@@ -1113,6 +1113,9 @@ test("ACCEPTANCE (5): all five can hold the same Los Angeles appointment interva
       await seedPractitionerDefault(live.studioId, id, day.dow, true, common.start, common.end);
     }
     const bookedIds: string[] = [];
+    const calendarBookings: Array<{
+      id: string; clientName: string; practitionerName: string;
+    }> = [];
     let target: string | undefined;
     for (const { who, label } of roster) {
       const client = newClientIdentity(live.runId, `SameInstant-${label.replaceAll(" ", "-")}`);
@@ -1129,6 +1132,9 @@ test("ACCEPTANCE (5): all five can hold the same Los Angeles appointment interva
         who.practitionerId,
       ]);
       bookedIds.push(rows[0].id);
+      calendarBookings.push({
+        id: rows[0].id, clientName: client.name, practitionerName: who.displayName,
+      });
     }
     const rows = await sql<{
       id: string; practitioner_id: string; starts_at: string; ends_at: string;
@@ -1150,6 +1156,40 @@ test("ACCEPTANCE (5): all five can hold the same Los Angeles appointment interva
     for (const row of rows) {
       expect(row.service_id).toBe(liveService);
       expect(row.minutes).toBe(serviceMinutes);
+    }
+
+    // DOM presence is not usable calendar capacity: identical-position cards
+    // can hide four bookings underneath the fifth. Start from the rendered
+    // date column and use ordinary pointer clicks, never force/DOM activation,
+    // a copied detail URL, or a filter that removes the other appointments.
+    await loginAsOwner(page, live);
+    for (const booking of calendarBookings) {
+      await page.goto(`/calendar?view=week&week=${bookDate}`);
+      const column = page.locator(`[data-testid="week-day-column"][data-date="${bookDate}"]`);
+      await expect(column, "the booked LA date must be rendered in the week grid").toHaveCount(1);
+      // All five must coexist in this same unfiltered column, not merely in
+      // separate practitioner views or via direct appointment-detail reads.
+      for (const expected of calendarBookings) {
+        await expect(
+          column.getByRole("button").filter({ hasText: expected.clientName }),
+          `${expected.clientName}'s same-instant booking must be in this date column`,
+        ).toHaveCount(1);
+      }
+      const entry = column.getByRole("button").filter({ hasText: booking.clientName });
+      await expect(entry).toBeVisible();
+      // Bound this particular failure so an obstructed card yields the real
+      // Playwright error, rather than exhausting the whole journey timeout.
+      await entry.click({ timeout: 10_000 });
+      const drawer = page.getByRole("dialog", { name: /appointment preview/i });
+      await expect(drawer).toBeVisible();
+      await expect(drawer.getByRole("heading", { name: booking.clientName, exact: true })).toBeVisible();
+      const details = drawer.getByRole("link", { name: /open full details/i });
+      await expect(details).toHaveAttribute("href", new RegExp(`^/calendar/${booking.id}(\\?|$)`));
+      await details.click();
+      await expect(page).toHaveURL(new RegExp(`/calendar/${booking.id}(\\?|$)`));
+      const header = page.locator("main header").first();
+      await expect(header.getByText(booking.practitionerName, { exact: false })).toBeVisible();
+      await expect(header.getByText(/unassigned/i)).toHaveCount(0);
     }
   } catch (error) {
     failures.push(error);
