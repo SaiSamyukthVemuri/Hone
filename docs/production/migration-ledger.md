@@ -14,9 +14,9 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (source-composed 2026-10-21; hosted declaration `0212` unchanged; repo `0245`; `0213`–`0245` AUTHORED AND PENDING)
+## Current state (source-composed 2026-10-21; hosted declaration `0212` unchanged; repo `0246`; `0213`–`0246` AUTHORED AND PENDING)
 
-> **CURRENT RELATIONSHIP: repo > hosted.** The complete source/evidence candidate contains the contiguous pending train `0213`–`0245`. Hosted history remains declared through `0212`; no hosted or retained-local apply is asserted. Historical apply evidence below is byte-preserved.
+> **CURRENT RELATIONSHIP: repo > hosted.** The complete source/evidence candidate contains the contiguous pending train `0213`–`0246`. Hosted history remains declared through `0212`; no hosted or retained-local apply is asserted. Historical apply evidence below is byte-preserved.
 >
 > **EVIDENCE ONLY, NEVER MERGE #926.** This source train composes published owner repairs for clinical identity/history, intake concurrency/audit authority and payment chronology. It is not permission to apply SQL, release a dependent feature, activate providers/models or change customer data. The retained hone-hon47 local stack remains at its previously proved max0237/source861e; it is NOT aligned with this new source tree, including the reviewed revised0214. Use the existing fresh isolated remote CI for the new train.
 >
@@ -25,10 +25,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0212**, unchanged canonical declaration and original receipts; no new hosted read/apply is implied by this source-composition date. |
-| **Repo migration max** | **0245** (`0245_ordered_card_setup_success.sql`), source-only and pending. |
+| **Repo migration max** | **0246** (`0246_intake_questionnaire_snapshot.sql`), source-only and pending. |
 | **Remote-only migrations** | **None recorded** by canonical hosted migration state. |
-| **Pending migrations** | PENDING, NOT APPLIED: **0213–0245** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`, `0236`, `0237`, `0238`, `0239`, `0240`, `0241`, `0242`, `0243`, `0244`, `0245`), contiguous in this evidence candidate. |
-| **Next free number** | Next free number is **0246** by this checkout's derived filenames only; it is **not claimed by this calculation**. OPS has separately RESERVED0246 to Team CLN008 and0247 to Willow MSG002/003; neither is included here or available for a new allocation. Check the live owner census. |
+| **Pending migrations** | PENDING, NOT APPLIED: **0213–0246** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`, `0236`, `0237`, `0238`, `0239`, `0240`, `0241`, `0242`, `0243`, `0244`, `0245`, `0246`), contiguous in this evidence candidate. |
+| **Next free number** | Next free number is **0247** by this checkout's derived filenames only; it is **not claimed by this calculation** and **not available for allocation**: OPS separately RESERVED0247 to Willow MSG002/003, source-only and not composed here. Team0246 is included. Check the live owner census before any new allocation. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` (Hone production project; no connection or apply performed here). |
 
 ### Published owner source additions after0237
@@ -43,10 +43,11 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | 0243 | Team `ead86c90bf2409bf9d21cc620bba92cf71bd39a2` | `94cbccc2e47f7c2935beafdf83ba90ee8a0ef903202b69c599f050d1943096b1` | SCHEMA FIRST: revision column/trigger+RPC must precede both public and assisted new CAS callers. Separate from242 app-first audit writer staging. |
 | 0244 | Machines `50fafeb50a8e7ca232ada57f08559d63ec06c0dc` | `046d5d11f06d011fd00fc994770382e1bf72079694d4eb0aaac0a69be2bb5964` | SCHEMA/REGISTRY TOGETHER on reviewed aligned prefix; old command APIs remain but every supported reading UPDATE now needs a real active attributed actor. Not blanket old-app/maintenance compatibility. |
 | 0245 | General `c878000792a8d7058fa750ec3e19be7d00b61756` | `623f967469cbc4bb5d29b38828fa95fd51539d4187af6b2b4d50a6900ca323ad` | Coordinated schema/runtime with setup-write drain; old unordered API closes, unknownlegacy order refuses; no automatic evidence adoption. |
+| 0246 | Team `131db9a8618a1cfd52ccc94fb4e4ca10d251b211`, owner-approved609union | `03a30dab56524b87ebefdf2e7b915d7717b1a9de6bed87f34b039a41dfc64b1a` | SCHEMA FIRST before known snapshot issuance. Every serving/rollback intake decoder must understand the immutable catalogue or hold known-row writes. SQL NULL legacy remains UNKNOWN forever; no adoption/backfill/grants. Preserve243 atomic revision/profile write and issued clinical evidence basis. |
 
 **Ordering is not one automatic bulk apply:** 0242 requires the governed audit writer app BEFORE ACL closure; 0243 requires schema BEFORE CAS app. Stage those application slices separately. 0239/0240 require a money-write hold and old-writer drain; 0245 similarly closes the unordered setup API. 0244 refuses unattributed corrections/FK-clearing and restricts parent deletion: active actor attribution, actual cleanup compatibility and retention/erasure disposition remain gates, not a deletion bypass. No local reset/apply, hosted SQL, provider activation or real-client mutation is authorized.
 
-The complete ordered33-file checksum list is [the source manifest](../reviews/hon18-stabilization-0245-source-manifest.json). It identifies authored sources, not an applied-history list or a passing DB run. Original829 CI39543875313 applied its fresh chain successfully but failed28unit/32DB/2payment cases plus browser findings; those failures remain recorded. Published owner repairs and the revised unapplied0240 cumulative-refund source require new exact-candidate CI. Old240 checksum018538e3b1ae73a1f203b2b4404d2bca068300110a0e3f4d77ae80be3d547b72 is historical source evidence, not proof of this revised source. Team246 remains separately published/reserved and is not in this245 candidate.
+The complete ordered34-file checksum list is [the source manifest](../reviews/hon18-stabilization-0245-source-manifest.json). It identifies authored sources, not an applied-history list or a passing DB run. Original829 CI39543875313 applied its fresh chain successfully but failed28unit/32DB/2payment cases plus browser findings; those failures remain recorded. Published owner repairs and the revised unapplied0240 cumulative-refund source require new exact-candidate CI. Old240 checksum018538e3b1ae73a1f203b2b4404d2bca068300110a0e3f4d77ae80be3d547b72 is historical source evidence, not proof of this revised source. Team246 is now composed from the owner-approved exact609 adapter, preserving974 whole-map validation and243 atomicity. Actual609 CI passed25392unit and all9 new240aggregate DB cases but failed1DBfixture plus1unhandled rejection,1payment-provenance assertion and1Node20browser probe; those failures are retained. Published owner test-only repairs are composed here. New246DB/browser and the resulting exact-head CI remain UNRUN until execution; retainedlocal237 is not aligned and has no new apply/reset authority.
 
 ## Previous state (historical records follow; individual apply evidence is preserved)
 

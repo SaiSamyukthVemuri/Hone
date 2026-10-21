@@ -362,3 +362,58 @@ describe("0243 revision and governed write response boundary", () => {
     expect(JSON.stringify(await writeIntakeRevision({ rpc } as never, input))).not.toContain("PRIVATE");
   });
 });
+
+// CLN-008: the shipped issue document is the authority for known rows, even
+// after the current catalogue is edited. Legacy NULL is deliberately different.
+describe("0246 issued questionnaire authority", () => {
+  it("pins the full TS catalogue, deterministic digest and exact migration literal", async () => {
+    const { ISSUED_QUESTIONNAIRE } = await import("@/lib/intake/questionnaire");
+    const { createHash } = await import("node:crypto");
+    const { readFileSync } = await import("node:fs");
+    const canonical = (v: unknown): string => {
+      if (v === null || typeof v !== "object") return JSON.stringify(v);
+      if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+      return `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(",")}}`;
+    };
+    expect(ISSUED_QUESTIONNAIRE.catalogue.steps).toEqual(INTAKE_STEPS);
+    expect(ISSUED_QUESTIONNAIRE.content_digest).toBe(createHash("sha256").update(canonical(ISSUED_QUESTIONNAIRE.catalogue)).digest("hex"));
+    expect(ISSUED_QUESTIONNAIRE.catalogue_version).toBe(`hone-intake-${ISSUED_QUESTIONNAIRE.content_digest}`);
+    const sql = readFileSync("supabase/migrations/0246_intake_questionnaire_snapshot.sql", "utf8");
+    expect(JSON.parse(sql.match(/\$catalogue\$([\s\S]*?)\$catalogue\$/)![1])).toEqual(ISSUED_QUESTIONNAIRE);
+  });
+
+  it("keeps issued labels, options, required and conditional rules when current wording/rules change", async () => {
+    const { ISSUED_QUESTIONNAIRE, questionnaireForRow } = await import("@/lib/intake/questionnaire");
+    const { findMissingRequiredAnswers } = await import("@/lib/intake/questions");
+    const original = JSON.parse(JSON.stringify(ISSUED_QUESTIONNAIRE));
+    const current = INTAKE_STEPS.flatMap(s => s.questions).find(q => q.key === "diabetes_type")!;
+    const before = { ...current };
+    try {
+      Object.assign(current, { label: "Different current wording", required: false, options: [{ value: "new", label: "New option" }], conditional: { whenKey: "new_parent", whenEquals: ["yes"] } });
+      const issued = questionnaireForRow(original);
+      expect(issued.kind).toBe("known");
+      const historic = issued.steps.flatMap(s => s.questions).find(q => q.key === "diabetes_type")!;
+      expect(historic).toEqual(before);
+      expect(findMissingRequiredAnswers({ medical_conditions: ["diabetes"] }, issued.steps)).toContain("diabetes_type");
+      expect(findMissingRequiredAnswers({ medical_conditions: ["diabetes"] })).not.toContain("diabetes_type");
+      expect(findInvalidChoiceAnswers({ medical_conditions: ["diabetes"], diabetes_type: "type_1" }, issued.steps)).not.toContain("diabetes_type");
+      expect(visibleQuestionsForStep(3, { medical_conditions: ["diabetes"] }, issued.steps).map(q => q.key)).toContain("diabetes_type");
+    } finally { Object.assign(current, before); }
+  });
+
+  it("distinguishes NULL legacy from missing, forged, recursive or unsupported known documents", async () => {
+    const { ISSUED_QUESTIONNAIRE, questionnaireForRow } = await import("@/lib/intake/questionnaire");
+    expect(questionnaireForRow(null).kind).toBe("legacy");
+    const changed = JSON.parse(JSON.stringify(ISSUED_QUESTIONNAIRE));
+    changed.catalogue.steps[0].questions[0].label = "Caller text";
+    const cycle: Record<string, unknown> = {}; cycle.catalogue = cycle;
+    for (const value of [undefined, {}, [], "legacy", cycle, changed,
+      { ...ISSUED_QUESTIONNAIRE, schema_version: 99 }, { ...ISSUED_QUESTIONNAIRE, content_digest: "forged" },
+      { ...ISSUED_QUESTIONNAIRE, catalogue_version: "forged" }, { ...ISSUED_QUESTIONNAIRE, extra: true }]) {
+      const decoded = questionnaireForRow(value);
+      expect(decoded.kind).toBe("invalid");
+      expect(decoded.steps).toEqual([]);
+    }
+    expect(Object.isFrozen(ISSUED_QUESTIONNAIRE.catalogue.steps[0].questions[0])).toBe(true);
+  });
+});

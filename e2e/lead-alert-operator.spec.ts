@@ -231,8 +231,16 @@ test.describe("SEC-002 admin document and RSC authorization", () => {
 
   // Same cookie adapter as the app, but an independent GoTrue getUser call:
   // never infer authentication from a redirect, email form, or unverified JWT.
+  // This probe uses GoTrue only. Supabase eagerly selects a Realtime transport
+  // even without channels; Node 20 has no native WebSocket. Refuse any attempted
+  // Realtime connection rather than enabling another network path or faking one.
+  function rejectIdentityProbeRealtime(): never {
+    throw new Error("SEC002 identity probe forbids Realtime connections");
+  }
+
   async function assertIdentity(page: Page, userId: string, email: string): Promise<void> {
     const auth = createServerClient(E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
+      realtime: { transport: rejectIdentityProbeRealtime as unknown as typeof WebSocket },
       cookies: {
         getAll: async () => (await page.context().cookies(E2E_APP_ORIGIN)).map(({ name, value }) => ({ name, value })),
         // Fresh sign-in cookies must verify without an invisible replacement.

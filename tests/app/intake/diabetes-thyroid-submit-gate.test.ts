@@ -159,6 +159,7 @@ function seedIntake(over: Partial<Row> = {}) {
       studio_id: STUDIO_ID,
       status: "in_progress",
       revision: 0,
+    questionnaire_snapshot: null,
       responses: {},
       current_step: 1,
       submitted_at: null,
@@ -540,5 +541,32 @@ describe("0243 profile synchronization through the real submit action", () => {
     const result = await submitIntakeAction({ token: "good", expectedRevision: "0", responses: completeAnswers({ pronouns: "they/them" }) });
     expect(result.ok).toBe(false);
     expect(JSON.stringify(storedRow())).toBe(before);
+  });
+});
+
+describe("0246 real public action snapshot boundary", () => {
+  it("uses issued required rules after current catalogue changes and never accepts caller catalogue text", async () => {
+    const { ISSUED_QUESTIONNAIRE } = await import("@/lib/intake/questionnaire");
+    seedIntake({ questionnaire_snapshot: structuredClone(ISSUED_QUESTIONNAIRE) });
+    const current = getQuestionByKey("has_allergies")!;
+    const required = current.required;
+    try {
+      current.required = false;
+      const responses = completeAnswers(); delete responses.has_allergies;
+      responses.questionnaire_snapshot = { arbitrary: "caller" };
+      const before = JSON.stringify(storedRow());
+      expect((await submitIntakeAction({ token: "good", expectedRevision: "0", responses })).ok).toBe(false);
+      expect(JSON.stringify(storedRow())).toBe(before);
+      expect((await saveIntakeStepAction({ token: "good", expectedRevision: "0", step: 1, responses: { preferred_name: "Saved", questionnaire_snapshot: { arbitrary: "caller" } } })).ok).toBe(true);
+      expect(storedResponses()).not.toHaveProperty("questionnaire_snapshot");
+      expect(storedRow().questionnaire_snapshot).toEqual(ISSUED_QUESTIONNAIRE);
+    } finally { current.required = required; }
+  });
+  it.each([{}, { schema_version: 99 }, undefined])("refuses unsupported/missing known snapshot %j without changing the draft or profile", async (snapshot) => {
+    seedIntake({ questionnaire_snapshot: snapshot });
+    const before = JSON.stringify(db);
+    expect((await saveIntakeStepAction({ token: "good", expectedRevision: "0", step: 1, responses: { preferred_name: "Unsaved" } })).ok).toBe(false);
+    expect((await submitIntakeAction({ token: "good", expectedRevision: "0", responses: completeAnswers() })).ok).toBe(false);
+    expect(JSON.stringify(db)).toBe(before);
   });
 });

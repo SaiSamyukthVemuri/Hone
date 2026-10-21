@@ -1567,6 +1567,11 @@ describe("0223 · channel exclusivity is SERIALISED, not just checked", () => {
           sessionId,
           studio.clientId,
         ],
+      ).then(
+        // Observe both outcomes immediately, before polling the lock barrier.
+        // The outcome assertion below still fails on success or any other error.
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
       );
 
       const blocked = await waitUntilBlocked(bPid);
@@ -1579,7 +1584,13 @@ describe("0223 · channel exclusivity is SERIALISED, not just checked", () => {
 
       // AND THEN REFUSED, on the state A committed. Blocking alone would not
       // be enough — it has to re-read and see the channel taken.
-      await expect(runB).rejects.toThrow(/still assigned to settings group/i);
+      expect(await runB).toMatchObject({
+        status: "rejected",
+        reason: {
+          code: "23514",
+          message: expect.stringMatching(/Channel 3 is still assigned to settings group "g1"/i),
+        },
+      });
       await b.query("rollback");
     } finally {
       try {

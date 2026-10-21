@@ -164,6 +164,7 @@ function row(over: Partial<Row> = {}): Row {
     client_id: CLIENT,
     status: "in_progress",
     revision: 0,
+    questionnaire_snapshot: null,
     current_step: TOTAL_STEPS,
     responses: { legal_name: "Dana Reyes", [KEY]: { ...REAL_PROVENANCE } },
     submitted_at: null,

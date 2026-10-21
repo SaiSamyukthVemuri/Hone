@@ -94,11 +94,33 @@ async function build(label: string, country: "US" | "CA"): Promise<Built> {
 async function attemptState(attemptId: string) {
   const r = await adminQuery(
     `select status, currency, amount_cents, receipt_status, refund_status,
-            refund_amount_cents, stripe_refund_id, refund_failure_code, updated_at
+            refund_amount_cents, stripe_refund_id, stripe_refund_status, refunded_at,
+            stripe_refund_event_id, stripe_refund_event_created::text as stripe_refund_event_created,
+            stripe_charge_refund_event_id, stripe_charge_refund_event_created::text as stripe_charge_refund_event_created,
+            refund_failure_code, updated_at
        from public.payment_charge_attempts where id = $1`,
     [attemptId],
   );
   return r.rows[0] as Record<string, unknown>;
+}
+
+/** A new signed observation enriches provenance; it must not rewrite refund
+ * identity, first completion time, money, or independent aggregate truth. */
+function expectSignedRefundObservation(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  event: { id: string; created: number },
+) {
+  expect(after.updated_at).toBeInstanceOf(Date);
+  expect((after.updated_at as Date).getTime()).toBeGreaterThanOrEqual(
+    (before.updated_at as Date).getTime(),
+  );
+  expect(after).toEqual({
+    ...before,
+    stripe_refund_event_id: event.id,
+    stripe_refund_event_created: String(event.created),
+    updated_at: after.updated_at,
+  });
 }
 
 async function alertsSince(studioId: string, since: string, event: string) {
@@ -198,13 +220,21 @@ test("A · USD charge, receipt and refund in the UI; every webhook replay is ide
     stripe_refund_id: processorRefund(attemptId)?.id,
   });
 
-  // charge.refunded replayed: same id twice, then a fresh id. Nothing changes,
-  // and the processor still made exactly ONE refund.
+  // The first signed observation adds provenance to the action response.
+  // Same-event replay changes NOTHING, including updated_at; a fresh event may
+  // advance only signed provenance and its observation timestamp.
+  expect(refunded.stripe_refund_event_id).toBeNull();
+  expect(refunded.stripe_refund_event_created).toBeNull();
   const refundEvent = await chargeRefundedEvent(attemptId);
-  for (const ev of [refundEvent, refundEvent, await chargeRefundedEvent(attemptId)]) {
-    expect((await deliverStripeEvent(ev)).status).toBe(200);
-  }
-  expect(await attemptState(attemptId)).toEqual(refunded);
+  expect((await deliverStripeEvent(refundEvent)).status).toBe(200);
+  const observed = await attemptState(attemptId);
+  expectSignedRefundObservation(refunded, observed, refundEvent);
+  expect((await deliverStripeEvent(refundEvent)).status).toBe(200);
+  expect(await attemptState(attemptId)).toEqual(observed);
+  const freshRefundEvent = await chargeRefundedEvent(attemptId);
+  expect((await deliverStripeEvent(freshRefundEvent)).status).toBe(200);
+  const replayed = await attemptState(attemptId);
+  expectSignedRefundObservation(observed, replayed, freshRefundEvent);
   expect(
     callsForAccount(b.accountId).filter((c) => c.method === "refund_create" && !c.replay),
   ).toHaveLength(1);
@@ -219,7 +249,7 @@ test("A · USD charge, receipt and refund in the UI; every webhook replay is ide
   ]) {
     expect((await deliverStripeEvent(ev)).status).toBe(200);
   }
-  expect(await attemptState(attemptId)).toEqual(refunded);
+  expect(await attemptState(attemptId)).toEqual(replayed);
   expect(
     (await alertsSince(b.studioId, since, "stripe_webhook_money_mismatch")).map((a) => a.severity),
   ).toContain("critical");
@@ -306,10 +336,14 @@ test("B · USD refund outcome UNKNOWN: pending until the charge.refunded webhook
   await expect(view.getByText(/Refund processing/)).toHaveCount(0);
   await expect(view.getByRole("button", { name: /^refund charge$/i })).toHaveCount(0);
 
-  // Replays change nothing.
+  expect(settled).toMatchObject({ stripe_refund_event_id: ev.id, stripe_refund_event_created: String(ev.created) });
+  // Identical delivery is a strict no-op; a new signed observation retains
+  // the first completion and individual Refund while recording its provenance.
   expect((await deliverStripeEvent(ev)).status).toBe(200);
-  expect((await deliverStripeEvent(await chargeRefundedEvent(attemptId))).status).toBe(200);
   expect(await attemptState(attemptId)).toEqual(settled);
+  const freshEvent = await chargeRefundedEvent(attemptId);
+  expect((await deliverStripeEvent(freshEvent)).status).toBe(200);
+  expectSignedRefundObservation(settled, await attemptState(attemptId), freshEvent);
   expect(
     callsForAccount(b.accountId).filter((c) => c.method === "refund_create" && !c.replay),
   ).toHaveLength(1);
@@ -361,10 +395,14 @@ test("D · CANADIAN REGRESSION: charge, refund and replay in CAD are unchanged",
   const refunded = await attemptState(attemptId);
   expect(refunded).toMatchObject({ currency: "cad", refund_status: "succeeded", refund_amount_cents: PRICE_CENTS });
 
-  for (const ev of [await paymentIntentSucceededEvent(attemptId), await chargeRefundedEvent(attemptId)]) {
-    expect((await deliverStripeEvent(ev)).status).toBe(200);
-  }
+  expect((await deliverStripeEvent(await paymentIntentSucceededEvent(attemptId))).status).toBe(200);
   expect(await attemptState(attemptId)).toEqual(refunded);
+  const refundEvent = await chargeRefundedEvent(attemptId);
+  expect((await deliverStripeEvent(refundEvent)).status).toBe(200);
+  const observed = await attemptState(attemptId);
+  expectSignedRefundObservation(refunded, observed, refundEvent);
+  expect((await deliverStripeEvent(refundEvent)).status).toBe(200);
+  expect(await attemptState(attemptId)).toEqual(observed);
   expect(stripeNetwork).toEqual([]); // browser side
   expect(stripeEgressGuardArmed()).toBe(true); // the guard IS in the payment server
   expect(readStripeEgress()).toEqual([]); // SERVER side: the payment web server never reached Stripe

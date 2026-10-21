@@ -1,8 +1,8 @@
 {
-  "at": "2026-10-21T05:05:43.315592+00:00",
+  "at": "2026-10-21T06:05:50.483056+00:00",
   "purpose": "Ordered source/checksum evidence only, not apply/release authority",
   "hosted_declaration": "0212 unchanged; originalapplyreceipts/history preserved; not re-read/applied here",
-  "source_SQL_tree": "6fb4c7d8f46e055076c74ca82739e86f6bcfceb2",
+  "source_SQL_tree": "db11e67f0d579726828276e3c8a8cea245f2ed4a",
   "pending_versions": [
     "0213",
     "0214",
@@ -36,7 +36,8 @@
     "0242",
     "0243",
     "0244",
-    "0245"
+    "0245",
+    "0246"
   ],
   "source_migrations": [
     {
@@ -335,6 +336,16 @@
       "owner": "General",
       "published_source": "c878000792a8d7058fa750ec3e19be7d00b61756",
       "application_order": "Coordinated schema/runtime with setup-write drain; old unordered API closes, unknownlegacy order refuses; no automatic evidence adoption."
+    },
+    {
+      "version": "0246",
+      "file": "supabase/migrations/0246_intake_questionnaire_snapshot.sql",
+      "raw_sha256": "03a30dab56524b87ebefdf2e7b915d7717b1a9de6bed87f34b039a41dfc64b1a",
+      "git_blob": "fd9e4b2190a9112ebb45efa539b48378a378c585",
+      "owner": "Team",
+      "published_source": "131db9a8618a1cfd52ccc94fb4e4ca10d251b211",
+      "application_order": "SCHEMA FIRST before known snapshot issuance; compatible serving/rollback decoders or hold known-row writes. Legacy NULL remains UNKNOWN/no adoption/backfill/grants. Preserve243 atomic CAS/profile write and issued clinical evidence basis.",
+      "owner_approved_union": "team/246-609-union/OWNER-APPROVAL.json"
     }
   ],
   "historical_ledger_tail_sha256": "70c606e503ddc66649ef67eae4d1bc777b943a202b650fb9f35eb5ae5e7fac17",

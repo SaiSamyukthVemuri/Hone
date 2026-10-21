@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { countVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 describe("0245 — ordered successor closes the unordered boundary", () => {
   const ordered = readFileSync(join(process.cwd(), "supabase/migrations/0245_ordered_card_setup_success.sql"), "utf8");
   const body = ordered.split("\n").map((line) => line.replace(/--.*$/, "")).join("\n");
   it("uses nullable paired evidence with no adoption/default/backfill", () => {
     expect(countVersion("0245")).toBe(1);
-    expect(isRepoMax("0245")).toBe(true);
     expect(body).toContain("stripe_setup_success_event_created bigint");
     expect(body).not.toMatch(/default\s+(?:now|0)|update[^;]*set[^;]*where[^;]*is null/i);
     expect(body).toContain("unknown_event_order");

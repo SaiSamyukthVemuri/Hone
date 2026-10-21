@@ -1,5 +1,6 @@
 "use server";
 
+import { questionnaireForRow, QUESTIONNAIRE_UNAVAILABLE, type Questionnaire } from "@/lib/intake/questionnaire";
 import { isDeepStrictEqual } from "node:util";
 
 import { intakeRevision, INTAKE_CONFLICT } from "@/lib/intake/revision";
@@ -19,8 +20,6 @@ import { sendIntakeUpdateRequestToClient } from "@/lib/email/send-appointment";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import {
   findInvalidChoiceAnswers,
-  PRACTITIONER_ENTERABLE_STEPS,
-  TOTAL_STEPS,
 } from "@/lib/intake/questions";
 import {
   assistedKeysChanged,
@@ -699,6 +698,7 @@ async function loadAssistedIntake(
       actor: { practitioner_id: string; display_name: string };
       responses: Record<string, unknown>;
       revision: string;
+      catalogue: Questionnaire;
     }
   | { ok: false; error: string }
 > {
@@ -708,7 +708,7 @@ async function loadAssistedIntake(
   const supabase = await createClient();
   const { data: intake, error: intakeErr } = await supabase
     .from("client_intake_forms")
-    .select("id, status, responses, revision")
+    .select("id, status, responses, revision, questionnaire_snapshot")
     .eq("id", intakeId)
     .eq("studio_id", auth.studioId)
     .eq("client_id", auth.client.id)
@@ -726,6 +726,9 @@ async function loadAssistedIntake(
   // collapse here into one message. No existence oracle.
   if (!intake || intakeRevision(intake.revision) === null) return { ok: false, error: ASSISTED_NOT_PERMITTED };
 
+  const catalogue = questionnaireForRow(intake.questionnaire_snapshot);
+  if (catalogue.kind === "invalid") return { ok: false, error: QUESTIONNAIRE_UNAVAILABLE };
+
   return {
     ok: true,
     studioId: auth.studioId,
@@ -735,6 +738,7 @@ async function loadAssistedIntake(
     },
     responses: (intake.responses as Record<string, unknown>) ?? {},
     revision: intakeRevision(intake.revision)!,
+    catalogue,
   };
 }
 
@@ -768,14 +772,14 @@ export async function saveAssistedIntakeStepAction(payload: {
   // The step must be one a practitioner may fill in. The acknowledgements
   // step is not in this set, so it cannot even be addressed here.
   const step = Math.floor(Number(payload.step));
-  const enterable = PRACTITIONER_ENTERABLE_STEPS.some((s) => s.id === step);
-  if (!enterable) return { ok: false, error: ASSISTED_CLIENT_OWNED };
-
-  const answers = sanitizePractitionerAssistedAnswers(payload.responses);
 
   const loaded = await loadAssistedIntake(intakeId, clientId);
   if (!loaded.ok) return loaded;
   if (loaded.revision !== expectedRevision) return { ok: false, error: INTAKE_CONFLICT };
+  const enterable = loaded.catalogue.steps.slice(0, -1).some((s) => s.id === step);
+  if (!enterable) return { ok: false, error: ASSISTED_CLIENT_OWNED };
+  const answers = sanitizePractitionerAssistedAnswers(payload.responses, loaded.catalogue.steps, loaded.catalogue.clientOwnedKeys);
+
 
   // Refuse loudly if the payload would CHANGE a client-owned answer.
   //
@@ -786,7 +790,7 @@ export async function saveAssistedIntakeStepAction(payload: {
   // boundary is unchanged in strength: a practitioner still cannot set, alter
   // or clear one, and sanitization drops these keys regardless. This is the
   // loud backstop for a UI bug or a crafted request.
-  const forbidden = assistedKeysChanged(payload.responses, loaded.responses);
+  const forbidden = assistedKeysChanged(payload.responses, loaded.responses, loaded.catalogue.clientOwnedKeys);
   if (forbidden.length > 0) {
     logIntakeActionFailure("assisted_client_owned_key_rejected", {
       message: `rejected ${forbidden.length} client-owned key change(s)`,
@@ -810,7 +814,7 @@ export async function saveAssistedIntakeStepAction(payload: {
   // Navigation posts the entire editor map: unchanged historical choices are
   // not newly authored answers. Changed malformed choices still refuse, and
   // the client's final submit validates the full applicable questionnaire.
-  const invalidChoices = findInvalidChoiceAnswers(merged).filter(
+  const invalidChoices = findInvalidChoiceAnswers(merged, loaded.catalogue.steps).filter(
     (key) => Object.hasOwn(answers, key) && !isDeepStrictEqual(answers[key], loaded.responses[key]),
   );
   if (invalidChoices.length > 0) {
@@ -866,7 +870,8 @@ export async function handOffAssistedIntakeAction(
   if (!loaded.ok) return { ok: false, error: loaded.error };
   if (loaded.revision !== expectedRevision) return { ok: false, error: INTAKE_CONFLICT };
 
-  const patch: Record<string, unknown> = { current_step: TOTAL_STEPS };
+  const lastStep = loaded.catalogue.steps[loaded.catalogue.steps.length - 1].id;
+  const patch: Record<string, unknown> = { current_step: lastStep };
 
   // Only stamp a handover onto an intake that actually carries assisted
   // provenance. A practitioner who opened the editor and recorded nothing has
@@ -887,7 +892,7 @@ export async function handOffAssistedIntakeAction(
   const written = await writeIntakeRevision(createAdminClient(), {
     intakeId, studioId: loaded.studioId, clientId, expectedRevision,
     responses: (patch.responses ?? loaded.responses) as Record<string, unknown>,
-    step: TOTAL_STEPS, operation: "handoff",
+    step: lastStep, operation: "handoff",
   });
   if (!written.ok) return written;
 
