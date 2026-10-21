@@ -126,6 +126,20 @@ test.describe("FETT photos: touch floor, mounted at phone width", () => {
     await expect(dialog.getByText("Loading preview…", { exact: true })).toHaveCount(0);
     const preview = await controlHeights(page);
 
+    // CLN-006: exercise the mounted dialog's keyboard boundary and restoration
+    // in this existing metadata-only fixture (no new browser/session harness).
+    const firstPreviewControl = dialog.getByRole("button").first();
+    const lastPreviewControl = dialog.getByRole("button").last();
+    await expect(page.getByRole("button", { name: "Close preview" })).toBeFocused();
+    await lastPreviewControl.focus();
+    await page.keyboard.press("Tab");
+    await expect(firstPreviewControl).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(lastPreviewControl).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(tile).toBeFocused();
+
     const all = [...areaPanel, ...panel, ...editor, ...tiles, ...preview];
     const under = all.filter((c) => c.height < FLOOR);
     // The surfaces the check claims to cover must actually be in the sample.
