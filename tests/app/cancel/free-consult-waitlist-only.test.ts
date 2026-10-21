@@ -517,6 +517,22 @@ describe("MSG-004 public cancellation owner-notification recovery", () => {
     expect(html).not.toContain("<form");
     expect(html).not.toContain("Resend");
   });
+  it("keeps committed cancellation successful when the recovery alert and console both throw", async () => {
+    ownerEmail.mockResolvedValueOnce({ ok: false, error: "PRIVATE owner@example.invalid " + TOKEN, retryable: true });
+    recoveryAlert.mockRejectedValueOnce(new Error("PRIVATE alert " + TOKEN));
+    const log = vi.spyOn(console, "error").mockImplementation(() => { throw new Error("PRIVATE console " + TOKEN); });
+    try {
+      const result = await publicCancelAppointmentAction(cancelForm());
+      expect(result).toEqual({ ok: true, notification: "unconfirmed" });
+      expect(ownerEmail).toHaveBeenCalledTimes(1);
+      expect(recoveryAlert).toHaveBeenCalledTimes(1);
+      expect(rpcCalls).toHaveLength(1);
+      expect(rpcCalls[0].fn).toBe("public_cancel_appointment_with_token");
+      expect(writes).toEqual([]);
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify([result, recoveryAlert.mock.calls, log.mock.calls])).not.toMatch(/PRIVATE|raw-url-token|owner@example.invalid/);
+    } finally { log.mockRestore(); }
+  });
 });
 
 
