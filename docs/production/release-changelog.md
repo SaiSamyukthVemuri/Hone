@@ -35,10 +35,10 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 
 **Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479**, **#601**,
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
-production refresh since — **every** first-parent merge in `b9e0003f..df0d42a2`, all
-**235** PR merges among them (**#632–#999**, plus **#631**, whose number sits below that floor but
-whose merge does not — see below). The sixty-four merges after the prior `440829c2` snapshot are #940,
-#903, #897, #895, #942, #944, #945, #941, #947, #948, #946, #949, #906, #950, #921, #951, #952, #954, #953, #956, #955, #958, #959, #957, #961, #962, #960, #964, #892, #965, #963, #966, #925, #967, #927, #968, #969, #970, #971, #973, #976, #972, #974, #975, #980, #978, #977, #983, #981, #986, #979, #982, #985, #987, #988, #989, #992, #990, #993, #991, #996, #998, #999 and #995; their dated receipts are listed at the end of this changelog. ⚠️ **EXTENDED
+production refresh since — **every** first-parent merge in `b9e0003f..f7ec655c`, all
+**237** PR merges among them (**#632–#1001**, plus **#631**, whose number sits below that floor but
+whose merge does not — see below). The sixty-six merges after the prior `440829c2` snapshot are #940,
+#903, #897, #895, #942, #944, #945, #941, #947, #948, #946, #949, #906, #950, #921, #951, #952, #954, #953, #956, #955, #958, #959, #957, #961, #962, #960, #964, #892, #965, #963, #966, #925, #967, #927, #968, #969, #970, #971, #973, #976, #972, #974, #975, #980, #978, #977, #983, #981, #986, #979, #982, #985, #987, #988, #989, #992, #990, #993, #991, #996, #998, #999, #995, #1001 and #984; their dated receipts are listed at the end of this changelog. ⚠️ **EXTENDED
 2026-10-12 by CANON-REFRESH-2026-10-12:**
 the range previously ended at `410e5039` (81 merges, the 2026-09-21 extension described next);
 **56** rows were backfilled from the first-parent graph and each merge's own diff, and the
@@ -454,3 +454,11 @@ deployment, route smoke and human acceptance.
 |---|---|---|---|---|
 | **#995** | none | **Merged · deployed; human UAT UNRUN** | Bounded fair reminder scans and same-candidate retry after unavailable claim | Sourcecd788 exact review/CI39608140091 passed21,627unit/603browser13skip; DB/payment/mobile/Google/docs skipped. Root311focused/type/prepush passed. Normaldf0d42a2 READYdpl_5RqZ3WWoBRdU38RnDbzA8dDyCkqq, alias/tree/safeGET200200307307 verified. Automatic39611091351 unit failed exactly stale canonical A3/A5:21,625passed/2failed. Browser jobs remain in progress at this dated sync; DB/payment/mobile/Google/canonical-docs skipped. Failure evidence is retained, not relabeled passed. Actual Redis/Lua/network persistence remains UNRUN; no manual cron/provider/send/activation/customer-data action; held generation/idempotency work remains separate. |
 | **#999** | none | **Docs-only · deployed** | Record correction through #998 | Exact49 review/CI39607418551 +374local/prepush passed; normald4fb5ab7 READYdpl_GYxQMhJa8HdsMCoqmLY2gRqCoLSV, alias/tree/safeGET verified. Automatic39607972677 docs-selected checks passed; runtime suites skipped. Original998postA3/A5failure retained; no runtime or SQL change. |
+
+
+## 2026-10-21 booking availability containment
+
+| PR | Migration | Status | What shipped | Evidence and limits |
+|---|---|---|---|---|
+| **#984** | none | **Merged · deployed; human UAT UNRUN** | Classified availability-read failures refuse unsafe internal booking/moves and return retryable results | Exactd9 review/CI39614332644 passed21,712unit/270browser9skip; DB/payment/mobile/Google/docs skipped. Root156affected/type/prepush PASS,14subjects unchanged. Normalf7ec655c READYdpl_3otXTFYDoNb5QdqcCzJrcon1qAXj, alias/tree/safeGET200200307307 verified. Automatic39616619850 FAILED only canonical unitA3/A5 stale df pins:21,710passed/2failed. All3targetedbrowser shards and aggregate passed; DB/payment/mobile/Google/canonical-docs skipped. Original failure evidence is retained. No SQL/grants/activation/customer-data action or production fault injection. |
+| **#1001** | none | **Docs-only · deployed** | Record correction through #995 | Exact813 review/CI39612953597 +374local/prepush PASS; initiala943 review count finding retained/sourcefixed. Normal2ed6619c READYdpl_9JMzPPuZ2iDsPSF1NUfhk7KbW2Y5, alias/tree/safeGET verified. Automatic39613801907 docs-selected PASS, runtime suites skipped. Later995automatic39611091351 remained FAILED onlyA3/A5:21,625pass/2fail; browser/aggregate PASS, other suites skipped. No runtime/SQL change. |
