@@ -198,7 +198,10 @@ export type SeededStudio = {
 // suites can re-run against the same local database without
 // colliding; assertions must scope by these ids, never by global
 // counts.
-export async function seedStudio(label: string): Promise<SeededStudio> {
+export async function seedStudio(
+  label: string,
+  opts: { verifiedPaymentJurisdiction?: boolean } = {},
+): Promise<SeededStudio> {
   const studioId = randomUUID();
   const userId = randomUUID();
   const practitionerId = randomUUID();
@@ -212,6 +215,15 @@ export async function seedStudio(label: string): Promise<SeededStudio> {
     `insert into public.studios (id, name, owner_email) values ($1, $2, $3)`,
     [studioId, `Harness ${label}`, email],
   );
+  // This synthetic fixture explicitly represents a verified CA/cad studio.
+  // It is NOT the application/default: policy tests opt out to exercise UNKNOWN.
+  if (opts.verifiedPaymentJurisdiction !== false) {
+    const verified = await adminQuery(
+      `select * from public.set_studio_payment_jurisdiction($1,'CA','cad',$2,$3,false,$4)`,
+      [studioId, "fixture:db-harness", "Synthetic verified onboarding pair", `fixture:${label}`],
+    );
+    if (verified.rows[0]?.out_result !== "initialized") throw new Error("synthetic jurisdiction initialization failed");
+  }
   await adminQuery(
     `insert into public.practitioners
        (id, studio_id, user_id, display_name, email, role, active)

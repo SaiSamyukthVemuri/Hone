@@ -106,7 +106,7 @@ async function seedConnect(ids: Ids, opts: SeedOptions): Promise<void> {
 async function seedJurisdiction(ids: Ids, opts: SeedOptions): Promise<void> {
   if (opts.paymentCountry !== "US") return;
   const r = await adminQuery(
-    `select out_result from public.set_studio_payment_jurisdiction($1,'US','usd','harness','synthetic US studio',false)`,
+    `select out_result from public.set_studio_payment_jurisdiction($1,'US','usd','harness','synthetic verified US studio',false,'fixture:payment-seed-usd')`,
     [ids.studio.studioId],
   );
   if (r.rows[0]?.out_result !== "changed") {

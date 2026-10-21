@@ -22,7 +22,7 @@ async function studio(label: string, country: "CA" | "US"): Promise<SeededStudio
   created.push(s);
   if (country === "US") {
     const r = await adminQuery(
-      `select out_result from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','verified US business',false)`,
+      `select out_result from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','verified US business and charge currency',false,'fixture:verified-usd-method')`,
       [s.studioId],
     );
     expect(r.rows[0].out_result).toBe("changed");

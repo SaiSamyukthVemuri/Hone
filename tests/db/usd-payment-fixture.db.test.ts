@@ -112,7 +112,7 @@ describe("seedUsdPaymentLayer composes onto an existing studio", () => {
     let refusal: unknown = null;
     await adminTx(async (q) => {
       await q(
-        `alter function public.set_studio_payment_jurisdiction(uuid,text,text,text,text,boolean) rename to set_studio_payment_jurisdiction_hidden`,
+        `alter function public.set_studio_payment_jurisdiction(uuid,text,text,text,text,boolean,text) rename to set_studio_payment_jurisdiction_hidden`,
       );
       refusal = await assertUsdCapableDatabase((text) => q(text)).catch((e: unknown) => e);
       throw rollback;

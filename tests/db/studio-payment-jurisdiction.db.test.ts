@@ -16,7 +16,7 @@ import {
 // ===========================================================================
 //
 // Real database, real roles. Proves:
-//   J1  every studio has an explicit CA/cad row (backfill shape + creation default);
+//   J1  unknown stays missing; only explicitly verified onboarding creates a pair;
 //   J2  no browser role can read, write or call any of it;
 //   J3  the protected change command: allowed pairs only, audited, and refused
 //       once an account, money history or (unacknowledged) prices exist;
@@ -29,8 +29,8 @@ import {
 
 const created: SeededStudio[] = [];
 
-async function studio(label: string): Promise<SeededStudio> {
-  const s = await seedStudio(`ccy-${label}`);
+async function studio(label: string, verifiedPaymentJurisdiction = true): Promise<SeededStudio> {
+  const s = await seedStudio(`ccy-${label}`, { verifiedPaymentJurisdiction });
   created.push(s);
   return s;
 }
@@ -70,11 +70,12 @@ async function setJurisdiction(
   currency: string,
   ack = false,
   actor = "operator:test",
-  reason = "verified business country",
+  reason = "verified business country and charge currency",
+  verificationReference: string | null = "fixture:verified-owner-onboarding",
 ) {
   const r = await adminQuery(
-    `select * from public.set_studio_payment_jurisdiction($1,$2,$3,$4,$5,$6)`,
-    [studioId, country, currency, actor, reason, ack],
+    `select * from public.set_studio_payment_jurisdiction($1,$2,$3,$4,$5,$6,$7)`,
+    [studioId, country, currency, actor, reason, ack, verificationReference],
   );
   return r.rows[0] as {
     out_result: string;
@@ -143,25 +144,42 @@ async function rejection(p: Promise<unknown>): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-describe("J1 every studio has an explicit jurisdiction", () => {
-  it("a newly created studio starts CA/cad, recorded as the creation default", async () => {
-    const s = await studio("j1");
-    expect(await jurisdiction(s.studioId)).toEqual({
-      payment_country: "CA",
-      payment_currency: "cad",
-      source: "studio_created",
-    });
+describe("J1 verified jurisdiction only", () => {
+  it("a new studio remains UNKNOWN: no automatic country/currency row", async () => {
+    const s = await studio("j1-unknown", false);
+    expect(await jurisdiction(s.studioId)).toBeUndefined();
+    const claim = adminQuery(`select * from public.create_or_claim_stripe_account_provisioning($1,false)`, [s.studioId]);
+    expect(await rejection(claim)).toMatch(/payment_jurisdiction_missing/);
   });
 
-  it("no studio is without a row, and only the two allowed pairs exist", async () => {
-    const r = await adminQuery(`
-      select
-        (select count(*) from public.studios s
-          where not exists (select 1 from public.studio_payment_jurisdictions j
-                             where j.studio_id = s.id))::int as missing,
-        (select count(*) from public.studio_payment_jurisdictions
-          where (payment_country, payment_currency) not in (('CA','cad'),('US','usd')))::int as bad`);
-    expect(r.rows[0]).toEqual({ missing: 0, bad: 0 });
+  it("explicit pair without verification evidence changes nothing", async () => {
+    const s = await studio("j1-unverified", false);
+    expect((await setJurisdiction(s.studioId, "CA", "cad", false, "operator:test", "onboarding", null)).out_result).toBe("verification_required");
+    expect(await jurisdiction(s.studioId)).toBeUndefined();
+  });
+
+  it.each([["CA", "cad"], ["US", "usd"]])("verified %s/%s initialization records actor/evidence without a guessed prior pair", async (country, currency) => {
+    const s = await studio(`j1-${country}`, false);
+    expect((await setJurisdiction(s.studioId, country, currency)).out_result).toBe("initialized");
+    expect(await jurisdiction(s.studioId)).toEqual({ payment_country: country, payment_currency: currency, source: "operator" });
+    const audit = await adminQuery(`select from_country, from_currency, actor, verification_reference from public.studio_payment_jurisdiction_changes where studio_id=$1`, [s.studioId]);
+    expect(audit.rows).toEqual([{ from_country: null, from_currency: null, actor: "operator:test", verification_reference: "fixture:verified-owner-onboarding" }]);
+  });
+
+  it("even verified initialization refuses an existing account and leaves UNKNOWN", async () => {
+    const s = await studio("j1-bound-unknown", false);
+    await bindAccount(s.studioId, { country: "CA" });
+    expect((await setJurisdiction(s.studioId, "CA", "cad")).out_result).toBe("refused_payment_account");
+    expect(await jurisdiction(s.studioId)).toBeUndefined();
+  });
+
+  it("initialization never reinterprets recorded money", async () => {
+    const s = await studio("j1-money-unknown");
+    await insertAttempt(s, "cad");
+    await adminQuery(`delete from public.studio_payment_jurisdictions where studio_id=$1`, [s.studioId]);
+    expect((await setJurisdiction(s.studioId, "US", "usd")).out_result).toBe("refused_monetary_history");
+    expect(await jurisdiction(s.studioId)).toBeUndefined();
+    expect((await adminQuery(`select currency from public.payment_charge_attempts where studio_id=$1`, [s.studioId])).rows.map((r) => r.currency)).toEqual(["cad"]);
   });
 
   it("the pair CHECK refuses a mixed pair even for the owner role", async () => {
@@ -192,6 +210,17 @@ describe("J2 no browser role reaches the jurisdiction", () => {
       }
     });
   }
+
+  it("no transport role can call the price-lock trigger directly", async () => {
+    const privileges = await adminQuery(`select role_name,
+      has_function_privilege(role_name, 'public.studio_price_write_jurisdiction_lock()', 'EXECUTE') allowed
+      from unnest(array['anon','authenticated','service_role']) role_name`);
+    expect(privileges.rows).toEqual([
+      { role_name: "anon", allowed: false },
+      { role_name: "authenticated", allowed: false },
+      { role_name: "service_role", allowed: false },
+    ]);
+  });
 
   it("a signed-in OWNER cannot change their own studio's jurisdiction", async () => {
     const s = await studio("j2");
@@ -263,7 +292,7 @@ describe("J3 the protected change command", () => {
     });
     const audit = await adminQuery(
       `select from_country, from_currency, to_country, to_currency, actor, prices_acknowledged
-         from public.studio_payment_jurisdiction_changes where studio_id=$1`,
+         from public.studio_payment_jurisdiction_changes where studio_id=$1 and actor='operator:test'`,
       [s.studioId],
     );
     expect(audit.rows).toEqual([
@@ -276,12 +305,14 @@ describe("J3 the protected change command", () => {
         prices_acknowledged: false,
       },
     ]);
-    expect((await setJurisdiction(s.studioId, "US", "usd")).out_result).toBe("unchanged");
+    expect((await setJurisdiction(s.studioId, "US", "usd", true, "operator:other", "reconfirmed", "fixture:new-reference")).out_result).toBe("unchanged");
     const count = await adminQuery(
-      `select count(*)::int as n from public.studio_payment_jurisdiction_changes where studio_id=$1`,
+      `select count(*)::int as n from public.studio_payment_jurisdiction_changes where studio_id=$1 and actor='operator:test'`,
       [s.studioId],
     );
     expect(count.rows[0].n).toBe(1);
+    const unchangedEvidence = await adminQuery(`select verification_reference from public.studio_payment_jurisdictions where studio_id=$1`, [s.studioId]);
+    expect(unchangedEvidence.rows[0].verification_reference).toBe("fixture:verified-owner-onboarding");
   });
 
   it("configured prices refuse unless explicitly acknowledged", async () => {
@@ -297,7 +328,7 @@ describe("J3 the protected change command", () => {
     expect((await jurisdiction(s.studioId))?.payment_country).toBe("CA");
     expect((await setJurisdiction(s.studioId, "US", "usd", true)).out_result).toBe("changed");
     const audit = await adminQuery(
-      `select prices_acknowledged from public.studio_payment_jurisdiction_changes where studio_id=$1`,
+      `select prices_acknowledged from public.studio_payment_jurisdiction_changes where studio_id=$1 and actor='operator:test'`,
       [s.studioId],
     );
     expect(audit.rows).toEqual([{ prices_acknowledged: true }]);
@@ -586,6 +617,148 @@ describe("J7 recording what Stripe says about an account", () => {
 
 // ---------------------------------------------------------------------------
 describe("J8 stale configuration fails closed under a concurrent change", () => {
+  it.each([false, true])("payment SHARE then parent FK cannot deadlock the setter (prior price=%s)", async (priorPrice) => {
+    const s = await studio("j8-parent-keyshare");
+    const appt = await appointment(s);
+    const pool = new Pool({ connectionString: resolveLocalDbUrl(), max: 2 });
+    const payer = await pool.connect();
+    const setter = await pool.connect();
+    let pending: Promise<{ result: string | null; error: unknown }> | undefined;
+    try {
+      await payer.query("begin isolation level read committed");
+      await setter.query("begin isolation level read committed");
+      await payer.query("set local statement_timeout = '3s'");
+      await setter.query("set local statement_timeout = '5s'");
+      const payerPid = (await payer.query("select pg_backend_pid() pid")).rows[0].pid as number;
+      const setterPid = (await setter.query("select pg_backend_pid() pid")).rows[0].pid as number;
+      if (priorPrice) {
+        // The price trigger itself must retain jurisdiction SHARE before its
+        // parent FK lock, so a later payment in this same transaction is safe.
+        await payer.query(`insert into public.services (studio_id,name,default_duration_minutes,price_cents,active,modality)
+          values ($1,'Price before payment',30,9000,true,'electrolysis')`, [s.studioId]);
+      } else {
+        await payer.query("select 1 from public.studio_payment_jurisdictions where studio_id=$1 for share", [s.studioId]);
+      }
+      pending = setter.query(
+        "select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false,'fixture:parent-keyshare')",
+        [s.studioId],
+      ).then((r) => ({ result: r.rows[0].out_result as string, error: null }), (error: unknown) => ({ result: null, error }));
+
+      // Observe the setter actually waiting on this payer, not a timing guess.
+      // It has passed its parent lock and is blocked at jurisdiction FOR UPDATE.
+      const deadline = Date.now() + 2_000;
+      let blocked = false;
+      while (Date.now() < deadline) {
+        const blockers = (await adminQuery("select pg_blocking_pids($1) pids", [setterPid])).rows[0].pids as number[];
+        if (blockers.includes(payerPid)) { blocked = true; break; }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(blocked, "setter must reach the payer-held jurisdiction lock").toBe(true);
+      // The FK now needs studio KEY SHARE. Old parent FOR UPDATE creates a
+      // cycle here; NO KEY UPDATE lets this matching old-currency insert commit.
+      await payer.query(
+        `insert into public.payment_charge_attempts
+           (studio_id,charge_reason,client_id,appointment_id,created_by_practitioner_id,
+            amount_cents,currency,status,stripe_livemode)
+         values($1,'no_show_fee',$2,$3,$4,5000,'cad','ready',false)`,
+        [s.studioId, s.clientId, appt, s.practitionerId],
+      );
+      await payer.query("commit");
+      expect(await pending).toEqual({ result: "refused_monetary_history", error: null });
+      await setter.query("commit");
+      expect((await jurisdiction(s.studioId))?.payment_currency).toBe("cad");
+    } finally {
+      await payer.query("rollback").catch(() => undefined);
+      await setter.query("rollback").catch(() => undefined);
+      await pending;
+      payer.release(); setter.release(); await pool.end();
+    }
+  }, 15_000);
+
+  it.each([
+    ...["service-insert", "service-update", "client-price", "client-price-move", "session-insert", "session-update", "studio-fee"].map((kind) => ({ kind, known: true })),
+    ...["service-insert", "service-update", "client-price", "client-price-move", "session-insert", "session-update", "studio-fee"].map((kind) => ({ kind, known: false })),
+  ])("an in-flight $kind write is observed before the price decision (known=$known)", async ({ kind, known }) => {
+    const s = await studio(`j8-price-${kind}-${known}`, known);
+    const priceId = randomUUID();
+    if (kind === "service-update") {
+      await adminQuery(`insert into public.services (id,studio_id,name,default_duration_minutes,price_cents,active,modality)
+        values ($1,$2,'Unpriced',30,0,true,'electrolysis')`, [priceId, s.studioId]);
+    }
+    if (kind === "client-price-move") {
+      const origin = await studio("j8-price-origin");
+      await adminQuery(`insert into public.client_pricing (id,studio_id,service_name,price_cents)
+        values ($1,$2,'Moved price',9000)`, [priceId, origin.studioId]);
+    }
+    if (kind === "session-update") {
+      await adminQuery(`insert into public.sessions (id,studio_id,client_id,practitioner_id,modality)
+        values ($1,$2,$3,$4,'electrolysis')`, [priceId, s.studioId, s.clientId, s.practitionerId]);
+    }
+    const pool = new Pool({ connectionString: resolveLocalDbUrl(), max: 2 });
+    const writer = await pool.connect();
+    const setter = await pool.connect();
+    let pending: Promise<{ result: string | null; error: unknown }> | undefined;
+    try {
+      await writer.query("begin isolation level read committed");
+      await setter.query("begin isolation level read committed");
+      await writer.query("set local statement_timeout = '3s'");
+      await setter.query("set local statement_timeout = '5s'");
+      const writerPid = (await writer.query("select pg_backend_pid() pid")).rows[0].pid as number;
+      const setterPid = (await setter.query("select pg_backend_pid() pid")).rows[0].pid as number;
+      if (kind === "service-insert") {
+        await writer.query(
+          `insert into public.services (studio_id,name,default_duration_minutes,price_cents,active,modality)
+           values ($1,'Concurrent price',30,9000,true,'electrolysis')`, [s.studioId],
+        );
+      } else if (kind === "service-update") {
+        await writer.query("update public.services set price_cents=9000 where id=$1", [priceId]);
+      } else if (kind === "client-price-move") {
+        await writer.query("update public.client_pricing set studio_id=$2 where id=$1", [priceId, s.studioId]);
+      } else if (kind === "studio-fee") {
+        await writer.query("update public.studios set no_show_fee_cents=9000 where id=$1", [s.studioId]);
+      } else if (kind === "session-insert") {
+        await writer.query(`insert into public.sessions (studio_id,client_id,practitioner_id,modality,price_paid_cents)
+          values ($1,$2,$3,'electrolysis',9000)`, [s.studioId, s.clientId, s.practitionerId]);
+      } else if (kind === "session-update") {
+        await writer.query("update public.sessions set price_paid_cents=9000 where id=$1", [priceId]);
+      } else {
+        await writer.query(
+          `insert into public.client_pricing (studio_id,client_id,service_name,price_cents)
+           values ($1,$2,'Concurrent price',9000)`, [s.studioId, s.clientId],
+        );
+      }
+      // The uncommitted price holds the parent FK KEY SHARE; the setter must
+      // wait for it, then read its committed row in a fresh READ COMMITTED query.
+      pending = setter.query(
+        "select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','price race',false,'fixture:price-race')",
+        [s.studioId],
+      ).then((r) => ({ result: r.rows[0].out_result as string, error: null }), (error: unknown) => ({ result: null, error }));
+      const deadline = Date.now() + 2_000;
+      let blocked = false;
+      while (Date.now() < deadline) {
+        const blockers = (await adminQuery("select pg_blocking_pids($1) pids", [setterPid])).rows[0].pids as number[];
+        if (blockers.includes(writerPid)) { blocked = true; break; }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(blocked, "setter must wait for the uncommitted price FK lock").toBe(true);
+      await writer.query("commit");
+      expect(await pending).toEqual({ result: "refused_priced_configuration", error: null });
+      await setter.query("commit");
+      expect((await jurisdiction(s.studioId))?.payment_currency).toBe(known ? "cad" : undefined);
+      const audit = await adminQuery(
+        "select count(*)::int n from public.studio_payment_jurisdiction_changes where studio_id=$1 and reason='price race'", [s.studioId],
+      );
+      expect(audit.rows[0].n).toBe(0);
+      // A legitimate explicit acknowledgement still works after serialization.
+      expect((await setJurisdiction(s.studioId, "US", "usd", true)).out_result).toBe(known ? "changed" : "initialized");
+    } finally {
+      await writer.query("rollback").catch(() => undefined);
+      await setter.query("rollback").catch(() => undefined);
+      await pending;
+      writer.release(); setter.release(); await pool.end();
+    }
+  }, 15_000);
+
   it("an attempt prepared against the old currency waits for the change and is refused", async () => {
     const s = await studio("j8");
     const appt = await appointment(s);
@@ -596,7 +769,7 @@ describe("J8 stale configuration fails closed under a concurrent change", () => 
     try {
       await changer.query("begin");
       const changed = await changer.query(
-        `select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false)`,
+        `select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false,'fixture:verified-race')`,
         [s.studioId],
       );
       expect(changed.rows[0].out_result).toBe("changed");
@@ -661,7 +834,7 @@ describe("J9 account provisioning is stamped with the country it is created in",
     return r.rows[0]?.payment_country as string | null;
   }
 
-  it("a claim stamps the studio's current country (CA default, US after a change)", async () => {
+  it("a claim stamps the explicitly verified studio country (CA fixture, US after a change)", async () => {
     const ca = await studio("j9-ca");
     expect(await stamped((await claim(adminQuery, ca.studioId)).attempt_id)).toBe("CA");
     const us = await studio("j9-us");
@@ -677,7 +850,7 @@ describe("J9 account provisioning is stamped with the country it is created in",
     try {
       await changer.query("begin");
       const changed = await changer.query(
-        `select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false)`,
+        `select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false,'fixture:verified-race')`,
         [s.studioId],
       );
       expect(changed.rows[0].out_result).toBe("changed");
@@ -711,7 +884,7 @@ describe("J9 account provisioning is stamped with the country it is created in",
       let settled = false;
       const pending = changer
         .query(
-          `select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false)`,
+          `select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false,'fixture:verified-race')`,
           [s.studioId],
         )
         .finally(() => {

@@ -58,7 +58,7 @@ export async function assertUsdCapableDatabase(
 ): Promise<void> {
   const r = await query(
     `select to_regclass('public.studio_payment_jurisdictions') is not null as has_table,
-            to_regprocedure('public.set_studio_payment_jurisdiction(uuid,text,text,text,text,boolean)') is not null as has_command`,
+            to_regprocedure('public.set_studio_payment_jurisdiction(uuid,text,text,text,text,boolean,text)') is not null as has_command`,
   );
   const row = r.rows[0] as { has_table: boolean; has_command: boolean };
   if (!row.has_table || !row.has_command) {
@@ -73,7 +73,7 @@ export async function assertUsdCapableDatabase(
  * Switch a studio to US/usd through the real 0214 command. `acknowledgePrices`
  * must be true if the studio already has priced services or fees (e.g. #853's
  * services after prices are set); the command refuses otherwise. Throws on any
- * result other than `changed` or `unchanged`, so a fixture can never silently
+ * result other than `initialized`, `changed` or `unchanged`, so a fixture can never silently
  * leave a studio Canadian.
  */
 export async function makeStudioUsd(
@@ -82,11 +82,11 @@ export async function makeStudioUsd(
 ): Promise<void> {
   await assertUsdCapableDatabase();
   const r = await adminQuery(
-    `select out_result from public.set_studio_payment_jurisdiction($1,'US','usd','harness:usd-fixture','synthetic US studio',$2)`,
+    `select out_result from public.set_studio_payment_jurisdiction($1,'US','usd','harness:usd-fixture','synthetic verified US studio',$2,'fixture:usd-payment')`,
     [studio.studioId, opts.acknowledgePrices ?? false],
   );
   const result = r.rows[0]?.out_result as string | undefined;
-  if (result !== "changed" && result !== "unchanged") {
+  if (result !== "initialized" && result !== "changed" && result !== "unchanged") {
     throw new Error(`makeStudioUsd: set_studio_payment_jurisdiction returned ${result}`);
   }
 }

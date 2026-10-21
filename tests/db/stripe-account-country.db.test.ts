@@ -147,7 +147,7 @@ async function studio(label: string, country: "CA" | "US" = "CA") {
   created.push(s);
   if (country === "US") {
     const r = await adminQuery(
-      `select out_result from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','verified US business',false)`,
+      `select out_result from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','verified US business and charge currency',false,'fixture:verified-usd-account')`,
       [s.studioId],
     );
     expect(r.rows[0].out_result).toBe("changed");
@@ -251,7 +251,7 @@ describe("K1 + K2 the account is created in the studio's country, and recorded",
     const s = await studio("race");
     fake.afterJurisdictionRead = async (studioId) => {
       const r = await adminQuery(
-        `select out_result from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false)`,
+        `select out_result from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false,'fixture:verified-usd-race')`,
         [studioId],
       );
       expect(r.rows[0].out_result).toBe("changed");

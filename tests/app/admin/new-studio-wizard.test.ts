@@ -5,7 +5,7 @@ import path from "node:path";
 // PR #254: internal New Studio Wizard. Source-pins the operator-only access,
 // the two service-role writes (studios + owner pending_invitation), and the
 // invariants that must not regress: NO direct practitioner insert, NO
-// payment/Stripe surface, and the PR #253 invite-only gate stays closed for
+// provider/Stripe surface, and the PR #253 invite-only gate stays closed for
 // non-operators. End-to-end behaviour is proven by
 // tests/db/new-studio-wizard.db.test.ts and e2e/new-studio-wizard.spec.ts.
 
@@ -75,10 +75,15 @@ describe("the two service-role writes mirror the manual runbook", () => {
     expect(ACTION_CODE).toMatch(/\.from\("studios"\)\s*\n?\s*\.delete\(\)/);
   });
 
-  it("touches NO payment / Stripe / fee / livemode columns", () => {
-    expect(ACTION_CODE).not.toMatch(
-      /fee_cents|stripe|livemode|payment|paymentIntents|require_card/i,
-    );
+  it("initializes only an explicitly verified pair through the scoped command, never a provider or direct money writer", () => {
+    expect(ACTION_CODE).not.toMatch(/fee_cents|stripe|livemode|paymentIntents|require_card|\.from\("studio_payment_jurisdictions"\)/i);
+    expect(ACTION_CODE).toContain("if (input.paymentJurisdiction)");
+    expect(ACTION_CODE).toContain('admin.rpc("set_studio_payment_jurisdiction"');
+    expect(ACTION_CODE).toContain("p_studio_id: studio.id");
+    expect(ACTION_CODE).toContain("p_actor: user.id");
+    expect(ACTION_CODE).toContain("p_verification_reference: pair.verificationReference");
+    expect(ACTION_CODE).toContain('row?.out_result !== "initialized"');
+    expect(ACTION_CODE.indexOf('admin.rpc("set_studio_payment_jurisdiction"')).toBeGreaterThan(ACTION_CODE.indexOf("isAdmin(user.email)"));
   });
 });
 
@@ -176,4 +181,13 @@ describe("new-client admission is initialized by the DATABASE, not by the wizard
     // contain" assertion above would pass for the wrong reason.
     expect(ACTION_CODE).toMatch(/\.from\("studios"\)\s*\n?\s*\.insert\(/);
   });
+});
+
+
+it("onboarding defaults to unresolved and explicitly asks for both verified values and evidence", () => {
+  expect(PAGE).toContain('name="payment_pair" defaultValue=""');
+  expect(PAGE).toContain('value="">Not yet verified');
+  expect(PAGE).toContain('name="payment_pair_verified"');
+  expect(PAGE).toContain('name="payment_verification_reference"');
+  expect(PAGE).not.toMatch(/defaultValue="CA\/cad"/);
 });
