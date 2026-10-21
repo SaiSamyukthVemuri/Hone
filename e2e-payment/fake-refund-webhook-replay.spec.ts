@@ -596,7 +596,18 @@ test("E · two synthetic studios keep one booking/intake/chart/money lineage and
       await run.click(); await region.getByRole("button", { name: /confirm: run charge/i }).click();
       await expect(region.getByTestId("payment-summary-paid")).toContainText(`$185.00 ${currency.toUpperCase()}`, { timeout: 30_000 });
       const pi = callsForAccount(account.accountId).filter((c) => c.method === "pi_create" && !c.replay);
-      expect(pi).toHaveLength(1); expect(pi[0]).toMatchObject({ amountCents: PRICE_CENTS, currency });
+      expect(pi).toHaveLength(1);
+      expect(pi[0]).toMatchObject({ amountCents: PRICE_CENTS, currency,
+        stripeAccount: account.accountId, idempotencyKey: idempotencySelectorForAttempt(attemptId) });
+      expect(pi[0].chargeId).toBeNull(); // Unconfirmed object creation is not money.
+      expect(pi[0].metadataDigest).toBeTruthy();
+      const confirmed = callsForAccount(account.accountId).filter((c) => c.method === "pi_confirm" && !c.replay);
+      expect(confirmed).toHaveLength(1);
+      expect(confirmed[0]).toMatchObject({ resultId: pi[0].resultId,
+        stripeAccount: account.accountId, amountCents: PRICE_CENTS, currency,
+        idempotencyKey: `hone:session_payment:${attemptId}:v2:confirm:${pi[0].resultId}`,
+        payerDigest: pi[0].payerDigest, metadataDigest: pi[0].metadataDigest });
+      expect(confirmed[0].chargeId).toEqual(expect.stringMatching(/^ch_[A-Za-z0-9_]+$/));
       await expect.poll(async () => (await adminQuery("select receipt_status,receipt_email_to from public.payment_charge_attempts where id=$1 and studio_id=$2", [attemptId, seed.studioId])).rows[0], { timeout: 30_000 })
         .toEqual({ receipt_status: "sent", receipt_email_to: card.clientEmail }); // FAKE acceptance, not delivery.
       configureFakeStripeOutcome(refundKey(attemptId), "success");
@@ -605,10 +616,10 @@ test("E · two synthetic studios keep one booking/intake/chart/money lineage and
       expect(await attemptState(attemptId)).toMatchObject({ status: "succeeded", currency, amount_cents: PRICE_CENTS, refund_status: "succeeded", refund_amount_cents: PRICE_CENTS });
       const refunds = callsForAccount(account.accountId).filter((c) => c.method === "refund_create" && !c.replay);
       expect(refunds).toHaveLength(1); expect(refunds[0].amountCents).toBe(PRICE_CENTS);
-      expect(pi[0].resultId).toBeTruthy(); expect(pi[0].chargeId).toBeTruthy();
+      expect(pi[0].resultId).toBeTruthy();
       expect(pi[0].payerDigest).toBe(metadataDigest({ payer: card.customerId }));
       expect(refunds[0].resultId).toBeTruthy();
-      expect(refunds[0].chargeId).toBe(pi[0].chargeId);
+      expect(refunds[0].chargeId).toBe(confirmed[0].chargeId);
       const identities = (await adminQuery(`select studio_id,client_id,session_id,
         stripe_account_id,stripe_customer_id,stripe_payment_intent_id,stripe_charge_id,
         stripe_refund_id,stripe_livemode from public.payment_charge_attempts
@@ -616,7 +627,7 @@ test("E · two synthetic studios keep one booking/intake/chart/money lineage and
       expect(identities).toEqual([{ studio_id: seed.studioId, client_id: b.clientId,
         session_id: b.sessionId, stripe_account_id: account.accountId,
         stripe_customer_id: card.customerId, stripe_payment_intent_id: pi[0].resultId,
-        stripe_charge_id: pi[0].chargeId, stripe_refund_id: refunds[0].resultId,
+        stripe_charge_id: confirmed[0].chargeId, stripe_refund_id: refunds[0].resultId,
         stripe_livemode: false }]);
       const lineage = (await adminQuery(`select p.studio_id,p.client_id,p.session_id,s.appointment_id,i.id as intake_id
         from public.payment_charge_attempts p join public.sessions s on s.id=p.session_id and s.studio_id=p.studio_id and s.client_id=p.client_id

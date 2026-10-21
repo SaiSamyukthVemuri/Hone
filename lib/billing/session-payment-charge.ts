@@ -39,15 +39,13 @@ import {
 //      crucially a PR #170-style current-card-authorization recheck
 //      so a freshly-stale signature blocks the charge.
 //   3. Calls the claim_session_payment_charge_attempt RPC. The RPC
-//      atomically transitions status='ready' -> 'pending_stripe'
-//      and stamps the deterministic idempotency key
-//      hone:session_payment:<attemptId>:v1. Caller never bypasses
-//      the RPC to claim the row directly.
-//   4. Calls the Stripe PaymentIntent create API with
-//      confirm=true. The connected account context is the studio's
-//      stripe_account_id. The idempotency key is the deterministic
-//      shape; Stripe's 24-hour replay covers the network-error
-//      retry path.
+//      atomically transitions ready to pending_stripe and stamps the new
+//      versioned create key. Legacy keys are never reinterpreted.
+//   4. Creates an UNCONFIRMED manual intent, durably binds its original
+//      identity with a strict NULL-only CAS, requires one acknowledged ID
+//      and a verified pending read, then only that invocation confirms it.
+//      Unknown creates/confirmations never grant automatic replay. Known
+//      originals retain the existing read/reconciliation path.
 //   5. Writes the success outcome (status='succeeded', PI id, PI
 //      latest_charge id, stripe_status, charged_at) OR the failure
 //      outcome (status='failed', failure_code, failure_message_safe,
@@ -1532,7 +1530,14 @@ export async function runSessionPaymentCharge(args: {
 
   // 5. Atomically claim the attempt. Idempotency key is deterministic
   //    so a retry produces the same key.
-  const idempotencyKey = buildIdempotencyKey(attemptRow.id, attemptRow.charge_reason ?? "session_payment");
+  // Changing parameters under a legacy key is forbidden. Pending legacy rows
+  // are read/manual only; complete old-writer/rollback drain precedes rollout.
+  const freshProtocol = attemptRow.status === "ready" && attemptRow.stripe_idempotency_key === null
+    && attemptRow.stripe_payment_intent_id === null;
+  const idempotencyKey = freshProtocol
+    ? `hone:${attemptRow.charge_reason}:${attemptRow.id}:v2:create`
+    : (attemptRow.stripe_idempotency_key
+      ?? buildIdempotencyKey(attemptRow.id, attemptRow.charge_reason ?? "session_payment"));
   const { data: claimRows, error: claimErr } = await admin.rpc(
     "claim_session_payment_charge_attempt",
     {
@@ -1645,102 +1650,111 @@ export async function runSessionPaymentCharge(args: {
         expectedCurrency: attemptRow.currency,
       });
     }
-    // No PI id on the row. Check whether the claim is recent enough
-    // to retry-create with the same idempotency key.
-    const claimedAt = claim.updated_at
-      ? new Date(claim.updated_at).getTime()
-      : 0;
-    const ageMin = (Date.now() - claimedAt) / 60000;
-    if (
-      claimedAt > 0 &&
-      Number.isFinite(ageMin) &&
-      ageMin <= RECONCILIATION_WINDOW_MINUTES
-    ) {
-      // Fall through to the create-and-confirm path with the same
-      // deterministic key.
-    } else {
-      await recordOpsAlert({
-        severity: "critical",
-        event: "session_payment_needs_manual_review",
-        message:
-          "Pending claim is older than the reconciliation window and has no PaymentIntent id.",
-        studioId: attemptRow.studio_id,
-        clientId: attemptRow.client_id,
-        route: "lib/billing/session-payment-charge:runSessionPaymentCharge",
-        safeDetails: {
-          attempt_id: attemptRow.id,
-          session_id: attemptRow.session_id,
-          appointment_id: attemptRow.appointment_id,
-          reason: "stale_pending_no_pi",
-          age_minutes_floor: Math.floor(ageMin),
-        },
-      });
-      return {
-        ok: false,
-        outcome: "needs_manual_review",
-        message: NEEDS_MANUAL_REVIEW_MESSAGE,
-      };
-    }
+    // Unknown create outcomes never grant another create or confirmation.
+    return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE };
   }
 
-  // 6b. Create + confirm the PaymentIntent. Off-session because the
-  //     practitioner is taking the action, not the cardholder. The
-  //     metadata block carries every Hone identity column the future
-  //     webhook handler or a manual reconciler needs to bind a
-  //     leaked-back PaymentIntent to this attempt.
+  // Only a fresh acknowledged claim may start the staged producer. The RPC's
+  // status_before_claim is informational; persisted pending is verified below.
+  const manual = (): SessionPaymentChargeResult => ({ ok: false,
+    outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE,
+    attemptId: attemptRow.id });
+  const frozen = {
+    studio_id: attemptRow.studio_id, client_id: attemptRow.client_id,
+    session_id: attemptRow.session_id, appointment_id: attemptRow.appointment_id,
+    charge_reason: attemptRow.charge_reason, amount_cents: attemptRow.amount_cents,
+    currency: attemptRow.currency, client_payment_method_id: attemptRow.client_payment_method_id,
+    card_authorization_signature_id: attemptRow.card_authorization_signature_id,
+    stripe_account_id: card.stripe_account_id, stripe_customer_id: card.stripe_customer_id,
+    stripe_payment_method_id: card.stripe_payment_method_id,
+  };
+  const claimedAt = claim.updated_at ? Date.parse(claim.updated_at) : NaN;
+  if (!freshProtocol || claim.result !== "claimed" || claim.attempt_id !== attemptRow.id
+    || claim.stripe_payment_intent_id !== null || claim.stripe_idempotency_key !== idempotencyKey
+    || !Number.isFinite(claimedAt) || claimedAt > Date.now()
+    || Date.now() - claimedAt > RECONCILIATION_WINDOW_MINUTES * 60000
+    || Object.entries(frozen).some(([key, value]) =>
+      (claim as unknown as Record<string, unknown>)[key] !== value)) return manual();
+
   const stripe = getSessionPaymentStripe();
   let pi: Stripe.PaymentIntent;
+  let boundPaymentIntentId: string | null = null;
+  const matchesOriginal = (value: Stripe.PaymentIntent) =>
+    typeof value.id === "string" && /^pi_[A-Za-z0-9_]+$/.test(value.id)
+    && value.livemode === livemode && value.amount === attemptRow.amount_cents
+    && value.currency === attemptRow.currency
+    && (typeof value.customer === "string" ? value.customer : value.customer?.id) === card.stripe_customer_id
+    && (typeof value.payment_method === "string" ? value.payment_method : value.payment_method?.id) === card.stripe_payment_method_id;
   try {
-    pi = await stripe.paymentIntents.create(
-      {
-        amount: attemptRow.amount_cents,
-        currency: attemptRow.currency,
-        customer: card.stripe_customer_id,
-        payment_method: card.stripe_payment_method_id,
-        confirm: true,
-        off_session: true,
-        // PR #320: accurate per-reason description (no "…for session null" on fees).
-        description: buildChargeDescription(attemptRow),
-        metadata: {
-          hone_studio_id: attemptRow.studio_id,
-          hone_client_id: attemptRow.client_id,
-          hone_session_id: attemptRow.session_id,
-          hone_appointment_id: attemptRow.appointment_id ?? "",
-          hone_session_payment_charge_attempt_id: attemptRow.id,
-          hone_charge_reason: attemptRow.charge_reason,
-          hone_card_authorization_signature_id:
-            attemptRow.card_authorization_signature_id,
-          hone_environment: livemode ? "live" : "test",
-        },
+    const created = await stripe.paymentIntents.create({
+      amount: attemptRow.amount_cents, currency: attemptRow.currency,
+      customer: card.stripe_customer_id, payment_method: card.stripe_payment_method_id,
+      confirm: false, confirmation_method: "manual",
+      description: buildChargeDescription(attemptRow),
+      metadata: {
+        hone_studio_id: attemptRow.studio_id, hone_client_id: attemptRow.client_id,
+        hone_session_id: attemptRow.session_id, hone_appointment_id: attemptRow.appointment_id ?? "",
+        hone_session_payment_charge_attempt_id: attemptRow.id,
+        hone_charge_reason: attemptRow.charge_reason,
+        hone_card_authorization_signature_id: attemptRow.card_authorization_signature_id,
+        hone_environment: livemode ? "live" : "test",
       },
-      {
-        stripeAccount: card.stripe_account_id,
-        idempotencyKey,
-      },
-    );
-  } catch (err) {
-    // HON-11: only a DEFINITIVE refusal is terminal. A connection or API
-    // error may mean Stripe processed the request, so it falls through to
-    // the unknown-outcome path below (row stays pending_stripe).
-    if (
-      err instanceof Stripe.errors.StripeError &&
-      isDefinitiveStripeRefusal(err)
-    ) {
-      const decline = err as unknown as {
-        code?: string;
-        type?: string;
-        message?: string;
-        payment_intent?: {
-          id?: string;
-          status?: string;
-          amount?: number;
-          currency?: string;
-        };
-      };
-      const paymentIntent = decline.payment_intent;
-      const piId = paymentIntent?.id ?? null;
-      const piStatus = paymentIntent?.status ?? null;
+    }, {
+      stripeAccount: card.stripe_account_id,
+      idempotencyKey,
+    });
+    if (!matchesOriginal(created) || created.status !== "requires_confirmation"
+      || created.confirmation_method !== "manual" || created.latest_charge !== null
+      || created.amount_received !== 0 || created.amount_capturable !== 0) return manual();
 
+    // This NULL-only CAS grants a continuation to exactly one acknowledged
+    // invocation. Known-ID retention and readback alone never grant it.
+    let binding = admin.from("payment_charge_attempts")
+      .update({ stripe_payment_intent_id: created.id, stripe_status: created.status })
+      .eq("id", attemptRow.id).eq("status", "pending_stripe")
+      .eq("stripe_livemode", livemode).eq("stripe_idempotency_key", idempotencyKey)
+      .eq("updated_at", claim.updated_at!)
+      .is("stripe_payment_intent_id", null).is("stripe_charge_id", null).is("charged_at", null);
+    for (const [key, value] of Object.entries(frozen)) {
+      binding = value === null ? binding.is(key, null) : binding.eq(key, value);
+    }
+    const ack = await binding.select("id");
+    if (ack.error || !Array.isArray(ack.data) || ack.data.length !== 1
+      || ack.data[0].id !== attemptRow.id) return manual();
+    const verified = await admin.from("payment_charge_attempts")
+      .select("id, studio_id, client_id, session_id, appointment_id, charge_reason, amount_cents, currency, client_payment_method_id, card_authorization_signature_id, stripe_account_id, stripe_customer_id, stripe_payment_method_id, stripe_livemode, stripe_idempotency_key, stripe_payment_intent_id, stripe_status, status, stripe_charge_id, charged_at")
+      .eq("id", attemptRow.id).eq("studio_id", attemptRow.studio_id).maybeSingle();
+    const row = verified.data;
+    if (verified.error || !row || row.id !== attemptRow.id || row.status !== "pending_stripe"
+      || row.stripe_payment_intent_id !== created.id || row.stripe_status !== "requires_confirmation"
+      || row.stripe_livemode !== livemode || row.stripe_idempotency_key !== idempotencyKey
+      || row.stripe_charge_id !== null || row.charged_at !== null
+      || Object.entries(frozen).some(([key, value]) => row[key as keyof typeof frozen] !== value)) return manual();
+    boundPaymentIntentId = created.id;
+    pi = await stripe.paymentIntents.confirm(created.id, { off_session: true }, {
+      stripeAccount: card.stripe_account_id,
+      idempotencyKey: `hone:${attemptRow.charge_reason}:${attemptRow.id}:v2:confirm:${created.id}`,
+    });
+    const confirmedMoneyRefusal = await refuseOnProviderMoneyMismatch({ pi,
+      expectedAmountCents: attemptRow.amount_cents, expectedCurrency: attemptRow.currency,
+      attemptId: attemptRow.id, studioId: attemptRow.studio_id, clientId: attemptRow.client_id,
+      sessionId: attemptRow.session_id, appointmentId: attemptRow.appointment_id,
+      route: "lib/billing/session-payment-charge:runSessionPaymentCharge" });
+    if (confirmedMoneyRefusal) return confirmedMoneyRefusal;
+    if (pi.id !== boundPaymentIntentId || !matchesOriginal(pi)) return manual();
+  } catch (err) {
+    // A full, verified ordinary issuer decline can fail the ATTEMPT. Partial
+    // errors and unknown provider outcomes retain the bound original/manual.
+    if (boundPaymentIntentId && err instanceof Stripe.errors.StripeError
+      && isDefinitiveStripeRefusal(err)) {
+      const attached: unknown = (err as unknown as { payment_intent?: unknown }).payment_intent;
+      if (attached && typeof attached === "object") {
+        const observed = attached as Stripe.PaymentIntent;
+        // Preserve the candidate's governed decline-money refusal/alert before
+        // any terminal attempt write, in addition to822's full bound identity.
+        const paymentIntent = observed;
+        const piId = observed.id ?? null;
+        const piStatus = observed.status ?? null;
       // CODEX P2 4288989005 — THE MONEY GUARD APPLIES TO A DECLINE'S INTENT TOO.
       //
       // A StripeError can carry `payment_intent`, and this path bound its id to
@@ -1811,93 +1825,39 @@ export async function runSessionPaymentCharge(args: {
         }
       }
 
-      if ((piId || piStatus) && piStatus !== "canceled") {
-        // An attached actionable/unknown intent is not proof that no money can
-        // move. Its partial error shape is not sufficient to bind new identity;
-        // keep the claim unresolved for verified retrieve/webhook reconciliation.
-        await recordOpsAlert({ severity: "critical", event: "session_payment_needs_manual_review",
-          message: "Stripe returned an error with an intent that is not confirmed canceled. No terminal failure was recorded.",
-          studioId: attemptRow.studio_id, clientId: attemptRow.client_id,
-          route: "lib/billing/session-payment-charge:runSessionPaymentCharge",
-          safeDetails: { attempt_id: attemptRow.id, stripe_payment_intent_id: piId, stripe_status: piStatus } });
-        return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE,
-          attemptId: attemptRow.id, ...(piId ? { stripePaymentIntentId: piId } : {}) };
+        if (observed.id === boundPaymentIntentId && matchesOriginal(observed)
+          && (observed.status === "canceled"
+            || (observed.status === "requires_payment_method" && observed.last_payment_error?.type === "card_error"))) {
+          const persisted = await writeFailedOutcome({ attemptId: attemptRow.id,
+            studioId: attemptRow.studio_id, clientId: attemptRow.client_id,
+            paymentIntentId: boundPaymentIntentId, stripeStatus: observed.status,
+            failureCode: err.code ?? observed.status, failureMessage: "The saved card was declined.",
+            expectedPaymentIntentId: boundPaymentIntentId });
+          if (!persisted) return manual();
+          await recordOpsAlert({
+            severity: err.code === "authentication_required" ? "critical" : "warning",
+            event: "session_payment_charge_failed", message: "The saved card could not be charged.",
+            studioId: attemptRow.studio_id, clientId: attemptRow.client_id,
+            route: "lib/billing/session-payment-charge:runSessionPaymentCharge",
+            safeDetails: { attempt_id: attemptRow.id, stripe_payment_intent_id: boundPaymentIntentId,
+              stripe_status: observed.status, failure_code: sanitizeFailureCode(err.code) },
+          });
+          return { ok: false, outcome: "failed",
+            message: err.code === "authentication_required" ? AUTHENTICATION_REQUIRED_MESSAGE : "The saved card was declined.",
+            failureCode: err.code ?? null };
+        }
       }
-      const failedPersisted = await writeFailedOutcome({
-        attemptId: attemptRow.id,
-        studioId: attemptRow.studio_id,
-        clientId: attemptRow.client_id,
-        paymentIntentId: piId,
-        stripeStatus: piStatus,
-        failureCode: err.code ?? piStatus,
-        failureMessage: err.message,
-        expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
-      });
-      if (!failedPersisted) return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE };
-      logInternal("session_payment_stripe_error", {
-        attemptId: attemptRow.id,
-        type: err.type,
-        code: err.code,
-      });
-      await recordOpsAlert({
-        severity:
-          err.code === "authentication_required" ? "critical" : "warning",
-        event: "session_payment_charge_failed",
-        message: err.message || "Stripe error during PaymentIntent create.",
-        studioId: attemptRow.studio_id,
-        clientId: attemptRow.client_id,
-        route: "lib/billing/session-payment-charge:runSessionPaymentCharge",
-        safeDetails: {
-          attempt_id: attemptRow.id,
-          session_id: attemptRow.session_id,
-          appointment_id: attemptRow.appointment_id,
-          stripe_payment_intent_id: piId,
-          failure_code: err.code ?? null,
-          stripe_status: piStatus,
-          stripe_error_type: err.type,
-        },
-      });
-      return {
-        ok: false,
-        outcome: "failed",
-        message:
-          err.code === "authentication_required"
-            ? AUTHENTICATION_REQUIRED_MESSAGE
-            : (err.message || "Stripe could not charge the saved card."),
-        failureCode: err.code ?? null,
-      };
     }
-    // Unknown error AFTER claim: leave row pending_stripe and force
-    // manual reconciliation. Same logic as manual fee: a transient
-    // network error after Stripe accepted the request could have
-    // already moved money.
-    logInternal("session_payment_stripe_unknown_error", {
-      attemptId: attemptRow.id,
-      message: err instanceof Error ? err.message : String(err),
-    });
-    await recordOpsAlert({
-      severity: "critical",
-      event: "session_payment_needs_manual_review",
-      message:
-        "Unknown error after claim; row stays pending_stripe. Reconcile via Stripe dashboard.",
-      studioId: attemptRow.studio_id,
-      clientId: attemptRow.client_id,
+    await recordOpsAlert({ severity: "critical", event: "session_payment_needs_manual_review",
+      message: "The staged payment outcome could not be verified. Review before retrying.",
+      studioId: attemptRow.studio_id, clientId: attemptRow.client_id,
       route: "lib/billing/session-payment-charge:runSessionPaymentCharge",
-      safeDetails: {
-        attempt_id: attemptRow.id,
-        session_id: attemptRow.session_id,
-        appointment_id: attemptRow.appointment_id,
-        reason: "unknown_error_after_claim",
-      },
-    });
-    return {
-      ok: false,
-      outcome: "needs_manual_review",
-      message: NEEDS_MANUAL_REVIEW_MESSAGE,
-    };
+      safeDetails: { attempt_id: attemptRow.id, stripe_payment_intent_id: boundPaymentIntentId,
+        reason: "staged_producer_unverified" } });
+    return manual();
   }
 
-  // 7. Stripe accepted the create+confirm. The PI either succeeded
+  // 7. The acknowledged binding winner confirmed its stored original. The PI either succeeded
   //    or sits in requires_action / requires_payment_method.
   //
   // Codex P1 4253998912: money before ANY status branch. An idempotent replay
@@ -1933,10 +1893,8 @@ export async function runSessionPaymentCharge(args: {
       expectedCurrency: attemptRow.currency,
       // WHY SEVERAL INVOCATIONS CAN REACH HERE HOLDING THE SAME CHARGE.
       //
-      // The `already_pending` branch above DELIBERATELY lets several requests
-      // fall through to the create-and-confirm call below with the same
-      // deterministic idempotency key, so Stripe returns the SAME succeeded
-      // PaymentIntent to all of them.
+      // A known-original reconciliation can race a verified webhook writer.
+      // Pending invocations never acquire another confirmation permit.
       //
       // (The provider method is deliberately not named in prose here: the repo's
       // Stripe call-site inventory guards count that literal to pin exactly one
@@ -1948,7 +1906,7 @@ export async function runSessionPaymentCharge(args: {
       // giving ownership to the claim winner -- which excluded the invocation
       // that RECOVERS an orphaned claim, and stranded that receipt with nobody
       // able to send it.
-      expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
+      expectedPaymentIntentId: boundPaymentIntentId,
     });
     if (!persistence.persisted) {
       return {
@@ -1985,7 +1943,7 @@ export async function runSessionPaymentCharge(args: {
     return finalizeRequiresActionPaymentIntent({
       stripe,
       pi,
-      expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
+      expectedPaymentIntentId: boundPaymentIntentId,
       stripeAccountId: card.stripe_account_id,
       attemptId: attemptRow.id,
       studioId: attemptRow.studio_id,
@@ -1996,11 +1954,12 @@ export async function runSessionPaymentCharge(args: {
     });
   }
 
-  // Processing/confirmation/capture/new-method states can still succeed later.
-  // Retain the original intent; only an explicitly canceled PI is terminal here.
-  if (pi.status !== "canceled") {
+  // Active or unknown states remain unresolved. A verified ordinary card
+  // decline fails this attempt without automatically confirming the PI again.
+  if (pi.status !== "canceled"
+    && !(pi.status === "requires_payment_method" && pi.last_payment_error?.type === "card_error")) {
     await retainNonterminalPaymentIntent({ attemptId: attemptRow.id, studioId: attemptRow.studio_id,
-      clientId: attemptRow.client_id, pi, expectedPaymentIntentId: attemptRow.stripe_payment_intent_id });
+      clientId: attemptRow.client_id, pi, expectedPaymentIntentId: boundPaymentIntentId });
     return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE,
       stripePaymentIntentId: pi.id, attemptId: attemptRow.id };
   }
@@ -2011,10 +1970,8 @@ export async function runSessionPaymentCharge(args: {
     paymentIntentId: pi.id,
     stripeStatus: pi.status,
     failureCode: pi.last_payment_error?.code ?? pi.status,
-    failureMessage:
-      pi.last_payment_error?.message ??
-      `PaymentIntent status: ${pi.status}`,
-    expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
+    failureMessage: "The saved card could not be charged.",
+    expectedPaymentIntentId: boundPaymentIntentId,
   });
   if (!failedPersisted) return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE };
   await recordOpsAlert({
@@ -2038,9 +1995,7 @@ export async function runSessionPaymentCharge(args: {
   return {
     ok: false,
     outcome: "failed",
-    message:
-      pi.last_payment_error?.message ??
-      "Stripe could not charge the saved card.",
+    message: "The saved card could not be charged.",
     failureCode: pi.last_payment_error?.code ?? pi.status,
   };
 }

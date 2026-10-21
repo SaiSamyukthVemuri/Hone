@@ -32,6 +32,7 @@ import {
 // real SDK call sites to their allowlisted files.
 export type FakeStripeMethod =
   | "pi_create"
+  | "pi_confirm"
   | "pi_retrieve"
   | "pi_cancel"
   | "refund_create";
@@ -79,11 +80,27 @@ const seqByRun = new Map<string, number>();
 // and the application now refuses to record any that do not equal the
 // prepared attempt, so a fake that omitted them would fail closed.
 type FakeMoney = { amount: number | null; currency: string | null };
+type FakeIntent = FakeMoney & {
+  id: string; status: "requires_confirmation" | "succeeded" | "requires_payment_method" | "processing" | "canceled";
+  customer: string | null; payment_method: string | null; livemode: false;
+  confirmation_method: "manual" | "automatic"; latest_charge: string | null;
+  amount_received: number; amount_capturable: number;
+  last_payment_error: { type: "card_error"; code: "card_declined"; message: string } | null;
+};
+type StoredIntent = { account: string | null; createKey: string | null; chargeId: string; value: FakeIntent; metadataDigest: string | null; payerDigest: string | null };
+type FakeRefund = FakeMoney & { id: string; status: "succeeded" };
+type CachedReply = { fingerprint: string; resultId: string; value: FakeIntent | FakeRefund | null; error: string | null };
+const intentsByRun = new Map<string, Map<string, StoredIntent>>();
+const repliesByRun = new Map<string, Map<string, CachedReply>>();
+const accountsByIdByRun = new Map<string, Map<string, string | null>>();
+
 const moneyByIdByRun = new Map<string, Map<string, FakeMoney>>();
-function rememberMoney(run: string, id: string, money: FakeMoney): void {
+function rememberMoney(run: string, id: string, money: FakeMoney, account: string | null = null): void {
   const m = moneyByIdByRun.get(run) ?? new Map<string, FakeMoney>();
   m.set(id, money);
   moneyByIdByRun.set(run, m);
+  const a = accountsByIdByRun.get(run) ?? new Map<string, string | null>();
+  a.set(id, account); accountsByIdByRun.set(run, a);
 }
 function recalledMoney(run: string, id: string | null | undefined): FakeMoney {
   if (!id) return { amount: null, currency: null };
@@ -107,7 +124,7 @@ function ledgerMoney(run: string, id: string): FakeMoney {
   const effects = ledgerEffects(run);
   // A PaymentIntent, or the charge a PaymentIntent create produced: its create money.
   const create = effects.find(
-    (c) => c.method === "pi_create" && (c.resultId === id || c.chargeId === id),
+    (c) => (c.method === "pi_create" || c.method === "pi_confirm") && (c.resultId === id || c.chargeId === id),
   );
   if (create) return { amount: create.amountCents, currency: create.currency };
   // A refund: its amount, in its CHARGE's currency (as Stripe states it).
@@ -118,6 +135,10 @@ function ledgerMoney(run: string, id: string): FakeMoney {
   return { amount: null, currency: null };
 }
 
+function runTag(run: string): string {
+  // Valid run IDs can contain hyphens; Stripe-shaped object IDs cannot.
+  return createHash("sha256").update(run).digest("hex").slice(0, 16);
+}
 function runId(): string {
   return process.env.HONE_E2E_RUN_ID ?? "no-run";
 }
@@ -137,7 +158,7 @@ function nextSeq(run: string): number {
 function ledgerMaxSeq(run: string): number {
   try {
     const escaped = run.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const seqOf = new RegExp(`_${escaped}_(\\d+)$`);
+    const seqOf = new RegExp(`_(?:${escaped}|${runTag(run)})_(\\d+)$`);
     let max = 0;
     for (const c of readFakeStripeCalls(run)) {
       const m = c.resultId.match(seqOf);
@@ -174,20 +195,75 @@ function outcomeFor(run: string, idempotencyKey: string | null): "success" | "de
   }
 }
 function idempotentResult(
-  run: string,
-  key: string | null | undefined,
+  run: string, key: string | null | undefined, opts: RequestOpts,
+  method: "pi_create" | "refund_create",
 ): string | null {
   if (!key) return null;
-  const remembered = idempotentResultByRun.get(run)?.get(key);
+  const scope = JSON.stringify([method, opts?.stripeAccount ?? null, key]);
+  const remembered = idempotentResultByRun.get(run)?.get(scope);
   if (remembered) return remembered;
-  // After a restart: the effect this key already produced, from the ledger.
-  return ledgerEffects(run).find((c) => c.idempotencyKey === key)?.resultId ?? null;
+  return ledgerEffects(run).find(c => c.method === method
+    && c.stripeAccount === (opts?.stripeAccount ?? null) && c.idempotencyKey === key)?.resultId ?? null;
 }
-function rememberIdempotent(run: string, key: string | null | undefined, id: string): void {
+function rememberIdempotent(run: string, key: string | null | undefined, id: string,
+  opts: RequestOpts, method: "pi_create" | "refund_create"): void {
   if (!key) return;
   const m = idempotentResultByRun.get(run) ?? new Map<string, string>();
-  m.set(key, id);
+  m.set(JSON.stringify([method, opts?.stripeAccount ?? null, key]), id);
   idempotentResultByRun.set(run, m);
+}
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") return Object.fromEntries(
+    Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, canonical(v)]),
+  );
+  return value;
+}
+
+// A key is scoped by connected account AND API method/path, matching Stripe's
+// operation boundary. Cache the original response, not mutable resource state.
+function invoke<T extends FakeIntent | FakeRefund>(
+  run: string, method: FakeStripeMethod, path: string, params: unknown,
+  opts: RequestOpts, money: FakeMoney, execute: () => T,
+): T {
+  const key = opts?.idempotencyKey ?? null;
+  const scope = key ? JSON.stringify([opts?.stripeAccount ?? null, path, key]) : null;
+  const fingerprint = createHash("sha256").update(JSON.stringify(canonical(params))).digest("hex");
+  const replies = repliesByRun.get(run) ?? new Map<string, CachedReply>();
+  const previous = scope ? replies.get(scope) : undefined;
+  let reply = previous;
+  const durable = !reply && key ? ledgerEffects(run).find(c => c.method === method
+    && c.stripeAccount === (opts?.stripeAccount ?? null) && c.idempotencyKey === key
+    && (method !== "pi_confirm" || path === `POST:/payment_intents/${c.resultId}/confirm`)) : undefined;
+  if (durable) {
+    record(run, { method, idempotencyKey: key, stripeAccount: opts?.stripeAccount ?? null,
+      amountCents: money.amount, currency: money.currency, resultId: durable.resultId,
+      chargeId: durable.chargeId, metadataDigest: durable.metadataDigest,
+      payerDigest: durable.payerDigest ?? null, replay: true });
+    throw new Error("Synthetic staged response unavailable after restart; review the existing operation.");
+  }
+
+  if (!reply) {
+    try {
+      const value = execute();
+      reply = { fingerprint, resultId: value.id, value: structuredClone(value), error: null };
+    } catch {
+      reply = { fingerprint, resultId: "pi_test_e2e_refused", value: null, error: "Synthetic processor request refused." };
+    }
+    if (scope) { replies.set(scope, reply); repliesByRun.set(run, replies); }
+  }
+  const stored = intentsByRun.get(run)?.get(reply.resultId);
+  record(run, { method, idempotencyKey: key, stripeAccount: opts?.stripeAccount ?? null,
+    amountCents: money.amount, currency: money.currency, resultId: reply.resultId,
+    chargeId: method === "pi_confirm" ? reply.value && "latest_charge" in reply.value ? reply.value.latest_charge : null : null,
+    metadataDigest: method === "pi_create" ? fakeMetadataDigest((params as CreatePiParams).metadata) : stored?.metadataDigest ?? null,
+    payerDigest: method === "pi_create" && typeof (params as CreatePiParams).customer === "string" && !!(params as CreatePiParams).customer
+      ? fakeMetadataDigest({ payer: (params as CreatePiParams).customer }) : stored?.payerDigest ?? null,
+    replay: !!previous });
+  if (previous && previous.fingerprint !== fingerprint) throw new Error("Synthetic idempotency parameters differ.");
+  if (reply.error) throw new Error(reply.error);
+  return structuredClone(reply.value) as T;
 }
 
 // ---- Test-process inspection API (NOT a production/browser surface) ----------
@@ -197,6 +273,7 @@ export function getFakeStripeCalls(run: string = runId()): ReadonlyArray<FakeStr
 export function resetFakeStripeState(run: string = runId()): void {
   callsByRun.delete(run);
   idempotentResultByRun.delete(run);
+  repliesByRun.delete(run); intentsByRun.delete(run); accountsByIdByRun.delete(run);
   seqByRun.delete(run);
   moneyByIdByRun.delete(run);
 }
@@ -204,6 +281,8 @@ export function resetFakeStripeState(run: string = runId()): void {
 // ---- The fake client -----------------------------------------------------------
 type CreatePiParams = {
   customer?: string | null;
+  payment_method?: string; confirm?: boolean;
+  confirmation_method?: "manual" | "automatic";
   amount?: number | null;
   currency?: string | null;
   metadata?: Record<string, string | null | undefined> | null;
@@ -228,7 +307,7 @@ type RequestOpts = { stripeAccount?: string; idempotencyKey?: string } | undefin
 
 function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiParams) {
   const key = opts?.idempotencyKey ?? null;
-  const existing = idempotentResult(run, key);
+  const existing = idempotentResult(run, key, opts, "pi_create");
   // A replay is a create whose idempotency key already produced an effect. It
   // returns the SAME synthetic result (Stripe's 24h idempotency window) and
   // creates NO new processor effect, but it IS still an app-level invocation.
@@ -239,7 +318,7 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
   const outcome = outcomeFor(run, key);
   if (!existing) {
     // First-seen key → THIS call is the unique processor effect.
-    rememberIdempotent(run, key, id);
+    rememberIdempotent(run, key, id, opts, "pi_create");
   }
   // Record EVERY invocation (replay flag distinguishes effect from replay) so a
   // duplicate server call can never be concealed behind one synthetic result.
@@ -258,7 +337,7 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
   });
   // Success → succeeded (+ latest_charge); decline → non-succeeded status the
   // real executor persists as failed; processing → pending.
-  const status =
+  const status: FakeIntent["status"] =
     outcome === "decline"
       ? "requires_payment_method"
       : outcome === "processing"
@@ -283,37 +362,100 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
 }
 
 // Returns a Stripe-shaped object implementing only the session-payment surface.
+function applyOutcome(run: string, stored: StoredIntent): FakeIntent {
+  const outcome = outcomeFor(run, stored.createKey);
+  const pi = stored.value;
+  pi.status = outcome === "decline" ? "requires_payment_method" : outcome === "processing" ? "processing" : "succeeded";
+  pi.latest_charge = outcome === "success" ? stored.chargeId : null;
+  pi.amount_received = outcome === "success" ? pi.amount ?? 0 : 0;
+  pi.last_payment_error = outcome === "decline"
+    ? { type: "card_error", code: "card_declined", message: "Synthetic processor refusal." } : null;
+  if (pi.latest_charge) rememberMoney(run, pi.latest_charge, pi, stored.account);
+  return pi;
+}
+function ownedIntent(run: string, id: string, opts: RequestOpts): StoredIntent {
+  const stored = intentsByRun.get(run)?.get(id);
+  if (!stored || stored.account !== (opts?.stripeAccount ?? null)) throw new Error("Synthetic original unavailable.");
+  return stored;
+}
+
 export function createFakeStripe(): Stripe {
   const fake = {
     paymentIntents: {
-      create: async (params: CreatePiParams, opts?: RequestOpts) =>
-        synthPaymentIntent(runId(), opts, params),
-      retrieve: async (id: string, _p?: unknown, opts?: RequestOpts) => {
-        record(runId(), {
-          method: "pi_retrieve",
-          idempotencyKey: null,
-          stripeAccount: opts?.stripeAccount ?? null,
-          amountCents: null,
-          currency: null,
-          resultId: id,
-          chargeId: `ch_test_e2e_${runId()}_r`,
-          metadataDigest: null,
-          replay: false, // a read, not a keyed effect
-        });
+      create: async (params: CreatePiParams, opts?: RequestOpts) => {
         const run = runId();
-        const chargeId = `ch_test_e2e_${run}_r`;
-        // States the money this PaymentIntent was created with. An id the fake
-        // never created states none, which the application treats as a
-        // mismatch, the same as real Stripe disagreeing with the row.
-        const money = recalledMoney(run, id);
-        rememberMoney(run, chargeId, money);
-        return {
-          id,
-          status: "succeeded",
-          amount: money.amount,
-          currency: money.currency,
-          latest_charge: chargeId,
-        };
+        if (params.confirm === true) {
+          const combined = synthPaymentIntent(run, opts, params);
+          const value: FakeIntent = { ...combined, customer: params.customer ?? null,
+            payment_method: params.payment_method ?? null, livemode: false,
+            confirmation_method: params.confirmation_method ?? "automatic",
+            amount_received: combined.status === "succeeded" ? combined.amount ?? 0 : 0,
+            amount_capturable: 0, last_payment_error: combined.status === "requires_payment_method"
+              ? { type: "card_error", code: "card_declined", message: "Synthetic processor refusal." } : null };
+          const intents = intentsByRun.get(run) ?? new Map<string, StoredIntent>();
+          intents.set(value.id, { value, account: opts?.stripeAccount ?? null,
+            createKey: opts?.idempotencyKey ?? null, chargeId: combined.latest_charge ?? "",
+            metadataDigest: fakeMetadataDigest(params.metadata),
+            payerDigest: typeof params.customer === "string" && params.customer.length > 0 ? fakeMetadataDigest({ payer: params.customer }) : null });
+          intentsByRun.set(run, intents); return value;
+        }
+        return invoke(run, "pi_create", "POST:/payment_intents", params, opts,
+          { amount: params.amount ?? null, currency: params.currency ?? null }, () => {
+            const seq = nextSeq(run);
+            const id = `pi_test_e2e_${runTag(run)}_${seq}`;
+            const stored: StoredIntent = {
+              metadataDigest: fakeMetadataDigest(params.metadata),
+              payerDigest: typeof params.customer === "string" && params.customer.length > 0 ? fakeMetadataDigest({ payer: params.customer }) : null,
+              account: opts?.stripeAccount ?? null, createKey: opts?.idempotencyKey ?? null,
+              chargeId: `ch_test_e2e_${runTag(run)}_${seq}`,
+              value: { id, status: "requires_confirmation", amount: params.amount ?? null,
+                currency: params.currency ?? null, customer: params.customer ?? null,
+                payment_method: params.payment_method ?? null, livemode: false,
+                confirmation_method: params.confirmation_method ?? "automatic", latest_charge: null,
+                amount_received: 0, amount_capturable: 0, last_payment_error: null },
+            };
+            const intents = intentsByRun.get(run) ?? new Map<string, StoredIntent>();
+            intents.set(id, stored); intentsByRun.set(run, intents);
+            rememberMoney(run, id, stored.value, stored.account);
+            // Creating an unconfirmed object is NOT a money operation. Legacy
+            // explicit combined requests retain their existing final outcomes.
+            return params.confirm === true ? applyOutcome(run, stored) : stored.value;
+          });
+      },
+      confirm: async (id: string, params: { off_session?: boolean } = {}, opts?: RequestOpts) => {
+        const run = runId();
+        return invoke(run, "pi_confirm", `POST:/payment_intents/${id}/confirm`, params, opts,
+          recalledMoney(run, id), () => {
+            const stored = ownedIntent(run, id, opts);
+            if (stored.value.status !== "requires_confirmation") throw new Error("Synthetic confirmation not permitted.");
+            return applyOutcome(run, stored);
+          });
+      },
+      retrieve: async (id: string, _p?: unknown, opts?: RequestOpts) => {
+        const run = runId();
+        const stored = intentsByRun.get(run)?.get(id);
+        const create = ledgerEffects(run).find(c => c.method === "pi_create" && c.resultId === id);
+        if (create && create.stripeAccount !== (opts?.stripeAccount ?? null)) throw new Error("Synthetic original unavailable.");
+        let value;
+        if (stored) {
+          const owned = ownedIntent(run, id, opts);
+          if (owned.value.status === "processing" && outcomeFor(run, owned.createKey) === "success") applyOutcome(run, owned);
+          value = structuredClone(owned.value);
+        } else {
+          // Metadata-only evidence survives a restart. It can prove existing
+          // money, but cannot invent private payer/PM values or a confirm permit.
+          const observed = ledgerEffects(run).filter(c => c.resultId === id
+            && c.stripeAccount === (opts?.stripeAccount ?? null) && c.chargeId).at(-1);
+          const money = recalledMoney(run, id);
+          value = { id, status: observed ? "succeeded" : "requires_confirmation",
+            amount: money.amount, currency: money.currency, latest_charge: observed?.chargeId ?? null };
+        }
+        record(run, { method: "pi_retrieve", idempotencyKey: null,
+          stripeAccount: opts?.stripeAccount ?? null, amountCents: value.amount,
+          currency: value.currency, resultId: id, chargeId: value.latest_charge,
+          metadataDigest: stored?.metadataDigest ?? create?.metadataDigest ?? null,
+          payerDigest: stored?.payerDigest ?? create?.payerDigest ?? null, replay: false });
+        return value;
       },
       cancel: async (id: string, _p?: unknown, opts?: RequestOpts) => {
         record(runId(), {
@@ -327,7 +469,11 @@ export function createFakeStripe(): Stripe {
           metadataDigest: null,
           replay: false,
         });
-        return { id, status: "canceled" };
+        const stored = intentsByRun.get(runId())?.get(id);
+        if (!stored) return { id, status: "canceled" };
+        const owned = ownedIntent(runId(), id, opts);
+        if (owned.value.status === "succeeded") throw new Error("Synthetic completed payment cannot be canceled.");
+        owned.value.status = "canceled"; return structuredClone(owned.value);
       },
     },
     refunds: {
@@ -340,8 +486,11 @@ export function createFakeStripe(): Stripe {
         opts?: RequestOpts,
       ) => {
         const run = runId();
+        const knownAccount = params.charge ? accountsByIdByRun.get(run)?.get(params.charge)
+          ?? ledgerEffects(run).find(c => c.chargeId === params.charge)?.stripeAccount : undefined;
+        if (knownAccount !== undefined && knownAccount !== (opts?.stripeAccount ?? null)) throw new Error("Synthetic charge unavailable.");
         const key = opts?.idempotencyKey ?? null;
-        const existing = idempotentResult(run, key);
+        const existing = idempotentResult(run, key, opts, "refund_create");
         // PAY-CCY-09. The SAME run-scoped, server-side outcome selector the
         // PaymentIntent create uses (keyed by the request's idempotency key,
         // set only by the test harness through the fake ledger), so a test
@@ -387,7 +536,7 @@ export function createFakeStripe(): Stripe {
               currency: recalledMoney(run, params?.charge).currency,
             };
         if (!existing) {
-          rememberIdempotent(run, key, id);
+          rememberIdempotent(run, key, id, opts, "refund_create");
           rememberMoney(run, id, money);
         }
         // Record every refund invocation (replay flag), same invocation/effect
@@ -410,7 +559,7 @@ export function createFakeStripe(): Stripe {
         return {
           id,
           charge: params?.charge ?? null,
-          payment_intent: ledgerEffects(run).find((effect) => effect.method === "pi_create" && effect.chargeId === params?.charge)?.resultId ?? null,
+          payment_intent: ledgerEffects(run).find((effect) => (effect.method === "pi_create" || effect.method === "pi_confirm") && effect.chargeId === params?.charge)?.resultId ?? null,
           status: "succeeded",
           amount: money.amount,
           currency: money.currency,

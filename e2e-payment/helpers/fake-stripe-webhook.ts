@@ -127,10 +127,24 @@ function processorCreate(a: AttemptFacts, runId: string) {
     a.stripe_idempotency_key !== null && create.idempotencyKey === a.stripe_idempotency_key,
     `${paymentIntentId} was created under key ${create.idempotencyKey}, the attempt stored ${a.stripe_idempotency_key}`,
   );
+  // A staged create has NO charge. Only the existing processor's confirm or
+  // later verified retrieval can supply that charge; preserve create metadata,
+  // payer, key and account evidence rather than manufacturing them from the row.
+  const completed = readFakeStripeCalls(runId).filter(c =>
+    (c.method === "pi_confirm" || c.method === "pi_retrieve") && !c.replay
+      && c.resultId === paymentIntentId && c.chargeId !== null && c.chargeId !== undefined);
+  for (const observed of completed) assertLineage(
+    observed.amountCents === create.amountCents && observed.currency === create.currency
+      && observed.stripeAccount === create.stripeAccount
+      && observed.metadataDigest === create.metadataDigest && observed.payerDigest === create.payerDigest,
+    "the processor confirmation/retrieval conflicts with its original create evidence",
+  );
+  const charges = new Set([create.chargeId, ...completed.map(c => c.chargeId)].filter(Boolean));
+  assertLineage(charges.size <= 1, "the processor named conflicting charges for one original");
   return {
     amount: create.amountCents,
     currency: create.currency,
-    chargeId: create.chargeId ?? null,
+    chargeId: [...charges][0] ?? null,
     metadataDigest: create.metadataDigest ?? null,
     payerDigest: create.payerDigest ?? null,
     stripeAccount: create.stripeAccount ?? null,

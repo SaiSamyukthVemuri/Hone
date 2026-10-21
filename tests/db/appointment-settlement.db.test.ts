@@ -385,7 +385,7 @@ describe("0187 — settlement and card charging exclude each other", () => {
 
     const claim = await adminQuery(
       `select result from public.claim_session_payment_charge_attempt($1,$2,$3)`,
-      [attemptId, s.practitionerId, `idem_${attemptId}`],
+      [attemptId, s.practitionerId, `hone:session_payment:${attemptId}:v2:create`],
     );
     expect(claim.rows[0].result).toBe("settled_externally");
 
@@ -446,7 +446,7 @@ describe("0187 — settlement and card charging exclude each other", () => {
 
     const claim = await adminQuery(
       `select result from public.claim_session_payment_charge_attempt($1,$2,$3)`,
-      [second, s.practitionerId, `idem_${second}`],
+      [second, s.practitionerId, `hone:session_payment:${second}:v2:create`],
     );
     expect(claim.rows[0].result).toBe("claimed");
 
@@ -671,7 +671,7 @@ describe("0187 — concurrency, on the shared appointment lock", () => {
       .query(`select result from public.claim_session_payment_charge_attempt($1,$2,$3)`, [
         attemptId,
         s.practitionerId,
-        `idem_${attemptId}`,
+        `hone:session_payment:${attemptId}:v2:create`,
       ])
       .then((r) => {
         claimResolved = true;
@@ -710,7 +710,7 @@ describe("0187 — concurrency, on the shared appointment lock", () => {
     await claimer.query("begin");
     const claim = await claimer.query(
       `select result from public.claim_session_payment_charge_attempt($1,$2,$3)`,
-      [attemptId, s.practitionerId, `idem_${attemptId}`],
+      [attemptId, s.practitionerId, `hone:session_payment:${attemptId}:v2:create`],
     );
     expect(claim.rows[0].result).toBe("claimed");
 
@@ -800,7 +800,7 @@ describe("0187 — a PREPARED card charge never dead-ends settlement", () => {
     // A later card claim then meets the settlement, not the retired row.
     const claim = await adminQuery(
       `select result from public.claim_session_payment_charge_attempt($1,$2,$3)`,
-      [id, s.practitionerId, `idem_${id}`],
+      [id, s.practitionerId, `hone:session_payment:${id}:v2:create`],
     );
     expect(claim.rows[0].result).toBe("settled_externally");
   });
@@ -899,7 +899,7 @@ describe("0187 — a PREPARED card charge never dead-ends settlement", () => {
       await claimer.query("begin");
       const claim = await claimer.query(
         `select result from public.claim_session_payment_charge_attempt($1,$2,$3)`,
-        [id, s.practitionerId, `idem_${id}`],
+        [id, s.practitionerId, `hone:session_payment:${id}:v2:create`],
       );
       expect(claim.rows[0].result).toBe("claimed");
 

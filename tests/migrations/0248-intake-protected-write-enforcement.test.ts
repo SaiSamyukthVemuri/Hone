@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 const sql = readFileSync("supabase/migrations/0248_intake_protected_write_enforcement.sql", "utf8");
 const code = sql.replace(/^\s*--.*$/gm, "");
@@ -9,8 +9,7 @@ const guard = code.slice(code.indexOf("create or replace function public.advance
 
 describe("0248 separately gated protected intake enforcement", () => {
   it("uses its sole OPS allocation without inventing the held0247 dependency", () => {
-    // Current-own-MAX coverage moves here from the published0246 predecessor.
-    expect(isRepoMax("0248")).toBe(true);
+    // Historical allocation/security contract; later-MAX coverage belongs to its own migration.
     expect(countVersion("0248")).toBe(1);
     expect(fileForVersion("0248")).toBe("0248_intake_protected_write_enforcement.sql");
     expect(code.trim()).toMatch(/^begin;/);
