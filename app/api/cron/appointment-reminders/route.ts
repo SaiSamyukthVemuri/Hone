@@ -65,41 +65,59 @@ type AttemptsColumn =
   | "sms_reminder_24h_send_attempts"
   | "sms_reminder_2h_send_attempts";
 
-async function loadAppointmentsForWindow(opts: {
+async function* loadAppointmentsForWindow(opts: {
   startIso: string;
   endIso: string;
   notSentColumn: SentColumn;
   attemptsColumn: AttemptsColumn;
-}): Promise<Joined[]> {
+}): AsyncGenerator<Joined> {
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("appointments")
-    .select(
-      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email, phone, sms_consent_at, sms_opted_out_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
-    )
-    .eq("status", "confirmed")
-    .is(opts.notSentColumn, null)
-    .lt(opts.attemptsColumn, MAX_ATTEMPTS)
-    .gte("starts_at", opts.startIso)
-    .lte("starts_at", opts.endIso)
-    .order("starts_at", { ascending: true })
-    .limit(PER_RUN_LIMIT);
-  if (error) throw new Error(error.message);
-
-  return ((data ?? []) as unknown as Array<
-    Appointment & {
-      service: Joined["service"] | Joined["service"][] | null;
-      studio: Studio | Studio[] | null;
-      client: Joined["client"] | Joined["client"][] | null;
-      practitioner: Joined["practitioner"] | Joined["practitioner"][] | null;
+  let after: { startsAt: string; id: string } | null = null;
+  while (true) {
+    let query = admin
+      .from("appointments")
+      .select(
+        "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email, phone, sms_consent_at, sms_opted_out_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
+      )
+      .eq("status", "confirmed")
+      .is(opts.notSentColumn, null)
+      .lt(opts.attemptsColumn, MAX_ATTEMPTS)
+      .gte("starts_at", opts.startIso)
+      .lte("starts_at", opts.endIso)
+      .order("starts_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(PER_RUN_LIMIT);
+    if (after) {
+      // A total keyset order survives rows leaving the candidate set as this
+      // pass records results. OFFSET would skip unsent work after those writes.
+      const time = JSON.stringify(after.startsAt);
+      const id = JSON.stringify(after.id);
+      query = query.or(`starts_at.gt.${time},and(starts_at.eq.${time},id.gt.${id})`);
     }
-  >).map((row) => ({
-    ...(row as Appointment),
-    service: pickRel(row.service),
-    studio: pickRel(row.studio),
-    client: pickRel(row.client),
-    practitioner: pickRel(row.practitioner),
-  }));
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+
+    const rows = ((data ?? []) as unknown as Array<
+      Appointment & {
+        service: Joined["service"] | Joined["service"][] | null;
+        studio: Studio | Studio[] | null;
+        client: Joined["client"] | Joined["client"][] | null;
+        practitioner: Joined["practitioner"] | Joined["practitioner"][] | null;
+      }
+    >).map((row) => ({
+      ...(row as Appointment),
+      service: pickRel(row.service),
+      studio: pickRel(row.studio),
+      client: pickRel(row.client),
+      practitioner: pickRel(row.practitioner),
+    }));
+    if (rows.length === 0) return;
+    const last = rows[rows.length - 1];
+    // Capture before yielding: sending can change the underlying candidate set.
+    after = { startsAt: last.starts_at, id: last.id };
+    yield* rows;
+    if (rows.length < PER_RUN_LIMIT) return;
+  }
 }
 
 // PR #189: email passes gained a "skipped" bucket for rows lost to a
@@ -220,7 +238,7 @@ async function sendReminderPass(opts: {
   const emailType: ClaimableEmailType =
     opts.kind === "24h" ? "reminder_24h" : "reminder_2h";
 
-  const appts = await loadAppointmentsForWindow({
+  const appts = loadAppointmentsForWindow({
     startIso: opts.windowStartIso,
     endIso: opts.windowEndIso,
     notSentColumn: sentColumn,
@@ -237,7 +255,10 @@ async function sendReminderPass(opts: {
   };
   const appOrigin = getRequiredAppOrigin();
 
-  for (const appt of appts) {
+  for await (const appt of appts) {
+    // Only work that reaches an attempt consumes the send budget. Ineligible
+    // prefixes and lost claims must not hide later rows in this window.
+    if (stats.attempted >= PER_RUN_LIMIT) break;
     if (!appt.studio) continue;
     if (!appt.client?.email) continue;
 
@@ -438,6 +459,8 @@ async function sendReminderPass(opts: {
       });
       stats.failed += 1;
     }
+    // Stop before requesting another candidate page when this pass is full.
+    if (stats.attempted >= PER_RUN_LIMIT) break;
   }
 
   return stats;
@@ -466,7 +489,7 @@ async function sendSmsReminderPass(opts: {
   const studioToggle =
     opts.kind === "24h" ? "send_24h_sms_reminders" : "send_2h_sms_reminders";
 
-  const appts = await loadAppointmentsForWindow({
+  const appts = loadAppointmentsForWindow({
     startIso: opts.windowStartIso,
     endIso: opts.windowEndIso,
     notSentColumn: sentColumn,
@@ -483,7 +506,10 @@ async function sendSmsReminderPass(opts: {
   };
   const smsAppOrigin = getRequiredAppOrigin();
 
-  for (const appt of appts) {
+  for await (const appt of appts) {
+    // Only work that reaches an attempt consumes the send budget. Ineligible
+    // prefixes and lost claims must not hide later rows in this window.
+    if (stats.attempted >= PER_RUN_LIMIT) break;
     if (!appt.studio) continue;
     if (!(appt.studio as unknown as Record<string, boolean>)[studioToggle]) {
       // Studio toggle is off: skip without an attempt counter bump.
@@ -625,6 +651,8 @@ async function sendSmsReminderPass(opts: {
       await stampIntakeLinkIssued(admin, smsIntake.id, { emailed: false });
       stats.intakeCtaIncluded += 1;
     }
+    // Stop before requesting another candidate page when this pass is full.
+    if (stats.attempted >= PER_RUN_LIMIT) break;
   }
 
   return stats;
