@@ -1,3 +1,4 @@
+import { requirePlatformAdmin } from "@/lib/auth/require-platform-admin";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { describeIncident, purposeLabel, type OwnerIncident } from "@/lib/delivery/incidents";
 import { healthFindings, readEmailDeliveryHealth } from "@/lib/email/delivery-health";
@@ -38,6 +39,7 @@ function when(iso: string | null): string {
 }
 
 export default async function DeliveryQueuePage() {
+  await requirePlatformAdmin();
   const admin = createAdminClient();
   const [incidentsRes, outcomesRes, health, concernsRes] = await Promise.all([
     admin.rpc("support_delivery_incidents", { p_include_resolved: true }),

@@ -244,6 +244,7 @@ describe("the capped incident list is not presented as a total (Codex P2 4307533
   });
 
   const renderWith = async (count: number): Promise<string> => {
+    h.email = "support@hone.test";
     h.byFn = {
       support_delivery_incidents: {
         data: Array.from({ length: count }, (_, i) => incidentRow(i)),
@@ -262,6 +263,14 @@ describe("the capped incident list is not presented as a total (Codex P2 4307533
     return renderToStaticMarkup(await Page());
   };
 
+  it("refuses an ordinary member before privileged delivery reads without a layout", async () => {
+    h.email = "member@hone.test";
+    const { default: Page } = await import("@/app/admin/delivery/page");
+    await expect(Page()).rejects.toThrow();
+    expect(h.rpcCalls).toEqual([]);
+    expect(h.tableReads).toEqual([]);
+  });
+
   const INDICATOR = "Showing up to 300 incidents, with open incidents first, newest activity first within each group. Other incidents, if any, are not listed.";
 
   it("AT the cap: says the list is truncated", async () => {
@@ -277,6 +286,7 @@ describe("the capped incident list is not presented as a total (Codex P2 4307533
   });
 
   it("the CONCERNS section is capped the same way, and says so", async () => {
+    h.email = "support@hone.test";
     // `support_delivery_concerns` also applies `limit 300` (0221:394), and this
     // page renders its length too — the same false total on a second section.
     const concernRow = (i: number) => ({

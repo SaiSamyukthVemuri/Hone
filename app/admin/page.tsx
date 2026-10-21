@@ -1,3 +1,4 @@
+import { requirePlatformAdmin } from "@/lib/auth/require-platform-admin";
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
@@ -91,6 +92,7 @@ async function loadConsole(): Promise<{
   waitlistTotal: number;
   demoRequests: DemoRequestRow[];
 }> {
+  await requirePlatformAdmin();
   const admin = createAdminClient();
 
   const [
@@ -238,6 +240,7 @@ export default async function AdminIndexPage({
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  await requirePlatformAdmin();
   const params = (await searchParams) ?? {};
   const { studios, overview, practitioners, waitlist, waitlistTotal, demoRequests } =
     await loadConsole();
