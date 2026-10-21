@@ -29,7 +29,8 @@ export async function recordClientArchiveAudit(input: {
       .eq("id", input.clientId).eq("studio_id", studio.id).maybeSingle();
     if (error || !data || data.id !== input.clientId) return refused();
 
-    const { error: writeError } = await createAdminClient().from("audit_logs").insert({
+    const admin = createAdminClient();
+    const { error: writeError } = await admin.from("audit_logs").insert({
       studio_id: studio.id, actor_id: practitioner.id,
       action: input.change === "archive" ? "client_archived" : "client_unarchived",
       entity_type: "client", entity_id: data.id,
@@ -62,7 +63,8 @@ export async function recordStudioExportAudit(input: {
     const keys = Object.keys(input.rowCounts);
     if (keys.length !== resources.length || keys.some((key) => !resources.includes(key))
       || Object.values(input.rowCounts).some((count) => !Number.isSafeInteger(count) || count < 0)) return refused();
-    const { error } = await createAdminClient().from("audit_logs").insert({
+    const admin = createAdminClient();
+    const { error } = await admin.from("audit_logs").insert({
       studio_id: studio.id, actor_id: practitioner.id, action: "studio_export",
       entity_type: "studio", entity_id: studio.id,
       metadata: { filename: input.filename, files: [...input.files], row_counts: { ...input.rowCounts } },

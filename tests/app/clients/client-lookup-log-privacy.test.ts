@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
-  identity: vi.fn(), lookup: vi.fn(), duplicate: vi.fn(), audit: vi.fn(), redirect: vi.fn(), revalidate: vi.fn(), filters: [] as Array<[string, unknown]>, writes: vi.fn(),
+  admin: vi.fn(), identity: vi.fn(), lookup: vi.fn(), duplicate: vi.fn(), audit: vi.fn(), redirect: vi.fn(), revalidate: vi.fn(), filters: [] as Array<[string, unknown]>, writes: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ redirect: h.redirect }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidate }));
 vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: h.identity }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: (table: string) => {
-  if (table === "audit_logs") return { insert: h.audit };
+  if (table === "audit_logs") throw new Error("Direct user-scoped audit insert is forbidden");
   const query = {
     select: () => query,
     eq: (key: string, value: unknown) => { h.filters.push([key, value]); return query; },
@@ -18,6 +18,13 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: (ta
   };
   return query;
 } }) }));
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => {
+  h.admin();
+  return { from: (table: string) => {
+    if (table !== "audit_logs") throw new Error("Unexpected privileged table");
+    return { insert: h.audit };
+  } };
+} }));
 import { updateClientAction, archiveClientAction, unarchiveClientAction } from "@/app/(app)/clients/[id]/actions";
 
 const STUDIO = "11111111-2222-4333-8444-555555555555";
@@ -147,7 +154,7 @@ describe.each([
   { name: "unarchive", action: unarchiveClientAction, event: "client_unarchive_audit_failed", auditAction: "client_unarchived", destination: `/clients/${CLIENT}` },
 ])("$name audit diagnostic privacy", ({ name, action, event, auditAction, destination }) => {
   function setup() {
-    h.identity.mockResolvedValue({ practitioner: { id: ACTOR }, studio: { id: STUDIO } });
+    h.identity.mockResolvedValue({ practitioner: { id: ACTOR, active: true, role: "practitioner" }, studio: { id: STUDIO } });
     h.lookup.mockResolvedValue({ data: { id: CLIENT }, error: null });
     const update = { eq: vi.fn(), is: vi.fn(), not: vi.fn() };
     update.eq.mockReturnValue(update);
@@ -163,8 +170,10 @@ describe.each([
     h.audit.mockResolvedValue({ error: { code: "23514", message: sentinel } });
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(action(form())).rejects.toBe(NAV);
-    expect(h.identity).toHaveBeenCalledOnce(); expect(h.lookup).toHaveBeenCalledOnce();
-    expect(h.filters).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
+    // The governed helper independently reauthorizes and checks the client again.
+    expect(h.identity).toHaveBeenCalledTimes(2); expect(h.lookup).toHaveBeenCalledTimes(2);
+    expect(h.admin).toHaveBeenCalledOnce();
+    expect(h.filters).toEqual([["id", CLIENT], ["studio_id", STUDIO], ["id", CLIENT], ["studio_id", STUDIO]]);
     expect(h.writes).toHaveBeenCalledOnce();
     expect(update.eq.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
     const mutation = h.writes.mock.calls[0]![0];
@@ -180,16 +189,25 @@ describe.each([
     expect(h.redirect).toHaveBeenCalledExactlyOnceWith(destination);
     expect(log).toHaveBeenCalledOnce();
     const payload = JSON.parse(String(log.mock.calls[0]![0]));
-    expect(payload).toEqual({ event, clientId: "[id]", code: "23514", timestamp: expect.any(String) });
+    expect(payload).toEqual({ event, clientId: "[id]", code: "audit_write_unavailable", timestamp: expect.any(String) });
     expect(Number.isNaN(Date.parse(payload.timestamp))).toBe(false);
     for (const text of ["synthetic-patient", "private-clinical", "synthetic-token", CLIENT])
       expect(JSON.stringify(log.mock.calls)).not.toContain(text);
   });
-  it("propagates rejected audit promises without logging or redirecting", async () => {
-    setup(); const failure = new Error("synthetic rejected audit");
+  it("keeps rejected audit promises rejected without raw free text, logging or redirecting", async () => {
+    setup(); const sentinel = "synthetic-patient@example.test private-clinical-sentinel synthetic-token";
+    const failure = new Error(sentinel);
     h.audit.mockRejectedValue(failure);
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    await expect(action(form())).rejects.toBe(failure);
+    let rejected: unknown;
+    try { await action(form()); } catch (error) { rejected = error; }
+    expect(rejected).toBeInstanceOf(Error);
+    expect((rejected as Error).message).toBe("Could not record the archive audit entry. Please try again.");
+    expect(rejected).not.toBe(failure);
+    expect(rejected).not.toHaveProperty("cause");
+    expect(String(rejected)).not.toContain(sentinel);
+    expect(h.identity).toHaveBeenCalledTimes(2); expect(h.lookup).toHaveBeenCalledTimes(2);
+    expect(h.admin).toHaveBeenCalledOnce();
     expect(h.writes).toHaveBeenCalledOnce(); expect(h.audit).toHaveBeenCalledOnce();
     expect(h.revalidate).not.toHaveBeenCalled(); expect(h.redirect).not.toHaveBeenCalled(); expect(log).not.toHaveBeenCalled();
   });
