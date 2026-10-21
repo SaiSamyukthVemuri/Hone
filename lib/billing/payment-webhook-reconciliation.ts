@@ -974,6 +974,35 @@ export async function handlePaymentIntentPaymentFailed(
     };
   }
 
+  // A verified card decline may finish this ATTEMPT with an intent awaiting
+  // a new payment method; it is not autonomous completion of an existing
+  // payment. PR320 separately keeps requires_action/in-progress/unknown
+  // outcomes unresolved. This observer never confirms or cancels the provider.
+  const observedCardDecline = pi.status === "requires_payment_method" &&
+    pi.last_payment_error?.type === "card_error";
+  if (pi.status !== "canceled" && !observedCardDecline) {
+    await recordOpsAlert({
+      severity: "critical",
+      event: "session_payment_needs_manual_review",
+      message:
+        "Stripe reported an active or unresolved original intent rather than a verified card decline or cancellation. Hone retained the original payment claim; no terminal failure was recorded. Manual reconciliation required.",
+      studioId: attempt.studio_id,
+      clientId: attempt.client_id,
+      stripeEventId: event.id,
+      stripePaymentIntentId: pi.id,
+      route: ROUTE,
+      safeDetails: {
+        attempt_id: attempt.id,
+        reason: "payment_intent_failed_active_or_unknown",
+      },
+    });
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      providerOutcomeUnresolved: true,
+    };
+  }
+
   // ready / pending_stripe: reconcile to failed.
   const lastError = pi.last_payment_error;
   const code = sanitizeFailureCode(lastError?.code ?? lastError?.type ?? null);

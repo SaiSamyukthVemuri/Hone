@@ -717,7 +717,7 @@ describe("PRIVACY PAY-004 retrieved identity across terminal branches", () => {
 // 3. The webhooks
 // ---------------------------------------------------------------------------
 function event(type: string, object: Record<string, unknown>): Stripe.Event {
-  return { id: "evt_1", type, account: "acct_test", livemode: false, data: { object: { customer: "cus_test", ...(type.startsWith("charge.") ? { payment_intent: PI_ID } : {}), ...object } } } as unknown as Stripe.Event;
+  return { id: "evt_1", type, account: "acct_test", livemode: false, data: { object: { ...(type === "payment_intent.payment_failed" ? { status: "requires_payment_method" } : {}), customer: "cus_test", ...(type.startsWith("charge.") ? { payment_intent: PI_ID } : {}), ...object } } } as unknown as Stripe.Event;
 }
 const META = {
   hone_payment_charge_attempt_id: ATTEMPT,
@@ -794,7 +794,7 @@ describe("payment_intent.payment_failed webhook", () => {
         amount: AMOUNT,
         currency: "usd",
         metadata: META,
-        last_payment_error: { code: "card_declined", message: "declined" },
+        last_payment_error: { type: "card_error", code: "card_declined", message: "declined" },
       }),
       CTX,
     );
@@ -810,7 +810,7 @@ describe("payment_intent.payment_failed webhook", () => {
         amount: AMOUNT,
         currency: "cad",
         metadata: META,
-        last_payment_error: { code: "card_declined", message: "declined" },
+        last_payment_error: { type: "card_error", code: "card_declined", message: "declined" },
       }),
       CTX,
     );
@@ -1151,4 +1151,50 @@ describe("existing E2E fake adapter through the real staged producer", () => {
       if (previous === undefined) delete process.env.HONE_E2E_RUN_ID; else process.env.HONE_E2E_RUN_ID = previous;
     }
   });
+});
+
+
+describe("bound PI active-or-unknown failed-event retirement", () => {
+  it.each(["requires_action", "requires_confirmation", "processing", "succeeded", undefined])("%s does not permit terminal local failure/new-attempt authority", async (status) => {
+    h.rows = { payment_charge_attempts: attemptRow("cad", { status: "pending_stripe", stripe_payment_intent_id: PI_ID }) };
+    const out = await handlePaymentIntentPaymentFailed(event("payment_intent.payment_failed", {
+      id: PI_ID, status, amount: AMOUNT, currency: "cad", metadata: META,
+      last_payment_error: { code: "card_declined", message: "synthetic refusal" },
+    }), CTX);
+    expect(h.rows.payment_charge_attempts).toMatchObject({ status: "pending_stripe", stripe_payment_intent_id: PI_ID });
+    expect(h.updates).toEqual([]);
+    expect(out.providerOutcomeUnresolved).toBe(true);
+    expect(critical("session_payment_needs_manual_review")).toHaveLength(1);
+    expect(h.stripeCalls).toEqual([]);
+  });
+  it("a verified canceled original intent is a terminal control", async () => {
+    h.rows = { payment_charge_attempts: attemptRow("cad", { status: "pending_stripe", stripe_payment_intent_id: PI_ID }) };
+    await handlePaymentIntentPaymentFailed(event("payment_intent.payment_failed", {
+      id: PI_ID, status: "canceled", amount: AMOUNT, currency: "cad", metadata: META,
+      last_payment_error: { code: "card_declined", message: "synthetic refusal" },
+    }), CTX);
+    expect(h.rows.payment_charge_attempts).toMatchObject({ status: "failed", stripe_payment_intent_id: PI_ID });
+    expect(h.stripeCalls).toEqual([]);
+  });
+  it("ordinary authenticated card decline finishes the failed attempt without a false manual alert", async () => {
+    h.rows = { payment_charge_attempts: attemptRow("cad", { status: "pending_stripe", stripe_payment_intent_id: PI_ID }) };
+    await handlePaymentIntentPaymentFailed(event("payment_intent.payment_failed", {
+      id: PI_ID, status: "requires_payment_method", amount: AMOUNT, currency: "cad", metadata: META,
+      last_payment_error: { type: "card_error", code: "card_declined", message: "synthetic refusal" },
+    }), CTX);
+    expect(h.rows.payment_charge_attempts).toMatchObject({ status: "failed", stripe_payment_intent_id: PI_ID });
+    expect(critical("session_payment_needs_manual_review")).toEqual([]);
+    expect(h.stripeCalls).toEqual([]);
+  });
+  it.each([null, { type: "api_error", code: "api_error" }])("requires_payment_method without card-decline evidence (%j) stays unresolved", async (error) => {
+    h.rows = { payment_charge_attempts: attemptRow("cad", { status: "pending_stripe", stripe_payment_intent_id: PI_ID }) };
+    await handlePaymentIntentPaymentFailed(event("payment_intent.payment_failed", {
+      id: PI_ID, status: "requires_payment_method", amount: AMOUNT, currency: "cad", metadata: META, last_payment_error: error,
+    }), CTX);
+    expect(h.rows.payment_charge_attempts).toMatchObject({ status: "pending_stripe", stripe_payment_intent_id: PI_ID });
+    expect(h.updates).toEqual([]);
+    expect(critical("session_payment_needs_manual_review")).toHaveLength(1);
+    expect(h.stripeCalls).toEqual([]);
+  });
+
 });

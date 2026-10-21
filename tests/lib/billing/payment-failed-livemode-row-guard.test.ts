@@ -93,6 +93,7 @@ function failedEvent(over: Record<string, unknown> = {}) {
     data: {
       object: {
         id: "pi_1",
+        status: "requires_payment_method", // A verified card decline finishes this attempt.
         customer: "cus_1",
         // A real PaymentIntent states its money (PAY-CCY-01).
         amount: 2500,
@@ -103,7 +104,7 @@ function failedEvent(over: Record<string, unknown> = {}) {
           hone_client_id: "cli_1",
           hone_charge_reason: "session_payment",
         },
-        last_payment_error: { code: "card_declined", message: "declined" },
+        last_payment_error: { type: "card_error", code: "card_declined", message: "declined" },
       },
     },
     ...over,

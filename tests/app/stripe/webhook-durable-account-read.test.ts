@@ -427,7 +427,8 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
       const object = type === "charge.refunded"
         ? { id: "ch_1", payment_intent: "pi_1", customer: "cus_1", amount: 5000, currency: "cad",
           refunded: true, amount_refunded: 5000, refunds: { data: [{ id: "re_1" }] }, metadata, ...options.object }
-        : { id: "pi_1", customer: "cus_1", amount: 5000, currency: "cad", latest_charge: "ch_1",
+        : { id: "pi_1", status: type === "payment_intent.payment_failed" ? "requires_payment_method" : "succeeded",
+          ...(type === "payment_intent.payment_failed" ? { last_payment_error: { type: "card_error", code: "card_declined" } } : {}), customer: "cus_1", amount: 5000, currency: "cad", latest_charge: "ch_1",
           metadata, ...options.object };
       CONSTRUCT_EVENT.mockReturnValue({ id: "evt_payment_bound", type, account, livemode: false, data: { object } });
       ADMIN.current = makeAdmin({
@@ -437,6 +438,26 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
         reconcile_card_payment_succeeded: options.rpcFailure ?? { data: [{ result: "reconciled", status_before: "pending_stripe" }], error: null } });
     }
     const writes = () => ADMIN.current!.rpcCalls.filter(({ name }) => name === "reconcile_card_payment_succeeded");
+    if (type === "payment_intent.payment_failed") {
+      it("ordinary verified decline records failed without false critical/manual evidence", async () => {
+        prepareBound();
+        expect((await callRoute()).status).toBe(200);
+        expect(ADMIN.current!.updateCalls).toEqual([expect.objectContaining({ table: "payment_charge_attempts", payload: expect.objectContaining({ status: "failed" }) })]);
+        expect(ADMIN.current!.opsRows).toEqual([]);
+        expect(NOTIFY_CRITICAL_OPS_ALERT).not.toHaveBeenCalled();
+        expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+      });
+      it.each(["requires_action", undefined])("unresolved failed event (%s) records manual evidence without retiring its bound intent", async (status) => {
+        prepareBound({ object: { status } });
+        expect((await callRoute()).status).toBe(200);
+        expect(ADMIN.current!.updateCalls).toEqual([]);
+        expect(writes()).toEqual([]);
+        expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+        expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
+        expect(ADMIN.current!.opsRows).toEqual([expect.objectContaining({ severity: "critical", event: "session_payment_needs_manual_review" })]);
+        expect(NOTIFY_CRITICAL_OPS_ALERT).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ event: "session_payment_needs_manual_review" }));
+      });
+    }
     it.each([
       ["another connected account", { stripe_account_id: "acct_test_2" }],
       ["another studio", { studio_id: "studio-2" }],
