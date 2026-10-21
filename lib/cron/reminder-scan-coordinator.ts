@@ -75,10 +75,23 @@ class InvalidCheckpoint extends Error { constructor() { super("Reminder scan che
 /** Loader preserves a validated code and its own abort state, never DB text. */
 export class ReminderScanReadFailure extends Error {
   readonly sqlState: string | undefined;
+  readonly hasQueryErrorCode: boolean;
   constructor(code: unknown, readonly timedOut: boolean) {
     super("Reminder candidate read failed");
     this.sqlState = diagnosticSqlState(code);
+    // Retain presence only: PostgREST/network codes are not SQLSTATEs and
+    // must not become retryable merely because diagnostics withhold them.
+    this.hasQueryErrorCode = code !== undefined && code !== null && code !== "";
   }
+}
+function isReadTimeout(error: unknown): boolean {
+  try {
+    // An expired abort signal is not authority to retry a structured SQL
+    // rejection that happened to arrive at the same boundary.
+    return error instanceof ScanTimeout || (error instanceof ReminderScanReadFailure
+      && error.hasQueryErrorCode === false && error.sqlState === undefined && error.timedOut === true);
+  }
+  catch { return false; }
 }
 function caughtSqlState(error: unknown): string | undefined {
   try {
@@ -176,6 +189,7 @@ type BatchResult = {
   attempted: number;
   queries: number;
   coverageUnconfirmed: boolean;
+  readRetry?: { attempted: boolean; recovered: boolean; timeouts: 1 | 2 };
   failure?: { stage: ScanFailureStage; category: ScanFailureCategory; sqlState?: string };
 };
 function currentWindow(pass: ReminderScanPass, now: number): Window {
@@ -269,7 +283,32 @@ export async function runReminderScanBatch<T extends Candidate>(ports: {
       const query = { startIso: window.startIso, endIso, after: state.after, limit };
       result.queries++;
       stage = "read";
-      const rows = Date.parse(endIso) < Date.parse(window.startIso) ? [] : await bounded(ports.readPage(pass, query, AbortSignal.timeout(1000)));
+      let rows: readonly T[];
+      try {
+        rows = Date.parse(endIso) < Date.parse(window.startIso) ? [] : await bounded(ports.readPage(pass, query, AbortSignal.timeout(1000)));
+      } catch (error) {
+        if (!isReadTimeout(error)) throw error;
+        // At most ONE extra SELECT per invocation; no handler has run for
+        // this page. A late losing read can only return data, never dispatch.
+        if (result.readRetry) { result.readRetry.timeouts = 2; throw error; }
+        result.readRetry = { attempted: false, recovered: false, timeouts: 1 };
+        // Reserve the existing bounded renew AND read without extending the
+        // 45s deadline or consuming the handler's existing 20s reserve.
+        if (result.queries >= REMINDER_SCAN_MAX_QUERIES || now() + 22_000 >= deadline) throw error;
+        stage = "renew";
+        if (!await ports.coordinator.renew(token)) return unavailable("coordination", "coordination_unavailable");
+        stage = "read";
+        if (now() + 21_000 >= deadline) throw error;
+        result.queries++;
+        result.readRetry.attempted = true;
+        try {
+          rows = await bounded(ports.readPage(pass, query, AbortSignal.timeout(1000)));
+          result.readRetry.recovered = true;
+        } catch (retryError) {
+          if (isReadTimeout(retryError)) result.readRetry.timeouts = 2;
+          throw retryError;
+        }
+      }
       stage = "validate";
       if (!Array.isArray(rows) || rows.length > limit) return unavailable("read_or_handler", "invalid_row");
       let exhausted = rows.length < limit;
@@ -320,7 +359,7 @@ export async function runReminderScanBatch<T extends Candidate>(ports: {
       : stage === "validate" ? "invalid_row" : "coordination_error";
     try {
       category = stage === "read"
-        ? error instanceof ScanTimeout || (error instanceof ReminderScanReadFailure && error.timedOut) ? "read_timeout" : "rejected_query"
+        ? isReadTimeout(error) ? "read_timeout" : "rejected_query"
         : stage === "handler" ? "handler_error"
         : stage === "validate" ? "invalid_row"
         : error instanceof InvalidCheckpoint ? "checkpoint_invalid"
