@@ -62,12 +62,26 @@ describe("0242 atomic governed service commands", () => {
     expect(raw).toBeDefined();
     expect(JSON.parse(raw!)).toEqual(Object.fromEntries(exportedResources().map(({ resource, disposition }) => [resource, disposition.file])));
   });
+  it("preserves0178 SELECT-only runtimes and validates actual trusted owner separately from ACLs", () => {
+    const frozen = readFileSync("supabase/migrations/0178_practitioner_identity_boundary.sql", "utf8");
+    expect(frozen).toContain("revoke all privileges on table public.practitioners");
+    expect(frozen).toContain("grant select on table public.practitioners");
+    expect(code).not.toMatch(/grant\s+update|alter\s+role|create\s+role|grant[^;]+to\s+(?:anon|authenticated)/i);
+    expect(code).toContain("v_function is null or v_owner is null or not exists");
+    expect(code.indexOf("v_function is null")).toBeLessThan(code.indexOf("lateral pg_catalog.aclexplode"));
+    expect(code).toContain("p.proconfig=array['search_path=\"\"','lock_timeout=5s']::pg_catalog.text[]");
+    expect(code).toContain("pg_catalog.pg_has_role(v_role.oid,v_owner,'MEMBER')");
+    expect(code).toContain("pg_catalog.pg_has_role(v_role.oid,v_owner,'SET')");
+    expect(code).toContain("v_owner<>v_expected_owner");
+    expect(code).toContain("pg_catalog.has_table_privilege(v_expected_owner,v_required.table_name,v_required.privilege_name)");
+    expect(code).toContain("Runtime practitioner identity boundary unexpectedly widened");
+  });
   it("binds membership locks and audit insertion in each narrow transaction", () => {
     for (const name of ["record_client_archive_audit_governed", "record_studio_export_audit_governed"]) {
       const start = code.indexOf(`create function public.${name}(`);
       const body = code.slice(start, code.indexOf("$$;", start));
       expect(start).toBeGreaterThan(-1);
-      expect(body).toContain("security invoker set search_path = ''");
+      expect(body).toContain("security definer set search_path = ''");
       expect(body).toContain("p.user_id=p_user_id");
       expect(body.indexOf("for update")).toBeLessThan(body.indexOf("insert into public.audit_logs"));
       expect(code).toContain(`grant execute on function public.${name}(`);
@@ -76,6 +90,6 @@ describe("0242 atomic governed service commands", () => {
     expect(helper).not.toContain('.from("audit_logs").insert');
     expect(helper).toContain('admin.rpc("record_studio_export_audit_governed"');
     expect(helper).toContain('recorded !== true');
-    expect(code).toContain("a.grantee <> p.proowner and a.is_grantable");
+    expect(code).toContain("a.grantee<>v_owner and a.is_grantable");
   });
 });

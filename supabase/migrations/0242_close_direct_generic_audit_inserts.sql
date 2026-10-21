@@ -40,16 +40,17 @@ end;
 $$;
 
 
--- EXTERNAL PROPOSAL ONLY. Two new narrow service EXECUTE capabilities require
--- explicit source/ACL review. Existing service table authority is required,
--- never manufactured here. User roles get no command or table permission.
+-- Two narrow service EXECUTE capabilities require
+-- explicit source/ACL review. Existing trusted function-owner authority is
+-- checked below;0178 keeps runtime practitioners SELECT-only. No UPDATE grant
+-- is manufactured for row locks. User roles get no command/table permission.
 -- The verified-user argument comes ONLY from the internal session adapter;
 -- service credentials are trusted server authority, not proof of user identity.
 create function public.record_client_archive_audit_governed(
   p_actor_id uuid, p_user_id uuid, p_studio_id uuid, p_client_id uuid,
   p_archived boolean, p_archived_at text
 ) returns boolean
-language plpgsql security invoker set search_path = '' set lock_timeout = '5s'
+language plpgsql security definer set search_path = '' set lock_timeout = '5s'
 as $$
 declare
   v_actor pg_catalog.uuid;
@@ -96,7 +97,7 @@ create function public.record_studio_export_audit_governed(
   p_actor_id uuid, p_user_id uuid, p_studio_id uuid,
   p_filename text, p_files text[], p_row_counts jsonb
 ) returns boolean
-language plpgsql security invoker set search_path = '' set lock_timeout = '5s'
+language plpgsql security definer set search_path = '' set lock_timeout = '5s'
 as $$
 declare
   -- Generated from the exact dd68 existing export registry; no new resource
@@ -166,37 +167,88 @@ revoke all on function public.record_studio_export_audit_governed(uuid,uuid,uuid
 grant execute on function public.record_client_archive_audit_governed(uuid,uuid,uuid,uuid,boolean,text) to service_role;
 grant execute on function public.record_studio_export_audit_governed(uuid,uuid,uuid,text,text[],jsonb) to service_role;
 
+-- SECURITY DEFINER is deliberately narrow here:0178 forbids runtime UPDATE
+-- on practitioner identity, including the privilege required by FOR UPDATE.
+-- Refuse a wrong/missing/assumable owner or changed execution context; never
+-- remediate it with runtime table/role grants or arbitrary audit authority.
 do $$
-declare v_signature pg_catalog.text;
+declare
+  v_signature pg_catalog.text;
+  v_function pg_catalog.oid;
+  v_owner pg_catalog.oid;
+  v_expected_owner pg_catalog.oid;
+  v_service pg_catalog.oid;
+  v_role record;
+  v_required record;
+  v_runtime_count pg_catalog.int4;
 begin
-  -- No permission repair here: an unexpected existing service context fails.
-  if not pg_catalog.has_table_privilege('service_role','public.practitioners','SELECT')
-     or not pg_catalog.has_table_privilege('service_role','public.practitioners','UPDATE')
-     or not pg_catalog.has_table_privilege('service_role','public.clients','SELECT')
-     or not pg_catalog.has_table_privilege('service_role','public.clients','UPDATE')
-     or not pg_catalog.has_table_privilege('service_role','public.studios','SELECT')
-     or not pg_catalog.has_table_privilege('service_role','public.audit_logs','INSERT') then
-    raise exception 'Existing governed audit service authority unavailable';
+  select r.oid into v_service from pg_catalog.pg_roles r where r.rolname='service_role';
+  if v_service is null then
+    raise exception 'Existing governed audit service role unavailable';
   end if;
   foreach v_signature in array array[
-    'public.record_client_archive_audit_governed(uuid,uuid,uuid,uuid,boolean,text)',
-    'public.record_studio_export_audit_governed(uuid,uuid,uuid,text,text[],jsonb)'
+    'public.record_client_archive_audit_governed(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.bool,pg_catalog.text)',
+    'public.record_studio_export_audit_governed(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.text,pg_catalog.text[],pg_catalog.jsonb)'
   ] loop
-    if pg_catalog.has_function_privilege('anon',v_signature,'EXECUTE')
-       or pg_catalog.has_function_privilege('authenticated',v_signature,'EXECUTE')
-       or not pg_catalog.has_function_privilege('service_role',v_signature,'EXECUTE')
+    v_function := pg_catalog.to_regprocedure(v_signature);
+    select p.proowner into v_owner from pg_catalog.pg_proc p where p.oid=v_function;
+    -- Context must be checked independently of ACL expansion (including an
+    -- empty ACL). Both exact commands retain the same trusted existing owner.
+    if v_function is null or v_owner is null or not exists (
+      select 1 from pg_catalog.pg_proc p where p.oid=v_function
+        and p.prosecdef and p.prokind='f'
+        and p.prolang=(select l.oid from pg_catalog.pg_language l where l.lanname='plpgsql')
+        and p.proconfig=array['search_path=""','lock_timeout=5s']::pg_catalog.text[]
+    ) then
+      raise exception 'Unsafe governed audit command execution context';
+    end if;
+    if v_expected_owner is null then v_expected_owner:=v_owner;
+    elsif v_owner<>v_expected_owner then
+      raise exception 'Governed audit command owners differ';
+    end if;
+    v_runtime_count:=0;
+    for v_role in select r.oid,r.rolname from pg_catalog.pg_roles r
+      where r.rolname in ('anon','authenticated','service_role','authenticator')
+    loop
+      v_runtime_count:=v_runtime_count+1;
+      if v_role.oid=v_owner
+         or pg_catalog.pg_has_role(v_role.oid,v_owner,'MEMBER')
+         or pg_catalog.pg_has_role(v_role.oid,v_owner,'SET') then
+        raise exception 'Governed audit owner is assumable by a runtime role';
+      end if;
+    end loop;
+    if v_runtime_count<>4 then
+      raise exception 'Governed audit runtime role context unavailable';
+    end if;
+    if pg_catalog.has_function_privilege('anon',v_function,'EXECUTE')
+       or pg_catalog.has_function_privilege('authenticated',v_function,'EXECUTE')
+       or not pg_catalog.has_function_privilege('service_role',v_function,'EXECUTE')
        or exists (
          select 1 from pg_catalog.pg_proc p,
            lateral pg_catalog.aclexplode(coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))) a
-         where p.oid=pg_catalog.to_regprocedure(v_signature) and
-           (p.prosecdef or (a.privilege_type='EXECUTE' and
-             (a.grantee not in (p.proowner,
-               (select r.oid from pg_catalog.pg_roles r where r.rolname='service_role'))
-              or (a.grantee <> p.proowner and a.is_grantable))))
+         where p.oid=v_function and a.privilege_type='EXECUTE' and
+           (a.grantee not in (v_owner,v_service)
+            or (a.grantee<>v_owner and a.is_grantable))
        ) then
       raise exception 'Unsafe governed audit command execution privileges';
     end if;
   end loop;
+  -- Existing owner privileges permit the precise row locks and fixed INSERT;
+  -- service_role never gains practitioner identity mutation authority.
+  for v_required in select * from (values
+    ('public.practitioners','SELECT'),('public.practitioners','UPDATE'),
+    ('public.clients','SELECT'),('public.clients','UPDATE'),
+    ('public.studios','SELECT'),('public.audit_logs','INSERT')
+  ) as required(table_name,privilege_name)
+  loop
+    if not pg_catalog.has_table_privilege(v_expected_owner,v_required.table_name,v_required.privilege_name) then
+      raise exception 'Existing governed audit owner authority unavailable: % %',v_required.table_name,v_required.privilege_name;
+    end if;
+  end loop;
+  if pg_catalog.has_table_privilege('service_role','public.practitioners','UPDATE')
+     or pg_catalog.has_any_column_privilege('service_role','public.practitioners','UPDATE') then
+    raise exception 'Runtime practitioner identity boundary unexpectedly widened';
+  end if;
 end;
 $$;
 

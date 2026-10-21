@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { adminQuery, adminTx, asRole, asUser, closePool, type UserQuery, seedMember, seedSession, seedStudio } from "./helpers/harness";
 import { countVersion } from "../migrations/helpers/migration-state";
 
@@ -630,7 +631,7 @@ describe("0242 atomic governed audit authorization", () => {
   });
 
   it("exposes only the two narrow non-grantable service EXECUTE capabilities", async () => {
-    const { rows } = await adminQuery(`select p.proname,p.prosecdef,p.proconfig,
+    const { rows } = await adminQuery(`select p.proname,p.proowner::text as owner,p.prosecdef,p.proconfig,
       pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE') as anon_execute,
       pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE') as auth_execute,
       pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE') as service_execute,
@@ -641,10 +642,47 @@ describe("0242 atomic governed audit authorization", () => {
         'public.record_client_archive_audit_governed(uuid,uuid,uuid,uuid,boolean,text)'::regprocedure,
         'public.record_studio_export_audit_governed(uuid,uuid,uuid,text,text[],jsonb)'::regprocedure)`);
     expect(rows).toHaveLength(2);
+    expect(rows[0].owner).toBe(rows[1].owner);
+    const { rows: roles } = await adminQuery(`select r.rolname,
+      pg_catalog.pg_has_role(r.oid,$1::oid,'MEMBER') as member,
+      pg_catalog.pg_has_role(r.oid,$1::oid,'SET') as can_assume
+      from pg_catalog.pg_roles r where r.rolname in ('anon','authenticated','service_role','authenticator')`, [rows[0].owner]);
+    expect(roles).toHaveLength(4);
+    for (const role of roles) expect(role).toMatchObject({ member: false, can_assume: false });
+    const { rows: [identity] } = await adminQuery(`select
+      pg_catalog.has_table_privilege('service_role','public.practitioners','UPDATE') as runtime_update,
+      pg_catalog.has_any_column_privilege('service_role','public.practitioners','UPDATE') as runtime_column_update,
+      pg_catalog.has_table_privilege($1::oid,'public.practitioners','UPDATE') as owner_lock_authority`, [rows[0].owner]);
+    expect(identity).toEqual({ runtime_update: false, runtime_column_update: false, owner_lock_authority: true });
+    await expect(asRole("service_role", q => q("select id from public.practitioners where false for update")))
+      .rejects.toMatchObject({ code: "42501" });
     for (const row of rows) {
-      expect(row).toMatchObject({ prosecdef: false, anon_execute: false, auth_execute: false, service_execute: true, unsafe_acl: false });
+      expect(row).toMatchObject({ prosecdef: true, anon_execute: false, auth_execute: false, service_execute: true, unsafe_acl: false });
       expect(row.proconfig).toEqual(['search_path=""', "lock_timeout=5s"]);
     }
+  });
+
+  it.each([
+    ["missing command", "alter function public.record_studio_export_audit_governed(uuid,uuid,uuid,text,text[],jsonb) rename to test_0242_missing_command", "Unsafe governed audit command execution context"],
+    ["invoker context", "alter function public.record_studio_export_audit_governed(uuid,uuid,uuid,text,text[],jsonb) security invoker", "Unsafe governed audit command execution context"],
+    ["unsafe path", "alter function public.record_studio_export_audit_governed(uuid,uuid,uuid,text,text[],jsonb) set search_path=public", "Unsafe governed audit command execution context"],
+    ["authenticated execute", "grant execute on function public.record_studio_export_audit_governed(uuid,uuid,uuid,text,text[],jsonb) to authenticated", "Unsafe governed audit command execution privileges"],
+    ["service grant option", "grant execute on function public.record_studio_export_audit_governed(uuid,uuid,uuid,text,text[],jsonb) to service_role with grant option", "Unsafe governed audit command execution privileges"],
+    ["missing service execute", "revoke all on function public.record_studio_export_audit_governed(uuid,uuid,uuid,text,text[],jsonb) from service_role", "Unsafe governed audit command execution privileges"],
+  ])("actual0242 preflight rejects %s without privilege repair", async (_name, mutation, message) => {
+    const sql = readFileSync("supabase/migrations/0242_close_direct_generic_audit_inserts.sql", "utf8");
+    const preflight = sql.slice(sql.lastIndexOf("do $$"), sql.lastIndexOf("\ncommit;"));
+    await adminTx(async q => {
+      await q(preflight);
+      await q("savepoint audit_context_negative");
+      try {
+        await q(mutation);
+        await expect(q(preflight)).rejects.toMatchObject({ code: "P0001", message });
+      } finally {
+        await q("rollback to savepoint audit_context_negative");
+      }
+      await q(preflight);
+    });
   });
 
   it("rolls back audit and locks with caller transaction", async () => {
