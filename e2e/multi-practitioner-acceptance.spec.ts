@@ -8,6 +8,7 @@ import {
   setStudioCapacityBookingEnabled,
   seedStudioWideDefault,
   seedPractitionerDefault,
+  getPractitionerWeekday,
   seedServiceEligibility,
   getE2eServiceId,
   getStudioTimezone,
@@ -362,6 +363,7 @@ async function bookWithPractitioner(
   client: { name: string; email: string },
   member: { displayName: string; practitionerId: string },
   window: { start: string; end: string },
+  requiredSlotLabel?: string,
 ): Promise<{ slotLabel: string }> {
   await openNewClientForm(page, live.slug, liveService, bookDate);
 
@@ -378,7 +380,8 @@ async function bookWithPractitioner(
   for (const label of labels) {
     expectSlotFitsWindow(label, window, `${member.displayName}'s grid`);
   }
-  const slotLabel = labels[0];
+  const slotLabel = requiredSlotLabel ?? labels[0];
+  expect(labels, "the requested common instant must remain offered").toContain(slotLabel);
 
   await page.getByRole("button", { name: slotLabel, exact: true }).click();
 
@@ -1079,4 +1082,88 @@ test("a receptionist never appears in the public picker", async ({ page }) => {
   // exclusion rather than an empty list.
   expect(labels).toContain(A.displayName);
   expect(labels).toContain(B.displayName);
+});
+
+// Five coexisting appointments at one instant, not five disjoint bookings or
+// a simultaneous HTTP-request race. Keep the original disjoint-window journey.
+test("ACCEPTANCE (5): all five can hold the same Los Angeles appointment interval", async ({
+  page,
+}) => {
+  const roster = allFive();
+  const ids = roster.map(({ who }) => who.practitionerId);
+  expect(new Set(ids).size).toBe(5);
+  expect(await getStudioTimezone(live.studioId)).toBe(ACCEPTANCE_TIMEZONE);
+  const [day] = await sql<{ dow: number }>(
+    `select extract(dow from $1::date)::int as dow`,
+    [bookDate],
+  );
+  // Only this run's already-owned synthetic studio/day changes. Capture every
+  // row before any write; restore exact values even after a partial setup fail.
+  const originals = await Promise.all(ids.map(async (id) => {
+    const hours = await getPractitionerWeekday(live.studioId, id, day.dow);
+    if (!hours) throw new Error("missing synthetic practitioner availability");
+    return { id, hours };
+  }));
+  // All previous cases use hours ending at or before 20:00. This common window
+  // is inside the existing studio hours and avoids their earlier appointments.
+  const common = { start: "20:00", end: "22:00" };
+  const failures: unknown[] = [];
+  try {
+    for (const id of ids) {
+      await seedPractitionerDefault(live.studioId, id, day.dow, true, common.start, common.end);
+    }
+    const bookedIds: string[] = [];
+    let target: string | undefined;
+    for (const { who, label } of roster) {
+      const client = newClientIdentity(live.runId, `SameInstant-${label.replaceAll(" ", "-")}`);
+      const booked = await bookWithPractitioner(page, client, who, common, target);
+      target ??= booked.slotLabel;
+      expect(labelToMinutes(booked.slotLabel)).toBe(windowToMinutes(common.start));
+      const rows = await waitForClientAppointments(live.studioId, client.email, 1, page);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].status).toBe("confirmed");
+      expect(rows[0].practitioner_id).toBe(who.practitionerId);
+      await expectCommittedWithinWindow(rows[0].id, common, label);
+      expect((await committedBounds(rows[0].id)).startMin).toBe(windowToMinutes(common.start));
+      expect(await getSourceReservationKeys("appointment", rows[0].id)).toEqual([
+        who.practitionerId,
+      ]);
+      bookedIds.push(rows[0].id);
+    }
+    const rows = await sql<{
+      id: string; practitioner_id: string; starts_at: string; ends_at: string;
+      service_id: string; minutes: number;
+    }>(
+      `select id, practitioner_id, starts_at::text, ends_at::text, service_id,
+              (extract(epoch from (ends_at - starts_at)) / 60)::int as minutes
+         from public.appointments
+        where studio_id = $1 and id = any($2::uuid[]) and status = 'confirmed'`,
+      [live.studioId, bookedIds],
+    );
+    expect(rows).toHaveLength(5);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(5);
+    expect(rows.map((row) => row.practitioner_id).sort()).toEqual([...ids].sort());
+    // Attribution alone is insufficient: all five committed intervals must
+    // actually coincide, with the same service and its complete duration.
+    expect(new Set(rows.map((row) => row.starts_at)).size).toBe(1);
+    expect(new Set(rows.map((row) => row.ends_at)).size).toBe(1);
+    for (const row of rows) {
+      expect(row.service_id).toBe(liveService);
+      expect(row.minutes).toBe(serviceMinutes);
+    }
+  } catch (error) {
+    failures.push(error);
+  } finally {
+    for (const { id, hours } of originals) {
+      try {
+        await seedPractitionerDefault(
+          live.studioId, id, day.dow, hours.is_open, hours.open_time, hours.close_time,
+        );
+        expect(await getPractitionerWeekday(live.studioId, id, day.dow)).toEqual(hours);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+  }
+  if (failures.length) throw new AggregateError(failures, "five-way capacity or fixture restoration failed");
 });
