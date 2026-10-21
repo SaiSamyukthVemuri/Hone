@@ -97,8 +97,8 @@ describe("the six-case law", () => {
   });
 
   it("CASE 6 (both off) short-circuits before any intake read or claim", () => {
-    expect(PASS).toMatch(/if \(!wantsReminder && !intakeEnabled\) continue;/);
-    const case6 = PASS.indexOf("if (!wantsReminder && !intakeEnabled) continue;");
+    expect(PASS).toMatch(/if \(!wantsReminder && !intakeEnabled\) return;/);
+    const case6 = PASS.indexOf("if (!wantsReminder && !intakeEnabled) return;");
     expect(case6).toBeGreaterThan(-1);
     expect(case6).toBeLessThan(PASS.indexOf("claimEmailSend("));
     expect(case6).toBeLessThan(PASS.indexOf("readLatestIntake("));
@@ -107,7 +107,7 @@ describe("the six-case law", () => {
   it("CASE 5 (reminder off, intake complete) never claims and never bumps an attempt", () => {
     // The pre-claim probe exists ONLY in the !wantsReminder branch.
     expect(PASS).toMatch(/if \(!wantsReminder\) \{[\s\S]*?const probe = await readLatestIntake\(/);
-    expect(PASS).toMatch(/if \(probe\?\.status !== "in_progress"\) \{[\s\S]*?stats\.skipped \+= 1;[\s\S]*?continue;/);
+    expect(PASS).toMatch(/if \(probe\?\.status !== "in_progress"\) \{[\s\S]*?stats\.skipped \+= 1;[\s\S]*?return;/);
     const probeAt = PASS.indexOf("const probe = await readLatestIntake(");
     expect(probeAt).toBeGreaterThan(-1);
     expect(probeAt).toBeLessThan(PASS.indexOf("claimEmailSend("));
@@ -125,7 +125,7 @@ describe("the six-case law", () => {
 
   it("a CASE 4 -> 5 flip after the claim sends nothing and clears the claim", () => {
     expect(PASS).toMatch(
-      /if \(!wantsReminder && !intakeIncomplete\) \{[\s\S]*?await recordEmailResult\(admin, appt\.id, emailType, false\);[\s\S]*?stats\.skipped \+= 1;[\s\S]*?continue;/,
+      /if \(!wantsReminder && !intakeIncomplete\) \{[\s\S]*?await recordEmailResult\(admin, appt\.id, emailType, false\);[\s\S]*?stats\.skipped \+= 1;[\s\S]*?return;/,
     );
   });
 });
@@ -228,8 +228,9 @@ describe("retry and exhaustion semantics are preserved", () => {
 // ---------------------------------------------------------------------------
 describe("windows come from the shared, already-proven module", () => {
   it("the route computes only the 24h and 2h reminder windows", () => {
-    expect(CODE).toMatch(/reminderWindowIso\("24h", now\)/);
-    expect(CODE).toMatch(/reminderWindowIso\("2h", now\)/);
+    const driver = readFileSync(path.resolve(__dirname, "../../../../lib/cron/reminder-scan-coordinator.ts"), "utf8");
+    expect(CODE).toContain("runReminderScanBatch({");
+    expect(driver).toContain('return reminderWindowIso(pass.endsWith("24h") ? "24h" : "2h", now);');
     expect(CODE).not.toMatch(/INTAKE_REMINDER_WINDOW_MINUTES/);
   });
 
@@ -284,9 +285,9 @@ describe("intake SMS reuses the existing SMS channel and its authority", () => {
   it("keeps every consent prerequisite ahead of the intake read", () => {
     const intakeAt = SMS_PASS.indexOf("send_intake_reminders");
     for (const gate of [
-      "if (!appt.client.phone) continue;",
-      "if (!appt.client.sms_consent_at) continue;",
-      "if (appt.client.sms_opted_out_at) continue;",
+      "if (!appt.client.phone) return;",
+      "if (!appt.client.sms_consent_at) return;",
+      "if (appt.client.sms_opted_out_at) return;",
     ]) {
       const at = SMS_PASS.indexOf(gate);
       expect(at, `missing gate: ${gate}`).toBeGreaterThan(-1);

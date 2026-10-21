@@ -187,6 +187,7 @@ type AttemptRow = {
   status: string;
   stripe_livemode: boolean;
   stripe_account_id: string | null;
+  stripe_customer_id: string | null;
   stripe_payment_intent_id: string | null;
   stripe_charge_id: string | null;
   amount_cents: number;
@@ -224,7 +225,7 @@ export async function refundPaymentChargeAttempt(args: {
   const { data: rawRow, error: loadErr } = await admin
     .from("payment_charge_attempts")
     .select(
-      "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id",
+      "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_customer_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id",
     )
     .eq("id", args.attemptId)
     .maybeSingle();
@@ -539,6 +540,7 @@ export async function refundPaymentChargeAttempt(args: {
             zero_rows: failedWriteZeroRows,
           },
         });
+        return { ok: false, outcome: "needs_manual_review", message: "The refund outcome changed or could not be saved. The studio operator will reconcile it." };
       }
       await recordOpsAlert({
         severity: "warning",
@@ -687,11 +689,45 @@ export async function refundPaymentChargeAttempt(args: {
     .eq("id", attempt.id)
     .eq("refund_status", "pending_stripe")
     .select("id");
-  // PR #263: a zero-row update (no matching pending_stripe row) means
-  // the refund is real on Stripe but nothing was persisted locally.
-  // Treat it identically to a write error, never report success
-  // without proving the row was stamped.
+  // A zero-row update alone proves no local completion. Require the exact
+  // durable callback outcome below; otherwise retain the critical refusal.
   const okWriteZeroRows = !writeOkErr && (!okRows || okRows.length === 0);
+  if (okWriteZeroRows) {
+    // A verified callback may have completed the same refund while the SDK
+    // request was in flight. Recognize only that exact durable outcome; never
+    // turn a write error, another refund, or an unreadable row into success.
+    try {
+      const { data: saved, error: savedError } = await admin
+        .from("payment_charge_attempts")
+        .select("id,studio_id,client_id,charge_reason,status,stripe_livemode,stripe_account_id,stripe_customer_id,stripe_payment_intent_id,stripe_charge_id,amount_cents,currency,charged_at,refund_status,refund_amount_cents,refunded_at,stripe_refund_id,refund_failure_code,refund_failure_message_safe")
+        .eq("id", attempt.id)
+        .eq("studio_id", attempt.studio_id)
+        .maybeSingle();
+      if (!savedError && saved &&
+        attempt.stripe_account_id && attempt.stripe_customer_id &&
+        attempt.stripe_payment_intent_id && attempt.stripe_charge_id && refund.id &&
+        saved.id === attempt.id && saved.studio_id === attempt.studio_id &&
+        saved.client_id === attempt.client_id && saved.charge_reason === attempt.charge_reason &&
+        saved.status === "succeeded" && saved.stripe_livemode === attempt.stripe_livemode &&
+        saved.stripe_account_id === attempt.stripe_account_id &&
+        saved.stripe_customer_id === attempt.stripe_customer_id &&
+        saved.stripe_payment_intent_id === attempt.stripe_payment_intent_id &&
+        saved.stripe_charge_id === attempt.stripe_charge_id &&
+        saved.amount_cents === attempt.amount_cents && saved.currency === attempt.currency &&
+        saved.charged_at === attempt.charged_at &&
+        saved.refund_status === "succeeded" && saved.stripe_refund_id === refund.id &&
+        saved.refund_amount_cents === refundAmountCents && refundAmountCents === saved.amount_cents &&
+        typeof saved.refunded_at === "string" && Number.isFinite(Date.parse(saved.refunded_at)) &&
+        saved.refund_failure_code === null && saved.refund_failure_message_safe === null) {
+        return {
+          ok: true, outcome: "succeeded", stripeRefundId: refund.id,
+          refundedAt: saved.refunded_at, refundAmountCents,
+        };
+      }
+    } catch {
+      // Preserve the existing critical/manual-review path on a failed re-read.
+    }
+  }
   if (writeOkErr || okWriteZeroRows) {
     // Stripe says refund is done but we could not persist the
     // success outcome (DB error or zero-row update). Critical alert;

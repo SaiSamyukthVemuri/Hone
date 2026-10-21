@@ -371,11 +371,9 @@ export async function loadPortalRebookSlotsAction(params: {
 
   // THE FAILURE-AWARE LOADER, NOT THE RAW GENERATOR.
   //
-  // `getAvailableSlots` destructures the error away from its blockout read and
-  // its `studio_calendar_reservations` read (lib/booking/slots.ts), so a
-  // TRANSIENT failure on either is indistinguishable from "no conflicts": the
-  // day renders as wide open and every occupied time is offered. The command
-  // then refuses each one, which is a list of buttons that can never book.
+  // Historically the day loader discarded blockout/reservation read errors,
+  // making a transient failure look like "no conflicts". Both loaders now
+  // fail closed; discovery keeps the bulk loader's explicit failure result.
   //
   // `loadPublicSlotsByDate` reads the same inputs through the same
   // `buildDaySlots` rules — one algorithm, not a second engine — but answers
@@ -535,24 +533,25 @@ export async function bookAnotherAppointmentAction(
   // studio lock is taken, so the command re-derives the same grid under the
   // lock and is the thing that actually decides.
   //
-  // AND THAT IS WHY THIS ONE KEEPS THE RAW GENERATOR WHILE DISCOVERY DOES NOT.
-  // The two want opposite behaviour from a failed read. Discovery must not
-  // OFFER what a missing conflict hides, so it propagates the failure. This
-  // check must not REFUSE a booking that is actually fine, so a failed read
-  // leaving it permissive is correct: the request simply reaches the command,
-  // which re-reads everything under the lock and decides authoritatively. A
-  // failure-aware loader here would turn a transient blip into a false refusal
-  // of a valid booking.
-  const slots = await getAvailableSlots(
-    admin,
-    publicStudioShape(studio),
-    localDateString(start, studio.timezone),
-    service.service.default_duration_minutes,
-  );
-  const offered = slots.some(
-    (s) => new Date(s.start).getTime() === start.getTime(),
-  );
-  if (!offered) return refuse("slot_taken", PORTAL_REBOOK_SLOT_TAKEN);
+  // A classified availability-read failure supplies no advisory answer. Only
+  // this preflight may defer to the existing locked command; discovery still
+  // refuses unread availability, and a successful empty preflight still refuses.
+  // Never invent an offered slot or absorb unrelated programming errors.
+  try {
+    const slots = await getAvailableSlots(
+      admin,
+      publicStudioShape(studio),
+      localDateString(start, studio.timezone),
+      service.service.default_duration_minutes,
+    );
+    const offered = slots.some(
+      (s) => new Date(s.start).getTime() === start.getTime(),
+    );
+    if (!offered) return refuse("slot_taken", PORTAL_REBOOK_SLOT_TAKEN);
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.startsWith("availability_read_failed:")) throw err;
+    logRebookError("portal_rebook_advisory_read_failed", { studioId: studio.id });
+  }
 
   // REQUIRED CONFIGURATION IS RESOLVED BEFORE THE DURABILITY BOUNDARY.
   // `getRequiredAppOrigin()` throws by design when NEXT_PUBLIC_APP_ORIGIN is

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
+  committedPatch: null as Record<string, unknown> | null, pendingPatch: null as Record<string, unknown> | null,
   identity: vi.fn(), lookup: vi.fn(), duplicate: vi.fn(), audit: vi.fn(), redirect: vi.fn(), revalidate: vi.fn(), filters: [] as Array<[string, unknown]>, writes: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ redirect: h.redirect }));
@@ -28,7 +29,7 @@ function form() {
   return data;
 }
 beforeEach(() => {
-  vi.clearAllMocks(); h.filters = [];
+  vi.clearAllMocks(); h.filters = []; h.committedPatch = null; h.pendingPatch = null;
   h.audit.mockReset(); h.redirect.mockReset(); h.revalidate.mockReset();
   h.identity.mockResolvedValue({ studio: { id: STUDIO } });
 });
@@ -151,8 +152,9 @@ describe.each([
     h.lookup.mockResolvedValue({ data: { id: CLIENT }, error: null });
     const update = { eq: vi.fn(), is: vi.fn(), not: vi.fn() };
     update.eq.mockReturnValue(update);
-    update.is.mockResolvedValue({ error: null }); update.not.mockResolvedValue({ error: null });
-    h.writes.mockReset(); h.writes.mockReturnValue(update);
+    const commit = async () => { h.committedPatch = { ...h.pendingPatch! }; return { error: null }; };
+    update.is.mockImplementation(commit); update.not.mockImplementation(commit);
+    h.writes.mockReset(); h.writes.mockImplementation((patch: Record<string, unknown>) => { h.pendingPatch = patch; return update; });
     h.audit.mockResolvedValue({ error: null });
     h.redirect.mockImplementation(() => { throw NAV; });
     return update;
@@ -185,19 +187,45 @@ describe.each([
     for (const text of ["synthetic-patient", "private-clinical", "synthetic-token", CLIENT])
       expect(JSON.stringify(log.mock.calls)).not.toContain(text);
   });
-  it("propagates rejected audit promises without logging or redirecting", async () => {
-    setup(); const failure = new Error("synthetic rejected audit");
-    h.audit.mockRejectedValue(failure);
+  it("preserves committed success and safe diagnostics when inline audit insert throws", async () => {
+    const update = setup();
+    const sentinel = `synthetic-patient@example.test private-clinical-sentinel synthetic-token ${CLIENT}`;
+    h.audit.mockRejectedValue(new Error(sentinel));
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    await expect(action(form())).rejects.toBe(failure);
-    expect(h.writes).toHaveBeenCalledOnce(); expect(h.audit).toHaveBeenCalledOnce();
-    expect(h.revalidate).not.toHaveBeenCalled(); expect(h.redirect).not.toHaveBeenCalled(); expect(log).not.toHaveBeenCalled();
+    await expect(action(form())).rejects.toBe(NAV);
+    expect(h.committedPatch).toEqual(name === "archive"
+      ? { archived_at: expect.any(String), archived_by: ACTOR } : { archived_at: null, archived_by: null });
+    expect(h.writes).toHaveBeenCalledOnce();
+    expect(update.eq.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
+    expect(update.is.mock.calls).toEqual(name === "archive" ? [["archived_at", null]] : []);
+    expect(update.not.mock.calls).toEqual(name === "unarchive" ? [["archived_at", "is", null]] : []);
+    expect(h.audit).toHaveBeenCalledExactlyOnceWith({
+      studio_id: STUDIO, actor_id: ACTOR, action: auditAction, entity_type: "client", entity_id: CLIENT,
+      metadata: name === "archive" ? { archived_at: h.committedPatch!.archived_at } : {},
+    });
+    expect(h.revalidate.mock.calls).toEqual([[`/clients/${CLIENT}`], ["/clients"]]);
+    expect(h.redirect).toHaveBeenCalledExactlyOnceWith(destination);
+    expect(log).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(log.mock.calls[0]![0]))).toEqual({ event, clientId: "[id]", code: "audit_write_unavailable", timestamp: expect.any(String) });
+    for (const raw of [sentinel, "synthetic-patient", "private-clinical", "synthetic-token", CLIENT])
+      expect(JSON.stringify(log.mock.calls)).not.toContain(raw);
+  });
+  it("preserves normal committed success without inventing an audit warning", async () => {
+    setup(); const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(action(form())).rejects.toBe(NAV);
+    expect(h.committedPatch).toEqual(name === "archive"
+      ? { archived_at: expect.any(String), archived_by: ACTOR } : { archived_at: null, archived_by: null });
+    expect(h.audit).toHaveBeenCalledOnce();
+    expect(h.revalidate.mock.calls).toEqual([[`/clients/${CLIENT}`], ["/clients"]]);
+    expect(h.redirect).toHaveBeenCalledExactlyOnceWith(destination);
+    expect(log).not.toHaveBeenCalled();
   });
   it("preserves UPDATE failure before audit and redirect", async () => {
     const update = setup();
     update.is.mockResolvedValue({ error: { message: "synthetic update refusal" } });
     update.not.mockResolvedValue({ error: { message: "synthetic update refusal" } });
     await expect(action(form())).rejects.toThrow(`Failed to ${name} client: synthetic update refusal`);
+    expect(h.committedPatch).toBeNull();
     expect(h.audit).not.toHaveBeenCalled(); expect(h.revalidate).not.toHaveBeenCalled(); expect(h.redirect).not.toHaveBeenCalled();
   });
   it.each(["auth", "visibility"])("preserves %s refusal before UPDATE or audit", async (mode) => {
@@ -206,6 +234,7 @@ describe.each([
     else h.lookup.mockResolvedValue({ data: null, error: null });
     await expect(action(form())).rejects.toThrow(mode === "auth" ? "synthetic auth refusal" : "Client not found.");
     if (mode === "auth") expect(h.lookup).not.toHaveBeenCalled();
+    expect(h.committedPatch).toBeNull();
     expect(h.writes).not.toHaveBeenCalled(); expect(h.audit).not.toHaveBeenCalled();
     expect(h.revalidate).not.toHaveBeenCalled(); expect(h.redirect).not.toHaveBeenCalled();
   });
