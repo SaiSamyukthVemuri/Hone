@@ -646,8 +646,13 @@ async function sendSmsReminderPass(opts: {
       stats.succeeded += 1;
       linkMayHaveGone = result.intakeLinkIncluded;
     } else if (result.skipped) {
+      if (result.reason === "reminder_claim_unavailable") {
+        // Incomplete work is not a healthy empty run. Stop an outage from
+        // spending a claim round trip on every remaining candidate.
+        throw new Error("SMS reminder claim unavailable; run incomplete.");
+      }
       // Helper-level skip (toggle race, claim collision, gate miss, or a
-      // reminder claim that could not be reached). We do not count these
+      // normal refusal). We do not count these
       // as attempted because no Twilio call was made; the operator wants
       // attempted/succeeded/failed to reflect actual Twilio invocations.
       stats.skipped += 1;

@@ -234,7 +234,6 @@ describe("NOT stamped: the link never left Hone, or the message did not carry it
 
   for (const [label, claim] of [
     ["a claim refused (another run holds the slot)", "not_claimed"],
-    ["a claim that could not be reached", "error"],
   ] as const) {
     it(`a skipped send: ${label}`, async () => {
       h.state.claim = claim;
@@ -244,6 +243,15 @@ describe("NOT stamped: the link never left Hone, or the message did not carry it
       expect(h.state.intakeUpdates).toEqual([]);
     });
   }
+
+  it("an unavailable claim reports an incomplete run and does not stamp an unsent intake link", async () => {
+    h.state.claim = "error";
+    const response = await GET(new Request("https://hone.care/api/cron/appointment-reminders"));
+    expect(response.status).toBe(500);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(h.state.rpcs.map((call) => call.fn)).toEqual(["claim_reminder_sms_send"]);
+    expect(h.state.intakeUpdates).toEqual([]);
+  });
 
   for (const [label, impl] of [
     ["accepted", answer(201, { sid: SID })],
