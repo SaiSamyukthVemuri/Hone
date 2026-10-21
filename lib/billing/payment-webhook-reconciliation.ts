@@ -454,6 +454,17 @@ async function verifyPaymentEventIdentity(args: {
       stripeEventId: event.id,
       targetEvent: event.type,
     }))) return false;
+    // Expected binding retries must agree with the existing money contract too.
+    // Reuse each event object's actual amount/currency, never a row default.
+    const provider = event.data.object as Stripe.PaymentIntent | Stripe.Charge | Stripe.Refund;
+    if (!(await verifyProviderMoneyAgainstRow({
+      attempt,
+      provider: { amount: provider.amount, currency: provider.currency },
+      stripeEventId: event.id,
+      targetEvent: event.type,
+      stripePaymentIntentId: event.type.startsWith("payment_intent.") ? args.paymentIntentId : undefined,
+      stripeChargeId: event.type === "charge.refunded" ? args.chargeId : undefined,
+    }))) return false;
     throw new PaymentOriginalBindingPendingError();
   }
 

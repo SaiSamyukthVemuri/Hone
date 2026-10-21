@@ -340,7 +340,7 @@ describe("PAY-001 durable payment event identity", () => {
   it.each(["payment_intent.succeeded", "charge.refunded"])("pending %s preserves delivery while only an original binding is missing", async (type) => {
     prepare(type === "charge.refunded" ? { stripe_charge_id: null } : { stripe_payment_intent_id: null });
     if (type === "charge.refunded") CONSTRUCT_EVENT.mockReturnValue({ id: "evt_payment_1", type, account: "acct_test_1", livemode: false,
-      data: { object: { id: "ch_1", payment_intent: "pi_1", customer: "cus_1", metadata: { hone_payment_charge_attempt_id: "attempt-1" } } } });
+      data: { object: { id: "ch_1", payment_intent: "pi_1", customer: "cus_1", amount: 5000, currency: "cad", metadata: { hone_payment_charge_attempt_id: "attempt-1" } } } });
     expect((await callRoute()).status).toBe(500);
     expect(ADMIN.current!.updateCalls).toEqual([]);
     expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_bound_payment_event");
@@ -799,3 +799,63 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
     });
   },
 );
+
+// Known money contradictions are not an expected original-binding race.
+describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "charge.refunded", "refund.created", "refund.updated", "refund.failed"] as const)("pending binding money order: %s", (type) => {
+  function prepareMoney(objectOverride: Record<string, unknown> = {}, metadataOverride: Record<string, string> = {}) {
+    const row = { id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
+      status: "pending_stripe", stripe_livemode: false, stripe_account_id: "acct_test_1", stripe_customer_id: "cus_1",
+      stripe_payment_intent_id: null, stripe_charge_id: "ch_1", amount_cents: 5000, currency: "cad" };
+    const identity = { customer: "cus_1", amount: 5000, currency: "cad", metadata: {
+      hone_payment_charge_attempt_id: "attempt-1", hone_studio_id: "studio-1", hone_client_id: "client-1", hone_charge_reason: "session_payment", ...metadataOverride } };
+    const object = type.startsWith("refund.")
+      ? { ...identity, id: "re_1", object: "refund", payment_intent: "pi_1", charge: "ch_1", status: "succeeded", ...objectOverride }
+      : type === "charge.refunded"
+        ? { ...identity, id: "ch_1", payment_intent: "pi_1", refunded: true, amount_refunded: 5000, refunds: { data: [{ id: "re_1" }] }, ...objectOverride }
+        : { ...identity, id: "pi_1", latest_charge: "ch_1", status: "requires_payment_method", last_payment_error: { type: "card_error", code: "card_declined" }, ...objectOverride };
+    CONSTRUCT_EVENT.mockReturnValue({ id: "evt_money_order", created: 1770000000, type, account: "acct_test_1", livemode: false, data: { object } });
+    ADMIN.current = makeAdmin({ studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: row, error: null }] }, { claim_stripe_event: CLAIM_OK });
+  }
+  const noMoneyWrite = () => {
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_bound_payment_event");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_card_payment_succeeded");
+    expect(ACCOUNTS_RETRIEVE).not.toHaveBeenCalled();
+  };
+  it.each([
+    ["amount mismatch", { amount: 6000 }], ["currency mismatch", { currency: "usd" }],
+    ["missing amount", { amount: undefined }], ["missing currency", { currency: undefined }],
+  ] as const)("missing original cannot suppress %s critical refusal", async (_kind, override) => {
+    prepareMoney(override);
+    expect((await callRoute()).status).toBe(200);
+    expect(RECORD_OPS_ALERT).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      severity: "critical", event: "stripe_webhook_money_mismatch", safeDetails: expect.objectContaining({ target_event: type }),
+    }));
+
+    noMoneyWrite();
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
+  });
+  it("matching money retains the concrete typed retry without duplicate alert/adoption", async () => {
+    prepareMoney();
+    expect((await callRoute()).status).toBe(500);
+    expect(RECORD_OPS_ALERT).not.toHaveBeenCalled();
+
+    noMoneyWrite();
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+    expect(ADMIN.current!.rpcCalls.filter(({ name }) => name === "release_stripe_event_claim_with_error")).toEqual([
+      { name: "release_stripe_event_claim_with_error", args: { p_event_id: "evt_money_order", p_claim_token: "claim-token-1",
+        p_error: "stripe_webhook_payment_original_binding_pending" } },
+    ]);
+  });
+  it("existing metadata refusal wins once when both metadata and money contradict", async () => {
+    prepareMoney({ amount: 6000 }, { hone_client_id: "client-other" });
+    expect((await callRoute()).status).toBe(200);
+    expect(RECORD_OPS_ALERT).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ event: "stripe_webhook_metadata_mismatch", severity: "critical" }));
+
+    noMoneyWrite();
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
+  });
+});
