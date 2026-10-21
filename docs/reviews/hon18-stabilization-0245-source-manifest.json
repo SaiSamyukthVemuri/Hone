@@ -1,5 +1,5 @@
 {
-  "at": "2026-10-21T13:45:00.373574+00:00",
+  "at": "2026-10-21T14:52:34.514404+00:00",
   "purpose": "Ordered source/checksum evidence only, not apply/release authority",
   "hosted_declaration": "0212 unchanged; originalapplyreceipts/history preserved; not re-read/applied here",
   "source_SQL_tree": "a334e5a75bbb8debff77aa5cf3f7a9f33326fa0a",
@@ -488,5 +488,57 @@
       "normal_merge_expected_actual_tree": "5eeaa3bf6e0365a0179cacba4c4a6cf3bee35741"
     },
     "SQL": "All35sources/SQLtree and historicalledger/frozen223 unchanged; no247fabrication, no new migration allocation."
+  },
+  "latest_settled_proof": {
+    "source": "8d983a13871f913484187f0bce84911ffa09cd82",
+    "CI": 39610815045,
+    "conclusion": "FAILURE",
+    "unit": "25549PASS5FAIL (247hole +4old reader source-contract assertions)",
+    "DB": "4571PASS1FAIL8SKIP; only247applied-chainhole. Three legacy phase contracts and new stale service submit now pass.",
+    "payment": "67PASS1SKIP1FAIL; E progressed through same appointment completion then correctly hid payment preparation for free service; no product gate weakened.",
+    "browser": "All4shards+aggregatePASS; detailedcounts prior/currentlogs, native20+recovery2stillSKIPPEDflagOFF",
+    "mobile": "6PASS",
+    "Google": "13PASS",
+    "limits": "Not wholegreen. New composition/sourceguards/Epaidfixture need fresh actualCI; no hosted/local reset/activation/human acceptance."
+  },
+  "current_composition_after_8d": {
+    "pre_manifest_commit": "00c423bca933f6c44731b8d93dfff8fb279a0560",
+    "production_code_base": "f7ec655c638581fefa17f5b00bc92322fdbd1f3a",
+    "published_record_owner_source": "d677407c7a85083a59c3c2f0a76ccd3e2dfa4f97",
+    "General_source_contract_repair": {
+      "patch_sha256": "02b0eca8472a2db2f793583473ca5273049308f7cd82a086fd7f09766d554f73",
+      "scope": "3existingtestfiles/same82cases;4strongerreadercontracts updated,78bodiesbyte-identical;runtime/SQL unchanged",
+      "proof": "Owner82PASS/lint+Machines sourceclear,rootincludedin558PASS1heldgapFAIL"
+    },
+    "Insurance_paid_E": {
+      "patch_sha256": "24072de4274616ffd28bca655bf82ed9fba84f1c2a84a58d7185d8a59a646bb1",
+      "postimage_sha256": "93900ff4230fa73e9ea97355711e3befede85c1309e1d6a6f32edef9751b1317",
+      "scope": "BeforeANYbooking exactnewsyntheticstudio/serviceprice0->12000/identityassertions; actualbooked120reference thenowner185+requiredreason; allA-D/temporal/financial/notification/denialoraclespreserved. Notproduct/freepolicy change.",
+      "proof": "Ownerlint/parse+Machines exactsourceclear; rootsemanticTSC;actualnewEUNRUNuntilfreshCI"
+    },
+    "Willow_current995_union": {
+      "patch_sha256": "8fb95db55b9a79a8f0908ea8303d4fee45c0fa1490d3653b717014d606c21b59",
+      "route_sha256": "3e29730e46223264e99ffeb78f1e8b133ba98822f5e26fb90704f75d1e2e06ce",
+      "coordinator_sha256": "c2fbe966ea8dc05d0a5358492576f4c0c1f1f1c4fa7d1e7dded6b72cd9b48995",
+      "scope": "Deployed995 bounds/cursor/fencing +future emailledger/settingslinks/currentSMScontext/boundedleadrecovery; sixownerpostimages, coordinator unchanged",
+      "proof": "267ownerPASS/TSC/lint+Privacy/Insurance exactsourceclear, rootincludedin558PASS1heldgapFAIL; actualRedisLuaUNRUN"
+    },
+    "Insurance_current984_union": {
+      "owner_postimage_sha256": "70e0027792d99275734fe2199beb332af54b41106725270c39770d6c65707931",
+      "root_cleaned_sha256": "4e49e9d945db95565f27f2e24d77206ed9ae61d5ea5ea73caa1d9252c1961a39",
+      "normalization": "Onlytrailingwhitespace on2blanklines removed forcommitcheck; no tokens/linecount change",
+      "scope": "Only2publicavailability wrappers;11otherfuturefunctions identical; actual0225/0222/0195/0170 locked publicON/OFFhoursauthority verified, internal/move allmodefailures refuseRPC",
+      "proof": "Owner88PASS/TSC/lint+Machines exactsourceclear; root88PASS/finalTSC andincludedin558PASS1heldgapFAIL"
+    },
+    "current_focused_proof": {
+      "source_before_manifest": "00c423bca933f6c44731b8d93dfff8fb279a0560",
+      "files": 19,
+      "passed": 558,
+      "failed": 1,
+      "failure": "ONLY unchanged canonical247pendingchainhole; no skip/xfail/bypass",
+      "TSC": "RootsemanticTSCpassed afterbookingunion; finalcommittedtreeprepushrequired",
+      "runtime_DB_browser": "NewcomposedheadUNRUNpendingnormalCI; actual8dproof reusedonlyunchangedsubjects"
+    },
+    "local_target": "Retainedhone-hon47SQL861e/max237 stillunaligned; fresh0386754backupcaptured, structuralverificationonly; newrestore-onlydecisionpendingSam, no reset/apply authority."
   }
 }
