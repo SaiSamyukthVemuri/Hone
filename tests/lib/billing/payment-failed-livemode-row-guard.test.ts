@@ -142,7 +142,7 @@ beforeEach(() => {
 });
 
 describe("payment_intent.payment_failed — resolved-row livemode guard", () => {
-  it("WRONG-mode row: does NOT mutate, fires the earlier complete-identity mode mismatch before any command", async () => {
+  it("WRONG-mode row: does NOT mutate, fires the published mode-specific refusal before any command", async () => {
     // Deployment is LIVE; the resolved row is TEST-mode (same studio/client/reason).
     h.state.livemode = true;
     h.state.selectResult = {
@@ -156,15 +156,16 @@ describe("payment_intent.payment_failed — resolved-row livemode guard", () => 
     expect(h.state.updateCalls).toHaveLength(0);
     // Critical mismatch alert with the exact event name + no-mutation message.
     const alert = h.state.alerts.find(
-      (a) => a.event === "stripe_webhook_payment_identity_mismatch",
+      (a) => a.event === "payment_intent_failed_livemode_row_mismatch",
     );
     expect(alert).toBeDefined();
     expect(alert!.severity).toBe("critical");
-    expect(String(alert!.message)).toMatch(/No payment row was mutated/);
-    expect(alert).toMatchObject({ safeDetails: { mismatches: ["mode"] } });
+    expect(String(alert!.message)).toMatch(/Row was NOT mutated/);
+    expect(alert).toMatchObject({ safeDetails: { attempt_id: "att_1" } });
     expect(h.state.rpcCalls).toHaveLength(0);
     // Structured return.
-    expect(result).toMatchObject({ identityMismatch: true, attemptId: "att_1" });
+    expect(result).toMatchObject({ livemodeRowMismatch: true, attemptId: "att_1" });
+    expect(result).not.toHaveProperty("identityMismatch");
   });
 
   it("MATCHING-mode row (regression): still flips ready → failed with sanitized error fields", async () => {
@@ -189,7 +190,7 @@ describe("payment_intent.payment_failed — resolved-row livemode guard", () => 
     // No mismatch alert on the happy path.
     expect(
       h.state.alerts.find(
-        (a) => a.event === "stripe_webhook_payment_identity_mismatch",
+        (a) => a.event === "payment_intent_failed_livemode_row_mismatch",
       ),
     ).toBeUndefined();
     expect(result).not.toHaveProperty("livemodeRowMismatch");
