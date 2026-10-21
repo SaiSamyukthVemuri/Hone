@@ -445,6 +445,26 @@ async function verifyPaymentEventIdentity(args: {
       || (mismatch === "charge" && args.requireCharge
         && !attempt.stripe_charge_id && !!args.chargeId));
   if (awaitingOriginalBinding) {
+    // A missing original is expected only when the existing optional metadata
+    // contract also agrees. Preserve its critical refusal before suppressing
+    // handler-failure alerts for a normal binding race.
+    if (!(await verifyMetadataAgainstRow({
+      attempt,
+      metadata: args.metadata,
+      stripeEventId: event.id,
+      targetEvent: event.type,
+    }))) return false;
+    // Expected binding retries must agree with the existing money contract too.
+    // Reuse each event object's actual amount/currency, never a row default.
+    const provider = event.data.object as Stripe.PaymentIntent | Stripe.Charge | Stripe.Refund;
+    if (!(await verifyProviderMoneyAgainstRow({
+      attempt,
+      provider: { amount: provider.amount, currency: provider.currency },
+      stripeEventId: event.id,
+      targetEvent: event.type,
+      stripePaymentIntentId: event.type.startsWith("payment_intent.") ? args.paymentIntentId : undefined,
+      stripeChargeId: event.type === "charge.refunded" ? args.chargeId : undefined,
+    }))) return false;
     throw new PaymentOriginalBindingPendingError();
   }
 
@@ -978,9 +998,11 @@ export async function handlePaymentIntentPaymentFailed(
   // a new payment method; it is not autonomous completion of an existing
   // payment. PR320 separately keeps requires_action/in-progress/unknown
   // outcomes unresolved. This observer never confirms or cancels the provider.
+  const knownOriginalIntent = typeof attempt.stripe_payment_intent_id === "string" &&
+    attempt.stripe_payment_intent_id.length > 0 && attempt.stripe_payment_intent_id === pi.id;
   const observedCardDecline = pi.status === "requires_payment_method" &&
     pi.last_payment_error?.type === "card_error";
-  if (pi.status !== "canceled" && !observedCardDecline) {
+  if (!knownOriginalIntent || (pi.status !== "canceled" && !observedCardDecline)) {
     await recordOpsAlert({
       severity: "critical",
       event: "session_payment_needs_manual_review",
@@ -993,7 +1015,7 @@ export async function handlePaymentIntentPaymentFailed(
       route: ROUTE,
       safeDetails: {
         attempt_id: attempt.id,
-        reason: "payment_intent_failed_active_or_unknown",
+        reason: "payment_intent_failed_unverified_or_unresolved",
       },
     });
     return {

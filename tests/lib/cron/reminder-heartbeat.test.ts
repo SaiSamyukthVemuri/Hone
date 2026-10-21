@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createReminderScanCoordinator,
   runReminderScanBatch,
+  ReminderScanReadFailure,
   REMINDER_SCAN_PASSES,
   REMINDER_SCAN_TTL_SECONDS,
   type ReminderScanCursor,
@@ -1379,6 +1380,7 @@ describe("#995 unwired bounded scan/coordinator proposal", () => {
     const f = scanFixture(); f.values.set("reminder_scan:v1:rotation", value);
     const result = await f.run();
     expect(result.kind).toBe("unavailable");
+    expect(result).toMatchObject({ failure: { stage: "rotation", category: "checkpoint_invalid" } });
     expect(f.readPage).not.toHaveBeenCalled();
     expect(f.handle).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain("PRIVATE");
@@ -1464,4 +1466,163 @@ describe("#995 unwired bounded scan/coordinator proposal", () => {
     expect((await f.run()).kind).toBe("partial");
     expect(JSON.parse(f.values.get("reminder_scan:v1:checkpoint:email24h")!).after).toEqual({ startsAt: originalStart, id: f.rows.email24h[0].id });
   });
+  it("incident diagnostics classify coordination read timeout without exposing lease/key/raw errors", async () => {
+    vi.useFakeTimers();
+    try {
+      const f = scanFixture(); const previous = f.redis.eval;
+      f.redis.eval = (script, keys, args) => script.includes("return {0,''}")
+        ? new Promise(() => undefined) : previous(script, keys, args);
+      const pending = f.run();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await pending).toMatchObject({ kind: "unavailable", queries: 0, scanned: 0, attempted: 0,
+        failure: { stage: "rotation", category: "coordination_timeout" } });
+      expect(f.readPage).not.toHaveBeenCalled(); expect(f.handle).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("incident diagnostics tolerate a throwing SQLSTATE getter and retain a coarse handler category", async () => {
+    const f = scanFixture(); f.populate("email24h", 1, 0);
+    f.handle.mockRejectedValueOnce(Object.defineProperty(new Error("PRIVATE body/token"), "code", {
+      get() { throw new Error("PRIVATE getter"); },
+    }));
+    const result = await f.run();
+    expect(result).toMatchObject({ kind: "unavailable", queries: 1, scanned: 0, attempted: 0,
+      failure: { stage: "handler", category: "handler_error" } });
+    expect(result.failure).not.toHaveProperty("sqlState");
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|body|token|00000000-/);
+  });
+
+});
+
+
+describe("bounded timeout READ retry", () => {
+  afterEach(() => vi.useRealTimers());
+  it("recovers one timed-out read using the same fence/cursor and one extra query", async () => {
+    const f = scanFixture(); f.populate("email24h", 1, 0);
+    f.readPage.mockRejectedValueOnce(new ReminderScanReadFailure(undefined, true));
+    expect(await f.run()).toMatchObject({ kind: "complete", queries: 5, scanned: 1, attempted: 1,
+      readRetry: { attempted: true, recovered: true, timeouts: 1 } });
+    expect(f.readPage.mock.calls[0].slice(0, 2)).toEqual(f.readPage.mock.calls[1].slice(0, 2));
+    const calls = f.readPage.mock.calls as unknown as [ReminderScanPass, unknown, AbortSignal][];
+    expect(calls[0][2]).not.toBe(calls[1][2]);
+    expect(f.handle).toHaveBeenCalledTimes(1); expect(f.sent.size).toBe(1);
+  });
+  it.each(["resolve", "reject"] as const)("late losing read %s cannot dispatch after retry", async (late) => {
+    vi.useFakeTimers(); const f = scanFixture(); f.populate("email24h", 1, 0);
+    let resolve!: (rows: ScanRow[]) => void; let reject!: (error: Error) => void;
+    f.readPage.mockImplementationOnce(() => new Promise((yes, no) => { resolve = yes; reject = no; }));
+    const pending = f.run(); await vi.advanceTimersByTimeAsync(1000);
+    expect(await pending).toMatchObject({ kind: "complete", readRetry: { recovered: true } });
+    expect(f.handle).toHaveBeenCalledTimes(1);
+    if (late === "resolve") resolve(f.rows.email24h); else reject(new Error("SYNTHETIC_PRIVATE late loser"));
+    await Promise.resolve(); await Promise.resolve();
+    expect(f.handle).toHaveBeenCalledTimes(1); expect(f.sent.size).toBe(1);
+  });
+  it("a second timeout fails after exactly two reads without advancing the cursor", async () => {
+    const f = scanFixture(); f.populate("email24h", 1, 0);
+    f.readPage.mockRejectedValue(new ReminderScanReadFailure(undefined, true));
+    expect(await f.run()).toMatchObject({ kind: "unavailable", queries: 2, scanned: 0,
+      failure: { stage: "read", category: "read_timeout" }, readRetry: { attempted: true, recovered: false, timeouts: 2 } });
+    expect(f.readPage).toHaveBeenCalledTimes(2); expect(f.handle).not.toHaveBeenCalled();
+    expect(f.values.has("reminder_scan:v1:checkpoint:email24h")).toBe(false);
+    expect(f.values.has("reminder_scan:v1:lock")).toBe(false);
+  });
+  it("never retries a later timeout after spending the one invocation-wide retry", async () => {
+    const f = scanFixture(); const original = f.readPage.getMockImplementation()!;
+    let calls = 0; f.readPage.mockImplementation(async (...args) => {
+      if (++calls === 1 || calls === 3) throw new ReminderScanReadFailure(undefined, true);
+      return original(...args);
+    });
+    expect(await f.run()).toMatchObject({ kind: "unavailable", queries: 3,
+      readRetry: { attempted: true, timeouts: 2 }, failure: { stage: "read", category: "read_timeout" } });
+    expect(f.readPage).toHaveBeenCalledTimes(3); expect(f.handle).not.toHaveBeenCalled();
+  });
+  it("refuses retry after lease loss", async () => {
+    const f = scanFixture(); f.readPage.mockImplementationOnce(async () => {
+      f.values.delete("reminder_scan:v1:lock"); throw new ReminderScanReadFailure(undefined, true);
+    });
+    expect(await f.run()).toMatchObject({ kind: "unavailable", queries: 1,
+      failure: { stage: "renew", category: "coordination_unavailable" }, readRetry: { attempted: false, recovered: false } });
+    expect(f.readPage).toHaveBeenCalledTimes(1); expect(f.handle).not.toHaveBeenCalled();
+  });
+  it("retains the reserve instead of retrying near the deadline", async () => {
+    const f = scanFixture(); f.readPage.mockImplementationOnce(async () => {
+      f.advance(24_000); throw new ReminderScanReadFailure(undefined, true);
+    });
+    expect(await f.run()).toMatchObject({ kind: "unavailable", queries: 1,
+      failure: { stage: "read", category: "read_timeout" }, readRetry: { attempted: false } });
+    expect(f.readPage).toHaveBeenCalledTimes(1); expect(f.handle).not.toHaveBeenCalled();
+  });
+  it("counts retry within eight reads while retaining the candidate cap and fair rotation", async () => {
+    const f = scanFixture(); f.populate("email24h", 1001);
+    f.readPage.mockRejectedValueOnce(new ReminderScanReadFailure(undefined, true));
+    const result = await f.run(); expect(result).toMatchObject({ kind: "partial", queries: 8, scanned: 200 });
+    expect(f.readPage).toHaveBeenCalledTimes(8);
+    expect(new Set(f.readPage.mock.calls.map(c => c[0])).size).toBe(4);
+    expect(f.handle).toHaveBeenCalledTimes(200);
+  });
+  it("does not issue a ninth query when the eighth read times out", async () => {
+    const f = scanFixture(); f.populate("email24h", 1001);
+    const original = f.readPage.getMockImplementation()!; let calls = 0;
+    f.readPage.mockImplementation(async (...args) => {
+      if (++calls === 1 || calls === 8) throw new ReminderScanReadFailure(undefined, true);
+      return original(...args);
+    });
+    expect(await f.run()).toMatchObject({ kind: "unavailable", queries: 8, scanned: 150,
+      readRetry: { attempted: true, timeouts: 2 }, failure: { stage: "read", category: "read_timeout" } });
+    expect(f.readPage).toHaveBeenCalledTimes(8); expect(f.handle).toHaveBeenCalledTimes(150);
+  });
+  it.each(["query", "validation", "handler", "coordination"] as const)("never retries a %s failure", async (failure) => {
+    const f = scanFixture(); f.populate("email24h", 1, 0);
+    if (failure === "query") f.readPage.mockRejectedValueOnce(new ReminderScanReadFailure("42703", false));
+    if (failure === "validation") f.readPage.mockResolvedValueOnce([{ ...f.rows.email24h[0], id: "SYNTHETIC_PRIVATE invalid" }]);
+    if (failure === "handler") f.handle.mockRejectedValueOnce(new Error("SYNTHETIC_PRIVATE handler"));
+    if (failure === "coordination") f.redis.eval = async () => { throw new Error("SYNTHETIC_PRIVATE coordination"); };
+    const result = await f.run(); expect(result.kind).toBe("unavailable");
+    expect(result).not.toHaveProperty("readRetry");
+    expect(f.readPage).toHaveBeenCalledTimes(failure === "coordination" ? 0 : 1);
+    expect(f.handle).toHaveBeenCalledTimes(failure === "handler" ? 1 : 0);
+    expect(JSON.stringify(result)).not.toContain("SYNTHETIC_PRIVATE");
+  });
+
+  it("rechecks the reserve after a slow lease renewal before retrying", async () => {
+    const f = scanFixture(); const renew = f.coordinator.renew; let renewals = 0;
+    f.coordinator.renew = async (token) => {
+      const owned = await renew(token); if (++renewals === 2) f.advance(24_000); return owned;
+    };
+    f.readPage.mockRejectedValueOnce(new ReminderScanReadFailure(undefined, true));
+    expect(await f.run()).toMatchObject({ kind: "unavailable", queries: 1,
+      failure: { stage: "read", category: "read_timeout" }, readRetry: { attempted: false } });
+    expect(f.readPage).toHaveBeenCalledTimes(1); expect(f.handle).not.toHaveBeenCalled();
+  });
+
+  it.each(["42703", "42501", "57014", "PGRST200", "PGRST301"])("known query code %s refuses retry even when abort signal already expired", async (code) => {
+    const f = scanFixture(); f.populate("email24h", 1, 0);
+    f.readPage.mockRejectedValueOnce(new ReminderScanReadFailure(code, true));
+    const result = await f.run();
+    expect(result).toMatchObject({ kind: "unavailable", queries: 1, scanned: 0,
+      failure: { stage: "read", category: "rejected_query", ...(code.startsWith("PGRST") ? {} : { sqlState: code }) } });
+    expect(result).not.toHaveProperty("readRetry");
+    if (code.startsWith("PGRST")) {
+      expect(result.failure).not.toHaveProperty("sqlState"); expect(JSON.stringify(result)).not.toContain(code);
+    }
+    expect(f.readPage).toHaveBeenCalledTimes(1); expect(f.handle).not.toHaveBeenCalled();
+    expect(f.values.has("reminder_scan:v1:checkpoint:email24h")).toBe(false);
+  });
+  it.each(["prototype", "sqlState", "timedOut", "hasQueryErrorCode"] as const)("hostile %s classifier fails closed without retry or private diagnostics", async (boundary) => {
+    const f = scanFixture(); f.populate("email24h", 1, 0);
+    const hostile = boundary === "prototype"
+      ? new Proxy({}, { getPrototypeOf() { throw new Error("SYNTHETIC_PRIVATE prototype"); } })
+      : Object.defineProperty(new ReminderScanReadFailure(undefined, true), boundary, {
+        get() { throw new Error("SYNTHETIC_PRIVATE classifier getter"); },
+      });
+    f.readPage.mockRejectedValueOnce(hostile);
+    const result = await f.run();
+    expect(result).toMatchObject({ kind: "unavailable", queries: 1, scanned: 0,
+      failure: { stage: "read", category: "rejected_query" } });
+    expect(result).not.toHaveProperty("readRetry");
+    expect(f.readPage).toHaveBeenCalledTimes(1); expect(f.handle).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("SYNTHETIC_PRIVATE");
+  });
+
 });

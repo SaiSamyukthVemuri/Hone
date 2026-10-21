@@ -1197,4 +1197,20 @@ describe("bound PI active-or-unknown failed-event retirement", () => {
     expect(h.stripeCalls).toEqual([]);
   });
 
+  it.each([null, "pi_other"])("ordinary decline cannot retire an unbound or different original (%s)", async (original) => {
+    h.rows = { payment_charge_attempts: attemptRow("cad", { status: "pending_stripe", stripe_payment_intent_id: original }) };
+    const pending = handlePaymentIntentPaymentFailed(event("payment_intent.payment_failed", {
+      id: PI_ID, status: "requires_payment_method", amount: AMOUNT, currency: "cad", metadata: META,
+      last_payment_error: { type: "card_error", code: "card_declined" },
+    }), CTX);
+    if (original === null) {
+      const { PaymentOriginalBindingPendingError } = await import("@/lib/billing/payment-webhook-reconciliation");
+      await expect(pending).rejects.toBeInstanceOf(PaymentOriginalBindingPendingError);
+    } else expect((await pending).identityMismatch).toBe(true);
+    expect(h.rows.payment_charge_attempts).toMatchObject({ status: "pending_stripe", stripe_payment_intent_id: original });
+    expect(h.updates).toEqual([]);
+    expect(critical("stripe_webhook_payment_identity_mismatch")).toHaveLength(original === null ? 0 : 1);
+    expect(h.stripeCalls).toEqual([]);
+  });
+
 });

@@ -29,7 +29,7 @@ import type { Appointment, Client, Service, Studio } from "@/lib/types/database"
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
-import { createUpstashReminderScanCoordinator, runReminderScanBatch, type ReminderScanPass, type ReminderScanCursor } from "@/lib/cron/reminder-scan-coordinator";
+import { createUpstashReminderScanCoordinator, runReminderScanBatch, ReminderScanReadFailure, type ReminderScanPass, type ReminderScanCursor } from "@/lib/cron/reminder-scan-coordinator";
 import { recordReminderRunSuccess } from "@/lib/cron/reminder-heartbeat";
 
 const PER_RUN_LIMIT = 50;
@@ -97,7 +97,7 @@ async function loadAppointmentsForWindow(opts: {
     query = query.or(`starts_at.gt.${time},and(starts_at.eq.${time},id.gt.${id})`);
   }
   const { data, error } = await query;
-  if (error) throw new Error(error.message);
+  if (error) throw new ReminderScanReadFailure(error.code, opts.signal.aborted);
 
   return ((data ?? []) as unknown as Array<
     Appointment & {
@@ -601,6 +601,7 @@ export async function GET(req: Request) {
   }
 
   const startedAt = Date.now();
+  let failureStage: "setup" | "scan" | "heartbeat" = "setup";
   try {
     const freshStats = (): EmailRunStats => ({ attempted: 0, succeeded: 0, failed: 0, skipped: 0, intakeCtaIncluded: 0 });
     const reminder_24h = freshStats();
@@ -611,6 +612,7 @@ export async function GET(req: Request) {
     const admin = createAdminClient();
     const appOrigin = getRequiredAppOrigin();
     const ledgerBudget = createLedgerBudget();
+    failureStage = "scan";
     const batch = await runReminderScanBatch({
       coordinator: createUpstashReminderScanCoordinator(),
       readPage: async (pass, page, signal) => {
@@ -636,6 +638,20 @@ export async function GET(req: Request) {
         };
       },
     });
+    // Retain the factual timeout even when a bounded read retry recovers.
+    // This does not resolve prior alerts or establish message delivery.
+    if (batch.readRetry?.recovered && batch.kind === "complete" && !batch.coverageUnconfirmed) {
+      try {
+        await recordOpsAlert({
+          severity: "warning", event: "reminder_read_timeout",
+          message: "A reminder candidate read timed out before a bounded retry recovered. Check scheduler progress.",
+          route: "/api/cron/appointment-reminders",
+          safeDetails: { failure_stage: "read", failure_category: "read_timeout",
+            read_timeouts: batch.readRetry.timeouts, read_retries: batch.readRetry.attempted ? 1 : 0,
+            read_retry_recovered: true, candidate_queries: batch.queries },
+        });
+      } catch { /* Best-effort observation; completion still requires all passes. */ }
+    }
     if (batch.kind !== "complete" || batch.coverageUnconfirmed) {
       try {
         await recordOpsAlert({
@@ -643,7 +659,17 @@ export async function GET(req: Request) {
           event: batch.kind === "unavailable" ? "cron_route_failed" : "reminder_scan_incomplete",
           message: "Reminder scan incomplete. Check scheduler progress before retrying work.",
           route: "/api/cron/appointment-reminders",
-          safeDetails: { reason: batch.reason, candidates_scanned: batch.scanned, candidate_queries: batch.queries, attempted: batch.attempted, coverage_unconfirmed: batch.coverageUnconfirmed },
+          safeDetails: {
+            reason: batch.reason, candidates_scanned: batch.scanned, candidate_queries: batch.queries,
+            attempted: batch.attempted, coverage_unconfirmed: batch.coverageUnconfirmed,
+            ...(batch.readRetry ? { read_timeouts: batch.readRetry.timeouts,
+              read_retries: batch.readRetry.attempted ? 1 : 0,
+              read_retry_recovered: batch.readRetry.recovered } : {}),
+            ...(batch.failure ? {
+              failure_stage: batch.failure.stage, failure_category: batch.failure.category,
+              ...(batch.failure.sqlState ? { sql_state: batch.failure.sqlState } : {}),
+            } : {}),
+          },
         });
       } catch { /* An incomplete run remains incomplete if its diagnostic fails. */ }
       return NextResponse.json({ ok: false, error: "cron_failed" }, { status: 500 });
@@ -660,6 +686,7 @@ export async function GET(req: Request) {
     // cadence is the spacing between invocations, so a slow or fast run can no
     // longer distort it. `previousInvokedAt` is filled in atomically by the
     // heartbeat merge from the value this write displaces.
+    failureStage = "heartbeat";
     await recordReminderRunSuccess({
       at: new Date().toISOString(),
       invokedAt: new Date(startedAt).toISOString(),
@@ -679,21 +706,23 @@ export async function GET(req: Request) {
       sms_reminder_24h,
       sms_reminder_2h,
     });
-  } catch (err) {
-    // PR #153. Cron-route failure alert. The cron runs every few
-    // minutes; if it starts throwing, reminders silently stop. The
-    // 3-strike per-row attempt counter caps the blast radius once
-    // the scheduler resumes, but the operator needs to know now.
-    await recordOpsAlert({
-      severity: "critical",
-      event: "cron_route_failed",
-      message:
-        err instanceof Error ? err.message : String(err ?? "unknown error"),
-      route: "/api/cron/appointment-reminders",
-      safeDetails: {
-        duration_ms: Date.now() - startedAt,
-      },
-    });
+  } catch {
+    // Rejection values may contain private contents or hostile getters/proxies.
+    // Never inspect them. A failed diagnostic must not replace the route's 500.
+    try {
+      await recordOpsAlert({
+        severity: "critical",
+        event: "cron_route_failed",
+        message: "Reminder run failed. Check scheduler progress before retrying work.",
+        route: "/api/cron/appointment-reminders",
+        safeDetails: {
+          duration_ms: Date.now() - startedAt,
+          failure_stage: failureStage,
+          failure_category: failureStage === "setup" ? "setup_failed"
+            : failureStage === "heartbeat" ? "heartbeat_failed" : "scan_failed",
+        },
+      });
+    } catch { /* The original run remains failed if its diagnostic cannot be stored. */ }
     return NextResponse.json(
       { ok: false, error: "cron_failed" },
       { status: 500 },
