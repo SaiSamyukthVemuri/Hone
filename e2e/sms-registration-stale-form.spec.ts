@@ -1,5 +1,5 @@
 import { test, expect, type Browser, type Page } from "@playwright/test";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomInt, randomUUID } from "node:crypto";
 import { seedE2eStudio, seedOperatorAuthUser, sql } from "./helpers/seed";
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
@@ -32,25 +32,9 @@ async function registrationOf(studioId: string): Promise<Registration | null> {
 }
 
 /** A studio whose live sender holds a US long code: what support records evidence against. */
-async function seedStudioWithActiveUsSender(): Promise<{ studioId: string; phone: string }> {
+export async function seedStudioWithActiveUsSender(): Promise<{ studioId: string; phone: string }> {
   const seed = await seedE2eStudio();
-  const [owner] = await sql<{ id: string }>(
-    "select id from public.practitioners where studio_id = $1 order by created_at limit 1",
-    [seed.studioId],
-  );
-  // A US 212 number, unique per run (exchange 555 keeps it fictional).
-  const phone = `+1212555${String(Math.floor(1000 + Math.random() * 9000))}`;
-  const hex = (n: number) => randomBytes(n / 2).toString("hex");
-  await sql(
-    `insert into public.studio_sms_senders
-       (studio_id, provider, status, country,
-        claimed_phone_number, phone_number, phone_number_sid, messaging_service_sid,
-        provisioning_claim_key, provisioning_claim_at, provisioning_claim_by_practitioner_id,
-        provisioning_lease_generation, provisioned_at, last_test_ok_at)
-     values ($1, 'twilio', 'active', 'US', $2, $2, $3, $4, $5, now(), $6, 1, now(), now())`,
-    [seed.studioId, phone, `PN${hex(32)}`, `MG${hex(32)}`, `hone-sms-${hex(32)}`, owner.id],
-  );
-  return { studioId: seed.studioId, phone };
+  return { studioId: seed.studioId, phone: await addActiveUsSender(seed.studioId) };
 }
 
 /** Release a sender the way 0191's lifecycle does: active -> releasing -> released. */
@@ -60,23 +44,37 @@ async function releaseSender(studioId: string): Promise<void> {
 }
 
 /** A new live sender with a new US number for the same studio (the replacement). */
-async function addActiveUsSender(studioId: string): Promise<string> {
+export async function addActiveUsSender(studioId: string): Promise<string> {
   const [owner] = await sql<{ id: string }>(
     "select id from public.practitioners where studio_id = $1 order by created_at limit 1",
     [studioId],
   );
-  const phone = `+1212555${String(Math.floor(1000 + Math.random() * 9000))}`;
+  // Released rows retain phone_number under the global unique index. Reserve
+  // by INSERT, not by guessing or a racy existence check; never delete rows.
+  const first = randomInt(0, 9000);
   const hex = (n: number) => randomBytes(n / 2).toString("hex");
-  await sql(
-    `insert into public.studio_sms_senders
-       (studio_id, provider, status, country,
-        claimed_phone_number, phone_number, phone_number_sid, messaging_service_sid,
-        provisioning_claim_key, provisioning_claim_at, provisioning_claim_by_practitioner_id,
-        provisioning_lease_generation, provisioned_at, last_test_ok_at)
-     values ($1, 'twilio', 'active', 'US', $2, $2, $3, $4, $5, now(), $6, 1, now(), now())`,
-    [studioId, phone, `PN${hex(32)}`, `MG${hex(32)}`, `hone-sms-${hex(32)}`, owner.id],
-  );
-  return phone;
+  for (let attempt = 0; attempt < 32; attempt += 1) {
+    // Distinct candidates in the existing synthetic US 212/555 fixture pool.
+    const phone = `+1212555${1000 + ((first + attempt) % 9000)}`;
+    try {
+      await sql(
+        `insert into public.studio_sms_senders
+           (studio_id, provider, status, country,
+            claimed_phone_number, phone_number, phone_number_sid, messaging_service_sid,
+            provisioning_claim_key, provisioning_claim_at, provisioning_claim_by_practitioner_id,
+            provisioning_lease_generation, provisioned_at, last_test_ok_at)
+         values ($1, 'twilio', 'active', 'US', $2, $2, $3, $4, $5, now(), $6, 1, now(), now())`,
+        [studioId, phone, `PN${hex(32)}`, `MG${hex(32)}`, `hone-sms-${hex(32)}`, owner.id],
+      );
+      return phone;
+    } catch (error) {
+      if (typeof error !== "object" || error === null) throw error;
+      const failure = error as { code?: unknown; constraint?: unknown };
+      // Retry only this fixture collision, not lifecycle/readiness/other guards.
+      if (failure.code !== "23505" || failure.constraint !== "studio_sms_senders_phone_number_unique") throw error;
+    }
+  }
+  throw new Error("Could not allocate an unused SMS fixture number after 32 attempts.");
 }
 
 /** One operator, signed in through the real magic link, in its own browser context. */
