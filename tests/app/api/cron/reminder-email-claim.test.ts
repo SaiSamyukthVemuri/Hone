@@ -155,7 +155,9 @@ const race = vi.hoisted(() => ({
   start: "2026-10-22T12:00:00.000Z",
   freshStart: "2026-10-22T12:00:00.000Z" as string | null,
   readError: false,
-  incidentRead: "none" as "none" | "db_error" | "timeout" | "invalid_row",
+  incidentRead: "none" as "none" | "db_error" | "timeout" | "invalid_row" | "throw",
+  incidentThrown: undefined as unknown,
+  incidentCoordinationError: undefined as unknown,
   incidentSqlState: "42703" as unknown,
   backlog: null as null | { channel: "email" | "sms"; skipped: number; eligible: number; reason: "toggle" | "destination" | "consent" | "claim" },
   sent: new Set<string>(),
@@ -183,6 +185,7 @@ vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
       race.store.set(key, { value, expiry: Date.now() + opts.ex * 1000 }); return "OK";
     },
     async eval(script, keys, args) {
+      if (race.incidentCoordinationError !== undefined && script.includes("return {0,''}")) throw race.incidentCoordinationError;
       if (race.failStore) throw new Error("synthetic storage failure");
       if (script.includes("return {0,''}")) return get(keys[0]) === args[0] ? [1, get(keys[1]) ?? ""] : [0, ""];
       if (get(keys[0]) !== args[0]) return 0;
@@ -267,7 +270,8 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           data: race.readError ? null : { ...row("00000000-0000-4000-8000-000000000001"), starts_at: race.freshStart },
           error: race.readError ? { message: "synthetic read failure" } : null,
         }),
-        then: (resolve: (value: unknown) => unknown) => {
+        then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => {
+          if (race.incidentRead === "throw") { answer(); return Promise.reject(race.incidentThrown).then(resolve, reject); }
           if (race.incidentRead === "timeout") { answer(); return new Promise(() => undefined); }
           return Promise.resolve(answer()).then(resolve);
         },
@@ -278,6 +282,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
 }));
 
 import { GET } from "@/app/api/cron/appointment-reminders/route";
+import { ReminderScanReadFailure } from "@/lib/cron/reminder-scan-coordinator";
 
 describe("MSG-001 candidate eligibility and keyset paging", () => {
   beforeEach(() => {
@@ -285,7 +290,7 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     vi.setSystemTime(new Date("2026-10-21T12:00:00.000Z"));
     race.store.clear(); race.store.set("reminder_scan:v1:rotation", { value: JSON.stringify({version:1,next:"email24h",known:[]}), expiry: Date.now() + 10800000 }); race.failStore = false; race.heartbeat.mockClear(); race.alerts.mockClear();
     race.start = "2026-10-22T12:00:00.000Z"; race.freshStart = race.start;
-    race.readError = false; race.incidentRead = "none"; race.incidentSqlState = "42703";
+    race.readError = false; race.incidentRead = "none"; race.incidentSqlState = "42703"; race.incidentThrown = undefined; race.incidentCoordinationError = undefined;
     race.backlog = null; race.sent.clear(); race.pages = [];
     race.send.mockClear(); race.smsSend.mockClear();
     race.claim.mockReset().mockResolvedValue(true);
@@ -497,6 +502,30 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     expect(details[0].safeDetails).not.toHaveProperty("sql_state");
     expect(JSON.stringify(race.alerts.mock.calls)).not.toContain(code);
     expect(race.claim).not.toHaveBeenCalled(); expect(race.heartbeat).not.toHaveBeenCalled();
+  });
+
+  it.each(["read", "rotation", "timedOut"] as const)("Privacy incident diagnostics contain hostile %s classification without raw outer-route alerts", async (boundary) => {
+    const hostile = new Proxy({}, { getPrototypeOf() { throw new Error("SYNTHETIC_PRIVATE getPrototypeOf classifier failure"); } });
+    if (boundary === "rotation") race.incidentCoordinationError = hostile;
+    else {
+      race.incidentRead = "throw";
+      race.incidentThrown = boundary === "read" ? hostile : Object.defineProperty(new ReminderScanReadFailure(undefined, false), "timedOut", {
+        get() { throw new Error("SYNTHETIC_PRIVATE timedOut classifier failure"); },
+      });
+    }
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
+    expect(race.alerts).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      message: "Reminder scan incomplete. Check scheduler progress before retrying work.",
+      safeDetails: expect.objectContaining({ reason: "read_or_handler", candidates_scanned: 0, attempted: 0,
+        candidate_queries: boundary === "rotation" ? 0 : 1,
+        failure_stage: boundary === "rotation" ? "rotation" : "read",
+        failure_category: boundary === "rotation" ? "coordination_error" : "rejected_query",
+      }),
+    }));
+    expect(race.claim).not.toHaveBeenCalled(); expect(race.send).not.toHaveBeenCalled();
+    expect(race.smsSend).not.toHaveBeenCalled(); expect(race.heartbeat).not.toHaveBeenCalled();
   });
 
 });

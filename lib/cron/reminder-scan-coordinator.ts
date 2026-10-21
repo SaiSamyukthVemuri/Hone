@@ -312,12 +312,20 @@ export async function runReminderScanBatch<T extends Candidate>(ports: {
     if (result.coverageUnconfirmed) return finish("partial", "coverage_unconfirmed");
     return [...states.values()].every((s) => s.complete) && done.size === 4 ? finish("complete", "complete") : result;
   } catch (error) {
-    const category: ScanFailureCategory = stage === "read"
-      ? error instanceof ScanTimeout || (error instanceof ReminderScanReadFailure && error.timedOut) ? "read_timeout" : "rejected_query"
+    // Rejection values can be hostile proxies or instances with throwing
+    // getters. Even instanceof can invoke getPrototypeOf: guard the ENTIRE
+    // refinement so diagnostics never escape into the outer raw-message path.
+    let category: ScanFailureCategory = stage === "read" ? "rejected_query"
       : stage === "handler" ? "handler_error"
-      : stage === "validate" ? "invalid_row"
-      : error instanceof InvalidCheckpoint ? "checkpoint_invalid"
-      : error instanceof ScanTimeout ? "coordination_timeout" : "coordination_error";
+      : stage === "validate" ? "invalid_row" : "coordination_error";
+    try {
+      category = stage === "read"
+        ? error instanceof ScanTimeout || (error instanceof ReminderScanReadFailure && error.timedOut) ? "read_timeout" : "rejected_query"
+        : stage === "handler" ? "handler_error"
+        : stage === "validate" ? "invalid_row"
+        : error instanceof InvalidCheckpoint ? "checkpoint_invalid"
+        : error instanceof ScanTimeout ? "coordination_timeout" : "coordination_error";
+    } catch { /* Keep the fixed stage-derived fallback; never inspect/log again here. */ }
     return unavailable("read_or_handler", category, error);
   } finally {
     await ports.coordinator.release(token);
