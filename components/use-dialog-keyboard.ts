@@ -114,9 +114,11 @@ export function useDialogKeyboard<
   return { panelRef, initialFocusRef };
 }
 
-/** Same selector `confirm-dialog` uses, so the two traps cannot disagree. */
+// Native disclosures are tab stops too: only the first summary of a details
+// element is natively focusable. Respect an explicit tabindex=-1; other explicit
+// tab stops remain covered by the final selector, as before.
 const FOCUSABLE =
-  'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
+  'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),details > summary:first-of-type:not([tabindex="-1"]),[tabindex]:not([tabindex="-1"])';
 
 
 // The existing trap's boundary decision, kept pure so both Tab directions can
