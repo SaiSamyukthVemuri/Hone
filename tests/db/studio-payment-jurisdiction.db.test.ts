@@ -606,6 +606,57 @@ describe("J7 recording what Stripe says about an account", () => {
 
 // ---------------------------------------------------------------------------
 describe("J8 stale configuration fails closed under a concurrent change", () => {
+  it("payment jurisdiction SHARE then parent FK KEY SHARE cannot deadlock the setter", async () => {
+    const s = await studio("j8-parent-keyshare");
+    const appt = await appointment(s);
+    const pool = new Pool({ connectionString: resolveLocalDbUrl(), max: 2 });
+    const payer = await pool.connect();
+    const setter = await pool.connect();
+    let pending: Promise<{ result: string | null; error: unknown }> | undefined;
+    try {
+      await payer.query("begin isolation level read committed");
+      await setter.query("begin isolation level read committed");
+      await payer.query("set local statement_timeout = '3s'");
+      await setter.query("set local statement_timeout = '5s'");
+      const payerPid = (await payer.query("select pg_backend_pid() pid")).rows[0].pid as number;
+      const setterPid = (await setter.query("select pg_backend_pid() pid")).rows[0].pid as number;
+      await payer.query("select 1 from public.studio_payment_jurisdictions where studio_id=$1 for share", [s.studioId]);
+      pending = setter.query(
+        "select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false,'fixture:parent-keyshare')",
+        [s.studioId],
+      ).then((r) => ({ result: r.rows[0].out_result as string, error: null }), (error: unknown) => ({ result: null, error }));
+
+      // Observe the setter actually waiting on this payer, not a timing guess.
+      // It has passed its parent lock and is blocked at jurisdiction FOR UPDATE.
+      const deadline = Date.now() + 2_000;
+      let blocked = false;
+      while (Date.now() < deadline) {
+        const blockers = (await adminQuery("select pg_blocking_pids($1) pids", [setterPid])).rows[0].pids as number[];
+        if (blockers.includes(payerPid)) { blocked = true; break; }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(blocked, "setter must reach the payer-held jurisdiction lock").toBe(true);
+      // The FK now needs studio KEY SHARE. Old parent FOR UPDATE creates a
+      // cycle here; NO KEY UPDATE lets this matching old-currency insert commit.
+      await payer.query(
+        `insert into public.payment_charge_attempts
+           (studio_id,charge_reason,client_id,appointment_id,created_by_practitioner_id,
+            amount_cents,currency,status,stripe_livemode)
+         values($1,'no_show_fee',$2,$3,$4,5000,'cad','ready',false)`,
+        [s.studioId, s.clientId, appt, s.practitionerId],
+      );
+      await payer.query("commit");
+      expect(await pending).toEqual({ result: "refused_monetary_history", error: null });
+      await setter.query("commit");
+      expect((await jurisdiction(s.studioId))?.payment_currency).toBe("cad");
+    } finally {
+      await payer.query("rollback").catch(() => undefined);
+      await setter.query("rollback").catch(() => undefined);
+      await pending;
+      payer.release(); setter.release(); await pool.end();
+    }
+  }, 15_000);
+
   it("an attempt prepared against the old currency waits for the change and is refused", async () => {
     const s = await studio("j8");
     const appt = await appointment(s);
