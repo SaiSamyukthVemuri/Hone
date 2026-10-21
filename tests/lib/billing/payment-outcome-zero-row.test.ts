@@ -70,13 +70,52 @@ describe("refund outcome writes detect zero rows (payment-refund.ts)", () => {
     // Returned-object success now requires the bound command + committed read.
     expect(count(REFUND, /\.select\("id"\)/g)).toBeGreaterThanOrEqual(2);
     expect(REFUND).toContain('rpc("reconcile_bound_payment_event"');
-    expect(REFUND).toContain('.select("refund_status,stripe_refund_id,refunded_at")');
+    const start = REFUND.indexOf("async function verifiedSavedRefundTimestamp(");
+    const end = REFUND.indexOf("const { data: observationRows", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const reader = REFUND.slice(start, end);
+    const columns = reader.match(/\.select\("([^"]+)"\)/)?.[1].split(",") ?? [];
+    expect(columns).toEqual([
+      "id", "studio_id", "client_id", "charge_reason", "status", "stripe_livemode",
+      "stripe_account_id", "stripe_customer_id", "stripe_payment_intent_id", "stripe_charge_id",
+      "amount_cents", "currency", "charged_at", "refund_status", "refund_amount_cents", "refunded_at",
+      "stripe_refund_id", "refund_failure_code", "refund_failure_message_safe",
+    ]);
+    expect(reader).toContain('.eq("id", original.id)');
+    expect(reader).toContain('.eq("studio_id", original.studio_id)');
   });
 
   it("success write treats zero rows as needs_manual_review (never reports success unproven)", () => {
     expect(REFUND).toContain('if (observationError || !["reconciled", "already_refunded", "refund_pending", "refund_failed"].includes(observation?.result ?? ""))');
-    expect(REFUND).toContain('savedError || saved?.refund_status !== "succeeded"');
-    expect(REFUND).toContain('saved.stripe_refund_id !== refund.id || !saved.refunded_at');
+    const start = REFUND.indexOf("async function verifiedSavedRefundTimestamp(");
+    const reader = REFUND.slice(start, REFUND.indexOf("const { data: observationRows", start));
+    expect(start).toBeGreaterThan(-1);
+    expect(reader).toMatch(/if \(!savedError && saved &&/);
+    expect(reader).toMatch(/original\.stripe_account_id && original\.stripe_customer_id &&[\s\S]*?original\.stripe_payment_intent_id && original\.stripe_charge_id && refundId/);
+    for (const field of ["id", "studio_id", "client_id", "charge_reason", "stripe_livemode",
+      "stripe_account_id", "stripe_customer_id", "stripe_payment_intent_id", "stripe_charge_id",
+      "amount_cents", "currency", "charged_at"]) {
+      expect(reader, `unverified original ${field}`).toContain(`saved.${field} === original.${field}`);
+    }
+    for (const proof of ['saved.status === "succeeded"', 'saved.refund_status === "succeeded"',
+      "saved.stripe_refund_id === refundId", "saved.refund_amount_cents === refundAmountCents",
+      "refundAmountCents === saved.amount_cents", 'typeof saved.refunded_at === "string"',
+      "Number.isFinite(Date.parse(saved.refunded_at))", "saved.refund_failure_code === null",
+      "saved.refund_failure_message_safe === null"]) expect(reader).toContain(proof);
+    expect(reader).toContain("return saved.refunded_at;");
+    expect(reader).toMatch(/if \(!savedError && saved &&[\s\S]*?saved\.refund_failure_message_safe === null\) \{\s*return saved\.refunded_at;/);
+    expect(reader).toMatch(/catch \{[\s\S]*?\}[\s\S]*?return null;/);
+    const completion = REFUND.slice(REFUND.indexOf("const refundedAtIso = await verifiedSavedRefundTimestamp(attempt, refund.id)"));
+    expect(completion).toMatch(/if \(!refundedAtIso\) \{[\s\S]*?outcome: "needs_manual_review"[\s\S]*?\}[\s\S]*?return \{[\s\S]*?ok: true/);
+    expect(completion).toContain("refundedAt: refundedAtIso");
+    const staleStart = REFUND.indexOf('if (!observationError && observation?.result === "stale_observation")');
+    const staleEnd = REFUND.indexOf('if (observationError ||', staleStart);
+    expect(staleStart).toBeGreaterThan(-1);
+    expect(staleEnd).toBeGreaterThan(staleStart);
+    const stale = REFUND.slice(staleStart, staleEnd);
+    expect(stale).toContain("await verifiedSavedRefundTimestamp(attempt, refund.id)");
+    expect(stale).toMatch(/if \(callbackTimestamp\) \{[\s\S]*?ok: true/);
   });
 
   it("terminal-failure write folds zero rows into the critical alert path", () => {

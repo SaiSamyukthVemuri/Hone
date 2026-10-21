@@ -437,6 +437,19 @@ test("E · two synthetic studios keep one booking/intake/chart/money lineage and
     if (country === "US") await makeStudioUsd({ studioId: seed.studioId }, { acknowledgePrices: true });
     const b: Built = { studioId: seed.studioId, clientId: "", sessionId: "", accountId: "", ownerEmail: seed.ownerEmail, clientEmail: seed.clientEmail };
     built.push(b); // Existing run-scoped cleanup owns even a partly built case.
+    // This paid journey uses a paid consultation BEFORE any booking exists.
+    // A free consultation intentionally has no payment-preparation form.
+    const initialService = (await adminQuery(`select id,studio_id,name,modality,price_cents,active
+      from public.services where studio_id=$1 and name=$2`, [seed.studioId, seed.serviceName])).rows;
+    expect(initialService).toHaveLength(1);
+    expect(initialService[0]).toMatchObject({ studio_id: seed.studioId, name: seed.serviceName,
+      modality: "consultation", price_cents: 0, active: true });
+    const pricedService = (await adminQuery(`update public.services set price_cents=12000
+      where id=$3 and studio_id=$1 and name=$2 and modality='consultation' and price_cents=0 and active=true
+      returning id,studio_id,name,price_cents`, [seed.studioId, seed.serviceName, initialService[0].id])).rows;
+    expect(pricedService).toHaveLength(1);
+    expect(pricedService[0]).toMatchObject({ id: initialService[0].id, studio_id: seed.studioId,
+      name: seed.serviceName, price_cents: 12000 });
 
     await test.step(`${country}: containment preconditions before booking`, async () => {
       const flags = (await adminQuery(`select send_confirmation_emails,send_confirmation_sms,
@@ -571,9 +584,11 @@ test("E · two synthetic studios keep one booking/intake/chart/money lineage and
     await test.step(`${country}: owner-authored fake charge/refund stays bound to that chart and intake`, async () => {
       await page.reload();
       const region = page.getByRole("region", { name: "Session payment" });
-      // The booked consultation is zero-priced. This is an EXPLICIT synthetic
-      // owner-authored total, not an invented booked-service reference price.
+      // Preserve the booked $120 reference; the owner explicitly authors a
+      // $185 total with the existing required adjustment explanation.
+      await expect(region.getByTestId("authoritative-amount")).toHaveText("$120.00");
       await region.getByTestId("final-charge-input").fill("185.00");
+      await region.getByTestId("adjustment-reason-input").fill("Synthetic aftercare product adjustment");
       await region.getByRole("button", { name: /prepare session payment/i }).click();
       const run = region.getByRole("button", { name: /^run charge$/i }); await expect(run).toBeVisible();
       const attempts = await getSessionPaymentAttemptRows(b.sessionId); expect(attempts).toHaveLength(1); attemptId = attempts[0].id;
@@ -608,6 +623,9 @@ test("E · two synthetic studios keep one booking/intake/chart/money lineage and
         join public.client_intake_forms i on i.client_id=p.client_id and i.studio_id=p.studio_id
         where p.id=$1 and p.studio_id=$2 and i.id=$3`, [attemptId, seed.studioId, intakeId])).rows;
       expect(lineage).toEqual([{ studio_id: seed.studioId, client_id: b.clientId, session_id: b.sessionId, appointment_id: appointmentId, intake_id: intakeId }]);
+      expect((await adminQuery(`select service_id from public.appointments
+        where id=$1 and studio_id=$2 and client_id=$3`,
+      [appointmentId, seed.studioId, b.clientId])).rows).toEqual([{ service_id: pricedService[0].id }]);
       expect(await readClinicalIntegritySnapshot(b.sessionId)).toEqual(beforeClinical);
       expect(await getSessionContentDigest(b.sessionId)).toBe(digest);
     });

@@ -312,8 +312,18 @@ describe("refundPaymentChargeAttempt: outcome writes", () => {
   it("success writes refund_status='succeeded', stripe_refund_id, refunded_at", () => {
     expect(HELPER).toContain('rpc("reconcile_bound_payment_event"');
     expect(HELPER).toContain('p_event_type: "refund.observed"');
-    expect(HELPER).toContain('saved?.refund_status !== "succeeded"');
-    expect(HELPER).toContain("const refundedAtIso = saved.refunded_at");
+    const readerStart = HELPER.indexOf("async function verifiedSavedRefundTimestamp(");
+    expect(readerStart).toBeGreaterThan(-1);
+    const reader = HELPER.slice(readerStart, HELPER.indexOf("const { data: observationRows", readerStart));
+    expect(reader).toContain("!savedError && saved &&");
+    expect(reader).toContain('saved.refund_status === "succeeded"');
+    expect(reader).toContain("saved.stripe_refund_id === refundId");
+    expect(reader).toContain("saved.refund_amount_cents === refundAmountCents");
+    expect(reader).toContain("Number.isFinite(Date.parse(saved.refunded_at))");
+    expect(reader).toContain("return saved.refunded_at;");
+    const completion = HELPER.slice(HELPER.indexOf("const refundedAtIso = await verifiedSavedRefundTimestamp(attempt, refund.id)"));
+    expect(completion).toMatch(/if \(!refundedAtIso\) \{[\s\S]*?outcome: "needs_manual_review"[\s\S]*?\}[\s\S]*?return \{[\s\S]*?ok: true/);
+    expect(completion).toContain("refundedAt: refundedAtIso");
   });
 
   it("success write matches refund_status='pending_stripe' (no overwrite of a reconciled row)", () => {
