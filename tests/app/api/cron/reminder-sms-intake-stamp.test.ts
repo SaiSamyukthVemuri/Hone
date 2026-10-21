@@ -32,7 +32,7 @@ const h = vi.hoisted(() => {
     intakeUpdates: [] as Array<Record<string, unknown>>,
   };
   const APPT = {
-    id: "appt-1",
+    id: "00000000-0000-4000-8000-000000000001",
     studio_id: "studio-1",
     client_id: "client-1",
     status: "confirmed",
@@ -73,7 +73,7 @@ const h = vi.hoisted(() => {
       return { data: table === "appointments" && sms24 ? [APPT] : [], error: null };
     };
     const b: Record<string, unknown> = {};
-    for (const m of ["order", "limit"]) b[m] = () => b;
+    for (const m of ["order", "limit", "abortSignal"]) b[m] = () => b;
     b.select = (selected: string) => { columns = selected; return b; };
     for (const op of ["eq", "is", "lt", "gte", "lte"]) {
       b[op] = (column: string, value: unknown) => {
@@ -124,6 +124,22 @@ const h = vi.hoisted(() => {
   return { state, admin };
 });
 
+
+vi.mock("@/lib/platform-leads/alert-delivery", () => ({
+  recoverLeadAlertsOnReminderTrigger: async () => ({ ran: false, reason: "offline_fixture" }),
+}));
+vi.mock("@/lib/email/delivery-ledger", () => ({
+  beginAppointmentEmailMessage: async () => null,
+  settleEmailMessage: async () => undefined,
+  settleOutcomeForEmailSend: () => "accepted",
+}));
+vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/cron/reminder-scan-coordinator")>();
+  return { ...actual, createUpstashReminderScanCoordinator: () => ({
+    acquire: async () => "offline-fixture", rotation: async () => ({ version: 1 as const, next: "email24h" as const, known: [] }),
+    checkpoint: async () => null, renew: async () => true, save: async () => true, release: async () => undefined,
+  }) };
+});
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => h.admin }));
 vi.mock("@/lib/cron/auth", () => ({ isAuthorizedCronRequest: () => true }));
 vi.mock("@/lib/cron/reminder-heartbeat", () => ({ recordReminderRunSuccess: () => Promise.resolve() }));
@@ -146,6 +162,8 @@ const answer = (status: number, body: unknown) => () =>
   Promise.resolve(new Response(JSON.stringify(body), { status }));
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-08T17:00:00.000Z"));
   for (const k of ENV_KEYS) saved[k] = process.env[k];
   delete process.env.VERCEL_ENV;
   process.env.TWILIO_ACCOUNT_SID = `AC${"1".repeat(32)}`;
@@ -166,6 +184,7 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   for (const k of ENV_KEYS) {
@@ -238,6 +257,13 @@ describe("NOT stamped: the link never left Hone, or the message did not carry it
   ] as const) {
     it(`a skipped send: ${label}`, async () => {
       h.state.claim = claim;
+      if (claim === "error") {
+        const response = await GET(new Request("https://hone.care/api/cron/appointment-reminders"));
+        expect(response.status).toBe(500);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(h.state.intakeUpdates).toEqual([]);
+        return;
+      }
       const { sms24 } = await run();
       expect(fetchMock).not.toHaveBeenCalled();
       expect(sms24).toMatchObject({ attempted: 0, skipped: 1, intakeCtaIncluded: 0 });
@@ -276,7 +302,7 @@ describe("MSG-005: queued SMS uses current recipient eligibility", () => {
     expect(recorded).toEqual([]);
     expect(h.state.intakeUpdates).toEqual([]);
     expect(sms24).toMatchObject({ attempted: 0, skipped: 1 });
-    expect(h.state.liveReads).toEqual([[ ["eq", "id", "appt-1"], ["eq", "studio_id", "studio-1"] ]]);
+    expect(h.state.liveReads).toEqual([[ ["eq", "id", "00000000-0000-4000-8000-000000000001"], ["eq", "studio_id", "studio-1"] ]]);
   });
 
   it("dispatches only to the current phone, never the queued destination", async () => {

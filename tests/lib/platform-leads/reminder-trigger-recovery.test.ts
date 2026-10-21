@@ -98,13 +98,18 @@ describe("wiring in the reminders route (source guard)", () => {
     const heartbeat = SRC.indexOf("await recordReminderRunSuccess(");
     const catchAt = SRC.indexOf("} catch (err) {", heartbeat);
     const calls = [...SRC.matchAll(/await runLeadAlertRecovery\(\)/g)].map((m) => m.index!);
-    expect(calls).toHaveLength(2);
-    expect(calls[0]).toBeGreaterThan(heartbeat);
-    expect(calls[0]).toBeLessThan(catchAt);
+    expect(calls).toHaveLength(3);
+    const partialAt = SRC.indexOf('if (batch.kind !== "complete" || batch.coverageUnconfirmed)');
+    expect(calls[0]).toBeGreaterThan(partialAt);
+    expect(calls[0]).toBeLessThan(heartbeat);
+    expect(SRC.slice(partialAt, calls[0])).not.toContain("recordReminderRunSuccess(");
+    expect(SRC.slice(calls[0], heartbeat)).toContain('return NextResponse.json({ ok: false, error: "cron_failed", lead_alerts }, { status: 500 });');
+    expect(calls[1]).toBeGreaterThan(heartbeat);
+    expect(calls[1]).toBeLessThan(catchAt);
     const failureAlert = SRC.indexOf('event: "cron_route_failed"');
-    expect(calls[1]).toBeGreaterThan(failureAlert);
+    expect(calls[2]).toBeGreaterThan(failureAlert);
     // The reminders' failure answer is unchanged: still a 500.
-    expect(SRC.slice(calls[1])).toMatch(/\{ ok: false, error: "cron_failed", lead_alerts \},\s*\{ status: 500 \}/);
+    expect(SRC.slice(calls[2])).toMatch(/\{ ok: false, error: "cron_failed", lead_alerts \},\s*\{ status: 500 \}/);
     expect(SRC.match(/recoverLeadAlertsOnReminderTrigger\(/g)).toHaveLength(1);
   });
 
