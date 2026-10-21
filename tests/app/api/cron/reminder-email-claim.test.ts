@@ -157,6 +157,8 @@ const race = vi.hoisted(() => ({
   readError: false,
   incidentRead: "none" as "none" | "db_error" | "timeout" | "invalid_row" | "throw",
   incidentThrown: undefined as unknown,
+  setupThrown: undefined as unknown,
+  originThrown: undefined as unknown,
   incidentCoordinationError: undefined as unknown,
   incidentSqlState: "42703" as unknown,
   backlog: null as null | { channel: "email" | "sms"; skipped: number; eligible: number; reason: "toggle" | "destination" | "consent" | "claim" },
@@ -201,7 +203,7 @@ vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
   }) };
 });
 vi.mock("@/lib/cron/auth", () => ({ isAuthorizedCronRequest: () => true }));
-vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://example.invalid" }));
+vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => { if (race.originThrown !== undefined) throw race.originThrown; return "https://example.invalid"; } }));
 vi.mock("@/lib/booking/tokens", () => ({ generateCancellationToken: () => "synthetic-token" }));
 vi.mock("@/lib/cron/reminder-heartbeat", () => ({ recordReminderRunSuccess: race.heartbeat }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: race.alerts }));
@@ -219,7 +221,7 @@ vi.mock("@/lib/sms/send-appointment", () => ({
   send2hReminderSmsToClient: race.smsSend,
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({
-  createAdminClient: () => ({
+  createAdminClient: () => { if (race.setupThrown !== undefined) throw race.setupThrown; return ({
     from: () => {
       let candidateColumn = "";
       let cursor: string | null = null;
@@ -278,7 +280,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       };
       return b;
     },
-  }),
+  }); },
 }));
 
 import { GET } from "@/app/api/cron/appointment-reminders/route";
@@ -292,6 +294,8 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     race.start = "2026-10-22T12:00:00.000Z"; race.freshStart = race.start;
     race.readError = false; race.incidentRead = "none"; race.incidentSqlState = "42703"; race.incidentThrown = undefined; race.incidentCoordinationError = undefined;
     race.backlog = null; race.sent.clear(); race.pages = [];
+    race.setupThrown = undefined; race.originThrown = undefined;
+    race.heartbeat.mockReset().mockResolvedValue(undefined); race.alerts.mockReset().mockResolvedValue(undefined);
     race.send.mockClear(); race.smsSend.mockClear();
     race.claim.mockReset().mockResolvedValue(true);
     race.record.mockReset().mockImplementation(async () => undefined);
@@ -526,6 +530,45 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     }));
     expect(race.claim).not.toHaveBeenCalled(); expect(race.send).not.toHaveBeenCalled();
     expect(race.smsSend).not.toHaveBeenCalled(); expect(race.heartbeat).not.toHaveBeenCalled();
+  });
+
+  it.each(["admin", "origin", "heartbeat"] as const)("MSG007 outer catch contains hostile %s rejection with fixed diagnostics", async (boundary) => {
+    const inspected = vi.fn(() => { throw new Error("SYNTHETIC_PRIVATE rejection inspected"); });
+    const hostile = new Proxy({}, { getPrototypeOf: inspected, get: inspected });
+    if (boundary === "admin") race.setupThrown = hostile;
+    else if (boundary === "origin") race.originThrown = hostile;
+    else race.heartbeat.mockRejectedValueOnce(hostile);
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ ok: false, error: "cron_failed" });
+    expect(inspected).not.toHaveBeenCalled();
+    expect(race.alerts).toHaveBeenCalledExactlyOnceWith({
+      severity: "critical", event: "cron_route_failed",
+      message: "Reminder run failed. Check scheduler progress before retrying work.",
+      route: "/api/cron/appointment-reminders",
+      safeDetails: { duration_ms: expect.any(Number),
+        failure_stage: boundary === "heartbeat" ? "heartbeat" : "setup",
+        failure_category: boundary === "heartbeat" ? "heartbeat_failed" : "setup_failed" },
+    });
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
+    if (boundary !== "heartbeat") {
+      expect(race.claim).not.toHaveBeenCalled(); expect(race.send).not.toHaveBeenCalled();
+      expect(race.smsSend).not.toHaveBeenCalled(); expect(race.heartbeat).not.toHaveBeenCalled();
+    } else {
+      expect(race.claim).toHaveBeenCalledTimes(1); expect(race.send).toHaveBeenCalledTimes(1);
+      expect(race.heartbeat).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it.each(["admin", "heartbeat"] as const)("MSG007 outer catch preserves 500 when %s diagnostic writer rejects", async (boundary) => {
+    if (boundary === "admin") race.setupThrown = new Error("SYNTHETIC_PRIVATE admin setup");
+    else race.heartbeat.mockRejectedValueOnce(new Error("SYNTHETIC_PRIVATE heartbeat"));
+    race.alerts.mockRejectedValueOnce(new Error("SYNTHETIC_PRIVATE alert writer"));
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ ok: false, error: "cron_failed" });
+    expect(race.alerts).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
   });
 
 });
