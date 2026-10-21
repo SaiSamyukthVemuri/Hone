@@ -1587,4 +1587,23 @@ describe("0239 — bound signed payment event command", () => {
       .toEqual({ refund_status: null, stripe_refund_status: null, refunded_at: null });
   });
 
+  it.each(["failed", "canceled"])("recorded provider %s evidence cannot be erased by the action retry claim", async (status) => {
+    const p = await prepared();
+    await bound(p);
+    const refund = { refund_id: `re_claim_${randomUUID()}`, refund_amount_cents: p.row.amount_cents,
+      refund_currency: p.row.currency, refund_charge_id: p.object.charge_id, refund_status: status, event_created: 400 };
+    expect((await bound(p, refund, "refund.updated")).rows[0].result).toBe("refund_failed");
+    const read = async () => (await adminQuery(`select refund_status,stripe_refund_id,stripe_refund_status,
+      stripe_refund_event_created,stripe_refund_event_id from public.payment_charge_attempts where id=$1`, [p.row.id])).rows[0];
+    const before = await read();
+    const claim = await adminQuery(`update public.payment_charge_attempts set refund_status='pending_stripe',stripe_refund_id=null
+      where id=$1 and studio_id=$2 and status='succeeded' and stripe_livemode=false
+        and (refund_status is null or refund_status='failed')
+        and (receipt_status is null or receipt_status in ('sent','failed'))
+        and stripe_refund_id is null and stripe_refund_status is null
+        and stripe_refund_event_created is null and stripe_refund_event_id is null returning id`, [p.row.id, p.s.studioId]);
+    expect(claim.rows).toEqual([]);
+    expect(await read()).toEqual(before);
+  });
+
 });

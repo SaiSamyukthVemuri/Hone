@@ -244,7 +244,10 @@ describe("refundPaymentChargeAttempt: atomic claim", () => {
     expect(HELPER).toMatch(/refund_failure_code:\s*null/);
     expect(HELPER).toMatch(/refund_failure_message_safe:\s*null/);
     expect(HELPER).toMatch(/refunded_at:\s*null/);
-    expect(HELPER).toMatch(/stripe_refund_id:\s*null/);
+    for (const field of ["stripe_refund_id", "stripe_refund_status", "stripe_refund_event_created", "stripe_refund_event_id"]) {
+      expect(HELPER).toContain(`.is("${field}", null)`);
+    }
+    expect(HELPER).not.toMatch(/stripe_refund_id:\s*null/);
   });
 
   it("zero-row claim returns outcome='claim_lost' (no duplicate Stripe call)", () => {

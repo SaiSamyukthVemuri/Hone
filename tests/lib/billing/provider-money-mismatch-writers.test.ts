@@ -199,6 +199,9 @@ function attemptRow(currency: "cad" | "usd", over: Record<string, unknown> = {})
     refund_amount_cents: null,
     refunded_at: null,
     stripe_refund_id: null,
+    stripe_refund_status: null,
+    stripe_refund_event_created: null,
+    stripe_refund_event_id: null,
     updated_at: "2026-08-01T00:00:00.000Z",
     ...over,
   };
