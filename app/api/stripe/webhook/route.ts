@@ -734,6 +734,14 @@ async function handleSetupIntentSucceeded(
     }
   }
 
+  // PAY-006: order selection by the authenticated SUCCESS event, not intent
+  // issuance, metadata or delivery time. The ordered command must adjudicate
+  // current selection under the existing client/mode lock; no app-side guess.
+  if (typeof event.id !== "string" || event.id.trim().length === 0
+      || !Number.isSafeInteger(event.created) || event.created <= 0) {
+    throw new Error("card_setup_success_event_order_missing");
+  }
+
   // 6. Retrieve the PaymentMethod from Stripe on the connected
   //    account. This is the only authoritative source for brand /
   //    last4 / exp; browser-side Elements never sends that data to
@@ -769,15 +777,18 @@ async function handleSetupIntentSucceeded(
   //    the partial unique index client_payment_methods_one_active_per_pair, so
   //    it cannot be reordered away; it has to commit as one transaction.
   //
-  //    save_client_card_on_file re-validates the customer and signature lineage
+  //    save_client_card_on_file_ordered re-validates signed success ordering,
+  //    customer and signature lineage
   //    inside that transaction, takes an advisory lock per
   //    (studio, client, mode) so two concurrent replacements cannot interleave,
   //    and returns 'inserted' or 'idempotent'. Anything else raises, which we
   //    surface as a throw so the parent releases the claim and Stripe retries,
   //    with the previous card still active, because the retire rolled back too.
   const { data: saveRows, error: saveErr } = await admin.rpc(
-    "save_client_card_on_file",
+    "save_client_card_on_file_ordered",
     {
+      p_success_event_id: event.id,
+      p_success_event_created: event.created,
       p_studio_id: metaStudioId,
       p_client_id: metaClientId,
       p_stripe_account_id: ctx.stripeAccountId,
@@ -809,7 +820,15 @@ async function handleSetupIntentSucceeded(
     );
   }
   const saved = Array.isArray(saveRows) ? saveRows[0] : saveRows;
-  if (!saved || typeof saved.card_id !== "string") {
+  if (saved?.outcome === "unknown_active_event_order") {
+    // Legacy unknown ordering requires trusted evidence under the command's
+    // CAS/lock contract, never a default timestamp or a silent replacement.
+    throw new Error("card_setup_active_event_order_unverified");
+  }
+  if (saved?.outcome === "stale_event" || saved?.outcome === "ambiguous_event_order") {
+    return terminalCardRejection(event, ctx, si, saved.outcome);
+  }
+  if (!saved || !["inserted", "idempotent"].includes(saved.outcome) || typeof saved.card_id !== "string") {
     throw new Error("save_client_card_on_file_returned_no_row");
   }
   const inserted = { id: saved.card_id as string };

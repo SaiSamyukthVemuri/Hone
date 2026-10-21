@@ -89,7 +89,7 @@ describe("card-change notification webhook wiring", () => {
     // Neither raw write may come back.
     expect(HANDLER).not.toMatch(/\.update\(\{ status: "removed"/);
     expect(HANDLER).not.toMatch(/\.from\("client_payment_methods"\)\s*\n\s*\.insert\(\{/);
-    expect(HANDLER).toMatch(/admin\.rpc\(\s*\n?\s*"save_client_card_on_file"/);
+    expect(HANDLER).toMatch(/admin\.rpc\(\s*\n?\s*"save_client_card_on_file_ordered"/);
     // The card_on_file_saved analytics event still fires, and BEFORE the
     // fresh-path notification (so a notification failure cannot suppress it).
     const analyticsIdx = HANDLER.indexOf('event: "card_on_file_saved"');
