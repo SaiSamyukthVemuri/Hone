@@ -6,6 +6,7 @@ import {
   seedE2eIntake,
   seedE2eStudio,
   setIntakeCurrentStep,
+  sql,
   type E2eSeed,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
@@ -15,6 +16,7 @@ import {
   TOTAL_STEPS,
 } from "@/lib/intake/questions";
 import { PRACTITIONER_ASSISTED_ENTRY } from "@/lib/intake/entry-provenance";
+import { ISSUED_QUESTIONNAIRE } from "@/lib/intake/questionnaire";
 
 // Practitioner-assisted intake, proven in a real browser against the real
 // local database.
@@ -717,8 +719,6 @@ test.describe("0243 stale public and assisted drafts", () => {
 // Prepared source only: separately aligned0246 target/slot required.
 test.describe("0246 prospective issue and legacy provenance", () => {
   test("normal no-email assisted issue pins one immutable catalogue through save and review", async ({ page }) => {
-    const { ISSUED_QUESTIONNAIRE } = await import("@/lib/intake/questionnaire");
-    const { sql } = await import("./helpers/seed");
     const { clientId } = await seedE2eClient(seed);
     await loginAsOwner(page, seed);
     await page.goto(`/clients/${clientId}?tab=health`);
@@ -752,8 +752,6 @@ test.describe("0246 prospective issue and legacy provenance", () => {
     await loginAsOwner(page,seed);
     await page.goto(`/clients/${clientId}/intake?intake=${intakeId}`);
     await expect(page.getByText("The original questionnaire wording was not saved with this intake",{exact:false})).toBeVisible();
-    const { ISSUED_QUESTIONNAIRE } = await import("@/lib/intake/questionnaire");
-    const { sql } = await import("./helpers/seed");
     const known = await sql<{id:string}>(`insert into public.client_intake_forms (studio_id,client_id,status,submitted_at,responses,questionnaire_snapshot) values ($1,$2,'submitted',now(),$3::jsonb,$4::jsonb) returning id`,[seed.studioId,clientId,JSON.stringify({preferred_name:"Synthetic terminal answer canary"}),JSON.stringify(ISSUED_QUESTIONNAIRE)]);
     const response = await page.goto(`/intake/${await mintIntakeToken(known[0].id)}`);
     const document = await response!.text();
