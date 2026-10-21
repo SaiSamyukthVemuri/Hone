@@ -439,6 +439,15 @@ describe("SCH-003 reschedule range preserves the original appointment timeline",
     expect(scopedFilters.some((q) => q.filters.some(([key]) => key === "practitioner_id" || key === "resource_key"))).toBe(false);
   });
 
+  it.each([false, true])("keeps public closing-edge packing off with capacity %s", async (practitionerCapacityEnabled) => {
+    const out = await load({ ...ctx, serviceDurationMinutes: 45, practitionerCapacityEnabled });
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error("unreachable");
+    const starts = out.byDate[0]?.slots.map((slot) => slot.start);
+    expect(starts).toContain("2026-10-05T20:00:00.000Z"); // 16:00 Toronto
+    expect(starts).not.toContain("2026-10-05T20:15:00.000Z"); // internal-only packed edge
+  });
+
   it("fails closed without personal row diagnostics instead of falling back to studio hours", async () => {
     scenario.personalError = true;
     expect(await load()).toEqual({ ok: false, error: "Availability could not be read." });
