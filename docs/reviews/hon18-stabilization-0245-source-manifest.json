@@ -1,8 +1,8 @@
 {
-  "at": "2026-10-21T09:50:20.009275+00:00",
+  "at": "2026-10-21T12:09:58.020478+00:00",
   "purpose": "Ordered source/checksum evidence only, not apply/release authority",
   "hosted_declaration": "0212 unchanged; originalapplyreceipts/history preserved; not re-read/applied here",
-  "source_SQL_tree": "64f03ac0f0ef60e500d857c79cddf358550d5d40",
+  "source_SQL_tree": "0cd250c9a487a89123beb251be991cce410547b1",
   "pending_versions": [
     "0213",
     "0214",
@@ -37,7 +37,8 @@
     "0243",
     "0244",
     "0245",
-    "0246"
+    "0246",
+    "0248"
   ],
   "source_migrations": [
     {
@@ -304,20 +305,20 @@
     {
       "version": "0242",
       "file": "supabase/migrations/0242_close_direct_generic_audit_inserts.sql",
-      "raw_sha256": "ad63727f205f1d4a0d183132b502069f5d08ff7a8ea7e5c34753e48a15f49e89",
-      "git_blob": "43712e2bb6c8c5740c50edfe4d6c729fc9be74e7",
+      "raw_sha256": "1d1f8e313966635017d20a432d7054b015ab064763361475d97547a004c97c5f",
+      "git_blob": "6a41b27b83fd2fc1bbba8b17e95a0f1a657818bb",
       "owner": "Team",
-      "published_source": "c9537bf0d7160380f38473a453d88c4e630fc28e",
-      "application_order": "APP FIRST: governed archive/unarchive/export helpers and their call sites must precede direct member INSERT ACL closure. Can stage these app-only hunks without243 CAS callers; the whole c953 branch contains243 and is not a deploy-before-schema shortcut."
+      "published_source": "8e33127543d4bd6c2b7d9a0d6d9fd8b3d0d11e0b",
+      "application_order": "COORDINATED WRITE HOLD / SCHEMA+APP: approved atomic commands and matching helpers before writes resume. Missing RPC withholds export; archive audit refusal preserves already-committed state/navigation. Old direct writers drained; no legacy INSERT fallback."
     },
     {
       "version": "0243",
       "file": "supabase/migrations/0243_intake_revision_cas_and_profile_sync.sql",
-      "raw_sha256": "e483bc412c90a1f210ebd90111db8ea8bac24f965fe2fca3baadc729bfa1d634",
-      "git_blob": "0ac734c810fa7a23020366397b37417558a7d67b",
+      "raw_sha256": "3e8c89a857b3c450ac3c87257208b206ea42dcb415fcf46720ee35256976d332",
+      "git_blob": "ffe4ea8ba2ead0f4a90e3b488b45d4ee3c2e1f47",
       "owner": "Team",
-      "published_source": "69672ea123120b6c85445a74447935cef45eeacc",
-      "application_order": "UNAPPLIED0243 amended source: schema first under explicit per-change approval; all old direct/detached intake writers drained and rollback versions compatible before writes resume. Same service-only RPC, trusted-owner definer and invoker protected-write guard; no runtime role/grant expansion. Preserve0162/246. No apply authority from this manifest. Exact reviewed0216 read projection AND transitive helper fingerprints/context are required; unknown/changed delegates still refuse."
+      "published_source": "d2d515e389dfc1e358a82eb0cdde2ad4c1317db4",
+      "application_order": "ADDITIVE SCHEMA FIRST: revision/all-writer bump and service-only CAS/profile RPC remain compatible with legacy direct writes. Transitional stage does NOT close direct-DML clobber. Deploy/verify all public/assisted CAS callers and rollback artifacts, drain old editors/processes/profile callbacks, then separately gated0248 enforcement."
     },
     {
       "version": "0244",
@@ -346,6 +347,15 @@
       "published_source": "131db9a8618a1cfd52ccc94fb4e4ca10d251b211",
       "application_order": "SCHEMA FIRST before known snapshot issuance; compatible serving/rollback decoders or hold known-row writes. Legacy NULL remains UNKNOWN/no adoption/backfill/grants. Preserve243 atomic CAS/profile write and issued clinical evidence basis.",
       "owner_approved_union": "team/246-609-union/OWNER-APPROVAL.json"
+    },
+    {
+      "version": "0248",
+      "file": "supabase/migrations/0248_intake_protected_write_enforcement.sql",
+      "raw_sha256": "1f6f9ad0026cee66b970e9dc630f1497aa10966df2adb9433d8f8c85bbc44cc3",
+      "git_blob": "e66c5d2f30e1ebfe88b6c0007dd52f02f5327a61",
+      "owner": "Team",
+      "published_source": "a67bebf8c7b263afe1c22f66f90ad0aab663a371",
+      "application_order": "LATER ENFORCEMENT ONLY after0243 additive schema, all CAS serving/rollback callers verified and old direct writers drained. Repeats exact owner/delegate/non-grantable ACL preflight. No legacy fallback. Requires separately approved apply. Reserved0247 source is absent; prefix gap remains an explicit required-check/release blocker, not fabricated."
     }
   ],
   "historical_ledger_tail_sha256": "70c606e503ddc66649ef67eae4d1bc777b943a202b650fb9f35eb5ae5e7fac17",
@@ -354,7 +364,7 @@
     "926NEVERMERGE/863frozen/223unchanged/held920alternativeexcluded",
     "No hosted/provider/model/consent/customerdata actions",
     "All newDB/runtime/concurrency/ACL/cleanup proofUNRUN untilfreshCI",
-    "246reservedTeam and247allocatedWillow notincluded;248+unallocated"
+    "0246 composed;0247 Willow reserved/source-native-held/ABSENT;0248 Team source-only composed for evidence;0249 derived, UNALLOCATED. No full contiguous prefix or release-ready claim."
   ],
   "source_corrections": {
     "0240": {
@@ -396,6 +406,42 @@
       "published_source": "69672ea123120b6c85445a74447935cef45eeacc",
       "reason": "Actual628 setup rejected known read-only0216 projection. Exact read getter+helper source/owner/STABLE/path/ACL checks preserve unknown-delegate refusal; no grants or frozen-source changes.",
       "DB_proof": "UNRUN new SQL hash; fresh existing CI required.628 failure preserved."
+    },
+    "0242-Wednesday-staged-atomic": {
+      "old_source": {
+        "version": "0242",
+        "file": "supabase/migrations/0242_close_direct_generic_audit_inserts.sql",
+        "raw_sha256": "ad63727f205f1d4a0d183132b502069f5d08ff7a8ea7e5c34753e48a15f49e89",
+        "git_blob": "43712e2bb6c8c5740c50edfe4d6c729fc9be74e7",
+        "owner": "Team",
+        "published_source": "c9537bf0d7160380f38473a453d88c4e630fc28e",
+        "application_order": "APP FIRST: governed archive/unarchive/export helpers and their call sites must precede direct member INSERT ACL closure. Can stage these app-only hunks without243 CAS callers; the whole c953 branch contains243 and is not a deploy-before-schema shortcut."
+      },
+      "published_source": "8e33127543d4bd6c2b7d9a0d6d9fd8b3d0d11e0b",
+      "raw_sha256": "1d1f8e313966635017d20a432d7054b015ab064763361475d97547a004c97c5f",
+      "reason": "Address current review findings without unsafe rolling order; grant-option denial and atomic membership audit source. Old failures/source history preserved.",
+      "DB_proof": "UNRUN current new source; existing fresh remote CI required; no local/hosted apply"
+    },
+    "0243-Wednesday-staged-atomic": {
+      "old_source": {
+        "version": "0243",
+        "file": "supabase/migrations/0243_intake_revision_cas_and_profile_sync.sql",
+        "raw_sha256": "e483bc412c90a1f210ebd90111db8ea8bac24f965fe2fca3baadc729bfa1d634",
+        "git_blob": "0ac734c810fa7a23020366397b37417558a7d67b",
+        "owner": "Team",
+        "published_source": "69672ea123120b6c85445a74447935cef45eeacc",
+        "application_order": "UNAPPLIED0243 amended source: schema first under explicit per-change approval; all old direct/detached intake writers drained and rollback versions compatible before writes resume. Same service-only RPC, trusted-owner definer and invoker protected-write guard; no runtime role/grant expansion. Preserve0162/246. No apply authority from this manifest. Exact reviewed0216 read projection AND transitive helper fingerprints/context are required; unknown/changed delegates still refuse."
+      },
+      "published_source": "d2d515e389dfc1e358a82eb0cdde2ad4c1317db4",
+      "raw_sha256": "3e8c89a857b3c450ac3c87257208b206ea42dcb415fcf46720ee35256976d332",
+      "reason": "Address current review findings without unsafe rolling order; grant-option denial and atomic membership audit source. Old failures/source history preserved.",
+      "DB_proof": "UNRUN current new source; existing fresh remote CI required; no local/hosted apply"
     }
+  },
+  "known_source_gap": {
+    "version": "0247",
+    "owner": "Willow",
+    "reason": "Existing source allocation/native approval rejection; no SQL fabricated/imported/reallocated",
+    "effect": "Canonical pending-chain contiguity guard remains unchanged and expected to fail until legitimate source dependency/allocation adjudication. Existing DB/browser CI may still execute present real source for evidence only."
   }
 }
