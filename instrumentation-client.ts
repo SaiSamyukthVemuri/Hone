@@ -64,6 +64,11 @@ posthog.init(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN!, {
   // Explicit safety switches (do not rely on SDK defaults):
   disable_session_recording: true, // never record the live DOM
   disable_surveys: true, // no remotely-injected UI in a clinical product
+  // No /flags request at all (#828 G-07/G-26). Hone uses no feature flags, and
+  // posthog-js 1.404.1 sends the first page this browser ever loaded
+  // ($initial_current_url, which can be /clients/<uuid>) in every /flags body,
+  // which before_send never sees. Pinned by tests/lib/analytics/posthog-url-ids.test.ts.
+  advanced_disable_flags: true,
   capture_exceptions: false, // Sentry owns errors, with scrubbing
   capture_heatmaps: false, // no heatmap events
   capture_performance: false, // no $web_vitals (carries URLs)

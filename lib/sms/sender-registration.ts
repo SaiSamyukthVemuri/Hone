@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { campaignBindingsFromSnapshot, type BindingSender, type RecordedCampaignBinding } from "./campaign-binding";
+import { stopPreflightsFromSnapshot, type RecordedStopPreflight } from "./stop-preflight-record";
 import { classifyNanpNumber } from "./nanp";
 import type { UsRegistrationEvidence } from "./sender-readiness";
 
@@ -151,6 +152,8 @@ export type LiveRegistrationState =
       registrations: LiveRegistrationSnapshot[];
       /** 0229: the recorded campaign bindings of the listed senders (HON-50 G4a). */
       campaignBindings: RecordedCampaignBinding[];
+      /** 0230: the recorded STOP preflights of the listed senders (HON-50 G6). */
+      stopPreflights: RecordedStopPreflight[];
     }
   | { ok: false };
 
@@ -171,6 +174,14 @@ export function campaignBindingFor(
   senderId: string,
 ): RecordedCampaignBinding | null {
   return state.campaignBindings.find((b) => b.senderId === senderId) ?? null;
+}
+
+/** The recorded STOP preflight for ONE sender, or null (the verdict's "missing"). */
+export function stopPreflightFor(
+  state: Extract<LiveRegistrationState, { ok: true }>,
+  senderId: string,
+): RecordedStopPreflight | null {
+  return state.stopPreflights.find((p) => p.senderId === senderId) ?? null;
 }
 
 export function parseLiveRegistrationState(data: unknown, studioId: string): LiveRegistrationState {
@@ -196,7 +207,12 @@ export function parseLiveRegistrationState(data: unknown, studioId: string): Liv
   }
   // 0229: two rows for one sender, a binding for an unlisted sender, or a
   // malformed array make the WHOLE read unreadable; an absent key is [].
-  const campaignBindings = campaignBindingsFromSnapshot(data, studioId, new Set(ownSenders.map((s) => s.id)));
+  const listed = new Set(ownSenders.map((s) => s.id));
+  const campaignBindings = campaignBindingsFromSnapshot(data, studioId, listed);
   if (!campaignBindings) return { ok: false };
-  return { ok: true, senders: ownSenders, registrations: rows, campaignBindings };
+  // 0230 (HON-50 G6), same strictness, parsed AFTER the bindings: a failure in
+  // either makes the WHOLE read unreadable; an absent key is [].
+  const stopPreflights = stopPreflightsFromSnapshot(data, studioId, listed);
+  if (!stopPreflights) return { ok: false };
+  return { ok: true, senders: ownSenders, registrations: rows, campaignBindings, stopPreflights };
 }

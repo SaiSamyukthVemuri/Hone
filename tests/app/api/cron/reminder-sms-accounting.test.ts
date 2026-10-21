@@ -6,9 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 //
 // The route's stated semantics: `attempted` / `succeeded` / `failed` count
 // actual provider requests, and anything that never reached Twilio is
-// `skipped`. A reminder claim that cannot be reached (a database outage) makes
-// no provider request and spends no attempt, so it must land in `skipped`,
-// in both the response and the heartbeat. A real provider refusal is still
+// `skipped`. An unavailable reminder claim is different from a normal lost
+// claim: the run is incomplete, must stop, and must not publish a success
+// heartbeat. No provider request is made. A real provider refusal is still
 // an attempt that failed.
 //
 // Substituted: the database client, cron auth, the heartbeat writer, ops
@@ -74,7 +74,7 @@ const h = vi.hoisted(() => {
       };
     }
     // The pass's cheap "still confirmed?" pre-filter.
-    b.maybeSingle = () => Promise.resolve({ data: { status: "confirmed" }, error: null });
+    b.maybeSingle = () => Promise.resolve({ data: APPT, error: null });
     b.then = (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
       Promise.resolve(answer()).then(resolve, reject);
     return b;
@@ -167,13 +167,16 @@ async function run() {
 }
 
 describe("the reminder cron counts provider requests, not database misses", () => {
-  it("a reminder claim that cannot be reached is SKIPPED: no attempt, no failure, no provider call", async () => {
+  it("an unavailable claim aborts the incomplete run before a second claim or success heartbeat", async () => {
     h.state.claim = "error";
-    const { sms24, heartbeat } = await run();
+    h.state.appointments = 2;
+    const response = await GET(new Request("https://hone.care/api/cron/appointment-reminders"));
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ ok: false, error: "cron_failed" });
     expect(h.state.rpcs).toEqual(["claim_reminder_sms_send"]);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(sms24).toEqual({ attempted: 0, succeeded: 0, failed: 0, skipped: 1, intakeCtaIncluded: 0 });
-    expect(heartbeat).toMatchObject({ smsAttempted: 0, smsSucceeded: 0, smsFailed: 0 });
+    expect(h.state.heartbeat).toEqual([]);
+    expect(h.state.alerts).toEqual([expect.objectContaining({ event: "cron_route_failed" })]);
   });
 
   it("control: a claimed reminder that Twilio accepts is one attempt that succeeded", async () => {

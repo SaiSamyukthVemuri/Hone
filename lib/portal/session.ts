@@ -55,13 +55,12 @@ export async function getCurrentPortalSession(): Promise<PortalSession | null> {
     .eq("session_token_hash", tokenHash)
     .maybeSingle();
   if (error) {
-    // Log sanitized; never include the raw cookie or its hash. A DB
+    // Omit provider text: it can quote identifiers, cookies or hashes. A DB
     // outage should not 500 the page render; treat as anonymous.
     console.error(
       JSON.stringify({
         event: "portal_session_lookup_failed",
         code: error.code,
-        message: error.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -80,7 +79,8 @@ export async function getCurrentPortalSession(): Promise<PortalSession | null> {
   // failures resolve with { error } rather than rejecting, so the
   // fulfilled arm inspects error; the rejected arm covers transport
   // throws. Neither arm logs the cookie token, its hash, or any
-  // client PII; a failed touch never affects the returned session.
+  // client PII: only an event marker, timestamp and database code leave.
+  // A failed touch never affects the returned session.
   void admin
     .from("client_portal_sessions")
     .update({ last_seen_at: nowIso })
@@ -91,20 +91,16 @@ export async function getCurrentPortalSession(): Promise<PortalSession | null> {
           console.error(
             JSON.stringify({
               event: "portal_session_last_seen_update_failed",
-              sessionId: data.id,
               code: touchError.code,
-              message: touchError.message,
               timestamp: new Date().toISOString(),
             }),
           );
         }
       },
-      (err: unknown) => {
+      () => {
         console.error(
           JSON.stringify({
             event: "portal_session_last_seen_update_failed",
-            sessionId: data.id,
-            err: err instanceof Error ? err.message : String(err),
             timestamp: new Date().toISOString(),
           }),
         );
@@ -177,7 +173,6 @@ export async function destroyPortalSession(): Promise<void> {
         JSON.stringify({
           event: "portal_session_revoke_failed",
           code: error.code,
-          message: error.message,
           timestamp: new Date().toISOString(),
         }),
       );

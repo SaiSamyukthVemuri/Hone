@@ -4,6 +4,9 @@ import {
   LEDGER_RUN_BUDGET_MS,
   LEDGER_STEP_BOUND_MS,
   createLedgerBudget,
+  claimSmsSend,
+  recordSmsResult,
+  logSmsFailure,
   sendBookingConfirmationSmsToClient,
   send24hReminderSmsToClient,
   send2hReminderSmsToClient,
@@ -26,10 +29,15 @@ import {
 // ===========================================================================
 
 const alerts: Array<Record<string, unknown>> = [];
+let alertCompletion: Promise<void> | null = null;
+let alertStarted: (() => void) | null = null;
+let alertRejects = false;
 vi.mock("@/lib/ops/alerts", () => ({
   recordOpsAlert: (input: Record<string, unknown>) => {
     alerts.push(input);
-    return Promise.resolve();
+    alertStarted?.();
+    if (alertRejects) return Promise.reject(new Error("PRIVATE_ALERT_FAILURE"));
+    return alertCompletion ?? Promise.resolve();
   },
 }));
 
@@ -45,11 +53,25 @@ const h: {
   begin: { data: unknown; error: unknown } | "hang" | { afterMs: number };
   /** "hang": settle_sms_message never answers (a stalled or killed request). */
   settle: "ok" | "hang";
+  attemptNumber: number;
+  alreadySent: boolean;
+  laterClaim: string | null;
+  recordError: boolean;
+  attemptReadError: boolean;
+  attemptReadWaitsForAbort: boolean;
+  attemptReads: Array<{ columns: string; filters: Array<[string, string]>; signal?: AbortSignal; rpcsBefore: string[] }>;
   rpcs: Array<{ fn: string; args: Record<string, unknown> }>;
 } = {
   claim: { result: "claimed", starts_at: START },
   begin: { data: LEDGER_ROW, error: null },
   settle: "ok",
+  attemptNumber: 1,
+  alreadySent: false,
+  laterClaim: null,
+  recordError: false,
+  attemptReadError: false,
+  attemptReadWaitsForAbort: false,
+  attemptReads: [],
   rpcs: [],
 };
 
@@ -63,6 +85,9 @@ function admin(): SupabaseClient {
             ? { data: null, error: { message: "boom" } }
             : { data: [h.claim], error: null },
         );
+      }
+      if (fn === "record_sms_result" && h.recordError) {
+        return Promise.resolve({ data: null, error: { message: "record unavailable" } });
       }
       // The confirmation path's plain claim (0049).
       if (fn === "claim_sms_send") return Promise.resolve({ data: true, error: null });
@@ -81,8 +106,47 @@ function admin(): SupabaseClient {
       }
       return Promise.resolve({ data: null, error: null });
     },
-    from() {
-      throw new Error("the reminder path must not read the appointment outside its claim");
+    from(table: string) {
+      if (table !== "appointments") throw new Error("unexpected table");
+      return {
+        select(columns: string) {
+          // Only failure accounting may read here. Start/status remain owned
+          // by the atomic reminder claim, never an unlocked appointment read.
+          const match = columns.match(/^(sms_reminder_(?:24h|2h))_send_attempts, \1_sent_at, \1_claimed_at$/);
+          if (!match) throw new Error("appointment timing/status must come from the claim");
+          const read = { columns, filters: [] as Array<[string, string]>, signal: undefined as AbortSignal | undefined, rpcsBefore: h.rpcs.map((call) => call.fn) };
+          h.attemptReads.push(read);
+          const query = {
+            eq: (column: string, value: string) => {
+              read.filters.push([column, value]);
+              return query;
+            },
+            abortSignal: (signal: AbortSignal) => {
+              read.signal = signal;
+              return query;
+            },
+            maybeSingle: async () => {
+              if (h.attemptReadWaitsForAbort) {
+                return new Promise<never>((_resolve, reject) => {
+                  const signal = read.signal;
+                  if (!signal) return;
+                  if (signal.aborted) reject(signal.reason);
+                  else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+                });
+              }
+              return {
+                data: h.attemptReadError ? null : {
+                  [`${match[1]}_send_attempts`]: h.attemptNumber,
+                  [`${match[1]}_sent_at`]: h.alreadySent ? START : null,
+                  [`${match[1]}_claimed_at`]: h.laterClaim,
+                },
+                error: h.attemptReadError ? { message: "read failed" } : null,
+              };
+            },
+          };
+          return query;
+        },
+      };
     },
   } as unknown as SupabaseClient;
 }
@@ -133,12 +197,23 @@ beforeEach(() => {
   h.claim = { result: "claimed", starts_at: START };
   h.begin = { data: LEDGER_ROW, error: null };
   h.settle = "ok";
+  h.attemptNumber = 1;
+  h.alreadySent = false;
+  h.laterClaim = null;
+  h.recordError = false;
+  h.attemptReadError = false;
+  h.attemptReadWaitsForAbort = false;
+  h.attemptReads = [];
   h.rpcs = [];
   alerts.length = 0;
+  alertCompletion = null;
+  alertStarted = null;
+  alertRejects = false;
   manageFor.length = 0;
   fetchMock = vi.fn(() => twilioAnswer(201, { sid: SID }));
   vi.stubGlobal("fetch", fetchMock);
   vi.spyOn(console, "log").mockImplementation(() => undefined);
+  vi.spyOn(console, "info").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 afterEach(() => {
@@ -321,8 +396,9 @@ describe("cancellation and moves before the send", () => {
     expect(alerts, "a retryable miss raises no alert").toEqual([]);
   });
 
-  it("the appointment is never read outside the claim (the mock throws if it is)", async () => {
+  it("appointment timing is read only by the claim; successful sends need no failure-accounting read", async () => {
     expect((await send24hReminderSmsToClient(input())).ok).toBe(true);
+    expect(h.attemptReads).toEqual([]);
   });
 });
 
@@ -351,6 +427,169 @@ describe("provider failure", () => {
     });
     expect(recorded()).toEqual([false]);
     expect(settled()).toEqual([expect.objectContaining({ p_outcome: "refused" })]);
+  });
+});
+
+describe("accepted reminders with unconfirmed result recording", () => {
+  it.each([
+    ["24h", send24hReminderSmsToClient, "reminder_24h"],
+    ["2h", send2hReminderSmsToClient, "reminder_2h"],
+  ] as const)("the %s provider acceptance stays successful and its accounting warning is visible", async (_kind, send, smsType) => {
+    h.recordError = true;
+    let finishAlert!: () => void;
+    alertCompletion = new Promise<void>((resolve) => { finishAlert = resolve; });
+    const started = new Promise<void>((resolve) => { alertStarted = resolve; });
+    const args = input();
+    args.studio.name = "PRIVATE_STUDIO_SENTINEL";
+    args.intakeUrl = "https://example.test/private-intake-secret";
+    let returned = false;
+    const sending = send(args).then((result) => { returned = true; return result; });
+    await started;
+    try {
+      await flush();
+      expect(returned).toBe(false);
+    } finally {
+      finishAlert();
+    }
+    expect(await sending).toMatchObject({ ok: true, messageSid: SID });
+    expect(alerts).toEqual([expect.objectContaining({
+      event: "sms_result_record_unconfirmed", severity: "warning",
+      studioId: "studio-1", appointmentId: "appt-1",
+      message: expect.stringContaining("accepted by the provider, but result recording was not confirmed"),
+      safeDetails: { sms_type: smsType },
+    })]);
+    expect(alerts[0].message).not.toMatch(/delivered|gave up|exhaust/i);
+    for (const value of [SID, "PRIVATE_STUDIO_SENTINEL", "private-intake-secret", "604-555-0199", "+16045550199"]) {
+      expect(JSON.stringify(alerts)).not.toContain(value);
+    }
+    expect(recorded()).toEqual([true]);
+    expect(h.attemptReads).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(h.rpcs.map((call) => call.fn)).toContain("settle_sms_message");
+  });
+  it.each([
+    ["24h", send24hReminderSmsToClient],
+    ["2h", send2hReminderSmsToClient],
+  ] as const)("a rejected accounting alert preserves the accepted %s send result", async (_kind, send) => {
+    h.recordError = true;
+    alertRejects = true;
+    expect(await send(input())).toMatchObject({ ok: true, messageSid: SID });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(recorded()).toEqual([true]);
+    expect(JSON.stringify(alerts)).not.toContain("PRIVATE_ALERT_FAILURE");
+  });
+
+});
+
+describe("retry exhaustion remains visible without changing send authority", () => {
+  it("an accounting read that only ends on abort preserves the retryable result without claiming exhaustion", async () => {
+    h.attemptReadWaitsForAbort = true;
+    h.attemptNumber = 3;
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    fetchMock.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
+    );
+    expect(await send24hReminderSmsToClient(input())).toEqual({
+      ok: false,
+      error: "twilio_unreachable",
+      retryable: true,
+    });
+    await flush();
+    expect(timeout).toHaveBeenCalledWith(1_000);
+    expect(h.attemptReads[0].signal?.aborted).toBe(true);
+    expect(h.attemptReads[0].rpcsBefore).toContain("record_sms_result");
+    expect(h.attemptReads[0].rpcsBefore).toContain("settle_sms_message");
+    expect(alerts).toEqual([]);
+    expect(recorded()).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["24h", send24hReminderSmsToClient],
+    ["2h", send2hReminderSmsToClient],
+  ] as const)("the third definite retryable %s failure raises an attributed warning", async (_kind, send) => {
+    h.attemptNumber = 3;
+    fetchMock.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
+    );
+    expect(await send(input())).toMatchObject({ ok: false, retryable: true });
+    await flush();
+    expect(alerts).toEqual([
+      expect.objectContaining({
+        event: "sms_send_failed",
+        severity: "warning",
+        studioId: "studio-1",
+        appointmentId: "appt-1",
+        safeDetails: expect.objectContaining({ attempt_number: 3 }),
+      }),
+    ]);
+    expect(recorded()).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(h.attemptReads).toHaveLength(1);
+    expect(h.attemptReads[0].filters).toEqual([["id", "appt-1"], ["studio_id", "studio-1"]]);
+    expect(h.attemptReads[0].signal).toBeInstanceOf(AbortSignal);
+    expect(h.attemptReads[0].rpcsBefore).toContain("record_sms_result");
+    expect(h.attemptReads[0].rpcsBefore).toContain("settle_sms_message");
+  });
+
+  it.each([
+    ["24h", send24hReminderSmsToClient],
+    ["2h", send2hReminderSmsToClient],
+  ] as const)("a later in-flight %s claim does not claim exhaustion", async (_kind, send) => {
+    h.attemptNumber = 3;
+    h.laterClaim = START;
+    fetchMock.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
+    );
+    expect(await send(input())).toMatchObject({ ok: false, retryable: true });
+    await flush();
+    expect(alerts).toEqual([]);
+    expect(recorded()).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["24h", send24hReminderSmsToClient, false],
+    ["2h", send2hReminderSmsToClient, false],
+    ["24h with unreadable diagnostic", send24hReminderSmsToClient, true],
+    ["2h with unreadable diagnostic", send2hReminderSmsToClient, true],
+  ] as const)("an unconfirmed result record preserves a truthful %s accounting warning", async (_kind, send, readError) => {
+    h.attemptNumber = 3;
+    h.laterClaim = START; // Could be our surviving claim OR a later claim after a lost response.
+    h.recordError = true;
+    h.attemptReadError = readError;
+    fetchMock.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
+    );
+    expect(await send(input())).toMatchObject({ ok: false, retryable: true });
+    await flush();
+    expect(alerts).toEqual([expect.objectContaining({
+      event: "sms_send_failed", severity: "warning",
+      message: expect.stringContaining("result recording was not confirmed"),
+      safeDetails: expect.objectContaining({ attempt_number: null, retryable: true }),
+    })]);
+    expect(alerts[0].message).not.toMatch(/gave up|exhaust/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["an earlier attempt", 2, false, false],
+    ["a malformed attempt count", Number.NaN, false, false],
+    ["a negative attempt count", -1, false, false],
+    ["a later attempt already sent it", 3, true, false],
+    ["the attempt count cannot be read", 3, false, true],
+  ] as const)("%s does not claim exhaustion", async (_label, count, sent, readError) => {
+    h.attemptNumber = count;
+    h.alreadySent = sent;
+    h.attemptReadError = readError;
+    fetchMock.mockImplementationOnce(() =>
+      Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })),
+    );
+    expect(await send24hReminderSmsToClient(input())).toMatchObject({ ok: false, retryable: true });
+    await flush();
+    expect(alerts).toEqual([]);
+    expect(recorded()).toEqual([false]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -637,5 +876,44 @@ describe("one ledger budget per cron run", () => {
       "record_sms_result",
       "settle_sms_message",
     ]);
+  });
+});
+
+
+describe("MSG-007 SMS diagnostics carry only closed metadata", () => {
+  const APPOINTMENT_ID = "11111111-1111-4111-8111-111111111111";
+  const PRIVATE = "PRIVATE patient@example.invalid +16045550199 https://example.invalid/manage/SECRET_TOKEN clinical note";
+  const output = () => JSON.stringify([vi.mocked(console.error).mock.calls, vi.mocked(console.log).mock.calls, vi.mocked(console.info).mock.calls]);
+  it.each(["claim", "record"] as const)("%s RPC failure never exports raw error/record content", async (operation) => {
+    const rpc = vi.fn(async () => ({ data: null, error: new Error(PRIVATE) }));
+    const a = { rpc } as unknown as SupabaseClient;
+    const result = operation === "claim" ? await claimSmsSend(a, APPOINTMENT_ID, "reminder_24h") : await recordSmsResult(a, APPOINTMENT_ID, "reminder_24h", false);
+    expect(result).toBe(false);
+    expect(rpc).toHaveBeenCalledWith(operation === "claim" ? "claim_sms_send" : "record_sms_result", {
+      p_appointment_id: APPOINTMENT_ID, p_sms_type: "reminder_24h", ...(operation === "claim" ? {} : { p_success: false }),
+    });
+    expect(output()).toContain("reminder_24h");
+    for (const value of [APPOINTMENT_ID, "PRIVATE", "patient@example.invalid", "SECRET_TOKEN", "clinical note"]) expect(output()).not.toContain(value);
+  });
+  it("accepted reminder keeps result/destination but omits SID/phone/record ID from console", async () => {
+    expect(await send24hReminderSmsToClient(input({ appointmentId: APPOINTMENT_ID }))).toEqual({ ok: true, messageSid: SID, intakeLinkIncluded: false });
+    expect(sentForm().get("To")).toBe("+16045550199");
+    expect(output()).toContain("sms_sent");
+    for (const value of [APPOINTMENT_ID, SID, "+16045550199", "+1***99"]) expect(output()).not.toContain(value);
+  });
+  it("failure alert keeps first-party lineage but excludes arbitrary provider content", async () => {
+    logSmsFailure({ appointmentId: APPOINTMENT_ID, smsType: "reminder_24h", error: PRIVATE, retryable: false, attemptNumber: 3 });
+    await flush();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ appointmentId: APPOINTMENT_ID, event: "sms_send_failed", safeDetails: { sms_type: "reminder_24h", attempt_number: 3 } });
+    expect(output()).not.toContain(APPOINTMENT_ID);
+    expect(JSON.stringify([output(), alerts[0]?.safeDetails, alerts[0]?.message])).not.toMatch(/PRIVATE|patient@example|SECRET_TOKEN|clinical note/);
+  });
+  it("unexpected runtime diagnostic types/counts cannot carry private fields", async () => {
+    logSmsFailure({ appointmentId: APPOINTMENT_ID, smsType: PRIVATE as "reminder_24h", error: PRIVATE, retryable: false, attemptNumber: 16045550199 });
+    await flush();
+    expect(alerts).toHaveLength(1);
+    expect(JSON.stringify([output(), alerts[0]?.safeDetails, alerts[0]?.message])).not.toMatch(/PRIVATE|patient@example|SECRET_TOKEN|16045550199/);
+    expect(alerts[0]).toMatchObject({ safeDetails: { sms_type: "unknown", attempt_number: null } });
   });
 });

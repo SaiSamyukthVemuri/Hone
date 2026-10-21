@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FAKE_MESSAGE_ID,
@@ -14,7 +15,10 @@ const KNOWN_FAKE_MODES: FakeResendMode[] = [
   "failonce",
   "hold",
 ];
-import { sendEmailSafely } from "@/lib/email/send-appointment";
+import { claimEmailSend, logEmailFailure, recordEmailAttempt, recordEmailResult, sendCancellationEmail, sendEmailSafely } from "@/lib/email/send-appointment";
+import { createFakeResendTransport } from "@/lib/email/e2e-fake-resend";
+import { bindEmailOperationRequest, classifyEmailOperationObservation, retainEmailOperationObservation } from "@/lib/email/operation-state";
+import { createEmailOperationDispatchAdapter } from "@/lib/email/operation-dispatch";
 
 // ===========================================================================
 // RESCHEDULE-E2E-01 — the appointment send path resolves a FAKEABLE transport.
@@ -34,6 +38,9 @@ import { sendEmailSafely } from "@/lib/email/send-appointment";
 // stubbed is the server-only marker the fake itself reads. A mock of
 // `@/lib/email/client` could pass while the real path reached a different
 // transport, which is exactly how the bypass survived.
+
+const privacyAlerts = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: async (input: Record<string, unknown>) => { privacyAlerts.push(input); } }));
 
 const BASE = { subject: "s", html: "<p>h</p>", text: "t" };
 
@@ -195,5 +202,271 @@ describe("the lane default and the acceptance seam are ONE contract", () => {
     for (const mode of ["success", "reject"]) {
       expect(KNOWN_FAKE_MODES).toContain(mode);
     }
+  });
+});
+
+
+describe("MSG-004 cancellation transport result is observable", () => {
+  const cancellation = (to: string) => sendCancellationEmail({
+    to, recipientName: "Synthetic", clientName: "Synthetic",
+    studio: { name: "Synthetic", timezone: "UTC" } as Parameters<typeof sendCancellationEmail>[0]["studio"],
+    serviceName: "Consultation", durationMinutes: 30, startsAt: new Date("2099-01-01T12:00:00Z"),
+    actorName: "Synthetic owner", actorRole: "owner", reason: null, isClient: true,
+  });
+  it.each([["client@harness.local", true], ["reject+cancel@harness.local", false], ["throw+cancel@harness.local", false]] as const)("returns the fake transport outcome for %s", async (to, ok) => {
+    vi.stubEnv("HONE_E2E_FAKE_RESEND", "1");
+    expect(await cancellation(to)).toMatchObject({ ok });
+  });
+});
+
+
+describe("MSG-007 email failure logs have a closed payload", () => {
+  const APPOINTMENT_ID = "11111111-1111-4111-8111-111111111111";
+  const PRIVATE = "PRIVATE patient@example.invalid +16045550199 https://example.invalid/intake/SECRET_TOKEN private clinical note";
+  it.each(["attempt", "claim", "result"] as const)("%s RPC failure preserves behavior without exporting IDs or error content", async (operation) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const rpc = vi.fn(async () => ({ data: null, error: new Error(PRIVATE) }));
+    const admin = { rpc } as unknown as Parameters<typeof claimEmailSend>[0];
+    try {
+      if (operation === "claim") expect(await claimEmailSend(admin, APPOINTMENT_ID, "reminder_24h")).toBe(false);
+      else if (operation === "attempt") await recordEmailAttempt(admin, APPOINTMENT_ID, "reminder_24h", false);
+      else await recordEmailResult(admin, APPOINTMENT_ID, "reminder_24h", false);
+      expect(rpc).toHaveBeenCalledTimes(1);
+      expect(rpc).toHaveBeenCalledWith(
+        operation === "attempt" ? "record_email_attempt" : operation === "claim" ? "claim_email_send" : "record_email_result",
+        { p_appointment_id: APPOINTMENT_ID, p_email_type: "reminder_24h", ...(operation === "claim" ? {} : { p_success: false }) },
+      );
+      const output = JSON.stringify(log.mock.calls);
+      expect(output).toContain("reminder_24h");
+      expect(output).not.toContain(APPOINTMENT_ID);
+      for (const privatePart of ["PRIVATE", "patient@example.invalid", "+16045550199", "SECRET_TOKEN", "private clinical note"]) expect(output).not.toContain(privatePart);
+    } finally { log.mockRestore(); }
+  });
+  it("final failure keeps the operator event and attempt count without raw provider text", async () => {
+    privacyAlerts.length = 0;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      logEmailFailure({ appointmentId: APPOINTMENT_ID, emailType: "reminder_24h", error: PRIVATE, retryable: true, attemptNumber: 3 });
+      await vi.waitFor(() => expect(privacyAlerts).toHaveLength(1));
+      const output = JSON.stringify(log.mock.calls);
+      expect(output).toContain("email_send_failed");
+      expect(output).not.toContain(APPOINTMENT_ID);
+      expect(output).not.toContain("PRIVATE");
+      expect(JSON.stringify(privacyAlerts)).not.toContain("PRIVATE");
+      expect(privacyAlerts[0]).toMatchObject({ event: "email_send_gave_up", appointmentId: APPOINTMENT_ID, safeDetails: { attempt_number: 3, email_type: "reminder_24h" } });
+    } finally { log.mockRestore(); }
+  });
+  it("a lower retryable attempt remains log-only", async () => {
+    privacyAlerts.length = 0;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      logEmailFailure({ appointmentId: APPOINTMENT_ID, emailType: "reminder_2h", error: PRIVATE, retryable: true, attemptNumber: 2 });
+      await Promise.resolve();
+      expect(privacyAlerts).toEqual([]);
+      expect(JSON.stringify(log.mock.calls)).toContain("reminder_2h");
+      expect(JSON.stringify(log.mock.calls)).not.toContain("PRIVATE");
+    } finally { log.mockRestore(); }
+  });
+  it("unexpected runtime type/count inputs cannot smuggle private values into diagnostic fields", async () => {
+    privacyAlerts.length = 0;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      logEmailFailure({ appointmentId: APPOINTMENT_ID, emailType: PRIVATE as "reminder_24h", error: PRIVATE, retryable: false, attemptNumber: 16045550199 });
+      await vi.waitFor(() => expect(privacyAlerts).toHaveLength(1));
+      expect(JSON.stringify([log.mock.calls, privacyAlerts[0]?.safeDetails, privacyAlerts[0]?.message])).not.toMatch(/PRIVATE|patient@example|16045550199|SECRET_TOKEN/);
+      expect(privacyAlerts[0]).toMatchObject({ safeDetails: { email_type: "unknown", attempt_number: null } });
+    } finally { log.mockRestore(); }
+  });
+});
+
+describe("0247 pure operation observations and request binding (not dispatch authority)", () => {
+  const payload = { from: "Hone <hello@hone.care>", to: "success+operation@harness.local", ...BASE };
+  const context = { providerAccount: "synthetic-account", providerKey: "opaque-synthetic-operation", purpose: "reminder_24h" as const };
+
+  it("holds contradictory acceptance and validation-refusal evidence", () => {
+    expect(classifyEmailOperationObservation({ kind: "reply", reply: { data: { id: FAKE_MESSAGE_ID }, error: { name: "validation_error", statusCode: 422 } } })).toEqual({ kind: "unknown", reason: "malformed_reply" });
+  });
+  it("rejects added runtime payload and attachment options rather than treating them as the frozen request", () => {
+    const binding = bindEmailOperationRequest(payload, context);
+    for (const extra of [{ bcc: "private@harness.local" }, { cc: [] }, { headers: { private: "token" } }]) {
+      expect(binding.matches({ ...payload, ...extra }, context)).toBe(false);
+    }
+    const withAttachment = { ...payload, attachments: [{ filename: "a", content: Buffer.from("a") }] };
+    const extended = { ...withAttachment, attachments: [{ ...withAttachment.attachments[0], contentType: "text/plain" }] };
+    expect(bindEmailOperationRequest(withAttachment, context).matches(extended, context)).toBe(false);
+  });
+
+  it.each([null, {}, { data: { id: "id" } }, { error: false }])("holds malformed replies without acceptance: %j", (reply) => {
+    expect(classifyEmailOperationObservation({ kind: "reply", reply }).kind).toBe("unknown");
+  });
+  it.each([undefined, "", " ", "id\nPRIVATE", 3])("requires a valid provider id: %j", (id) => {
+    expect(classifyEmailOperationObservation({ kind: "reply", reply: { data: { id }, error: null } })).toEqual({ kind: "unknown", reason: "missing_id" });
+  });
+  it.each([
+    ["invalid_idempotent_request", 409, "payload_conflict"],
+    ["concurrent_idempotent_requests", 409, "inflight"],
+    ["invalid_idempotency_key", 400, "invalid_key"],
+    ["server_error", 503, "server_error"],
+  ])("holds %s separately and excludes raw private messages", (name, statusCode, reason) => {
+    const result = classifyEmailOperationObservation({ kind: "reply", reply: { data: null, error: { name, statusCode, message: "PRIVATE token patient@example.invalid" } } });
+    expect(result).toEqual({ kind: "unknown", reason });
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|token|patient@/);
+  });
+  it("uses the existing fake for acceptance/refusal and observes an exception without retry", async () => {
+    vi.stubEnv("HONE_E2E_FAKE_RESEND", "1");
+    const fake = createFakeResendTransport();
+    const send = vi.spyOn(fake.emails, "send");
+    const accepted = classifyEmailOperationObservation({ kind: "reply", reply: await fake.emails.send(payload) });
+    expect(accepted).toEqual({ kind: "accepted", messageId: FAKE_MESSAGE_ID });
+    expect(classifyEmailOperationObservation({ kind: "reply", reply: await fake.emails.send({ ...payload, to: "reject+operation@harness.local" }) })).toEqual({ kind: "definite_refusal" });
+    let thrown: unknown;
+    try { await fake.emails.send({ ...payload, to: "throw+operation@harness.local" }); } catch (error) { thrown = error; }
+    expect(thrown).toBeInstanceOf(Error);
+    expect(classifyEmailOperationObservation({ kind: "transport" })).toEqual({ kind: "unknown", reason: "transport" });
+    expect(send).toHaveBeenCalledTimes(3); // one explicit call per scenario; no replay
+  });
+  it("freezes attachment bytes, omitted fields, tokenized content and provider context in memory only", () => {
+    const content = Buffer.from("PRIVATE original ICS");
+    const original = { ...payload, attachments: [{ filename: "appointment.ics", content }] };
+    const binding = bindEmailOperationRequest(original, context);
+    expect(binding.matches({ ...original }, { ...context })).toBe(true);
+    for (const changed of [
+      { ...original, html: "PRIVATE reminted-token" }, { ...original, text: "changed" },
+      { ...original, to: "other@harness.local" }, { ...original, from: "Other" },
+      { ...original, subject: "changed" }, { ...original, replyTo: "" },
+      { ...original, attachments: [] },
+    ]) expect(binding.matches(changed, context)).toBe(false);
+    expect(binding.matches(original, { ...context, providerKey: "rotated" })).toBe(false);
+    expect(binding.matches(original, { ...context, providerAccount: "different" })).toBe(false);
+    expect(binding.matches(original, { ...context, purpose: "reminder_2h" })).toBe(false);
+    content[0] = 0;
+    expect(binding.matches(original, context)).toBe(false);
+    expect(JSON.stringify(binding)).toBe("{}");
+  });
+  it("keeps unknown and positive original-operation observations monotonic", () => {
+    const unknown = classifyEmailOperationObservation({ kind: "timeout" });
+    const lateAccepted = { kind: "accepted" as const, messageId: FAKE_MESSAGE_ID };
+    const accepted = retainEmailOperationObservation(unknown, lateAccepted);
+    expect(accepted).toEqual(lateAccepted);
+    expect(retainEmailOperationObservation(accepted, { kind: "definite_refusal" })).toBe(accepted);
+    expect(retainEmailOperationObservation(unknown, { kind: "definite_refusal" })).toBe(unknown);
+    // This proves only the pure effect merge. Lease/projection isolation,
+    // immutable DB horizons and dispatch permission need the reviewed adapter
+    // and DB concurrency proof; this helper cannot settle or authorize them.
+  });
+});
+
+describe("0247 private one-use SDK observation adapter (SQL port not wired)", () => {
+  type Ports = Parameters<typeof createEmailOperationDispatchAdapter>[0];
+  const payload = { from: "Hone <hello@hone.care>", to: "success+capability@harness.local", ...BASE };
+  const context = { operationId: "opaque-operation", studioId: "synthetic-studio", appointmentId: "synthetic-appointment", purpose: "reminder_24h" as const, authority: { appointment: "2", client: "3", studio: "4", intake: "5" }, providerAccount: "synthetic-account", providerKey: "opaque-provider-key" };
+  function setup() {
+    vi.stubEnv("HONE_E2E_FAKE_RESEND", "1");
+    const fake = createFakeResendTransport();
+    const authorize = vi.fn<Ports["authorize"]>().mockResolvedValue({ kind: "authorized", firstPossibleAttemptAt: "2026-10-21T00:00:00Z", retryNotAfter: null });
+    const observe = vi.fn<Ports["observe"]>().mockResolvedValue(undefined);
+    const send = vi.fn<Ports["send"]>(async (request) => fake.emails.send(request));
+    return { adapter: createEmailOperationDispatchAdapter({ authorize, observe, send }), authorize, observe, send, fake };
+  }
+  it("consumes authorization and dispatch synchronously so concurrent calls have one initial SDK invocation", async () => {
+    const { adapter, authorize, observe, send } = setup();
+    const request = adapter.freeze(payload, context)!;
+    const grants = await Promise.all([adapter.authorize(request), adapter.authorize(request)]);
+    expect(authorize).toHaveBeenCalledTimes(1);
+    expect(grants[1]).toBeNull();
+    const results = await Promise.all([adapter.dispatchAndSettle(request, grants[0]!), adapter.dispatchAndSettle(request, grants[0]!)]);
+    expect(results[0]).toMatchObject({ kind: "observed", observation: { kind: "accepted", messageId: FAKE_MESSAGE_ID } });
+    expect(results[1]).toEqual({ kind: "held" });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(payload, { idempotencyKey: context.providerKey });
+    expect(observe).toHaveBeenCalledTimes(1);
+    expect(observe.mock.calls[0][0]).toEqual(authorize.mock.calls[0][0]);
+    expect(authorize.mock.calls[0][0]).toMatchObject({ ...context, channel: "email", requestDigest: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(observe.mock.calls[0][1]).not.toBe(context.providerKey);
+    expect(observe.mock.calls[0][1]).not.toBe(context.operationId);
+    expect(createHash("sha256").update(observe.mock.calls[0][1]).digest("hex")).toBe(authorize.mock.calls[0][0].capabilityDigest);
+    expect(JSON.stringify([request, ...grants])).toBe("[{},{},null]");
+  });
+  it("rejects forged/cross-request grants and consumes a mismatched grant without SDK or accepted write", async () => {
+    const { adapter, send, observe } = setup();
+    const request = adapter.freeze(payload, context)!;
+    expect(await adapter.authorize({})).toBeNull();
+    expect(await adapter.dispatchAndSettle(request, {})).toEqual({ kind: "held" });
+    const other = adapter.freeze({ ...payload, html: "PRIVATE changed token" }, { ...context, operationId: "other-operation" })!;
+    const grant = (await adapter.authorize(request))!;
+    expect(await adapter.dispatchAndSettle(other, grant)).toEqual({ kind: "held" });
+    expect(await adapter.dispatchAndSettle(request, grant)).toEqual({ kind: "held" });
+    expect(send).not.toHaveBeenCalled();
+    expect(observe).not.toHaveBeenCalled();
+  });
+  it("sends only detached canonical bytes and refuses unmodelled runtime payload fields", async () => {
+    const { adapter, send } = setup();
+    const bytes = Buffer.from("original ICS");
+    const mutable = { ...payload, attachments: [{ filename: "a.ics", content: bytes }] };
+    const extended = { ...payload, bcc: "private@harness.local" };
+    expect(adapter.freeze(extended, context)).toBeNull();
+    const request = adapter.freeze(mutable, context)!;
+    mutable.html = "PRIVATE changed token";
+    bytes.fill(0);
+    const grant = (await adapter.authorize(request))!;
+    await adapter.dispatchAndSettle(request, grant);
+    expect(send.mock.calls[0][0].html).toBe(payload.html);
+    expect(send.mock.calls[0][0].attachments?.[0].content.toString()).toBe("original ICS");
+  });
+  it("keeps a refused/lost authorization held without any SDK or replacement authorization", async () => {
+    const { adapter, authorize, send, observe } = setup();
+    authorize.mockRejectedValueOnce(new Error("PRIVATE lost commit response"));
+    const request = adapter.freeze(payload, context)!;
+    expect(await adapter.authorize(request)).toBeNull();
+    expect(await adapter.authorize(request)).toBeNull();
+    expect(authorize).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
+    expect(observe).not.toHaveBeenCalled();
+  });
+  it("retains SDK-observed acceptance separately from failed persistence, with no second dispatch", async () => {
+    const { adapter, observe, send } = setup();
+    observe.mockRejectedValueOnce(new Error("PRIVATE receipt persistence unavailable"));
+    const request = adapter.freeze(payload, context)!;
+    const grant = (await adapter.authorize(request))!;
+    expect(await adapter.dispatchAndSettle(request, grant)).toMatchObject({ kind: "observed", observation: { kind: "accepted" }, persistence: "unconfirmed" });
+    expect(await adapter.dispatchAndSettle(request, grant)).toEqual({ kind: "held" });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    { data: {}, error: null },
+    { data: null, error: { name: "server_error", statusCode: 503 } },
+    { data: null, error: { name: "invalid_idempotent_request", statusCode: 409 } },
+    { data: null, error: { name: "concurrent_idempotent_requests", statusCode: 409 } },
+  ])("holds uncertain SDK reply without a second invocation or replacement key: %j", async (reply) => {
+    const { adapter, send } = setup();
+    send.mockResolvedValueOnce(reply);
+    const request = adapter.freeze(payload, context)!;
+    const grant = (await adapter.authorize(request))!;
+    expect(await adapter.dispatchAndSettle(request, grant)).toMatchObject({ kind: "observed", observation: { kind: "unknown" } });
+    expect(await adapter.dispatchAndSettle(request, grant)).toEqual({ kind: "held" });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][1]).toEqual({ idempotencyKey: context.providerKey });
+  });
+  it("holds timeout without replay and binds late SDK evidence to the original authorization", async () => {
+    vi.useFakeTimers();
+    try {
+      const { adapter, send, observe, authorize, fake } = setup();
+      let release!: () => void;
+      send.mockImplementationOnce(async (request) => { await new Promise<void>((resolve) => { release = resolve; }); return fake.emails.send(request); });
+      const request = adapter.freeze(payload, context)!;
+      const grant = (await adapter.authorize(request))!;
+      const pending = adapter.dispatchAndSettle(request, grant);
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(await pending).toMatchObject({ kind: "observed", observation: { kind: "unknown", reason: "timeout" } });
+      expect(await adapter.dispatchAndSettle(request, grant)).toEqual({ kind: "held" });
+      release();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(observe).toHaveBeenCalledTimes(2);
+      expect(observe.mock.calls[1][2]).toEqual({ kind: "accepted", messageId: FAKE_MESSAGE_ID });
+      expect(observe.mock.calls[1][0]).toEqual(authorize.mock.calls[0][0]);
+      expect(observe.mock.calls[1][1]).toBe(observe.mock.calls[0][1]);
+      expect(send).toHaveBeenCalledTimes(1);
+      // This proves ORIGINAL binding only, not SQL successor-lease/projection CAS.
+    } finally { vi.useRealTimers(); }
   });
 });

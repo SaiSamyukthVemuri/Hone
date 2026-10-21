@@ -28,14 +28,14 @@ describe("the operator's registration section", () => {
   });
 
   it("no live sender, or more than one: no form", () => {
-    expect(render({ ok: true, senders: [], registrations: [], campaignBindings: [] })).not.toMatch(/<form/);
-    const two = render({ ok: true, senders: [SENDER, { ...SENDER, id: "33333333-3333-4333-8333-333333333333" }], registrations: [], campaignBindings: [] });
+    expect(render({ ok: true, senders: [], registrations: [], campaignBindings: [], stopPreflights: [] })).not.toMatch(/<form/);
+    const two = render({ ok: true, senders: [SENDER, { ...SENDER, id: "33333333-3333-4333-8333-333333333333" }], registrations: [], campaignBindings: [], stopPreflights: [] });
     expect(two).toContain('data-state="ambiguous"');
     expect(two).not.toMatch(/<form/);
   });
 
   it("one live sender with NO record yet: its number is shown, and the form is bound to it", () => {
-    const html = render({ ok: true, senders: [SENDER], registrations: [], campaignBindings: [] });
+    const html = render({ ok: true, senders: [SENDER], registrations: [], campaignBindings: [], stopPreflights: [] });
     expect(html).toContain(SENDER.phone_number);
     expect(html).toContain(`name="expected_sender_id" value="${SENDER.id}"`);
     expect(html).toContain(`name="expected_phone_number" value="${SENDER.phone_number}"`);
@@ -46,7 +46,7 @@ describe("the operator's registration section", () => {
 
   it("a sender with NO number yet: shown, but no form (Codex P2 4244484021)", () => {
     for (const status of ["off", "selecting", "provisioning"]) {
-      const html = render({ ok: true, senders: [{ ...SENDER, status, phone_number: null }], registrations: [], campaignBindings: [] });
+      const html = render({ ok: true, senders: [{ ...SENDER, status, phone_number: null }], registrations: [], campaignBindings: [], stopPreflights: [] });
       expect(html).toContain('data-state="no-number"');
       expect(html).toContain("not assigned yet");
       expect(html).not.toMatch(/<form|<button/);
@@ -54,14 +54,14 @@ describe("the operator's registration section", () => {
   });
 
   it("the kind is the number's, shown and never chosen (Codex P2 4244484022)", () => {
-    const longCode = render({ ok: true, senders: [SENDER], registrations: [], campaignBindings: [] });
+    const longCode = render({ ok: true, senders: [SENDER], registrations: [], campaignBindings: [], stopPreflights: [] });
     expect(longCode).not.toMatch(/name="kind"/);
     expect(longCode).toMatch(/data-testid="admin-sms-registration-kind">A2P 10DLC/);
-    const tollFree = render({ ok: true, senders: [{ ...SENDER, phone_number: "+18885550123" }], registrations: [], campaignBindings: [] });
+    const tollFree = render({ ok: true, senders: [{ ...SENDER, phone_number: "+18885550123" }], registrations: [], campaignBindings: [], stopPreflights: [] });
     expect(tollFree).not.toMatch(/name="kind"/);
     expect(tollFree).toMatch(/data-testid="admin-sms-registration-kind">Toll-free verification/);
     // A number Hone does not serve gets no form at all.
-    const other = render({ ok: true, senders: [{ ...SENDER, phone_number: "+18765550123" }], registrations: [], campaignBindings: [] });
+    const other = render({ ok: true, senders: [{ ...SENDER, phone_number: "+18765550123" }], registrations: [], campaignBindings: [], stopPreflights: [] });
     expect(other).toContain('data-state="unsupported-number"');
     expect(other).not.toMatch(/<form/);
   });
@@ -71,19 +71,19 @@ describe("the operator's registration section", () => {
       sender_id: SENDER.id, studio_id: STUDIO, phone_number: SENDER.phone_number, kind: "us_10dlc" as const,
       status: "requires_information" as const, missing_information: "a sample message", provider_reference: "CMabc123", updated_at: "x",
     };
-    const html = render({ ok: true, senders: [SENDER], registrations: [rec], campaignBindings: [] });
+    const html = render({ ok: true, senders: [SENDER], registrations: [rec], campaignBindings: [], stopPreflights: [] });
     expect(html).toMatch(/<option value="requires_information" selected="">/);
     expect(html).toContain('name="missing_information" value="a sample message"');
     expect(html).toContain('name="provider_reference" value="CMabc123"');
     expect(html).toContain("Currently recorded: <strong>requires_information</strong>");
 
-    const approved = render({ ok: true, senders: [SENDER], registrations: [{ ...rec, status: "approved", missing_information: null }], campaignBindings: [] });
+    const approved = render({ ok: true, senders: [SENDER], registrations: [{ ...rec, status: "approved", missing_information: null }], campaignBindings: [], stopPreflights: [] });
     expect(approved).toMatch(/<option value="approved" selected="">/);
     expect(approved).not.toMatch(/<option value="pending" selected="">/);
   });
 
   it("with no record (or only a record of another kind) the defaults apply", () => {
-    const none = render({ ok: true, senders: [SENDER], registrations: [], campaignBindings: [] });
+    const none = render({ ok: true, senders: [SENDER], registrations: [], campaignBindings: [], stopPreflights: [] });
     expect(none).toMatch(/<option value="pending" selected="">/);
     expect(none).not.toContain("Currently recorded");
   });
@@ -101,7 +101,7 @@ describe("the operator's registration section", () => {
 
 describe("parseLiveRegistrationState", () => {
   it("accepts the 0217 shape", () => {
-    expect(parseLiveRegistrationState({ senders: [SENDER], registrations: [] }, STUDIO)).toEqual({ ok: true, senders: [SENDER], registrations: [], campaignBindings: [] });
+    expect(parseLiveRegistrationState({ senders: [SENDER], registrations: [] }, STUDIO)).toEqual({ ok: true, senders: [SENDER], registrations: [], campaignBindings: [], stopPreflights: [] });
   });
 
   it("refuses a row about a number the sender no longer holds", () => {
@@ -121,7 +121,7 @@ describe("parseLiveRegistrationState", () => {
 
 describe("approved means COMPLETE for this number (Codex P2 4253281361)", () => {
   it("the form and its guidance say so", () => {
-    const html = render({ ok: true, senders: [SENDER], registrations: [], campaignBindings: [] });
+    const html = render({ ok: true, senders: [SENDER], registrations: [], campaignBindings: [], stopPreflights: [] });
     expect(html).toMatch(/approved: COMPLETE for this number \(brand, campaign and the number registered\)/);
     expect(html).toMatch(/pending: anything not yet complete, including this number(&#x27;|')s own registration/);
     expect(html).toMatch(/only when registration is complete for this exact number/);
@@ -208,12 +208,12 @@ describe("success names the number it recorded for", () => {
 
 describe("HON-50 G4b: the US campaign block", () => {
   it("shows the recorded verdict and the check form for a US long-code sender only", () => {
-    const html = render({ ok: true, senders: [SENDER], registrations: [], campaignBindings: [] });
+    const html = render({ ok: true, senders: [SENDER], registrations: [], campaignBindings: [], stopPreflights: [] });
     expect(html).toContain('data-testid="admin-sms-campaign"');
     expect(html).toContain('data-verdict="missing"');
     expect(html).toContain(`value="${SENDER.id}"`);
     // Toll-free numbers are verified, not linked to a campaign: no block.
-    const tollFree = render({ ok: true, senders: [{ ...SENDER, phone_number: "+18885550123" }], registrations: [], campaignBindings: [] });
+    const tollFree = render({ ok: true, senders: [{ ...SENDER, phone_number: "+18885550123" }], registrations: [], campaignBindings: [], stopPreflights: [] });
     expect(tollFree).not.toContain('data-testid="admin-sms-campaign"');
     // The form never carries a Messaging Service: the server reads it from the snapshot.
     expect(html).not.toContain('name="messaging_service_sid"');

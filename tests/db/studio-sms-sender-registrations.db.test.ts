@@ -277,8 +277,8 @@ describe("the operator's snapshot (Codex P2 4244011188, 4244108801)", () => {
       // 0229 adds provisioned_at to each sender, additively.
       { id, studio_id: s.studioId, status: "active", phone_number: num, messaging_service_sid: expect.stringMatching(/^MG/), provisioned_at: expect.any(String) },
     ]);
-    // 0229 adds campaign_bindings, additively.
-    expect((await snapshot(none.studioId))).toEqual({ senders: [], registrations: [], campaign_bindings: [] });
+    // 0229 adds campaign_bindings, and 0230 (HON-50 G6) stop_preflights, additively.
+    expect((await snapshot(none.studioId))).toEqual({ senders: [], registrations: [], campaign_bindings: [], stop_preflights: [] });
   });
 
   it("returns the LIVE number's evidence only, never a released predecessor's", async () => {

@@ -2,6 +2,7 @@ import { generateRawToken, hashToken } from "@/lib/portal/tokens";
 import { buildPortalMagicLinkEmail } from "@/lib/email/templates/portal-magic-link";
 import { sendEmailSafely } from "@/lib/email/send-appointment";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { safeLog } from "@/lib/logging/safe-log";
 
 // Shared client-portal magic-link issuance. Used by the new practitioner
 // "Send portal link" action; mirrors the public self-request issuance
@@ -54,8 +55,8 @@ export async function issuePortalMagicLink(
       user_agent_hash: input.userAgentHash ?? null,
     });
   if (insertErr) {
-    // Safe log only, never the raw token.
-    console.error(
+    // Provider error messages can quote record ids; never log them raw.
+    safeLog.error(
       JSON.stringify({
         event: "portal_magic_link_insert_failed",
         code: insertErr.code,
@@ -93,7 +94,7 @@ export async function issuePortalMagicLink(
     return { ok: false, error: "The portal link email could not be sent. Please try again." };
   }
 
-  console.log(
+  safeLog.info(
     JSON.stringify({
       event: "portal_magic_link_sent",
       studioId: input.studioId,

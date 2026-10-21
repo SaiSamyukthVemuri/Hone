@@ -1,5 +1,6 @@
 "use server";
 
+import { safeLog } from "@/lib/logging/safe-log";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -25,6 +26,7 @@ import {
   sendPostcareToClient,
 } from "@/lib/email/send-appointment";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 import { localDateString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 
@@ -364,6 +366,28 @@ export async function bookAppointmentForClientAction(
     return { ok: true, appointmentId: createdId };
   }
 
+  // SCH-001: the booking actor remains the authorization/audit identity above.
+  // Notification identity comes only from the COMMITTED assignment, never the
+  // actor or a submitted target. A missing/unread contact must not notify A in
+  // B's place; resolve inside the existing post-commit failure boundary below.
+  const assignedNotificationContact = async () => {
+    if (!created.practitioner_id) throw new Error("assigned_practitioner_unavailable");
+    const { data: assigned, error: assignedError } = await supabase
+      .from("practitioners")
+      .select("display_name, email")
+      .eq("id", created.practitioner_id)
+      .eq("studio_id", studio.id)
+      .eq("active", true)
+      .maybeSingle();
+    if (assignedError || !assigned?.email?.trim()) {
+      throw new Error("assigned_practitioner_unavailable");
+    }
+    return {
+      practitionerName: assigned.display_name?.trim() || assigned.email,
+      practitionerEmail: assigned.email,
+    };
+  };
+
   // The appointment is COMMITTED (create_internal_appointment_v2 returned). The
   // post-commit notification dispatch is best-effort/fail-open: a throwing helper
   // (e.g. a transient read inside the email context) must NEVER turn a committed
@@ -374,8 +398,7 @@ export async function bookAppointmentForClientAction(
       appointment: created,
       service,
       studio,
-      practitionerName: practitioner.display_name?.trim() || practitioner.email,
-      practitionerEmail: practitioner.email,
+      ...(await assignedNotificationContact()),
       clientName: client.name,
       clientEmail: client.email,
       clientPhone: client.phone,
@@ -409,6 +432,7 @@ export async function bookAppointmentForClientAction(
 
 export async function cancelAppointmentAction(formData: FormData): Promise<{
   ok: true;
+  notification?: "unconfirmed";
 } | { ok: false; error: string }> {
   const appointmentId = formDataStr(formData, "appointment_id");
   const reason = formDataStrOrNull(formData, "reason");
@@ -439,15 +463,7 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
     },
   );
   if (rpcErr) {
-    console.error(
-      JSON.stringify({
-        event: "practitioner_cancel_rpc_error",
-        code: rpcErr.code,
-        message: rpcErr.message,
-        appointmentId,
-        timestamp: new Date().toISOString(),
-      }),
-    );
+    safeLog.error(JSON.stringify({ event: "practitioner_cancel_rpc_error", timestamp: new Date().toISOString() }));
     return { ok: false, error: "Could not cancel this appointment." };
   }
   if (rpcResult === "already_cancelled") {
@@ -468,31 +484,33 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
     };
   }
 
-  // Look up enough data to send the client-notification email.
-  const supabase = await createClient();
-  const { data: appt } = await supabase
-    .from("appointments")
-    .select("client_id, starts_at, duration_minutes, service_id")
-    .eq("id", appointmentId)
-    .eq("studio_id", studio.id)
-    .maybeSingle();
-  if (appt) {
-    const { data: client } = await supabase
-      .from("clients")
-      .select("name, email")
-      .eq("id", appt.client_id)
+  // Cancellation already committed. Its notification can fail independently;
+  // never imply delivery or invite a second cancellation/send as recovery.
+  let notificationUnconfirmed = true;
+  try {
+    const supabase = await createClient();
+    const { data: appt } = await supabase
+      .from("appointments")
+      .select("client_id, starts_at, duration_minutes, service_id")
+      .eq("id", appointmentId)
+      .eq("studio_id", studio.id)
       .maybeSingle();
-    const { data: service } = appt.service_id
-      ? await supabase
-          .from("services")
-          .select("name")
-          .eq("id", appt.service_id)
-          .maybeSingle()
-      : { data: null };
+    if (appt) {
+      const { data: client } = await supabase
+        .from("clients")
+        .select("name, email")
+        .eq("id", appt.client_id)
+        .maybeSingle();
+      const { data: service } = appt.service_id
+        ? await supabase
+            .from("services")
+            .select("name")
+            .eq("id", appt.service_id)
+            .maybeSingle()
+        : { data: null };
 
-    if (client?.email) {
-      try {
-        await sendCancellationEmail({
+      if (client?.email) {
+        const sent = await sendCancellationEmail({
           to: client.email,
           recipientName: client.name,
           clientName: client.name,
@@ -510,17 +528,35 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
           isClient: true,
           rebookUrl: `${getRequiredAppOrigin()}/book/${studio.slug}`,
         });
-      } catch (err) {
-        console.error("client cancel notification email failed", err);
+        notificationUnconfirmed = !sent.ok;
       }
-    }
 
-    revalidatePath(`/clients/${appt.client_id}`);
+      revalidatePath(`/clients/${appt.client_id}`);
+    }
+  } catch {
+    notificationUnconfirmed = true;
+  }
+  if (notificationUnconfirmed) {
+    try {
+      // Existing durable operator surface; no provider error, address or
+      // cancellation reason is copied into logs or alert metadata.
+      await recordOpsAlert({
+        severity: "warning",
+        event: "cancellation_email_unconfirmed",
+        message: "Appointment cancelled; client notification was not confirmed. Review notification status before contacting the client.",
+        studioId: studio.id,
+        appointmentId,
+        route: "/calendar",
+        safeDetails: { notification_type: "cancellation", outcome: "unconfirmed" },
+      });
+    } catch {
+      safeLog.error(JSON.stringify({ event: "cancellation_notification_alert_unavailable", timestamp: new Date().toISOString() }));
+    }
   }
   revalidatePath("/calendar");
   revalidatePath("/calendar/upcoming");
   revalidatePath(`/calendar/${appointmentId}`);
-  return { ok: true };
+  return notificationUnconfirmed ? { ok: true, notification: "unconfirmed" } : { ok: true };
 }
 
 export type AppointmentStateActionResult =
@@ -1046,9 +1082,12 @@ function postcareClaimRefusalCopy(result: string): string {
   }
 }
 
-// Bounded structured logging: codes and ids only, never provider payloads.
-function logPostcare(event: string, fields: Record<string, unknown>): void {
-  console.error(JSON.stringify({ event, ...fields, timestamp: new Date().toISOString() }));
+// Closed projection only: callers may supply an operational code, never an
+// arbitrary provider error or record id to the external console.
+const POSTCARE_LOG_CODES = new Set(["PGRST202", "42501", "23503", "23514", "22P02", "P0001", "40001", "40P01", "57014", "stale_claim", "not_authorized", "invalid_input"]);
+function logPostcare(event: "send_postcare_claim_command_failed" | "send_postcare_claim_empty" | "send_postcare_settle_failure_unpersisted", fields: Record<string, unknown>): void {
+  const code = typeof fields.code === "string" && POSTCARE_LOG_CODES.has(fields.code) ? fields.code : "unknown";
+  safeLog.error(JSON.stringify({ event, code, timestamp: new Date().toISOString() }));
 }
 
 export async function sendPostcareEmailAction(
@@ -1089,15 +1128,7 @@ export async function sendPostcareEmailAction(
     .eq("studio_id", studio.id)
     .maybeSingle();
   if (lookupErr) {
-    console.error(
-      JSON.stringify({
-        event: "send_postcare_lookup_failed",
-        code: lookupErr.code,
-        message: lookupErr.message,
-        appointmentId,
-        timestamp: new Date().toISOString(),
-      }),
-    );
+    safeLog.error(JSON.stringify({ event: "send_postcare_lookup_failed", timestamp: new Date().toISOString() }));
     return { ok: false, error: "Could not send postcare. Please try again." };
   }
   if (!appt) return { ok: false, error: "Appointment not found." };
@@ -1225,17 +1256,7 @@ export async function sendPostcareEmailAction(
     // logEmailFailure's emailType union doesn't include "postcare" and we
     // intentionally don't extend it (postcare bypasses record_email_attempt);
     // log inline with the postcare event tag.
-    console.error(
-      JSON.stringify({
-        event: "send_postcare_email_failed",
-        appointmentId,
-        retryable: result.retryable,
-        // Bounded: retryable category only. A raw provider error can carry the
-        // recipient address and vendor internals, and the DB stores only the
-        // safe derived copy: operational logging matches that posture.
-        timestamp: new Date().toISOString(),
-      }),
-    );
+    safeLog.error(JSON.stringify({ event: "send_postcare_email_failed", retryable: result.retryable === true, timestamp: new Date().toISOString() }));
     // B8: settle the FAILURE through the command, under the exact claim token.
     // The safe operator-facing copy is derived in SQL from `retryable` alone,
     // a raw provider error can carry recipient addresses and vendor internals
@@ -1297,17 +1318,7 @@ export async function sendPostcareEmailAction(
     // The email DID hand off to the provider, but the success stamp failed.
     // Log it; the claim stays and is stale-reclaimable, we under-claim
     // ("still sending" → "not sent yet") rather than overclaim "sent".
-    console.error(
-      JSON.stringify({
-        event: "send_postcare_success_write_failed",
-        // The email DID reach the provider but the settlement did not persist.
-        // Bounded metadata only, and deliberately NO repair: we under-claim
-        // ("still sending" -> reclaimable) rather than fabricate a sent state.
-        code: successWriteErr.code,
-        appointmentId,
-        timestamp: new Date().toISOString(),
-      }),
-    );
+    safeLog.error(JSON.stringify({ event: "send_postcare_success_write_failed", timestamp: new Date().toISOString() }));
   }
 
   revalidatePath(`/calendar/${appointmentId}`);

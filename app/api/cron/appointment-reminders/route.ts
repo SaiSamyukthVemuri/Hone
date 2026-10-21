@@ -65,41 +65,59 @@ type AttemptsColumn =
   | "sms_reminder_24h_send_attempts"
   | "sms_reminder_2h_send_attempts";
 
-async function loadAppointmentsForWindow(opts: {
+async function* loadAppointmentsForWindow(opts: {
   startIso: string;
   endIso: string;
   notSentColumn: SentColumn;
   attemptsColumn: AttemptsColumn;
-}): Promise<Joined[]> {
+}): AsyncGenerator<Joined> {
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("appointments")
-    .select(
-      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email, phone, sms_consent_at, sms_opted_out_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
-    )
-    .eq("status", "confirmed")
-    .is(opts.notSentColumn, null)
-    .lt(opts.attemptsColumn, MAX_ATTEMPTS)
-    .gte("starts_at", opts.startIso)
-    .lte("starts_at", opts.endIso)
-    .order("starts_at", { ascending: true })
-    .limit(PER_RUN_LIMIT);
-  if (error) throw new Error(error.message);
-
-  return ((data ?? []) as unknown as Array<
-    Appointment & {
-      service: Joined["service"] | Joined["service"][] | null;
-      studio: Studio | Studio[] | null;
-      client: Joined["client"] | Joined["client"][] | null;
-      practitioner: Joined["practitioner"] | Joined["practitioner"][] | null;
+  let after: { startsAt: string; id: string } | null = null;
+  while (true) {
+    let query = admin
+      .from("appointments")
+      .select(
+        "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email, phone, sms_consent_at, sms_opted_out_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
+      )
+      .eq("status", "confirmed")
+      .is(opts.notSentColumn, null)
+      .lt(opts.attemptsColumn, MAX_ATTEMPTS)
+      .gte("starts_at", opts.startIso)
+      .lte("starts_at", opts.endIso)
+      .order("starts_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(PER_RUN_LIMIT);
+    if (after) {
+      // A total keyset order survives rows leaving the candidate set as this
+      // pass records results. OFFSET would skip unsent work after those writes.
+      const time = JSON.stringify(after.startsAt);
+      const id = JSON.stringify(after.id);
+      query = query.or(`starts_at.gt.${time},and(starts_at.eq.${time},id.gt.${id})`);
     }
-  >).map((row) => ({
-    ...(row as Appointment),
-    service: pickRel(row.service),
-    studio: pickRel(row.studio),
-    client: pickRel(row.client),
-    practitioner: pickRel(row.practitioner),
-  }));
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+
+    const rows = ((data ?? []) as unknown as Array<
+      Appointment & {
+        service: Joined["service"] | Joined["service"][] | null;
+        studio: Studio | Studio[] | null;
+        client: Joined["client"] | Joined["client"][] | null;
+        practitioner: Joined["practitioner"] | Joined["practitioner"][] | null;
+      }
+    >).map((row) => ({
+      ...(row as Appointment),
+      service: pickRel(row.service),
+      studio: pickRel(row.studio),
+      client: pickRel(row.client),
+      practitioner: pickRel(row.practitioner),
+    }));
+    if (rows.length === 0) return;
+    const last = rows[rows.length - 1];
+    // Capture before yielding: sending can change the underlying candidate set.
+    after = { startsAt: last.starts_at, id: last.id };
+    yield* rows;
+    if (rows.length < PER_RUN_LIMIT) return;
+  }
 }
 
 // PR #189: email passes gained a "skipped" bucket for rows lost to a
@@ -220,7 +238,7 @@ async function sendReminderPass(opts: {
   const emailType: ClaimableEmailType =
     opts.kind === "24h" ? "reminder_24h" : "reminder_2h";
 
-  const appts = await loadAppointmentsForWindow({
+  const appts = loadAppointmentsForWindow({
     startIso: opts.windowStartIso,
     endIso: opts.windowEndIso,
     notSentColumn: sentColumn,
@@ -237,7 +255,10 @@ async function sendReminderPass(opts: {
   };
   const appOrigin = getRequiredAppOrigin();
 
-  for (const appt of appts) {
+  for await (const appt of appts) {
+    // Only work that reaches an attempt consumes the send budget. Ineligible
+    // prefixes and lost claims must not hide later rows in this window.
+    if (stats.attempted >= PER_RUN_LIMIT) break;
     if (!appt.studio) continue;
     if (!appt.client?.email) continue;
 
@@ -277,14 +298,28 @@ async function sendReminderPass(opts: {
       continue;
     }
 
-    // PR #258: a confirmed appointment can be cancelled / no-showed between
-    // the window query and now; the claim does not re-validate status.
+    // Revalidate the generation used to compose this email after claiming.
+    // A reschedule may remain confirmed, even within this same window: never
+    // send the cached time or mint a manage token for the previous start.
     const { data: fresh } = await admin
       .from("appointments")
-      .select("status")
+      .select("status, starts_at")
       .eq("id", appt.id)
       .maybeSingle();
     if (!fresh || fresh.status !== "confirmed") {
+      stats.skipped += 1;
+      continue;
+    }
+    const currentStart = Date.parse(fresh.starts_at);
+    if (
+      !Number.isFinite(currentStart) ||
+      currentStart !== Date.parse(appt.starts_at) ||
+      currentStart < Date.parse(opts.windowStartIso) ||
+      currentStart > Date.parse(opts.windowEndIso)
+    ) {
+      // No provider call occurred. Release this claimed attempt so a later
+      // run can evaluate the new appointment time instead of waiting for TTL.
+      await recordEmailResult(admin, appt.id, emailType, false);
       stats.skipped += 1;
       continue;
     }
@@ -438,6 +473,8 @@ async function sendReminderPass(opts: {
       });
       stats.failed += 1;
     }
+    // Stop before requesting another candidate page when this pass is full.
+    if (stats.attempted >= PER_RUN_LIMIT) break;
   }
 
   return stats;
@@ -466,7 +503,7 @@ async function sendSmsReminderPass(opts: {
   const studioToggle =
     opts.kind === "24h" ? "send_24h_sms_reminders" : "send_2h_sms_reminders";
 
-  const appts = await loadAppointmentsForWindow({
+  const appts = loadAppointmentsForWindow({
     startIso: opts.windowStartIso,
     endIso: opts.windowEndIso,
     notSentColumn: sentColumn,
@@ -483,7 +520,10 @@ async function sendSmsReminderPass(opts: {
   };
   const smsAppOrigin = getRequiredAppOrigin();
 
-  for (const appt of appts) {
+  for await (const appt of appts) {
+    // Only work that reaches an attempt consumes the send budget. Ineligible
+    // prefixes and lost claims must not hide later rows in this window.
+    if (stats.attempted >= PER_RUN_LIMIT) break;
     if (!appt.studio) continue;
     if (!(appt.studio as unknown as Record<string, boolean>)[studioToggle]) {
       // Studio toggle is off: skip without an attempt counter bump.
@@ -554,6 +594,33 @@ async function sendSmsReminderPass(opts: {
       return manageToken ? `${smsAppOrigin}/manage/${manageToken}` : null;
     };
 
+    // Candidate eligibility is only a snapshot. Refresh after intake work,
+    // immediately before dispatch, so STOP/consent/phone/switch changes made
+    // while the row was queued reach the real sender's consent gate.
+    const { data: recipient, error: recipientError } = await admin
+      .from("appointments")
+      .select("status, client_id, client:clients(phone, sms_consent_at, sms_opted_out_at), studio:studios(send_24h_sms_reminders, send_2h_sms_reminders)")
+      .eq("id", appt.id)
+      .eq("studio_id", appt.studio.id)
+      .maybeSingle();
+    const current = recipient as unknown as {
+      status: string;
+      client_id: string;
+      client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at"> | Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">[] | null;
+      studio: Pick<Studio, "send_24h_sms_reminders" | "send_2h_sms_reminders"> | Pick<Studio, "send_24h_sms_reminders" | "send_2h_sms_reminders">[] | null;
+    } | null;
+    const currentClient = pickRel(current?.client ?? null);
+    const currentStudio = pickRel(current?.studio ?? null);
+    if (
+      recipientError || !currentClient || !currentStudio ||
+      current?.status !== "confirmed" || current.client_id !== appt.client_id
+    ) {
+      // Do not attach the queued client's intake link to a reassigned client.
+      // A later run can select that appointment with its new context.
+      stats.skipped += 1;
+      continue;
+    }
+
     const sendFn =
       opts.kind === "24h"
         ? send24hReminderSmsToClient
@@ -563,12 +630,8 @@ async function sendSmsReminderPass(opts: {
       appointmentId: appt.id,
       window: { startIso: opts.windowStartIso, endIso: opts.windowEndIso },
       timezone: appt.studio.timezone,
-      studio: appt.studio,
-      client: {
-        phone: appt.client.phone,
-        sms_consent_at: appt.client.sms_consent_at,
-        sms_opted_out_at: appt.client.sms_opted_out_at,
-      },
+      studio: { ...appt.studio, ...currentStudio },
+      client: currentClient,
       manageUrlFor,
       intakeUrl: smsIntakeUrl,
       ledgerBudget: opts.ledgerBudget,
@@ -583,8 +646,13 @@ async function sendSmsReminderPass(opts: {
       stats.succeeded += 1;
       linkMayHaveGone = result.intakeLinkIncluded;
     } else if (result.skipped) {
+      if (result.reason === "reminder_claim_unavailable") {
+        // Incomplete work is not a healthy empty run. Stop an outage from
+        // spending a claim round trip on every remaining candidate.
+        throw new Error("SMS reminder claim unavailable; run incomplete.");
+      }
       // Helper-level skip (toggle race, claim collision, gate miss, or a
-      // reminder claim that could not be reached). We do not count these
+      // normal refusal). We do not count these
       // as attempted because no Twilio call was made; the operator wants
       // attempted/succeeded/failed to reflect actual Twilio invocations.
       stats.skipped += 1;
@@ -602,6 +670,8 @@ async function sendSmsReminderPass(opts: {
       await stampIntakeLinkIssued(admin, smsIntake.id, { emailed: false });
       stats.intakeCtaIncluded += 1;
     }
+    // Stop before requesting another candidate page when this pass is full.
+    if (stats.attempted >= PER_RUN_LIMIT) break;
   }
 
   return stats;
@@ -690,7 +760,7 @@ export async function GET(req: Request) {
       sms_reminder_24h,
       sms_reminder_2h,
     });
-  } catch (err) {
+  } catch {
     // PR #153. Cron-route failure alert. The cron runs every few
     // minutes; if it starts throwing, reminders silently stop. The
     // 3-strike per-row attempt counter caps the blast radius once
@@ -698,8 +768,7 @@ export async function GET(req: Request) {
     await recordOpsAlert({
       severity: "critical",
       event: "cron_route_failed",
-      message:
-        err instanceof Error ? err.message : String(err ?? "unknown error"),
+      message: "Appointment reminder run failed. Check the cron execution status.",
       route: "/api/cron/appointment-reminders",
       safeDetails: {
         duration_ms: Date.now() - startedAt,
