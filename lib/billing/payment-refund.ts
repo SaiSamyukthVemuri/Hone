@@ -713,6 +713,41 @@ export async function refundPaymentChargeAttempt(args: {
     });
     return { ok: false, outcome: "needs_manual_review", message: "The refund response could not be matched to this payment. The studio operator will reconcile it." };
   }
+  // Owner998 union: preserve the locked observation/status/provenance path,
+  // but recognize only the SAME complete durable refund when a signed callback
+  // beats this older action response. Never hide an RPC error or other refusal.
+  async function verifiedSavedRefundTimestamp(original: AttemptRow, refundId: string): Promise<string | null> {
+    try {
+      const { data: saved, error: savedError } = await admin
+        .from("payment_charge_attempts")
+        .select("id,studio_id,client_id,charge_reason,status,stripe_livemode,stripe_account_id,stripe_customer_id,stripe_payment_intent_id,stripe_charge_id,amount_cents,currency,charged_at,refund_status,refund_amount_cents,refunded_at,stripe_refund_id,refund_failure_code,refund_failure_message_safe")
+        .eq("id", original.id)
+        .eq("studio_id", original.studio_id)
+        .maybeSingle();
+      if (!savedError && saved &&
+        original.stripe_account_id && original.stripe_customer_id &&
+        original.stripe_payment_intent_id && original.stripe_charge_id && refundId &&
+        saved.id === original.id && saved.studio_id === original.studio_id &&
+        saved.client_id === original.client_id && saved.charge_reason === original.charge_reason &&
+        saved.status === "succeeded" && saved.stripe_livemode === original.stripe_livemode &&
+        saved.stripe_account_id === original.stripe_account_id &&
+        saved.stripe_customer_id === original.stripe_customer_id &&
+        saved.stripe_payment_intent_id === original.stripe_payment_intent_id &&
+        saved.stripe_charge_id === original.stripe_charge_id &&
+        saved.amount_cents === original.amount_cents && saved.currency === original.currency &&
+        saved.charged_at === original.charged_at &&
+        saved.refund_status === "succeeded" && saved.stripe_refund_id === refundId &&
+        saved.refund_amount_cents === refundAmountCents && refundAmountCents === saved.amount_cents &&
+        typeof saved.refunded_at === "string" && Number.isFinite(Date.parse(saved.refunded_at)) &&
+        saved.refund_failure_code === null && saved.refund_failure_message_safe === null) {
+        return saved.refunded_at;
+      }
+    } catch {
+      // An unreadable row remains unresolved; never expose a private read error.
+    }
+    return null;
+  }
+
   const { data: observationRows, error: observationError } = await admin.rpc("reconcile_bound_payment_event", {
     p_attempt_id: attempt.id,
     p_event_id: `refund-observation:${refund.id}`,
@@ -735,6 +770,13 @@ export async function refundPaymentChargeAttempt(args: {
     },
   });
   const observation = (Array.isArray(observationRows) ? observationRows[0] : observationRows) as { result?: string } | null;
+  if (!observationError && observation?.result === "stale_observation") {
+    const callbackTimestamp = await verifiedSavedRefundTimestamp(attempt, refund.id);
+    if (callbackTimestamp) {
+      return { ok: true, outcome: "succeeded", stripeRefundId: refund.id,
+        refundedAt: callbackTimestamp, refundAmountCents };
+    }
+  }
   if (observationError || !["reconciled", "already_refunded", "refund_pending", "refund_failed"].includes(observation?.result ?? "")) {
     await recordOpsAlert({
       severity: "critical", event: "payment_refund_outcome_write_refused",
@@ -752,13 +794,10 @@ export async function refundPaymentChargeAttempt(args: {
   }
   // Read the timestamp actually committed by the command; never invent a local
   // completion time after a refused/missing write or a concurrent event.
-  const { data: saved, error: savedError } = await admin.from("payment_charge_attempts")
-    .select("refund_status,stripe_refund_id,refunded_at")
-    .eq("id", attempt.id).eq("studio_id", attempt.studio_id).maybeSingle();
-  if (savedError || saved?.refund_status !== "succeeded" || saved.stripe_refund_id !== refund.id || !saved.refunded_at) {
+  const refundedAtIso = await verifiedSavedRefundTimestamp(attempt, refund.id);
+  if (!refundedAtIso) {
     return { ok: false, outcome: "needs_manual_review", message: "The saved refund could not be confirmed. The studio operator will reconcile it." };
   }
-  const refundedAtIso = saved.refunded_at as string;
 
   return {
     ok: true,
