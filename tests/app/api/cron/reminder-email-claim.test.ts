@@ -155,6 +155,8 @@ const race = vi.hoisted(() => ({
   start: "2026-10-22T12:00:00.000Z",
   freshStart: "2026-10-22T12:00:00.000Z" as string | null,
   readError: false,
+  incidentRead: "none" as "none" | "db_error" | "timeout" | "invalid_row",
+  incidentSqlState: "42703" as unknown,
   backlog: null as null | { channel: "email" | "sms"; skipped: number; eligible: number; reason: "toggle" | "destination" | "consent" | "claim" },
   sent: new Set<string>(),
   heartbeat: vi.fn(async () => undefined),
@@ -240,6 +242,8 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           return { data: [], error: null };
         }
         race.pages.push({ cursor, orders });
+        if (race.incidentRead === "db_error") return { data: null, error: { message: "SYNTHETIC_PRIVATE PostgREST read failure", code: race.incidentSqlState } };
+        if (race.incidentRead === "invalid_row") return { data: [row("SYNTHETIC_PRIVATE invalid row")], error: null };
         if (race.pages.length > 100) throw new Error("Candidate cursor did not advance");
         const rows = race.backlog ? Array.from({ length: race.backlog.skipped + race.backlog.eligible }, (_, i) =>
           row(`00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`, i < race.backlog!.skipped),
@@ -263,7 +267,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           data: race.readError ? null : { ...row("00000000-0000-4000-8000-000000000001"), starts_at: race.freshStart },
           error: race.readError ? { message: "synthetic read failure" } : null,
         }),
-        then: (resolve: (value: unknown) => unknown) => Promise.resolve(answer()).then(resolve),
+        then: (resolve: (value: unknown) => unknown) => {
+          if (race.incidentRead === "timeout") { answer(); return new Promise(() => undefined); }
+          return Promise.resolve(answer()).then(resolve);
+        },
       };
       return b;
     },
@@ -278,7 +285,7 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     vi.setSystemTime(new Date("2026-10-21T12:00:00.000Z"));
     race.store.clear(); race.store.set("reminder_scan:v1:rotation", { value: JSON.stringify({version:1,next:"email24h",known:[]}), expiry: Date.now() + 10800000 }); race.failStore = false; race.heartbeat.mockClear(); race.alerts.mockClear();
     race.start = "2026-10-22T12:00:00.000Z"; race.freshStart = race.start;
-    race.readError = false;
+    race.readError = false; race.incidentRead = "none"; race.incidentSqlState = "42703";
     race.backlog = null; race.sent.clear(); race.pages = [];
     race.send.mockClear(); race.smsSend.mockClear();
     race.claim.mockReset().mockResolvedValue(true);
@@ -388,6 +395,9 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
   it("#995 storage outage is fail closed before any query, claim or provider dispatch", async () => {
     race.failStore = true;
     expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({
+      failure_stage: "acquire", failure_category: "coordination_unavailable",
+    }) }));
     expect(race.pages).toEqual([]); expect(race.claim).not.toHaveBeenCalled();
     expect(race.send).not.toHaveBeenCalled(); expect(race.smsSend).not.toHaveBeenCalled(); expect(race.heartbeat).not.toHaveBeenCalled();
   });
@@ -412,6 +422,81 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     expect(response.status).toBe(200);
     expect((await response.json()).reminder_24h).toMatchObject({ attempted: 1, failed: 1, succeeded: 0 });
     expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", false);
+  });
+
+  it.each(["db_error", "timeout"] as const)("16:15 incident signature: first-page %s fails before any claim/SDK and a later healthy fake run recovers without resets", async (failure) => {
+    race.incidentRead = failure;
+    const pending = GET(new Request("https://example.invalid/api/cron/appointment-reminders"));
+    if (failure === "timeout") await vi.advanceTimersByTimeAsync(1000);
+    const response = await pending;
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ ok: false, error: "cron_failed" });
+    expect(race.alerts).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      event: "cron_route_failed", severity: "critical",
+      message: "Reminder scan incomplete. Check scheduler progress before retrying work.",
+      safeDetails: { reason: "read_or_handler", candidates_scanned: 0, candidate_queries: 1, attempted: 0, coverage_unconfirmed: false,
+        failure_stage: "read", failure_category: failure === "timeout" ? "read_timeout" : "rejected_query",
+        ...(failure === "db_error" ? { sql_state: "42703" } : {}),
+      },
+    }));
+    expect(race.pages).toHaveLength(1);
+    expect(race.claim).not.toHaveBeenCalled(); expect(race.send).not.toHaveBeenCalled();
+    expect(race.smsSend).not.toHaveBeenCalled(); expect(race.record).not.toHaveBeenCalled();
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    expect(race.store.has("reminder_scan:v1:checkpoint:email24h")).toBe(false);
+    expect(race.store.has("reminder_scan:v1:lock")).toBe(false);
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
+    // Synthetic subsequent invocation only, NOT the production cron. Keep
+    // all persisted fixture state; no cursor/claim reset or alert resolution.
+    race.incidentRead = "none";
+    const recovered = await GET(new Request("https://example.invalid/api/cron/appointment-reminders"));
+    expect(recovered.status).toBe(200);
+    expect(race.claim).toHaveBeenCalledTimes(1); expect(race.send).toHaveBeenCalledTimes(1);
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+    expect(race.alerts).toHaveBeenCalledTimes(1);
+  });
+
+  it("16:15 incident ambiguity: a first-row handler can throw after fake acceptance with the same zero-attempt aggregate", async () => {
+    race.record.mockRejectedValueOnce(Object.assign(new Error("SYNTHETIC_PRIVATE settlement transport exception"), { code: "40001" }));
+    const response = await GET(new Request("https://example.invalid/api/cron/appointment-reminders"));
+    expect(response.status).toBe(500);
+    expect(race.alerts).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      event: "cron_route_failed", severity: "critical",
+      safeDetails: { reason: "read_or_handler", candidates_scanned: 0, candidate_queries: 1, attempted: 0, coverage_unconfirmed: false,
+        failure_stage: "handler", failure_category: "handler_error", sql_state: "40001",
+      },
+    }));
+    expect(race.claim).toHaveBeenCalledTimes(1);
+    expect(race.send).toHaveBeenCalledTimes(1); // fake only; aggregate is NOT a no-send proof
+    expect(race.record).toHaveBeenCalledTimes(1);
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
+    expect(race.store.has("reminder_scan:v1:checkpoint:email24h")).toBe(false);
+    // Deliberately no subsequent fake retry in this case: a possible accepted
+    // effect requires independent claim/result reconciliation before resend.
+  });
+
+  it("incident diagnostics distinguish invalid rows from reads without exposing the rejected cursor", async () => {
+    race.incidentRead = "invalid_row";
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({
+      failure_stage: "validate", failure_category: "invalid_row", candidates_scanned: 0, candidate_queries: 1,
+    }) }));
+    expect(race.claim).not.toHaveBeenCalled(); expect(race.send).not.toHaveBeenCalled();
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
+  });
+
+  it.each(["PGRST200", "SYNTHETIC_PRIVATE", "42703 private suffix"])("incident diagnostics withhold non-allowlisted SQLSTATE %s", async (code) => {
+    race.incidentRead = "db_error"; race.incidentSqlState = code;
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({
+      failure_stage: "read", failure_category: "rejected_query",
+    }) }));
+    const details = race.alerts.mock.calls[0] as unknown as [{ safeDetails: Record<string, unknown> }];
+    expect(details[0].safeDetails).not.toHaveProperty("sql_state");
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain(code);
+    expect(race.claim).not.toHaveBeenCalled(); expect(race.heartbeat).not.toHaveBeenCalled();
   });
 
 });
