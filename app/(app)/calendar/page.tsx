@@ -23,7 +23,8 @@ import type {
   RecurringBreakOccurrenceWithRule,
 } from "@/lib/booking/queries";
 import type { StudioTimedBlock } from "@/lib/types/database";
-import { DayColumn, type DayAvailability } from "./DayColumn";
+import { DayColumn } from "./DayColumn";
+import { resolveCalendarDayAvailability } from "@/lib/calendar/day-availability";
 import { buildCalendarReturnParams } from "./calendar-return";
 // Grid constants + formatters MUST come from plain (non-"use client")
 // modules. Importing them from the "use client" DayColumn turned them
@@ -141,47 +142,25 @@ export default async function CalendarPage({
     ),
     getActiveServices(studio.id),
     getClientsForStudio(studio.id),
-    // Read-only weekly availability for the calendar's neutral
-    // open/closed tint. One small query (≤7 rows), parallel with the
-    // rest; never feeds booking math. Visual guidance only.
+    // Studio-scoped availability rows for the calendar's neutral tint,
+    // projected by effective scope below; never feeds booking math.
     getAvailabilityDefaults(studio.id),
     // Read-only per-date availability overrides for the visible week,
-    // used (with the weekday defaults) to resolve each date's open/closed
-    // status the SAME way public booking does: override wins, else default,
-    // else closed. Display-only; never feeds booking math.
+    // used with weekday defaults to resolve common hours without collapsing
+    // different practitioner schedules into one studio-wide state.
     getOverridesForRange(studio.id, weekStart, weekEnd),
   ]);
   domain.end();
 
-  // Index weekly availability by day_of_week (0=Sun..6=Sat), matching the
-  // Sunday-start `days` array below. Days with no configured default map
-  // to null → no tint.
-  const availabilityByDow = new Map<number, DayAvailability>();
-  for (const d of availabilityDefaults) {
-    availabilityByDow.set(d.day_of_week, {
-      isOpen: d.is_open,
-      openTime: d.open_time,
-      closeTime: d.close_time,
-    });
-  }
-
-  // Per-date availability overrides keyed by effective_date ("YYYY-MM-DD").
-  const overrideByDate = new Map<string, boolean>();
-  for (const o of availabilityOverrides) {
-    overrideByDate.set(o.effective_date, o.is_open);
-  }
-
-  // Resolve whether a given visible date (Sunday-start index i = day_of_week)
-  // is closed, using the SAME precedence as public booking's slot generation
-  // (lib/booking/slots.ts): a date override wins; else the weekday default;
-  // else (no default configured) the day is closed. Display-only, used to
-  // hide auto-materialized recurring breaks on closed dates.
+  // This combined view may show shared hours, never one arbitrary person's
+  // row. A date with different effective schedules stays neutral and keeps
+  // recurring breaks visible. No booking query/authority is changed.
+  const availabilityForDate = (date: string, dayOfWeek: number) => resolveCalendarDayAvailability({
+    date, dayOfWeek, defaults: availabilityDefaults, overrides: availabilityOverrides,
+    capacityEnabled: studio.practitioner_capacity_enabled === true,
+  });
   function isClosedDate(date: string, dow: number): boolean {
-    const override = overrideByDate.get(date);
-    if (override !== undefined) return !override;
-    const def = availabilityByDow.get(dow);
-    if (def) return !def.isOpen;
-    return true;
+    return availabilityForDate(date, dow).closedDay;
   }
 
   // The drawer only needs the small subset used for search + display. We
@@ -259,7 +238,7 @@ export default async function CalendarPage({
     appts: byDate.get(date) ?? [],
     timedBlocks: timedBlocksByDate.get(date) ?? [],
     recurringBreaks: recurringByDate.get(date) ?? [],
-    availability: availabilityByDow.get(i) ?? null,
+    availability: availabilityForDate(date, i).availability,
     closedDay: isClosedDate(date, i),
     blocked: blockoutReasonByDate.has(date),
     blockedReason: blockoutReasonByDate.get(date) ?? null,
@@ -283,6 +262,11 @@ export default async function CalendarPage({
         upcomingHref="/calendar/upcoming"
         hideStepNavOnMobile
       />
+      {days.some((date, dow) => availabilityForDate(date, dow).hoursVary) && (
+        <p className="text-sm text-neutral-600">
+          Hours vary by practitioner. Check availability for the practitioner you select when booking.
+        </p>
+      )}
 
       {/* Layout (PR B): the calendar body scrolls INTERNALLY: the grid is a
           fixed 1020px, so without a height bound it forced the whole page to
@@ -427,7 +411,7 @@ export default async function CalendarPage({
                 clients={drawerClients}
                 services={services}
                 isToday={date === today}
-                availability={availabilityByDow.get(i) ?? null}
+                availability={availabilityForDate(date, i).availability}
                 closedDay={isClosedDate(date, i)}
                 returnTo={returnTo}
               />
@@ -453,13 +437,13 @@ export default async function CalendarPage({
 // (already done in the caller) but loads a different appointment
 // range and uses its own grouping helper.
 //
-// Closed-day resolution here uses the SAME precedence as the week
-// view (override wins → weekday default → no-default = closed). The
+// Closed-day resolution uses the SAME scope projection as the week view;
+// different effective schedules never imply a shared closed day. The
 // month view only renders the closed pill in-month so spillover
 // days don't get a distracting bottom-right "Closed" tag.
 
 async function renderMonthView(opts: {
-  studio: { id: string; timezone: string };
+  studio: { id: string; timezone: string; practitioner_capacity_enabled?: boolean };
   timeFormat: TimeFormat;
   today: string;
   monthParam: string | undefined;
@@ -514,23 +498,17 @@ async function renderMonthView(opts: {
   ]);
   domain.end();
 
-  const availabilityByDow = new Map<number, boolean>();
-  for (const d of availabilityDefaults) {
-    availabilityByDow.set(d.day_of_week, d.is_open);
-  }
-  const overrideByDate = new Map<string, boolean>();
-  for (const o of availabilityOverrides) {
-    overrideByDate.set(o.effective_date, o.is_open);
-  }
-  function isClosedDate(dateStr: string): boolean {
-    const override = overrideByDate.get(dateStr);
-    if (override !== undefined) return !override;
+  const availabilityForDate = (dateStr: string) => {
     // Sunday-start dow consistent with the week view's mapping.
     const [y, m, d] = dateStr.split("-").map(Number);
     const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-    const def = availabilityByDow.get(dow);
-    if (def === undefined) return true;
-    return !def;
+    return resolveCalendarDayAvailability({
+      date: dateStr, dayOfWeek: dow, defaults: availabilityDefaults, overrides: availabilityOverrides,
+      capacityEnabled: studio.practitioner_capacity_enabled === true,
+    });
+  };
+  function isClosedDate(dateStr: string): boolean {
+    return availabilityForDate(dateStr).closedDay;
   }
 
   const appointmentsByDate = groupMonthAppointmentsByDate(
@@ -568,6 +546,12 @@ async function renderMonthView(opts: {
         upcomingHref="/calendar/upcoming"
         hideStepNavOnMobile={false}
       />
+      {Array.from({ length: 31 }, (_, i) => addDays(monthAnchor, i))
+        .filter((date) => date < monthEnd).some((date) => availabilityForDate(date).hoursVary) && (
+        <p className="text-sm text-neutral-600">
+          Hours vary by practitioner. Check availability for the practitioner you select when booking.
+        </p>
+      )}
 
       <MonthView
         monthAnchor={monthAnchor}
