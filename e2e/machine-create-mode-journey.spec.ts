@@ -1197,12 +1197,17 @@ for (const suite of [
   { name: "native 3G text durability", profiles: APILUS_3G_TEXT_FIXTURES, choiceOnly: true },
 ]) {
 for (const device of [
-  { name: "desktop", viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false },
-  { name: "mobile", viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true },
+  { name: "desktop", viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false, reloadInitial: false, blendOnly: false },
+  { name: "mobile", viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reloadInitial: true, blendOnly: false },
+  // One additional desktop initial-reload journey per model. Keep the original
+  // twenty durability cases unchanged, including their same-mount retry branch.
+  ...(suite.choiceOnly ? [
+    { name: "desktop initial reload", viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false, reloadInitial: true, blendOnly: true },
+  ] : []),
 ]) {
   test.describe(`${suite.name} ${device.name}`, () => {
     test.use({ viewport: device.viewport, isMobile: device.isMobile, hasTouch: device.hasTouch });
-    for (const profile of suite.profiles) for (const mode of profile.modes.filter((m) => !suite.choiceOnly || m.fields.some((f) => f.valueKind === "choice"))) {
+    for (const profile of suite.profiles) for (const mode of profile.modes.filter((m) => (!suite.choiceOnly || m.fields.some((f) => f.valueKind === "choice")) && (!device.blendOnly || m.key === "blend"))) {
       test(`${profile.model} / ${mode.key}: save, retry, reload, history and next visit`, async ({ page }) => {
         test.skip(process.env.HONE_SYNTHETIC_MACHINE_PROFILE !== "1",
           "UNRUN native journey: existing synthetic server gate must explicitly be enabled; closed gate is not native acceptance.");
@@ -1332,8 +1337,9 @@ for (const device of [
         };
         await assertFrozenDraft(observations);
         await noOverflow(page);
-        if (device.isMobile) {
-          // Existing reload reconciliation journey, now with each native mode.
+        if (device.reloadInitial) {
+          // Existing reload reconciliation journey: every mobile mode and the
+          // additional model-specific desktop Blend cases use this same path.
           // The address-bar identity must match the independently read claim.
           const areaOp = () => new URL(page.url()).searchParams.get("area_op");
           await expect.poll(areaOp, { timeout: T }).not.toBeNull();
@@ -1511,7 +1517,8 @@ for (const device of [
 
 // Two model-specific recovery cases, not another durability cross-product.
 // Recovery choice/key handling has no viewport branch in block-setup-form;
-// use the existing mobile viewport. Desktop initial-reload remains UNRUN.
+// use the existing mobile viewport. Desktop initial reload has its own two
+// model-specific durability cases above; execution evidence is recorded separately.
 for (const profile of APILUS_3G_TEXT_FIXTURES) {
   test(`native 3G uncommitted recovery ${profile.model}: explicit whole-draft reconstruction`, async ({ page }) => {
     test.skip(process.env.HONE_SYNTHETIC_MACHINE_PROFILE !== "1",

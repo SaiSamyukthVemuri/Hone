@@ -687,7 +687,7 @@ jobs:
     # HON-18 proof workload: ordinary coverage plus formerly skipped storage
     # cases and a second, synthetic-native-only server invocation. Run39620772010
     # already took15m59s with those cases skipped; native20 was9.1m unsharded.
-    # The22 native cases are disjoint6/6/5/5 (3way8/7/7), one worker per runner.
+    # The24 native cases are disjoint6/6/6/6 (3way8/8/8), one worker per runner.
     # Allow second build/storage/teardown headroom with a finite35m ceiling;
     # investigate augmented runs over25m. This is new work, not a new target for
     # unchanged ordinary coverage; non-machine targeted jobs retain15m.

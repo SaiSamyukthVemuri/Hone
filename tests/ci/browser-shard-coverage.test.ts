@@ -323,15 +323,19 @@ describe("the split covers the same specs, once and only once", () => {
 
 
 describe("native-only case-level sharding preserves both 3G models", () => {
-  it("all22 existing cases are disjoint and exhaustive across the four existing runners", { timeout: 120_000 }, () => {
+  it("all24 native cases are disjoint and exhaustive across the four existing runners", { timeout: 120_000 }, () => {
     const specs = ["e2e/machine-create-mode-journey.spec.ts"];
     const args = ["--grep=native 3G (durability|text durability|uncommitted recovery)", "--fully-parallel", "--workers=1"];
     const all = listTests(specs, undefined, args);
     const shards = ["1/4", "2/4", "3/4", "4/4"].map((shard) => listTests(specs, shard, args));
-    expect(all).toHaveLength(22);
+    expect(all).toHaveLength(24);
     expect(all.some((name) => name.includes("Senior 3G"))).toBe(true);
     expect(all.some((name) => name.includes("Junior 3G"))).toBe(true);
-    expect(shards.map((shard) => shard.length)).toEqual([6, 6, 5, 5]);
+    const desktopReload = all.filter((name) => name.includes("native 3G text durability desktop initial reload"));
+    expect(desktopReload).toHaveLength(2);
+    expect(desktopReload.filter((name) => name.includes("Senior 3G") && name.includes(" / blend:"))).toHaveLength(1);
+    expect(desktopReload.filter((name) => name.includes("Junior 3G") && name.includes(" / blend:"))).toHaveLength(1);
+    expect(shards.map((shard) => shard.length)).toEqual([6, 6, 6, 6]);
     expect(shards.flat().sort()).toEqual(all);
     expect(new Set(shards.flat()).size).toBe(all.length);
   });
