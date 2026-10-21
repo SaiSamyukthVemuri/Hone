@@ -380,20 +380,12 @@ function jobNames(yaml: string): string[] {
   return out;
 }
 
-/**
- * Parse the browser shard's conditional `timeout-minutes` into its two
- * branches. Parsing beats matching a literal expression: the guard then
- * survives whitespace and formatting changes, and states the two budgets as
- * NUMBERS rather than as one brittle regex.
- *
- *   timeout-minutes: ${{ ... browser_extended == 'true' && <extended> || <targeted> }}
- */
+/** Parse the actual browser job's finite augmented-proof / ordinary budgets. */
 function shardTimeoutBudgets(): { extended: number; targeted: number } {
-  const m =
-    /timeout-minutes:\s*\$\{\{\s*needs\.changes\.outputs\.browser_extended\s*==\s*'true'\s*&&\s*(\d+)\s*\|\|\s*(\d+)\s*\}\}/.exec(
-      CI,
-    );
-  if (!m) throw new Error("browser shard timeout-minutes expression not found in ci.yml");
+  const doc = yaml.load(CI) as { jobs: Record<string, Record<string, unknown>> };
+  const expression = String(doc.jobs["browser-e2e-shard"]["timeout-minutes"]);
+  const m = /&&\s*(\d+)\s*\|\|\s*(\d+)\s*\}\}$/.exec(expression);
+  if (!m) throw new Error("browser shard finite timeout branches missing in ci.yml");
   return { extended: Number(m[1]), targeted: Number(m[2]) };
 }
 
@@ -550,7 +542,7 @@ describe("PR CI — path-aware lane selection", () => {
     // misreported as test failures.
     const b = shardTimeoutBudgets();
     expect(b.targeted, "targeted hard timeout").toBe(15);
-    expect(b.extended, "extended hard timeout").toBe(18);
+    expect(b.extended, "augmented storage/native proof hard timeout").toBe(35);
     expect(CI).toMatch(/hard timeout 15 min/i);
     expect(CI).toMatch(/hard timeout 18 min/i);
     expect(CI).toMatch(/target <10 min per shard/i);
@@ -738,7 +730,8 @@ describe("PR CI — path-aware lane selection", () => {
     expect(b.targeted).toBeGreaterThan(10);
     expect(b.extended).toBeGreaterThan(10);
     expect(b.targeted).toBeLessThanOrEqual(15);
-    expect(b.extended).toBeLessThanOrEqual(18);
+    expect(b.extended).toBeGreaterThan(25);
+    expect(b.extended).toBeLessThanOrEqual(35);
   });
 
   it("every job declares an explicit timeout", () => {
@@ -1898,5 +1891,65 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
     expect(onDisk.length, "the workflow directory is empty").toBeGreaterThan(0);
     expect(WORKFLOWS.map(([name]) => name)).toEqual(onDisk);
     expect(onDisk).toEqual(expect.arrayContaining(["ci.yml", "nightly.yml"]));
+  });
+});
+
+
+describe("HON-18 existing browser job executes guarded photo/native proof", () => {
+  const doc = yaml.load(CI) as { env?: Record<string, string>; jobs: Record<string, { env?: Record<string, string>; steps: Array<Record<string, unknown>>; "timeout-minutes": string }> };
+  const job = doc.jobs["browser-e2e-shard"];
+  const native = job.steps.find((step) => step.id === "native3g") ?? {};
+
+  it("keeps the synthetic gate step-local and only supplements the ordinary pass", () => {
+    expect(doc.env?.HONE_SYNTHETIC_MACHINE_PROFILE).toBeUndefined();
+    expect(job.env?.HONE_SYNTHETIC_MACHINE_PROFILE).toBeUndefined();
+    expect((native.env as Record<string, string>).HONE_SYNTHETIC_MACHINE_PROFILE).toBe("1");
+    expect(job.steps.findIndex((step) => step.id === "e2e")).toBeLessThan(job.steps.indexOf(native));
+    expect(native.if).toBe("needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')");
+    const budget = job["timeout-minutes"].replace(/\s+/g, "");
+    expect(budget).toBe("${{(" + String(native.if).replace(/\s+/g, "") + ")&&35||15}}");
+    expect(native.run).toContain("--workers=1");
+    expect(native.run).toContain("--fully-parallel");
+    expect(native.run).toContain("--retries=0");
+    expect(native.run).toContain("--shard=${{ matrix.shard }}/${SHARD_TOTAL}");
+    expect(native.run).toContain('SHARD_TOTAL="${{ needs.changes.outputs.browser_shard_total }}"');
+  });
+
+  it("starts existing storage and refuses unavailable or public-bucket prerequisites", () => {
+    const start = job.steps.find((step) => step.name === "Start local Supabase stack (db + auth + mail capture)")!;
+    expect(start.run).not.toContain("storage-api");
+    const preflight = job.steps.find((step) => step.name === "Verify isolated photo storage prerequisite")!;
+    expect(preflight.run).toContain("http://127.0.0.1:54321/storage/v1/version");
+    expect(preflight.run).toContain("127.0.0.1:54322/postgres");
+    expect(preflight.run).toContain("rows.length !== 1 || rows[0].public !== false");
+    expect(job.steps.indexOf(preflight)).toBeLessThan(job.steps.findIndex((step) => step.id === "e2e"));
+    expect(job.steps.filter((step) => step.name === "Apply full migration chain from scratch")).toHaveLength(1);
+  });
+
+  const verification = String(native.run).match(/node --input-type=module <<'NODE'\n([\s\S]*?)\nNODE/)!;
+  function check(report: unknown): string {
+    if (!verification) throw new Error("native verification program missing");
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-native-report-"));
+    const file = path.join(dir, "results.json");
+    try {
+      writeFileSync(file, JSON.stringify(report));
+      return execFileSync(process.execPath, ["--input-type=module", "-e", verification[1]], {
+        encoding: "utf8", env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_FILE: file }, stdio: "pipe",
+      });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  const report = (results: Array<{ status: string }>, errors: unknown[] = []) => ({
+    suites: [{ suites: [{ specs: [{ tests: [{ expectedStatus: "passed", results }] }] }] }], errors,
+  });
+  it("accepts a real nested passing case", () => {
+    expect(check(report([{ status: "passed" }]))).toContain("1 actual passes, zero skips/retries");
+  });
+  it.each(["skipped", "failed", "interrupted"])("refuses a %s native result", (status) => {
+    expect(() => check(report([{ status }]))).toThrow();
+  });
+  it("refuses empty selection, retries and runner errors", () => {
+    expect(() => check({ suites: [], errors: [] })).toThrow();
+    expect(() => check(report([{ status: "failed" }, { status: "passed" }]))).toThrow();
+    expect(() => check(report([{ status: "passed" }], [{ message: "synthetic runner error" }]))).toThrow();
   });
 });
