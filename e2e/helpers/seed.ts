@@ -72,6 +72,14 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
     [studioId, studioName, ownerEmail, slug, timezoneWithLocalMorning()],
   );
 
+  // This existing synthetic fixture explicitly uses a verified CA/cad pair;
+  // real studios have no default and remain UNKNOWN without onboarding evidence.
+  const verified = await sql<{ out_result: string }>(
+    `select * from public.set_studio_payment_jurisdiction($1,'CA','cad',$2,$3,false,$4)`,
+    [studioId, "fixture:e2e", "Synthetic verified onboarding pair", `fixture:${runId}`],
+  );
+  if (verified[0]?.out_result !== "initialized") throw new Error("synthetic jurisdiction initialization failed");
+
   // Weekly availability: open every day with a wide window so the
   // booking page has slots no matter which weekday the run lands on.
   await sql(

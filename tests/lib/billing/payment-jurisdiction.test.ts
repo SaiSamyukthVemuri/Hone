@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   accountCountryBlockingReason,
   accountCountryChargeable,
@@ -81,5 +81,36 @@ describe("currencyLabel", () => {
   it("labels each currency explicitly", () => {
     expect(currencyLabel("cad")).toBe("CAD");
     expect(currencyLabel("usd")).toBe("USD");
+  });
+});
+
+
+const readState = vi.hoisted(() => ({
+  data: null as { payment_country: string; payment_currency: string } | null,
+  error: null as { code: string } | null,
+  studios: [] as string[],
+}));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  createAdminClient: () => ({ from: () => ({ select: () => ({ eq: (_column: string, studioId: string) => {
+    readState.studios.push(studioId);
+    return { maybeSingle: async () => ({ data: readState.data, error: readState.error }) };
+  } }) }) }),
+}));
+const { getStudioPaymentJurisdiction } = await import("@/lib/billing/payment-jurisdiction-server");
+beforeEach(() => { readState.data = null; readState.error = null; readState.studios = []; });
+describe("missing verified evidence remains UNKNOWN at the existing server read", () => {
+  it("a missing row is missing, never an implicit CA/cad pair", async () => {
+    expect(await getStudioPaymentJurisdiction("studio-unknown")).toEqual({ ok: false, reason: "missing" });
+    expect(readState.studios).toEqual(["studio-unknown"]);
+  });
+  it("read failure and invalid pair also fail closed", async () => {
+    readState.error = { code: "read_failed" };
+    expect(await getStudioPaymentJurisdiction("s")).toEqual({ ok: false, reason: "read_failed" });
+    readState.error = null; readState.data = { payment_country: "US", payment_currency: "cad" };
+    expect(await getStudioPaymentJurisdiction("s")).toEqual({ ok: false, reason: "invalid" });
+  });
+  it("only an explicit valid stored pair is returned", async () => {
+    readState.data = { payment_country: "US", payment_currency: "usd" };
+    expect(await getStudioPaymentJurisdiction("s")).toEqual({ ok: true, jurisdiction: { country: "US", currency: "usd" } });
   });
 });

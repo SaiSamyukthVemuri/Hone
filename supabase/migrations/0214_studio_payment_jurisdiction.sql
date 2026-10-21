@@ -16,10 +16,10 @@
 --      payment country and its currency as two explicit values. Only the pairs
 --      CA/cad and US/usd exist. Nothing infers them: not the timezone, not the
 --      address, not the phone number.
---   2. Every existing studio is BACKFILLED to CA/cad, and every studio created
---      from now on starts CA/cad (the pre-#824 deployment default, so Canadian
---      onboarding is unchanged). A US studio is made one by an operator, with
---      the command below, before it has a payment account or any money history.
+--   2. No studio is assigned a country or currency by migration or creation.
+--      Missing verified onboarding evidence remains a MISSING row (UNKNOWN).
+--      An operator must verify BOTH the business country and intended charge
+--      currency and supply the evidence reference to the governed command.
 --   3. public.set_studio_payment_jurisdiction — the ONLY writer of a change,
 --      service_role only, audited in public.studio_payment_jurisdiction_changes.
 --      It REFUSES once the studio has a Stripe account (any mode, any status)
@@ -83,11 +83,9 @@ create table if not exists public.studio_payment_jurisdictions (
   -- ISO 4217, lower case, as Stripe and every ledger spell it.
   payment_currency text not null,
 
-  -- How the current values were set:
-  --   legacy_backfill  every studio that existed when 0214 was applied
-  --   studio_created   the CA/cad default given to every studio created since
-  --   operator         set by set_studio_payment_jurisdiction (audited)
+  -- operator: explicit verified onboarding/change through the audited command.
   source text not null,
+  verification_reference text not null check (length(btrim(verification_reference)) between 1 and 1000),
 
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -97,7 +95,7 @@ create table if not exists public.studio_payment_jurisdictions (
     or (payment_country = 'US' and payment_currency = 'usd')
   ),
   constraint studio_payment_jurisdictions_source_check check (
-    source in ('legacy_backfill', 'studio_created', 'operator')
+    source = 'operator'
   )
 );
 
@@ -107,14 +105,16 @@ create table if not exists public.studio_payment_jurisdiction_changes (
   id uuid primary key default gen_random_uuid(),
   studio_id uuid not null
     references public.studios(id) on delete cascade,
-  from_country text not null,
-  from_currency text not null,
+  -- NULL only for the first verified pair; no guessed previous jurisdiction.
+  from_country text,
+  from_currency text,
   to_country text not null,
   to_currency text not null,
   -- Who did it, as the operator names themself. Free text because the operator
   -- path is SQL as well as a future console; never a client identity.
   actor text not null,
   reason text not null,
+  verification_reference text not null check (length(btrim(verification_reference)) between 1 and 1000),
   -- True when the studio already had configured or recorded prices and the
   -- operator explicitly accepted that those numbers now mean the new currency.
   prices_acknowledged boolean not null default false,
@@ -138,47 +138,20 @@ alter table public.studio_payment_jurisdictions enable row level security;
 alter table public.studio_payment_jurisdiction_changes enable row level security;
 
 -- ---------------------------------------------------------------------------
--- 2. Backfill, and the default for every studio created from now on
+-- 2. No backfill and no automatic jurisdiction/default trigger
 -- ---------------------------------------------------------------------------
-
--- Every studio that exists today has only ever been able to hold CAD money and
--- a CA account (the deployment default), so CA/cad is the truth about it, not
--- an assumption.
-insert into public.studio_payment_jurisdictions
-  (studio_id, payment_country, payment_currency, source)
-select s.id, 'CA', 'cad', 'legacy_backfill'
-  from public.studios s
-on conflict (studio_id) do nothing;
-
--- A new studio starts exactly where every studio before #824 started. Studios
--- are created by an operator (the New Studio wizard, or the runbook's SQL),
--- and a US studio is switched by the command below before its owner can
--- connect Stripe.
-create or replace function public.studios_payment_jurisdiction_default()
-returns trigger
-language plpgsql
-security definer
-set search_path = pg_catalog, pg_temp
-as $$
-begin
-  insert into public.studio_payment_jurisdictions
-    (studio_id, payment_country, payment_currency, source)
-  values (new.id, 'CA', 'cad', 'studio_created')
-  on conflict (studio_id) do nothing;
-  return new;
-end;
-$$;
-
-drop trigger if exists studios_payment_jurisdiction_default on public.studios;
-create trigger studios_payment_jurisdiction_default
-  after insert on public.studios
-  for each row execute function public.studios_payment_jurisdiction_default();
+-- Sam's 2026-10-21 policy: existing and future studios remain UNKNOWN until
+-- BOTH country and charge currency have verified evidence. Existing recorded
+-- money is never rewritten or treated as onboarding evidence. There is no
+-- implicit CA/cad fallback, including for a new studio.
 
 -- ---------------------------------------------------------------------------
 -- 3. The protected change command
 -- ---------------------------------------------------------------------------
 --
 -- Results (out_result):
+--   initialized                   the first explicitly verified pair was recorded
+--   verification_required         no evidence reference; UNKNOWN is unchanged
 --   changed                       the studio now charges in the new pair
 --   unchanged                     it already did; nothing written
 --   refused_payment_account       a Stripe account, provisioning attempt, saved
@@ -196,7 +169,8 @@ create or replace function public.set_studio_payment_jurisdiction(
   p_payment_currency text,
   p_actor text,
   p_reason text,
-  p_acknowledge_configured_prices boolean default false
+  p_acknowledge_configured_prices boolean default false,
+  p_verification_reference text default null
 )
 returns table (
   out_result text,
@@ -213,6 +187,8 @@ declare
   v_actor text := btrim(coalesce(p_actor, ''));
   v_reason text := btrim(coalesce(p_reason, ''));
   v_ack boolean := coalesce(p_acknowledge_configured_prices, false);
+  v_reference text := btrim(coalesce(p_verification_reference, ''));
+  v_initial boolean;
   v_row public.studio_payment_jurisdictions%rowtype;
 begin
   if p_studio_id is null
@@ -224,6 +200,20 @@ begin
     return;
   end if;
 
+  if length(v_reference) not between 1 and 1000 then
+    return query select 'verification_required'::text, null::text, null::text;
+    return;
+  end if;
+
+  -- Serialize first initialization on the existing studio, then its jurisdiction.
+  -- Missing evidence never creates a placeholder/default row. Existing money
+  -- and account refusals below also apply to initialization, not just changes.
+  perform 1 from public.studios st where st.id = p_studio_id for update;
+  if not found then
+    return query select 'not_found'::text, null::text, null::text;
+    return;
+  end if;
+
   -- FOR UPDATE FIRST, history second. A charge attempt or settlement takes FOR
   -- SHARE on this row before it is written (section 4), so once this lock is
   -- held no first payment can slip in between the checks below and the write.
@@ -231,10 +221,7 @@ begin
     from public.studio_payment_jurisdictions j
    where j.studio_id = p_studio_id
    for update;
-  if not found then
-    return query select 'not_found'::text, null::text, null::text;
-    return;
-  end if;
+  v_initial := not found;
 
   if v_row.payment_country = v_country and v_row.payment_currency = v_currency then
     return query select 'unchanged'::text, v_row.payment_country, v_row.payment_currency;
@@ -298,20 +285,27 @@ begin
     return;
   end if;
 
-  update public.studio_payment_jurisdictions j
-     set payment_country = v_country,
-         payment_currency = v_currency,
-         source = 'operator'
-   where j.studio_id = p_studio_id;
+  if v_initial then
+    insert into public.studio_payment_jurisdictions
+      (studio_id, payment_country, payment_currency, source, verification_reference)
+    values (p_studio_id, v_country, v_currency, 'operator', v_reference);
+  else
+    update public.studio_payment_jurisdictions j
+       set payment_country = v_country,
+           payment_currency = v_currency,
+           source = 'operator',
+           verification_reference = v_reference
+     where j.studio_id = p_studio_id;
+  end if;
 
   insert into public.studio_payment_jurisdiction_changes
     (studio_id, from_country, from_currency, to_country, to_currency,
-     actor, reason, prices_acknowledged)
+     actor, reason, prices_acknowledged, verification_reference)
   values
     (p_studio_id, v_row.payment_country, v_row.payment_currency, v_country, v_currency,
-     v_actor, v_reason, v_ack);
+     v_actor, v_reason, v_ack, v_reference);
 
-  return query select 'changed'::text, v_country, v_currency;
+  return query select case when v_initial then 'initialized' else 'changed' end, v_country, v_currency;
 end;
 $$;
 
@@ -692,11 +686,11 @@ revoke all on public.studio_payment_jurisdiction_changes
 grant select on public.studio_payment_jurisdictions to service_role;
 grant select on public.studio_payment_jurisdiction_changes to service_role;
 
-revoke execute on function public.set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean) from public;
-revoke execute on function public.set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean) from anon;
-revoke execute on function public.set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean) from authenticated;
-revoke execute on function public.set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean) from service_role;
-grant execute on function public.set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean) to service_role;
+revoke execute on function public.set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean, text) from public;
+revoke execute on function public.set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean, text) from anon;
+revoke execute on function public.set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean, text) from authenticated;
+revoke execute on function public.set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean, text) from service_role;
+grant execute on function public.set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean, text) to service_role;
 
 revoke execute on function public.record_stripe_account_jurisdiction(uuid, text, boolean, text, text) from public;
 revoke execute on function public.record_stripe_account_jurisdiction(uuid, text, boolean, text, text) from anon;
@@ -704,8 +698,6 @@ revoke execute on function public.record_stripe_account_jurisdiction(uuid, text,
 revoke execute on function public.record_stripe_account_jurisdiction(uuid, text, boolean, text, text) from service_role;
 grant execute on function public.record_stripe_account_jurisdiction(uuid, text, boolean, text, text) to service_role;
 
-revoke all privileges on function public.studios_payment_jurisdiction_default()
-  from public, anon, authenticated, service_role;
 revoke all privileges on function public.payment_charge_attempts_jurisdiction_guard()
   from public, anon, authenticated, service_role;
 revoke all privileges on function public.payment_charge_attempts_money_immutable()
@@ -720,9 +712,9 @@ revoke all privileges on function public.stripe_account_provisioning_payment_cou
 -- ---------------------------------------------------------------------------
 
 comment on table public.studio_payment_jurisdictions is
-  'PAY-CCY-02 (#824): one row per studio naming the country its payment account belongs to and the currency it charges in. Only CA/cad and US/usd. Backfilled CA/cad for every studio that existed at 0214, defaulted CA/cad for every studio created since, and changed only by set_studio_payment_jurisdiction (service_role only, audited). Read server-side; no browser grant and no RLS policy.';
+  'PAY-CCY-02 (#824): one row per studio naming the country its payment account belongs to and the currency it charges in. Only CA/cad and US/usd. No backfill or creation default. A missing row is UNKNOWN. Initialized or changed only with verified country AND charge currency plus an evidence reference through set_studio_payment_jurisdiction (service_role only, audited). Read server-side; no browser grant and no RLS policy.';
 comment on table public.studio_payment_jurisdiction_changes is
-  'Append-only audit of set_studio_payment_jurisdiction: who changed a studio''s payment country and currency, from what, to what, why, and whether configured prices were explicitly acknowledged. Written only by that command.';
+  'Append-only audit of set_studio_payment_jurisdiction: who initialized or changed a studio''s payment country and currency, evidence reference, previous pair (NULL for initialization), new pair, reason, and whether configured prices were explicitly acknowledged. Written only by that command.';
 comment on column public.studio_payment_settings.stripe_account_country is
   'The connected account''s country as Stripe reported it, recorded by record_stripe_account_jurisdiction. Write-once: a later different country is a conflict, never an overwrite. Null until first observed.';
 comment on column public.studio_payment_settings.stripe_account_country_conflict is
@@ -735,8 +727,8 @@ comment on column public.stripe_account_provisioning_attempts.payment_country is
   'The studio''s payment country at the moment this attempt was claimed, stamped under a share lock on its jurisdiction row so it serializes with set_studio_payment_jurisdiction. Stripe accounts.create uses this country and no earlier read. Null only on a pre-0214 attempt never claimed since.';
 comment on column public.studio_payment_settings.stripe_account_observed_at is
   'When Stripe last reported this account''s country and default currency to Hone.';
-comment on function public.set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean) is
-  'The protected change of a studio''s payment country and currency (CA/cad or US/usd). Refuses once the studio has a Stripe account, provisioning attempt, saved card or Stripe customer in any mode (refused_payment_account), or any recorded money (refused_monetary_history); refuses over configured or recorded prices unless p_acknowledge_configured_prices is true (refused_priced_configuration). Locks the jurisdiction row before checking, so no first payment can interleave. Audited. service_role only.';
+comment on function public.set_studio_payment_jurisdiction(uuid, text, text, text, text, boolean, text) is
+  'The protected verified initialization/change of a studio''s payment country and charge currency (CA/cad or US/usd); requires actor, reason and verification reference. Refuses once the studio has a Stripe account, provisioning attempt, saved card or Stripe customer in any mode (refused_payment_account), or any recorded money (refused_monetary_history); refuses over configured or recorded prices unless p_acknowledge_configured_prices is true (refused_priced_configuration). Locks the studio then jurisdiction row before checking, serializing initializers; no first payment can interleave. Audited. service_role only.';
 comment on function public.record_stripe_account_jurisdiction(uuid, text, boolean, text, text) is
   'Record the country and default currency Stripe reports for a studio''s bound connected account (studio, mode, account). The country is write-once; a different later country is persisted as stripe_account_country_conflict, returns country_conflict, and blocks charging until an operator resolves it. Returns whether the recorded country equals the studio''s payment country. service_role only.';
 

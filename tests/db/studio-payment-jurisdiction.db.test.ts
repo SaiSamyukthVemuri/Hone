@@ -16,7 +16,7 @@ import {
 // ===========================================================================
 //
 // Real database, real roles. Proves:
-//   J1  every studio has an explicit CA/cad row (backfill shape + creation default);
+//   J1  unknown stays missing; only explicitly verified onboarding creates a pair;
 //   J2  no browser role can read, write or call any of it;
 //   J3  the protected change command: allowed pairs only, audited, and refused
 //       once an account, money history or (unacknowledged) prices exist;
@@ -29,8 +29,8 @@ import {
 
 const created: SeededStudio[] = [];
 
-async function studio(label: string): Promise<SeededStudio> {
-  const s = await seedStudio(`ccy-${label}`);
+async function studio(label: string, verifiedPaymentJurisdiction = true): Promise<SeededStudio> {
+  const s = await seedStudio(`ccy-${label}`, { verifiedPaymentJurisdiction });
   created.push(s);
   return s;
 }
@@ -70,11 +70,12 @@ async function setJurisdiction(
   currency: string,
   ack = false,
   actor = "operator:test",
-  reason = "verified business country",
+  reason = "verified business country and charge currency",
+  verificationReference: string | null = "fixture:verified-owner-onboarding",
 ) {
   const r = await adminQuery(
-    `select * from public.set_studio_payment_jurisdiction($1,$2,$3,$4,$5,$6)`,
-    [studioId, country, currency, actor, reason, ack],
+    `select * from public.set_studio_payment_jurisdiction($1,$2,$3,$4,$5,$6,$7)`,
+    [studioId, country, currency, actor, reason, ack, verificationReference],
   );
   return r.rows[0] as {
     out_result: string;
@@ -143,25 +144,42 @@ async function rejection(p: Promise<unknown>): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-describe("J1 every studio has an explicit jurisdiction", () => {
-  it("a newly created studio starts CA/cad, recorded as the creation default", async () => {
-    const s = await studio("j1");
-    expect(await jurisdiction(s.studioId)).toEqual({
-      payment_country: "CA",
-      payment_currency: "cad",
-      source: "studio_created",
-    });
+describe("J1 verified jurisdiction only", () => {
+  it("a new studio remains UNKNOWN: no automatic country/currency row", async () => {
+    const s = await studio("j1-unknown", false);
+    expect(await jurisdiction(s.studioId)).toBeUndefined();
+    const claim = adminQuery(`select * from public.create_or_claim_stripe_account_provisioning($1,false)`, [s.studioId]);
+    expect(await rejection(claim)).toMatch(/payment_jurisdiction_missing/);
   });
 
-  it("no studio is without a row, and only the two allowed pairs exist", async () => {
-    const r = await adminQuery(`
-      select
-        (select count(*) from public.studios s
-          where not exists (select 1 from public.studio_payment_jurisdictions j
-                             where j.studio_id = s.id))::int as missing,
-        (select count(*) from public.studio_payment_jurisdictions
-          where (payment_country, payment_currency) not in (('CA','cad'),('US','usd')))::int as bad`);
-    expect(r.rows[0]).toEqual({ missing: 0, bad: 0 });
+  it("explicit pair without verification evidence changes nothing", async () => {
+    const s = await studio("j1-unverified", false);
+    expect((await setJurisdiction(s.studioId, "CA", "cad", false, "operator:test", "onboarding", null)).out_result).toBe("verification_required");
+    expect(await jurisdiction(s.studioId)).toBeUndefined();
+  });
+
+  it.each([["CA", "cad"], ["US", "usd"]])("verified %s/%s initialization records actor/evidence without a guessed prior pair", async (country, currency) => {
+    const s = await studio(`j1-${country}`, false);
+    expect((await setJurisdiction(s.studioId, country, currency)).out_result).toBe("initialized");
+    expect(await jurisdiction(s.studioId)).toEqual({ payment_country: country, payment_currency: currency, source: "operator" });
+    const audit = await adminQuery(`select from_country, from_currency, actor, verification_reference from public.studio_payment_jurisdiction_changes where studio_id=$1`, [s.studioId]);
+    expect(audit.rows).toEqual([{ from_country: null, from_currency: null, actor: "operator:test", verification_reference: "fixture:verified-owner-onboarding" }]);
+  });
+
+  it("even verified initialization refuses an existing account and leaves UNKNOWN", async () => {
+    const s = await studio("j1-bound-unknown", false);
+    await bindAccount(s.studioId, { country: "CA" });
+    expect((await setJurisdiction(s.studioId, "CA", "cad")).out_result).toBe("refused_payment_account");
+    expect(await jurisdiction(s.studioId)).toBeUndefined();
+  });
+
+  it("initialization never reinterprets recorded money", async () => {
+    const s = await studio("j1-money-unknown");
+    await insertAttempt(s, "cad");
+    await adminQuery(`delete from public.studio_payment_jurisdictions where studio_id=$1`, [s.studioId]);
+    expect((await setJurisdiction(s.studioId, "US", "usd")).out_result).toBe("refused_monetary_history");
+    expect(await jurisdiction(s.studioId)).toBeUndefined();
+    expect((await adminQuery(`select currency from public.payment_charge_attempts where studio_id=$1`, [s.studioId])).rows.map((r) => r.currency)).toEqual(["cad"]);
   });
 
   it("the pair CHECK refuses a mixed pair even for the owner role", async () => {
@@ -263,7 +281,7 @@ describe("J3 the protected change command", () => {
     });
     const audit = await adminQuery(
       `select from_country, from_currency, to_country, to_currency, actor, prices_acknowledged
-         from public.studio_payment_jurisdiction_changes where studio_id=$1`,
+         from public.studio_payment_jurisdiction_changes where studio_id=$1 and actor='operator:test'`,
       [s.studioId],
     );
     expect(audit.rows).toEqual([
@@ -276,12 +294,14 @@ describe("J3 the protected change command", () => {
         prices_acknowledged: false,
       },
     ]);
-    expect((await setJurisdiction(s.studioId, "US", "usd")).out_result).toBe("unchanged");
+    expect((await setJurisdiction(s.studioId, "US", "usd", true, "operator:other", "reconfirmed", "fixture:new-reference")).out_result).toBe("unchanged");
     const count = await adminQuery(
-      `select count(*)::int as n from public.studio_payment_jurisdiction_changes where studio_id=$1`,
+      `select count(*)::int as n from public.studio_payment_jurisdiction_changes where studio_id=$1 and actor='operator:test'`,
       [s.studioId],
     );
     expect(count.rows[0].n).toBe(1);
+    const unchangedEvidence = await adminQuery(`select verification_reference from public.studio_payment_jurisdictions where studio_id=$1`, [s.studioId]);
+    expect(unchangedEvidence.rows[0].verification_reference).toBe("fixture:verified-owner-onboarding");
   });
 
   it("configured prices refuse unless explicitly acknowledged", async () => {
@@ -297,7 +317,7 @@ describe("J3 the protected change command", () => {
     expect((await jurisdiction(s.studioId))?.payment_country).toBe("CA");
     expect((await setJurisdiction(s.studioId, "US", "usd", true)).out_result).toBe("changed");
     const audit = await adminQuery(
-      `select prices_acknowledged from public.studio_payment_jurisdiction_changes where studio_id=$1`,
+      `select prices_acknowledged from public.studio_payment_jurisdiction_changes where studio_id=$1 and actor='operator:test'`,
       [s.studioId],
     );
     expect(audit.rows).toEqual([{ prices_acknowledged: true }]);
@@ -596,7 +616,7 @@ describe("J8 stale configuration fails closed under a concurrent change", () => 
     try {
       await changer.query("begin");
       const changed = await changer.query(
-        `select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false)`,
+        `select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false,'fixture:verified-race')`,
         [s.studioId],
       );
       expect(changed.rows[0].out_result).toBe("changed");
@@ -661,7 +681,7 @@ describe("J9 account provisioning is stamped with the country it is created in",
     return r.rows[0]?.payment_country as string | null;
   }
 
-  it("a claim stamps the studio's current country (CA default, US after a change)", async () => {
+  it("a claim stamps the explicitly verified studio country (CA fixture, US after a change)", async () => {
     const ca = await studio("j9-ca");
     expect(await stamped((await claim(adminQuery, ca.studioId)).attempt_id)).toBe("CA");
     const us = await studio("j9-us");
@@ -677,7 +697,7 @@ describe("J9 account provisioning is stamped with the country it is created in",
     try {
       await changer.query("begin");
       const changed = await changer.query(
-        `select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false)`,
+        `select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false,'fixture:verified-race')`,
         [s.studioId],
       );
       expect(changed.rows[0].out_result).toBe("changed");
@@ -711,7 +731,7 @@ describe("J9 account provisioning is stamped with the country it is created in",
       let settled = false;
       const pending = changer
         .query(
-          `select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false)`,
+          `select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false,'fixture:verified-race')`,
           [s.studioId],
         )
         .finally(() => {

@@ -756,3 +756,12 @@ non-forgeable half of the record is elsewhere and is unaffected: every adjusted
 row carries `created_by_practitioner_id`, and because a changed total is
 owner-gated, that practitioner's role was `owner` at the moment of preparation.
 Surfacing the note to the practitioner is a small, separate follow-up.
+
+
+### PAY-CCY-02 verified jurisdiction preparation (0214, unapplied)
+
+A studio's business country and intended charge currency require separate verified onboarding evidence. Neither its timezone/name/address, an old CAD ledger entry, nor a connected account's settlement default establishes both. No jurisdiction is backfilled or assigned on studio creation. Missing evidence remains a missing jurisdiction row and an UNKNOWN application read; provisioning/financial preparation refuses it.
+
+The existing operator New Studio workflow may supply an explicit CA/cad or US/usd pair, confirmation and an onboarding evidence reference. Without those inputs it creates the studio with unresolved payment setup. Only the service-role command `set_studio_payment_jurisdiction(studio_id,country,currency,actor,reason,acknowledge_prices,verification_reference)` initializes or changes a pair; it audits the actor/reference and refuses existing account or money history and unacknowledged prices. This is no permission to rewrite history or bypass those refusals. Existing studios that cannot satisfy the command remain unresolved pending their owner evidence and a bounded reconciliation decision.
+
+Migration-first does **not** mean old-app payment compatibility: the old account creator assumes CA, while the new governed provisioning stamp can name US. Deploy compatible country-aware account/charge consumers before enabling verified US onboarding. During the schema/app interval, UNKNOWN studios cannot provision or prepare money. Existing historical transaction currencies stay byte-for-byte as recorded. Clinical/photo reads and appointment booking that performs no money command have no new jurisdiction gate. Hosted apply and production release remain separate approvals; do not apply this replacement source over an already-applied old 0214 local history.
