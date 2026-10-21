@@ -98,6 +98,7 @@ const scenario = {
   /** Open studio-wide weekly days. Zero means the studio is not bookable. */
   openWeeklyDays: 3,
   availabilityReadError: null as { code: string } | null,
+  dayReadError: null as Error | string | null,
   slotOffered: true,
   commandResult: "created" as string | null,
   commandError: null as { code: string } | null,
@@ -313,6 +314,7 @@ vi.mock("@/lib/booking/slots", async (importOriginal) => {
       durationMinutes: number,
     ) => {
       slotCalls.push({ dateStr, durationMinutes });
+      if (scenario.dayReadError !== null) throw scenario.dayReadError;
       // `generatedSlots` models the RAW generator output when a test needs to
       // prove the action's own public filters, rather than the fake, are what
       // removes a start.
@@ -472,6 +474,7 @@ beforeEach(() => {
     notifyPractitioner: true,
     serviceReadError: null,
     rangeReadFails: false,
+    dayReadError: null,
     openWeeklyDays: 3,
     availabilityReadError: null,
     slotOffered: true,
@@ -1488,5 +1491,66 @@ describe("the public-readiness gate applies to every portal action", () => {
       practitioner_id: null,
       is_open: true,
     });
+  });
+});
+
+
+describe("9844333201179 advisory read failures defer only to the locked command", () => {
+  it.each(["blockouts", "reservations", "window", "day:42501"])("a classified %s read failure still permits the command to accept", async (stage) => {
+    scenario.dayReadError = new Error(`availability_read_failed:${stage}`);
+    const out = await bookAnotherAppointmentAction(form({ clientId: FORGED_CLIENT, studioId: OTHER_STUDIO }));
+    expect(out.ok).toBe(true);
+    expect(commits()).toHaveLength(1);
+    expect(commits()[0].args).toMatchObject({ p_studio_id: SESSION_STUDIO, p_client_id: SESSION_CLIENT, p_service_id: SERVICE_ID, p_starts_at: START_ISO });
+    expect(String(commits()[0].args.p_cancellation_token_hash)).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it.each([
+    ["not_a_public_slot", "slot_taken"],
+    ["time_unavailable", "slot_taken"],
+    ["invalid_client", "unavailable"],
+    ["public_booking_unavailable", "unavailable"],
+  ])("a classified read failure never overrides command refusal %s", async (result, code) => {
+    scenario.dayReadError = new Error("availability_read_failed:reservations");
+    scenario.commandResult = result;
+    const out = await bookAnotherAppointmentAction(form());
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.code).toBe(code);
+    expect(commits()).toHaveLength(1);
+    expect(emails).toHaveLength(0); expect(smsCalls).toHaveLength(0); expect(notifications).toHaveLength(0);
+  });
+
+  it.each(["23514", "42501"])("does not bypass locked command financial/permission error %s after an advisory read failure", async (code) => {
+    scenario.dayReadError = new Error("availability_read_failed:window");
+    scenario.commandError = { code };
+    const out = await bookAnotherAppointmentAction(form());
+    expect(out).toMatchObject({ ok: false, code: "unavailable", error: PORTAL_REBOOK_GENERIC_REFUSAL });
+    expect(commits()).toHaveLength(1);
+    expect(emails).toHaveLength(0); expect(smsCalls).toHaveLength(0);
+  });
+
+  it.each([new Error("unexpected programming failure"), "availability_read_failed:reservations"])("never treats unrelated/non-Error throws as advisory availability evidence", async (failure) => {
+    scenario.dayReadError = failure;
+    await expect(bookAnotherAppointmentAction(form())).rejects.toBe(failure);
+    expect(commits()).toHaveLength(0); expect(emails).toHaveLength(0); expect(smsCalls).toHaveLength(0);
+  });
+
+  it("a successful empty preflight still refuses, even when the mocked command would create", async () => {
+    scenario.slotOffered = false;
+    const out = await bookAnotherAppointmentAction(form());
+    expect(out).toMatchObject({ ok: false, code: "slot_taken" });
+    expect(commits()).toHaveLength(0);
+  });
+
+  it("discovery read failures remain unavailable, never an empty/free offer or command attempt", async () => {
+    scenario.dayReadError = new Error("availability_read_failed:blockouts");
+    scenario.rangeReadFails = true;
+    const date = addDays(todayInTz(scenario.timezone), 1);
+    const day = await loadPortalRebookSlotsAction({ serviceId: SERVICE_ID, date });
+    const next = await loadPortalRebookNextAvailableAction({ serviceId: SERVICE_ID, fromDate: date });
+    expect(day).toMatchObject({ ok: false, code: "unavailable" });
+    expect(next).toMatchObject({ ok: false, code: "unavailable" });
+    expect("slots" in day).toBe(false); expect("date" in next).toBe(false);
+    expect(slotCalls).toHaveLength(0); expect(commits()).toHaveLength(0);
   });
 });
