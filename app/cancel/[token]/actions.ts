@@ -455,7 +455,11 @@ export async function publicCancelAppointmentAction(
       });
     } catch {
       // Fixed metadata only: never the token, reason, address or provider body.
-      safeLog.error(JSON.stringify({ event: "cancellation_notification_alert_unavailable", timestamp: new Date().toISOString() }));
+      try {
+        safeLog.error(JSON.stringify({ event: "cancellation_notification_alert_unavailable", timestamp: new Date().toISOString() }));
+      } catch {
+        // Cancellation is already committed; diagnostics must remain best effort.
+      }
     }
   }
 
