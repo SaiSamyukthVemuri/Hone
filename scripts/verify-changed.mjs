@@ -59,7 +59,11 @@ if (c.docs_only) {
     addAuto("typecheck", "npx tsc --noEmit", "TypeScript changed");
   }
   if (c.payment) {
-    addAuto("payment unit + safety gates", "npx vitest run tests/app/ --silent=false -t payment || npm run check:stripe-gates", "payment paths changed");
+    // Both checks are required. A passing gate must never mask a failed unit
+    // run, and a passing unit run must not skip the gate. File filters include
+    // billing/refund/checkout cases regardless of their describe/test wording.
+    addAuto("payment unit regressions", "npx vitest run payment stripe checkout manual-fee refund tests/lib/billing/", "payment paths changed");
+    addAuto("payment safety gates", "npm run check:stripe-gates", "payment paths changed");
     addSuggested("payment browser E2E", "npm run test:e2e:payment", "payment paths changed");
   }
   if (c.google_calendar) {
@@ -127,7 +131,7 @@ for (const a of auto) {
   } catch (err) {
     failed += 1;
     console.log(`${RED}FAILED${RESET}`);
-    const out = `${err.stdout ?? ""}${err.stderr ?? ""}`.trim().split("\n").slice(-15);
+    const out = `${err.stdout ?? ""}${err.stderr ?? ""}`.trim().split("\n");
     for (const l of out) console.log(`    ${l}`);
   }
 }
