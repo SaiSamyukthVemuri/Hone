@@ -77,11 +77,14 @@ import { MarkAppointmentCompleteControl } from "@/components/appointment/mark-co
 import { PostcareSection } from "@/components/appointment/postcare-section";
 import { ClinicalNotesSection } from "@/components/clinical-notes-section";
 import { getAppointmentSettlements } from "@/lib/billing/appointment-settlement";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import {
   FAST_CHART_PARAM,
   resolveAutoEditBlockId,
 } from "@/lib/sessions/fast-chart-start";
 import { SectionLabel } from "@/components/ui/section-label";
+import { SessionPhotos } from "./SessionPhotos";
+import { signedSessionPhotos } from "./session-photos";
 
 export default async function SessionDetailPage({
   params,
@@ -137,6 +140,7 @@ export default async function SessionDetailPage({
   const linkedAppointmentId = session.appointment_id ?? null;
 
   const [
+    sessionPhotos,
     lastEntry,
     treatmentCounts,
     audit,
@@ -145,7 +149,13 @@ export default async function SessionDetailPage({
     sessionPaymentEligibility,
     pricedForPage,
     settlementLoad,
+    settlementJurisdiction,
   ] = await Promise.all([
+    // FETT photos: this visit's photos, signed for 60 s under the Photos tab's
+    // trust boundary. Depends only on (studio, client, session).
+    timed("session-chart.photos", () =>
+      signedSessionPhotos({ studioId: studio.id, clientId: id, sessionId: session.id }),
+    ),
     timed("session-chart.recent-entry", () =>
       getRecentEntryForClient(studio.id, id, session.modality),
     ),
@@ -174,6 +184,14 @@ export default async function SessionDetailPage({
           getAppointmentSettlements(studio.id, [linkedAppointmentId]),
         )
       : Promise.resolve(null),
+    // PAY-CCY-04. The studio's currency, to label a NEW settlement amount.
+    // Same condition as the settlement read; a failed read labels nothing
+    // rather than assuming Canada.
+    linkedAppointmentId
+      ? timed("session-chart.payment-jurisdiction", () =>
+          getStudioPaymentJurisdiction(studio.id),
+        )
+      : Promise.resolve(null),
   ]);
 
   // Pure derivations of the wave's results. Unchanged, and still in the order
@@ -185,6 +203,17 @@ export default async function SessionDetailPage({
   const lastEntryNotFromThisSession =
     lastEntry && !sessionEntryIds.has(lastEntry.id) ? lastEntry : null;
   const sessionPaymentAmount = pricedForPage.ok ? pricedForPage.result : null;
+  // HON-11: the quoted price that prefills the cash/e-transfer amount when the
+  // prepare form is hidden (no card on file). Quick checkout passes the same
+  // fact; without it this page showed a blank box for the visit the dashboard
+  // prefilled. Same resolver, through this session's linked appointment, and no
+  // extra read. Null when unresolvable: a zero would be a manufactured price.
+  const settlementQuotedAmountCents =
+    sessionPaymentAmount?.kind === "resolved"
+      ? sessionPaymentAmount.amountCents
+      : sessionPaymentAmount?.kind === "free"
+        ? 0
+        : null;
   // Populated from the SAME widened appointment read below; feeds the Finish
   // appointment workflow without a second read of the same row.
   let apptContext: {
@@ -434,6 +463,9 @@ export default async function SessionDetailPage({
     .eq("studio_id", studio.id)
     .eq("client_id", id)
     .is("deleted_at", null)
+    // HON-10 row 1: a void session's note is never "From last visit".
+    // record_status is NOT NULL (0119), so `neq` drops nothing else.
+    .neq("record_status", "void")
     .not("next_session_note", "is", null)
     .lt("started_at", session.started_at)
     .order("started_at", { ascending: false })
@@ -793,6 +825,8 @@ export default async function SessionDetailPage({
         </>
       )}
 
+      <SessionPhotos clientId={id} photos={sessionPhotos} />
+
       {/* PR #190 (clinical memory): plan for the NEXT visit. Saved on
           sessions.next_session_note and shown as "From last visit"
           when the client returns. Optional; empty save clears it. */}
@@ -1041,6 +1075,13 @@ export default async function SessionDetailPage({
           appointmentId={linkedAppointmentId}
           settledMethod={liveSettlement?.method ?? null}
           settledAmountCents={liveSettlement?.amountCents ?? null}
+          settledCurrency={liveSettlement?.currency ?? null}
+          settlementCurrency={
+            settlementJurisdiction?.ok
+              ? settlementJurisdiction.jurisdiction.currency
+              : null
+          }
+          settlementQuotedAmountCents={settlementQuotedAmountCents}
           // The UI's copy of the database's own rule: only a COMPLETED
           // appointment can carry a disposition (0187 answers anything else
           // with `not_completed`). Offering the controls on a visit that has

@@ -405,3 +405,43 @@ describe("HEARTBEAT and HEALTH", () => {
     await q(`select * from public.process_email_provider_event($1)`, [rec.receipt_id]);
   });
 });
+
+
+describe("AGED CLAIM HEALTH — no inference of provider acceptance (4310259234)", () => {
+  it.each([
+    { status: "claimed", hours: 25, claimed: 1, accepted: 0 },
+    { status: "claimed", hours: 23, claimed: 0, accepted: 0 },
+    { status: "claimed", hours: 24, claimed: 0, accepted: 0 },
+    { status: "accepted", hours: 25, claimed: 0, accepted: 1 },
+    { status: "accepted", hours: 23, claimed: 0, accepted: 0 },
+    { status: "sent", hours: 25, claimed: 0, accepted: 1 },
+    { status: "delivered", hours: 25, claimed: 0, accepted: 0 },
+    { status: "refused", hours: 25, claimed: 0, accepted: 0 },
+    { status: "unknown", hours: 25, claimed: 0, accepted: 0 },
+  ])("$status at $hours hours: aged claims +$claimed, accepted +$accepted", async ({ status, hours, claimed, accepted }) => {
+    const id = await beginEmail(A, apptA);
+    if (status === "refused" || status === "unknown") await settleEmail(id, status, null, "validation_error");
+    else if (status !== "claimed") {
+      const providerId = randomUUID();
+      await settleEmail(id, "accepted", providerId);
+      if (status === "sent" || status === "delivered") await emailEvent(`email.${status}`, providerId, id);
+    }
+    type Health = { stale_claimed: number; unreported_accepted: number };
+    await adminTx(async (tx) => {
+      const before = ((await tx(`select * from public.email_delivery_health()`)).rows as Health[])[0]!;
+      // Synthetic fixture only; the production identity guard stays intact.
+      await tx(`alter table public.email_outbound_messages disable trigger email_outbound_messages_identity_guard`);
+      await tx(`update public.email_outbound_messages set claimed_at = now() - ($2::text || ' hours')::interval,
+        settled_at = case when settled_at is null then null else now() - ($2::text || ' hours')::interval end,
+        provider_status_at = case when provider_status_at is null then null else now() - ($2::text || ' hours')::interval end
+        where id = $1`, [id, String(hours)]);
+      await tx(`alter table public.email_outbound_messages enable trigger email_outbound_messages_identity_guard`);
+      const after = ((await tx(`select * from public.email_delivery_health()`)).rows as Health[])[0]!;
+      expect(after.stale_claimed).toBe(before.stale_claimed + claimed);
+      expect(after.unreported_accepted).toBe(before.unreported_accepted + accepted);
+      const [row] = (await tx(`select status, provider_email_id from public.email_outbound_messages where id = $1`, [id])).rows as { status: string; provider_email_id: string | null }[];
+      expect(row!.status).toBe(status);
+      if (status === "claimed") expect(row!.provider_email_id).toBeNull();
+    });
+  });
+});

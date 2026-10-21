@@ -36,6 +36,7 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { reminderWindowIso } from "@/lib/cron/reminder-schedule";
 import { recordReminderRunSuccess } from "@/lib/cron/reminder-heartbeat";
+import { recoverLeadAlertsOnReminderTrigger } from "@/lib/platform-leads/alert-delivery";
 
 const PER_RUN_LIMIT = 50;
 const MAX_ATTEMPTS = 3;
@@ -629,6 +630,38 @@ async function sendSmsReminderPass(opts: {
   return stats;
 }
 
+/**
+ * LEAD-ALERT-01: bounded operator lead-alert recovery on this trigger, on the
+ * success AND the failure path (Codex P2 4253278108, 4254097611). Gated before
+ * any database or provider call until lead alerts are configured; never
+ * throws; a lead-alert problem is its own warning ops alert and a response
+ * field, never a change to what reminders did or how the route answers.
+ */
+async function runLeadAlertRecovery() {
+  try {
+    // Bounded end to end, its own failure report included (Codex P2
+    // 4259034271): at most REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS + _REPORT_MS.
+    const out = await recoverLeadAlertsOnReminderTrigger();
+    return out.ran
+      ? {
+          ran: true as const,
+          ok: out.summary.ok,
+          // false = stopped at its cap or budget with work possibly left (backpressure)
+          drained: out.summary.drained,
+          attempted: out.summary.attempted,
+          accepted: out.summary.accepted,
+          failed: out.summary.failed,
+          expired: out.summary.expired,
+          // claim/freeze/settle cancelled at the deadline: recovered later, neither sent nor failed
+          unknown: out.summary.unknown,
+          timed_out: out.summary.timedOut,
+        }
+      : { ran: false as const, reason: out.reason };
+  } catch {
+    return { ran: false as const, reason: "threw" as const };
+  }
+}
+
 export async function GET(req: Request) {
   if (!isAuthorizedCronRequest(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -705,12 +738,14 @@ export async function GET(req: Request) {
       smsFailed: sms_reminder_24h.failed + sms_reminder_2h.failed,
     });
 
+    const lead_alerts = await runLeadAlertRecovery();
     return NextResponse.json({
       ok: true,
       reminder_24h,
       reminder_2h,
       sms_reminder_24h,
       sms_reminder_2h,
+      lead_alerts,
     });
   } catch (err) {
     // PR #153. Cron-route failure alert. The cron runs every few
@@ -727,8 +762,9 @@ export async function GET(req: Request) {
         duration_ms: Date.now() - startedAt,
       },
     });
+    const lead_alerts = await runLeadAlertRecovery();
     return NextResponse.json(
-      { ok: false, error: "cron_failed" },
+      { ok: false, error: "cron_failed", lead_alerts },
       { status: 500 },
     );
   }

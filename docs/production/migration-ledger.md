@@ -14,14 +14,46 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0211 apply; hosted `0211`; `0212`-`0218` AUTHORED AND PENDING, contiguous, in that order)
 
-<!-- sync 2026-10-17: production c901be08 merged in, merge-only. Production wins on the
-     DECLARED HOSTED FACTS (hosted max 0211, its row carried verbatim below) and its 0211
-     apply record is preserved verbatim. The repo/pending/next-free rows are DERIVED from
-     `npm run migration:state -- --json` on the merged tree. 0212 is NOT written as hosted:
-     that apply is recorded through #832's own lane and record, not by this sync. The
-     integration composition markers and lane prose below are carried verbatim. -->
+## Current state (reconciled 2026-10-20; 0212 already APPLIED, source restored byte-identically)
+
+> **This is a documentation/source reconciliation of an existing apply, not an authorization or execution of an apply.** A fresh read-only query on 2026-10-19 at 21:23:10.258674Z ran with `transaction_read_only=on` against the verified canonical Hone production project: migration history max **0212**, **211** rows, exactly one each for 0211 and 0212, and no entries above 0212. Migration-history presence establishes a recorded apply; it does not by itself claim a table's present existence or contents.
+>
+> Existing apply receipt `cead71c5` records the successful migration-first apply from reviewed PR #832 head `7116c66848574b0e02e7c2b8f500a6d3198edb58`. The exact source is `supabase/migrations/0212_email_delivery_events.sql`, 44,462 bytes, Git blob `cd8a4908fdad8b68e917842d5ffe1590c86eb875`, raw SHA-256 `cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1`. The source was restored here byte-identically from existing commit `cbb567afed08550e29e165bdc91adb4324a93181`; no SQL bytes were edited. The stored-history statement serialization hash `bc13731bb8c36b8a1db2f5a5185d0700308e598e92347a3ab87df696814ef142` is not the raw migration checksum. No server apply timestamp was captured, so `hosted_applied_at` remains null.
+>
+> The prior production record's 0211 declaration and missing 0212 source were stale repository documentation/source, not grounds to reapply. The full 0211 apply account below remains unchanged as historical evidence. **Do not reapply 0212.** No hosted database, migration history, schema, table or row was changed in this reconciliation.
+>
+> Hosted history remains reconciled at 0212. The migration-first relationship is repo > hosted. This feature branch has a contiguous pending suffix 0213–0218; none of those migrations is applied or authorized by this preparation.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), recorded in read-only history as described above. |
+| **Repo migration max** | **0218** on this feature branch; 217 migration files, derived from the actual SQL tree. |
+| **Remote-only migrations** | **none** after restoring the exact applied 0212 source. |
+| **Pending migrations** | **0213**, **0214**, **0215**, **0216**, **0217**, **0218**, contiguous from hosted + 1, all authored and pending. |
+| **Next free migration** | Next free number is **0219**, derived by `npm run migration:state` from this tree's migration filenames; not claimed by this record. |
+| **Project ref** | Canonical Hone production project; see the verified linked-project evidence retained in the apply receipt. No credentials or new project identifiers are recorded here. |
+| **0212 apply source** | PR #832 reviewed head `7116c66848574b0e02e7c2b8f500a6d3198edb58`; exact raw file SHA-256 `cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1`; source reintroduced unchanged from `cbb567afed08550e29e165bdc91adb4324a93181`. |
+| **Apply timestamp** | `hosted_applied_at` remains `null`; the receipt contains client-side bounds and a server history bracket, not a server-generated apply timestamp. |
+
+
+### Existing pending feature contracts on this branch
+
+The order is 0213 → 0214 → 0215 → 0216 → 0217 → 0218. This is source preparation, not an apply receipt. Earlier hosted history and recorded timestamps below are unchanged. No SQL is reapplied, and availability of 0219 is not an allocation.
+
+| Pending source | Existing owner contract |
+|---|---|
+| `0213_platform_lead_alerts.sql` (#831) | Durable operator lead alerts, leased claim/send/settle, frozen generation payload and explicit ambiguous retry confirmation; no retroactive lead sends. |
+| `0214_studio_payment_jurisdiction.sql` (#833) | Verified per-studio country/currency, immutable money lineage and recorded account-country conflicts. The existing CA/cad backfill requires its own hosted approval. |
+| `0215_delivery_incidents.sql` (#843) | Delivery incidents, bounded sweep health and owner/support projections; existing provider acceptance remains distinct from delivery. |
+| `0216_receptionist_membership_foundation.sql` (#838) | Governed receptionist membership and studio boundaries. |
+| `0217_studio_sms_sender_registrations.sql` (#844) | Recorded sender/number registration evidence; no provider provisioning or activation. |
+| `0218_receptionist_invitations.sql` (#850) | Governed receptionist invitation acceptance; verified role owns front-desk destination. |
+
+Application code that requires these contracts remains migration-first and held until the exact ordered hosted approval/receipt and required gates are present. No 0219+ migration is imported for this preparation.
+
+
+## Previous state (verified 2026-10-12, post-0211 apply; historical 0211 record preserved)
 
 > **0211 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #827 HEAD, BEFORE ANY MERGE.**
 > `0211_client_sms_permission_guard.sql` was applied to production on
@@ -70,69 +102,18 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > `0211` is now **FROZEN**. Any correction is a new forward migration; there is no
 > manual down-migration.
 
-<!-- integration: incoming lane's ledger prose, preserved verbatim -->
-<!-- integration: incoming lane's ledger prose, preserved verbatim -->
-
-> **0217 IS AUTHORED AND PENDING, on `feat/sms-sender-reg-01` only** (stacked on #841, which has no migration).
-> `0217_studio_sms_sender_registrations.sql` adds one table (`studio_sms_sender_registrations`) and one service_role-only command.
-> - **The table:** support-recorded US registration evidence (10DLC or toll-free verification) for a studio's live sender. The owner reads it without the provider reference.
-> - **The command:** `record_studio_sms_sender_registration`, which resolves the studio's live sender itself.
-> - **Out of scope:** no provider call, no activation, no existing object altered, no row written.
->
-> **NUMBERING.** A fresh census on 2026-10-12 (recorded in `/home/sam/hone-migration-coordination.md`) found:
-> - `0211` #827, `0212` #832 and `0213` #831, all pending;
-> - `0214` in the PAY-CCY branches, `0215` held by DELIVERY-VISIBILITY-01, and `0216` the receptionist foundation.
->
-> On this branch alone the pending suffix therefore has a **hole at `0211`-`0216`**. The canonical-facts contiguity guard reports that correctly, and it is not weakened. `0217` applies only after `0211`-`0216`, or after an agreed renumber.
->
-> **`0209` and `0210` are APPLIED AND FROZEN**, carried byte-identical.
-
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`), applied 2026-10-12 from #827's reviewed head. |
-| **Repo migration max** | **0218** — `0218_receptionist_invitations.sql`. This tree is the ISOLATED SYNTHETIC INTEGRATION of eight lanes' pending migrations, `0211`–`0218`, each carried byte-identical to its own PR head. No data; no existing object altered by the integration itself. |
+| **Repo migration max** | **0211** on this branch, so repo and hosted are equal here: the PARITY shape. A branch stacked above it carries its own pending suffix. |
 | **Remote-only migrations** | **none**: no migration exists on production that this branch lacks. |
-| **Pending migrations** | **`0212`**-**`0218`** (`0212`, `0213`, `0214`, `0215`, `0216`, `0217`, `0218`), **NOT applied**: `repo > hosted`, MIGRATION-FIRST PENDING, and the suffix is CONTIGUOUS. Derived by `npm run migration:state -- --json` on this merged tree, not written by hand. |
-| **Next free migration** | Next free number is **0219**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** in this tree — availability is not allocation. The shared register (`~/hone-migration-coordination.md`) records `0219` as ALLOCATED to the DB/WAIT G1 lane, which is a reservation elsewhere and not a file here. |
-| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
+| **Pending migrations** | **0213**, **0214**, **0215**, **0216**, **0217**, **0218**, contiguous from hosted + 1, all authored and pending. |
+| **Next free migration** | Next free number is **0212**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. The coordination record already holds it for #832. |
+| **Project ref** | `alhhybgqdmcdyzpybykj`, the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `481e60c60ae8c873a2e1b6e2a0ccc5b9dc0b8c11` (PR #827): CI green (run `38164242975`), 0 review threads, migration bytes reviewed byte-identical inside #831. The shepherd was UNKNOWN (`read_failed`), and that was accepted by the operator for this migration-only apply. |
 | **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |
 
-## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
-> **0215 IS AUTHORED AND PENDING, on the DELIVERY-VISIBILITY-01 branch `feat/delivery-visibility-01` only.**
-> `0215_delivery_incidents.sql` adds:
-> - `delivery_incidents`: one open incident per studio, channel, purpose and failure class, opened or extended by an AFTER trigger on each delivery ledger in the same transaction as the failure;
-> - `delivery_sweep_heartbeat`;
-> - `record_email_sweep_run`, `email_delivery_health`, `resolve_delivery_incident`, `support_delivery_incidents` and `support_email_receipt_outcomes` (all `service_role` only), and `owner_delivery_incidents` (authenticated, owner of that studio only).
->
-> It writes no data and redefines no existing function. It adds one trigger to `sms_outbound_messages` and one to `email_outbound_messages`.
->
-> **NUMBERING, from a fresh full census (2026-10-12, recorded in `/home/sam/hone-migration-coordination.md`):** 0211 = #827, 0212 = #832, 0213 = #831, 0214 = #833, **0215 = this lane**, 0216 = #838. This branch carries 0211 and 0212 and not 0213 or 0214, so its pending suffix has a hole at `0213`-`0214`. The contiguity rule in `tests/docs/canonical-production-facts.test.ts` is red on this branch for exactly that reason, by construction, until it is stacked behind #831 and #833 or integrated after them. Apply order is 0211 → 0212 → 0213 → 0214 → 0215 → 0216.
->
-> **NOT APPLIED, NOT MERGED.**
-> **THIS TREE IS AN ISOLATED SYNTHETIC INTEGRATION BRANCH** (`integration/fett-synthetic-824`),
-> built for #824 to prove a higher migration locally against a coherent chain. It is NOT a
-> release candidate and nothing here is applied. Each number is carried **byte-identical** to
-> its own PR head and every reviewed branch is **unmodified**; the integration is by normal
-> merge into this branch only:
->
-> * `0211` G3 — PR #827
-> * `0212` DELIVERY-EVENTS-01 — PR #832 (stacked on #827)
-> * `0213` LEAD-ALERT-01 — PR #831
-> * `0214` PAY-CCY-02 — PR #833
->
-> The pending suffix above hosted `0210` is therefore **contiguous** on this branch:
-> `0211`, `0212`, `0213`, `0214`. Each lane's own branch states its own contiguity position
-> honestly and those statements are preserved below; on a single lane's branch the suffix
-> has holes, and that is correct for that branch. **No contiguity guard is weakened** —
-> the chain is made coherent by carrying the numbers beneath, never by relaxing
-> `tests/docs/canonical-production-facts.test.ts`.
->
-> Apply order is lexical and strictly `0211` → `0212` → `0213` → `0214`, each
-> migration-first under its own approval **from its own reviewed head, not from this
-> branch**. Coordinated through `~/hone-migration-coordination.md`.
-
-### Pending `0211` — G3 client SMS permission guard (PR #827)
+## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, `0211` AUTHORED AND PENDING on the G3 branch)
 
 > **0211 IS AUTHORED AND PENDING (added after the 0210 apply), on the draft G3 branch `fix/g3-client-sms-field-guard` only.**
 > `0211_client_sms_permission_guard.sql` closes finding G3: studio members could rewrite a client's SMS consent and opt-out through the database API. It adds ONE `SECURITY INVOKER` trigger function and ONE trigger on `public.clients`, nothing else:
@@ -146,117 +127,8 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 >
 > **NOT APPLIED, NOT MERGED.** Apply it migration-first, under separate approval, from the exact reviewed head. No application change depends on it: either order is safe for the application, and the guard binds only raw member writes that no screen makes.
 >
+> **THE BLOCK BELOW IS THE 0210 APPLY RECORD.** Its hosted row is still current. Its repo-max, pending and next-free rows have been updated for `0211` while it is pending.
 
-### Pending `0212` — email delivery events (PR #832)
-
-> **0212 IS AUTHORED AND PENDING (added after the 0210 apply), on the DELIVERY-EVENTS-01 branch `feat/delivery-events-01-resend` only.**
-> `0212_email_delivery_events.sql` adds two tables and five `service_role`-only commands:
-> - **`email_outbound_messages`**, the email delivery ledger, shaped like 0206's SMS ledger: one row per attempt, forward-only status, no address, subject or body;
-> - **`email_provider_events`**, one receipt per signature-verified Resend webhook delivery, deduplicated on its delivery id.
->
-> The commands are `begin_appointment_email_message`, `settle_email_message`, `record_email_provider_event`, `claim_email_provider_events` and `process_email_provider_event`. No browser grant, no policy, no trigger on an existing table, and it writes no data.
->
-
-### Pending `0213` — operator lead alerts (PR #831)
-
-> **0213 IS AUTHORED AND PENDING, on `feat/lead-alert-01-operator-email` (#826) only.**
-> `0213_platform_lead_alerts.sql` adds the operator alert for a new Hone demo request or
-> early-access signup: one table (`platform_lead_alerts`, service_role SELECT only, RLS on,
-> no policy), its update guard, and seven `service_role`-only commands that save a lead and
-> its alert intent together and claim, settle, expire, block and requeue the alert. It
-> writes no row at top level, so no existing lead is ever alerted, and it changes no existing
-> object: 0004's and 0006's anonymous insert policies stay for the deployed forms.
->
-
-> **DELIVERY AUTHORITY, ONE OWNER EACH.** `0213` owns the lead alert's SEND retries (claim → send →
-> settle, at most five attempts). `0212` owns delivery-event RECEIPTS (record → claim → process,
-> bounded and quarantined) and never resends anything; its ledger is studio-scoped, so a receipt for
-> a lead-alert email matches no ledger row and stays platform-only. Neither writes the other's tables.
-
-| Field | Value |
-|---|---|
-| **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0213** — `0213_platform_lead_alerts.sql`, above `0212_email_delivery_events.sql` and `0211_client_sms_permission_guard.sql`. `0209` and `0210` are byte-identical. |
-| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0211`, `0212`, `0213`**, contiguous from hosted + 1, all **NOT applied**: the MIGRATION-FIRST PENDING shape, `repo > hosted`. |
-| **Next free migration** | Next free number is **0214**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. |
-| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
-
-## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
-
-### Pending `0214` — PAY-CCY-02 studio payment jurisdiction (PR #833)
-
-> What 0214 adds: `studio_payment_jurisdictions` (CA/cad backfill for every existing
-> studio, CA/cad default for new ones), the audited service_role-only
-> `set_studio_payment_jurisdiction`, the live ledgers' currency CHECKs widened to
-> `('cad','usd')` with an insert guard tying each attempt to its studio's currency and
-> its account's country, attempt money immutability, settlement currency from the
-> studio, and `record_stripe_account_jurisdiction` with three observation columns on
-> `studio_payment_settings`. Historical rows are not rewritten.
->
-<!-- integration: incoming lane's ledger prose, preserved verbatim -->
-
-> **`0218` IS AUTHORED AND PENDING, stacked on `0216`.** STUDIO-READY-02b (#824)
-> authors `0218_receptionist_invitations.sql`. It adds four agreement-evidence
-> columns to `studio_receptionists`, widens `pending_invitations.role` to admit
-> `receptionist`, and re-emits `link_invited_membership` with a receptionist branch.
-> The practitioner path is byte-identical to `0141`, and privileges are restated as
-> `service_role` only. Neither acceptance caller is re-emitted. No data.
-> **NOT APPLIED, NOT MERGED.** The block below records `0216`.
-
-> **AUTHORED, NOT APPLIED — MIGRATION-FIRST PENDING.** STUDIO-READY-02a (#824)
-> authors `0216_receptionist_membership_foundation.sql` on
-> `feat/receptionist-foundation-824`. It is **not** applied to production, no
-> production write was performed, and `docs/production/migration-state.json` is
-> **untouched** — `hosted_migration_max` stays **0210**. The repository therefore
-> sits legitimately ABOVE hosted, which is the second of the two legal shapes the
-> parity guard admits.
->
-> **WHAT IT ADDS.** A receptionist membership that is deliberately **not** a
-> `practitioners` row: the table `studio_receptionists`; three bounded read
-> projections for a signed-in receptionist (`receptionist_calendar`,
-> `receptionist_calendar_closures`, `receptionist_client_contacts`); and two
-> `service_role`-only owner lifecycle commands (`add_studio_receptionist`,
-> `set_studio_receptionist_active`). Every existing policy and command resolves
-> membership from `practitioners`, so a receptionist is refused by all of them by
-> construction. No existing policy, membership helper, role check or command is
-> redefined, and `pending_invitations.role` is unchanged, so no receptionist
-> invitation can exist yet.
->
-> **COMPLETE STATEMENT INVENTORY — fifty-eight statements**, inside the file's own
-> `begin;` / `set local lock_timeout = '5s';` / `commit;`:
-> - **one `create table`** (`studio_receptionists`), its **`comment on table`**, and **one partial `create index`** (`user_id` where active);
-> - **nine `create or replace function`**, all new names: two internal helpers, two trigger guards, three projections, two lifecycle commands;
-> - **two `create trigger`**, each preceded by `drop trigger if exists`: the dual-membership guard on the new table, and **one BEFORE trigger on the existing `practitioners` table**, which can only refuse (23514) a practitioner becoming active while already an active receptionist in the same studio, and never writes;
-> - **row-level security enabled** and **one `create policy`** (preceded by `drop policy if exists`): a receptionist selects their own row, the studio owner selects the studio's rows;
-> - table privileges: **`revoke all` from `anon`**, **`revoke insert, update, delete, truncate` from `authenticated`**, **`grant select` to `authenticated`**;
-> - **thirty-one `revoke execute`** — every function by name, one statement per role — **three `grant execute … to authenticated`** (the projections only) and **two `grant execute … to service_role`** (the lifecycle commands only).
->
-> NO existing table altered, NO column added to an existing table, NO existing
-> function or policy redefined, and **zero** migration-level DML. `0209` and `0210`
-> stay byte-identical.
->
-> **PROVED LOCALLY, ON AN ISOLATED STACK ONLY** (pinned CLI 2.102.0; never the
-> shared stack, never production). Under its first number, `0211`, with identical
-> SQL: one fresh `db reset` and the full DB suite. As `0216`: applied on the
-> stack at `0210`, then the behavioural suite
-> `tests/db/receptionist-foundation.db.test.ts` and the source contract
-> `tests/migrations/0216-receptionist-membership-foundation.test.ts`.
->
-> **NOT APPLIED, NOT MERGED.** Apply `0216` migration-first from the reviewed head
-> of its own PR, under its own per-change approval, before any application that
-> calls it deploys.
-
-| Field | Value |
-|---|---|
-| **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`) — unchanged by this branch; no apply was performed or claimed. |
-| **Repo migration max** | **0218**: `0218_receptionist_invitations.sql` (STUDIO-READY-02b), stacked on `0216_receptionist_membership_foundation.sql` (STUDIO-READY-02a, #824). `0217` is held by #844 (SMS sender registrations) and is not on this branch. No data. |
-| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0216`** and **`0218`** on this branch, **NOT applied**. They follow a pending sequence held by other lanes: `0211` (#827), `0212` (#832), `0213` (#831), `0214` (#833), `0215` (#843) and `0217` (#844). This branch does not carry those files, so the parity guard reports a hole **by construction** until it integrates after them, in order `0211` → … → `0218`. It renumbers if that order changes. `repo > hosted` is the MIGRATION-FIRST PENDING shape: `0216` and `0218` are pending, not applied. |
-| **Next free migration** | Next free number is **0219**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
-| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. No Supabase command was run against it for this change. |
-
-## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, repo == hosted)
 > **0210 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #822 HEAD, BEFORE ANY MERGE.**
 > `0210_sms_waitlist_join_acknowledgement.sql` was applied to production on
 > 2026-10-11 under explicit per-change owner authorization (A4), from
@@ -315,15 +187,11 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0214** — `0214_studio_payment_jurisdiction.sql`, authored on the PAY-CCY-02 branch and NOT applied. This is the MIGRATION-FIRST PENDING shape, with a gap: 0211–0213 are reserved by other lanes and are not in this tree. |
+| **Repo migration max** | **0211** — `0211_client_sms_permission_guard.sql`, authored on the draft G3 branch: one `SECURITY INVOKER` trigger function and one trigger on `public.clients`. `0209` and `0210` are byte-identical. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0214`** on this branch, applied only after `0211`–`0213` (other lanes' reservations) are applied or renumbered by agreement. |
-| **Next free migration** | Next free number is **0215**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
-<!-- integration: incoming lane's ledger prose, preserved verbatim -->
-| **Repo migration max** | **0215** — `0215_delivery_incidents.sql` (DELIVERY-VISIBILITY-01), stacked on `0212` (#832) and `0211` (#827). `0209` and `0210` are byte-identical. |
-| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0211`, `0212`, `0215`**, all **NOT applied**, so `repo > hosted`: the MIGRATION-FIRST PENDING shape, with a coordinated hole at `0213`-`0214` (#831, #833) on this branch. Apply in number order, under separate approval for each. |
-| **Next free migration** | Next free number is **0216**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here (OpenWiki's #838 carries a `0216` of its own). || **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
+| **Pending migrations** | **`0211`** — `0211_client_sms_permission_guard.sql`, **NOT applied**, so `repo > hosted` by exactly one: the MIGRATION-FIRST PENDING shape. Apply it migration-first, under separate approval, before or with the merge of its branch. |
+| **Next free migration** | Next free number is **0212**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. A lane that needs it must stack on `0211` or wait for it, because the pending suffix must be contiguous. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `3096e1f41dd00291e14885c16b8061e078b4b05d` (PR #822) — CI green (run 38107988921), explicit exact-head review clean ("Reviewed commit `3096e1f41d`"), 3 of 3 review threads resolved, operator shepherd `CANDIDATE_READY_FOR_HUMAN_REVIEW` (2026-10-11T08:08:55Z). |
 | **Production application SHA at apply time** | `0e16257ed7332d512cc4d500377a790d7c66b9b5` (the #820 merge). **No application behaviour was deployed by this apply.** |
 

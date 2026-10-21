@@ -38,6 +38,7 @@ const TRIGGER_FNS = [
   "payment_charge_attempts_jurisdiction_guard",
   "payment_charge_attempts_money_immutable",
   "appointment_settlements_currency_from_jurisdiction",
+  "stripe_account_provisioning_payment_country",
 ];
 
 describe("0214 sits correctly in the migration sequence", () => {

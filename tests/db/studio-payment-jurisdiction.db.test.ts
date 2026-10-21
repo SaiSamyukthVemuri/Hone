@@ -493,12 +493,77 @@ describe("J7 recording what Stripe says about an account", () => {
     expect(await record(s.studioId, acct, "CA", "cad")).toMatchObject({
       out_result: "country_conflict",
       out_account_country: "US",
+      out_matches: false,
     });
     const row = await adminQuery(
-      `select stripe_account_country from public.studio_payment_settings where stripe_account_id=$1`,
+      `select stripe_account_country, stripe_account_country_conflict,
+              stripe_account_country_conflict_at is not null as conflict_dated
+         from public.studio_payment_settings where stripe_account_id=$1`,
       [acct],
     );
-    expect(row.rows[0].stripe_account_country).toBe("US");
+    expect(row.rows[0]).toEqual({
+      stripe_account_country: "US",
+      stripe_account_country_conflict: "CA",
+      conflict_dated: true,
+    });
+  });
+
+  // Codex P1 4244834151: the conflict used to be returned and then forgotten,
+  // so the recorded country (which matched) kept every charge path open.
+  it("A PERSISTED CONFLICT STOPS CHARGING, even though the recorded country matches", async () => {
+    const s = await studio("j7-conflict-blocks");
+    await setJurisdiction(s.studioId, "US", "usd");
+    const acct = await bindAccount(s.studioId);
+    expect((await record(s.studioId, acct, "US", "usd")).out_matches).toBe(true);
+    // Negative control: before the conflict, the same insert is accepted.
+    await expect(insertAttempt(s, "usd", acct)).resolves.toBeTruthy();
+
+    expect((await record(s.studioId, acct, "CA", "cad")).out_result).toBe("country_conflict");
+    expect(await rejection(insertAttempt(s, "usd", acct))).toMatch(
+      /payment_account_country_conflict/,
+    );
+
+    // A later report that agrees again does not clear it.
+    expect(await record(s.studioId, acct, "US", "usd")).toMatchObject({
+      out_result: "country_conflict",
+      out_account_country: "US",
+      out_matches: false,
+    });
+    expect(await rejection(insertAttempt(s, "usd", acct))).toMatch(
+      /payment_account_country_conflict/,
+    );
+  });
+
+  it("a conflict on a legacy Canadian account blocks it too", async () => {
+    const s = await studio("j7-conflict-ca");
+    const acct = await bindAccount(s.studioId);
+    expect((await record(s.studioId, acct, "CA", "cad")).out_result).toBe("recorded");
+    expect((await record(s.studioId, acct, "US", "usd")).out_result).toBe("country_conflict");
+    expect(await rejection(insertAttempt(s, "cad", acct))).toMatch(
+      /payment_account_country_conflict/,
+    );
+  });
+
+  it("the conflict column is bound to a recorded, different country", async () => {
+    const s = await studio("j7-conflict-shape");
+    const acct = await bindAccount(s.studioId, { country: "CA" });
+    for (const [conflict, at] of [
+      ["US", null],
+      ["CA", "now()"],
+      [null, "now()"],
+    ] as const) {
+      expect(
+        await rejection(
+          adminQuery(
+            `update public.studio_payment_settings
+                set stripe_account_country_conflict = $2,
+                    stripe_account_country_conflict_at = ${at ?? "null"}
+              where stripe_account_id = $1`,
+            [acct, conflict],
+          ),
+        ),
+      ).toMatch(/studio_payment_settings_account_country_conflict_check/);
+    }
   });
 
   it("reports a mismatch with the studio's country without hiding it", async () => {
@@ -573,5 +638,130 @@ describe("J8 stale configuration fails closed under a concurrent change", () => 
       "refused_monetary_history",
     );
     expect((await jurisdiction(s.studioId))?.payment_currency).toBe("cad");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Codex P1 4244982189. The Stripe account is created in the country stamped on
+// the provisioning claim, and that stamp serializes with the change command.
+describe("J9 account provisioning is stamped with the country it is created in", () => {
+  type Q = (t: string, p?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
+  async function claim(q: Q, studioId: string) {
+    const r = await q(
+      `select * from public.create_or_claim_stripe_account_provisioning($1,false)`,
+      [studioId],
+    );
+    return r.rows[0] as { attempt_id: string; should_execute_stripe_call: boolean };
+  }
+  async function stamped(attemptId: string) {
+    const r = await adminQuery(
+      `select payment_country from public.stripe_account_provisioning_attempts where id=$1`,
+      [attemptId],
+    );
+    return r.rows[0]?.payment_country as string | null;
+  }
+
+  it("a claim stamps the studio's current country (CA default, US after a change)", async () => {
+    const ca = await studio("j9-ca");
+    expect(await stamped((await claim(adminQuery, ca.studioId)).attempt_id)).toBe("CA");
+    const us = await studio("j9-us");
+    await setJurisdiction(us.studioId, "US", "usd");
+    expect(await stamped((await claim(adminQuery, us.studioId)).attempt_id)).toBe("US");
+  });
+
+  it("A CHANGE IN FLIGHT IS WAITED FOR: the claim is stamped with the NEW country", async () => {
+    const s = await studio("j9-change-first");
+    const pool = new Pool({ connectionString: resolveLocalDbUrl(), max: 2 });
+    const changer = await pool.connect();
+    const claimer = await pool.connect();
+    try {
+      await changer.query("begin");
+      const changed = await changer.query(
+        `select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false)`,
+        [s.studioId],
+      );
+      expect(changed.rows[0].out_result).toBe("changed");
+      // The owner's onboarding claim starts while the change is uncommitted.
+      let settled = false;
+      const pending = claim((t, p) => claimer.query(t, p), s.studioId).finally(() => {
+        settled = true;
+      });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(settled).toBe(false); // waiting on the jurisdiction row lock
+      await changer.query("commit");
+      const c = await pending;
+      expect(c.should_execute_stripe_call).toBe(true);
+      expect(await stamped(c.attempt_id)).toBe("US");
+    } finally {
+      await changer.query("rollback").catch(() => undefined);
+      changer.release();
+      claimer.release();
+      await pool.end();
+    }
+  });
+
+  it("A CLAIM IN FLIGHT WINS: the change waits for it, then refuses", async () => {
+    const s = await studio("j9-claim-first");
+    const pool = new Pool({ connectionString: resolveLocalDbUrl(), max: 2 });
+    const changer = await pool.connect();
+    const claimer = await pool.connect();
+    try {
+      await claimer.query("begin");
+      const c = await claim((t, p) => claimer.query(t, p), s.studioId);
+      let settled = false;
+      const pending = changer
+        .query(
+          `select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','race',false)`,
+          [s.studioId],
+        )
+        .finally(() => {
+          settled = true;
+        });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(settled).toBe(false); // waiting behind the claim's share lock
+      await claimer.query("commit");
+      expect((await pending).rows[0].out_result).toBe("refused_payment_account");
+      expect(await stamped(c.attempt_id)).toBe("CA");
+      expect((await jurisdiction(s.studioId))?.payment_country).toBe("CA");
+    } finally {
+      await claimer.query("rollback").catch(() => undefined);
+      changer.release();
+      claimer.release();
+      await pool.end();
+    }
+  });
+
+  it("a pre-0214 stale claim is stamped when it is taken over, and not by a status-only update", async () => {
+    const s = await studio("j9-legacy");
+    const first = await claim(adminQuery, s.studioId);
+    // Simulate a row written before 0214: unstamped, its claim abandoned.
+    await adminQuery(
+      `alter table public.stripe_account_provisioning_attempts
+         disable trigger stripe_account_provisioning_payment_country`,
+    );
+    try {
+      await adminQuery(
+        `update public.stripe_account_provisioning_attempts
+            set payment_country = null,
+                processing_started_at = now() - interval '10 minutes'
+          where id = $1`,
+        [first.attempt_id],
+      );
+    } finally {
+      await adminQuery(
+        `alter table public.stripe_account_provisioning_attempts
+           enable trigger stripe_account_provisioning_payment_country`,
+      );
+    }
+    // Negative control: an update that issues no new claim does not stamp.
+    await adminQuery(
+      `update public.stripe_account_provisioning_attempts set error_message = 'x' where id = $1`,
+      [first.attempt_id],
+    );
+    expect(await stamped(first.attempt_id)).toBeNull();
+    const again = await claim(adminQuery, s.studioId);
+    expect(again.attempt_id).toBe(first.attempt_id);
+    expect(again.should_execute_stripe_call).toBe(true);
+    expect(await stamped(again.attempt_id)).toBe("CA");
   });
 });

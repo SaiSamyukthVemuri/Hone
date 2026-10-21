@@ -221,6 +221,9 @@ export const BROWSER_GROUPS = {
     specs: [
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
+      // STUDIO-READY-03b (#824): the owner console's composition of the
+      // delivery, SMS and payment-country authorities.
+      "owner-console-overview.spec.ts",
       // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
       // the 60 s signed-URL expiry. Here and not in `sessions` for UI-04's two
       // reasons: /clients/** has no PATH_TO_GROUP pattern (a photo diff already
@@ -312,10 +315,19 @@ export const BROWSER_GROUPS = {
       // extended to one group, and that is a coverage decision for every client
       // diff in the repository, not a presentation slice's to take in passing.
       "ui04-unarchive-pending.spec.ts",
+      // FETT photos (#892): the photo surface's mounted 44px floor at phone width
+      // and the deactivated-practitioner denial. Filed here for the same two
+      // reasons as UI-04 above: /clients/** has no PATH_TO_GROUP pattern, so a
+      // photo diff already runs extended, and `sessions` carries a cost pin.
+      "fett-photos-touch-floor.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",
       "welcome-email-admin.spec.ts",
+      // DELIVERY-VISIBILITY-02: the owner's delivery card (Settings -> Launch,
+      // moving to the owner console) and the /admin/delivery support queue.
+      // Owner-authority and platform-admin surfaces, so the owner/admin family.
+      "delivery-visibility.spec.ts",
       "practitioner-availability-compat.spec.ts",
       "practitioner-booking-studio-b.spec.ts",
       "practitioner-quick-book-studio-b.spec.ts",

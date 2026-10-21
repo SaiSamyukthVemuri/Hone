@@ -25,12 +25,22 @@ import {
 //
 // Durability: the receipt is written BEFORE the delivery is acknowledged. If
 // it cannot be written the route answers 500 and the provider retries the
-// same delivery (same svix-id) on its own schedule. Once it is written, the
-// answer is 200 whatever happens to processing: the receipt is durable, the
-// sweep finishes it, and a poison event must never keep the provider retrying
-// until it disables the endpoint. A retried delivery whose receipt is still
-// pending is processed again here; one already processed is acknowledged
-// as-is.
+// same delivery (same svix-id) on its own schedule.
+//
+// Recovery (Codex P2 4244387538, 4244798597): when the receipt is STILL
+// PENDING after this request -- its own claim or processing attempt failed,
+// or another holder's claim kept it from trying -- the answer is also 500.
+// Resend's retry of that delivery is then the receipt's recovery trigger.
+// A retry that lands while a failed attempt's two-minute claim is still held
+// answers 500 again, so the provider keeps retrying (5 s, 5 min, 30 min, ...)
+// until one lands after the claim has expired and reclaims it. It never
+// depends on a later webhook for some other email or on a scheduled sweep.
+// Attempts are bounded in the database: after five, the receipt is
+// quarantined and the next retry finds it processed and gets 200, so a
+// poison event cannot keep the provider retrying until it disables the
+// endpoint. Only an applied, stale, unmatched, ignored or quarantined outcome
+// is acknowledged with 200, as is a retried delivery whose receipt is
+// already processed.
 //
 // Attribution: process_email_provider_event attributes an event to a studio
 // only through the ledger row it matched. An unmatched or quarantined event
@@ -53,6 +63,55 @@ function logError(event: string, fields: Record<string, unknown>): void {
   console.error(JSON.stringify({ event, ...fields, timestamp: new Date().toISOString() }));
 }
 
+type BoundedBody =
+  | { kind: "ok"; text: string }
+  | { kind: "too_large"; declared: boolean }
+  | { kind: "failed" };
+
+/**
+ * Reads the request body without ever holding more than `limit` bytes
+ * (Codex P2 4248920477). This is a public, unauthenticated endpoint, so the
+ * limit has to bound memory and read work, not just what gets verified:
+ *   - a declared Content-Length above the limit is refused before reading;
+ *   - the stream is counted as it arrives and cancelled the moment it passes
+ *     the limit, whatever (or whether) Content-Length was declared.
+ * The bytes are decoded as UTF-8 exactly as req.text() would, so the
+ * signature still covers the same string.
+ */
+async function readBoundedBody(req: Request, limit: number): Promise<BoundedBody> {
+  const declared = req.headers.get("content-length");
+  if (declared !== null) {
+    const n = Number(declared);
+    if (Number.isFinite(n) && n > limit) return { kind: "too_large", declared: true };
+  }
+  if (!req.body) return { kind: "ok", text: "" };
+
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel().catch(() => undefined);
+        return { kind: "too_large", declared: false };
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return { kind: "failed" };
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    bytes.set(c, offset);
+    offset += c.byteLength;
+  }
+  return { kind: "ok", text: new TextDecoder("utf-8").decode(bytes) };
+}
+
 export async function POST(req: Request): Promise<Response> {
   const secret = process.env.RESEND_WEBHOOK_SECRET;
   if (!secret) {
@@ -62,17 +121,16 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 
-  let rawBody: string;
-  try {
-    rawBody = await req.text();
-  } catch {
+  const body = await readBoundedBody(req, MAX_BODY_BYTES);
+  if (body.kind === "too_large") {
+    logError("resend_webhook_body_too_large", { declared: body.declared });
+    return NextResponse.json({ ok: false }, { status: 413 });
+  }
+  if (body.kind === "failed") {
     logError("resend_webhook_body_read_failed", {});
     return NextResponse.json({ ok: false }, { status: 400 });
   }
-  if (Buffer.byteLength(rawBody, "utf8") > MAX_BODY_BYTES) {
-    logError("resend_webhook_body_too_large", {});
-    return NextResponse.json({ ok: false }, { status: 413 });
-  }
+  const rawBody = body.text;
 
   const verdict = verifyResendWebhookSignature({
     secret,
@@ -120,6 +178,14 @@ export async function POST(req: Request): Promise<Response> {
   const sweep = await drainEmailProviderEvents(admin, { limit: SWEEP_LIMIT });
   if (sweep && sweep.claimed > 0) {
     logEvent("resend_webhook_sweep", sweep);
+  }
+
+  if (processed === null || processed === "held") {
+    // The receipt is still pending: this attempt failed, or a claim (possibly
+    // a failed attempt's, not yet expired) kept it from trying. Ask the
+    // provider to deliver again, so a later retry recovers it (bounded: the
+    // database quarantines it after five attempts, and that retry gets 200).
+    return NextResponse.json({ ok: false, recorded: true }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true });

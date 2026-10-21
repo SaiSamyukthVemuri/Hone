@@ -43,6 +43,13 @@ type SettingsOutcome =
 
 const h = vi.hoisted(() => ({
   livemode: true,
+  observation: "match",
+  provisioningCompleteError: false,
+  accountCreates: 0,
+  accountLinks: 0,
+  boundAccountId: null as string | null,
+  recordedCountry: null as string | null,
+  countryConflict: null as string | null,
   settings: { kind: "zero_row" } as SettingsOutcome,
   // Stripe side
   accountRetrieveThrows: false,
@@ -63,13 +70,23 @@ vi.mock("@/lib/stripe/server", () => ({
   STRIPE_CONNECT_COUNTRY: "CA",
   inferStripeLivemode: () => h.livemode,
   getStripe: () => ({
+    accountLinks: { create: async () => {
+      h.accountLinks++;
+      return { url: "https://stripe.invalid/onboarding" };
+    } },
     accounts: {
+      create: async () => {
+        h.accountCreates++;
+        return { id: "acct_created", country: "CA", default_currency: "cad" };
+      },
       retrieve: async () => {
         if (h.accountRetrieveThrows) {
           throw new Tripwire("stripe unreachable");
         }
         return {
           id: "acct_test",
+          country: "CA",
+          default_currency: "cad",
           charges_enabled: h.chargesEnabled,
           payouts_enabled: true,
           requirements: { currently_due: [], eventually_due: [], disabled_reason: null },
@@ -86,6 +103,13 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       const q: Record<string, unknown> = {};
       const settle = () => {
         h.reads.push({ table, filters: [...filters] });
+        if (table === "stripe_account_provisioning_attempts") {
+          return { data: { payment_country: "CA" }, error: null };
+        }
+        if (h.boundAccountId && h.settings.kind !== "error") {
+          return { data: { stripe_account_country: h.recordedCountry,
+            stripe_account_country_conflict: h.countryConflict }, error: null };
+        }
         switch (h.settings.kind) {
           case "error":
             // PostgREST leaves data null on failure - the whole point.
@@ -110,12 +134,40 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     },
     rpc: async (name: string, args: Record<string, unknown>) => {
       h.rpcCalls.push({ name, args });
+      if (name === "create_or_claim_stripe_account_provisioning") {
+        if (h.boundAccountId) return { data: { already_provisioned: true,
+          out_stripe_account_id: h.boundAccountId, out_stripe_livemode: h.livemode }, error: null };
+        return { data: { attempt_id: "attempt_fake", out_processing_claim_token: "claim_fake",
+          out_idempotency_key: "idempotency_fake", should_execute_stripe_call: true }, error: null };
+      }
+      if (name === "complete_stripe_account_provisioning") {
+        if (!h.provisioningCompleteError) h.boundAccountId = String(args.p_stripe_account_id);
+        return { data: null, error: h.provisioningCompleteError ? DB_ERROR : null };
+      }
+      if (name === "record_stripe_account_jurisdiction") {
+        if (h.observation === "match") h.recordedCountry = "CA";
+        return { data: h.observation === "empty" ? null : {
+          out_result: h.observation, out_account_country: "CA",
+          out_payment_country: "CA", out_matches: h.observation === "match",
+        }, error: h.observation === "rpc_failed" ? DB_ERROR : null };
+      }
       return { data: null, error: h.syncErr };
     },
   }),
 }));
 
-const { refreshAccountStatusFromStripe } = await import("@/lib/stripe/account");
+vi.mock("@/lib/billing/payment-jurisdiction-server", () => ({
+  getStudioPaymentJurisdiction: async () => ({ ok: true, jurisdiction: { country: "CA" } }),
+}));
+vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: vi.fn() }));
+
+const {
+  refreshAccountStatusFromStripe,
+  createOrLoadConnectedAccountForStudio,
+  createConnectOnboardingLink,
+  PAYMENT_COUNTRY_UNVERIFIED_ERROR,
+  ACCOUNT_COUNTRY_MISMATCH_ERROR,
+} = await import("@/lib/stripe/account");
 
 const STUDIO = "11111111-1111-4111-8111-111111111111";
 const ACCOUNT = "acct_test";
@@ -134,6 +186,13 @@ function syncCall() {
 
 beforeEach(() => {
   h.livemode = true;
+  h.observation = "match";
+  h.provisioningCompleteError = false;
+  h.accountCreates = 0;
+  h.accountLinks = 0;
+  h.boundAccountId = null;
+  h.recordedCountry = null;
+  h.countryConflict = null;
   h.settings = { kind: "zero_row" };
   h.accountRetrieveThrows = false;
   h.chargesEnabled = true;
@@ -248,5 +307,94 @@ describe("scoping is exact", () => {
     await call();
     expect(syncCall()?.args.p_studio_id).toBe(STUDIO);
     expect(syncCall()?.args.p_stripe_livemode).toBe(true);
+  });
+});
+
+describe("new account country must be recorded before provisioning succeeds", () => {
+  it.each(["rpc_failed", "not_bound", "invalid_input", "empty"])(
+    "refuses %s after binding, preserving the created account for reconciliation",
+    async (outcome) => {
+      h.observation = outcome;
+      await expect(createOrLoadConnectedAccountForStudio(STUDIO))
+        .rejects.toThrow(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
+      expect(h.accountCreates).toBe(1);
+      expect(h.rpcCalls.map((c) => c.name)).toEqual([
+        "create_or_claim_stripe_account_provisioning",
+        "complete_stripe_account_provisioning",
+        "record_stripe_account_jurisdiction",
+      ]);
+      expect(h.rpcCalls[1].args.p_stripe_account_id).toBe("acct_created");
+      expect(h.rpcCalls[2].args).toMatchObject({
+        p_studio_id: STUDIO, p_stripe_account_id: "acct_created",
+        p_stripe_livemode: true, p_country: "CA", p_default_currency: "cad",
+      });
+    },
+  );
+
+  it("succeeds only after the bound account observation matches", async () => {
+    await expect(createOrLoadConnectedAccountForStudio(STUDIO)).resolves.toEqual({
+      stripeAccountId: "acct_created", livemode: true, alreadyProvisioned: false,
+    });
+    expect(h.rpcCalls.at(-1)?.name).toBe("record_stripe_account_jurisdiction");
+  });
+
+  it("keeps country mismatch refusal", async () => {
+    h.observation = "country_conflict";
+    await expect(createOrLoadConnectedAccountForStudio(STUDIO))
+      .rejects.toThrow(ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    expect(h.accountCreates).toBe(1);
+  });
+
+  it("does not observe an account whose binding failed", async () => {
+    h.provisioningCompleteError = true;
+    await expect(createOrLoadConnectedAccountForStudio(STUDIO)).rejects.toThrow("local binding failed");
+    expect(h.rpcCalls.some((c) => c.name === "record_stripe_account_jurisdiction")).toBe(false);
+    expect(h.accountCreates).toBe(1);
+  });
+});
+
+
+describe("bound retries cannot bypass an unrecorded country", () => {
+  async function onboard() {
+    const result = await createOrLoadConnectedAccountForStudio(STUDIO);
+    return createConnectOnboardingLink({ stripeAccountId: result.stripeAccountId,
+      appOrigin: "https://hone.invalid" });
+  }
+
+  it.each(["rpc_failed", "not_bound", "invalid_input", "empty"])(
+    "keeps %s blocked on bound retry, then reuses the account after verified refresh",
+    async (outcome) => {
+      h.observation = outcome;
+      await expect(onboard()).rejects.toThrow(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
+      expect(h.boundAccountId).toBe("acct_created");
+      expect(h.recordedCountry).toBeNull();
+      await expect(onboard()).rejects.toThrow(PAYMENT_COUNTRY_UNVERIFIED_ERROR);
+      expect(h.boundAccountId).toBe("acct_created");
+      expect(h.accountCreates).toBe(1);
+      expect(h.accountLinks).toBe(0);
+      expect(h.rpcCalls.filter((c) => c.name === "complete_stripe_account_provisioning")).toHaveLength(1);
+      expect(h.rpcCalls.some((c) => c.name === "mark_stripe_account_provisioning_failed")).toBe(false);
+      const read = h.reads.find((r) => r.table === "studio_payment_settings");
+      expect(read?.filters).toEqual([["studio_id", STUDIO], ["stripe_livemode", true],
+        ["stripe_account_id", "acct_created"]]);
+      h.observation = "match";
+      await refreshAccountStatusFromStripe({ studioId: STUDIO, stripeAccountId: "acct_created" });
+      expect(h.recordedCountry).toBe("CA");
+      await expect(onboard()).resolves.toBe("https://stripe.invalid/onboarding");
+      expect(h.accountCreates).toBe(1);
+      expect(h.accountLinks).toBe(1);
+    },
+  );
+
+  it.each(["mismatch", "conflict", "unread"])("keeps a bound %s account blocked", async (outcome) => {
+    h.boundAccountId = "acct_created";
+    h.recordedCountry = outcome === "mismatch" ? "US" : "CA";
+    if (outcome === "conflict") h.countryConflict = "US";
+    if (outcome === "unread") h.settings = { kind: "error" };
+    await expect(onboard()).rejects.toThrow(outcome === "unread"
+      ? PAYMENT_COUNTRY_UNVERIFIED_ERROR : ACCOUNT_COUNTRY_MISMATCH_ERROR);
+    expect(h.accountCreates).toBe(0);
+    expect(h.accountLinks).toBe(0);
+    expect(h.boundAccountId).toBe("acct_created");
   });
 });

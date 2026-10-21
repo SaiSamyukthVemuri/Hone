@@ -26,6 +26,7 @@ const DB_ERROR = {
 
 const h = vi.hoisted(() => ({
   livemode: false,
+  authFailure: undefined as Error | undefined,
   outcomes: {} as Record<string, { kind: string; data?: unknown }>,
   writes: [] as string[],
   rpcs: [] as string[],
@@ -51,10 +52,13 @@ vi.mock("@/lib/stripe/server", () => ({
 }));
 
 vi.mock("@/lib/supabase/queries", () => ({
-  getCurrentPractitionerWithStudio: async () => ({
-    practitioner: { id: "p1", role: "owner" },
-    studio: { id: "11111111-1111-4111-8111-111111111111", timezone: "America/Toronto" },
-  }),
+  getCurrentPractitionerWithStudio: async () => {
+    if (h.authFailure) throw h.authFailure;
+    return {
+      practitioner: { id: "p1", role: "owner" },
+      studio: { id: "11111111-1111-4111-8111-111111111111", timezone: "America/Toronto" },
+    };
+  },
 }));
 
 // #585's helper. Held at signed_current so the ONLY variable in each case is
@@ -266,6 +270,7 @@ function moneyTouched() {
 
 beforeEach(() => {
   h.livemode = false;
+  h.authFailure = undefined;
   h.outcomes = {};
   h.writes = [];
   h.rpcs = [];
@@ -331,6 +336,25 @@ describe("SESSION PAYMENT prepare: an unverifiable eligibility reaches no money"
 });
 
 describe("MANUAL FEE prepare: an unverifiable eligibility reaches no money", () => {
+  it("auth failure omits exception free text and preserves refusal before any money operation", async () => {
+    const sentinel = "synthetic-patient@example.test private-clinical-sentinel synthetic-token-secret";
+    h.authFailure = new Error(sentinel);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(prepareManualFeeChargeAction(feeForm())).resolves.toEqual({
+        ok: false, error: "You don't have permission to prepare a fee charge for this appointment.",
+      });
+      expect(moneyTouched()).toBe(0);
+      expect(log).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(String(log.mock.calls[0]![0]));
+      expect(payload).toEqual({ event: "manual_fee_prepare_auth_failed", detail: {}, timestamp: expect.any(String) });
+      expect(Number.isNaN(Date.parse(payload.timestamp))).toBe(false);
+      expect(JSON.stringify(log.mock.calls)).not.toContain(sentinel);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   for (const table of [
     "appointments",
     "client_payment_methods",

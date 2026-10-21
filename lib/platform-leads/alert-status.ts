@@ -31,6 +31,7 @@ export const LEAD_ALERT_ERROR_CODES = [
   "provider_timeout",
   "provider_exception",
   "render_failed",
+  "recipient_changed",
   "lease_expired",
   "expired",
 ] as const;
@@ -48,6 +49,8 @@ const REASON: Record<LeadAlertErrorCode, string> = {
   provider_timeout: "The email provider did not answer in time.",
   provider_exception: "The email provider gave no usable answer.",
   render_failed: "The alert email could not be composed.",
+  recipient_changed:
+    "The alert recipient (LEAD_ALERT_EMAIL) changed after the first attempt, so a retry could not repeat it. Use Retry to send it to the current recipient under a new key.",
   lease_expired: "A send attempt stopped before it finished.",
   expired: "It was not sent within its automatic retry window. Use Retry to send it under a new key.",
 };
@@ -67,7 +70,16 @@ export function leadAlertReason(code: string | null | undefined): string | null 
 
 export type PlatformLeadKind = "demo_request" | "early_access";
 
-/** The console row's anchor, which the alert email links to. */
+/**
+ * The one-lead console page the alert email links to (Codex P2 4248920469):
+ * it loads the named lead whatever its age, unlike the /admin tables, which
+ * show the latest 20 of each kind.
+ */
+export function leadDetailPath(kind: PlatformLeadKind, leadId: string): string {
+  return `/admin/leads/${kind === "demo_request" ? "demo-request" : "early-access"}/${leadId}`;
+}
+
+/** The console row's anchor on /admin. */
 export function leadAnchorId(kind: PlatformLeadKind, leadId: string): string {
   return kind === "demo_request"
     ? `lead-demo-request-${leadId}`
@@ -124,4 +136,24 @@ export function describeLeadAlert(alert: LeadAlertSummary | null): LeadAlertBadg
       }
       return { tone: "waiting", label: "Alert waiting to send", detail: null };
   }
+}
+
+/**
+ * Failure codes KNOWN not to have reached the provider as an accepted send
+ * (0213 requeue_platform_lead_alert's list, pinned by test). Only these, and
+ * an expiry before any attempt, may be retried under a new idempotency key
+ * without the operator's confirmation (Codex P2 4276616247).
+ */
+export const LEAD_ALERT_KNOWN_UNSENT_CODES = ["provider_rejected", "recipient_changed", "render_failed"] as const;
+
+/**
+ * True when a FAILED alert may already have been accepted by the provider: a
+ * timeout, provider exception or unavailability, an abandoned lease, or an
+ * expiry after an attempt. Retrying it mints a new key the provider cannot
+ * match to the earlier request, so it may send a duplicate.
+ */
+export function leadAlertMayHaveBeenSent(code: string | null | undefined, attempts: number): boolean {
+  if (code && (LEAD_ALERT_KNOWN_UNSENT_CODES as readonly string[]).includes(code)) return false;
+  if (code === "expired" && attempts === 0) return false;
+  return true;
 }

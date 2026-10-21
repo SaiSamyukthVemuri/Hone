@@ -154,6 +154,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/clients/[id]/images/sign-treatment-image.ts",
+    purpose:
+      "FETT photos (HON-43): the ONE treatment-photo URL signer, shared by getTreatmentImageSignedUrlAction (View larger) and GET /api/clients/[clientId]/images/[imageId]/signed-url (photo-cell re-mint).",
+    why: "Storage signing only (createSignedUrl), never a table read or write through the admin client. Both callers resolve the studio from the session first (getCurrentPractitionerWithStudio); this function then reads the row through the caller's RLS client scoped to that studio.id (and the route's clientId) and not archived, and validateTreatmentImagePath binds the stored path to that studio and client before the service-role client signs the path that verified read returned. No bucket or path is taken from input.",
+    scopeGuard: "validateTreatmentImagePath",
+  },
+  {
     path: "app/(app)/clients/[id]/images/page.tsx",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via requirePractitionerWithStudio(); every query is scoped to that studio.id.",
@@ -263,6 +270,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAdmin",
   },
   {
+    path: "app/admin/leads/[kind]/[id]/page.tsx",
+    purpose:
+      "LEAD-ALERT-01 (#826) operator-only page for ONE platform lead (a demo request or early-access signup) and its alert status, which the operator alert email links to.",
+    why: "No practitioner session; gated by the ADMIN_EMAILS/isAdmin operator check before any read. demo_requests, waitlist and platform_lead_alerts grant nothing to authenticated, so service-role is required. Reads only those three tables (pinned by tests/app/admin/lead-detail-page.test.ts).",
+    scopeGuard: "isAdmin",
+  },
+  {
     path: "app/admin/ops-alerts/page.tsx",
     purpose: "Operator-only admin console surface.",
     why: "No practitioner session; gated by the ADMIN_EMAILS/isAdmin operator check. Cross-studio access is intentional for support/ops, so service-role is required.",
@@ -315,6 +329,18 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Trusted onboarding completion + celebration adapters (wizard).",
     why: "completed_at / celebrated_at / status='completed' / the 'done' marker are PROTECTED fields — a SECURITY INVOKER guard trigger blocks any direct browser write. Completion + celebration are therefore the service-role-ONLY commands admin_complete_onboarding / admin_mark_onboarding_celebrated (public/anon/authenticated execute revoked). The adapter passes ONLY the session user id (resolved server-side by the owner-gated action) + the studio id; each command re-verifies IN-DB that the user is an ACTIVE OWNER of that studio AND onboarding_v2 is enabled, and accepts no role/status/timestamp/step state from the browser.",
     scopeGuard: "admin_complete_onboarding",
+  },
+  {
+    path: "app/admin/delivery/page.tsx",
+    purpose: "DELIVERY-VISIBILITY-02 platform support delivery queue (cross-studio).",
+    why: "Platform-global by design. The /admin layout gates it to the ADMIN_EMAILS allowlist (isAdmin) before render. It reads ONLY the service-role-only 0215 commands support_delivery_incidents, support_email_receipt_outcomes and email_delivery_health, which return operational metadata (no client identity, address or message).",
+    scopeGuard: "support_delivery_incidents",
+  },
+  {
+    path: "app/admin/delivery/actions.ts",
+    purpose: "DELIVERY-VISIBILITY-02 support closes a delivery incident.",
+    why: "Admin-only server action: isAdmin(user.email) is re-checked before the admin client is built, and every attempt (blocked included) is audited via logAdminAction. It drives ONLY resolve_delivery_incident, which closes one open incident by id.",
+    scopeGuard: "isAdmin(user.email)",
   },
   {
     path: "app/api/cron/appointment-reminders/route.ts",
@@ -829,5 +855,11 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Authenticated OWNER settings page (redacted status read).",
     why: "Owner-gated via requirePractitionerWithStudio(); reads only redacted provider status (never encrypted_server_token) scoped to studio.id.",
     scopeGuard: "requirePractitionerWithStudio",
+  },
+  {
+    path: "app/(app)/clients/[id]/sessions/[sessionId]/session-photos.ts",
+    purpose: "Sign this visit's treatment photos for the session chart page (FETT photos, read-only).",
+    why: "Signing a private-bucket object needs the service role (storage is service-role only since 0093). Rows are first read through the RLS client scoped to the caller's studio + client + session, unarchived, and each path must pass validateTreatmentImagePath before the admin client signs it with the shared 60 s TTL: the Photos tab's own trust boundary.",
+    scopeGuard: "validateTreatmentImagePath",
   },
 ];

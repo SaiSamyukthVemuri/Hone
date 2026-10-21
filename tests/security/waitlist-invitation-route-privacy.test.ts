@@ -62,9 +62,13 @@ const APP_DIR = join(ROOT, "app");
  */
 const CLASSIFIED_NON_BEARER: ReadonlyArray<{ prefix: string; why: string }> = [
   { prefix: "/admin/studios", why: "platform-operator surface behind isAdmin; the segment is a studio row id, not a credential" },
+  { prefix: "/admin/leads", why: "LEAD-ALERT-01 platform-operator lead page behind isAdmin; the segment is a lead KIND (demo-request | early-access), not a credential" },
+  { prefix: "/admin/leads/[kind]", why: "LEAD-ALERT-01 platform-operator lead page behind isAdmin (404 for anyone else); the segment is a lead row id, not a credential" },
   { prefix: "/book", why: "public booking page keyed by the studio's PUBLIC slug — the slug is meant to be shared" },
   { prefix: "/calendar", why: "authenticated app route; the segment is an appointment row id" },
   { prefix: "/clients", why: "authenticated app route; the segment is a client row id" },
+  { prefix: "/api/clients", why: "authenticated photo re-mint route (FETT HON-43, Codex P1 4307807754); the segment is a client row id behind the session middleware (no exemption) and the handler's own practitioner check" },
+  { prefix: "/api/clients/[clientId]/images", why: "same route, nested; the segment is a treatment-image row id, authorised by the shared signer against the session's studio AND the client above it, never a credential" },
   { prefix: "/clients/[id]/sessions", why: "authenticated app route nested under a client; the segment is a session row id and the client id above it is equally not a credential" },
   { prefix: "/e2e-fault", why: "E2E fault-injection harness, not a production surface" },
   { prefix: "/ingest", why: "same-origin PostHog proxy (app/ingest/[...path], #828 G-07/G-26); the catch-all segments are PostHog SDK endpoint paths (e, flags, static/<version>, array/<public project key>), allowlisted by prefix, never a Hone credential" },

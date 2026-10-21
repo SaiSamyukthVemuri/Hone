@@ -74,7 +74,7 @@
   - **Client-facing mail** sends as `<Studio name> via Hone <hello@hone.care>`, with `Reply-To` set to the studio's contact address when one is usable. The studio name is **display text only**, sanitised so it cannot inject a mail header; an absent or unusable name falls back to exactly `Hone <hello@hone.care>`.
   - **Reply-To is derived server-side** from `studios.postcare_contact_email`, else `studios.owner_email` (`studioClientContactEmail`). If neither is usable the header is **omitted** — never fabricated, and never the client's own address.
   - **Hone-facing mail** (ops alerts, team invitations) deliberately keeps `Hone <hello@hone.care>` with no `Reply-To`: Hone is speaking as Hone.
-  - **Hone learns only that Resend ACCEPTED a message.** In production there is still no bounce or complaint tracking and no suppression list (COMMS-01D). DELIVERY-EVENTS-01 (migration `0212`, pending) adds the receiving half only: a signed webhook at `/api/resend/webhook`, durable receipts and an email delivery ledger. It stays inert until `RESEND_WEBHOOK_SECRET` is set and the endpoint is configured in Resend, and no send path records its attempts in the ledger yet ([docs/08 §Email delivery events](./08_EMAIL_SMS_AND_CRON.md#email-delivery-events-delivery-events-01-migration-0212)).
+  - **Hone learns only that Resend ACCEPTED a message.** In production there is still no bounce or complaint tracking and no suppression list (COMMS-01D). DELIVERY-EVENTS-01 (migration `0212`, applied to production 2026-10-12 migration-first; its application code ships only when #832 merges) adds the receiving half only: a signed webhook at `/api/resend/webhook`, durable receipts and an email delivery ledger. It stays inert until `RESEND_WEBHOOK_SECRET` is set and the endpoint is configured in Resend, and no send path records its attempts in the ledger yet ([docs/08 §Email delivery events](./08_EMAIL_SMS_AND_CRON.md#email-delivery-events-delivery-events-01-migration-0212)).
 
 ## Twilio
 
@@ -128,7 +128,7 @@ Authoritative source: [`.env.local.example`](../.env.local.example). The summary
 | `STRIPE_ALLOW_LIVE_MODE` | Default `false` | Live-mode gate. Leave unset / `false` until a deliberate live-mode PR. |
 | `STRIPE_WEBHOOK_SECRET` | Required | Signing secret from the connected-account webhook in the Stripe dashboard. |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Required for portal Add-card surface | `pk_test_*` mirrors the secret-key gate; portal renders calm unavailable surface if missing. |
-| `STRIPE_CONNECT_COUNTRY` | Default `CA` | Hardcoded for Canadian rollout. |
+| `STRIPE_CONNECT_COUNTRY` | — | **No longer read** (PAY-CCY-03, #824). Express accounts are created in each studio's verified payment country (`studio_payment_jurisdictions`, migration 0214). Leaving the variable set is harmless; it changes nothing. |
 | `UPSTASH_REDIS_REST_URL` | **Required in production** | Public rate limit. Missing in prod → the production build fails (PR #262 gate). Runtime still fails open on a transient outage. |
 | `UPSTASH_REDIS_REST_TOKEN` | **Required in production** | Same. |
 | `TWILIO_ACCOUNT_SID` | Optional | SMS subsystem gated on this. |

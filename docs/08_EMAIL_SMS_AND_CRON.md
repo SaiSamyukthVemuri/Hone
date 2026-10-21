@@ -41,7 +41,7 @@ Appointment rows carry attempt counters and stamped timestamps:
 - `intake_reminder_7d_send_attempts` + `intake_reminder_7d_sent_at` (+ `_claimed_at`) — PR #306, **RETIRED by 0186: retained, no longer written**
 - `intake_reminder_3d_send_attempts` + `intake_reminder_3d_sent_at` (+ `_claimed_at`) — PR #306, **RETIRED by 0186: retained, no longer written**
 
-Truthful-reporting rule: stamp the `*_sent_at` **only** when the Resend call actually delivered. The 3-strike pattern is on every transactional path: each attempt increments `_attempts`; once Resend confirms success the `_sent_at` is set; if attempts exceed 3 without delivery the cron stops retrying and logs a sanitized failure for the operator.
+Truthful-reporting rule: stamp the `*_sent_at` **only** after the provider accepts the send. This records provider handoff, not delivery to the client or proof that it was read. The 3-strike pattern is on every transactional path: each attempt increments `_attempts`; once Resend confirms success the `_sent_at` is set; if attempts exceed 3 without confirmed acceptance the cron stops retrying and logs a sanitized failure for the operator.
 
 **Postcare send-state correctness (PR #311, migration 0100).** The manual postcare send (`sendPostcareEmailAction`) previously used `postcare_email_sent_at` as **both** the atomic first-send claim **and** the "sent" marker, stamping it **before** the Resend call — so a provider failure left a false "Postcare sent" (a P1 overclaim). It now mirrors the reminder claim discipline with per-appointment columns: the first send **claims `postcare_email_claimed_at`** (guarded by `sent_at IS NULL` + no fresh claim; ~5-min stale-reclaim window) and sets `postcare_email_last_attempt_at` + increments attempts **without** stamping `sent_at`; `postcare_email_sent_at` is stamped **only after Resend confirms success** (which also clears `_failed_at`/`_last_error`/`_claimed_at`). A provider **failure** sets `postcare_email_failed_at` + a **safe/generic** `postcare_email_last_error` (never the raw provider payload, client email/name, health data, or exception details) and clears the claim, leaving `sent_at` NULL on a first send (a failed **resend** keeps any prior real `sent_at`). The appointment-detail UI shows Sent / **Send failed — try again** / Sending… / Not-sent, and "sent" means **handed to the provider**, never delivered/received/opened. Postcare still bypasses `record_email_attempt` (single-request, no scheduler race). Additive/backfill-safe; existing historical `postcare_email_sent_at` rows are unchanged.
 
@@ -91,13 +91,14 @@ The double-send gap is closed. The reminder cron now claims each row via `claim_
 **Route: `POST /api/resend/webhook`** (`app/api/resend/webhook/route.ts`, exact-path middleware exemption). It reads the raw body, then verifies the Svix signature (`svix-id`, `svix-timestamp`, `svix-signature`) with `RESEND_WEBHOOK_SECRET` in `lib/email/resend-webhook.ts`. The check is hand-rolled on `node:crypto`, like the Twilio check, and is held to the official Resend SDK verifier on the same fixtures. Refusals:
 - missing secret: 500, nothing written;
 - missing or invalid signature, or a timestamp more than **five minutes** from the server clock: 403 and zero database work;
-- a body over 256 KB: 413.
+- a body over 256 KB: 413. A declared `Content-Length` over the limit is refused before any read, and an undeclared body is counted as it streams and cancelled once it passes the limit, so the limit bounds memory and read work on this public endpoint.
 
 A captured request therefore cannot be replayed later. A replay inside the window carries the same `svix-id` and is deduplicated below.
 
 **Durable before acknowledged.** `record_email_provider_event` writes one receipt per delivery, unique on `(provider, svix-id)`. Resend keeps that id across every retry of an event.
 - If the receipt cannot be written, the route answers **500** and Resend retries on its own schedule (roughly 27 hours, after which it may disable the endpoint).
-- Once the receipt is written, the answer is **200**, whatever happens to processing. A poison event must never keep the provider retrying until it disables the endpoint.
+- If the receipt is written but is **still pending after this request**, the answer is also **500**, so Resend's retry recovers it (Codex P2 4244387538, 4244798597). That covers this request's own processing failing, and a claim (a failed attempt's, not yet expired) keeping it from trying. A retry that lands inside the two-minute claim answers 500 again, so the provider keeps retrying until one lands after it expires. The recovery does not depend on another webhook or a scheduled sweep. Attempts are bounded in the database: after five the receipt is quarantined and the retry that follows gets **200**, so a poison event cannot keep the provider retrying until it disables the endpoint.
+- Every other outcome is acknowledged with **200**: applied, stale, unmatched, ignored or quarantined.
 - A retried delivery whose receipt is still **pending** is processed again; one already processed is acknowledged as-is.
 
 **Exactly-once processing and crash recovery.**
@@ -171,9 +172,17 @@ Pinned by `tests/db/email-delivery-events.db.test.ts` (replay, order permutation
 - accepted emails with no report for 24h;
 - open incidents and the last sweep.
 
-Findings (`lib/email/delivery-health.ts`) have purpose-specific thresholds: a backlog older than 15 minutes is a warning and older than 6 hours is critical; exhausted, quarantined, unreported and sweep failures are warnings. Each finding is raised as an ops alert **at most once while an unresolved alert for that event is open**. A sweep or health read that fails is itself a finding, never a healthy run. **The route is not registered in `vercel.json`**: scheduling it belongs to the delivery-events activation.
+Findings (`lib/email/delivery-health.ts`) have purpose-specific thresholds: a backlog older than 15 minutes is a warning and older than 6 hours is critical; exhausted, quarantined, unreported and sweep failures are warnings. Each finding is raised as an ops alert **at most once while an unresolved alert for that event is open**. The sweep records every finding at **warning** severity at most, because a critical ops alert is emailed to `OPS_ALERT_EMAILS` and emailed delivery alerts stay off until the #828 routing decision (D-4). A finding assessed as critical carries `assessed_severity: "critical"` in its details, so the `ops_alerts` row and `/admin/ops-alerts` still show it. A sweep or health read that fails is itself a finding, never a healthy run. **The route is not registered in `vercel.json`**: scheduling it belongs to the delivery-events activation.
 
-**Not yet:** an owner-facing screen, a support queue UI, emailed owner/support notifications (the HIPAA routing gate #828 applies to any patient-related email: Resend cannot sign a BAA), and producers beyond the reminder window.
+**Where people see it (DELIVERY-VISIBILITY-02).**
+- **Owner:** a "Message delivery" card in the owner console, Settings → Overview (`components/delivery/OwnerDeliveryCard.tsx`, mounted as-is by `app/(app)/settings/overview/page.tsx`; STUDIO-READY-03b moved it there from Settings → Launch, which no longer shows it). It reads `owner_delivery_incidents` with the owner's own session and renders **nothing** for anyone the database refuses (42501). Any other failed read says delivery status is unavailable, never "no problems". Each open incident shows once, with:
+  - a count and its first and last occurrence;
+  - a plain-English meaning and the next step (`lib/delivery/incidents.ts`), with a link to the latest appointment.
+
+  A bounce is the studio's to fix (check the address); a provider failure or refusal is Hone's. Until the Resend webhook is activated, the card says plainly that a bounce after sending cannot appear.
+- **Platform support:** `/admin/delivery`. It shows the delivery health (an unreadable row is shown as unknown, never healthy), Resend receipt outcomes and the cross-studio incident queue. Resolve is an admin-only server action, audited as `delivery_incident_resolved` (blocked attempts included).
+
+**Not yet:** emailed owner or support notifications (the HIPAA routing gate #828 applies to any patient-related email: Resend cannot sign a BAA), and producers beyond the reminder window.
 
 Pinned by `tests/db/delivery-incidents.db.test.ts`, `tests/migrations/0215-delivery-incidents.test.ts`, `tests/lib/email/delivery-ledger.test.ts`, `tests/lib/email/delivery-health.test.ts`, `tests/app/api/email-delivery-sweep.test.ts` and `tests/app/api/cron/reminder-email-ledger.test.ts`.
 

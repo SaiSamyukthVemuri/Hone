@@ -23,7 +23,10 @@ function grep(pattern: string, paths: string): string {
 
 const PAGE = read("app/(app)/clients/[id]/images/page.tsx");
 const MANAGER = read("app/(app)/clients/[id]/images/TreatmentImagesManager.tsx");
-const ACTIONS = read("app/(app)/clients/[id]/images/actions.ts");
+// The signer moved into sign-treatment-image.ts (shared with the re-mint route,
+// Codex P1 4307807754); the signed-URL surface is both files together.
+const ACTIONS =
+  read("app/(app)/clients/[id]/images/actions.ts") + "\n" + read("app/(app)/clients/[id]/images/sign-treatment-image.ts");
 
 describe("server-side preview signing (short-lived, ownership-checked)", () => {
   it("the page signs preview URLs with the service-role client after the studio-scoped load", () => {

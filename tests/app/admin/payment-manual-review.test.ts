@@ -83,9 +83,21 @@ describe("formatAmountLabel", () => {
     expect(formatAmountLabel(5000, "cad")).toBe("$50.00 CAD");
     expect(formatAmountLabel(199, "cad")).toBe("$1.99 CAD");
   });
+  it.each([null, undefined, "", "   "])("does not invent CAD for missing currency %j", (currency) => {
+    expect(formatAmountLabel(5000, currency)).toBe("$50.00 (currency unknown)");
+  });
+  it("preserves explicit USD and normalizes an explicit currency label", () => {
+    expect(formatAmountLabel(5000, "usd")).toBe("$50.00 USD");
+    expect(formatAmountLabel(5000, " CAD ")).toBe("$50.00 CAD");
+  });
   it("returns null for missing amount", () => {
     expect(formatAmountLabel(null, "cad")).toBeNull();
     expect(formatAmountLabel(undefined, "cad")).toBeNull();
+  });
+  it("PAY-CCY-04: names USD, and never assumes CAD for a row without a currency", () => {
+    expect(formatAmountLabel(5000, "usd")).toBe("$50.00 USD");
+    expect(formatAmountLabel(5000, null)).toBe("$50.00 (currency unknown)");
+    expect(formatAmountLabel(5000, "")).toBe("$50.00 (currency unknown)");
   });
 });
 

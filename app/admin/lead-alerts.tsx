@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
+  leadAlertMayHaveBeenSent,
+  leadDetailPath,
   describeLeadAlert,
   leadAlertReason,
   LEAD_ALERT_MAX_ATTEMPTS,
@@ -230,9 +232,22 @@ export function LeadAlertsCard({
           <h3 className="text-sm font-medium">Failed alerts</h3>
           <FailedPager page={view.failedPage} shown={view.failed.length} total={view.counts.failed} />
           <ul className="mt-2 flex flex-col gap-2 text-sm">
-            {view.failed.map((a) => (
+            {view.failed.map((a) => {
+              // WHICH LEAD (Codex P2 4276835172): the operator must be able to
+              // reconcile THIS alert against the inbox, whatever page of the
+              // lead tables it has fallen off. The kind and the minute are not
+              // an identity; the lead's own page is.
+              const leadId = a.lead_kind === "demo_request" ? a.demo_request_id : a.waitlist_id;
+              const label = a.lead_kind === "demo_request" ? "Demo request" : "Early-access signup";
+              return (
               <li key={a.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span>{a.lead_kind === "demo_request" ? "Demo request" : "Early-access signup"}</span>
+                {leadId ? (
+                  <a className="underline" href={leadDetailPath(a.lead_kind, leadId)} data-testid="lead-alert-failed-lead-link">
+                    {label}
+                  </a>
+                ) : (
+                  <span>{label}</span>
+                )}
                 <span className="text-xs opacity-80">
                   saved <FormattedDateTime iso={a.created_at} />
                 </span>
@@ -240,17 +255,37 @@ export function LeadAlertsCard({
                   {leadAlertReason(a.last_error_code) ?? "Failed."} ({a.attempt_count} of{" "}
                   {LEAD_ALERT_MAX_ATTEMPTS} attempts)
                 </span>
-                <form action={retryLeadAlertAction}>
-                  <input type="hidden" name="id" value={a.id} />
-                  <button
-                    type="submit"
-                    className="rounded-md border border-current/30 px-2 py-0.5 text-xs hover:bg-white/50 dark:hover:bg-black/30"
-                  >
-                    Retry
-                  </button>
-                </form>
+                {leadAlertMayHaveBeenSent(a.last_error_code, a.attempt_count) ? (
+                  // MAY ALREADY HAVE ARRIVED (Codex P2 4276616247): a retry
+                  // uses a new key the provider cannot match to the earlier
+                  // request, so it can send a duplicate. Say so, and ask.
+                  <form action={retryLeadAlertAction} className="flex flex-wrap items-center gap-2" data-testid="lead-alert-possible-duplicate">
+                    <input type="hidden" name="id" value={a.id} />
+                    <input type="hidden" name="confirm_possible_duplicate" value="yes" />
+                    <span className="text-xs">
+                      This alert may already have reached the operator inbox. Check it first; sending again may deliver a duplicate.
+                    </span>
+                    <button
+                      type="submit"
+                      className="rounded-md border border-current/30 px-2 py-0.5 text-xs hover:bg-white/50 dark:hover:bg-black/30"
+                    >
+                      Send again anyway
+                    </button>
+                  </form>
+                ) : (
+                  <form action={retryLeadAlertAction}>
+                    <input type="hidden" name="id" value={a.id} />
+                    <button
+                      type="submit"
+                      className="rounded-md border border-current/30 px-2 py-0.5 text-xs hover:bg-white/50 dark:hover:bg-black/30"
+                    >
+                      Retry
+                    </button>
+                  </form>
+                )}
               </li>
-            ))}
+              );
+            })}
           </ul>
         </div>
       )}

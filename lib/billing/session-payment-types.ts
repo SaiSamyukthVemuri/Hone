@@ -90,6 +90,10 @@ export type SessionPaymentExistingAttemptSummary = {
   id: string;
   status: string;
   amountCents: number;
+  // PAY-CCY-04 (Codex P2 4244957363). The currency the attempt was PREPARED
+  // in (fixed by 0214), never the studio's current configuration. Null only
+  // for a value outside cad/usd, which no surface treats as Canadian.
+  currency: PaymentCurrency | null;
   createdAt: string;
   stripePaymentIntentId: string | null;
   stripeChargeId: string | null;

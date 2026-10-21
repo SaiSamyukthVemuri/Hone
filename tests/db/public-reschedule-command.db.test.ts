@@ -1010,7 +1010,8 @@ describe("0171 — financial safety fails closed (manual_fee_charge_attempts)", 
 
 describe("0171 — the financial census is complete", () => {
   it("no OTHER table carrying live appointment-bound money is missing from the gate", async () => {
-    // Every table with an appointment_id FK, minus the ones the gate covers and
+    // Every distinct table with an appointment FK (including composite FKs),
+    // minus the ones the gate covers and
     // the ones that are provably not payment state. If this list grows, the
     // gate (or this justification) must be revisited.
     const r = await adminQuery(
