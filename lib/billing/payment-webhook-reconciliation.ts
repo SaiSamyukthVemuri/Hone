@@ -75,6 +75,8 @@ type AttemptRow = {
   charge_reason: string;
   status: string;
   stripe_livemode: boolean;
+  stripe_account_id: string | null;
+  stripe_customer_id: string | null;
   stripe_payment_intent_id: string | null;
   stripe_charge_id: string | null;
   amount_cents: number;
@@ -87,7 +89,7 @@ type AttemptRow = {
 };
 
 const ATTEMPT_COLUMNS =
-  "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id";
+  "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_customer_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id";
 
 // ---------------------------------------------------------------------------
 // Sanitisers (mirror lib/billing/session-payment-charge.ts +
@@ -171,10 +173,12 @@ type Resolution =
   | { ok: false; reason: "not_found" | "database_error"; detail?: string };
 
 async function resolveAttemptByMetadataOrId(args: {
+  ctx: WebhookCtx;
   metadata: Record<string, string> | undefined | null;
   fallbackByPaymentIntentId?: string | null;
   fallbackByChargeId?: string | null;
 }): Promise<Resolution> {
+  if (!args.ctx.studioId || !args.ctx.stripeAccountId) return { ok: false, reason: "not_found" };
   const admin = createAdminClient();
   const meta = args.metadata ?? {};
   const canonicalId = (meta["hone_payment_charge_attempt_id"] ?? "").trim();
@@ -187,6 +191,9 @@ async function resolveAttemptByMetadataOrId(args: {
       .from("payment_charge_attempts")
       .select(ATTEMPT_COLUMNS)
       .eq("id", canonicalId)
+      .eq("studio_id", args.ctx.studioId)
+      .eq("stripe_account_id", args.ctx.stripeAccountId)
+      .eq("stripe_livemode", args.ctx.livemode)
       .maybeSingle();
     if (error) {
       return {
@@ -206,6 +213,9 @@ async function resolveAttemptByMetadataOrId(args: {
       .from("payment_charge_attempts")
       .select(ATTEMPT_COLUMNS)
       .eq("id", legacyId)
+      .eq("studio_id", args.ctx.studioId)
+      .eq("stripe_account_id", args.ctx.stripeAccountId)
+      .eq("stripe_livemode", args.ctx.livemode)
       .maybeSingle();
     if (error) {
       return {
@@ -225,6 +235,9 @@ async function resolveAttemptByMetadataOrId(args: {
       .from("payment_charge_attempts")
       .select(ATTEMPT_COLUMNS)
       .eq("stripe_payment_intent_id", args.fallbackByPaymentIntentId)
+      .eq("studio_id", args.ctx.studioId)
+      .eq("stripe_account_id", args.ctx.stripeAccountId)
+      .eq("stripe_livemode", args.ctx.livemode)
       .maybeSingle();
     if (error) {
       return {
@@ -242,6 +255,9 @@ async function resolveAttemptByMetadataOrId(args: {
       .from("payment_charge_attempts")
       .select(ATTEMPT_COLUMNS)
       .eq("stripe_charge_id", args.fallbackByChargeId)
+      .eq("studio_id", args.ctx.studioId)
+      .eq("stripe_account_id", args.ctx.stripeAccountId)
+      .eq("stripe_livemode", args.ctx.livemode)
       .maybeSingle();
     if (error) {
       return {
@@ -382,6 +398,44 @@ async function verifyProviderMoneyAgainstRow(args: {
   return false;
 }
 
+// The signature proves the event came from Stripe. It does not let metadata
+// replace the account/customer/provider object stamped on this durable attempt.
+async function verifyPaymentEventIdentity(args: {
+  attempt: AttemptRow;
+  event: Stripe.Event;
+  ctx: WebhookCtx;
+  paymentIntentId: string | null;
+  chargeId: string | null;
+  customerId: string | null;
+  metadata: Record<string, string>;
+  requireCharge: boolean;
+}): Promise<boolean> {
+  const { attempt, event, ctx } = args;
+  const mismatches: string[] = [];
+  if (!ctx.studioId || ctx.studioId !== attempt.studio_id) mismatches.push("studio");
+  if (!ctx.stripeAccountId || event.account !== ctx.stripeAccountId || ctx.stripeAccountId !== attempt.stripe_account_id) mismatches.push("account");
+  if (event.livemode !== ctx.livemode || event.livemode !== attempt.stripe_livemode) mismatches.push("mode");
+  if (!attempt.stripe_customer_id || args.customerId !== attempt.stripe_customer_id) mismatches.push("customer");
+  if (!attempt.stripe_payment_intent_id || args.paymentIntentId !== attempt.stripe_payment_intent_id) mismatches.push("payment_intent");
+  if ((args.requireCharge && !attempt.stripe_charge_id) || (attempt.stripe_charge_id && args.chargeId !== attempt.stripe_charge_id)) mismatches.push("charge");
+  for (const key of ["hone_payment_charge_attempt_id", "hone_session_payment_charge_attempt_id"]) {
+    const id = args.metadata[key]?.trim();
+    if (id && id !== attempt.id) mismatches.push(key);
+  }
+  if (mismatches.length === 0) return true;
+  await recordOpsAlert({
+    severity: "critical",
+    event: "stripe_webhook_payment_identity_mismatch",
+    message: "Signed payment event does not match the durable attempt identity. No payment row was mutated.",
+    studioId: attempt.studio_id,
+    clientId: attempt.client_id,
+    stripeEventId: event.id,
+    route: ROUTE,
+    safeDetails: { attempt_id: attempt.id, event_type: event.type, mismatches },
+  });
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // payment_intent.succeeded
 // ---------------------------------------------------------------------------
@@ -400,6 +454,7 @@ export async function handlePaymentIntentSucceeded(
   const metadata = (pi.metadata ?? {}) as Record<string, string>;
 
   const resolution = await resolveAttemptByMetadataOrId({
+    ctx,
     metadata,
     fallbackByPaymentIntentId: pi.id,
   });
@@ -429,6 +484,16 @@ export async function handlePaymentIntentSucceeded(
     };
   }
   const attempt = resolution.attempt;
+
+  if (!(await verifyPaymentEventIdentity({
+    attempt, event, ctx, metadata,
+    paymentIntentId: pi.id,
+    chargeId: typeof pi.latest_charge === "string" ? pi.latest_charge : pi.latest_charge?.id ?? null,
+    customerId: typeof pi.customer === "string" ? pi.customer : pi.customer?.id ?? null,
+    requireCharge: false,
+  }))) {
+    return { eventType: event.type, attemptId: attempt.id, identityMismatch: true };
+  }
 
   if (
     !(await verifyMetadataAgainstRow({
@@ -721,6 +786,7 @@ export async function handlePaymentIntentPaymentFailed(
   const metadata = (pi.metadata ?? {}) as Record<string, string>;
 
   const resolution = await resolveAttemptByMetadataOrId({
+    ctx,
     metadata,
     fallbackByPaymentIntentId: pi.id,
   });
@@ -751,6 +817,16 @@ export async function handlePaymentIntentPaymentFailed(
   }
   const attempt = resolution.attempt;
 
+  if (!(await verifyPaymentEventIdentity({
+    attempt, event, ctx, metadata,
+    paymentIntentId: pi.id,
+    chargeId: typeof pi.latest_charge === "string" ? pi.latest_charge : pi.latest_charge?.id ?? null,
+    customerId: typeof pi.customer === "string" ? pi.customer : pi.customer?.id ?? null,
+    requireCharge: false,
+  }))) {
+    return { eventType: event.type, attemptId: attempt.id, identityMismatch: true };
+  }
+
   if (
     !(await verifyMetadataAgainstRow({
       attempt,
@@ -768,7 +844,8 @@ export async function handlePaymentIntentPaymentFailed(
 
   // Resolved-row mode guard (mirrors payment_intent.succeeded + charge.refunded).
   // The event-mode guard above only checks event.livemode; the resolver + the
-  // metadata guard do NOT check the row's stripe_livemode. Post-0105 a session
+  // metadata guard historically did not check the row's mode. The bound identity
+  // guard now does too; retain this independent mode refusal. Post-0105 a session
   // can hold both a test and a live attempt with the same studio/client/reason,
   // so a mode-matching failed event could resolve the OTHER mode's row: refuse
   // to mutate it and alert, exactly as the two other mutating handlers do.
@@ -955,6 +1032,7 @@ export async function handleChargeRefunded(
   const metadata = (charge.metadata ?? {}) as Record<string, string>;
 
   const resolution = await resolveAttemptByMetadataOrId({
+    ctx,
     metadata,
     fallbackByChargeId: charge.id,
   });
@@ -985,6 +1063,16 @@ export async function handleChargeRefunded(
     };
   }
   const attempt = resolution.attempt;
+
+  if (!(await verifyPaymentEventIdentity({
+    attempt, event, ctx, metadata,
+    paymentIntentId: typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id ?? null,
+    chargeId: charge.id,
+    customerId: typeof charge.customer === "string" ? charge.customer : charge.customer?.id ?? null,
+    requireCharge: true,
+  }))) {
+    return { eventType: event.type, attemptId: attempt.id, identityMismatch: true };
+  }
 
   if (
     !(await verifyMetadataAgainstRow({

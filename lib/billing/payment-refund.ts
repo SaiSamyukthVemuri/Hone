@@ -674,6 +674,50 @@ export async function refundPaymentChargeAttempt(args: {
     }
   }
 
+  // PAY-002: receiving a Refund object is not proof that the refund completed.
+  // Keep pending/requires_action/unknown outcomes claimed so retries cannot
+  // create another refund. Retain the provider id for reconciliation, and never
+  // stamp refunded_at until Stripe explicitly reports succeeded.
+  if (refund.status !== "succeeded") {
+    const terminalFailure = refund.status === "failed" || refund.status === "canceled";
+    const failureCode = terminalFailure ? `provider_refund_${refund.status}` : null;
+    const message = terminalFailure
+      ? "Stripe did not complete the refund. The studio operator can review the payment before retrying."
+      : "Stripe has not completed the refund. Refresh later; the studio operator may need to review it.";
+    const { data: rows, error } = await admin
+      .from("payment_charge_attempts")
+      .update({
+        refund_status: terminalFailure ? "failed" : "pending_stripe",
+        stripe_refund_id: refund.id,
+        refunded_at: null,
+        refund_failure_code: failureCode,
+        refund_failure_message_safe: terminalFailure ? message : null,
+      })
+      .eq("id", attempt.id)
+      .eq("studio_id", attempt.studio_id)
+      .eq("stripe_livemode", attempt.stripe_livemode)
+      .eq("refund_status", "pending_stripe")
+      .select("id");
+    if (error || !rows?.length) {
+      await recordOpsAlert({
+        severity: "critical",
+        event: "payment_refund_nonterminal_write_failed",
+        message: "Stripe returned a refund that has not succeeded, but Hone could not persist its outcome. Manual reconciliation required.",
+        studioId: attempt.studio_id,
+        clientId: attempt.client_id,
+        route: ROUTE,
+        safeDetails: { attempt_id: attempt.id, stripe_refund_id: refund.id, zero_rows: !error && !rows?.length },
+      });
+      return { ok: false, outcome: "needs_manual_review", message: "The refund outcome could not be saved. The studio operator will reconcile it." };
+    }
+    return {
+      ok: false,
+      outcome: terminalFailure ? "failed" : "needs_manual_review",
+      message,
+      failureCode,
+    };
+  }
+
   const refundedAtIso = new Date().toISOString();
   const { data: okRows, error: writeOkErr } = await admin
     .from("payment_charge_attempts")
