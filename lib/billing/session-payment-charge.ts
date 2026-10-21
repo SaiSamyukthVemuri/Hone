@@ -919,7 +919,8 @@ async function retainNonterminalPaymentIntent(args: {
       safeDetails: { attempt_id: args.attemptId, reason: "intent_identity_mismatch" } });
     return false;
   }
-  let query = createAdminClient().from("payment_charge_attempts")
+  const admin = createAdminClient();
+  let query = admin.from("payment_charge_attempts")
     .update({ stripe_payment_intent_id: args.pi.id, stripe_status: args.pi.status })
     .eq("id", args.attemptId).eq("studio_id", args.studioId)
     .eq("stripe_livemode", inferStripeLivemode()).eq("status", "pending_stripe");
