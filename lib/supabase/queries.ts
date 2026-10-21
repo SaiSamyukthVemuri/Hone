@@ -292,31 +292,41 @@ export async function getPractitionersForStudio(
 }
 
 // DAT-001: a directory must not silently stop at PostgREST's row ceiling.
-// Keep the user-scoped client and archive filter on EVERY page, with an id
-// tie-break for duplicate names/timestamps. Continue to an empty page: a short
-// page can be a lower server cap, not the end. Fail rather than return a partial
-// list if a later page errors or repeats rows (including concurrent movement).
+// Keep user/studio/archive scope on EVERY page. Traverse by immutable id, not
+// an offset into mutable membership/name/archive order: a previous-page edit
+// must not shift an unread client behind the next page. Sort the collected
+// snapshots for display only after traversal. This is not a DB-wide snapshot.
+// Continue to empty even with a lower server cap; errors/repeated rows refuse
+// the whole directory rather than return a partial list.
 async function loadStudioClientDirectory(studioId: string, archived: boolean): Promise<Client[]> {
   const supabase = await createClient();
   const clients: Client[] = [];
   const seen = new Set<string>();
+  let afterId: string | null = null;
   const failure = archived ? "Failed to load archived clients" : "Failed to load clients";
   for (;;) {
     let query = supabase.from("clients").select("*").eq("studio_id", studioId);
     query = archived ? query.not("archived_at", "is", null) : query.is("archived_at", null);
+    if (afterId !== null) query = query.gt("id", afterId);
     const { data, error } = await query
-      .order(archived ? "archived_at" : "name", { ascending: !archived })
       .order("id", { ascending: true })
-      .range(clients.length, clients.length + 999);
+      .range(0, 999);
     // Database messages may contain client data; never expose them here.
     if (error) throw new Error(failure);
     const rows = (data ?? []) as Client[];
-    if (rows.length === 0) return clients;
+    if (rows.length === 0) {
+      return clients.sort((a, b) => (
+        archived
+          ? Date.parse(b.archived_at!) - Date.parse(a.archived_at!)
+          : a.name.localeCompare(b.name, "en")
+      ) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    }
     for (const row of rows) {
       if (seen.has(row.id)) throw new Error(failure);
       seen.add(row.id);
       clients.push(row);
     }
+    afterId = rows[rows.length - 1].id;
   }
 }
 
