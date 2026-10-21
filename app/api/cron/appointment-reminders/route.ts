@@ -277,14 +277,28 @@ async function sendReminderPass(opts: {
       continue;
     }
 
-    // PR #258: a confirmed appointment can be cancelled / no-showed between
-    // the window query and now; the claim does not re-validate status.
+    // Revalidate the generation used to compose this email after claiming.
+    // A reschedule may remain confirmed, even within this same window: never
+    // send the cached time or mint a manage token for the previous start.
     const { data: fresh } = await admin
       .from("appointments")
-      .select("status")
+      .select("status, starts_at")
       .eq("id", appt.id)
       .maybeSingle();
     if (!fresh || fresh.status !== "confirmed") {
+      stats.skipped += 1;
+      continue;
+    }
+    const currentStart = Date.parse(fresh.starts_at);
+    if (
+      !Number.isFinite(currentStart) ||
+      currentStart !== Date.parse(appt.starts_at) ||
+      currentStart < Date.parse(opts.windowStartIso) ||
+      currentStart > Date.parse(opts.windowEndIso)
+    ) {
+      // No provider call occurred. Release this claimed attempt so a later
+      // run can evaluate the new appointment time instead of waiting for TTL.
+      await recordEmailResult(admin, appt.id, emailType, false);
       stats.skipped += 1;
       continue;
     }

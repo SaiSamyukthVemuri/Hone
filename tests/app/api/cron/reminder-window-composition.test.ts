@@ -135,10 +135,10 @@ describe("the six-case law", () => {
 // ---------------------------------------------------------------------------
 describe("nothing is inferred from an earlier cron query", () => {
   it("re-reads appointment status after the claim and before the decision", () => {
-    expect(PASS).toMatch(/\.from\("appointments"\)\s*\n?\s*\.select\("status"\)/);
+    expect(PASS).toMatch(/\.from\("appointments"\)\s*\n?\s*\.select\("status, starts_at"\)/);
     expect(PASS).toMatch(/if \(!fresh \|\| fresh\.status !== "confirmed"\)/);
     expect(PASS.indexOf("claimEmailSend(")).toBeLessThan(
-      PASS.indexOf('.select("status")'),
+      PASS.indexOf('.select("status, starts_at")'),
     );
   });
 
@@ -146,7 +146,7 @@ describe("nothing is inferred from an earlier cron query", () => {
     // Two distinct readLatestIntake call sites: the pre-claim probe (cases
     // 4/5 only) and the live read. Reusing the probe would be inference.
     expect(PASS.match(/readLatestIntake\(/g) ?? []).toHaveLength(2);
-    const statusAt = PASS.indexOf('.select("status")');
+    const statusAt = PASS.indexOf('.select("status, starts_at")');
     const liveAt = PASS.indexOf("const intake = intakeEnabled");
     expect(statusAt).toBeGreaterThan(-1);
     expect(liveAt).toBeGreaterThan(statusAt);

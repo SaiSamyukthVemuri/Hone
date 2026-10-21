@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -146,5 +146,98 @@ describe("PR #189 boundaries (cron route)", () => {
 
   it("cron auth gate unchanged", () => {
     expect(CODE).toMatch(/if \(!isAuthorizedCronRequest\(req\)\)/);
+  });
+});
+
+
+// Exercise the real route across the query/claim boundary with synthetic rows.
+const race = vi.hoisted(() => ({
+  start: "2026-10-22T12:00:00.000Z",
+  freshStart: "2026-10-22T12:00:00.000Z" as string | null,
+  readError: false,
+  send: vi.fn(async () => ({ ok: true })),
+  claim: vi.fn(async () => true),
+  record: vi.fn(async () => undefined),
+}));
+vi.mock("@/lib/cron/auth", () => ({ isAuthorizedCronRequest: () => true }));
+vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://example.invalid" }));
+vi.mock("@/lib/booking/tokens", () => ({ generateCancellationToken: () => "synthetic-token" }));
+vi.mock("@/lib/cron/reminder-heartbeat", () => ({ recordReminderRunSuccess: async () => undefined }));
+vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: async () => undefined }));
+vi.mock("@/lib/email/send-appointment", () => ({
+  claimEmailSend: race.claim,
+  recordEmailResult: race.record,
+  logEmailFailure: vi.fn(),
+  send24hReminderToClient: race.send,
+  send2hReminderToClient: race.send,
+  sendIntakeReminderToClient: race.send,
+}));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  createAdminClient: () => ({
+    from: () => {
+      let candidate = false;
+      const b = {
+        select: () => b,
+        eq: () => b,
+        is: (column: string) => { candidate = column === "reminder_24h_sent_at"; return b; },
+        lt: () => b, gte: () => b, lte: () => b, order: () => b, limit: () => b,
+        maybeSingle: async () => ({
+          data: race.readError ? null : { status: "confirmed", starts_at: race.freshStart },
+          error: race.readError ? { message: "synthetic read failure" } : null,
+        }),
+        then: (resolve: (value: unknown) => unknown) => Promise.resolve({
+          data: candidate ? [{
+            id: "synthetic-appointment", studio_id: "synthetic-studio", client_id: "synthetic-client",
+            status: "confirmed", starts_at: race.start, reminder_24h_send_attempts: 0,
+            studio: { id: "synthetic-studio", name: "Synthetic", timezone: "UTC",
+              send_24h_reminders: true, send_intake_reminders: false },
+            client: { name: "Synthetic", email: "synthetic@example.invalid" },
+            service: null, practitioner: null,
+          }] : [], error: null,
+        }).then(resolve),
+      };
+      return b;
+    },
+  }),
+}));
+
+import { GET } from "@/app/api/cron/appointment-reminders/route";
+
+describe("email reminder appointment-time race", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-21T12:00:00.000Z"));
+    race.freshStart = race.start;
+    race.readError = false;
+    race.send.mockClear(); race.claim.mockClear(); race.record.mockClear();
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it.each([
+    ["rescheduled outside the window", "2026-10-23T12:00:00.000Z"],
+    ["rescheduled within the window", "2026-10-22T12:15:00.000Z"],
+    ["missing current time", null],
+    ["invalid current time", "invalid"],
+  ])("does not send stale content when %s", async (_label, startsAt) => {
+    race.freshStart = startsAt;
+    const response = await GET(new Request("https://example.invalid/api/cron/appointment-reminders"));
+    expect(response.status).toBe(200);
+    expect(race.claim).toHaveBeenCalledTimes(1);
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.record).toHaveBeenCalledWith(expect.anything(), "synthetic-appointment", "reminder_24h", false);
+  });
+
+  it("sends when the current time is unchanged, including equivalent ISO offsets", async () => {
+    race.freshStart = "2026-10-22T08:00:00-04:00";
+    const response = await GET(new Request("https://example.invalid/api/cron/appointment-reminders"));
+    expect(response.status).toBe(200);
+    expect(race.send).toHaveBeenCalledTimes(1);
+    expect(race.record).toHaveBeenCalledWith(expect.anything(), "synthetic-appointment", "reminder_24h", true);
+  });
+
+  it("fails closed when the current appointment cannot be read", async () => {
+    race.readError = true;
+    await GET(new Request("https://example.invalid/api/cron/appointment-reminders"));
+    expect(race.send).not.toHaveBeenCalled();
   });
 });
