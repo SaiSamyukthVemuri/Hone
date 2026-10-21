@@ -15,9 +15,13 @@ const booking = vi.hoisted(() => ({
   assignedId: "B",
   assigned: { id: "B", studio_id: "studio", active: true, display_name: "Assigned B", email: "b@example.test" },
   lookupError: false,
+  slotError: null as unknown,
+  emptySlots: false,
+  rpcResult: "created",
+  rpcError: null as null | { code: string },
   clientEmail: vi.fn(async () => ({ ok: true })),
   practitionerEmail: vi.fn(async () => ({ ok: true })),
-  rpc: vi.fn(async () => ({ data: [{ result: "created", appointment_id: "appointment" }], error: null })),
+  rpc: vi.fn(async () => ({ data: [{ result: booking.rpcResult, appointment_id: "appointment" }], error: booking.rpcError })),
   event: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -43,7 +47,7 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: (ta
   };
   return query;
 } }) }));
-vi.mock("@/lib/booking/slots", () => ({ INTERNAL_SLOT_PACKING: {}, getAvailableSlots: async () => [{ start: "2099-01-01T15:00:00.000Z", end: "2099-01-01T16:00:00.000Z" }] }));
+vi.mock("@/lib/booking/slots", () => ({ INTERNAL_SLOT_PACKING: {}, getAvailableSlots: async () => { if (booking.slotError !== null) throw booking.slotError; return booking.emptySlots ? [] : [{ start: "2099-01-01T15:00:00.000Z", end: "2099-01-01T16:00:00.000Z" }]; } }));
 vi.mock("@/lib/booking/appointment-token", () => ({ generateAppointmentToken: () => "synthetic", hashAppointmentToken: () => "hash" }));
 vi.mock("@/lib/booking/tokens", () => ({ generateCancellationToken: () => "synthetic" }));
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: booking.event }));
@@ -66,6 +70,7 @@ function bookFor(target = "B") {
 }
 
 beforeEach(() => {
+  booking.slotError = null; booking.emptySlots = false; booking.rpcResult = "created"; booking.rpcError = null;
   vi.clearAllMocks(); booking.assignedId = "B"; booking.lookupError = false;
   booking.assigned = { id: "B", studio_id: "studio", active: true, display_name: "Assigned B", email: "b@example.test" };
 });
@@ -125,5 +130,33 @@ describe("booking action — post-commit + safe-error hardening (Item 8)", () =>
     expect(ACTIONS).toMatch(/Could not create the client\. Please try again\./);
     expect(ACTIONS).toMatch(/logBookingDbError\("last_service", "query", error\.code\)/);
     expect(ACTIONS).toMatch(/Could not load the last service\. Please try again\./);
+  });
+});
+
+
+describe("SCH-002 internal submit advisory availability failures", () => {
+  it.each(["blockouts", "reservations", "window", "defaults"])("still reaches the locked target-aware command after %s read failure", async (stage) => {
+    booking.slotError = new Error(`availability_read_failed:${stage}`);
+    expect(await bookFor()).toEqual({ ok: true, appointmentId: "appointment" });
+    expect(booking.rpc).toHaveBeenCalledWith("create_internal_appointment_v2", expect.objectContaining({ p_actor_practitioner_id: "A", p_target_practitioner_id: "B", p_allow_outside_availability: false }));
+  });
+  it("preserves authoritative refusal after advisory failure", async () => {
+    booking.slotError = new Error("availability_read_failed:window"); booking.rpcResult = "time_unavailable";
+    expect(await bookFor()).toMatchObject({ ok: false }); expect(booking.rpc).toHaveBeenCalledTimes(1);
+    expect(booking.clientEmail).not.toHaveBeenCalled();
+  });
+  it.each(["23514", "42501"])("preserves command error %s after advisory failure", async (code) => {
+    booking.slotError = new Error("availability_read_failed:reservations"); booking.rpcError = { code };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try { expect(await bookFor()).toMatchObject({ ok: false }); expect(booking.rpc).toHaveBeenCalledTimes(1); expect(booking.clientEmail).not.toHaveBeenCalled(); }
+    finally { log.mockRestore(); }
+  });
+  it("refuses successfully read empty slots without calling the command", async () => {
+    booking.emptySlots = true;
+    expect(await bookFor()).toMatchObject({ ok: false }); expect(booking.rpc).not.toHaveBeenCalled();
+  });
+  it.each([new Error("unexpected programming error"), "availability_read_failed:blockouts"])("propagates unclassified/non-Error throws without command", async (failure) => {
+    booking.slotError = failure;
+    await expect(bookFor()).rejects.toBe(failure); expect(booking.rpc).not.toHaveBeenCalled();
   });
 });

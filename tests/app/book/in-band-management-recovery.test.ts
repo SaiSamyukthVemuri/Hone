@@ -75,6 +75,9 @@ const scenario = {
   showTreatmentTime: false,
   notifyPractitioner: false,
   commandRefuses: false,
+  slotError: null as unknown,
+  emptySlots: false,
+  commandError: null as null | { code: string },
 };
 
 /** Any real error message could carry a token or address; none may be logged. */
@@ -177,6 +180,7 @@ const admin = {
   async rpc(fn: string, args: Record<string, unknown>) {
     rpcCalls.push({ fn, args });
     if (fn === "create_public_appointment") {
+      if (scenario.commandError) return { data: null, error: scenario.commandError };
       if (scenario.commandRefuses) {
         return { data: [{ result: "time_unavailable" }], error: null };
       }
@@ -231,7 +235,10 @@ vi.mock("@/lib/booking/queries", () => ({
   }),
 }));
 vi.mock("@/lib/booking/slots", () => ({
-  getAvailableSlots: async () => [{ start: START_ISO, end: new Date(START.getTime() + 45 * 60_000).toISOString() }],
+  getAvailableSlots: async () => {
+    if (scenario.slotError !== null) throw scenario.slotError;
+    return scenario.emptySlots ? [] : [{ start: START_ISO, end: new Date(START.getTime() + 45 * 60_000).toISOString() }];
+  },
   filterFutureSlots: (s: unknown[]) => s,
 }));
 vi.mock("@/lib/booking/readiness", () => ({
@@ -371,6 +378,7 @@ beforeEach(() => {
   scenario.showTreatmentTime = false;
   scenario.notifyPractitioner = false;
   scenario.commandRefuses = false;
+  scenario.slotError = null; scenario.emptySlots = false; scenario.commandError = null;
   errSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
     consoleErrors.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
   });
@@ -828,5 +836,41 @@ describe("BOOK-01 P2-B — required configuration resolves BEFORE the durability
     expect(originAt).toBeLessThan(commandAt);
     // And it is resolved exactly ONCE, so no later call can throw post-commit.
     expect(src.match(/getRequiredAppOrigin\(\)/g) ?? []).toHaveLength(1);
+  });
+});
+
+
+describe("SCH-002 public submit advisory availability failures", () => {
+  it.each(["blockouts", "reservations", "window", "defaults"])("still reaches the locked command after %s read failure", async (stage) => {
+    scenario.slotError = new Error(`availability_read_failed:${stage}`);
+    expect(await book()).toMatchObject({ ok: true, appointmentId: APPT_ID });
+    expect(rpcCalls.filter((c) => c.fn === "create_public_appointment")).toEqual([expect.objectContaining({ args: expect.objectContaining({ p_studio_id: STUDIO_ID, p_client_id: CLIENT_ID, p_service_id: SERVICE_ID, p_starts_at: START_ISO }) })]);
+    expect(consoleErrors.join(" ")).not.toContain(`availability_read_failed:${stage}`);
+  });
+  it("preserves authoritative command refusal after advisory failure", async () => {
+    scenario.slotError = new Error("availability_read_failed:blockouts"); scenario.commandRefuses = true;
+    expect(await book()).toMatchObject({ ok: false });
+    expect(rpcCalls.some((c) => c.fn === "create_public_appointment")).toBe(true);
+    expect(confirmationEmails).toEqual([]);
+  });
+  it.each(["23514", "42501"])("does not turn command error %s into success", async (code) => {
+    scenario.slotError = new Error("availability_read_failed:reservations"); scenario.commandError = { code };
+    expect(await book()).toMatchObject({ ok: false });
+    expect(rpcCalls.some((c) => c.fn === "create_public_appointment")).toBe(true);
+    expect(confirmationEmails).toEqual([]);
+  });
+  it("keeps discovery failures rejecting rather than returning invented empty availability", async () => {
+    const failure = new Error("availability_read_failed:blockouts"); scenario.slotError = failure;
+    const { fetchPublicSlotsAction } = await import("@/app/book/[slug]/actions");
+    await expect(fetchPublicSlotsAction({ slug: "test-studio", serviceId: SERVICE_ID, date: START_ISO.slice(0, 10) })).rejects.toBe(failure);
+    expect(rpcCalls).toEqual([]);
+  });
+  it("still refuses a successfully read empty slot list without command", async () => {
+    scenario.emptySlots = true;
+    expect(await book()).toMatchObject({ ok: false }); expect(rpcCalls).toEqual([]);
+  });
+  it.each([new Error("unexpected programming error"), "availability_read_failed:blockouts"])("propagates unclassified/non-Error throws without command", async (failure) => {
+    scenario.slotError = failure;
+    await expect(book()).rejects.toBe(failure); expect(rpcCalls).toEqual([]);
   });
 });
