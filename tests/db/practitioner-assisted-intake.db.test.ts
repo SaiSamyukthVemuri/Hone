@@ -386,6 +386,43 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
     });
   });
 
+  it("a rolled-back old public service-role submit cannot replace a current CAS winner after248", async () => {
+    const id = await seedIntake(A, "in_progress", { legal_name: "Old public editor" });
+    const { rows: [stale] } = await adminTx(async q => {
+      await q("set local role service_role");
+      return q("select revision::text,responses from public.client_intake_forms where id=$1 and studio_id=$2", [id,A.studioId]);
+    });
+    expect(stale).toEqual({ revision: "0", responses: { legal_name: "Old public editor" } });
+    const answers = { legal_name: "Current CAS winner" };
+    expect(await write(parameters(id, stale.revision, "save", answers)))
+      .toEqual({ outcome: "saved", new_revision: "1" });
+
+    // Model the pre-CAS public server artifact: service-role, correct tenant,
+    // draft predicate, whole-map answers + submitted status/time, no revision.
+    // Its transaction commits if mistakenly permitted, so a broken guard
+    // produces a real clobber diagnostic rather than a rolled-back false pass.
+    const direct = await adminTx(async q => {
+      await q("set local role service_role");
+      expect((await q("select current_user as role")).rows[0].role).toBe("service_role");
+      return q(`update public.client_intake_forms
+        set responses=$3::jsonb,status='submitted',submitted_at=now()
+        where id=$1 and studio_id=$2 and status='in_progress' returning id`,
+        [id,A.studioId,JSON.stringify({ ...stale.responses, legal_name: "Stale rollback submission" })]);
+    }).then(
+      result => ({ writtenRows: result.rowCount, code: null, message: null }),
+      error => ({ writtenRows: 0, code: error.code, message: error.message }),
+    );
+    // Read first even if the old writer was incorrectly admitted.
+    const { rows: [stored] } = await adminQuery(
+      "select responses,status,submitted_at,revision::text from public.client_intake_forms where id=$1", [id]);
+    expect({ direct, stored }).toEqual({
+      direct: { writtenRows: 0, code: "42501", message: "Protected intake changes require the governed revision command." },
+      stored: { responses: answers, status: "in_progress", submitted_at: null, revision: "1" },
+    });
+    // Already-dispatched detached profile callbacks are not exercised or
+    // prevented by this denial: serving/rollback artifacts still need drain.
+  });
+
   it("pins the actual definer/invoker owner, role graph and effective command ACL", async () => {
     const { rows: [context] } = await adminQuery(`
       select w.proowner::text as writer_owner, g.proowner::text as guard_owner,
