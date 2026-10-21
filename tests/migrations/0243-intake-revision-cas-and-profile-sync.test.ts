@@ -18,6 +18,24 @@ describe("0243 scoped intake revision and atomic profile contract", () => {
     expect(code.trim()).toMatch(/commit;$/);
     expect(code).not.toMatch(/(?:replace|drop)\s+function\s+public\.(?:set_updated_at|enforce_intake_terminal_immutability)/i);
   });
+  it("separates the trusted command from ordinary protected DML without a caller-controlled bypass", () => {
+    const guard = code.slice(code.indexOf("create function public.advance_intake_revision"), code.indexOf("create trigger"));
+    const writer = code.slice(code.indexOf("create function public.write_intake_revision"), code.indexOf("revoke execute on function public.write_intake_revision"));
+    expect(guard).toMatch(/security invoker set search_path = ''/);
+    expect(writer).toMatch(/security definer set search_path = ''/);
+    expect(guard).toContain("current_user is distinct from pg_catalog.pg_get_userbyid(v_writer_owner)");
+    expect(guard).toContain("v_writer_owner pg_catalog.oid");
+    expect(guard).toContain("public.write_intake_revision(pg_catalog.uuid,pg_catalog.uuid,pg_catalog.uuid,pg_catalog.int8,pg_catalog.jsonb,pg_catalog.int4,pg_catalog.text,pg_catalog.jsonb)");
+    for (const field of ["responses", "current_step", "submitted_at", "status"]) expect(guard).toContain(`new.${field} is distinct from old.${field}`);
+    expect(guard).toContain("old.status = 'submitted' and new.status = 'reviewed'");
+    expect(code).toContain("client_intake_forms_zz_advance_revision");
+    expect(code).toContain("pg_catalog.pg_has_role(v_role.oid, v_owner, 'MEMBER')");
+    expect(code).toContain("pg_catalog.pg_has_role(v_role.oid, v_owner, 'SET')");
+    expect(code).toContain("p.oid = v_guard and not p.prosecdef and p.proowner = v_owner");
+    expect(code).toContain("Unsafe intake revision command privileges.");
+    expect(code).toContain("Unexpected callable intake definer requires review.");
+    expect(guard).not.toMatch(/current_setting|session_user|pg_trigger_depth|auth\.uid/);
+  });
   it("never accepts a caller counter and bumps every existing writer", () => {
     expect(code).toMatch(/new\.revision := 0/);
     expect(code).toMatch(/new\.revision := old\.revision \+ 1/);
@@ -28,12 +46,12 @@ describe("0243 scoped intake revision and atomic profile contract", () => {
     expect(code).toContain("v_intake.revision <> p_expected_revision");
     expect(code).toContain("v_intake.status <> 'in_progress'");
     for (const outcome of ["not_available", "terminal", "conflict"]) {
-      expect(code).toContain(`select '${outcome}'::text, null::text`);
+      expect(code).toContain(`select '${outcome}'::pg_catalog.text, null::pg_catalog.text`);
     }
   });
   it("keeps the scoped CAS predicate on the actual UPDATE and returns its new revision", () => {
     expect(code).toMatch(/f\.status = 'in_progress' and f\.revision = p_expected_revision/);
-    expect(code).toContain("returning f.revision::text into v_revision");
+    expect(code).toContain("returning f.revision::pg_catalog.text into v_revision");
   });
   it("locks intake before client and rolls back profile failure instead of swallowing it", () => {
     const intakeLock = code.indexOf("select f.* into v_intake");
@@ -53,7 +71,7 @@ describe("0243 scoped intake revision and atomic profile contract", () => {
     expect(code).toMatch(/grant execute on function public\.write_intake_revision\([^;]+to service_role;/);
     expect(code).not.toMatch(/grant\s+(?:all|execute)[^;]+to\s+(?:anon|authenticated)/i);
     expect(code).toContain("v_profile_key not in");
-    expect(code).toContain("p_operation <> 'submit' and p_profile <> '{}'::jsonb");
+    expect(code).toContain("p_operation <> 'submit' and p_profile <> '{}'::pg_catalog.jsonb");
   });
   it("public and assisted merges name the revision they saw; only the submit winner notifies", () => {
     expect(publicAction).toContain("intakeRevision(payload.expectedRevision)");
