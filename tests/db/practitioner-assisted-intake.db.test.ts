@@ -372,6 +372,42 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
     expect((await write(parameters(id, "1", "save", { legal_name: "Stale assisted" }))).outcome).toBe("conflict");
     expect((await storedResponses(id)).legal_name).toBe("Current public");
   });
+  // Intentionally blocks closure until the direct-writer boundary is governed.
+  // The earlier case proves direct-before-CAS invalidation, not this reverse
+  // ordering. Do not mark this expected failure green or weaken preservation.
+  it("a stale authenticated direct response update cannot overwrite a governed CAS winner", async () => {
+    const id = await seedIntake(A, "in_progress", { legal_name: "Original draft" });
+    const initial = await userQuery(A.userId,
+      "select revision::text, responses from public.client_intake_forms where id=$1 and studio_id=$2",
+      [id, A.studioId]);
+    expect(initial.rows).toHaveLength(1);
+    const stale = initial.rows[0] as { revision: string; responses: Record<string, unknown> };
+    expect(stale.revision).toBe("0");
+
+    const governedAnswers = { legal_name: "Governed winner" };
+    const winner = await write(parameters(id, stale.revision, "save", governedAnswers));
+    expect(winner).toEqual({ outcome: "saved", new_revision: "1" });
+
+    // Model the existing blind whole-map writer: correct tenant, authenticated
+    // member and draft status, but no expected-revision predicate.
+    const direct = await userQuery(A.userId,
+      "update public.client_intake_forms set responses=$3::jsonb where id=$1 and studio_id=$2 and status='in_progress' returning id",
+      [id, A.studioId, JSON.stringify({ ...stale.responses, legal_name: "Stale direct draft" })],
+    ).then(
+      (result) => ({ refused: result.rowCount === 0, writtenRows: result.rowCount }),
+      () => ({ refused: true, writtenRows: 0 }),
+    );
+    // Always read back before asserting so a failure records the real clobber
+    // and revision advance, rather than stopping at the UPDATE's success.
+    const { rows: [stored] } = await adminQuery(
+      "select revision::text, responses from public.client_intake_forms where id=$1", [id]);
+    expect({ direct, responses: stored.responses, revision: stored.revision }).toEqual({
+      direct: expect.objectContaining({ refused: true }),
+      responses: governedAnswers,
+      revision: winner.new_revision,
+    });
+  });
+
   it("wrong studio/client refuses without a revision or a write", async () => {
     const id = await seedIntake(A, "in_progress");
     expect(await write(parameters(id, "0", "save", {}, {}, B.studioId))).toEqual({ outcome: "not_available", new_revision: null });
