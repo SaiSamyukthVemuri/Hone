@@ -100,7 +100,6 @@ import {
 //   * No DML against manual_fee_charge_attempts.
 //   * No RLS relaxation.
 
-const FAILURE_MESSAGE_MAX = 1000;
 const FAILURE_CODE_MAX = 100;
 // Mode-mismatch refusal (PR C): fires when the ROW's stripe_livemode does
 // not equal the deployment mode. The old wording falsely claimed live
@@ -131,13 +130,6 @@ function logInternal(event: string, detail: unknown) {
 function sanitizeFailureCode(raw: string | null | undefined): string | null {
   if (!raw) return null;
   return raw.slice(0, FAILURE_CODE_MAX);
-}
-
-function sanitizeFailureMessage(
-  raw: string | null | undefined,
-): string | null {
-  if (!raw) return null;
-  return raw.replace(/\s+/g, " ").trim().slice(0, FAILURE_MESSAGE_MAX);
 }
 
 function sanitizeInternalNote(
@@ -495,9 +487,7 @@ export async function refundPaymentChargeAttempt(args: {
       isDefinitiveStripeRefusal(err)
     ) {
       const code = sanitizeFailureCode(err.code ?? err.type);
-      const safeMessage =
-        sanitizeFailureMessage(err.message) ??
-        "Stripe refused this refund.";
+      const safeMessage = "Stripe refused this refund.";
       const { data: failedRows, error: writeFailedErr } = await admin
         .from("payment_charge_attempts")
         .update({
@@ -569,10 +559,7 @@ export async function refundPaymentChargeAttempt(args: {
     // pending_stripe; an operator reconciliation can re-query
     // Stripe using the deterministic idempotency key. The
     // critical ops_alert is the operator's wake-up signal.
-    const safeMessage =
-      sanitizeFailureMessage(
-        err instanceof Error ? err.message : String(err),
-      ) ?? "Refund Stripe call did not return a response.";
+    const safeMessage = "Refund Stripe call did not return a response.";
     logInternal("payment_refund_stripe_unknown_outcome", {
       attemptId: attempt.id,
       message: safeMessage,
