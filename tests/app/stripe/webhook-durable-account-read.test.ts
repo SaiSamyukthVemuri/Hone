@@ -265,3 +265,53 @@ describe("PAY-WEBHOOK-01: a failed studio-binding read must not be an unbound ac
     expect(names(ADMIN.current.rpcCalls)).toContain("mark_stripe_event_processed");
   });
 });
+
+// PAY-001: signature verification authenticates Stripe, not this attempt's owner.
+describe("PAY-001 durable payment event identity", () => {
+  const attempt = {
+    id: "attempt-1", studio_id: "studio-1", client_id: "client-1",
+    charge_reason: "session_payment", status: "pending_stripe",
+    stripe_account_id: "acct_test_1", stripe_customer_id: "cus_1",
+    stripe_livemode: false, stripe_payment_intent_id: "pi_1", stripe_charge_id: "ch_1",
+    amount_cents: 5000, currency: "cad", charged_at: null,
+    refund_status: null, refund_amount_cents: null, refunded_at: null, stripe_refund_id: null,
+  };
+  function prepare(overrides: Record<string, unknown> = {}) {
+    CONSTRUCT_EVENT.mockReturnValue({
+      id: "evt_payment_1", type: "payment_intent.succeeded", account: "acct_test_1", livemode: false,
+      data: { object: { id: "pi_1", customer: "cus_1", amount: 5000, currency: "cad", latest_charge: "ch_1",
+        metadata: { hone_payment_charge_attempt_id: "attempt-1" } } },
+    });
+    ADMIN.current = makeAdmin({
+      studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: { ...attempt, ...overrides }, error: null }],
+    }, { claim_stripe_event: CLAIM_OK, reconcile_card_payment_succeeded: { data: [{ result: "zero_rows" }], error: null } });
+  }
+  it.each([
+    ["account", { stripe_account_id: "acct_other" }],
+    ["studio", { studio_id: "studio-other" }],
+    ["customer", { stripe_customer_id: "cus_other" }],
+    ["payment intent", { stripe_payment_intent_id: "pi_other" }],
+    ["charge", { stripe_charge_id: "ch_other" }],
+    ["missing original intent", { stripe_payment_intent_id: null }],
+    ["missing original customer", { stripe_customer_id: null }],
+  ] as const)("refuses a signed event resolving to a different %s", async (_label, overrides) => {
+    prepare(overrides);
+    const response = await callRoute();
+    expect(response.status).toBe(200);
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_card_payment_succeeded");
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+    expect(RECORD_OPS_ALERT).toHaveBeenCalledWith(expect.objectContaining({ event: "stripe_webhook_payment_identity_mismatch" }));
+  });
+  it("allows a genuinely matching event to reach the existing locked command", async () => {
+    prepare();
+    const response = await callRoute();
+    expect(response.status).toBe(200);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("reconcile_card_payment_succeeded");
+    expect(ADMIN.current!.eqCalls).toEqual(expect.arrayContaining([
+      { table: "payment_charge_attempts", column: "studio_id", value: "studio-1" },
+      { table: "payment_charge_attempts", column: "stripe_account_id", value: "acct_test_1" },
+      { table: "payment_charge_attempts", column: "stripe_livemode", value: false },
+    ]));
+  });
+});
