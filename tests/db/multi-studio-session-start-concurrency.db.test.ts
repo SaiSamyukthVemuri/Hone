@@ -196,3 +196,102 @@ describe("start_session — overlapping first taps (empty coalesce window)", () 
     expect(count).toBe(1);
   });
 });
+
+// 0241/CLN-002: the same existing two-connection fixture, appointment identity
+// added to the lookup decision without narrowing the coarse advisory lock.
+// Prepared only until executed against an aligned target under an OPS grant.
+describe("0241 — appointment identity under the existing coalesce lock", () => {
+  let slot = 1000;
+  async function appointment() {
+    const id = randomUUID();
+    slot += 2;
+    await adminQuery(`insert into public.appointments
+      (id,studio_id,client_id,practitioner_id,starts_at,ends_at,duration_minutes,status)
+      values ($1,$2,$3,$4,now()-make_interval(hours=>$5+1),now()-make_interval(hours=>$5),60,'confirmed')`,
+    [id, B.studioId, B.clientId, practInB, slot]);
+    return id;
+  }
+  const args = (appointmentId: string | null) => [B.clientId, "electrolysis", appointmentId, COALESCE_MINUTES, B.studioId];
+  const links = () => adminQuery(`select id,appointment_id from public.sessions where client_id=$1 and deleted_at is null order by id`, [B.clientId]);
+
+  it("A then B produce distinct charts and neither appointment link is overwritten", async () => {
+    await purge(B.clientId);
+    const a = await appointment();
+    const b = await appointment();
+    await withTwoUserClients(sharedUser, async (ca, cb) => {
+      const first = (await ca.query(CALL, args(a))).rows[0];
+      const second = (await cb.query(CALL, args(b))).rows[0];
+      expect(first.reused).toBe(false);
+      expect(second.reused).toBe(false);
+      expect(first.session_id).not.toBe(second.session_id);
+      expect((await links()).rows).toEqual(expect.arrayContaining([
+        { id: first.session_id, appointment_id: a }, { id: second.session_id, appointment_id: b },
+      ]));
+      expect(await liveSessionCount(B.clientId)).toBe(2);
+    });
+  });
+
+  it("two overlapping same-B starts create one B chart and reuse its identity", async () => {
+    await purge(B.clientId);
+    const b = await appointment();
+    await withTwoUserClients(sharedUser, async (ca, cb) => {
+      const [first, second] = await Promise.all([ca.query(CALL, args(b)), cb.query(CALL, args(b))]);
+      expect(first.rows[0].session_id).toBe(second.rows[0].session_id);
+      expect([first.rows[0].reused, second.rows[0].reused].sort()).toEqual([false, true]);
+      expect((await links()).rows).toEqual([{ id: first.rows[0].session_id, appointment_id: b }]);
+    });
+  });
+
+  it("promotes an eligible NULL chart once for concurrent B requests", async () => {
+    await purge(B.clientId);
+    const b = await appointment();
+    await withTwoUserClients(sharedUser, async (ca, cb) => {
+      const unlinked = (await ca.query(CALL, args(null))).rows[0].session_id;
+      const [first, second] = await Promise.all([ca.query(CALL, args(b)), cb.query(CALL, args(b))]);
+      for (const result of [first, second]) expect(result.rows[0]).toMatchObject({ session_id: unlinked, reused: true });
+      expect((await links()).rows).toEqual([{ id: unlinked, appointment_id: b }]);
+    });
+  });
+
+  it("prefers an eligible exact B chart over a newer NULL chart", async () => {
+    await purge(B.clientId);
+    const b = await appointment();
+    await withTwoUserClients(sharedUser, async (ca, cb) => {
+      const exact = (await ca.query(CALL, args(b))).rows[0].session_id;
+      await adminQuery("update public.sessions set started_at=now()-interval '1 minute' where id=$1", [exact]);
+      const unlinked = randomUUID();
+      await adminQuery(`insert into public.sessions
+        (id,studio_id,client_id,practitioner_id,performed_by_practitioner_id,modality)
+        values ($1,$2,$3,$4,$4,'electrolysis')`, [unlinked, B.studioId, B.clientId, practInB]);
+      const result = (await cb.query(CALL, args(b))).rows[0];
+      expect(result).toMatchObject({ session_id: exact, reused: true });
+      expect((await links()).rows).toEqual(expect.arrayContaining([
+        { id: exact, appointment_id: b }, { id: unlinked, appointment_id: null },
+      ]));
+      expect(await liveSessionCount(B.clientId)).toBe(2);
+    });
+  });
+
+  it("preserves no-appointment recent-chart reuse without relinking A", async () => {
+    await purge(B.clientId);
+    const a = await appointment();
+    await withTwoUserClients(sharedUser, async (ca, cb) => {
+      const exact = (await ca.query(CALL, args(a))).rows[0].session_id;
+      expect((await cb.query(CALL, args(null))).rows[0]).toMatchObject({ session_id: exact, reused: true });
+      expect((await links()).rows).toEqual([{ id: exact, appointment_id: a }]);
+    });
+  });
+
+  it("keeps the original coalesce window even for an exact appointment", async () => {
+    await purge(B.clientId);
+    const b = await appointment();
+    await withTwoUserClients(sharedUser, async (ca, cb) => {
+      const old = (await ca.query(CALL, args(b))).rows[0].session_id;
+      await adminQuery("update public.sessions set started_at=now()-interval '91 minutes' where id=$1", [old]);
+      const fresh = (await cb.query(CALL, args(b))).rows[0];
+      expect(fresh.reused).toBe(false);
+      expect(fresh.session_id).not.toBe(old);
+      expect(await liveSessionCount(B.clientId)).toBe(2);
+    });
+  });
+});
