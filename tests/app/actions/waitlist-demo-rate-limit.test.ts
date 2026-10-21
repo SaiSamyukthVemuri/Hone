@@ -185,9 +185,11 @@ describe("PR #187 boundaries", () => {
       [WAITLIST_CODE, '.rpc("record_platform_early_access_signup"'],
       [DEMO_CODE, '.rpc("record_platform_demo_request"'],
     ] as const) {
-      const scheduled = code.match(/after\(\(\) => deliverPlatformLeadAlert\(alertId\)\)/g) ?? [];
+      const scheduled = code.match(/schedulePlatformLeadAlert\(alertId\)/g) ?? [];
       expect(scheduled).toHaveLength(1);
-      expect(code.indexOf("after(() => deliverPlatformLeadAlert")).toBeGreaterThan(code.indexOf(write));
+      expect(code.indexOf("schedulePlatformLeadAlert(alertId)")).toBeGreaterThan(code.indexOf(write));
+      // Codex P2 4249961225: never a callback handed to after() (SENTRY-AFTER-01).
+      expect(code).not.toMatch(/\bafter\(/);
       // The anonymous form never writes the tables directly any more.
       expect(code).not.toMatch(/\.from\("(waitlist|demo_requests)"\)/);
     }

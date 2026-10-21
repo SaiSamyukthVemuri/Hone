@@ -270,6 +270,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAdmin",
   },
   {
+    path: "app/admin/leads/[kind]/[id]/page.tsx",
+    purpose:
+      "LEAD-ALERT-01 (#826) operator-only page for ONE platform lead (a demo request or early-access signup) and its alert status, which the operator alert email links to.",
+    why: "No practitioner session; gated by the ADMIN_EMAILS/isAdmin operator check before any read. demo_requests, waitlist and platform_lead_alerts grant nothing to authenticated, so service-role is required. Reads only those three tables (pinned by tests/app/admin/lead-detail-page.test.ts).",
+    scopeGuard: "isAdmin",
+  },
+  {
     path: "app/admin/ops-alerts/page.tsx",
     purpose: "Operator-only admin console surface.",
     why: "No practitioner session; gated by the ADMIN_EMAILS/isAdmin operator check. Cross-studio access is intentional for support/ops, so service-role is required.",
