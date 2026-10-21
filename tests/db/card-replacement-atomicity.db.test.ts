@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { adminQuery, closePool, seedStudio, type SeededStudio } from "./helpers/harness";
+import { adminQuery, adminTx, closePool, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // 0180 — CARD-ON-FILE REPLACEMENT INTEGRITY, proved against real PostgreSQL.
 //
@@ -579,9 +579,27 @@ describe("0245 — signed success chronology across card history", () => {
     const rows = await adminQuery(`select stripe_setup_success_event_created from public.client_payment_methods where id=$1`, [old.card_id]);
     expect(rows.rows[0].stripe_setup_success_event_created).toBeNull();
   });
-  it("different-method concurrent replacements leave the greatest signed success active", async () => {
+  it("different-method replacements both wait on the same coarse lock, then greatest signed success wins", async () => {
     const f = await seedCardStudio("ordered-concurrent");
-    await Promise.all([ordered(f, "seti_a", 100), ordered(f, "seti_b", 200)]);
+    let workers: Promise<unknown[]> | undefined;
+    await adminTx(async (query) => {
+      await query(`select pg_advisory_xact_lock(hashtextextended($1 || '|' || $2 || '|f',0))`, [f.studioId, f.clientId]);
+      workers = Promise.all([ordered(f, "seti_a", 100), ordered(f, "seti_b", 200)]);
+      // Attach immediately so an early command failure is never unhandled.
+      void workers.catch(() => undefined);
+      let waiting = 0;
+      for (let retry = 0; retry < 50; retry++) {
+        const locks = await query(`with k as (select hashtextextended($1 || '|' || $2 || '|f',0) as key)
+          select count(*)::int as n from pg_locks, k where locktype='advisory' and not granted
+          and classid::bigint=((k.key >> 32) & 4294967295::bigint)
+          and objid::bigint=(k.key & 4294967295::bigint) and objsubid=1`, [f.studioId, f.clientId]);
+        waiting = locks.rows[0].n;
+        if (waiting === 2) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(waiting).toBe(2);
+    });
+    await workers;
     expect(await activeCards(f)).toMatchObject([{ stripe_setup_intent_id: "seti_b" }]);
   });
   it("failure after retire rolls back old-card status and evidence together", async () => {
