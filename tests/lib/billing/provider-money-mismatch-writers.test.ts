@@ -648,7 +648,7 @@ describe("PRIVACY PAY-004 retrieved identity across terminal branches", () => {
 // 3. The webhooks
 // ---------------------------------------------------------------------------
 function event(type: string, object: Record<string, unknown>): Stripe.Event {
-  return { id: "evt_1", type, livemode: false, data: { object: { ...(type === "payment_intent.payment_failed" ? { status: "requires_payment_method" } : {}), ...object } } } as unknown as Stripe.Event;
+  return { id: "evt_1", type, account: "acct_test", livemode: false, data: { object: { customer: "cus_test", ...(type.startsWith("charge.") ? { payment_intent: PI_ID } : {}), ...(type === "payment_intent.payment_failed" ? { status: "requires_payment_method" } : {}), ...object } } } as unknown as Stripe.Event;
 }
 const META = {
   hone_payment_charge_attempt_id: ATTEMPT,
@@ -660,7 +660,7 @@ const CTX = { studioId: STUDIO, stripeAccountId: "acct_test", livemode: false };
 
 describe("payment_intent.succeeded webhook", () => {
   it.each(["cad", "usd"] as const)("%s: matching money reconciles (control)", async (currency) => {
-    h.rows = { payment_charge_attempts: attemptRow(currency, { status: "pending_stripe" }) };
+    h.rows = { payment_charge_attempts: attemptRow(currency, { status: "pending_stripe", stripe_payment_intent_id: PI_ID }) };
     const out = await handlePaymentIntentSucceeded(
       event("payment_intent.succeeded", {
         id: PI_ID,
@@ -676,7 +676,7 @@ describe("payment_intent.succeeded webhook", () => {
   });
 
   it("different money: no command, no write, a critical alert", async () => {
-    h.rows = { payment_charge_attempts: attemptRow("usd", { status: "pending_stripe" }) };
+    h.rows = { payment_charge_attempts: attemptRow("usd", { status: "pending_stripe", stripe_payment_intent_id: PI_ID }) };
     const out = await handlePaymentIntentSucceeded(
       event("payment_intent.succeeded", {
         id: PI_ID,
@@ -699,7 +699,7 @@ describe("payment_intent.succeeded webhook", () => {
 
   it("an already-succeeded row does not borrow a charge id from different money", async () => {
     h.rows = {
-      payment_charge_attempts: attemptRow("cad", { status: "succeeded", stripe_charge_id: null }),
+      payment_charge_attempts: attemptRow("cad", { status: "succeeded", stripe_payment_intent_id: PI_ID, stripe_charge_id: null }),
     };
     const out = await handlePaymentIntentSucceeded(
       event("payment_intent.succeeded", {
@@ -768,7 +768,7 @@ describe("charge.refunded webhook", () => {
     async (currency) => {
       h.rows = {
         payment_charge_attempts: attemptRow(currency, {
-          status: "succeeded",
+          status: "succeeded", stripe_payment_intent_id: PI_ID,
           stripe_charge_id: CHARGE_ID,
         }),
       };
@@ -781,7 +781,7 @@ describe("charge.refunded webhook", () => {
   it("a refunded charge in another currency is not this payment's refund", async () => {
     h.rows = {
       payment_charge_attempts: attemptRow("cad", {
-        status: "succeeded",
+        status: "succeeded", stripe_payment_intent_id: PI_ID,
         stripe_charge_id: CHARGE_ID,
       }),
     };
@@ -801,7 +801,7 @@ describe("charge.refunded webhook", () => {
   it("a charge of a different amount is caught before the partial/full decision", async () => {
     h.rows = {
       payment_charge_attempts: attemptRow("cad", {
-        status: "succeeded",
+        status: "succeeded", stripe_payment_intent_id: PI_ID,
         stripe_charge_id: CHARGE_ID,
       }),
     };
@@ -904,13 +904,17 @@ describe("bound PI active-or-unknown failed-event retirement", () => {
 
   it.each([null, "pi_other"])("ordinary decline cannot retire an unbound or different original (%s)", async (original) => {
     h.rows = { payment_charge_attempts: attemptRow("cad", { status: "pending_stripe", stripe_payment_intent_id: original }) };
-    await handlePaymentIntentPaymentFailed(event("payment_intent.payment_failed", {
+    const pending = handlePaymentIntentPaymentFailed(event("payment_intent.payment_failed", {
       id: PI_ID, status: "requires_payment_method", amount: AMOUNT, currency: "cad", metadata: META,
       last_payment_error: { type: "card_error", code: "card_declined" },
     }), CTX);
+    if (original === null) {
+      const { PaymentOriginalBindingPendingError } = await import("@/lib/billing/payment-webhook-reconciliation");
+      await expect(pending).rejects.toBeInstanceOf(PaymentOriginalBindingPendingError);
+    } else expect((await pending).identityMismatch).toBe(true);
     expect(h.rows.payment_charge_attempts).toMatchObject({ status: "pending_stripe", stripe_payment_intent_id: original });
     expect(h.updates).toEqual([]);
-    expect(critical("session_payment_needs_manual_review")).toHaveLength(1);
+    expect(critical("stripe_webhook_payment_identity_mismatch")).toHaveLength(original === null ? 0 : 1);
     expect(h.stripeCalls).toEqual([]);
   });
 
