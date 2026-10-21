@@ -535,7 +535,7 @@ describe("the create form carries the key in the URL", () => {
     // operation still owns the key, because that identity is the only thing
     // that can reconcile a save which may have committed (4305431336).
     const src = read(FORM_SRC);
-    const close = /if \(([^)]*)\) syncAreaOperationParam\(null\);\s*\n\s*onCancel\(\);/.exec(
+    const close = /if \(([^)]*)\) \{\s*clearAreaOperationParamIfOwned\(resume.state === "saved" \? resumedSaveKey : pendingSaveKey\);\s*\}\s*onCancel\(\);/.exec(
       src,
     );
     expect(close, "the form's exit path was not found").toBeTruthy();
@@ -634,25 +634,14 @@ describe("the create form carries the key in the URL", () => {
     ).not.toMatch(/=== "(checking|absent|unknown)"/);
   });
 
-  it("and a FOUND claim refreshes the chart before saying the area is on it", () => {
-    // THE OTHER P1 (Codex, #922 4305501020). If the server page read `blocks`
-    // before the original transaction committed and this read ran after, the
-    // claim is found while the chart still holds the pre-commit prop — so the
-    // message said "on the chart below" when it was not, and after Close she
-    // would reopen Add and create a second area.
-    //
-    // This is the ONE place the router is right: everywhere else the form
-    // edits the URL through `history.replaceState` precisely to avoid
-    // refetching the server component mid-save.
+  it("a FOUND claim navigates to the current settled URL and refetches the chart", () => {
     const src = read(FORM_SRC);
-    const found = src.slice(src.indexOf("if (res.found)"));
-    const refresh = found.indexOf("router.refresh()");
-    const clear = found.indexOf("syncAreaOperationParam(null)");
-    expect(refresh, "the found branch never refreshes the chart").toBeGreaterThan(-1);
-    expect(
-      refresh,
-      "the parameter was cleared before the chart was refreshed",
-    ).toBeLessThan(clear);
+    const found = src.slice(src.indexOf("if (res.found)"), src.indexOf("// NOTHING COMMITTED."));
+    expect(found).toContain("settledAreaOperationHref(resumedSaveKey)");
+    expect(found).toContain("router.replace(settledHref, { scroll: false })");
+    expect(found.indexOf("router.replace(")).toBeLessThan(found.indexOf('setResume({ state: "saved"'));
+    expect(found).not.toContain("router.refresh()");
+    expect(found).not.toContain("syncAreaOperationParam(null)");
   });
 
   it("and the ABANDONMENT path is actually reachable", () => {
@@ -721,7 +710,7 @@ describe("the create form carries the key in the URL", () => {
       "a drop site stopped clearing the URL",
     ).toBe(3);
     // And the form's exits clear it directly, which `closeForm` owns.
-    expect(src).toMatch(/syncAreaOperationParam\(null\)/);
+    expect(src).toMatch(/clearAreaOperationParamIfOwned\(resume.state === "saved" \? resumedSaveKey : pendingSaveKey\)/);
   });
 
   it("writes through replaceState, never the router", () => {
