@@ -593,6 +593,7 @@ type ZeroRowRecheckRow = {
 };
 
 async function writeSucceededOutcome(args: {
+  expectedPaymentIntentId: string | null;
   attemptId: string;
   studioId: string;
   clientId: string;
@@ -653,7 +654,7 @@ async function writeSucceededOutcome(args: {
     return { persisted: false, reason: "provider_money_mismatch" };
   }
 
-  const { data: updatedRows, error } = await admin
+  let successQuery = admin
     .from("payment_charge_attempts")
     .update({
       status: "succeeded",
@@ -666,8 +667,13 @@ async function writeSucceededOutcome(args: {
       failure_message_safe: null,
     })
     .eq("id", args.attemptId)
-    .eq("status", "pending_stripe")
-    .select("id");
+    .eq("studio_id", args.studioId)
+    .eq("stripe_livemode", inferStripeLivemode())
+    .eq("status", "pending_stripe");
+  successQuery = args.expectedPaymentIntentId === null
+    ? successQuery.is("stripe_payment_intent_id", null)
+    : successQuery.eq("stripe_payment_intent_id", args.expectedPaymentIntentId);
+  const { data: updatedRows, error } = await successQuery.select("id");
   if (error) {
     // PR #281: the PaymentIntent already succeeded at Stripe, so a DB
     // error on the succeeded-outcome write is a real-money / unstamped-
@@ -806,6 +812,7 @@ async function writeSucceededOutcome(args: {
 }
 
 async function writeFailedOutcome(args: {
+  expectedPaymentIntentId: string | null;
   attemptId: string;
   studioId: string;
   clientId: string;
@@ -815,7 +822,7 @@ async function writeFailedOutcome(args: {
   failureMessage: string | null | undefined;
 }): Promise<boolean> {
   const admin = createAdminClient();
-  const { data: updatedRows, error } = await admin
+  let failureQuery = admin
     .from("payment_charge_attempts")
     .update({
       status: "failed",
@@ -826,8 +833,13 @@ async function writeFailedOutcome(args: {
       failure_message_safe: sanitizeFailureMessage(args.failureMessage),
     })
     .eq("id", args.attemptId)
-    .eq("status", "pending_stripe")
-    .select("id");
+    .eq("studio_id", args.studioId)
+    .eq("stripe_livemode", inferStripeLivemode())
+    .eq("status", "pending_stripe");
+  failureQuery = args.expectedPaymentIntentId === null
+    ? failureQuery.is("stripe_payment_intent_id", null)
+    : failureQuery.eq("stripe_payment_intent_id", args.expectedPaymentIntentId);
+  const { data: updatedRows, error } = await failureQuery.select("id");
   if (error) {
     // PR #310: a DB error on the FAILED-outcome write previously logged to
     // stderr only, leaving it invisible to ops_alerts / the manual-review
@@ -972,6 +984,7 @@ async function finalizeRequiresActionPaymentIntent(args: {
       stripeStatus: canceled.status,
       failureCode: "requires_action_canceled",
       failureMessage: AUTHENTICATION_REQUIRED_MESSAGE,
+      expectedPaymentIntentId: args.pi.id,
     });
     if (!failedPersisted) return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE };
     await recordOpsAlert({
@@ -1147,6 +1160,16 @@ async function reconcileExistingPaymentIntent(args: {
       message: NEEDS_MANUAL_REVIEW_MESSAGE,
     };
   }
+  if (typeof pi.id !== "string" || pi.id !== args.paymentIntentId) {
+    await recordOpsAlert({ severity: "critical", event: "session_payment_provider_identity_mismatch",
+      message: "Retrieved PaymentIntent does not match the pending attempt. No cancellation or outcome write was permitted.",
+      studioId: args.studioId, clientId: args.clientId,
+      route: "lib/billing/session-payment-charge:reconcileExistingPaymentIntent",
+      safeDetails: { attempt_id: args.attemptId, expected_payment_intent_id: args.paymentIntentId,
+        observed_payment_intent_id: typeof pi.id === "string" ? pi.id : null } });
+    return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE,
+      stripePaymentIntentId: args.paymentIntentId, attemptId: args.attemptId };
+  }
   // Codex P1 4253998912: money before ANY status branch (cancel / failed write).
   const moneyRefusal = await refuseOnProviderMoneyMismatch({
     pi,
@@ -1169,6 +1192,7 @@ async function reconcileExistingPaymentIntent(args: {
       expectedChargeReason: args.expectedChargeReason,
       expectedAmountCents: args.expectedAmountCents,
       expectedCurrency: args.expectedCurrency,
+      expectedPaymentIntentId: args.paymentIntentId,
     });
     if (!persistence.persisted) {
       // PR #281: Stripe says succeeded but Hone could not persist it
@@ -1226,6 +1250,7 @@ async function reconcileExistingPaymentIntent(args: {
     failureCode: pi.last_payment_error?.code ?? pi.status,
     failureMessage:
       pi.last_payment_error?.message ?? `PaymentIntent status: ${pi.status}`,
+    expectedPaymentIntentId: args.paymentIntentId,
   });
   if (!failedPersisted) return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE };
   await recordOpsAlert({
@@ -1658,6 +1683,7 @@ export async function runSessionPaymentCharge(args: {
         stripeStatus: piStatus,
         failureCode: err.code ?? piStatus,
         failureMessage: err.message,
+        expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
       });
       if (!failedPersisted) return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE };
       logInternal("session_payment_stripe_error", {
@@ -1774,6 +1800,7 @@ export async function runSessionPaymentCharge(args: {
       // giving ownership to the claim winner -- which excluded the invocation
       // that RECOVERS an orphaned claim, and stranded that receipt with nobody
       // able to send it.
+      expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
     });
     if (!persistence.persisted) {
       return {
@@ -1839,6 +1866,7 @@ export async function runSessionPaymentCharge(args: {
     failureMessage:
       pi.last_payment_error?.message ??
       `PaymentIntent status: ${pi.status}`,
+    expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
   });
   if (!failedPersisted) return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE };
   await recordOpsAlert({

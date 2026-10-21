@@ -23,6 +23,8 @@ const h = vi.hoisted(() => ({
   rows: {} as Record<string, unknown>,
   updates: [] as Array<{ table: string; payload: Record<string, unknown> }>,
   rpcCalls: [] as string[],
+  updateAttempts: [] as Array<{ payload: Record<string, unknown>; filters: Array<{ column: string; value: unknown }>; matched: boolean }>,
+  afterRetrieve: null as null | (() => void),
   alerts: [] as Array<{ severity: string; event: string; details: Record<string, unknown> }>,
   claim: {} as Record<string, unknown>,
   pi: {} as Record<string, unknown>,
@@ -43,6 +45,7 @@ const fakeStripe = {
     },
     retrieve: async () => {
       h.stripeCalls.push("pi_retrieve");
+      h.afterRetrieve?.();
       return h.pi;
     },
     // Recorded, not forbidden: a SAME-money requires_action intent is still
@@ -108,19 +111,27 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     from(table: string) {
       const q: Record<string, unknown> = {};
       let updatePayload: Record<string, unknown> | null = null;
+      const filters: Array<{ column: string; value: unknown }> = [];
       // Supabase reads are snapshots, not live references to the fake ledger.
       const read = () => ({ data: h.rows[table] && typeof h.rows[table] === "object"
         ? { ...(h.rows[table] as Record<string, unknown>) } : h.rows[table] ?? null, error: null });
       q.select = () => {
         if (updatePayload) {
-          h.updates.push({ table, payload: updatePayload });
-          if (h.pendingWriteZero && updatePayload.stripe_status && updatePayload.status === undefined) return Promise.resolve({ data: [], error: null });
-          if (h.failedWriteZero && updatePayload.status === "failed") return Promise.resolve({ data: [], error: null });
-          return Promise.resolve({ data: [{ id: "row" }], error: null });
+          const row = h.rows[table] as Record<string, unknown> | undefined;
+          const forced = (h.pendingWriteZero && updatePayload.stripe_status && updatePayload.status === undefined)
+            || (h.failedWriteZero && updatePayload.status === "failed");
+          const matched = !forced && !!row && filters.every((filter) => row[filter.column] === filter.value);
+          h.updateAttempts.push({ payload: updatePayload, filters: [...filters], matched });
+          if (matched) {
+            h.updates.push({ table, payload: updatePayload });
+            Object.assign(row!, updatePayload);
+          }
+          return Promise.resolve({ data: matched ? [{ id: "row" }] : [], error: null });
         }
         return q;
       };
-      for (const m of ["eq", "is", "in", "or", "order", "limit"]) q[m] = () => q;
+      for (const m of ["eq", "is"]) q[m] = (column: string, value: unknown) => { filters.push({ column, value }); return q; };
+      for (const m of ["in", "or", "order", "limit"]) q[m] = () => q;
       q.maybeSingle = async () => read();
       q.single = async () => read();
       q.then = (resolve: (v: unknown) => unknown) => resolve(read());
@@ -139,6 +150,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     rpc: async (name: string, args: Record<string, unknown> = {}) => {
       h.rpcCalls.push(name);
       if (name === "claim_session_payment_charge_attempt") {
+        const row = h.rows.payment_charge_attempts as Record<string, unknown> | undefined;
+        if (row && ["claimed", "already_pending"].includes(String(h.claim.result))) {
+          row.status = "pending_stripe";
+          if (h.claim.stripe_payment_intent_id) row.stripe_payment_intent_id = h.claim.stripe_payment_intent_id;
+        }
         return { data: [h.claim], error: null };
       }
       if (name === "reconcile_bound_payment_event") {
@@ -272,6 +288,8 @@ beforeEach(() => {
   h.rows = {};
   h.updates = [];
   h.rpcCalls = [];
+  h.updateAttempts = [];
+  h.afterRetrieve = null;
   h.alerts = [];
   h.stripeCalls = [];
   h.claim = {};
@@ -777,7 +795,7 @@ describe("PAY-004 nonterminal PaymentIntents", () => {
     expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
     expect(h.stripeCalls).toEqual(["pi_retrieve"]);
     expect(h.updates.filter((write) => write.payload.status === "failed")).toEqual([]);
-    expect(critical("session_payment_nonterminal_write_refused")).toHaveLength(1);
+    expect(critical("session_payment_provider_identity_mismatch")).toHaveLength(1);
   });
   it("a definitive SDK error with a still-actionable intent does not falsely retire it", async () => {
     seedLineage("cad");
@@ -787,5 +805,41 @@ describe("PAY-004 nonterminal PaymentIntents", () => {
     expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
     expect(h.updates.filter((write) => write.payload.status === "failed")).toEqual([]);
     expect(h.stripeCalls).toEqual(["pi_create"]);
+  });
+});
+
+describe("PRIVACY PAY-004 retrieved identity across terminal branches", () => {
+  it.each(["canceled", "succeeded"])("a matching %s retrieval still finalizes under its original-ID predicate", async (status) => {
+    seedLineage("cad");
+    h.claim = claimFor("cad", { result: "already_pending", stripe_payment_intent_id: PI_ID });
+    h.pi = { id: PI_ID, status, amount: AMOUNT, currency: "cad", latest_charge: CHARGE_ID };
+    const result = await charge();
+    expect(result).toMatchObject(status === "succeeded" ? { ok: true, outcome: "succeeded" } : { ok: false, outcome: "failed" });
+    expect(h.stripeCalls).toEqual(["pi_retrieve"]);
+    expect(h.updateAttempts[0]?.matched).toBe(true);
+    expect(h.updateAttempts[0]?.filters).toContainEqual({ column: "stripe_payment_intent_id", value: PI_ID });
+    expect((h.rows.payment_charge_attempts as Record<string, unknown>).stripe_payment_intent_id).toBe(PI_ID);
+  });
+  it.each(["canceled", "succeeded"])("wrong retrieved ID with %s cannot write or cancel", async (status) => {
+    seedLineage("cad");
+    h.claim = claimFor("cad", { result: "already_pending", stripe_payment_intent_id: PI_ID });
+    h.pi = { id: "pi_other", status, amount: AMOUNT, currency: "cad", latest_charge: CHARGE_ID };
+    expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.updates).toEqual([]);
+    expect(h.updateAttempts).toEqual([]);
+    expect(h.stripeCalls).toEqual(["pi_retrieve"]);
+    expect((h.rows.payment_charge_attempts as Record<string, unknown>).stripe_payment_intent_id).toBe(PI_ID);
+  });
+  it.each(["canceled", "succeeded"])("a concurrent identity replacement after matching %s retrieval cannot be overwritten", async (status) => {
+    seedLineage("cad");
+    h.claim = claimFor("cad", { result: "already_pending", stripe_payment_intent_id: PI_ID });
+    h.pi = { id: PI_ID, status, amount: AMOUNT, currency: "cad", latest_charge: CHARGE_ID };
+    h.afterRetrieve = () => { (h.rows.payment_charge_attempts as Record<string, unknown>).stripe_payment_intent_id = "pi_concurrent"; };
+    expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.updates).toEqual([]);
+    expect(h.stripeCalls).toEqual(["pi_retrieve"]);
+    expect((h.rows.payment_charge_attempts as Record<string, unknown>).stripe_payment_intent_id).toBe("pi_concurrent");
+    expect(h.updateAttempts[0]?.matched).toBe(false);
+    expect(h.updateAttempts[0]?.filters).toContainEqual({ column: "stripe_payment_intent_id", value: PI_ID });
   });
 });
