@@ -137,10 +137,14 @@ describe("PR #319: setup_intent.succeeded live-mode dormancy guard", () => {
     );
     // Anchor on the actual DB operations (.from("...")), not bare mentions —
     // a comment naming the tables must not fool the ordering check.
-    const pmIdx = block.indexOf('.from("client_payment_methods")');
+    const pmIdx = block.search(/await admin\.rpc\(\s*"save_client_card_on_file_ordered"/);
     const lineageIdx = block.indexOf('.from("client_stripe_customers")');
     expect(guardIdx).toBeGreaterThan(-1);
-    expect(pmIdx).toBeGreaterThan(-1); // the handler does write cards in test mode
+    expect(pmIdx).toBeGreaterThan(-1); // actual atomic ordered persistence
+    expect(lineageIdx).toBeGreaterThan(-1);
+    // No direct card mutation or unordered command may bypass adjudication.
+    expect(block).not.toMatch(/\.from\("client_payment_methods"\)[\s\S]*?\.(?:insert|update|upsert|delete)\(/);
+    expect(block).not.toMatch(/admin\.rpc\(\s*"save_client_card_on_file"/);
     // Guard runs first — before the card write AND before the lineage read.
     expect(guardIdx).toBeLessThan(pmIdx);
     expect(guardIdx).toBeLessThan(lineageIdx);
