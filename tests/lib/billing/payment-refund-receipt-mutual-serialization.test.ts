@@ -35,6 +35,8 @@ type Filter =
 
 const db = vi.hoisted(() => ({
   livemode: true,
+  refundProviderStatus: "succeeded" as string | null,
+  afterRefund: null as null | (() => void),
   // THE one row. Every claim is evaluated and applied against this object.
   row: {} as Record<string, unknown>,
   aux: {} as Record<string, { data: unknown; error: unknown }>,
@@ -79,11 +81,12 @@ vi.mock("@/lib/stripe/session-payment-stripe", () => ({
         opts: Record<string, unknown>,
       ) => {
         db.stripeRefunds.push({ params, opts });
+        db.afterRefund?.();
         // A real Refund states its amount and its charge's currency, and the
         // helper now refuses one that does not match the row (PAY-CCY-01).
         return {
           id: "re_1",
-          status: "succeeded",
+          status: db.refundProviderStatus,
           amount: params.amount,
           currency: "cad",
         };
@@ -237,6 +240,8 @@ function seedRow(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   db.livemode = true;
+  db.refundProviderStatus = "succeeded";
+  db.afterRefund = null;
   db.writes = [];
   db.emails = [];
   db.stripeRefunds = [];
@@ -674,5 +679,47 @@ describe("R1 — the post-claim classification, reached by a real race", () => {
     const res = await receiptManual();
 
     expect(res.ok === false && res.reason).toBe("in_flight");
+  });
+});
+
+// PAY-002: a returned Refund object is not proof that money was returned.
+describe("PAY-002 provider refund status", () => {
+  it.each(["pending", "requires_action", "failed", "canceled", null])(
+    "does not complete a refund whose provider status is %s",
+    async (status) => {
+      db.refundProviderStatus = status;
+      const result = await refund();
+      expect(result.ok).toBe(false);
+      expect(db.row.refund_status).not.toBe("succeeded");
+      expect(db.row.refunded_at).toBeNull();
+      expect(db.stripeRefunds).toHaveLength(1);
+      expect(db.emails).toHaveLength(0);
+      expect(db.row.stripe_refund_id).toBe("re_1");
+      expect(db.row.refund_status).toBe(status === "failed" || status === "canceled" ? "failed" : "pending_stripe");
+      if (status !== "failed" && status !== "canceled") {
+        // The unresolved claim must refuse a second provider request.
+        const retry = await refund();
+        expect(retry.ok).toBe(false);
+        expect(db.stripeRefunds).toHaveLength(1);
+      }
+    },
+  );
+  it("does not overwrite or report completion after losing the outcome write", async () => {
+    db.refundProviderStatus = "pending";
+    db.afterRefund = () => { db.row.refund_status = "succeeded"; };
+    const result = await refund();
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.outcome).toBe("needs_manual_review");
+    expect(db.row.stripe_refund_id).toBeNull();
+    expect(db.row.refunded_at).toBeNull();
+    expect(db.stripeRefunds).toHaveLength(1);
+    expect(db.writes.at(-1)?.matched).toBe(false);
+  });
+  it("still records a genuinely succeeded provider refund", async () => {
+    const result = await refund();
+    expect(result.ok).toBe(true);
+    expect(db.row.refund_status).toBe("succeeded");
+    expect(db.row.stripe_refund_id).toBe("re_1");
+    expect(db.stripeRefunds).toHaveLength(1);
   });
 });
