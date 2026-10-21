@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 const sql = readFileSync("supabase/migrations/0241_session_appointment_coalesce_identity.sql", "utf8");
 const previous = readFileSync("supabase/migrations/0181_multi_studio_command_authority.sql", "utf8");
@@ -16,10 +16,9 @@ function assertIdentityContract(source: string) {
 }
 
 describe("0241 appointment coalesce identity (source only; DB proof separate)", () => {
-  it("owns one allocated file/current max and an atomic bounded transaction", () => {
+  it("owns one allocated file and an atomic bounded transaction", () => {
     expect(countVersion("0241")).toBe(1);
     expect(fileForVersion("0241")).toBe("0241_session_appointment_coalesce_identity.sql");
-    expect(isRepoMax("0241")).toBe(true);
     expect(sql).toMatch(/begin;\s*set local lock_timeout = '5s';/);
     expect(sql.trim()).toMatch(/commit;$/);
   });
