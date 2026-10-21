@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   adminQuery,
   adminTx,
@@ -417,10 +418,73 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
       where n.nspname='public' and p.prosecdef
         and p.oid<>'public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb)'::regprocedure
         and p.prosrc ~* '(^|[^a-z0-9_])client_intake_forms([^a-z0-9_]|$)'
+      and (
+        p.oid = pg_catalog.to_regprocedure('public.receptionist_client_contacts(pg_catalog.uuid,pg_catalog.text,pg_catalog.int4)')
+        and p.proowner = (select w.proowner from pg_catalog.pg_proc w where w.oid='public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb)'::regprocedure) and p.provolatile = 's' and p.prokind = 'f'
+        and p.prolang = (select l.oid from pg_catalog.pg_language l where l.lanname = 'plpgsql')
+        and p.proconfig = array['search_path=pg_catalog, pg_temp']::text[]
+        and pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc, 'UTF8')), 'hex') = '4ad10247566c4186a5c03d12180c2946ae05919fcc75f4145e5a8566ada9ff6a'
+        and exists (
+          select 1 from pg_catalog.pg_proc helper
+          where helper.oid = pg_catalog.to_regprocedure('public.receptionist_actor_id(pg_catalog.uuid)')
+            and helper.proowner = p.proowner and helper.prosecdef
+            and helper.provolatile = 's' and helper.prokind = 'f'
+            and helper.prolang = (select l.oid from pg_catalog.pg_language l where l.lanname = 'sql')
+            and helper.proconfig = array['search_path=pg_catalog, pg_temp']::text[]
+            and pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(helper.prosrc, 'UTF8')), 'hex') = 'cf6256e2abdaaa6c319b17b26b22da159ab1017d5b2970676695961bdd9af7b4'
+            and not pg_catalog.has_function_privilege('anon', helper.oid, 'EXECUTE')
+            and not pg_catalog.has_function_privilege('authenticated', helper.oid, 'EXECUTE')
+            and not pg_catalog.has_function_privilege('service_role', helper.oid, 'EXECUTE')
+            and not exists (
+              select 1 from pg_catalog.aclexplode(coalesce(helper.proacl, pg_catalog.acldefault('f', helper.proowner))) a
+              where a.privilege_type = 'EXECUTE' and a.grantee <> helper.proowner
+            )
+        )
+        and pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
+        and not pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')
+        and not pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE')
+        and not exists (
+          select 1 from pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
+          where a.privilege_type = 'EXECUTE' and a.grantee not in
+            (p.proowner, (select r.oid from pg_catalog.pg_roles r where r.rolname = 'authenticated'))
+        )
+      ) is not true
         and (pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE')
           or pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE')
           or pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE'))`);
     expect(delegates).toEqual([]);
+  });
+
+  it.each(["unknown delegate", "changed reviewed body", "changed transitive helper"] as const)("the actual migration preflight refuses %s", async (change) => {
+    const migration = readFileSync("supabase/migrations/0243_intake_revision_cas_and_profile_sync.sql", "utf8");
+    const preflight = migration.slice(migration.lastIndexOf("do $$"), migration.lastIndexOf("\ncommit;"));
+    await adminTx(async (q) => {
+      // Positive actual full-chain context first; mutants live only inside
+      // this transaction/savepoint and cannot alter another test's catalog.
+      await q(preflight);
+      await q("savepoint delegate_negative");
+      try {
+        if (change === "unknown delegate") {
+          await q(`create function public.test_0243_unreviewed_intake_reader() returns bigint
+            language sql stable security definer set search_path='' as
+            'select count(*) from public.client_intake_forms'`);
+          await q("grant execute on function public.test_0243_unreviewed_intake_reader() to authenticated");
+        } else {
+          const signature = change === "changed transitive helper"
+            ? "public.receptionist_actor_id(uuid)" : "public.receptionist_client_contacts(uuid,text,integer)";
+          const { rows: [row] } = await q("select pg_catalog.pg_get_functiondef($1::regprocedure) as definition", [signature]);
+          const changed = row.definition.replace("AS $function$", "AS $function$\n-- Unreviewed source change.");
+          expect(changed).not.toBe(row.definition);
+          await q(changed);
+        }
+        await expect(q(preflight)).rejects.toMatchObject({
+          code: "P0001", message: "Unexpected callable intake definer requires review.",
+        });
+      } finally {
+        await q("rollback to savepoint delegate_negative");
+      }
+      await q(preflight);
+    });
   });
 
   it.each(["authenticated", "service_role"] as const)("%s cannot forge protected writes with a counter, claim or caller setting", async (role) => {
