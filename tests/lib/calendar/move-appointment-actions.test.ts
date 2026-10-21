@@ -244,10 +244,31 @@ describe("available_slot — server-side membership verification", () => {
     },
   );
 
-  it("slot discovery remains fail closed on a classified read failure", async () => {
-    const failure = new Error("availability_read_failed:defaults:42501");
-    h.getAvailableSlots.mockRejectedValueOnce(failure);
-    await expect(loadMoveSlotsAction({ appointmentId: APPT_ID, localDate: DAY })).rejects.toBe(failure);
+  it.each(["blockouts", "defaults", "overrides", "reservations"])(
+    "slot discovery returns a sanitized failure, never an empty success, for classified %s read errors", async (stage) => {
+      h.getAvailableSlots.mockRejectedValueOnce(new Error(`availability_read_failed:${stage}:PRIVATE_DB_DETAIL`));
+      const res = await loadMoveSlotsAction({ appointmentId: APPT_ID, localDate: DAY });
+      expect(res).toEqual({ ok: false, error: "Could not load available times." });
+      expect(res).not.toHaveProperty("slots");
+      expect(state.rpcCalls).toHaveLength(0);
+      expect(h.notify).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([new Error("unrelated discovery error"), "availability_read_failed:defaults:42501"])(
+    "slot discovery does not hide unrelated errors or non-Error rejections (%s)", async (failure) => {
+      h.getAvailableSlots.mockRejectedValueOnce(failure);
+      await expect(loadMoveSlotsAction({ appointmentId: APPT_ID, localDate: DAY })).rejects.toBe(failure);
+      expect(state.rpcCalls).toHaveLength(0);
+    },
+  );
+
+  it("successful empty slot discovery remains distinct from a read failure", async () => {
+    state.slots = [];
+    const res = await loadMoveSlotsAction({ appointmentId: APPT_ID, localDate: DAY });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.slots).toEqual([]);
+    expect(res).not.toHaveProperty("error");
     expect(state.rpcCalls).toHaveLength(0);
   });
 
