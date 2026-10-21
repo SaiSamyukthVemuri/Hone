@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { adminQuery, asRole, asUser, closePool, seedMember, seedSession, seedStudio } from "./helpers/harness";
+import { adminQuery, adminTx, asRole, asUser, closePool, type UserQuery, seedMember, seedSession, seedStudio } from "./helpers/harness";
 import { countVersion } from "../migrations/helpers/migration-state";
 
 // 0233 (HON-46, Codex P1 4304545551): the clinical-records audit is
@@ -521,5 +521,156 @@ describe("0233: clinical-records audit rows are actor-bound", () => {
     await expect(
       asRole("anon", (q) => q(`select public.record_clinical_records_audit($1, 'clinical_records_printed', $2)`, [randomUUID(), meta])),
     ).rejects.toSatisfy((e) => refused(e) === "42501");
+  });
+});
+
+
+// Prepared atomic-command cases; execution requires the aligned CI/DB gate.
+describe("0242 atomic governed audit authorization", () => {
+  // Unlike asRole's deliberately rolled-back privilege probes, these
+  // command transactions commit so cross-connection audit assertions are real.
+  const serviceCommand = <T>(run: (q: UserQuery) => Promise<T>) => adminTx(async q => {
+    await q("set local role service_role");
+    return run(q);
+  });
+  async function exportArgs(s: Awaited<ReturnType<typeof seedStudio>>) {
+    const { rows: [studio] } = await adminQuery("select name from public.studios where id=$1", [s.studioId]);
+    const slug = String(studio.name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "studio";
+    return [s.practitionerId, s.userId, s.studioId,
+      `hone-export-${slug}-2026-10-21.zip`, ["clients.csv", "manifest.json", "README.txt"], { clients: 0 }];
+  }
+  const exportSQL = "select public.record_studio_export_audit_governed($1,$2,$3,$4,$5,$6) as recorded";
+  it("retains exact active owner emission and fixed archive/unarchive rows", async () => {
+    const s = await seedStudio("aud0242-atomic-ok");
+    const args = await exportArgs(s);
+    expect((await serviceCommand(q => q(exportSQL, args))).rows[0].recorded).toBe(true);
+    for (const archived of [true, false]) {
+      const reply = await serviceCommand(q => q(
+        "select public.record_client_archive_audit_governed($1,$2,$3,$4,$5,$6) as recorded",
+        [s.practitionerId,s.userId,s.studioId,s.clientId,archived,archived ? "2026-10-21T01:00:00.000Z" : null]));
+      expect(reply.rows[0].recorded).toBe(true);
+    }
+    expect((await rowsFor(s.clientId)).map(row => row.action)).toEqual(["client_archived","client_unarchived"]);
+  });
+  it.each(["inactive", "demoted"] as const)("committed %s before atomic owner check refuses without an audit", async change => {
+    const s = await seedStudio(`aud0242-${change}`);
+    const args = await exportArgs(s);
+    await adminQuery(change === "inactive"
+      ? "update public.practitioners set active=false where id=$1"
+      : "update public.practitioners set role='practitioner' where id=$1", [s.practitionerId]);
+    expect((await serviceCommand(q => q(exportSQL,args))).rows[0].recorded).toBe(false);
+    expect(await rowsFor(s.studioId)).toEqual([]);
+  });
+  it("concurrent deactivation waits for authorized audit commit (no post-commit revocation claim)", async () => {
+    const s = await seedStudio("aud0242-lock");
+    const args = await exportArgs(s);
+    let worker: Promise<unknown> | undefined;
+    let workerPid!: number;
+    let announce!: () => void;
+    const announced = new Promise<void>(resolve => { announce = resolve; });
+    await adminTx(async q => {
+      await q("set local role service_role");
+      expect((await q(exportSQL,args)).rows[0].recorded).toBe(true);
+      worker = adminTx(async other => {
+        const { rows: [backend] } = await other("select pg_backend_pid() as pid");
+        workerPid = backend.pid; announce();
+        await other("set local lock_timeout='2s'");
+        await other("update public.practitioners set active=false where id=$1", [s.practitionerId]);
+      });
+      void worker.catch(() => undefined);
+      await announced;
+      let waiting = false;
+      for (let i=0;i<50;i++) {
+        const { rows: [backend] } = await adminQuery("select wait_event_type from pg_stat_activity where pid=$1", [workerPid]);
+        if (backend?.wait_event_type === "Lock") { waiting = true; break; }
+        await new Promise(resolve => setTimeout(resolve,10));
+      }
+      expect(waiting).toBe(true);
+      expect(await rowsFor(s.studioId)).toEqual([]); // Uncommitted audit not externally visible.
+    });
+    await worker;
+    expect(await rowsFor(s.studioId)).toHaveLength(1);
+    const { rows: [member] } = await adminQuery("select active from public.practitioners where id=$1", [s.practitionerId]);
+    expect(member.active).toBe(false);
+  });
+  it.each(["inactive", "demoted"] as const)("a concurrent %s change committed before the membership lock refuses emission", async change => {
+    const s = await seedStudio(`aud0242-revoke-first-${change}`);
+    const args = await exportArgs(s);
+    let command: Promise<{ rows: Array<{ recorded: boolean }> }> | undefined;
+    let workerPid!: number;
+    let announce!: () => void;
+    const announced = new Promise<void>(resolve => { announce = resolve; });
+    try {
+      await adminTx(async q => {
+        await q(change === "inactive"
+          ? "update public.practitioners set active=false where id=$1"
+          : "update public.practitioners set role='practitioner' where id=$1", [s.practitionerId]);
+        command = serviceCommand(async worker => {
+          const { rows: [backend] } = await worker("select pg_backend_pid() as pid");
+          workerPid = backend.pid; announce();
+          return worker(exportSQL,args);
+        });
+        void command.catch(() => undefined);
+        await announced;
+        let waiting = false;
+        for (let i=0;i<50;i++) {
+          const { rows: [backend] } = await adminQuery("select wait_event_type from pg_stat_activity where pid=$1", [workerPid]);
+          if (backend?.wait_event_type === "Lock") { waiting = true; break; }
+          await new Promise(resolve => setTimeout(resolve,10));
+        }
+        expect(waiting).toBe(true);
+        expect(await rowsFor(s.studioId)).toEqual([]);
+      });
+      expect((await command)!.rows[0].recorded).toBe(false);
+      expect(await rowsFor(s.studioId)).toEqual([]);
+    } finally {
+      // Drain even a failed assertion's worker after the revoker rolls back.
+      await command?.catch(() => undefined);
+    }
+  });
+
+  it("exposes only the two narrow non-grantable service EXECUTE capabilities", async () => {
+    const { rows } = await adminQuery(`select p.proname,p.prosecdef,p.proconfig,
+      pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE') as anon_execute,
+      pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE') as auth_execute,
+      pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE') as service_execute,
+      exists(select 1 from pg_catalog.aclexplode(p.proacl) a
+        where a.grantee<>p.proowner and (a.is_grantable or a.grantee<>
+          (select r.oid from pg_catalog.pg_roles r where r.rolname='service_role'))) as unsafe_acl
+      from pg_catalog.pg_proc p where p.oid in (
+        'public.record_client_archive_audit_governed(uuid,uuid,uuid,uuid,boolean,text)'::regprocedure,
+        'public.record_studio_export_audit_governed(uuid,uuid,uuid,text,text[],jsonb)'::regprocedure)`);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row).toMatchObject({ prosecdef: false, anon_execute: false, auth_execute: false, service_execute: true, unsafe_acl: false });
+      expect(row.proconfig).toEqual(['search_path=""', "lock_timeout=5s"]);
+    }
+  });
+
+  it("rolls back audit and locks with caller transaction", async () => {
+    const s = await seedStudio("aud0242-rollback"); const args = await exportArgs(s);
+    await expect(adminTx(async q => {
+      await q("set local role service_role");
+      expect((await q(exportSQL,args)).rows[0].recorded).toBe(true);
+      throw new Error("synthetic audit rollback");
+    })).rejects.toThrow("synthetic audit rollback");
+    expect(await rowsFor(s.studioId)).toEqual([]);
+  });
+  it("refuses cross-user/client/studio, unapproved metadata and runtime EXECUTE", async () => {
+    const s = await seedStudio("aud0242-scope"); const other = await seedStudio("aud0242-other");
+    const args = await exportArgs(s);
+    for (const changed of [
+      [other.practitionerId,...args.slice(1)], [args[0],other.userId,...args.slice(2)],
+      [args[0],args[1],other.studioId,...args.slice(3)],
+      [...args.slice(0,4),["PRIVATE.csv","manifest.json","README.txt"],{ PRIVATE: 0 }],
+      [...args.slice(0,5),{ clients: -1 }],
+    ]) expect((await serviceCommand(q => q(exportSQL,changed))).rows[0].recorded).toBe(false);
+    expect((await serviceCommand(q => q(
+      "select public.record_client_archive_audit_governed($1,$2,$3,$4,false,null) as recorded",
+      [s.practitionerId,s.userId,s.studioId,other.clientId]))).rows[0].recorded).toBe(false);
+    for (const role of ["anon","authenticated"] as const) {
+      await expect(asRole(role,q => q(exportSQL,args))).rejects.toMatchObject({code:"42501"});
+    }
+    expect(await rowsFor(s.studioId)).toEqual([]);
   });
 });
