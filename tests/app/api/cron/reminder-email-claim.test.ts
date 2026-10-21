@@ -353,8 +353,13 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     expect(race.pages).toHaveLength(1);
     expect(race.heartbeat).not.toHaveBeenCalled();
     const checkpoint = JSON.parse(race.store.get("reminder_scan:v1:checkpoint:sms24h")!.value);
-    expect(checkpoint.after.id).toBe("00000000-0000-4000-8000-000000000001");
+    expect(checkpoint.after).toBeNull();
     expect(JSON.parse(race.store.get("reminder_scan:v1:rotation")!.value).next).toBe("sms2h");
+    const retried = await GET(new Request("https://example.invalid"));
+    expect(retried.status).toBe(500); // still a bounded, unfinished backlog
+    expect(race.smsSend).toHaveBeenNthCalledWith(2, expect.objectContaining({ appointmentId: "00000000-0000-4000-8000-000000000001" }));
+    expect(race.smsSend).toHaveBeenCalledTimes(51); // one refused claim + max50 attempts
+    expect(race.heartbeat).not.toHaveBeenCalled();
   });
 
   it("#995 overlapping GET cannot read candidates or dispatch while the first lease is held", async () => {

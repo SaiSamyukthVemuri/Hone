@@ -1227,7 +1227,7 @@ describe("#995 unwired bounded scan/coordinator proposal", () => {
     await f.run();
     expect(f.handle.mock.calls.map((call) => call[1].id)).toEqual(f.rows.email24h.map((row) => row.id));
   });
-  it("stops on explicit claim outage, persists scheduling progress, and rotates past the failed pass next invocation", async () => {
+  it("stops on explicit claim outage, preserves the prior cursor, and rotates past the failed pass next invocation", async () => {
     const f = scanFixture();
     for (const pass of REMINDER_SCAN_PASSES) f.populate(pass, 1001);
     f.handle.mockImplementationOnce(async () => ({ kind: "claim_unavailable", attempted: false }));
@@ -1237,7 +1237,36 @@ describe("#995 unwired bounded scan/coordinator proposal", () => {
     await f.run();
     expect(f.readPage.mock.calls[0][0]).toBe("email2h");
     const email24Read = f.readPage.mock.calls.find((call) => call[0] === "email24h");
-    expect(email24Read?.[1].after?.id).toBe(f.rows.email24h[0].id);
+    expect(email24Read).toBeDefined();
+    expect(email24Read![1].after).toBeNull();
+  });
+  it("retries an unavailable 2h claim before its tail on the next fire while the candidate remains inside the current window", async () => {
+    const f = scanFixture(); f.populate("sms2h", 3, 1);
+    const [prefix, target, tail] = f.rows.sms2h;
+    let unavailable = true;
+    f.handle.mockImplementation(async (pass, row) => {
+      if (row.id === target.id && unavailable) {
+        unavailable = false;
+        return { kind: "claim_unavailable", attempted: false };
+      }
+      if (row.id === target.id) {
+        f.sent.add(`${pass}:${row.id}`);
+        return { kind: "processed", attempted: true };
+      }
+      return { kind: "skipped", attempted: false };
+    });
+    expect(await f.run()).toMatchObject({ kind: "unavailable", reason: "claim_unavailable", attempted: 0 });
+    expect(f.handle.mock.calls.map((call) => call[1].id)).toEqual([prefix.id, target.id]);
+    // Retain the actually handled prefix, never the unclaimed row or page end.
+    expect(JSON.parse(f.values.get("reminder_scan:v1:checkpoint:sms2h")!).after.id).toBe(prefix.id);
+    f.advance(15 * 60_000); // target is now at the lower edge of the 2h window
+    f.handle.mockClear(); f.readPage.mockClear();
+    const recovered = await f.run();
+    expect(recovered).toMatchObject({ kind: "complete", attempted: 1, coverageUnconfirmed: false });
+    expect(f.readPage.mock.calls[0][0]).toBe("email24h"); // rotation remains fair
+    expect(f.handle.mock.calls.map((call) => call[1].id)).toEqual([target.id, tail.id]);
+    expect(f.sent).toContain(`sms2h:${target.id}`);
+    expect(f.handle.mock.calls.filter((call) => call[1].id === prefix.id)).toHaveLength(0);
   });
   it("does not send a row that leaves the CURRENT window while its page is read", async () => {
     const f = scanFixture(); f.populate("email24h", 1, 0);

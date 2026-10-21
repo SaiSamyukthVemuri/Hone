@@ -241,12 +241,14 @@ export async function runReminderScanBatch<T extends Candidate>(ports: {
           result.attempted++;
           attempts.set(pass, (attempts.get(pass) ?? 0) + 1);
         }
-        // Last ACTUALLY handled candidate, not page end or refreshed timestamp.
-        state.after = cursor;
         if (outcome.kind === "claim_unavailable") {
+          // No authoritative handling occurred: retain the handled prefix so
+          // the next fire can retry this row while its CURRENT window permits.
           if (!await ports.coordinator.save(token, pass, state, rotation, now())) return finish("unavailable", "coordination");
           return finish("unavailable", "claim_unavailable");
         }
+        // Last ACTUALLY handled candidate, not page end or refreshed timestamp.
+        state.after = cursor;
         if ((attempts.get(pass) ?? 0) >= ATTEMPTS_PER_PASS) {
           exhausted = false;
           done.add(pass); // preserve per-invocation attempt cap; cursor resumes
