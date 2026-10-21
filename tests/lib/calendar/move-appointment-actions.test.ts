@@ -91,6 +91,7 @@ function baseMove(over: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   state.practitioner = { id: "prac-1", role: "owner" };
   state.appt = { id: APPT_ID, status: "confirmed", starts_at: EXPECT_START, client_id: "client-1", duration_minutes: 60, practitioner_id: "pr-1" };
   state.slots = [
@@ -194,6 +195,58 @@ describe("available_slot — server-side membership verification", () => {
   it("rejects an arbitrary time not present in the slot list; RPC never called", async () => {
     const res = await moveAppointmentAction(avail({ localTime: "13:37" }));
     expect(res).toEqual({ ok: false, code: "conflict", error: "That time is no longer available. Choose another time." });
+    expect(state.rpcCalls).toHaveLength(0);
+  });
+
+  it("classified advisory read failure defers to the locked command without an availability override", async () => {
+    h.getAvailableSlots.mockRejectedValueOnce(new Error("availability_read_failed:defaults:42501"));
+    const res = await moveAppointmentAction(avail({ localTime: "10:00" }));
+    expect(res.ok).toBe(true);
+    expect(state.rpcCalls).toHaveLength(1);
+    expect(state.rpcCalls[0].name).toBe("move_or_reassign_appointment");
+    expect(state.rpcCalls[0].args).toMatchObject({
+      p_appointment_id: APPT_ID,
+      p_studio_id: "studio-1",
+      p_actor_practitioner_id: "prac-1",
+      p_expected_starts_at: EXPECT_START,
+      p_expected_ends_at: EXPECT_END,
+      p_new_starts_at: localISO("10:00"),
+      p_target_practitioner_id: null,
+      p_allow_outside_availability: false,
+    });
+  });
+
+  it("classified advisory read failure still returns the locked command's conflict", async () => {
+    h.getAvailableSlots.mockRejectedValueOnce(new Error("availability_read_failed:reservations:42501"));
+    state.rpcError = { code: "HB001" };
+    const res = await moveAppointmentAction(avail({ localTime: "10:00" }));
+    expect(res).toEqual({ ok: false, code: "conflict", error: "That time is no longer available. Choose another time." });
+    expect(state.rpcCalls).toHaveLength(1);
+    expect(state.rpcCalls[0].args.p_allow_outside_availability).toBe(false);
+    expect(h.notify).not.toHaveBeenCalled();
+  });
+
+  it("a successful empty advisory read refuses without invoking the command", async () => {
+    state.slots = [];
+    const res = await moveAppointmentAction(avail({ localTime: "10:00" }));
+    expect(res.ok).toBe(false);
+    expect(state.rpcCalls).toHaveLength(0);
+    expect(h.notify).not.toHaveBeenCalled();
+  });
+
+  it.each([new Error("unrelated failure"), "availability_read_failed:defaults:42501"])(
+    "does not classify an unrelated error or non-Error rejection as an advisory read failure (%s)", async (failure) => {
+      h.getAvailableSlots.mockRejectedValueOnce(failure);
+      await expect(moveAppointmentAction(avail({ localTime: "10:00" }))).rejects.toBe(failure);
+      expect(state.rpcCalls).toHaveLength(0);
+      expect(h.notify).not.toHaveBeenCalled();
+    },
+  );
+
+  it("slot discovery remains fail closed on a classified read failure", async () => {
+    const failure = new Error("availability_read_failed:defaults:42501");
+    h.getAvailableSlots.mockRejectedValueOnce(failure);
+    await expect(loadMoveSlotsAction({ appointmentId: APPT_ID, localDate: DAY })).rejects.toBe(failure);
     expect(state.rpcCalls).toHaveLength(0);
   });
 
