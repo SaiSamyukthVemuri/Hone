@@ -35,10 +35,10 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 
 **Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479**, **#601**,
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
-production refresh since — **every** first-parent merge in `b9e0003f..e3f63b74`, all
-**233** PR merges among them (**#632–#998**, plus **#631**, whose number sits below that floor but
-whose merge does not — see below). The sixty-two merges after the prior `440829c2` snapshot are #940,
-#903, #897, #895, #942, #944, #945, #941, #947, #948, #946, #949, #906, #950, #921, #951, #952, #954, #953, #956, #955, #958, #959, #957, #961, #962, #960, #964, #892, #965, #963, #966, #925, #967, #927, #968, #969, #970, #971, #973, #976, #972, #974, #975, #980, #978, #977, #983, #981, #986, #979, #982, #985, #987, #988, #989, #992, #990, #993, #991, #996 and #998; their dated receipts are listed at the end of this changelog. ⚠️ **EXTENDED
+production refresh since — **every** first-parent merge in `b9e0003f..df0d42a2`, all
+**235** PR merges among them (**#632–#999**, plus **#631**, whose number sits below that floor but
+whose merge does not — see below). The sixty-four merges after the prior `440829c2` snapshot are #940,
+#903, #897, #895, #942, #944, #945, #941, #947, #948, #946, #949, #906, #950, #921, #951, #952, #954, #953, #956, #955, #958, #959, #957, #961, #962, #960, #964, #892, #965, #963, #966, #925, #967, #927, #968, #969, #970, #971, #973, #976, #972, #974, #975, #980, #978, #977, #983, #981, #986, #979, #982, #985, #987, #988, #989, #992, #990, #993, #991, #996, #998, #999 and #995; their dated receipts are listed at the end of this changelog. ⚠️ **EXTENDED
 2026-10-12 by CANON-REFRESH-2026-10-12:**
 the range previously ended at `410e5039` (81 merges, the 2026-09-21 extension described next);
 **56** rows were backfilled from the first-parent graph and each merge's own diff, and the
@@ -446,3 +446,11 @@ deployment, route smoke and human acceptance.
 |---|---|---|---|---|
 | **#996** | none | **Documentation only · deployed** | Current-record correction through runtime59ff | Merge41998325, READYdpl_EkNaLfVBGRrjR7oazBmHN8wegxda. Exact23c review/sourceCI39569704757 and automatic39570550177 canonical-record plan passed; unit/DB/browser/payment/mobile/Google skipped. Earlier A3/A5 failures retained. |
 | **#998** | none | **Merged · deployed; human UAT UNRUN** | Exact refund callback-winner recognition and truthful unsaved-failure outcome | Source83845 exact review clear; CI39601081414 passed21,577unit/603browser13skip/58fake-payment; DB/mobile/Google/docs skipped. Root65focused/type/lint/prepush passed. Mergee3f63b74 READYdpl_4pXZj9vvycahYZxvwCwifa76ADgP, hone.care alias/tree/safe GET200200307307 verified. Automatic39603406676 unit failed only stale A3/A5:21,575pass/2fail; all four browser shards/fake-payment/aggregate passed; DB/mobile/Google/docs skipped. No live money/SQL/activation/customer-data repair; full atomic/status guarantees and Chloe acceptance remain separate. |
+
+
+## 2026-10-21 bounded reminder scan release
+
+| PR | Migration | Status | What shipped | Evidence and limits |
+|---|---|---|---|---|
+| **#995** | none | **Merged · deployed; human UAT UNRUN** | Bounded fair reminder scans and same-candidate retry after unavailable claim | Sourcecd788 exact review/CI39608140091 passed21,627unit/603browser13skip; DB/payment/mobile/Google/docs skipped. Root311focused/type/prepush passed. Normaldf0d42a2 READYdpl_5RqZ3WWoBRdU38RnDbzA8dDyCkqq, alias/tree/safeGET200200307307 verified. Automatic39611091351 unit failed exactly stale canonical A3/A5:21,625passed/2failed. Browser jobs remain in progress at this dated sync; DB/payment/mobile/Google/canonical-docs skipped. Failure evidence is retained, not relabeled passed. Actual Redis/Lua/network persistence remains UNRUN; no manual cron/provider/send/activation/customer-data action; held generation/idempotency work remains separate. |
+| **#999** | none | **Docs-only · deployed** | Record correction through #998 | Exact49 review/CI39607418551 +374local/prepush passed; normald4fb5ab7 READYdpl_GYxQMhJa8HdsMCoqmLY2gRqCoLSV, alias/tree/safeGET verified. Automatic39607972677 docs-selected checks passed; runtime suites skipped. Original998postA3/A5failure retained; no runtime or SQL change. |
