@@ -16,7 +16,9 @@ const booking = vi.hoisted(() => ({
   assigned: { id: "B", studio_id: "studio", active: true, display_name: "Assigned B", email: "b@example.test" },
   lookupError: false,
   slotError: null as unknown,
+  capacityEnabled: true as boolean | null | undefined,
   emptySlots: false,
+  onSlotsRead: null as null | (() => void),
   rpcResult: "created",
   rpcError: null as null | { code: string },
   clientEmail: vi.fn(async () => ({ ok: true })),
@@ -27,7 +29,7 @@ const booking = vi.hoisted(() => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: async () => ({
   practitioner: { id: "A", role: "owner", active: true, display_name: "Owner A", email: "a@example.test" },
-  studio: { id: "studio", timezone: "America/Toronto", practitioner_capacity_enabled: true,
+  studio: { id: "studio", timezone: "America/Toronto", practitioner_capacity_enabled: booking.capacityEnabled,
     default_appointment_duration_minutes: 60, buffer_minutes: 0, send_confirmation_emails: true },
 }) }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: booking.rpc }) }));
@@ -47,7 +49,7 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: (ta
   };
   return query;
 } }) }));
-vi.mock("@/lib/booking/slots", () => ({ INTERNAL_SLOT_PACKING: {}, getAvailableSlots: async () => { if (booking.slotError !== null) throw booking.slotError; return booking.emptySlots ? [] : [{ start: "2099-01-01T15:00:00.000Z", end: "2099-01-01T16:00:00.000Z" }]; } }));
+vi.mock("@/lib/booking/slots", () => ({ INTERNAL_SLOT_PACKING: {}, getAvailableSlots: async () => { booking.onSlotsRead?.(); if (booking.slotError !== null) throw booking.slotError; return booking.emptySlots ? [] : [{ start: "2099-01-01T15:00:00.000Z", end: "2099-01-01T16:00:00.000Z" }]; } }));
 vi.mock("@/lib/booking/appointment-token", () => ({ generateAppointmentToken: () => "synthetic", hashAppointmentToken: () => "hash" }));
 vi.mock("@/lib/booking/tokens", () => ({ generateCancellationToken: () => "synthetic" }));
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: booking.event }));
@@ -70,6 +72,8 @@ function bookFor(target = "B") {
 }
 
 beforeEach(() => {
+  booking.onSlotsRead = null;
+  booking.capacityEnabled = true;
   booking.slotError = null; booking.emptySlots = false; booking.rpcResult = "created"; booking.rpcError = null;
   vi.clearAllMocks(); booking.assignedId = "B"; booking.lookupError = false;
   booking.assigned = { id: "B", studio_id: "studio", active: true, display_name: "Assigned B", email: "b@example.test" };
@@ -135,18 +139,18 @@ describe("booking action — post-commit + safe-error hardening (Item 8)", () =>
 
 
 describe("SCH-002 internal submit advisory availability failures", () => {
-  it.each(["blockouts", "reservations", "window", "defaults"])("still reaches the locked target-aware command after %s read failure", async (stage) => {
+  it.each(["blockouts", "reservations", "window", "defaults"])("refuses a failed %s preflight even when the ON pre-read command would accept", async (stage) => {
     booking.slotError = new Error(`availability_read_failed:${stage}`);
-    expect(await bookFor()).toEqual({ ok: true, appointmentId: "appointment" });
-    expect(booking.rpc).toHaveBeenCalledWith("create_internal_appointment_v2", expect.objectContaining({ p_actor_practitioner_id: "A", p_target_practitioner_id: "B", p_allow_outside_availability: false }));
+    await expect(bookFor()).rejects.toBe(booking.slotError);
+    expect(booking.rpc).not.toHaveBeenCalled();
   });
-  it("preserves authoritative refusal after advisory failure", async () => {
-    booking.slotError = new Error("availability_read_failed:window"); booking.rpcResult = "time_unavailable";
+  it("preserves authoritative refusal after a successful offered-slot read", async () => {
+    booking.rpcResult = "time_unavailable";
     expect(await bookFor()).toMatchObject({ ok: false }); expect(booking.rpc).toHaveBeenCalledTimes(1);
     expect(booking.clientEmail).not.toHaveBeenCalled();
   });
-  it.each(["23514", "42501"])("preserves command error %s after advisory failure", async (code) => {
-    booking.slotError = new Error("availability_read_failed:reservations"); booking.rpcError = { code };
+  it.each(["23514", "42501"])("preserves command error %s after a successful offered-slot read", async (code) => {
+    booking.rpcError = { code };
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     try { expect(await bookFor()).toMatchObject({ ok: false }); expect(booking.rpc).toHaveBeenCalledTimes(1); expect(booking.clientEmail).not.toHaveBeenCalled(); }
     finally { log.mockRestore(); }
@@ -158,5 +162,36 @@ describe("SCH-002 internal submit advisory availability failures", () => {
   it.each([new Error("unexpected programming error"), "availability_read_failed:blockouts"])("propagates unclassified/non-Error throws without command", async (failure) => {
     booking.slotError = failure;
     await expect(bookFor()).rejects.toBe(failure); expect(booking.rpc).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("SCH-002 legacy internal submission retains the app availability boundary", () => {
+  it.each([false, null, undefined])("does not defer a failed preflight when capacity is %s, even if the command would accept", async (capacity) => {
+    booking.capacityEnabled = capacity;
+    const failure = new Error("availability_read_failed:window"); booking.slotError = failure;
+    await expect(bookFor()).rejects.toBe(failure);
+    expect(booking.rpc).not.toHaveBeenCalled();
+    expect(booking.clientEmail).not.toHaveBeenCalled();
+    expect(booking.practitionerEmail).not.toHaveBeenCalled();
+  });
+  it.each(["blockouts", "reservations"])("also refuses unread %s in legacy mode before the permissive legacy command", async (stage) => {
+    booking.capacityEnabled = false;
+    const failure = new Error(`availability_read_failed:${stage}`); booking.slotError = failure;
+    await expect(bookFor()).rejects.toBe(failure); expect(booking.rpc).not.toHaveBeenCalled();
+  });
+  it("does not use an ON pre-read as authority if capacity flips OFF before the command", async () => {
+    booking.capacityEnabled = true;
+    booking.onSlotsRead = () => { booking.capacityEnabled = false; };
+    const failure = new Error("availability_read_failed:window"); booking.slotError = failure;
+    await expect(bookFor()).rejects.toBe(failure);
+    expect(booking.capacityEnabled).toBe(false);
+    expect(booking.rpc).not.toHaveBeenCalled();
+    expect(booking.clientEmail).not.toHaveBeenCalled();
+  });
+  it("retains ordinary legacy submission after a successful offered-slot read", async () => {
+    booking.capacityEnabled = false;
+    expect(await bookFor("A")).toEqual({ ok: true, appointmentId: "appointment" });
+    expect(booking.rpc).toHaveBeenCalledWith("create_internal_appointment_v2", expect.objectContaining({ p_actor_practitioner_id: "A", p_target_practitioner_id: "A", p_allow_outside_availability: false }));
   });
 });
