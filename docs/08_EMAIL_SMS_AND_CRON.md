@@ -84,6 +84,122 @@ Pinned by `tests/migrations/0186-intake-reminder-24h-2h.test.ts`, `tests/app/api
 
 The double-send gap is closed. The reminder cron now claims each row via `claim_email_send(appointment_id, email_type)` BEFORE calling Resend: one conditional UPDATE that increments the attempts counter and stamps the matching `*_claimed_at`, gated on sent-is-null, attempts under the 3-strike cap, and no fresh claim (claims older than 5 minutes are stale and reclaimable, so a crashed sender never permanently blocks a row). Two overlapping cron runs can no longer both send; the loser counts the row as `skipped` in the response stats. Outcomes are recorded via `record_email_result` (stamps `*_sent_at` on success, clears the claim, never increments). Both RPCs are SECURITY DEFINER with locked search_path, `revoke from public/anon/authenticated`, execute granted to `service_role` only. This mirrors the SMS `claim_sms_send` / `record_sms_result` pair from migration 0049. The unclaimed one-shot paths (booking confirmation, reschedule notices, no-show cron, postcare) keep using `record_email_attempt` (0028); they run inside a single user request and do not race a scheduler.
 
+### Email delivery events (DELIVERY-EVENTS-01, migration 0212)
+
+> **THE RECEIVING HALF, INERT UNTIL ACTIVATED.** This adds the signed Resend webhook, the receipts and an email delivery ledger. **Ledgered so far:** the 24h and 2h reminder window emails (DELIVERY-VISIBILITY-01) and the client booking confirmation from every caller: public booking, portal rebook, calendar and public reschedule (DELIVERY-VISIBILITY-03, joined once inside `sendBookingConfirmationToClient`). Every other email path is still unledgered, so its events stay unattributed and platform-only. Until `RESEND_WEBHOOK_SECRET` is set and the endpoint is configured in Resend (a separately authorized activation), nothing arrives at all.
+
+**Route: `POST /api/resend/webhook`** (`app/api/resend/webhook/route.ts`, exact-path middleware exemption). It reads the raw body, then verifies the Svix signature (`svix-id`, `svix-timestamp`, `svix-signature`) with `RESEND_WEBHOOK_SECRET` in `lib/email/resend-webhook.ts`. The check is hand-rolled on `node:crypto`, like the Twilio check, and is held to the official Resend SDK verifier on the same fixtures. Refusals:
+- missing secret: 500, nothing written;
+- missing or invalid signature, or a timestamp more than **five minutes** from the server clock: 403 and zero database work;
+- a body over 256 KB: 413. A declared `Content-Length` over the limit is refused before any read, and an undeclared body is counted as it streams and cancelled once it passes the limit, so the limit bounds memory and read work on this public endpoint.
+
+A captured request therefore cannot be replayed later. A replay inside the window carries the same `svix-id` and is deduplicated below.
+
+**Durable before acknowledged.** `record_email_provider_event` writes one receipt per delivery, unique on `(provider, svix-id)`. Resend keeps that id across every retry of an event.
+- If the receipt cannot be written, the route answers **500** and Resend retries on its own schedule (roughly 27 hours, after which it may disable the endpoint).
+- If the receipt is written but is **still pending after this request**, the answer is also **500**, so Resend's retry recovers it (Codex P2 4244387538, 4244798597). That covers this request's own processing failing, and a claim (a failed attempt's, not yet expired) keeping it from trying. A retry that lands inside the two-minute claim answers 500 again, so the provider keeps retrying until one lands after it expires. The recovery does not depend on another webhook or a scheduled sweep. Attempts are bounded in the database: after five the receipt is quarantined and the retry that follows gets **200**, so a poison event cannot keep the provider retrying until it disables the endpoint.
+- Every other outcome is acknowledged with **200**: applied, stale, unmatched, ignored or quarantined.
+- A retried delivery whose receipt is still **pending** is processed again; one already processed is acknowledged as-is.
+
+**Exactly-once processing and crash recovery.**
+- `process_email_provider_event` applies one receipt in one transaction. It locks the receipt, refuses one that is no longer pending (`already_processed`), locks the ledger row, moves the status and records the outcome. Any error rolls back all of it.
+- `claim_email_provider_events` counts every attempt in its own committed statement, **before** the attempt. A claim is held for two minutes. The route claims and processes the receipt it just recorded and answers the provider. Only **after** the response (Next `after()`, Codex P2 4266147060) does it sweep up to five receipts that are at least a minute old, which covers a request that died mid-processing. A slow or failing sweep never delays or changes the delivery's answer; a failed sweep is logged as `resend_webhook_sweep_failed`.
+- A receipt that has spent **five** attempts is quarantined as `processing_exhausted` instead of being retried forever. Quarantine is bounded like the claim (0227, Codex P2 4252980865): one call quarantines at most its own receipt, or at most the sweep's limit, oldest first, skipping receipts another caller holds. A large exhausted backlog drains over successive sweeps instead of in one locking statement, so a webhook's five-row sweep stays five rows.
+- The sweep runs only as a side effect of the next delivery. A scheduled sweep and its heartbeat belong to the alerting slice.
+
+**Order.** Statuses only move forward: `claimed`/`unknown` < `accepted` < `sent` < `delivery_delayed` < `delivered` < `bounced` | `failed` | `suppressed`.
+- Every arrival order of the same events ends in the same state. A late, repeated or lower event is recorded `stale` and changes nothing.
+- A **permanent** bounce reported after `delivered` supersedes it: the recipient's server rejected the message after all.
+- A **transient** (soft) bounce is not terminal (0227, Codex P2 4265450918): it is recorded as `delivery_delayed`, so a later `delivered` or a permanent bounce still advances the row, and a transient bounce after `delivered` is stale. Permanent, undetermined and any other bounce type stay terminal.
+- `email.complained` records `complained_at` once and implies `delivered`.
+- `email.opened` and `email.clicked` are `ignored`: they are not delivery facts, and the activation subscribes to neither.
+
+**Truthful display.** `lib/delivery/status.ts` maps a ledger row to one channel-agnostic vocabulary:
+- queued, not sent, provider accepted, delayed, delivered, bounced, failed, suppressed;
+- **unknown** (an ambiguous answer, or a claim its sender never settled);
+- **stale** (accepted, but nothing reported within 24 hours, or delayed beyond 72 hours).
+
+Accepted is never shown as delivered. *Delivered* means the recipient's mail server accepted the message, never the inbox or a read. Unknown and stale are never success.
+
+**Attribution: Hone's own row, never the payload.** A ledgered send carries the Resend tag `hone_m = <email_outbound_messages.id>`. Resend reports tags inside the signed payload, so an event addresses the row Hone created before the call, even when the send's own answer was lost. Without a tag, the provider email id is the key. A receipt links to a ledger row, and through it to a studio, only when it was **applied** or **stale**. These cases keep `email_message_id` NULL and are attributable to no studio:
+- an unknown tag (`unmatched_tag`: another deployment sharing the Resend account) or an unknown email id (`unmatched_email_id`);
+- a tag and email id that disagree (`email_id_mismatch`);
+- an id already held by another attempt (`email_id_conflict`);
+- an event for an attempt Hone recorded as never sent (`not_sent`);
+- an unknown type (`unknown_event_type`) or a missing email id (`missing_email_id`).
+
+**Minimum metadata.** A receipt keeps:
+- the delivery id, the event type and time;
+- the provider email id and the reported tag;
+- reason **slugs**: bounce type and subtype, failure reason, suppression type.
+
+Addresses, subject, headers, other tags and every free-text provider message are dropped before anything is stored or logged. A reason that is not a plain identifier becomes `other`, so free text cannot leak through in slug form. Neither table has a policy or a grant: the five commands are `service_role` only.
+
+**Joining a send path (the producer contract).** The intent owner (for example LEAD-ALERT-01's notification row) stays the retry authority. For each provider attempt it:
+1. calls the purpose's begin command (`begin_appointment_email_message` today);
+2. sends through the ONE Resend path with tag `hone_m` set to the row id, plus its own idempotency key;
+3. calls `settle_email_message`: `accepted` with the email id, `refused`, `unknown` or `skipped`.
+
+A retry under the **same** idempotency key may settle an `unknown` row `accepted`. The ledger never resends. A resend after the provider's 24-hour idempotency window must first reconcile the earlier attempt.
+
+**Activation packet (each step separately authorized; none taken here).**
+1. Hosted migration `0212`, migration-first, after the lane holding `0211`.
+2. `RESEND_WEBHOOK_SECRET` in Vercel production.
+3. A Resend endpoint for `https://hone.care/api/resend/webhook`, subscribed to exactly `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.failed`, `email.suppressed` and `email.complained`.
+4. A dashboard test event, verified as one receipt with the expected outcome.
+
+Pinned by `tests/db/email-delivery-events.db.test.ts` (replay, order permutations, exactly-once under concurrency, crash recovery, tenant isolation, provider failure, privileges), `tests/migrations/0212-email-delivery-events.test.ts`, `tests/lib/email/resend-webhook.test.ts`, `tests/app/api/resend-webhook.test.ts` and `tests/lib/delivery/status.test.ts`.
+
+### Delivery incidents, the recovery sweep and the first ledgered emails (DELIVERY-VISIBILITY-01, migration 0215)
+
+**The first producer join: the reminder window email.** The reminder cron's email pass sends the 24h or 2h reminder, or the standalone intake email, under the existing 0080 claim. It now:
+1. begins one `email_outbound_messages` row per real attempt (`begin_appointment_email_message`), only after the claim, the live status re-check and the nothing-to-send exit;
+2. sends through the one Resend path with the tag `hone_m = <row id>` (`sendEmailSafely({ ledgerMessageId })`);
+3. settles the row (`settleOutcomeForEmailSend`) before recording the claim result.
+
+`sendEmailSafely` now classifies each failure as `none` (no request made), `refused` (a 4xx) or `ambiguous` (5xx, timeout, network). An acceptance without a recognisable provider id settles `unknown`. Ambiguity is never recorded as a refusal, and no free-text provider message is kept. The join is fail-soft: a ledger that cannot be written sends exactly as before, untagged. The 0080 claim stays the send authority, and nothing here resends. The booking confirmation joins inside its one sender, so none of its four callers changes, and it is just as fail-soft: no service-role configuration or no ledger row means the same email, untagged. Cancellation, postcare and receipts need new ledger purposes (a migration), and LEAD-ALERT-01's operator email needs a platform purpose; both are later slices.
+
+**Incidents: one per failure class, not one per failure.** `delivery_incidents` keeps one OPEN incident per (studio, channel, purpose, failure class), with occurrences, first and last seen, the latest attempt and appointment, and the latest reason slug.
+- An AFTER trigger on each ledger opens or extends it in the **same transaction** as the failure. For email that covers refused, bounced, failed and suppressed (settle or signed event). For SMS it covers refused, undelivered and failed (settle or Twilio callback, with no change to the Twilio route).
+- A rolled-back failure leaves no incident, and racing failures collapse into one.
+- Retry-in-progress and ambiguous states (`unknown`, `delivery_delayed`, `accepted`, `sent`) are **not** incidents. They surface through health as unknown, never as success.
+- `resolve_delivery_incident` (service_role) closes one as fixed, acknowledged or not_actionable, and the next failure opens a new one.
+- The studio **owner** reads their own incidents through `owner_delivery_incidents(studio)`: operational metadata only, with no client identity, address or message. Another studio's owner, non-owner members (receptionists included), anon and service_role are refused with 42501.
+- Platform support reads the cross-studio queue through `support_delivery_incidents` and `support_email_receipt_outcomes` (service_role). The second gives seven days of Resend receipts by outcome, including the unattributed and quarantined ones that belong to no studio.
+
+**Recovery sweep and heartbeat: `GET /api/cron/email-delivery-sweep`** (CRON_SECRET bearer). It drains up to 50 receipts whose processing never finished, records `delivery_sweep_heartbeat`, and reads `email_delivery_health()`:
+- the pending backlog and its oldest age;
+- receipts exhausted or quarantined in 24h, and unattributed receipts;
+- accepted emails with no report for 24h;
+- open incidents and the last sweep.
+
+Findings (`lib/email/delivery-health.ts`) have purpose-specific thresholds: a backlog older than 15 minutes is a warning and older than 6 hours is critical; exhausted, quarantined, unreported and sweep failures are warnings. Each finding is raised as an ops alert **at most once while an unresolved alert for that event is open**. The sweep records every finding at **warning** severity at most, because a critical ops alert is emailed to `OPS_ALERT_EMAILS` and emailed delivery alerts stay off until the #828 routing decision (D-4). A finding assessed as critical carries `assessed_severity: "critical"` in its details, so the `ops_alerts` row and `/admin/ops-alerts` still show it. A sweep or health read that fails is itself a finding, never a healthy run. **The route is not registered in `vercel.json`**: scheduling it belongs to the delivery-events activation.
+
+**Where people see it (DELIVERY-VISIBILITY-02).**
+- **Owner:** a "Message delivery" card in the owner console, Settings → Overview (`components/delivery/OwnerDeliveryCard.tsx`, mounted as-is by `app/(app)/settings/overview/page.tsx`; STUDIO-READY-03b moved it there from Settings → Launch, which no longer shows it). It reads `owner_delivery_incidents` with the owner's own session and renders **nothing** for anyone the database refuses (42501). Any other failed read says delivery status is unavailable, never "no problems". Each open incident shows once, with:
+  - a count and its first and last occurrence;
+  - a plain-English meaning and the next step (`lib/delivery/incidents.ts`), with a link to the latest appointment.
+
+  A bounce or invalid client address is the studio's to fix (check the address); a provider failure or any other refusal is Hone's. Until the Resend webhook is activated, the card says plainly that a bounce after sending cannot appear.
+- **Platform support:** `/admin/delivery`. It shows the delivery health (an unreadable row is shown as unknown, never healthy), Resend receipt outcomes and the cross-studio incident queue. Resolve is an admin-only server action, audited as `delivery_incident_resolved` (blocked attempts included).
+
+**Cancellation and postcare emails, and "client says they didn't receive it" (DELIVERY-VISIBILITY-04, migration 0221).**
+- The client's **cancellation notice** (practitioner cancel) and the **postcare email** now go through the same begin/tag/settle join, as `appointment_cancellation` and `appointment_postcare`. The join lives in one helper in `lib/email/send-appointment.ts`, and the callers pass only `ledger: { studioId, appointmentId }`. The studio's own copy of a cancellation is Hone talking to its customer, so it is **not** ledgered.
+- On an appointment page the **owner** can report "Client says they didn't receive a message", choosing one message from a closed list. `report_delivery_concern` records:
+  - who reported it and when, on the server's clock;
+  - **what the ledger said at that moment** (the latest attempt's status, or `no_record`).
+
+  It changes no delivery status, infers nothing, resends nothing and stores no free text. At most one concern is open per appointment, channel and purpose.
+- The owner's open concerns appear on the delivery card. Support sees them in `/admin/delivery` with the ledger status **then and now**, and closes them as explained, resent by the studio, provider issue or not actionable. The close is audited as `delivery_concern_closed`. The database refuses practitioners, front desk, other studios, anon and service_role.
+
+**Sweep heartbeat age (review 4307828020).** The held delivery-monitoring activation plan specifies `30 10 * * *`: once daily at 10:30 UTC, consistent with the plan's daily cron limit. Classification uses that expected 24-hour interval × a 2× margin: a heartbeat older than 48 hours raises `email_delivery_sweep_stale` at warning severity; exactly 48 hours is within the margin. A null or unparsable timestamp raises the same finding immediately, even when the backlog is empty and the last failure count is null/zero. This is an expected-cadence contract, not cron registration or an activation claim. A fresh heartbeat does not suppress a last-run failure and proves only the heartbeat write, not successful completion of later health/alert handling.
+
+**Independent-monitor/config gap.** No existing independently scheduled caller invokes email `healthFindings`/`readEmailDeliveryHealth`. The sweep evaluates itself after its heartbeat write, so it cannot independently detect its own failure to start. The integration candidate's `/admin/delivery` already evaluates this helper on demand, but a page read is not a monitor. Existing daily calendar routes check *reminder* scheduler health (calendar-sync at `30 9 * * *` is a possible reuse point), but they are not wired to email health. This change adds no job, schedule, health-caller wiring or provider activation; missing/stale detection remains read-triggered until an independently scheduled email-health invocation is explicitly wired. The sweep itself remains absent from `vercel.json`. Critical ops-alert email activation remains held under #828, and #925/#927 remain held.
+
+**Not yet:** emailed owner or support notifications (the HIPAA routing gate #828 applies to any patient-related email: Resend cannot sign a BAA), and producer coverage beyond the reminder, cancellation and postcare flows described above.
+
+Pinned by `tests/db/delivery-incidents.db.test.ts`, `tests/migrations/0215-delivery-incidents.test.ts`, `tests/lib/email/delivery-ledger.test.ts`, `tests/lib/email/delivery-health.test.ts`, `tests/app/api/email-delivery-sweep.test.ts` and `tests/app/api/cron/reminder-email-ledger.test.ts`.
+
 ## SMS (Twilio)
 
 ### Posture
@@ -244,6 +360,123 @@ A new waitlist invitation is **also texted** to an eligible prospect, beside its
   - a refused or lost text raises one `sms_send_failed` warning (purpose `waitlist_join_acknowledgement`), before the best-effort settle.
 - **The ledger.** Purpose `waitlist_join_acknowledgement`, subject `waitlist_entry_id`. The subject is tied to the studio by a composite key, there is at most one row per entry (unique index), and it is write-once.
 
+### Operator lead alerts (LEAD-ALERT-01, #826, migration 0213)
+
+When a Hone **demo request** (`/demo`) or **early-access signup** (`public.waitlist`, not a
+studio's new-client waitlist) is saved, the platform operator gets one email. Nothing is sent
+to the prospect.
+
+- **Saved together.** `record_platform_demo_request` / `record_platform_early_access_signup`
+  (service_role only) write the lead and its `platform_lead_alerts` row in one transaction,
+  after the action's validation and rate limit. A refused submission saves nothing and alerts
+  nobody. An early-access address already on the list is a duplicate: no lead, no alert.
+  Every accepted demo request is its own lead with its own single alert (lead capture is
+  unchanged; the rate limit bounds repeats).
+- **Sent after the response**, through the existing keyed Resend attempt
+  (`sendOnceWithIdempotencyKey`), under the alert's `idempotency_key`
+  (`lead-alert/<alert id>/<generation>`), identical on every retry of that generation.
+- **One key, one request.** The first attempt of a generation freezes the message it sends
+  (From, subject, HTML, text) and the SHA-256 of its recipient on the alert row
+  (`freeze_platform_lead_alert_message`, first writer wins under the current claim). Every
+  automatic retry sends those exact bytes, whatever changed in the renderer, origin or sender
+  since. If `LEAD_ALERT_EMAIL` changed mid-generation, the retry is not sent and the alert fails
+  as `recipient_changed`. The operator's **Retry** renders afresh under a new key. The frozen
+  message is cleared when the generation ends.
+- **Claim → send → settle.** One worker leases an alert (`FOR UPDATE SKIP LOCKED`, 120 s
+  lease); only the current claim token may settle it. At most five attempts, backing off
+  2 min, 10 min, 1 h, 6 h. A provider refusal the same request would meet again fails at
+  once. An abandoned lease is re-claimed under the same key. **Replay window:** automatic
+  attempts end 20 hours after the first one (the provider keeps an idempotency key about
+  24 hours), whatever the sweep cadence; alerts unsent by then, or 72 hours after the lead,
+  become a visible `failed: expired`, and only the operator's Retry (a new key) sends again.
+- **When retries run.** The first attempt is sent right after the lead is saved. Retries run
+  on the existing **15-minute appointment-reminders trigger**, after its reminder passes and
+  heartbeat, and also after a failed reminders run's `cron_route_failed` alert (the route still
+  answers 500), so an unrelated reminders failure does not stop lead retries: a bounded sweep
+  through the same worker, sized by time: up to 25 alerts within
+  an 8-second budget. **The deadline is enforced by cancellation, on every call**: the provider
+  request is aborted 1.5 s before the deadline (settled as a same-key retry), and the claim,
+  freeze, settle, expiry and ops-alert writes are aborted at the deadline itself, so nothing the
+  sweep started keeps running. A database call cut off this way has an **unknown** outcome: it is
+  counted as `unknown` (never as sent or failed), the run reports `timed_out` and `ok: false`, and
+  the lease, the same key and the frozen message recover the alert on a later run, the provider
+  replaying rather than resending. The `lead_alert_recovery_failed` report is itself cut off after
+  1 s, so the recovery adds at most 9 s to a reminders invocation whatever the database or
+  provider does (proved with a fake clock and fake database and provider transports in
+  `tests/lib/platform-leads/recovery-deadline.test.ts`).
+  Alerts are claimed earliest-due first, so a backlog cannot starve later alerts. The response
+  reports `drained`; `false` means it stopped at its cap or budget. It is gated before any database or provider call until lead alerts are configured,
+  and a failure there is an ops alert (`lead_alert_recovery_failed`) and a response field,
+  never a failed reminders run. The daily `/api/cron/lead-alerts` stays as a backstop. With
+  this trigger every arrival minute of the day reaches all five attempts inside the 20-hour
+  cutoff (proved in `tests/lib/platform-leads/retry-schedule.test.ts`, at 15- and 60-minute
+  cadence). **The daily cron alone cannot**: no arrival reaches five attempts. **Capacity is
+  finite**: `tests/lib/platform-leads/retry-capacity.test.ts` shows 300- and 1,000-alert outage
+  cohorts all delivered with a healthy provider, and that with a slow provider and a large backlog
+  some alerts expire. They become a visible `failed: expired` (ops alert
+  `platform_lead_alerts_expired`); the lead is kept and the operator's Retry sends again.
+- **States are honest.** `accepted` means the provider accepted the message. It is not a
+  delivery receipt.
+- **Recipient.** `LEAD_ALERT_EMAIL`, exactly one address that is also on `ADMIN_EMAILS`.
+  Missing or refused configuration, a missing `RESEND_API_KEY` or a missing
+  `NEXT_PUBLIC_APP_ORIGIN` sends nothing and spends no attempt. The alert records the
+  blocker and `/admin` shows **Lead alerts: Not sending**. A send abandoned by a worker
+  that died (its lease expired) is not left looking active: in the same statement it
+  returns to pending with the blocker, keeping its attempts, key and frozen message, and
+  the old worker's late settle is refused. A live lease is never touched, and one past
+  its attempts or replay window is left for expiry to fail.
+- **Content.** Name, email, practice, city, practice type, practitioner count, current tool
+  when given, event and time, and a sign-in-required link to the lead's own page,
+  `/admin/leads/<demo-request|early-access>/<id>`. The page is admin-only (404 for anyone else)
+  and reads only that lead and its alert status, so it works for any lead, however old, and shows
+  a demo request's notes. If the operator is signed out, the middleware remembers the validated
+  `/admin` path in a 15-minute httpOnly cookie, and the sign-in callback returns there in the
+  same browser. Only a same-origin path is ever a return target. Submitted text
+  is flattened (no control, invisible or bidi characters, capped at 200 characters) and
+  HTML-escaped. Notes are never included; the email says only that there are some. The
+  subject carries no submitted text.
+- **Visibility.** `/admin` has a **Lead alerts** card (configuration, counts by state,
+  failed alerts with **Retry**) and an Alert column on both lead tables. A final failure
+  raises a `warning` ops alert carrying ids and codes only.
+- **No catch-up.** Leads saved before 0213, or written any other way, have no alert and
+  never generate email.
+
+### Studio number controls (SMS-SENDER-CONTROL-01, #824) — fake provider only
+
+Settings → Integrations can show an owner **Set up a studio number** panel:
+- **Find numbers:** search CA or US candidates by area code.
+- **Use this number:** provision the chosen number. This runs `provisionStudioSmsSender`, so it goes through the 0191 claim, fence, purchase, finalize and test.
+- **Adopt an existing number:** a support-assisted path through `adoptExistingStudioSmsSender`.
+
+**The gate.** The panel and every action open **only** when `HONE_SMS_SENDER_CONTROLS=fake` on an unhosted run (no `VERCEL_ENV`) or Vercel `development`. They stay shut on every hosted Vercel environment, including previews, which run against the production database, and in either of these cases:
+- in production (`VERCEL_ENV=production`), where the resolver would hand back the fake and could write a fake sender into production data;
+- whenever live provisioning is armed (`HONE_SMS_PROVISIONING_LIVE` plus credentials), where a click could buy a number.
+
+**The provider.** The actions pass the controls' own **fake** provider explicitly and never resolve one, so nothing is bought, registered or sent. That fake is seeded with a synthetic demo account inventory (`lib/sms/sender-controls-demo.ts`): +14165550142 (CA) and +12125550142 (US) in one demo messaging service, so adoption can succeed. Search never offers those numbers and purchase never buys them.
+
+**One webhook base.** Every Twilio webhook URL Hone configures (provisioning) or requires (adoption) is built by `lib/sms/webhook-base.ts`: `TWILIO_WEBHOOK_BASE_URL` when set, else the app origin. The signature-verifying routes (`/api/twilio/inbound-sms`, `/api/twilio/message-status`) rebuild the signed URL through the same module. A configured URL therefore always verifies, and parity tests pin this.
+
+**Release and choose again (migration 0226).** The panel offers "Choose a different number" when the sender is in `error`. The release proceeds only for a claim that provably owns nothing:
+- `get_releasable_studio_sms_claim` requires an owner actor, `error`, no recorded number, number SID, service SID or `provisioned_at`, and a last error of `number_no_longer_available`, `provider_resource_mismatch` or `finalize_conflict`;
+- the provider's read-only `lookupResourcesByClaim` must find nothing under the claim key;
+- `release_unpurchased_studio_sms_claim` then re-checks everything, compare-and-set on the sender and key, and goes error -> releasing -> released.
+
+A timeout, network or unavailable failure is never releasable; only a retry, which reconciles first, may continue it.
+
+Before any claim, a number or service recorded on any row other than the studio's own live attempt is refused (`studio_sms_resource_recorded`). That includes the studio's RELEASED history, which 0191's uniqueness still covers. A stale search result therefore does not wedge setup. The reservation itself is atomic: a unique index on the claimed number across live rows makes the second concurrent claimer `not_claimable` before any provider work. Each studio's demo account is its own: numbers from the 555-0150..0199 range (search offers 0100..0149) and its own service.
+
+**Connection-override fragments.** Twilio lets a webhook URL carry connection overrides after `#` (for example `#rp=5xx`), and leaves the fragment out of the request and the signature. One strict validator, `normalizeTwilioWebhookUrl` in `lib/sms/webhook-base.ts`, is shared with the STOP preflight. A fragment is recognised only when it is entirely documented overrides with valid values: `ct` 100–10000, `rt` and `tt` 100–15000, `rc` 0–5, `rp` from 4xx, 5xx, ct, rt and all, `sni` y or n, `e` documented edges, each key once. Anything else is refused, never stripped, and everything before `#` is compared exactly. A recognised override is not evidence of STOP redelivery: account Webhook Rules take precedence (`effectiveConnectionSettings`).
+
+**Effective inbound route.** Adoption compares where inbound texts, STOP included, ACTUALLY go (`lib/sms/inbound-routing.ts`). Per Twilio's Services resource documentation (checked 2026-10-12), with `use_inbound_webhook_on_number` on, the number's own `sms_url` overrides the service's `inbound_request_url`. With it off and `inbound_request_url` null, inbound is disabled. `readMessagingServiceConfig` reports the flag, and an unreported flag is `null`. `lookupOwnedNumber` reports the number's `sms_url` from the record it already reads. The number's `sms_method` must be POST, and a populated `sms_application_sid` (which makes Twilio ignore the number's URLs) is refused. The service's `inbound_method` must be POST too. An unreported flag, URL, method or application is UNKNOWN: a blocker, refused before the claim as `inbound_routing_unknown` (uncertain), never treated as false.
+
+**Adoption is checked before the claim.** The provider's read-only ownership lookup and messaging-service config read run BEFORE the durable claim. A number the account does not own, a number in another or no service, or a service not wired to Hone's webhooks is refused with nothing written (`uncertain: false`). An incomplete or failed provider answer is refused as `uncertain: true`, to retry later. Without this, a typo would claim a write-once number (0191), park it in `error`, and wedge the studio's setup. Only a submission that passes reaches the claim. A later failure there (for example its proof text) is reported as failed and never as active.
+
+**The country.** A number, or area code, that does not belong to the selected country is refused before any claim (`number_country_mismatch`). With no area code, the fake proposes the country's own numbers.
+
+**Authority.**
+- The database's claim re-derives the owner from the actor user id.
+- Live provisioning, number purchase, US registration submission and WAIT routing (#716, held) are separate owner-approved decisions.
+
 ### SMS RPC grants hardened (PR #141 / migration 0062)
 
 `claim_sms_send` and related SMS RPCs are `revoke from public, anon, authenticated; grant to service_role only`. The action layer always invokes via `createAdminClient()`. Audit grep on every caller is part of the PR template's security checklist.
@@ -256,10 +489,11 @@ A new waitlist invitation is **also texted** to an eligible prospect, beside its
 
 | Route | How it is scheduled |
 |---|---|
-| `/api/cron/appointment-reminders` | **External scheduler (cron-job.org), `GET` every 15 min** with `Authorization: Bearer $CRON_SECRET`. (NOT in `vercel.json` — `*/15` exceeds the current plan's once-per-day cron cap. If the project moves to Vercel Pro, add `{ "path": "/api/cron/appointment-reminders", "schedule": "*/15 * * * *" }` to `vercel.json` and drop the external job — that schedule string is `APPOINTMENT_REMINDER_CRON_SCHEDULE`.) |
+| `/api/cron/appointment-reminders` | **External scheduler (cron-job.org), `GET` every 15 min** with `Authorization: Bearer $CRON_SECRET`. After its reminder passes it also runs bounded operator lead-alert recovery (LEAD-ALERT-01), gated until lead alerts are configured. (NOT in `vercel.json` — `*/15` exceeds the current plan's once-per-day cron cap. If the project moves to Vercel Pro, add `{ "path": "/api/cron/appointment-reminders", "schedule": "*/15 * * * *" }` to `vercel.json` and drop the external job — that schedule string is `APPOINTMENT_REMINDER_CRON_SCHEDULE`.) |
 | `/api/cron/materialize-recurring-breaks` | **Vercel Cron, `vercel.json`, `0 8 * * *`** (daily, 08:00 UTC — allowed on every plan). Also runs the reminder-scheduler health check in a `finally` (PR OPS-01). |
 | `/api/cron/calendar-reconcile` | **Vercel Cron, `vercel.json`, `0 9 * * *`** (daily, B2.3-c3 — daily because the plan caps cron at once/day). **DORMANT:** the reconciliation sweep finds zero intent-eligible studios while every studio outbound flag is OFF. Schedule pinned in `lib/cron/calendar-cron-schedule.ts`. |
 | `/api/cron/calendar-sync` | **Vercel Cron, `vercel.json`, `30 9 * * *`** (daily, B2.3-c3, after reconciliation). **DORMANT:** `worker_enabled=false` → the claim RPC returns zero rows and mutates nothing → no-work. The **first scheduled run doubles as the B2.3-c2 no-work production validation** (Vercel Cron auto-supplies the production `CRON_SECRET`). Schedule pinned in `lib/cron/calendar-cron-schedule.ts`. |
+| `/api/cron/lead-alerts` | **Vercel Cron, `vercel.json`, `0 13 * * *`** (daily, LEAD-ALERT-01). Recovery sweep for operator lead alerts: expires alerts past 72 h, then sends due or abandoned ones, one claim at a time (≤ 20 per run). Each alert is normally sent right after its lead is saved. Retries run on the 15-minute appointment-reminders trigger (bounded, gated until configured); this daily run is the backstop. |
 | `/api/cron/no-show-check` | **intentionally NOT scheduled** (disabled, non-mutating stub). |
 
 ### Reminder scheduler: RUNTIME OPERATION PROVEN 2026-08-12 · HUMAN OWNERSHIP still OPEN

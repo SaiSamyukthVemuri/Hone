@@ -202,6 +202,9 @@ beforeEach(() => {
     },
     studio_payment_settings: { stripe_account_id: "acct_test", stripe_livemode: false },
     client_stripe_customers: { stripe_customer_id: "cus_test" },
+    // PAY-CCY-02's pre-charge country check (step 4, inside
+    // loadCardAndVerifyLineage) reads studio_payment_jurisdictions.
+    studio_payment_jurisdictions: { payment_country: "CA", payment_currency: "cad" },
   };
 });
 
@@ -312,6 +315,42 @@ describe("NEGATIVE CONTROL: the retired rule fails these tests", () => {
       expect(wroteFailed()).toBe(true);
     });
   }
+});
+
+describe("PAY-CCY-02: a MISSING jurisdiction row is fail-closed", () => {
+  // 0214_studio_payment_jurisdiction.sql BACKFILLS a row for every existing
+  // studio (:147) and adds an `after insert on public.studios` trigger for new
+  // ones (:164-175), so with 0214 in the chain an absent row is an INTEGRITY
+  // ANOMALY, not a legacy state. It was briefly exempted as chargeable on the
+  // premise that every studio lacked a row; exempting it moves money through a
+  // country and currency nobody has verified.
+  //
+  // This case exists because nothing pinned the behaviour: the two suites that
+  // touch the table SEED it, so the absence was untested and the exemption
+  // could return unnoticed.
+  it("refuses BEFORE Stripe when the row 0214 guarantees is absent", async () => {
+    delete (h.rows as Record<string, unknown>).studio_payment_jurisdictions;
+
+    const r = await run();
+
+    expect(r.ok).toBe(false);
+    // The country check pushes its reason into loadCardAndVerifyLineage's list,
+    // so the refusal surfaces as the lineage verdict.
+    expect(r).toMatchObject({ outcome: "lineage_mismatch" });
+    // AND NO MONEY MOVED: the provider was never called, so there is no
+    // charge to reconcile and no idempotency key was spent.
+    expect(h.createKeys).toHaveLength(0);
+    expect(wroteFailed()).toBe(false);
+  });
+
+  it("CONTROL: the same attempt charges once the row is present", async () => {
+    // Non-vacuity. Without this the case above would also pass if the fixture
+    // were broken in some unrelated way that refused every charge.
+    expect((h.rows as Record<string, unknown>).studio_payment_jurisdictions).toBeDefined();
+    const r = await run();
+    expect(r).not.toMatchObject({ outcome: "lineage_mismatch" });
+    expect(h.createKeys.length).toBeGreaterThan(0);
+  });
 });
 
 describe("source shape: the runner consults the classifier in its terminal branch", () => {

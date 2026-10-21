@@ -20,6 +20,7 @@ function attempt(
     id: "att_test",
     status: "succeeded",
     amountCents: 22500,
+    currency: "cad",
     createdAt: "2026-07-12T19:03:00Z",
     stripePaymentIntentId: "pi_test",
     stripeChargeId: "ch_test",

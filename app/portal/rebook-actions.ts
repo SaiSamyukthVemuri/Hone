@@ -46,6 +46,7 @@ import {
   type PortalRebookRefusalCode,
 } from "@/lib/portal/rebook-copy";
 import type { Studio } from "@/lib/types/database";
+import { clientSelfServiceLinks } from "@/lib/booking/client-self-service-policy";
 
 // ===========================================================================
 // EMERG-PORTAL-REBOOK-01 — a returning client can book again, from the portal.
@@ -725,9 +726,19 @@ export async function bookAnotherAppointmentAction(
     }),
   );
 
-  const cancellationUrl = `${appOrigin}/cancel/${appointmentToken}`;
-  const rescheduleUrl = `${appOrigin}/reschedule/${appointmentToken}`;
-  const manageUrl = `${appOrigin}/manage/${appointmentToken}`;
+  // HON-47. One policy-aware helper for all three links: a studio that has
+  // switched an action off must not have that link SENT, in any channel.
+  // `/manage` is never suppressed — it is the honest fallback. The flags come
+  // from the studio row already read server-side.
+  const {
+    cancelUrl: cancellationUrl,
+    rescheduleUrl,
+    manageUrl,
+  } = clientSelfServiceLinks({
+    origin: appOrigin,
+    token: appointmentToken,
+    studio,
+  });
 
   const intake = await postCommit<{ id: string; url: string } | null>(
     "portal_rebook_intake_threw",

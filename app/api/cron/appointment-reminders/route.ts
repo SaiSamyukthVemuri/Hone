@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import {
+  beginAppointmentEmailMessage,
+  settleEmailMessage,
+  settleOutcomeForEmailSend,
+} from "@/lib/email/delivery-ledger";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import {
   claimEmailSend,
@@ -31,6 +36,8 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { reminderWindowIso } from "@/lib/cron/reminder-schedule";
 import { recordReminderRunSuccess } from "@/lib/cron/reminder-heartbeat";
+import { recoverLeadAlertsOnReminderTrigger } from "@/lib/platform-leads/alert-delivery";
+import { clientSelfServiceLinks } from "@/lib/booking/client-self-service-policy";
 
 const PER_RUN_LIMIT = 50;
 const MAX_ATTEMPTS = 3;
@@ -325,6 +332,35 @@ async function sendReminderPass(opts: {
 
     let result: EmailSendResult;
 
+    // DELIVERY-VISIBILITY-01: one email delivery-ledger row per real attempt.
+    //
+    // THE ROW IS BEGUN IMMEDIATELY BEFORE THE PROVIDER CALL, AFTER ALL
+    // PREPARATION (Codex P2 4307698580). It used to be begun here, before the
+    // token was minted and before the treatment-time context was read, and
+    // `begin` leaves the row `claimed` — so two paths left a row that nothing
+    // would ever settle:
+    //
+    //   * an unmintable token `continue`s the loop (it records a failed email
+    //     result and moves on), skipping the settle entirely;
+    //   * `getTreatmentTimeContextForEmail` can THROW, and nothing between
+    //     here and the settle catches it.
+    //
+    // A row stuck in `claimed` is invisible: no health measure reports one. So
+    // the reference is computed once and the row is created at the last moment
+    // in each branch, which is what the old comment already claimed was true.
+    // Fail-soft is unchanged: a null id sends exactly as before, untagged. The
+    // case-4 standalone intake email is the same window slot, so it carries the
+    // same purpose.
+    const ledgerRef = {
+      studioId: appt.studio.id,
+      appointmentId: appt.id,
+      purpose:
+        opts.kind === "24h"
+          ? ("appointment_reminder_24h" as const)
+          : ("appointment_reminder_2h" as const),
+    };
+    let ledgerMessageId: string | null = null;
+
     if (wantsReminder) {
       // CASES 1/2/3 - the appointment reminder, carrying the intake CTA only
       // when intakeUrl is non-null.
@@ -357,8 +393,12 @@ async function sendReminderPass(opts: {
         stats.failed += 1;
         continue;
       }
-      const cancellationUrl = `${appOrigin}/cancel/${token}`;
-      const rescheduleUrl = `${appOrigin}/reschedule/${token}`;
+  // HON-47. One policy-aware helper for all three links: a studio that has
+  // switched an action off must not have that link SENT, in any channel.
+  // `/manage` is never suppressed — it is the honest fallback. The flags come
+  // from the studio row already read server-side.
+      const { cancelUrl: cancellationUrl, rescheduleUrl } =
+        clientSelfServiceLinks({ origin: appOrigin, token, studio: appt.studio });
       const practitionerName =
         appt.practitioner?.display_name?.trim() ||
         appt.practitioner?.email ||
@@ -377,6 +417,8 @@ async function sendReminderPass(opts: {
         : null;
       const sendFn =
         opts.kind === "24h" ? send24hReminderToClient : send2hReminderToClient;
+      // Everything that could fail or throw is behind us.
+      ledgerMessageId = await beginAppointmentEmailMessage(admin, ledgerRef);
       result = await sendFn({
         appointment: appt,
         service: appt.service,
@@ -388,6 +430,7 @@ async function sendReminderPass(opts: {
         rescheduleUrl,
         treatmentTimeLine,
         intakeUrl,
+        ledgerMessageId,
       });
     } else {
       // CASE 4 - the appointment reminder is off but intake reminders are on
@@ -398,6 +441,7 @@ async function sendReminderPass(opts: {
       // !wantsReminder, and the !wantsReminder && !intakeIncomplete case
       // already `continue`d above - so intakeIncomplete holds, `intake` is
       // non-null, and the link was minted.
+      ledgerMessageId = await beginAppointmentEmailMessage(admin, ledgerRef);
       result = await sendIntakeReminderToClient({
         kind: opts.kind,
         clientEmail: appt.client.email,
@@ -405,9 +449,13 @@ async function sendReminderPass(opts: {
         startsAt: new Date(appt.starts_at),
         timezone: appt.studio.timezone,
         intakeUrl: intakeUrl as string,
+        ledgerMessageId,
       });
     }
 
+    if (ledgerMessageId) {
+      await settleEmailMessage(admin, ledgerMessageId, settleOutcomeForEmailSend(result));
+    }
     await recordEmailResult(admin, appt.id, emailType, result.ok);
     if (result.ok) {
       // Stamp the PR #303 intake-link display metadata ONLY when a link was
@@ -551,7 +599,15 @@ async function sendSmsReminderPass(opts: {
       } catch {
         manageToken = null;
       }
-      return manageToken ? `${smsAppOrigin}/manage/${manageToken}` : null;
+      // /manage is never suppressed, so this stays a plain build — but it goes
+      // through the helper so there is ONE place that decides these URLs.
+      return manageToken
+        ? clientSelfServiceLinks({
+            origin: smsAppOrigin,
+            token: manageToken,
+            studio: null,
+          }).manageUrl
+        : null;
     };
 
     const sendFn =
@@ -605,6 +661,38 @@ async function sendSmsReminderPass(opts: {
   }
 
   return stats;
+}
+
+/**
+ * LEAD-ALERT-01: bounded operator lead-alert recovery on this trigger, on the
+ * success AND the failure path (Codex P2 4253278108, 4254097611). Gated before
+ * any database or provider call until lead alerts are configured; never
+ * throws; a lead-alert problem is its own warning ops alert and a response
+ * field, never a change to what reminders did or how the route answers.
+ */
+async function runLeadAlertRecovery() {
+  try {
+    // Bounded end to end, its own failure report included (Codex P2
+    // 4259034271): at most REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS + _REPORT_MS.
+    const out = await recoverLeadAlertsOnReminderTrigger();
+    return out.ran
+      ? {
+          ran: true as const,
+          ok: out.summary.ok,
+          // false = stopped at its cap or budget with work possibly left (backpressure)
+          drained: out.summary.drained,
+          attempted: out.summary.attempted,
+          accepted: out.summary.accepted,
+          failed: out.summary.failed,
+          expired: out.summary.expired,
+          // claim/freeze/settle cancelled at the deadline: recovered later, neither sent nor failed
+          unknown: out.summary.unknown,
+          timed_out: out.summary.timedOut,
+        }
+      : { ran: false as const, reason: out.reason };
+  } catch {
+    return { ran: false as const, reason: "threw" as const };
+  }
 }
 
 export async function GET(req: Request) {
@@ -683,12 +771,21 @@ export async function GET(req: Request) {
       smsFailed: sms_reminder_24h.failed + sms_reminder_2h.failed,
     });
 
+    // LEAD-ALERT-01 (Codex P2 4253278108): bounded operator lead-alert
+    // recovery on this existing 15-minute trigger, AFTER every reminder pass
+    // and the heartbeat, so it can never change what reminders did. It is gated
+    // before any database or provider call until lead alerts are configured,
+    // never throws, and reports its own outcome: a lead-alert problem is an ops
+    // alert and a field below, never a failed reminders run.
+    const lead_alerts = await runLeadAlertRecovery();
+
     return NextResponse.json({
       ok: true,
       reminder_24h,
       reminder_2h,
       sms_reminder_24h,
       sms_reminder_2h,
+      lead_alerts,
     });
   } catch (err) {
     // PR #153. Cron-route failure alert. The cron runs every few
@@ -705,8 +802,14 @@ export async function GET(req: Request) {
         duration_ms: Date.now() - startedAt,
       },
     });
+    // LEAD-ALERT-01 (Codex P2 4254097611): an unrelated reminders failure must
+    // not stop lead-alert retries -- the daily backstop alone cannot keep the
+    // 20-hour schedule. The SAME bounded, gated, never-throwing recovery runs
+    // here too, AFTER the reminders' own failure alert. The reminders' 500 and
+    // cron_route_failed are unchanged.
+    const lead_alerts = await runLeadAlertRecovery();
     return NextResponse.json(
-      { ok: false, error: "cron_failed" },
+      { ok: false, error: "cron_failed", lead_alerts },
       { status: 500 },
     );
   }

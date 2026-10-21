@@ -323,6 +323,77 @@ describe("lookupOwnedNumber: read-only census", () => {
     });
   });
 
+  it("reports the number's own inbound webhook (sms_url) from the same record: set, empty, or not reported", async () => {
+    for (const [record, expected] of [
+      [{ sms_url: "https://hone.care/api/twilio/inbound-sms" }, "https://hone.care/api/twilio/inbound-sms"],
+      [{ sms_url: "" }, null],
+      [{}, undefined],
+    ] as const) {
+      stubFetch([
+        { status: 200, json: { incoming_phone_numbers: [{ sid: PN("a"), phone_number: NUMBER, ...record }] } },
+        { status: 200, json: { services: [{ sid: MG("b") }], meta: { next_page_url: null } } },
+        { status: 200, json: {} },
+      ]);
+      const r = await (await adapter()).lookupOwnedNumber({ phoneNumber: NUMBER, expectedMessagingServiceSid: MG("b") });
+      expect(r.ok && r.facts.numberSmsUrl, JSON.stringify(record)).toBe(expected);
+    }
+  });
+
+  it("reports sms_method and sms_application_sid from the same record; absent is not reported (undefined)", async () => {
+    for (const [record, method, app] of [
+      [{ sms_method: "POST", sms_application_sid: null }, "POST", null],
+      [{ sms_method: "GET", sms_application_sid: "AP" + "1".repeat(32) }, "GET", "AP" + "1".repeat(32)],
+      [{}, undefined, undefined],
+    ] as const) {
+      stubFetch([
+        { status: 200, json: { incoming_phone_numbers: [{ sid: PN("a"), phone_number: NUMBER, ...record }] } },
+        { status: 200, json: { services: [{ sid: MG("b") }], meta: { next_page_url: null } } },
+        { status: 200, json: {} },
+      ]);
+      const r = await (await adapter()).lookupOwnedNumber({ phoneNumber: NUMBER, expectedMessagingServiceSid: MG("b") });
+      expect(r.ok && r.facts.numberSmsMethod, JSON.stringify(record)).toBe(method);
+      expect(r.ok && r.facts.numberSmsApplicationSid, JSON.stringify(record)).toBe(app);
+    }
+  });
+
+  // Codex P2 4275604617: a present but MALFORMED routing field is unknown,
+  // never "none"; only an explicit null or empty value is "none".
+  it("a malformed sms_application_sid, sms_url or sms_method is UNKNOWN (undefined), never none (null)", async () => {
+    for (const bad of [123, true, false, {}, [], { sid: "AP" + "1".repeat(32) }]) {
+      for (const field of ["sms_application_sid", "sms_url", "sms_method"] as const) {
+        stubFetch([
+          { status: 200, json: { incoming_phone_numbers: [{ sid: PN("a"), phone_number: NUMBER, sms_url: "https://hone.care/api/twilio/inbound-sms", sms_method: "POST", sms_application_sid: null, [field]: bad }] } },
+          { status: 200, json: { services: [{ sid: MG("b") }], meta: { next_page_url: null } } },
+          { status: 200, json: {} },
+        ]);
+        const r = await (await adapter()).lookupOwnedNumber({ phoneNumber: NUMBER, expectedMessagingServiceSid: MG("b") });
+        const facts = r.ok ? r.facts : null;
+        const value = field === "sms_application_sid" ? facts?.numberSmsApplicationSid : field === "sms_url" ? facts?.numberSmsUrl : facts?.numberSmsMethod;
+        expect(r.ok, `${field}=${JSON.stringify(bad)}`).toBe(true);
+        expect(value, `${field}=${JSON.stringify(bad)}`).toBeUndefined();
+      }
+    }
+  });
+
+  it("and the routing decision built from a malformed application SID is UNKNOWN, never 'the number's URL'", async () => {
+    const { effectiveInbound } = await import("@/lib/sms/inbound-routing");
+    const { reportedString } = await import("@/lib/sms/provider/twilio-provider");
+    const HONE = "https://hone.care/api/twilio/inbound-sms";
+    const facts = (app: unknown) => ({
+      useInboundWebhookOnNumber: true,
+      serviceInboundUrl: null,
+      numberSmsUrl: HONE,
+      numberSmsMethod: "POST",
+      numberSmsApplicationSid: reportedString({ sms_application_sid: app }, "sms_application_sid"),
+    });
+    expect(effectiveInbound(facts(42))).toMatchObject({ kind: "unknown", missing: "number_sms_application_sid" });
+    expect(effectiveInbound(facts({}))).toMatchObject({ kind: "unknown" });
+    // An explicit null is still "none": the number's own URL decides.
+    expect(effectiveInbound(facts(null)).kind).not.toBe("unknown");
+    expect(reportedString({ sms_application_sid: "" }, "sms_application_sid")).toBeNull();
+    expect(reportedString({}, "sms_application_sid")).toBeUndefined();
+  });
+
   it("A MALFORMED SERVICE ENTRY FAILS THE CENSUS CLOSED", async () => {
     // The skipped entry could be the one holding the number, so a census that
     // ignored it and reported `not_associated` would license an attach.
@@ -450,7 +521,18 @@ describe("readMessagingServiceConfig: read-only", () => {
     expect(r.ok && r.config).toEqual({
       inboundRequestUrl: "https://hone.care/in",
       statusCallbackUrl: "https://hone.care/st",
+      // Not in the answer: UNKNOWN, never false / never POST.
+      useInboundWebhookOnNumber: null,
+      inboundMethod: null,
     });
+  });
+
+  it("reports use_inbound_webhook_on_number exactly as given; a non-boolean is unknown", async () => {
+    for (const [given, expected] of [[true, true], [false, false], ["true", null], [null, null]] as const) {
+      stubFetch([{ status: 200, json: { inbound_request_url: null, status_callback: null, use_inbound_webhook_on_number: given } }]);
+      const r = await (await adapter()).readMessagingServiceConfig({ messagingServiceSid: MG("b") });
+      expect(r.ok && r.config.useInboundWebhookOnNumber, String(given)).toBe(expected);
+    }
   });
 });
 

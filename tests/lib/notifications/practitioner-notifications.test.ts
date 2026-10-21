@@ -300,10 +300,13 @@ describe("public reschedule action calls the helper after the reschedule RPC suc
   });
 
   // Migration 0171 replaced the legacy reschedule_appointment RPC with the
-  // atomic reschedule_appointment_v2 command. The invariant is unchanged: the
-  // notification is a POST-COMMIT side effect and must follow the mutation.
-  it("the call appears AFTER the reschedule_appointment_v2 command", () => {
-    const rpcIdx = ACTIONS.indexOf('"reschedule_appointment_v2"');
+  // atomic reschedule_appointment_v2 command, and HON-47/0234 moved the
+  // implementation to v3 (v2 stays as a deploy-skew wrapper). The invariant is
+  // unchanged through both: the notification is a POST-COMMIT side effect and
+  // must follow the mutation. Anchored on the name the ACTION calls, because an
+  // anchor on a name the action no longer uses would pass vacuously.
+  it("the call appears AFTER the reschedule command", () => {
+    const rpcIdx = ACTIONS.indexOf('"reschedule_appointment_v3"');
     const helperIdx = ACTIONS.indexOf("recordPractitionerNotification({");
     expect(rpcIdx).toBeGreaterThan(-1);
     expect(helperIdx).toBeGreaterThan(-1);

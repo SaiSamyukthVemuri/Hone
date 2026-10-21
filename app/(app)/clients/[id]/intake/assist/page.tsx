@@ -1,3 +1,4 @@
+import { intakeRevision } from "@/lib/intake/revision";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -77,6 +78,8 @@ export default async function AssistedIntakePage({
     lastEnterableId,
   );
 
+  if (intakeRevision(intake.revision) === null) notFound();
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2">
@@ -97,7 +100,7 @@ export default async function AssistedIntakePage({
         intakeId={intake.id}
         initialStep={initialStep}
         initialResponses={responses}
-        initialUpdatedAt={intake.updated_at}
+        initialRevision={intakeRevision(intake.revision)!}
       />
     </div>
   );

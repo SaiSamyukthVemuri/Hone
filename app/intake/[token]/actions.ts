@@ -1,10 +1,13 @@
 "use server";
 
+import { isDeepStrictEqual } from "node:util";
+
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyIntakeToken } from "@/lib/intake/tokens";
 import {
   findInvalidChoiceAnswers,
+  getQuestionByKey,
   findMissingRequiredAnswers,
   TOTAL_STEPS,
 } from "@/lib/intake/questions";
@@ -19,8 +22,11 @@ import {
 } from "@/lib/intake/consent-gate";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
+import { intakeRevision, INTAKE_CONFLICT, INTAKE_TERMINAL } from "@/lib/intake/revision";
+import { writeIntakeRevision } from "@/lib/intake/write-revision";
 
-export type SaveResult = { ok: true } | { ok: false; error: string };
+export type SaveResult = { ok: true; revision: string } | { ok: false; error: string; code?: "conflict" | "terminal" | "unavailable" };
+
 
 const INTAKE_GENERIC_ERROR =
   "We couldn't save your intake. Please refresh and try again.";
@@ -82,6 +88,7 @@ function sanitizeResponses(input: unknown): Record<string, unknown> {
 
 export async function saveIntakeStepAction(payload: {
   token: string;
+  expectedRevision?: unknown;
   step: number;
   responses: Record<string, unknown>;
 }): Promise<SaveResult> {
@@ -103,6 +110,8 @@ export async function saveIntakeStepAction(payload: {
   if (!Number.isFinite(step) || step < 1 || step > TOTAL_STEPS) {
     return { ok: false, error: "Invalid step." };
   }
+  const expectedRevision = intakeRevision(payload.expectedRevision);
+  if (expectedRevision === null) return { ok: false, code: "conflict", error: INTAKE_CONFLICT };
   const responses = sanitizeResponses(payload.responses);
 
   const admin = createAdminClient();
@@ -113,7 +122,7 @@ export async function saveIntakeStepAction(payload: {
     // from the intake row the verified token addresses, never from the
     // request, so a claim can only ever be checked against ITS OWN studio's
     // forms.
-    .select("id, status, responses, studio_id")
+    .select("id, status, responses, studio_id, client_id, revision")
     .eq("id", v.intake_id)
     .is("deleted_at", null)
     .maybeSingle();
@@ -123,15 +132,31 @@ export async function saveIntakeStepAction(payload: {
   }
   if (!existing) return { ok: false, error: "Intake not found." };
   if (existing.status === "submitted" || existing.status === "reviewed") {
-    return { ok: false, error: "This intake has already been submitted." };
+    return { ok: false, code: "terminal", error: INTAKE_TERMINAL };
   }
 
   // Merge with what's already saved so a save from step 3 doesn't blow away
   // step 1 answers if the client only sent the latest step's fields.
+  if (intakeRevision(existing.revision) !== expectedRevision) {
+    return { ok: false, code: "conflict", error: INTAKE_CONFLICT };
+  }
+
   const merged = {
     ...((existing.responses as Record<string, unknown>) ?? {}),
     ...responses,
   };
+
+  // Incomplete drafts remain legal; a supplied yes/no value must be canonical.
+  // Use the saved parent for applicability, but do not strand an unrelated
+  // step because an untouched historic value needs correction on a later step.
+  const invalidYesNo = findInvalidChoiceAnswers(merged).filter(
+    (key) => Object.hasOwn(responses, key)
+      && !isDeepStrictEqual(responses[key], (existing.responses as Record<string, unknown> | null)?.[key])
+      && getQuestionByKey(key)?.type === "yes_no",
+  );
+  if (invalidYesNo.length > 0) {
+    return { ok: false, error: "Please choose Yes or No for each yes/no answer before saving." };
+  }
 
   // Same draft posture for the live consent forms: a save is NEVER refused
   // for an unanswered or half-answered consent form: that is a normal
@@ -158,34 +183,15 @@ export async function saveIntakeStepAction(payload: {
     else delete merged[INTAKE_CONSENT_RESPONSES.id];
   }
 
-  // Atomic status guard: the UPDATE is conditional on
-  // `status = 'in_progress'`. If the form is submitted/reviewed
-  // BETWEEN our SELECT above and this UPDATE (race), or under any
-  // other status, zero rows update. We do NOT return raw DB errors;
-  // the no-rows-updated case returns the same "already submitted"
-  // message the SELECT path would have returned.
-  const { data: updated, error: updateErr } = await admin
-    .from("client_intake_forms")
-    .update({ responses: merged, current_step: step })
-    .eq("id", v.intake_id)
-    .eq("status", "in_progress")
-    .is("deleted_at", null)
-    .select("id");
-  if (updateErr) {
-    logInternalIntakeError("intake_save_update_error", { code: updateErr.code, message: updateErr.message });
-    return { ok: false, error: INTAKE_GENERIC_ERROR };
-  }
-  if (!updated || updated.length === 0) {
-    // Race-loser branch: the row's status changed under us. Treat
-    // as terminal-state save attempt.
-    return { ok: false, error: "This intake has already been submitted." };
-  }
-
-  return { ok: true };
+  return writeIntakeRevision(admin, {
+    intakeId: v.intake_id, studioId: existing.studio_id, clientId: existing.client_id,
+    expectedRevision, responses: merged, step, operation: "save",
+  });
 }
 
 export async function submitIntakeAction(payload: {
   token: string;
+  expectedRevision?: unknown;
   responses: Record<string, unknown>;
 }): Promise<SaveResult> {
   if (!payload.token) return { ok: false, error: "Missing token." };
@@ -202,12 +208,14 @@ export async function submitIntakeAction(payload: {
   const v = verifyIntakeToken(payload.token);
   if (!v.ok) return { ok: false, error: INTAKE_TOKEN_INVALID };
 
+  const expectedRevision = intakeRevision(payload.expectedRevision);
+  if (expectedRevision === null) return { ok: false, code: "conflict", error: INTAKE_CONFLICT };
   const responses = sanitizeResponses(payload.responses);
 
   const admin = createAdminClient();
   const { data: existing, error: lookupErr } = await admin
     .from("client_intake_forms")
-    .select("id, status, responses, studio_id, client_id")
+    .select("id, status, responses, studio_id, client_id, revision")
     .eq("id", v.intake_id)
     .is("deleted_at", null)
     .maybeSingle();
@@ -217,7 +225,11 @@ export async function submitIntakeAction(payload: {
   }
   if (!existing) return { ok: false, error: "Intake not found." };
   if (existing.status === "submitted" || existing.status === "reviewed") {
-    return { ok: true };
+    return { ok: false, code: "terminal", error: INTAKE_TERMINAL };
+  }
+
+  if (intakeRevision(existing.revision) !== expectedRevision) {
+    return { ok: false, code: "conflict", error: INTAKE_CONFLICT };
   }
 
   const merged = {
@@ -253,7 +265,7 @@ export async function submitIntakeAction(payload: {
   // answer. Not relying on the browser having only drawn two buttons is the
   // entire point.
   //
-  // Draft saves stay permissive by design: the same posture the consent draft
+  // Draft saves allow incomplete answers by design: the same posture the consent draft
   // takes a few lines down. A draft is never authoritative; THIS is the gate,
   // and it re-checks the whole merged map, so a bad value planted by an earlier
   // save is caught here rather than waved through.
@@ -319,43 +331,12 @@ export async function submitIntakeAction(payload: {
     delete merged[INTAKE_CONSENT_RESPONSES.id];
   }
 
-  // Atomic status guard: only transition to 'submitted' if the row is
-  // still 'in_progress'. Two concurrent submit clicks (e.g. browser
-  // double-click on a flaky network) race here; the partial unique
-  // index isn't applicable, so we rely on the conditional UPDATE.
-  // A loser sees zero rows updated; we treat that as idempotent
-  // "already submitted" (returning ok: true mirrors the early-exit
-  // SELECT branch above, which also returns ok: true).
-  const { data: updated, error: updateErr } = await admin
-    .from("client_intake_forms")
-    .update({
-      responses: merged,
-      current_step: TOTAL_STEPS,
-      status: "submitted",
-      submitted_at: new Date().toISOString(),
-    })
-    .eq("id", v.intake_id)
-    .eq("status", "in_progress")
-    .is("deleted_at", null)
-    .select("id");
-  if (updateErr) {
-    logInternalIntakeError("intake_submit_update_error", { code: updateErr.code, message: updateErr.message });
-    return { ok: false, error: INTAKE_GENERIC_ERROR };
-  }
-  if (!updated || updated.length === 0) {
-    // Concurrent submit race winner already flipped the row. The
-    // form IS submitted on the server: we return ok:true so the
-    // browser shows the submitted state, matching the pre-update
-    // SELECT branch.
-    return { ok: true };
-  }
-
-  // Populate the client profile from the intake submission so the
-  // practitioner doesn't have to retype any of it. Field-by-field rules
-  // below preserve practitioner-entered values where present and never
-  // delete allergies. Failures inside the sync are logged and swallowed;
-  // the intake submit is the source of truth and is not rolled back.
-  await syncIntakeToClient(merged, existing.client_id);
+  const written = await writeIntakeRevision(admin, {
+    intakeId: v.intake_id, studioId: existing.studio_id, clientId: existing.client_id,
+    expectedRevision, responses: merged, step: TOTAL_STEPS, operation: "submit",
+    profile: intakeProfileContributions(merged),
+  });
+  if (!written.ok) return written;
 
   // Fire-and-forget in-app notification for the studio (PR #164 helper,
   // studio-wide visibility). This runs ONLY in this winner branch: the
@@ -388,11 +369,11 @@ export async function submitIntakeAction(payload: {
     href: `/clients/${existing.client_id}/intake`,
   });
 
-  return { ok: true };
+  return { ok: true, revision: written.revision };
 }
 
 // ---------------------------------------------------------------------------
-// syncIntakeToClient
+// Server-derived contributions for0243 atomic profile synchronization
 // ---------------------------------------------------------------------------
 // Field rules (Chloe feedback):
 //
@@ -410,87 +391,15 @@ export async function submitIntakeAction(payload: {
 //     renders this in a red section, and the intake review page also
 //     keeps its own dedicated EpiPen banner.
 // ---------------------------------------------------------------------------
-async function syncIntakeToClient(
-  responses: Record<string, unknown>,
-  clientId: string,
-): Promise<void> {
-  const emergencyName = stringOrNull(responses.emergency_contact_name);
-  const emergencyPhone = stringOrNull(responses.emergency_contact_phone);
-  const dob = stringOrNull(responses.date_of_birth);
-  const pronouns = stringOrNull(responses.pronouns);
-  const address = stringOrNull(responses.address);
-  const intakeAllergyText = buildIntakeAllergyText(responses);
-
-  // Bail early if the intake had nothing to contribute to the profile.
-  if (
-    !emergencyName &&
-    !emergencyPhone &&
-    !dob &&
-    !pronouns &&
-    !address &&
-    !intakeAllergyText
-  ) {
-    return;
-  }
-
-  const admin = createAdminClient();
-  const { data: client, error: lookupErr } = await admin
-    .from("clients")
-    .select(
-      "emergency_contact_name, emergency_contact_phone, date_of_birth, pronouns, address, allergies",
-    )
-    .eq("id", clientId)
-    .maybeSingle();
-  if (lookupErr || !client) {
-    if (lookupErr) {
-      console.error(
-        "Failed to look up client for intake sync:",
-        lookupErr.message,
-      );
-    }
-    return;
-  }
-
-  const patch: Record<string, string> = {};
-  if (emergencyName && !client.emergency_contact_name) {
-    patch.emergency_contact_name = emergencyName;
-  }
-  if (emergencyPhone && !client.emergency_contact_phone) {
-    patch.emergency_contact_phone = emergencyPhone;
-  }
-  if (dob && !client.date_of_birth) {
-    patch.date_of_birth = dob;
-  }
-  if (pronouns && !client.pronouns) {
-    patch.pronouns = pronouns;
-  }
-  if (address && !client.address) {
-    patch.address = address;
-  }
-  if (intakeAllergyText) {
-    // Append-only merge. If existing.allergies is empty, write the intake
-    // summary alone. Otherwise concatenate beneath a dated marker so the
-    // practitioner can see "the original record said X, the intake added
-    // Y" and reconcile manually; we never auto-resolve.
-    const existingAllergies = typeof client.allergies === "string"
-      ? client.allergies.trim()
-      : "";
-    if (existingAllergies.length === 0) {
-      patch.allergies = intakeAllergyText;
-    } else {
-      const dateLabel = formatTodayLocal();
-      patch.allergies = `${existingAllergies}\n\nFrom client intake (${dateLabel}):\n${intakeAllergyText}`;
-    }
-  }
-  if (Object.keys(patch).length === 0) return;
-
-  const { error: updateErr } = await admin
-    .from("clients")
-    .update(patch)
-    .eq("id", clientId);
-  if (updateErr) {
-    console.error("Failed to sync intake to client:", updateErr.message);
-  }
+function intakeProfileContributions(responses: Record<string, unknown>): Record<string, string | null> {
+  return {
+    emergency_contact_name: stringOrNull(responses.emergency_contact_name),
+    emergency_contact_phone: stringOrNull(responses.emergency_contact_phone),
+    date_of_birth: stringOrNull(responses.date_of_birth),
+    pronouns: stringOrNull(responses.pronouns),
+    address: stringOrNull(responses.address),
+    allergy_text: buildIntakeAllergyText(responses),
+  };
 }
 
 // Builds a single human-readable allergy summary from the intake's allergy
@@ -538,16 +447,6 @@ function buildIntakeAllergyText(
   return lines.join("\n");
 }
 
-// Format today as a calm "YYYY-MM-DD" marker for the appended allergy
-// block. Server-local; the precise zone doesn't matter for a readability
-// marker on a manually-curated text field.
-function formatTodayLocal(): string {
-  const d = new Date();
-  const yy = String(d.getFullYear()).padStart(4, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yy}-${mm}-${dd}`;
-}
 
 function stringOrNull(value: unknown): string | null {
   if (typeof value !== "string") return null;

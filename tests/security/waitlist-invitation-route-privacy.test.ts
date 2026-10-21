@@ -62,6 +62,8 @@ const APP_DIR = join(ROOT, "app");
  */
 const CLASSIFIED_NON_BEARER: ReadonlyArray<{ prefix: string; why: string }> = [
   { prefix: "/admin/studios", why: "platform-operator surface behind isAdmin; the segment is a studio row id, not a credential" },
+  { prefix: "/admin/leads", why: "LEAD-ALERT-01 platform-operator lead page behind isAdmin; the segment is a lead KIND (demo-request | early-access), not a credential" },
+  { prefix: "/admin/leads/[kind]", why: "LEAD-ALERT-01 platform-operator lead page behind isAdmin (404 for anyone else); the segment is a lead row id, not a credential" },
   { prefix: "/book", why: "public booking page keyed by the studio's PUBLIC slug — the slug is meant to be shared" },
   { prefix: "/calendar", why: "authenticated app route; the segment is an appointment row id" },
   { prefix: "/clients", why: "authenticated app route; the segment is a client row id" },

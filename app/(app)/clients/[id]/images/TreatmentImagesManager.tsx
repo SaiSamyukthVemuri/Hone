@@ -16,6 +16,9 @@ import {
   updateTreatmentImageNoteAction,
 } from "./actions";
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
+import { PortraitControl } from "./PortraitControl";
+import { canLabelPhotoAttachment } from "./photo-context";
+import { CaptureStageControl } from "./CaptureStageControl";
 import { Button, buttonClasses } from "@/components/ui/button";
 import {
   validateTreatmentImageUpload,
@@ -29,6 +32,8 @@ type UploadFileResult = {
   name: string;
   status: UploadFileStatus;
   error?: string;
+  // 0232: stored, but the chosen capture-stage label was not saved.
+  note?: string;
 };
 
 // PR #271 / #272 / #273. Practitioner-only "Treatment Photos" UI.
@@ -41,6 +46,13 @@ type UploadFileResult = {
 
 type Row = {
   id: string;
+  // 0231: true only for a client-scoped photo (no session, no treatment area);
+  // only those can be the client's identification portrait.
+  clientScope: boolean;
+  // 0232: linked to a visit, so it may carry a capture-stage label; and its
+  // current label (null = not labelled).
+  visitPhoto: boolean;
+  captureStage: "before" | "after" | null;
   // Session date of the attached session (null for client-scope photos). Shown
   // as the human card title instead of the raw .jpg filename (Chloe feedback).
   sessionDate: string | null;
@@ -68,10 +80,17 @@ type Row = {
 export type SessionAttachOption = {
   id: string;
   startedAt: string;
+  recordStatus: string | null;
   blocks: { id: string; areaLabel: string }[];
 };
 
 type PhotoContextKind = "client" | "session" | "block";
+
+// 0232: the upload summary's label suffix.
+const CAPTURE_STAGE_SUMMARY = {
+  before: "Labelled: Before treatment.",
+  after: "Labelled: After treatment.",
+} as const;
 
 // Treatment-context tags shown on each card and in the larger preview. Labels
 // only, no UUIDs, storage paths, bucket names, or signed-URL text.
@@ -204,10 +223,12 @@ export function TreatmentImagesManager({
   clientId,
   images,
   sessionOptions = [],
+  portraitImageId = null,
 }: {
   clientId: string;
   images: Row[];
   sessionOptions?: SessionAttachOption[];
+  portraitImageId?: string | null;
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -221,9 +242,13 @@ export function TreatmentImagesManager({
   const hasSessions = sessionOptions.length > 0;
   const [contextKind, setContextKind] = useState<PhotoContextKind>("client");
   const [ctxSessionId, setCtxSessionId] = useState<string>("");
+  // 0232: the capture stage chosen at upload ("" = not labelled). Offered only
+  // for a visit photo; the action labels right after the photo is recorded.
+  const [captureStage, setCaptureStage] = useState<"" | "before" | "after">("");
   const [ctxBlockId, setCtxBlockId] = useState<string>("");
   const ctxSession = sessionOptions.find((s) => s.id === ctxSessionId) ?? null;
   const ctxBlocks = ctxSession?.blocks ?? [];
+  const canLabelUpload = canLabelPhotoAttachment(contextKind, ctxSession);
   const sessionDateLabel = (iso: string): string => {
     const d = new Date(iso);
     return Number.isNaN(d.getTime()) ? "session" : d.toLocaleDateString();
@@ -234,6 +259,8 @@ export function TreatmentImagesManager({
   const [modalUrl, setModalUrl] = useState<string | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState(false);
+  // Label saves refresh images; the open preview must not retain its old label.
+  const modalPhoto = modal ? images.find((image) => image.id === modal.id) ?? null : null;
 
   useEffect(() => {
     if (!modal) return;
@@ -288,8 +315,8 @@ export function TreatmentImagesManager({
     }));
     setFileResults([...results]);
     setUploading(true);
-    const update = (i: number, status: UploadFileStatus, err?: string) => {
-      results[i] = { ...results[i], status, error: err };
+    const update = (i: number, status: UploadFileStatus, err?: string, note?: string) => {
+      results[i] = { ...results[i], status, error: err, note };
       setFileResults([...results]);
     };
 
@@ -311,10 +338,18 @@ export function TreatmentImagesManager({
       try {
         const fd = new FormData();
         for (const [k, val] of Object.entries(context)) fd.set(k, val);
+        if (canLabelUpload && captureStage) fd.set("captureStage", captureStage);
         fd.set("file", file);
         const res = await uploadTreatmentImageAction(fd);
         if (res.ok) {
-          update(i, "uploaded");
+          update(
+            i,
+            "uploaded",
+            undefined,
+            "labelNotSaved" in res && res.labelNotSaved
+              ? "label not saved; set it on the photo"
+              : undefined,
+          );
           anyOk = true;
         } else {
           update(i, "failed", res.error);
@@ -332,6 +367,7 @@ export function TreatmentImagesManager({
       setContextKind("client");
       setCtxSessionId("");
       setCtxBlockId("");
+      setCaptureStage("");
     }
     if (anyOk) router.refresh();
   }
@@ -381,7 +417,7 @@ export function TreatmentImagesManager({
               width controls. Only shown when this client has sessions; otherwise
               every photo attaches to the client. */}
           {hasSessions ? (
-            <fieldset className="flex flex-col gap-2 rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
+            <fieldset disabled={uploading} className="flex flex-col gap-2 rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
               <legend className="px-1 text-xs font-medium text-neutral-500">
                 Photo context
               </legend>
@@ -457,7 +493,38 @@ export function TreatmentImagesManager({
                   </p>
                 ))}
 
-              <p className="text-xs text-neutral-400">
+              {canLabelUpload && (
+                <div
+                  role="radiogroup"
+                  aria-label="Taken before or after treatment"
+                  className="flex flex-wrap gap-x-4"
+                  data-testid="upload-capture-stage"
+                >
+                  {(
+                    [
+                      ["", "Not labelled"],
+                      ["before", "Before treatment"],
+                      ["after", "After treatment"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <label
+                      key={value || "none"}
+                      className="flex min-h-[44px] items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200"
+                    >
+                      <input
+                        type="radio"
+                        name="captureStage"
+                        value={value}
+                        checked={captureStage === value}
+                        onChange={() => setCaptureStage(value)}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              <p className="text-xs text-neutral-400" data-testid="upload-attach-summary">
                 {contextKind === "client"
                   ? "Will attach as: Client photo."
                   : contextKind === "session"
@@ -467,6 +534,11 @@ export function TreatmentImagesManager({
                     : ctxBlockId && ctxSession
                       ? `Will attach as: Treatment area photo, ${ctxBlocks.find((b) => b.id === ctxBlockId)?.areaLabel ?? ""}, Session on ${sessionDateLabel(ctxSession.startedAt)}.`
                       : "Will attach as: Treatment area photo: choose a session and area."}
+                {/* 0232: the chosen label, so the summary says everything the
+                    upload will record. Nothing when Not labelled. */}
+                {canLabelUpload && captureStage
+                  ? ` ${CAPTURE_STAGE_SUMMARY[captureStage]}`
+                  : null}
               </p>
             </fieldset>
           ) : (
@@ -548,7 +620,7 @@ export function TreatmentImagesManager({
                   >
                     {f.status === "pending" && "Waiting"}
                     {f.status === "uploading" && "Uploading…"}
-                    {f.status === "uploaded" && "✓ Uploaded"}
+                    {f.status === "uploaded" && (f.note ? `✓ Uploaded (${f.note})` : "✓ Uploaded")}
                     {f.status === "failed" && `✗ ${f.error ?? "Failed"}`}
                   </span>
                 </li>
@@ -623,6 +695,8 @@ export function TreatmentImagesManager({
                   clientId={clientId}
                   note={img.note}
                 />
+                <PortraitControl clientId={clientId} imageId={img.id} clientScope={img.clientScope} isPortrait={img.id === portraitImageId} />
+                <CaptureStageControl clientId={clientId} imageId={img.id} visitPhoto={img.visitPhoto} stage={img.captureStage} />
                 <div className="flex gap-3 text-xs">
                   <Button
                     variant="quiet"
@@ -696,6 +770,14 @@ export function TreatmentImagesManager({
                   clientId={clientId}
                   note={modal.note}
                 />
+                {modalPhoto && (
+                  <CaptureStageControl
+                    clientId={clientId}
+                    imageId={modalPhoto.id}
+                    visitPhoto={modalPhoto.visitPhoto}
+                    stage={modalPhoto.captureStage}
+                  />
+                )}
               </div>
               <Button
                 variant="secondary"

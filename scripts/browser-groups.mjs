@@ -43,6 +43,25 @@ export const BROWSER_GROUPS = {
       "client-budget-context.spec.ts",
       "clinical-notes.spec.ts",
       "conditional-numbing-notes.spec.ts",
+      // MPX-03: the machine-first panel lives in the settings-block form,
+      // the same surface conditional-numbing-notes and
+      // repeat-client-fast-charting drive.
+      "machine-first-charting.spec.ts",
+      // MPX-03: the CREATE-mode journey through the same surface — the panel
+      // before a block exists, then the one atomic save that follows. Same
+      // group as its sibling for the same reason.
+      "machine-create-mode-journey.spec.ts",
+      // MPX-03: changing the machine or the mode UNDER a typed draft, and the
+      // unit going out of service mid-draft. Same surface again - the panel
+      // inside the settings-block form - so the same group: a diff to that
+      // form must run this spec, and filing it elsewhere would hide it from
+      // the only lane its subject can regress in.
+      "machine-switch-discards-draft.spec.ts",
+      // MPX-03: the LOST RESPONSE on the initial save, and pressing Save
+      // again. Same surface once more, so the same group - and this one most
+      // of all, because what it proves is that the FORM reuses its retry key,
+      // which no database test can see.
+      "machine-initial-save-retry.spec.ts",
       "copy-settings-machine-readings.spec.ts",
       "custom-area-commit.spec.ts",
       "galvanic-intensity-retirement.spec.ts",
@@ -181,6 +200,10 @@ export const BROWSER_GROUPS = {
       // than which diffs are allowed to break it unnoticed.
       "ui03-blocked-reason.spec.ts",
       "manual-override-buffer-booking.spec.ts",
+      // STUDIO-READY-02c (#824): the front desk books, moves and cancels over
+      // the shared core. It is appointment lifecycle, so it runs with the other
+      // booking specs; app/front-desk/(desk)/book matches /\bbook\b/.
+      "front-desk-booking.spec.ts",
       "move-appointment-custom-time.spec.ts",
       "move-appointment-mobile-submit.spec.ts",
       "move-appointment-responsive.spec.ts",
@@ -198,6 +221,21 @@ export const BROWSER_GROUPS = {
       // or stale Server Action and recovers. A diff to app/book/** selects this
       // group, which is the diff that can break it.
       "public-booking-error-containment.spec.ts",
+      // G1: the public practitioner picker — options, scoped slots, parallel
+      // booking by two practitioners at one instant, and the same
+      // practitioner's taken instant not being offered. It drives
+      // /book/[slug], so a diff to app/book/** selects the group that can
+      // break it.
+      "public-practitioner-picker.spec.ts",
+      // #824 ACCEPTANCE: the operator's multi-practitioner journey walked once
+      // end to end — pick A, pick B, reschedule one, then read the owner's
+      // calendar. Registered HERE, with the picker, because its dominant
+      // surface is /book/[slug] and that is the diff most likely to break it.
+      // It also asserts attribution on /calendar/[id], which the `calendar`
+      // group owns; a spec may appear in only one group, so a calendar-only
+      // diff selects `calendar` and not this journey. That is the deliberate
+      // trade, not an oversight.
+      "multi-practitioner-acceptance.spec.ts",
     ],
   },
   calendar: {
@@ -221,12 +259,25 @@ export const BROWSER_GROUPS = {
     specs: [
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
+      // STUDIO-READY-03b (#824): the owner console's composition of the
+      // delivery, SMS and payment-country authorities.
+      "owner-console-overview.spec.ts",
       // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
       // the 60 s signed-URL expiry. Here and not in `sessions` for UI-04's two
       // reasons: /clients/** has no PATH_TO_GROUP pattern (a photo diff already
       // runs extended) and `sessions` carries a cost pin. Needs REAL storage,
       // so it SELF-SKIPS in CI (no storage-api); its evidence is a local run.
       "fett-photos-thumbnail-recovery.spec.ts",
+      // FETT photos (HON-43), 0232: the Before/After label end to end at phone
+      // width (upload, keyboard relabel/clear, the visit sections) and the
+      // receptionist refusal. Same group and the same reasons as the recovery
+      // spec above; it uploads, so it SELF-SKIPS in CI (no storage-api).
+      "fett-photo-labels.spec.ts",
+      // ID photo set/replace/remove on the client profile/Photos surface:
+      // same group as thumbnail recovery, with the same real-storage
+      // requirement (self-skips in CI without storage-api). Does not add to
+      // the sessions targeted-lane cost pin.
+      "fett-client-portrait.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the
@@ -312,6 +363,12 @@ export const BROWSER_GROUPS = {
       // extended to one group, and that is a coverage decision for every client
       // diff in the repository, not a presentation slice's to take in passing.
       "ui04-unarchive-pending.spec.ts",
+      // HON-46: the owner-only per-client clinical-records export. Filed here
+      // for the UI-04 reasons above: it lives under app/(app)/clients/**, which
+      // matches no PATH_TO_GROUP pattern (so a diff to it already runs via the
+      // extended fallback), and it is owner records administration, not
+      // charting, so it does not join the cost-pinned `sessions` selection.
+      "hon-46-clinical-records-export.spec.ts",
       // FETT photos (#892): the photo surface's mounted 44px floor at phone width
       // and the deactivated-practitioner denial. Filed here for the same two
       // reasons as UI-04 above: /clients/** has no PATH_TO_GROUP pattern, so a
@@ -321,6 +378,21 @@ export const BROWSER_GROUPS = {
       "onboarding.spec.ts",
       "quick-import.spec.ts",
       "welcome-email-admin.spec.ts",
+      // DELIVERY-VISIBILITY-02: the owner's delivery card (Settings -> Launch,
+      // moving to the owner console) and the /admin/delivery support queue.
+      // Owner-authority and platform-admin surfaces, so the owner/admin family.
+      "delivery-visibility.spec.ts",
+      // SMS-SENDER-REG-01 (#844): the mounted no-lost-update proof of the
+      // operator's registration form on /admin/studios/[id] (two operators,
+      // stale submit refused, refresh, safe resubmit). Admin surface.
+      "sms-registration-stale-form.spec.ts",
+      // LEAD-ALERT-01 (#831): the operator lead alert on the fake provider --
+      // /demo -> accepted, durable failure -> Retry, and the operator's lead
+      // link through invitation acceptance. Operator/admin and invitation
+      // surface, like welcome-email-admin above; changed /admin and invitation
+      // paths already select this group. lib/platform-leads/** matches no rule
+      // and keeps its EXTENDED fail-safe (narrowing it is not this slice's call).
+      "lead-alert-operator.spec.ts",
       "practitioner-availability-compat.spec.ts",
       "practitioner-booking-studio-b.spec.ts",
       "practitioner-quick-book-studio-b.spec.ts",

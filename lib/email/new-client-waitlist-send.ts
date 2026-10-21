@@ -311,6 +311,15 @@ async function attempt(
 }
 
 /**
+ * ONE keyed attempt, exactly as above, for a sender that owns its own durable
+ * key and retry state. LEAD-ALERT-01's operator alert keys each send on its
+ * alert row (lib/platform-leads/alert-delivery.ts) and records every outcome
+ * there, so it needs this attempt and not the waitlist key derivation or the
+ * in-call retry below. Nothing about the attempt changes by being exported.
+ */
+export { attempt as sendOnceWithIdempotencyKey };
+
+/**
  * Send one waitlist email under a tenant-scoped, payload-derived key.
  *
  * On an ambiguous first attempt it makes EXACTLY ONE more attempt with the SAME

@@ -15,7 +15,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
 
-## Current state (reconciled 2026-10-20; 0212 already APPLIED, source restored byte-identically)
+## Current state (reconciled 2026-10-20; hosted 0212 APPLIED; 0213–0235 and 0243 authored and pending on this tree)
 
 > **This is a documentation/source reconciliation of an existing apply, not an authorization or execution of an apply.** A fresh read-only query on 2026-10-19 at 21:23:10.258674Z ran with `transaction_read_only=on` against the verified canonical Hone production project: migration history max **0212**, **211** rows, exactly one each for 0211 and 0212, and no entries above 0212. Migration-history presence establishes a recorded apply; it does not by itself claim a table's present existence or contents.
 >
@@ -23,19 +23,206 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 >
 > The prior production record's 0211 declaration and missing 0212 source were stale repository documentation/source, not grounds to reapply. The full 0211 apply account below remains unchanged as historical evidence. **Do not reapply 0212.** No hosted database, migration history, schema, table or row was changed in this reconciliation.
 >
-> Repository and hosted migration state reconcile, with nothing pending and nothing remote-only.
+> The production-only record reconciles at 0212. This stacked Team tree carries authored pending 0213–0235 plus allocated 0243. Owner sources 0236–0242 are not imported into this branch; no missing history is fabricated. The standalone source is not a complete release/apply train: MIGRATION-FIRST PENDING, not hosted parity; nothing remote-only. No apply is performed or authorized by this source merge.
 
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), recorded in read-only history as described above. |
-| **Repo migration max** | **0212** on this branch; the restored source file matches the existing applied source checksum exactly. |
+| **Repo migration max** | **0243**, derived from this tree; the restored applied 0212 source remains byte-identical. |
 | **Remote-only migrations** | **none** after restoring the exact applied 0212 source. |
-| **Pending migrations** | **none** on this branch. |
-| **Next free migration** | Next free number is **0213**, derived by `npm run migration:state` from this tree's migration filenames; not claimed by this record. |
+| **Pending migrations** | **0213–0235 and 0243** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`, `0243`), **PENDING, NOT APPLIED**; **repo > hosted — MIGRATION-FIRST PENDING**. This includes `0233_clinical_records_audit_command.sql`, legitimate Team `0234_client_self_service_controls.sql` and `0235_machine_finite_readings.sql`; each requires its own approval before hosted apply. `0243_intake_revision_cas_and_profile_sync.sql` is the source-only CLN-001/003 allocation: explicit all-writer revision/CAS and atomic submit/profile merge. Its app callers require this schema first; no local or hosted apply is authorized. Source versions 0236–0242 are absent on this branch and must be reconciled by existing owners in the final composed candidate, not invented or applied out of history. `0234` adds default-true cancellation/reschedule flags; separate flag writes need separate authority. The held Machines #920 alternative is not this Team migration. |
+| **Next free migration** | Next free number is **0244**, derived by `npm run migration:state` from this actual 0243 tree; it is **not claimed** here: availability is not an allocation. No 0236–0242 source is imported. Global OPS allocations, including Machines 0244, still govern reservation; this branch-derived availability grants no number. |
 | **Project ref** | Canonical Hone production project; see the verified linked-project evidence retained in the apply receipt. No credentials or new project identifiers are recorded here. |
 | **0212 apply source** | PR #832 reviewed head `7116c66848574b0e02e7c2b8f500a6d3198edb58`; exact raw file SHA-256 `cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1`; source reintroduced unchanged from `cbb567afed08550e29e165bdc91adb4324a93181`. |
 | **Apply timestamp** | `hosted_applied_at` remains `null`; the receipt contains client-side bounds and a server history bracket, not a server-generated apply timestamp. |
 
+
+
+## Pending source contracts retained from the Team 0235 tree
+
+These are existing authoring/proof records, not new apply or release authority. Branch names, “only”, historical hosted heads and authoring-time holes inside the quoted records describe their original contexts; the **current state table above** describes this combined tree. Frozen 0223 remains unchanged; Team 0234 is distinct from held #920. No live studio flags, provider activation or hosted data are changed.
+
+## 0235 — Machines finite readings (pending hosted apply, 2026-10-19)
+
+OPS allocated 0235 after a fresh cross-ref/worktree/open-PR census. It promotes
+only the existing finite-reading proposal, preserving frozen 0223 and held 0234.
+It adds a NOT VALID constraint refusing NaN and both numeric infinities for new
+reading rows, with no backfill or historical correction. Hosted state is unchanged.
+
+The granted Machines slot proved the expected pre-repair Infinity acceptance,
+then 10/10 scoped existing-stack DB cases after the exact local patch (finite
+values, publication, four Senior and two Junior native cases). This was **not** a
+full-chain reset or browser proof; no migration-history entry was fabricated.
+See [the scoped proof](../reviews/hon8-0235-db-proof-2026-10-19.md). Full train order
+remains the existing pending train, HON-47 0234, then 0235; it is not apply authority.
+
+> **0232 IS AUTHORED AND PENDING, on `feat/fett-capture-stage` only** (FETT photos, HON-43), stacked on `feat/fett-client-portrait` (0231). It applies after `0231`.
+> `0232_treatment_image_capture_stage.sql` adds ONE nullable column, `treatment_images.capture_stage` (`check (capture_stage in ('before', 'after'))`, NULL = unlabelled, no backfill), ONE new command, and ONE trigger on `treatment_images`; it writes no rows.
+> - **The trigger:** `treatment_images_clear_stage_without_session`, `BEFORE INSERT OR UPDATE … FOR EACH ROW WHEN (new.session_id is null and new.capture_stage is not null)`, clears `capture_stage` when a photo is inserted without a session (including direct `service_role`/PostgreSQL INSERTs; Codex 4309998087) or loses its session (0092's `ON DELETE SET NULL` on a session hard delete; Codex 4308037526). It repairs the row and never raises, so the cascade and the session delete still succeed; it is not a CHECK. Its function is revoked from `public`, `anon`, `authenticated` and `service_role` by name and never granted (no API EXECUTE). The `treatment_images` trigger-set pins name it.
+> - **The command:** `set_treatment_image_capture_stage(uuid, uuid, text)`. The actor is resolved by `treatment_image_actor(studio)`; a wrong studio, client, archived photo, deactivated practitioner or receptionist gets NULL (non-disclosing, like `set_treatment_image_note`). Only a photo linked to a session can carry a stage. EXECUTE is revoked from `public`, `anon`, `authenticated` and `service_role` by name, then granted to `authenticated` only.
+> - **The pinned 0168 commands are untouched:** a separate command instead of a tenth argument on `create_treatment_image_metadata`.
+> - **Allocation:** `0232` allocated by the coordinator (#825). It inherits 0231's by-construction `0229`/`0230` hole.
+
+> **0231 IS AUTHORED AND PENDING, on `feat/fett-client-portrait` only** (FETT photos, HON-43), stacked on `integration/fett-composed-824` @ `380f2ab1`.
+> `0231_client_identification_portrait.sql` adds ONE nullable column, `clients.portrait_image_id` → `treatment_images(id)` (`on delete set null`), one trigger (on `clients`), ONE new command, one partial index, and a redefinition of `archive_treatment_image` (clears the pointer); it writes no rows.
+> - **Integrity, in the database:** the portrait must be the same client and studio, client-scoped and not archived (`clients_portrait_integrity`, which takes `FOR SHARE` on the photo so a concurrent archive waits). Archiving clears the pointer atomically: `archive_treatment_image` is redefined with 0178's body plus one scoped UPDATE, grants restated by name. No trigger is added to `treatment_images` (its trigger set is pinned by the 0093/0168/0169 guards). One partial index on the pointer.
+> - **The command:** `set_client_portrait(uuid, uuid, uuid)` (third argument defaults to NULL), actor resolved by `treatment_image_actor(studio)` (an ACTIVE practitioner of the client's studio). EXECUTE revoked from `public`, `anon`, `authenticated` and `service_role` by name, then granted to `authenticated` only. The trigger function is never granted back.
+> - **Published compare-and-clear repair (Photos `affcb867`):** clearing requires the displayed portrait ID as `p_expected_image_id`; the locked current pointer must still equal it, otherwise `P0231` refuses without removing the replacement. The caller passes the displayed ID, and the UI reports the conflict. This is the existing owner source repair, not a new migration or apply.
+> - **Allocation:** `0231` allocated by the coordinator (#825). `0229` (General) and `0230` (Willow) are allocated to other lanes and are NOT in this tree, so the parity guard reports a hole **by construction** until this branch integrates after them, in order. It renumbers if that order changes.
+
+> **0230 IS AUTHORED AND PENDING, on `wip/hon-50-g6g7` (#916) only**, stacked on #902 (`0229`). Reserved for HON-50 G6 by the migration coordinator.
+> `0230_studio_sms_sender_stop_preflights.sql` adds one table (`studio_sms_sender_stop_preflights`), one service_role-only writer (`record_studio_sms_stop_preflight`), and REPLACES `0229`'s body of `get_live_studio_sms_sender_registration_state` (0229's body verbatim plus `stop_preflights`).
+> - **What it records:** a sender's inbound STOP preflight, accepted only as the COMPLETE version-1 STOP checklist (check ids and pass/fail/unknown only; no secrets, no free text). It calls no provider, activates nothing and sends nothing.
+> - **Order:** after `0229`, migration-first.
+>
+> **0229 IS AUTHORED AND PENDING** on #901 (HON-50 G4a): `studio_sms_sender_campaign_bindings`, its writer, and an additive redefinition of `0217`'s snapshot.
+
+> **0228 IS AUTHORED AND PENDING, on `feat/g1-public-booking-picker` (#874) only.** It applies after `0227`.
+> **`0228` IS A FORWARD-ONLY REPAIR of the applied, frozen `0204`** — it
+> redefines `create_public_appointment_for_new_client` and nothing else, restates
+> its grants by name, and writes no rows. `0204`'s bytes are unchanged and pinned
+> by hash in `tests/migrations/0228-*.test.ts`. Same shape as `0227` against the
+> applied `0212`.
+
+> **0227 IS AUTHORED AND PENDING, on `fix/delivery-quarantine-bound-0227` (#876) only**, which is stacked on #832 (`0212`).
+> `0227_email_receipt_quarantine_bound.sql` (blob `67e837de`, sha256 `8b62d4d8…0313`) makes two forward fixes to the APPLIED, frozen `0212`. It redefines exactly two functions and nothing else: no table, no ALTER, no row written.
+> - `claim_email_provider_events(uuid, integer)` bounds the sweep's quarantine step by the same limit as its claim step, oldest first, with `for update skip locked` (Codex P2 4252980865).
+> - `process_email_provider_event(uuid)` records a transient (soft) bounce as `delivery_delayed`, not as a terminal bounce (Codex P2 4265450918).
+>
+> Grants are restated by name (`service_role` only), and `0212`'s bytes are unchanged.
+> - **Allocation:** after a fresh census found nothing at or above `0227`, recorded in `/home/sam/hone-migration-coordination.md`. It applies after `0226`.
+
+
+> **0226 IS AUTHORED AND PENDING, on `feat/sms-sender-control-01` (#863) only**, which is stacked on #844 (`0217`).
+> `0226_studio_sms_sender_unpurchased_release.sql` adds three service_role-only definer functions and ONE unique index, and nothing else: no table, no ALTER, no row written.
+> - **The index:** `studio_sms_senders_live_claimed_number_unique` on `claimed_phone_number` for live rows. It is the atomic reservation, so two studios cannot hold live claims on one number. Production has no sender rows, so it builds on an empty table.
+> - **The functions:** `get_releasable_studio_sms_claim`, `release_unpurchased_studio_sms_claim` and `studio_sms_resource_recorded`.
+> - **What they allow:** an owner can release an `error` claim that recorded no provider resource and failed definitively before purchase (`number_no_longer_available`, `provider_resource_mismatch` or `finalize_conflict`), after the provider confirms nothing exists under its claim key. The release goes error -> releasing -> released through 0191's own guard.
+> - **Allocation:** allocated after a fresh census (nothing at or above `0226` on any ref, worktree or this ledger); recorded in `/home/sam/hone-migration-coordination.md`. It applies after `0225`.
+
+> **0221 IS AUTHORED AND PENDING, on the DELIVERY-VISIBILITY-04 branch `feat/delivery-visibility-04` only.**
+> `0221_delivery_concerns_and_purposes.sql`:
+> - widens the email ledger by two purposes (`appointment_cancellation`, `appointment_postcare`): 0212's purpose check and `begin_appointment_email_message` are replaced whole;
+> - adds `delivery_concerns`, the owner-reported "client says they did not receive it", with `report_delivery_concern` and `owner_delivery_concerns` (authenticated, owner of that studio only) and `support_delivery_concerns` and `close_delivery_concern` (`service_role` only).
+>
+> It writes no data.
+>
+> **NUMBERING:** `0221` was allocated by the DB/WAIT lane from a full census (2026-10-12), **provisionally**: it is valid once `0220` (receptionist lane, then uncommitted) is on a ref, and **renumbers DOWN to `0220`** if that lane drops it. Integrated apply order: 0211 → 0212 → 0213 → 0214 → 0215 → 0216 → 0217 → 0218 → 0219 → 0220 → 0221. On this branch the pending suffix has holes at `0213`-`0214` and `0216`-`0220`, so the contiguity rule in `tests/docs/canonical-production-facts.test.ts` is red here by construction until integration. The guard is not weakened.
+>
+> **NOT APPLIED, NOT MERGED.**
+
+> **0217 IS AUTHORED AND PENDING, on `feat/sms-sender-reg-01` only** (stacked on #841, which has no migration).
+> `0217_studio_sms_sender_registrations.sql` adds one table (`studio_sms_sender_registrations`), one service_role-only command and one service_role-only snapshot read.
+> - **The table:** support-recorded US registration evidence (10DLC or toll-free verification) for the number a studio's sender holds, one row per (sender, number, kind); the kind is the number's, enforced by a check. The owner reads it without the provider reference.
+> - **The command:** `record_studio_sms_sender_registration`, which resolves the studio's live sender itself, compares the sender AND number the operator verified, refuses a sender with no number, and derives the kind from the number.
+> - **Out of scope:** no provider call, no activation, no existing object altered, no row written.
+>
+> **NUMBERING.** A fresh census on 2026-10-12 (recorded in `/home/sam/hone-migration-coordination.md`) found:
+> - `0211` #827, `0212` #832 and `0213` #831, all pending;
+> - `0214` in the PAY-CCY branches, `0215` held by DELIVERY-VISIBILITY-01, and `0216` the receptionist foundation.
+>
+> On this branch alone the pending suffix therefore has a **hole at `0211`-`0216`**. The canonical-facts contiguity guard reports that correctly, and it is not weakened. `0217` applies only after `0211`-`0216`, or after an agreed renumber.
+>
+> **`0209` and `0210` are APPLIED AND FROZEN**, carried byte-identical.
+
+> **0215 IS AUTHORED AND PENDING, on the DELIVERY-VISIBILITY-01 branch `feat/delivery-visibility-01` only.**
+> `0215_delivery_incidents.sql` adds:
+> - `delivery_incidents`: one open incident per studio, channel, purpose and failure class, opened or extended by an AFTER trigger on each delivery ledger in the same transaction as the failure;
+> - `delivery_sweep_heartbeat`;
+> - `record_email_sweep_run`, `email_delivery_health`, `resolve_delivery_incident`, `support_delivery_incidents` and `support_email_receipt_outcomes` (all `service_role` only), and `owner_delivery_incidents` (authenticated, owner of that studio only).
+>
+> It writes no data and redefines no existing function. It adds one trigger to `sms_outbound_messages` and one to `email_outbound_messages`.
+>
+> **NUMBERING, from a fresh full census (2026-10-12, recorded in `/home/sam/hone-migration-coordination.md`):** 0211 = #827, 0212 = #832, 0213 = #831, 0214 = #833, **0215 = this lane**, 0216 = #838. This branch carries 0211 and 0212 and not 0213 or 0214, so its pending suffix has a hole at `0213`-`0214`. The contiguity rule in `tests/docs/canonical-production-facts.test.ts` is red on this branch for exactly that reason, by construction, until it is stacked behind #831 and #833 or integrated after them. Apply order is 0211 → 0212 → 0213 → 0214 → 0215 → 0216.
+>
+> **NOT APPLIED, NOT MERGED.**
+
+### Pending `0214` — PAY-CCY-02 studio payment jurisdiction (PR #833)
+
+> What 0214 adds: `studio_payment_jurisdictions` (CA/cad backfill for every existing
+> studio, CA/cad default for new ones), the audited service_role-only
+> `set_studio_payment_jurisdiction`, the live ledgers' currency CHECKs widened to
+> `('cad','usd')` with an insert guard tying each attempt to its studio's currency and
+> its account's country, attempt money immutability, settlement currency from the
+> studio, and `record_stripe_account_jurisdiction` with three observation columns on
+> `studio_payment_settings`. Historical rows are not rewritten.
+>
+<!-- integration: incoming lane's ledger prose, preserved verbatim -->
+
+<!-- integration: the receptionist lane's ledger prose, preserved verbatim -->
+
+
+> **`0220` IS AUTHORED AND PENDING, stacked on `0218`.** STUDIO-READY-02c (#824)
+> authors `0220_receptionist_scheduling.sql`: receptionist scheduling over the
+> shared core.
+> - `create_internal_appointment_v2`, `move_or_reassign_appointment` and
+>   `practitioner_cancel_appointment` keep their signatures and grants, and become
+>   wrappers over one internal core each (`create_`/`move_`/`cancel_appointment_core`).
+>   Each core is the `0174` body with a server-resolved actor kind. The existing
+>   suites pin the practitioner behaviour.
+> - Three new `authenticated`-only receptionist commands, plus one booking-form
+>   projection, derive the actor from `receptionist_actor_id`.
+> - `appointments` gains two **nullable, no-default** receptionist attribution
+>   columns, so `create_public_appointment`'s explicit INSERT is unaffected.
+>   `cancelled_by` and `appointment_audit.actor_type` widen to admit `receptionist`,
+>   and the audit trigger derives `actor_receptionist_id`.
+> - `revert_appointment_outcome` (B4) is re-emitted from its live body with only
+>   two assignments added: a revert clears both canceller attribution columns.
+> - No public path is re-emitted. No data.
+>
+> **NOT APPLIED, NOT MERGED.** `0219` is DB/WAIT's queue position (G1, #824), so
+> this branch carries a hole there by construction. The block below records `0218`.
+
+> **`0218` IS AUTHORED AND PENDING, stacked on `0216`.** STUDIO-READY-02b (#824)
+> authors `0218_receptionist_invitations.sql`. It adds four agreement-evidence
+> columns to `studio_receptionists`, widens `pending_invitations.role` to admit
+> `receptionist`, and re-emits `link_invited_membership` with a receptionist branch.
+> The practitioner path is byte-identical to `0141`, and privileges are restated as
+> `service_role` only. Neither acceptance caller is re-emitted. No data.
+> **NOT APPLIED, NOT MERGED.** The block below records `0216`.
+
+> **AUTHORED, NOT APPLIED — MIGRATION-FIRST PENDING.** STUDIO-READY-02a (#824)
+> authors `0216_receptionist_membership_foundation.sql` on
+> `feat/receptionist-foundation-824`. It is **not** applied to production, no
+> production write was performed, and `docs/production/migration-state.json` is
+> **untouched** — `hosted_migration_max` stays **0210**. The repository therefore
+> sits legitimately ABOVE hosted, which is the second of the two legal shapes the
+> parity guard admits.
+>
+> **WHAT IT ADDS.** A receptionist membership that is deliberately **not** a
+> `practitioners` row: the table `studio_receptionists`; three bounded read
+> projections for a signed-in receptionist (`receptionist_calendar`,
+> `receptionist_calendar_closures`, `receptionist_client_contacts`); and two
+> `service_role`-only owner lifecycle commands (`add_studio_receptionist`,
+> `set_studio_receptionist_active`). Every existing policy and command resolves
+> membership from `practitioners`, so a receptionist is refused by all of them by
+> construction. No existing policy, membership helper, role check or command is
+> redefined, and `pending_invitations.role` is unchanged, so no receptionist
+> invitation can exist yet.
+>
+> **COMPLETE STATEMENT INVENTORY — fifty-eight statements**, inside the file's own
+> `begin;` / `set local lock_timeout = '5s';` / `commit;`:
+> - **one `create table`** (`studio_receptionists`), its **`comment on table`**, and **one partial `create index`** (`user_id` where active);
+> - **nine `create or replace function`**, all new names: two internal helpers, two trigger guards, three projections, two lifecycle commands;
+> - **two `create trigger`**, each preceded by `drop trigger if exists`: the dual-membership guard on the new table, and **one BEFORE trigger on the existing `practitioners` table**, which can only refuse (23514) a practitioner becoming active while already an active receptionist in the same studio, and never writes;
+> - **row-level security enabled** and **one `create policy`** (preceded by `drop policy if exists`): a receptionist selects their own row, the studio owner selects the studio's rows;
+> - table privileges: **`revoke all` from `anon`**, **`revoke insert, update, delete, truncate` from `authenticated`**, **`grant select` to `authenticated`**;
+> - **thirty-one `revoke execute`** — every function by name, one statement per role — **three `grant execute … to authenticated`** (the projections only) and **two `grant execute … to service_role`** (the lifecycle commands only).
+>
+> NO existing table altered, NO column added to an existing table, NO existing
+> function or policy redefined, and **zero** migration-level DML. `0209` and `0210`
+> stay byte-identical.
+>
+> **PROVED LOCALLY, ON AN ISOLATED STACK ONLY** (pinned CLI 2.102.0; never the
+> shared stack, never production). Under its first number, `0211`, with identical
+> SQL: one fresh `db reset` and the full DB suite. As `0216`: applied on the
+> stack at `0210`, then the behavioural suite
+> `tests/db/receptionist-foundation.db.test.ts` and the source contract
+> `tests/migrations/0216-receptionist-membership-foundation.test.ts`.
+>
+> **NOT APPLIED, NOT MERGED.** Apply `0216` migration-first from the reviewed head
+> of its own PR, under its own per-change approval, before any application that
+> calls it deploys.
 
 ## Previous state (verified 2026-10-12, post-0211 apply; historical 0211 record preserved)
 

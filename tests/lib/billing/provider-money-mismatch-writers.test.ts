@@ -59,6 +59,17 @@ vi.mock("@/lib/stripe/server", () => ({
   inferStripeLivemode: () => false,
   getStripe: () => fakeStripe,
 }));
+// PAY-CCY-02 (0214) composition (R2): the charge path also reads the studio's
+// jurisdiction for its account-country lineage check. These cases are about
+// PROVIDER MONEY, on a Canadian studio whose account country is unobserved
+// (legacy-CA, chargeable); the jurisdiction read is proved on its own in
+// tests/lib/billing/payment-jurisdiction*.test.ts and against a real database.
+vi.mock("@/lib/billing/payment-jurisdiction-server", () => ({
+  getStudioPaymentJurisdiction: async () => ({
+    ok: true,
+    jurisdiction: { country: "CA", currency: "cad" },
+  }),
+}));
 vi.mock("@/lib/stripe/session-payment-stripe", () => ({
   getSessionPaymentStripe: () => fakeStripe,
 }));
@@ -216,6 +227,9 @@ function seedLineage(currency: "cad" | "usd") {
     studio_payment_settings: { stripe_account_id: "acct_test", stripe_livemode: false },
     client_stripe_customers: { stripe_customer_id: "cus_test" },
     practitioners: { role: "owner" },
+    // PAY-CCY-02's pre-charge country check (step 4, inside
+    // loadCardAndVerifyLineage) reads studio_payment_jurisdictions.
+    studio_payment_jurisdictions: { payment_country: "CA", payment_currency: "cad" },
   };
 }
 

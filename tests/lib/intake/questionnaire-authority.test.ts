@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ACKNOWLEDGEMENTS_STEP_ID,
   ANSWER_ERROR_COPY,
@@ -6,6 +6,7 @@ import {
   PRACTITIONER_ENTERABLE_STEPS,
   TOTAL_STEPS,
   isAnswerProvided,
+  findInvalidChoiceAnswers,
   isConditionalSatisfied,
   isValidIntakeDate,
   isValidIntakeEmail,
@@ -14,6 +15,38 @@ import {
   visibleQuestionsForStep,
   type Question,
 } from "@/lib/intake/questions";
+import { reviewAnswerState, REVIEW_ANSWER_COPY, yesNoAnswerLabel } from "@/lib/intake/review-answers";
+
+describe("CLN-004 canonical yes/no answers", () => {
+  const question = INTAKE_STEPS.flatMap((s) => s.questions).find((q) => q.key === "has_allergies")!;
+
+  it.each(["maybe", "YES", "No", " yes ", true, false, 1, {}, ["no"]])(
+    "refuses noncanonical answer %j instead of treating it as a negative",
+    (value) => {
+      expect(findInvalidChoiceAnswers({ has_allergies: value })).toContain("has_allergies");
+      expect(reviewAnswerState(question, { has_allergies: value }, "submitted")).toBe("unrecognized");
+      expect(yesNoAnswerLabel(value)).toBe("Unknown (unrecognized answer)");
+    },
+  );
+
+  it.each(["yes", "no"])("accepts canonical %s without relabelling history", (value) => {
+    expect(findInvalidChoiceAnswers({ has_allergies: value })).not.toContain("has_allergies");
+    expect(reviewAnswerState(question, { has_allergies: value }, "submitted")).toBe("answered");
+    expect(yesNoAnswerLabel(value)).toBe(value === "yes" ? "Yes" : "No");
+  });
+
+  it("keeps incomplete drafts and missing historic answers distinct from invalid answers", () => {
+    for (const value of [undefined, null, "", "  "]) {
+      expect(findInvalidChoiceAnswers({ has_allergies: value })).not.toContain("has_allergies");
+    }
+    expect(reviewAnswerState(question, {}, "in_progress")).toBe("unanswered");
+    expect(reviewAnswerState(question, {}, "submitted")).toBe("not_collected");
+    expect(REVIEW_ANSWER_COPY).toHaveProperty("unrecognized", "Unknown (unrecognized answer)");
+    expect(yesNoAnswerLabel(undefined)).toBe("Not answered");
+    const conditional = INTAKE_STEPS.flatMap((s) => s.questions).find((q) => q.key === "requires_epipen")!;
+    expect(reviewAnswerState(conditional, { has_allergies: "no", requires_epipen: "maybe" }, "reviewed")).toBe("not_applicable");
+  });
+});
 
 // PARITY GUARD for the shared questionnaire authority.
 //
@@ -281,5 +314,51 @@ describe("the practitioner-enterable / client-owned step split", () => {
         expect(q.type).not.toBe("checkbox");
       }
     }
+  });
+});
+
+
+import { intakeRevision } from "@/lib/intake/revision";
+import { writeIntakeRevision } from "@/lib/intake/write-revision";
+
+describe("0243 revision and governed write response boundary", () => {
+  it.each([undefined, null, "", "00", "-1", "1.5", "1e2", "9223372036854775808", -1, Number.MAX_SAFE_INTEGER + 1])(
+    "refuses missing or lossy revision %j", (value) => { expect(intakeRevision(value)).toBeNull(); },
+  );
+  it("round-trips legacy zero and full bigint strings without inventing missing zero", () => {
+    expect(intakeRevision(0)).toBe("0");
+    expect(intakeRevision("9223372036854775807")).toBe("9223372036854775807");
+  });
+  const input = { intakeId: "intake", studioId: "studio-A", clientId: "client-A", expectedRevision: "4", responses: { legal_name: "Synthetic" }, step: 1, operation: "save" as const };
+  it("passes only resolved scope, validated responses and explicit revision to the one governed command", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ outcome: "saved", new_revision: "5" }], error: null });
+    expect(await writeIntakeRevision({ rpc } as never, input)).toEqual({ ok: true, revision: "5", outcome: "saved" });
+    expect(rpc).toHaveBeenCalledWith("write_intake_revision", {
+      p_intake_id: "intake", p_studio_id: "studio-A", p_client_id: "client-A", p_expected_revision: "4",
+      p_responses: input.responses, p_step: 1, p_operation: "save", p_profile: {},
+    });
+  });
+  it.each(["conflict", "terminal"])("%s never claims the new payload was saved", async (outcome) => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ outcome, new_revision: null }], error: null });
+    const result = await writeIntakeRevision({ rpc } as never, input);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe(outcome);
+  });
+  it.each([null, [], [{ outcome: "saved", new_revision: "4" }], [{ outcome: "saved", new_revision: "garbage" }], [{ outcome: "submitted", new_revision: "5" }], [{ outcome: "not_available", new_revision: "private-revision" }]])(
+    "fails closed on an incomplete or wrong-operation response %j", async (data) => {
+      const rpc = vi.fn().mockResolvedValue({ data, error: null });
+      expect((await writeIntakeRevision({ rpc } as never, input)).ok).toBe(false);
+    },
+  );
+  it("refuses an invalid explicit counter without calling a writer", async () => {
+    const rpc = vi.fn();
+    expect((await writeIntakeRevision({ rpc } as never, { ...input, expectedRevision: "invalid" })).ok).toBe(false);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it("database errors and throws fail closed without returning database/private text", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: "PRIVATE" } });
+    expect(JSON.stringify(await writeIntakeRevision({ rpc } as never, input))).not.toContain("PRIVATE");
+    rpc.mockRejectedValue(new Error("PRIVATE"));
+    expect(JSON.stringify(await writeIntakeRevision({ rpc } as never, input))).not.toContain("PRIVATE");
   });
 });

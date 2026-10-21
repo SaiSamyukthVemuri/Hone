@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
   adminQuery,
+  adminTx,
+  asRole,
   closePool,
   seedStudio,
   userQuery,
@@ -330,5 +332,94 @@ describe("5. the documented limitation is real, and stated honestly", () => {
     );
     // It succeeds. That is the limitation, proven rather than assumed.
     expect(res.rowCount).toBe(1);
+  });
+});
+
+
+// 0243 command-level concurrency/ACL proof. Prepared only: requires the
+// composed 0243 chain and a separately granted paired isolated DB target.
+describe("0243 public/assisted revision and atomic profile boundary", () => {
+  const command = "select * from public.write_intake_revision($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb)";
+  function parameters(id: string, revision: string, operation = "save", responses: Record<string, unknown> = {}, profile: Record<string, unknown> = {}, studio = A.studioId, client = A.clientId) {
+    return [id, studio, client, revision, JSON.stringify(responses), operation === "save" ? 1 : 5, operation, JSON.stringify(profile)];
+  }
+  async function write(args: unknown[]) {
+    return adminTx(async (q) => { await q("set local role service_role"); return (await q(command, args)).rows[0]; });
+  }
+  it.each(["anon", "authenticated"] as const)("%s cannot invoke the privileged writer", async (role) => {
+    const id = await seedIntake(A, "in_progress");
+    await expect(asRole(role, (q) => q(command, parameters(id, "0")))).rejects.toMatchObject({ code: "42501" });
+  });
+  it.each([["save", "save"], ["save", "submit"], ["submit", "submit"]])(
+    "two %s/%s requests with one snapshot have exactly one winner", async (first, second) => {
+      const id = await seedIntake(A, "in_progress");
+      const results = await Promise.all([
+        write(parameters(id, "0", first, { legal_name: "Public A" })),
+        write(parameters(id, "0", second, { legal_name: "Public B" })),
+      ]);
+      expect(results.filter((r) => ["saved", "submitted"].includes(r.outcome))).toHaveLength(1);
+      expect(results.filter((r) => ["conflict", "terminal"].includes(r.outcome))).toHaveLength(1);
+      const { rows: [row] } = await adminQuery("select revision::text, responses from public.client_intake_forms where id=$1", [id]);
+      expect(row.revision).toBe("1");
+      expect(["Public A", "Public B"]).toContain(row.responses.legal_name);
+    },
+  );
+  it("a prior assisted write invalidates the public snapshot, and a stale assisted write cannot overwrite it", async () => {
+    const id = await seedIntake(A, "in_progress");
+    await userQuery(A.userId, "update public.client_intake_forms set responses=$2::jsonb where id=$1", [id, JSON.stringify({ legal_name: "Assisted" })]);
+    expect((await write(parameters(id, "0", "save", { legal_name: "Stale public" }))).outcome).toBe("conflict");
+    expect((await write(parameters(id, "1", "save", { legal_name: "Current public" }))).outcome).toBe("saved");
+    expect((await write(parameters(id, "1", "save", { legal_name: "Stale assisted" }))).outcome).toBe("conflict");
+    expect((await storedResponses(id)).legal_name).toBe("Current public");
+  });
+  it("wrong studio/client refuses without a revision or a write", async () => {
+    const id = await seedIntake(A, "in_progress");
+    expect(await write(parameters(id, "0", "save", {}, {}, B.studioId))).toEqual({ outcome: "not_available", new_revision: null });
+    expect(await write(parameters(id, "0", "save", {}, {}, A.studioId, B.clientId))).toEqual({ outcome: "not_available", new_revision: null });
+    expect((await storedResponses(id)).q).toBe("draft");
+  });
+  it("only the submit winner appends allergies once and preserves current nonempty profile fields", async () => {
+    const id = await seedIntake(A, "in_progress");
+    await adminQuery("update public.clients set allergies='Practitioner latest', pronouns='They', emergency_contact_phone='Existing' where id=$1", [A.clientId]);
+    const args = parameters(id, "0", "submit", { legal_name: "Submitted" }, { allergy_text: "Intake contribution", pronouns: "Different", emergency_contact_phone: "Different" });
+    expect((await write(args)).outcome).toBe("submitted");
+    expect((await write(args)).outcome).toBe("terminal");
+    const { rows: [client] } = await adminQuery("select allergies,pronouns,emergency_contact_phone from public.clients where id=$1", [A.clientId]);
+    expect(client.pronouns).toBe("They"); expect(client.emergency_contact_phone).toBe("Existing");
+    expect(client.allergies).toContain("Practitioner latest");
+    expect(client.allergies.split("Intake contribution")).toHaveLength(2);
+  });
+  it("invalid profile date rolls back both the submitted transition and new answers", async () => {
+    const id = await seedIntake(A, "in_progress");
+    await adminQuery("update public.clients set date_of_birth=null where id=$1", [A.clientId]);
+    await expect(write(parameters(id, "0", "submit", { legal_name: "Must rollback" }, { date_of_birth: "not-a-date" }))).rejects.toBeTruthy();
+    const { rows: [row] } = await adminQuery("select status,revision::text,submitted_at,responses from public.client_intake_forms where id=$1", [id]);
+    expect(row.status).toBe("in_progress"); expect(row.revision).toBe("0"); expect(row.submitted_at).toBeNull(); expect(row.responses.q).toBe("draft");
+  });
+  it("waits for a concurrent profile edit, then merges the latest locked values", async () => {
+    const id = await seedIntake(A, "in_progress");
+    let held!: () => void; let release!: () => void; let identified!: () => void;
+    const locked = new Promise<void>((r) => { held = r; });
+    const unlock = new Promise<void>((r) => { release = r; });
+    const pidReady = new Promise<void>((r) => { identified = r; });
+    let pid = 0;
+    const editor = adminTx(async (q) => {
+      await q("update public.clients set allergies='Concurrent practitioner', address='Current address' where id=$1", [A.clientId]);
+      held(); await unlock;
+    });
+    await locked;
+    const submit = adminTx(async (q) => {
+      await q("set local role service_role"); pid = (await q("select pg_backend_pid() as pid")).rows[0].pid; identified();
+      return (await q(command, parameters(id, "0", "submit", {}, { allergy_text: "New intake", address: "Stale address" }))).rows[0];
+    });
+    await pidReady;
+    try {
+      await expect.poll(async () => (await adminQuery("select wait_event_type from pg_stat_activity where pid=$1", [pid])).rows[0]?.wait_event_type, { timeout: 5000 }).toBe("Lock");
+    } finally { release(); }
+    await editor;
+    expect((await submit).outcome).toBe("submitted");
+    const { rows: [client] } = await adminQuery("select allergies,address from public.clients where id=$1", [A.clientId]);
+    expect(client.address).toBe("Current address");
+    expect(client.allergies).toContain("Concurrent practitioner"); expect(client.allergies).toContain("New intake");
   });
 });

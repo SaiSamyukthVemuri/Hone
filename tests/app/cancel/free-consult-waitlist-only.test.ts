@@ -210,6 +210,12 @@ function renderNudge(
       createElement(CancellationNudge, {
         reason,
         freeConsultationWaitlistOnly,
+        // HON-47 added this prop. TRUE here, which is the honest value for
+        // every case in THIS file: these cases are about the free-consultation
+        // policy at a studio that has NOT switched client rescheduling off.
+        // HON-47's own branch is proved in
+        // tests/app/cancel/client-self-service-disabled.test.ts.
+        clientRescheduleAllowed: true,
         rescheduleHref: `/reschedule/${TOKEN}`,
       }),
     ),

@@ -2,6 +2,13 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
+import {
+  accountCountryBlockingReason,
+  accountCountryVerdict,
+  JURISDICTION_UNVERIFIED_REASON,
+  parsePaymentCurrency,
+} from "@/lib/billing/payment-jurisdiction";
 import type {
   SessionPaymentCardAuthorizationSummary,
   SessionPaymentCardSummary,
@@ -64,8 +71,9 @@ import type {
 //   practitioner-confirmed form input; the helper carries the
 //   pre-existing sessions.price_paid_cents as a non-binding
 //   suggestion only.
-// * No currency lookup beyond launch. Sam's policy pegs launch
-//   currency at 'cad' (also enforced by the table CHECK).
+// * The currency is the studio's (PAY-CCY-02, studio_payment_jurisdictions):
+//   returned as paymentCurrency for the prepare action to stamp. The
+//   account's observed country must be the studio's country.
 
 type Args = {
   studioId: string;
@@ -295,13 +303,22 @@ export async function getSessionPaymentEligibility(
   //    deployment mode (the read below is mode-scoped; a mode belt
   //    double-checks it).
   let resolvedStripeAccountId: string | null = stripeAccountIdFromCard;
+
+  // PAY-CCY-02. The studio's payment country and charge currency. An unread
+  // jurisdiction blocks: it is never assumed to be Canada.
+  const jurisdictionRead = await getStudioPaymentJurisdiction(args.studioId);
+  const jurisdiction = jurisdictionRead.ok ? jurisdictionRead.jurisdiction : null;
+  if (!jurisdiction) {
+    reasons.push(JURISDICTION_UNVERIFIED_REASON);
+  }
+
   // Mode-scoped (0103): a studio can hold one settings row per Stripe mode;
   // eligibility verifies against the CURRENT deployment mode's row only
   // (the stripe_livemode !== livemode belt below stays as defense-in-depth).
   const { data: settings, error: settingsErr } = await admin
     .from("studio_payment_settings")
     .select(
-      "stripe_account_id, stripe_account_status, stripe_livemode",
+      "stripe_account_id, stripe_account_status, stripe_livemode, stripe_account_country, stripe_account_country_conflict",
     )
     .eq("studio_id", args.studioId)
     .eq("stripe_livemode", livemode)
@@ -340,6 +357,19 @@ export async function getSessionPaymentEligibility(
         "Studio payment settings mode does not match the deployment mode.",
       );
     }
+    // PAY-CCY-02. The account's COUNTRY against the studio's COUNTRY. Never
+    // inferred from the currency, and never from the account's own default
+    // currency. The 0214 insert guard enforces the same rule.
+    if (jurisdiction && settings.stripe_account_id) {
+      const countryReason = accountCountryBlockingReason(
+        accountCountryVerdict(
+          jurisdiction.country,
+          (settings.stripe_account_country as string | null) ?? null,
+          (settings.stripe_account_country_conflict as string | null) ?? null,
+        ),
+      );
+      if (countryReason) reasons.push(countryReason);
+    }
     resolvedStripeAccountId =
       stripeAccountIdFromCard ?? (settings.stripe_account_id as string | null);
   }
@@ -371,7 +401,7 @@ export async function getSessionPaymentEligibility(
     const { data: attemptRows, error: attemptsErr } = await admin
       .from("payment_charge_attempts")
       .select(
-        "id, status, amount_cents, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message_safe, receipt_status, receipt_sent_at, receipt_email_to, receipt_failure_code, receipt_failure_message_safe, refund_status, refund_amount_cents, refunded_at, stripe_refund_id, refund_failure_code, refund_failure_message_safe",
+        "id, status, amount_cents, currency, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message_safe, receipt_status, receipt_sent_at, receipt_email_to, receipt_failure_code, receipt_failure_message_safe, refund_status, refund_amount_cents, refunded_at, stripe_refund_id, refund_failure_code, refund_failure_message_safe",
       )
       .eq("studio_id", args.studioId)
       .eq("session_id", sessionSummary.id)
@@ -391,6 +421,7 @@ export async function getSessionPaymentEligibility(
       id: row.id as string,
       status: row.status as string,
       amountCents: row.amount_cents as number,
+      currency: parsePaymentCurrency(row.currency),
       createdAt: row.created_at as string,
       stripePaymentIntentId:
         (row.stripe_payment_intent_id as string | null) ?? null,
@@ -442,6 +473,7 @@ export async function getSessionPaymentEligibility(
 
   if (
     reasons.length === 0 &&
+    jurisdiction &&
     sessionSummary &&
     client &&
     cardSummary &&
@@ -465,6 +497,7 @@ export async function getSessionPaymentEligibility(
       stripeAccountId: resolvedStripeAccountId,
       stripeCustomerId: stripeCustomerIdFromCard,
       stripePaymentMethodId: stripePaymentMethodIdFromCard,
+      paymentCurrency: jurisdiction.currency,
       existingAttempts,
     };
   }

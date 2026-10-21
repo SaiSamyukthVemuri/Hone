@@ -1010,7 +1010,8 @@ describe("0171 — financial safety fails closed (manual_fee_charge_attempts)", 
 
 describe("0171 — the financial census is complete", () => {
   it("no OTHER table carrying live appointment-bound money is missing from the gate", async () => {
-    // Every table with an appointment_id FK, minus the ones the gate covers and
+    // Every distinct table with an appointment FK (including composite FKs),
+    // minus the ones the gate covers and
     // the ones that are provably not payment state. If this list grows, the
     // gate (or this justification) must be revisited.
     const r = await adminQuery(
@@ -1031,11 +1032,12 @@ describe("0171 — the financial census is complete", () => {
         "appointment_policy_acknowledgements", // evidence, stays on the original
         "appointments", //                 the lineage self-reference
         "booking_tracking_consents", //    marketing consent, ON DELETE SET NULL
-        "email_outbound_messages", //       delivery ledger, no money
         "ops_alerts", //                   operator signal, ON DELETE SET NULL
         "practitioner_notifications", //   in-app notice, ON DELETE SET NULL
         "sessions", //                     clinical record, ON DELETE SET NULL
         "sms_outbound_messages", //        SMS-00 delivery ledger, ON DELETE CASCADE; no money
+        "email_outbound_messages", //      0212 email delivery ledger, ON DELETE CASCADE; no money
+        "delivery_concerns", //            0221 owner-reported delivery concern, ON DELETE CASCADE; no money
         // APPOINTMENT-BOUND MONEY THAT THIS GATE STRUCTURALLY CANNOT MEET
         // (PAY-SETTLE / 0187):
         "appointment_settlements", //      see the justification below

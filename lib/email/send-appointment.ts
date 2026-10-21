@@ -1,5 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FROM_ADDRESS, getResendTransport } from "@/lib/email/client";
+import { EMAIL_LEDGER_TAG } from "@/lib/email/resend-webhook";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import {
+  beginAppointmentEmailMessage,
+  settleEmailMessage,
+  settleOutcomeForEmailSend,
+  type AppointmentEmailPurpose,
+} from "@/lib/email/delivery-ledger";
 import {
   buildFromHeader,
   resolveReplyTo,
@@ -44,7 +52,20 @@ type AnyAppointment = Appointment;
 // errors. Callers MUST inspect `ok` before treating a send as delivered.
 export type EmailSendResult =
   | { ok: true; messageId?: string }
-  | { ok: false; error: string; retryable: boolean };
+  | {
+      ok: false;
+      error: string;
+      retryable: boolean;
+      /**
+       * DELIVERY-VISIBILITY-01. Whether the provider was reached, for the
+       * delivery ledger (lib/email/delivery-ledger.ts): `none` -- no request
+       * was made; `refused` -- the provider answered and did not take it;
+       * `ambiguous` -- a request was made and its answer was lost or was a
+       * server error, so it may have been sent. Optional so the existing
+       * callers, which read only `ok` / `retryable`, are unchanged.
+       */
+      attempt?: "none" | "refused" | "ambiguous";
+    };
 
 const RESEND_TIMEOUT_MS = 15_000;
 
@@ -106,6 +127,13 @@ export async function sendEmailSafely(opts: {
    * as Hone) omits it and keeps today's exact From with no Reply-To.
    */
   studioIdentity?: StudioEmailIdentity;
+  /**
+   * DELIVERY-VISIBILITY-01. The email_outbound_messages row this attempt was
+   * begun on. When present the message carries the Resend tag
+   * `hone_m = <row id>`, so its signed delivery events land on that row even
+   * if this call's own answer is lost. An opaque id: no content.
+   */
+  ledgerMessageId?: string | null;
 }): Promise<EmailSendResult> {
   // RESCHEDULE-E2E-01. The transport is RESOLVED, not imported: in production
   // `getResendTransport()` returns the same real Resend client this used to
@@ -121,6 +149,7 @@ export async function sendEmailSafely(opts: {
       ok: false,
       error: "Resend not configured (RESEND_API_KEY missing)",
       retryable: false,
+      attempt: "none",
     };
   }
 
@@ -129,6 +158,7 @@ export async function sendEmailSafely(opts: {
       ok: false,
       error: `Invalid recipient: ${opts.to || "(empty)"}`,
       retryable: false,
+      attempt: "none",
     };
   }
 
@@ -166,6 +196,9 @@ export async function sendEmailSafely(opts: {
   if (attachments.length > 0) {
     payload.attachments = attachments;
   }
+  if (opts.ledgerMessageId) {
+    payload.tags = [{ name: EMAIL_LEDGER_TAG, value: opts.ledgerMessageId }];
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), RESEND_TIMEOUT_MS);
@@ -186,11 +219,22 @@ export async function sendEmailSafely(opts: {
     clearTimeout(timeout);
 
     if (!result) {
-      return { ok: false, error: "Empty response from Resend", retryable: true };
+      return { ok: false, error: "Empty response from Resend", retryable: true, attempt: "ambiguous" };
     }
     if (result.error) {
       const c = classifyResendError(result.error);
-      return { ok: false, error: c.message, retryable: c.retryable };
+      // A 4xx (429 included) is the provider declining the request. A 5xx or
+      // an unfamiliar envelope may still have been accepted.
+      const status = result.error.statusCode;
+      const refused =
+        (typeof status === "number" && status >= 400 && status < 500) ||
+        (typeof status !== "number" && !c.retryable);
+      return {
+        ok: false,
+        error: c.message,
+        retryable: c.retryable,
+        attempt: refused ? "refused" : "ambiguous",
+      };
     }
     return { ok: true, messageId: result.data?.id };
   } catch (err) {
@@ -200,12 +244,13 @@ export async function sendEmailSafely(opts: {
         ok: false,
         error: `Resend timeout after ${RESEND_TIMEOUT_MS}ms`,
         retryable: true,
+        attempt: "ambiguous",
       };
     }
     const message = err instanceof Error ? err.message : "Unknown send error";
     // Network errors throw synchronously / asynchronously and rarely
     // carry structured shape; treat as retryable.
-    return { ok: false, error: message, retryable: true };
+    return { ok: false, error: message, retryable: true, attempt: "ambiguous" };
   }
 }
 
@@ -406,14 +451,16 @@ export async function sendBookingConfirmationToClient(params: {
   practitionerDisplayName: string | null;
   clientName: string;
   clientEmail: string;
-  cancellationUrl: string;
+  // HON-47. Null when the studio has switched client cancellation off, so the
+  // link is never SENT. Already the shape `rescheduleUrl` has.
+  cancellationUrl: string | null;
   rescheduleUrl: string | null;
   intakeUrl: string | null;
   treatmentTimeLine: string | null;
   appBaseUrl: string;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "No client email on file", retryable: false, attempt: "none" };
   }
   const start = new Date(params.appointment.starts_at);
   const end = new Date(params.appointment.ends_at);
@@ -443,22 +490,88 @@ export async function sendBookingConfirmationToClient(params: {
     end,
     summary: `${serviceName} · ${params.studio.name}`,
     location: params.studio.address ?? undefined,
-    description:
-      `${serviceName} at ${params.studio.name}.\nCancel: ${params.cancellationUrl}`,
+    // HON-47. The calendar invite is a channel too: a suppressed link must
+    // not reach it either, and the description simply names the appointment.
+    description: params.cancellationUrl
+      ? `${serviceName} at ${params.studio.name}.\nCancel: ${params.cancellationUrl}`
+      : `${serviceName} at ${params.studio.name}.`,
     organizerName: params.studio.name,
     organizerEmail: params.studio.owner_email,
     attendeeName: params.clientName,
     attendeeEmail: params.clientEmail,
   });
 
-  return sendEmailSafely({
-    studioIdentity: identityFor(params.studio),
-    to: params.clientEmail,
-    subject,
-    html,
-    text,
-    icsContent: ics,
-  });
+  // DELIVERY-VISIBILITY-03: the booking confirmation joins the email delivery
+  // ledger HERE, once, so every caller (public booking, portal rebook,
+  // calendar, public reschedule) is covered without touching any of them.
+  return sendLedgeredAppointmentEmail(
+    // THE STUDIO COMES FROM THE STUDIO ARGUMENT, NOT THE APPOINTMENT ROW
+    // (Codex P2 4307335313, fixed on #849 and carried here through 04's
+    // refactor). The three PUBLIC callers hand this function a PARTIAL
+    // appointment — `{ id, starts_at, ends_at, duration_minutes, created_at }`
+    // cast `as unknown as Appointment` (app/book/[slug]/actions.ts:1425,
+    // app/reschedule/[token]/actions.ts:1046, app/portal/rebook-actions.ts:668)
+    // — so `studio_id` is UNDEFINED on exactly the flows this ledger exists to
+    // observe, and the fail-soft path sent the confirmation untagged: no row,
+    // no attribution, no incident, nothing red to show it.
+    //
+    // `params.studio` is a FULL `Studio`, so `.id` is always present. The cast
+    // is why the compiler never objected.
+    //
+    // THE REF IS WHERE THE STUDIO IS CHOSEN. `sendLedgeredAppointmentEmail`
+    // itself correctly uses whatever `ref` it is handed, so the fix belongs
+    // here and not inside the helper — which is exactly what the merge of
+    // #849 into this branch had to decide.
+    { studioId: params.studio.id, appointmentId: params.appointment.id },
+    "appointment_confirmation",
+    (ledgerMessageId) =>
+      sendEmailSafely({
+        studioIdentity: identityFor(params.studio),
+        to: params.clientEmail,
+        subject,
+        html,
+        text,
+        icsContent: ics,
+        ledgerMessageId,
+      }),
+  );
+}
+
+/** The appointment an email is about, for the delivery ledger. */
+export type AppointmentLedgerRef = { studioId: string; appointmentId: string };
+
+/**
+ * DELIVERY-VISIBILITY-03/04. Send one appointment email through the delivery
+ * ledger: begin a row for this appointment and purpose, send tagged
+ * `hone_m = <row id>`, settle the provider's answer. Called only once the
+ * caller has decided to send (after any no-recipient exit). Fail-soft both
+ * ways: no service-role configuration or no ledger row means the same email,
+ * untagged; a settle that cannot be written never changes the result.
+ */
+async function sendLedgeredAppointmentEmail(
+  ref: AppointmentLedgerRef | null | undefined,
+  purpose: AppointmentEmailPurpose,
+  send: (ledgerMessageId: string | null) => Promise<EmailSendResult>,
+): Promise<EmailSendResult> {
+  if (!ref) return send(null);
+  let admin: ReturnType<typeof createAdminClient> | null = null;
+  try {
+    admin = createAdminClient();
+  } catch {
+    admin = null; // no service-role configuration: send untagged, as before
+  }
+  const ledgerMessageId = admin
+    ? await beginAppointmentEmailMessage(admin, {
+        studioId: ref.studioId,
+        appointmentId: ref.appointmentId,
+        purpose,
+      })
+    : null;
+  const result = await send(ledgerMessageId);
+  if (admin && ledgerMessageId) {
+    await settleEmailMessage(admin, ledgerMessageId, settleOutcomeForEmailSend(result));
+  }
+  return result;
 }
 
 export async function sendBookingNotificationToPractitioner(params: {
@@ -518,6 +631,12 @@ export async function sendCancellationEmail(params: {
   reason: string | null;
   isClient: boolean;
   rebookUrl?: string;
+  /**
+   * DELIVERY-VISIBILITY-04: the appointment, for the delivery ledger. Only the
+   * CLIENT's notice is ledgered: the studio copy is Hone talking to its own
+   * customer, not a client delivery.
+   */
+  ledger?: AppointmentLedgerRef | null;
 }) {
   if (!params.to) return;
   const { subject, html, text } = buildCancellationEmail({
@@ -534,21 +653,27 @@ export async function sendCancellationEmail(params: {
     isClient: params.isClient,
     rebookUrl: params.rebookUrl,
   });
-  await sendEmailSafely({
-    // ONE helper, TWO recipients. `isClient` decides who is reading:
-    //   true  -> the CLIENT: brand as the studio, reply to the studio.
-    //   false -> the STUDIO OWNER: stay Hone. Branding this would make the
-    //            owner receive mail apparently from their own studio, with
-    //            replies routed to their own postcare inbox.
-    // The recipient decides the identity; the function name never does.
-    studioIdentity: params.isClient
-      ? identityFor(params.studio)
-      : undefined,
-    to: params.to,
-    subject,
-    html,
-    text,
-  });
+  await sendLedgeredAppointmentEmail(
+    params.isClient ? params.ledger : null,
+    "appointment_cancellation",
+    (ledgerMessageId) =>
+      sendEmailSafely({
+        // ONE helper, TWO recipients. `isClient` decides who is reading:
+        //   true  -> the CLIENT: brand as the studio, reply to the studio.
+        //   false -> the STUDIO OWNER: stay Hone. Branding this would make the
+        //            owner receive mail apparently from their own studio, with
+        //            replies routed to their own postcare inbox.
+        // The recipient decides the identity; the function name never does.
+        studioIdentity: params.isClient
+          ? identityFor(params.studio)
+          : undefined,
+        to: params.to,
+        subject,
+        html,
+        text,
+        ledgerMessageId,
+      }),
+  );
 }
 
 type ReminderInput = {
@@ -561,7 +686,9 @@ type ReminderInput = {
   practitionerDisplayName: string | null;
   clientName: string;
   clientEmail: string;
-  cancellationUrl: string;
+  // HON-47. Null when the studio has switched client cancellation off, so the
+  // link is never SENT. Already the shape `rescheduleUrl` has.
+  cancellationUrl: string | null;
   rescheduleUrl: string | null;
   treatmentTimeLine: string | null;
   // A FRESH secure intake link, or null. The reminder cron passes non-null
@@ -569,13 +696,16 @@ type ReminderInput = {
   // that this send should carry the intake CTA. The template does not
   // re-derive eligibility.
   intakeUrl?: string | null;
+  // DELIVERY-VISIBILITY-01: the delivery-ledger row begun for this send, if
+  // any. Tags the message; changes nothing else about it.
+  ledgerMessageId?: string | null;
 };
 
 export async function send24hReminderToClient(
   p: ReminderInput,
 ): Promise<EmailSendResult> {
   if (!p.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "No client email on file", retryable: false, attempt: "none" };
   }
   const start = new Date(p.appointment.starts_at);
   const end = new Date(p.appointment.ends_at);
@@ -596,14 +726,14 @@ export async function send24hReminderToClient(
     treatmentTimeLine: p.treatmentTimeLine,
     intakeUrl: p.intakeUrl ?? null,
   });
-  return sendEmailSafely({ studioIdentity: identityFor(p.studio), to: p.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: identityFor(p.studio), to: p.clientEmail, subject, html, text, ledgerMessageId: p.ledgerMessageId });
 }
 
 export async function send2hReminderToClient(
   p: ReminderInput,
 ): Promise<EmailSendResult> {
   if (!p.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "No client email on file", retryable: false, attempt: "none" };
   }
   const start = new Date(p.appointment.starts_at);
   const end = new Date(p.appointment.ends_at);
@@ -624,7 +754,7 @@ export async function send2hReminderToClient(
     treatmentTimeLine: p.treatmentTimeLine,
     intakeUrl: p.intakeUrl ?? null,
   });
-  return sendEmailSafely({ studioIdentity: identityFor(p.studio), to: p.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: identityFor(p.studio), to: p.clientEmail, subject, html, text, ledgerMessageId: p.ledgerMessageId });
 }
 
 // STANDALONE intake-form reminder, sent by the reminder cron at the ~24h or
@@ -643,9 +773,10 @@ export async function sendIntakeReminderToClient(p: {
   startsAt: Date;
   timezone: string;
   intakeUrl: string;
+  ledgerMessageId?: string | null;
 }): Promise<EmailSendResult> {
   if (!p.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "No client email on file", retryable: false, attempt: "none" };
   }
   const { subject, html, text } = buildIntakeReminderEmail({
     kind: p.kind,
@@ -654,7 +785,7 @@ export async function sendIntakeReminderToClient(p: {
     startsAt: p.startsAt,
     timezone: p.timezone,
   });
-  return sendEmailSafely({ studioIdentity: { displayName: p.studioName, replyTo: null }, to: p.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: { displayName: p.studioName, replyTo: null }, to: p.clientEmail, subject, html, text, ledgerMessageId: p.ledgerMessageId });
 }
 
 export async function sendNoShowFollowupToClient(params: {
@@ -664,7 +795,7 @@ export async function sendNoShowFollowupToClient(params: {
   rebookUrl: string | null;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "No client email on file", retryable: false, attempt: "none" };
   }
   const { subject, html, text } = buildNoShowFollowupEmail({
     clientName: params.clientName,
@@ -701,9 +832,11 @@ export async function sendPostcareToClient(params: {
   productRecommendationsText: string | null;
   reviewUrl: string | null;
   reviewPromptText: string | null;
+  /** DELIVERY-VISIBILITY-04: the appointment, for the delivery ledger. */
+  ledger?: AppointmentLedgerRef | null;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "No client email on file", retryable: false, attempt: "none" };
   }
   // Contact-line priority: studios.postcare_contact_email overrides
   // studios.owner_email when set. Never the client's email; if
@@ -725,7 +858,16 @@ export async function sendPostcareToClient(params: {
     reviewUrl: params.reviewUrl,
     reviewPromptText: params.reviewPromptText,
   });
-  return sendEmailSafely({ studioIdentity: identityFor(params.studio), to: params.clientEmail, subject, html, text });
+  return sendLedgeredAppointmentEmail(params.ledger, "appointment_postcare", (ledgerMessageId) =>
+    sendEmailSafely({
+      studioIdentity: identityFor(params.studio),
+      to: params.clientEmail,
+      subject,
+      html,
+      text,
+      ledgerMessageId,
+    }),
+  );
 }
 
 // Resolve which email to render in the postcare Contact line. The
@@ -767,7 +909,7 @@ export async function sendIntakeUpdateRequestToClient(params: {
   intakeUrl: string;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "No client email on file", retryable: false, attempt: "none" };
   }
   const { subject, html, text } = buildIntakeRequestEmail({
     studioName: params.studioName,

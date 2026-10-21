@@ -6,7 +6,44 @@ import type {
 import type { TreatmentParams } from "@/lib/supabase/queries";
 import { ELECTROLYSIS_MODES, apilusModalityLabel } from "@/lib/constants";
 import { formatSeconds } from "@/lib/sessions/format-seconds";
+import { hasStructuredReadings } from "@/lib/sessions/structured-readings";
 import { resolveDisplayChips } from "@/lib/observation-chips";
+
+// The fields this row reads, and nothing else: the saved session view passes
+// full rows, and the HON-46 printout passes its allow-listed rows, through the
+// SAME component (SavedAreaRecord in session-blocks-view.tsx).
+export type SavedEntryFields = Pick<
+  ElectrolysisEntry,
+  | "id"
+  | "created_at"
+  | "area"
+  | "areas"
+  | "mode"
+  | "apilus_modality"
+  | "energy_level"
+  | "minutes_performed"
+  | "probe_type"
+  | "probe_size"
+  | "machine_frequency"
+  | "units_of_lye"
+  | "galvanic_duration_seconds"
+  | "galvanic_ma"
+  | "thermolysis_duration_seconds"
+  | "thermolysis_intensity_percent"
+  | "pulse_count"
+  | "pulse_delay_seconds"
+  | "intensity"
+  | "duration_seconds"
+  | "hairs_treated"
+  | "observation_chips"
+  | "comments"
+>;
+
+// The laser fields LaserEntryRow reads (shared with the printout the same way).
+export type SavedLaserFields = Pick<
+  LaserEntry,
+  "id" | "created_at" | "zone" | "session_number" | "equipment_params" | "observation_notes"
+>;
 
 function modeLabel(value: ElectrolysisEntry["mode"]): string | null {
   if (!value) return null;
@@ -51,9 +88,9 @@ export function ElectrolysisEntryRow({
   hideArea = false,
   label,
 }: {
-  entry: ElectrolysisEntry;
+  entry: SavedEntryFields;
   treatmentParams?: TreatmentParams;
-  block?: SessionBlock | null;
+  block?: Pick<SessionBlock, "mode"> | null;
   density?: "comfortable" | "compact";
   action?: React.ReactNode;
   // "readings": compact render for entries shown INSIDE a treatment-area
@@ -136,7 +173,21 @@ export function ElectrolysisEntryRow({
     if (pulseDelayLabel) thermoParts.push(pulseDelayLabel);
   }
 
-  const hasStructured = galvanicParts.length > 0 || thermoParts.length > 0;
+  // The ONE shared rule (lib/sessions/structured-readings.ts), also used by
+  // the HON-46 printout, so screen and paper suppress the same legacy pair
+  // (Codex P1 4304983088). Equivalent to "galvanicParts or thermoParts is
+  // non-empty" above.
+  const hasStructured = hasStructuredReadings(entry);
+
+  // PULSES ARE A THERMOLYSIS SETTING (Codex P1 4307447121). A galvanic pass
+  // saved with no readings still stores the default count of 1
+  // (clampPulseCount), and with nothing structured it reaches the legacy line
+  // below, so the legacy line shows a count only for a pass whose mode is not
+  // galvanic. A backfilled pass may inherit its mode from the block
+  // (4309769366); an explicit entry mode still takes precedence.
+  // Shared by the saved view and the HON-46 printout (one render).
+  const effectiveMode = entry.mode ?? block?.mode;
+  const legacyPulses = entry.pulse_count != null && effectiveMode !== "galv";
 
   // Primary meta line: probe size · mode · modality · pulses · intensity · duration
   const meta: string[] = [];
@@ -145,7 +196,7 @@ export function ElectrolysisEntryRow({
   if (mLabel) meta.push(mLabel);
   if (params.apilus_modality) meta.push(apilusModalityLabel(params.apilus_modality));
   if (!hasStructured) {
-    if (entry.pulse_count != null) {
+    if (legacyPulses) {
       meta.push(
         `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
       );
@@ -186,7 +237,7 @@ export function ElectrolysisEntryRow({
         : entry.area;
     const legacyReadings: string[] = [];
     if (!hasStructured) {
-      if (entry.pulse_count != null) {
+      if (legacyPulses) {
         legacyReadings.push(
           `${entry.pulse_count} ${entry.pulse_count === 1 ? "pulse" : "pulses"}`,
         );
@@ -346,7 +397,7 @@ export function LaserEntryRow({
   density = "comfortable",
   action,
 }: {
-  entry: LaserEntry;
+  entry: SavedLaserFields;
   density?: "comfortable" | "compact";
   action?: React.ReactNode;
 }) {

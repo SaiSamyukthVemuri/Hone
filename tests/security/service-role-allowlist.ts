@@ -20,6 +20,12 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "lib/email/send-appointment.ts",
+    purpose: "DELIVERY-VISIBILITY-03: the booking confirmation joins the email delivery ledger.",
+    why: "Bookkeeping only, after the send decision its caller already made. sendBookingConfirmationToClient builds the admin client ONLY to call the service-role-only begin_appointment_email_message (which re-checks that the appointment belongs to the studio it names) and settle_email_message on the row it just created. It reads no other table and accepts no caller-chosen row id. Fail-soft: without it the same email is sent, untagged.",
+    scopeGuard: "beginAppointmentEmailMessage",
+  },
+  {
     path: "app/(app)/settings/waitlist/profile-actions.ts",
     purpose:
       "WAIT-04A owner surface — the sole caller of set_waitlist_entry_availability, create_practitioner_waitlist_entry and import_legacy_waitlist_entry (all migration 0193).",
@@ -118,6 +124,18 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id", consumed.studioId)',
   },
   {
+    path: "lib/booking/booking-notifications.ts",
+    purpose: "Post-commit internal booking notifications (moved verbatim from app/(app)/calendar/actions.ts, STUDIO-READY-02c): records the confirmation email attempt and sends the confirmation SMS.",
+    why: "Called only after create_internal_appointment_v2 or receptionist_create_appointment has COMMITTED, with the appointment row that command returned. The service-role client stamps that one appointment's email-attempt columns (recordEmailAttempt) and passes itself to the SMS helper, which claims and records that one appointment's SMS. No caller-supplied id reaches it except that committed appointment.",
+    scopeGuard: "recordEmailAttempt(admin, p.appointment.id",
+  },
+  {
+    path: "lib/receptionist/scheduling-actions.ts",
+    purpose: "Front-desk book / move / cancel (STUDIO-READY-02c): post-commit notification reads only.",
+    why: "Every write is a 0220 receptionist command called with the receptionist's OWN session (createClient), which derives the actor from auth.uid() and refuses anyone who is not an active receptionist of the studio. The service-role client is constructed only AFTER that command has returned a committed result, and reads exactly that appointment and its client/service/practitioner/studio, each scoped by the server-resolved studio id, to send the same notifications the practitioner calendar sends. Nothing it reads is returned to the browser, and it writes nothing.",
+    scopeGuard: '.eq("studio_id", studioId)',
+  },
+  {
     path: "lib/google-calendar/connection.ts",
     purpose: "Google Calendar Phase A connection metadata + service-role writes (ciphertext table is browser-inaccessible).",
     why: "Callers pass the authenticated studio_id + practitioner_id (resolved via getCurrentPractitionerWithStudio in the actions/callback); every read/write is scoped to both ids so a row can never cross studios.",
@@ -152,6 +170,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
     scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
+    path: "lib/images/client-portrait.ts",
+    purpose: "Sign the client identification portrait (0231) for the profile header.",
+    why: "Signing a private-bucket object needs the service role (storage is service-role only since 0093). The row is first read through the RLS client scoped to the caller's studio + client + client-scope + unarchived, and its path must pass validateTreatmentImagePath before the admin client signs it with the shared 60 s TTL: the Photos tab's own trust boundary.",
+    scopeGuard: "validateTreatmentImagePath",
   },
   {
     path: "app/(app)/clients/[id]/images/sign-treatment-image.ts",
@@ -222,6 +246,18 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/settings/team/receptionist-actions.ts",
+    purpose: "Owner team management — receptionist deactivate/reactivate via the service-role-only set_studio_receptionist_active command (STUDIO-READY-02d, migration 0216).",
+    why: "setReceptionistActiveAction resolves the owner + studio server-side (getCurrentPractitionerWithStudio, role 'owner') before calling the RPC with the server-derived studio + owner ids; only the receptionist id comes from the form, and the RPC re-verifies the active owner and refuses another studio's receptionist ('not_found').",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
+    path: "lib/receptionist/identity.ts",
+    purpose: "The /front-desk route guard — reads the receptionist's studio name and timezone (STUDIO-READY-02d).",
+    why: "A receptionist holds no studios read under RLS. Both reads start from the caller's OWN studio_receptionists rows, read with their session. The guard resolves them (resolveReceptionistMembership), then the service role reads id, name and timezone of THAT studio only. The /front-desk/select chooser reads the names of exactly the studios in those rows. Nothing else is read.",
+    scopeGuard: "resolveReceptionistMembership",
+  },
+  {
     path: "app/(app)/settings/payments/actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
@@ -255,6 +291,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     path: "app/admin/ops-alerts/actions.ts",
     purpose: "Operator-only admin console surface.",
     why: "No practitioner session; gated by the ADMIN_EMAILS/isAdmin operator check. Cross-studio access is intentional for support/ops, so service-role is required.",
+    scopeGuard: "isAdmin",
+  },
+  {
+    path: "app/admin/leads/[kind]/[id]/page.tsx",
+    purpose:
+      "LEAD-ALERT-01 (#826) operator-only page for ONE platform lead (a demo request or early-access signup) and its alert status, which the operator alert email links to.",
+    why: "No practitioner session; gated by the ADMIN_EMAILS/isAdmin operator check before any read. demo_requests, waitlist and platform_lead_alerts grant nothing to authenticated, so service-role is required. Reads only those three tables (pinned by tests/app/admin/lead-detail-page.test.ts).",
     scopeGuard: "isAdmin",
   },
   {
@@ -312,6 +355,24 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "admin_complete_onboarding",
   },
   {
+    path: "app/admin/delivery/page.tsx",
+    purpose: "DELIVERY-VISIBILITY-02 platform support delivery queue (cross-studio).",
+    why: "Platform-global by design. The /admin layout gates it to the ADMIN_EMAILS allowlist (isAdmin) before render. It reads ONLY the service-role-only 0215 commands support_delivery_incidents, support_email_receipt_outcomes and email_delivery_health, which return operational metadata (no client identity, address or message).",
+    scopeGuard: "support_delivery_incidents",
+  },
+  {
+    path: "app/admin/delivery/actions.ts",
+    purpose: "DELIVERY-VISIBILITY-02 support closes a delivery incident.",
+    why: "Admin-only server action: isAdmin(user.email) is re-checked before the admin client is built, and every attempt (blocked included) is audited via logAdminAction. It drives ONLY resolve_delivery_incident, which closes one open incident by id.",
+    scopeGuard: "isAdmin(user.email)",
+  },
+  {
+    path: "app/api/cron/sms-confirmation-recovery/route.ts",
+    purpose: "Scheduled, session-less cron: D5 owed-confirmation recovery (#824, inert unless SMS_CONFIRMATION_RECOVERY=on).",
+    why: "Runs with no user session; authorized by the CRON_SECRET bearer, and creates no client while disabled. Service-role is required for the appointments read and claim_sms_send; every query is scoped to one listed studio in-query.",
+    scopeGuard: "isAuthorizedCronRequest",
+  },
+  {
     path: "app/api/cron/appointment-reminders/route.ts",
     purpose: "Scheduled, session-less cron / heartbeat.",
     why: "Runs with no user session; authorized by the CRON_SECRET bearer. Service-role is required; each row is studio-scoped in-query.",
@@ -321,6 +382,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     path: "app/api/cron/materialize-recurring-breaks/route.ts",
     purpose: "Scheduled, session-less cron / heartbeat.",
     why: "Runs with no user session; authorized by the CRON_SECRET bearer. Service-role is required; each row is studio-scoped in-query.",
+    scopeGuard: "isAuthorizedCronRequest",
+  },
+  {
+    path: "app/api/cron/email-delivery-sweep/route.ts",
+    purpose: "DELIVERY-VISIBILITY-01 email delivery-event recovery sweep and heartbeat.",
+    why: "No user session. The admin client is built only after the CRON_SECRET bearer verifies (isAuthorizedCronRequest). It drives ONLY the service-role-only claim/process receipt commands, record_email_sweep_run and email_delivery_health, plus a read of unresolved ops_alerts by event name for dedupe. It accepts no caller-supplied id.",
     scopeGuard: "isAuthorizedCronRequest",
   },
   {
@@ -334,6 +401,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Google Calendar Phase B2.3-c2 worker-drain runtime — the server-only seam behind /api/cron/calendar-sync (dormant; route unscheduled, worker OFF).",
     why: "The admin client is built only after handleWorkerRoute authenticates the CRON_SECRET bearer (isAuthorizedCronRequest, before any admin client). It drives ONLY the service-role-only claim_calendar_sync_op / record_calendar_sync_result RPCs (the claim RPC self-gates on worker_enabled and re-derives every tenant id from the row — the route supplies NO caller-selected studio/connection/provider id) plus a studio-scoped google_calendar_outbound_sync_enabled read; the handler re-validates tenant + destination before any op.",
     scopeGuard: "isAuthorizedCronRequest",
+  },
+  {
+    path: "app/api/resend/webhook/route.ts",
+    purpose: "DELIVERY-EVENTS-01 Resend delivery-event webhook.",
+    why: "No user session; authenticated by the Svix signature (verifyResendWebhookSignature over svix-id, svix-timestamp and the raw body, with a five-minute replay window). The admin client is built only after the signature verifies, and drives ONLY the service-role-only record_email_provider_event / claim_email_provider_events / process_email_provider_event commands. Attribution is re-derived inside the database from the ledger row the event matched, never from the payload.",
+    scopeGuard: "verifyResendWebhookSignature",
   },
   {
     path: "app/api/stripe/webhook/route.ts",
@@ -358,6 +431,41 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Public, unauthenticated token-scoped route/query.",
     why: "No session; the bearer signed/hashed token is verified (verifyCancellationToken) and resolves the exact appointment/intake/portal row. Scope comes from the verified token, so service-role is required.",
     scopeGuard: "verifyCancellationToken",
+  },
+  {
+    path: "app/actions/demo.ts",
+    purpose:
+      "LEAD-ALERT-01 (#826) public /demo request: the sole caller of record_platform_demo_request (0213), which saves the demo request and its operator alert intent in one transaction; then schedules deliverPlatformLeadAlert after the response.",
+    why: "Unauthenticated public surface with no session. The command is service_role-only (EXECUTE revoked from public/anon/authenticated) so that a client cannot create alert intents directly and bypass the form's rate limit. The action validates name and email, runs the shared limiter BEFORE the call, and passes exactly the columns the form always saved; the browser supplies only those bounded fields and never a recipient, status or id.",
+    scopeGuard: "record_platform_demo_request",
+  },
+  {
+    path: "app/actions/waitlist.ts",
+    purpose:
+      "LEAD-ALERT-01 (#826) public early-access signup: the sole caller of record_platform_early_access_signup (0213), which saves the address and its operator alert intent together, or reports a duplicate and creates nothing; then schedules deliverPlatformLeadAlert after the response.",
+    why: "Unauthenticated public surface with no session. The command is service_role-only so a client cannot create alert intents directly; the action normalizes and validates the address and rate-limits BEFORE the call. A duplicate still reads as success, so the answer is no membership oracle. The browser supplies one address and nothing else.",
+    scopeGuard: "record_platform_early_access_signup",
+  },
+  {
+    path: "lib/platform-leads/alert-delivery.ts",
+    purpose:
+      "LEAD-ALERT-01 (#826) operator lead-alert worker: claims, settles, expires, records configuration blockers on and requeues platform_lead_alerts through the 0213 service_role-only commands, after the saving action's response and from the CRON_SECRET-gated sweep.",
+    why: "platform_lead_alerts grants nothing to anon/authenticated and only SELECT to service_role; every write is a 0213 definer command granted to service_role alone. The worker runs with no user session (after() and cron), never writes a lead, takes the recipient only from server env allowlisted against ADMIN_EMAILS, and logs ids and codes only.",
+    scopeGuard: "claim_platform_lead_alert",
+  },
+  {
+    path: "app/(app)/settings/integrations/SmsSenderControlsSection.tsx",
+    purpose:
+      "SMS-SENDER-CONTROL-01 (#824, Codex P2 4274756044): chooses which FAKE demo number pair the owner's sender controls advertise, the studio's first candidate that no other studio records, via 0226's studio_sms_resource_recorded (service_role only, existence only). Its own server component so the integrations page keeps its read-only, session-client-only boundary.",
+    why: "Returns nothing unless senderControlsGate().open, re-checked here (never in production, never on hosted previews, never with live provisioning armed, only HONE_SMS_SENDER_CONTROLS=fake against the loopback database). It is a READ: one existence check per candidate number, scoped to the studio the page already resolved for the signed-in practitioner. It writes nothing and returns only a boolean per number.",
+    scopeGuard: "senderControlsGate",
+  },
+  {
+    path: "app/(app)/settings/integrations/sender-control-actions.ts",
+    purpose:
+      "SMS-SENDER-CONTROL-01 (#824): the studio owner's number provisioning and adoption controls, FAKE PROVIDER ONLY. The service-role client is the transport for the 0191 provisioning store (claim/finalize/fail/renew), whose definer commands re-derive membership and OWNER role from (studio_id, actor_user_id).",
+    why: "studio_sms_senders is revoked from every role including service_role (0191); the lifecycle is reachable only through its definer commands, which take the actor's user id and refuse a non-owner in the database. The action first re-checks senderControlsGate (never in production, never with live provisioning armed, only HONE_SMS_SENDER_CONTROLS=fake), then the page's owner role, resolves the studio server-side, and passes the process FAKE provider explicitly, so no path reaches a real provider.",
+    scopeGuard: "senderControlsGate",
   },
   {
     path: "app/book/[slug]/waitlist-actions.ts",
@@ -619,6 +727,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Payment / consent ledger helper.",
     why: "Invoked by authenticated actions and the signature-verified webhook; uses service-role for the payment_charge_attempts / consent RPCs and write-throughs. Scoped by the caller-supplied studio_id/client_id/appointment_id.",
     scopeGuard: '.eq("studio_id"',
+  },
+  {
+    path: "lib/billing/payment-jurisdiction-server.ts",
+    purpose:
+      "PAY-CCY-02 (0214): the one server read of a studio's payment country and charge currency.",
+    why: "studio_payment_jurisdictions grants SELECT to service_role ONLY (revoked from public, anon and authenticated by name) and has no RLS policy, so there is no browser-role path to it by design. The read is a single SELECT of two columns scoped by the caller's server-resolved studio id (callers obtain it from getCurrentPractitionerWithStudio or an already studio-scoped helper); it writes nothing, and a failed or unparseable read is returned as unknown, never defaulted to Canada.",
+    scopeGuard: '.eq("studio_id", studioId)',
   },
   {
     path: "lib/booking/public-slot-range.ts",

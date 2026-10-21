@@ -11,14 +11,21 @@ import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 // "Reschedule appointment" to someone /reschedule will then refuse is the same
 // dead end, one screen earlier. Same decision, same server-resolved inputs.
 import { isFreeConsultWaitlistOnlyReschedule } from "@/lib/booking/free-consult-reschedule-policy";
+// HON-47. Same reasoning as EMERG-01 above, one step broader: /manage is the
+// button a client taps from a confirmation or reminder, and offering an action
+// the destination will refuse is a dead end one screen earlier. This surface
+// mutates nothing, so these decide COPY and CTAs only — 0234 owns the refusal.
+import {
+  clientCancellationAllowed,
+  clientRescheduleAllowed,
+} from "@/lib/booking/client-self-service-policy";
 
 // Generic public-facing message for the /manage surface. Returned for
 // any non-success outcome so the existence of a real appointment row
 // cannot be probed by comparing error shapes. Matches the same
 // collapse stance used by /cancel and /reschedule; the wording is
 // scoped to "manage link" so the user sees a coherent message.
-const PUBLIC_MANAGE_GENERIC_ERROR =
-  "This manage link can't be used right now.";
+const PUBLIC_MANAGE_GENERIC_ERROR = "This manage link can't be used right now.";
 
 function logInternal(event: string, detail: unknown) {
   try {
@@ -85,11 +92,17 @@ export type ManageSummary = {
   // refuse this appointment. The page withdraws the reschedule CTA rather than
   // linking into a refusal. Cancellation is unaffected and still offered.
   freeConsultationWaitlistOnly: boolean;
+  // HON-47. SERVER-DERIVED, presentation only: whether the studio permits
+  // clients to do each thing themselves. This page owns no mutation, so these
+  // decide which CTAs it offers and which sentence it leads with. Kept as TWO
+  // fields rather than one "canChange" because the page says a different thing
+  // for each combination, and because they are independent switches.
+  clientCancellationAllowed: boolean;
+  clientRescheduleAllowed: boolean;
 };
 
 export type FetchManageResult =
-  | { ok: true; summary: ManageSummary }
-  | { ok: false; error: string };
+  { ok: true; summary: ManageSummary } | { ok: false; error: string };
 
 export async function fetchAppointmentForManageAction(
   token: string,
@@ -117,7 +130,8 @@ export async function fetchAppointmentForManageAction(
     .select(
       // EMERG-01 adds the studio slug and the service's modality + price so
       // the policy is derived from the same row this page renders.
-      "id, status, starts_at, studio:studios(id, name, slug, timezone, cancellation_policy_text, no_show_policy_text), service:services(name, modality, price_cents)",
+      // HON-47 adds the two self-service flags to the same embed.
+      "id, status, starts_at, studio:studios(id, name, slug, timezone, cancellation_policy_text, no_show_policy_text, client_cancellation_enabled, client_reschedule_enabled), service:services(name, modality, price_cents)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -139,6 +153,11 @@ export async function fetchAppointmentForManageAction(
     timezone: string;
     cancellation_policy_text: string | null;
     no_show_policy_text: string | null;
+    // HON-47. Nullable in the PROJECTION though `not null` in the table, so a
+    // dropped column leaves both actions OFFERED (`?? true`) rather than
+    // withdrawing them from a studio that never asked.
+    client_cancellation_enabled: boolean | null;
+    client_reschedule_enabled: boolean | null;
   };
   type JoinedService = {
     name: string;
@@ -192,6 +211,10 @@ export async function fetchAppointmentForManageAction(
         studioSlug: studio?.slug ?? null,
         service,
       }),
+      // HON-47. Same placement and same reasoning as the line above: derived
+      // after the collapse rule, from the studio row this page renders.
+      clientCancellationAllowed: clientCancellationAllowed(studio),
+      clientRescheduleAllowed: clientRescheduleAllowed(studio),
     },
   };
 }

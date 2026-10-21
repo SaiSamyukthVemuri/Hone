@@ -1,8 +1,13 @@
 import type { E2eSeed } from "../../e2e/helpers/seed";
-import { E2E_SUPABASE_URL, E2E_SERVICE_ROLE_KEY } from "../../e2e/helpers/local-env";
+import { E2E_DB_URL, E2E_SUPABASE_URL, E2E_SERVICE_ROLE_KEY } from "../../e2e/helpers/local-env";
 import { timezoneWithLocalMorning } from "../../e2e/helpers/timezone";
-import { adminQuery, closePool } from "../../tests/db/helpers/harness";
+import { adminQuery, closePool, resolveLocalDbUrl } from "../../tests/db/helpers/harness";
+import { assertSeedTargetsE2eDatabase } from "./db-target-guard";
 export { adminQuery } from "../../tests/db/helpers/harness";
+
+// Before ANY seed: the harness database must be the browser app's database.
+// Fails at import, so a misrouted run seeds nothing anywhere (see the guard).
+assertSeedTargetsE2eDatabase(resolveLocalDbUrl(), E2E_DB_URL);
 import {
   seedEligibleQuickCheckoutScenario,
   readClinicalIntegritySnapshot,
@@ -71,6 +76,30 @@ async function createLoginUser(email: string): Promise<string> {
 
 // Seed the proven eligible scenario, then make its owner login-capable. Returns a
 // full E2eSeed (so loginAsOwner works unchanged) plus the payment ids.
+/**
+ * PAY-CCY-06. Give ANY seeded studio's owner a real local GoTrue login (the
+ * same steps seedEligiblePaymentWithLogin takes), so a spec can compose its own
+ * studio (#853's Fett studio, a USD layer) and still log in with loginAsOwner.
+ * Returns the owner email loginAsOwner needs.
+ */
+export async function attachOwnerLogin(
+  studio: { studioId: string; practitionerId: string },
+  label: string,
+): Promise<string> {
+  const ownerEmail = `e2e-${label}-owner-${studio.studioId.slice(0, 8)}@harness.local`;
+  const loginUserId = await createLoginUser(ownerEmail);
+  await adminQuery(`update public.practitioners set user_id = $2, email = $3 where id = $1`, [
+    studio.practitionerId,
+    loginUserId,
+    ownerEmail,
+  ]);
+  await adminQuery(`update public.studios set owner_email = $2 where id = $1`, [
+    studio.studioId,
+    ownerEmail,
+  ]);
+  return ownerEmail;
+}
+
 export async function seedEligiblePaymentWithLogin(
   opts: SeedOptions = {},
 ): Promise<PaymentSeed> {

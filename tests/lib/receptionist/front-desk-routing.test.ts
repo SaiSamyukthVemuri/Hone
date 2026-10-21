@@ -1,0 +1,161 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
+import { isFrontDeskPath, resolveReceptionistMembership } from "@/lib/receptionist/membership";
+
+// STUDIO-READY-02d (#824): who may reach /front-desk, run against the REAL
+// middleware (lib/supabase/middleware.ts) with only the Supabase client mocked.
+// The mock answers each table with the rows a scenario sets, and records which
+// tables were read, so a practitioner is also proved to pay no extra query.
+
+type Rows = Record<string, Array<Record<string, unknown>>>;
+const state: { user: { id: string; email: string } | null; rows: Rows; reads: string[]; failing: string[] } = {
+  user: null,
+  rows: {},
+  reads: [],
+  failing: [],
+};
+
+function builder(table: string) {
+  const result = () =>
+    Promise.resolve(
+      state.failing.includes(table)
+        ? { data: null, error: { code: "57014" } }
+        : { data: state.rows[table] ?? [], error: null },
+    );
+  const b: Record<string, unknown> = {};
+  for (const m of ["select", "eq", "limit", "order"]) b[m] = () => b;
+  b.then = (ok: (v: unknown) => unknown, bad: (e: unknown) => unknown) => result().then(ok, bad);
+  return b;
+}
+
+vi.mock("@supabase/ssr", () => ({
+  createServerClient: () => ({
+    auth: { getUser: async () => ({ data: { user: state.user } }) },
+    from: (table: string) => {
+      state.reads.push(table);
+      return builder(table);
+    },
+  }),
+}));
+
+const { updateSession } = await import("@/lib/supabase/middleware");
+
+const go = (path: string) => updateSession(new NextRequest(new URL(`https://app.test${path}`)));
+const location = (r: Response) => {
+  const l = r.headers.get("location");
+  return l ? new URL(l).pathname : null;
+};
+
+beforeEach(() => {
+  state.user = { id: "user-1", email: "person@example.test" };
+  state.rows = {};
+  state.reads = [];
+  state.failing = [];
+});
+
+describe("a receptionist-only user", () => {
+  beforeEach(() => {
+    state.rows = { practitioners: [], studio_receptionists: [{ studio_id: "studio-1" }] };
+  });
+
+  it("is admitted to /front-desk and its subpages", async () => {
+    for (const p of ["/front-desk", "/front-desk/contacts"]) {
+      expect(location(await go(p)), p).toBeNull();
+    }
+  });
+
+  it("is sent to /front-desk from every practitioner route, never into the app", async () => {
+    for (const p of [
+      "/dashboard",
+      "/clients",
+      "/clients/abc",
+      "/clients/abc/images",
+      "/calendar",
+      "/records",
+      "/financials",
+      "/settings/team",
+      "/settings/data",
+    ]) {
+      expect(location(await go(p)), p).toBe("/front-desk");
+    }
+  });
+
+  it("reaches its own studio chooser", async () => {
+    expect(location(await go("/front-desk/select"))).toBeNull();
+  });
+
+  it("can still reach invitation acceptance, deliberately (Codex P1 4243875486 on #845)", async () => {
+    // Exempt for every signed-in user, so a receptionist can accept a real
+    // owner-issued invitation (another studio, or another receptionist
+    // invitation). A SAME-studio practitioner invitation cannot turn them into
+    // a practitioner: the linker's practitioners insert is refused 23514 by the
+    // 0216 guard (tests/db/receptionist-foundation.db.test.ts, "either order").
+    expect(location(await go("/accept-invitation"))).toBeNull();
+  });
+
+  it("does not match a lookalike path", async () => {
+    expect(location(await go("/front-desk-admin"))).toBe("/front-desk");
+    expect(location(await go("/front-deskx/clients"))).toBe("/front-desk");
+  });
+});
+
+describe("everyone else is unchanged", () => {
+  it("a practitioner routes as before, and the receptionist table is never read", async () => {
+    state.rows = { practitioners: [{ studio_id: "studio-1" }] };
+    expect(location(await go("/dashboard"))).toBeNull();
+    expect(state.reads).toEqual(["practitioners"]);
+  });
+
+  it("a mixed-role user with 2+ practitioner studios and no selection reaches /front-desk, not the chooser (Codex P2 4243982486 on #850)", async () => {
+    state.rows = {
+      practitioners: [{ studio_id: "studio-1" }, { studio_id: "studio-2" }],
+      studio_receptionists: [{ studio_id: "studio-3" }],
+    };
+    for (const p of ["/front-desk", "/front-desk/select", "/front-desk/contacts"]) {
+      expect(location(await go(p)), p).toBeNull();
+    }
+    // The practitioner app still requires a studio choice.
+    expect(location(await go("/dashboard"))).toBe("/no-access");
+    // And a practitioner's request still reads only practitioners.
+    expect(state.reads.every((t) => t === "practitioners")).toBe(true);
+  });
+
+  it("a user with no membership of either kind still goes to /no-access", async () => {
+    state.rows = { practitioners: [], studio_receptionists: [] };
+    expect(location(await go("/dashboard"))).toBe("/no-access");
+    expect(location(await go("/front-desk"))).toBe("/no-access");
+  });
+
+  it("a FAILED receptionist read defers to /front-desk, whose own guard decides (Codex P2 4243919027)", async () => {
+    state.rows = { practitioners: [] };
+    state.failing = ["studio_receptionists"];
+    expect(location(await go("/front-desk"))).toBeNull();
+    expect(location(await go("/dashboard"))).toBe("/front-desk");
+  });
+
+  it("an anonymous visitor to /front-desk goes to /login", async () => {
+    state.user = null;
+    expect(location(await go("/front-desk"))).toBe("/login");
+  });
+});
+
+describe("the receptionist membership resolver", () => {
+  const a = { id: "r-a", studio_id: "s-a", display_name: "A" };
+  const b = { id: "r-b", studio_id: "s-b", display_name: "B" };
+
+  it("none, one, or a choice, honouring the cookie only for an own membership", () => {
+    expect(resolveReceptionistMembership([], "s-a")).toEqual({ kind: "none" });
+    expect(resolveReceptionistMembership([a], null)).toEqual({ kind: "one", value: a });
+    expect(resolveReceptionistMembership([a, b], "s-b")).toEqual({ kind: "one", value: b });
+    expect(resolveReceptionistMembership([a, b], null)).toEqual({ kind: "choose", studioIds: ["s-a", "s-b"] });
+    // A forged or stale cookie never selects a studio.
+    expect(resolveReceptionistMembership([a, b], "s-forged")).toEqual({ kind: "choose", studioIds: ["s-a", "s-b"] });
+  });
+
+  it("isFrontDeskPath matches the route and its children only", () => {
+    expect(isFrontDeskPath("/front-desk")).toBe(true);
+    expect(isFrontDeskPath("/front-desk/contacts")).toBe(true);
+    expect(isFrontDeskPath("/front-desk-admin")).toBe(false);
+    expect(isFrontDeskPath("/dashboard")).toBe(false);
+  });
+});

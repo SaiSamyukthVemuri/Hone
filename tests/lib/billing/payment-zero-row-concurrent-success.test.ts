@@ -89,6 +89,15 @@ const fakeStripe = {
   },
 };
 
+// PAY-CCY-02 (0214): this suite is about other behaviour, on a Canadian studio.
+// The jurisdiction read is proved on its own and against a real database.
+vi.mock("@/lib/billing/payment-jurisdiction-server", () => ({
+  getStudioPaymentJurisdiction: async () => ({
+    ok: true,
+    jurisdiction: { country: "CA", currency: "cad" },
+  }),
+}));
+
 vi.mock("@/lib/stripe/server", () => ({
   inferStripeLivemode: () => false,
   getStripe: () => fakeStripe,

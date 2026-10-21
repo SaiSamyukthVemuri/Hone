@@ -84,8 +84,13 @@ describe("adoption cannot purchase, create or move", () => {
   it("adoption reads the service configuration and compares rather than writing", () => {
     expect(ADOPTION).toContain("readMessagingServiceConfig");
     expect(ADOPTION).toContain("provider_configuration_required");
-    expect(ADOPTION).toMatch(/inboundRequestUrl !== input\.requiredInboundWebhookUrl/);
-    expect(ADOPTION).toMatch(/statusCallbackUrl !== input\.requiredStatusCallbackUrl/);
+    // The EFFECTIVE inbound URL is compared (use_inbound_webhook_on_number aware),
+    // and anything but an exact "yes" is a mismatch.
+    expect(ADOPTION).toMatch(/inboundReaches\(\s*\{\s*serviceInboundUrl: current\.config\.inboundRequestUrl,\s*serviceInboundMethod: current\.config\.inboundMethod,\s*useInboundWebhookOnNumber: current\.config\.useInboundWebhookOnNumber,\s*numberSmsUrl: facts\.facts\.numberSmsUrl,\s*numberSmsMethod: facts\.facts\.numberSmsMethod,\s*numberSmsApplicationSid: facts\.facts\.numberSmsApplicationSid,/);
+    expect(ADOPTION).toMatch(/input\.requiredInboundWebhookUrl,\s*\);\s*if \(inbound !== "yes"\)/);
+    // The same endpoint exactly, allowing only a validated connection-override
+    // fragment (one strict normalizer, lib/sms/webhook-base.ts).
+    expect(ADOPTION).toMatch(/!sameTwilioWebhook\(current\.config\.statusCallbackUrl, input\.requiredStatusCallbackUrl\)/);
   });
 
   it("a configuration mismatch is NOT reported as a provider-test failure", () => {

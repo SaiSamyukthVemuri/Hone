@@ -7,6 +7,11 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 import { isDefinitiveStripeRefusal } from "@/lib/billing/stripe-error-outcome";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
 import { buildChargeDescription } from "@/lib/billing/charge-description";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
+import {
+  accountCountryChargeable,
+  accountCountryVerdict,
+} from "@/lib/billing/payment-jurisdiction";
 import {
   compareProviderMoney,
   providerMoneyMismatchDetails,
@@ -376,13 +381,65 @@ async function loadCardAndVerifyLineage(args: {
     // stripe_livemode !== livemode belt below stays as defense-in-depth).
     const { data: settings } = await admin
       .from("studio_payment_settings")
-      .select("stripe_account_id, stripe_livemode")
+      .select(
+        "stripe_account_id, stripe_livemode, stripe_account_country, stripe_account_country_conflict",
+      )
       .eq("studio_id", args.studioId)
       .eq("stripe_livemode", livemode)
       .maybeSingle();
     if (!settings) {
       reasons.push("Studio payment settings are missing.");
     } else {
+      // PAY-CCY-02. The connected account must still be in the studio's
+      // COUNTRY at the moment money moves: a mismatch observed after
+      // preparation (account.updated, a refresh) stops the charge here. This
+      // is a country check only; the amount and currency charged remain the
+      // attempt's own prepared facts, never re-read from configuration.
+      // AN UNCONFIGURED JURISDICTION IS NOT A MISMATCH, and treating it as one
+      // blocked every charge in the product.
+      //
+      // `missing` IS FAIL-CLOSED AGAIN, and the history is worth keeping
+      // because the reasoning that exempted it was once true.
+      //
+      // This block briefly treated `missing` as chargeable. The justification
+      // was that "this studio has no jurisdiction row yet" described EVERY
+      // studio, so refusing on it blocked every charge — which surfaced when
+      // production's money-mismatch suite arrived in a sync and 29 of its cases
+      // refused with zero provider calls.
+      //
+      // THAT PREMISE IS NO LONGER TRUE, AND 0214 IS WHY.
+      // `0214_studio_payment_jurisdiction.sql` BACKFILLS a row for every
+      // existing studio (:147) and installs an `after insert on public.studios`
+      // trigger that writes one for every new studio (:164-175). With 0214 in
+      // the chain a missing row is an INTEGRITY ANOMALY, not a supported
+      // legacy state, so exempting it would move money through a country and
+      // currency configuration nobody has verified.
+      //
+      // The 29 refusals were a FIXTURE problem, not a product one: those two
+      // suites omitted the row 0214 guarantees. They seed it now, which is
+      // what makes this safe to close.
+      //
+      // So every `!ok` reason refuses: `missing` (the row that must exist does
+      // not), `invalid` (it exists and cannot be parsed) and `read_failed` (it
+      // cannot be read). A CONFIGURED jurisdiction whose verdict is not
+      // chargeable also refuses, which is the ordinary mismatch case.
+      const jurisdictionRead = await getStudioPaymentJurisdiction(args.studioId);
+      if (!jurisdictionRead.ok) {
+        reasons.push("Studio payment country could not be verified.");
+      } else if (
+        jurisdictionRead.ok &&
+        !accountCountryChargeable(
+          accountCountryVerdict(
+            jurisdictionRead.jurisdiction.country,
+            (settings.stripe_account_country as string | null) ?? null,
+            (settings.stripe_account_country_conflict as string | null) ?? null,
+          ),
+        )
+      ) {
+        reasons.push(
+          "Studio's Stripe account country does not match the studio's payment country.",
+        );
+      }
       if (settings.stripe_account_id !== card.stripe_account_id) {
         reasons.push(
           "Studio is now connected to a different Stripe account.",
@@ -1561,11 +1618,87 @@ export async function runSessionPaymentCharge(args: {
         code?: string;
         type?: string;
         message?: string;
-        payment_intent?: { id?: string; status?: string };
+        payment_intent?: {
+          id?: string;
+          status?: string;
+          amount?: number;
+          currency?: string;
+        };
       };
       const paymentIntent = decline.payment_intent;
       const piId = paymentIntent?.id ?? null;
       const piStatus = paymentIntent?.status ?? null;
+
+      // CODEX P2 4288989005 — THE MONEY GUARD APPLIES TO A DECLINE'S INTENT TOO.
+      //
+      // A StripeError can carry `payment_intent`, and this path bound its id to
+      // the attempt and stamped the attempt FAILED without ever comparing its
+      // money. Every other place that binds a provider intent to this row
+      // compares first, for the reason writeSucceededOutcome states: stamping a
+      // status says "THIS attempt's money" and that sentence must be true of the
+      // one row the receipt, the refund and every financial report read. A
+      // misbound intent would make the sentence false in the failure direction
+      // instead of the success direction — which is no better, and is harder to
+      // notice because nobody checks a failure as closely as a charge.
+      //
+      // So a decline whose intent names different money is NOT recorded as this
+      // attempt's failure. The row is left exactly as it is — `pending_stripe`,
+      // a valid reconciliation source — and a person is told, which is the same
+      // refusal shape the succeeded and reconcile paths already use. Only the
+      // BINDING is refused; the decline itself is still real on Stripe.
+      if (
+        paymentIntent &&
+        typeof paymentIntent.amount === "number" &&
+        typeof paymentIntent.currency === "string"
+      ) {
+        const prepared = {
+          amountCents: attemptRow.amount_cents,
+          currency: attemptRow.currency,
+        };
+        const provider = {
+          amount: paymentIntent.amount,
+          currency: paymentIntent.currency,
+        };
+        const declineMoney = compareProviderMoney(prepared, provider);
+        if (!declineMoney.ok) {
+          logInternal("session_payment_provider_money_mismatch", {
+            attemptId: attemptRow.id,
+            mismatches: declineMoney.mismatches,
+          });
+          await recordOpsAlert({
+            severity: "critical",
+            event: "session_payment_provider_money_mismatch",
+            message:
+              "Stripe returned a DECLINED PaymentIntent whose amount or currency does not equal the prepared attempt. Hone did NOT record it as this attempt's failure; the row is left pending for review.",
+            studioId: attemptRow.studio_id,
+            clientId: attemptRow.client_id,
+            stripePaymentIntentId: piId,
+            route:
+              "lib/billing/session-payment-charge:runSessionPaymentCharge:decline",
+            safeDetails: {
+              attempt_id: attemptRow.id,
+              session_id: attemptRow.session_id,
+              appointment_id: attemptRow.appointment_id,
+              attempted_status: "failed",
+              stripe_status: piStatus,
+              failure_code: err.code ?? null,
+              stripe_error_type: err.type,
+              ...providerMoneyMismatchDetails(
+                prepared,
+                provider,
+                declineMoney.mismatches,
+              ),
+            },
+          });
+          return {
+            ok: false,
+            outcome: "needs_manual_review",
+            message: NEEDS_MANUAL_REVIEW_MESSAGE,
+            failureCode: err.code ?? null,
+          };
+        }
+      }
+
       await writeFailedOutcome({
         attemptId: attemptRow.id,
         studioId: attemptRow.studio_id,

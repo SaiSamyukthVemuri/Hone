@@ -23,7 +23,7 @@ type Props = {
   intakeId: string;
   initialStep: number;
   initialResponses: Responses;
-  initialUpdatedAt: string;
+  initialRevision: string;
 };
 
 const STEP_IDS = PRACTITIONER_ENTERABLE_STEPS.map((s) => s.id);
@@ -46,7 +46,7 @@ export function AssistedIntakeEditor({
   intakeId,
   initialStep,
   initialResponses,
-  initialUpdatedAt,
+  initialRevision,
 }: Props) {
   const router = useRouter();
   const [step, setStep] = useState(initialStep);
@@ -57,7 +57,7 @@ export function AssistedIntakeEditor({
   // Optimistic-concurrency token. Refreshed from every successful save so a
   // long assisted session keeps working, and used to refuse a save that would
   // clobber a write made through the client's own link in the meantime.
-  const [updatedAt, setUpdatedAt] = useState(initialUpdatedAt);
+  const [revision, setRevision] = useState(initialRevision);
   const [atHandoff, setAtHandoff] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -102,13 +102,13 @@ export function AssistedIntakeEditor({
         // they are unchanged. The server remains the authority: it strips
         // these keys and refuses any that would CHANGE a client answer.
         responses: withoutClientOwnedKeys(responses),
-        expectedUpdatedAt: updatedAt,
+        expectedRevision: revision,
       });
       if (!res.ok) {
         setActionError(res.error);
         return;
       }
-      setUpdatedAt(res.updatedAt);
+      setRevision(res.revision);
       setSavedAt(new Date().toISOString());
       onDone?.();
     });
@@ -149,6 +149,7 @@ export function AssistedIntakeEditor({
       const fd = new FormData();
       fd.set("intake_id", intakeId);
       fd.set("client_id", clientId);
+      fd.set("expected_revision", revision);
       const res = await handOffAssistedIntakeAction(fd);
       if (!res.ok) {
         setActionError(res.error);
@@ -164,6 +165,11 @@ export function AssistedIntakeEditor({
   return (
     <div className="flex flex-col gap-6">
       <AssistedBanner clientName={clientName} />
+      {actionError && (
+        <button type="button" className="text-sm underline" onClick={() => window.location.reload()}>
+          Discard my unsaved draft and reload saved answers
+        </button>
+      )}
 
       {atHandoff ? (
         <HandoffPanel

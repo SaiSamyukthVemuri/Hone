@@ -105,3 +105,64 @@ describe("scope: no annotation/OCR/AI/AR assets/comparison/export", () => {
     });
   }
 });
+
+
+// 0232 (FETT photos, HON-43) EXTENDS this boundary rather than routing around
+// it. Sam authorized before/after CAPTURE-STAGE LABELS (#825 6227921378:
+// "before/after photos at every session for team review"; 0232 allocated in
+// #825 6233952537 as "before/after capture stage on treatment_images"). The
+// boundary above came from PR #273's scope list ("no side-by-side comparison",
+// 2026-06-27), and a COMPARISON feature is still deferred. So the label
+// control is scanned too: it may use the label vocabulary (the two values and
+// their "Before"/"After" text), and nothing else in this family.
+// 0232 (option A): the visit chart GROUPS photos by label in STACKED sections
+// (Before, After, Other). That is grouping, not the deferred comparison: no
+// paired side-by-side view, no slider, no compare. Scanned here so a later
+// edit cannot turn the grouping into a comparison without meeting this guard.
+describe("scope: the 0232 session grouping is stacked sections, never a comparison", () => {
+  const SECTION = readFileSync(
+    join(process.cwd(), "app/(app)/clients/[id]/sessions/[sessionId]/SessionPhotos.tsx"),
+    "utf8",
+  );
+  const EXEC = SECTION.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+
+  it("has no comparison UI in its code", () => {
+    expect(EXEC).not.toMatch(/side-by-side|\bcompar(e|es|ed|ing|ison)\b|slider|<input[^>]*type="range"|<canvas/i);
+    expect(EXEC).not.toMatch(/before\s*[\/-]\s*after/i);
+    expect(EXEC).not.toMatch(/annotat|sketch|drawing|\bOCR\b/i);
+  });
+
+  it("its label vocabulary is exactly the three section headings", () => {
+    expect(SECTION).toMatch(/\{ key: "before", heading: "Before" \},\s*\{ key: "after", heading: "After" \},\s*\{ key: null, heading: "Other" \},/);
+    // Sections are stacked (column flex), not laid out as paired columns.
+    expect(EXEC).not.toMatch(/grid-cols-2[^"]*">\s*\{GROUPS/);
+  });
+});
+
+describe("scope: the 0232 capture-stage control is a LABEL, never a comparison", () => {
+  const CONTROL = readFileSync(
+    join(process.cwd(), "app/(app)/clients/[id]/images/CaptureStageControl.tsx"),
+    "utf8",
+  );
+
+  it("adds no canvas/drawing/OCR/AI / Aesthetic Record, like the page and manager", () => {
+    expect(CONTROL).not.toMatch(/<canvas|getContext\(|toDataURL|tesseract|createWorker|\bOCR\b/i);
+    expect(CONTROL).not.toMatch(/annotat|sketch|drawing/i);
+    expect(CONTROL).not.toMatch(/aestheticrecord|aesthetic.record|smartmatch/i);
+  });
+
+  it("has no comparison UI: no side-by-side, comparison, compare, slider or paired 'before/after' view", () => {
+    expect(CONTROL).not.toMatch(/side-by-side|\bcompar(e|es|ed|ing|ison)\b|slider|<input[^>]*type="range"/i);
+    // The paired form ("before/after", "before-after") names a comparison; a
+    // label is one value at a time.
+    expect(CONTROL).not.toMatch(/before\s*[\/-]\s*after/i);
+  });
+
+  it("its before/after vocabulary is exactly the two label values and their display text", () => {
+    const words = CONTROL.match(/\b(before|after)\b/gi) ?? [];
+    expect(words.length).toBeGreaterThan(0);
+    // Only these forms: the stored values and the display labels.
+    expect(CONTROL).toMatch(/const LABEL: Record<TreatmentImageCaptureStage, string> = \{ before: "Before", after: "After" \};/);
+    expect(CONTROL).toMatch(/\(\["before", "after"\] as const\)/);
+  });
+});

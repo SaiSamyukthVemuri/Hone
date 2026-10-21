@@ -83,7 +83,7 @@ describe("every registered family is actually canonicalized", () => {
         event_id: "p1",
         transaction: `GET ${prefix}/${secret}`,
         request: { url: `https://hone.care${prefix}/${secret}?a=1#f` },
-      } as ErrorEvent);
+      } as ErrorEvent)!;
       expect(JSON.stringify(out)).not.toContain(secret);
       // The family itself survives — safe diagnostics, not no diagnostics.
       expect(String(out.transaction)).toContain(prefix);

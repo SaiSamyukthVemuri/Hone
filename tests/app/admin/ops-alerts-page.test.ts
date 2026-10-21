@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -150,5 +150,73 @@ describe("PR #193 boundaries", () => {
   it("no public access: route lives under the guarded /admin tree", () => {
     expect(PAGE).not.toMatch(/export const runtime/);
     expect(ACTIONS).toMatch(/"use server"/);
+  });
+});
+
+// SEC-002: these loaders must refuse before constructing a privileged client,
+// even when React starts their work without waiting for the parent layout.
+const authState = vi.hoisted(() => ({
+  user: null as { id: string; email: string } | null,
+  error: null as { message: string } | null,
+  allowed: true,
+}));
+vi.mock("next/navigation", () => ({
+  notFound: () => { throw new Error("NEXT_NOT_FOUND"); },
+}));
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: async () => ({ auth: { getUser: async () => ({
+    data: { user: authState.user }, error: authState.error,
+  }) } }),
+}));
+vi.mock("@/lib/admin", () => ({
+  isAdmin: (email: string) => authState.allowed && email === "operator@hone.example",
+}));
+import { requirePlatformAdmin } from "@/lib/auth/require-platform-admin";
+
+describe("SEC-002 independently authorized privileged loaders", () => {
+  beforeEach(() => { authState.user = null; authState.error = null; authState.allowed = true; });
+
+  it.each(["ordinary-studio-A", "ordinary-studio-B", "deactivated-member"])(
+    "refuses %s without trusting studio role or layout", async (id) => {
+      authState.user = { id, email: "member@hone.example" };
+      await expect(requirePlatformAdmin()).rejects.toThrow("NEXT_NOT_FOUND");
+    },
+  );
+  it("refuses no session, revoked allowlist and auth error even with stale user data", async () => {
+    await expect(requirePlatformAdmin()).rejects.toThrow("NEXT_NOT_FOUND");
+    authState.user = { id: "operator", email: "operator@hone.example" };
+    authState.allowed = false;
+    await expect(requirePlatformAdmin()).rejects.toThrow("NEXT_NOT_FOUND");
+    authState.allowed = true;
+    authState.error = { message: "session no longer valid" };
+    await expect(requirePlatformAdmin()).rejects.toThrow("NEXT_NOT_FOUND");
+  });
+  it("permits the currently authenticated platform operator without a studio membership", async () => {
+    authState.user = { id: "operator", email: "operator@hone.example" };
+    await expect(requirePlatformAdmin()).resolves.toBe(authState.user);
+  });
+  it.each([
+    "app/admin/page.tsx", "app/admin/studios/[id]/page.tsx",
+    "app/admin/studios/new/page.tsx", "app/admin/ops-alerts/page.tsx",
+    "app/admin/delivery/page.tsx",
+  ])("%s guards the loader before service-role construction", (file) => {
+    const source = codeOnly(readFileSync(path.join(ROOT, file), "utf8"));
+    expect(source).toMatch(/await requirePlatformAdmin\(\);\s*const admin = createAdminClient\(\);/);
+  });
+});
+
+// A 200 empty Next prefetch tree does not establish that the page ran.
+// Preserve full-content positive canaries before the four denied identities.
+describe("SEC-002 browser request contract", () => {
+  it("uses full RSC requests and proves protected content before denial checks", () => {
+    const spec = readFileSync(path.join(ROOT, "e2e/lead-alert-operator.spec.ts"), "utf8");
+    const scope = spec.slice(spec.indexOf('test.describe("SEC-002'));
+    expect(scope).toContain('headers: rsc ? { RSC: "1" } : {}');
+    expect(scope).not.toContain('"Next-Router-Prefetch": "1"');
+    expect(scope).toContain('test.describe.configure({ mode: "serial" })');
+    expect(scope.indexOf('test("current platform operator proves full')).toBeLessThan(scope.indexOf('for (const role of identities)'));
+    expect(scope).toContain('for (const canary of expected) expect(body).toContain(canary)');
+    expect(scope).toContain('expect(body).not.toContain(studio.ownerEmail)');
+    expect(scope).toContain('expect(refused,');
   });
 });

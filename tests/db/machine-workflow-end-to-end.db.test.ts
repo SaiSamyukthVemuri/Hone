@@ -1,0 +1,1674 @@
+// NEW BY REF THROUGHOUT (Codex, #860 4305780322). A settings-group identity
+// is ISSUED by the database now: a caller sends `newGroupRef` - its own local
+// placeholder - and may use `groupKey` only for a group already on the block.
+// Every per-group save in this file is the FIRST on its own freshly seeded
+// block, including the four cases that save twice, which use two DISTINCT
+// blocks (two visits, a studio-mate's, a soft-deleted one). So every call here
+// asks for an identity rather than naming one.
+
+import { afterAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+
+import {
+  adminQuery,
+  asUser,
+  closePool,
+  seedMember,
+  seedSession,
+  seedStudio,
+  type SeededStudio,
+  type UserQuery,
+} from "./helpers/harness";
+import {
+  latestRecordedSetup,
+  readRememberedMachine,
+  readingsForBlock,
+  recordSetupGroup,
+  registerStudioMachine,
+  rememberMachine,
+  retireStudioMachine,
+  type MachineDb,
+} from "@/lib/machines/machine-queries";
+import { listStudioDevices } from "@/lib/machines/studio-devices";
+import {
+  createDatabaseStore,
+  createVerifyingStore,
+  PersistenceUnavailableError,
+  ScopeMismatchError,
+} from "@/lib/machines/selection-store";
+import { resolveSelection, selectableDevices } from "@/lib/machines/selection";
+import { machinesByIds } from "@/lib/machines/machine-queries";
+import { nativeFieldGroups, priorSetupView } from "@/lib/machines/charting";
+import { activeModes, type MachineProfile } from "@/lib/machines/profile-contract";
+
+// ===========================================================================
+// MPX-03 — the whole machine workflow, end to end, against a real database.
+//
+// WHAT MAKES THIS DIFFERENT from the 0223 storage test. That one calls the SQL
+// commands directly. This one runs `lib/machines/machine-queries.ts` - the
+// exact module the mounted server actions delegate to - so the code under test
+// is the code the product runs. The actions themselves add only identity
+// resolution, which is proved separately with a mocked session in
+// tests/app/machines/.
+//
+// HOW A POSTGREST-SHAPED LAYER IS EXERCISED OVER pg. `MachineDb` is a narrow
+// structural type (`rpc` plus a filtered `select`) precisely so it can be
+// backed by anything. The adapter below implements it over the harness's
+// authenticated pg connection, which is STRONGER than a service-role REST
+// client would be: service_role deliberately holds no EXECUTE on these
+// commands, so the only way to call them is as a real `authenticated`
+// practitioner with RLS in force. That is what this adapter is.
+//
+// SYNTHETIC PROFILE ONLY. Every profile id here is `synthetic:` or `fixture:`.
+// Nothing activates a real model; `machine_profile_id` is unconstrained TEXT in
+// the schema exactly so activation stays an evidence review.
+//
+// SCOPE LIMIT, STATED: this proves the data path the UI uses, and the rendered
+// markup produced from it. It is NOT a browser test - no Playwright lane runs
+// here, so "through the mounted UI" means the mount's own code path, not a real
+// click.
+// ===========================================================================
+
+const SYNTH: MachineProfile = {
+  profileId: "synthetic:e2e-demo",
+  version: 1,
+  family: "Permanence/GEMM-16",
+  manufacturer: "Synthetic",
+  model: "E2E Demo",
+  availability: "active",
+  verification: "device-confirmed",
+  frequency: { kind: "not-applicable" },
+  evidence: [
+    {
+      id: "s",
+      kind: "studio-device-photo",
+      consultedOn: "2026-10-12",
+      establishes: "Nothing about any real machine.",
+    },
+  ],
+  openQuestions: [],
+  channels: {
+    count: 4,
+    nativeLabel: "Channel",
+    associationRequired: false,
+    supportsDistinctSettingGroups: true,
+    verification: "device-confirmed",
+    evidence: ["s"],
+  },
+  modes: [
+    {
+      key: "galvanic",
+      nativeLabel: "Galvanic",
+      family: "galvanic",
+      availability: "active",
+      verification: "device-confirmed",
+      evidence: ["s"],
+      stages: [],
+      fields: [
+        {
+          key: "current",
+          nativeLabel: "Current",
+          quantity: "current",
+          unit: "µA",
+          decimals: 0,
+          optional: false,
+          expectedSource: "practitioner-entered",
+          editable: true,
+          verification: "device-confirmed",
+          evidence: ["s"],
+        },
+        {
+          key: "duration",
+          nativeLabel: "Time",
+          quantity: "duration",
+          unit: "s",
+          decimals: 1,
+          optional: false,
+          expectedSource: "practitioner-entered",
+          editable: true,
+          verification: "device-confirmed",
+          evidence: ["s"],
+        },
+      ],
+    },
+  ],
+};
+
+const CAT = [SYNTH];
+
+afterAll(async () => {
+  await closePool();
+});
+
+/**
+ * `MachineDb` over an authenticated pg connection.
+ *
+ * Only the shapes the data layer actually uses are implemented, and anything
+ * else throws rather than silently returning nothing — a double that answers
+ * calls it was never taught is how a test starts passing for the wrong reason.
+ */
+function pgMachineDb(q: UserQuery): MachineDb {
+  const run = async (sql: string, params: unknown[]) => {
+    try {
+      const r = await q(sql, params);
+      return { data: r.rows, error: null };
+    } catch (e) {
+      // THE SQLSTATE COMES TOO. supabase-js supplies `code` for anything that
+      // reached PostgREST or Postgres, and `MachineDbError.code` is how a
+      // caller tells a DEFINITIVE answer from a transport failure. Dropping it
+      // made every refusal here look like a transport failure.
+      const err = e as Error & { code?: unknown };
+      return {
+        data: null,
+        error: {
+          message: err.message,
+          ...(typeof err.code === "string" ? { code: err.code } : {}),
+        },
+      };
+    }
+  };
+
+  return {
+    async rpc(fn, args) {
+      const names = Object.keys(args);
+      const placeholders = names.map((n, i) => `${n} => $${i + 1}`).join(", ");
+      const out = await run(
+        `select public.${fn}(${placeholders}) as result`,
+        names.map((n) => {
+          const v = args[n];
+          // jsonb and smallint[] both arrive as JS arrays, and pg cannot tell
+          // which is which - so the JSONB parameters are named explicitly and
+          // sent as JSON TEXT, while channels goes as a pg array literal.
+          // Missing one here surfaces as "invalid input syntax for type json",
+          // which reads like a bad payload rather than a missing name.
+          if (n === "p_readings" || n === "p_fields") return JSON.stringify(v);
+          return v;
+        }),
+      );
+      if (out.error) return { data: null, error: out.error };
+      return {
+        data: (out.data as Array<{ result: unknown }>)[0]?.result ?? null,
+        error: null,
+      };
+    },
+    from(table) {
+      return {
+        select(columns) {
+          return {
+            eq(column, value) {
+              const base = `select ${columns} from public.${table} where ${column} = $1`;
+              return {
+                is(nullCol) {
+                  return {
+                    order(orderCol, opts) {
+                      return run(
+                        `${base} and ${nullCol} is null order by ${orderCol} ${
+                          opts.ascending ? "asc" : "desc"
+                        }`,
+                        [value],
+                      );
+                    },
+                  };
+                },
+                order(orderCol, opts) {
+                  return {
+                    limit(n) {
+                      return run(
+                        `${base} order by ${orderCol} ${
+                          opts.ascending ? "asc" : "desc"
+                        } limit ${n}`,
+                        [value],
+                      );
+                    },
+                  };
+                },
+                // A SECOND `eq` is the route binding - "this block, in this
+                // session" - which the reader now issues before it reads
+                // anything (Codex, #860 4298457378). This adapter runs real
+                // SQL against the real database, so the binding is exercised
+                // here rather than mocked away: a block that is not the
+                // session's returns no row and the read refuses.
+                eq(secondCol, secondValue) {
+                  return {
+                    limit(n) {
+                      return run(
+                        `${base} and ${secondCol} = $2 limit ${n}`,
+                        [value, secondValue],
+                      );
+                    },
+                  };
+                },
+                // `gt` is the KEYSET predicate: the page after the last id
+                // seen. The cursor is a PARAMETER, not interpolated text, for
+                // the same reason `in`'s ids are - a fake that builds SQL by
+                // concatenation teaches the habit the real call sites must not
+                // have.
+                gt(gtCol, gtValue) {
+                  return {
+                    order(orderCol, opts) {
+                      return {
+                        limit(n) {
+                          return run(
+                            `${base} and ${gtCol} > $2 order by ${orderCol} ${
+                              opts.ascending ? "asc" : "desc"
+                            } limit ${n}`,
+                            [value, gtValue],
+                          );
+                        },
+                      };
+                    },
+                  };
+                },
+                // `in` names specific rows by id. Sent as a pg array with
+                // `= any($2)` rather than an interpolated list, so the ids stay
+                // parameters and never become SQL text.
+                in(column, values) {
+                  return {
+                    limit(n) {
+                      return run(
+                        `${base} and ${column} = any($2) limit ${n}`,
+                        [value, [...values]],
+                      );
+                    },
+                  };
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+/** Run the data layer as one practitioner, with RLS in force. */
+function asDb<T>(userId: string, fn: (db: MachineDb) => Promise<T>): Promise<T> {
+  return asUser(userId, (q) => fn(pgMachineDb(q)));
+}
+
+async function registerSynthetic(
+  studio: SeededStudio,
+  name: string,
+): Promise<string> {
+  // Registration CONSUMES a published contract and refuses without one, so the
+  // deployment step has to have happened first. Idempotent, so calling it here
+  // keeps each test self-contained.
+  await publishSyntheticContract();
+  return asDb(studio.userId, async (db) => {
+    const made = await registerStudioMachine(db, {
+      studioId: studio.studioId,
+      profileId: SYNTH.profileId,
+      profileVersion: SYNTH.version,
+      displayName: name,
+    });
+    if (!made.ok) throw new Error(made.error);
+    return made.value;
+  });
+}
+
+/**
+ * Publish the synthetic profile's contract as DEPLOYMENT AUTHORITY.
+ *
+ * Through adminQuery, i.e. as `postgres`, NOT as a practitioner: the command's
+ * EXECUTE is granted to service_role and revoked from `authenticated`, because
+ * the contract is a global product fact and a studio owner must not be able to
+ * change what other studios record against. A test that could publish it as an
+ * owner would be proving the wrong thing.
+ *
+ * Idempotent by design - a published version re-published with identical
+ * content is a no-op - so every test that needs it may call it.
+ */
+async function publishSyntheticContract(): Promise<void> {
+  for (const mode of activeModes(SYNTH)) {
+    const fields = nativeFieldGroups(SYNTH, mode).flatMap((g) =>
+      g.fields.map((f) => ({
+        stage_key: f.stageKey ?? "",
+        field_key: f.key,
+        native_unit: f.unit || "none",
+        decimals: f.decimals,
+        quantity: SYNTH.modes
+          .find((m) => m.key === mode.key)!
+          .fields.concat(
+            SYNTH.modes.find((m) => m.key === mode.key)!.stages.flatMap((st) => st.fields),
+          )
+          .find((ff) => ff.key === f.key)!.quantity,
+        // THE PROFILE'S OWN FLAG, not a blanket value. This fixture derives
+        // its contract from the real synthetic profile, so it can publish
+        // requiredness truthfully — and the recording command now refuses a
+        // capture missing a required field (Codex, #860 4299434251).
+        optional: SYNTH.modes
+          .find((m) => m.key === mode.key)!
+          .fields.concat(
+            SYNTH.modes.find((m) => m.key === mode.key)!.stages.flatMap((st) => st.fields),
+          )
+          .find((ff) => ff.key === f.key)!.optional,
+      })),
+    );
+    if (fields.length === 0) continue;
+    await adminQuery(
+      `select public.sync_machine_profile_contract($1, $2, $3, $4, $5, $6::jsonb)`,
+      [
+        SYNTH.profileId,
+        SYNTH.version,
+        mode.key,
+        SYNTH.channels?.count ?? null,
+        mode.requiresInstalledOption ?? null,
+        JSON.stringify(fields),
+      ],
+    );
+  }
+}
+
+const READINGS = [
+  {
+    stageKey: null,
+    fieldKey: "current",
+    value: { kind: "value" as const, value: 120 },
+    nativeUnit: "µA",
+    decimals: 0,
+    observationSource: "practitioner-entered" as const,
+  },
+  {
+    stageKey: null,
+    fieldKey: "duration",
+    value: { kind: "value" as const, value: 300.5 },
+    nativeUnit: "s",
+    decimals: 1,
+    observationSource: "practitioner-entered" as const,
+  },
+];
+
+// ---------------------------------------------------------------------------
+
+/**
+ * A session id that holds none of the captures in this file.
+ *
+ * `latestRecordedSetup` REQUIRES the session being charted, so it can never
+ * offer a capture recorded in that same session back as "Previous treatment"
+ * (Codex, #860 4289974654). Every case below asks what a LATER visit sees, so
+ * each excludes a visit that recorded nothing - and the type checker found all
+ * eight call sites the moment the parameter stopped being optional, which is
+ * the argument for requiring it rather than defaulting it.
+ */
+const ANOTHER_VISIT = randomUUID();
+
+describe("MPX-03 · the inventory reader reads real rows", () => {
+  it("registers a machine and reads it back as a selectable device", async () => {
+    const studio = await seedStudio("e2e-inv");
+    const id = await registerSynthetic(studio, "Room 1");
+
+    const inv = await asDb(studio.userId, (db) =>
+      listStudioDevices(db, studio.studioId),
+    );
+    expect(inv.source).toBe("ok");
+    expect(inv.devices).toHaveLength(1);
+    expect(inv.devices[0]!.deviceId).toBe(id);
+    expect(inv.devices[0]!.displayName).toBe("Room 1");
+    expect(inv.devices[0]!.profileId).toBe(SYNTH.profileId);
+    expect(inv.devices[0]!.profileVersion).toBe(1);
+
+    // And it is genuinely offerable: the catalogue says active, the version
+    // matches, the studio matches.
+    const offerable = selectableDevices(
+      { studioId: studio.studioId, practitionerId: studio.practitionerId },
+      inv.devices,
+      CAT,
+    );
+    expect(offerable).toHaveLength(1);
+  });
+
+  it("a studio with nothing registered reports empty, not unreadable", async () => {
+    const studio = await seedStudio("e2e-inv-empty");
+    const inv = await asDb(studio.userId, (db) =>
+      listStudioDevices(db, studio.studioId),
+    );
+    expect(inv.devices).toEqual([]);
+    expect(inv.source).toBe("empty-for-studio");
+  });
+
+  it("a retired machine leaves the inventory", async () => {
+    const studio = await seedStudio("e2e-inv-retire");
+    const id = await registerSynthetic(studio, "Room 1");
+    await asDb(studio.userId, (db) => retireStudioMachine(db, id));
+    const inv = await asDb(studio.userId, (db) =>
+      listStudioDevices(db, studio.studioId),
+    );
+    expect(inv.devices).toEqual([]);
+    expect(inv.source).toBe("empty-for-studio");
+  });
+
+  it("another studio's machines are invisible", async () => {
+    const mine = await seedStudio("e2e-inv-a");
+    const other = await seedStudio("e2e-inv-b");
+    await registerSynthetic(other, "Their room");
+    const inv = await asDb(mine.userId, (db) =>
+      listStudioDevices(db, mine.studioId),
+    );
+    expect(inv.devices).toEqual([]);
+  });
+
+  it("a NON-OWNER cannot register one through the data layer", async () => {
+    const studio = await seedStudio("e2e-inv-nonowner");
+    const member = await seedMember(studio, "plain");
+    const out = await asDb(member.userId, (db) =>
+      registerStudioMachine(db, {
+        studioId: studio.studioId,
+        profileId: SYNTH.profileId,
+        profileVersion: 1,
+        displayName: "Smuggled",
+      }),
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toMatch(/only the studio owner/i);
+  });
+});
+
+describe("MPX-03 · the remembered selection SAVES and RELOADS through the store", () => {
+  it("saves, then reloads on a fresh connection, then resolves to ready", async () => {
+    const studio = await seedStudio("e2e-remember");
+    const id = await registerSynthetic(studio, "Room 1");
+    const scope = {
+      studioId: studio.studioId,
+      practitionerId: studio.practitionerId,
+    };
+
+    // SAVE through the production store, wrapped in the real scope check.
+    await asDb(studio.userId, (db) =>
+      createVerifyingStore(
+        async () => scope,
+        createDatabaseStore(db, (s) => s.practitionerId),
+      ).write(scope, { deviceId: id, modeKey: "galvanic" }),
+    );
+
+    // RELOAD on a brand-new connection and transaction.
+    const reloaded = await asDb(studio.userId, (db) =>
+      createVerifyingStore(
+        async () => scope,
+        createDatabaseStore(db, (s) => s.practitionerId),
+      ).read(scope),
+    );
+    expect(reloaded).toEqual({ deviceId: id, modeKey: "galvanic" });
+
+    // And the full resolver answers "ready" with the right device and mode.
+    const resolved = await asDb(studio.userId, async (db) => {
+      const inv = await listStudioDevices(db, scope.studioId);
+      return resolveSelection(
+        scope,
+        inv.devices,
+        createVerifyingStore(
+          async () => scope,
+          createDatabaseStore(db, (s) => s.practitionerId),
+        ),
+        CAT,
+      );
+    });
+    expect(resolved.state).toBe("ready");
+    if (resolved.state === "ready") {
+      expect(resolved.device.deviceId).toBe(id);
+      expect(resolved.mode?.key).toBe("galvanic");
+    }
+  });
+
+  it("the raw column agrees with what the store reported", async () => {
+    const studio = await seedStudio("e2e-remember-raw");
+    const id = await registerSynthetic(studio, "Room 1");
+    await asDb(studio.userId, (db) =>
+      rememberMachine(db, {
+        studioId: studio.studioId,
+        machineId: id,
+        modeKey: "galvanic",
+      }),
+    );
+    const row = await adminQuery(
+      `select default_machine_id, default_machine_mode
+         from public.practitioners where id = $1`,
+      [studio.practitionerId],
+    );
+    expect(row.rows[0].default_machine_id).toBe(id);
+    expect(row.rows[0].default_machine_mode).toBe("galvanic");
+  });
+
+  it("ISOLATES two practitioners in one studio", async () => {
+    const studio = await seedStudio("e2e-iso");
+    const member = await seedMember(studio, "second");
+    const a = await registerSynthetic(studio, "Room A");
+    const b = await registerSynthetic(studio, "Room B");
+
+    await asDb(studio.userId, (db) =>
+      rememberMachine(db, { studioId: studio.studioId, machineId: a, modeKey: null }),
+    );
+    await asDb(member.userId, (db) =>
+      rememberMachine(db, { studioId: studio.studioId, machineId: b, modeKey: null }),
+    );
+
+    const mineBack = await asDb(studio.userId, (db) =>
+      readRememberedMachine(db, studio.practitionerId),
+    );
+    const theirsBack = await asDb(member.userId, (db) =>
+      readRememberedMachine(db, member.practitionerId),
+    );
+    expect(mineBack.ok && mineBack.value.machineId).toBe(a);
+    expect(theirsBack.ok && theirsBack.value.machineId).toBe(b);
+  });
+
+  it("a non-member's write is refused, not silently dropped", async () => {
+    const mine = await seedStudio("e2e-nonmember-a");
+    const theirs = await seedStudio("e2e-nonmember-b");
+    const scopeInTheirs = {
+      studioId: theirs.studioId,
+      practitionerId: theirs.practitionerId,
+    };
+    // Alice's session, Bob's studio: the command resolves membership FIRST and
+    // returns NULL before it ever looks at the machine, so the store turns that
+    // into a refusal rather than a quiet success. A VALID uuid is used on
+    // purpose - a malformed one would raise a type error earlier and this would
+    // pass for the wrong reason.
+    await expect(
+      asDb(mine.userId, (db) =>
+        createDatabaseStore(db, (s) => s.practitionerId).write(scopeInTheirs, {
+          deviceId: randomUUID(),
+          modeKey: null,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(ScopeMismatchError);
+  });
+
+  it("a machine from another studio is refused by the database", async () => {
+    const mine = await seedStudio("e2e-xs-a");
+    const theirs = await seedStudio("e2e-xs-b");
+    const theirMachine = await registerSynthetic(theirs, "Their room");
+    const out = await asDb(mine.userId, (db) =>
+      rememberMachine(db, {
+        studioId: mine.studioId,
+        machineId: theirMachine,
+        modeKey: null,
+      }),
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toMatch(/belongs to another studio/i);
+  });
+
+  it("clearing removes both halves", async () => {
+    const studio = await seedStudio("e2e-clear");
+    const id = await registerSynthetic(studio, "Room 1");
+    const scope = {
+      studioId: studio.studioId,
+      practitionerId: studio.practitionerId,
+    };
+    await asDb(studio.userId, (db) =>
+      createDatabaseStore(db, (s) => s.practitionerId).write(scope, {
+        deviceId: id,
+        modeKey: "galvanic",
+      }),
+    );
+    await asDb(studio.userId, (db) =>
+      createDatabaseStore(db, (s) => s.practitionerId).write(scope, null),
+    );
+    const back = await asDb(studio.userId, (db) =>
+      createDatabaseStore(db, (s) => s.practitionerId).read(scope),
+    );
+    expect(back).toBeNull();
+  });
+});
+
+describe("MPX-03 · readings SAVE and are RETRIEVED for the chart", () => {
+  it("saves a group and reads it back for the same block", async () => {
+    const studio = await seedStudio("e2e-read");
+    const { blockId, sessionId } = await seedSession(studio);
+    const id = await registerSynthetic(studio, "Room 1");
+
+    const wrote = await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: sessionId,
+        clientId: studio.clientId,
+        blockId,
+        machineId: id,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [1, 2],
+        readings: READINGS,
+      }),
+    );
+    expect(wrote.ok && wrote.value).toBe(2);
+
+    const back = await asDb(studio.userId, (db) => readingsForBlock(db, blockId, sessionId));
+    expect(back.ok).toBe(true);
+    if (!back.ok) return;
+    const byField = new Map(back.value.map((r) => [r.fieldKey, r]));
+    // Native unit and precision survive the whole round trip.
+    expect(byField.get("current")!.nativeUnit).toBe("µA");
+    expect(byField.get("current")!.value).toEqual({ kind: "value", value: 120 });
+    expect(byField.get("duration")!.value).toEqual({ kind: "value", value: 300.5 });
+    expect(byField.get("duration")!.decimals).toBe(1);
+    expect(byField.get("current")!.profileVersion).toBe(1);
+  });
+
+  it("a recorded ZERO round-trips as a value, not an absence", async () => {
+    // The payload sends the number as a STRING precisely so a zero survives.
+    const studio = await seedStudio("e2e-zero");
+    const { blockId, sessionId } = await seedSession(studio);
+    const id = await registerSynthetic(studio, "Room 1");
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: sessionId,
+        clientId: studio.clientId,
+        blockId,
+        machineId: id,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 0 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
+          },
+        ],
+      }),
+    );
+    const back = await asDb(studio.userId, (db) => readingsForBlock(db, blockId, sessionId));
+    expect(back.ok && back.value[0]!.value).toEqual({ kind: "value", value: 0 });
+  });
+
+  it("an absence round-trips with its reason", async () => {
+    const studio = await seedStudio("e2e-absent");
+    const { blockId, sessionId } = await seedSession(studio);
+    const id = await registerSynthetic(studio, "Room 1");
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: sessionId,
+        clientId: studio.clientId,
+        blockId,
+        machineId: id,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "absent", reason: "not-legible" },
+            nativeUnit: "s",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+          {
+            // `current` is the OTHER required field of this mode. The
+            // subject here is the absence round-tripping, and a capture
+            // must still be complete to be recorded at all
+            // (Codex, #860 4299434251).
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value" as const, value: 120 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered" as const,
+          },
+        ],
+      }),
+    );
+    const back = await asDb(studio.userId, (db) => readingsForBlock(db, blockId, sessionId));
+    // BY FIELD, not by position: the capture now carries two readings and
+    // the order is the query's, not the payload's.
+    const absent = (back.ok ? back.value : []).find((r) => r.fieldKey === "duration");
+    expect(absent?.value).toEqual({
+      kind: "absent",
+      reason: "not-legible",
+    });
+  });
+
+  it("two probe groups both persist", async () => {
+    const studio = await seedStudio("e2e-groups");
+    const { blockId, sessionId } = await seedSession(studio);
+    const id = await registerSynthetic(studio, "Room 1");
+    for (const [group, channels, current] of [
+      ["g1", [1, 2], 120],
+      ["g2", [3], 90],
+    ] as const) {
+      await asDb(studio.userId, (db) =>
+        recordSetupGroup(db, {
+          sessionId: sessionId,
+          clientId: studio.clientId,
+          blockId,
+          machineId: id,
+          modeKey: "galvanic",
+          groupKey: null,
+          newGroupRef: group,
+          channels: [...channels],
+          readings: [
+            {
+              stageKey: null,
+              fieldKey: "current",
+              value: { kind: "value", value: current },
+              nativeUnit: "µA",
+              decimals: 0,
+              observationSource: "practitioner-entered",
+            },
+            {
+              // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+              // This fixture derives its contract from the real synthetic
+              // profile, so the command now refuses a capture that omits a
+              // required field (Codex, #860 4299434251). Recording the field
+              // is the honest fix; declaring the profile's own fields
+              // optional would test a machine that does not exist.
+              stageKey: null,
+              fieldKey: "duration",
+              value: { kind: "value" as const, value: 300 },
+              nativeUnit: "s",
+              decimals: 1,
+              observationSource: "practitioner-entered" as const,
+            },
+          ],
+        }),
+      );
+    }
+    const back = await asDb(studio.userId, (db) => readingsForBlock(db, blockId, sessionId));
+    // TWO GROUPS, each now carrying BOTH required fields — four readings,
+    // not two. The count moved because the capture became complete
+    // (Codex, #860 4299434251); the claim is about the GROUPS, so it is
+    // asserted on them below rather than on a reading count that tracks
+    // the field list.
+    expect(back.ok && back.value).toHaveLength(4);
+    if (back.ok) {
+      expect([...new Set(back.value.map((r) => r.groupKey))].sort()).toEqual([
+      "g1",
+      "g2",
+    ]);
+    }
+  });
+
+  it("another studio cannot read them", async () => {
+    const mine = await seedStudio("e2e-read-a");
+    const other = await seedStudio("e2e-read-b");
+    const { blockId, sessionId } = await seedSession(mine);
+    const id = await registerSynthetic(mine, "Room 1");
+    await asDb(mine.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: sessionId,
+        clientId: mine.clientId,
+        blockId,
+        machineId: id,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [],
+        readings: READINGS,
+      }),
+    );
+    const seen = await asDb(other.userId, (db) => readingsForBlock(db, blockId, sessionId));
+    // REFUSED, NOT SILENTLY EMPTY — and that is a change for the better.
+    //
+    // This used to assert `ok: true` with an empty list, because RLS hid the
+    // readings and the reader had nothing to return. The route binding now
+    // runs FIRST (Codex, #860 4298457378) and the block itself is invisible
+    // to this studio, so the read refuses before it looks at any readings.
+    //
+    // The claim the test exists for is unchanged and now stronger: another
+    // studio gets NOTHING. What moved is that it is told so, rather than
+    // handed an empty list indistinguishable from "this treatment has no
+    // settings recorded" — the very conflation round 4 removed from the
+    // surface above it.
+    expect(seen.ok, "a foreign studio must be refused, not answered").toBe(false);
+    if (!seen.ok) {
+      expect(seen.error).toMatch(/could not read settings/i);
+    }
+  });
+});
+
+describe("MPX-03 · the prior setup belongs to THIS CLIENT, against a real DB", () => {
+  // THE TEST THAT WAS MISSING. latestRecordedSetup took only a studio id, so
+  // it returned the newest reading anywhere in the studio: open Ana's chart
+  // while Bea's block is newer and Ana's panel showed Bea's settings as
+  // next-visit guidance for Ana. Every existing test in this file used a
+  // single-client studio, so none of them could see it (Codex, 9c6fbbe5).
+  //
+  // PR #286 removed studio-only scoping from the charting WRITES in this
+  // directory for exactly this reason. This is the read-side equivalent, and
+  // it is proved here rather than argued, because the scoping now lives in SQL
+  // (latest_setup_for_client) over the block-in-session lineage.
+  it("does not return a studio-mate's newer setup", async () => {
+    const studio = await seedStudio("e2e-two-clients");
+    const machineId = await registerSynthetic(studio, "Room 1");
+
+    // Ana, recorded FIRST.
+    const ana = await seedSession(studio);
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: ana.sessionId,
+        clientId: studio.clientId,
+        blockId: ana.blockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 70 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
+          },
+        ],
+      }),
+    );
+
+    // A SECOND client in the SAME studio, recorded LATER and with a different
+    // value, so a studio-scoped read is guaranteed to pick the wrong one.
+    const beaClientId = randomUUID();
+    await adminQuery(
+      `insert into public.clients (id, studio_id, name) values ($1, $2, $3)`,
+      [beaClientId, studio.studioId, "Client Bea"],
+    );
+    const beaSessionId = randomUUID();
+    const beaBlockId = randomUUID();
+    await adminQuery(
+      `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality)
+       values ($1, $2, $3, $4, 'electrolysis')`,
+      [beaSessionId, studio.studioId, beaClientId, studio.practitionerId],
+    );
+    await adminQuery(
+      `insert into public.session_blocks (id, studio_id, session_id)
+       values ($1, $2, $3)`,
+      [beaBlockId, studio.studioId, beaSessionId],
+    );
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: beaSessionId,
+        clientId: beaClientId,
+        blockId: beaBlockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 410 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
+          },
+        ],
+      }),
+    );
+
+    // (the cross-client case continues below; the same-client, same-session
+    // case is its own test further down)
+    // Ana's chart must show ANA's 70, never Bea's newer 410.
+    const forAna = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, studio.clientId, ANOTHER_VISIT),
+    );
+    expect(forAna.ok).toBe(true);
+    if (!forAna.ok) return;
+    // BOTH required fields now, because the capture had to be complete to be
+    // recorded at all (Codex, #860 4299434251). The claim is WHOSE setup is
+    // returned, not how many fields it has.
+    expect(forAna.value.map((r) => r.fieldKey).sort()).toEqual([
+      "current",
+      "duration",
+    ]);
+    expect(
+      forAna.value.find((r) => r.fieldKey === "current")!.value,
+      "Ana's panel showed another client's reading",
+      // A NUMBER, not the text the SQL emits: toReading parses value_numeric
+      // once and carries the machine's precision separately in `decimals`.
+      // The ::text cast in latest_setup_for_client exists so the exact decimal
+      // survives JSON on the way here, not to change that contract - the new
+      // RPC path returning the SAME shape as the old PostgREST select is
+      // exactly what makes this swap safe.
+    ).toMatchObject({ kind: "value", value: 70 });
+    expect(forAna.value[0]!.blockId).toBe(ana.blockId);
+
+    // And Bea's chart shows Bea's.
+    const forBea = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, beaClientId, ANOTHER_VISIT),
+    );
+    expect(forBea.ok).toBe(true);
+    if (!forBea.ok) return;
+    expect(forBea.value[0]!.value).toMatchObject({ kind: "value", value: 410 });
+    expect(forBea.value[0]!.blockId).toBe(beaBlockId);
+  });
+
+  it("does NOT offer a SOFT-DELETED block as next-visit guidance", async () => {
+    // soft_delete_session_block (0166) retires a treatment area without
+    // removing its rows, and the readings survive by design - the observation
+    // happened. But removing an area is usually how a MIS-ENTRY is corrected,
+    // so offering it back as "the setup to reproduce" would ignore the
+    // correction and re-present the mistake. record_treatment_setup_group
+    // already refuses to WRITE against a deleted block; this read was
+    // inconsistent with it (Codex, a66f5ec9).
+    const studio = await seedStudio("e2e-softdel");
+    const machineId = await registerSynthetic(studio, "Room 1");
+
+    // An EARLIER block that stays live, with a distinguishable value.
+    const kept = await seedSession(studio);
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: kept.sessionId,
+        clientId: studio.clientId,
+        blockId: kept.blockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 60 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
+          },
+        ],
+      }),
+    );
+
+    // A LATER block, recorded after it, then retired.
+    const removed = await seedSession(studio);
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: removed.sessionId,
+        clientId: studio.clientId,
+        blockId: removed.blockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 999 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
+          },
+        ],
+      }),
+    );
+
+    // Retire it the way the application does.
+    await adminQuery(
+      `update public.session_blocks set deleted_at = now() where id = $1`,
+      [removed.blockId],
+    );
+
+    const prior = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, studio.clientId, ANOTHER_VISIT),
+    );
+    expect(prior.ok).toBe(true);
+    if (!prior.ok) return;
+
+    // The KEPT block's 60, not the retired block's newer 999.
+    expect(
+      prior.value[0]?.blockId,
+      "a retired block was offered as next-visit guidance",
+    ).toBe(kept.blockId);
+    expect(
+      prior.value.find((r) => r.fieldKey === "current")!.value,
+    ).toMatchObject({ kind: "value", value: 60 });
+
+    // And the retired block's readings still EXIST - retiring an area does not
+    // unwrite the observation, it only stops it being offered as guidance.
+    const survived = await adminQuery(
+      `select count(*)::int as n from public.treatment_setup_readings
+        where session_block_id = $1`,
+      [removed.blockId],
+    );
+    // TWO readings, because a capture must now carry every required field
+    // of its mode (Codex, #860 4299434251). The claim is that retiring an
+    // area does not UNWRITE the observation, so what matters is that the
+    // count is non-zero and unchanged by the retirement.
+    expect(survived.rows[0].n).toBe(2);
+  });
+
+  it("returns nothing for a client in ANOTHER studio, even to a member of both", async () => {
+    // The function takes a studio AND a client; a client id from elsewhere must
+    // not resolve just because the caller is a member of the studio asked about.
+    const mine = await seedStudio("e2e-scope-mine");
+    const other = await seedStudio("e2e-scope-other");
+    const machineId = await registerSynthetic(mine, "Room 1");
+    const block = await seedSession(mine);
+    await asDb(mine.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: block.sessionId,
+        clientId: mine.clientId,
+        blockId: block.blockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [],
+        readings: READINGS,
+      }),
+    );
+
+    const out = await asDb(mine.userId, (db) =>
+      latestRecordedSetup(db, mine.studioId, other.clientId, ANOTHER_VISIT),
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.value).toEqual([]);
+  });
+
+  it("returns nothing to a NON-MEMBER asking about a studio's client", async () => {
+    // is_studio_member is the fail-closed second lock inside the function, on
+    // top of RLS. A member of another studio gets an empty answer, not a leak.
+    const target = await seedStudio("e2e-scope-target");
+    const stranger = await seedStudio("e2e-scope-stranger");
+    const machineId = await registerSynthetic(target, "Room 1");
+    const block = await seedSession(target);
+    await asDb(target.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: block.sessionId,
+        clientId: target.clientId,
+        blockId: block.blockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [],
+        readings: READINGS,
+      }),
+    );
+
+    const leaked = await asDb(stranger.userId, (db) =>
+      latestRecordedSetup(db, target.studioId, target.clientId, ANOTHER_VISIT),
+    );
+    expect(leaked.ok).toBe(true);
+    if (!leaked.ok) return;
+    expect(leaked.value, "a non-member read another studio's setup").toEqual([]);
+  });
+});
+
+describe("MPX-03 · NEXT-VISIT retrieval returns one coherent prior setup", () => {
+  it("returns the most recent block's whole group, not a mixture of visits", async () => {
+    const studio = await seedStudio("e2e-next");
+    const id = await registerSynthetic(studio, "Room 1");
+
+    const first = await seedSession(studio);
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: first.sessionId,
+        clientId: studio.clientId,
+        blockId: first.blockId,
+        machineId: id,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 80 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
+          },
+        ],
+      }),
+    );
+
+    const second = await seedSession(studio);
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: second.sessionId,
+        clientId: studio.clientId,
+        blockId: second.blockId,
+        machineId: id,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [],
+        readings: READINGS,
+      }),
+    );
+
+    const prior = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, studio.clientId, ANOTHER_VISIT),
+    );
+    expect(prior.ok).toBe(true);
+    if (!prior.ok) return;
+
+    // ONE block, both its fields — a current without its duration is not a
+    // setting anyone can repeat.
+    expect(new Set(prior.value.map((r) => r.blockId)).size).toBe(1);
+    expect(prior.value[0]!.blockId).toBe(second.blockId);
+    expect(prior.value.map((r) => r.fieldKey).sort()).toEqual([
+      "current",
+      "duration",
+    ]);
+
+    // The earlier visit is untouched.
+    const firstStill = await adminQuery(
+      `select value_numeric::text as v from public.treatment_setup_readings
+        where session_block_id = $1 and field_key = 'current'`,
+      [first.blockId],
+    );
+    expect(firstStill.rows[0].v).toBe("80");
+  });
+
+  it("renders into the next-visit view the panel shows, with units and provenance", async () => {
+    // The retrieval payload feeds `priorSetupView`, which is what the mounted
+    // panel renders. Proving the two fit together is the point: a payload the
+    // renderer cannot use is not a retrieval.
+    const studio = await seedStudio("e2e-next-view");
+    const id = await registerSynthetic(studio, "Room 1");
+    const { blockId, sessionId } = await seedSession(studio);
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: sessionId,
+        clientId: studio.clientId,
+        blockId,
+        machineId: id,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [2],
+        readings: READINGS,
+      }),
+    );
+
+    const prior = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, studio.clientId, ANOTHER_VISIT),
+    );
+    if (!prior.ok) throw new Error("expected a prior setup");
+
+    const view = priorSetupView(
+      {
+        profileId: prior.value[0]!.profileId,
+        profileVersion: prior.value[0]!.profileVersion,
+        modeKey: prior.value[0]!.modeKey,
+        recordedAt: prior.value[0]!.recordedAt,
+        sessionId: prior.value[0]!.blockId,
+        groups: [
+          {
+            groupId: prior.value[0]!.groupKey,
+            channels: prior.value[0]!.channels,
+            readings: Object.fromEntries(
+              prior.value.map((r) => [r.fieldKey, r.value]),
+            ),
+          },
+        ],
+      },
+      CAT,
+    );
+    expect("unavailable" in view).toBe(false);
+    if ("unavailable" in view) return;
+
+    expect(view.machine).toBe("Synthetic E2E Demo");
+    expect(view.modeLabel).toBe("Galvanic");
+    expect(view.renderedAgainstHistoricalVersion).toBe(false);
+    expect(view.groups[0]!.channels).toEqual([2]);
+    const rows = new Map(view.groups[0]!.rows.map((r) => [r.key, r]));
+    expect(rows.get("current")!.unit).toBe("µA");
+    expect(rows.get("current")!.display).toBe("120");
+    expect(rows.get("duration")!.display).toBe("300.5");
+  });
+
+  it("and the chart shows that model's native fields for entry", async () => {
+    // The other half of the mounted path: the entry surface is derived from the
+    // same profile the retrieval names.
+    const groups = nativeFieldGroups(SYNTH, SYNTH.modes[0]!);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.fields.map((f) => [f.label, f.unit])).toEqual([
+      ["Current", "µA"],
+      ["Time", "s"],
+    ]);
+  });
+
+  it("a studio with no history gets an empty prior setup, not an error", async () => {
+    const studio = await seedStudio("e2e-next-none");
+    const prior = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, studio.clientId, ANOTHER_VISIT),
+    );
+    expect(prior.ok && prior.value).toEqual([]);
+  });
+});
+
+describe("MPX-03 · the adapter itself is not lying", () => {
+  it("surfaces a database refusal as an error, never as empty data", async () => {
+    // If the adapter swallowed errors into `data: []`, half the refusal tests
+    // above would pass for the wrong reason. A bad machine id must surface.
+    const studio = await seedStudio("e2e-adapter");
+    const { blockId, sessionId } = await seedSession(studio);
+    const out = await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: sessionId,
+        clientId: studio.clientId,
+        blockId,
+        machineId: "00000000-0000-0000-0000-000000000000",
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [],
+        readings: READINGS,
+      }),
+    );
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toMatch(/unknown machine/i);
+  });
+
+  it("a persistence failure reaches the store as PersistenceUnavailableError", async () => {
+    const studio = await seedStudio("e2e-adapter-store");
+    await expect(
+      asDb(studio.userId, (db) =>
+        createDatabaseStore(db, () => "not-a-uuid").read({
+          studioId: studio.studioId,
+          practitionerId: "not-a-uuid",
+        }),
+      ),
+    ).rejects.toBeInstanceOf(PersistenceUnavailableError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A RETIRED UNIT MUST STILL BE NAMEABLE, against real SQL.
+//
+// Every existing inventory query excludes retired units in SQL - deliberately,
+// so one cannot reach a picker by accident - which also left nothing able to
+// NAME one. Two things needed to: next-visit guidance, which fell back to the
+// model exactly when a studio with two identical models most needed telling
+// them apart, and the "taken out of service" wording, which could not fire
+// because the unit was absent from the list it was looked up in.
+//
+// THIS IS THE TEST THE COMPONENT FILE COULD NOT HONESTLY WRITE. Its version
+// injected a retired device into the `devices` prop - a state the production
+// loader cannot produce - so it passed while proving nothing (Codex, 27061e88).
+// Here the unit is genuinely retired through the real command first.
+// ---------------------------------------------------------------------------
+describe("naming a RETIRED unit", () => {
+  it("is still named after retirement, while being absent from the picker", async () => {
+    const studio = await seedStudio("retired-name");
+    const machineId = await registerSynthetic(studio, "Room 1 retired");
+
+    // PRE-CONDITION: it is offered while live, or the test proves nothing
+    // about retirement specifically.
+    const before = await asDb(studio.userId, (db) =>
+      listStudioDevices(db, studio.studioId),
+    );
+    expect(
+      before.devices.map((d) => d.deviceId),
+      "the unit must be offered before it is retired",
+    ).toContain(machineId);
+
+    await asUser(studio.userId, (q) =>
+      q(`select public.retire_studio_machine($1)`, [machineId]),
+    );
+
+    // THE PICKER NO LONGER OFFERS IT - the guard still holds.
+    const after = await asDb(studio.userId, (db) =>
+      listStudioDevices(db, studio.studioId),
+    );
+    expect(
+      after.devices.map((d) => d.deviceId),
+      "a retired unit must never reach the picker",
+    ).not.toContain(machineId);
+
+    // AND IT IS STILL NAMEABLE BY ID, which is the whole point.
+    const named = await asDb(studio.userId, (db) =>
+      machinesByIds(db, studio.studioId, [machineId]),
+    );
+    expect(named.ok).toBe(true);
+    if (!named.ok) return;
+    expect(named.value).toHaveLength(1);
+    expect(named.value[0]!.displayName).toBe("Room 1 retired");
+    expect(
+      named.value[0]!.retiredAt,
+      "and it reports that it IS retired, so the wording can say so",
+    ).not.toBeNull();
+  });
+
+  it("names only units of the CALLER's studio, retired or not", async () => {
+    // The lookup drops the picker's retired filter; it must not drop the
+    // studio scope with it. RLS plus the explicit studio_id predicate.
+    const mine = await seedStudio("retired-name-mine");
+    const theirs = await seedStudio("retired-name-theirs");
+    const hers = await registerSynthetic(theirs, "Their room");
+    await asUser(theirs.userId, (q) =>
+      q(`select public.retire_studio_machine($1)`, [hers]),
+    );
+
+    const named = await asDb(mine.userId, (db) =>
+      machinesByIds(db, mine.studioId, [hers]),
+    );
+    expect(named.ok).toBe(true);
+    if (!named.ok) return;
+    expect(named.value, "another studio's unit is not nameable here").toEqual([]);
+  });
+
+  it("an empty id list performs no query and returns nothing", async () => {
+    // The ordinary case on a chart with no history. Worth pinning because the
+    // alternative - an unfiltered read - would be a studio-wide scan.
+    const studio = await seedStudio("retired-name-none");
+    const named = await asDb(studio.userId, (db) =>
+      machinesByIds(db, studio.studioId, []),
+    );
+    expect(named.ok).toBe(true);
+    if (!named.ok) return;
+    expect(named.value).toEqual([]);
+  });
+});
+
+describe("0223 · guidance never offers the session on screen back as history", () => {
+  // THE DEFECT (Codex, #860 4289974654). `latest_setup_for_client` filtered on
+  // client and studio and took the newest capture, so a setup recorded MINUTES
+  // AGO, in the session being charted, came back as "Previous treatment" -
+  // under copy that says it is reference only and not today's entries. She
+  // reads her own last save back as history and may reproduce it believing it
+  // came from a previous visit.
+  //
+  // THE FIX IS A REQUIRED PARAMETER, not a filter in the caller: the wrapper's
+  // own docblock says the scoping lives in SQL "so a future caller cannot omit
+  // it", and the type checker found all eight existing call sites the moment
+  // it stopped being optional.
+  it("returns the EARLIER visit's setup, not the one being charted", async () => {
+    const studio = await seedStudio("prior-excl");
+    const machineId = await asDb(studio.userId, (db) =>
+      registerStudioMachine(db, {
+        studioId: studio.studioId,
+        profileId: SYNTH.profileId,
+        profileVersion: SYNTH.version,
+        displayName: "Room 1",
+        installedOptions: [],
+      }),
+    ).then((r) => (r.ok ? r.value : ""));
+    expect(machineId).not.toBe("");
+
+    // VISIT ONE, the genuine previous treatment.
+    const first = await seedSession(studio);
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: first.sessionId,
+        clientId: studio.clientId,
+        blockId: first.blockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 111 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
+          },
+        ],
+      }),
+    );
+
+    // VISIT TWO, the session on screen, for the SAME client - recorded later,
+    // so it wins every ordering this function applies.
+    const todaySessionId = randomUUID();
+    const todayBlockId = randomUUID();
+    await adminQuery(
+      `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality)
+       values ($1, $2, $3, $4, 'electrolysis')`,
+      [todaySessionId, studio.studioId, studio.clientId, studio.practitionerId],
+    );
+    await adminQuery(
+      `insert into public.session_blocks (id, studio_id, session_id)
+       values ($1, $2, $3)`,
+      [todayBlockId, studio.studioId, todaySessionId],
+    );
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        // TODAY'S session, because today's block belongs to it. The sweep
+        // that added these bound this call to the nearest enclosing
+        // seedSession, which was the EARLIER visit - and the command
+        // correctly refused a block that is not that session's. The DB run
+        // is what reported it; nothing in TypeScript could.
+        sessionId: todaySessionId,
+        clientId: studio.clientId,
+        blockId: todayBlockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 222 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
+          },
+        ],
+      }),
+    );
+
+    // CHARTING TODAY: the guidance is visit one's 111, never today's own 222.
+    const asSeenToday = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, studio.clientId, todaySessionId),
+    );
+    expect(asSeenToday.ok).toBe(true);
+    if (!asSeenToday.ok) return;
+    expect(
+      asSeenToday.value[0]?.value,
+      "today's own capture was offered back as Previous treatment",
+    ).toMatchObject({ kind: "value", value: 111 });
+    expect(asSeenToday.value[0]?.blockId).toBe(first.blockId);
+
+    // THE CONVERSE, so the assertion above cannot pass by the function simply
+    // preferring older rows: charting the EARLIER session sees today's 222.
+    const asSeenFromVisitOne = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, studio.clientId, first.sessionId),
+    );
+    expect(asSeenFromVisitOne.ok).toBe(true);
+    if (!asSeenFromVisitOne.ok) return;
+    expect(asSeenFromVisitOne.value[0]?.value).toMatchObject({
+      kind: "value",
+      value: 222,
+    });
+  });
+
+  it("returns NOTHING when the only capture is the one being charted", async () => {
+    // THE SHARPEST CASE, and the one the old behaviour got most wrong: a
+    // first-ever visit. There is no previous treatment, so the honest answer
+    // is an empty list and a panel that shows no guidance at all. Returning
+    // her own capture here is how "Previous treatment" came to describe
+    // something recorded ten minutes earlier on the same screen.
+    const studio = await seedStudio("prior-excl-only");
+    const machineId = await asDb(studio.userId, (db) =>
+      registerStudioMachine(db, {
+        studioId: studio.studioId,
+        profileId: SYNTH.profileId,
+        profileVersion: SYNTH.version,
+        displayName: "Room 1",
+        installedOptions: [],
+      }),
+    ).then((r) => (r.ok ? r.value : ""));
+
+    const only = await seedSession(studio);
+    await asDb(studio.userId, (db) =>
+      recordSetupGroup(db, {
+        sessionId: only.sessionId,
+        clientId: studio.clientId,
+        blockId: only.blockId,
+        machineId,
+        modeKey: "galvanic",
+        groupKey: null,
+        newGroupRef: "g1",
+        channels: [],
+        readings: [
+          {
+            stageKey: null,
+            fieldKey: "current",
+            value: { kind: "value", value: 333 },
+            nativeUnit: "µA",
+            decimals: 0,
+            observationSource: "practitioner-entered",
+          },
+          {
+            // REQUIRED BY THE PROFILE'S GALVANIC MODE alongside `current`.
+            // This fixture derives its contract from the real synthetic
+            // profile, so the command now refuses a capture that omits a
+            // required field (Codex, #860 4299434251). Recording the field
+            // is the honest fix; declaring the profile's own fields
+            // optional would test a machine that does not exist.
+            stageKey: null,
+            fieldKey: "duration",
+            value: { kind: "value" as const, value: 300 },
+            nativeUnit: "s",
+            decimals: 1,
+            observationSource: "practitioner-entered" as const,
+          },
+        ],
+      }),
+    );
+
+    const guidance = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, studio.clientId, only.sessionId),
+    );
+    expect(guidance.ok).toBe(true);
+    if (!guidance.ok) return;
+    expect(
+      guidance.value,
+      "a first visit was shown its own capture as Previous treatment",
+    ).toEqual([]);
+
+    // CONTROL: the capture really exists and is readable from another visit,
+    // so the empty answer above is the exclusion and not a failed write.
+    const fromElsewhere = await asDb(studio.userId, (db) =>
+      latestRecordedSetup(db, studio.studioId, studio.clientId, ANOTHER_VISIT),
+    );
+    expect(fromElsewhere.ok).toBe(true);
+    if (!fromElsewhere.ok) return;
+    expect(fromElsewhere.value[0]?.value).toMatchObject({
+      kind: "value",
+      value: 333,
+    });
+  });
+});
