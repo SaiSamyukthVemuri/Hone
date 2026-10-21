@@ -208,6 +208,41 @@ describe("SEC-002 independently authorized privileged loaders", () => {
 // A 200 empty Next prefetch tree does not establish that the page ran.
 // Preserve full-content positive canaries before the four denied identities.
 describe("SEC-002 browser request contract", () => {
+  it("independently verifies actual GoTrue identity and membership before each negative request matrix", () => {
+    const spec = readFileSync(path.join(ROOT, "e2e/lead-alert-operator.spec.ts"), "utf8");
+    const scope = spec.slice(spec.indexOf('test.describe("SEC-002'));
+    expect(scope).toContain("const auth = createServerClient(E2E_SUPABASE_URL");
+    expect(scope).toContain("await page.context().cookies()");
+    expect(scope).toContain("await auth.auth.getUser()");
+    expect(scope).toContain("expect(error === null).toBe(true)");
+    expect(scope).toContain("expect(user?.id).toBe(userId)");
+    expect(scope).toContain("expect(user?.email).toBe(email)");
+    const negative = scope.slice(scope.indexOf("for (const role of identities)"));
+    expect(negative.indexOf("await assertIdentity(page, fixture.userId, emails[role])")).toBeGreaterThan(0);
+    expect(negative.indexOf("await assertIdentity(page, fixture.userId, emails[role])")).toBeLessThan(negative.indexOf("for (const pathname of paths())"));
+    expect(negative).toContain('active: fixture.active, role: "owner"');
+    expect(scope).toContain('const active = role !== "deactivated"');
+    expect(scope).toContain('"never-operator"');
+    expect(scope).not.toContain('"former-operator"');
+  });
+  it("proves same-session authority before and after a scoped synthetic revocation with exact restoration", () => {
+    const spec = readFileSync(path.join(ROOT, "e2e/lead-alert-operator.spec.ts"), "utf8");
+    const scope = spec.slice(spec.indexOf('test("the same operator session loses'));
+    expect(scope).toContain("expect(before.status()).toBe(200)");
+    expect(scope).toContain("expect(await before.text()).toContain(studios[0].name)");
+    expect(scope).toContain('"update auth.users set email = $2 where id = $1 and email = $3 returning id"');
+    expect(scope).toContain("expect(changed).toEqual([{ id: operatorId }])");
+    expect(scope).toContain("await assertIdentity(page, operatorId, revokedEmail)");
+    expect(scope.indexOf("await assertIdentity(page, operatorId, revokedEmail)")).toBeLessThan(scope.indexOf("for (const pathname of paths())"));
+    const revoked = scope.slice(scope.indexOf("const changed ="), scope.indexOf("} finally"));
+    expect(revoked).not.toContain("signIn(");
+    expect(revoked).not.toContain("clearCookies(");
+    expect(scope).toMatch(/finally\s*\{\s*await restoreOperatorEmail\(\)/);
+    expect(spec).toContain('"update auth.users set email = $2 where id = $1 and email = $3"');
+    expect(spec).toContain("[operatorId, OPERATOR, revokedEmail]");
+    expect(spec).toContain('expect(restored?.email).toBe(OPERATOR)');
+  });
+
   it("uses full RSC requests and proves protected content before denial checks", () => {
     const spec = readFileSync(path.join(ROOT, "e2e/lead-alert-operator.spec.ts"), "utf8");
     const scope = spec.slice(spec.indexOf('test.describe("SEC-002'));

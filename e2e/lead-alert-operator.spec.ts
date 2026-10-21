@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { createServerClient } from "@supabase/ssr";
 import { randomUUID } from "node:crypto";
 import {
   createLocalAuthUser,
@@ -8,7 +9,7 @@ import {
   sql,
 } from "./helpers/seed";
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
-import { E2E_APP_ORIGIN } from "./helpers/local-env";
+import { E2E_APP_ORIGIN, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "./helpers/local-env";
 
 // LEAD-ALERT-01 (#831): the operator lead alert, accepted END TO END through
 // the real surfaces against the local stack and the FAKE Resend transport
@@ -214,24 +215,64 @@ test.describe("operator lead alerts — fake Resend", () => {
 });
 
 // SEC-002: actual Hone document and RSC requests, not a framework fixture.
-// No role grants or allowlist changes: a former-operator fixture is currently
-// outside ADMIN_EMAILS. Revocation between requests is covered by guard units.
+// Identities are independently verified by GoTrue from this browser's cookies.
+// The last case revokes this spec's synthetic operator via verified email change
+// in the SAME session, restoring it afterward. No runtime allowlist edits/grants.
+// This is not a proof of changing ADMIN_EMAILS in a running deployment.
 test.describe("SEC-002 admin document and RSC authorization", () => {
   test.describe.configure({ mode: "serial" });
   const run = randomUUID().slice(0, 8);
-  const identities = ["member-a", "member-b", "deactivated", "former-operator"] as const;
+  const identities = ["member-a", "member-b", "deactivated", "never-operator"] as const;
   const emails = Object.fromEntries(identities.map((role) => [role, `sec002-${role}-${run}@harness.local`]));
   const studios: Array<{ studioId: string; name: string; ownerEmail: string }> = [];
+  const fixtures = new Map<string, { userId: string; studioId: string; active: boolean }>();
+  let operatorId: string;
+  const revokedEmail = `sec002-revoked-${run}@harness.local`;
+
+  // Same cookie adapter as the app, but an independent GoTrue getUser call:
+  // never infer authentication from a redirect, email form, or unverified JWT.
+  async function assertIdentity(page: Page, userId: string, email: string): Promise<void> {
+    const auth = createServerClient(E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
+      cookies: {
+        getAll: async () => (await page.context().cookies()).map(({ name, value }) => ({ name, value })),
+        // Fresh sign-in cookies must verify without an invisible replacement.
+        setAll: () => { throw new Error("SEC002 identity probe unexpectedly required cookie replacement"); },
+      },
+    });
+    const { data: { user }, error } = await auth.auth.getUser();
+    expect(error === null).toBe(true);
+    expect(user?.id).toBe(userId);
+    expect(user?.email).toBe(email);
+  }
+
+  async function restoreOperatorEmail(): Promise<void> {
+    // Exact account and this run's temporary value only. Never another email.
+    await sql("update auth.users set email = $2 where id = $1 and email = $3", [operatorId, OPERATOR, revokedEmail]);
+    const [restored] = await sql<{ email: string }>("select email from auth.users where id = $1", [operatorId]);
+    expect(restored?.email).toBe(OPERATOR);
+  }
+
 
   test.beforeAll(async () => {
     await ensureOperator();
+    const operators = await sql<{ id: string }>("select id from auth.users where lower(email) = lower($1)", [OPERATOR]);
+    expect(operators).toHaveLength(1);
+    operatorId = operators[0].id;
+    const [owned] = await sql<{ n: string }>("select count(*)::text as n from public.practitioners where user_id = $1", [operatorId]);
+    expect(owned.n).toBe("0");
+    expect(E2E_WEB_SERVER_ENV.ADMIN_EMAILS.split(",")).toContain(OPERATOR);
     studios.push(await insertBareStudio(`sec002-a-${run}`), await insertBareStudio(`sec002-b-${run}`));
     for (const [index, role] of identities.entries()) {
       const userId = await createLocalAuthUser(emails[role]);
-      await insertMembershipInStudio(studios[index % 2].studioId, userId, emails[role], role !== "deactivated");
+      const studioId = studios[index % 2].studioId;
+      const active = role !== "deactivated";
+      await insertMembershipInStudio(studioId, userId, emails[role], active);
+      fixtures.set(role, { userId, studioId, active });
+      expect(E2E_WEB_SERVER_ENV.ADMIN_EMAILS.split(",")).not.toContain(emails[role]);
     }
   });
   test.afterAll(async () => {
+    if (operatorId) await restoreOperatorEmail();
     // Only this suite's two exact synthetic studio IDs; auth identities remain
     // available for failure investigation. Never reset a retained target.
     for (const studio of studios) await sql("delete from public.studios where id = $1", [studio.studioId]);
@@ -244,6 +285,7 @@ test.describe("SEC-002 admin document and RSC authorization", () => {
   // RSC prefetch can return an empty router skeleton; it is NOT this proof.
   test("current platform operator proves full document and RSC page content", async ({ page }) => {
     await signIn(page, OPERATOR);
+    await assertIdentity(page, operatorId, OPERATOR);
     for (const pathname of paths()) {
       const expected = pathname === "/admin" ? studios.map((s) => s.name)
         : pathname === "/admin/ops-alerts" ? ["Ops alerts"]
@@ -266,6 +308,13 @@ test.describe("SEC-002 admin document and RSC authorization", () => {
     test(`${role} cannot read either studio through documents or RSC`, async ({ page }) => {
       await signIn(page, emails[role]);
       await page.waitForURL((url) => !url.pathname.startsWith("/auth/"));
+      const fixture = fixtures.get(role)!;
+      await assertIdentity(page, fixture.userId, emails[role]);
+      const membership = await sql<{ user_id: string; studio_id: string; active: boolean; role: string }>(
+        "select user_id, studio_id, active, role from public.practitioners where user_id = $1 and studio_id = $2",
+        [fixture.userId, fixture.studioId],
+      );
+      expect(membership).toEqual([{ user_id: fixture.userId, studio_id: fixture.studioId, active: fixture.active, role: "owner" }]);
       for (const pathname of paths()) {
         for (const rsc of [false, true]) {
           const response = await page.request.get(`${E2E_APP_ORIGIN}${pathname}`, {
@@ -285,6 +334,47 @@ test.describe("SEC-002 admin document and RSC authorization", () => {
       }
     });
   }
+
+  test("the same operator session loses admin access after its verified email leaves the allowlist", async ({ page }) => {
+    await signIn(page, OPERATOR);
+    await assertIdentity(page, operatorId, OPERATOR);
+    const before = await page.request.get(`${E2E_APP_ORIGIN}/admin`, { maxRedirects: 0 });
+    expect(before.status()).toBe(200);
+    expect(await before.text()).toContain(studios[0].name);
+    expect(E2E_WEB_SERVER_ENV.ADMIN_EMAILS.split(",")).not.toContain(revokedEmail);
+    try {
+      const changed = await sql<{ id: string }>(
+        "update auth.users set email = $2 where id = $1 and email = $3 returning id",
+        [operatorId, revokedEmail, OPERATOR],
+      );
+      expect(changed).toEqual([{ id: operatorId }]);
+      // Do not re-login or replace cookies: verify the SAME authenticated ID
+      // now has a non-allowlisted server-verified email, not a signed-out denial.
+      await assertIdentity(page, operatorId, revokedEmail);
+      for (const pathname of paths()) {
+        for (const rsc of [false, true]) {
+          const response = await page.request.get(`${E2E_APP_ORIGIN}${pathname}`, {
+            maxRedirects: 0,
+            headers: rsc ? { RSC: "1" } : {},
+          });
+          const body = await response.text();
+          const refused = [301, 302, 303, 307, 308, 401, 403, 404].includes(response.status())
+            || (rsc && response.status() === 200 && /NEXT_REDIRECT|NEXT_HTTP_ERROR_FALLBACK;404/.test(body));
+          expect(refused, `revoked ${pathname} ${rsc ? "RSC" : "document"} ${response.status()}`).toBe(true);
+          for (const studio of studios) {
+            expect(body).not.toContain(studio.name);
+            expect(body).not.toContain(studio.ownerEmail);
+          }
+          expect(body).not.toContain("admin-lead-detail");
+        }
+      }
+      await assertIdentity(page, operatorId, revokedEmail);
+    } finally {
+      await restoreOperatorEmail();
+    }
+    await assertIdentity(page, operatorId, OPERATOR);
+  });
+
 
 
 });
