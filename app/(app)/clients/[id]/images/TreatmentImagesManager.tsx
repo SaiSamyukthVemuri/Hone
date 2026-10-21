@@ -597,11 +597,11 @@ export function TreatmentImagesManager({
               >
                 {/* PERF-IMG-03 + FETT thumbnail recovery: derivative first,
                     demote to the original, re-mint an EXPIRED URL once per
-                    variant (lib/images/grid-photo-recovery.ts). Keyed by the
-                    server URLs so fresh URLs from router.refresh() start the
-                    cell over. Availability still keys off the ORIGINAL. */}
+                    variant (lib/images/grid-photo-recovery.ts). The hook resets
+                    on fresh URLs; image identity keeps this opener mounted
+                    across router.refresh(). Availability keys off the ORIGINAL. */}
                 <GridPhoto
-                  key={`${img.id}:${img.previewUrl ?? ""}:${img.thumbUrl ?? ""}`}
+                  key={img.id}
                   clientId={clientId}
                   imageId={img.id}
                   previewUrl={img.previewUrl}
