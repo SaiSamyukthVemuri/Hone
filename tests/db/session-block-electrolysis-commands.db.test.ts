@@ -904,20 +904,24 @@ describe("0244 — attributable routine reading correction history", () => {
     const f = await fixture();
     await userQuery(A.userId, UPDATE_SQL, await correctionArgs(f, { energy_level: 6 }));
     const [event] = await events(f.blockId);
-    await asRole("service_role", async q => {
-      // Existing rollback-only fixture helper; no persistent actor deactivation.
-      await q("update public.practitioners set display_name='renamed synthetic' where id=$1", [A.practitionerId]);
+    expect(event).toMatchObject({ actor_practitioner_id: A.practitionerId, actor_user_id: A.userId });
+    const rollback = new Error("rollback owner-scoped practitioner fixture");
+    await expect(adminTx(async q => {
+      // Practitioner maintenance is owner-only, not a service-role privilege.
+      // Throw below rolls all rename/deactivation/role changes back, even on success.
+      await q("update public.practitioners set display_name='renamed synthetic' where id=$1 and studio_id=$2", [A.practitionerId, A.studioId]);
       await q("set local role authenticated");
       await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: A.userId, role: "authenticated" })]);
       expect((await q("select actor_display_name from public.treatment_reading_change_events where source_id=$1", [f.blockId])).rows[0].actor_display_name).toBe(event.actor_display_name);
-      await q("set local role service_role");
-      await q("update public.practitioners set active=false where id=$1", [A.practitionerId]);
+      await q("reset role");
+      await q("update public.practitioners set active=false where id=$1 and studio_id=$2", [A.practitionerId, A.studioId]);
       await q("set local role authenticated");
       await q("savepoint inactive_correction");
       await expect(q(UPDATE_SQL, await correctionArgs(f, { energy_level: 7 }))).rejects.toMatchObject({ code: "23514" });
       await q("rollback to savepoint inactive_correction");
       expect((await q("select id from public.treatment_reading_change_events where source_id=$1", [f.blockId])).rowCount).toBe(0);
-    });
+      throw rollback;
+    })).rejects.toBe(rollback);
     expect(await events(f.blockId)).toEqual([event]);
   });
   it("same-studio receptionist-only membership cannot read clinical history, active clinical member can", async context => {
