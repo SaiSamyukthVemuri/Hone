@@ -321,23 +321,23 @@ prospects at every measured instant.
 
 ## 15. Capabilities added since the 2026-08-23 reconciliation
 
-**227** production merges landed between `b9e0003f` and the current production branch head (2026-10-21 sync, `dd6be03d`; it was224 through `7e801043`; it was220 through `d379d747`; it was218 through `7c724bd4`; it was215 through `4c42e777`; it was211 through `5a9aba77`,210 through `fc3101a2`,209 through `cae869ac`,208 through `10982f4a`; it was 207 through `73a6f577`, 206 through `0dc7d5e4`, 205 through `751f3176`, 204 through `aa905103`; it was 203 through `1f6be8c6`, 202 through `4425b8ef`, 201 through `00c14c90`, 200 through `e91ddd43`, 199 through `462b16b0`, 198 through `af2f7423`, 197 through `4f08de03`, 196 through `338115e4`, 195 through `b09b870f`, 194 through `ea76407e`, 192 through `6dc70b7e`, 190 through `e125ea4e`, 186 through `291ba2ee`, 176 through `0726dcff`, 171 through `440829c2`; it was 169 through `37b0ed82`; it was 164 at the 2026-10-18 sync through `f9cd9013`; it was 163 at the 2026-10-18 sync through `aaf3042b`; it was 160 at the 2026-10-17 sync through `6acea261`; it was 157 at the 2026-10-17 sync through `62ff27b2`; it was 154 at the 2026-10-17 sync through `b08845ce`; it was 152 at the 2026-10-16 sync through `0ae33bd3`; it was 150 at the 2026-10-16 sync through `1ae096e2`; it was 145 at the 2026-10-14 sync through `ce133c18`; it was 140 at the 2026-10-13 sync through `6f7281bb`, 138 at the 2026-10-12 sync through `d5efa20a`, and eighty-one at the 2026-09-21 sync through `410e5039`). That is
+**233** production merges landed between `b9e0003f` and the current production branch head (2026-10-21 sync, `e3f63b74`; it was231 through `59ff87cd`; it was227 through `dd6be03d`; it was224 through `7e801043`; it was220 through `d379d747`; it was218 through `7c724bd4`; it was215 through `4c42e777`; it was211 through `5a9aba77`,210 through `fc3101a2`,209 through `cae869ac`,208 through `10982f4a`; it was 207 through `73a6f577`, 206 through `0dc7d5e4`, 205 through `751f3176`, 204 through `aa905103`; it was 203 through `1f6be8c6`, 202 through `4425b8ef`, 201 through `00c14c90`, 200 through `e91ddd43`, 199 through `462b16b0`, 198 through `af2f7423`, 197 through `4f08de03`, 196 through `338115e4`, 195 through `b09b870f`, 194 through `ea76407e`, 192 through `6dc70b7e`, 190 through `e125ea4e`, 186 through `291ba2ee`, 176 through `0726dcff`, 171 through `440829c2`; it was 169 through `37b0ed82`; it was 164 at the 2026-10-18 sync through `f9cd9013`; it was 163 at the 2026-10-18 sync through `aaf3042b`; it was 160 at the 2026-10-17 sync through `6acea261`; it was 157 at the 2026-10-17 sync through `62ff27b2`; it was 154 at the 2026-10-17 sync through `b08845ce`; it was 152 at the 2026-10-16 sync through `0ae33bd3`; it was 150 at the 2026-10-16 sync through `1ae096e2`; it was 145 at the 2026-10-14 sync through `ce133c18`; it was 140 at the 2026-10-13 sync through `6f7281bb`, 138 at the 2026-10-12 sync through `d5efa20a`, and eighty-one at the 2026-09-21 sync through `410e5039`). That is
 the current ancestry count and nothing more — capability was **not** re-derived over it.
 
 Over the **twenty-nine** merges through `bf6f09c4`, derived on **2026-08-30**, **Ten**
-carry a capability that belongs in this register. The 198 later production merges are recorded in
+carry a capability that belongs in this register. The 204 later production merges are recorded in
 [release-changelog.md](./release-changelog.md) and are **not** enumerated for capability here.
 
 **THOSE TWO NUMBERS ARE DERIVED OVER DIFFERENT SPANS, AND SAYING SO IS THE POINT.** The
-**227** is the merge ancestry through the *current* branch head, `dd6be03d`. The **ten**
+**233** is the merge ancestry through the *current* branch head, `e3f63b74`. The **ten**
 is **not** derived over it: it is the **2026-08-30** derivation over the twenty-nine merges
 through `bf6f09c4`, and it has not been re-run since.
 
 **This section is scoped to that dated derivation and must not be read as a current capability
-count.** The 198 merges between `bf6f09c4` and `dd6be03d` are recorded row by row in
+count.** The 204 merges between `bf6f09c4` and `e3f63b74` are recorded row by row in
 [release-changelog.md](./release-changelog.md), and several of them plainly ship capability —
 `#702`'s automatic card receipts and `#745`'s next-setup-step checklist among them. This register
-has **not** re-enumerated them. Re-running the capability derivation across all 227 merges
+has **not** re-enumerated them. Re-running the capability derivation across all 233 merges
 is its own lane with its own evidence; raising the number here without doing that work would
 manufacture a figure nobody derived, which is the precise failure this document exists to
 prevent.
@@ -439,3 +439,6 @@ overwritten, because a register that silently changes its mind teaches readers n
 **2026-10-21 photo/payment/cancellation stabilization:** #979 fixes preview generation/current-image races and shared dialog keyboard containment; #982 preserves pending PaymentIntent truth and original provider-object binding; #985 distinguishes committed cancellation from email refusal and safely contains recovery logging failures. Exact-source review/CI and READY/unauthenticated smoke are recorded in current-state/changelog. No live provider/customer mutation or Chloe acceptance is inferred.
 
 **2026-10-21 calendar/notification stabilization:** #988 traverses captured calendar rows by immutable ID before final date/ID sorting, without a transaction-wide snapshot promise. #989 uses committed assigned-practitioner contact for owner-created booking notifications; actor authority/audit identity stays separate, and unavailable contact skips dispatch without undoing the booking. Exact-source review/CI and READY/unauthenticated smoke are distinct from human/provider acceptance, which remains UNRUN. No SQL or activation.
+
+
+**2026-10-21 bounded refund-result update (#998):** exact callback-winner identity/money/refund/timestamp recognition prevents false manual failure after saved success. An unsuccessful failed-outcome write retains manual review rather than falsely claiming a saved failure. Source83845 review/CI39601081414 and65focused/type/prepush passed; e3f63b74 READY/alias/tree/read-only smoke verified. Live money/provider behavior and Chloe UAT remain UNRUN. Full original-binding/atomic settlement/refund-status dependencies remain separately held; no SQL or activation occurred. Historical observations above retain their dates.
