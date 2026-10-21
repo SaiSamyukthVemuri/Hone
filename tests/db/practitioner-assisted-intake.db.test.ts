@@ -445,8 +445,9 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
         and not pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE')
         and not exists (
           select 1 from pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
-          where a.privilege_type = 'EXECUTE' and a.grantee not in
+          where a.privilege_type = 'EXECUTE' and (a.grantee not in
             (p.proowner, (select r.oid from pg_catalog.pg_roles r where r.rolname = 'authenticated'))
+            or (a.grantee <> p.proowner and a.is_grantable))
         )
       ) is not true
         and (pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE')
@@ -455,8 +456,42 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
     expect(delegates).toEqual([]);
   });
 
-  it.each(["unknown delegate", "changed reviewed body", "changed transitive helper"] as const)("the actual migration preflight refuses %s", async (change) => {
+  it("additive0243 keeps legacy writes available and invalidates stale CAS before later0248 closure", async () => {
+    const id = await seedIntake(A, "in_progress");
     const migration = readFileSync("supabase/migrations/0243_intake_revision_cas_and_profile_sync.sql", "utf8");
+    const start = migration.indexOf("create function public.advance_intake_revision()");
+    const additiveGuard = migration.slice(start, migration.indexOf("\n$$;", start) + 4)
+      .replace("create function", "create or replace function");
+    await adminTx(async q => {
+      await q("savepoint additive_phase");
+      try {
+        // Simulate only the earlier additive function inside a rolled-back
+        // catalog savepoint. No migration-history rows or frozen SQL change.
+        await q(additiveGuard);
+        await q("set local role authenticated");
+        await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: A.userId, role: "authenticated" })]);
+        const { rows: [legacy] } = await q("update public.client_intake_forms set responses=$2::jsonb,revision=999 where id=$1 returning revision::text,responses",
+          [id, JSON.stringify({ legal_name: "Legacy additive writer" })]);
+        expect(legacy).toEqual({ revision: "1", responses: { legal_name: "Legacy additive writer" } });
+        await q("set local role service_role");
+        const command = "select * from public.write_intake_revision($1,$2,$3,$4,$5::jsonb,1,'save','{}'::jsonb)";
+        const { rows: [stale] } = await q(command, [id,A.studioId,A.clientId,0,JSON.stringify({ legal_name: "Stale CAS" })]);
+        expect(stale).toEqual({ outcome: "conflict", new_revision: null });
+        expect((await q("select responses from public.client_intake_forms where id=$1", [id])).rows[0].responses).toEqual(legacy.responses);
+        const { rows: [fresh] } = await q(command, [id,A.studioId,A.clientId,1,JSON.stringify({ legal_name: "Fresh CAS" })]);
+        expect(fresh).toEqual({ outcome: "saved", new_revision: "2" });
+      } finally {
+        await q("rollback to savepoint additive_phase");
+      }
+      // The exact final guard and original row are restored, not dropped.
+      await expect(q("select 1")).resolves.toBeDefined();
+    });
+    expect((await adminQuery("select revision::text,responses from public.client_intake_forms where id=$1", [id])).rows[0])
+      .toEqual({ revision: "0", responses: { q: "draft" } });
+  });
+
+  it.each(["unknown delegate", "changed reviewed body", "changed transitive helper", "delegate grant option", "writer grant option"] as const)("the actual migration preflight refuses %s", async (change) => {
+    const migration = readFileSync("supabase/migrations/0248_intake_protected_write_enforcement.sql", "utf8");
     const preflight = migration.slice(migration.lastIndexOf("do $$"), migration.lastIndexOf("\ncommit;"));
     await adminTx(async (q) => {
       // Positive actual full-chain context first; mutants live only inside
@@ -469,6 +504,10 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
             language sql stable security definer set search_path='' as
             'select count(*) from public.client_intake_forms'`);
           await q("grant execute on function public.test_0243_unreviewed_intake_reader() to authenticated");
+        } else if (change === "delegate grant option") {
+          await q("grant execute on function public.receptionist_client_contacts(uuid,text,integer) to authenticated with grant option");
+        } else if (change === "writer grant option") {
+          await q("grant execute on function public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb) to service_role with grant option");
         } else {
           const signature = change === "changed transitive helper"
             ? "public.receptionist_actor_id(uuid)" : "public.receptionist_client_contacts(uuid,text,integer)";
@@ -478,7 +517,8 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
           await q(changed);
         }
         await expect(q(preflight)).rejects.toMatchObject({
-          code: "P0001", message: "Unexpected callable intake definer requires review.",
+          code: "P0001", message: change === "writer grant option"
+            ? "Unsafe intake revision command privileges." : "Unexpected callable intake definer requires review.",
         });
       } finally {
         await q("rollback to savepoint delegate_negative");
