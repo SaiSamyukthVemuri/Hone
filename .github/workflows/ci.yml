@@ -513,9 +513,6 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
-
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
@@ -576,6 +573,9 @@ jobs:
       - name: Retry Supabase start once on a port-bind collision (no credential)
         if: steps.sb_start.outcome == 'failure'
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Apply full migration chain from scratch
         id: db_chain
@@ -744,9 +744,6 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
-
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
@@ -796,6 +793,9 @@ jobs:
       - name: Retry Supabase start once on a port-bind collision (no credential)
         if: steps.sb_start.outcome == 'failure'
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -1064,9 +1064,6 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
-
       - name: Generate the per-job fake-Stripe run id
         # ONE validated run id, shared by the Next server + Playwright runner +
         # both ledger sides. Matches the fake-Stripe guard regex
@@ -1122,6 +1119,9 @@ jobs:
       - name: Retry Supabase start once on a port-bind collision (no credential)
         if: steps.sb_start.outcome == 'failure'
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -1206,9 +1206,6 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
-
       - name: Generate the per-job fake-Stripe run id
         # ONE validated run id, shared by the Next server + Playwright runner +
         # both ledger sides (matches the fake-Stripe guard regex). Fake Stripe is
@@ -1262,6 +1259,9 @@ jobs:
       - name: Retry Supabase start once on a port-bind collision (no credential)
         if: steps.sb_start.outcome == 'failure'
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -1348,9 +1348,6 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
-
       - name: Generate the per-job fake-Google run id
         # ONE validated run id shared by the Next server + Playwright runner +
         # both ledger sides. Matches the fake-Google guard regex
@@ -1403,6 +1400,9 @@ jobs:
       - name: Retry Supabase start once on a port-bind collision (no credential)
         if: steps.sb_start.outcome == 'failure'
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local

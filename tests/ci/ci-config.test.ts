@@ -768,6 +768,21 @@ describe("D7b: Supabase-starting jobs pull ghcr.io images authenticated, read-on
       expect(at, "every setup-cli is followed by its login").toBeGreaterThan(i);
       const login = steps[at];
       expect(login).toMatch(/uses: docker\/login-action@dbcb813823bdd20940b903addbd779551569679f # v4\.6\.0\n\s+with:\n\s+registry: ghcr\.io/);
+      // Codex P2 4354428027: nothing branch-controlled may have RUN in this job
+      // before the login (an npm lifecycle hook could leave a process waiting
+      // for ~/.docker/config.json). So every earlier step of the job is either a
+      // pinned action or an inline command that invokes no package manager,
+      // node or repository script; `npm ci` and friends come after the logout.
+      let first = at - 1;
+      while (first >= 0 && !/^    steps:\s*$/m.test(steps[first])) first -= 1;
+      const runsRepoCode = (s: string) => {
+        const code = s.replace(/^\s*#.*$/gm, "");
+        const run = code.match(/\n        run: ?([\s\S]*)$/);
+        return run !== null && /\b(npm|npx|node|yarn|pnpm)\b|scripts\//.test(run[1]);
+      };
+      const before = steps.slice(first + 1, at);
+      expect(before.length, "the job's pre-login steps were found").toBeGreaterThan(0);
+      expect(before.filter(runsRepoCode).map((s) => s.match(/- name: ([^\n]+)/)?.[1]), "steps running repo code before the login").toEqual([]);
       // Codex P2 4353164800: the login must run whenever its setup-cli runs,
       // or that lane silently falls back to anonymous pulls. So its `if:` is
       // pinned EXACTLY: none in ci.yml, and nightly's must equal its

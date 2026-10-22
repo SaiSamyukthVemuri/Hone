@@ -155,34 +155,6 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
-
-      # Browsers are only fetched for the lanes that actually drive one, and the
-      # download is cached across runs.
-      - name: Resolve Playwright version
-        id: pw
-        if: matrix.needs_browsers
-        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Playwright browsers
-        id: pw-cache
-        if: matrix.needs_browsers
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-
-
-      - name: Install Playwright browsers (cache miss)
-        if: matrix.needs_browsers && steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
-
-      - name: Install Playwright system deps only (cache hit)
-        if: matrix.needs_browsers && steps.pw-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
-
       # Supabase is only started for lanes that need a database. The DB-less
       # lane skips several minutes of container startup entirely.
       - name: Start local Supabase
@@ -238,6 +210,34 @@ jobs:
       - name: Retry Supabase start once on a port-bind collision (no credential)
         if: matrix.needs_supabase && steps.sb_start.outcome == 'failure'
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Browsers are only fetched for the lanes that actually drive one, and the
+      # download is cached across runs.
+      - name: Resolve Playwright version
+        id: pw
+        if: matrix.needs_browsers
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        if: matrix.needs_browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-
+
+      - name: Install Playwright browsers (cache miss)
+        if: matrix.needs_browsers && steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright system deps only (cache hit)
+        if: matrix.needs_browsers && steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
 
       - name: Run lane
         run: ${{ matrix.command }}

@@ -378,7 +378,10 @@ never a blanket reset or email-domain deletion.
   an `if: always()` `docker logout ghcr.io`. A failed start falls through to a
   single credential-free retry step, where `supabase-start-bind-retry.sh
   --after-failed-start` retries once only on the port-bind signature in the
-  first start's log (Codex P2 4353990804, 4354172124).
+  first start's log. No step that runs a package manager, node or a
+  repository script (`npm ci` included) may precede the login in its job, so no
+  PR-controlled process exists while the credential does (Codex P2 4353990804,
+  4354172124, 4354428027).
 - Codex exact-head review (`npm run eng -- status <pr>`) is **operator-side**. Do
   not wire it into a workflow: it needs a GitHub API credential, which is exactly
   what the posture above removes.
