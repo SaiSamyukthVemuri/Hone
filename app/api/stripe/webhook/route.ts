@@ -398,10 +398,11 @@ async function handleStripeEvent(
 
       // #1035 P1-B. Record the account's country from this authoritative
       // Account object (the event's own for account.updated, the
-      // identity-verified retrieve for capability.updated). An rpc error
-      // throws into the handler catch, so the event stays retryable, as a
-      // failed status sync does. A result that is not a confirmed match is a
-      // recorded fact, not a failure: eligibility and the 0214 guard refuse it.
+      // identity-verified retrieve for capability.updated). An rpc error or a
+      // reply that stored nothing (not_bound, invalid_input, unreadable) throws
+      // into the handler catch, so the event stays retryable, as a failed
+      // status sync does. A PERSISTED mismatch or conflict is a recorded fact,
+      // not a failure: eligibility and the 0214 guard refuse it.
       const accountCountry = await recordAccountJurisdiction(admin, {
         studioId: ctx.studioId,
         stripeAccountId: ctx.stripeAccountId,

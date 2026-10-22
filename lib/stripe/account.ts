@@ -174,8 +174,8 @@ export async function createOrLoadConnectedAccountForStudio(
   }
 
   // #1035 P1-B. Bound now, so the record can find the settings row. The
-  // account exists and is bound whatever happens here, so a failure is
-  // reported as unconfirmed rather than thrown: the eligibility verdict and the
+  // account exists and is bound whatever happens here, so a failure (including
+  // a reply that stored nothing) is reported as unconfirmed rather than thrown: the eligibility verdict and the
   // 0214 charge guard already refuse an unconfirmed non-CA account.
   let accountCountryConfirmed = false;
   try {
@@ -271,10 +271,16 @@ async function markProvisioningFailed(
 // status refresh, and from the account webhooks. Without it the observed
 // country stays NULL and a US studio can never become chargeable.
 //
-// THROWS on an rpc error, so each caller decides what a failed write means. A
-// RESULT is never an error: country_conflict, a mismatch, not_bound and
-// invalid_input are all `confirmed: false`, and charging needs nothing more,
-// because the eligibility verdict and the 0214 guard read the persisted state.
+// THROWS whenever no observation was stored, so each caller decides what a
+// failed write means: an rpc error, not_bound, invalid_input, an empty or
+// unreadable reply, or an Account that is not the bound one (#1035 Codex P2
+// 4352568927 — resolving on those let a refresh report success and the webhook
+// acknowledge an event that recorded nothing). Only a PERSISTED outcome
+// resolves: recorded, refreshed, or country_conflict. A persisted mismatch or
+// conflict is `confirmed: false`, and charging needs nothing more, because the
+// eligibility verdict and the 0214 guard read the persisted state.
+const PERSISTED_JURISDICTION_RESULTS = new Set(["recorded", "refreshed", "country_conflict"]);
+
 export type AccountJurisdictionRecord = {
   confirmed: boolean;
   result: string;
@@ -295,7 +301,7 @@ export async function recordAccountJurisdiction(
       studioId: params.studioId,
       stripeAccountId: params.stripeAccountId,
     });
-    return { confirmed: false, result: "identity_unverified" };
+    throw new Error("record_stripe_account_jurisdiction refused: account identity unverified");
   }
   const { data, error } = await admin.rpc("record_stripe_account_jurisdiction", {
     p_studio_id: params.studioId,
@@ -312,6 +318,14 @@ export async function recordAccountJurisdiction(
     | null
     | undefined;
   const result = typeof row?.out_result === "string" ? row.out_result : "unreadable";
+  if (!PERSISTED_JURISDICTION_RESULTS.has(result)) {
+    logInternalStripeError("record_account_jurisdiction_not_persisted", {
+      studioId: params.studioId,
+      stripeAccountId: params.stripeAccountId,
+      result,
+    });
+    throw new Error(`record_stripe_account_jurisdiction stored nothing: ${result}`);
+  }
   const confirmed =
     (result === "recorded" || result === "refreshed") && row?.out_matches === true;
   if (!confirmed) {

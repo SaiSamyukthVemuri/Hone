@@ -102,6 +102,13 @@ function makeAdmin(reads: Record<string, ReadResult[]>, rpcs: Record<string, Rea
       const result = rpcs[name];
       if (result instanceof Error) throw result;
       if (result) return result;
+      // Like the real 0214 RPC for a bound account: the observation persists.
+      // A reply that stored nothing now fails the event (#1035 P2), so a
+      // healthy-path test must not inherit a null reply by default.
+      if (name === "record_stripe_account_jurisdiction") {
+        return { data: [{ out_result: "recorded", out_account_country: args.p_country,
+          out_payment_country: args.p_country, out_matches: true }], error: null };
+      }
       if (name === "reconcile_bound_payment_event") {
         const row = observedAttempt;
         const object = args.p_object as Record<string, unknown>;
@@ -1391,6 +1398,23 @@ describe("P1-B: the account arm records the Account's country", () => {
     ADMIN.current = makeAdmin(bound(), { claim_stripe_event: CLAIM_OK, record_stripe_account_jurisdiction: RECORDED });
     await callRoute();
     expect(record()).toBeUndefined();
+  });
+
+  // #1035 Codex P2 4352568927. No observation was stored for these, so
+  // acknowledging the event would drop the only delivery that could record it.
+  it.each([
+    ["not_bound", { data: [{ out_result: "not_bound", out_account_country: null, out_payment_country: "US", out_matches: null }], error: null }],
+    ["invalid_input", { data: [{ out_result: "invalid_input", out_account_country: null, out_payment_country: null, out_matches: null }], error: null }],
+    ["an empty result set", { data: [], error: null }],
+    ["a null result", { data: null, error: null }],
+    ["a malformed row", { data: [{ out_result: 7 }], error: null }],
+    ["an unknown result", { data: [{ out_result: "mystery", out_matches: true }], error: null }],
+  ])("P2: %s stored nothing, so the event fails retryably and is never marked processed", async (_label, reply) => {
+    CONSTRUCT_EVENT.mockReturnValue({ ...accountEvent(), data: { object: US_ACCOUNT } });
+    ADMIN.current = makeAdmin(bound(), { claim_stripe_event: CLAIM_OK, record_stripe_account_jurisdiction: reply });
+    expect((await callRoute()).status).toBe(500);
+    expect(names(ADMIN.current.rpcCalls)).toContain("record_stripe_account_jurisdiction");
+    expect(names(ADMIN.current.rpcCalls)).not.toContain("mark_stripe_event_processed");
   });
 
   it("a persisted country_conflict is acknowledged: it is a recorded fact, not a retryable failure", async () => {

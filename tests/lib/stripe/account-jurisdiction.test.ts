@@ -195,12 +195,23 @@ describe("P1-B: the created account's country is recorded after binding", () => 
     expect(result.accountCountryConfirmed).toBe(false);
   });
 
-  it.each(["not_bound", "invalid_input"])("%s is not confirmed", async (outcome) => {
+  it.each(["not_bound", "invalid_input"])("%s is not confirmed, and the binding still stands", async (outcome) => {
     h.rpc.record_stripe_account_jurisdiction = {
       data: [{ out_result: outcome, out_account_country: null, out_payment_country: "US", out_matches: null }],
       error: null,
     };
     const result = await createOrLoadConnectedAccountForStudio(STUDIO);
+    expect(result.stripeAccountId).toBe("acct_new");
+    expect(result.accountCountryConfirmed).toBe(false);
+  });
+
+  it.each([
+    ["an empty result set", { data: [], error: null }],
+    ["a malformed row", { data: [{ out_result: 7 }], error: null }],
+  ])("%s is not confirmed, and the binding still stands", async (_label, reply) => {
+    h.rpc.record_stripe_account_jurisdiction = reply;
+    const result = await createOrLoadConnectedAccountForStudio(STUDIO);
+    expect(result.stripeAccountId).toBe("acct_new");
     expect(result.accountCountryConfirmed).toBe(false);
   });
 });
@@ -232,6 +243,30 @@ describe("P1-B: a refresh records the retrieved account's country", () => {
   it("an rpc that throws fails the refresh closed too", async () => {
     h.rpc.record_stripe_account_jurisdiction = new Error("network");
     await expect(refresh()).rejects.toThrow(/^Stripe status refresh succeeded but local sync failed\.$/);
+  });
+
+  // #1035 Codex P2 4352568927. These outcomes stored NO observation, so a
+  // refresh that resolved after one told the practitioner the country was
+  // recorded when it was not. Each must fail the refresh like a failed write.
+  it.each([
+    ["not_bound", { data: [{ out_result: "not_bound", out_account_country: null, out_payment_country: "US", out_matches: null }], error: null }],
+    ["invalid_input", { data: [{ out_result: "invalid_input", out_account_country: null, out_payment_country: null, out_matches: null }], error: null }],
+    ["an empty result set", { data: [], error: null }],
+    ["a null result", { data: null, error: null }],
+    ["a malformed row", { data: [{ out_result: 7 }], error: null }],
+    ["an unknown result", { data: [{ out_result: "mystery", out_matches: true }], error: null }],
+  ])("P2: %s stored nothing, so the refresh fails closed", async (_label, reply) => {
+    h.rpc.record_stripe_account_jurisdiction = reply;
+    await expect(refresh()).rejects.toThrow(/^Stripe status refresh succeeded but local sync failed\.$/);
+    expect(rpcNames()).toContain("record_stripe_account_jurisdiction");
+  });
+
+  it("CONTROL: a refreshed observation that matches still resolves", async () => {
+    h.rpc.record_stripe_account_jurisdiction = {
+      data: [{ out_result: "refreshed", out_account_country: "US", out_payment_country: "US", out_matches: true }],
+      error: null,
+    };
+    await expect(refresh()).resolves.toMatchObject({ chargesEnabled: true });
   });
 
   it("a persisted country_conflict is a non-chargeable answer, not an error", async () => {

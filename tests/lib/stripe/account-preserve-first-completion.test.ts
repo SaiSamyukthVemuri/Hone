@@ -113,6 +113,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     },
     rpc: async (name: string, args: Record<string, unknown>) => {
       h.rpcCalls.push({ name, args });
+      // #1035 P2: a jurisdiction reply that stored nothing fails the refresh,
+      // so answer as the real RPC does for a bound account.
+      if (name === "record_stripe_account_jurisdiction") {
+        return { data: [{ out_result: "recorded", out_matches: true }], error: null };
+      }
       return { data: null, error: h.syncErr };
     },
   }),
