@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { orderByRecency } from "@/lib/sessions/charted-session";
 // RESP-CLIENT-INTAKE-01. The four outbound controls measured as dead clicks on
 // this page use the shipped navigation leaf (DESIGN contract 2c). The remaining
 // bare <Link>s here — the /clients back link and the two Edit links — were NOT
@@ -10,6 +11,7 @@ import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
   pickLastTreatment,
+  pickNewestNonVoidSession,
   pickPreClientWatchPlanSource,
   type ClinicalSummaryBlock,
   type LastSessionSummary,
@@ -237,6 +239,8 @@ export default async function ClientCheatSheetPage({
   }
 
   const { client, pricing, sessions, practitioners } = data;
+  const sessionsByRecency = orderByRecency(sessions);
+  const newestSession = pickNewestNonVoidSession(sessionsByRecency);
   // PR Willow launch fixes: surface past appointments that the
   // practitioner has not charted yet under the Sessions tab. The
   // helper filters out appointments that already have a session
@@ -460,7 +464,7 @@ export default async function ClientCheatSheetPage({
   // (or, for laser/legacy sessions, raw entries) wins. An uncharted
   // newer session still appears under Needs charting; it just can't
   // blank out the summary.
-  const recentSessions = sessions.slice(0, 25);
+  const recentSessions = sessionsByRecency.slice(0, 25);
   let lastTreatment: (typeof sessions)[number] | null = null;
   let lastTreatmentSummary: LastSessionSummary | null = null;
   let lastTreatmentBlocks: ClinicalSummaryBlock[] = [];
@@ -488,15 +492,15 @@ export default async function ClientCheatSheetPage({
   // PERF-02A. BOTH clinical block reads are issued first, their structured
   // areas are attached in ONE read, and only then is each result consumed.
   //
-  // WHY. `recentSessions` is `sessions.slice(0, 25)` and the intelligence
-  // window is `sessions.slice(0, 200)`, so the summary's block ids are ALWAYS a
-  // strict subset of the intelligence read's. `getSessionBlockAreasByBlockIds`
+  // WHY. Both windows use sessionsByRecency: <=25 summary and <=200
+  // intelligence, so the summary block ids are a subset of the intelligence read's. `getSessionBlockAreasByBlockIds`
   // opens with `[...new Set(blockIds)]`, so the second attach was re-issuing a
   // query whose rows the first had just fetched — a wholly redundant round trip
   // on the slowest route in the app, paid on every overview load.
   //
   // WHAT IS DELIBERATELY UNCHANGED. Selection semantics: pickLastTreatment and
-  // pickPreClientWatchPlanSource receive exactly the rows they received before.
+  // pickPreClientWatchPlanSource retain the bounded window. Shared recency is
+  // applied before truncation so timestamp ties cannot omit the winning row.
   // Both `session_blocks` reads keep their own projection, their own session
   // window and their own CLIN-01-B unavailability flag — the rows are held in
   // two variables rather than merged into one array precisely so that one read
@@ -510,8 +514,8 @@ export default async function ClientCheatSheetPage({
   //
   // This is a REORDERING, not a dedupe. Every projection, filter, session
   // window (<=25 summary, <=200 intelligence), ordering and tab gate below is
-  // byte-for-byte what it was, so each tab issues exactly the queries it issued
-  // before; only the order they are awaited in changed.
+  // preserved with shared recency applied before bounds. The reads retain
+  // their tab gates and concurrency; no additional query is introduced.
   //
   // EACH UNIT RESOLVES; NONE REJECTS. That is the correctness crux, not a style
   // choice. A bare Promise.all over three throwing promises rejects as a unit,
@@ -647,7 +651,7 @@ export default async function ClientCheatSheetPage({
           .eq("studio_id", studio.id)
           .in(
             "session_id",
-            sessions.slice(0, 200).map((sess) => sess.id),
+            sessionsByRecency.slice(0, 200).map((sess) => sess.id),
           )
           .is("deleted_at", null);
         if (intelBlocksError) {
@@ -1110,7 +1114,7 @@ export default async function ClientCheatSheetPage({
             performerName={lastTreatmentPerformer}
             aftercareExplainedAt={lastTreatmentAftercareAt}
             totalMinutes={lastTreatmentTotalMinutes}
-            isLatestSession={lastTreatment?.id === sessions[0]?.id}
+            isLatestSession={lastTreatment?.id === newestSession?.id}
             summary={lastTreatmentSummary}
             unavailable={clinicalHistoryUnavailable}
           />
@@ -1613,7 +1617,7 @@ export default async function ClientCheatSheetPage({
                         {/* A newer uncharted session exists; say so quietly
                             instead of letting it blank out this card. It
                             still shows under Needs charting below. */}
-                        {lastTreatment.id !== sessions[0]?.id && (
+                        {lastTreatment.id !== newestSession?.id && (
                           <p className="mt-1 text-xs text-neutral-500">
                             Most recent charted treatment. A newer session has no
                             treatment details yet.

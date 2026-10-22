@@ -199,3 +199,13 @@ describe("THE GUARANTEE for encodings (ASCII percent-decoding to a fixed point)"
     expect(withoutRecordIds(["100% done", "q=a%20b&r=%2Fx", "bad %zz escape"])).toEqual(["100% done", "q=a%20b&r=%2Fx", "bad %zz escape"]);
   });
 });
+
+
+it("shared decoder preserves the logging sink policy at the decode bound", () => {
+  const id = "6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5";
+  const four = "%25252536" + id.slice(1);
+  const five = four.replaceAll("%", "%25");
+  const tail = "dp%5F1TestDispute9Ab%20foo%40example.test%0A%zz%C3%A9";
+  expect(withoutRecordIds([`😀${four}%20${tail}`])).toEqual([`😀[id]%20${tail}`]);
+  expect(withoutRecordIds([five])).toEqual(["[Redacted]"]);
+});

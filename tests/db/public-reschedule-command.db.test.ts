@@ -58,7 +58,6 @@ async function seed(
     capacity?: boolean;
     cancellationPolicy?: string | null;
     noShowPolicy?: string | null;
-    verifiedPaymentJurisdiction?: boolean;
   } = {},
 ): Promise<Fixture> {
   const studioId = randomUUID();
@@ -90,16 +89,6 @@ async function seed(
       opts.noShowPolicy ?? null,
     ],
   );
-  // Only the six charge-attempt cases opt into this synthetic verified pair.
-  // Real studio creation stays UNKNOWN; use the governed command before any
-  // priced configuration/account/money, never bypass its insert guard.
-  if (opts.verifiedPaymentJurisdiction === true) {
-    const verified = await adminQuery(
-      `select * from public.set_studio_payment_jurisdiction($1,'CA','cad',$2,$3,false,$4)`,
-      [studioId, "fixture:public-reschedule-command", "Synthetic verified CA/cad payment fixture", `fixture:${label}`],
-    );
-    expect(verified.rows[0]?.out_result).toBe("initialized");
-  }
   await adminQuery(
     `insert into public.practitioners (id, studio_id, user_id, display_name, email, role, active)
      values ($1, $2, $3, $4, $5, 'owner', true)`,
@@ -917,7 +906,7 @@ describe("0171 — financial safety fails closed (payment_charge_attempts)", () 
   it.each(["ready", "blocked", "pending_stripe", "succeeded"])(
     "REFUSES on a live charge attempt in status %s",
     async (status) => {
-      const f = await seed(`charge-live-${status}`, { verifiedPaymentJurisdiction: true });
+      const f = await seed(`charge-live-${status}`);
       await seedChargeAttempt(f, status);
       const out = await reschedule(f, at(11, 10, 0));
       expect(out.result).toBe("payment_state_requires_studio");
@@ -928,7 +917,7 @@ describe("0171 — financial safety fails closed (payment_charge_attempts)", () 
   it.each(["cancelled", "failed"])(
     "does NOT block on a terminally dead attempt in status %s",
     async (status) => {
-      const f = await seed(`charge-dead-${status}`, { verifiedPaymentJurisdiction: true });
+      const f = await seed(`charge-dead-${status}`);
       await seedChargeAttempt(f, status);
       const out = await reschedule(f, at(11, 10, 0));
       expect(out.result).toBe("success");
@@ -1042,6 +1031,7 @@ describe("0171 — the financial census is complete", () => {
         "appointment_policy_acknowledgements", // evidence, stays on the original
         "appointments", //                 the lineage self-reference
         "booking_tracking_consents", //    marketing consent, ON DELETE SET NULL
+        "email_outbound_messages", //       delivery ledger, no money
         "ops_alerts", //                   operator signal, ON DELETE SET NULL
         "practitioner_notifications", //   in-app notice, ON DELETE SET NULL
         "sessions", //                     clinical record, ON DELETE SET NULL

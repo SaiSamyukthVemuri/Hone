@@ -40,9 +40,6 @@ async function isClientVisible(
     safeLog.error(
       JSON.stringify({
         event: "client_visible_lookup_failed",
-        clientId,
-        code: error.code,
-        message: error.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -129,7 +126,6 @@ async function checkDuplicateEmail(
       JSON.stringify({
         event: "client_duplicate_email_lookup_failed",
         code: error.code,
-        message: error.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -261,7 +257,6 @@ export async function updateClientAction(
         event: "client_update_failed",
         clientId,
         code: error.code,
-        message: error.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -312,21 +307,28 @@ export async function archiveClientAction(formData: FormData): Promise<void> {
     throw new Error(`Failed to archive client: ${error.message}`);
   }
 
-  const { error: auditErr } = await supabase.from("audit_logs").insert({
-    studio_id: studio.id,
-    actor_id: practitioner.id,
-    action: "client_archived",
-    entity_type: "client",
-    entity_id: clientId,
-    metadata: { archived_at: nowIso },
-  });
+  // The client change already committed. Audit transport failures are
+  // recoverable and must not prevent revalidation or successful navigation.
+  let auditErr: { code?: string } | null = null;
+  try {
+    const { error: auditWriteError } = await supabase.from("audit_logs").insert({
+      studio_id: studio.id,
+      actor_id: practitioner.id,
+      action: "client_archived",
+      entity_type: "client",
+      entity_id: clientId,
+      metadata: { archived_at: nowIso },
+    });
+    auditErr = auditWriteError;
+  } catch {
+    auditErr = { code: "audit_write_unavailable" };
+  }
   if (auditErr) {
     safeLog.error(
       JSON.stringify({
         event: "client_archive_audit_failed",
         clientId,
         code: auditErr.code,
-        message: auditErr.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -364,21 +366,28 @@ export async function unarchiveClientAction(formData: FormData): Promise<void> {
     throw new Error(`Failed to unarchive client: ${error.message}`);
   }
 
-  const { error: auditErr } = await supabase.from("audit_logs").insert({
-    studio_id: studio.id,
-    actor_id: practitioner.id,
-    action: "client_unarchived",
-    entity_type: "client",
-    entity_id: clientId,
-    metadata: {},
-  });
+  // The client change already committed. Audit transport failures are
+  // recoverable and must not prevent revalidation or successful navigation.
+  let auditErr: { code?: string } | null = null;
+  try {
+    const { error: auditWriteError } = await supabase.from("audit_logs").insert({
+      studio_id: studio.id,
+      actor_id: practitioner.id,
+      action: "client_unarchived",
+      entity_type: "client",
+      entity_id: clientId,
+      metadata: {},
+    });
+    auditErr = auditWriteError;
+  } catch {
+    auditErr = { code: "audit_write_unavailable" };
+  }
   if (auditErr) {
     safeLog.error(
       JSON.stringify({
         event: "client_unarchive_audit_failed",
         clientId,
         code: auditErr.code,
-        message: auditErr.message,
         timestamp: new Date().toISOString(),
       }),
     );

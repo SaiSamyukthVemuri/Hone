@@ -340,12 +340,23 @@ export async function recordClinicalRecordsAudit(args: {
   action: "clinical_records_previewed" | "clinical_records_printed";
   metadata: Record<string, string>;
 }): Promise<{ ok: boolean }> {
-  const supabase = await createClient();
-  const { error } = await supabase.rpc("record_clinical_records_audit", {
-    p_client_id: args.clientId,
-    p_action: args.action,
-    p_metadata: args.metadata,
-    p_id: args.id ?? null,
-  });
-  return { ok: !error };
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("record_clinical_records_audit", {
+      p_client_id: args.clientId,
+      p_action: args.action,
+      p_metadata: args.metadata,
+      p_id: args.id ?? null,
+    });
+    // 0233 returns the inserted row's UUID. An error-free but malformed/skewed
+    // response is not evidence that the requested preview was recorded.
+    const recorded = typeof data === "string"
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data)
+      && (args.id === undefined || data.toLowerCase() === args.id.toLowerCase());
+    return { ok: !error && recorded };
+  } catch {
+    // A thrown client/transport error can contain clinical or database prose.
+    // Withhold the record and print authorization without propagating it.
+    return { ok: false };
+  }
 }
