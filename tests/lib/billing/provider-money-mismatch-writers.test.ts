@@ -20,6 +20,7 @@ import Stripe from "stripe";
 class Tripwire extends Error {}
 
 const h = vi.hoisted(() => ({
+  livemode: false,
   rows: {} as Record<string, unknown>,
   updates: [] as Array<{ table: string; payload: Record<string, unknown> }>,
   rpcCalls: [] as string[],
@@ -70,7 +71,7 @@ const fakeStripe = {
 };
 
 vi.mock("@/lib/stripe/server", () => ({
-  inferStripeLivemode: () => false,
+  inferStripeLivemode: () => h.livemode,
   getStripe: () => fakeStripe,
 }));
 vi.mock("@/lib/stripe/session-payment-stripe", () => ({
@@ -314,6 +315,7 @@ const critical = (event: string) =>
   h.alerts.filter((a) => a.severity === "critical" && a.event === event);
 
 beforeEach(() => {
+  h.livemode = false;
   h.rows = {};
   h.updates = [];
   h.rpcCalls = [];
@@ -1246,6 +1248,35 @@ describe("G1 execution country authority before a new provider intent", () => {
     expect(h.reads).toContainEqual({ table: "studio_payment_settings", filters: [
       { column: "studio_id", value: STUDIO }, { column: "stripe_livemode", value: false },
       { column: "stripe_account_id", value: "acct_test" },
+    ] });
+  });
+  it.each([false, true])("deployment mode %s uses its own bound account settings", async (livemode) => {
+    h.livemode = livemode;
+    for (const table of ["payment_charge_attempts", "client_payment_methods", "studio_payment_settings"]) {
+      (h.rows[table] as Record<string, unknown>).stripe_livemode = livemode;
+    }
+    expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(h.stripeCalls).toEqual(["pi_create"]);
+    expect(h.reads).toContainEqual({ table: "studio_payment_settings", filters: [
+      { column: "studio_id", value: STUDIO }, { column: "stripe_livemode", value: livemode },
+      { column: "stripe_account_id", value: "acct_test" },
+    ] });
+  });
+  it.each([false, true])("deployment mode %s rejects an opposite-mode settings row before claiming", async (livemode) => {
+    h.livemode = livemode;
+    for (const table of ["payment_charge_attempts", "client_payment_methods"]) {
+      (h.rows[table] as Record<string, unknown>).stripe_livemode = livemode;
+    }
+    settings().stripe_livemode = !livemode;
+    const before = { ...(h.rows.payment_charge_attempts as Record<string, unknown>) };
+    // Existing lineage defense rejects the opposite mode before the country gate.
+    expect(await charge()).toMatchObject({ ok: false, outcome: "lineage_mismatch" });
+    expect(h.stripeCalls).toEqual([]);
+    expect(h.rpcCalls).not.toContain("claim_session_payment_charge_attempt");
+    expect(h.updates).toEqual([]);
+    expect(h.rows.payment_charge_attempts).toEqual(before);
+    expect(h.reads).toContainEqual({ table: "studio_payment_settings", filters: [
+      { column: "studio_id", value: STUDIO }, { column: "stripe_livemode", value: livemode },
     ] });
   });
   it("existing CA legacy observation policy remains chargeable with verified CA/cad", async () => {
