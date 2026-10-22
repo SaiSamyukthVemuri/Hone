@@ -308,7 +308,8 @@ before assuming the diff broke something.**
 | db integration | 8 min |
 | targeted browser shard (×3) | target ~6 min · **hard timeout 15 min** |
 | extended browser shard (×4) | target <10 min · **hard timeout 25 min** |
-| nightly browser shard (×4) | hard timeout 15 min |
+| nightly browser shard (×4) | hard timeout 25 min (same quarter-suite as extended) |
+| nightly payment / Google · mobile | hard timeout 18 min · 15 min |
 | payment browser e2e (fake stripe) | target ~10 min · **hard timeout 18 min** |
 | Google / mobile | 15 min / 12 min |
 

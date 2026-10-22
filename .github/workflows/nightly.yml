@@ -69,31 +69,37 @@ jobs:
             needs_supabase: true
             needs_browsers: false
             timeout: 30
+          # Browser ceilings are FAILURE CEILINGS sized to setup plus tests, not
+          # targets. Each shard runs the same quarter of the full suite as ci.yml's
+          # extended shard, so it gets the same 25; payment matches ci.yml's 18.
+          # At 15, runs 39602074266 and 39781365862 cancelled shards 1 and 3 and
+          # google at the ceiling with no assertion failure (google spent 12 of
+          # its 15 minutes before the lane step started).
           - lane: "core browser e2e (shard 1/4)"
             command: "npx playwright test --shard=1/4"
             needs_supabase: true
             needs_browsers: true
-            timeout: 15
+            timeout: 25
           - lane: "core browser e2e (shard 2/4)"
             command: "npx playwright test --shard=2/4"
             needs_supabase: true
             needs_browsers: true
-            timeout: 15
+            timeout: 25
           - lane: "core browser e2e (shard 3/4)"
             command: "npx playwright test --shard=3/4"
             needs_supabase: true
             needs_browsers: true
-            timeout: 15
+            timeout: 25
           - lane: "core browser e2e (shard 4/4)"
             command: "npx playwright test --shard=4/4"
             needs_supabase: true
             needs_browsers: true
-            timeout: 15
+            timeout: 25
           - lane: "payment e2e (fake stripe)"
             command: "npm run test:e2e:payment"
             needs_supabase: true
             needs_browsers: true
-            timeout: 15
+            timeout: 18
           - lane: "mobile completion e2e"
             command: "npm run test:e2e:mobile"
             needs_supabase: true
@@ -103,7 +109,7 @@ jobs:
             command: "npm run test:e2e:google"
             needs_supabase: true
             needs_browsers: true
-            timeout: 15
+            timeout: 18
 
     env:
       # TEST-PORT-01: pin the historical port so the nightly matrix is unaffected
