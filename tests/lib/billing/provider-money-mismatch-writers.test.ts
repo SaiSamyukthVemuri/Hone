@@ -625,6 +625,49 @@ describe("refund: Stripe's refund is recorded only when it is the claimed refund
     expect(refundSucceededWrites()).toHaveLength(1);
   });
 
+  // Validate identity before crossing the locked command boundary; this fake
+  // does not establish SQL coercion/provenance semantics for malformed inputs.
+  for (const currency of ["cad", "usd"] as const) {
+    it(`${currency}: matching expanded originals preserve the locked refund command (control)`, async () => {
+      seedSucceeded(currency);
+      h.refund = { id: "re_1", status: "succeeded", amount: AMOUNT, currency,
+        charge: { id: CHARGE_ID }, payment_intent: { id: PI_ID } };
+      expect(await refund()).toMatchObject({ ok: true, outcome: "succeeded" });
+      expect(h.stripeCalls).toEqual(["refund_create"]);
+      expect(h.rpcCalls.filter(name => name === "reconcile_bound_payment_event")).toHaveLength(1);
+      expect(h.boundObjects).toContainEqual(expect.objectContaining({
+        refund_id: "re_1", payment_intent_id: PI_ID, charge_id: CHARGE_ID,
+        refund_amount_cents: AMOUNT, refund_currency: currency,
+      }));
+      expect(refundSucceededWrites()).toHaveLength(1);
+    });
+    it.each([7, true, { id: "re_1" }, "  "])(`${currency}: malformed returned refund ID %j never reaches locked reconciliation`, async (refundId) => {
+      seedSucceeded(currency);
+      h.refund = { id: refundId, status: "succeeded", amount: AMOUNT, currency };
+      const result = await refund();
+      // The decisive oracle precedes fake/SQL outcome assumptions.
+      expect(h.rpcCalls.filter(name => name === "reconcile_bound_payment_event")).toEqual([]);
+      expect(h.boundObjects).toEqual([]);
+      expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+      expect(refundSucceededWrites()).toEqual([]);
+      expect(h.updates.filter(u => u.payload.refund_status === "pending_stripe")).toHaveLength(1);
+      expect(h.stripeCalls).toEqual(["refund_create"]);
+    });
+    it.each(["stripe_charge_id", "stripe_payment_intent_id"])(`${currency}: whitespace known original %s never reaches locked reconciliation`, async (field) => {
+      seedSucceeded(currency);
+      (h.rows.payment_charge_attempts as Record<string, unknown>)[field] = "  ";
+      h.refund = { id: "re_1", status: "succeeded", amount: AMOUNT, currency,
+        charge: field === "stripe_charge_id" ? "  " : CHARGE_ID,
+        payment_intent: field === "stripe_payment_intent_id" ? "  " : PI_ID };
+      const result = await refund();
+      expect(h.rpcCalls.filter(name => name === "reconcile_bound_payment_event")).toEqual([]);
+      expect(h.boundObjects).toEqual([]);
+      expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+      expect(refundSucceededWrites()).toEqual([]);
+      expect(h.stripeCalls).toEqual(["refund_create"]);
+    });
+  }
+
   it.each([
     ["in another currency", { amount: AMOUNT, currency: "cad" }, "usd"],
     ["for another amount", { amount: AMOUNT - 100, currency: "usd" }, "usd"],
