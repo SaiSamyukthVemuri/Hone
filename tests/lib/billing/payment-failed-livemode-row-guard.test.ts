@@ -207,3 +207,23 @@ describe("payment_intent.payment_failed — resolved-row livemode guard", () => 
     expect(h.state.updateCalls[0].status).toBe("failed");
   });
 });
+
+
+for (const status of ["ready", "pending_stripe"]) {
+  it(`${status}: failed-event RPC evidence excludes private provider prose`, async () => {
+    const privateText = "synthetic-private@example.invalid token=synthetic-secret";
+    h.state.selectResult = { data: attemptRow({ status }), error: null };
+    h.state.updateResult = { data: [{ id: "att_1" }], error: null };
+    const event = failedEvent() as unknown as { data: { object: { last_payment_error: { message: string } } } };
+    event.data.object.last_payment_error.message = privateText;
+    const result = await handlePaymentIntentPaymentFailed(event as never, CTX);
+    expect(h.state.rpcCalls).toHaveLength(1);
+    expect(h.state.rpcCalls[0]).toMatchObject({ name: "reconcile_bound_payment_event",
+      p_object: { customer_id: "cus_row", payment_intent_id: "pi_row", amount_cents: 2500, currency: "cad", failure_code: "card_declined" } });
+    expect(h.state.updateCalls).toHaveLength(1);
+    expect(h.state.updateCalls[0]).toMatchObject({ status: "failed", failure_code: "card_declined" });
+    expect(result).not.toHaveProperty("boundCommandRefused");
+    expect(JSON.stringify([result, h.state.rpcCalls, h.state.updateCalls, h.state.alerts])).not.toContain(privateText);
+    expect((h.state.rpcCalls[0].p_object as Record<string, unknown>).failure_message_safe).toBe("Stripe could not charge the saved card.");
+  });
+}

@@ -24,6 +24,10 @@ import Stripe from "stripe";
 
 const h = vi.hoisted(() => ({
   createError: null as unknown,
+  retrieveError: null as unknown,
+  retrieveReply: null as Record<string, unknown> | null,
+  confirmReply: null as Record<string, unknown> | null,
+  retrieveCalls: 0,
   createKeys: [] as string[],
   confirmKeys: [] as string[],
   trace: [] as string[],
@@ -31,6 +35,7 @@ const h = vi.hoisted(() => ({
   bindingAck: true,
   corruptOriginal: false,
   alerts: [] as Array<{ severity: string; event: string }>,
+  alertInputs: [] as unknown[],
   updates: [] as Array<Record<string, unknown>>,
   rows: {} as Record<string, unknown>,
   claimResult: "claimed" as string,
@@ -75,9 +80,10 @@ const fakeStripe = {
         stripe_status: "requires_confirmation",
         stripe_idempotency_key: `hone:session_payment:${ATTEMPT}:v2:create`,
       });
+      if (h.confirmReply) return h.confirmReply;
       throw h.createError;
     },
-    retrieve: async () => { throw new Error("retrieve must not be reached"); },
+    retrieve: async () => { h.retrieveCalls += 1; if (h.retrieveReply) return h.retrieveReply; throw h.retrieveError ?? new Error("retrieve must not be reached"); },
     cancel: async () => { throw new Error("cancel must not be reached"); },
   },
 };
@@ -100,6 +106,7 @@ vi.mock("@/lib/stripe/session-payment-stripe", () => ({
 vi.mock("@/lib/ops/alerts", () => ({
   recordOpsAlert: async (input: { severity: string; event: string }) => {
     h.alerts.push({ severity: input.severity, event: input.event });
+    h.alertInputs.push(input);
   },
 }));
 vi.mock("@/lib/billing/charge-description", () => ({
@@ -206,6 +213,7 @@ const ATTEMPT_ROW = {
 
 beforeEach(() => {
   h.createError = null;
+  h.retrieveError = null; h.retrieveReply = null; h.confirmReply = null; h.retrieveCalls = 0;
   h.createKeys = [];
   h.confirmKeys = [];
   h.trace = [];
@@ -213,6 +221,7 @@ beforeEach(() => {
   h.bindingAck = true;
   h.corruptOriginal = false;
   h.alerts = [];
+  h.alertInputs = [];
   h.updates = [];
   h.claimResult = "claimed";
   h.legacyRule = false;
@@ -415,5 +424,50 @@ describe("staged refusal evidence and continuation controls", () => {
     expect(h.createKeys).toHaveLength(1);
     expect(h.confirmKeys).toHaveLength(0);
     expect(h.updates).toEqual([]);
+  });
+});
+
+
+// Privacy controls use this future protocol's staged create/bind/confirm model.
+describe("future provider prose boundary", () => {
+  const privateText = "synthetic-private@example.invalid token=synthetic-secret";
+  function pendingOriginal() {
+    h.claimResult = "already_pending";
+    h.rows.payment_charge_attempts = { ...ATTEMPT_ROW, status: "pending_stripe",
+      stripe_payment_intent_id: originalIntent().id, stripe_status: "requires_confirmation",
+      stripe_idempotency_key: `hone:session_payment:${ATTEMPT}:v2:create` };
+  }
+  it.each(["retrieve error", "canceled reply"])("known-original %s excludes provider prose without another create/confirm", async (path) => {
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      pendingOriginal();
+      if (path === "retrieve error") h.retrieveError = new Error(privateText);
+      else h.retrieveReply = { ...originalIntent(), status: "canceled",
+        last_payment_error: { type: "card_error", code: "card_declined", message: privateText } };
+      const result = await run();
+      expect(result).toMatchObject({ ok: false, outcome: path === "retrieve error" ? "needs_manual_review" : "failed" });
+      expect(h.retrieveCalls).toBe(1); expect(h.createKeys).toHaveLength(0); expect(h.confirmKeys).toHaveLength(0);
+      expect(wroteFailed()).toBe(path === "canceled reply");
+      expect(raisedManualReview()).toBe(path === "retrieve error");
+      expect(JSON.stringify([result, h.updates, h.alertInputs, diagnostic.mock.calls])).not.toContain(privateText);
+    } finally { diagnostic.mockRestore(); }
+  });
+  it("staged canceled confirmation reply retains its fixed-copy boundary", async () => {
+    h.confirmReply = { ...originalIntent(), status: "canceled",
+      last_payment_error: { type: "card_error", code: "card_declined", message: privateText } };
+    const result = await run();
+    expect(result).toMatchObject({ ok: false, outcome: "failed", failureCode: "card_declined" });
+    expect(wroteFailed()).toBe(true); expect(h.createKeys).toHaveLength(1); expect(h.confirmKeys).toHaveLength(1);
+    expect(h.trace).toEqual(["claim", "create", "bind", "read_bound", "confirm"]);
+    expect(JSON.stringify([result, h.updates, h.alertInputs])).not.toContain(privateText);
+  });
+  it.each(["card_declined", "authentication_required"])("bound %s refusal excludes provider prose", async (code) => {
+    h.createError = withObservedRefusal(new Stripe.errors.StripeCardError(raw({
+      message: privateText, code, type: "card_error", statusCode: 402,
+    })), true);
+    const result = await run();
+    expect(result).toMatchObject({ ok: false, outcome: "failed", failureCode: code });
+    expect(wroteFailed()).toBe(true); expect(h.createKeys).toHaveLength(1); expect(h.confirmKeys).toHaveLength(1);
+    expect(JSON.stringify([result, h.updates, h.alertInputs])).not.toContain(privateText);
   });
 });

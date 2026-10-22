@@ -58,7 +58,6 @@ import {
 //   * No manual_fee_charge_attempts touch.
 //   * No live-mode CHECK relaxation.
 
-const FAILURE_MESSAGE_MAX = 1000;
 const FAILURE_CODE_MAX = 100;
 const ROUTE = "app/api/stripe/webhook";
 
@@ -99,13 +98,6 @@ const ATTEMPT_COLUMNS =
 function sanitizeFailureCode(raw: string | null | undefined): string | null {
   if (!raw) return null;
   return raw.slice(0, FAILURE_CODE_MAX);
-}
-
-function sanitizeFailureMessage(
-  raw: string | null | undefined,
-): string | null {
-  if (!raw) return null;
-  return raw.replace(/\s+/g, " ").trim().slice(0, FAILURE_MESSAGE_MAX);
 }
 
 // ---------------------------------------------------------------------------
@@ -560,7 +552,8 @@ async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt
       refund_charge_id: cumulative ? null : objectId(refund?.charge),
       refund_status: cumulative ? null : refund?.status ?? null,
       failure_code: sanitizeFailureCode(pi.last_payment_error?.code ?? pi.last_payment_error?.type),
-      failure_message_safe: sanitizeFailureMessage(pi.last_payment_error?.message),
+      failure_message_safe: event.type === "payment_intent.payment_failed"
+        ? "Stripe could not charge the saved card." : null,
       event_created: event.created,
       evidence_kind: "signed_event",
     },

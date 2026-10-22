@@ -336,9 +336,10 @@ describe("payment_intent.payment_failed: status-conditional reconciliation", () 
     expect(HELPER).toContain("reconcileBoundEvent(event, ctx, attempt)");
   });
 
-  it("sanitises the Stripe last_payment_error code + message", () => {
+  it("bounds failure codes and sends fixed failure copy only for failed-event evidence", () => {
     expect(HELPER).toMatch(/sanitizeFailureCode\(pi\.last_payment_error\?\.code/);
-    expect(HELPER).toMatch(/sanitizeFailureMessage\(pi\.last_payment_error\?\.message/);
+    expect(HELPER).toMatch(/failure_message_safe:\s*event\.type === "payment_intent\.payment_failed"\s*\? "Stripe could not charge the saved card\." : null/);
+    expect(HELPER).not.toMatch(/pi\.last_payment_error\s*(?:\?\.|\.)\s*message/);
   });
 });
 

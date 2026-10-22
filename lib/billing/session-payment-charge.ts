@@ -1190,11 +1190,11 @@ async function reconcileExistingPaymentIntent(args: {
       undefined,
       { stripeAccount: args.stripeAccountId },
     );
-  } catch (err) {
+  } catch {
     logInternal("session_payment_reconcile_retrieve_failed", {
       attemptId: args.attemptId,
       paymentIntentId: args.paymentIntentId,
-      message: err instanceof Error ? err.message : String(err),
+      message: "Stripe PaymentIntent retrieval failed during reconciliation.",
     });
     await recordOpsAlert({
       severity: "critical",
@@ -1306,8 +1306,7 @@ async function reconcileExistingPaymentIntent(args: {
     paymentIntentId: pi.id,
     stripeStatus: pi.status,
     failureCode: pi.last_payment_error?.code ?? pi.status,
-    failureMessage:
-      pi.last_payment_error?.message ?? `PaymentIntent status: ${pi.status}`,
+    failureMessage: "Stripe could not charge the saved card.",
     expectedPaymentIntentId: args.paymentIntentId,
     concurrentFailureFacts: {
       stripeAccountId: args.stripeAccountId, stripeCustomerId: args.expectedStripeCustomerId,
@@ -1336,8 +1335,7 @@ async function reconcileExistingPaymentIntent(args: {
     ok: false,
     outcome: "failed",
     // requires_action is handled by finalizeRequiresActionPaymentIntent above.
-    message:
-      pi.last_payment_error?.message ?? "PaymentIntent did not succeed.",
+    message: "Stripe could not charge the saved card.",
     failureCode: pi.last_payment_error?.code ?? pi.status,
   };
 }

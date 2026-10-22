@@ -21,6 +21,7 @@ const db = vi.hoisted(() => ({
   refundError: null as unknown,
   refundKeys: [] as string[],
   alerts: [] as Array<{ severity: string; event: string }>,
+  alertInputs: [] as unknown[],
   legacyRule: false,
 }));
 
@@ -36,6 +37,7 @@ vi.mock("@/lib/stripe/server", () => ({ inferStripeLivemode: () => true }));
 vi.mock("@/lib/ops/alerts", () => ({
   recordOpsAlert: async (input: { severity: string; event: string }) => {
     db.alerts.push({ severity: input.severity, event: input.event });
+    db.alertInputs.push(input);
   },
 }));
 vi.mock("@/lib/stripe/session-payment-stripe", () => ({
@@ -103,6 +105,7 @@ beforeEach(() => {
   db.refundError = null;
   db.refundKeys = [];
   db.alerts = [];
+  db.alertInputs = [];
   db.legacyRule = false;
   db.aux = { practitioners: { data: { role: "owner" }, error: null } };
   db.row = {
@@ -220,5 +223,45 @@ describe("source shape: the refund runner consults the classifier in its termina
       /if \(\s*err instanceof Stripe\.errors\.StripeError &&\s*isDefinitiveStripeRefusal\(err\)\s*\) \{/,
     );
     expect(src.match(/instanceof Stripe\.errors\.StripeError/g)).toHaveLength(1);
+  });
+});
+
+
+// Same privacy contract as charges, without weakening definitive/unknown state.
+describe("provider message privacy on refunds", () => {
+  it("definitive refusal excludes provider prose from result, ledger, alerts and diagnostics", async () => {
+    const privateText = "synthetic-private@example.invalid token=synthetic-secret";
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      db.refundError = new Stripe.errors.StripeInvalidRequestError(raw({
+        message: privateText, code: "charge_already_refunded", statusCode: 400,
+      }));
+      const result = await refund();
+      expect(result).toMatchObject({ ok: false, outcome: "failed", failureCode: "charge_already_refunded" });
+      expect(db.row.refund_status).toBe("failed");
+      expect(db.refundKeys).toHaveLength(1);
+      expect(db.alerts).toContainEqual({ severity: "warning", event: "payment_refund_failed" });
+      expect(JSON.stringify([result, db.row, db.alertInputs, diagnostic.mock.calls]))
+        .not.toContain(privateText);
+    } finally {
+      diagnostic.mockRestore();
+    }
+  });
+
+  it("unknown outcome stays pending with one SDK call and excludes provider prose", async () => {
+    const privateText = "synthetic-private@example.invalid token=synthetic-secret";
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      db.refundError = new Error(privateText);
+      const result = await refund();
+      expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+      expect(db.row.refund_status).toBe("pending_stripe");
+      expect(db.refundKeys).toHaveLength(1);
+      expect(db.alerts).toContainEqual({ severity: "critical", event: "payment_refund_stripe_unknown_outcome" });
+      expect(JSON.stringify([result, db.row, db.alertInputs, diagnostic.mock.calls]))
+        .not.toContain(privateText);
+    } finally {
+      diagnostic.mockRestore();
+    }
   });
 });
