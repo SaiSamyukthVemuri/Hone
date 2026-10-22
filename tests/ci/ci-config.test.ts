@@ -762,7 +762,17 @@ describe("D7b: Supabase-starting jobs pull ghcr.io images authenticated, read-on
     const steps = body().split(/\n(?=      - )/);
     const setups = steps.map((s, i) => [s, i] as const).filter(([s]) => /uses: supabase\/setup-cli@/.test(s));
     expect(setups.length).toBeGreaterThan(0);
-    for (const [, i] of setups) expect(steps[i + 1]).toMatch(/uses: docker\/login-action@dbcb813823bdd20940b903addbd779551569679f # v4\.6\.0\n\s+with:\n\s+registry: ghcr\.io/);
+    for (const [setup, i] of setups) {
+      const login = steps[i + 1];
+      expect(login).toMatch(/uses: docker\/login-action@dbcb813823bdd20940b903addbd779551569679f # v4\.6\.0\n\s+with:\n\s+registry: ghcr\.io/);
+      // Codex P2 4353164800: the login must run whenever its setup-cli runs,
+      // or that lane silently falls back to anonymous pulls. So its `if:` is
+      // pinned EXACTLY: none in ci.yml, and nightly's must equal its
+      // setup-cli's own condition (matrix.needs_supabase).
+      const conds = (s: string) => s.match(/^\s+if:.*$/gm) ?? [];
+      expect(conds(login)).toEqual(conds(setup));
+      expect(conds(login)).toEqual(_n === "ci.yml" ? [] : ["        if: matrix.needs_supabase"]);
+    }
     expect((body().match(/uses: docker\/login-action@/g) ?? []).length).toBe(setups.length);
     expect(body()).not.toMatch(/SUPABASE_INTERNAL_IMAGE_REGISTRY/);
   });
