@@ -27,6 +27,7 @@ const h = vi.hoisted(() => ({
   afterRetrieve: null as null | (() => void),
   recheckReadError: false,
   alerts: [] as Array<{ severity: string; event: string; details: Record<string, unknown> }>,
+  alertThrows: false,
   claim: {} as Record<string, unknown>,
   pi: {} as Record<string, unknown>,
   createError: null as unknown,
@@ -78,6 +79,7 @@ vi.mock("@/lib/ops/alerts", () => ({
     safeDetails?: Record<string, unknown>;
   }) => {
     h.alerts.push({ severity: a.severity, event: a.event, details: a.safeDetails ?? {} });
+    if (h.alertThrows) throw new Error("synthetic diagnostic sink failure");
   },
 }));
 vi.mock("@/lib/billing/charge-description", () => ({
@@ -261,6 +263,7 @@ beforeEach(() => {
   h.afterRetrieve = null;
   h.recheckReadError = false;
   h.alerts = [];
+  h.alertThrows = false;
   h.stripeCalls = [];
   h.claim = {};
   h.pi = {};
@@ -513,6 +516,40 @@ describe("refund: Stripe's refund is recorded only when it is the claimed refund
 
     expect(result).toMatchObject({ ok: true, outcome: "succeeded", refundAmountCents: AMOUNT });
     expect(refundSucceededWrites()).toHaveLength(1);
+  });
+
+  // Matching money is not proof that the refund has actually succeeded.
+  // Exercise the real writer; keep both currency success controls above.
+  for (const currency of ["cad", "usd"] as const) {
+    it.each(["pending", "requires_action", "failed", "canceled", undefined])(
+      `${currency}: refund status %s never becomes a succeeded ledger outcome`, async (status) => {
+        seedSucceeded(currency);
+        h.refund = {
+          id: "re_synthetic_unresolved", amount: AMOUNT, currency,
+          ...(status === undefined ? {} : { status }),
+        };
+        const result = await refund();
+        expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+        expect(h.stripeCalls).toEqual(["refund_create"]);
+        expect(refundSucceededWrites()).toEqual([]);
+        expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(1);
+        expect(h.updates.some((u) => u.payload.refund_status === "failed")).toBe(false);
+        expect(critical("payment_refund_provider_money_mismatch")).toEqual([]);
+      },
+    );
+  }
+
+  it("a throwing status diagnostic retains manual review, pending claim and one refund call", async () => {
+    seedSucceeded("cad");
+    h.refund = { id: "re_synthetic_unresolved", status: "pending", amount: AMOUNT, currency: "cad" };
+    h.alertThrows = true;
+    const result = await refund();
+    expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual(["refund_create"]);
+    expect(refundSucceededWrites()).toEqual([]);
+    expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(1);
+    expect(h.updates.some((u) => u.payload.refund_status === "failed")).toBe(false);
+    expect(critical("payment_refund_provider_status_unresolved")).toHaveLength(1);
   });
 
   it.each([

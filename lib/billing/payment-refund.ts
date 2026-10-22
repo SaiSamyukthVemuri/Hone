@@ -663,6 +663,37 @@ export async function refundPaymentChargeAttempt(args: {
     }
   }
 
+  // A returned refund object and matching money do not prove completion.
+  // Keep the existing pending claim for every unconfirmed provider outcome;
+  // this does not authorize a retry or replace durable status reconciliation.
+  if (refund.status !== "succeeded") {
+    try {
+      await recordOpsAlert({
+        severity: "critical",
+        event: "payment_refund_provider_status_unresolved",
+        message:
+          "Stripe returned a refund without confirmed success. Hone retained the pending claim and did not record completion.",
+        studioId: attempt.studio_id,
+        clientId: attempt.client_id,
+        route: ROUTE,
+        safeDetails: {
+          attempt_id: attempt.id,
+          charge_reason: attempt.charge_reason,
+          stripe_charge_id: attempt.stripe_charge_id,
+          reason: "provider_refund_not_succeeded",
+        },
+      });
+    } catch {
+      // Alerting cannot turn an unresolved refund into completion or retry.
+    }
+    return {
+      ok: false,
+      outcome: "needs_manual_review",
+      message:
+        "Stripe has not confirmed this refund as completed. The studio operator will reconcile it.",
+    };
+  }
+
   const refundedAtIso = new Date().toISOString();
   const { data: okRows, error: writeOkErr } = await admin
     .from("payment_charge_attempts")
