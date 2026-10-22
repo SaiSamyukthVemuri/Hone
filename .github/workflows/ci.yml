@@ -688,7 +688,10 @@ jobs:
     # 482 observed passes/4skips/0assertion failures before cancellation.
     # Worst measured projection22.15min + finiteheadroom => hard25.
     # Keep target <10 min per shard and targeted hard15; investigate slow npm ci.
-    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 25 || 15 }}
+    # Existing native24 work adds a second build and six cases per extended runner.
+    # Reuse reviewed HON-18 finite35m augmented ceiling; ordinary target remains <10m.
+    # Run39620772010 took15m59s before native20 (9.1m unsharded) was added.
+    timeout-minutes: ${{ (needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')) && 35 || 15 }}
     strategy:
       fail-fast: false
       matrix:
@@ -800,6 +803,38 @@ jobs:
           # resolver, which is what made the reschedule confirmation
           # deterministic.
           HONE_E2E_FAKE_RESEND: "1"
+
+      # Preserve ordinary flag-OFF coverage above. Only this supplemental
+      # invocation enables six synthetic identities; deployed runtimes refuse
+      # this gate. Existing config propagates it to the local server only.
+      - name: Native Senior and Junior 3G acceptance
+        id: native3g
+        if: needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.changes.outputs.browser_extended }}" = "true" ]; then
+            SHARD_TOTAL=4
+          else
+            SHARD_TOTAL="${{ needs.changes.outputs.browser_shard_total }}"
+          fi
+          npx playwright test e2e/machine-create-mode-journey.spec.ts --project=chromium --grep='native 3G (durability|text durability|uncommitted recovery)' --fully-parallel --workers=1 --shard=${{ matrix.shard }}/${SHARD_TOTAL} --retries=0 --max-failures=1 --reporter=list,json --output=test-results/native-3g-shard-${{ matrix.shard }}
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const report = JSON.parse(readFileSync(process.env.PLAYWRIGHT_JSON_OUTPUT_FILE, 'utf8'));
+          const tests = [];
+          const collect = (suite) => {
+            for (const spec of suite.specs ?? []) tests.push(...spec.tests);
+            for (const child of suite.suites ?? []) collect(child);
+          };
+          for (const suite of report.suites ?? []) collect(suite);
+          if (report.errors?.length || tests.length === 0 || tests.some((test) => test.expectedStatus !== 'passed' || test.results.length !== 1 || test.results[0].status !== 'passed')) {
+            throw new Error('Native acceptance requires actual passing cases, with no skips or retries');
+          }
+          console.log(`Native acceptance: ${tests.length} actual passes, zero skips/retries`);
+          NODE
+        env:
+          HONE_SYNTHETIC_MACHINE_PROFILE: "1"
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/native-3g-shard-${{ matrix.shard }}/results.json
 
       - name: Upload Playwright traces on failure
         if: ${{ !cancelled() }}
