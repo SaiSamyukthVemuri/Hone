@@ -213,9 +213,11 @@ describe("0160 — recorded passes and photos stay with their encounter", () => 
     } catch (e) { contentCode = (e as { code?: string }).code; }
     expect(contentCode).toBe("42501");
     await adminTx(async q => {
-      // Owner-only content fixture still requires an active attributed actor.
-      await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: a.userId, role: "authenticated" })]);
-      return q(
+      // Owner-only fixture edit with the real synthetic practitioner attribution.
+      await q("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: a.userId, role: "authenticated" }),
+      ]);
+      await q(
         "update public.electrolysis_entries set hairs_treated=42 where id=$1 and session_id=$2",
         [entryId, sessionId],
       );

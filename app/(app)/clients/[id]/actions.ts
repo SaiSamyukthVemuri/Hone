@@ -1,9 +1,12 @@
 "use server";
 
+import { recordClientArchiveAudit } from "@/lib/audit/governed-writes";
+
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { safeLog } from "@/lib/logging/safe-log";
 
 async function assertClientVisible(
   studioId: string,
@@ -36,12 +39,9 @@ async function isClientVisible(
     .eq("studio_id", studioId)
     .maybeSingle();
   if (error) {
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "client_visible_lookup_failed",
-        clientId,
-        code: error.code,
-        message: error.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -124,11 +124,10 @@ async function checkDuplicateEmail(
   }
   const { data, error } = await query.limit(1);
   if (error) {
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "client_duplicate_email_lookup_failed",
         code: error.code,
-        message: error.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -255,12 +254,11 @@ export async function updateClientAction(
       }
       return { ok: false, error: ACTIVE_DUPLICATE_ERROR };
     }
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "client_update_failed",
         clientId,
         code: error.code,
-        message: error.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -311,21 +309,15 @@ export async function archiveClientAction(formData: FormData): Promise<void> {
     throw new Error(`Failed to archive client: ${error.message}`);
   }
 
-  const { error: auditErr } = await supabase.from("audit_logs").insert({
-    studio_id: studio.id,
-    actor_id: practitioner.id,
-    action: "client_archived",
-    entity_type: "client",
-    entity_id: clientId,
-    metadata: { archived_at: nowIso },
+  const { error: auditErr } = await recordClientArchiveAudit({
+    expectedStudioId: studio.id, clientId, change: "archive", archivedAt: nowIso,
   });
   if (auditErr) {
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "client_archive_audit_failed",
         clientId,
         code: auditErr.code,
-        message: auditErr.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -363,21 +355,15 @@ export async function unarchiveClientAction(formData: FormData): Promise<void> {
     throw new Error(`Failed to unarchive client: ${error.message}`);
   }
 
-  const { error: auditErr } = await supabase.from("audit_logs").insert({
-    studio_id: studio.id,
-    actor_id: practitioner.id,
-    action: "client_unarchived",
-    entity_type: "client",
-    entity_id: clientId,
-    metadata: {},
+  const { error: auditErr } = await recordClientArchiveAudit({
+    expectedStudioId: studio.id, clientId, change: "unarchive",
   });
   if (auditErr) {
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "client_unarchive_audit_failed",
         clientId,
         code: auditErr.code,
-        message: auditErr.message,
         timestamp: new Date().toISOString(),
       }),
     );

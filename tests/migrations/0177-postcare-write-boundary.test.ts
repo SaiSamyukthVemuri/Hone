@@ -511,7 +511,10 @@ describe("0177 — production truth: APPLIED 2026-08-10", () => {
       LEDGER.indexOf("## Previous state"),
     );
     expect(current).not.toMatch(/post-017[0-6] apply/);
-    expect(Number(current.match(/post-(\d{4}) apply/)?.[1] ?? 0)).toBeGreaterThanOrEqual(177);
+    const repoMax = current.match(
+      /\|\s*\*\*Repo migration max\*\*\s*\|\s*\*\*(\d{4})\*\*/,
+    )?.[1];
+    expect(Number(repoMax ?? 0)).toBeGreaterThanOrEqual(177);
   });
 
   it("the ledger carries a 0177 rollout entry with the app-first evidence", () => {

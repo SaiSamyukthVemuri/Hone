@@ -461,9 +461,11 @@ describe("C. ordinary treatment charting stays editable", () => {
     // practitioner reaches it through the 0166 commands, so the direct write is
     // performed as the owner here purely to prove the column is not read-only.
     await adminTx(async q => {
-      // Privileged legacy fixture edit, explicitly attributed; no DML grant change.
-      await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: a.userId, role: "authenticated" })]);
-      return q(
+      // Owner-only fixture edit with the real synthetic practitioner attribution.
+      await q("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: a.userId, role: "authenticated" }),
+      ]);
+      await q(
         "update public.electrolysis_entries set hairs_treated = 25 where id=$1 and session_id=$2",
         [entryId, sessionId],
       );

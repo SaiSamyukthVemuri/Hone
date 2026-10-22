@@ -301,6 +301,45 @@ export async function getPractitionersForStudio(
   return (data ?? []) as Practitioner[];
 }
 
+// DAT-001: a directory must not silently stop at PostgREST's row ceiling.
+// Keep user/studio/archive scope on EVERY page. Traverse by immutable id, not
+// an offset into mutable membership/name/archive order: a previous-page edit
+// must not shift an unread client behind the next page. Sort the collected
+// snapshots for display only after traversal. This is not a DB-wide snapshot.
+// Continue to empty even with a lower server cap; errors/repeated rows refuse
+// the whole directory rather than return a partial list.
+async function loadStudioClientDirectory(studioId: string, archived: boolean): Promise<Client[]> {
+  const supabase = await createClient();
+  const clients: Client[] = [];
+  const seen = new Set<string>();
+  let afterId: string | null = null;
+  const failure = archived ? "Failed to load archived clients" : "Failed to load clients";
+  for (;;) {
+    let query = supabase.from("clients").select("*").eq("studio_id", studioId);
+    query = archived ? query.not("archived_at", "is", null) : query.is("archived_at", null);
+    if (afterId !== null) query = query.gt("id", afterId);
+    const { data, error } = await query
+      .order("id", { ascending: true })
+      .range(0, 999);
+    // Database messages may contain client data; never expose them here.
+    if (error) throw new Error(failure);
+    const rows = (data ?? []) as Client[];
+    if (rows.length === 0) {
+      return clients.sort((a, b) => (
+        archived
+          ? Date.parse(b.archived_at!) - Date.parse(a.archived_at!)
+          : a.name.localeCompare(b.name, "en")
+      ) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    }
+    for (const row of rows) {
+      if (seen.has(row.id)) throw new Error(failure);
+      seen.add(row.id);
+      clients.push(row);
+    }
+    afterId = rows[rows.length - 1].id;
+  }
+}
+
 export async function getClientsForStudio(studioId: string): Promise<Client[]> {
   // PR Willow launch fixes (migration 0050): filter archived clients
   // out of the active list. Archived rows still exist (their
@@ -314,16 +353,7 @@ export async function getClientsForStudio(studioId: string): Promise<Client[]> {
   //
   // The dedicated archived view in /clients?view=archived uses the
   // sibling helper getArchivedClientsForStudio below.
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("clients")
-    .select("*")
-    .eq("studio_id", studioId)
-    .is("archived_at", null)
-    .order("name", { ascending: true });
-
-  if (error) throw new Error(`Failed to load clients: ${error.message}`);
-  return (data ?? []) as Client[];
+  return loadStudioClientDirectory(studioId, false);
 }
 
 // Archived clients for the studio's "Archived clients" view. Mirrors
@@ -337,18 +367,7 @@ export async function getClientsForStudio(studioId: string): Promise<Client[]> {
 export async function getArchivedClientsForStudio(
   studioId: string,
 ): Promise<Client[]> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("clients")
-    .select("*")
-    .eq("studio_id", studioId)
-    .not("archived_at", "is", null)
-    .order("archived_at", { ascending: false });
-
-  if (error) {
-    throw new Error(`Failed to load archived clients: ${error.message}`);
-  }
-  return (data ?? []) as Client[];
+  return loadStudioClientDirectory(studioId, true);
 }
 
 export type SessionWithEntries = Session & {

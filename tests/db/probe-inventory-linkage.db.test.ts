@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   adminQuery,
   adminTx,
+  purgeAppointmentAudit,
   asUser,
   closePool,
   seedSession,
@@ -332,4 +333,31 @@ it("0244 history-free synthetic studio cleanup remains possible", async () => {
   const empty = await seedStudio("probeinv-nohistory");
   await adminQuery("delete from public.studios where id=$1", [empty.studioId]);
   expect((await adminQuery("select id from public.studios where id=$1", [empty.studioId])).rowCount).toBe(0);
+});
+
+
+// Retain the incoming history-free cascade positive control alongside owner RESTRICT coverage.
+describe("studio-scoped cascade still removes both the block and its inventory", () => {
+  it("deleting the studio cascades away the linked block and the sterile item", async () => {
+    const c = await seedStudio("probeinv-c");
+    const item = await seedProbeItem(c, { probeKey: F3, lot: "C-LOT" });
+    const { sessionId } = await seedSession(c);
+    const blockId = await rpcCreateLinkedBlock(c, sessionId, {
+      probe_key: F3,
+      probe_inventory_item_id: item,
+      probe_lot_number: "C-LOT",
+    });
+    await purgeAppointmentAudit(c.studioId);
+    await adminQuery("delete from public.studios where id=$1", [c.studioId]);
+    const blk = await adminQuery(
+      "select id from public.session_blocks where id=$1",
+      [blockId],
+    );
+    const inv = await adminQuery(
+      "select id from public.record_keeping_sterile_items where id=$1",
+      [item],
+    );
+    expect(blk.rowCount).toBe(0);
+    expect(inv.rowCount).toBe(0);
+  });
 });

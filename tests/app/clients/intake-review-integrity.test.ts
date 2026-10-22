@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ISSUED_QUESTIONNAIRE } from "@/lib/intake/questionnaire";
 
 // F-CLIN-004 — behavioural proof that markIntakeReviewedAction's conditional
 // UPDATE is the single authority for an intake review transition.
@@ -23,6 +24,10 @@ type Row = Record<string, unknown>;
 
 type TableState = {
   rows: Row[];
+  // Independent read failure: never confuse an unreadable catalogue with NULL legacy.
+  readFailure?: { message: string; code?: string } | null;
+  // One-shot interleaving after a detached read snapshot, before the UPDATE.
+  afterRead?: () => void;
   // When set, the next update rejects with this PostgREST-shaped error.
   failWith?: { message: string; code?: string } | null;
   // Records each update's resolved filter set for assertions.
@@ -98,7 +103,39 @@ function makeFakeSupabase(state: TableState) {
       if (table !== "client_intake_forms") {
         throw new Error(`fake supabase: unexpected table ${table}`);
       }
-      return { update: (patch: Row) => builder(patch) };
+      return {
+        update: (patch: Row) => builder(patch),
+        select: (cols: string) => {
+          const predicates: Array<(r: Row) => boolean> = [];
+          const read = {
+            eq(col: string, value: unknown) {
+              predicates.push((r) => r[col] === value);
+              return read;
+            },
+            is(col: string, value: unknown) {
+              predicates.push((r) => r[col] === value);
+              return read;
+            },
+            not(col: string, op: string, value: unknown) {
+              if (op !== "is" || value !== null) throw new Error("unsupported read predicate");
+              predicates.push((r) => r[col] !== null && r[col] !== undefined);
+              return read;
+            },
+            async maybeSingle() {
+              if (state.readFailure) return { data: null, error: state.readFailure };
+              const matched = state.rows.filter((r) => predicates.every((p) => p(r)));
+              if (matched.length !== 1) return { data: null, error: null };
+              const keys = cols.split(",").map((key) => key.trim());
+              const data = Object.fromEntries(keys.map((key) => [key, structuredClone(matched[0][key])]));
+              const afterRead = state.afterRead;
+              state.afterRead = undefined;
+              afterRead?.();
+              return { data, error: null };
+            },
+          };
+          return read;
+        },
+      };
     },
   };
 }
@@ -151,6 +188,7 @@ function submittedRow(over: Partial<Row> = {}): Row {
     studio_id: STUDIO,
     client_id: CLIENT,
     status: "submitted",
+    questionnaire_snapshot: null,
     submitted_at: "2026-07-01T10:00:00.000Z",
     reviewed_at: null,
     reviewed_by: null,
@@ -176,6 +214,8 @@ function row(id = INTAKE): Row {
 beforeEach(() => {
   state.rows = [];
   state.failWith = null;
+  state.readFailure = null;
+  state.afterRead = undefined;
   state.updates = [];
   revalidatePath.mockClear();
   createClientSpy.mockReset();
@@ -237,7 +277,7 @@ describe("F-CLIN-004 / 2. in-progress is blocked", () => {
     expect(r.reviewed_by).toBeNull();
     // The notes were not written either — a blocked review writes nothing.
     expect(r.practitioner_notes).toBeNull();
-    expect(state.updates[0].matched).toBe(0);
+    expect(state.updates.reduce((total, update) => total + update.matched, 0)).toBe(0);
   });
 
   it("does not revalidate anything when nothing transitioned", async () => {
@@ -264,7 +304,7 @@ describe("F-CLIN-004 / 2. in-progress is blocked", () => {
     expect(r.status).toBe("in_progress");
     expect(r.reviewed_at).toBeNull();
     expect(r.reviewed_by).toBeNull();
-    expect(state.updates[0].matched).toBe(0);
+    expect(state.updates.reduce((total, update) => total + update.matched, 0)).toBe(0);
   });
 
   // Same isolation for the already-reviewed case: a reviewed row has a
@@ -281,7 +321,7 @@ describe("F-CLIN-004 / 2. in-progress is blocked", () => {
     const res = await markIntakeReviewedAction(fd());
     expect(res).toEqual({ ok: false, error: GENERIC });
     expect(row().reviewed_by).toBe("prac-original");
-    expect(state.updates[0].matched).toBe(0);
+    expect(state.updates.reduce((total, update) => total + update.matched, 0)).toBe(0);
   });
 });
 
@@ -444,7 +484,7 @@ describe("F-CLIN-004 / 12. zero returned rows never reports success", () => {
       state.updates = [];
       const res = await markIntakeReviewedAction(fd());
       expect(res, label).toEqual({ ok: false, error: GENERIC });
-      expect(state.updates[0].matched, label).toBe(0);
+      expect(state.updates.reduce((total, update) => total + update.matched, 0), label).toBe(0);
     }
   });
 
@@ -499,14 +539,23 @@ describe("F-CLIN-004 / 13. database errors are sanitized", () => {
     expect(row().status).toBe("submitted");
   });
 
-  it("logs the provider detail server-side only, with no client/intake identity", async () => {
+  it("omits review UPDATE diagnostic free text while preserving the fixed failure contract", async () => {
     state.rows = [submittedRow()];
-    state.failWith = { message: "permission denied for table", code: "42501" };
+    const diagnostic = "synthetic-patient@example.test private-intake-answer synthetic-token 604-555-0184";
+    state.failWith = { message: diagnostic, code: "42501" };
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    await markIntakeReviewedAction(fd());
-    const logged = spy.mock.calls.map((c) => String(c[0])).join("\n");
+    const result = await markIntakeReviewedAction(fd());
+    const calls = [...spy.mock.calls];
+    const logged = calls.map((c) => String(c[0])).join("\n");
     spy.mockRestore();
 
+    expect(result).toEqual({ ok: false, error: "Could not mark this intake reviewed. Please try again." });
+    expect(row().status).toBe("submitted");
+    expect(state.updates).toEqual([]);
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(logged)).toEqual({ event: "intake_review_update_failed", code: "42501", message: null, timestamp: expect.any(String) });
+    for (const value of [diagnostic, "synthetic-patient", "private-intake-answer", "synthetic-token", "604-555-0184"])
+      expect(logged).not.toContain(value);
     expect(logged).toMatch(/intake_review_update_failed/);
     expect(logged).toMatch(/42501/);
     // No identifiers, no answers, no notes in the log line.
@@ -732,15 +781,23 @@ describe("F-CLIN-004 / notes action hardening", () => {
     expect(r.reviewed_at).toBeNull();
   });
 
-  it("a raw DB error is never returned", async () => {
+  it("notes UPDATE errors omit raw diagnostic text from response and log", async () => {
     state.rows = [submittedRow()];
-    state.failWith = {
-      message: 'relation "public.client_intake_forms" does not exist',
-      code: "42P01",
-    };
+    const before = { ...row() };
+    const diagnostic = 'relation "public.client_intake_forms" does not exist: synthetic-patient@example.test private-notes-sentinel synthetic-token 604-555-0184';
+    state.failWith = { message: diagnostic, code: "42P01" };
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await saveIntakeNotesAction(fd());
+    const calls = [...spy.mock.calls];
     spy.mockRestore();
+
+    expect(row()).toEqual(before);
+    expect(state.updates).toEqual([]);
+    expect(revalidatePath).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(String(calls[0][0]))).toEqual({ event: "intake_notes_update_failed", code: "42P01", message: null, timestamp: expect.any(String) });
+    for (const text of [diagnostic, "synthetic-patient", "private-notes-sentinel", "synthetic-token", "604-555-0184"])
+      expect(JSON.stringify({ res, calls })).not.toContain(text);
 
     expect(res.ok).toBe(false);
     if (!res.ok) {
@@ -779,5 +836,93 @@ describe("F-CLIN-004 / notes action hardening", () => {
     if (!res.ok) expect(res.error).toMatch(/Inactive practitioners/i);
     expect(row().practitioner_notes).toBeNull();
     expect(createClientSpy).not.toHaveBeenCalled();
+  });
+});
+
+
+// Existing0246 contract: known non-NULL provenance must decode or hold writes.
+// This adds no review-certification/manual-review policy and does not change notes.
+describe("0246 review transition respects saved questionnaire authority", () => {
+  const altered = structuredClone(ISSUED_QUESTIONNAIRE);
+  altered.catalogue.steps[0].questions[0].label = "PRIVATE altered issue wording";
+  const invalid: Array<[string, unknown]> = [
+    ["missing snapshot column", undefined],
+    ["empty document", {}],
+    ["array instead of catalogue", []],
+    ["scalar instead of catalogue", "PRIVATE malformed questionnaire"],
+    ["unsupported schema", { ...ISSUED_QUESTIONNAIRE, schema_version: 99 }],
+    ["altered issue-time label", altered],
+    ["forged digest", { ...ISSUED_QUESTIONNAIRE, content_digest: "PRIVATE forged digest" }],
+  ];
+
+  it.each(invalid)("holds the reviewed transition for %s before any update", async (_name, snapshot) => {
+    state.rows = [submittedRow({ questionnaire_snapshot: snapshot })];
+    const before = structuredClone(state.rows);
+    const result = await markIntakeReviewedAction(fd());
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.length).toBeGreaterThan(0);
+      expect(result.error).not.toContain("PRIVATE");
+    }
+    expect(state.rows).toEqual(before);
+    expect(state.updates).toEqual([]);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["approved issue-time document", structuredClone(ISSUED_QUESTIONNAIRE)],
+    ["explicit NULL legacy", null],
+  ])("CONTROL: %s still transitions exactly one submitted row", async (_name, snapshot) => {
+    state.rows = [submittedRow({ questionnaire_snapshot: snapshot })];
+    expect(await markIntakeReviewedAction(fd())).toEqual({ ok: true });
+    expect(row().status).toBe("reviewed");
+    expect(row().reviewed_by).toBe(PRACTITIONER);
+    expect(row().questionnaire_snapshot).toEqual(snapshot);
+    expect(state.updates).toHaveLength(1);
+    expect(state.updates[0].matched).toBe(1);
+    expect(revalidatePath).toHaveBeenCalledWith(`/clients/${CLIENT}/intake`);
+  });
+
+  it("an unreadable catalogue is not treated as NULL legacy and writes nothing", async () => {
+    state.rows = [submittedRow({ questionnaire_snapshot: structuredClone(ISSUED_QUESTIONNAIRE) })];
+    state.readFailure = { code: "XX000", message: "PRIVATE catalogue read failed" };
+    const before = structuredClone(state.rows);
+    const result = await markIntakeReviewedAction(fd());
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("PRIVATE");
+    expect(state.rows).toEqual(before);
+    expect(state.updates).toEqual([]);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+
+// A scoped catalogue pre-read is not UPDATE authorization. Force valid reads
+// followed by changes so removing an atomic predicate still makes a test RED.
+describe("0246 pre-read cannot replace the atomic review UPDATE guards", () => {
+  it.each([
+    ["client changes", { client_id: OTHER_CLIENT }],
+    ["studio changes", { studio_id: OTHER_STUDIO }],
+    ["row is soft deleted", { deleted_at: "2026-07-02T11:00:00.000Z" }],
+    ["submission timestamp disappears", { submitted_at: null }],
+    ["status becomes in_progress", { status: "in_progress" }],
+    ["another reviewer wins", { status: "reviewed", reviewed_by: "other-reviewer", reviewed_at: "2026-07-02T11:00:00.000Z" }],
+  ] as Array<[string, Row]>)("refuses when %s after an authorized catalogue read", async (_name, change) => {
+    state.rows = [submittedRow({ questionnaire_snapshot: structuredClone(ISSUED_QUESTIONNAIRE) })];
+    const before = structuredClone(state.rows[0]);
+    let interleaved = false;
+    state.afterRead = () => {
+      interleaved = true;
+      Object.assign(state.rows[0], change);
+    };
+    const result = await markIntakeReviewedAction(fd());
+    expect(interleaved, "the race did not reach the read/write boundary").toBe(true);
+    expect(result).toEqual({ ok: false, error: GENERIC });
+    expect(state.rows).toEqual([{ ...before, ...change }]);
+    // Unlike a static refusal, this MUST reach the conditional UPDATE and
+    // prove its own predicates matched nothing after the pre-read succeeded.
+    expect(state.updates).toHaveLength(1);
+    expect(state.updates[0].matched).toBe(0);
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });

@@ -160,8 +160,7 @@ async function raceSourceEdit(
   try {
     // Editor opens a txn and holds a row lock on a source block (edit not yet committed).
     await editor.query("begin");
-    // The privileged fixture editor remains subject to the clinical actor guard.
-    await editor.query("select set_config('request.jwt.claims',$1,true)", [
+    await editor.query("select set_config('request.jwt.claims', $1, true)", [
       JSON.stringify({ sub: a.userId, role: "authenticated" }),
     ]);
     await editor.query(editSql, editParams.map((p) => (p === "__SOURCE__" ? source : p)));

@@ -21,6 +21,7 @@ function session(id: string, over: Partial<IntelligenceSessionInput> = {}): Inte
   return {
     id,
     started_at: "2026-06-01T10:00:00Z",
+    record_status: "draft",
     next_session_note: null,
     electrolysis_entries: [],
     laser_entries: [],

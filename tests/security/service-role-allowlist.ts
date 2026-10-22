@@ -20,6 +20,12 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "lib/audit/governed-writes.ts",
+    purpose: "SEC-003: only the existing archive/unarchive and owner-export audit emissions after direct member INSERT closure.",
+    why: "Internal server-only existing archive/unarchive and owner-export writers. Session getUser and exact active actor/user/studio checks precede service-client construction; archive additionally checks exact client via RLS and export requires owner plus bounded registry metadata. Final membership FOR UPDATE and hardcoded audit insertion are in two explicit narrow service-only 0242 commands under their same existing trusted non-runtime owner. Owner/context/ACL and runtime MEMBER/SET assumptions are checked fail-closed;0178 keeps service_role SELECT-only on practitioner identity, with no new UPDATE grant. There is no separate app-read/direct-INSERT authority decision. Missing/refused/malformed commands fail closed, no old API/table fallback. New command EXECUTE capability needs explicit source/ACL approval; no user/table grants. No generic caller-supplied action/entity/actor metadata. Export refuses bytes on failure; archive failures, including thrown audit reads/transport, return the curated best-effort refusal so committed state/revalidation/redirect survive.",
+    scopeGuard: "freshAuditMembership",
+  },
+  {
     path: "app/(app)/settings/waitlist/profile-actions.ts",
     purpose:
       "WAIT-04A owner surface — the sole caller of set_waitlist_entry_availability, create_practitioner_waitlist_entry and import_legacy_waitlist_entry (all migration 0193).",
@@ -152,6 +158,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
     scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
+    path: "app/(app)/clients/[id]/images/sign-treatment-image.ts",
+    purpose:
+      "FETT photos (HON-43): the ONE treatment-photo URL signer, shared by getTreatmentImageSignedUrlAction (View larger) and GET /api/clients/[clientId]/images/[imageId]/signed-url (photo-cell re-mint).",
+    why: "Storage signing only (createSignedUrl), never a table read or write through the admin client. Both callers resolve the studio from the session first (getCurrentPractitionerWithStudio); this function then reads the row through the caller's RLS client scoped to that studio.id (and the route's clientId) and not archived, and validateTreatmentImagePath binds the stored path to that studio and client before the service-role client signs the path that verified read returned. No bucket or path is taken from input.",
+    scopeGuard: "validateTreatmentImagePath",
   },
   {
     path: "app/(app)/clients/[id]/images/page.tsx",
@@ -777,5 +790,11 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Authenticated OWNER settings page (redacted status read).",
     why: "Owner-gated via requirePractitionerWithStudio(); reads only redacted provider status (never encrypted_server_token) scoped to studio.id.",
     scopeGuard: "requirePractitionerWithStudio",
+  },
+  {
+    path: "app/(app)/clients/[id]/sessions/[sessionId]/session-photos.ts",
+    purpose: "Sign this visit's treatment photos for the session chart page (FETT photos, read-only).",
+    why: "Signing a private-bucket object needs the service role (storage is service-role only since 0093). Rows are first read through the RLS client scoped to the caller's studio + client + session, unarchived, and each path must pass validateTreatmentImagePath before the admin client signs it with the shared 60 s TTL: the Photos tab's own trust boundary.",
+    scopeGuard: "validateTreatmentImagePath",
   },
 ];

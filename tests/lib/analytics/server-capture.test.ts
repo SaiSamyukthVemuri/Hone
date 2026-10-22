@@ -72,8 +72,8 @@ describe("captureServerEvent — dispatch discipline (scenario 15)", () => {
   });
 
   it("sends the resolved distinctId for a user and a studio actor", async () => {
-    captureServerEvent({ actor: { kind: "user", id: UID }, event: "a" });
-    captureServerEvent({ actor: { kind: "studio", id: SID }, event: "b" });
+    captureServerEvent({ actor: { kind: "user", id: UID }, event: "client_created" });
+    captureServerEvent({ actor: { kind: "studio", id: SID }, event: "studio_created" });
     await runScheduled();
     expect(captureMock.mock.calls[0][0].distinctId).toBe(UID);
     expect(captureMock.mock.calls[1][0].distinctId).toBe(`studio:${SID}`);
@@ -123,13 +123,13 @@ describe("captureServerEvent — never affects product (scenario 16)", () => {
       throw new Error("capture boom");
     });
     expect(() =>
-      captureServerEvent({ actor: { kind: "user", id: UID }, event: "e" }),
+      captureServerEvent({ actor: { kind: "user", id: UID }, event: "client_created" }),
     ).not.toThrow();
     await expect(runScheduled()).resolves.toBeUndefined();
 
     captureMock.mockReset();
     flushMock.mockRejectedValue(new Error("network down"));
-    captureServerEvent({ actor: { kind: "user", id: UID }, event: "e" });
+    captureServerEvent({ actor: { kind: "user", id: UID }, event: "client_created" });
     await expect(runScheduled()).resolves.toBeUndefined();
     warn.mockRestore();
   });

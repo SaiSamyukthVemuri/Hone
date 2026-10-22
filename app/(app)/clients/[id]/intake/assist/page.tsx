@@ -1,9 +1,10 @@
+import { questionnaireForRow, QUESTIONNAIRE_UNAVAILABLE } from "@/lib/intake/questionnaire";
+import { intakeRevision } from "@/lib/intake/revision";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getIntakeById, getLatestIntakeForClient } from "@/lib/intake/queries";
-import { PRACTITIONER_ENTERABLE_STEPS } from "@/lib/intake/questions";
 import { AssistedIntakeEditor } from "./AssistedIntakeEditor";
 
 // "Complete intake with client", the practitioner-assisted questionnaire
@@ -63,10 +64,14 @@ export default async function AssistedIntakePage({
     redirect(`/clients/${id}/intake`);
   }
 
+  const catalogue = questionnaireForRow(intake.questionnaire_snapshot);
+  if (catalogue.kind === "invalid") return <p role="alert">{QUESTIONNAIRE_UNAVAILABLE}</p>;
+  const issuedEnterable = catalogue.steps.slice(0, -1);
+
   const responses = (intake.responses ?? {}) as Record<string, unknown>;
-  const firstStepId = PRACTITIONER_ENTERABLE_STEPS[0]?.id ?? 1;
+  const firstStepId = issuedEnterable[0]?.id ?? 1;
   const lastEnterableId =
-    PRACTITIONER_ENTERABLE_STEPS[PRACTITIONER_ENTERABLE_STEPS.length - 1]?.id ??
+    issuedEnterable[issuedEnterable.length - 1]?.id ??
     firstStepId;
   // Resume where the intake left off, clamped into the practitioner-enterable
   // range. A client who already reached the acknowledgements step leaves
@@ -76,6 +81,8 @@ export default async function AssistedIntakePage({
     Math.max(Number(intake.current_step) || firstStepId, firstStepId),
     lastEnterableId,
   );
+
+  if (intakeRevision(intake.revision) === null) notFound();
 
   return (
     <div className="flex flex-col gap-6">
@@ -92,12 +99,13 @@ export default async function AssistedIntakePage({
       </div>
 
       <AssistedIntakeEditor
+        questionnaireSnapshot={intake.questionnaire_snapshot}
         clientId={id}
         clientName={client.name}
         intakeId={intake.id}
         initialStep={initialStep}
         initialResponses={responses}
-        initialUpdatedAt={intake.updated_at}
+        initialRevision={intakeRevision(intake.revision)!}
       />
     </div>
   );

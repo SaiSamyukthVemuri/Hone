@@ -20,7 +20,10 @@ function grep(pattern: string, paths: string): string {
     .trim();
 }
 
-const ACTIONS = read("app/(app)/clients/[id]/images/actions.ts");
+// The signer moved into sign-treatment-image.ts (shared with the re-mint route,
+// Codex P1 4307807754); the signed-URL surface is both files together.
+const ACTIONS =
+  read("app/(app)/clients/[id]/images/actions.ts") + "\n" + read("app/(app)/clients/[id]/images/sign-treatment-image.ts");
 const LIB = read("lib/images/treatment-images.ts");
 const MANAGER = read("app/(app)/clients/[id]/images/TreatmentImagesManager.tsx");
 const PAGE = read("app/(app)/clients/[id]/images/page.tsx");

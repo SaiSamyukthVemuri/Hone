@@ -243,7 +243,8 @@ describe("0169 — the command surface is untouched", () => {
       "sessions_immutable_lineage",
       "sessions_price_jurisdiction_lock",
     ]);
-    expect(byTable.treatment_images).toBe(3);
+    // 0232 adds treatment_images_clear_stage_without_session to the three existing guards.
+    expect(byTable.treatment_images).toBe(4);
     // The remaining tables keep whatever guards they had; assert non-zero so a
     // dropped trigger cannot hide behind this cutover.
     for (const t of ["session_blocks", "electrolysis_entries", "laser_entries"]) {

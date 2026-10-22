@@ -32,6 +32,31 @@ const PAGE = read("app/(app)/clients/[id]/intake/page.tsx");
 const PAGE_CODE = codeOnly(PAGE);
 
 describe("the review grid asks the projection, not the raw response map", () => {
+  it("uses the validated row catalogue and refuses a labelled grid for invalid non-NULL provenance", () => {
+    expect(PAGE_CODE).toContain("questionnaireForRow(intake.questionnaire_snapshot)");
+    expect(PAGE_CODE).toContain("const INTAKE_STEPS = catalogue.steps");
+    expect(PAGE_CODE).toContain('catalogue.kind === "legacy"');
+    expect(PAGE_CODE).toContain('catalogue.kind === "known"');
+    expect(PAGE_CODE).toContain("QUESTIONNAIRE_HISTORY_UNAVAILABLE");
+    expect(PAGE_CODE).toContain("<IntakeReviewFlags responses={responses} steps={INTAKE_STEPS}");
+    expect(PAGE_CODE).toContain("deriveIntakeReviewFlags(responses, steps)");
+  });
+
+  it("labels current questionnaire wording and the missing historical snapshot before the answer grid (CLN-008)", () => {
+    const notice = PAGE_CODE.indexOf("Question and answer labels below use the current questionnaire.");
+    expect(notice).toBeGreaterThan(0);
+    expect(notice).toBeLessThan(PAGE_CODE.indexOf("INTAKE_STEPS.map"));
+    expect(PAGE_CODE).toContain("The original questionnaire wording was not saved with this intake");
+    expect(PAGE_CODE).toContain("and may have been different. Stored answers are unchanged.");
+  });
+
+  it("uses honest yes/no labels in both the answer grid and the allergy summary (CLN-004)", () => {
+    expect(PAGE_CODE).toContain("yesNoAnswerLabel(value)");
+    expect(PAGE_CODE).toContain("yesNoAnswerLabel(responses.requires_epipen)");
+    expect(PAGE_CODE).not.toContain('value === "yes" ? "Yes" : "No"');
+    expect(PAGE_CODE).not.toContain('requiresEpipen ? "Yes" : "No"');
+  });
+
   it("computes a state for every question it renders", () => {
     expect(PAGE_CODE).toMatch(/reviewAnswerState\(q, responses, intake\.status\)/);
   });

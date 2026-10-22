@@ -795,28 +795,28 @@ export const INTAKE_STEPS: ReadonlyArray<Step> = [
 
 export const TOTAL_STEPS = INTAKE_STEPS.length;
 
-export function stepById(id: number): Step | undefined {
-  return INTAKE_STEPS.find((s) => s.id === id);
+export function stepById(id: number, steps: ReadonlyArray<Step> = INTAKE_STEPS): Step | undefined {
+  return steps.find((s) => s.id === id);
 }
 
 // Pure key -> question / label resolvers, used by the practitioner-side
 // intake review surfaces (e.g. derived review flags in
 // lib/intake/review-flags.ts). Walk INTAKE_STEPS; fall back to the raw key /
 // value for older intakes whose keys/options were since renamed. No I/O.
-export function getQuestionByKey(key: string): Question | undefined {
-  for (const step of INTAKE_STEPS) {
+export function getQuestionByKey(key: string, steps: ReadonlyArray<Step> = INTAKE_STEPS): Question | undefined {
+  for (const step of steps) {
     const q = step.questions.find((qq) => qq.key === key);
     if (q) return q;
   }
   return undefined;
 }
 
-export function getQuestionLabel(key: string): string {
-  return getQuestionByKey(key)?.label ?? key;
+export function getQuestionLabel(key: string, steps: ReadonlyArray<Step> = INTAKE_STEPS): string {
+  return getQuestionByKey(key, steps)?.label ?? key;
 }
 
-export function getOptionLabel(key: string, value: string): string {
-  const opt = getQuestionByKey(key)?.options?.find((o) => o.value === value);
+export function getOptionLabel(key: string, value: string, steps: ReadonlyArray<Step> = INTAKE_STEPS): string {
+  const opt = getQuestionByKey(key, steps)?.options?.find((o) => o.value === value);
   return opt?.label ?? value;
 }
 
@@ -880,9 +880,10 @@ export function isAnswerProvided(
 // re-validated when the practitioner views them.
 export function findMissingRequiredAnswers(
   responses: Record<string, unknown>,
+  steps: ReadonlyArray<Step> = INTAKE_STEPS,
 ): string[] {
   const missing: string[] = [];
-  for (const step of INTAKE_STEPS) {
+  for (const step of steps) {
     for (const q of step.questions) {
       if (!q.required) continue;
       if (!isConditionalSatisfied(responses, q.conditional)) continue;
@@ -904,7 +905,8 @@ export function findMissingRequiredAnswers(
 // `diabetes_type: "whatever I like"` into a clinical record. Hiding the control
 // in the browser is not a validation.
 //
-// SCOPED TO single_select ON PURPOSE, and the reason is a fact about this
+// Canonical yes_no values are exactly "yes" and "no" (CLN-004). Other choices
+// are SCOPED TO single_select ON PURPOSE, and the reason is a fact about this
 // repository rather than a preference. Across the whole history of
 // lib/intake/questions.ts exactly ONE option value has ever been removed from an
 // option set: "keloid", from the multi_select CONDITIONS list. So a strict
@@ -922,13 +924,18 @@ export function findMissingRequiredAnswers(
 // Pure compute; no I/O. Like findMissingRequiredAnswers it must only ever run
 // on a WRITE path: an already-submitted intake is never re-validated, which is
 // what keeps a historical record valid when today's option set has moved on.
+export function isCanonicalYesNoAnswer(value: unknown): value is "yes" | "no" {
+  return value === "yes" || value === "no";
+}
+
 export function findInvalidChoiceAnswers(
   responses: Record<string, unknown>,
+  steps: ReadonlyArray<Step> = INTAKE_STEPS,
 ): string[] {
   const invalid: string[] = [];
-  for (const step of INTAKE_STEPS) {
+  for (const step of steps) {
     for (const q of step.questions) {
-      if (q.type !== "single_select" || !q.options) continue;
+      if (q.type !== "yes_no" && (q.type !== "single_select" || !q.options)) continue;
       if (!isConditionalSatisfied(responses, q.conditional)) continue;
       const value = responses[q.key];
       // Absent / cleared: not this function's concern. "Absent" is defined
@@ -940,8 +947,9 @@ export function findInvalidChoiceAnswers(
       if (value === undefined || value === null) continue;
       if (typeof value === "string" && value.trim() === "") continue;
       if (
-        typeof value !== "string" ||
-        !q.options.some((o) => o.value === value)
+        q.type === "yes_no"
+          ? !isCanonicalYesNoAnswer(value)
+          : typeof value !== "string" || !q.options!.some((o) => o.value === value)
       ) {
         invalid.push(q.key);
       }
@@ -1028,8 +1036,9 @@ export function isClientOwnedResponseKey(key: string): boolean {
 export function visibleQuestionsForStep(
   stepId: number,
   responses: Record<string, unknown>,
+  steps: ReadonlyArray<Step> = INTAKE_STEPS,
 ): ReadonlyArray<Question> {
-  const step = stepById(stepId);
+  const step = stepById(stepId, steps);
   if (!step) return [];
   return step.questions.filter((q) =>
     isConditionalSatisfied(responses, q.conditional),

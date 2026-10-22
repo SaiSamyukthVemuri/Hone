@@ -1,3 +1,4 @@
+import { requirePlatformAdmin } from "@/lib/auth/require-platform-admin";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   resolveOpsAlertAction,
@@ -74,6 +75,7 @@ function idLines(alert: OpsAlertRow): Array<{ label: string; value: string }> {
 }
 
 export default async function OpsAlertsPage() {
+  await requirePlatformAdmin();
   const admin = createAdminClient();
   const [unresolvedRes, resolvedRes] = await Promise.all([
     admin
