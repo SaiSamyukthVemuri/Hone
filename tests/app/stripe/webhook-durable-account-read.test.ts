@@ -642,6 +642,20 @@ describe("PAY-005 capability retrieval stays retryable", () => {
       sink.mockRestore();
     }
   });
+  it.each(["wrong", "missing"] as const)("refuses a %s retrieved account identity without syncing or acknowledging", async (kind) => {
+    prepareCapability();
+    ACCOUNTS_RETRIEVE.mockResolvedValue({ ...ACCOUNT_OBJECT, id: kind === "wrong" ? "acct_other" : undefined });
+    const response = await callRoute();
+    const called = names(ADMIN.current!.rpcCalls);
+    expect({ status: response.status, synced: called.includes("sync_studio_account_status"),
+      processed: called.includes("mark_stripe_event_processed") }).toEqual({ status: 500, synced: false, processed: false });
+    expect(ACCOUNTS_RETRIEVE).toHaveBeenCalledTimes(1);
+    expect(ACCOUNTS_RETRIEVE).toHaveBeenCalledWith("acct_test_1");
+    expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("sync_studio_account_status");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+    expect(CAPTURE_EVENT).not.toHaveBeenCalled();
+  });
   it("a healthy retrieval still synchronizes and completes the event", async () => {
     prepareCapability();
     ACCOUNTS_RETRIEVE.mockResolvedValue(ACCOUNT_OBJECT);
