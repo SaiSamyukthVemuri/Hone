@@ -49,6 +49,26 @@ export type PageResult<T> = {
 // `.range()`.
 export type PageFactory<T> = (from: number, to: number) => PromiseLike<PageResult<T>>;
 
+// OPS-DAT-EXPORT-01. How many times a read with a `rowKey` may start over after
+// finding that its table moved between pages, before it refuses instead.
+export const EXPORT_MAX_READ_ATTEMPTS = 3;
+
+export type FetchAllRowsOptions<T> = {
+  pageSize?: number;
+  maxPages?: number;
+  /**
+   * OPT-IN boundary check. Offset pages over a table that changes between
+   * requests shift by one: a row deleted (or inserted) before the next offset
+   * makes one SURVIVING row vanish (or appear twice) while the short final page
+   * still reads as complete. With a key, every page after the first re-reads
+   * the previous page's last row; a different key there means the table moved,
+   * so the read restarts from page 0, at most `EXPORT_MAX_READ_ATTEMPTS` times,
+   * and then refuses. The key must be the read's unique final ordering column
+   * and must be SELECTED. Without a key the read is exactly as before.
+   */
+  rowKey?: (row: T) => string;
+};
+
 /**
  * Read every row a query can see, one `EXPORT_PAGE_SIZE` page at a time.
  *
@@ -59,8 +79,9 @@ export type PageFactory<T> = (from: number, to: number) => PromiseLike<PageResul
  */
 export async function fetchAllRows<T>(
   makePage: PageFactory<T>,
-  opts: { pageSize?: number; maxPages?: number } = {},
+  opts: FetchAllRowsOptions<T> = {},
 ): Promise<PageResult<T>> {
+  if (opts.rowKey) return fetchAllRowsWithBoundaryCheck(makePage, opts.rowKey, opts);
   const pageSize = opts.pageSize ?? EXPORT_PAGE_SIZE;
   const maxPages = opts.maxPages ?? EXPORT_MAX_PAGES;
   const all: T[] = [];
@@ -79,10 +100,68 @@ export async function fetchAllRows<T>(
   }
 
   // Refuse rather than return a silently capped set: the entire point.
+  return pageLimitRefusal(maxPages, pageSize);
+}
+
+function pageLimitRefusal<T>(maxPages: number, pageSize: number): PageResult<T> {
   return {
     data: null,
     error: {
       message: `Export read exceeded ${maxPages} pages (${maxPages * pageSize} rows); refusing to return a partial table.`,
+    },
+  };
+}
+
+async function fetchAllRowsWithBoundaryCheck<T>(
+  makePage: PageFactory<T>,
+  rowKey: (row: T) => string,
+  opts: { pageSize?: number; maxPages?: number },
+): Promise<PageResult<T>> {
+  const pageSize = opts.pageSize ?? EXPORT_PAGE_SIZE;
+  const maxPages = opts.maxPages ?? EXPORT_MAX_PAGES;
+
+  attempts: for (let attempt = 0; attempt < EXPORT_MAX_READ_ATTEMPTS; attempt++) {
+    const all: T[] = [];
+    let boundaryKey: string | null = null;
+
+    for (let page = 0; page < maxPages; page++) {
+      // Page 0 starts at 0; every later page starts ON the previous page's last
+      // row, so each request still asks for at most `pageSize` rows.
+      const from = page === 0 ? 0 : all.length - 1;
+      const { data, error } = await makePage(from, from + pageSize - 1);
+      if (error) return { data: null, error };
+      const rows = data ?? [];
+
+      if (page > 0) {
+        // An empty page here means the boundary row itself is gone: moved.
+        if (rows.length === 0 || rowKey(rows[0]) !== boundaryKey) continue attempts;
+        all.push(...rows.slice(1));
+      } else {
+        all.push(...rows);
+      }
+      // Same end-of-table rule as the unkeyed read: a short page is the end.
+      if (rows.length < pageSize) return { data: all, error: null };
+
+      const key = rowKey(rows[rows.length - 1]);
+      if (typeof key !== "string" || key === "") {
+        return {
+          data: null,
+          error: {
+            message:
+              "Export read has no row key at a page boundary (is the key column selected?); refusing to return a partial table.",
+          },
+        };
+      }
+      boundaryKey = key;
+    }
+
+    return pageLimitRefusal(maxPages, pageSize);
+  }
+
+  return {
+    data: null,
+    error: {
+      message: `Export read changed while it was being read (${EXPORT_MAX_READ_ATTEMPTS} attempts); refusing to return a partial table.`,
     },
   };
 }
