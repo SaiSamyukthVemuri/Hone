@@ -735,7 +735,7 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
             expect(s.if).toBe("${{ !cancelled() }}");
             expect(s.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
             expect(s.with).toEqual({
-              name: "sentry-egress-shard-${{ matrix.shard }}", path: "/tmp/hone-e2e-sentry-egress/",
+              name: "sentry-egress-shard-${{ matrix.shard }}", path: "/tmp/hone-e2e-sentry-egress/*.jsonl",
               "if-no-files-found": "ignore", "retention-days": 7,
             });
           } else {
