@@ -385,6 +385,9 @@ describe("routine clinical reading history export disposition", () => {
     expect(disposition).toMatchObject({
       kind: "pending", ticket: "TRUTH-01B", tier: 1, fieldReviewRequired: true,
     });
+    if (disposition.kind !== "pending") {
+      throw new Error("Clinical reading history must remain pending field review.");
+    }
     expect(disposition.reason).toContain("NOT EXPORTED");
     expect(disposition.reason).toContain("no new export authority or retention policy");
     expect(exportedResources().some(({ resource }) => resource === "treatment_reading_change_events")).toBe(false);
