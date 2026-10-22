@@ -1,5 +1,7 @@
 "use server";
 
+import { recordStudioExportAudit } from "@/lib/audit/governed-writes";
+
 import JSZip from "jszip";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -1268,43 +1270,17 @@ hello@hone.care
   const base64 = Buffer.from(bytes).toString("base64");
   const filename = `hone-export-${slugify(studio.name)}-${todayStamp()}.zip`;
 
-  // PR #189 (pilot safety): every successful export leaves an audit
-  // trail. Inserted with the user-scoped client (audit_logs RLS from
-  // 0001 allows member insert, never update/delete). Fail closed: if
-  // the audit row cannot be written, the export is not handed out.
-  const { error: auditError } = await supabase.from("audit_logs").insert({
-    studio_id: studio.id,
-    actor_id: practitioner.id,
-    action: "studio_export",
-    entity_type: "studio",
-    entity_id: studio.id,
-    metadata: {
-      filename,
-      // R2. THE AUDIT ROW AND THE ARCHIVE NOW COME FROM ONE SOURCE.
-      //
-      // This used to be a hand-written literal, and it had drifted: it named
-      // ten CSVs while the ZIP held fifteen, omitting all four
-      // record_keeping_*.csv files and manifest.json. The studio's own audit
-      // trail therefore UNDERSTATED what left the building — and the file it
-      // failed to record was the exposure-incident log, the most sensitive
-      // thing in the archive and the one carrying a third party's name,
-      // address and phone number.
-      //
-      // `writtenCsvNames` is read back off the built archive, so this cannot
-      // describe a file the ZIP does not contain, and the emission-parity
-      // guard above has already proved that set equals the registry's.
-      files: [...writtenCsvNames, "manifest.json", "README.txt"],
-      // Keyed by RESOURCE, valued from the same manifestCounts the archive and
-      // manifest were built from. No per-table expression to forget to add.
-      row_counts: Object.fromEntries(
-        exportedResources()
-          .filter(({ disposition }) => disposition.file in manifestCounts)
-          .map(({ resource, disposition }) => [
-            resource,
-            manifestCounts[disposition.file],
-          ]),
-      ),
-    },
+  // SEC-003: trusted, owner-only server emission with exact archive metadata.
+  // A failed audit still withholds the export; no direct browser INSERT.
+  const { error: auditError } = await recordStudioExportAudit({
+    expectedStudioId: studio.id,
+    filename,
+    files: [...writtenCsvNames, "manifest.json", "README.txt"],
+    rowCounts: Object.fromEntries(
+      exportedResources()
+        .filter(({ disposition }) => disposition.file in manifestCounts)
+        .map(({ resource, disposition }) => [resource, manifestCounts[disposition.file]]),
+    ),
   });
   if (auditError) {
     return {

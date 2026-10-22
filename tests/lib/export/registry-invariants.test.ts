@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
+  EXPORT_RESOURCE_REGISTRY,
   auditEmissionContract,
   auditExportedFilenames,
   auditSelectedColumns,
@@ -374,5 +375,18 @@ describe("the registry's prose cannot go stale about the payload", () => {
     for (const kind of kinds) {
       expect(["studio_scoped", "via_parent", "none"]).toContain(kind);
     }
+  });
+});
+
+// 0244 records prospective clinical corrections; registration is not export authority.
+describe("routine clinical reading history export disposition", () => {
+  it("keeps clinical diffs and actor snapshots pending field review and out of exports", () => {
+    const disposition = EXPORT_RESOURCE_REGISTRY.treatment_reading_change_events;
+    expect(disposition).toMatchObject({
+      kind: "pending", ticket: "TRUTH-01B", tier: 1, fieldReviewRequired: true,
+    });
+    expect(disposition.reason).toContain("NOT EXPORTED");
+    expect(disposition.reason).toContain("no new export authority or retention policy");
+    expect(exportedResources().some(({ resource }) => resource === "treatment_reading_change_events")).toBe(false);
   });
 });

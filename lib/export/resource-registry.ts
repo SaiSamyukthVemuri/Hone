@@ -1308,6 +1308,14 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     description:
       "Probe lot inventory - size, lot number, expiry and status. Exported because electrolysis entries already carry probe_lot_id, which a studio could not resolve to a real lot from the archive alone.",
   },
+  treatment_reading_change_events: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    fieldReviewRequired: true,
+    reason:
+      "HON-18 / CLN-007: 0244 routine clinical reading correction diffs and actor snapshots. PENDING field review under TRUTH-01B, NOT EXPORTED: old/new values are clinical data; this registry entry grants no new export authority or retention policy. Retired signed-record ledgers and native setup captures remain separate.",
+  },
   imported_treatment_memories: {
     kind: "pending",
     ticket: "TRUTH-01B",
