@@ -45,11 +45,18 @@ const h: {
   begin: { data: unknown; error: unknown } | "hang" | { afterMs: number };
   /** "hang": settle_sms_message never answers (a stalled or killed request). */
   settle: "ok" | "hang";
+  attemptNumber: unknown;
+  sentAt: string | null;
+  laterClaim: string | null;
+  recordError: boolean;
+  readMode: "row" | "error" | "hang";
+  attemptReads: Array<{ columns: string; filters: Array<[string, string]>; signal?: AbortSignal; rpcsBefore: string[] }>;
   rpcs: Array<{ fn: string; args: Record<string, unknown> }>;
 } = {
   claim: { result: "claimed", starts_at: START },
   begin: { data: LEDGER_ROW, error: null },
   settle: "ok",
+  attemptNumber: 1, sentAt: null, laterClaim: null, recordError: false, readMode: "row", attemptReads: [],
   rpcs: [],
 };
 
@@ -64,6 +71,7 @@ function admin(): SupabaseClient {
             : { data: [h.claim], error: null },
         );
       }
+      if (fn === "record_sms_result" && h.recordError) return Promise.resolve({ data: null, error: { message: "synthetic record failure" } });
       // The confirmation path's plain claim (0049).
       if (fn === "claim_sms_send") return Promise.resolve({ data: true, error: null });
       if (fn === "begin_appointment_sms_message") {
@@ -81,8 +89,27 @@ function admin(): SupabaseClient {
       }
       return Promise.resolve({ data: null, error: null });
     },
-    from() {
-      throw new Error("the reminder path must not read the appointment outside its claim");
+    from(table: string) {
+      if (table !== "appointments") throw new Error("unexpected observer table");
+      return { select(columns: string) {
+        const match = columns.match(/^(sms_reminder_(?:24h|2h))_send_attempts, \1_sent_at, \1_claimed_at$/);
+        if (!match) throw new Error("appointment timing/status must remain inside the atomic claim");
+        const read = { columns, filters: [] as Array<[string, string]>, signal: undefined as AbortSignal | undefined, rpcsBefore: h.rpcs.map(call => call.fn) };
+        h.attemptReads.push(read);
+        const query = {
+          eq: (column: string, value: string) => { read.filters.push([column, value]); return query; },
+          abortSignal: (signal: AbortSignal) => { read.signal = signal; return query; },
+          maybeSingle: async () => {
+            if (h.readMode === "hang") return new Promise<never>(() => undefined); // ignores abort deliberately
+            return { data: h.readMode === "error" ? null : {
+              [`${match[1]}_send_attempts`]: h.attemptNumber,
+              [`${match[1]}_sent_at`]: h.sentAt,
+              [`${match[1]}_claimed_at`]: h.laterClaim,
+            }, error: h.readMode === "error" ? { message: "SYNTHETIC_PRIVATE observer read" } : null };
+          },
+        };
+        return query;
+      } };
     },
   } as unknown as SupabaseClient;
 }
@@ -133,7 +160,7 @@ beforeEach(() => {
   h.claim = { result: "claimed", starts_at: START };
   h.begin = { data: LEDGER_ROW, error: null };
   h.settle = "ok";
-  h.rpcs = [];
+  h.rpcs = []; h.attemptNumber = 1; h.sentAt = null; h.laterClaim = null; h.recordError = false; h.readMode = "row"; h.attemptReads = [];
   alerts.length = 0;
   manageFor.length = 0;
   fetchMock = vi.fn(() => twilioAnswer(201, { sid: SID }));
@@ -321,7 +348,7 @@ describe("cancellation and moves before the send", () => {
     expect(alerts, "a retryable miss raises no alert").toEqual([]);
   });
 
-  it("the appointment is never read outside the claim (the mock throws if it is)", async () => {
+  it("appointment timing/status is never read outside the atomic claim", async () => {
     expect((await send24hReminderSmsToClient(input())).ok).toBe(true);
   });
 });
@@ -637,5 +664,77 @@ describe("one ledger budget per cron run", () => {
       "record_sms_result",
       "settle_sms_message",
     ]);
+  });
+});
+
+
+describe("MSG006 production final-failure observer", () => {
+  function definiteNonSend() {
+    fetchMock.mockImplementationOnce(() => Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })));
+  }
+  it.each([["reminder_24h", send24hReminderSmsToClient], ["reminder_2h", send2hReminderSmsToClient]] as const)("%s third definite failure uses scoped settled accounting and existing alert", async (smsType, send) => {
+    h.attemptNumber = 3; definiteNonSend();
+    expect(await send(input())).toEqual({ ok: false, error: "twilio_unreachable", retryable: true });
+    await flush();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ event: "sms_send_failed", severity: "warning", safeDetails: { sms_type: smsType, attempt_number: 3, retryable: true } });
+    expect(h.attemptReads).toHaveLength(1);
+    const read = h.attemptReads[0];
+    expect(read.columns).toBe(`sms_${smsType}_send_attempts, sms_${smsType}_sent_at, sms_${smsType}_claimed_at`);
+    expect(read.filters).toEqual([["id", "appt-1"], ["studio_id", "studio-1"]]);
+    expect(read.signal).toBeInstanceOf(AbortSignal);
+    expect(read.rpcsBefore).toEqual(["claim_reminder_sms_send", "begin_appointment_sms_message", "record_sms_result", "settle_sms_message"]);
+    expect(recorded()).toEqual([false]); expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it.each([0, 1, 2])("attempt %s remains below the existing alert threshold", async (count) => {
+    h.attemptNumber = count; definiteNonSend();
+    expect((await send24hReminderSmsToClient(input())).ok).toBe(false); await flush();
+    expect(h.attemptReads).toHaveLength(1); expect(alerts).toEqual([]); expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it.each([null, "3", -1, 1.5])("malformed accounting %s cannot manufacture exhaustion", async (count) => {
+    h.attemptNumber = count; definiteNonSend();
+    expect((await send24hReminderSmsToClient(input())).ok).toBe(false); await flush();
+    expect(h.attemptReads).toHaveLength(1); expect(alerts).toEqual([]); expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it.each(["sent", "later claim", "read error"] as const)("%s cannot manufacture exhaustion", async (state) => {
+    h.attemptNumber = 3;
+    if (state === "sent") h.sentAt = START;
+    if (state === "later claim") h.laterClaim = START;
+    if (state === "read error") h.readMode = "error";
+    definiteNonSend();
+    expect((await send24hReminderSmsToClient(input())).ok).toBe(false); await flush();
+    expect(h.attemptReads).toHaveLength(1); expect(alerts).toEqual([]); expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it.each(["accepted", "ambiguous", "terminal refusal"] as const)("%s does not start the accounting observer", async (state) => {
+    if (state === "ambiguous") fetchMock.mockImplementationOnce(() => twilioAnswer(201, {}));
+    if (state === "terminal refusal") fetchMock.mockImplementationOnce(() => twilioAnswer(400, { code: 21211 }));
+    const result = await send24hReminderSmsToClient(input());
+    expect(result.ok).toBe(state === "accepted"); expect(h.attemptReads).toEqual([]); expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(recorded()).toEqual([state !== "terminal refusal"]);
+  });
+  it("a throwing observer diagnostic preserves the definite failure without private payloads or retry", async () => {
+    h.readMode = "error"; definiteNonSend();
+    vi.mocked(console.error).mockImplementation((value) => {
+      if (String(value).includes("sms_reminder_attempt_read_failed")) throw new Error("SYNTHETIC_PRIVATE sink failure");
+    });
+    expect(await send24hReminderSmsToClient(input())).toEqual({ ok: false, error: "twilio_unreachable", retryable: true });
+    const observer = vi.mocked(console.error).mock.calls.filter(call => String(call[0]).includes("sms_reminder_attempt_read_failed"));
+    expect(observer).toHaveLength(1);
+    expect(JSON.parse(String(observer[0][0]))).toEqual({ event: "sms_reminder_attempt_read_failed", smsType: "reminder_24h", timestamp: expect.any(String) });
+    expect(JSON.stringify(observer)).not.toMatch(/SYNTHETIC_PRIVATE|appt-1|studio-1|555/);
+    expect(h.attemptReads).toHaveLength(1); expect(fetchMock).toHaveBeenCalledTimes(1); expect(recorded()).toEqual([false]);
+  });
+  it("an observer that ignores abort still returns within1000ms without extra sends", async () => {
+    vi.useFakeTimers(); h.readMode = "hang"; definiteNonSend(); let finished = false;
+    const pending = send24hReminderSmsToClient(input()).then(result => { finished = true; return result; });
+    await vi.advanceTimersByTimeAsync(999); expect(finished).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await pending).toEqual({ ok: false, error: "twilio_unreachable", retryable: true });
+    expect(h.attemptReads).toHaveLength(1); expect(fetchMock).toHaveBeenCalledTimes(1); expect(recorded()).toEqual([false]);
+  });
+  it("failed result recording with an active claim remains unknown accounting", async () => {
+    h.recordError = true; h.laterClaim = START; h.attemptNumber = 3; definiteNonSend();
+    expect((await send24hReminderSmsToClient(input())).ok).toBe(false); await flush();
+    expect(h.attemptReads).toHaveLength(1); expect(alerts).toEqual([]); expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
