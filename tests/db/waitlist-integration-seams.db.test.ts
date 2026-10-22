@@ -69,6 +69,7 @@ vi.mock("@/lib/rate-limit/public", async (importOriginal) => {
 
 vi.mock("next/headers", () => ({
   cookies: async () => ({
+    getAll: () => Array.from(hoisted.jar, ([name, value]) => ({ name, value })),
     get: (name: string) =>
       hoisted.jar.has(name) ? { name, value: hoisted.jar.get(name) } : undefined,
     set: (name: string, value: string) => {
