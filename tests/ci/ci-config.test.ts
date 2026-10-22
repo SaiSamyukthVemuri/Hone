@@ -1902,3 +1902,50 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
     expect(onDisk).toEqual(expect.arrayContaining(["ci.yml", "nightly.yml"]));
   });
 });
+
+
+describe("browser timing diagnostic truthfulness", () => {
+  function diagnostic() {
+    const doc = yaml.load(CI) as { jobs: Record<string, { steps: Array<{ name?: string; if?: string; run?: string; env?: Record<string, string> }> }> };
+    const step = doc.jobs["browser-e2e-shard"].steps.find(s => s.name === "Timing diagnostics");
+    expect(step).toBeDefined();
+    return step!;
+  }
+  it("keeps job status separate and binds timestamp/outcome as environment data", () => {
+    const step = diagnostic();
+    expect(step.if).toBe("always()");
+    expect(step.env).toEqual({
+      SETUP_END: "${{ steps.setup_done.outputs.at }}",
+      E2E_OUTCOME: "${{ steps.e2e.outcome }}",
+      JOB_STATUS: "${{ job.status }}",
+    });
+  });
+  function runTiming(timestamp: string, outcome: string, status: string) {
+    // Execute the actual workflow shell, not a duplicate implementation. Other
+    // trusted Actions display expressions get inert synthetic fixture text.
+    const script = diagnostic().run!.replace(/\$\{\{[\s\S]*?\}\}/g, "synthetic-fixture");
+    return execFileSync("bash", ["-euo", "pipefail", "-c", 'date() { printf "1700000000\\n"; };\n' + script], {
+      encoding: "utf8", env: { ...process.env, SETUP_END: timestamp, E2E_OUTCOME: outcome, JOB_STATUS: status },
+    });
+  }
+  it.each(["", "not-a-number", "0", "-1", "0123", "1700000001", "999999999999999999999999", "1+1", "$(exit 9)"])("does not invent elapsed seconds for invalid setup timestamp %j", timestamp => {
+    const output = runTiming(timestamp, "skipped", "failure");
+    expect(output).toContain("test duration (s)  : unavailable");
+    expect(output).not.toMatch(/test duration \(s\)  : \d/);
+    expect(output).toContain("job status at timing: failure");
+    expect(output).toContain("browser step outcome: skipped");
+  });
+  it.each(["success", "failure", "cancelled"])("retains numeric elapsed time for an executed %s browser step", outcome => {
+    const output = runTiming("1699999970", outcome, outcome);
+    expect(output).toContain("test duration (s)  : 30");
+    expect(output).toContain(`job status at timing: ${outcome}`);
+    expect(output).toContain(`browser step outcome: ${outcome}`);
+    expect(output.includes("exceeded its timeout budget")).toBe(outcome === "cancelled");
+  });
+  it("does not report test duration when a valid setup timestamp precedes an unrun browser step", () => {
+    expect(runTiming("1699999970", "skipped", "failure")).toContain("test duration (s)  : unavailable");
+  });
+  it.each(["", "malformed", "1700000001", "999999999999999999999999"])("rejects invalid timestamp %j even when a browser outcome exists", timestamp => {
+    expect(runTiming(timestamp, "failure", "failure")).toContain("test duration (s)  : unavailable");
+  });
+});
