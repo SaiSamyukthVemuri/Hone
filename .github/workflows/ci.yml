@@ -677,14 +677,18 @@ jobs:
     # its own result instead of being cut mid-run and misread as a test failure.
     #
     #   targeted  : target <10 min per shard, hard timeout 15 min  (3 shards)
-    #   extended  : target <10 min per shard, hard timeout 18 min  (4 shards)
+    #   extended  : target <10 min per shard, hard timeout 25 min  (4 shards)
     #
     # NEITHER CEILING MOVED WHEN TARGETED WAS SPLIT. The targeted lane was the
     # one breaching its budget, and the repair was to give it the sharding
     # extended already had rather than to buy every PR more time. Raising 15
     # would have moved the cliff for lanes that are nowhere near it; splitting
     # moves the work.
-    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 18 || 15 }}
+    # ENG-003/004 run39713000378: cold setup12–12.6min before150–158tests;
+    # 482 observed passes/4skips/0assertion failures before cancellation.
+    # Worst measured projection22.15min + finiteheadroom => hard25.
+    # Keep target <10 min per shard and targeted hard15; investigate slow npm ci.
+    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 25 || 15 }}
     strategy:
       fail-fast: false
       matrix:
@@ -798,7 +802,7 @@ jobs:
           HONE_E2E_FAKE_RESEND: "1"
 
       - name: Upload Playwright traces on failure
-        if: failure()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # Per-shard so two shards never clobber each other's artifact.
@@ -1069,7 +1073,10 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.mobile == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # run39713000378 mobile:3 observed passes before10min cancellation;
+    # setup~10min + existing6-case phase~0.4min + finiteheadroom => hard12.
+    # This ceiling is not a performance or physical-device acceptance target.
+    timeout-minutes: 12
 
     steps:
       - name: Checkout repository
