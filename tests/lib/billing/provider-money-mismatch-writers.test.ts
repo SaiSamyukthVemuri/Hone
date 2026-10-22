@@ -23,6 +23,7 @@ const h = vi.hoisted(() => ({
   rows: {} as Record<string, unknown>,
   updates: [] as Array<{ table: string; payload: Record<string, unknown> }>,
   rpcCalls: [] as string[],
+  boundObjects: [] as Array<Record<string, unknown>>,
   updateAttempts: [] as Array<{ payload: Record<string, unknown>; filters: Array<{ column: string; value: unknown }>; matched: boolean }>,
   afterRetrieve: null as null | (() => void),
   recheckReadError: false,
@@ -137,7 +138,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       };
       return q;
     },
-    rpc: async (name: string) => {
+    rpc: async (name: string, args: Record<string, unknown> = {}) => {
       h.rpcCalls.push(name);
       if (name === "claim_session_payment_charge_attempt") {
         const row = h.rows.payment_charge_attempts as Record<string, unknown> | undefined;
@@ -146,6 +147,48 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           if (h.claim.stripe_payment_intent_id) row.stripe_payment_intent_id = h.claim.stripe_payment_intent_id;
         }
         return { data: [h.claim], error: null };
+      }
+      if (name === "reconcile_bound_payment_event") {
+        const row = h.rows.payment_charge_attempts as Record<string, unknown>;
+        const object = args.p_object as Record<string, unknown>;
+        h.boundObjects.push(object);
+        const matches = args.p_attempt_id === row.id && args.p_studio_id === row.studio_id
+          && args.p_stripe_account_id === row.stripe_account_id && args.p_livemode === row.stripe_livemode
+          && object.customer_id === row.stripe_customer_id && object.payment_intent_id === row.stripe_payment_intent_id
+          && object.amount_cents === row.amount_cents && object.currency === row.currency
+          && (!row.stripe_charge_id || object.charge_id === row.stripe_charge_id);
+        if (!matches) return { data: [{ result: "identity_mismatch" }], error: null };
+        if (Array.isArray(object.charge_refund_components)) {
+          if (row.stripe_charge_refund_event_id) return { data: [{ result: "already_refunded", status_before: row.status }], error: null };
+          const payload = { refund_status: "succeeded", refund_amount_cents: row.amount_cents,
+            refunded_at: "2026-10-21T00:00:00.000Z", stripe_charge_refund_event_id: args.p_event_id,
+            stripe_charge_refund_event_created: object.event_created };
+          h.updates.push({ table: "payment_charge_attempts", payload });
+          Object.assign(row, payload);
+          return { data: [{ result: "reconciled", status_before: row.status }], error: null };
+        }
+        if (args.p_event_type === "refund.observed" && object.refund_status !== "succeeded") {
+          if (!["pending", "requires_action", "failed", "canceled"].includes(String(object.refund_status))) {
+            return { data: [{ result: "refund_evidence_refused" }], error: null };
+          }
+          const failed = object.refund_status === "failed" || object.refund_status === "canceled";
+          const payload = { refund_status: failed ? "failed" : "pending_stripe", stripe_refund_id: object.refund_id,
+            refund_amount_cents: object.refund_amount_cents, refunded_at: null,
+            refund_failure_code: failed ? `provider_refund_${object.refund_status}` : null,
+            refund_failure_message_safe: failed ? "Stripe did not complete this refund." : null };
+          h.updates.push({ table: "payment_charge_attempts", payload }); Object.assign(row, payload);
+          return { data: [{ result: failed ? "refund_failed" : "refund_pending" }], error: null };
+        }
+        const statusBefore = row.status;
+        const refund = args.p_event_type === "charge.refunded" || args.p_event_type === "refund.observed";
+        const failed = args.p_event_type === "payment_intent.payment_failed";
+        const payload = refund ? { refund_status: "succeeded", stripe_refund_id: object.refund_id,
+          refund_amount_cents: object.refund_amount_cents, refund_failure_code: null, refund_failure_message_safe: null,
+          refunded_at: "2026-10-21T00:00:00.000Z" }
+          : { status: failed ? "failed" : "succeeded", stripe_charge_id: object.charge_id };
+        h.updates.push({ table: "payment_charge_attempts", payload });
+        Object.assign(row, payload);
+        return { data: [{ result: "reconciled", status_before: statusBefore }], error: null };
       }
       if (name === "reconcile_card_payment_succeeded") {
         return { data: [{ result: "reconciled", status_before: "pending_stripe" }], error: null };
@@ -196,6 +239,9 @@ function attemptRow(currency: "cad" | "usd", over: Record<string, unknown> = {})
     refund_amount_cents: null,
     refunded_at: null,
     stripe_refund_id: null,
+    stripe_refund_status: null,
+    stripe_refund_event_created: null,
+    stripe_refund_event_id: null,
     updated_at: "2026-08-01T00:00:00.000Z",
     ...over,
   };
@@ -259,6 +305,7 @@ beforeEach(() => {
   h.rows = {};
   h.updates = [];
   h.rpcCalls = [];
+  h.boundObjects = [];
   h.updateAttempts = [];
   h.afterRetrieve = null;
   h.recheckReadError = false;
@@ -602,17 +649,17 @@ describe("refund: Stripe's refund is recorded only when it is the claimed refund
           ...(status === undefined ? {} : { status }),
         };
         const result = await refund();
-        expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+        expect(result).toMatchObject({ ok: false, outcome: status === "failed" || status === "canceled" ? "failed" : "needs_manual_review" });
         expect(h.stripeCalls).toEqual(["refund_create"]);
         expect(refundSucceededWrites()).toEqual([]);
-        expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(1);
-        expect(h.updates.some((u) => u.payload.refund_status === "failed")).toBe(false);
+        expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(status === "pending" || status === "requires_action" ? 2 : 1);
+        expect(h.updates.some((u) => u.payload.refund_status === "failed")).toBe(status === "failed" || status === "canceled");
         expect(critical("payment_refund_provider_money_mismatch")).toEqual([]);
       },
     );
   }
 
-  it("a throwing status diagnostic retains manual review, pending claim and one refund call", async () => {
+  it("a pending status observation retains manual review and one refund call even with a failing diagnostic sink", async () => {
     seedSucceeded("cad");
     h.refund = { id: "re_synthetic_unresolved", status: "pending", amount: AMOUNT, currency: "cad", charge: CHARGE_ID, payment_intent: PI_ID };
     h.alertThrows = true;
@@ -620,9 +667,9 @@ describe("refund: Stripe's refund is recorded only when it is the claimed refund
     expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
     expect(h.stripeCalls).toEqual(["refund_create"]);
     expect(refundSucceededWrites()).toEqual([]);
-    expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(1);
+    expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(2);
     expect(h.updates.some((u) => u.payload.refund_status === "failed")).toBe(false);
-    expect(critical("payment_refund_provider_status_unresolved")).toHaveLength(1);
+    expect(h.boundObjects).toContainEqual(expect.objectContaining({ refund_status: "pending", refund_id: "re_synthetic_unresolved" }));
   });
 
   it.each([
@@ -758,7 +805,7 @@ describe("PRIVACY PAY-004 retrieved identity across terminal branches", () => {
 // 3. The webhooks
 // ---------------------------------------------------------------------------
 function event(type: string, object: Record<string, unknown>): Stripe.Event {
-  return { id: "evt_1", type, account: "acct_test", livemode: false, data: { object: { customer: "cus_test", ...(type.startsWith("charge.") ? { payment_intent: PI_ID } : {}), ...(type === "payment_intent.payment_failed" ? { status: "requires_payment_method" } : {}), ...object } } } as unknown as Stripe.Event;
+  return { id: "evt_1", created: 1770000000, type, account: "acct_test", livemode: false, data: { object: { customer: "cus_test", ...(type.startsWith("charge.") ? { payment_intent: PI_ID } : {}), ...(type === "payment_intent.payment_failed" ? { status: "requires_payment_method" } : {}), ...object } } } as unknown as Stripe.Event;
 }
 const META = {
   hone_payment_charge_attempt_id: ATTEMPT,
@@ -781,7 +828,7 @@ describe("payment_intent.succeeded webhook", () => {
       }),
       CTX,
     );
-    expect(h.rpcCalls).toContain("reconcile_card_payment_succeeded");
+    expect(h.rpcCalls).toContain("reconcile_bound_payment_event");
     expect(out.reconciledFromStatus).toBe("pending_stripe");
   });
 
@@ -867,7 +914,7 @@ describe("charge.refunded webhook", () => {
       id: CHARGE_ID,
       refunded: true,
       amount_refunded: money.amount,
-      refunds: { data: [{ id: "re_1" }] },
+      refunds: { data: [{ id: "re_1", status: "succeeded", charge: CHARGE_ID, payment_intent: PI_ID, amount: money.amount, currency: money.currency }] },
       metadata: META,
       ...money,
     });
@@ -1028,4 +1075,73 @@ describe("bound PI active-or-unknown failed-event retirement", () => {
     expect(h.stripeCalls).toEqual([]);
   });
 
+});
+
+describe("PAY002 cumulative full refund evidence", () => {
+  function prepare(components?: Array<Record<string, unknown>>, chargeOverrides: Record<string, unknown> = {}, rowOverrides: Record<string, unknown> = {}) {
+    h.rows.payment_charge_attempts = attemptRow("usd", { status: "succeeded", stripe_payment_intent_id: PI_ID,
+      stripe_charge_id: CHARGE_ID, ...rowOverrides });
+    const parts = components ?? [
+      { id: "re_part_a", amount: 5000 }, { id: "re_part_b", amount: 10000 },
+    ];
+    return event("charge.refunded", { object: "charge", id: CHARGE_ID, status: "succeeded", paid: true,
+      captured: true, amount_captured: AMOUNT, amount: AMOUNT, amount_refunded: AMOUNT,
+      refunded: true, livemode: false, customer: "cus_test", payment_intent: PI_ID, currency: "usd",
+      refunds: { object: "list", has_more: false, data: parts.map((part) => ({ object: "refund", status: "succeeded",
+        charge: CHARGE_ID, payment_intent: PI_ID, currency: "usd", ...part })) }, ...chargeOverrides });
+  }
+  it("two successful partials prove full charge total without fabricating one full Refund", async () => {
+    const out = await handleChargeRefunded(prepare(), CTX);
+    expect(out.outOfBandReconciled).toBe(true);
+    expect(h.boundObjects[0]).toMatchObject({ charge_amount_refunded: AMOUNT,
+      charge_refund_list_complete: true, refund_id: null, refund_status: null, refund_amount_cents: null,
+      charge_refund_components: [{ refund_id: "re_part_a", amount_cents: 5000 }, { refund_id: "re_part_b", amount_cents: 10000 }] });
+    const row = h.rows.payment_charge_attempts as Record<string, unknown>;
+    expect(row.refund_status).toBe("succeeded");
+    expect(row.stripe_refund_id).toBeNull();
+    expect(row.stripe_refund_status).toBeNull();
+    expect(h.stripeCalls).toEqual([]);
+  });
+  it.each(["failed", "succeeded"])("existing actual single %s evidence is preserved by separate cumulative completion", async (status) => {
+    await handleChargeRefunded(prepare(undefined, {}, { refund_status: status === "failed" ? "failed" : "pending_stripe",
+      stripe_refund_id: "re_original", stripe_refund_status: status }), CTX);
+    const row = h.rows.payment_charge_attempts as Record<string, unknown>;
+    expect(row.refund_status).toBe("succeeded");
+    expect(row.stripe_refund_id).toBe("re_original");
+    expect(row.stripe_refund_status).toBe(status);
+    expect(h.updates[0].payload).not.toHaveProperty("stripe_refund_id");
+    expect(h.updates[0].payload).not.toHaveProperty("stripe_refund_status");
+  });
+  it.each([
+    [{ id: "re_same", amount: 5000 }, { id: "re_same", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, status: "pending" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, status: "requires_action" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, status: "mystery" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, charge: "ch_other" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, payment_intent: "pi_other" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, currency: "cad" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, customer: "cus_other" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, customer: null }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: Number.MAX_SAFE_INTEGER + 1 }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5001 }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 4999 }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 0 }, { id: "re_b", amount: AMOUNT }],
+  ].map((parts) => ({ parts })))("incomplete or contradictory component evidence cannot stamp full refund: %j", async ({ parts }) => {
+    const out = await handleChargeRefunded(prepare(parts), CTX);
+    expect(out.cumulativeRefundEvidenceRefused).toBe(true);
+    expect(h.boundObjects).toEqual([]);
+    expect(h.updates).toEqual([]);
+    expect(h.stripeCalls).toEqual([]);
+  });
+  it.each([
+    { refunds: { object: "list", has_more: true, data: [] } },
+    { refunds: { object: "list", data: [] } },
+    { refunds: null }, { object: "not_charge" }, { paid: false },
+    { captured: false }, { amount_captured: AMOUNT - 1 }, { livemode: true },
+  ])("missing complete/captured charge context refuses: %j", async (over) => {
+    const out = await handleChargeRefunded(prepare(undefined, over), CTX);
+    expect(out.cumulativeRefundEvidenceRefused).toBe(true);
+    expect(h.boundObjects).toEqual([]);
+    expect(h.updates).toEqual([]);
+  });
 });
