@@ -1,5 +1,6 @@
 import { localTimeString12h } from "@/lib/booking/tz";
 import { markdownLiteToHtml } from "@/lib/email/markdown-lite";
+import { clientPreheader, withPreheader } from "@/lib/email/preheader";
 
 // Postcare email template (v1).
 //
@@ -107,7 +108,9 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
   const warningHtml = textBlockToHtml(p.warningSignsText);
   const productsHtml = textBlockToHtml(p.productRecommendationsText);
 
-  const subject = `Aftercare for your appointment with ${p.studioName}`;
+  // SUBJECT RULE (HIPAA-READY-01, #828): "Aftercare for your appointment" told
+  // anyone who sees the inbox that a treatment took place. The body keeps it.
+  const subject = `A message from ${p.studioName}`;
 
   const htmlSections: string[] = [];
   htmlSections.push(
@@ -223,5 +226,10 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
   }
   const text = textSections.join("\n");
 
-  return { subject, html, text, preview: text };
+  return {
+    subject,
+    html: withPreheader(html, clientPreheader(p.studioName)),
+    text,
+    preview: text,
+  };
 }
