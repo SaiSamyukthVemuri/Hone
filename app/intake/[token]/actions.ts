@@ -9,6 +9,7 @@ import {
   findInvalidChoiceAnswers,
   getQuestionByKey,
   findMissingRequiredAnswers,
+  isValidIntakeDate,
   type Step,
 } from "@/lib/intake/questions";
 import { questionnaireForRow, QUESTIONNAIRE_UNAVAILABLE } from "@/lib/intake/questionnaire";
@@ -406,7 +407,7 @@ function intakeProfileContributions(responses: Record<string, unknown>): Record<
   return {
     emergency_contact_name: stringOrNull(responses.emergency_contact_name),
     emergency_contact_phone: stringOrNull(responses.emergency_contact_phone),
-    date_of_birth: stringOrNull(responses.date_of_birth),
+    date_of_birth: profileBirthDate(responses.date_of_birth),
     pronouns: stringOrNull(responses.pronouns),
     address: stringOrNull(responses.address),
     allergy_text: buildIntakeAllergyText(responses),
@@ -458,6 +459,19 @@ function buildIntakeAllergyText(
   return lines.join("\n");
 }
 
+
+// 0243 casts this contribution to date INSIDE the submit transaction, so a
+// value the cast rejects would roll back the whole submission. Only a strict
+// calendar ISO date the wizard itself accepts is contributed; anything else
+// stays in the intake responses and leaves the profile field untouched, as the
+// old after-submit sync did when it swallowed the failure.
+function profileBirthDate(value: unknown): string | null {
+  const date = stringOrNull(value);
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) return null;
+  return isValidIntakeDate(date, Date.now()) ? date : null;
+}
 
 function stringOrNull(value: unknown): string | null {
   if (typeof value !== "string") return null;
