@@ -14,7 +14,60 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-19, post-0212 apply; hosted 0212, repo 0231; MIGRATION-FIRST PENDING)
+
+## Current state (reconciled 2026-10-20; 0212 already APPLIED, source restored byte-identically)
+
+> **This is a documentation/source reconciliation of an existing apply, not an authorization or execution of an apply.** A fresh read-only query on 2026-10-19 at 21:23:10.258674Z ran with `transaction_read_only=on` against the verified canonical Hone production project: migration history max **0212**, **211** rows, exactly one each for 0211 and 0212, and no entries above 0212. Migration-history presence establishes a recorded apply; it does not by itself claim a table's present existence or contents.
+>
+> Existing apply receipt `cead71c5` records the successful migration-first apply from reviewed PR #832 head `7116c66848574b0e02e7c2b8f500a6d3198edb58`. The exact source is `supabase/migrations/0212_email_delivery_events.sql`, 44,462 bytes, Git blob `cd8a4908fdad8b68e917842d5ffe1590c86eb875`, raw SHA-256 `cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1`. The source was restored here byte-identically from existing commit `cbb567afed08550e29e165bdc91adb4324a93181`; no SQL bytes were edited. The stored-history statement serialization hash `bc13731bb8c36b8a1db2f5a5185d0700308e598e92347a3ab87df696814ef142` is not the raw migration checksum. No server apply timestamp was captured, so `hosted_applied_at` remains null.
+>
+> The prior production record's 0211 declaration and missing 0212 source were stale repository documentation/source, not grounds to reapply. The full 0211 apply account below remains unchanged as historical evidence. **Do not reapply 0212.** No hosted database, migration history, schema, table or row was changed in this reconciliation.
+>
+> **Source composition only (2026-10-22):** Migration state: repo > hosted. this bounded candidate carries the contiguous pending source prefix 0213–0231 above the unchanged hosted state. Repository source presence is not an apply, activation or parity claim. There are no remote-only migrations in the retained read-only evidence; no new hosted query or apply occurred.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), recorded in read-only history as described above. |
+| **Repo migration max** | **0231** (`0231_client_identification_portrait.sql`) on this source candidate only; derive mechanically from its files. |
+| **Remote-only migrations** | **none** after restoring the exact applied 0212 source. |
+| **Pending migrations** | **MIGRATION-FIRST PENDING**: `0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231` — contiguous source files, not hosted-applied by this preparation. Per-change authorization and ordered application contracts remain required. |
+| **Next free migration** | Next free number is **0232**, **not claimed** on this tree, derived by `npm run migration:state`. This is not a global allocation or a claim on another owner’s number; existing allocations/holds remain effective. |
+| **Project ref** | Canonical Hone production project; see the verified linked-project evidence retained in the apply receipt. No credentials or new project identifiers are recorded here. |
+| **0212 apply source** | PR #832 reviewed head `7116c66848574b0e02e7c2b8f500a6d3198edb58`; exact raw file SHA-256 `cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1`; source reintroduced unchanged from `cbb567afed08550e29e165bdc91adb4324a93181`. |
+| **Apply timestamp** | `hosted_applied_at` remains `null`; the receipt contains client-side bounds and a server history bracket, not a server-generated apply timestamp. |
+
+
+
+### Pending source inventory on this bounded candidate
+
+The raw source bytes below are pinned to published integrated source `edfca671bb6b681a79712c6e92665376ebb33d32`; original-owner provenance/application-order contracts remain in the release packet. This inventory grants no apply or activation authority. Frozen0223/0231 and the held Machines#920 alternative are unchanged/excluded; legitimate Team0234 is distinct when included.
+
+| Version | Source file | Raw SHA-256 |
+|---|---|---|
+| 0213 | [0213_platform_lead_alerts.sql](../../supabase/migrations/0213_platform_lead_alerts.sql) | `5186bca250713e8db8eb17dc6a354202f98ea00388d489fb9f7d74d93c960d2b` |
+| 0214 | [0214_studio_payment_jurisdiction.sql](../../supabase/migrations/0214_studio_payment_jurisdiction.sql) | `8ff9350eb53070c970b9548e4e4093e2aa878116fd7ad9dc118bfb3d401a3289` |
+| 0215 | [0215_delivery_incidents.sql](../../supabase/migrations/0215_delivery_incidents.sql) | `612f98fe62b9bb7113e32956a46eaeab07238fbf94cb305f6c1ab6ddaa2ec168` |
+| 0216 | [0216_receptionist_membership_foundation.sql](../../supabase/migrations/0216_receptionist_membership_foundation.sql) | `1039bd49ab49849f2e0632aa896961572b4598ab46786fa194866730de10563e` |
+| 0217 | [0217_studio_sms_sender_registrations.sql](../../supabase/migrations/0217_studio_sms_sender_registrations.sql) | `beda95b6594c01da4f5b1eb9d52bbd5838991a51526874cfac41e18f9ccbb1f6` |
+| 0218 | [0218_receptionist_invitations.sql](../../supabase/migrations/0218_receptionist_invitations.sql) | `58ad44c705797f3d5c48b9cea1fadcef2da23ab46a41ec41cc67ea7dcf0c3a7a` |
+| 0219 | [0219_public_practitioner_selection.sql](../../supabase/migrations/0219_public_practitioner_selection.sql) | `4d44fc6603301ad1b94d7af9ecd56f1d28cd798742271bd6b1b0cd25b3bd69fe` |
+| 0220 | [0220_receptionist_scheduling.sql](../../supabase/migrations/0220_receptionist_scheduling.sql) | `329d70744996abe73a24c836e87e10bd842e9ba9f124940f9c95a5338fa4b0e2` |
+| 0221 | [0221_delivery_concerns_and_purposes.sql](../../supabase/migrations/0221_delivery_concerns_and_purposes.sql) | `b881fa9052edabee0af3140ee8b7e09108b2013b16268dce894003f5bec4e19a` |
+| 0222 | [0222_public_practitioner_booking_command.sql](../../supabase/migrations/0222_public_practitioner_booking_command.sql) | `9d85ba09f8ddcd308848a5c8711b7e8da5b58e7c707f040a6b69cf0333a6b798` |
+| 0223 | [0223_machine_inventory_and_setup_readings.sql](../../supabase/migrations/0223_machine_inventory_and_setup_readings.sql) | `12038b1eab95d84f0ed84b235f0bf00641f6e06007e6ba5008066fc0d852b948` |
+| 0224 | [0224_us_settlement_method_guard.sql](../../supabase/migrations/0224_us_settlement_method_guard.sql) | `761a76fbb04adc03f13b82d1e7e22594d688a7ba9d7bf53ae6fe742f83003246` |
+| 0225 | [0225_public_new_client_practitioner_selection.sql](../../supabase/migrations/0225_public_new_client_practitioner_selection.sql) | `61d69c6f50ea66963298ff44ad27f21a8cef640e81f1f428b9c778d29a5892ab` |
+| 0226 | [0226_studio_sms_sender_unpurchased_release.sql](../../supabase/migrations/0226_studio_sms_sender_unpurchased_release.sql) | `1ee108d11c2ce3ffe7bcd7baa9a44082c6c6d5369bfb7f3ca1d80489fd9ca0e4` |
+| 0227 | [0227_email_receipt_quarantine_bound.sql](../../supabase/migrations/0227_email_receipt_quarantine_bound.sql) | `8b62d4d8b9c32608a0d2c9884184752068c64679eab2f913b04de9ba3a7e0313` |
+| 0228 | [0228_legacy_new_client_refusal_atomicity.sql](../../supabase/migrations/0228_legacy_new_client_refusal_atomicity.sql) | `0d43f23e16ec67a54cbe7df98e5c1a09f66321149ded4f43062fd2baae4841a3` |
+| 0229 | [0229_studio_sms_sender_campaign_bindings.sql](../../supabase/migrations/0229_studio_sms_sender_campaign_bindings.sql) | `fe1499a590a90ad13597627c186010aaf0a486be7e2c3890cd31264d97d96f86` |
+| 0230 | [0230_studio_sms_sender_stop_preflights.sql](../../supabase/migrations/0230_studio_sms_sender_stop_preflights.sql) | `6fd46332f04a463890350041005626ffc7977751fd2e6c976c5530a8812aceaa` |
+| 0231 | [0231_client_identification_portrait.sql](../../supabase/migrations/0231_client_identification_portrait.sql) | `b9ad60aa947cb63a8f4b8c1c5dd273d03d6f58dbaa1bdb8dba895cfce1bcddf1` |
+
+## Previous state (original 0212 apply detail, dated 2026-10-12; preserved verbatim)
+
+The following original apply account is retained from source `07aa8355a105fb7437720191c4c37807e267fabc`. It supplements the current reconciliation; no historical exception, failure, incomplete check or apply evidence is relabelled. It does not authorize reapplication.
+The original detailed `hosted_note` also remains unchanged in published source `07aa8355a105fb7437720191c4c37807e267fabc`, file `docs/production/migration-state.json`, Git blob `258b3a1665e460e9392ed604830cb1d49f2aeeac` (raw file SHA-256 `7b152738618bcb6f6c34c6bd3699e61aaef9e86af553314dc675f96f8648240a`). This candidate keeps the current canonical hosted-state JSON byte-identical instead of replacing it with that older note.
 
 > **0212 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #832 HEAD, BEFORE ANY MERGE.**
 > `0212_email_delivery_events.sql` was applied to production on 2026-10-12 under explicit
@@ -65,35 +118,8 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 > `0212` is now **FROZEN**. Any correction is a new forward migration; there is no
 > manual down-migration.
 
-| Field | Value |
-|---|---|
-| **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12 from #832's reviewed head; corroborated by read-only history on 2026-10-19. |
-| **Repo migration max** | **0231** (`0231_client_identification_portrait.sql`) on the narrowly composed production-based release candidate; repo > hosted is the normal migration-first pending shape. |
-| **Remote-only migrations** | **none** in the read-only hosted-history reconciliation; hosted history has one 0212 row and no higher row. |
-| **Pending migrations** | **MIGRATION-FIRST PENDING**: `0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231` — strictly contiguous and unapplied on the candidate; apply in this order. |
-| **Next free migration** | Next free number is **0232**, derived from this tree; it is not included and is **not claimed by this candidate** (separately allocated to #908). |
-| **Project ref** | `alhhybgqdmcdyzpybykj`, the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
-| **Reviewed release head** | Exact-head review and CI for candidate PR #939 are tracked on the PR and must be checked against its current head. The Photos owner repair is source `affcb86727324b2c2505f5185b3ba3db3e9f4545`. Historical #832 evidence applies only to the 0212 migration source/apply record. |
-| **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |
 
-> **0231 compare-and-clear repair (Photos #905 head `affcb867`).** `set_client_portrait(uuid, uuid, uuid default null)` checks a requested clear against the displayed expected image while holding the client row lock; stale or missing expected IDs raise `P0231` and preserve the newer pointer. The authenticated-only execute boundary is restated for the three-UUID signature. Apply and verify 0231 before deploying app code.
-
-## Previous state (verified 2026-10-12, post-0211 apply; `0211` APPLIED, `0212` AUTHORED AND PENDING on the DELIVERY-EVENTS-01 branch)
-
-> **0212 IS AUTHORED AND PENDING (added after the 0210 apply; `0211` beneath it is now APPLIED), on the DELIVERY-EVENTS-01 branch `feat/delivery-events-01-resend` only.**
-> `0212_email_delivery_events.sql` adds two tables and five `service_role`-only commands:
-> - **`email_outbound_messages`**, the email delivery ledger, shaped like 0206's SMS ledger: one row per attempt, forward-only status, no address, subject or body;
-> - **`email_provider_events`**, one receipt per signature-verified Resend webhook delivery, deduplicated on its delivery id.
->
-> The commands are `begin_appointment_email_message`, `settle_email_message`, `record_email_provider_event`, `claim_email_provider_events` and `process_email_provider_event`. No browser grant, no policy, no trigger on an existing table, and it writes no data.
->
-> **STACKED ON `0211`, BY COORDINATION.** Per the shared census (`/home/sam/hone-migration-coordination.md`, 2026-10-11), `0211` is the G3 client SMS permission guard (draft PR #827), `0212` is this lane (draft PR #832), and `0213` is LEAD-ALERT-01 (draft PR #831). `0211` is now APPLIED (record below), so the pending suffix on this branch is `0212` alone. The remaining apply order is 0212 → 0213. `0211` and its apply record belong to the G3 lane.
->
-> **NOT APPLIED, NOT MERGED.**
->
-
-> **THE BLOCK BELOW IS THE 0211 APPLY RECORD.** Its hosted row is current. Its repo-max, pending and next-free rows are updated for `0212` while it is pending.
-
+## Previous state (verified 2026-10-12, post-0211 apply; historical 0211 record preserved)
 
 > **0211 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #827 HEAD, BEFORE ANY MERGE.**
 > `0211_client_sms_permission_guard.sql` was applied to production on
@@ -145,27 +171,15 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`), applied 2026-10-12 from #827's reviewed head. |
-| **Repo migration max** | **0212**: `0212_email_delivery_events.sql` (DELIVERY-EVENTS-01, draft PR #832), stacked on the applied `0211`. `0211` is byte-identical to #827's applied head. |
+| **Repo migration max** | **0211** on this branch, so repo and hosted are equal here: the PARITY shape. A branch stacked above it carries its own pending suffix. |
 | **Remote-only migrations** | **none**: no migration exists on production that this branch lacks. |
-| **Pending migrations** | **`0212`**: `0212_email_delivery_events.sql` (DELIVERY-EVENTS-01, PR #832), **NOT applied**. Hosted `0211` is the applied prefix, so this is the MIGRATION-FIRST PENDING shape, not PARITY. |
-| **Next free migration** | Next free number is **0213**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. LEAD-ALERT-01's PR #831 holds it by coordination. |
+| **Pending migrations** | **none** on this branch. |
+| **Next free migration** | Next free number is **0212**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. The coordination record already holds it for #832. |
 | **Project ref** | `alhhybgqdmcdyzpybykj`, the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `481e60c60ae8c873a2e1b6e2a0ccc5b9dc0b8c11` (PR #827): CI green (run `38164242975`), 0 review threads, migration bytes reviewed byte-identical inside #831. The shepherd was UNKNOWN (`read_failed`), and that was accepted by the operator for this migration-only apply. |
 | **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |
 
-## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, `0211` AND `0212` AUTHORED AND PENDING: `0212` on the DELIVERY-EVENTS-01 branch, stacked on the G3 branch carrying `0211`)
-
-> **0212 IS AUTHORED AND PENDING (added after the 0210 apply), on the DELIVERY-EVENTS-01 branch `feat/delivery-events-01-resend` only.**
-> `0212_email_delivery_events.sql` adds two tables and five `service_role`-only commands:
-> - **`email_outbound_messages`**, the email delivery ledger, shaped like 0206's SMS ledger: one row per attempt, forward-only status, no address, subject or body;
-> - **`email_provider_events`**, one receipt per signature-verified Resend webhook delivery, deduplicated on its delivery id.
->
-> The commands are `begin_appointment_email_message`, `settle_email_message`, `record_email_provider_event`, `claim_email_provider_events` and `process_email_provider_event`. No browser grant, no policy, no trigger on an existing table, and it writes no data.
->
-> **STACKED ON `0211`, BY COORDINATION.** Per the shared census (`/home/sam/hone-migration-coordination.md`, 2026-10-11), `0211` is the G3 client SMS permission guard (draft PR #827), `0212` is this lane (draft PR #832), and `0213` is LEAD-ALERT-01 (draft PR #831). This branch merges #827's head unchanged, so the pending suffix is the contiguous `0211`, `0212`. Apply order is 0211 → 0212 → 0213. `0211` and its record below belong to the G3 lane.
->
-> **NOT APPLIED, NOT MERGED.**
->
+## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, `0211` AUTHORED AND PENDING on the G3 branch)
 
 > **0211 IS AUTHORED AND PENDING (added after the 0210 apply), on the draft G3 branch `fix/g3-client-sms-field-guard` only.**
 > `0211_client_sms_permission_guard.sql` closes finding G3: studio members could rewrite a client's SMS consent and opt-out through the database API. It adds ONE `SECURITY INVOKER` trigger function and ONE trigger on `public.clients`, nothing else:
@@ -179,7 +193,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 >
 > **NOT APPLIED, NOT MERGED.** Apply it migration-first, under separate approval, from the exact reviewed head. No application change depends on it: either order is safe for the application, and the guard binds only raw member writes that no screen makes.
 >
-> **THE BLOCK BELOW IS THE 0210 APPLY RECORD.** Its hosted row is still current. Its repo-max, pending and next-free rows have been updated for `0211` and `0212` while they are pending.
+> **THE BLOCK BELOW IS THE 0210 APPLY RECORD.** Its hosted row is still current. Its repo-max, pending and next-free rows have been updated for `0211` while it is pending.
 
 > **0210 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #822 HEAD, BEFORE ANY MERGE.**
 > `0210_sms_waitlist_join_acknowledgement.sql` was applied to production on
@@ -239,10 +253,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
-| **Repo migration max** | **0212** — `0212_email_delivery_events.sql` (DELIVERY-EVENTS-01, draft PR #832), stacked on `0211`. `0209` and `0210` are byte-identical. |
+| **Repo migration max** | **0211** — `0211_client_sms_permission_guard.sql`, authored on the draft G3 branch: one `SECURITY INVOKER` trigger function and one trigger on `public.clients`. `0209` and `0210` are byte-identical. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **`0211`, `0212`** — `0211_client_sms_permission_guard.sql` (G3, PR #827) and `0212_email_delivery_events.sql` (DELIVERY-EVENTS-01, PR #832), both **NOT applied**, so `repo > hosted` by exactly two: the MIGRATION-FIRST PENDING shape, contiguous from hosted + 1. Apply `0211` first, under separate approval for each. |
-| **Next free migration** | Next free number is **0213**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here (LEAD-ALERT-01's PR #831 carries a `0213` of its own). |
+| **Pending migrations** | **`0211`** — `0211_client_sms_permission_guard.sql`, **NOT applied**, so `repo > hosted` by exactly one: the MIGRATION-FIRST PENDING shape. Apply it migration-first, under separate approval, before or with the merge of its branch. |
+| **Next free migration** | Next free number is **0212**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. A lane that needs it must stack on `0211` or wait for it, because the pending suffix must be contiguous. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
 | **Reviewed release head** | `3096e1f41dd00291e14885c16b8061e078b4b05d` (PR #822) — CI green (run 38107988921), explicit exact-head review clean ("Reviewed commit `3096e1f41d`"), 3 of 3 review threads resolved, operator shepherd `CANDIDATE_READY_FOR_HUMAN_REVIEW` (2026-10-11T08:08:55Z). |
 | **Production application SHA at apply time** | `0e16257ed7332d512cc4d500377a790d7c66b9b5` (the #820 merge). **No application behaviour was deployed by this apply.** |
