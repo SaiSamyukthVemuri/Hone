@@ -1333,3 +1333,76 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
     expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
   });
 });
+
+// #1035 Codex P1 4352197747 (P1-B), the webhook half. account.updated and
+// capability.updated hold an authoritative Account for a bound account, and
+// must record its country through record_stripe_account_jurisdiction, or
+// studio_payment_settings.stripe_account_country stays NULL forever.
+describe("P1-B: the account arm records the Account's country", () => {
+  const US_ACCOUNT = { ...ACCOUNT_OBJECT, country: "US", default_currency: "usd" };
+  const RECORDED = {
+    data: [{ out_result: "recorded", out_account_country: "US", out_payment_country: "US", out_matches: true }],
+    error: null,
+  };
+  const bound = () => ({
+    studio_payment_settings: [
+      { data: { studio_id: "studio-1" }, error: null },
+      { data: { stripe_onboarding_completed_at: "2026-01-01T00:00:00Z" }, error: null },
+    ],
+  });
+  const record = () => ADMIN.current!.rpcCalls.find((c) => c.name === "record_stripe_account_jurisdiction");
+
+  it("account.updated records country and default currency after the status sync", async () => {
+    CONSTRUCT_EVENT.mockReturnValue({ ...accountEvent(), data: { object: US_ACCOUNT } });
+    ADMIN.current = makeAdmin(bound(), { claim_stripe_event: CLAIM_OK, record_stripe_account_jurisdiction: RECORDED });
+    expect((await callRoute()).status).toBe(200);
+    const order = names(ADMIN.current.rpcCalls);
+    expect(order.indexOf("record_stripe_account_jurisdiction")).toBeGreaterThan(order.indexOf("sync_studio_account_status"));
+    expect(record()?.args).toEqual({
+      p_studio_id: "studio-1",
+      p_stripe_account_id: "acct_test_1",
+      p_stripe_livemode: false,
+      p_country: "US",
+      p_default_currency: "usd",
+    });
+    expect(order).toContain("mark_stripe_event_processed");
+  });
+
+  it("capability.updated records the identity-verified retrieved Account", async () => {
+    CONSTRUCT_EVENT.mockReturnValue({ ...accountEvent("capability.updated"), data: { object: { id: "card_payments", account: "acct_test_1" } } });
+    ACCOUNTS_RETRIEVE.mockResolvedValue(US_ACCOUNT);
+    ADMIN.current = makeAdmin(bound(), { claim_stripe_event: CLAIM_OK, record_stripe_account_jurisdiction: RECORDED });
+    expect((await callRoute()).status).toBe(200);
+    expect(record()?.args).toMatchObject({ p_stripe_account_id: "acct_test_1", p_country: "US" });
+  });
+
+  it("an rpc error fails the event retryably and never marks it processed", async () => {
+    CONSTRUCT_EVENT.mockReturnValue({ ...accountEvent(), data: { object: US_ACCOUNT } });
+    ADMIN.current = makeAdmin(bound(), {
+      claim_stripe_event: CLAIM_OK,
+      record_stripe_account_jurisdiction: { data: null, error: { code: "XX000", message: "boom" } },
+    });
+    expect((await callRoute()).status).toBe(500);
+    expect(names(ADMIN.current.rpcCalls)).not.toContain("mark_stripe_event_processed");
+  });
+
+  it("an account.updated object for ANOTHER account is never recorded against this binding", async () => {
+    CONSTRUCT_EVENT.mockReturnValue({ ...accountEvent(), data: { object: { ...US_ACCOUNT, id: "acct_other" } } });
+    ADMIN.current = makeAdmin(bound(), { claim_stripe_event: CLAIM_OK, record_stripe_account_jurisdiction: RECORDED });
+    await callRoute();
+    expect(record()).toBeUndefined();
+  });
+
+  it("a persisted country_conflict is acknowledged: it is a recorded fact, not a retryable failure", async () => {
+    CONSTRUCT_EVENT.mockReturnValue({ ...accountEvent(), data: { object: US_ACCOUNT } });
+    ADMIN.current = makeAdmin(bound(), {
+      claim_stripe_event: CLAIM_OK,
+      record_stripe_account_jurisdiction: {
+        data: [{ out_result: "country_conflict", out_account_country: "CA", out_payment_country: "US", out_matches: false }],
+        error: null,
+      },
+    });
+    expect((await callRoute()).status).toBe(200);
+    expect(names(ADMIN.current.rpcCalls)).toContain("mark_stripe_event_processed");
+  });
+});

@@ -67,8 +67,8 @@ import type {
 //   pre-existing sessions.price_paid_cents as a non-binding
 //   suggestion only.
 // * Current verified jurisdiction and observed account country gate readiness.
-//   This helper retains its existing return interface; prepare-currency writers
-//   are a separate contract and are not changed by this read-only guard.
+//   An eligible result carries that jurisdiction (#1035 P1-C): the prepare
+//   action takes the attempt's currency from it, never from a constant.
 
 type Args = {
   studioId: string;
@@ -467,7 +467,8 @@ export async function getSessionPaymentEligibility(
     cardPaymentMethodId &&
     resolvedStripeAccountId &&
     stripeCustomerIdFromCard &&
-    stripePaymentMethodIdFromCard
+    stripePaymentMethodIdFromCard &&
+    jurisdiction
   ) {
     return {
       eligible: true,
@@ -484,6 +485,7 @@ export async function getSessionPaymentEligibility(
       stripeCustomerId: stripeCustomerIdFromCard,
       stripePaymentMethodId: stripePaymentMethodIdFromCard,
       existingAttempts,
+      jurisdiction,
     };
   }
 

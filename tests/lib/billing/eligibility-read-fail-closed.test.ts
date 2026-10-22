@@ -598,6 +598,15 @@ describe("G1 guard-only eligibility country authority", () => {
       expect(h.reads).toContainEqual({ table: "studio_payment_jurisdictions", filters: [["studio_id", STUDIO]] });
       expect(h.reads).toContainEqual({ table: "studio_payment_settings", filters: [["studio_id", STUDIO], ["stripe_livemode", false]] });
     });
+  // #1035 Codex P1 4352197754 (P1-C): the prepare writer needs the currency
+  // this read decided, so the eligible result carries the jurisdiction.
+  it.each([["CA", "cad", "CA"], ["US", "usd", "US"], ["CA", "cad", null]] as const)(
+    "%s eligible result carries the jurisdiction it was decided on", async (country, currency, observed) => {
+      setCountry(country, currency, observed);
+      const result = await getSessionPaymentEligibility(sessionArgs());
+      if (!result.eligible) throw new Error("expected eligible");
+      expect(result.jurisdiction).toEqual({ country, currency });
+    });
   it("settings read failure keeps the existing generic retryable reason", async () => {
     err("studio_payment_settings"); await refused(/could not be verified/i);
   });

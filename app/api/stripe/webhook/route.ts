@@ -72,7 +72,7 @@
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe/server";
-import { accountToStatusSnapshot } from "@/lib/stripe/account";
+import { accountToStatusSnapshot, recordAccountJurisdiction } from "@/lib/stripe/account";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { captureServerEvent } from "@/lib/analytics/server";
@@ -396,6 +396,19 @@ async function handleStripeEvent(
         );
       }
 
+      // #1035 P1-B. Record the account's country from this authoritative
+      // Account object (the event's own for account.updated, the
+      // identity-verified retrieve for capability.updated). An rpc error
+      // throws into the handler catch, so the event stays retryable, as a
+      // failed status sync does. A result that is not a confirmed match is a
+      // recorded fact, not a failure: eligibility and the 0214 guard refuse it.
+      const accountCountry = await recordAccountJurisdiction(admin, {
+        studioId: ctx.studioId,
+        stripeAccountId: ctx.stripeAccountId,
+        livemode: ctx.livemode,
+        account: accountObject,
+      });
+
       if (snapshot.chargesEnabled) {
         // Post-response, bounded: analytics failure must never 500 this
         // webhook and trigger Stripe retries (P1/P2-ANALYTICS-03).
@@ -413,6 +426,8 @@ async function handleStripeEvent(
         payoutsEnabled: snapshot.payoutsEnabled,
         requirementsCurrentlyDueCount: snapshot.requirementsCurrentlyDue.length,
         requirementsEventuallyDueCount: snapshot.requirementsEventuallyDue.length,
+        accountCountryConfirmed: accountCountry.confirmed,
+        accountCountryResult: accountCountry.result,
       };
     }
 

@@ -323,7 +323,10 @@ export async function prepareSessionPaymentChargeAction(
       // execution and any later refund all read THIS column; nothing downstream
       // recomputes it from the service menu.
       amount_cents: decision.amountCents,
-      currency: "cad",
+      // #1035 P1-C. The studio's charge currency, from the jurisdiction the
+      // eligibility read decided on. The 0214 insert guard re-checks it under
+      // FOR SHARE, so a jurisdiction that changed since then still fails closed.
+      currency: eligibility.jurisdiction.currency,
       status: "ready",
       client_payment_method_id: eligibility.card.id,
       card_authorization_signature_id:

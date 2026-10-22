@@ -102,6 +102,9 @@ const ELIGIBLE = {
   stripeCustomerId: "cus_SERVER",
   stripePaymentMethodId: "pm_SERVER",
   existingAttempts: [],
+  // #1035 P1-C: the jurisdiction eligibility read, and the only source of the
+  // prepared attempt's currency.
+  jurisdiction: { country: "CA", currency: "cad" },
 };
 
 let eligibility: unknown = ELIGIBLE;
@@ -831,5 +834,34 @@ describe("prepare refuses a visit that already has an attested outcome", () => {
     const r = await prepareSessionPaymentChargeAction(form({ final: "120.00" }));
     expect(r.ok).toBe(true);
     expect(inserted.length).toBe(before + 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1035 Codex P1 4352197754 (P1-C). The attempt is prepared in the studio's
+// CURRENCY, read by eligibility from its payment jurisdiction. A hard-coded
+// "cad" is refused by the 0214 insert guard for every US studio.
+// ---------------------------------------------------------------------------
+describe("P1-C · the prepared attempt carries the jurisdiction's currency", () => {
+  it("a US/usd eligible session inserts usd", async () => {
+    eligibility = { ...ELIGIBLE, jurisdiction: { country: "US", currency: "usd" } };
+    const res = await prepareSessionPaymentChargeAction(form({ final: "120.00" }));
+    expect(res.ok).toBe(true);
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0].currency).toBe("usd");
+  });
+
+  it("a CA/cad eligible session still inserts cad", async () => {
+    const res = await prepareSessionPaymentChargeAction(form({ final: "120.00" }));
+    expect(res.ok).toBe(true);
+    expect(inserted[0].currency).toBe("cad");
+  });
+
+  it("a forged currency field cannot move a US studio to cad", async () => {
+    eligibility = { ...ELIGIBLE, jurisdiction: { country: "US", currency: "usd" } };
+    const fd = form({ final: "120.00" });
+    fd.set("currency", "cad");
+    await prepareSessionPaymentChargeAction(fd);
+    expect(inserted[0].currency).toBe("usd");
   });
 });
