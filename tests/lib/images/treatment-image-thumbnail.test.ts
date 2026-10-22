@@ -496,7 +496,14 @@ describe("SOURCE CONTRACT: the derivative introduces no public surface", () => {
     expect(signer.replace(thumbBranch, "")).not.toMatch(/buildTreatmentImageThumbPath/);
     // ...and the modal itself never asks for a variant: it gets the ORIGINAL.
     const mgr = readFileSync("app/(app)/clients/[id]/images/TreatmentImagesManager.tsx", "utf8");
-    expect(mgr).toMatch(/getTreatmentImageSignedUrlAction\(\{ imageId: img\.id \}\)/);
+    // The manager now delegates request identity to the preview controller.
+    // Follow the complete row-id -> controller -> action chain, requiring an
+    // exact action payload with no thumbnail variant.
+    expect(mgr).toMatch(/previewRequests\.current\?\.open\(img\.id\)/);
+    expect(mgr).toMatch(/request: \(imageId\) => getTreatmentImageSignedUrlAction\(\{ imageId \}\)/);
+    const controller = readFileSync("lib/images/photo-preview-controller.ts", "utf8");
+    expect(controller).toMatch(/async open\(imageId: string\)/);
+    expect(controller).toMatch(/await deps\.request\(imageId\)/);
   });
 });
 
