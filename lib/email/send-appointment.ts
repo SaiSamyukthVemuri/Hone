@@ -1,3 +1,4 @@
+import { safeLog } from "@/lib/logging/safe-log";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FROM_ADDRESS, getResendTransport } from "@/lib/email/client";
 import {
@@ -209,6 +210,25 @@ export async function sendEmailSafely(opts: {
   }
 }
 
+// Messaging diagnostics are a closed vocabulary. safeLog removes record IDs,
+// but intentionally does not sanitize arbitrary provider text; never pass it.
+const EMAIL_LOG_TYPES = new Set([
+  "confirmation", "reminder_24h", "reminder_2h", "no_show",
+  "intake_reminder_7d", "intake_reminder_3d",
+]);
+function emailTypeForLog(value: unknown): string {
+  return typeof value === "string" && EMAIL_LOG_TYPES.has(value) ? value : "unknown";
+}
+function emailAttemptForLog(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 3 ? value : null;
+}
+
+// A failed diagnostic must not replace settlement or suppress the existing
+// final-attempt event. Raw provider/RPC errors never enter this helper.
+function logEmailDiagnostic(payload: string): void {
+  try { safeLog.error(payload); } catch { /* Best-effort logging only. */ }
+}
+
 export type EmailType =
   | "confirmation"
   | "reminder_24h"
@@ -236,13 +256,11 @@ export async function recordEmailAttempt(
     p_success: success,
   });
   if (error) {
-    console.error(
+    logEmailDiagnostic(
       JSON.stringify({
         event: "record_email_attempt_failed",
-        appointmentId,
-        emailType,
-        success,
-        error: String(error),
+        emailType: emailTypeForLog(emailType),
+        success: success === true,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -316,13 +334,11 @@ export async function recordEmailResult(
     // 5-minute staleness window in claim_email_send bounds how long
     // the row stays blocked, and _sent_at remaining null means the
     // next pass may retry under the attempts cap.
-    console.error(
+    logEmailDiagnostic(
       JSON.stringify({
         event: "record_email_result_failed",
-        appointmentId,
-        emailType,
-        success,
-        error: String(error),
+        emailType: emailTypeForLog(emailType),
+        success: success === true,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -352,14 +368,14 @@ export function logEmailFailure(opts: {
   // alert row.
   studioId?: string | null;
 }): void {
-  console.error(
+  const emailType = emailTypeForLog(opts.emailType);
+  const attemptNumber = emailAttemptForLog(opts.attemptNumber);
+  logEmailDiagnostic(
     JSON.stringify({
       event: "email_send_failed",
-      appointmentId: opts.appointmentId,
-      emailType: opts.emailType,
-      error: opts.error,
-      retryable: opts.retryable,
-      attemptNumber: opts.attemptNumber,
+      emailType,
+      retryable: opts.retryable === true,
+      attemptNumber,
       timestamp: new Date().toISOString(),
     }),
   );
@@ -381,15 +397,15 @@ export function logEmailFailure(opts: {
       await recordOpsAlert({
         severity: "warning",
         event: "email_send_gave_up",
-        message: `Email ${opts.emailType} gave up after ${opts.attemptNumber ?? "?"} attempts.`,
+        message: `Email ${emailType} gave up after ${attemptNumber ?? "?"} attempts.`,
         studioId: opts.studioId ?? null,
         appointmentId: opts.appointmentId,
         route: "lib/email/send-appointment",
         safeDetails: {
-          email_type: opts.emailType,
-          attempt_number: opts.attemptNumber ?? null,
-          retryable: opts.retryable,
-          provider_error: opts.error,
+          email_type: emailType,
+          attempt_number: attemptNumber,
+          retryable: opts.retryable === true,
+          failure_class: "provider_or_transport",
         },
       });
     } catch {
