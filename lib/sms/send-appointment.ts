@@ -92,6 +92,34 @@ export type ReminderSmsResult =
 // Re-export for callers that import alongside the send helpers.
 export type { SmsType };
 
+// Closed diagnostic fields only: provider text, recipient details and provider
+// identifiers never enter the third-party console. RPC/result authority is unchanged.
+function smsTypeForLog(value: unknown): string {
+  return value === "confirmation" || value === "reminder_24h" || value === "reminder_2h" ? value : "unknown";
+}
+function smsAttemptForLog(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 3 ? value : null;
+}
+const SMS_LOG_FAILURES = new Set([
+  "twilio_timeout", "twilio_network", "twilio_unreachable", "twilio_unreadable_success",
+  "twilio_not_configured", "twilio_missing_sender", "twilio_invalid_sender",
+  "sms_fenced_non_production", "sms_render_failed", "reminder_claim_unavailable",
+  "sms_send_unknown", "sms_send_exception",
+]);
+function smsFailureForLog(value: unknown): string {
+  if (typeof value !== "string") return "provider_or_transport";
+  if (value.startsWith("exception:")) return "sms_send_exception";
+  const ambiguous = value.endsWith(":outcome_unknown");
+  const tag = ambiguous ? value.slice(0, -":outcome_unknown".length) : value;
+  return SMS_LOG_FAILURES.has(tag) || /^twilio_http_[1-5][0-9]{2}$/.test(tag)
+    ? `${tag}${ambiguous ? ":outcome_unknown" : ""}` : "provider_or_transport";
+}
+
+// Best-effort diagnostics must not replace RPC outcomes or suppress alerts.
+function logSmsDiagnostic(payload: string): void {
+  try { safeLog.error(payload); } catch { /* Best-effort logging only. */ }
+}
+
 // ---------------------------------------------------------------------------
 // Low-level claim/record wrappers
 // ---------------------------------------------------------------------------
@@ -106,12 +134,10 @@ export async function claimSmsSend(
     p_sms_type: smsType,
   });
   if (error) {
-    console.error(
+    logSmsDiagnostic(
       JSON.stringify({
         event: "claim_sms_send_failed",
-        appointmentId,
-        smsType,
-        error: String(error),
+        smsType: smsTypeForLog(smsType),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -138,13 +164,11 @@ export async function recordSmsResult(
     // and the next cron pass could attempt a duplicate. The 5-minute
     // claim window provides a partial backstop; this log is the
     // operator's signal that something is wrong with Postgres.
-    console.error(
+    logSmsDiagnostic(
       JSON.stringify({
         event: "record_sms_result_failed",
-        appointmentId,
-        smsType,
-        success,
-        error: String(error),
+        smsType: smsTypeForLog(smsType),
+        success: success === true,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -217,14 +241,13 @@ export function logSmsFailure(opts: {
   // PR #153. Optional studio id surfaces on the ops alert.
   studioId?: string | null;
 }): void {
-  console.error(
+  logSmsDiagnostic(
     JSON.stringify({
       event: "sms_send_failed",
-      appointmentId: opts.appointmentId,
-      smsType: opts.smsType,
-      error: opts.error,
-      retryable: opts.retryable,
-      attemptNumber: opts.attemptNumber,
+      smsType: smsTypeForLog(opts.smsType),
+      error: smsFailureForLog(opts.error),
+      retryable: opts.retryable === true,
+      attemptNumber: smsAttemptForLog(opts.attemptNumber),
       timestamp: new Date().toISOString(),
     }),
   );
@@ -240,15 +263,15 @@ export function logSmsFailure(opts: {
       await recordOpsAlert({
         severity: "warning",
         event: "sms_send_failed",
-        message: `SMS ${opts.smsType} gave up after ${opts.attemptNumber ?? "?"} attempts.`,
+        message: `SMS ${smsTypeForLog(opts.smsType)} gave up after ${smsAttemptForLog(opts.attemptNumber) ?? "?"} attempts.`,
         studioId: opts.studioId ?? null,
         appointmentId: opts.appointmentId,
         route: "lib/sms/send-appointment",
         safeDetails: {
-          sms_type: opts.smsType,
-          attempt_number: opts.attemptNumber ?? null,
-          retryable: opts.retryable,
-          provider_error: opts.error,
+          sms_type: smsTypeForLog(opts.smsType),
+          attempt_number: smsAttemptForLog(opts.attemptNumber),
+          retryable: opts.retryable === true,
+          provider_error: smsFailureForLog(opts.error),
         },
       });
     } catch {
