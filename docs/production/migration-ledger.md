@@ -25,10 +25,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0212**, unchanged canonical declaration and original receipts; no new hosted read/apply implied. |
-| **Repo migration max** | **0249** (`0249_session_payment_claim_admission_fence.sql`), source-only and pending. |
+| **Repo migration max** | **0250** (`0250_appointment_email_stale_preparation_retire.sql`, MSG-002/003 R2 repair of 0247 on the #926 evidence candidate), source-only and pending. |
 | **Remote-only migrations** | **None recorded** by canonical hosted migration state. |
 | **Pending migrations** | PENDING, NOT APPLIED: **0213–0246 plus0248–0249** (`0213`, `0214`, `0215`, `0216`, `0217`, `0218`, `0219`, `0220`, `0221`, `0222`, `0223`, `0224`, `0225`, `0226`, `0227`, `0228`, `0229`, `0230`, `0231`, `0232`, `0233`, `0234`, `0235`, `0236`, `0237`, `0238`, `0239`, `0240`, `0241`, `0242`, `0243`, `0244`, `0245`, `0246`, `0248`, `0249`); reserved0247 absent, not contiguous. |
-| **Next free number** | Next free number is **0250** by derived filenames, not claimed or allocated here. Willow0247 remains reserved/held/absent; do not fabricate a filler or import held source. Re-census through the existing owner process before any allocation. |
+| **Next free number** | Next free number is **0251** by derived filenames, not claimed or allocated here. Willow0247 remains reserved/held/absent; do not fabricate a filler or import held source. Re-census through the existing owner process before any allocation. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` (Hone production; no connection/apply here). |
 
 ### Published owner source additions after0237

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, fileForVersion } from "./helpers/migration-state";
 
 const sql = readFileSync("supabase/migrations/0249_session_payment_claim_admission_fence.sql", "utf8");
 const predecessor = readFileSync("supabase/migrations/0187_appointment_settlement.sql", "utf8");
@@ -18,8 +18,9 @@ const code = withoutComments(sql);
 const pending = body(fn).slice(body(fn).indexOf("if v_row.status = 'pending_stripe' then"), body(fn).indexOf("-- Any other non-'ready'"));
 
 describe("0249 existing claim RPC protocol-admission fence", () => {
-  it("owns the actual maximum and exactly one allocated SQL file", () => {
-    expect(isRepoMax("0249")).toBe(true);
+  // Only the current maximum's own test asserts isRepoMax (CLAUDE.md §2);
+  // 0250 now owns it.
+  it("owns exactly one allocated SQL file", () => {
     expect(countVersion("0249")).toBe(1);
     expect(fileForVersion("0249")).toBe("0249_session_payment_claim_admission_fence.sql");
     expect(code.trim()).toMatch(/^begin;/);
