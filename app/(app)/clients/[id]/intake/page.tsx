@@ -353,7 +353,10 @@ export default async function ClientIntakePage({
 
       <AllergiesSummary responses={responses} />
 
-      <IntakeReviewFlags responses={responses} steps={INTAKE_STEPS} />
+      {/* #1035 P2 4354364701: the flags apply current clinical rules to the
+          stored answers, so they are withheld, like the Fitzpatrick summary,
+          when the saved questionnaire cannot be verified. */}
+      {catalogue.kind !== "invalid" ? <IntakeReviewFlags responses={responses} steps={INTAKE_STEPS} /> : null}
 
       {catalogue.kind !== "invalid" ? <FitzpatrickSummary responses={responses} steps={INTAKE_STEPS} /> : null}
 
