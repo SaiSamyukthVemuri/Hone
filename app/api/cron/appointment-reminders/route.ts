@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import {
-  claimEmailSend,
+  claimEmailSendOutcome,
   logEmailFailure,
   recordEmailResult,
   send24hReminderToClient,
@@ -221,7 +221,7 @@ async function sendReminderPass(opts: {
   kind: "24h" | "2h";
   windowStartIso: string;
   windowEndIso: string;
-}, appt: Joined, admin: ReturnType<typeof createAdminClient>, stats: EmailRunStats, appOrigin: string): Promise<void> {
+}, appt: Joined, admin: ReturnType<typeof createAdminClient>, stats: EmailRunStats, appOrigin: string): Promise<"claim_unavailable" | void> {
   const attemptsColumn =
     opts.kind === "24h"
       ? "reminder_24h_send_attempts"
@@ -264,7 +264,9 @@ async function sendReminderPass(opts: {
 
   // Claim-before-send (PR #189, migration 0080): atomic attempt increment +
   // _claimed_at, so two overlapping cron runs can never both send.
-  const claimed = await claimEmailSend(admin, appt.id, emailType);
+  const claimOutcome = await claimEmailSendOutcome(admin, appt.id, emailType);
+  if (claimOutcome === "unavailable") return "claim_unavailable";
+  const claimed = claimOutcome === "claimed";
   if (!claimed) {
     stats.skipped += 1;
     return;
@@ -631,7 +633,7 @@ export async function GET(req: Request) {
         const opts = { kind, windowStartIso: window.startIso, windowEndIso: window.endIso } as const;
         const unavailable = pass.startsWith("sms")
           ? await sendSmsReminderPass({ ...opts, ledgerBudget }, appt, admin, stats, appOrigin)
-          : (await sendReminderPass(opts, appt, admin, stats, appOrigin), undefined);
+          : await sendReminderPass(opts, appt, admin, stats, appOrigin);
         return {
           kind: unavailable === "claim_unavailable" ? "claim_unavailable" : stats.attempted > attemptedBefore ? "processed" : "skipped",
           attempted: stats.attempted > attemptedBefore,

@@ -268,28 +268,32 @@ export type ClaimableEmailType =
 // statement, so two overlapping cron runs can never both send.
 // Errors are treated as "claim not won" so an RPC outage cannot
 // cause a duplicate send.
+/** Preserve the legacy fail-closed boolean contract for other email callers. */
 export async function claimEmailSend(
   admin: SupabaseClient,
   appointmentId: string,
   emailType: ClaimableEmailType,
 ): Promise<boolean> {
-  const { data, error } = await admin.rpc("claim_email_send", {
-    p_appointment_id: appointmentId,
-    p_email_type: emailType,
-  });
-  if (error) {
-    console.error(
-      JSON.stringify({
-        event: "claim_email_send_failed",
-        appointmentId,
-        emailType,
-        error: String(error),
-        timestamp: new Date().toISOString(),
-      }),
-    );
-    return false;
-  }
-  return data === true;
+  return (await claimEmailSendOutcome(admin, appointmentId, emailType)) === "claimed";
+}
+
+/** A definite DB false may advance the scan; failure to learn claim authority
+ * must not. No retry, counter refund or provider action occurs in this seam. */
+export async function claimEmailSendOutcome(
+  admin: SupabaseClient,
+  appointmentId: string,
+  emailType: ClaimableEmailType,
+): Promise<"claimed" | "not_claimed" | "unavailable"> {
+  try {
+    const { data, error } = await admin.rpc("claim_email_send", {
+      p_appointment_id: appointmentId,
+      p_email_type: emailType,
+    });
+    if (error === null && typeof data === "boolean") return data ? "claimed" : "not_claimed";
+  } catch { /* A lost/throwing reply is not a proven collision. */ }
+  // Fixed diagnostic only; no RPC error text, identifiers or hostile getters.
+  try { console.error(JSON.stringify({ event: "claim_email_send_failed", timestamp: new Date().toISOString() })); } catch { /* Best effort cannot grant permission. */ }
+  return "unavailable";
 }
 
 // Record the outcome of a CLAIMED send (record_email_result,

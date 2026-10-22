@@ -44,14 +44,14 @@ const EMAIL_PASS = CODE.slice(
 
 describe("email reminder pass: claim before send", () => {
   it("imports claimEmailSend + recordEmailResult from the email module", () => {
-    expect(ROUTE).toMatch(/claimEmailSend,/);
+    expect(ROUTE).toMatch(/claimEmailSendOutcome,/);
     expect(ROUTE).toMatch(/recordEmailResult,/);
     expect(ROUTE).toMatch(/from "@\/lib\/email\/send-appointment"/);
   });
 
   it("every send is claimed first: claim call precedes the send dispatch", () => {
     const claimIdx = EMAIL_PASS.indexOf(
-      "await claimEmailSend(admin, appt.id, emailType)",
+      "await claimEmailSendOutcome(admin, appt.id, emailType)",
     );
     const sendIdx = EMAIL_PASS.indexOf("result = await sendFn(");
     expect(claimIdx).toBeGreaterThan(-1);
@@ -65,7 +65,7 @@ describe("email reminder pass: claim before send", () => {
   });
 
   it("the claim also precedes the missing-token failure record", () => {
-    const claimIdx = EMAIL_PASS.indexOf("await claimEmailSend(");
+    const claimIdx = EMAIL_PASS.indexOf("await claimEmailSendOutcome(");
     const tokenIdx = EMAIL_PASS.indexOf("if (!token) {");
     expect(tokenIdx).toBeGreaterThan(claimIdx);
   });
@@ -90,7 +90,7 @@ describe("email reminder pass: claim before send", () => {
     // unclaimed dispatch is ever added, this count catches it.
     const sends = EMAIL_PASS.match(/await sendFn\(/g) ?? [];
     expect(sends.length).toBe(1);
-    const claims = EMAIL_PASS.match(/await claimEmailSend\(/g) ?? [];
+    const claims = EMAIL_PASS.match(/await claimEmailSendOutcome\(/g) ?? [];
     expect(claims.length).toBe(1);
   });
 });
@@ -115,7 +115,7 @@ describe("email reminder pass: preserved behavior", () => {
     // a claim costs an attempt off the 3-strike cap.
     const toggleIdx = EMAIL_PASS.indexOf("[studioToggle]");
     const emailIdx = EMAIL_PASS.indexOf("if (!appt.client?.email) return;");
-    const claimIdx = EMAIL_PASS.indexOf("await claimEmailSend(");
+    const claimIdx = EMAIL_PASS.indexOf("await claimEmailSendOutcome(");
     expect(toggleIdx).toBeGreaterThan(-1);
     expect(emailIdx).toBeGreaterThan(-1);
     expect(claimIdx).toBeGreaterThan(toggleIdx);
@@ -155,6 +155,8 @@ const race = vi.hoisted(() => ({
   start: "2026-10-22T12:00:00.000Z",
   freshStart: "2026-10-22T12:00:00.000Z" as string | null,
   readError: false,
+  claimRpcMode: "normal" as "normal" | "error" | "throw" | "malformed",
+  claimRpc: vi.fn(),
   incidentRead: "none" as "none" | "db_error" | "timeout" | "invalid_row" | "throw" | "timeout_once",
   incidentThrown: undefined as unknown,
   setupThrown: undefined as unknown,
@@ -170,7 +172,7 @@ const race = vi.hoisted(() => ({
   pages: [] as Array<{ cursor: string | null; orders: string[] }>,
   smsSend: vi.fn(async () => ({ ok: true, intakeLinkIncluded: false })),
   send: vi.fn(async () => ({ ok: true })),
-  claim: vi.fn(async () => true),
+  claim: vi.fn(async (_admin?: unknown, _id?: string, _kind?: string) => { void [_admin, _id, _kind]; return true; }),
   record: vi.fn(async () => undefined),
 }));
 vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
@@ -207,14 +209,23 @@ vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => { if (race.orig
 vi.mock("@/lib/booking/tokens", () => ({ generateCancellationToken: () => "synthetic-token" }));
 vi.mock("@/lib/cron/reminder-heartbeat", () => ({ recordReminderRunSuccess: race.heartbeat }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: race.alerts }));
-vi.mock("@/lib/email/send-appointment", () => ({
-  claimEmailSend: race.claim,
-  recordEmailResult: race.record,
-  logEmailFailure: vi.fn(),
-  send24hReminderToClient: race.send,
-  send2hReminderToClient: race.send,
-  sendIntakeReminderToClient: race.send,
-}));
+vi.mock("@/lib/email/send-appointment", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/email/send-appointment")>();
+  const invokeClaim = async (original: Parameters<typeof actual.claimEmailSend>, richer = false) => {
+    const admin = { rpc: async () => {
+      race.claimRpc();
+      if (race.claimRpcMode === "throw") throw new Error("SYNTHETIC_PRIVATE unavailable claim");
+      if (race.claimRpcMode === "error") return { data: null, error: new Error("SYNTHETIC_PRIVATE unavailable claim") };
+      if (race.claimRpcMode === "malformed") return { data: null, error: null };
+      return { data: await race.claim(...original), error: null };
+    } } as unknown as Parameters<typeof actual.claimEmailSend>[0];
+    return richer ? actual.claimEmailSendOutcome(admin, original[1], original[2]) : actual.claimEmailSend(admin, original[1], original[2]);
+  };
+  return { claimEmailSend: (...args: Parameters<typeof actual.claimEmailSend>) => invokeClaim(args),
+    claimEmailSendOutcome: (...args: Parameters<typeof actual.claimEmailSend>) => invokeClaim(args, true),
+    recordEmailResult: race.record, logEmailFailure: vi.fn(),
+    send24hReminderToClient: race.send, send2hReminderToClient: race.send, sendIntakeReminderToClient: race.send };
+});
 vi.mock("@/lib/sms/send-appointment", () => ({
   createLedgerBudget: () => ({}),
   send24hReminderSmsToClient: race.smsSend,
@@ -293,6 +304,7 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     vi.setSystemTime(new Date("2026-10-21T12:00:00.000Z"));
     race.store.clear(); race.store.set("reminder_scan:v1:rotation", { value: JSON.stringify({version:1,next:"email24h",known:[]}), expiry: Date.now() + 10800000 }); race.failStore = false; race.heartbeat.mockClear(); race.alerts.mockClear();
     race.start = "2026-10-22T12:00:00.000Z"; race.freshStart = race.start;
+    race.claimRpcMode = "normal"; race.claimRpc.mockClear();
     race.readError = false; race.incidentRead = "none"; race.incidentSqlState = "42703"; race.incidentThrown = undefined; race.incidentCoordinationError = undefined;
     race.backlog = null; race.sent.clear(); race.pages = [];
     race.setupThrown = undefined; race.originThrown = undefined;
@@ -585,6 +597,34 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     expect(race.claim).toHaveBeenCalledTimes(1); expect(race.send).toHaveBeenCalledTimes(1);
     expect(race.heartbeat).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
+  });
+
+  it.each(["error", "throw", "malformed"] as const)("email claim %s keeps the candidate unacknowledged and heartbeat unhealthy", async (mode) => {
+    race.claimRpcMode = mode;
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(500);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).not.toHaveBeenCalled(); expect(race.record).not.toHaveBeenCalled(); expect(race.heartbeat).not.toHaveBeenCalled();
+    const saved = race.store.get("reminder_scan:v1:checkpoint:email24h");
+    if (saved) expect(JSON.parse(saved.value).after).toBeNull();
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({ reason: "claim_unavailable", attempted: 0 }) }));
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
+  });
+  it("a definite false claim remains a legitimate skip that can complete the pass", async () => {
+    race.claim.mockResolvedValue(false);
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1); expect(race.send).not.toHaveBeenCalled(); expect(race.record).not.toHaveBeenCalled();
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("an unavailable second claim preserves the already-handled prefix without acknowledging that row", async () => {
+    race.backlog = { channel: "email", reason: "toggle", skipped: 0, eligible: 3 };
+    race.claim.mockImplementationOnce(async () => { race.claimRpcMode = "error"; return true; });
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
+    expect(race.claimRpc).toHaveBeenCalledTimes(2); expect(race.send).toHaveBeenCalledTimes(1); expect(race.record).toHaveBeenCalledTimes(1);
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    const saved = race.store.get("reminder_scan:v1:checkpoint:email24h"); expect(saved).toBeDefined();
+    expect(JSON.parse(saved!.value).after.id).toBe("00000000-0000-4000-8000-000000000001");
   });
 
 });
