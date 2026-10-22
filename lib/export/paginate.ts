@@ -119,12 +119,28 @@ async function fetchAllRowsWithBoundaryCheck<T>(
 ): Promise<PageResult<T>> {
   const pageSize = opts.pageSize ?? EXPORT_PAGE_SIZE;
   const maxPages = opts.maxPages ?? EXPORT_MAX_PAGES;
+  // The documented capacity is ROWS, not pages: the overlap makes each later
+  // page add only pageSize - 1 new rows, so a page count would refuse tables
+  // the unkeyed read accepts. Same rule as unkeyed: fewer than
+  // maxPages x pageSize rows is returned, that many or more is refused.
+  const capacity = maxPages * pageSize;
+  // A one-row page is nothing but the overlap row and would never advance.
+  if (pageSize < 2) {
+    return {
+      data: null,
+      error: {
+        message: `Export read with a row key needs a page size of at least 2 (got ${pageSize}); refusing to return a partial table.`,
+      },
+    };
+  }
 
   attempts: for (let attempt = 0; attempt < EXPORT_MAX_READ_ATTEMPTS; attempt++) {
     const all: T[] = [];
     let boundaryKey: string | null = null;
 
-    for (let page = 0; page < maxPages; page++) {
+    // Terminates: every full page adds at least one new row (pageSize >= 2),
+    // and the read refuses once it holds `capacity` rows.
+    for (let page = 0; ; page++) {
       // Page 0 starts at 0; every later page starts ON the previous page's last
       // row, so each request still asks for at most `pageSize` rows.
       const from = page === 0 ? 0 : all.length - 1;
@@ -139,6 +155,7 @@ async function fetchAllRowsWithBoundaryCheck<T>(
       } else {
         all.push(...rows);
       }
+      if (all.length >= capacity) return pageLimitRefusal(maxPages, pageSize);
       // Same end-of-table rule as the unkeyed read: a short page is the end.
       if (rows.length < pageSize) return { data: all, error: null };
 
@@ -154,8 +171,6 @@ async function fetchAllRowsWithBoundaryCheck<T>(
       }
       boundaryKey = key;
     }
-
-    return pageLimitRefusal(maxPages, pageSize);
   }
 
   return {

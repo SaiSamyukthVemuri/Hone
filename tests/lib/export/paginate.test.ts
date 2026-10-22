@@ -348,3 +348,38 @@ describe("E7 — every exported read is boundary-checked by default", () => {
     expect(keyed.data).toHaveLength(1500);
   });
 });
+
+describe("E8 — a keyed read keeps the documented row capacity (Codex P2 4351023375)", () => {
+  // Capacity is maxPages x pageSize ROWS. The overlap makes every keyed page
+  // after the first add pageSize - 1 new rows, so counting PAGES refused tables
+  // the unkeyed read accepts (499,501..499,999 rows at the real sizes). Small
+  // sizes make the same boundary cheap: capacity 3 x 10 = 30.
+  const small = { pageSize: 10, maxPages: 3 };
+
+  it("29 rows (capacity - 1) are returned, as the unkeyed read returns them", async () => {
+    const rows = makeRows(29);
+    const unkeyed = await fetchAllRows(pageSource(rows, 10).factory, small);
+    expect(unkeyed.data).toHaveLength(29);
+    const keyed = await fetchAllRows(pageSource(rows, 10).factory, { ...small, ...byId });
+    expect(keyed.error).toBeNull();
+    expect(keyed.data!.map((r) => r.id)).toEqual(rows.map((r) => r.id));
+  });
+
+  it("30 rows (capacity) are refused, as the unkeyed read refuses them", async () => {
+    const rows = makeRows(30);
+    const unkeyed = await fetchAllRows(pageSource(rows, 10).factory, small);
+    expect(unkeyed.data).toBeNull();
+    const keyed = await fetchAllRows(pageSource(rows, 10).factory, { ...small, ...byId });
+    expect(keyed.data).toBeNull();
+    expect(keyed.error?.message).toMatch(/refusing to return a partial table/);
+  });
+
+  it("a keyed read with pageSize 1 is refused before any request: the overlap would never advance", async () => {
+    const { factory, callCount } = pageSource(makeRows(5), 1);
+    const { data, error } = await fetchAllRows(factory, { pageSize: 1, maxPages: 10, ...byId });
+    expect(data).toBeNull();
+    expect(error?.message).toMatch(/page size of at least 2/);
+    expect(error?.message).toMatch(/refusing to return a partial table/);
+    expect(callCount()).toBe(0);
+  });
+});
