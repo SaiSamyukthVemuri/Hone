@@ -1294,6 +1294,7 @@ async function reconcileExistingPaymentIntent(args: {
 async function canCreateInCurrentPaymentCountry(args: {
   studioId: string; stripeAccountId: string; livemode: boolean;
 }): Promise<boolean> {
+  const { livemode } = args;
   const jurisdiction = await getStudioPaymentJurisdiction(args.studioId);
   if (!jurisdiction.ok) return false;
   const admin = createAdminClient();
@@ -1301,7 +1302,7 @@ async function canCreateInCurrentPaymentCountry(args: {
     .from("studio_payment_settings")
     .select("stripe_account_id, stripe_livemode, stripe_account_country, stripe_account_country_conflict")
     .eq("studio_id", args.studioId)
-    .eq("stripe_livemode", args.livemode)
+    .eq("stripe_livemode", livemode)
     .eq("stripe_account_id", args.stripeAccountId)
     .maybeSingle();
   if (error || !settings || settings.stripe_account_id !== args.stripeAccountId
