@@ -88,6 +88,8 @@ vi.mock("@/lib/stripe/session-payment-stripe", () => ({
         opts: Record<string, unknown>,
       ) => {
         db.stripeRefunds.push({ params, opts });
+        const originalCharge = params.charge;
+        const originalIntent = db.row.stripe_payment_intent_id;
         const callback = db.afterRefundCreate;
         db.afterRefundCreate = null;
         if (callback) await callback();
@@ -97,6 +99,8 @@ vi.mock("@/lib/stripe/session-payment-stripe", () => ({
         return {
           id: "re_1",
           status: "succeeded",
+          charge: originalCharge,
+          payment_intent: originalIntent,
           amount: params.amount,
           currency: "cad",
         };
