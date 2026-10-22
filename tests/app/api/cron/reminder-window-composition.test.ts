@@ -61,12 +61,14 @@ describe("at most one email per appointment per window", () => {
     expect(PASS).toMatch(
       /const emailType: ClaimableEmailType =\s*\n?\s*opts\.kind === "24h" \? "reminder_24h" : "reminder_2h";/,
     );
-    expect(PASS).toMatch(/const claimed = await claimEmailSend\(admin, appt\.id, emailType\)/);
+    expect(PASS).toMatch(/const claimOutcome = await claimEmailSendOutcome\(admin, appt\.id, emailType\)/);
+    expect(PASS).toMatch(/if \(claimOutcome === "unavailable"\) return "claim_unavailable";/);
+    expect(PASS).toMatch(/const claimed = claimOutcome === "claimed";/);
     expect(PASS).toMatch(/if \(!claimed\)/);
   });
 
   it("has exactly ONE claim call and ONE success-recording call site", () => {
-    expect(PASS.match(/claimEmailSend\(/g) ?? []).toHaveLength(1);
+    expect(PASS.match(/claimEmailSendOutcome\(/g) ?? []).toHaveLength(1);
     expect(
       PASS.match(/recordEmailResult\(admin, appt\.id, emailType, result\.ok\)/g) ?? [],
     ).toHaveLength(1);
@@ -100,7 +102,9 @@ describe("the six-case law", () => {
     expect(PASS).toMatch(/if \(!wantsReminder && !intakeEnabled\) return;/);
     const case6 = PASS.indexOf("if (!wantsReminder && !intakeEnabled) return;");
     expect(case6).toBeGreaterThan(-1);
-    expect(case6).toBeLessThan(PASS.indexOf("claimEmailSend("));
+    const claimAt = PASS.indexOf("claimEmailSendOutcome(");
+    expect(claimAt).toBeGreaterThan(-1);
+    expect(case6).toBeLessThan(claimAt);
     expect(case6).toBeLessThan(PASS.indexOf("readLatestIntake("));
   });
 
@@ -110,7 +114,9 @@ describe("the six-case law", () => {
     expect(PASS).toMatch(/if \(probe\?\.status !== "in_progress"\) \{[\s\S]*?stats\.skipped \+= 1;[\s\S]*?return;/);
     const probeAt = PASS.indexOf("const probe = await readLatestIntake(");
     expect(probeAt).toBeGreaterThan(-1);
-    expect(probeAt).toBeLessThan(PASS.indexOf("claimEmailSend("));
+    const claimAt = PASS.indexOf("claimEmailSendOutcome(");
+    expect(claimAt).toBeGreaterThan(-1);
+    expect(probeAt).toBeLessThan(claimAt);
   });
 
   it("CASE 3 (intake off) never reads intake at all", () => {
@@ -137,9 +143,10 @@ describe("nothing is inferred from an earlier cron query", () => {
   it("re-reads appointment status after the claim and before the decision", () => {
     expect(PASS).toMatch(/\.from\("appointments"\)\s*\n?\s*\.select\("status"\)/);
     expect(PASS).toMatch(/if \(!fresh \|\| fresh\.status !== "confirmed"\)/);
-    expect(PASS.indexOf("claimEmailSend(")).toBeLessThan(
-      PASS.indexOf('.select("status")'),
-    );
+    const claimAt = PASS.indexOf("claimEmailSendOutcome(");
+    const statusAt = PASS.indexOf('.select("status")');
+    expect(claimAt).toBeGreaterThan(-1);
+    expect(statusAt).toBeGreaterThan(claimAt);
   });
 
   it("re-reads intake LIVE after the status re-check, as a SECOND query", () => {
