@@ -801,9 +801,7 @@ export type Practitioner = {
   default_machine_mode: string | null;
   created_at: string;
 
-  // Existing finite 0213–0246 schema fields; this DTO grants no write authority.
-  default_machine_id: string | null;
-  default_machine_mode: string | null;
+  // Existing finite 0222 assignment timestamp; this DTO grants no write authority.
   last_public_assignment_at: string | null;
 };
 

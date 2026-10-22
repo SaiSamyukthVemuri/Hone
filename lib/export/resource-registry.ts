@@ -544,8 +544,6 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
       { column: "user_id", reason: "internal_state", note: "Supabase auth user identifier. Platform identity, not studio content." },
-      { column: "default_machine_id", reason: "pending_review", note: "Migration 0223. A UI default, not a treatment record: what was actually used is on treatment_setup_readings. It is also an opaque uuid pointing at studio_machines, whose own export disposition is still pending, so emitting it would hand a studio an identifier it cannot resolve inside the archive. Unlike default_machine_frequency below, it is not self-describing. Revisit with the MPX-02 export decision." },
-      { column: "default_machine_mode", reason: "pending_review", note: "Migration 0223. The mode half of the same UI default, meaningful only alongside default_machine_id. Held with it rather than emitted on its own." },
       { column: "terms_accepted_at", reason: "internal_state", note: "Hone platform agreement acceptance, not studio-owned client content." },
       { column: "terms_version", reason: "internal_state", note: "See terms_accepted_at." },
       { column: "privacy_accepted_at", reason: "internal_state", note: "See terms_accepted_at." },
@@ -1120,55 +1118,6 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the payment-consent decisions and the metadata recorded with them.",
   },
-  treatment_setup_captures: {
-    kind: "pending",
-    ticket: "TRUTH-01B",
-    tier: 1,
-    reason:
-      "Introduced by migration 0223 (MPX-03, #829) when per-field revisions were replaced by atomic captures. One row per act of recording a settings group against a treatment block: which unit, which catalogue profile version, which mode, which channels, by whom, when, and which revision of that group it is. It is CLINICAL and studio-owned - the readings in treatment_setup_readings hang off it, and exporting readings without their captures would leave each reading unable to say what it was recorded under or in what order. Its disposition should therefore follow whatever treatment_setup_readings is given, and this lane was not asked to make that product decision. Note it carries recorded_by_practitioner_id, so it names a practitioner but no client directly.",
-  },
-  treatment_area_create_claims: {
-    kind: "pending",
-    ticket: "TRUTH-01B",
-    tier: 2,
-    reason:
-      "Introduced by migration 0223 (MPX-03, #829) to make the INITIAL save of a treatment area repeatable. One row per (session, caller-supplied retry key), recording a digest of the whole initial payload together with the block, entry and submission that key produced - so a retry after a lost response returns the original area instead of creating a second one carrying a second copy of the settings. TIER 2 RATHER THAN 1 because nothing in it is clinical content: it is a RECEIPT for a transport, and the three ids in it point at rows that each carry their own disposition in this registry. THE OBVIOUS ANSWER IS AN EXCLUSION on the same footing as studio_calendar_reservations - but `derived` would be an OVERCLAIM, and saying so is the point of leaving this pending. Two of its columns exist nowhere else: `idempotency_key`, which is opaque and minted by the caller's browser, and `payload_digest`, an md5 over the save's arguments. Neither is derivable from the rows it points at, and neither would mean anything to a client reading an archive - which is an argument for excluding it, not for calling it derived. It is studio-scoped and member-read like everything else here, because a key names a session and a session names a client.",
-  },
-  treatment_setup_submissions: {
-    kind: "pending",
-    ticket: "TRUTH-01B",
-    tier: 1,
-    reason:
-      "Introduced by migration 0223 (MPX-03, #829) when a Save of machine settings became ONE atomic fact rather than several independent calls. One row per press of Save, recording the setup identity it was made under - which physical unit, which catalogue profile version, which mode - plus a caller-supplied retry key and a digest of the payload, so a repeat after a lost response returns the original instead of appending a second capture. It is CLINICAL and studio-owned: the captures in treatment_setup_captures carry its id, and a submission without them says only that a save happened, while captures without it lose which groups were entered together in one act. Its disposition must therefore follow whatever treatment_setup_captures and treatment_setup_readings are given, and this lane was not asked to make that product decision. PROVENANCE: it carries recorded_by_practitioner_id, so it names a practitioner but no client directly - the client is reachable only through session_blocks -> sessions. The retry key is caller-supplied and opaque, and payload_digest is an md5 over the settings payload, not the readings themselves, so neither carries clinical values of its own; both are nonetheless studio-scoped operational metadata rather than anything a client would recognise, which is a reason to think an exported archive wants the captures and readings and not these two columns.",
-  },
-  machine_profile_field_contract: {
-    kind: "pending",
-    ticket: "TRUTH-01B",
-    tier: 1,
-    reason:
-      "Introduced by migration 0223 (MPX-03, #829). The FIELD half of the published contract: for a (profile, version, mode), which fields exist, in what native unit and precision, and what kind of quantity each is. record_treatment_setup_group validates every reading against it and derives unit and precision from it. Like its mode-level parent it is a GLOBAL PRODUCT FACT with no studio_id, published by deployment authority only and immutable once published, holding no client, clinical or provider data. A studio export probably should not carry it, but an exported reading is only interpretable against the contract version it was captured under, so the decision belongs with whoever decides the readings' disposition.",
-  },
-  machine_profile_mode_contract: {
-    kind: "pending",
-    ticket: "TRUTH-01B",
-    tier: 1,
-    reason:
-      "Introduced by migration 0223 (MPX-03, #829) when field-contract validation moved into the recording command's authority boundary. The MODE-level half of the published contract for a (profile, version, mode): how many independently controlled channels the model has and any physical option the mode requires. It is a GLOBAL PRODUCT FACT, not studio data - there is no studio_id, it is published by deployment authority only, and it is immutable once published. It holds no client, clinical or provider data. A studio export almost certainly should NOT carry it, but it may need to be resolvable to interpret exported readings, so the decision belongs with whoever decides the readings' disposition.",
-  },
-  studio_machines: {
-    kind: "pending",
-    ticket: "TRUTH-01B",
-    tier: 1,
-    reason:
-      "Introduced by migration 0223 (MPX-02, #829). The studio's own list of physical electrolysis machines: a display name, the catalogue profile and version it was registered against, the options physically fitted, and a retirement instant. It holds NO client or clinical data and no provider identifier. It is plainly studio-owned content and a studio export should probably carry it, but that is a product decision this lane was not asked to make, so nothing is claimed here. Whoever takes it should note that treatment_setup_readings references this table, so exporting the readings without the machines would leave an unresolvable identifier in the archive.",
-  },
-  treatment_setup_readings: {
-    kind: "pending",
-    ticket: "TRUTH-01B",
-    tier: 1,
-    reason:
-      "Introduced by migration 0223 (MPX-02, #829). What a machine actually showed for one treatment block: one row per settings group, stage and field, each carrying its own native unit, the machine's decimal precision, the profile version it was captured under, and who or what observed it. Append-only - UPDATE is refused by trigger. This is clinical treatment content of the same class as electrolysis_entries and laser_entries, both of which ARE exported, so the likely answer is that it should be too. It is left pending rather than assumed for two reasons: the field set is model-specific, so a CSV header list cannot be written until at least one machine profile passes its evidence review; and #828's HIPAA gate governs what may leave the system in a patient-identifiable archive. No finding is made here about either.",
-  },
   pending_booking_payment_sessions: {
     kind: "pending",
     ticket: "TRUTH-01B",
@@ -1499,14 +1448,6 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 1,
     reason:
       "Same 0159 retirement and the same unverified row-bearing question as clinical_record_snapshots.",
-  },
-  treatment_reading_change_events: {
-    kind: "pending",
-    ticket: "TRUTH-01B",
-    tier: 1,
-    fieldReviewRequired: true,
-    reason:
-      "HON-18 / CLN-007: 0244 routine clinical reading correction diffs and actor snapshots. PENDING field review under TRUTH-01B, NOT EXPORTED: old/new values are clinical data; this registry entry grants no new export authority or retention policy. Retired signed-record ledgers and native setup captures remain separate.",
   },
   clinical_audit_events: {
     kind: "pending",
