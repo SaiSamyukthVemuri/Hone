@@ -184,3 +184,32 @@ describe("payment_intent.payment_failed — resolved-row livemode guard", () => 
     expect(h.state.updateCalls[0].status).toBe("failed");
   });
 });
+
+
+for (const status of ["ready", "pending_stripe"]) {
+  it(`${status}: a verified failed-event writer never persists provider prose`, async () => {
+    const privateText = "synthetic-private@example.invalid token=synthetic-secret";
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      h.state.selectResult = { data: attemptRow({ status }), error: null };
+      h.state.updateResult = { data: [{ id: "att_1" }], error: null };
+      const event = failedEvent() as unknown as {
+        data: { object: { last_payment_error: { type: string; code: string; message: string } } };
+      };
+      event.data.object.last_payment_error.message = privateText;
+      const result = await handlePaymentIntentPaymentFailed(event as never, {
+        studioId: "stud_1", stripeAccountId: "acct_1", livemode: true,
+      });
+      expect(h.state.updateCalls).toHaveLength(1);
+      expect(h.state.updateCalls[0]).toMatchObject({ status: "failed", failure_code: "card_declined" });
+      expect(h.state.updateCalls[0].failed_at).toBeTruthy();
+      expect(result).not.toHaveProperty("providerOutcomeUnresolved");
+      expect(h.state.alerts.some((alert) => alert.severity === "critical")).toBe(false);
+      expect(JSON.stringify([result, h.state.updateCalls, h.state.alerts, diagnostic.mock.calls]))
+        .not.toContain(privateText);
+      expect(h.state.updateCalls[0].failure_message_safe).toBe("Stripe could not charge the saved card.");
+    } finally {
+      diagnostic.mockRestore();
+    }
+  });
+}

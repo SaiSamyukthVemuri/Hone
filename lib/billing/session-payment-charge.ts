@@ -1135,11 +1135,11 @@ async function reconcileExistingPaymentIntent(args: {
       undefined,
       { stripeAccount: args.stripeAccountId },
     );
-  } catch (err) {
+  } catch {
     logInternal("session_payment_reconcile_retrieve_failed", {
       attemptId: args.attemptId,
       paymentIntentId: args.paymentIntentId,
-      message: err instanceof Error ? err.message : String(err),
+      message: "Stripe PaymentIntent retrieval failed during reconciliation.",
     });
     await recordOpsAlert({
       severity: "critical",
@@ -1251,8 +1251,7 @@ async function reconcileExistingPaymentIntent(args: {
     paymentIntentId: pi.id,
     stripeStatus: pi.status,
     failureCode: pi.last_payment_error?.code ?? pi.status,
-    failureMessage:
-      pi.last_payment_error?.message ?? `PaymentIntent status: ${pi.status}`,
+    failureMessage: "Stripe could not charge the saved card.",
     expectedPaymentIntentId: args.paymentIntentId,
     concurrentFailureFacts: {
       stripeAccountId: args.stripeAccountId, stripeCustomerId: args.expectedStripeCustomerId,
@@ -1281,8 +1280,7 @@ async function reconcileExistingPaymentIntent(args: {
     ok: false,
     outcome: "failed",
     // requires_action is handled by finalizeRequiresActionPaymentIntent above.
-    message:
-      pi.last_payment_error?.message ?? "PaymentIntent did not succeed.",
+    message: "Stripe could not charge the saved card.",
     failureCode: pi.last_payment_error?.code ?? pi.status,
   };
 }
@@ -1697,7 +1695,7 @@ export async function runSessionPaymentCharge(args: {
         paymentIntentId: piId,
         stripeStatus: piStatus,
         failureCode: err.code ?? piStatus,
-        failureMessage: err.message,
+        failureMessage: "Stripe could not charge the saved card.",
         expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
       });
       if (!failedPersisted) return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE };
@@ -1710,7 +1708,7 @@ export async function runSessionPaymentCharge(args: {
         severity:
           err.code === "authentication_required" ? "critical" : "warning",
         event: "session_payment_charge_failed",
-        message: err.message || "Stripe error during PaymentIntent create.",
+        message: "Stripe refused the saved-card charge.",
         studioId: attemptRow.studio_id,
         clientId: attemptRow.client_id,
         route: "lib/billing/session-payment-charge:runSessionPaymentCharge",
@@ -1730,7 +1728,7 @@ export async function runSessionPaymentCharge(args: {
         message:
           err.code === "authentication_required"
             ? AUTHENTICATION_REQUIRED_MESSAGE
-            : (err.message || "Stripe could not charge the saved card."),
+            : "Stripe could not charge the saved card.",
         failureCode: err.code ?? null,
       };
     }
@@ -1740,7 +1738,7 @@ export async function runSessionPaymentCharge(args: {
     // already moved money.
     logInternal("session_payment_stripe_unknown_error", {
       attemptId: attemptRow.id,
-      message: err instanceof Error ? err.message : String(err),
+      message: "Stripe charge call did not return a clear outcome.",
     });
     await recordOpsAlert({
       severity: "critical",
@@ -1878,9 +1876,7 @@ export async function runSessionPaymentCharge(args: {
     paymentIntentId: pi.id,
     stripeStatus: pi.status,
     failureCode: pi.last_payment_error?.code ?? pi.status,
-    failureMessage:
-      pi.last_payment_error?.message ??
-      `PaymentIntent status: ${pi.status}`,
+    failureMessage: "Stripe could not charge the saved card.",
     expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
   });
   if (!failedPersisted) return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE };
@@ -1905,9 +1901,7 @@ export async function runSessionPaymentCharge(args: {
   return {
     ok: false,
     outcome: "failed",
-    message:
-      pi.last_payment_error?.message ??
-      "Stripe could not charge the saved card.",
+    message: "Stripe could not charge the saved card.",
     failureCode: pi.last_payment_error?.code ?? pi.status,
   };
 }

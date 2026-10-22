@@ -100,7 +100,6 @@ import {
 //   * No DML against manual_fee_charge_attempts.
 //   * No RLS relaxation.
 
-const FAILURE_MESSAGE_MAX = 1000;
 const FAILURE_CODE_MAX = 100;
 // Mode-mismatch refusal (PR C): fires when the ROW's stripe_livemode does
 // not equal the deployment mode. The old wording falsely claimed live
@@ -131,13 +130,6 @@ function logInternal(event: string, detail: unknown) {
 function sanitizeFailureCode(raw: string | null | undefined): string | null {
   if (!raw) return null;
   return raw.slice(0, FAILURE_CODE_MAX);
-}
-
-function sanitizeFailureMessage(
-  raw: string | null | undefined,
-): string | null {
-  if (!raw) return null;
-  return raw.replace(/\s+/g, " ").trim().slice(0, FAILURE_MESSAGE_MAX);
 }
 
 function sanitizeInternalNote(
@@ -495,9 +487,7 @@ export async function refundPaymentChargeAttempt(args: {
       isDefinitiveStripeRefusal(err)
     ) {
       const code = sanitizeFailureCode(err.code ?? err.type);
-      const safeMessage =
-        sanitizeFailureMessage(err.message) ??
-        "Stripe refused this refund.";
+      const safeMessage = "Stripe refused this refund.";
       const { data: failedRows, error: writeFailedErr } = await admin
         .from("payment_charge_attempts")
         .update({
@@ -569,10 +559,7 @@ export async function refundPaymentChargeAttempt(args: {
     // pending_stripe; an operator reconciliation can re-query
     // Stripe using the deterministic idempotency key. The
     // critical ops_alert is the operator's wake-up signal.
-    const safeMessage =
-      sanitizeFailureMessage(
-        err instanceof Error ? err.message : String(err),
-      ) ?? "Refund Stripe call did not return a response.";
+    const safeMessage = "Refund Stripe call did not return a response.";
     logInternal("payment_refund_stripe_unknown_outcome", {
       attemptId: attempt.id,
       message: safeMessage,
@@ -674,6 +661,73 @@ export async function refundPaymentChargeAttempt(args: {
           "Stripe's refund does not match this payment, so Hone did not record it. The studio operator will reconcile this.",
       };
     }
+  }
+
+  // A returned refund object and matching money do not prove completion.
+  // Keep the existing pending claim for every unconfirmed provider outcome;
+  // this does not authorize a retry or replace durable status reconciliation.
+  if (refund.status !== "succeeded") {
+    try {
+      await recordOpsAlert({
+        severity: "critical",
+        event: "payment_refund_provider_status_unresolved",
+        message:
+          "Stripe returned a refund without confirmed success. Hone retained the pending claim and did not record completion.",
+        studioId: attempt.studio_id,
+        clientId: attempt.client_id,
+        route: ROUTE,
+        safeDetails: {
+          attempt_id: attempt.id,
+          charge_reason: attempt.charge_reason,
+          stripe_charge_id: attempt.stripe_charge_id,
+          reason: "provider_refund_not_succeeded",
+        },
+      });
+    } catch {
+      // Alerting cannot turn an unresolved refund into completion or retry.
+    }
+    return {
+      ok: false,
+      outcome: "needs_manual_review",
+      message:
+        "Stripe has not confirmed this refund as completed. The studio operator will reconcile it.",
+    };
+  }
+
+  const providerCharge = typeof refund.charge === "string"
+    ? refund.charge : refund.charge?.id;
+  const providerIntent = typeof refund.payment_intent === "string"
+    ? refund.payment_intent : refund.payment_intent?.id;
+  if (typeof refund.id !== "string" || refund.id.trim().length === 0 ||
+      typeof attempt.stripe_charge_id !== "string" || attempt.stripe_charge_id.trim().length === 0 ||
+      typeof attempt.stripe_payment_intent_id !== "string" || attempt.stripe_payment_intent_id.trim().length === 0 ||
+      providerCharge !== attempt.stripe_charge_id ||
+      providerIntent !== attempt.stripe_payment_intent_id) {
+    try {
+      await recordOpsAlert({
+        severity: "critical",
+        event: "payment_refund_provider_identity_mismatch",
+        message:
+          "The refund response could not be matched to the original charge and payment intent. Hone retained the pending claim without recording completion.",
+        studioId: attempt.studio_id,
+        clientId: attempt.client_id,
+        route: ROUTE,
+        safeDetails: {
+          attempt_id: attempt.id,
+          charge_reason: attempt.charge_reason,
+          stripe_charge_id: attempt.stripe_charge_id,
+          reason: "provider_refund_original_identity_mismatch",
+        },
+      });
+    } catch {
+      // Alerting cannot authorize completion or a retry of this refund.
+    }
+    return {
+      ok: false,
+      outcome: "needs_manual_review",
+      message:
+        "The refund response could not be matched to this payment. The studio operator will reconcile it.",
+    };
   }
 
   const refundedAtIso = new Date().toISOString();

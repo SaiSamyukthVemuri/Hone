@@ -27,6 +27,7 @@ const h = vi.hoisted(() => ({
   afterRetrieve: null as null | (() => void),
   recheckReadError: false,
   alerts: [] as Array<{ severity: string; event: string; details: Record<string, unknown> }>,
+  alertThrows: false,
   claim: {} as Record<string, unknown>,
   pi: {} as Record<string, unknown>,
   createError: null as unknown,
@@ -78,6 +79,7 @@ vi.mock("@/lib/ops/alerts", () => ({
     safeDetails?: Record<string, unknown>;
   }) => {
     h.alerts.push({ severity: a.severity, event: a.event, details: a.safeDetails ?? {} });
+    if (h.alertThrows) throw new Error("synthetic diagnostic sink failure");
   },
 }));
 vi.mock("@/lib/billing/charge-description", () => ({
@@ -261,6 +263,7 @@ beforeEach(() => {
   h.afterRetrieve = null;
   h.recheckReadError = false;
   h.alerts = [];
+  h.alertThrows = false;
   h.stripeCalls = [];
   h.claim = {};
   h.pi = {};
@@ -507,12 +510,119 @@ describe("refund: Stripe's refund is recorded only when it is the claimed refund
 
   it.each(["cad", "usd"] as const)("%s: a matching refund is recorded (control)", async (currency) => {
     seedSucceeded(currency);
-    h.refund = { id: "re_1", status: "succeeded", amount: AMOUNT, currency };
+    h.refund = { id: "re_1", status: "succeeded", amount: AMOUNT, currency, charge: CHARGE_ID, payment_intent: PI_ID };
 
     const result = await refund();
 
     expect(result).toMatchObject({ ok: true, outcome: "succeeded", refundAmountCents: AMOUNT });
     expect(refundSucceededWrites()).toHaveLength(1);
+  });
+
+  // The SDK can expand charge/payment_intent; only their original IDs bind
+  // a successful refund to this attempt. Matching money is insufficient.
+  for (const currency of ["cad", "usd"] as const) {
+    it(`${currency}: matching expanded charge and intent bind to the original (control)`, async () => {
+      seedSucceeded(currency);
+      h.refund = { id: "re_1", status: "succeeded", amount: AMOUNT, currency,
+        charge: { id: CHARGE_ID }, payment_intent: { id: PI_ID } };
+      expect(await refund()).toMatchObject({ ok: true, outcome: "succeeded" });
+      expect(refundSucceededWrites()).toHaveLength(1);
+      expect(h.stripeCalls).toEqual(["refund_create"]);
+    });
+    it.each([
+      ["missing refund ID", { id: undefined }],
+      ["null refund ID", { id: null }],
+      ["blank refund ID", { id: "  " }],
+      ["non-string refund ID", { id: 7 }],
+      ["missing charge", { charge: undefined }],
+      ["null charge", { charge: null }],
+      ["wrong charge", { charge: "ch_foreign" }],
+      ["expanded wrong charge", { charge: { id: "ch_foreign" } }],
+      ["expanded malformed charge", { charge: { id: 7 } }],
+      ["missing known intent", { payment_intent: undefined }],
+      ["null known intent", { payment_intent: null }],
+      ["wrong known intent", { payment_intent: "pi_foreign" }],
+      ["expanded wrong intent", { payment_intent: { id: "pi_foreign" } }],
+      ["expanded malformed intent", { payment_intent: { id: 7 } }],
+    ])(`${currency}: %s cannot complete a matching-money succeeded refund`, async (_label, override) => {
+      seedSucceeded(currency);
+      h.refund = { id: "re_1", status: "succeeded", amount: AMOUNT, currency,
+        charge: CHARGE_ID, payment_intent: PI_ID, ...(override as Record<string, unknown>) };
+      const result = await refund();
+      expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+      expect(h.stripeCalls).toEqual(["refund_create"]);
+      expect(refundSucceededWrites()).toEqual([]);
+      expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(1);
+      expect(h.updates.some((u) => u.payload.refund_status === "failed")).toBe(false);
+      expect(critical("payment_refund_provider_money_mismatch")).toEqual([]);
+    });
+  }
+
+  it.each(["cad", "usd"] as const)("%s: a legacy row without an original intent never adopts the refund's intent", async (currency) => {
+    seedSucceeded(currency);
+    (h.rows.payment_charge_attempts as Record<string, unknown>).stripe_payment_intent_id = null;
+    h.refund = { id: "re_1", status: "succeeded", amount: AMOUNT, currency,
+      charge: CHARGE_ID, payment_intent: PI_ID };
+    expect(await refund()).toMatchObject({ ok: false, outcome: "missing_payment_intent_id" });
+    expect(h.stripeCalls).toEqual([]);
+    expect(refundSucceededWrites()).toEqual([]);
+    expect(h.updates).toEqual([]);
+  });
+  it.each(["stripe_charge_id", "stripe_payment_intent_id"])("blank known original %s is never treated as verified identity", async (field) => {
+    seedSucceeded("cad");
+    (h.rows.payment_charge_attempts as Record<string, unknown>)[field] = "  ";
+    h.refund = { id: "re_1", status: "succeeded", amount: AMOUNT, currency: "cad",
+      charge: field === "stripe_charge_id" ? "  " : CHARGE_ID,
+      payment_intent: field === "stripe_payment_intent_id" ? "  " : PI_ID };
+    expect(await refund()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual(["refund_create"]);
+    expect(refundSucceededWrites()).toEqual([]);
+    expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(1);
+  });
+
+  it("a throwing identity diagnostic cannot complete or rearm a mismatched refund", async () => {
+    seedSucceeded("cad");
+    h.refund = { id: "re_1", status: "succeeded", amount: AMOUNT, currency: "cad",
+      charge: "ch_foreign", payment_intent: PI_ID };
+    h.alertThrows = true;
+    expect(await refund()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual(["refund_create"]);
+    expect(refundSucceededWrites()).toEqual([]);
+    expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(1);
+  });
+
+  // Matching money is not proof that the refund has actually succeeded.
+  // Exercise the real writer; keep both currency success controls above.
+  for (const currency of ["cad", "usd"] as const) {
+    it.each(["pending", "requires_action", "failed", "canceled", undefined])(
+      `${currency}: refund status %s never becomes a succeeded ledger outcome`, async (status) => {
+        seedSucceeded(currency);
+        h.refund = {
+          id: "re_synthetic_unresolved", amount: AMOUNT, currency, charge: CHARGE_ID, payment_intent: PI_ID,
+          ...(status === undefined ? {} : { status }),
+        };
+        const result = await refund();
+        expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+        expect(h.stripeCalls).toEqual(["refund_create"]);
+        expect(refundSucceededWrites()).toEqual([]);
+        expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(1);
+        expect(h.updates.some((u) => u.payload.refund_status === "failed")).toBe(false);
+        expect(critical("payment_refund_provider_money_mismatch")).toEqual([]);
+      },
+    );
+  }
+
+  it("a throwing status diagnostic retains manual review, pending claim and one refund call", async () => {
+    seedSucceeded("cad");
+    h.refund = { id: "re_synthetic_unresolved", status: "pending", amount: AMOUNT, currency: "cad", charge: CHARGE_ID, payment_intent: PI_ID };
+    h.alertThrows = true;
+    const result = await refund();
+    expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual(["refund_create"]);
+    expect(refundSucceededWrites()).toEqual([]);
+    expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(1);
+    expect(h.updates.some((u) => u.payload.refund_status === "failed")).toBe(false);
+    expect(critical("payment_refund_provider_status_unresolved")).toHaveLength(1);
   });
 
   it.each([
@@ -521,7 +631,7 @@ describe("refund: Stripe's refund is recorded only when it is the claimed refund
     ["stating no money", {}, "cad"],
   ] as const)("a refund %s is NOT recorded; it stays pending for review", async (_l, money, rowCurrency) => {
     seedSucceeded(rowCurrency);
-    h.refund = { id: "re_1", status: "succeeded", ...money };
+    h.refund = { id: "re_1", status: "succeeded", charge: CHARGE_ID, payment_intent: PI_ID, ...money };
 
     const result = await refund();
 

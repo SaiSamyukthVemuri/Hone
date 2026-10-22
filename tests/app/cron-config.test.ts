@@ -106,7 +106,7 @@ describe("reminder route preserves claim-before-send, idempotency, and auth", ()
   });
 
   it("claims BEFORE sending and records the result AFTER", () => {
-    const claimIdx = ROUTE_CODE.indexOf("claimEmailSend(");
+    const claimIdx = ROUTE_CODE.indexOf("claimEmailSendOutcome(");
     const sendIdx = ROUTE_CODE.indexOf("result = await sendFn(");
     const recordIdx = ROUTE_CODE.indexOf("recordEmailResult(admin, appt.id, emailType, result.ok)");
     expect(claimIdx).toBeGreaterThan(-1);
@@ -192,7 +192,7 @@ describe("an unauthorized reminder invocation is side-effect free (PR OPS-01)", 
     expect(gate).toBeGreaterThan(-1);
     for (const sideEffect of [
       "createAdminClient(",
-      "claimEmailSend(",
+      "claimEmailSendOutcome(",
       "recordEmailResult(",
       "recordReminderRunSuccess(",
       "sendReminderPass(",

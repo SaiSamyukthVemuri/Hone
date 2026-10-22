@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import {
-  claimEmailSend,
+  claimEmailSendOutcome,
   logEmailFailure,
   recordEmailResult,
   send24hReminderToClient,
@@ -174,16 +174,16 @@ async function alertIfReminderExhausted(opts: {
 // scoped so tenant isolation holds on the session-less admin client. Reads id
 // and status ONLY: no client PII, no responses, no token.
 //
-// FAIL-SAFE, NOT FAIL-LOUD. A read error yields null, which every caller reads
-// as "not incomplete" and therefore "no intake CTA". The appointment reminder
-// is the time-critical message; degrading it to nothing because an intake
-// lookup blipped would be strictly worse than sending it without the CTA.
+// Plain appointment reminders and SMS retain no-CTA degradation on read error.
+// Standalone intake email requires a known read: an error cannot establish
+// completion or justify clearing its counted claim without sending.
 async function readLatestIntake(
   admin: ReturnType<typeof createAdminClient>,
   studioId: string,
   clientId: string,
+  requireKnown = false,
 ): Promise<{ id: string; status: string } | null> {
-  const { data } = await admin
+  const { data, error } = await admin
     .from("client_intake_forms")
     .select("id, status")
     .eq("studio_id", studioId)
@@ -192,6 +192,7 @@ async function readLatestIntake(
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (requireKnown && error) throw new Error("reminder intake state unavailable");
   return (data as { id: string; status: string } | null) ?? null;
 }
 
@@ -221,7 +222,7 @@ async function sendReminderPass(opts: {
   kind: "24h" | "2h";
   windowStartIso: string;
   windowEndIso: string;
-}, appt: Joined, admin: ReturnType<typeof createAdminClient>, stats: EmailRunStats, appOrigin: string): Promise<void> {
+}, appt: Joined, admin: ReturnType<typeof createAdminClient>, stats: EmailRunStats, appOrigin: string): Promise<"claim_unavailable" | void> {
   const attemptsColumn =
     opts.kind === "24h"
       ? "reminder_24h_send_attempts"
@@ -254,6 +255,7 @@ async function sendReminderPass(opts: {
       admin,
       appt.studio.id,
       appt.client_id,
+      true,
     );
     if (probe?.status !== "in_progress") {
       // CASE 5. No claim, no attempt bump, no email.
@@ -264,20 +266,38 @@ async function sendReminderPass(opts: {
 
   // Claim-before-send (PR #189, migration 0080): atomic attempt increment +
   // _claimed_at, so two overlapping cron runs can never both send.
-  const claimed = await claimEmailSend(admin, appt.id, emailType);
+  const claimOutcome = await claimEmailSendOutcome(admin, appt.id, emailType);
+  if (claimOutcome === "unavailable") return "claim_unavailable";
+  const claimed = claimOutcome === "claimed";
   if (!claimed) {
     stats.skipped += 1;
     return;
   }
 
-  // PR #258: a confirmed appointment can be cancelled / no-showed between
-  // the window query and now; the claim does not re-validate status.
-  const { data: fresh } = await admin
+  // Recheck the current start used to compose this cached email after claiming.
+  // This contains observed reschedules; it is not an atomic send-time fence.
+  const { data: fresh, error: freshError } = await admin
     .from("appointments")
-    .select("status")
+    .select("status, starts_at")
     .eq("id", appt.id)
     .maybeSingle();
+  // An unavailable read is not evidence that this row was handled. Use the
+  // existing handler failure path; never settle or clear the counted claim.
+  if (freshError) throw new Error("reminder appointment state unavailable");
   if (!fresh || fresh.status !== "confirmed") {
+    stats.skipped += 1;
+    return;
+  }
+
+  const currentStart = Date.parse(fresh.starts_at);
+  if (
+    !Number.isFinite(currentStart) ||
+    currentStart !== Date.parse(appt.starts_at) ||
+    currentStart < Date.parse(opts.windowStartIso) ||
+    currentStart > Date.parse(opts.windowEndIso)
+  ) {
+    // No send occurred. Preserve the counted claim and existing TTL; do not
+    // settle, clear, refund or create a retry from this unfenced observation.
     stats.skipped += 1;
     return;
   }
@@ -289,7 +309,7 @@ async function sendReminderPass(opts: {
   // (CASE 3), which is also why a studio with the setting off never pays for
   // an intake lookup.
   const intake = intakeEnabled
-    ? await readLatestIntake(admin, appt.studio.id, appt.client_id)
+    ? await readLatestIntake(admin, appt.studio.id, appt.client_id, !wantsReminder)
     : null;
   const intakeIncomplete = intake?.status === "in_progress";
 
@@ -631,7 +651,7 @@ export async function GET(req: Request) {
         const opts = { kind, windowStartIso: window.startIso, windowEndIso: window.endIso } as const;
         const unavailable = pass.startsWith("sms")
           ? await sendSmsReminderPass({ ...opts, ledgerBudget }, appt, admin, stats, appOrigin)
-          : (await sendReminderPass(opts, appt, admin, stats, appOrigin), undefined);
+          : await sendReminderPass(opts, appt, admin, stats, appOrigin);
         return {
           kind: unavailable === "claim_unavailable" ? "claim_unavailable" : stats.attempted > attemptedBefore ? "processed" : "skipped",
           attempted: stats.attempted > attemptedBefore,

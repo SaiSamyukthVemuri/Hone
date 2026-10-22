@@ -44,14 +44,14 @@ const EMAIL_PASS = CODE.slice(
 
 describe("email reminder pass: claim before send", () => {
   it("imports claimEmailSend + recordEmailResult from the email module", () => {
-    expect(ROUTE).toMatch(/claimEmailSend,/);
+    expect(ROUTE).toMatch(/claimEmailSendOutcome,/);
     expect(ROUTE).toMatch(/recordEmailResult,/);
     expect(ROUTE).toMatch(/from "@\/lib\/email\/send-appointment"/);
   });
 
   it("every send is claimed first: claim call precedes the send dispatch", () => {
     const claimIdx = EMAIL_PASS.indexOf(
-      "await claimEmailSend(admin, appt.id, emailType)",
+      "await claimEmailSendOutcome(admin, appt.id, emailType)",
     );
     const sendIdx = EMAIL_PASS.indexOf("result = await sendFn(");
     expect(claimIdx).toBeGreaterThan(-1);
@@ -65,7 +65,7 @@ describe("email reminder pass: claim before send", () => {
   });
 
   it("the claim also precedes the missing-token failure record", () => {
-    const claimIdx = EMAIL_PASS.indexOf("await claimEmailSend(");
+    const claimIdx = EMAIL_PASS.indexOf("await claimEmailSendOutcome(");
     const tokenIdx = EMAIL_PASS.indexOf("if (!token) {");
     expect(tokenIdx).toBeGreaterThan(claimIdx);
   });
@@ -90,7 +90,7 @@ describe("email reminder pass: claim before send", () => {
     // unclaimed dispatch is ever added, this count catches it.
     const sends = EMAIL_PASS.match(/await sendFn\(/g) ?? [];
     expect(sends.length).toBe(1);
-    const claims = EMAIL_PASS.match(/await claimEmailSend\(/g) ?? [];
+    const claims = EMAIL_PASS.match(/await claimEmailSendOutcome\(/g) ?? [];
     expect(claims.length).toBe(1);
   });
 });
@@ -115,7 +115,7 @@ describe("email reminder pass: preserved behavior", () => {
     // a claim costs an attempt off the 3-strike cap.
     const toggleIdx = EMAIL_PASS.indexOf("[studioToggle]");
     const emailIdx = EMAIL_PASS.indexOf("if (!appt.client?.email) return;");
-    const claimIdx = EMAIL_PASS.indexOf("await claimEmailSend(");
+    const claimIdx = EMAIL_PASS.indexOf("await claimEmailSendOutcome(");
     expect(toggleIdx).toBeGreaterThan(-1);
     expect(emailIdx).toBeGreaterThan(-1);
     expect(claimIdx).toBeGreaterThan(toggleIdx);
@@ -155,6 +155,13 @@ const race = vi.hoisted(() => ({
   start: "2026-10-22T12:00:00.000Z",
   freshStart: "2026-10-22T12:00:00.000Z" as string | null,
   readError: false,
+  intakeOnly: false,
+  intakeEnabled: false,
+  intakeReads: [] as Array<{ data: { id: string; status: string } | null; error: { message: string } | null }>,
+  freshMissing: false,
+  readErrorWithData: false,
+  claimRpcMode: "normal" as "normal" | "error" | "throw" | "malformed",
+  claimRpc: vi.fn(),
   incidentRead: "none" as "none" | "db_error" | "timeout" | "invalid_row" | "throw" | "timeout_once",
   incidentThrown: undefined as unknown,
   setupThrown: undefined as unknown,
@@ -170,7 +177,7 @@ const race = vi.hoisted(() => ({
   pages: [] as Array<{ cursor: string | null; orders: string[] }>,
   smsSend: vi.fn(async () => ({ ok: true, intakeLinkIncluded: false })),
   send: vi.fn(async () => ({ ok: true })),
-  claim: vi.fn(async () => true),
+  claim: vi.fn(async (_admin?: unknown, _id?: string, _kind?: string) => { void [_admin, _id, _kind]; return true; }),
   record: vi.fn(async () => undefined),
 }));
 vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
@@ -204,17 +211,27 @@ vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
 });
 vi.mock("@/lib/cron/auth", () => ({ isAuthorizedCronRequest: () => true }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => { if (race.originThrown !== undefined) throw race.originThrown; return "https://example.invalid"; } }));
+vi.mock("@/lib/intake/queries", () => ({ generateIntakeLinkUrl: () => "https://example.invalid/intake/synthetic", stampIntakeLinkIssued: async () => undefined }));
 vi.mock("@/lib/booking/tokens", () => ({ generateCancellationToken: () => "synthetic-token" }));
 vi.mock("@/lib/cron/reminder-heartbeat", () => ({ recordReminderRunSuccess: race.heartbeat }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: race.alerts }));
-vi.mock("@/lib/email/send-appointment", () => ({
-  claimEmailSend: race.claim,
-  recordEmailResult: race.record,
-  logEmailFailure: vi.fn(),
-  send24hReminderToClient: race.send,
-  send2hReminderToClient: race.send,
-  sendIntakeReminderToClient: race.send,
-}));
+vi.mock("@/lib/email/send-appointment", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/email/send-appointment")>();
+  const invokeClaim = async (original: Parameters<typeof actual.claimEmailSend>, richer = false) => {
+    const admin = { rpc: async () => {
+      race.claimRpc();
+      if (race.claimRpcMode === "throw") throw new Error("SYNTHETIC_PRIVATE unavailable claim");
+      if (race.claimRpcMode === "error") return { data: null, error: new Error("SYNTHETIC_PRIVATE unavailable claim") };
+      if (race.claimRpcMode === "malformed") return { data: null, error: null };
+      return { data: await race.claim(...original), error: null };
+    } } as unknown as Parameters<typeof actual.claimEmailSend>[0];
+    return richer ? actual.claimEmailSendOutcome(admin, original[1], original[2]) : actual.claimEmailSend(admin, original[1], original[2]);
+  };
+  return { claimEmailSend: (...args: Parameters<typeof actual.claimEmailSend>) => invokeClaim(args),
+    claimEmailSendOutcome: (...args: Parameters<typeof actual.claimEmailSend>) => invokeClaim(args, true),
+    recordEmailResult: race.record, logEmailFailure: vi.fn(),
+    send24hReminderToClient: race.send, send2hReminderToClient: race.send, sendIntakeReminderToClient: race.send };
+});
 vi.mock("@/lib/sms/send-appointment", () => ({
   createLedgerBudget: () => ({}),
   send24hReminderSmsToClient: race.smsSend,
@@ -222,7 +239,7 @@ vi.mock("@/lib/sms/send-appointment", () => ({
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => { if (race.setupThrown !== undefined) throw race.setupThrown; return ({
-    from: () => {
+    from: (table: string) => {
       let candidateColumn = "";
       let cursor: string | null = null;
       let limit = 50;
@@ -233,7 +250,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           id, studio_id: "synthetic-studio", client_id: "synthetic-client",
           status: "confirmed", starts_at: race.start, reminder_24h_send_attempts: 0,
           studio: { id: "synthetic-studio", name: "Synthetic", timezone: "UTC",
-            send_24h_reminders: !(skipped && reason === "toggle"), send_intake_reminders: false,
+            send_24h_reminders: !race.intakeOnly && !(skipped && reason === "toggle"), send_intake_reminders: race.intakeOnly || race.intakeEnabled,
             send_24h_sms_reminders: !(skipped && reason === "toggle") },
           client: { name: "Synthetic", email: skipped && reason === "destination" ? null : "synthetic@example.invalid",
             phone: skipped && reason === "destination" ? null : "+15555550123",
@@ -268,10 +285,16 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           cursor = JSON.parse(match[1]);
           return b;
         },
-        maybeSingle: async () => ({
-          data: race.readError ? null : { ...row("00000000-0000-4000-8000-000000000001"), starts_at: race.freshStart },
+        maybeSingle: async () => {
+          if (table === "client_intake_forms") {
+            const answer = race.intakeReads.shift();
+            if (!answer) throw new Error("Synthetic intake fixture exhausted");
+            return answer;
+          }
+          return ({
+          data: race.freshMissing || (race.readError && !race.readErrorWithData) ? null : { ...row("00000000-0000-4000-8000-000000000001"), starts_at: race.freshStart },
           error: race.readError ? { message: "synthetic read failure" } : null,
-        }),
+        }); },
         then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => {
           if (race.incidentRead === "throw") { answer(); return Promise.reject(race.incidentThrown).then(resolve, reject); }
           if (race.incidentRead === "timeout_once" && race.pages.length === 0) { answer(); return new Promise(() => undefined); }
@@ -293,7 +316,10 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     vi.setSystemTime(new Date("2026-10-21T12:00:00.000Z"));
     race.store.clear(); race.store.set("reminder_scan:v1:rotation", { value: JSON.stringify({version:1,next:"email24h",known:[]}), expiry: Date.now() + 10800000 }); race.failStore = false; race.heartbeat.mockClear(); race.alerts.mockClear();
     race.start = "2026-10-22T12:00:00.000Z"; race.freshStart = race.start;
-    race.readError = false; race.incidentRead = "none"; race.incidentSqlState = "42703"; race.incidentThrown = undefined; race.incidentCoordinationError = undefined;
+    race.claimRpcMode = "normal"; race.claimRpc.mockClear();
+    race.intakeEnabled = false;
+    race.intakeOnly = false; race.intakeReads = [];
+    race.readError = false; race.freshMissing = false; race.readErrorWithData = false; race.incidentRead = "none"; race.incidentSqlState = "42703"; race.incidentThrown = undefined; race.incidentCoordinationError = undefined;
     race.backlog = null; race.sent.clear(); race.pages = [];
     race.setupThrown = undefined; race.originThrown = undefined;
     race.heartbeat.mockReset().mockResolvedValue(undefined); race.alerts.mockReset().mockResolvedValue(undefined);
@@ -302,6 +328,141 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     race.record.mockReset().mockImplementation(async () => undefined);
   });
   afterEach(() => { vi.useRealTimers(); });
+
+  it.each([["probe", false], ["live", false], ["probe", true], ["live", true]] as const)("INTAKE_AUTH %s error with data=%s cannot masquerade as submitted", async (stage, withData) => {
+    race.intakeOnly = true;
+    const incomplete = { data: { id: "synthetic-intake", status: "in_progress" }, error: null };
+    const unavailable = { data: withData ? incomplete.data : null, error: { message: "SYNTHETIC_PRIVATE intake read error" } };
+    race.intakeReads = stage === "probe" ? [unavailable] : [incomplete, unavailable];
+    const response = await GET(new Request("https://example.invalid"));
+    console.info(JSON.stringify({ event: "synthetic_intake_authority_observation", stage, status: response.status,
+      claims: race.claimRpc.mock.calls.length, sdk_calls: race.send.mock.calls.length,
+      settlement_calls: race.record.mock.calls.length, failed_settlement_calls: race.record.mock.calls.filter((c) => (c as unknown[])[3] === false).length,
+      heartbeats: race.heartbeat.mock.calls.length }));
+    expect(race.send).not.toHaveBeenCalled();
+    expect(response.status).toBe(500);
+    expect(race.record).not.toHaveBeenCalled();
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    expect(race.claimRpc).toHaveBeenCalledTimes(stage === "probe" ? 0 : 1);
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({
+      reason: "read_or_handler", failure_stage: "handler", failure_category: "handler_error",
+    }) }));
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
+  });
+
+  it("INTAKE_AUTH known incomplete standalone intake still sends once", async () => {
+    race.intakeOnly = true;
+    race.intakeReads = Array.from({ length: 2 }, () => ({ data: { id: "synthetic-intake", status: "in_progress" }, error: null }));
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).toHaveBeenCalledTimes(1);
+    expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", true);
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("INTAKE_AUTH known submission after probe retains existing no-send settlement", async () => {
+    race.intakeOnly = true;
+    race.intakeReads = [{ data: { id: "synthetic-intake", status: "in_progress" }, error: null },
+      { data: { id: "synthetic-intake", status: "submitted" }, error: null }];
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", false);
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("INTAKE_AUTH plain appointment reminder keeps no-CTA error degradation", async () => {
+    race.intakeEnabled = true;
+    race.intakeReads = [{ data: null, error: { message: "SYNTHETIC_PRIVATE intake error" } }];
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.send).toHaveBeenCalledTimes(1);
+    expect(race.send).toHaveBeenCalledWith(expect.objectContaining({ intakeUrl: null }));
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("INTAKE_AUTH SMS keeps no-CTA error degradation", async () => {
+    race.intakeEnabled = true;
+    race.backlog = { channel: "sms", reason: "toggle", skipped: 0, eligible: 1 };
+    race.intakeReads = [{ data: null, error: { message: "SYNTHETIC_PRIVATE intake error" } }];
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.smsSend).toHaveBeenCalledTimes(1);
+    expect(race.smsSend).toHaveBeenCalledWith(expect.objectContaining({ intakeUrl: null }));
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.record).not.toHaveBeenCalled();
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("POSTCLAIM_READ failure must not become a healthy completed scan", async () => {
+    race.readError = true;
+    const response = await GET(new Request("https://example.invalid"));
+    const saved = race.store.get("reminder_scan:v1:checkpoint:email24h");
+    const checkpoint = saved ? JSON.parse(saved.value) : null;
+    console.info(JSON.stringify({ event: "synthetic_postclaim_read_observation", status: response.status,
+      claim_calls: race.claimRpc.mock.calls.length, sdk_calls: race.send.mock.calls.length,
+      settlement_calls: race.record.mock.calls.length, heartbeat_calls: race.heartbeat.mock.calls.length,
+      checkpoint_complete: checkpoint?.complete ?? null, checkpoint_after_null: checkpoint?.after === null }));
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.record).not.toHaveBeenCalled();
+    expect(response.status).toBe(500);
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    if (checkpoint) expect(checkpoint.complete).toBe(false);
+  });
+
+  it("POSTCLAIM_READ error with returned data remains unavailable", async () => {
+    race.readError = true;
+    race.readErrorWithData = true;
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.record).not.toHaveBeenCalled();
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({
+      reason: "read_or_handler", failure_stage: "handler", failure_category: "handler_error",
+    }) }));
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("synthetic read failure");
+  });
+
+  it("POSTCLAIM_READ definite missing row without error remains an ordinary skip", async () => {
+    race.freshMissing = true;
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.record).not.toHaveBeenCalled();
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("POSTCLAIM_READ known successful current read retains normal send and heartbeat", async () => {
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(200);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).toHaveBeenCalledTimes(1);
+    expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", true);
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["moved outside window", "2026-10-23T12:00:00.000Z"],
+    ["moved within window", "2026-10-22T12:15:00.000Z"],
+    ["missing current start", null],
+    ["invalid current start", "invalid"],
+  ])("MSG002 refuses cached reminder when %s without settling the claim", async (_label, freshStart) => {
+    race.freshStart = freshStart;
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(200);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.record).not.toHaveBeenCalled();
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("MSG002 accepts an unchanged instant with an equivalent timezone offset", async () => {
+    race.freshStart = "2026-10-22T08:00:00-04:00";
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.send).toHaveBeenCalledTimes(1);
+    expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", true);
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
 
   it.each([
     ["email", "toggle"], ["email", "destination"],
@@ -585,6 +746,34 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     expect(race.claim).toHaveBeenCalledTimes(1); expect(race.send).toHaveBeenCalledTimes(1);
     expect(race.heartbeat).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
+  });
+
+  it.each(["error", "throw", "malformed"] as const)("email claim %s keeps the candidate unacknowledged and heartbeat unhealthy", async (mode) => {
+    race.claimRpcMode = mode;
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(500);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).not.toHaveBeenCalled(); expect(race.record).not.toHaveBeenCalled(); expect(race.heartbeat).not.toHaveBeenCalled();
+    const saved = race.store.get("reminder_scan:v1:checkpoint:email24h");
+    if (saved) expect(JSON.parse(saved.value).after).toBeNull();
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({ reason: "claim_unavailable", attempted: 0 }) }));
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
+  });
+  it("a definite false claim remains a legitimate skip that can complete the pass", async () => {
+    race.claim.mockResolvedValue(false);
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1); expect(race.send).not.toHaveBeenCalled(); expect(race.record).not.toHaveBeenCalled();
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("an unavailable second claim preserves the already-handled prefix without acknowledging that row", async () => {
+    race.backlog = { channel: "email", reason: "toggle", skipped: 0, eligible: 3 };
+    race.claim.mockImplementationOnce(async () => { race.claimRpcMode = "error"; return true; });
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
+    expect(race.claimRpc).toHaveBeenCalledTimes(2); expect(race.send).toHaveBeenCalledTimes(1); expect(race.record).toHaveBeenCalledTimes(1);
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    const saved = race.store.get("reminder_scan:v1:checkpoint:email24h"); expect(saved).toBeDefined();
+    expect(JSON.parse(saved!.value).after.id).toBe("00000000-0000-4000-8000-000000000001");
   });
 
 });
