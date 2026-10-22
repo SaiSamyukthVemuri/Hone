@@ -1138,8 +1138,13 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
     if (!isRecord(doc) || !isRecord(doc.jobs)) return doc;
     const jobs: Record<string, unknown> = {};
     for (const [k, job] of Object.entries(doc.jobs)) {
+      // Blank ONLY the sanctioned password value; every other field of the
+      // step (name, if, uses, with) is still scanned, so a secret smuggled
+      // into an `if:` or `name:` on this very step is still refused.
       jobs[k] = isRecord(job) && Array.isArray(job.steps)
-        ? { ...job, steps: job.steps.filter((s) => !isSanctionedGhcrLogin(job, s)) }
+        ? { ...job, steps: job.steps.map((s) => isSanctionedGhcrLogin(job, s) && isRecord(s) && isRecord(s.with)
+            ? { ...s, with: { ...s.with, password: "<sanctioned ghcr.io token>" } }
+            : s) }
         : job;
     }
     return { ...doc, jobs };
@@ -1223,6 +1228,11 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
     expect(writeCredentialViolations([wf(READ_PKGS, LOGIN.map((l) => l.replace("registry: ghcr.io", "registry: docker.io")))]).length).toBeGreaterThan(0);
     expect(writeCredentialViolations([wf(READ_PKGS, LOGIN.map((l) => l.replace(SANCTIONED_LOGIN, "docker/login-action@0000000000000000000000000000000000000000")))]).length).toBeGreaterThan(0);
     expect(writeCredentialViolations([wf(READ_PKGS, [...LOGIN, "        env:", "          X: ${{ secrets.GITHUB_TOKEN }}"])]).length).toBeGreaterThan(0);
+    // Codex 4353055752: a secret in the sanctioned step's own if/name is still refused.
+    const withIf = [LOGIN[0], "        if: secrets.DEPLOY_PAT != ''", ...LOGIN.slice(1)];
+    expect(writeCredentialViolations([wf(READ_PKGS, withIf)]).join("\n")).toMatch(/DEPLOY_PAT/);
+    const withName = [LOGIN[0].replace("login", "login ${{ secrets.DEPLOY_PAT }}"), ...LOGIN.slice(1)];
+    expect(writeCredentialViolations([wf(READ_PKGS, withName)]).join("\n")).toMatch(/DEPLOY_PAT/);
   });
 
   // 6. The Supabase CLI pin is a DB-SAFETY invariant, not a preference: a newer
