@@ -121,7 +121,7 @@ describe("the six-case law", () => {
 
   it("CASE 3 (intake off) never reads intake at all", () => {
     expect(PASS).toMatch(
-      /const intake = intakeEnabled\s*\n?\s*\? await readLatestIntake\(admin, appt\.studio\.id, appt\.client_id\)\s*\n?\s*: null;/,
+      /const intake = intakeEnabled\s*\n?\s*\? await readLatestIntake\(admin, appt\.studio\.id, appt\.client_id, !wantsReminder\)\s*\n?\s*: null;/,
     );
   });
 
@@ -173,13 +173,12 @@ describe("nothing is inferred from an earlier cron query", () => {
     expect(CODE).toMatch(/\.is\("deleted_at", null\)/);
   });
 
-  it("an intake read failure degrades to no-CTA instead of throwing", () => {
-    // Destructures `data` only: an error yields null, never a throw, so the
-    // appointment reminder still goes out.
-    expect(CODE).toMatch(
-      /async function readLatestIntake\([\s\S]*?const \{ data \} = await admin[\s\S]*?return \(data as \{ id: string; status: string \} \| null\) \?\? null;/,
-    );
-    expect(CODE).not.toMatch(/readLatestIntake[\s\S]{0,400}throw new Error/);
+  it("preserves default no-CTA degradation and requires authority only for standalone email", () => {
+    expect(CODE).toMatch(/requireKnown = false/);
+    expect(CODE).toMatch(/const \{ data, error \} = await admin/);
+    expect(CODE).toMatch(/if \(requireKnown && error\) throw new Error\("reminder intake state unavailable"\)/);
+    expect(PASS).toMatch(/const probe = await readLatestIntake\([\s\S]*?appt\.client_id,\s*true,/);
+    expect(PASS).toMatch(/readLatestIntake\(admin, appt\.studio\.id, appt\.client_id, !wantsReminder\)/);
   });
 });
 

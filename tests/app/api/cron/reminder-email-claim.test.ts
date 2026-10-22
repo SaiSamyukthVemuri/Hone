@@ -155,6 +155,9 @@ const race = vi.hoisted(() => ({
   start: "2026-10-22T12:00:00.000Z",
   freshStart: "2026-10-22T12:00:00.000Z" as string | null,
   readError: false,
+  intakeOnly: false,
+  intakeEnabled: false,
+  intakeReads: [] as Array<{ data: { id: string; status: string } | null; error: { message: string } | null }>,
   freshMissing: false,
   readErrorWithData: false,
   claimRpcMode: "normal" as "normal" | "error" | "throw" | "malformed",
@@ -208,6 +211,7 @@ vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
 });
 vi.mock("@/lib/cron/auth", () => ({ isAuthorizedCronRequest: () => true }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => { if (race.originThrown !== undefined) throw race.originThrown; return "https://example.invalid"; } }));
+vi.mock("@/lib/intake/queries", () => ({ generateIntakeLinkUrl: () => "https://example.invalid/intake/synthetic", stampIntakeLinkIssued: async () => undefined }));
 vi.mock("@/lib/booking/tokens", () => ({ generateCancellationToken: () => "synthetic-token" }));
 vi.mock("@/lib/cron/reminder-heartbeat", () => ({ recordReminderRunSuccess: race.heartbeat }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: race.alerts }));
@@ -235,7 +239,7 @@ vi.mock("@/lib/sms/send-appointment", () => ({
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => { if (race.setupThrown !== undefined) throw race.setupThrown; return ({
-    from: () => {
+    from: (table: string) => {
       let candidateColumn = "";
       let cursor: string | null = null;
       let limit = 50;
@@ -246,7 +250,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           id, studio_id: "synthetic-studio", client_id: "synthetic-client",
           status: "confirmed", starts_at: race.start, reminder_24h_send_attempts: 0,
           studio: { id: "synthetic-studio", name: "Synthetic", timezone: "UTC",
-            send_24h_reminders: !(skipped && reason === "toggle"), send_intake_reminders: false,
+            send_24h_reminders: !race.intakeOnly && !(skipped && reason === "toggle"), send_intake_reminders: race.intakeOnly || race.intakeEnabled,
             send_24h_sms_reminders: !(skipped && reason === "toggle") },
           client: { name: "Synthetic", email: skipped && reason === "destination" ? null : "synthetic@example.invalid",
             phone: skipped && reason === "destination" ? null : "+15555550123",
@@ -281,10 +285,16 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           cursor = JSON.parse(match[1]);
           return b;
         },
-        maybeSingle: async () => ({
+        maybeSingle: async () => {
+          if (table === "client_intake_forms") {
+            const answer = race.intakeReads.shift();
+            if (!answer) throw new Error("Synthetic intake fixture exhausted");
+            return answer;
+          }
+          return ({
           data: race.freshMissing || (race.readError && !race.readErrorWithData) ? null : { ...row("00000000-0000-4000-8000-000000000001"), starts_at: race.freshStart },
           error: race.readError ? { message: "synthetic read failure" } : null,
-        }),
+        }); },
         then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => {
           if (race.incidentRead === "throw") { answer(); return Promise.reject(race.incidentThrown).then(resolve, reject); }
           if (race.incidentRead === "timeout_once" && race.pages.length === 0) { answer(); return new Promise(() => undefined); }
@@ -307,6 +317,8 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     race.store.clear(); race.store.set("reminder_scan:v1:rotation", { value: JSON.stringify({version:1,next:"email24h",known:[]}), expiry: Date.now() + 10800000 }); race.failStore = false; race.heartbeat.mockClear(); race.alerts.mockClear();
     race.start = "2026-10-22T12:00:00.000Z"; race.freshStart = race.start;
     race.claimRpcMode = "normal"; race.claimRpc.mockClear();
+    race.intakeEnabled = false;
+    race.intakeOnly = false; race.intakeReads = [];
     race.readError = false; race.freshMissing = false; race.readErrorWithData = false; race.incidentRead = "none"; race.incidentSqlState = "42703"; race.incidentThrown = undefined; race.incidentCoordinationError = undefined;
     race.backlog = null; race.sent.clear(); race.pages = [];
     race.setupThrown = undefined; race.originThrown = undefined;
@@ -316,6 +328,69 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     race.record.mockReset().mockImplementation(async () => undefined);
   });
   afterEach(() => { vi.useRealTimers(); });
+
+  it.each([["probe", false], ["live", false], ["probe", true], ["live", true]] as const)("INTAKE_AUTH %s error with data=%s cannot masquerade as submitted", async (stage, withData) => {
+    race.intakeOnly = true;
+    const incomplete = { data: { id: "synthetic-intake", status: "in_progress" }, error: null };
+    const unavailable = { data: withData ? incomplete.data : null, error: { message: "SYNTHETIC_PRIVATE intake read error" } };
+    race.intakeReads = stage === "probe" ? [unavailable] : [incomplete, unavailable];
+    const response = await GET(new Request("https://example.invalid"));
+    console.info(JSON.stringify({ event: "synthetic_intake_authority_observation", stage, status: response.status,
+      claims: race.claimRpc.mock.calls.length, sdk_calls: race.send.mock.calls.length,
+      settlement_calls: race.record.mock.calls.length, failed_settlement_calls: race.record.mock.calls.filter((c) => (c as unknown[])[3] === false).length,
+      heartbeats: race.heartbeat.mock.calls.length }));
+    expect(race.send).not.toHaveBeenCalled();
+    expect(response.status).toBe(500);
+    expect(race.record).not.toHaveBeenCalled();
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    expect(race.claimRpc).toHaveBeenCalledTimes(stage === "probe" ? 0 : 1);
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({
+      reason: "read_or_handler", failure_stage: "handler", failure_category: "handler_error",
+    }) }));
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
+  });
+
+  it("INTAKE_AUTH known incomplete standalone intake still sends once", async () => {
+    race.intakeOnly = true;
+    race.intakeReads = Array.from({ length: 2 }, () => ({ data: { id: "synthetic-intake", status: "in_progress" }, error: null }));
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).toHaveBeenCalledTimes(1);
+    expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", true);
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("INTAKE_AUTH known submission after probe retains existing no-send settlement", async () => {
+    race.intakeOnly = true;
+    race.intakeReads = [{ data: { id: "synthetic-intake", status: "in_progress" }, error: null },
+      { data: { id: "synthetic-intake", status: "submitted" }, error: null }];
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", false);
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("INTAKE_AUTH plain appointment reminder keeps no-CTA error degradation", async () => {
+    race.intakeEnabled = true;
+    race.intakeReads = [{ data: null, error: { message: "SYNTHETIC_PRIVATE intake error" } }];
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.send).toHaveBeenCalledTimes(1);
+    expect(race.send).toHaveBeenCalledWith(expect.objectContaining({ intakeUrl: null }));
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("INTAKE_AUTH SMS keeps no-CTA error degradation", async () => {
+    race.intakeEnabled = true;
+    race.backlog = { channel: "sms", reason: "toggle", skipped: 0, eligible: 1 };
+    race.intakeReads = [{ data: null, error: { message: "SYNTHETIC_PRIVATE intake error" } }];
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.smsSend).toHaveBeenCalledTimes(1);
+    expect(race.smsSend).toHaveBeenCalledWith(expect.objectContaining({ intakeUrl: null }));
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.record).not.toHaveBeenCalled();
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
 
   it("POSTCLAIM_READ failure must not become a healthy completed scan", async () => {
     race.readError = true;
