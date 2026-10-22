@@ -48,15 +48,6 @@ concurrency:
   group: nightly-${{ github.ref }}
   cancel-in-progress: true
 
-# D7 (Sam, 2026-10-22, option B). The pinned Supabase CLI 2.102.0 pulls its
-# local-stack images from ghcr.io by default. From ~16:33Z on 2026-10-22 every
-# Supabase-starting job failed before any test on ghcr.io "toomanyrequests" for
-# supabase/postgres. Pull the same images from Supabase's public ECR mirror
-# instead: no credential, no CLI version change (grants parity is tied to the
-# CLI version, which stays 2.102.0).
-env:
-  SUPABASE_INTERNAL_IMAGE_REGISTRY: public.ecr.aws
-
 jobs:
   full-matrix:
     name: full matrix (${{ matrix.lane }})
@@ -208,6 +199,12 @@ jobs:
           # which looks exactly like an application bug. Bump only with a
           # grants-parity re-verification.
           version: 2.102.0
+
+      # D7 option B. supabase/setup-cli exports SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io
+      # through GITHUB_ENV, which beats workflow-level env; a later GITHUB_ENV write
+      # wins, so re-point the CLI at Supabase's public ECR mirror right here.
+      - name: Use Supabase public ECR image mirror (D7)
+        run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=public.ecr.aws" >> "$GITHUB_ENV"
 
       - name: Bring up the database
         if: matrix.needs_supabase

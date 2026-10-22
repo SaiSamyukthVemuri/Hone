@@ -758,9 +758,16 @@ describe("PR CI — path-aware lane selection", () => {
 
 describe("D7: local-stack images come from Supabase's public ECR mirror", () => {
   // ghcr.io rate-limited supabase/postgres for every Supabase-starting job on
-  // 2026-10-22. The registry is a workflow-level env so no job can miss it.
-  it.each([["ci.yml", () => CI], ["nightly.yml", () => NIGHTLY]])("%s pins the registry", (_n, body) => {
-    expect(body()).toMatch(/^env:\n(?:  .*\n)*?  SUPABASE_INTERNAL_IMAGE_REGISTRY: public\.ecr\.aws$/m);
+  // 2026-10-22. supabase/setup-cli exports SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io
+  // through GITHUB_ENV, which overrides workflow/job env, so the only effective
+  // place is a GITHUB_ENV write in the step right after every setup-cli use.
+  const REEXPORT = 'echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=public.ecr.aws" >> "$GITHUB_ENV"';
+  it.each([["ci.yml", () => CI], ["nightly.yml", () => NIGHTLY]])("%s re-points the CLI after every setup-cli", (_n, body) => {
+    const steps = body().split(/\n(?=      - )/);
+    const setups = steps.map((s, i) => [s, i] as const).filter(([s]) => /uses: supabase\/setup-cli@/.test(s));
+    expect(setups.length).toBeGreaterThan(0);
+    for (const [, i] of setups) expect(steps[i + 1]).toContain(REEXPORT);
+    expect(body().split(REEXPORT).length - 1).toBe(setups.length);
   });
 });
 

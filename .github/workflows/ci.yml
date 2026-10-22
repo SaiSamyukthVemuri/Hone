@@ -69,13 +69,6 @@ concurrency:
 # and derived paths cannot disagree.
 env:
   HONE_E2E_PORT: "3111"
-  # D7 (Sam, 2026-10-22, option B). The pinned Supabase CLI 2.102.0 pulls its
-  # local-stack images from ghcr.io by default. From ~16:33Z on 2026-10-22 every
-  # Supabase-starting job failed before any test on ghcr.io "toomanyrequests" for
-  # supabase/postgres. Pull the same images from Supabase's public ECR mirror
-  # instead: no credential, no CLI version change (grants parity is tied to the
-  # CLI version, which stays 2.102.0).
-  SUPABASE_INTERNAL_IMAGE_REGISTRY: public.ecr.aws
 
 jobs:
   # -------------------------------------------------------------------------
@@ -541,6 +534,12 @@ jobs:
           # locally; bump deliberately and re-verify grants parity.
           version: 2.102.0
 
+      # D7 option B. supabase/setup-cli exports SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io
+      # through GITHUB_ENV, which beats workflow-level env; a later GITHUB_ENV write
+      # wins, so re-point the CLI at Supabase's public ECR mirror right here.
+      - name: Use Supabase public ECR image mirror (D7)
+        run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=public.ecr.aws" >> "$GITHUB_ENV"
+
       - name: Start local Supabase (DB + REST API)
         # Was `supabase db start` (Postgres only). The DB-integration lane now
         # also exercises server-side code that reaches Supabase over the REST API
@@ -721,6 +720,12 @@ jobs:
         with:
           # Same pin and rationale as db-integration (grants parity, v1 branch).
           version: 2.102.0
+
+      # D7 option B. supabase/setup-cli exports SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io
+      # through GITHUB_ENV, which beats workflow-level env; a later GITHUB_ENV write
+      # wins, so re-point the CLI at Supabase's public ECR mirror right here.
+      - name: Use Supabase public ECR image mirror (D7)
+        run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=public.ecr.aws" >> "$GITHUB_ENV"
 
       - name: Configure local auth for the E2E origin
         # supabase/config.toml is untracked (CLI convention via
@@ -1016,6 +1021,12 @@ jobs:
           # Same pin and rationale as db-integration / browser-e2e (grants parity, v1 branch).
           version: 2.102.0
 
+      # D7 option B. supabase/setup-cli exports SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io
+      # through GITHUB_ENV, which beats workflow-level env; a later GITHUB_ENV write
+      # wins, so re-point the CLI at Supabase's public ECR mirror right here.
+      - name: Use Supabase public ECR image mirror (D7)
+        run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=public.ecr.aws" >> "$GITHUB_ENV"
+
       - name: Configure local auth for the E2E origin
         # Same local-only auth config as browser-e2e: allow-list the local E2E app
         # origin (port 3111) for the magic-link redirect. No production project.
@@ -1124,6 +1135,12 @@ jobs:
           # Same pin and rationale as the other browser lanes (grants parity, v1 branch).
           version: 2.102.0
 
+      # D7 option B. supabase/setup-cli exports SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io
+      # through GITHUB_ENV, which beats workflow-level env; a later GITHUB_ENV write
+      # wins, so re-point the CLI at Supabase's public ECR mirror right here.
+      - name: Use Supabase public ECR image mirror (D7)
+        run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=public.ecr.aws" >> "$GITHUB_ENV"
+
       - name: Configure local auth for the E2E origin
         run: |
           supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
@@ -1230,6 +1247,12 @@ jobs:
         uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
           version: 2.102.0
+
+      # D7 option B. supabase/setup-cli exports SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io
+      # through GITHUB_ENV, which beats workflow-level env; a later GITHUB_ENV write
+      # wins, so re-point the CLI at Supabase's public ECR mirror right here.
+      - name: Use Supabase public ECR image mirror (D7)
+        run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=public.ecr.aws" >> "$GITHUB_ENV"
 
       - name: Configure local auth for the E2E origin
         run: |
