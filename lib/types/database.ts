@@ -187,6 +187,9 @@ export type Studio = {
   // to an eligible prospect. Default false. Optional because a row read before
   // 0206 is applied has no such column, and absent must mean OFF.
   send_waitlist_invitation_sms?: boolean;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 // Migration 0140: per-studio resumable onboarding-v2 (owner first-run) state.
@@ -553,6 +556,9 @@ export type Appointment = {
   rescheduled_from_appointment_id: string | null;
   rescheduled_to_appointment_id: string | null;
   cancellation_kind: string | null;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 // Migration 0049: SMS types accepted by claim_sms_send and
@@ -824,6 +830,9 @@ export type Practitioner = {
   // backfilled because history carries no such fact.
   last_public_assignment_at: string | null;
   created_at: string;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 export type Client = {
@@ -880,6 +889,9 @@ export type Client = {
   // Migration 0231: the client's identification portrait, a pointer to one of
   // their own client-scoped, unarchived treatment photos (null = none).
   portrait_image_id: string | null;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 // Migration 0126 (Willow PR A): dedicated dated CONSULTATION notes + SKIN/HAIR

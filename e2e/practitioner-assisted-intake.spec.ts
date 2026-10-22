@@ -718,7 +718,13 @@ test.describe("0243 stale public and assisted drafts", () => {
 
 // Prepared source only: separately aligned0246 target/slot required.
 test.describe("0246 prospective issue and legacy provenance", () => {
-  test("normal no-email assisted issue pins one immutable catalogue through save and review", async ({ page }) => {
+  // c99c7e1b (decoder-first rollout): issuance of a KNOWN snapshot is deferred
+  // until every reader ships, so a new assisted issue is written explicitly
+  // unverified (null) and must be reviewed as such. The property kept: the
+  // review never claims a saved questionnaire the row does not carry, and the
+  // snapshot does not change through save. Re-pin to ISSUED_QUESTIONNAIRE when
+  // issuance is re-enabled.
+  test("normal no-email assisted issue stays explicitly unverified through save and review (issuance deferred)", async ({ page }) => {
     const { clientId } = await seedE2eClient(seed);
     await loginAsOwner(page, seed);
     await page.goto(`/clients/${clientId}?tab=health`);
@@ -728,7 +734,7 @@ test.describe("0246 prospective issue and legacy provenance", () => {
     const rows = await sql<{ id: string; questionnaire_snapshot: unknown; intake_link_last_sent_at: string | null }>(
       `select id, questionnaire_snapshot, intake_link_last_sent_at::text from public.client_intake_forms where studio_id=$1 and client_id=$2 and deleted_at is null`, [seed.studioId,clientId]);
     expect(rows).toHaveLength(1);
-    expect(rows[0].questionnaire_snapshot).toEqual(ISSUED_QUESTIONNAIRE);
+    expect(rows[0].questionnaire_snapshot).toBeNull();
     expect(rows[0].intake_link_last_sent_at).toBeNull();
     await page.getByLabel("Preferred name", { exact: true }).fill("Synthetic issued draft");
     await page.locator("#legal_name").fill("Synthetic Client");
@@ -742,9 +748,10 @@ test.describe("0246 prospective issue and legacy provenance", () => {
     await page.getByRole("button", { name: /Continue|Save and continue/ }).click();
     await expect.poll(async () => (await getIntakeRow(rows[0].id))?.responses.preferred_name).toBe("Synthetic issued draft");
     await page.goto(`/clients/${clientId}/intake?intake=${rows[0].id}`);
-    await expect(page.getByText("Labels below use the questionnaire saved when this intake was issued.", { exact: false })).toBeVisible();
+    await expect(page.getByText("The original questionnaire wording was not saved with this intake", { exact: false })).toBeVisible();
+    await expect(page.getByText("Labels below use the questionnaire saved when this intake was issued.", { exact: false })).toHaveCount(0);
     const after = await sql<{ questionnaire_snapshot: unknown }>(`select questionnaire_snapshot from public.client_intake_forms where id=$1`,[rows[0].id]);
-    expect(after[0].questionnaire_snapshot).toEqual(ISSUED_QUESTIONNAIRE);
+    expect(after[0].questionnaire_snapshot).toBeNull();
   });
   test("a retained legacy intake remains unknown and terminal token discloses neither answers nor catalogue", async ({ page }) => {
     const { clientId } = await seedE2eClient(seed);

@@ -80,6 +80,10 @@ import {
 //     their stability, and a studio does not own their contents. The one
 //     exception is storage BUCKETS, which hold studio files and are therefore
 //     enumerated as resources in their own right.
+//   * Repository-owned PRIVATE schemas (today only appointment_email_private,
+//     0247) are named one by one with the decision behind them. They are not
+//     platform-provisioned, so each needs its own reviewed reason rather than
+//     the platform rule above.
 //   * Views and materialized views are excluded because they are projections of
 //     base tables that already carry a disposition; exporting both would be
 //     exporting the same fact twice.
@@ -112,6 +116,8 @@ export const NON_CUSTOMER_SCHEMAS: Readonly<Record<string, string>> = {
   cron: "pg_cron internals.",
   pgsodium: "pgsodium key management. Secret material.",
   information_schema: "SQL standard catalog.",
+  appointment_email_private:
+    "Hone's reminder-email send authority (migration 0247): the operation state machine, per-appointment cohorts and intake epochs. Repository-owned, not platform-provisioned, and decided rather than shrugged: its rows are delivery-accounting internals (lease tokens, capability and request digests, opaque authority revision vectors, provider message ids), several of them security material. The studio-visible history of the same sends is written to email_outbound_messages, which 0247 keeps as its secondary ledger and whose export is decided under TRUTH-01B.",
 };
 
 // ---------------------------------------------------------------------------
@@ -311,6 +317,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "normalized_email", reason: "internal_state", note: "Generated from email, which is exported; a second copy carries no new fact." },
       { column: "sms_phone", reason: "internal_state", note: "Generated from exported `phone`; carries no additional customer fact and exists to support canonical SMS routing/eligibility. Same call as normalized_email: the export preserves the AUTHORED customer value, never a second generated copy of it. Migration 0199 added the column as `generated always as (public.sms_normalized_phone(phone)) stored`." },
       { column: "archived_by", reason: "pending_review", note: "Archive attribution; see archived_at." },
+      { column: "email_operation_revision", reason: "delivery_mechanics", note: "Migration 0247. Trigger-maintained opaque sequence value that invalidates an in-flight reminder email when this row changes; no studio-authored fact." },
       { column: "portrait_image_id", reason: "pending_review", note: "0231 identification-portrait pointer to one of the client's own treatment_images rows; it travels with the treatment-photo export decision, not as a bare id." },
     ],
     sourceCountCheck: { kind: "studio_scoped" },
@@ -544,6 +551,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
       { column: "user_id", reason: "internal_state", note: "Supabase auth user identifier. Platform identity, not studio content." },
+      { column: "email_operation_revision", reason: "delivery_mechanics", note: "Migration 0247. Trigger-maintained opaque sequence value that invalidates an in-flight reminder email when this row changes; no studio-authored fact." },
       { column: "default_machine_id", reason: "pending_review", note: "Migration 0223. A UI default, not a treatment record: what was actually used is on treatment_setup_readings. It is also an opaque uuid pointing at studio_machines, whose own export disposition is still pending, so emitting it would hand a studio an identifier it cannot resolve inside the archive. Unlike default_machine_frequency below, it is not self-describing. Revisit with the MPX-02 export decision." },
       { column: "default_machine_mode", reason: "pending_review", note: "Migration 0223. The mode half of the same UI default, meaningful only alongside default_machine_id. Held with it rather than emitted on its own." },
       { column: "terms_accepted_at", reason: "internal_state", note: "Hone platform agreement acceptance, not studio-owned client content." },
@@ -646,6 +654,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "reminder_24h_send_attempts", reason: "delivery_mechanics" },
       { column: "reminder_2h_send_attempts", reason: "delivery_mechanics" },
       { column: "no_show_email_send_attempts", reason: "delivery_mechanics" },
+      { column: "email_operation_revision", reason: "delivery_mechanics", note: "Migration 0247. Trigger-maintained opaque sequence value that invalidates an in-flight reminder email when this row changes; no studio-authored fact." },
       { column: "buffer_minutes_snapshot", reason: "internal_state", note: "Trigger-managed scheduling snapshot." },
       { column: "blocked_ends_at", reason: "internal_state", note: "Trigger-managed scheduling snapshot." },
       { column: "postcare_email_sent_at", reason: "delivery_mechanics" },
@@ -1286,6 +1295,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     ],
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
+      { column: "email_operation_revision", reason: "delivery_mechanics", note: "Migration 0247. Trigger-maintained opaque sequence value that invalidates an in-flight reminder email when this row changes; no studio-authored fact." },
     ],
     sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database - the same posture as the other unverified files. Declaring the gap is what stops the manifest reading as though every file were checked." },
     rowScope: "Every service this studio has defined, active or not.",
