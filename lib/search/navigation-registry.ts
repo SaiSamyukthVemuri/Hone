@@ -409,6 +409,16 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     priority: 360,
   },
   {
+    id: "settings-overview",
+    title: "Studio overview",
+    category: "Settings",
+    href: "/settings/overview",
+    description: "Where the studio stands: booking setup, team, phone and payments",
+    keywords: ["overview", "studio overview", "owner console", "console", "status", "readiness", "setup status", "admin"],
+    visibility: "owner",
+    priority: 365,
+  },
+  {
     id: "settings-team",
     title: "Team",
     category: "Settings",

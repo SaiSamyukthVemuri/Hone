@@ -502,6 +502,43 @@ describe("ONB-02 P2: readiness reads the SAME availability scope as public booki
   });
 });
 
+describe("owner-console admission evidence stays inside the request boundary", () => {
+  beforeEach(() => {
+    vi.stubEnv("NEW_CLIENT_WAITLIST_STUDIO_SLUGS", "");
+    vi.mocked(queries.getActiveServices).mockResolvedValue([CONSULTATION] as never);
+    vi.mocked(wideAvailability.getStudioWideDefaultsSafe).mockResolvedValue([OPEN_DAY] as never);
+    vi.mocked(consent.getTreatmentConsentReadiness).mockResolvedValue({ ok: true, ready: true });
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each(["open", "waitlist", "closed"] as const)("uses owner-resolved %s without privileged admission reads", async (mode) => {
+    const authority = await import("@/lib/booking/new-client-admission");
+    vi.mocked(authority.getNewClientAdmissionMode).mockClear();
+    const evidence = authority.resolveAdmission({ storedMode: mode, storedSetAt: "2026-10-20T00:00:00Z", readFailed: false, studioSlug: STUDIO.slug });
+    const r = await getNewClientReadiness({ id: "st", ...STUDIO }, evidence);
+    expect(authority.getNewClientAdmissionMode).not.toHaveBeenCalled();
+    expect(r.status).toBe(mode === "open" ? "ready" : "not_ready");
+    if (r.status === "not_ready") {
+      expect(r.blockers.map((b) => b.key)).toContain(mode === "closed" ? "admission_closed" : "wait_admission");
+    }
+  });
+
+  it("unreadable owner admission stays unknown, without privileged fallback", async () => {
+    const authority = await import("@/lib/booking/new-client-admission");
+    vi.mocked(authority.getNewClientAdmissionMode).mockClear();
+    const r = await getNewClientReadiness({ id: "st", ...STUDIO }, { ok: false });
+    expect(authority.getNewClientAdmissionMode).not.toHaveBeenCalled();
+    expect(r).toMatchObject({ status: "unknown", unavailable: ["admission"] });
+  });
+
+  it("callers without owner evidence still use the existing admission authority", async () => {
+    const authority = await import("@/lib/booking/new-client-admission");
+    vi.mocked(authority.getNewClientAdmissionMode).mockClear();
+    await getNewClientReadiness({ id: "st", ...STUDIO });
+    expect(authority.getNewClientAdmissionMode).toHaveBeenCalledExactlyOnceWith({ id: "st", ...STUDIO });
+  });
+});
+
 describe("ONB-02 P1: the owner launch surface CONSUMES the canonical authority", () => {
   // MUTATION CONTROL 1 — "canonical result not wired into the owner surface".
   //
