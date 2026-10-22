@@ -7,6 +7,8 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 import { isDefinitiveStripeRefusal } from "@/lib/billing/stripe-error-outcome";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
 import { buildChargeDescription } from "@/lib/billing/charge-description";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
+import { accountCountryChargeable, accountCountryVerdict } from "@/lib/billing/payment-jurisdiction";
 import {
   compareProviderMoney,
   providerMoneyMismatchDetails,
@@ -1285,6 +1287,32 @@ async function reconcileExistingPaymentIntent(args: {
   };
 }
 
+// Recheck current authority before creating a provider intent. Preparation's
+// INSERT trigger cannot cover an observation that changed after preparation.
+// UNKNOWN is a supported state, never permission to move money. Reuse the
+// published country verdict, including its existing verified-CA legacy policy.
+async function canCreateInCurrentPaymentCountry(args: {
+  studioId: string; stripeAccountId: string; livemode: boolean;
+}): Promise<boolean> {
+  const jurisdiction = await getStudioPaymentJurisdiction(args.studioId);
+  if (!jurisdiction.ok) return false;
+  const admin = createAdminClient();
+  const { data: settings, error } = await admin
+    .from("studio_payment_settings")
+    .select("stripe_account_id, stripe_livemode, stripe_account_country, stripe_account_country_conflict")
+    .eq("studio_id", args.studioId)
+    .eq("stripe_livemode", args.livemode)
+    .eq("stripe_account_id", args.stripeAccountId)
+    .maybeSingle();
+  if (error || !settings || settings.stripe_account_id !== args.stripeAccountId
+      || settings.stripe_livemode !== args.livemode) return false;
+  return accountCountryChargeable(accountCountryVerdict(
+    jurisdiction.jurisdiction.country,
+    settings.stripe_account_country,
+    settings.stripe_account_country_conflict,
+  ));
+}
+
 // Entry point. Caller MUST already have resolved practitioner +
 // studio from the session.
 export async function runSessionPaymentCharge(args: {
@@ -1471,6 +1499,19 @@ export async function runSessionPaymentCharge(args: {
   }
   const card = lineage.card;
 
+  // A new attempt must pass before claiming, so a country refusal leaves it
+  // ready. An already uncertain attempt must still be reconcilable: provider
+  // truth is not a new charge authorization and is handled below unchanged.
+  const currentCountryArgs = {
+    studioId: attemptRow.studio_id, stripeAccountId: card.stripe_account_id, livemode,
+  };
+  const countryCheckedBeforeClaim = attemptRow.status !== "pending_stripe"
+    && !attemptRow.stripe_payment_intent_id;
+  if (countryCheckedBeforeClaim && !(await canCreateInCurrentPaymentCountry(currentCountryArgs))) {
+    return { ok: false, outcome: "blocked",
+      message: "The studio's payment country or Stripe account country could not be verified. Refresh the payment settings or contact Hone support before charging." };
+  }
+
   // 5. Atomically claim the attempt. Idempotency key is deterministic
   //    so a retry produces the same key.
   const idempotencyKey = buildIdempotencyKey(attemptRow.id, attemptRow.charge_reason ?? "session_payment");
@@ -1622,6 +1663,14 @@ export async function runSessionPaymentCharge(args: {
         message: NEEDS_MANUAL_REVIEW_MESSAGE,
       };
     }
+  }
+
+  // A pending claim without a PI can still create on its same key. Recheck
+  // authority for that external call, but retain the uncertain claim on refusal.
+  // A bound PI returned through reconciliation above never reaches this gate.
+  if (!countryCheckedBeforeClaim && !(await canCreateInCurrentPaymentCountry(currentCountryArgs))) {
+    return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE,
+      attemptId: attemptRow.id };
   }
 
   // 6b. Create + confirm the PaymentIntent. Off-session because the

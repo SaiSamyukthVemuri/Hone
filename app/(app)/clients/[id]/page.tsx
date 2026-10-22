@@ -66,6 +66,7 @@ import {
   INTAKE_LINK_TTL_DAYS,
 } from "@/lib/intake/queries";
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
+import { questionnaireForRow } from "@/lib/intake/questionnaire";
 import { IntakeResendCard } from "./intake/IntakeResendCard";
 import { StartAssistedIntakeButton } from "./intake/StartAssistedIntakeButton";
 import { PortalAccessCard } from "./PortalAccessCard";
@@ -413,7 +414,13 @@ export default async function ClientCheatSheetPage({
       : Promise.resolve([] as Awaited<ReturnType<typeof getRecentPortalAccessEvents>>),
   ]);
 
-  const selfReportedFitzpatrick = submittedIntake
+  // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
+  // shape uses legacy decoding; a present undefined/malformed snapshot refuses
+  // the derived summary just as the intake review page does.
+  const selfReportedFitzpatrick = submittedIntake &&
+    questionnaireForRow(Object.hasOwn(submittedIntake, "questionnaire_snapshot")
+      ? submittedIntake.questionnaire_snapshot
+      : null).kind !== "invalid"
     ? computeFitzpatrickEstimate(
         (submittedIntake.responses ?? {}) as Record<string, unknown>,
       )

@@ -153,6 +153,7 @@ function empty(table: string) {
 // because some unrelated fixture was unsatisfiable.
 // ---------------------------------------------------------------------------
 function healthySession() {
+  rows("studio_payment_jurisdictions", { payment_country: "CA", payment_currency: "cad" });
   rows("sessions", {
     id: SESSION,
     studio_id: STUDIO,
@@ -180,6 +181,8 @@ function healthySession() {
   rows("studio_payment_settings", {
     stripe_account_id: "acct_test",
     stripe_account_status: "enabled",
+    stripe_account_country: "CA",
+    stripe_account_country_conflict: null,
     stripe_livemode: false,
   });
   empty("payment_charge_attempts");
@@ -548,5 +551,57 @@ describe("scoping survives the change", () => {
       expect(read?.filters).toContainEqual(["appointment_id", APPT]);
       expect(read?.filters).toContainEqual(["stripe_livemode", false]);
     }
+  });
+});
+
+
+describe("G1 guard-only eligibility country authority", () => {
+  const setCountry = (country: "CA" | "US", currency: "cad" | "usd", observed: string | null, conflict: string | null = null) => {
+    rows("studio_payment_jurisdictions", { payment_country: country, payment_currency: currency });
+    const o = h.outcomes.studio_payment_settings;
+    rows("studio_payment_settings", { ...(o.data as Record<string, unknown>),
+      stripe_account_country: observed, stripe_account_country_conflict: conflict });
+  };
+  const refused = async (reason: RegExp) => {
+    const result = await getSessionPaymentEligibility(sessionArgs());
+    expect(result.eligible).toBe(false);
+    if (result.eligible) throw new Error("guard did not refuse");
+    expect(result.blockingReasons.join(" | ")).toMatch(reason);
+  };
+  beforeEach(() => healthySession());
+  it("UNKNOWN jurisdiction cannot present eligibility", async () => {
+    delete h.outcomes.studio_payment_jurisdictions; await refused(/could not be verified/i);
+  });
+  it("failed jurisdiction read is not a Canada default", async () => {
+    err("studio_payment_jurisdictions"); await refused(/could not be verified/i);
+  });
+  it("invalid jurisdiction pair cannot present eligibility", async () => {
+    rows("studio_payment_jurisdictions", { payment_country: "US", payment_currency: "cad" });
+    await refused(/could not be verified/i);
+  });
+  it("observed account mismatch refuses preparation readiness", async () => {
+    setCountry("US", "usd", "CA"); await refused(/different country/i);
+  });
+  it.each([["US", "usd", "US", "CA"], ["CA", "cad", "CA", "US"]] as const)(
+    "%s matching original observation does not clear a persisted conflict", async (country, currency, observed, conflict) => {
+      setCountry(country, currency, observed, conflict); await refused(/conflicting countries/i);
+    });
+  it("US unobserved account refuses", async () => {
+    setCountry("US", "usd", null); await refused(/not yet confirmed/i);
+  });
+  it.each([["CA", "cad", "CA"], ["US", "usd", "US"], ["CA", "cad", null]] as const)(
+    "%s healthy existing verdict remains eligible without a new currency interface", async (country, currency, observed) => {
+      setCountry(country, currency, observed);
+      const result = await getSessionPaymentEligibility(sessionArgs());
+      expect(result.eligible).toBe(true);
+      expect(result).not.toHaveProperty("paymentCurrency");
+      expect(h.reads).toContainEqual({ table: "studio_payment_jurisdictions", filters: [["studio_id", STUDIO]] });
+      expect(h.reads).toContainEqual({ table: "studio_payment_settings", filters: [["studio_id", STUDIO], ["stripe_livemode", false]] });
+    });
+  it("settings read failure keeps the existing generic retryable reason", async () => {
+    err("studio_payment_settings"); await refused(/could not be verified/i);
+  });
+  it("unavailable attempt history still refuses despite valid country", async () => {
+    err("payment_charge_attempts"); await refused(/could not be verified/i);
   });
 });

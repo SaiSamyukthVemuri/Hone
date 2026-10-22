@@ -27,6 +27,8 @@ const h = vi.hoisted(() => ({
   updateAttempts: [] as Array<{ payload: Record<string, unknown>; filters: Array<{ column: string; value: unknown }>; matched: boolean }>,
   afterRetrieve: null as null | (() => void),
   recheckReadError: false,
+  readErrors: [] as string[],
+  reads: [] as Array<{ table: string; filters: Array<{ column: string; value: unknown }> }>,
   alerts: [] as Array<{ severity: string; event: string; details: Record<string, unknown> }>,
   alertThrows: false,
   claim: {} as Record<string, unknown>,
@@ -105,7 +107,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       const q: Record<string, unknown> = {};
       let updatePayload: Record<string, unknown> | null = null;
       const filters: Array<{ column: string; value: unknown }> = [];
-      const read = () => ({ data: h.rows[table] && typeof h.rows[table] === "object" ? { ...(h.rows[table] as Record<string, unknown>) } : h.rows[table] ?? null, error: h.recheckReadError ? { code: "XX000" } : null });
+      const read = () => { h.reads.push({ table, filters: [...filters] }); return ({ data: h.rows[table] && typeof h.rows[table] === "object" ? { ...(h.rows[table] as Record<string, unknown>) } : h.rows[table] ?? null, error: h.recheckReadError || h.readErrors.includes(table) ? { code: "XX000" } : null }); };
       q.select = () => {
         if (updatePayload) {
           const row = h.rows[table] as Record<string, unknown> | undefined;
@@ -285,7 +287,8 @@ function seedLineage(currency: "cad" | "usd") {
       stripe_payment_method_id: "pm_test",
       card_authorization_signature_id: "sig-1",
     },
-    studio_payment_settings: { stripe_account_id: "acct_test", stripe_livemode: false },
+    studio_payment_settings: { stripe_account_id: "acct_test", stripe_livemode: false, stripe_account_country: currency === "usd" ? "US" : "CA", stripe_account_country_conflict: null },
+    studio_payment_jurisdictions: { payment_country: currency === "usd" ? "US" : "CA", payment_currency: currency },
     client_stripe_customers: { stripe_customer_id: "cus_test" },
     practitioners: { role: "owner" },
   };
@@ -309,6 +312,8 @@ beforeEach(() => {
   h.updateAttempts = [];
   h.afterRetrieve = null;
   h.recheckReadError = false;
+  h.readErrors = [];
+  h.reads = [];
   h.alerts = [];
   h.alertThrows = false;
   h.stripeCalls = [];
@@ -1143,5 +1148,90 @@ describe("PAY002 cumulative full refund evidence", () => {
     expect(out.cumulativeRefundEvidenceRefused).toBe(true);
     expect(h.boundObjects).toEqual([]);
     expect(h.updates).toEqual([]);
+  });
+});
+
+
+describe("G1 execution country authority before a new provider intent", () => {
+  const settings = () => h.rows.studio_payment_settings as Record<string, unknown>;
+  const pending = (piId: string | null) => {
+    Object.assign(h.rows.payment_charge_attempts as Record<string, unknown>, {
+      status: "pending_stripe", stripe_payment_intent_id: piId,
+    });
+    h.claim = claimFor("usd", { result: "already_pending", stripe_payment_intent_id: piId,
+      updated_at: new Date().toISOString() });
+  };
+  const refused = async () => {
+    const before = { ...(h.rows.payment_charge_attempts as Record<string, unknown>) };
+    expect(await charge()).toMatchObject({ ok: false, outcome: "blocked" });
+    expect(h.stripeCalls).toEqual([]);
+    expect(h.rpcCalls).not.toContain("claim_session_payment_charge_attempt");
+    expect(h.updates).toEqual([]);
+    expect(h.rows.payment_charge_attempts).toEqual(before);
+  };
+  beforeEach(() => {
+    seedLineage("usd"); h.claim = claimFor("usd");
+    h.pi = { id: PI_ID, status: "succeeded", amount: AMOUNT, currency: "usd", latest_charge: CHARGE_ID };
+  });
+  it("missing jurisdiction remains UNKNOWN and cannot claim or create", async () => {
+    delete h.rows.studio_payment_jurisdictions; await refused();
+  });
+  it("invalid country/currency pair cannot claim or create", async () => {
+    h.rows.studio_payment_jurisdictions = { payment_country: "US", payment_currency: "cad" }; await refused();
+  });
+  it("failed jurisdiction read cannot trust even an accompanying row", async () => {
+    h.readErrors = ["studio_payment_jurisdictions"]; await refused();
+  });
+  it("country mismatch after preparation cannot claim or create", async () => {
+    settings().stripe_account_country = "CA"; await refused();
+  });
+  it("persisted conflict blocks even when the original observation matches", async () => {
+    settings().stripe_account_country_conflict = "CA"; await refused();
+  });
+  it("unobserved US account cannot claim or create", async () => {
+    settings().stripe_account_country = null; await refused();
+  });
+  it("failed settings read cannot trust an accompanying bound row", async () => {
+    h.readErrors = ["studio_payment_settings"]; await refused();
+  });
+  it("healthy verified USD control still creates once with tenant/mode scoped reads", async () => {
+    expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(h.stripeCalls).toEqual(["pi_create"]);
+    expect(h.reads).toContainEqual({ table: "studio_payment_jurisdictions", filters: [{ column: "studio_id", value: STUDIO }] });
+    expect(h.reads).toContainEqual({ table: "studio_payment_settings", filters: [
+      { column: "studio_id", value: STUDIO }, { column: "stripe_livemode", value: false },
+      { column: "stripe_account_id", value: "acct_test" },
+    ] });
+  });
+  it("existing CA legacy observation policy remains chargeable with verified CA/cad", async () => {
+    seedLineage("cad"); settings().stripe_account_country = null; h.claim = claimFor("cad");
+    h.pi = { id: PI_ID, status: "succeeded", amount: AMOUNT, currency: "cad", latest_charge: CHARGE_ID };
+    expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(h.stripeCalls).toEqual(["pi_create"]);
+  });
+  it("newly unavailable jurisdiction never hides a bound uncertain intent from reconciliation", async () => {
+    pending(PI_ID); delete h.rows.studio_payment_jurisdictions;
+    settings().stripe_account_country_conflict = "CA";
+    expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(h.stripeCalls).toEqual(["pi_retrieve"]);
+    expect(succeededWrites()).toHaveLength(1);
+  });
+  it("pending bound nonterminal intent retains EDF uncertainty without replacement create", async () => {
+    pending(PI_ID); delete h.rows.studio_payment_jurisdictions; h.pi.status = "processing";
+    expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual(["pi_retrieve"]);
+    expect((h.rows.payment_charge_attempts as Record<string, unknown>).status).toBe("pending_stripe");
+    expect(succeededWrites()).toEqual([]);
+  });
+  it("pending no-intent UNKNOWN refuses create and retains the uncertain claim", async () => {
+    pending(null); delete h.rows.studio_payment_jurisdictions;
+    expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual([]); expect(h.updates).toEqual([]);
+    expect((h.rows.payment_charge_attempts as Record<string, unknown>).status).toBe("pending_stripe");
+  });
+  it("healthy pending no-intent retains EDF same-key create recovery", async () => {
+    pending(null);
+    expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(h.stripeCalls).toEqual(["pi_create"]);
   });
 });
