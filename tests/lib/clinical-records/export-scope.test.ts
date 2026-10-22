@@ -47,6 +47,7 @@ function text(html: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+const TZ = "America/Toronto";
 type BuildInput = Parameters<typeof buildClinicalRecordsDocument>[0];
 function printed(input: Partial<BuildInput>): string {
   const doc = buildClinicalRecordsDocument({
@@ -56,7 +57,7 @@ function printed(input: Partial<BuildInput>): string {
     practitionerNameById: new Map(),
     ...input,
   });
-  return text(renderToStaticMarkup(createElement(ExportSessionTreatments, { session: doc.sessions[0] })));
+  return text(renderToStaticMarkup(createElement(ExportSessionTreatments, { session: doc.sessions[0], timezone: TZ })));
 }
 const blockOf = (over: Record<string, unknown>) =>
   ({ id: "b", session_id: "s", sort_order: 0, primary_area: "chin", side: null, created_at: "2026-10-01T15:01:00Z", ...over }) as unknown as ExportBlockSource;
@@ -162,6 +163,29 @@ describe("caution flag without a note (Codex P2 4302644062)", () => {
       "Caution for next session: Thin skin",
     );
     expect(printed({ blocks: [blockOf({})] })).not.toContain("Caution");
+  });
+});
+
+describe("per-area recorded times (Codex P2 4347995164)", () => {
+  // A legacy or amended settings block can carry its own started_at/ended_at.
+  // The query loads both; the printout must keep them, in the studio's
+  // timezone, as NAMED print-only fields (the saved view does not show them).
+  it("prints an area's recorded start and end in the studio timezone", () => {
+    const out = printed({
+      blocks: [blockOf({ started_at: "2026-10-01T15:05:00Z", ended_at: "2026-10-01T15:20:00Z" })],
+    });
+    expect(out).toContain("Area started: October 1, 2026 at 11:05 a.m.");
+    expect(out).toContain("Area ended: October 1, 2026 at 11:20 a.m.");
+  });
+  it("prints only the start when no end was recorded", () => {
+    const out = printed({ blocks: [blockOf({ started_at: "2026-10-01T15:05:00Z", ended_at: null })] });
+    expect(out).toContain("Area started: October 1, 2026 at 11:05 a.m.");
+    expect(out).not.toContain("Area ended");
+  });
+  it("prints neither label for a block with no recorded times", () => {
+    const out = printed({ blocks: [blockOf({ started_at: null, ended_at: null })] });
+    expect(out).not.toContain("Area started");
+    expect(out).not.toContain("Area ended");
   });
 });
 
@@ -302,7 +326,7 @@ describe("buildClinicalRecordsDocument is an allow-list", () => {
     expect(s.blocks.map((b) => b.record.electrolysis_entries.map((e) => e.id))).toEqual([["e1"]]);
     expect(s.entries.map((e) => e.id)).toEqual(["e0"]);
 
-    const out = text(renderToStaticMarkup(createElement(ExportSessionTreatments, { session: s })));
+    const out = text(renderToStaticMarkup(createElement(ExportSessionTreatments, { session: s, timezone: TZ })));
     // The settings block, worded as the saved view words it.
     for (const shown of [
       "Blend · 13.56 · 15 min",

@@ -5,14 +5,15 @@
 // (SavedAreaRecord, ElectrolysisEntryRow, LaserEntryRow), without the view's
 // controls. The only additions are the NAMED print-only fields
 // (PRINT_ONLY_FIELDS in lib/clinical-records/export-scope.ts): stored clinical
-// record the saved view does not show, kept on paper, each marked
+// record the saved view does not show (an area's own recorded times, its legacy
+// note, a laser pass's results and settings), kept on paper, each marked
 // [data-print-only]. tests/components/saved-record-print-parity.test.ts
 // renders the real view and this component from one fixture and requires the
 // same text, apart from exactly those named fields.
 
 import { SavedAreaRecord } from "@/app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view";
 import { ElectrolysisEntryRow, LaserEntryRow } from "@/components/entry-row";
-import type { ClinicalRecordsDocument, Reading } from "@/lib/clinical-records/export-scope";
+import { formatExportInstant, type ClinicalRecordsDocument, type Reading } from "@/lib/clinical-records/export-scope";
 
 function PrintOnlyList({ readings }: { readings: Reading[] }) {
   if (readings.length === 0) return null;
@@ -27,7 +28,19 @@ function PrintOnlyList({ readings }: { readings: Reading[] }) {
   );
 }
 
-export function ExportSessionTreatments({ session }: { session: ClinicalRecordsDocument["sessions"][number] }) {
+export function ExportSessionTreatments({
+  session,
+  timezone,
+}: {
+  session: ClinicalRecordsDocument["sessions"][number];
+  /** The studio's timezone: an area's recorded times print in it, as the session's do. */
+  timezone: string;
+}) {
+  // Only recorded times print; a block with none prints exactly as before.
+  const areaTimes = (b: ClinicalRecordsDocument["sessions"][number]["blocks"][number]): Reading[] => [
+    ...(b.startedAt ? [{ label: "Area started", value: formatExportInstant(b.startedAt, timezone) }] : []),
+    ...(b.endedAt ? [{ label: "Area ended", value: formatExportInstant(b.endedAt, timezone) }] : []),
+  ];
   return (
     <>
       {session.blocks.map((b) => (
@@ -37,7 +50,7 @@ export function ExportSessionTreatments({ session }: { session: ClinicalRecordsD
           className="mt-2 flex break-inside-avoid flex-col gap-3 rounded border border-neutral-200 p-3"
         >
           <SavedAreaRecord block={b.record} />
-          <PrintOnlyList readings={b.printOnly} />
+          <PrintOnlyList readings={[...areaTimes(b), ...b.printOnly]} />
         </section>
       ))}
       {session.entries.length > 0 && (

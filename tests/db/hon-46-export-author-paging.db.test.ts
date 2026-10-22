@@ -309,7 +309,7 @@ describe("HON-46 export reads every author and every note to completion", () => 
     expect(Number(entry.pulse_delay_seconds)).toBe(1.5);
     // ...and PRINT as the saved view shows them: the area's own settings on
     // its header line, each pass reading under its own group, in machine order.
-    const printed = renderToStaticMarkup(createElement(ExportSessionTreatments, { session: doc.sessions.find((x) => x.id === sessionId)! }))
+    const printed = renderToStaticMarkup(createElement(ExportSessionTreatments, { session: doc.sessions.find((x) => x.id === sessionId)!, timezone: args.timezone }))
       .replace(/<[^>]+>/g, " ")
       .replace(/\s+/g, " ");
     for (const shown of [

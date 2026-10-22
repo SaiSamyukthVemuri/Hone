@@ -246,6 +246,21 @@ export type ExportNoteSource = {
 /** One labelled value, already formatted. Only present values are emitted. */
 export type Reading = { label: string; value: string };
 
+/** An instant on the printout, in the studio's timezone (sessions, notes and area times alike). */
+export function formatExportInstant(iso: string | null, timezone: string): string {
+  if (!iso) return "Not recorded";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Not recorded";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(d);
+}
+
 // SCREEN == PAPER, BY CONSTRUCTION. A block, a blockless entry and a laser pass
 // print through the SAME components the saved session view renders
 // (SavedAreaRecord, ElectrolysisEntryRow, LaserEntryRow), so the document
@@ -261,8 +276,12 @@ export type Reading = { label: string; value: string };
 // treatments and clinical notes), as an explicit list rendered AFTER the shared
 // render. They are exactly these, and the parity test allows exactly these:
 export const PRINT_ONLY_FIELDS = {
-  /** session_blocks.block_notes: a legacy free-text clinical note per area. */
-  block: ["Area notes"],
+  /**
+   * session_blocks.started_at / ended_at: a legacy or amended area's own
+   * recorded times, printed only when recorded (Codex P2 4347995164); and
+   * session_blocks.block_notes: a legacy free-text clinical note per area.
+   */
+  block: ["Area started", "Area ended", "Area notes"],
   /** laser_entries: the results, and every setting LaserEntryRow does not show. */
   laser: ["Results", "Settings"],
 } as const;
@@ -271,6 +290,9 @@ export type ExportedBlock = {
   id: string;
   /** Exactly what SavedAreaRecord renders. */
   record: SavedAreaBlock;
+  /** The area's own recorded instants, formatted at render in the studio's timezone. */
+  startedAt: string | null;
+  endedAt: string | null;
   printOnly: Reading[];
 };
 
@@ -480,6 +502,8 @@ export function buildClinicalRecordsDocument(input: {
         .map((b) => ({
           id: b.id,
           record: pickBlock(b, input.blockAreasById?.get(b.id), [...(entriesByBlock.get(b.id) ?? [])].sort(byCreated)),
+          startedAt: b.started_at,
+          endedAt: b.ended_at,
           printOnly: readings([["Area notes", b.block_notes]]),
         })),
       entries: [...(looseBySession.get(s.id) ?? [])].sort(byCreated).map(pickEntry),

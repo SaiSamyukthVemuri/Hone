@@ -22,6 +22,7 @@ import {
   MAX_RANGE_DAYS,
   auditThenLoad,
   buildClinicalRecordsDocument,
+  formatExportInstant,
   parseExportScope,
   scopeAuditMetadata,
   type ClinicalRecordsDocument,
@@ -56,20 +57,6 @@ type RawScope = { scope?: string; session?: string; day?: string; from?: string;
 
 function one(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;
-}
-
-function formatInstant(iso: string | null, timezone: string): string {
-  if (!iso) return "Not recorded";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "Not recorded";
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(d);
 }
 
 const NOTE_KIND_LABEL: Record<string, string> = {
@@ -166,7 +153,7 @@ export default async function ClinicalRecordsExportPage({
       : parsed.scope.kind === "range"
         ? `${civil(parsed.scope.from)} to ${civil(parsed.scope.to)}`
         : outcome?.ok && outcome.document.sessions[0]
-          ? `${formatInstant(outcome.document.sessions[0].startedAt, tz)} (one treatment session)`
+          ? `${formatExportInstant(outcome.document.sessions[0].startedAt, tz)} (one treatment session)`
           : "One treatment session";
   const includesLine = !parsed.ok
     ? null
@@ -206,7 +193,7 @@ export default async function ClinicalRecordsExportPage({
         <div className="flex flex-col gap-1">
           <h1 className="text-lg font-semibold">Clinical records: {client.name}</h1>
           <p className="text-xs text-neutral-600 dark:text-neutral-400">
-            {studio.name} · Generated {formatInstant(new Date().toISOString(), tz)}
+            {studio.name} · Generated {formatExportInstant(new Date().toISOString(), tz)}
           </p>
           {/* Printed with the document: which date(s) this record covers. */}
           {outcome?.ok && scopeLabel && (
@@ -320,11 +307,11 @@ export default async function ClinicalRecordsExportPage({
               <ul className="flex flex-col gap-4">
                 {outcome.document.sessions.map((s) => (
                   <li key={s.id} className="break-inside-avoid border-b border-neutral-100 pb-3" data-testid="export-session">
-                    <p className="text-sm font-medium">{formatInstant(s.startedAt, tz)}</p>
+                    <p className="text-sm font-medium">{formatExportInstant(s.startedAt, tz)}</p>
                     {/* The recorded end, when there is one (Codex P2 4302799074). */}
                     {s.endedAt && (
                       <p className="text-[11px] text-neutral-600" data-testid="export-session-ended">
-                        Ended {formatInstant(s.endedAt, tz)}
+                        Ended {formatExportInstant(s.endedAt, tz)}
                       </p>
                     )}
                     <p className="text-[11px] text-neutral-600">
@@ -335,20 +322,20 @@ export default async function ClinicalRecordsExportPage({
                         other time on this page. */}
                     {s.finalizedAt && (
                       <p className="text-[11px] text-neutral-600" data-testid="export-session-finalized">
-                        Finalized {formatInstant(s.finalizedAt, tz)}
+                        Finalized {formatExportInstant(s.finalizedAt, tz)}
                       </p>
                     )}
                     {s.notes && <p className="mt-1 whitespace-pre-wrap break-words text-sm">{s.notes}</p>}
                     {s.aftercareExplainedAt && (
                       <p className="mt-1 text-[11px]" data-testid="export-session-aftercare">
-                        Risks explained and aftercare provided: {formatInstant(s.aftercareExplainedAt, tz)}
+                        Risks explained and aftercare provided: {formatExportInstant(s.aftercareExplainedAt, tz)}
                         {/* Attributed to whoever recorded it, which can differ from
                             the performer (Codex P2 4307259896). */}
                         {s.aftercareExplainedBy ? ` · ${s.aftercareExplainedBy}` : ""}
                       </p>
                     )}
                     {/* The saved session view's own render (session-treatments.tsx). */}
-                    <ExportSessionTreatments session={s} />
+                    <ExportSessionTreatments session={s} timezone={tz} />
                     {/* SINGLE-SESSION SCOPE (Codex P2 4301153316): reachable from this
                         audited view; a plain anchor, so it is a full document load. */}
                     {outcome.scopeKind !== "session" && (

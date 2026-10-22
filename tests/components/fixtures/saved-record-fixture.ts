@@ -7,7 +7,8 @@
 //   B1  current multi-area flat block: structured areas + detail, blend, Apilus
 //       modality, EL, frequency, minutes, structured probe + CONFIRMED lot,
 //       numbing USED with a note, tolerance 1, an UNMATCHED legacy reaction +
-//       response note, caution WITH a note, legacy block notes (print-only);
+//       response note, caution WITH a note, legacy block notes and the
+//       area's own recorded start/end times (print-only);
 //       passes: structured blend (pulses > 1 with delay, every galvanic and
 //       thermolysis reading, hairs, chips, note); a pass whose stored areas
 //       DIFFER from the header and carry an old legacy probe and pulse/
@@ -95,6 +96,8 @@ export const blocks = [
     caution_note: "Thin skin at the jaw",
     caution_for_next_session: true,
     block_notes: "Legacy area note kept on paper",
+    started_at: T(5),
+    ended_at: T(20),
     created_at: T(1),
   },
   {

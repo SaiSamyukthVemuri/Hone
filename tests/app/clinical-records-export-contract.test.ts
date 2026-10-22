@@ -88,7 +88,7 @@ describe("HON-46 export reads exclude private and payment data", () => {
     expect(src).not.toMatch(/noteBounds = localDayBounds\(/);
     const page = code(FILES.page);
     expect(page).toContain("formatClinicalDate(n.occurredAt)");
-    expect(page).not.toContain("formatInstant(n.occurredAt");
+    expect(page).not.toContain("formatExportInstant(n.occurredAt");
   });
 
   it("a single-session export reads NO clinical notes, and says so (Codex P1 4302690099)", () => {
@@ -152,13 +152,13 @@ describe("HON-46 export reads exclude private and payment data", () => {
 
   it("renders the recorded finalization time, studio-local, beside the status (Codex P2 4304674125)", () => {
     const page = code(FILES.page);
-    expect(page).toContain("formatInstant(s.finalizedAt, tz)");
+    expect(page).toContain("formatExportInstant(s.finalizedAt, tz)");
     expect(page).toContain('data-testid="export-session-finalized"');
   });
 
   it("renders the recorded session end time (Codex P2 4302799074)", () => {
     const page = code(FILES.page);
-    expect(page).toContain("formatInstant(s.endedAt, tz)");
+    expect(page).toContain("formatExportInstant(s.endedAt, tz)");
     expect(page).toContain('data-testid="export-session-ended"');
   });
 
@@ -176,7 +176,7 @@ describe("HON-46 export reads exclude private and payment data", () => {
     const treatments = code(SESSION_TREATMENTS);
     expect(treatments).toContain('import { SavedAreaRecord } from "@/app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view";');
     expect(treatments).toContain('import { ElectrolysisEntryRow, LaserEntryRow } from "@/components/entry-row";');
-    expect(code(FILES.page)).toContain("<ExportSessionTreatments session={s} />");
+    expect(code(FILES.page)).toContain("<ExportSessionTreatments session={s} timezone={tz} />");
     // The deleted second presenter stays deleted.
     expect(code(FILES.scope)).not.toMatch(/function exportEntry|function exportLaser|function blockTitle/);
   });

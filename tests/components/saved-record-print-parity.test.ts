@@ -79,7 +79,7 @@ const CONTROLS = /data-record-controls=|<button\b/;
 
 const viewHtml = renderToStaticMarkup(createElement(SessionBlocksView, viewProps()));
 const doc = buildClinicalRecordsDocument(exportInput());
-const printHtml = renderToStaticMarkup(createElement(ExportSessionTreatments, { session: doc.sessions[0] }));
+const printHtml = renderToStaticMarkup(createElement(ExportSessionTreatments, { session: doc.sessions[0], timezone: "America/Toronto" }));
 
 describe("the saved session view itself is unchanged by sharing its render", () => {
   it("renders exactly the pre-extraction text for the full fixture", () => {
@@ -131,6 +131,9 @@ describe("PARITY: the printout is the saved record, plus only the named print-on
     const named = [...PRINT_ONLY_FIELDS.block, ...PRINT_ONLY_FIELDS.laser] as string[];
     expect(new Set(labels)).toEqual(new Set(named));
     expect(printHtml).toContain("Area notes: Legacy area note kept on paper");
+    // The area's own recorded times, in the studio timezone (Codex P2 4347995164).
+    expect(printHtml).toContain("Area started: October 1, 2026 at 11:05 a.m.");
+    expect(printHtml).toContain("Area ended: October 1, 2026 at 11:20 a.m.");
     expect(printHtml).toContain("Results: Good ejection");
     // Every laser setting LaserEntryRow does not show is kept on paper.
     expect(printHtml).toContain("Settings: fluence j cm2 18 · cooling contact");
