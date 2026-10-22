@@ -1,6 +1,13 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Locator } from "@playwright/test";
 import {
   seedE2eStudio,
+  seedE2eMember,
+  seedE2eClient,
+  setStudioCapacityEnabled,
+  setStudioCapacityBookingEnabled,
+  seedPractitionerDefault,
+  seedServiceEligibility,
+  getE2eServiceId,
   seedConfirmedAppointment,
   getOwnerPractitionerId,
   setStudioTimezone,
@@ -22,6 +29,155 @@ import { loginAsOwner } from "./helpers/flows";
 // column. A cosmetic reorder cannot satisfy it.
 
 const T = 20_000;
+
+// Seeded calendar selection only, not public booking or physical-device UAT.
+// Managed page fixtures retain the normal CI failure trace and screenshot.
+for (const mode of [
+  { name: "mouse week", width: 1280, coarse: false },
+  { name: "coarse tablet week", width: 768, coarse: true },
+  { name: "coarse phone day", width: 390, coarse: true },
+]) {
+  test.describe("five coincident practitioner cards — " + mode.name, () => {
+    test.use({ viewport: { width: mode.width, height: 900 }, hasTouch: mode.coarse });
+
+    test("normal selection opens each own client and practitioner without creating a session", async ({ page }) => {
+      const seed = await seedE2eStudio();
+      const tz = "America/Los_Angeles";
+      await setStudioTimezone(seed.studioId, tz);
+      await setStudioCapacityEnabled(seed.studioId, true);
+      await setStudioCapacityBookingEnabled(seed.studioId, true);
+      const ids = [await getOwnerPractitionerId(seed.studioId)];
+      for (let i = 0; i < 4; i++) ids.push((await seedE2eMember(seed)).practitionerId);
+      const roster = await sql<{ id: string; display_name: string; role: string; active: boolean }>(
+        "select id,display_name,role,active from public.practitioners where studio_id=$1 and id=any($2::uuid[])",
+        [seed.studioId, ids],
+      );
+      expect(roster).toHaveLength(5);
+      expect(roster.filter(p => p.role === "owner")).toHaveLength(1);
+      expect(roster.filter(p => p.role === "practitioner")).toHaveLength(4);
+      expect(roster.every(p => p.active)).toBe(true);
+      const [{ day, dow }] = await sql<{ day: string; dow: number }>(
+        "select ((now() at time zone $1)::date+7)::text as day, extract(dow from ((now() at time zone $1)::date+7))::int as dow",
+        [tz],
+      );
+      const serviceId = await getE2eServiceId(seed.studioId);
+      const [service] = await sql<{ minutes: number }>(
+        "select default_duration_minutes as minutes from public.services where studio_id=$1 and id=$2 and active",
+        [seed.studioId, serviceId],
+      );
+      expect(service.minutes).toBe(30); // The existing synthetic consultation.
+      const bookings: Array<{ id: string; clientId: string; clientName: string; practitionerName: string }> = [];
+      for (const id of ids) {
+        await seedPractitionerDefault(seed.studioId, id, dow, true, "06:00", "22:00");
+        await seedServiceEligibility(seed.studioId, serviceId, id);
+        const { clientId } = await seedE2eClient(seed);
+        const [client] = await sql<{ name: string }>(
+          "select name from public.clients where studio_id=$1 and id=$2", [seed.studioId, clientId],
+        );
+        // Future LA interval, actual service duration, distinct eligible
+        // practitioners/clients. Existing DB guards remain enabled.
+        const [appointment] = await sql<{ id: string }>(
+          "insert into public.appointments " +
+          "(id,studio_id,client_id,practitioner_id,service_id,starts_at,ends_at," +
+          "duration_minutes,buffer_minutes_snapshot,blocked_ends_at,status) " +
+          "select gen_random_uuid(),$1,$2,$3,$4,start_at,start_at+make_interval(mins=>$7),$7,0," +
+          "start_at+make_interval(mins=>$7),'confirmed' " +
+          "from (select ($5::date+time '10:00') at time zone $6 as start_at) t returning id",
+          [seed.studioId, clientId, id, serviceId, day, tz, service.minutes],
+        );
+        bookings.push({ id: appointment.id, clientId, clientName: client.name,
+          practitionerName: roster.find(p => p.id === id)!.display_name });
+      }
+      const clientIds = bookings.map(b => b.clientId);
+      const readAppointments = () => sql(
+        "select id,client_id,practitioner_id,status,starts_at::text,ends_at::text,service_id,duration_minutes " +
+        "from public.appointments where studio_id=$1 and client_id=any($2::uuid[]) order by id",
+        [seed.studioId, clientIds],
+      );
+      const readSessions = () => sql(
+        "select id,client_id,appointment_id from public.sessions where studio_id=$1 and client_id=any($2::uuid[]) order by id",
+        [seed.studioId, clientIds],
+      );
+      const before = await readAppointments();
+      expect(before).toHaveLength(5);
+      expect(new Set(before.map(a => a.practitioner_id)).size).toBe(5);
+      expect(new Set(before.map(a => a.starts_at)).size).toBe(1);
+      expect(new Set(before.map(a => a.ends_at)).size).toBe(1);
+      for (const row of before) expect(row).toMatchObject({ status: "confirmed", service_id: serviceId, duration_minutes: 30 });
+      expect(await readSessions()).toEqual([]);
+      await loginAsOwner(page, seed);
+      const activate = (target: Locator) => mode.coarse
+        ? target.tap({ timeout: 10_000 }) : target.click({ timeout: 10_000 });
+      const assertOwnHref = async (link: Locator, id: string) => {
+        const href = await link.getAttribute("href");
+        expect(href).not.toBeNull();
+        const target = new URL(href!, page.url());
+        expect(target.origin).toBe(new URL(page.url()).origin);
+        expect(target.pathname).toBe("/calendar/" + id);
+      };
+      for (const [index, booking] of bookings.entries()) {
+        await page.goto("/calendar?view=week&day=" + day);
+        expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(mode.coarse);
+        expect(await page.evaluate(() => matchMedia("(pointer: fine)").matches)).toBe(!mode.coarse);
+        const surface = page.locator('[data-testid="' +
+          (mode.width >= 768 ? "week-day-column" : "mobile-day-timeline") + '"][data-date="' + day + '"]');
+        await expect(surface).toBeVisible();
+        if (mode.width >= 768) await expect(page.getByTestId("week-day-column")).toHaveCount(7);
+        if (mode.coarse) {
+          const group = surface.getByRole("button", { name: "Choose from 5 appointments", exact: true });
+          await expect(group).toHaveCount(1);
+          for (const expected of bookings) await expect(surface.getByRole("button").filter({ hasText: expected.clientName })).toHaveCount(0);
+          await group.scrollIntoViewIfNeeded();
+          const bounds = await group.boundingBox();
+          expect(bounds!.width).toBeGreaterThanOrEqual(44);
+          expect(bounds!.height).toBeGreaterThanOrEqual(44);
+          if (index === 0) await group.focus();
+          await activate(group);
+          const chooser = page.getByRole("dialog", { name: "Choose an appointment", exact: true });
+          await expect(chooser).toBeVisible();
+          if (index === 0) {
+            await page.keyboard.press("Escape");
+            await expect(chooser).toHaveCount(0);
+            await expect(group).toBeFocused();
+            await activate(group);
+            await activate(chooser.getByRole("button", { name: "Close", exact: true }));
+            await expect(chooser).toHaveCount(0);
+            await activate(group);
+          }
+          for (const expected of bookings) {
+            const choice = chooser.getByRole(mode.width >= 768 ? "button" : "link").filter({ hasText: expected.clientName });
+            await expect(choice).toHaveCount(1);
+            await expect(choice.getByText(expected.practitionerName, { exact: true })).toBeVisible();
+            const box = await choice.boundingBox();
+            expect(box!.width).toBeGreaterThanOrEqual(44);
+            expect(box!.height).toBeGreaterThanOrEqual(44);
+          }
+          const choice = chooser.getByRole(mode.width >= 768 ? "button" : "link").filter({ hasText: booking.clientName });
+          if (mode.width < 768) await assertOwnHref(choice, booking.id);
+          await activate(choice);
+        } else {
+          for (const expected of bookings) await expect(surface.getByRole("button").filter({ hasText: expected.clientName })).toHaveCount(1);
+          await activate(surface.getByRole("button").filter({ hasText: booking.clientName }));
+        }
+        await expect(page.getByRole("dialog", { name: "New appointment", exact: true })).toHaveCount(0);
+        if (mode.width >= 768) {
+          const preview = page.getByRole("dialog", { name: /appointment preview/i });
+          await expect(preview.getByRole("heading", { name: booking.clientName, exact: true })).toBeVisible();
+          const details = preview.getByRole("link", { name: /open full details/i });
+          await assertOwnHref(details, booking.id);
+          await activate(details);
+        }
+        await expect.poll(() => new URL(page.url()).pathname).toBe("/calendar/" + booking.id);
+        const header = page.locator("main header").first();
+        await expect(header.getByText(booking.practitionerName, { exact: false })).toBeVisible();
+        await expect(header.getByText(/unassigned/i)).toHaveCount(0);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      }
+      expect(await readAppointments()).toEqual(before);
+      expect(await readSessions()).toEqual([]);
+    });
+  });
+}
 
 // A fixed timezone and a fixed week, so this spec does not drift with the
 // calendar date of the run. America/Toronto is the repo's established DST

@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AppointmentOverlapChooser } from "@/app/(app)/calendar/AppointmentOverlapChooser";
+import type { AppointmentWithPractitionerColor } from "@/lib/booking/queries";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { formatTimeForStudio } from "@/lib/booking/tz";
@@ -172,5 +176,60 @@ describe("safety: desktop untouched surfaces + no payment/email/SMS", () => {
     for (const src of [MOBILE, TIMELINE]) {
       expect(src).not.toMatch(/stripe|payment|sendEmail|twilio|sendSms/i);
     }
+  });
+});
+
+
+describe("overlap chooser reuses exact authorized calendar identities", () => {
+  const appointments = Array.from({ length: 5 }, (_, i) => ({
+    id: `appointment-${i}`, starts_at: "2030-03-01T20:00:00Z", ends_at: "2030-03-01T20:30:00Z",
+    status: "confirmed", client: { id: `client-${i}`, name: `Synthetic client ${i}` },
+    practitioner: { id: `practitioner-${i}`, color: "sky", display_name: `Practitioner ${i}` },
+    service: null,
+  } as unknown as AppointmentWithPractitionerColor));
+  it("renders five real detail links preserving each id and returnTo; never invents a chart link", () => {
+    const html = renderToStaticMarkup(createElement(AppointmentOverlapChooser, {
+      appointments, tz: "America/Los_Angeles", timeFormat: "12h", returnTo: "?view=week", onClose: () => {},
+    }));
+    for (const a of appointments) {
+      expect(html).toContain(`href="/calendar/${a.id}?view=week"`);
+      expect(html).toContain(a.client!.name);
+    }
+    expect(html.match(/href="\/calendar\//g)).toHaveLength(5);
+    expect(html).not.toMatch(/sessions\/new|appointment_id=/);
+    expect(html).toContain("min-h-[44px] min-w-[44px]");
+    expect(html).toContain('aria-label="Choose an appointment"');
+  });
+  it("desktop renders appointment choice buttons, not direct links or form submissions", () => {
+    const html = renderToStaticMarkup(createElement(AppointmentOverlapChooser, {
+      appointments, tz: "America/Los_Angeles", timeFormat: "12h", returnTo: "", onClose: () => {}, onSelect: () => {},
+    }));
+    expect(html).not.toContain("href=");
+    for (const a of appointments) expect(html).toContain(a.client!.name);
+    expect(html).not.toContain("<form");
+  });
+  it("keeps five appointment/practitioner identities even when client and time are identical", () => {
+    const sameClient = appointments.map((a) => ({ ...a, client: { id: "same-client", name: "Same client" } }));
+    const html = renderToStaticMarkup(createElement(AppointmentOverlapChooser, {
+      appointments: sameClient, tz: "America/Los_Angeles", timeFormat: "12h", returnTo: "", onClose: () => {},
+    }));
+    for (const a of sameClient) {
+      expect(html).toContain(`href="/calendar/${a.id}"`);
+      expect(html).toContain(a.practitioner!.display_name!);
+    }
+    expect(html.match(/href="\/calendar\//g)).toHaveLength(5);
+  });
+  it("uses the existing modal keyboard contract and resolves selected ids against current-day objects", () => {
+    const chooser = read("app/(app)/calendar/AppointmentOverlapChooser.tsx");
+    expect(chooser).toContain("useDialogKeyboard");
+    expect(chooser).toContain("ref={panelRef}");
+    expect(chooser).toContain("ref={initialFocusRef}");
+    expect(chooser).toContain("onSelect(a)");
+    expect(TIMELINE).toContain("appointmentsById.get(id)");
+    expect(TIMELINE).toContain("appointmentCollisionGroups(rectangles)");
+    expect(TIMELINE).toContain("<AppointmentOverlapChooser");
+    expect(MOBILE).toMatch(/<MobileDayTimeline\s+key=\{day.date\}/);
+    const query = read("lib/booking/queries.ts");
+    expect(query).toContain("practitioners!appointments_practitioner_same_studio_fk(id, color, display_name)");
   });
 });

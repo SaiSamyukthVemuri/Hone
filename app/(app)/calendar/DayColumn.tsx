@@ -12,7 +12,8 @@
 // so clicks land on event cards first and only fall through to
 // the overlay on truly empty space.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { appointmentLanes, appointmentCollisionGroups } from "@/lib/calendar/appointment-lanes";
 import type { Service, StudioTimedBlock } from "@/lib/types/database";
 import type {
   AppointmentWithPractitionerColor,
@@ -34,6 +35,7 @@ import { DragActionChooser } from "./DragActionChooser";
 import { TimedBlockEditDrawer } from "./TimedBlockEditDrawer";
 import { QuickBlockDrawer } from "./QuickBlockDrawer";
 import { AppointmentPreviewDrawer } from "./AppointmentPreviewDrawer";
+import { AppointmentOverlapChooser, OverlapAppointmentSummary } from "./AppointmentOverlapChooser";
 // Grid constants live in a plain (non-"use client") module. The server
 // component calendar/page.tsx must import them from there, NOT from this
 // client module: a client-module value imported by a Server Component
@@ -206,6 +208,7 @@ export function DayColumn({
   closedDay,
   returnTo = "",
 }: Props) {
+  const [overlapIds, setOverlapIds] = useState<string[] | null>(null);
   const [draft, setDraft] = useState<QuickBookDraft | null>(null);
   // PR C: the timed block whose edit/detail drawer is open (null = closed).
   const [editingBlock, setEditingBlock] = useState<StudioTimedBlock | null>(null);
@@ -431,6 +434,35 @@ export function DayColumn({
       durationMinutes: snappedEnd - snappedStart,
     };
   })();
+
+  // Horizontal layout uses the actual rendered rectangles, not booking
+  // availability or UTC intervals. Retain the original object and vertical
+  // geometry, including the existing short-card minimum height.
+  const positionedAppointments = appts.flatMap((a) => {
+    const start = new Date(a.starts_at);
+    const localTime = localTimeString(start, tz); // 24h, positioning only
+    const [h, m] = localTime.split(":").map(Number);
+    const startMinutesFromGridTop = (h - HOUR_START) * 60 + m;
+    if (startMinutesFromGridTop < 0 || startMinutesFromGridTop >= VISIBLE_MINUTES) return [];
+    const top = (startMinutesFromGridTop / ROW_MINUTES) * ROW_HEIGHT_PX;
+    const height = Math.max(
+      ROW_HEIGHT_PX - 2,
+      (a.duration_minutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
+    );
+    return [{ appointment: a, start, top, height }];
+  });
+  const lanes = appointmentLanes(positionedAppointments.map(({ appointment, top, height }) => ({
+    id: appointment.id, top, height,
+  })));
+
+  const coarseGroups = appointmentCollisionGroups(positionedAppointments.map(({ appointment, top, height }) => ({
+    id: appointment.id, top, height,
+  })));
+  const appointmentsById = new Map(appts.map((a) => [a.id, a]));
+  const selectedOverlaps = (overlapIds ?? []).flatMap((id) => {
+    const a = appointmentsById.get(id);
+    return a ? [a] : [];
+  });
 
   return (
     <div
@@ -694,22 +726,9 @@ export function DayColumn({
         );
       })}
 
-      {appts.map((a) => {
-        const start = new Date(a.starts_at);
+      {positionedAppointments.map(({ appointment: a, start, top, height }) => {
         const localTime = localTimeString(start, tz);
-        const [h, m] = localTime.split(":").map(Number);
-        const startMinutesFromGridTop = (h - HOUR_START) * 60 + m;
-        if (
-          startMinutesFromGridTop < 0 ||
-          startMinutesFromGridTop >= VISIBLE_MINUTES
-        ) {
-          return null;
-        }
-        const top = (startMinutesFromGridTop / ROW_MINUTES) * ROW_HEIGHT_PX;
-        const height = Math.max(
-          ROW_HEIGHT_PX - 2,
-          (a.duration_minutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
-        );
+        const lane = lanes.get(a.id)!;
         const clientName = a.client?.name?.trim() || "Client";
         const serviceName = a.service?.name?.trim() || null;
         // Visible time RANGE ("9:00–10:00"), derived from the existing row
@@ -745,7 +764,11 @@ export function DayColumn({
             // preview's "Open full details" link. z-10 keeps this above the
             // empty-slot booking overlay, so a card click never books.
             onClick={() => setPreview(a)}
-            style={{ top, height }}
+            style={{
+              top, height,
+              "--appointment-lane-left": `calc(${100 * lane.column / lane.columns}% + 4px)`,
+              "--appointment-lane-right": `calc(${100 * (lane.columns - lane.column - 1) / lane.columns}% + 4px)`,
+            } as CSSProperties}
             title={
               serviceName
                 ? `${clientName} · ${serviceName} · ${localTime} · ${a.duration_minutes}m`
@@ -758,7 +781,7 @@ export function DayColumn({
             // red unique. softCardClasses still exists for any
             // future practitioner-color surface but is not used on
             // the per-appointment card any more.
-            className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg text-left border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""}`}
+            className={`hidden pointer-fine:block absolute left-1 right-1 pointer-fine:left-[var(--appointment-lane-left)] pointer-fine:right-[var(--appointment-lane-right)] z-10 overflow-hidden rounded-lg text-left border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""}`}
           >
             {twoLine ? (
               // Hierarchy (Chloe / Fresha-readability): time range, then the
@@ -788,6 +811,27 @@ export function DayColumn({
           </button>
         );
       })}
+
+      {coarseGroups.map((group) => {
+        const members = group.ids.map((id) => appointmentsById.get(id)!);
+        const a = members[0];
+        return <button key={group.ids.join(":")} type="button"
+          style={{ top: group.top, height: group.height }}
+          className={`pointer-fine:hidden absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 px-2 py-1 text-left text-xs ${members.length === 1 ? appointmentCardClasses(a.service) : "border-neutral-500 bg-neutral-100 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) !== "upcoming" ? "opacity-60" : ""}`}
+          aria-label={members.length > 1 ? `Choose from ${members.length} appointments` : undefined}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (members.length === 1) setPreview(a);
+            else setOverlapIds(group.ids);
+          }}>
+          {members.length === 1 ? <OverlapAppointmentSummary appointment={a} tz={tz} timeFormat={timeFormat} /> : <>
+            <span className="block font-semibold">{members.length} appointments</span>
+            <span className="block tabular-nums">{formatTimeForStudio(new Date(a.starts_at), tz, timeFormat)}</span>
+          </>}
+        </button>;
+      })}
+      <AppointmentOverlapChooser appointments={selectedOverlaps} tz={tz} timeFormat={timeFormat} returnTo={returnTo}
+        onClose={() => setOverlapIds(null)} onSelect={(a) => setPreview(a)} />
 
       <QuickBookDrawer
         open={draft !== null}

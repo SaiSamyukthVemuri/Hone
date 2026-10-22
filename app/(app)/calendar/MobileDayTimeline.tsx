@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useRef } from "react";
+import { useRef, useState } from "react";
+import { appointmentCollisionGroups } from "@/lib/calendar/appointment-lanes";
+import { AppointmentOverlapChooser } from "./AppointmentOverlapChooser";
 import type { StudioTimedBlock } from "@/lib/types/database";
 import type {
   AppointmentWithPractitionerColor,
@@ -83,6 +85,7 @@ export function MobileDayTimeline({
   onEditBlock,
 }: Props) {
   const dayRef = useRef<HTMLDivElement>(null);
+  const [overlapIds, setOverlapIds] = useState<string[] | null>(null);
 
   // Out-of-hours tint (gray guidance only), identical model to DayColumn:
   // closed day tints the whole grid; open day tints before-open + after-close.
@@ -118,8 +121,23 @@ export function MobileDayTimeline({
     onBookAt(minutesToHHMM(snapped));
   }
 
+  const rectangles = appts.flatMap((a) => {
+    const start = new Date(a.starts_at);
+    const [h, m] = localTimeString(start, tz).split(":").map(Number);
+    const startMin = (h - HOUR_START) * 60 + m;
+    if (startMin < 0 || startMin >= VISIBLE_MINUTES) return [];
+    return [{ id: a.id, top: (startMin / ROW_MINUTES) * ROW_HEIGHT_PX,
+      height: Math.max(ROW_HEIGHT_PX - 2, (a.duration_minutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2) }];
+  });
+  const groups = appointmentCollisionGroups(rectangles);
+  const appointmentsById = new Map(appts.map((a) => [a.id, a]));
+  const selectedOverlaps = (overlapIds ?? []).flatMap((id) => {
+    const a = appointmentsById.get(id);
+    return a ? [a] : [];
+  });
+
   return (
-    <div className="relative flex">
+    <div className="relative flex" data-testid="mobile-day-timeline" data-date={date}>
       {/* Time rail (left). Fixed-width, same 1px=1min hour offsets as the grid. */}
       <div
         className="relative w-14 shrink-0 border-r border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950"
@@ -264,15 +282,20 @@ export function MobileDayTimeline({
         })}
 
         {/* Appointments: tap → existing detail page (with returnTo). */}
-        {appts.map((a) => {
+        {groups.map((group) => {
+          const members = group.ids.map((id) => appointmentsById.get(id)!);
+          const a = members[0];
           const start = new Date(a.starts_at);
-          const [h, m] = localTimeString(start, tz).split(":").map(Number);
-          const startMin = (h - HOUR_START) * 60 + m;
-          if (startMin < 0 || startMin >= VISIBLE_MINUTES) return null;
-          const top = (startMin / ROW_MINUTES) * ROW_HEIGHT_PX;
-          const height = Math.max(
-            ROW_HEIGHT_PX - 2,
-            (a.duration_minutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
+          const top = group.top;
+          const height = group.height;
+          if (members.length > 1) return (
+            <button key={group.ids.join(":")} type="button" style={{ top, height }}
+              aria-label={`Choose from ${members.length} appointments`}
+              className="absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 border-neutral-500 bg-neutral-100 px-2 py-1 text-left text-sm text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"
+              onClick={(event) => { event.stopPropagation(); setOverlapIds(group.ids); }}>
+              <span className="block font-semibold">{members.length} appointments</span>
+              <span className="block tabular-nums">{formatTimeForStudio(start, tz, timeFormat)}</span>
+            </button>
           );
           const clientName = a.client?.name?.trim() || "Client";
           const serviceName = a.service?.name?.trim() || null;
@@ -296,7 +319,7 @@ export function MobileDayTimeline({
               key={a.id}
               href={`/calendar/${a.id}${returnTo}`}
               style={{ top, height }}
-              className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[12px] leading-tight shadow-sm transition active:brightness-95 ${terminal ? "opacity-60" : ""}`}
+              className={`absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[12px] leading-tight shadow-sm transition active:brightness-95 ${terminal ? "opacity-60" : ""}`}
             >
               <div className="truncate text-[10px] font-semibold tabular-nums opacity-80">
                 {timeRange}
@@ -312,6 +335,8 @@ export function MobileDayTimeline({
           );
         })}
       </div>
+      <AppointmentOverlapChooser appointments={selectedOverlaps} tz={tz} timeFormat={timeFormat} returnTo={returnTo}
+        onClose={() => setOverlapIds(null)} />
     </div>
   );
 }
