@@ -4,6 +4,9 @@ import {
   LEDGER_RUN_BUDGET_MS,
   LEDGER_STEP_BOUND_MS,
   createLedgerBudget,
+  claimSmsSend,
+  recordSmsResult,
+  logSmsFailure,
   sendBookingConfirmationSmsToClient,
   send24hReminderSmsToClient,
   send2hReminderSmsToClient,
@@ -737,4 +740,63 @@ describe("MSG006 production final-failure observer", () => {
     expect((await send24hReminderSmsToClient(input())).ok).toBe(false); await flush();
     expect(h.attemptReads).toHaveLength(1); expect(alerts).toEqual([]); expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+});
+
+
+describe("MSG-007 SMS diagnostics carry only closed metadata", () => {
+  const APPOINTMENT_ID = "11111111-1111-4111-8111-111111111111";
+  const PRIVATE = "PRIVATE patient@example.invalid +16045550199 https://example.invalid/manage/SECRET_TOKEN clinical note";
+  const output = () => JSON.stringify([vi.mocked(console.error).mock.calls, vi.mocked(console.log).mock.calls]);
+  it.each(["claim", "record"] as const)("%s RPC failure never exports raw error/record content", async (operation) => {
+    const rpc = vi.fn(async () => ({ data: null, error: new Error(PRIVATE) }));
+    const a = { rpc } as unknown as SupabaseClient;
+    const result = operation === "claim" ? await claimSmsSend(a, APPOINTMENT_ID, "reminder_24h") : await recordSmsResult(a, APPOINTMENT_ID, "reminder_24h", false);
+    expect(result).toBe(operation === "claim" ? false : undefined);
+    expect(rpc).toHaveBeenCalledWith(operation === "claim" ? "claim_sms_send" : "record_sms_result", {
+      p_appointment_id: APPOINTMENT_ID, p_sms_type: "reminder_24h", ...(operation === "claim" ? {} : { p_success: false }),
+    });
+    expect(output()).toContain("reminder_24h");
+    for (const value of [APPOINTMENT_ID, "PRIVATE", "patient@example.invalid", "SECRET_TOKEN", "clinical note"]) expect(output()).not.toContain(value);
+  });
+  it("failure alert keeps first-party lineage but excludes arbitrary provider content", async () => {
+    logSmsFailure({ appointmentId: APPOINTMENT_ID, smsType: "reminder_24h", error: PRIVATE, retryable: false, attemptNumber: 3 });
+    await flush();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ appointmentId: APPOINTMENT_ID, event: "sms_send_failed", safeDetails: { sms_type: "reminder_24h", attempt_number: 3 } });
+    expect(output()).not.toContain(APPOINTMENT_ID);
+    expect(JSON.stringify([output(), alerts[0]?.safeDetails, alerts[0]?.message])).not.toMatch(/PRIVATE|patient@example|SECRET_TOKEN|clinical note/);
+  });
+  it("unexpected runtime diagnostic types/counts cannot carry private fields", async () => {
+    logSmsFailure({ appointmentId: APPOINTMENT_ID, smsType: PRIVATE as "reminder_24h", error: PRIVATE, retryable: false, attemptNumber: 16045550199 });
+    await flush();
+    expect(alerts).toHaveLength(1);
+    expect(JSON.stringify([output(), alerts[0]?.safeDetails, alerts[0]?.message])).not.toMatch(/PRIVATE|patient@example|SECRET_TOKEN|16045550199/);
+    expect(alerts[0]).toMatchObject({ safeDetails: { sms_type: "unknown", attempt_number: null } });
+  });
+  it.each(["claim", "record"] as const)("throwing diagnostic sink cannot change %s RPC failure semantics", async (operation) => {
+    const a = { rpc: vi.fn(async () => ({ data: null, error: new Error(PRIVATE) })) } as unknown as SupabaseClient;
+    vi.mocked(console.error).mockImplementation(() => { throw new Error("SYNTHETIC_PRIVATE sink"); });
+    const result = operation === "claim" ? await claimSmsSend(a, APPOINTMENT_ID, "reminder_24h") : await recordSmsResult(a, APPOINTMENT_ID, "reminder_24h", false);
+    expect(result).toBe(operation === "claim" ? false : undefined);
+  });
+  it("throwing diagnostic sink cannot suppress an existing final-attempt alert", async () => {
+    vi.mocked(console.error).mockImplementation(() => { throw new Error("SYNTHETIC_PRIVATE sink"); });
+    expect(() => logSmsFailure({ appointmentId: APPOINTMENT_ID, smsType: "reminder_24h", error: PRIVATE, retryable: false, attemptNumber: 3 })).not.toThrow();
+    await vi.waitFor(() => expect(alerts).toHaveLength(1));
+    expect(alerts[0]).toMatchObject({ event: "sms_send_failed", appointmentId: APPOINTMENT_ID });
+    expect(JSON.stringify([alerts[0]?.message, alerts[0]?.safeDetails])).not.toContain("PRIVATE");
+  });
+  it.each(["claim", "record"] as const)("successful %s RPC keeps its return and emits no diagnostic", async (operation) => {
+    const a = { rpc: vi.fn(async () => ({ data: true, error: null })) } as unknown as SupabaseClient;
+    const result = operation === "claim" ? await claimSmsSend(a, APPOINTMENT_ID, "reminder_24h") : await recordSmsResult(a, APPOINTMENT_ID, "reminder_24h", true);
+    expect(result).toBe(operation === "claim" ? true : undefined);
+    expect(output()).toBe("[[],[]]");
+  });
+  it("lower retryable attempt stays log-only with its existing predicate", async () => {
+    logSmsFailure({ appointmentId: APPOINTMENT_ID, smsType: "reminder_24h", error: "twilio_http_503", retryable: true, attemptNumber: 1 });
+    await flush();
+    expect(alerts).toHaveLength(0);
+    expect(output()).toContain("sms_send_failed");
+  });
+
 });
