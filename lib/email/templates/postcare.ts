@@ -88,6 +88,13 @@ export type PostcareEmail = {
   preview: string;
 };
 
+// SUBJECT RULE (HIPAA-READY-01, #828): "Aftercare for your appointment" told
+// anyone who sees the inbox that a treatment took place. The body keeps it.
+// The settings preview shows this same subject, so the two cannot drift.
+export function postcareSubject(studioName: string): string {
+  return `A message from ${studioName}`;
+}
+
 export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
   const greetingName = firstNameOf(p.clientName);
   const studioLine = p.practitionerName
@@ -108,9 +115,7 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
   const warningHtml = textBlockToHtml(p.warningSignsText);
   const productsHtml = textBlockToHtml(p.productRecommendationsText);
 
-  // SUBJECT RULE (HIPAA-READY-01, #828): "Aftercare for your appointment" told
-  // anyone who sees the inbox that a treatment took place. The body keeps it.
-  const subject = `A message from ${p.studioName}`;
+  const subject = postcareSubject(p.studioName);
 
   const htmlSections: string[] = [];
   htmlSections.push(
