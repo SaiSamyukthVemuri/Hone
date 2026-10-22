@@ -367,6 +367,13 @@ never a blanket reset or email-domain deletion.
   checkout sets `persist-credentials: false`. No workflow holds write
   credentials. A new workflow that genuinely needs one declares **job-level**
   `permissions:` rather than widening the top-level block.
+- **One sanctioned credential (D7b, Sam, 2026-10-22).** Anonymous image pulls
+  were throttled on both `ghcr.io` and `public.ecr.aws`, so each
+  Supabase-starting job logs in to `ghcr.io` with its own token through the
+  SHA-pinned `docker/login-action`, and only those jobs declare job-level
+  `permissions: { contents: read, packages: read }`. That exact shape is the
+  only credential use `tests/ci/ci-config.test.ts` exempts; any other token,
+  scope, registry or secret is still refused.
 - Codex exact-head review (`npm run eng -- status <pr>`) is **operator-side**. Do
   not wire it into a workflow: it needs a GitHub API credential, which is exactly
   what the posture above removes.

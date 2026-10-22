@@ -52,6 +52,10 @@ jobs:
   full-matrix:
     name: full matrix (${{ matrix.lane }})
     runs-on: ubuntu-latest
+    # D7b: read-only package scope for the authenticated ghcr.io image pull only.
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
       # One lane failing must not hide the others: the nightly's job is to tell
@@ -200,11 +204,19 @@ jobs:
           # grants-parity re-verification.
           version: 2.102.0
 
-      # D7 option B. supabase/setup-cli exports SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io
-      # through GITHUB_ENV, which beats workflow-level env; a later GITHUB_ENV write
-      # wins, so re-point the CLI at Supabase's public ECR mirror right here.
-      - name: Use Supabase public ECR image mirror (D7)
-        run: echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=public.ecr.aws" >> "$GITHUB_ENV"
+      # D7b (Sam, 2026-10-22, option A). Anonymous pulls were throttled on BOTH
+      # ghcr.io ("toomanyrequests") and public.ecr.aws ("Data limit exceeded") for
+      # parallel Supabase stacks. Pull the CLI's default ghcr.io images
+      # AUTHENTICATED with the job's own read-only token: this job alone declares
+      # packages: read; nothing here can write. The ONE sanctioned credential use
+      # in these workflows, pinned by tests/ci/ci-config.test.ts.
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        if: matrix.needs_supabase
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Bring up the database
         if: matrix.needs_supabase

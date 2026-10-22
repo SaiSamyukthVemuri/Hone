@@ -756,18 +756,15 @@ describe("PR CI — path-aware lane selection", () => {
   });
 });
 
-describe("D7: local-stack images come from Supabase's public ECR mirror", () => {
-  // ghcr.io rate-limited supabase/postgres for every Supabase-starting job on
-  // 2026-10-22. supabase/setup-cli exports SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io
-  // through GITHUB_ENV, which overrides workflow/job env, so the only effective
-  // place is a GITHUB_ENV write in the step right after every setup-cli use.
-  const REEXPORT = 'echo "SUPABASE_INTERNAL_IMAGE_REGISTRY=public.ecr.aws" >> "$GITHUB_ENV"';
-  it.each([["ci.yml", () => CI], ["nightly.yml", () => NIGHTLY]])("%s re-points the CLI after every setup-cli", (_n, body) => {
+describe("D7b: Supabase-starting jobs pull ghcr.io images authenticated, read-only", () => {
+  // Anonymous pulls were throttled on ghcr.io and public.ecr.aws on 2026-10-22.
+  it.each([["ci.yml", () => CI], ["nightly.yml", () => NIGHTLY]])("%s logs in right after every setup-cli", (_n, body) => {
     const steps = body().split(/\n(?=      - )/);
     const setups = steps.map((s, i) => [s, i] as const).filter(([s]) => /uses: supabase\/setup-cli@/.test(s));
     expect(setups.length).toBeGreaterThan(0);
-    for (const [, i] of setups) expect(steps[i + 1]).toContain(REEXPORT);
-    expect(body().split(REEXPORT).length - 1).toBe(setups.length);
+    for (const [, i] of setups) expect(steps[i + 1]).toMatch(/uses: docker\/login-action@dbcb813823bdd20940b903addbd779551569679f # v4\.6\.0\n\s+with:\n\s+registry: ghcr\.io/);
+    expect((body().match(/uses: docker\/login-action@/g) ?? []).length).toBe(setups.length);
+    expect(body()).not.toMatch(/SUPABASE_INTERNAL_IMAGE_REGISTRY/);
   });
 });
 
@@ -1119,9 +1116,39 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   //    third-party action handed a PAT writes through the API just the same,
   //    while `permissions: contents: read` and the absence of `git push` and
   //    `gh` all still read clean.
+  // D7b (Sam, 2026-10-22, option A): the ONE sanctioned credential. Anonymous
+  // image pulls were throttled on both ghcr.io and public.ecr.aws, so the
+  // Supabase-starting jobs pull ghcr.io images AUTHENTICATED with their own
+  // token. Exempt only this exact step, in a job whose permissions are exactly
+  // { contents: read, packages: read }; any other spelling, scope, action,
+  // registry or credential is still refused below.
+  const SANCTIONED_LOGIN = "docker/login-action@dbcb813823bdd20940b903addbd779551569679f";
+  function isSanctionedGhcrLogin(job: unknown, step: unknown): boolean {
+    if (!isRecord(job) || !isRecord(step) || !isRecord(step.with)) return false;
+    const perms = job.permissions;
+    if (!isRecord(perms) || Object.keys(perms).sort().join(",") !== "contents,packages") return false;
+    if (perms.contents !== "read" || perms.packages !== "read") return false;
+    if (step.uses !== SANCTIONED_LOGIN) return false;
+    if (Object.keys(step).some((k) => !["name", "if", "uses", "with"].includes(k))) return false;
+    const w = step.with;
+    return Object.keys(w).sort().join(",") === "password,registry,username" &&
+      w.registry === "ghcr.io" && w.username === "${{ github.actor }}" && w.password === "${{ secrets.GITHUB_TOKEN }}";
+  }
+  function withoutSanctionedLogins(doc: unknown): unknown {
+    if (!isRecord(doc) || !isRecord(doc.jobs)) return doc;
+    const jobs: Record<string, unknown> = {};
+    for (const [k, job] of Object.entries(doc.jobs)) {
+      jobs[k] = isRecord(job) && Array.isArray(job.steps)
+        ? { ...job, steps: job.steps.filter((s) => !isSanctionedGhcrLogin(job, s)) }
+        : job;
+    }
+    return { ...doc, jobs };
+  }
+
   function writeCredentialViolations(sources: readonly Workflow[]): string[] {
     const bad: string[] = [];
-    for (const { file, doc } of parseAll(sources)) {
+    for (const { file, doc: parsed } of parseAll(sources)) {
+      const doc = withoutSanctionedLogins(parsed);
       const strings = taggedStrings(doc);
       const text = strings.map((s) => s.value).join("\n");
       if (/GITHUB_TOKEN/.test(text)) bad.push(`${file}: uses GITHUB_TOKEN`);
@@ -1170,6 +1197,32 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
 
   it("no workflow writes to GitHub, which is what makes the opt-out safe", () => {
     expect(writeCredentialViolations(WORKFLOWS)).toEqual([]);
+  });
+
+  it("D7b: the sanctioned ghcr.io login is exempt only in its exact shape", () => {
+    const LOGIN = [
+      "      - name: login",
+      `        uses: ${SANCTIONED_LOGIN} # v4.6.0`,
+      "        with:",
+      "          registry: ghcr.io",
+      "          username: ${{ github.actor }}",
+      "          password: ${{ secrets.GITHUB_TOKEN }}",
+    ];
+    const wf = (perms: string[], login: string[]): Workflow => [
+      "probe.yml",
+      ["permissions:", "  contents: read", "jobs:", "  j:", "    runs-on: ubuntu-latest", ...perms,
+        "    steps:", ...login].join("\n"),
+    ];
+    const READ_PKGS = ["    permissions:", "      contents: read", "      packages: read"];
+    expect(JSON.stringify(parseAll([wf(READ_PKGS, LOGIN)])[0].doc)).toContain("secrets.GITHUB_TOKEN");
+    expect(writeCredentialViolations([wf(READ_PKGS, LOGIN)])).toEqual([]);
+    // Each departure is refused again.
+    expect(writeCredentialViolations([wf([], LOGIN)]).length).toBeGreaterThan(0);
+    expect(writeCredentialViolations([wf([...READ_PKGS, "      pull-requests: read"], LOGIN)]).length).toBeGreaterThan(0);
+    expect(writeCredentialViolations([wf(READ_PKGS, LOGIN.map((l) => l.replace("secrets.GITHUB_TOKEN", "secrets.DEPLOY_PAT")))]).length).toBeGreaterThan(0);
+    expect(writeCredentialViolations([wf(READ_PKGS, LOGIN.map((l) => l.replace("registry: ghcr.io", "registry: docker.io")))]).length).toBeGreaterThan(0);
+    expect(writeCredentialViolations([wf(READ_PKGS, LOGIN.map((l) => l.replace(SANCTIONED_LOGIN, "docker/login-action@0000000000000000000000000000000000000000")))]).length).toBeGreaterThan(0);
+    expect(writeCredentialViolations([wf(READ_PKGS, [...LOGIN, "        env:", "          X: ${{ secrets.GITHUB_TOKEN }}"])]).length).toBeGreaterThan(0);
   });
 
   // 6. The Supabase CLI pin is a DB-SAFETY invariant, not a preference: a newer
