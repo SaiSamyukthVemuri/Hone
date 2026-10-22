@@ -219,8 +219,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Bring up the database
+        id: sb_start
         if: matrix.needs_supabase
-        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start
+        # Direct pinned-CLI call while the ghcr.io credential is held: no
+        # checked-out script runs before the logout (Codex P2 4354172124).
+        # A failure falls through to the credential-free retry step below.
+        continue-on-error: true
+        shell: bash
+        run: supabase start 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
 
       # Codex P2 4353990804: drop the registry credential the moment the
       # images are pulled, before ANY later step runs branch-controlled code.
@@ -228,6 +234,10 @@ jobs:
       - name: Log out of ghcr.io (D7b)
         if: always() && matrix.needs_supabase
         run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: matrix.needs_supabase && steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start
 
       - name: Run lane
         run: ${{ matrix.command }}

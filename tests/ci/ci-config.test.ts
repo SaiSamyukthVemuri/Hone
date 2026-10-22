@@ -758,7 +758,7 @@ describe("PR CI — path-aware lane selection", () => {
 
 describe("D7b: Supabase-starting jobs pull ghcr.io images authenticated, read-only", () => {
   // Anonymous pulls were throttled on ghcr.io and public.ecr.aws on 2026-10-22.
-  it.each([["ci.yml", () => CI], ["nightly.yml", () => NIGHTLY]])("%s holds the ghcr.io login ONLY across the Supabase start", (_n, body) => {
+  it.each([["ci.yml", () => CI], ["nightly.yml", () => NIGHTLY]])("%s holds the ghcr.io login ONLY across a direct Supabase CLI start", (_n, body) => {
     const steps = body().split(/\n(?=      - )/);
     const setups = steps.map((s, i) => [s, i] as const).filter(([s]) => /uses: supabase\/setup-cli@/.test(s));
     const isLogin = (s: string) => /uses: docker\/login-action@/.test(s);
@@ -778,9 +778,18 @@ describe("D7b: Supabase-starting jobs pull ghcr.io images authenticated, read-on
       // Codex P2 4353990804: the credential lives in ~/.docker/config.json, so
       // the ONLY step between login and logout is the Supabase start, and the
       // logout runs even when that start fails.
-      expect(steps[at + 1]).toMatch(/^      - name: (Start local Supabase|Bring up the database)[\s\S]*\brun: bash scripts\/ci\/supabase-start-bind-retry\.sh supabase start\b/);
+      // Codex P2 4354172124: that start is a DIRECT pinned-CLI call, never a
+      // checked-out script; its failure falls through to ONE retry step that
+      // runs the repo's wrapper only AFTER the logout.
+      const start = steps[at + 1];
+      expect(start).toMatch(/^      - name: (Start local Supabase|Bring up the database)/);
+      expect(start).toMatch(/\n        id: sb_start\n/);
+      expect(start).toMatch(/\n        continue-on-error: true\n        shell: bash\n        run: supabase start\b[^\n]* 2>&1 \| tee "\$RUNNER_TEMP\/supabase-start\.log"\n/);
+      expect(start.replace(/^\s*#.*$/gm, "")).not.toMatch(/scripts\/|\bbash scripts|\bnpm |\bnode |\.sh\b/);
       const cond = _n === "ci.yml" ? "always()" : "always() && matrix.needs_supabase";
       expect(steps[at + 2]).toMatch(new RegExp(`^      - name: Log out of ghcr\\.io \\(D7b\\)\\n        if: ${cond.replace(/[()&.]/g, "\\$&")}\\n        run: docker logout ghcr\\.io\\n`));
+      const retryIf = _n === "ci.yml" ? "steps.sb_start.outcome == 'failure'" : "matrix.needs_supabase && steps.sb_start.outcome == 'failure'";
+      expect(steps[at + 3]).toContain(`      - name: Retry Supabase start once on a port-bind collision (no credential)\n        if: ${retryIf}\n        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start`);
     }
     expect((body().match(/uses: docker\/login-action@/g) ?? []).length).toBe(setups.length);
     expect((body().match(/run: docker logout ghcr\.io/g) ?? []).length).toBe(setups.length);

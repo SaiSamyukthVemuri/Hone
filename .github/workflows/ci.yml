@@ -552,13 +552,19 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Start local Supabase (DB + REST API)
+        id: sb_start
         # Was `supabase db start` (Postgres only). The DB-integration lane now
         # also exercises server-side code that reaches Supabase over the REST API
         # via createAdminClient() (e.g. the REAL getSessionPaymentEligibility
         # resolver), that needs kong (54321), not just Postgres (54322). Bring
         # up the same trimmed stack the browser-e2e job uses (proven in CI); the
         # node-pg harness (54322) and `db reset --local` are unaffected.
-        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        # Direct pinned-CLI call while the ghcr.io credential is held: no
+        # checked-out script runs before the logout (Codex P2 4354172124).
+        # A failure falls through to the credential-free retry step below.
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
 
       # Codex P2 4353990804: drop the registry credential the moment the
       # images are pulled, before ANY later step runs branch-controlled code.
@@ -566,6 +572,10 @@ jobs:
       - name: Log out of ghcr.io (D7b)
         if: always()
         run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         id: db_chain
@@ -768,7 +778,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        id: sb_start
+        # Direct pinned-CLI call while the ghcr.io credential is held: no
+        # checked-out script runs before the logout (Codex P2 4354172124).
+        # A failure falls through to the credential-free retry step below.
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
 
       # Codex P2 4353990804: drop the registry credential the moment the
       # images are pulled, before ANY later step runs branch-controlled code.
@@ -776,6 +792,10 @@ jobs:
       - name: Log out of ghcr.io (D7b)
         if: always()
         run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -1084,7 +1104,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        id: sb_start
+        # Direct pinned-CLI call while the ghcr.io credential is held: no
+        # checked-out script runs before the logout (Codex P2 4354172124).
+        # A failure falls through to the credential-free retry step below.
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
 
       # Codex P2 4353990804: drop the registry credential the moment the
       # images are pulled, before ANY later step runs branch-controlled code.
@@ -1092,6 +1118,10 @@ jobs:
       - name: Log out of ghcr.io (D7b)
         if: always()
         run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -1214,7 +1244,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        id: sb_start
+        # Direct pinned-CLI call while the ghcr.io credential is held: no
+        # checked-out script runs before the logout (Codex P2 4354172124).
+        # A failure falls through to the credential-free retry step below.
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
 
       # Codex P2 4353990804: drop the registry credential the moment the
       # images are pulled, before ANY later step runs branch-controlled code.
@@ -1222,6 +1258,10 @@ jobs:
       - name: Log out of ghcr.io (D7b)
         if: always()
         run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -1345,7 +1385,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        id: sb_start
+        # Direct pinned-CLI call while the ghcr.io credential is held: no
+        # checked-out script runs before the logout (Codex P2 4354172124).
+        # A failure falls through to the credential-free retry step below.
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
 
       # Codex P2 4353990804: drop the registry credential the moment the
       # images are pulled, before ANY later step runs branch-controlled code.
@@ -1353,6 +1399,10 @@ jobs:
       - name: Log out of ghcr.io (D7b)
         if: always()
         run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local

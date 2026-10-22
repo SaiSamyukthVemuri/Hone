@@ -373,10 +373,12 @@ never a blanket reset or email-domain deletion.
   SHA-pinned `docker/login-action`, and only those jobs declare job-level
   `permissions: { contents: read, packages: read }`. That exact shape is the
   only credential use `tests/ci/ci-config.test.ts` exempts; any other token,
-  scope, registry or secret is still refused. The login sits immediately
-  before the Supabase start and an `if: always()` `docker logout ghcr.io`
-  immediately after it, so no later branch-controlled step can read the token
-  from `~/.docker/config.json` (Codex P2 4353990804).
+  scope, registry or secret is still refused. The login is held across ONE
+  step only: a direct pinned-CLI `supabase start` (no checked-out script), then
+  an `if: always()` `docker logout ghcr.io`. A failed start falls through to a
+  single credential-free retry step, where `supabase-start-bind-retry.sh
+  --after-failed-start` retries once only on the port-bind signature in the
+  first start's log (Codex P2 4353990804, 4354172124).
 - Codex exact-head review (`npm run eng -- status <pr>`) is **operator-side**. Do
   not wire it into a workflow: it needs a GitHub API credential, which is exactly
   what the posture above removes.
