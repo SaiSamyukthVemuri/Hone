@@ -159,7 +159,7 @@ describe("the operator service-role path creates a studio + owner invite, and th
 describe("verified onboarding jurisdiction is separate from studio creation", () => {
   it("no evidence leaves no jurisdiction; a verified operator pair initializes it with audit", async () => {
     const studioId = randomUUID();
-    await adminQuery(`insert into public.studios(id,name) values($1,'Verified fixture')`, [studioId]);
+    await adminQuery(`insert into public.studios(id,name,owner_email) values($1,'Verified fixture',$2)`, [studioId, `verified-${studioId}@example.invalid`]);
     expect((await adminQuery(`select count(*)::int n from public.studio_payment_jurisdictions where studio_id=$1`, [studioId])).rows[0].n).toBe(0);
     const noEvidence = await adminQuery(`select * from public.set_studio_payment_jurisdiction($1,'US','usd','operator:test','onboarding',false)`, [studioId]);
     expect(noEvidence.rows[0].out_result).toBe("verification_required");
