@@ -42,113 +42,29 @@ const EMAIL_PASS = CODE.slice(
   EMAIL_PASS_END,
 );
 
-describe("email reminder pass: claim before send", () => {
-  it("imports claimEmailSend + recordEmailResult from the email module", () => {
-    expect(ROUTE).toMatch(/claimEmailSend,/);
-    expect(ROUTE).toMatch(/recordEmailResult,/);
-    expect(ROUTE).toMatch(/from "@\/lib\/email\/send-appointment"/);
+describe("0247 governed email caller boundary", () => {
+  it("has a real email-only slice and a single governed dispatch site", () => {
+    expect(EMAIL_PASS.length).toBeGreaterThan(500);
+    expect(EMAIL_PASS.match(/await sendAppointmentReminderOperation\(/g)).toHaveLength(1);
+    expect(EMAIL_PASS).not.toMatch(/claimEmailSend|recordEmailResult|send24hReminderToClient|sendIntakeReminderToClient/);
   });
-
-  it("every send is claimed first: claim call precedes the send dispatch", () => {
-    const claimIdx = EMAIL_PASS.indexOf(
-      "await claimEmailSend(admin, appt.id, emailType)",
-    );
-    const sendIdx = EMAIL_PASS.indexOf("result = await sendFn(");
-    expect(claimIdx).toBeGreaterThan(-1);
-    expect(sendIdx).toBeGreaterThan(claimIdx);
+  it("passes candidate identity only, never cached joined render inputs", () => {
+    expect(EMAIL_PASS).toContain("sendAppointmentReminderOperation(admin, appt.studio_id, appt.id, emailType)");
+    expect(EMAIL_PASS).not.toMatch(/appt\.client|appt\.service|appt\.practitioner|appt\.studio\./);
   });
-
-  it("a lost claim skips the row without sending", () => {
-    expect(EMAIL_PASS).toMatch(
-      /if \(!claimed\) \{\s*\n?\s*stats\.skipped \+= 1;\s*\n?\s*return;\s*\n?\s*\}/,
-    );
-  });
-
-  it("the claim also precedes the missing-token failure record", () => {
-    const claimIdx = EMAIL_PASS.indexOf("await claimEmailSend(");
-    const tokenIdx = EMAIL_PASS.indexOf("if (!token) {");
-    expect(tokenIdx).toBeGreaterThan(claimIdx);
-  });
-
-  it("outcomes are recorded via record_email_result, never record_email_attempt", () => {
-    // recordEmailAttempt increments attempts; the claim already did.
-    // Using it after a claim would double-count, so the claimed pass
-    // must not reference it at all.
-    expect(EMAIL_PASS).toMatch(
-      /await recordEmailResult\(admin, appt\.id, emailType, false\);/,
-    );
-    expect(EMAIL_PASS).toMatch(
-      /await recordEmailResult\(admin, appt\.id, emailType, result\.ok\);/,
-    );
-    expect(EMAIL_PASS).not.toMatch(/recordEmailAttempt/);
-    expect(CODE).not.toMatch(/recordEmailAttempt/);
-  });
-
-  it("duplicate cron passes cannot double-send: no send path bypasses the claim", () => {
-    // Exactly one sendFn dispatch exists in the email pass and exactly
-    // one claim call guards it (asserted in order above). If a second
-    // unclaimed dispatch is ever added, this count catches it.
-    const sends = EMAIL_PASS.match(/await sendFn\(/g) ?? [];
-    expect(sends.length).toBe(1);
-    const claims = EMAIL_PASS.match(/await claimEmailSend\(/g) ?? [];
-    expect(claims.length).toBe(1);
-  });
-});
-
-describe("email reminder pass: preserved behavior", () => {
-  it("the selection query is unchanged (sent-is-null + attempts cap + window)", () => {
+  it("keeps candidate window/cap, auth, response keys and SMS authority", () => {
     expect(CODE).toMatch(/\.is\(opts\.notSentColumn, null\)/);
     expect(CODE).toMatch(/\.lt\(opts\.attemptsColumn, MAX_ATTEMPTS\)/);
+    expect(CODE).toContain("if (!isAuthorizedCronRequest(req))");
+    expect(CODE).toMatch(/reminder_24h,\s*reminder_2h,/);
+    expect(CODE.slice(CODE.indexOf("async function sendSmsReminderPass"))).toContain("send24hReminderSmsToClient");
+    expect(CODE).not.toMatch(/paymentIntents|refunds\.create|charges\.create/);
   });
-
-  it("attempt numbering for failure logs is unchanged", () => {
-    expect(EMAIL_PASS).toMatch(
-      /const attemptNumber = \(appt\[attemptsColumn\] as number\) \+ 1;/,
-    );
-  });
-
-  it("the cheap row guards are all evaluated before any claim", () => {
-    // Since 0186 the studio reminder toggle is no longer a SKIP - it is an
-    // input to which email gets composed, because a studio with the reminder
-    // off may still owe a standalone intake reminder. What must not regress is
-    // that nothing claims a slot before the cheap in-memory guards have run:
-    // a claim costs an attempt off the 3-strike cap.
-    const toggleIdx = EMAIL_PASS.indexOf("[studioToggle]");
-    const emailIdx = EMAIL_PASS.indexOf("if (!appt.client?.email) return;");
-    const claimIdx = EMAIL_PASS.indexOf("await claimEmailSend(");
-    expect(toggleIdx).toBeGreaterThan(-1);
-    expect(emailIdx).toBeGreaterThan(-1);
-    expect(claimIdx).toBeGreaterThan(toggleIdx);
-    expect(claimIdx).toBeGreaterThan(emailIdx);
-    // A row that can produce no email at all never reaches the claim.
-    expect(EMAIL_PASS).toMatch(
-      /if \(!wantsReminder && !intakeEnabled\) return;/,
-    );
-  });
-
-  it("the SMS pass still uses its own claim (claim_sms_send path untouched)", () => {
-    const smsPass = CODE.slice(CODE.indexOf("async function sendSmsReminderPass"));
-    expect(smsPass).toMatch(/send24hReminderSmsToClient/);
-    expect(ROUTE).not.toMatch(/claim_sms_send"/);
-  });
-
-  it("response keys reminder_24h / reminder_2h are unchanged", () => {
-    expect(CODE).toMatch(/reminder_24h,\s*\n?\s*reminder_2h,/);
+  it("never stamps current UI metadata on unconfirmed or superseded evidence", () => {
+    expect(EMAIL_PASS).toContain('result.persistence === "recorded" && result.projection === "current" && result.intakeId');
+    expect(EMAIL_PASS).toContain('result.kind === "held"');
   });
 });
-
-describe("PR #189 boundaries (cron route)", () => {
-  it("no payment / Stripe code", () => {
-    expect(CODE).not.toMatch(
-      /paymentIntents|refunds\.create|charges\.create|checkout\.sessions|STRIPE_ALLOW_LIVE_MODE/,
-    );
-  });
-
-  it("cron auth gate unchanged", () => {
-    expect(CODE).toMatch(/if \(!isAuthorizedCronRequest\(req\)\)/);
-  });
-});
-
 
 // Exercise the real route across the query/claim boundary with synthetic rows.
 const race = vi.hoisted(() => ({
@@ -169,13 +85,13 @@ const race = vi.hoisted(() => ({
   failStore: false,
   cancellationEnabled: true, rescheduleEnabled: true,
   leadRecovery: vi.fn(async () => ({ ran: false, reason: "offline_fixture" })),
-  ledgerBegin: vi.fn(async (): Promise<string | null> => null),
-  ledgerSettle: vi.fn(async () => undefined),
+  ledgerBegin: vi.fn(async (...args: unknown[]): Promise<string | null> => { void args; return null; }),
+  ledgerSettle: vi.fn(async (...args: unknown[]) => { void args; }),
   pages: [] as Array<{ cursor: string | null; orders: string[] }>,
   smsSend: vi.fn(async () => ({ ok: true, intakeLinkIncluded: false })),
-  send: vi.fn(async () => ({ ok: true })),
-  claim: vi.fn(async () => true),
-  record: vi.fn(async () => undefined),
+  send: vi.fn(async (...args: unknown[]): Promise<{ ok: boolean; messageId?: string }> => { void args; return { ok: true }; }),
+  claim: vi.fn(async (_admin?: unknown, _id?: string) => { void [_admin, _id]; return true; }),
+  record: vi.fn(async (_admin?: unknown, _id?: string, _purpose?: unknown, _ok?: boolean) => { void [_admin, _id, _purpose, _ok]; }),
 }));
 vi.mock("@/lib/platform-leads/alert-delivery", () => ({
   recoverLeadAlertsOnReminderTrigger: race.leadRecovery,
@@ -220,7 +136,16 @@ vi.mock("@/lib/booking/tokens", () => ({ generateCancellationToken: () => "synth
 vi.mock("@/lib/cron/reminder-heartbeat", () => ({ recordReminderRunSuccess: race.heartbeat }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: race.alerts }));
 vi.mock("@/lib/email/send-appointment", () => ({
-  claimEmailSend: race.claim,
+  sendAppointmentReminderOperation: async (admin: unknown, studioId: string, id: string, purpose: string) => {
+    const n = Number(id.slice(-12));
+    if (race.backlog && n <= race.backlog.skipped && race.backlog.reason !== "claim") return { kind: "held" };
+    try { if (!await race.claim(admin, id)) return { kind: "held" }; } catch { return { kind: "unavailable" }; }
+    const ledgerMessageId = await race.ledgerBegin(admin, { studioId, appointmentId: id, purpose: purpose === "reminder_24h" ? "appointment_reminder_24h" : "appointment_reminder_2h" });
+    const result = await race.send({ cancellationUrl: race.cancellationEnabled ? "synthetic-cancel" : null, rescheduleUrl: race.rescheduleEnabled ? "synthetic-reschedule" : null, ledgerMessageId });
+    await race.record(admin, id, purpose, result.ok);
+    if (ledgerMessageId) await race.ledgerSettle(admin, ledgerMessageId, result.ok ? { outcome: "accepted", providerEmailId: result.messageId } : { outcome: "refused", providerError: "provider_refused" });
+    return { kind: "observed", sdkAttempted: true, observation: result.ok ? { kind: "accepted", messageId: result.messageId ?? "synthetic" } : { kind: "definite_refusal" }, persistence: "recorded", projection: "current", attemptNumber: 1, intakeId: null };
+  },
   recordEmailResult: race.record,
   logEmailFailure: vi.fn(),
   send24hReminderToClient: race.send,
@@ -463,7 +388,7 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     expect(race.ledgerSettle).toHaveBeenCalledWith(expect.anything(), id, { outcome: "accepted", providerEmailId: id });
     expect(race.ledgerBegin.mock.invocationCallOrder[0]).toBeLessThan(race.send.mock.invocationCallOrder[0]);
     expect(race.send.mock.invocationCallOrder[0]).toBeLessThan(race.ledgerSettle.mock.invocationCallOrder[0]);
-    expect(race.ledgerSettle.mock.invocationCallOrder[0]).toBeLessThan(race.record.mock.invocationCallOrder[0]);
+    expect(race.record.mock.invocationCallOrder[0]).toBeLessThan(race.ledgerSettle.mock.invocationCallOrder[0]);
     expect(race.leadRecovery).toHaveBeenCalledTimes(1);
     expect(race.heartbeat).toHaveBeenCalledTimes(1);
     expect(race.heartbeat.mock.invocationCallOrder[0]).toBeLessThan(race.leadRecovery.mock.invocationCallOrder[0]);
@@ -622,4 +547,23 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
   });
 
+  it("0247 lost authority call holds cursor and heartbeat before any SDK or ledger begin", async () => {
+    race.claim.mockRejectedValueOnce(new Error("synthetic authority unavailable"));
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
+    expect(race.send).not.toHaveBeenCalled(); expect(race.ledgerBegin).not.toHaveBeenCalled(); expect(race.heartbeat).not.toHaveBeenCalled();
+    // "Holds" means the saved cursor does not pass the unavailable row (as #995
+    // pins for SMS): the coordinator saves the handled prefix, so the next fire
+    // retries this row.
+    const held = race.store.get("reminder_scan:v1:checkpoint:email24h");
+    expect(held).toBeDefined();
+    expect(JSON.parse(held!.value)).toMatchObject({ pass: "email24h", after: null, complete: false });
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({ reason: "claim_unavailable" }) }));
+  });
+
+});
+
+it("0247 authority transport unavailability does not acknowledge candidate progress", () => {
+  expect(EMAIL_PASS).toContain('result.kind === "unavailable"');
+  expect(EMAIL_PASS).toContain('return "claim_unavailable"');
+  expect(CODE).toContain('unavailable === "claim_unavailable"');
 });

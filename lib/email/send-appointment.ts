@@ -1,9 +1,19 @@
+import { createHash } from "node:crypto";
+import { Resend } from "resend";
+import { createProjectedEmailOperationDispatchAdapter } from "./operation-dispatch";
+import { parseEmailOperationAuthority, parseEmailOperationRender, type EmailOperationRender } from "./operation-state";
+import { generateCancellationToken } from "@/lib/booking/tokens";
+import { generateIntakeLinkUrl } from "@/lib/intake/queries";
+import { buildTreatmentTimeLine } from "@/lib/treatment-time/format";
+import { isE2eFakeResendEnabled } from "./e2e-fake-resend";
+import { clientSelfServiceLinks } from "@/lib/booking/client-self-service-policy";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FROM_ADDRESS, getResendTransport } from "@/lib/email/client";
 import { EMAIL_LEDGER_TAG } from "@/lib/email/resend-webhook";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   beginAppointmentEmailMessage,
+  isEmailLedgerId,
   settleEmailMessage,
   settleOutcomeForEmailSend,
   type AppointmentEmailPurpose,
@@ -916,4 +926,140 @@ export async function sendIntakeUpdateRequestToClient(params: {
     intakeUrl: params.intakeUrl,
   });
   return sendEmailSafely({ studioIdentity: { displayName: params.studioName, replyTo: null }, to: params.clientEmail, subject, html, text });
+}
+
+
+// Pinned Resend exposes its captured credential as a public readonly key;
+// its constructor builds Authorization from THAT same capture. Account
+// identity must come from the exact resolved SDK, never a second env capture.
+const operationHash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
+function operationRuntime(transport: NonNullable<ReturnType<typeof getResendTransport>>) {
+  const fake = isE2eFakeResendEnabled();
+  const actualSdk = transport instanceof Resend;
+  const capturedKey = actualSdk ? transport.key : null;
+  if (fake ? actualSdk : (!actualSdk || !capturedKey || capturedKey !== process.env.RESEND_API_KEY)) {
+    throw new Error("email_operation_account_unbound");
+  }
+  const origin = getRequiredAppOrigin();
+  return { origin, account: fake ? "resend:offline-fake" : `resend:${operationHash(capturedKey)}`,
+    binding: operationHash(["0247-render-v1", FROM_ADDRESS, origin, fake, capturedKey,
+      process.env.APPOINTMENT_SIGNING_SECRET, process.env.INTAKE_SIGNING_SECRET,
+      process.env.HONE_E2E_FAKE_RESEND_MODE, process.env.HONE_E2E_FAKE_RESEND_DEFAULT_MODE]) };
+}
+
+/** Trusted renderer consumes ONLY the closed SQL projection, never a cron
+ * joined row. This creates no dispatch permission; URL bytes are frozen once. */
+export function buildAppointmentEmailOperationPayload(projection: EmailOperationRender, purpose: "reminder_24h" | "reminder_2h"): EmailPayload | null {
+  const origin = getRequiredAppOrigin();
+  const kind = purpose === "reminder_24h" ? "24h" : "2h";
+  const intakeUrl = projection.intake ? generateIntakeLinkUrl(projection.intake.id, origin) : null;
+  if ("kind" in projection) {
+    if (projection.kind !== purpose || !intakeUrl) return null;
+    const content = buildIntakeReminderEmail({ kind, studioName: projection.studioName,
+      startsAt: new Date(projection.startsAt), timezone: projection.timezone, intakeUrl });
+    return { from: buildFromHeader(projection.studioName), to: projection.clientEmail, ...content };
+  }
+  const p = projection;
+  const token = generateCancellationToken(p.appointment.id, new Date(p.appointment.starts_at));
+  if (!token) return null;
+  const links = clientSelfServiceLinks({ origin, token, studio: p.studio });
+  const content = (kind === "24h" ? build24hReminderEmail : build2hReminderEmail)({
+    clientName: p.client.name, studioName: p.studio.name, studioAddress: p.studio.address,
+    practitionerName: p.practitioner?.display_name?.trim() || p.practitioner?.email || null,
+    serviceName: p.service?.name ?? "Appointment", preCareInstructions: p.service?.pre_care_instructions ?? null,
+    durationMinutes: p.appointment.duration_minutes, startsAt: new Date(p.appointment.starts_at), endsAt: new Date(p.appointment.ends_at),
+    timezone: p.studio.timezone, cancellationUrl: links.cancelUrl,
+    rescheduleUrl: links.rescheduleUrl,
+    portalLoginUrl: p.studio.slug?.trim() ? `${origin}/portal/login?studio=${encodeURIComponent(p.studio.slug.trim())}` : null,
+    treatmentTimeLine: p.treatmentTime ? buildTreatmentTimeLine({ enabled: true, clientFirstName: p.client.name.split(/\s+/)[0] || p.client.name, context: p.treatmentTime }) : null,
+    intakeUrl,
+  });
+  const identity = identityFor(p.studio);
+  return { from: buildFromHeader(identity.displayName), to: p.client.email, ...content,
+    ...(identity.replyTo ? { replyTo: identity.replyTo } : {}) };
+}
+
+/** Proposed target integration: primary0247 authority and secondary existing
+ * ledger remain separate. No SQL/signature/replay change is proposed here. */
+export async function sendAppointmentReminderOperation(admin: SupabaseClient, studioId: string, appointmentId: string, purpose: "reminder_24h" | "reminder_2h") {
+  const held = { kind: "held" as const }; const unavailable = { kind: "unavailable" as const };
+  let ledgerMessageId: string | null = null; let sdkAttempted = false; let ledgerSettlementAttempted = false;
+  let authorityUnavailable = false;
+  const settleSecondary = async (observation?: import("./operation-state").EmailOperationObservation) => {
+    if (!ledgerMessageId) return;
+    ledgerSettlementAttempted = true;
+    try {
+      const outcome = !sdkAttempted ? { outcome: "skipped" as const, skipReason: "operation_held" as const }
+        : observation?.kind === "accepted" ? settleOutcomeForEmailSend({ ok: true, messageId: observation.messageId })
+        : observation?.kind === "definite_refusal" ? { outcome: "refused" as const, providerError: "provider_refused" }
+        : { outcome: "unknown" as const, providerError: "ambiguous" };
+      await settleEmailMessage(admin, ledgerMessageId, outcome);
+    } catch { /* Secondary bookkeeping never replaces primary effect truth. */ }
+  };
+  try {
+    const transport = getResendTransport(); if (!transport) return held;
+    let runtime: ReturnType<typeof operationRuntime>;
+    try { runtime = operationRuntime(transport); } catch { return held; }
+    const inspected = await admin.rpc("inspect_appointment_email_operation", { p_studio_id: studioId, p_appointment_id: appointmentId, p_purpose: purpose });
+    if (inspected.error || !inspected.data || !["eligible", "held"].includes(inspected.data.kind)) return unavailable;
+    if (inspected.data.kind === "held") return held;
+    const authority = parseEmailOperationAuthority(inspected.data.authority); if (!authority) return unavailable;
+    const prepared = await admin.rpc("prepare_appointment_email_operation", { p_studio_id: studioId, p_appointment_id: appointmentId, p_purpose: purpose, p_provider_account: runtime.account, p_expected_authority: authority });
+    if (prepared.error || !prepared.data || !["prepared", "held"].includes(prepared.data.kind)) return unavailable;
+    if (prepared.data.kind === "held") return held;
+    const p = prepared.data as Record<string, unknown>; const render = parseEmailOperationRender(p.render); const frozenAuthority = parseEmailOperationAuthority(p.authority);
+    if (!render || !frozenAuthority || typeof p.operationId !== "string" || !p.operationId || typeof p.providerKey !== "string" || !p.providerKey || typeof p.leaseToken !== "string" || !p.leaseToken) return unavailable;
+    if ("kind" in render ? p.composition !== "intake_only" : p.composition !== (render.intake ? "reminder_with_intake" : "reminder_only")) return unavailable;
+    try { if (runtime.binding !== operationRuntime(transport).binding) return held; } catch { return held; }
+    // Complete all rendering before creating a claimed ledger row. The
+    // optional tag is attached BEFORE the sole payload/capability freeze.
+    const payload = buildAppointmentEmailOperationPayload(render, purpose); if (!payload) return held;
+    try {
+      ledgerMessageId = await beginAppointmentEmailMessage(admin, { studioId, appointmentId, purpose: purpose === "reminder_24h" ? "appointment_reminder_24h" : "appointment_reminder_2h" });
+    } catch { ledgerMessageId = null; } // Observational begin stays fail-soft.
+    if (ledgerMessageId && !isEmailLedgerId(ledgerMessageId)) ledgerMessageId = null;
+    const tagged = ledgerMessageId ? { ...payload, tags: [{ name: EMAIL_LEDGER_TAG, value: ledgerMessageId }] } : payload;
+    try { if (runtime.binding !== operationRuntime(transport).binding) return held; } catch { return held; }
+    let attemptNumber = 0; let projection: "current" | "superseded" | "unverified" | "unchanged" | undefined;
+    const sendWithIdempotency: (payload: EmailPayload, options: Readonly<{ idempotencyKey: string }>) => Promise<unknown> = transport.emails.send.bind(transport.emails);
+    const adapter = createProjectedEmailOperationDispatchAdapter({
+      render: () => tagged, currentRuntimeBinding: () => operationRuntime(transport).binding,
+      authorize: async (binding, original) => {
+        try {
+          const { data, error } = await admin.rpc("authorize_appointment_email_operation", {
+            p_operation_id: binding.operationId, p_lease_token: p.leaseToken, p_authority: binding.authority,
+            p_provider_account: binding.providerAccount, p_provider_key: binding.providerKey,
+            p_request_digest: binding.requestDigest, p_capability_digest: binding.capabilityDigest, p_expected_render: original,
+          });
+          if (error || !data || !["authorized", "held"].includes(data.kind)) { authorityUnavailable = true; return held; }
+          if (data.kind === "held") return held;
+          if (!Number.isInteger(data.attemptNumber) || data.attemptNumber < 1 || data.attemptNumber > 3 || data.retryNotAfter !== null || !Number.isFinite(Date.parse(data.firstPossibleAttemptAt))) { authorityUnavailable = true; return held; }
+          attemptNumber = data.attemptNumber;
+          return { kind: "authorized", firstPossibleAttemptAt: data.firstPossibleAttemptAt, retryNotAfter: null };
+        } catch { authorityUnavailable = true; return held; }
+      },
+      observe: async (binding, capability, observation, original) => {
+        try {
+          const { data, error } = await admin.rpc("observe_appointment_email_operation", {
+            p_operation_id: binding.operationId, p_original_lease: p.leaseToken, p_authority: binding.authority,
+            p_provider_account: binding.providerAccount, p_provider_key: binding.providerKey, p_request_digest: binding.requestDigest,
+            p_capability: capability, p_outcome: observation.kind, p_provider_message_id: observation.kind === "accepted" ? observation.messageId : null, p_original_render: original,
+          });
+          if (error || !["accepted_retained", "unknown_held", "refusal_recorded"].includes(data?.kind)) throw new Error("email_operation_observation_unconfirmed");
+          projection = ["current", "superseded", "unverified", "unchanged"].includes(data.projection) ? data.projection : undefined;
+        } finally { await settleSecondary(observation); }
+      },
+      send: (request, options) => { sdkAttempted = true; return sendWithIdempotency(request, options); },
+    });
+    const request = adapter.freeze(render, { operationId: p.operationId, studioId, appointmentId, purpose, authority: frozenAuthority, providerAccount: runtime.account, providerKey: p.providerKey });
+    if (!request) return held;
+    const grant = await adapter.authorize(request); if (!grant) return authorityUnavailable ? unavailable : held;
+    const result = await adapter.dispatchAndSettle(request, grant);
+    return result.kind === "held" ? held : { ...result, sdkAttempted, attemptNumber, projection, intakeId: render.intake?.id ?? null };
+  } catch {
+    // No unknown authority read/prepare exception may advance a scan cursor.
+    return unavailable;
+  } finally {
+    if (ledgerMessageId && !sdkAttempted && !ledgerSettlementAttempted) await settleSecondary();
+  }
 }

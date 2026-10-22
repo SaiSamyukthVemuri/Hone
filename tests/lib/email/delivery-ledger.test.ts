@@ -246,4 +246,12 @@ describe("the ledger wrappers are fail-soft", () => {
       p_skip_reason: null,
     });
   });
+  it("records proven SDK0 operation_held as skipped, never provider refusal/unknown", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const spy = admin(async (_fn, args) => { calls.push(args); return { data: "settled", error: null }; });
+    await settleEmailMessage(spy, ROW, { outcome: "skipped", skipReason: "operation_held" });
+    expect(calls[0]).toEqual({ p_message_id: ROW, p_outcome: "skipped", p_provider_email_id: null, p_provider_error: null, p_skip_reason: "operation_held" });
+    expect(sent).toHaveLength(0);
+  });
+
 });

@@ -1,6 +1,10 @@
+import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   adminQuery,
+  adminTx,
+  asRole,
+  seedSession,
   closePool,
   seedStudio,
   type SeededStudio,
@@ -582,5 +586,76 @@ describe("the SMS consent model is untouched by the intake composition", () => {
     expect(r.rows[0].send_24h_sms_reminders).toBe(false);
     expect(r.rows[0].send_2h_sms_reminders).toBe(false);
     expect(r.rows[0].send_intake_reminders).toBe(true);
+  });
+});
+
+
+// 0247 source-authored regression cases. NOT executed under the source/fake
+// grant. Run only on the separately approved fresh composed DB target; the
+// older sections above retain the historical 0186 contract, not new authority.
+describe("0247 original-render observation (DB execution separately held)", () => {
+  const cap = "a".repeat(64);
+  const capDigest = createHash("sha256").update(cap).digest("hex");
+  const requestDigest = createHash("sha256").update("synthetic full frozen request").digest("hex");
+  type Prepared247 = { operationId: string; leaseToken: string; providerKey: string; authority: Record<string, string>; render: unknown };
+  async function rpc247(sql: string, params: unknown[]) {
+    return adminTx(async (query) => {
+      await query("set local role service_role");
+      return (await query(sql, params)).rows[0].result;
+    });
+  }
+  async function fixture247() {
+    const studio = await seedStudio("0247-render");
+    await adminQuery("update public.clients set email='synthetic@harness.local' where id=$1 and studio_id=$2", [studio.clientId, studio.studioId]);
+    await adminQuery("update public.studios set send_24h_reminders=true, send_intake_reminders=false, show_treatment_time_to_clients=true where id=$1", [studio.studioId]);
+    const session = await seedSession(studio);
+    const setMinutes = (minutes: number) => adminTx(async (query) => {
+      // Existing fixture attribution, not a clinical writer bypass in app code.
+      await query("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: studio.userId, role: "authenticated" })]);
+      await query("update public.session_blocks set minutes_performed=$1 where id=$2 and studio_id=$3", [minutes, session.blockId, studio.studioId]);
+    });
+    await setMinutes(10);
+    const appointmentId = (await adminQuery(`insert into public.appointments
+      (studio_id,practitioner_id,client_id,starts_at,ends_at,duration_minutes,status,buffer_minutes_snapshot,blocked_ends_at,cancellation_token_hash)
+      values($1,$2,$3,now()+interval '24 hours',now()+interval '25 hours',60,'confirmed',15,now()+interval '25 hours 15 minutes',$4) returning id`,
+      [studio.studioId, studio.practitionerId, studio.clientId, createHash("sha256").update(studio.studioId).digest("hex")])).rows[0].id as string;
+    const inspected = await rpc247("select public.inspect_appointment_email_operation($1,$2,'reminder_24h') as result", [studio.studioId, appointmentId]);
+    expect(inspected.kind).toBe("eligible");
+    const p = await rpc247("select public.prepare_appointment_email_operation($1,$2,'reminder_24h','offline-account',$3::jsonb) as result", [studio.studioId, appointmentId, JSON.stringify(inspected.authority)]);
+    expect(p.kind).toBe("prepared"); const prepared = p as Prepared247;
+    expect(prepared.render).toMatchObject({ treatmentTime: { totalMinutes: 10, sessionCount: 1 } });
+    const granted = await rpc247("select public.authorize_appointment_email_operation($1,$2,$3::jsonb,'offline-account',$4,$5,$6,$7::jsonb) as result",
+      [prepared.operationId, prepared.leaseToken, JSON.stringify(prepared.authority), prepared.providerKey, requestDigest, capDigest, JSON.stringify(prepared.render)]);
+    expect(granted.kind).toBe("authorized");
+    const observe = (render: unknown, outcome = "accepted", originalCap = cap) => rpc247(
+      "select public.observe_appointment_email_operation($1,$2,$3::jsonb,'offline-account',$4,$5,$6,$7,$8,$9::jsonb) as result",
+      [prepared.operationId, prepared.leaseToken, JSON.stringify(prepared.authority), prepared.providerKey, requestDigest, originalCap, outcome, outcome === "accepted" ? "synthetic-accepted" : null, render === null ? null : JSON.stringify(render)]);
+    const state = async () => (await adminQuery(`select o.state,o.authority,a.reminder_24h_sent_at,a.reminder_24h_claimed_at
+      from appointment_email_private.operations o join public.appointments a on a.id=o.appointment_id and a.studio_id=o.studio_id
+      where o.id=$1 and o.studio_id=$2`, [prepared.operationId, studio.studioId])).rows[0];
+    return { studio, prepared, setMinutes, observe, state };
+  }
+  it("retains original accepted evidence but does not stamp current after clinical10/1 becomes20/1", async () => {
+    const f = await fixture247(); await f.setMinutes(20);
+    expect(await f.observe(f.prepared.render)).toMatchObject({ kind: "accepted_retained", projection: "superseded" });
+    const row = await f.state(); expect(row.state).toBe("accepted"); expect(row.reminder_24h_sent_at).toBeNull(); expect(row.reminder_24h_claimed_at).not.toBeNull();
+    expect(Object.keys(row.authority).sort()).toEqual(["appointment", "client", "intake", "practitioner", "service", "studio"]);
+  });
+  it("original valid acceptance without a render binding is retained but unverified", async () => {
+    const f = await fixture247(); expect(await f.observe(null)).toMatchObject({ kind: "accepted_retained", projection: "unverified" });
+    const row = await f.state(); expect(row.state).toBe("accepted"); expect(row.reminder_24h_sent_at).toBeNull(); expect(row.reminder_24h_claimed_at).not.toBeNull();
+  });
+  it("unchanged current original render projects only once and keeps accepted monotonic", async () => {
+    const f = await fixture247(); expect(await f.observe(f.prepared.render)).toMatchObject({ kind: "accepted_retained", projection: "current" });
+    const row = await f.state(); expect(row.reminder_24h_sent_at).not.toBeNull(); expect(row.reminder_24h_claimed_at).toBeNull();
+    expect(await f.observe(f.prepared.render, "definite_refusal")).toMatchObject({ kind: "accepted_retained", projection: "unchanged" });
+    expect((await f.state()).state).toBe("accepted");
+  });
+  it("does not treat a forged original capability as accepted evidence", async () => {
+    const f = await fixture247(); expect(await f.observe(f.prepared.render, "accepted", "b".repeat(64))).toEqual({ kind: "held" });
+    expect((await f.state()).state).toBe("unknown");
+  });
+  it.each(["anon", "authenticated"] as const)("%s cannot call the new ten-argument observation command", async (role) => {
+    await expect(asRole(role, (query) => query("select public.observe_appointment_email_operation(null,null,null,null,null,null,null,null,null,null)"))).rejects.toMatchObject({ code: "42501" });
   });
 });

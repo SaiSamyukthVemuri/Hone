@@ -29,7 +29,7 @@ export type AppointmentEmailPurpose =
   | "appointment_postcare";
 
 /** Why a begun attempt made no provider call. A closed vocabulary. */
-export const EMAIL_SKIP_REASONS = ["provider_not_configured", "no_recipient"] as const;
+export const EMAIL_SKIP_REASONS = ["provider_not_configured", "no_recipient", "operation_held"] as const;
 export type EmailSkipReason = (typeof EMAIL_SKIP_REASONS)[number];
 
 export type EmailSettleOutcome =
