@@ -178,6 +178,136 @@ for (const mode of [
       expect(await readAppointments()).toEqual(before);
       expect(await readSessions()).toEqual([]);
     });
+
+    test("adjacent short appointment and timed block remain selectable by normal input", async ({ page }) => {
+      const seed = await seedE2eStudio();
+      const tz = "America/Los_Angeles";
+      await setStudioTimezone(seed.studioId, tz);
+      const practitionerId = await getOwnerPractitionerId(seed.studioId);
+      const { clientId } = await seedE2eClient(seed);
+      const [{ day, dow }] = await sql<{ day: string; dow: number }>(
+        "select ((now() at time zone $1)::date+7)::text as day, extract(dow from ((now() at time zone $1)::date+7))::int as dow", [tz],
+      );
+      await seedPractitionerDefault(seed.studioId, practitionerId, dow, true, "06:00", "22:00");
+      const serviceId = await getE2eServiceId(seed.studioId);
+      // This fresh run owns this synthetic service. Its actual duration must
+      // match the appointment, rather than bypassing a 30-minute service guard.
+      await sql("update public.services set default_duration_minutes=15 where id=$1 and studio_id=$2", [serviceId, seed.studioId]);
+      await seedServiceEligibility(seed.studioId, serviceId, practitionerId);
+      const [{ minutes }] = await sql<{ minutes: number }>(
+        "select default_duration_minutes as minutes from public.services where id=$1 and studio_id=$2 and active", [serviceId, seed.studioId],
+      );
+      expect(minutes).toBe(15);
+      const [{ name: clientName }] = await sql<{ name: string }>("select name from public.clients where id=$1 and studio_id=$2", [clientId, seed.studioId]);
+      const [{ display_name: practitionerName }] = await sql<{ display_name: string }>(
+        "select display_name from public.practitioners where id=$1 and studio_id=$2 and active", [practitionerId, seed.studioId],
+      );
+      const [appointment] = await sql<{ id: string }>(
+        "insert into public.appointments " +
+        "(id,studio_id,client_id,practitioner_id,service_id,starts_at,ends_at,duration_minutes,buffer_minutes_snapshot,blocked_ends_at,status) " +
+        "select gen_random_uuid(),$1,$2,$3,$4,start_at,start_at+interval '15 minutes',15,0,start_at+interval '15 minutes','confirmed' " +
+        "from (select ($5::date+time '10:00') at time zone $6 as start_at) t returning id",
+        [seed.studioId, clientId, practitionerId, serviceId, day, tz],
+      );
+      const marker = "adjacent-short-block-" + seed.runId;
+      const [block] = await sql<{ id: string }>(
+        "insert into public.studio_timed_blocks (studio_id,practitioner_id,created_by,starts_at,ends_at,category,private_note) " +
+        "select $1,$2,$2,start_at,start_at+interval '15 minutes','break',$3 " +
+        "from (select ($4::date+time '10:15') at time zone $5 as start_at) t returning id",
+        [seed.studioId, practitionerId, marker, day, tz],
+      );
+      const [{ disjoint, appointment_minutes, service_minutes }] = await sql<{
+        disjoint: boolean; appointment_minutes: number; service_minutes: number;
+      }>(
+        "select a.ends_at=b.starts_at and a.blocked_ends_at<=b.starts_at as disjoint, " +
+        "(extract(epoch from (a.ends_at-a.starts_at))/60)::int as appointment_minutes, s.default_duration_minutes as service_minutes " +
+        "from public.appointments a join public.services s on s.id=a.service_id and s.studio_id=a.studio_id " +
+        "join public.studio_timed_blocks b on b.studio_id=a.studio_id where a.id=$1 and b.id=$2", [appointment.id, block.id],
+      );
+      expect({ disjoint, appointment_minutes, service_minutes }).toEqual({ disjoint: true, appointment_minutes: 15, service_minutes: 15 });
+      // Nonoverlapping DB intervals still collide as rendered targets: the
+      // appointment's 44px floor reaches past the adjacent block at +15px.
+      const readAppointment = () => sql(
+        "select id,client_id,practitioner_id,service_id,duration_minutes,status,starts_at::text,ends_at::text,blocked_ends_at::text " +
+        "from public.appointments where studio_id=$1 and id=$2", [seed.studioId, appointment.id],
+      );
+      const readBlock = () => sql(
+        "select id,practitioner_id,created_by,starts_at::text,ends_at::text,category,private_note,updated_at::text " +
+        "from public.studio_timed_blocks where studio_id=$1 and id=$2", [seed.studioId, block.id],
+      );
+      const readSessions = () => sql("select id,appointment_id from public.sessions where studio_id=$1 and client_id=$2 order by id", [seed.studioId, clientId]);
+      const beforeAppointment = await readAppointment();
+      const beforeBlock = await readBlock();
+      expect(beforeAppointment).toHaveLength(1);
+      expect(beforeBlock).toHaveLength(1);
+      expect(await readSessions()).toEqual([]);
+      await loginAsOwner(page, seed);
+      await page.goto("/calendar?view=week&day=" + day);
+      expect(await page.evaluate(() => matchMedia("(pointer: fine)").matches)).toBe(!mode.coarse);
+      expect(await page.evaluate(() => matchMedia("(any-pointer: coarse)").matches)).toBe(mode.coarse);
+      const activate = (target: Locator) => mode.coarse ? target.tap({ timeout: 10_000 }) : target.click({ timeout: 10_000 });
+      const surface = page.locator('[data-testid="' + (mode.width >= 768 ? "week-day-column" : "mobile-day-timeline") + '"][data-date="' + day + '"]');
+      await expect(surface).toBeVisible();
+      const group = surface.getByRole("button", { name: "Choose from 2 calendar items", exact: true });
+      await expect(group).toHaveCount(1);
+      await group.scrollIntoViewIfNeeded();
+      const groupBox = await group.boundingBox();
+      expect(groupBox).not.toBeNull();
+      expect(groupBox!.width).toBeGreaterThanOrEqual(44);
+      expect(groupBox!.height).toBeGreaterThanOrEqual(44);
+      await activate(group);
+      const chooser = page.getByRole("dialog", { name: "Choose a calendar item", exact: true });
+      await expect(chooser).toBeVisible();
+      const blockChoice = chooser.locator(`[data-timed-block-id="${block.id}"]`);
+      await expect(blockChoice).toHaveCount(1);
+      await expect(blockChoice.getByText("Break", { exact: true })).toBeVisible();
+      const blockBox = await blockChoice.boundingBox();
+      expect(blockBox).not.toBeNull();
+      expect(blockBox!.width).toBeGreaterThanOrEqual(44);
+      expect(blockBox!.height).toBeGreaterThanOrEqual(44);
+      await activate(blockChoice);
+      await expect(chooser).toHaveCount(0);
+      const edit = page.getByRole("dialog", { name: "Blocked time", exact: true });
+      await expect(edit).toBeVisible();
+      await expect(edit.getByLabel("Private note (optional)", { exact: true })).toHaveValue(marker);
+      await expect(edit.getByLabel("Category", { exact: true })).toHaveValue("break");
+      await expect(edit.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+      await expect(page.getByRole("dialog", { name: "New appointment", exact: true })).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      await expect(edit).toHaveCount(0);
+      await activate(group);
+      await expect(chooser).toBeVisible();
+      const choice = chooser.getByRole(mode.width >= 768 ? "button" : "link").filter({ hasText: clientName });
+      await expect(choice).toHaveCount(1);
+      await expect(choice.getByText(practitionerName, { exact: true })).toBeVisible();
+      const choiceBox = await choice.boundingBox();
+      expect(choiceBox).not.toBeNull();
+      expect(choiceBox!.width).toBeGreaterThanOrEqual(44);
+      expect(choiceBox!.height).toBeGreaterThanOrEqual(44);
+      const assertOwnHref = async (link: Locator) => {
+        const href = await link.getAttribute("href");
+        expect(href).not.toBeNull();
+        const target = new URL(href!, page.url());
+        expect(target.origin).toBe(new URL(page.url()).origin);
+        expect(target.pathname).toBe("/calendar/" + appointment.id);
+      };
+      if (mode.width < 768) await assertOwnHref(choice);
+      await activate(choice);
+      if (mode.width >= 768) {
+        const preview = page.getByRole("dialog", { name: /appointment preview/i });
+        await expect(preview.getByRole("heading", { name: clientName, exact: true })).toBeVisible();
+        const details = preview.getByRole("link", { name: /open full details/i });
+        await assertOwnHref(details);
+        await activate(details);
+      }
+      await expect.poll(() => new URL(page.url()).pathname).toBe("/calendar/" + appointment.id);
+      await expect(page.locator(`main a[href="/clients/${clientId}"]`).filter({ hasText: clientName }).first()).toBeVisible();
+      await expect(page.locator("main header").first().getByText(practitionerName, { exact: false })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      expect(await readAppointment()).toEqual(beforeAppointment);
+      expect(await readBlock()).toEqual(beforeBlock);
+      expect(await readSessions()).toEqual([]);
+    });
   });
 }
 

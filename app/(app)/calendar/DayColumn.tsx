@@ -13,7 +13,7 @@
 // the overlay on truly empty space.
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { appointmentLanes, appointmentCollisionGroups, appointmentNeedsChooser } from "@/lib/calendar/appointment-lanes";
+import { appointmentLanes, calendarCollisionGroups, timedBlockCollisionId, calendarGroupNeedsChooser } from "@/lib/calendar/appointment-lanes";
 import type { Service, StudioTimedBlock } from "@/lib/types/database";
 import type {
   AppointmentWithPractitionerColor,
@@ -484,13 +484,27 @@ export function DayColumn({
     id: appointment.id, top, height,
   })));
 
-  const coarseGroups = appointmentCollisionGroups(positionedAppointments.map(({ appointment, top, height }) => ({
+  const timedBlockRectangles = timedBlocks.flatMap(block => {
+    const start = new Date(block.starts_at);
+    const end = new Date(block.ends_at);
+    const [h, m] = localTimeString(start, tz).split(":").map(Number);
+    const minutes = (h - HOUR_START) * 60 + m;
+    if (minutes < 0 || minutes >= VISIBLE_MINUTES) return [];
+    const duration = Math.max(5, Math.round((end.getTime() - start.getTime()) / 60_000));
+    return [{ id: block.id, top: (minutes / ROW_MINUTES) * ROW_HEIGHT_PX,
+      height: Math.max(ROW_HEIGHT_PX - 2, (duration / ROW_MINUTES) * ROW_HEIGHT_PX - 2) }];
+  });
+  const coarseGroups = calendarCollisionGroups(positionedAppointments.map(({ appointment, top, height }) => ({
     id: appointment.id, top, height,
-  })));
-  const chooserGroups = coarseGroups.filter(group => group.ids.some(id =>
-    appointmentNeedsChooser({ ...columnLayout, columns: lanes.get(id)?.columns ?? 0 })));
+  })), timedBlockRectangles);
+  const chooserGroups = coarseGroups.filter(group => calendarGroupNeedsChooser(group, columnLayout, lanes));
   const chooserIds = new Set(chooserGroups.flatMap(group => group.ids));
   const appointmentsById = new Map(appts.map((a) => [a.id, a]));
+  const blocksById = new Map(timedBlocks.map(block => [timedBlockCollisionId(block.id), block]));
+  const selectedBlocks = (overlapIds ?? []).flatMap(id => {
+    const block = blocksById.get(id);
+    return block ? [block] : [];
+  });
   const selectedOverlaps = (overlapIds ?? []).flatMap((id) => {
     const a = appointmentsById.get(id);
     return a ? [a] : [];
@@ -717,6 +731,7 @@ export function DayColumn({
       })}
 
       {timedBlocks.map((tb) => {
+        if (chooserIds.has(timedBlockCollisionId(tb.id))) return null;
         const start = new Date(tb.starts_at);
         const end = new Date(tb.ends_at);
         const localTime = localTimeString(start, tz); // 24h, positioning only
@@ -847,6 +862,15 @@ export function DayColumn({
       })}
 
       {chooserGroups.map((group) => {
+          if (group.ids.some(id => blocksById.has(id)) && group.ids.length > 1) return (
+            <button key={group.ids.join(":")} type="button" style={{ top: group.top, height: group.height }}
+              aria-label={`Choose from ${group.ids.length} calendar items`}
+              className="absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 border-neutral-500 bg-neutral-100 px-2 py-1 text-left text-sm text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"
+              onClick={(event) => { event.stopPropagation(); setOverlapIds(group.ids); }}>
+              <span className="block font-semibold">{group.ids.length} calendar items</span>
+            </button>
+          );
+
         const members = group.ids.map((id) => appointmentsById.get(id)!);
         const a = members[0];
         return <button key={group.ids.join(":")} type="button"
@@ -864,7 +888,7 @@ export function DayColumn({
           </>}
         </button>;
       })}
-      <AppointmentOverlapChooser appointments={selectedOverlaps} tz={tz} timeFormat={timeFormat} returnTo={returnTo}
+      <AppointmentOverlapChooser timedBlocks={selectedBlocks} onSelectBlock={(block) => setEditingBlock(block)} appointments={selectedOverlaps} tz={tz} timeFormat={timeFormat} returnTo={returnTo}
         onClose={() => setOverlapIds(null)} onSelect={(a) => setPreview(a)} />
 
       <QuickBookDrawer
@@ -1016,7 +1040,7 @@ function BlockoutCard({
       className={
         "absolute inset-x-1 z-[5] overflow-hidden rounded-lg border border-[#C9C4B6] border-l-[3px] border-l-[#8C8579] px-2 py-1 text-[11px] leading-tight dark:border-stone-700 dark:border-l-stone-500 dark:bg-stone-800/80 dark:text-stone-200" +
         (onClick
-          ? " cursor-pointer hover:border-[#8C8579] focus:outline-none focus:ring-2 focus:ring-sky-500"
+          ? " min-h-[44px] min-w-[44px] cursor-pointer hover:border-[#8C8579] focus:outline-none focus:ring-2 focus:ring-sky-500"
           : "")
       }
     >

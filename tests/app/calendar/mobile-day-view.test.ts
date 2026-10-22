@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { MobileDayTimeline } from "@/app/(app)/calendar/MobileDayTimeline";
+import type { StudioTimedBlock } from "@/lib/types/database";
 import { AppointmentOverlapChooser } from "@/app/(app)/calendar/AppointmentOverlapChooser";
 import type { AppointmentWithPractitionerColor } from "@/lib/booking/queries";
 import { readFileSync } from "node:fs";
@@ -226,10 +228,65 @@ describe("overlap chooser reuses exact authorized calendar identities", () => {
     expect(chooser).toContain("ref={initialFocusRef}");
     expect(chooser).toContain("onSelect(a)");
     expect(TIMELINE).toContain("appointmentsById.get(id)");
-    expect(TIMELINE).toContain("appointmentCollisionGroups(rectangles)");
+    expect(TIMELINE).toContain("calendarCollisionGroups(rectangles, timedBlockRectangles)");
     expect(TIMELINE).toContain("<AppointmentOverlapChooser");
     expect(MOBILE).toMatch(/<MobileDayTimeline\s+key=\{day.date\}/);
     const query = read("lib/booking/queries.ts");
     expect(query).toContain("practitioners!appointments_practitioner_same_studio_fk(id, color, display_name)");
+  });
+});
+
+
+describe("adjacent appointment and timed-block hit targets", () => {
+  const appointment = {
+    id: "same-id", starts_at: "2030-03-01T18:00:00Z", ends_at: "2030-03-01T18:15:00Z",
+    duration_minutes: 15, status: "confirmed", client: { id: "synthetic-client", name: "Synthetic appointment" },
+    service: null, practitioner: { display_name: "Synthetic practitioner" },
+  } as unknown as AppointmentWithPractitionerColor;
+  const block = {
+    id: "same-id", starts_at: "2030-03-01T18:15:00Z", ends_at: "2030-03-01T18:30:00Z",
+    category: "break", private_note: "Synthetic block",
+  } as StudioTimedBlock;
+  it("renders one mixed chooser instead of two overlapping standalone hit targets", () => {
+    const html = renderToStaticMarkup(createElement(MobileDayTimeline, {
+      date: "2030-03-01", appts: [appointment], timedBlocks: [block], recurringBreaks: [],
+      availability: null, closedDay: false, isToday: false, tz: "America/Los_Angeles",
+      timeFormat: "12h", returnTo: "?view=day", onBookAt: () => {}, onEditBlock: () => {},
+    }));
+    expect(html).toContain('aria-label="Choose from 2 calendar items"');
+    expect(html).not.toContain('href="/calendar/same-id');
+    expect(html).not.toContain('title="Break: Synthetic block"');
+    expect(html).toContain("min-h-[44px] min-w-[44px]");
+  });
+  it("keeps a lone block's original edit control and supports block-only overlapping choices", () => {
+    const props = { date: "2030-03-01", appts: [], timedBlocks: [block], recurringBreaks: [],
+      availability: null, closedDay: false, isToday: false, tz: "America/Los_Angeles", timeFormat: "12h" as const,
+      returnTo: "", onBookAt: () => {}, onEditBlock: () => {} };
+    const single = renderToStaticMarkup(createElement(MobileDayTimeline, props));
+    expect(single).toContain('title="Break: Synthetic block"');
+    expect(single).not.toContain("calendar items");
+    expect(single).toContain("min-h-[44px] min-w-[44px]");
+    const mixed = renderToStaticMarkup(createElement(MobileDayTimeline, { ...props,
+      timedBlocks: [block, { ...block, id: "second-block" }] }));
+    expect(mixed).toContain('aria-label="Choose from 2 calendar items"');
+    const choices = renderToStaticMarkup(createElement(AppointmentOverlapChooser, {
+      appointments: [], timedBlocks: [block], tz: "America/Los_Angeles", timeFormat: "12h",
+      returnTo: "", onClose: () => {}, onSelectBlock: () => {},
+    }));
+    expect(choices).toContain('data-timed-block-id="same-id"');
+  });
+  it("preserves the appointment link and offers the exact timed block through the existing edit callback", () => {
+    const html = renderToStaticMarkup(createElement(AppointmentOverlapChooser, {
+      appointments: [appointment], timedBlocks: [block], tz: "America/Los_Angeles", timeFormat: "12h",
+      returnTo: "?view=day", onClose: () => {}, onSelectBlock: () => {},
+    }));
+    expect(html).toContain('aria-label="Choose a calendar item"');
+    expect(html).toContain('href="/calendar/same-id?view=day"');
+    expect(html).toContain('data-timed-block-id="same-id"');
+    expect(html).toContain("min-h-[44px] min-w-[44px]");
+    expect(html).not.toContain("<form");
+    const chooser = read("app/(app)/calendar/AppointmentOverlapChooser.tsx");
+    expect(chooser).toContain("onSelectBlock(block)");
+    expect(TIMELINE).toContain("onSelectBlock={onEditBlock}");
   });
 });

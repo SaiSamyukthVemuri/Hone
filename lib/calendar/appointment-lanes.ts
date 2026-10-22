@@ -71,3 +71,29 @@ export function appointmentCollisionGroups(
   }
   return groups;
 }
+
+
+// Timed blocks share the same rendered 44px hit space as appointments. Keep
+// their keys distinct even if two tables happen to contain the same UUID.
+export function timedBlockCollisionId(id: string): string { return `block:${id}`; }
+export function calendarCollisionGroups(
+  appointments: ReadonlyArray<AppointmentRectangle>,
+  timedBlocks: ReadonlyArray<AppointmentRectangle>,
+): AppointmentCollisionGroup[] {
+  return appointmentCollisionGroups([
+    ...appointments,
+    ...timedBlocks.map(block => ({ ...block, id: timedBlockCollisionId(block.id) })),
+  ]);
+}
+
+
+export function calendarGroupNeedsChooser(
+  group: AppointmentCollisionGroup,
+  layout: Omit<Parameters<typeof appointmentNeedsChooser>[0], "columns">,
+  lanes: ReadonlyMap<string, AppointmentLane>,
+): boolean {
+  // A full-width timed block cannot share appointment lanes. Mixed groups
+  // (and colliding blocks) use the same chooser even on a wide fine pointer.
+  if (group.ids.some(id => id.startsWith("block:"))) return group.ids.length > 1;
+  return group.ids.some(id => appointmentNeedsChooser({ ...layout, columns: lanes.get(id)?.columns ?? 0 }));
+}
