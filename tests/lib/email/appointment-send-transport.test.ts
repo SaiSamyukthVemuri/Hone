@@ -14,7 +14,7 @@ const KNOWN_FAKE_MODES: FakeResendMode[] = [
   "failonce",
   "hold",
 ];
-import { sendCancellationEmail, sendEmailSafely } from "@/lib/email/send-appointment";
+import { claimEmailSend, claimEmailSendOutcome, sendCancellationEmail, sendEmailSafely } from "@/lib/email/send-appointment";
 
 // ===========================================================================
 // RESCHEDULE-E2E-01 — the appointment send path resolves a FAKEABLE transport.
@@ -209,5 +209,31 @@ describe("MSG-004 cancellation transport result is observable", () => {
   it.each([["client@harness.local", true], ["reject+cancel@harness.local", false], ["throw+cancel@harness.local", false]] as const)("returns the fake transport outcome for %s", async (to, ok) => {
     vi.stubEnv("HONE_E2E_FAKE_RESEND", "1");
     expect(await cancellation(to)).toMatchObject({ ok });
+  });
+});
+
+
+describe("reminder claim outcome preserves legacy boolean callers", () => {
+  it.each([
+    [true, null, "claimed", true], [false, null, "not_claimed", false],
+    [null, new Error("SYNTHETIC_PRIVATE RPC failure"), "unavailable", false],
+    [null, null, "unavailable", false], ["true", null, "unavailable", false],
+    [true, undefined, "unavailable", false], [false, false, "unavailable", false],
+  ] as const)("classifies a claim reply without changing the legacy boolean contract (%s)", async (data, error, outcome, legacy) => {
+    const rpc = vi.fn(async () => ({ data, error })); const admin = { rpc } as unknown as Parameters<typeof claimEmailSend>[0];
+    expect(await claimEmailSendOutcome(admin, "synthetic-appointment", "reminder_24h")).toBe(outcome);
+    expect(await claimEmailSend(admin, "synthetic-appointment", "reminder_24h")).toBe(legacy);
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc).toHaveBeenCalledWith("claim_email_send", { p_appointment_id: "synthetic-appointment", p_email_type: "reminder_24h" });
+  });
+  it("throwing RPC or diagnostic sink never turns unavailable into a collision or grant", async () => {
+    const sink = vi.spyOn(console, "error").mockImplementation(() => { throw new Error("SYNTHETIC_PRIVATE log failure"); });
+    try {
+      const rpc = vi.fn(async () => { throw new Error("SYNTHETIC_PRIVATE transport failure"); });
+      const admin = { rpc } as unknown as Parameters<typeof claimEmailSend>[0];
+      expect(await claimEmailSendOutcome(admin, "synthetic-appointment", "reminder_24h")).toBe("unavailable");
+      expect(await claimEmailSend(admin, "synthetic-appointment", "reminder_24h")).toBe(false);
+      expect(JSON.stringify(sink.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
+    } finally { sink.mockRestore(); }
   });
 });
