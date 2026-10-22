@@ -560,6 +560,13 @@ jobs:
         # node-pg harness (54322) and `db reset --local` are unaffected.
         run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
+      # Codex P2 4353990804: drop the registry credential the moment the
+      # images are pulled, before ANY later step runs branch-controlled code.
+      # always(): a failed start must not leave the token behind either.
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
       - name: Apply full migration chain from scratch
         id: db_chain
         # Fails the job if ANY migration 0001-current cannot apply to
@@ -736,6 +743,17 @@ jobs:
           # Same pin and rationale as db-integration (grants parity, v1 branch).
           version: 2.102.0
 
+      - name: Configure local auth for the E2E origin
+        # supabase/config.toml is untracked (CLI convention via
+        # supabase/.gitignore), so CI materializes the default config
+        # and allow-lists the local E2E app origin for the magic-link
+        # redirect. Local-only setting; no production project involved.
+        run: |
+          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
+          test -f supabase/config.toml
+          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
+          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
+
       # D7b (Sam, 2026-10-22, option A). Anonymous pulls were throttled on BOTH
       # ghcr.io ("toomanyrequests") and public.ecr.aws ("Data limit exceeded") for
       # parallel Supabase stacks. Pull the CLI's default ghcr.io images
@@ -749,19 +767,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure local auth for the E2E origin
-        # supabase/config.toml is untracked (CLI convention via
-        # supabase/.gitignore), so CI materializes the default config
-        # and allow-lists the local E2E app origin for the magic-link
-        # redirect. Local-only setting; no production project involved.
-        run: |
-          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
-          test -f supabase/config.toml
-          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
-          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
-
       - name: Start local Supabase stack (db + auth + mail capture)
         run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      # Codex P2 4353990804: drop the registry credential the moment the
+      # images are pulled, before ANY later step runs branch-controlled code.
+      # always(): a failed start must not leave the token behind either.
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -1047,6 +1061,15 @@ jobs:
           # Same pin and rationale as db-integration / browser-e2e (grants parity, v1 branch).
           version: 2.102.0
 
+      - name: Configure local auth for the E2E origin
+        # Same local-only auth config as browser-e2e: allow-list the local E2E app
+        # origin (port 3111) for the magic-link redirect. No production project.
+        run: |
+          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
+          test -f supabase/config.toml
+          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
+          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
+
       # D7b (Sam, 2026-10-22, option A). Anonymous pulls were throttled on BOTH
       # ghcr.io ("toomanyrequests") and public.ecr.aws ("Data limit exceeded") for
       # parallel Supabase stacks. Pull the CLI's default ghcr.io images
@@ -1060,17 +1083,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure local auth for the E2E origin
-        # Same local-only auth config as browser-e2e: allow-list the local E2E app
-        # origin (port 3111) for the magic-link redirect. No production project.
-        run: |
-          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
-          test -f supabase/config.toml
-          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
-          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
-
       - name: Start local Supabase stack (db + auth + mail capture)
         run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      # Codex P2 4353990804: drop the registry credential the moment the
+      # images are pulled, before ANY later step runs branch-controlled code.
+      # always(): a failed start must not leave the token behind either.
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -1172,6 +1193,13 @@ jobs:
           # Same pin and rationale as the other browser lanes (grants parity, v1 branch).
           version: 2.102.0
 
+      - name: Configure local auth for the E2E origin
+        run: |
+          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
+          test -f supabase/config.toml
+          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
+          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
+
       # D7b (Sam, 2026-10-22, option A). Anonymous pulls were throttled on BOTH
       # ghcr.io ("toomanyrequests") and public.ecr.aws ("Data limit exceeded") for
       # parallel Supabase stacks. Pull the CLI's default ghcr.io images
@@ -1185,15 +1213,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure local auth for the E2E origin
-        run: |
-          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
-          test -f supabase/config.toml
-          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
-          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
-
       - name: Start local Supabase stack (db + auth + mail capture)
         run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      # Codex P2 4353990804: drop the registry credential the moment the
+      # images are pulled, before ANY later step runs branch-controlled code.
+      # always(): a failed start must not leave the token behind either.
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -1296,6 +1324,13 @@ jobs:
         with:
           version: 2.102.0
 
+      - name: Configure local auth for the E2E origin
+        run: |
+          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
+          test -f supabase/config.toml
+          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
+          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
+
       # D7b (Sam, 2026-10-22, option A). Anonymous pulls were throttled on BOTH
       # ghcr.io ("toomanyrequests") and public.ecr.aws ("Data limit exceeded") for
       # parallel Supabase stacks. Pull the CLI's default ghcr.io images
@@ -1309,15 +1344,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure local auth for the E2E origin
-        run: |
-          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
-          test -f supabase/config.toml
-          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
-          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
-
       - name: Start local Supabase stack (db + auth + mail capture)
         run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      # Codex P2 4353990804: drop the registry credential the moment the
+      # images are pulled, before ANY later step runs branch-controlled code.
+      # always(): a failed start must not leave the token behind either.
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local

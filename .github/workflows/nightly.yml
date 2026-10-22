@@ -222,6 +222,13 @@ jobs:
         if: matrix.needs_supabase
         run: bash scripts/ci/supabase-start-bind-retry.sh supabase start
 
+      # Codex P2 4353990804: drop the registry credential the moment the
+      # images are pulled, before ANY later step runs branch-controlled code.
+      # always(): a failed start must not leave the token behind either.
+      - name: Log out of ghcr.io (D7b)
+        if: always() && matrix.needs_supabase
+        run: docker logout ghcr.io
+
       - name: Run lane
         run: ${{ matrix.command }}
         env:
