@@ -69,6 +69,13 @@ concurrency:
 # and derived paths cannot disagree.
 env:
   HONE_E2E_PORT: "3111"
+  # D7 (Sam, 2026-10-22, option B). The pinned Supabase CLI 2.102.0 pulls its
+  # local-stack images from ghcr.io by default. From ~16:33Z on 2026-10-22 every
+  # Supabase-starting job failed before any test on ghcr.io "toomanyrequests" for
+  # supabase/postgres. Pull the same images from Supabase's public ECR mirror
+  # instead: no credential, no CLI version change (grants parity is tied to the
+  # CLI version, which stays 2.102.0).
+  SUPABASE_INTERNAL_IMAGE_REGISTRY: public.ecr.aws
 
 jobs:
   # -------------------------------------------------------------------------

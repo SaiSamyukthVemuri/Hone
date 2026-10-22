@@ -756,6 +756,14 @@ describe("PR CI — path-aware lane selection", () => {
   });
 });
 
+describe("D7: local-stack images come from Supabase's public ECR mirror", () => {
+  // ghcr.io rate-limited supabase/postgres for every Supabase-starting job on
+  // 2026-10-22. The registry is a workflow-level env so no job can miss it.
+  it.each([["ci.yml", () => CI], ["nightly.yml", () => NIGHTLY]])("%s pins the registry", (_n, body) => {
+    expect(body()).toMatch(/^env:\n(?:  .*\n)*?  SUPABASE_INTERNAL_IMAGE_REGISTRY: public\.ecr\.aws$/m);
+  });
+});
+
 describe("nightly / manual full matrix", () => {
   it("runs on a schedule and on demand", () => {
     expect(NIGHTLY).toMatch(/schedule:/);
