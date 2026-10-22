@@ -1666,10 +1666,12 @@ export async function runSessionPaymentCharge(args: {
     }
   }
 
-  // A pending claim without a PI can still create on its same key. Recheck
-  // authority for that external call, but retain the uncertain claim on refusal.
-  // A bound PI returned through reconciliation above never reaches this gate.
-  if (!countryCheckedBeforeClaim && !(await canCreateInCurrentPaymentCountry(currentCountryArgs))) {
+  // Recheck authority after the claim on EVERY path that creates, a new
+  // attempt included: the pre-claim read is unlocked, so a country conflict
+  // can be recorded while the claim runs. Refusal here retains the claim
+  // (no provider call was made) for reconciliation. A bound PI returned
+  // through reconciliation above never reaches this gate.
+  if (!(await canCreateInCurrentPaymentCountry(currentCountryArgs))) {
     return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE,
       attemptId: attemptRow.id };
   }

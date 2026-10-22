@@ -27,6 +27,7 @@ const h = vi.hoisted(() => ({
   boundObjects: [] as Array<Record<string, unknown>>,
   updateAttempts: [] as Array<{ payload: Record<string, unknown>; filters: Array<{ column: string; value: unknown }>; matched: boolean }>,
   afterRetrieve: null as null | (() => void),
+  afterClaim: null as null | (() => void),
   recheckReadError: false,
   readErrors: [] as string[],
   reads: [] as Array<{ table: string; filters: Array<{ column: string; value: unknown }> }>,
@@ -150,6 +151,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           row.status = "pending_stripe";
           if (h.claim.stripe_payment_intent_id) row.stripe_payment_intent_id = h.claim.stripe_payment_intent_id;
         }
+        h.afterClaim?.();
         return { data: [h.claim], error: null };
       }
       if (name === "reconcile_bound_payment_event") {
@@ -322,6 +324,7 @@ beforeEach(() => {
   h.boundObjects = [];
   h.updateAttempts = [];
   h.afterRetrieve = null;
+  h.afterClaim = null;
   h.recheckReadError = false;
   h.readErrors = [];
   h.reads = [];
@@ -1309,5 +1312,26 @@ describe("G1 execution country authority before a new provider intent", () => {
     pending(null);
     expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
     expect(h.stripeCalls).toEqual(["pi_create"]);
+  });
+  // The pre-claim read is unlocked: record_stripe_account_jurisdiction can land
+  // a conflict while the claim runs. The read before create must be fresh on
+  // EVERY path, a new ready attempt included.
+  const changedDuringClaim = async (change: () => void) => {
+    h.afterClaim = change;
+    expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.rpcCalls).toContain("claim_session_payment_charge_attempt");
+    expect(h.stripeCalls).toEqual([]); expect(h.updates).toEqual([]);
+    expect((h.rows.payment_charge_attempts as Record<string, unknown>).status).toBe("pending_stripe");
+  };
+  it("conflict recorded during a new attempt's claim refuses create and retains the claim", async () => {
+    await changedDuringClaim(() => { settings().stripe_account_country_conflict = "CA"; });
+  });
+  it("jurisdiction lost during a new attempt's claim refuses create and retains the claim", async () => {
+    await changedDuringClaim(() => { delete h.rows.studio_payment_jurisdictions; });
+  });
+  it("a new attempt reads country authority both before and after its claim", async () => {
+    expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(h.reads.filter((r) => r.table === "studio_payment_settings"
+      && r.filters.some((f) => f.column === "stripe_account_id"))).toHaveLength(2);
   });
 });
