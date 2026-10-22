@@ -1,3 +1,5 @@
+const privacyAlerts = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: async (input: Record<string, unknown>) => { privacyAlerts.push(input); } }));
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,7 +16,7 @@ const KNOWN_FAKE_MODES: FakeResendMode[] = [
   "failonce",
   "hold",
 ];
-import { claimEmailSend, claimEmailSendOutcome, sendCancellationEmail, sendEmailSafely } from "@/lib/email/send-appointment";
+import { claimEmailSend, claimEmailSendOutcome, recordEmailAttempt, recordEmailResult, logEmailFailure, sendCancellationEmail, sendEmailSafely } from "@/lib/email/send-appointment";
 
 // ===========================================================================
 // RESCHEDULE-E2E-01 — the appointment send path resolves a FAKEABLE transport.
@@ -235,5 +237,96 @@ describe("reminder claim outcome preserves legacy boolean callers", () => {
       expect(await claimEmailSend(admin, "synthetic-appointment", "reminder_24h")).toBe(false);
       expect(JSON.stringify(sink.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
     } finally { sink.mockRestore(); }
+  });
+});
+
+
+describe("MSG-007 email failure logs have a closed payload", () => {
+  const APPOINTMENT_ID = "11111111-1111-4111-8111-111111111111";
+  const PRIVATE = "PRIVATE patient@example.invalid +16045550199 https://example.invalid/intake/SECRET_TOKEN private clinical note";
+  it.each(["attempt", "result"] as const)("%s RPC failure preserves behavior without exporting IDs or error content", async (operation) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const rpc = vi.fn(async () => ({ data: null, error: new Error(PRIVATE) }));
+    const admin = { rpc } as unknown as Parameters<typeof claimEmailSend>[0];
+    try {
+      if (operation === "attempt") await recordEmailAttempt(admin, APPOINTMENT_ID, "reminder_24h", false);
+      else await recordEmailResult(admin, APPOINTMENT_ID, "reminder_24h", false);
+      expect(rpc).toHaveBeenCalledTimes(1);
+      expect(rpc).toHaveBeenCalledWith(
+        operation === "attempt" ? "record_email_attempt" : "record_email_result",
+        { p_appointment_id: APPOINTMENT_ID, p_email_type: "reminder_24h", p_success: false },
+      );
+      const output = JSON.stringify(log.mock.calls);
+      expect(output).toContain("reminder_24h");
+      expect(output).not.toContain(APPOINTMENT_ID);
+      for (const privatePart of ["PRIVATE", "patient@example.invalid", "+16045550199", "SECRET_TOKEN", "private clinical note"]) expect(output).not.toContain(privatePart);
+    } finally { log.mockRestore(); }
+  });
+  it("final failure keeps the operator event and attempt count without raw provider text", async () => {
+    privacyAlerts.length = 0;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      logEmailFailure({ appointmentId: APPOINTMENT_ID, emailType: "reminder_24h", error: PRIVATE, retryable: true, attemptNumber: 3 });
+      await vi.waitFor(() => expect(privacyAlerts).toHaveLength(1));
+      const output = JSON.stringify(log.mock.calls);
+      expect(output).toContain("email_send_failed");
+      expect(output).not.toContain(APPOINTMENT_ID);
+      expect(output).not.toContain("PRIVATE");
+      expect(JSON.stringify(privacyAlerts)).not.toContain("PRIVATE");
+      expect(privacyAlerts[0]).toMatchObject({ event: "email_send_gave_up", appointmentId: APPOINTMENT_ID, safeDetails: { attempt_number: 3, email_type: "reminder_24h" } });
+    } finally { log.mockRestore(); }
+  });
+  it("a lower retryable attempt remains log-only", async () => {
+    privacyAlerts.length = 0;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      logEmailFailure({ appointmentId: APPOINTMENT_ID, emailType: "reminder_2h", error: PRIVATE, retryable: true, attemptNumber: 2 });
+      await Promise.resolve();
+      expect(privacyAlerts).toEqual([]);
+      expect(JSON.stringify(log.mock.calls)).toContain("reminder_2h");
+      expect(JSON.stringify(log.mock.calls)).not.toContain("PRIVATE");
+    } finally { log.mockRestore(); }
+  });
+  it("unexpected runtime type/count inputs cannot smuggle private values into diagnostic fields", async () => {
+    privacyAlerts.length = 0;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      logEmailFailure({ appointmentId: APPOINTMENT_ID, emailType: PRIVATE as "reminder_24h", error: PRIVATE, retryable: false, attemptNumber: 16045550199 });
+      await vi.waitFor(() => expect(privacyAlerts).toHaveLength(1));
+      expect(JSON.stringify([log.mock.calls, privacyAlerts[0]?.safeDetails, privacyAlerts[0]?.message])).not.toMatch(/PRIVATE|patient@example|16045550199|SECRET_TOKEN/);
+      expect(privacyAlerts[0]).toMatchObject({ safeDetails: { email_type: "unknown", attempt_number: null } });
+    } finally { log.mockRestore(); }
+  });
+});
+
+
+describe("MSG-007 best-effort diagnostic sink and no-error controls", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  it.each(["attempt", "result"] as const)("successful %s RPC remains unchanged and log-free", async (kind) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const rpc = vi.fn(async () => ({ data: null, error: null })); const admin = { rpc } as unknown as Parameters<typeof recordEmailResult>[0];
+      await (kind === "attempt" ? recordEmailAttempt : recordEmailResult)(admin, id, "reminder_24h", true);
+      expect(rpc).toHaveBeenCalledExactlyOnceWith(kind === "attempt" ? "record_email_attempt" : "record_email_result", { p_appointment_id: id, p_email_type: "reminder_24h", p_success: true });
+      expect(log).not.toHaveBeenCalled();
+    } finally { log.mockRestore(); }
+  });
+  it.each(["attempt", "result"] as const)("a throwing log sink cannot replace %s settlement", async (kind) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => { throw new Error("SYNTHETIC_PRIVATE log sink"); });
+    try {
+      const rpc = vi.fn(async () => ({ data: null, error: new Error("SYNTHETIC_PRIVATE contact/token") })); const admin = { rpc } as unknown as Parameters<typeof recordEmailResult>[0];
+      await expect((kind === "attempt" ? recordEmailAttempt : recordEmailResult)(admin, id, "reminder_24h", false)).resolves.toBeUndefined();
+      expect(rpc).toHaveBeenCalledTimes(1); expect(JSON.stringify(log.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
+    } finally { log.mockRestore(); }
+  });
+  it("a throwing console sink does not suppress the existing final-failure ops event", async () => {
+    privacyAlerts.length = 0;
+    const log = vi.spyOn(console, "error").mockImplementation(() => { throw new Error("SYNTHETIC_PRIVATE log sink"); });
+    try {
+      expect(() => logEmailFailure({ appointmentId: id, emailType: "reminder_24h", error: "SYNTHETIC_PRIVATE contact/token", retryable: true, attemptNumber: 3 })).not.toThrow();
+      await vi.waitFor(() => expect(privacyAlerts).toHaveLength(1));
+      expect(privacyAlerts[0]).toMatchObject({ event: "email_send_gave_up", appointmentId: id, safeDetails: { attempt_number: 3 } });
+      expect(JSON.stringify([log.mock.calls, privacyAlerts])).not.toContain("SYNTHETIC_PRIVATE");
+    } finally { log.mockRestore(); }
   });
 });

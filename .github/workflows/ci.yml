@@ -812,16 +812,26 @@ jobs:
 
       - name: Timing diagnostics
         if: always()
+        env:
+          SETUP_END: ${{ steps.setup_done.outputs.at }}
+          E2E_OUTCOME: ${{ steps.e2e.outcome }}
+          JOB_STATUS: ${{ job.status }}
         run: |
           NOW=$(date +%s)
-          SETUP_END=${{ steps.setup_done.outputs.at }}
           echo "shard              : ${{ matrix.shard }}"
           echo "mode               : ${{ needs.changes.outputs.browser_extended == 'true' && 'extended (sharded)' || 'targeted' }}"
           echo "selected specs     : ${{ needs.changes.outputs.browser_specs }}"
           echo "selection reason   : ${{ needs.changes.outputs.browser_reason }}"
-          echo "test duration (s)  : $(( NOW - SETUP_END ))"
-          echo "job outcome        : ${{ steps.e2e.outcome }}"
-          if [ "${{ steps.e2e.outcome }}" = "cancelled" ]; then
+          # A failed setup has no timestamp; never subtract an empty value as zero.
+          # This is setup-complete-to-diagnostic elapsed, not exact test runtime.
+          if [[ "$SETUP_END" =~ ^[1-9][0-9]{0,9}$ ]] && (( SETUP_END <= NOW )) && [[ "$E2E_OUTCOME" =~ ^(success|cancelled|failure)$ ]]; then
+            echo "test duration (s)  : $(( NOW - SETUP_END ))"
+          else
+            echo "test duration (s)  : unavailable (setup incomplete, test not run, or invalid timestamp)"
+          fi
+          echo "job status at timing: $JOB_STATUS"
+          echo "browser step outcome: $E2E_OUTCOME"
+          if [ "$E2E_OUTCOME" = "cancelled" ]; then
             echo "NOTE: cancelled. Most likely the job exceeded its timeout budget."
           fi
 
