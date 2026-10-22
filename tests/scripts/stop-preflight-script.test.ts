@@ -94,6 +94,25 @@ describe("DRY RUN (the default) evaluates and writes nothing", () => {
     expect(r.checks?.map((c) => c.id)).toEqual([...STOP_PREFLIGHT_CHECKLIST]);
     expect(calls.some((c) => c.fn === "record_studio_sms_stop_preflight")).toBe(false);
   });
+
+  // 924-T1: the non-ready paths must not record either; a dry run that wrote
+  // only when NOT ready would pass the READY case above.
+  it("a well-formed facts file that evaluates NOT ready records nothing", async () => {
+    const { admin, calls } = fakeAdmin();
+    const r = await run(admin, { ...readyFacts(), staticProxyEnabled: true });
+    expect(r).toMatchObject({ result: "evaluated", ready: false, malformed: [] });
+    expect(calls.some((c) => c.fn === "record_studio_sms_stop_preflight")).toBe(false);
+  });
+
+  it("a malformed facts file records nothing", async () => {
+    const { admin, calls } = fakeAdmin();
+    const facts = readyFacts();
+    (facts.liveStopObservation as Record<string, unknown>).toNumber = "416-555-0100";
+    const r = await run(admin, facts);
+    expect(r).toMatchObject({ result: "evaluated", ready: false });
+    expect(r.malformed?.length).toBeGreaterThan(0);
+    expect(calls.some((c) => c.fn === "record_studio_sms_stop_preflight")).toBe(false);
+  });
 });
 
 describe("--record writes EXACTLY the evaluator's v1 output, guarded by the CAS", () => {
