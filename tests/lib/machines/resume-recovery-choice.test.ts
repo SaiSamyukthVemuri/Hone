@@ -268,18 +268,26 @@ describe("7 · START NEW ends the resumed operation's claim on the key", () => {
   });
 });
 
-describe("5 · a SETTLED close clears the key", () => {
-  it("clears on every settled state and retains only while unsettled", () => {
+describe("5 · a SETTLED close clears only its own key", () => {
+  it("clears its owned key on settled close and retains keys while unsettled or editing", () => {
     // `resumeOwnsKey` is true for `checking`, `absent` and `unknown`, and
     // false for `idle` and `saved` - so a settled close still abandons, which
     // is what 4305701038 required.
+    // A settled banner may belong to A while the URL now carries B. The
+    // exit still obeys the same edit/unsettled exclusions, but must ask the
+    // owned-key helper to retire A, never clear B blindly.
     const close =
-      /if \(([^)]*)\) syncAreaOperationParam\(null\);\s*\n\s*onCancel\(\);/.exec(
+      /if \(([^)]*)\) \{\s*clearAreaOperationParamIfOwned\(([^;]+)\);\s*\}\s*onCancel\(\);/.exec(
         FORM,
       );
     expect(close, "the form's exit path was not found").toBeTruthy();
     expect(close![1]).toContain("!isEdit");
     expect(close![1]).toContain("!resumeOwnsKey");
+    expect(close![2]).toBe('resume.state === "saved" ? resumedSaveKey : pendingSaveKey');
+    // Anti-vacuity: the match must actually reach the shared exit and must
+    // reject its former unconditional clear, not merely find ownership copy.
+    expect(close![0]).toContain("onCancel()");
+    expect(close![0]).not.toContain("syncAreaOperationParam(null)");
   });
 
   it("and the ownership rule is defined ONCE, with both paths deferring to it", () => {

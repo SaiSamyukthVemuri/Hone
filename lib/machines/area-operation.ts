@@ -200,3 +200,25 @@ export function syncAreaOperationParam(id: string | null): void {
     `${url.pathname}${next ? `?${next}` : ""}${url.hash}`,
   );
 }
+
+/**
+ * Navigate the chart after a positive claim read, using the address bar rather
+ * than the router's possibly stale canonical URL. A history-only clear followed
+ * by router.refresh can restore the old key. Only retire the key this read
+ * settled: another operation may now own the URL. No history is changed here.
+ */
+export function settledAreaOperationHref(settledId: string): string | null {
+  if (typeof window === "undefined") return null;
+  const url = new URL(window.location.href);
+  if (isAreaOperationId(settledId) && readAreaOperationId(url.searchParams) === settledId) {
+    url.searchParams.delete(AREA_OP_PARAM);
+  }
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+/** Closing one form must not abandon another form's operation. */
+export function clearAreaOperationParamIfOwned(ownedId: string | null): void {
+  if (ownedId !== null && isAreaOperationId(ownedId) && readAreaOperationIdFromLocation() === ownedId) {
+    syncAreaOperationParam(null);
+  }
+}

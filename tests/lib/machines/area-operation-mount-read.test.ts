@@ -8,6 +8,8 @@ import {
   readAreaOperationIdAtMount,
   readAreaOperationIdFromLocation,
   syncAreaOperationParam,
+  settledAreaOperationHref,
+  clearAreaOperationParamIfOwned,
 } from "@/lib/machines/area-operation";
 
 // ===========================================================================
@@ -213,5 +215,77 @@ describe("and the form does not read this key through the router", () => {
     // prove nothing.
     expect(code).toMatch(/useSearchParams\(\)/);
     expect(code.length).toBeGreaterThan(10_000);
+  });
+});
+
+describe("positive claim recovery navigation", () => {
+  it("refetches the clean destination even when refresh would restore the settled key", () => {
+    const bar = installFakeWindow(`area_op=${A}`);
+    let canonicalHref = `${PATH}?area_op=${A}`;
+    const refresh = () => window.history.replaceState(window.history.state, "", canonicalHref);
+    // Negative control: clearing browser history alone cannot fix stale router state.
+    syncAreaOperationParam(null);
+    refresh();
+    expect(readAreaOperationIdFromLocation()).toBe(A);
+    // A router navigation receives an explicit destination, not stale canonicalHref.
+    const destination = settledAreaOperationHref(A);
+    expect(destination).toBe(PATH);
+    expect(bar.href()).toContain(`area_op=${A}`); // computing it does not mutate history
+    canonicalHref = destination!;
+    refresh();
+    expect(readAreaOperationIdFromLocation()).toBeNull();
+    expect(readAreaOperationIdAtMount(new URLSearchParams(`area_op=${A}`))).toBeNull();
+  });
+
+  it("preserves unrelated repeated parameters and the chart anchor", () => {
+    const bar = installFakeWindow(`tab=history&tag=a&area_op=${A}&tag=b#capture-2`);
+    expect(settledAreaOperationHref(A)).toBe(`${PATH}?tab=history&tag=a&tag=b#capture-2`);
+    expect(bar.href()).toContain(`area_op=${A}`);
+  });
+
+  it("does not retire a newer operation while the older claim read completes", () => {
+    const bar = installFakeWindow(`tab=history&area_op=${A}`);
+    syncAreaOperationParam(B);
+    expect(settledAreaOperationHref(A)).toBe(`${PATH}?tab=history&area_op=${B}`);
+    expect(readAreaOperationIdFromLocation()).toBe(B);
+    expect(bar.href()).toContain(`area_op=${B}`);
+  });
+
+  it.each(["", "area_op=bad", `area_op=${A}&area_op=${B}`])(
+    "preserves an absent or ambiguous current operation: %s", (search) => {
+      installFakeWindow(search);
+      expect(settledAreaOperationHref(A)).toBe(`${PATH}${search ? `?${search}` : ""}`);
+    },
+  );
+
+  it("does not let an invalid settled identity clear a current valid key", () => {
+    installFakeWindow(`area_op=${B}`);
+    expect(settledAreaOperationHref("bad")).toBe(`${PATH}?area_op=${B}`);
+  });
+
+  it("cannot navigate outside the browser", () => {
+    expect(settledAreaOperationHref(A)).toBeNull();
+  });
+});
+
+describe("closing a settled or abandoned form only releases its own key", () => {
+  it("A settles, B owns the URL, then closing A's saved banner keeps B", () => {
+    installFakeWindow(`area_op=${A}`);
+    syncAreaOperationParam(B);
+    expect(settledAreaOperationHref(A)).toBe(`${PATH}?area_op=${B}`);
+    clearAreaOperationParamIfOwned(A);
+    expect(readAreaOperationIdFromLocation()).toBe(B);
+  });
+
+  it("ordinary abandonment clears its own create key and keeps other URL data", () => {
+    const bar = installFakeWindow(`tab=history&area_op=${B}#capture-2`);
+    clearAreaOperationParamIfOwned(B);
+    expect(bar.href()).toBe(`http://localhost${PATH}?tab=history#capture-2`);
+  });
+
+  it("a settings-free form owns no key and cannot clear another operation", () => {
+    installFakeWindow(`area_op=${B}`);
+    clearAreaOperationParamIfOwned(null);
+    expect(readAreaOperationIdFromLocation()).toBe(B);
   });
 });

@@ -85,6 +85,8 @@ import {
 import { SESSION_BLOCK_SIDE_OPTIONS } from "@/lib/sessions/side-labels";
 import {
   readAreaOperationIdAtMount,
+  settledAreaOperationHref,
+  clearAreaOperationParamIfOwned,
   syncAreaOperationParam,
 } from "@/lib/machines/area-operation";
 import { AreaPicker } from "@/components/area-picker";
@@ -732,7 +734,11 @@ export function BlockSetupForm({
     // Sam's standing requirement is that recovery preserve the ability to
     // make one deliberately. So the next Add does not resume silently: it
     // ASKS. See `resumeChoice` below.
-    if (!isEdit && !resumeOwnsKey) syncAreaOperationParam(null);
+    // A completed lookup may belong to an older operation than the URL now
+    // carries. Closing its banner only retires that form's own identity.
+    if (!isEdit && !resumeOwnsKey) {
+      clearAreaOperationParamIfOwned(resume.state === "saved" ? resumedSaveKey : pendingSaveKey);
+    }
     onCancel();
   };
 
@@ -817,12 +823,12 @@ export function BlockSetupForm({
         // message then said the area was "on the chart below" when it was not,
         // and after Close she would reopen Add and create a second one.
         //
-        // REFRESHED FIRST, so the statement is true when she reads it. This is
-        // the one place the ROUTER is right: everywhere else this form edits
-        // the URL through `history.replaceState` precisely to avoid refetching
-        // the server component mid-save, but here a refetch is the point.
-        router.refresh();
-        syncAreaOperationParam(null);
+        // Fetch the chart and retire this settled URL key in one router
+        // navigation. refresh() uses the router's old canonical URL, so a
+        // history-only clear can be overwritten by its response. Derive the
+        // destination from the address bar and preserve any newer operation.
+        const settledHref = settledAreaOperationHref(resumedSaveKey);
+        if (settledHref !== null) router.replace(settledHref, { scroll: false });
         setResume({ state: "saved", blockId: res.blockId });
         return;
       }
