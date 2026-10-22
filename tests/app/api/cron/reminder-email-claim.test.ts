@@ -71,6 +71,13 @@ const race = vi.hoisted(() => ({
   start: "2026-10-22T12:00:00.000Z",
   freshStart: "2026-10-22T12:00:00.000Z" as string | null,
   readError: false,
+  intakeOnly: false,
+  intakeEnabled: false,
+  intakeReads: [] as Array<{ data: { id: string; status: string } | null; error: { message: string } | null }>,
+  freshMissing: false,
+  readErrorWithData: false,
+  claimRpcMode: "normal" as "normal" | "error" | "throw" | "malformed",
+  claimRpc: vi.fn(),
   incidentRead: "none" as "none" | "db_error" | "timeout" | "invalid_row" | "throw" | "timeout_once",
   incidentThrown: undefined as unknown,
   setupThrown: undefined as unknown,
@@ -132,6 +139,7 @@ vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
 });
 vi.mock("@/lib/cron/auth", () => ({ isAuthorizedCronRequest: () => true }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => { if (race.originThrown !== undefined) throw race.originThrown; return "https://example.invalid"; } }));
+vi.mock("@/lib/intake/queries", () => ({ generateIntakeLinkUrl: () => "https://example.invalid/intake/synthetic", stampIntakeLinkIssued: async () => undefined }));
 vi.mock("@/lib/booking/tokens", () => ({ generateCancellationToken: () => "synthetic-token" }));
 vi.mock("@/lib/cron/reminder-heartbeat", () => ({ recordReminderRunSuccess: race.heartbeat }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: race.alerts }));
@@ -159,7 +167,7 @@ vi.mock("@/lib/sms/send-appointment", () => ({
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => { if (race.setupThrown !== undefined) throw race.setupThrown; return ({
-    from: () => {
+    from: (table: string) => {
       let candidateColumn = "";
       let cursor: string | null = null;
       let limit = 50;
@@ -171,7 +179,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           status: "confirmed", starts_at: race.start, reminder_24h_send_attempts: 0,
           studio: { id: "synthetic-studio", name: "Synthetic", timezone: "UTC",
             client_cancellation_enabled: race.cancellationEnabled, client_reschedule_enabled: race.rescheduleEnabled,
-            send_24h_reminders: !(skipped && reason === "toggle"), send_intake_reminders: false,
+            send_24h_reminders: !race.intakeOnly && !(skipped && reason === "toggle"), send_intake_reminders: race.intakeOnly || race.intakeEnabled,
             send_24h_sms_reminders: !(skipped && reason === "toggle") },
           client: { name: "Synthetic", email: skipped && reason === "destination" ? null : "synthetic@example.invalid",
             phone: skipped && reason === "destination" ? null : "+15555550123",
@@ -206,10 +214,16 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           cursor = JSON.parse(match[1]);
           return b;
         },
-        maybeSingle: async () => ({
-          data: race.readError ? null : { ...row("00000000-0000-4000-8000-000000000001"), starts_at: race.freshStart },
+        maybeSingle: async () => {
+          if (table === "client_intake_forms") {
+            const answer = race.intakeReads.shift();
+            if (!answer) throw new Error("Synthetic intake fixture exhausted");
+            return answer;
+          }
+          return ({
+          data: race.freshMissing || (race.readError && !race.readErrorWithData) ? null : { ...row("00000000-0000-4000-8000-000000000001"), starts_at: race.freshStart },
           error: race.readError ? { message: "synthetic read failure" } : null,
-        }),
+        }); },
         then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => {
           if (race.incidentRead === "throw") { answer(); return Promise.reject(race.incidentThrown).then(resolve, reject); }
           if (race.incidentRead === "timeout_once" && race.pages.length === 0) { answer(); return new Promise(() => undefined); }
@@ -234,6 +248,10 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     race.readError = false; race.incidentRead = "none"; race.incidentSqlState = "42703"; race.incidentThrown = undefined; race.incidentCoordinationError = undefined;
     race.cancellationEnabled = true; race.rescheduleEnabled = true;
     race.leadRecovery.mockClear(); race.ledgerBegin.mockReset().mockResolvedValue(null); race.ledgerSettle.mockClear();
+    race.claimRpcMode = "normal"; race.claimRpc.mockClear();
+    race.intakeEnabled = false;
+    race.intakeOnly = false; race.intakeReads = [];
+    race.readError = false; race.freshMissing = false; race.readErrorWithData = false; race.incidentRead = "none"; race.incidentSqlState = "42703"; race.incidentThrown = undefined; race.incidentCoordinationError = undefined;
     race.backlog = null; race.sent.clear(); race.pages = [];
     race.setupThrown = undefined; race.originThrown = undefined;
     race.heartbeat.mockReset().mockResolvedValue(undefined); race.alerts.mockReset().mockResolvedValue(undefined);
@@ -242,6 +260,43 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     race.record.mockReset().mockImplementation(async () => undefined);
   });
   afterEach(() => { vi.useRealTimers(); });
+
+  // 0247 merge (D8): the six email INTAKE_AUTH route cases (probe/live read
+  // errors with and without data, known incomplete, submitted-after-probe,
+  // plain no-CTA degradation) are RETIRED at route level by design. The 0247
+  // route never reads intake; whether the CTA is rendered comes from the
+  // governed SQL projection, covered by the appointment-send-transport render
+  // tests. The SMS no-CTA case below is unchanged and still runs.
+
+  it("INTAKE_AUTH SMS keeps no-CTA error degradation", async () => {
+    race.intakeEnabled = true;
+    race.backlog = { channel: "sms", reason: "toggle", skipped: 0, eligible: 1 };
+    race.intakeReads = [{ data: null, error: { message: "SYNTHETIC_PRIVATE intake error" } }];
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.smsSend).toHaveBeenCalledTimes(1);
+    expect(race.smsSend).toHaveBeenCalledWith(expect.objectContaining({ intakeUrl: null }));
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.record).not.toHaveBeenCalled();
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  // 0247 merge (D8): #1032's POSTCLAIM_READ and MSG002 route regressions,
+  // ported onto the 0247 harness. The operation is mocked, so these prove the
+  // ROUTE's mapping of the authority's answer only: an unreadable/erroring
+  // current state -> "unavailable"; a missing, cancelled, moved (within or
+  // outside the window), missing-start or invalid-start row -> "held". Whether
+  // the SQL returns those answers (snapshot_authority/prepare/authorize) is
+  // NOT proven here; that is R1, still OPEN and DB-held. The old "equivalent
+  // timezone offset" case is retired: 0247 compares starts as timestamptz in
+  // SQL, never as strings.
+  // The unavailable and held mappings are the "0247 port:" cases below (Willow
+  // E4: one copy each); this keeps only the success control.
+  it("POSTCLAIM_READ: a known successful current state retains normal send and heartbeat", async () => {
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.send).toHaveBeenCalledTimes(1);
+    expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", true);
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
 
   it.each([
     ["email", "toggle"], ["email", "destination"],
@@ -560,6 +615,36 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({ reason: "claim_unavailable" }) }));
   });
 
+
+  // 0247 merge (D8): production's claim-availability invariants, ported onto
+  // the 0247 harness (race.claim drives the operation authority: reject ->
+  // "unavailable", false -> "held"). R1: cancelled / moved / out-of-window rows
+  // surface here as authority "held"; their SQL-side proof stays DB-held.
+  it("0247 port: unavailable authority keeps the candidate unacknowledged and the heartbeat unhealthy", async () => {
+    race.claim.mockRejectedValue(new Error("SYNTHETIC_PRIVATE unavailable authority"));
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(500);
+    expect(race.send).not.toHaveBeenCalled(); expect(race.record).not.toHaveBeenCalled(); expect(race.heartbeat).not.toHaveBeenCalled();
+    const saved = race.store.get("reminder_scan:v1:checkpoint:email24h");
+    if (saved) expect(JSON.parse(saved.value).after).toBeNull();
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({ reason: "claim_unavailable" }) }));
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
+  });
+  it("0247 port: a held authority (incl. cancelled/moved/out-of-window) is a legitimate skip that completes the pass", async () => {
+    race.claim.mockResolvedValue(false);
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.send).not.toHaveBeenCalled(); expect(race.record).not.toHaveBeenCalled(); expect(race.ledgerBegin).not.toHaveBeenCalled();
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+  it("0247 port: an unavailable second authority call preserves the handled prefix without acknowledging that row", async () => {
+    race.backlog = { channel: "email", reason: "toggle", skipped: 0, eligible: 3 };
+    race.claim.mockResolvedValueOnce(true).mockRejectedValueOnce(new Error("SYNTHETIC_PRIVATE unavailable authority"));
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
+    expect(race.send).toHaveBeenCalledTimes(1); expect(race.record).toHaveBeenCalledTimes(1);
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    const saved = race.store.get("reminder_scan:v1:checkpoint:email24h"); expect(saved).toBeDefined();
+    expect(JSON.parse(saved!.value).after.id).toBe("00000000-0000-4000-8000-000000000001");
+  });
 });
 
 it("0247 authority transport unavailability does not acknowledge candidate progress", () => {

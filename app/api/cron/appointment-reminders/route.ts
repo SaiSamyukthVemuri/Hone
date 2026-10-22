@@ -167,16 +167,16 @@ async function alertIfReminderExhausted(opts: {
 // scoped so tenant isolation holds on the session-less admin client. Reads id
 // and status ONLY: no client PII, no responses, no token.
 //
-// FAIL-SAFE, NOT FAIL-LOUD. A read error yields null, which every caller reads
-// as "not incomplete" and therefore "no intake CTA". The appointment reminder
-// is the time-critical message; degrading it to nothing because an intake
-// lookup blipped would be strictly worse than sending it without the CTA.
+// Plain appointment reminders and SMS retain no-CTA degradation on read error.
+// Standalone intake email requires a known read: an error cannot establish
+// completion or justify clearing its counted claim without sending.
 async function readLatestIntake(
   admin: ReturnType<typeof createAdminClient>,
   studioId: string,
   clientId: string,
+  requireKnown = false,
 ): Promise<{ id: string; status: string } | null> {
-  const { data } = await admin
+  const { data, error } = await admin
     .from("client_intake_forms")
     .select("id, status")
     .eq("studio_id", studioId)
@@ -185,6 +185,7 @@ async function readLatestIntake(
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (requireKnown && error) throw new Error("reminder intake state unavailable");
   return (data as { id: string; status: string } | null) ?? null;
 }
 

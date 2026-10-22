@@ -3,89 +3,86 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // ===========================================================================
-// DELIVERY-VISIBILITY-01 — the reminder email pass joins the delivery ledger.
+// DELIVERY-VISIBILITY-01: the reminder email pass joins the delivery ledger.
 // SOURCE CONTRACT, in the style of reminder-email-claim.test.ts.
 //
-// The ledger row is begun only AFTER the 0080 claim, the live status re-check
-// and the "nothing to send" exit, so it always describes a send that is about
-// to happen. It tags BOTH sends the window can make, and it is settled BEFORE
-// the claim result is recorded. Its behaviour against a real database is in
+// 0247 (D8 extension): the route's email pass no longer begins, tags or
+// settles a ledger row itself. The governed operation does, so the contract
+// moves with it:
+//   - the route pass makes no ledger call and reaches the provider only through
+//     sendAppointmentReminderOperation;
+//   - inside the operation, the row is begun only AFTER inspect, a successful
+//     prepare and the complete render (so no path can leave a claimed row for a
+//     send that preparation already refused), it is tagged before the payload
+//     freeze, and it is settled through one helper.
+// Two legacy invariants are DELIBERATELY changed, not lost (Willow E1/E2):
+//   - begin -> SDK now spans the authorize RPC and the dispatch adapter. Every
+//     in-process exit is settled SDK0 by the finally; a KILLED invocation
+//     (function timeout) can still leave a claimed secondary row. That row is
+//     observational only; the primary 0247 authority is unaffected.
+//   - the secondary settle now runs AFTER the primary observe record, never
+//     before it: secondary bookkeeping never replaces primary effect truth.
+// Settlement behaviour (accepted / held SDK0 / lost grant) is proven in
+// tests/lib/email/appointment-send-transport.test.ts; the database side in
 // tests/db/email-delivery-events.db.test.ts and tests/db/delivery-incidents.db.test.ts.
 // ===========================================================================
 
-const ROUTE = readFileSync(
-  path.resolve(__dirname, "../../../../app/api/cron/appointment-reminders/route.ts"),
-  "utf8",
+const codeOnly = (source: string) =>
+  source
+    .split("\n")
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join("\n");
+const ROUTE = codeOnly(
+  readFileSync(path.resolve(__dirname, "../../../../app/api/cron/appointment-reminders/route.ts"), "utf8"),
 );
-const CODE = ROUTE.split("\n")
-  .filter((line) => !/^\s*\/\//.test(line))
-  .join("\n");
-const PASS = CODE.slice(CODE.indexOf("async function sendReminderPass"), CODE.indexOf("async function sendSmsReminderPass"));
+const SEND = codeOnly(readFileSync(path.resolve(__dirname, "../../../../lib/email/send-appointment.ts"), "utf8"));
+const PASS = ROUTE.slice(ROUTE.indexOf("async function sendReminderPass"), ROUTE.indexOf("async function sendSmsReminderPass"));
+// To the next top-level declaration of ANY kind, so a trailing export cannot be
+// credited to the operation.
+const OP_START = SEND.indexOf("export async function sendAppointmentReminderOperation");
+const OP_NEXT = SEND.slice(OP_START + 1).search(/\n(export |async function |function |const |type |interface )/);
+const OP = SEND.slice(OP_START, OP_NEXT === -1 ? undefined : OP_START + 1 + OP_NEXT);
 
-describe("reminder email pass: begin, tag, settle", () => {
-  it("the pass slice is real", () => {
-    expect(PASS.length).toBeGreaterThan(2000);
-    expect(PASS).toContain("await claimEmailSend(admin, appt.id, emailType)");
+describe("reminder email pass: begin, tag, settle (0247 operation)", () => {
+  it("the slices are real", () => {
+    expect(PASS.length).toBeGreaterThan(200);
+    expect(PASS).toContain("await sendAppointmentReminderOperation(admin, appt.studio_id, appt.id, emailType)");
+    expect(OP_START).toBeGreaterThan(-1);
+    expect(OP.length).toBeGreaterThan(2000);
   });
 
-  it("begins the ledger row after the claim, the status re-check and the nothing-to-send exit", () => {
-    const begin = PASS.indexOf("await beginAppointmentEmailMessage(admin, ledgerRef)");
-    expect(begin).toBeGreaterThan(-1);
-    expect(begin).toBeGreaterThan(PASS.indexOf("await claimEmailSend(admin, appt.id, emailType)"));
-    expect(begin).toBeGreaterThan(PASS.indexOf('fresh.status !== "confirmed"'));
-    expect(begin).toBeGreaterThan(PASS.indexOf("if (!wantsReminder && !intakeIncomplete)"));
-    expect(begin).toBeLessThan(PASS.indexOf("result = await sendFn("));
+  it("the route pass makes no ledger call of its own", () => {
+    for (const call of ["beginAppointmentEmailMessage(", "settleEmailMessage(", "ledgerMessageId", "claimEmailSend", "recordEmailResult("]) {
+      expect(PASS).not.toContain(call);
+    }
   });
 
-  it("begins it after ALL PREPARATION, so no path can leave a claimed row (Codex P2 4307698580)", () => {
-    // `begin` leaves the row `claimed`, and nothing reports a row stuck there.
-    // Two paths used to skip the settle entirely: an unmintable token
-    // `continue`s the loop, and `getTreatmentTimeContextForEmail` can THROW.
-    // Both sat BETWEEN the old begin and the send.
-    const begin = PASS.indexOf("await beginAppointmentEmailMessage(admin, ledgerRef)");
-    expect(begin).toBeGreaterThan(PASS.indexOf("generateCancellationToken(appt.id"));
-    expect(begin).toBeGreaterThan(PASS.indexOf("await getTreatmentTimeContextForEmail("));
-    // ...and nothing that could leave the loop sits between the first begin and
-    // the send it is for. A `continue` there is the leak in its purest form.
-    const send = PASS.indexOf("result = await sendFn(");
-    expect(send).toBeGreaterThan(begin);
-    // FROM AFTER the begin LINE: slicing from `begin` includes the begin call
-    // itself, whose own `await` makes "no await between" trivially false. My
-    // first version did exactly that and failed on its own boundary.
-    const afterBegin = PASS.indexOf("\n", begin) + 1;
-    expect(PASS.slice(afterBegin, send)).not.toContain("continue");
-    expect(PASS.slice(afterBegin, send)).not.toContain("await ");
+  it("begins exactly one row, only after inspect, a successful prepare and the complete render", () => {
+    expect(OP.match(/await beginAppointmentEmailMessage\(admin,/g)).toHaveLength(1);
+    const begin = OP.indexOf("await beginAppointmentEmailMessage(admin,");
+    expect(begin).toBeGreaterThan(OP.indexOf('admin.rpc("inspect_appointment_email_operation"'));
+    expect(begin).toBeGreaterThan(OP.indexOf('if (prepared.data.kind === "held") return held;'));
+    expect(begin).toBeGreaterThan(OP.indexOf("const payload = buildAppointmentEmailOperationPayload(render, purpose); if (!payload) return held;"));
+    expect(begin).toBeLessThan(OP.indexOf('admin.rpc("authorize_appointment_email_operation"'));
   });
 
-  it("each branch begins its OWN row, immediately before its own provider call", () => {
-    // Two sends, two begins — one per branch — rather than one begin shared
-    // across a decision that can still fail.
-    expect(PASS.match(/await beginAppointmentEmailMessage\(admin, ledgerRef\)/g)).toHaveLength(2);
-    const intakeBegin = PASS.lastIndexOf("await beginAppointmentEmailMessage(admin, ledgerRef)");
-    const intakeSend = PASS.indexOf("result = await sendIntakeReminderToClient(");
-    expect(intakeBegin).toBeLessThan(intakeSend);
-    const afterIntakeBegin = PASS.indexOf("\n", intakeBegin) + 1;
-    expect(PASS.slice(afterIntakeBegin, intakeSend)).not.toContain("await ");
-    expect(PASS.slice(afterIntakeBegin, intakeSend)).not.toContain("continue");
+  it("tags the payload before the freeze and names the window's own purpose", () => {
+    const begin = OP.indexOf("await beginAppointmentEmailMessage(admin,");
+    const tag = OP.indexOf("tags: [{ name: EMAIL_LEDGER_TAG, value: ledgerMessageId }]");
+    expect(tag).toBeGreaterThan(begin);
+    expect(tag).toBeLessThan(OP.indexOf("createProjectedEmailOperationDispatchAdapter("));
+    expect(OP).toContain('purpose === "reminder_24h" ? "appointment_reminder_24h" : "appointment_reminder_2h"');
   });
 
-  it("tags both sends the window can make", () => {
-    expect(PASS.match(/ledgerMessageId,\n/g)).toHaveLength(2);
+  it("settles through one helper, and settles a begun row that never reached the provider", () => {
+    expect(OP.match(/await settleEmailMessage\(admin, ledgerMessageId, outcome\)/g)).toHaveLength(1);
+    expect(OP).toContain('!sdkAttempted ? { outcome: "skipped" as const, skipReason: "operation_held" as const }');
+    expect(OP).toContain("if (ledgerMessageId && !sdkAttempted && !ledgerSettlementAttempted) await settleSecondary();");
   });
 
-  it("settles before the claim result is recorded, and only a row it began", () => {
-    const settle = PASS.indexOf("await settleEmailMessage(admin, ledgerMessageId, settleOutcomeForEmailSend(result))");
-    expect(settle).toBeGreaterThan(PASS.indexOf("result = await sendIntakeReminderToClient("));
-    expect(settle).toBeLessThan(PASS.indexOf("await recordEmailResult(admin, appt.id, emailType, result.ok)"));
-    expect(PASS.slice(settle - 40, settle)).toContain("if (ledgerMessageId)");
-  });
-
-  it("names the window's own purpose", () => {
-    // Computed ONCE into `ledgerRef`, so both branches cannot disagree about
-    // which window they are reporting.
-    expect(PASS).toContain('? ("appointment_reminder_24h" as const)');
-    expect(PASS).toContain(': ("appointment_reminder_2h" as const)');
-    expect(PASS).toContain("const ledgerRef = {");
-    expect(PASS).toContain("appointmentId: appt.id");
+  it("settles the secondary row only AFTER the primary observation is recorded", () => {
+    const observe = OP.indexOf('admin.rpc("observe_appointment_email_operation"');
+    expect(observe).toBeGreaterThan(-1);
+    expect(OP.indexOf("finally { await settleSecondary(observation); }")).toBeGreaterThan(observe);
   });
 });

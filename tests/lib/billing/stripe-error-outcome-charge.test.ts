@@ -468,6 +468,24 @@ describe("future provider prose boundary", () => {
     const result = await run();
     expect(result).toMatchObject({ ok: false, outcome: "failed", failureCode: code });
     expect(wroteFailed()).toBe(true); expect(h.createKeys).toHaveLength(1); expect(h.confirmKeys).toHaveLength(1);
+    expect(h.alerts).toContainEqual({
+      severity: code === "authentication_required" ? "critical" : "warning",
+      event: "session_payment_charge_failed",
+    });
     expect(JSON.stringify([result, h.updates, h.alertInputs])).not.toContain(privateText);
+  });
+  // Production's unknown-outcome privacy control, adapted to the staged
+  // create/bind/confirm model: an unclassified confirm error stays pending.
+  it("unknown confirm outcome keeps pending and one create/confirm without logging provider prose", async () => {
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      h.createError = new Error(privateText);
+      const result = await run();
+      expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+      expect(wroteFailed()).toBe(false);
+      expect(raisedManualReview()).toBe(true);
+      expect(h.createKeys).toHaveLength(1); expect(h.confirmKeys).toHaveLength(1);
+      expect(JSON.stringify([result, h.updates, h.alertInputs, diagnostic.mock.calls])).not.toContain(privateText);
+    } finally { diagnostic.mockRestore(); }
   });
 });

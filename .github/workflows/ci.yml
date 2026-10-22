@@ -677,13 +677,17 @@ jobs:
     # its own result instead of being cut mid-run and misread as a test failure.
     #
     #   targeted  : target <10 min per shard, hard timeout 15 min  (3 shards)
-    #   extended  : target <10 min per shard, hard timeout 18 min  (4 shards)
+    #   extended  : target <10 min per shard, hard timeout 25 min  (4 shards)
     #
     # NEITHER CEILING MOVED WHEN TARGETED WAS SPLIT. The targeted lane was the
     # one breaching its budget, and the repair was to give it the sharding
     # extended already had rather than to buy every PR more time. Raising 15
     # would have moved the cliff for lanes that are nowhere near it; splitting
     # moves the work.
+    # ENG-003/004 run39713000378: cold setup12–12.6min before150–158tests;
+    # 482 observed passes/4skips/0assertion failures before cancellation.
+    # Worst measured projection22.15min + finiteheadroom => hard25.
+    # Keep target <10 min per shard and targeted hard15; investigate slow npm ci.
     # HON-18 proof workload: ordinary coverage plus formerly skipped storage
     # cases and a second, synthetic-native-only server invocation. Run39620772010
     # already took15m59s with those cases skipped; native20 was9.1m unsharded.
@@ -855,7 +859,7 @@ jobs:
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/native-3g-shard-${{ matrix.shard }}/results.json
 
       - name: Upload Playwright traces on failure
-        if: failure()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # Per-shard so two shards never clobber each other's artifact.
@@ -865,17 +869,27 @@ jobs:
 
       - name: Timing diagnostics
         if: always()
+        env:
+          SETUP_END: ${{ steps.setup_done.outputs.at }}
+          E2E_OUTCOME: ${{ steps.e2e.outcome }}
+          JOB_STATUS: ${{ job.status }}
         run: |
           NOW=$(date +%s)
-          SETUP_END=${{ steps.setup_done.outputs.at }}
           echo "shard              : ${{ matrix.shard }}"
           echo "mode               : ${{ needs.changes.outputs.browser_extended == 'true' && 'extended (sharded)' || 'targeted' }}"
           echo "selected specs     : ${{ needs.changes.outputs.browser_specs }}"
           echo "selection reason   : ${{ needs.changes.outputs.browser_reason }}"
-          echo "test duration (s)  : $(( NOW - SETUP_END ))"
-          echo "job outcome        : ${{ steps.e2e.outcome }}"
+          # A failed setup has no timestamp; never subtract an empty value as zero.
+          # This is setup-complete-to-diagnostic elapsed, not exact test runtime.
+          if [[ "$SETUP_END" =~ ^[1-9][0-9]{0,9}$ ]] && (( SETUP_END <= NOW )) && [[ "$E2E_OUTCOME" =~ ^(success|cancelled|failure)$ ]]; then
+            echo "test duration (s)  : $(( NOW - SETUP_END ))"
+          else
+            echo "test duration (s)  : unavailable (setup incomplete, test not run, or invalid timestamp)"
+          fi
+          echo "job status at timing: $JOB_STATUS"
+          echo "browser step outcome: $E2E_OUTCOME"
           echo "native 3G outcome  : ${{ steps.native3g.outcome }}"
-          if [ "${{ steps.e2e.outcome }}" = "cancelled" ]; then
+          if [ "$E2E_OUTCOME" = "cancelled" ]; then
             echo "NOTE: cancelled. Most likely the job exceeded its timeout budget."
           fi
 
@@ -1127,7 +1141,10 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.mobile == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # run39713000378 mobile:3 observed passes before10min cancellation;
+    # setup~10min + existing6-case phase~0.4min + finiteheadroom => hard12.
+    # This ceiling is not a performance or physical-device acceptance target.
+    timeout-minutes: 12
 
     steps:
       - name: Checkout repository

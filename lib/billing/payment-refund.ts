@@ -695,12 +695,16 @@ export async function refundPaymentChargeAttempt(args: {
       typeof attempt.stripe_charge_id !== "string" || attempt.stripe_charge_id.trim().length === 0 ||
       typeof attempt.stripe_payment_intent_id !== "string" || attempt.stripe_payment_intent_id.trim().length === 0 ||
       providerCharge !== attempt.stripe_charge_id || providerIntent !== attempt.stripe_payment_intent_id || providerCustomer !== attempt.stripe_customer_id) {
-    await recordOpsAlert({
-      severity: "critical", event: "payment_refund_provider_identity_mismatch",
-      message: "Provider refund does not match the original charge/payment intent. Hone retained the unresolved claim without recording completion.",
-      studioId: attempt.studio_id, clientId: attempt.client_id, route: ROUTE,
-      safeDetails: { attempt_id: attempt.id, stripe_refund_id: typeof refund.id === "string" ? refund.id : null },
-    });
+    try {
+      await recordOpsAlert({
+        severity: "critical", event: "payment_refund_provider_identity_mismatch",
+        message: "Provider refund does not match the original charge/payment intent. Hone retained the unresolved claim without recording completion.",
+        studioId: attempt.studio_id, clientId: attempt.client_id, route: ROUTE,
+        safeDetails: { attempt_id: attempt.id, stripe_refund_id: typeof refund.id === "string" ? refund.id : null },
+      });
+    } catch {
+      // Alerting cannot authorize completion or a retry of this refund.
+    }
     return { ok: false, outcome: "needs_manual_review", message: "The refund response could not be matched to this payment. The studio operator will reconcile it." };
   }
   // Owner998 union: preserve the locked observation/status/provenance path,

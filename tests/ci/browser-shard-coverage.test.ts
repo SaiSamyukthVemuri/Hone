@@ -164,6 +164,9 @@ describe("the targeted browser lane's shard count is stated consistently", () =>
     expect(CI_YML).toContain("contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')) && 35 || 15");
     expect(CI_YML).toContain("Run39620772010");
     expect(CI_YML).toContain("native20 was9.1m unsharded");
+    expect(CI_YML).toContain("run39713000378");
+    expect(CI_YML).toContain("mobile:3 observed passes");
+    expect(CI_YML).toContain("target <10 min per shard");
   });
 });
 

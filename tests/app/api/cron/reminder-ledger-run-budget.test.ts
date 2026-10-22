@@ -397,31 +397,11 @@ describe("controls: a healthy ledger is untouched", () => {
 });
 
 
-describe("email delivery rows begin only when preparation reaches the send", () => {
-  beforeEach(() => { h.state.rows = { "24h": 0, "2h": 0 }; });
-
-  it.each(["token-null", "token-throw", "context-throw"] as const)(
-    "%s leaves no claimed delivery row or provider request", async (mode) => {
-      h.state.emailMode = mode;
-      const response = await GET(new Request("https://hone.care/api/cron/appointment-reminders"));
-      expect(response.status).toBe(mode === "token-null" ? 200 : 500);
-      expect(h.state.emailOrder).toContain("token");
-      if (mode === "context-throw") expect(h.state.emailOrder).toContain("context");
-      expect(h.state.emailOrder).not.toContain("begin");
-      expect(h.state.emailOrder).not.toContain("send");
-      expect(h.state.emailOrder).not.toContain("settle");
-      expect(fetchMock).not.toHaveBeenCalled();
-    },
-  );
-
-  it("prepared reminder begins, tags and settles exactly one send, preserving policy links", async () => {
-    h.state.emailMode = "success";
-    const response = await GET(new Request("https://hone.care/api/cron/appointment-reminders"));
-    expect(response.status).toBe(200);
-    expect(h.state.emailOrder).toEqual(["token", "context", "begin", "send", "settle", "record"]);
-    expect(h.state.emailPayloads).toHaveLength(1);
-    expect(h.state.emailPayloads[0]).toMatchObject({ ledgerMessageId: "fake-ledger-id", cancellationUrl: null });
-    expect(h.state.emailPayloads[0].rescheduleUrl).toContain("fake-token");
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-});
+// 0247 (D8 extension): the four "email delivery rows begin only when
+// preparation reaches the send" cases are RETIRED here. They drove the legacy
+// email pass (route token mint + treatment-time context, then begin/send/
+// settle/record). Under 0247 the route never mints, reads context, begins or
+// settles; the governed operation begins its ledger row only after a
+// successful prepare (pinned in reminder-email-ledger.test.ts) and its
+// begin/settle behaviour is proven in appointment-send-transport.test.ts.
+// The SMS budget cases above are unchanged.

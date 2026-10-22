@@ -57,6 +57,8 @@ const h = vi.hoisted(() => ({
   settings: { kind: "zero_row" } as SettingsOutcome,
   // Stripe side
   accountRetrieveThrows: false,
+  returnedAccountId: "acct_test" as string | undefined,
+  retrieveCalls: [] as string[],
   chargesEnabled: true,
   // RPC side
   syncErr: null as { code: string; message: string } | null,
@@ -83,12 +85,13 @@ vi.mock("@/lib/stripe/server", () => ({
         h.accountCreates++;
         return { id: "acct_created", country: "CA", default_currency: "cad" };
       },
-      retrieve: async () => {
+      retrieve: async (accountId: string) => {
+        h.retrieveCalls.push(accountId);
         if (h.accountRetrieveThrows) {
           throw new Tripwire("stripe unreachable");
         }
         return {
-          id: "acct_test",
+          id: h.returnedAccountId,
           country: "CA",
           default_currency: "cad",
           charges_enabled: h.chargesEnabled,
@@ -220,6 +223,8 @@ beforeEach(() => {
   vi.mocked(recordOpsAlert).mockClear();
   h.settings = { kind: "zero_row" };
   h.accountRetrieveThrows = false;
+  h.returnedAccountId = "acct_test";
+  h.retrieveCalls = [];
   h.chargesEnabled = true;
   h.syncErr = null;
   h.rpcCalls = [];
@@ -403,6 +408,8 @@ describe("bound retries cannot bypass an unrecorded country", () => {
       expect(read?.filters).toEqual([["studio_id", STUDIO], ["stripe_livemode", true],
         ["stripe_account_id", "acct_created"]]);
       h.observation = "match";
+      // The #1042 identity guard requires the retrieved account to be the bound one.
+      h.returnedAccountId = "acct_created";
       await refreshAccountStatusFromStripe({ studioId: STUDIO, stripeAccountId: "acct_created" });
       expect(h.recordedCountry).toBe("CA");
       await expect(onboard()).resolves.toBe("https://stripe.invalid/onboarding");
@@ -500,5 +507,29 @@ describe("0238 country incident created-winner dispatch", () => {
     await call().catch(() => undefined);
     expect(h.rpcCalls.some((c) => c.name === "claim_stripe_account_country_alert")).toBe(false);
     expect(notifyCriticalOpsAlert).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("owner refresh verifies retrieved account identity before any local status", () => {
+  it.each(["acct_other", undefined])("returned id %s refuses before preserve read and status synchronization", async (id) => {
+    h.returnedAccountId = id;
+    await expect(refreshAccountStatusFromStripe({ studioId: STUDIO, stripeAccountId: "acct_test" }))
+      .rejects.toThrow("Could not refresh status from Stripe. Try again.");
+    expect(h.retrieveCalls).toEqual(["acct_test"]);
+    expect(h.reads).toEqual([]);
+    expect(h.rpcCalls).toEqual([]);
+  });
+  it("correct identity retains one same SDK request and legitimate first-completion synchronization", async () => {
+    h.settings = { kind: "row", completedAt: null };
+    const result = await refreshAccountStatusFromStripe({ studioId: STUDIO, stripeAccountId: "acct_test" });
+    expect(result.chargesEnabled).toBe(true);
+    expect(h.retrieveCalls).toEqual(["acct_test"]);
+    // The candidate's refresh also records the account country after sync.
+    expect(h.rpcCalls.filter((c) => c.name === "sync_studio_account_status")).toHaveLength(1);
+    expect(h.rpcCalls[0]).toMatchObject({ name: "sync_studio_account_status", args: {
+      p_studio_id: STUDIO, p_stripe_account_id: "acct_test", p_stripe_livemode: h.livemode,
+    } });
+    expect(h.rpcCalls[0].args.p_onboarding_completed_at).toEqual(expect.any(String));
   });
 });

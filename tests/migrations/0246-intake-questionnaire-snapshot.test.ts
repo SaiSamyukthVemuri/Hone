@@ -32,9 +32,13 @@ describe("0246 prospective-only snapshot boundary", () => {
     expect(assisted).toContain("const lastStep = loaded.catalogue.steps[loaded.catalogue.steps.length - 1].id");
     expect(assisted).toContain('step: lastStep, operation: "handoff"');
   });
-  it("only existing trusted creation inserts name the issued catalogue; export remains pending", () => {
+  // c99c7e1b deferred known snapshot issuance until the reader rollout: both
+  // trusted creation inserts write an explicit null (unverified), and nothing
+  // stamps the issued catalogue yet.
+  it("trusted creation inserts defer the issued catalogue (explicit null); export remains pending", () => {
     const creators = readFileSync("lib/intake/queries.ts", "utf8");
-    expect(creators.match(/questionnaire_snapshot: ISSUED_QUESTIONNAIRE/g)).toHaveLength(2);
+    expect(creators.match(/questionnaire_snapshot: null,/g)).toHaveLength(2);
+    expect(creators).not.toMatch(/ISSUED_QUESTIONNAIRE/);
     const registry = readFileSync("lib/export/resource-registry.ts", "utf8");
     expect(registry).toMatch(/client_intake_forms:\s*\{\s*kind: "pending",\s*ticket: "TRUTH-01B"/);
   });

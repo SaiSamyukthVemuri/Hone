@@ -839,7 +839,13 @@ async function resolveAccountFromEvent(
   // capability.updated: refresh via accounts.retrieve.
   try {
     const stripe = getStripe();
-    return await stripe.accounts.retrieve(stripeAccountId);
+    const account = await stripe.accounts.retrieve(stripeAccountId);
+    // A successful fetch is not proof that this is the bound account. Never
+    // synchronize another account's readiness or acknowledge an unverified read.
+    if (account?.id !== stripeAccountId) {
+      throw new Error("capability_updated_account_identity_unverified");
+    }
+    return account;
   } catch {
     logInternal("capability_updated_account_retrieve_failed", {
       stripeAccountId,
