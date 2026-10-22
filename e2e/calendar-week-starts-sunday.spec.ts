@@ -33,7 +33,7 @@ const T = 20_000;
 // Seeded calendar selection only, not public booking or physical-device UAT.
 // Managed page fixtures retain the normal CI failure trace and screenshot.
 for (const mode of [
-  { name: "mouse week", width: 1280, coarse: false },
+  { name: "dense mouse week", width: 1280, coarse: false },
   { name: "coarse tablet week", width: 768, coarse: true },
   { name: "coarse phone day", width: 390, coarse: true },
 ]) {
@@ -123,42 +123,44 @@ for (const mode of [
           (mode.width >= 768 ? "week-day-column" : "mobile-day-timeline") + '"][data-date="' + day + '"]');
         await expect(surface).toBeVisible();
         if (mode.width >= 768) await expect(page.getByTestId("week-day-column")).toHaveCount(7);
-        if (mode.coarse) {
-          const group = surface.getByRole("button", { name: "Choose from 5 appointments", exact: true });
-          await expect(group).toHaveCount(1);
-          for (const expected of bookings) await expect(surface.getByRole("button").filter({ hasText: expected.clientName })).toHaveCount(0);
-          await group.scrollIntoViewIfNeeded();
-          const bounds = await group.boundingBox();
-          expect(bounds!.width).toBeGreaterThanOrEqual(44);
-          expect(bounds!.height).toBeGreaterThanOrEqual(44);
-          if (index === 0) await group.focus();
-          await activate(group);
-          const chooser = page.getByRole("dialog", { name: "Choose an appointment", exact: true });
-          await expect(chooser).toBeVisible();
-          if (index === 0) {
-            await page.keyboard.press("Escape");
-            await expect(chooser).toHaveCount(0);
-            await expect(group).toBeFocused();
-            await activate(group);
-            await activate(chooser.getByRole("button", { name: "Close", exact: true }));
-            await expect(chooser).toHaveCount(0);
-            await activate(group);
-          }
-          for (const expected of bookings) {
-            const choice = chooser.getByRole(mode.width >= 768 ? "button" : "link").filter({ hasText: expected.clientName });
-            await expect(choice).toHaveCount(1);
-            await expect(choice.getByText(expected.practitionerName, { exact: true })).toBeVisible();
-            const box = await choice.boundingBox();
-            expect(box!.width).toBeGreaterThanOrEqual(44);
-            expect(box!.height).toBeGreaterThanOrEqual(44);
-          }
-          const choice = chooser.getByRole(mode.width >= 768 ? "button" : "link").filter({ hasText: booking.clientName });
-          if (mode.width < 768) await assertOwnHref(choice, booking.id);
-          await activate(choice);
-        } else {
-          for (const expected of bookings) await expect(surface.getByRole("button").filter({ hasText: expected.clientName })).toHaveCount(1);
-          await activate(surface.getByRole("button").filter({ hasText: booking.clientName }));
+        expect(await page.evaluate(() => matchMedia("(any-pointer: coarse)").matches)).toBe(mode.coarse);
+        if (mode.width >= 768) {
+          // The existing max-w-5xl seven-day grid cannot provide five 44px
+          // lanes after their 8px insets; mouse must get the same chooser.
+          const available = await surface.evaluate(el => el.clientWidth / 5 - 8);
+          expect(available).toBeLessThan(44);
         }
+        const group = surface.getByRole("button", { name: "Choose from 5 appointments", exact: true });
+        await expect(group).toHaveCount(1);
+        for (const expected of bookings) await expect(surface.getByRole("button").filter({ hasText: expected.clientName })).toHaveCount(0);
+        await group.scrollIntoViewIfNeeded();
+        const bounds = await group.boundingBox();
+        expect(bounds!.width).toBeGreaterThanOrEqual(44);
+        expect(bounds!.height).toBeGreaterThanOrEqual(44);
+        if (index === 0) await group.focus();
+        await activate(group);
+        const chooser = page.getByRole("dialog", { name: "Choose an appointment", exact: true });
+        await expect(chooser).toBeVisible();
+        if (index === 0) {
+          await page.keyboard.press("Escape");
+          await expect(chooser).toHaveCount(0);
+          await expect(group).toBeFocused();
+          await activate(group);
+          await activate(chooser.getByRole("button", { name: "Close", exact: true }));
+          await expect(chooser).toHaveCount(0);
+          await activate(group);
+        }
+        for (const expected of bookings) {
+          const choice = chooser.getByRole(mode.width >= 768 ? "button" : "link").filter({ hasText: expected.clientName });
+          await expect(choice).toHaveCount(1);
+          await expect(choice.getByText(expected.practitionerName, { exact: true })).toBeVisible();
+          const box = await choice.boundingBox();
+          expect(box!.width).toBeGreaterThanOrEqual(44);
+          expect(box!.height).toBeGreaterThanOrEqual(44);
+        }
+        const choice = chooser.getByRole(mode.width >= 768 ? "button" : "link").filter({ hasText: booking.clientName });
+        if (mode.width < 768) await assertOwnHref(choice, booking.id);
+        await activate(choice);
         await expect(page.getByRole("dialog", { name: "New appointment", exact: true })).toHaveCount(0);
         if (mode.width >= 768) {
           const preview = page.getByRole("dialog", { name: /appointment preview/i });

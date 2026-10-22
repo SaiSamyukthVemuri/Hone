@@ -3,6 +3,21 @@
 export type AppointmentRectangle = { id: string; top: number; height: number };
 export type AppointmentLane = { column: number; columns: number };
 
+// Reuse the existing chooser's 44px width floor rather than squeezing a
+// cluster below it. The lane's two existing four-pixel insets cost eight.
+// Unknown input/geometry stays on that safe full-width selection path.
+export function appointmentNeedsChooser({
+  finePointer, anyCoarsePointer, columnWidth, columns,
+}: {
+  finePointer: boolean; anyCoarsePointer: boolean;
+  columnWidth: number | null; columns: number;
+}): boolean {
+  if (!finePointer || anyCoarsePointer || columnWidth === null
+    || !Number.isFinite(columnWidth) || columnWidth <= 0
+    || !Number.isSafeInteger(columns) || columns < 1) return true;
+  return columnWidth / columns - 8 < 44;
+}
+
 export function appointmentLanes(
   rectangles: ReadonlyArray<AppointmentRectangle>,
 ): Map<string, AppointmentLane> {

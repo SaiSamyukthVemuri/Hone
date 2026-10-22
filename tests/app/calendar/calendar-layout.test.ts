@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { compile } from "tailwindcss";
-import { appointmentLanes, appointmentCollisionGroups } from "@/lib/calendar/appointment-lanes";
+import { appointmentLanes, appointmentCollisionGroups, appointmentNeedsChooser } from "@/lib/calendar/appointment-lanes";
 
 // PR B — calendar layout usability (layout-only; no booking logic). The calendar
 // body now scrolls INTERNALLY (fits the viewport) with a sticky day header and a
@@ -152,15 +152,50 @@ describe("coarse-pointer rendered collision ranges", () => {
     expect(rectangles).toEqual(original);
     expect(appointmentCollisionGroups([])).toEqual([]);
   });
-  it("fine cards are CSS-hidden on coarse/none; coarse groups are hidden on fine", async () => {
+  it("only selected compact lanes render; the chooser is never CSS-hidden by a fine primary pointer", async () => {
     expect(DAYCOL).toContain("hidden pointer-fine:block absolute");
-    expect(DAYCOL).toContain("pointer-fine:hidden absolute");
+    expect(DAYCOL).not.toContain("pointer-fine:hidden absolute");
+    expect(DAYCOL).toContain('window.matchMedia("(pointer: fine)")');
+    expect(DAYCOL).toContain('window.matchMedia("(any-pointer: coarse)")');
+    expect(DAYCOL).toContain('coarse.addEventListener("change", measure)');
+    expect(DAYCOL).toContain('coarse.removeEventListener("change", measure)');
+    expect(DAYCOL).toContain("new ResizeObserver(measure)");
+    expect(DAYCOL).toContain("observer.observe(column)");
+    expect(DAYCOL).toContain("observer.disconnect()");
+    expect(DAYCOL).toContain("appointmentNeedsChooser({ ...columnLayout, columns: lanes.get(id)?.columns ?? 0 })");
+    expect(DAYCOL).toContain("if (chooserIds.has(a.id)) return null");
+    expect(DAYCOL).toContain("chooserGroups.map");
     const c = await compile("@tailwind utilities;");
-    const css = c.build(["hidden", "pointer-fine:block", "pointer-fine:hidden", "min-h-[44px]", "min-w-[44px]"]);
+    const css = c.build(["hidden", "pointer-fine:block", "min-h-[44px]", "min-w-[44px]"]);
     expect(css).toContain("min-height: 44px;");
     expect(css).toContain("min-width: 44px;");
     expect(css).toMatch(/\.hidden \{\s+display: none;/);
     expect(css).toMatch(/@media \(pointer: fine\) \{\s+display: block;/);
-    expect(css).toMatch(/@media \(pointer: fine\) \{\s+display: none;/);
+  });
+});
+
+describe("hybrid input and dense-lane chooser safety", () => {
+  const fine = { finePointer: true, anyCoarsePointer: false, columnWidth: 500, columns: 5 };
+  it("keeps the chooser available on a hybrid fine-primary touchscreen even when lanes are wide", () => {
+    expect(appointmentNeedsChooser(fine)).toBe(false);
+    expect(appointmentNeedsChooser({ ...fine, anyCoarsePointer: true })).toBe(true);
+  });
+  it("uses the chooser for coarse or unknown pointers without inventing compact capability", () => {
+    expect(appointmentNeedsChooser({ ...fine, finePointer: false, anyCoarsePointer: true })).toBe(true);
+    expect(appointmentNeedsChooser({ ...fine, finePointer: false })).toBe(true);
+    expect(appointmentNeedsChooser({ ...fine, columnWidth: null })).toBe(true);
+  });
+  it("falls back before dense seven-day lanes become tiny or collapse after the existing insets", () => {
+    expect(appointmentNeedsChooser({ ...fine, columnWidth: 128 })).toBe(true);
+    expect(appointmentNeedsChooser({ ...fine, columnWidth: 80, columns: 20 })).toBe(true);
+    expect(appointmentNeedsChooser({ ...fine, columnWidth: 259 })).toBe(true);
+    expect(appointmentNeedsChooser({ ...fine, columnWidth: 260 })).toBe(false);
+  });
+  it("keeps known usable fine lanes and singletons compact", () => {
+    expect(appointmentNeedsChooser(fine)).toBe(false);
+    expect(appointmentNeedsChooser({ ...fine, columnWidth: 52, columns: 1 })).toBe(false);
+  });
+  it.each([0, -1, NaN, Infinity])("does not trust unmeasured/invalid width %s", columnWidth => {
+    expect(appointmentNeedsChooser({ ...fine, columnWidth })).toBe(true);
   });
 });

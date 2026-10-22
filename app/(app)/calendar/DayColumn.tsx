@@ -13,7 +13,7 @@
 // the overlay on truly empty space.
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { appointmentLanes, appointmentCollisionGroups } from "@/lib/calendar/appointment-lanes";
+import { appointmentLanes, appointmentCollisionGroups, appointmentNeedsChooser } from "@/lib/calendar/appointment-lanes";
 import type { Service, StudioTimedBlock } from "@/lib/types/database";
 import type {
   AppointmentWithPractitionerColor,
@@ -209,6 +209,35 @@ export function DayColumn({
   returnTo = "",
 }: Props) {
   const [overlapIds, setOverlapIds] = useState<string[] | null>(null);
+  const columnRef = useRef<HTMLDivElement>(null);
+  const [columnLayout, setColumnLayout] = useState<{
+    finePointer: boolean; anyCoarsePointer: boolean; columnWidth: number | null;
+  }>({ finePointer: false, anyCoarsePointer: false, columnWidth: null });
+  useEffect(() => {
+    const column = columnRef.current;
+    if (!column || typeof window.matchMedia !== "function"
+      || typeof ResizeObserver === "undefined") return;
+    const fine = window.matchMedia("(pointer: fine)");
+    const coarse = window.matchMedia("(any-pointer: coarse)");
+    if (typeof fine.addEventListener !== "function"
+      || typeof coarse.addEventListener !== "function") return;
+    const measure = () => {
+      const next = { finePointer: fine.matches, anyCoarsePointer: coarse.matches, columnWidth: column.clientWidth };
+      setColumnLayout(previous => previous.finePointer === next.finePointer
+        && previous.anyCoarsePointer === next.anyCoarsePointer
+        && previous.columnWidth === next.columnWidth ? previous : next);
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(column);
+    fine.addEventListener("change", measure);
+    coarse.addEventListener("change", measure);
+    measure();
+    return () => {
+      observer.disconnect();
+      fine.removeEventListener("change", measure);
+      coarse.removeEventListener("change", measure);
+    };
+  }, []);
   const [draft, setDraft] = useState<QuickBookDraft | null>(null);
   // PR C: the timed block whose edit/detail drawer is open (null = closed).
   const [editingBlock, setEditingBlock] = useState<StudioTimedBlock | null>(null);
@@ -458,6 +487,9 @@ export function DayColumn({
   const coarseGroups = appointmentCollisionGroups(positionedAppointments.map(({ appointment, top, height }) => ({
     id: appointment.id, top, height,
   })));
+  const chooserGroups = coarseGroups.filter(group => group.ids.some(id =>
+    appointmentNeedsChooser({ ...columnLayout, columns: lanes.get(id)?.columns ?? 0 })));
+  const chooserIds = new Set(chooserGroups.flatMap(group => group.ids));
   const appointmentsById = new Map(appts.map((a) => [a.id, a]));
   const selectedOverlaps = (overlapIds ?? []).flatMap((id) => {
     const a = appointmentsById.get(id);
@@ -474,6 +506,7 @@ export function DayColumn({
       // header says "Sun".
       data-testid="week-day-column"
       data-date={date}
+      ref={columnRef}
       className="relative border-l border-neutral-300 dark:border-neutral-700"
       style={{ height: GRID_HEIGHT }}
     >
@@ -727,6 +760,7 @@ export function DayColumn({
       })}
 
       {positionedAppointments.map(({ appointment: a, start, top, height }) => {
+        if (chooserIds.has(a.id)) return null;
         const localTime = localTimeString(start, tz);
         const lane = lanes.get(a.id)!;
         const clientName = a.client?.name?.trim() || "Client";
@@ -812,12 +846,12 @@ export function DayColumn({
         );
       })}
 
-      {coarseGroups.map((group) => {
+      {chooserGroups.map((group) => {
         const members = group.ids.map((id) => appointmentsById.get(id)!);
         const a = members[0];
         return <button key={group.ids.join(":")} type="button"
           style={{ top: group.top, height: group.height }}
-          className={`pointer-fine:hidden absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 px-2 py-1 text-left text-xs ${members.length === 1 ? appointmentCardClasses(a.service) : "border-neutral-500 bg-neutral-100 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) !== "upcoming" ? "opacity-60" : ""}`}
+          className={`absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 px-2 py-1 text-left text-xs ${members.length === 1 ? appointmentCardClasses(a.service) : "border-neutral-500 bg-neutral-100 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) !== "upcoming" ? "opacity-60" : ""}`}
           aria-label={members.length > 1 ? `Choose from ${members.length} appointments` : undefined}
           onClick={(event) => {
             event.stopPropagation();
