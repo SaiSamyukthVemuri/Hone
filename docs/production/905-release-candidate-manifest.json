@@ -604,7 +604,7 @@
       "reason": "expected-current-image compare-and-clear under client row lock; stale removal fails closed and preserves newer portrait; exact seven-file owner delta composed without merging owner branch ancestry"
     }
   ],
-  "review_state": "LOCALcurrentproduction969/970 normallycomposed;19actualSQL+12portraitdigestsverified;122canonical/prepushPASS after3-docmerge. NOnew214policycomposed; exacta192price-racefindingOPEN. CurrentheadNOTpublished andNOTnewpolicyDBverified. Prior ebdb/D380 proof remains scopedhistorical; freshchangedSQLrequirescomposedDB+normalCI/review anddeliberateRCnightly.",
+  "review_state": "Source-only #905 portrait release preparation with the pinned0213–0231 prefix. Reviewed0214 source5452f0ec/raw8ff9350e enforces verified country/currency and leaves unknowns unresolved; the paired application order is mandatory, not blanket old-app/new-DB compatibility. This manifest grants no hosted apply/reapply, production release, real-client consent, customer-data mutation or provider/model activation. Read current exact-head CI/review and retained prior proof from GitHub and the OPS release packet; historical entries retain their original source and scope.",
   "previous_candidate_base": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
   "candidate_base_history": [
     "102faf94fc573c724d73419bc9e8a6262ac1a247",
