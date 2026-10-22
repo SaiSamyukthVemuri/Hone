@@ -31,6 +31,7 @@ const h = vi.hoisted(() => ({
   reads: [] as Array<{ table: string; filters: Array<{ column: string; value: unknown }> }>,
   alerts: [] as Array<{ severity: string; event: string; details: Record<string, unknown> }>,
   alertThrows: false,
+  refundObservationFailure: null as null | "rpc_error" | "refused",
   claim: {} as Record<string, unknown>,
   pi: {} as Record<string, unknown>,
   createError: null as unknown,
@@ -160,6 +161,14 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           && object.amount_cents === row.amount_cents && object.currency === row.currency
           && (!row.stripe_charge_id || object.charge_id === row.stripe_charge_id);
         if (!matches) return { data: [{ result: "identity_mismatch" }], error: null };
+        // These failures are injected only AFTER the original bound identity
+        // matched. They model a failed/refused durable observation, not a new
+        // provider object or a global successful-RPC stub.
+        if (args.p_event_type === "refund.observed" && h.refundObservationFailure) {
+          return h.refundObservationFailure === "rpc_error"
+            ? { data: null, error: { code: "08006", message: "synthetic observation unavailable" } }
+            : { data: [{ result: "refund_evidence_refused" }], error: null };
+        }
         if (Array.isArray(object.charge_refund_components)) {
           if (row.stripe_charge_refund_event_id) return { data: [{ result: "already_refunded", status_before: row.status }], error: null };
           const payload = { refund_status: "succeeded", refund_amount_cents: row.amount_cents,
@@ -316,6 +325,7 @@ beforeEach(() => {
   h.reads = [];
   h.alerts = [];
   h.alertThrows = false;
+  h.refundObservationFailure = null;
   h.stripeCalls = [];
   h.claim = {};
   h.pi = {};
@@ -676,6 +686,41 @@ describe("refund: Stripe's refund is recorded only when it is the claimed refund
     expect(h.updates.some((u) => u.payload.refund_status === "failed")).toBe(false);
     expect(h.boundObjects).toContainEqual(expect.objectContaining({ refund_status: "pending", refund_id: "re_synthetic_unresolved" }));
   });
+
+  // Preserve the deployed D1 diagnostic-failure invariant on the actual
+  // 239/240 bound-observation refusal path. A healthy diagnostic control proves
+  // the new event is reached; throwing it may not change the business result.
+  for (const currency of ["cad", "usd"] as const) {
+    for (const failure of ["rpc_error", "refused"] as const) {
+      for (const throws of [false, true]) {
+        it(`${currency}: ${failure} observation with ${throws ? "throwing" : "healthy"} diagnostic retains pending/manual review and one refund call`, async () => {
+          seedSucceeded(currency);
+          h.refund = { id: "re_synthetic_unresolved", status: "pending", amount: AMOUNT, currency,
+            charge: CHARGE_ID, payment_intent: PI_ID };
+          h.refundObservationFailure = failure;
+          h.alertThrows = throws;
+          const result = await refund();
+          expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+          expect(h.stripeCalls).toEqual(["refund_create"]);
+          expect(refundSucceededWrites()).toEqual([]);
+          expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(1);
+          expect(h.updates.some((u) => u.payload.refund_status === "failed")).toBe(false);
+          expect(critical("payment_refund_outcome_write_refused")).toHaveLength(1);
+          expect(h.rpcCalls.filter(name => name === "reconcile_bound_payment_event")).toHaveLength(1);
+          expect(h.boundObjects).toEqual([expect.objectContaining({ evidence_kind: "action_response",
+            customer_id: "cus_test", payment_intent_id: PI_ID, charge_id: CHARGE_ID,
+            amount_cents: AMOUNT, currency, refund_id: "re_synthetic_unresolved",
+            refund_status: "pending", refund_amount_cents: AMOUNT, refund_currency: currency,
+            refund_charge_id: CHARGE_ID })]);
+          expect(h.rows.payment_charge_attempts).toMatchObject({ id: ATTEMPT, studio_id: STUDIO,
+            client_id: CLIENT, stripe_livemode: false, stripe_account_id: "acct_test",
+            stripe_customer_id: "cus_test", stripe_payment_intent_id: PI_ID, stripe_charge_id: CHARGE_ID,
+            amount_cents: AMOUNT, currency, status: "succeeded", refund_status: "pending_stripe",
+            stripe_refund_id: null, refunded_at: null });
+        });
+      }
+    }
+  }
 
   it.each([
     ["in another currency", { amount: AMOUNT, currency: "cad" }, "usd"],

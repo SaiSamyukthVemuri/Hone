@@ -772,12 +772,17 @@ export async function refundPaymentChargeAttempt(args: {
     }
   }
   if (observationError || !["reconciled", "already_refunded", "refund_pending", "refund_failed"].includes(observation?.result ?? "")) {
-    await recordOpsAlert({
-      severity: "critical", event: "payment_refund_outcome_write_refused",
-      message: "Provider refund observation could not be persisted by the bound payment command. Manual reconciliation required.",
-      studioId: attempt.studio_id, clientId: attempt.client_id, route: ROUTE,
-      safeDetails: { attempt_id: attempt.id, stripe_refund_id: refund.id, result: observation?.result ?? null },
-    });
+    try {
+      await recordOpsAlert({
+        severity: "critical", event: "payment_refund_outcome_write_refused",
+        message: "Provider refund observation could not be persisted by the bound payment command. Manual reconciliation required.",
+        studioId: attempt.studio_id, clientId: attempt.client_id, route: ROUTE,
+        safeDetails: { attempt_id: attempt.id, stripe_refund_id: refund.id, result: observation?.result ?? null },
+      });
+    } catch {
+      // A diagnostic failure cannot complete or rearm an unresolved refund.
+      // Preserve the pending claim and the same truthful manual-review result.
+    }
     return { ok: false, outcome: "needs_manual_review", message: "The refund outcome could not be saved. The studio operator will reconcile it." };
   }
   if (observation?.result === "refund_pending") {
