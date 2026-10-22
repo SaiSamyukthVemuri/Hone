@@ -682,28 +682,69 @@ describe("print gate CSS (Codex P1 4301153310)", () => {
   });
 });
 
-describe("readAllPages — complete or nothing (Codex P1 4301307242)", () => {
-  const page = (n: number) => Array.from({ length: n }, (_, i) => i);
+describe("readAllPages — a row moving between pages is never skipped (Codex P2 4350759725)", () => {
+  // A mutable child table read in id order. Between two page requests a row
+  // BEFORE the next page boundary is soft-deleted or inserted. An offset into
+  // that order shifts: a deletion pushes an unread row behind the next offset
+  // (silently omitted from the clinical record), an insertion re-reads one.
+  // The table answers the retired offset protocol (from, to) as well as the
+  // keyset one (after), so this same test is RED against the offset reader.
+  const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  function table(initial: number[], between: (rows: string[]) => void) {
+    const rows = initial.map(id);
+    let served = 0;
+    const page = async (...args: unknown[]) => {
+      if (served === 1) between(rows);
+      served += 1;
+      const sorted = [...rows].sort();
+      const data =
+        typeof args[0] === "number"
+          ? sorted.slice(args[0] as number, (args[1] as number) + 1)
+          : sorted.filter((r) => args[0] === null || r > (args[0] as string)).slice(0, EXPORT_PAGE_SIZE);
+      return { data: data.map((r) => ({ id: r })), error: null };
+    };
+    return page as unknown as Parameters<typeof readAllPages<{ id: string }>>[0];
+  }
+  const N = EXPORT_PAGE_SIZE + 500;
+  const all = Array.from({ length: N }, (_, i) => (i + 1) * 10);
 
-  it("reads to exhaustion across full pages", async () => {
+  it("a row soft-deleted from an already-read page does not hide the next unread row", async () => {
+    const deleted = id(all[5]);
+    const rows = await readAllPages<{ id: string }>(
+      table(all, (r) => r.splice(r.indexOf(deleted), 1)),
+    );
+    const got = new Set((rows ?? []).map((r) => r.id));
+    for (const n of all) if (id(n) !== deleted) expect(got.has(id(n)), `row ${n}`).toBe(true);
+  });
+
+  it("a row inserted before the next page is neither duplicated nor displaces an unread row", async () => {
+    const rows = await readAllPages<{ id: string }>(table(all, (r) => r.push(id(15))));
+    const ids = (rows ?? []).map((r) => r.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const n of all) expect(ids.includes(id(n)), `row ${n}`).toBe(true);
+  });
+});
+
+describe("readAllPages — complete or nothing (Codex P1 4301307242)", () => {
+  // Rows with increasing ids, numbered from `start`, so each page's cursor moves forward.
+  const page = (n: number, start = 0) =>
+    Array.from({ length: n }, (_, i) => ({ id: `id-${String(start + i).padStart(8, "0")}` }));
+
+  it("reads to exhaustion across full pages, each page after the last id read", async () => {
     const sizes = [EXPORT_PAGE_SIZE, EXPORT_PAGE_SIZE, 7];
-    const calls: Array<[number, number]> = [];
-    const rows = await readAllPages<number>(async (from, to) => {
-      calls.push([from, to]);
-      return { data: page(sizes[calls.length - 1]), error: null };
+    const calls: Array<string | null> = [];
+    const rows = await readAllPages(async (after) => {
+      calls.push(after);
+      return { data: page(sizes[calls.length - 1], (calls.length - 1) * EXPORT_PAGE_SIZE), error: null };
     });
     expect(rows).toHaveLength(EXPORT_PAGE_SIZE * 2 + 7);
-    expect(calls).toEqual([
-      [0, EXPORT_PAGE_SIZE - 1],
-      [EXPORT_PAGE_SIZE, EXPORT_PAGE_SIZE * 2 - 1],
-      [EXPORT_PAGE_SIZE * 2, EXPORT_PAGE_SIZE * 3 - 1],
-    ]);
+    expect(calls).toEqual([null, page(1, EXPORT_PAGE_SIZE - 1)[0].id, page(1, EXPORT_PAGE_SIZE * 2 - 1)[0].id]);
   });
 
   it("an error anywhere fails the read", async () => {
     let n = 0;
     expect(
-      await readAllPages<number>(async () => {
+      await readAllPages(async () => {
         n += 1;
         return n === 2 ? { data: null, error: { code: "x" } } : { data: page(EXPORT_PAGE_SIZE), error: null };
       }),
@@ -712,9 +753,9 @@ describe("readAllPages — complete or nothing (Codex P1 4301307242)", () => {
 
   it("saturation (every page full up to the cap) fails closed instead of truncating", async () => {
     let calls = 0;
-    const rows = await readAllPages<number>(async () => {
+    const rows = await readAllPages(async () => {
       calls += 1;
-      return { data: page(EXPORT_PAGE_SIZE), error: null };
+      return { data: page(EXPORT_PAGE_SIZE, (calls - 1) * EXPORT_PAGE_SIZE), error: null };
     });
     expect(rows).toBeNull();
     expect(calls).toBe(EXPORT_MAX_PAGES);
@@ -723,9 +764,19 @@ describe("readAllPages — complete or nothing (Codex P1 4301307242)", () => {
   it("an exactly-full final page is followed by one more read, not assumed complete", async () => {
     const sizes = [EXPORT_PAGE_SIZE, 0];
     let i = 0;
-    const rows = await readAllPages<number>(async () => ({ data: page(sizes[i++]), error: null }));
+    const rows = await readAllPages(async () => ({ data: page(sizes[i++]), error: null }));
     expect(rows).toHaveLength(EXPORT_PAGE_SIZE);
     expect(i).toBe(2);
+  });
+
+  it("a cursor that does not move forward fails closed rather than looping", async () => {
+    let calls = 0;
+    const rows = await readAllPages(async () => {
+      calls += 1;
+      return { data: page(EXPORT_PAGE_SIZE), error: null };
+    });
+    expect(rows).toBeNull();
+    expect(calls).toBe(2);
   });
 });
 

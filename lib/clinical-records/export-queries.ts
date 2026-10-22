@@ -67,6 +67,14 @@ export const EXPORT_SESSION_LIMIT = 500;
 // rest. Every child read is paged to exhaustion in a stable order; a read that
 // would need more than EXPORT_MAX_PAGES pages fails the whole load closed, and
 // the page shows no record rather than a partial clinical one.
+//
+// BY IMMUTABLE ID, NOT OFFSET (Codex P2 4350759725). These rows change while a
+// practitioner charts: an offset into mutable id order shifts when a row before
+// the next page is soft-deleted (an unread row slides behind the offset and is
+// silently left off the printout) or inserted (a row is read twice). Each page
+// asks for ids AFTER the last one read, the cursor the client directory
+// (lib/supabase/queries.ts) and the SMS suppression read already use. This is
+// not a DB-wide snapshot; it guarantees no surviving row is skipped.
 export const EXPORT_PAGE_SIZE = 1000;
 export const EXPORT_MAX_PAGES = 50;
 // Session ids per .in() filter, so a 500-session export never builds an
@@ -75,16 +83,37 @@ const SESSION_ID_CHUNK = 100;
 
 type PageResult<T> = PromiseLike<{ data: T[] | null; error: unknown }>;
 
-/** Read every row, page by page; null on error OR on saturation (fail closed). */
-export async function readAllPages<T>(page: (from: number, to: number) => PageResult<T>): Promise<T[] | null> {
+/**
+ * The keyset filter for one page: every id after the last one read. Typed
+ * structurally, not as a constraint on Q: checking supabase-js's own builder
+ * generics against one instantiates too deeply (TS2589), as the SMS
+ * suppression read also found.
+ */
+function afterId<Q>(query: Q, after: string | null): Q {
+  return after === null ? query : (query as unknown as { gt(column: string, value: string): Q }).gt("id", after);
+}
+
+/**
+ * Read every row, page by page; null on error OR on saturation (fail closed).
+ * `page(after)` must order by id ascending, keep only ids after `after` when it
+ * is set, and return at most EXPORT_PAGE_SIZE rows.
+ */
+export async function readAllPages<T extends { id: string }>(
+  page: (after: string | null) => PageResult<T>,
+): Promise<T[] | null> {
   const out: T[] = [];
+  let after: string | null = null;
   for (let p = 0; p < EXPORT_MAX_PAGES; p += 1) {
-    const from = p * EXPORT_PAGE_SIZE;
-    const { data, error } = await page(from, from + EXPORT_PAGE_SIZE - 1);
+    const { data, error } = await page(after);
     if (error) return null;
     const rows = data ?? [];
+    if (rows.length === 0) return out;
+    // The cursor must move forward, or the loop could re-read a page forever.
+    const last = rows[rows.length - 1].id;
+    if (typeof last !== "string" || (after !== null && last <= after)) return null;
     out.push(...rows);
     if (rows.length < EXPORT_PAGE_SIZE) return out;
+    after = last;
   }
   return null;
 }
@@ -96,12 +125,12 @@ function chunks<T>(xs: ReadonlyArray<T>, size: number): T[][] {
 }
 
 /** Every row for every chunk of session ids, or null if any chunk fails. */
-async function readAllForSessions<T>(
+async function readAllForSessions<T extends { id: string }>(
   sessionIds: ReadonlyArray<string>,
-  page: (ids: string[], from: number, to: number) => PageResult<T>,
+  page: (ids: string[], after: string | null) => PageResult<T>,
 ): Promise<T[] | null> {
   const parts = await Promise.all(
-    chunks(sessionIds, SESSION_ID_CHUNK).map((ids) => readAllPages<T>((from, to) => page(ids, from, to))),
+    chunks(sessionIds, SESSION_ID_CHUNK).map((ids) => readAllPages<T>((after) => page(ids, after))),
   );
   if (parts.some((part) => part === null)) return null;
   return (parts as T[][]).flat();
@@ -194,49 +223,61 @@ export async function loadClinicalRecordsForExport(args: {
   const sessionIds = sessions.map((s) => s.id);
   const bounds = noteBounds;
   const [blocks, entries, laserEntries, notes, supersedingLinks] = await Promise.all([
-    readAllForSessions<ExportBlockSource>(sessionIds, (ids, from, to) =>
-      supabase
-        .from("session_blocks")
-        .select(BLOCK_COLUMNS)
-        .eq("studio_id", studioId)
-        .in("session_id", ids)
-        .is("deleted_at", null)
+    readAllForSessions<ExportBlockSource>(sessionIds, (ids, after) =>
+      afterId(
+        supabase
+          .from("session_blocks")
+          .select(BLOCK_COLUMNS)
+          .eq("studio_id", studioId)
+          .in("session_id", ids)
+          .is("deleted_at", null),
+        after,
+      )
         .order("id", { ascending: true })
-        .range(from, to)
+        .range(0, EXPORT_PAGE_SIZE - 1)
         .returns<ExportBlockSource[]>(),
     ),
-    readAllForSessions<ExportEntrySource>(sessionIds, (ids, from, to) =>
-      supabase
-        .from("electrolysis_entries")
-        .select(ENTRY_COLUMNS)
-        .in("session_id", ids)
-        .is("deleted_at", null)
+    readAllForSessions<ExportEntrySource>(sessionIds, (ids, after) =>
+      afterId(
+        supabase
+          .from("electrolysis_entries")
+          .select(ENTRY_COLUMNS)
+          .in("session_id", ids)
+          .is("deleted_at", null),
+        after,
+      )
         .order("id", { ascending: true })
-        .range(from, to)
+        .range(0, EXPORT_PAGE_SIZE - 1)
         .returns<ExportEntrySource[]>(),
     ),
-    readAllForSessions<ExportLaserSource>(sessionIds, (ids, from, to) =>
-      supabase
-        .from("laser_entries")
-        .select(LASER_COLUMNS)
-        .in("session_id", ids)
-        .is("deleted_at", null)
+    readAllForSessions<ExportLaserSource>(sessionIds, (ids, after) =>
+      afterId(
+        supabase
+          .from("laser_entries")
+          .select(LASER_COLUMNS)
+          .in("session_id", ids)
+          .is("deleted_at", null),
+        after,
+      )
         .order("id", { ascending: true })
-        .range(from, to)
+        .range(0, EXPORT_PAGE_SIZE - 1)
         .returns<ExportLaserSource[]>(),
     ),
     bounds === null
       ? Promise.resolve([] as ExportNoteSource[])
-      : readAllPages<ExportNoteSource>((from, to) =>
-          supabase
-            .from("client_clinical_notes")
-            .select(NOTE_COLUMNS)
-            .eq("studio_id", studioId)
-            .eq("client_id", clientId)
-            .gte("occurred_at", bounds.fromUtc)
-            .lt("occurred_at", bounds.toUtcExclusive)
+      : readAllPages<ExportNoteSource>((after) =>
+          afterId(
+            supabase
+              .from("client_clinical_notes")
+              .select(NOTE_COLUMNS)
+              .eq("studio_id", studioId)
+              .eq("client_id", clientId)
+              .gte("occurred_at", bounds.fromUtc)
+              .lt("occurred_at", bounds.toUtcExclusive),
+            after,
+          )
             .order("id", { ascending: true })
-            .range(from, to)
+            .range(0, EXPORT_PAGE_SIZE - 1)
             .returns<ExportNoteSource[]>(),
         ),
     // Which notes a later version replaces (Codex P1 4302740025). Read across
@@ -245,15 +286,18 @@ export async function loadClinicalRecordsForExport(args: {
     // completion and fail-closed, like every read here.
     bounds === null
       ? Promise.resolve([] as Array<{ id: string; supersedes_note_id: string }>)
-      : readAllPages<{ id: string; supersedes_note_id: string }>((from, to) =>
-          supabase
-            .from("client_clinical_notes")
-            .select("id, supersedes_note_id")
-            .eq("studio_id", studioId)
-            .eq("client_id", clientId)
-            .not("supersedes_note_id", "is", null)
+      : readAllPages<{ id: string; supersedes_note_id: string }>((after) =>
+          afterId(
+            supabase
+              .from("client_clinical_notes")
+              .select("id, supersedes_note_id")
+              .eq("studio_id", studioId)
+              .eq("client_id", clientId)
+              .not("supersedes_note_id", "is", null),
+            after,
+          )
             .order("id", { ascending: true })
-            .range(from, to)
+            .range(0, EXPORT_PAGE_SIZE - 1)
             .returns<Array<{ id: string; supersedes_note_id: string }>>(),
         ),
   ]);
@@ -275,14 +319,17 @@ export async function loadClinicalRecordsForExport(args: {
       ].filter((id): id is string => typeof id === "string" && id.length > 0),
     ),
   ];
-  const authors = await readAllForSessions<{ id: string; display_name: string }>(authorIds, (ids, from, to) =>
-    supabase
-      .from("practitioners")
-      .select("id, display_name")
-      .eq("studio_id", studioId)
-      .in("id", ids)
+  const authors = await readAllForSessions<{ id: string; display_name: string }>(authorIds, (ids, after) =>
+    afterId(
+      supabase
+        .from("practitioners")
+        .select("id, display_name")
+        .eq("studio_id", studioId)
+        .in("id", ids),
+      after,
+    )
       .order("id", { ascending: true })
-      .range(from, to)
+      .range(0, EXPORT_PAGE_SIZE - 1)
       .returns<Array<{ id: string; display_name: string }>>(),
   );
   if (authors === null) return { ok: false };

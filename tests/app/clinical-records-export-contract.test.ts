@@ -33,6 +33,10 @@ function code(rel: string): string {
     .join("\n");
 }
 
+// One page of a child read: the filtered query wrapped in the id cursor
+// (afterId(..., after)), ordered by id, from row 0 of what is after it.
+const KEYSET_PAGE = /\bafter,\s*\)\s*\.order\("id", \{ ascending: true \}\)\s*\.range\(0, EXPORT_PAGE_SIZE - 1\)/;
+
 describe("HON-46 export reads exclude private and payment data", () => {
   it("never names the personal-notes table, its columns, payment or planning fields", () => {
     for (const rel of [FILES.queries, FILES.page, FILES.action]) {
@@ -65,7 +69,7 @@ describe("HON-46 export reads exclude private and payment data", () => {
     const at = src.indexOf('.from("laser_entries")');
     expect(at).toBeGreaterThan(-1);
     const chain = src.slice(at, src.indexOf(".returns<", at));
-    expect(chain).toContain(".range(from, to)");
+    expect(chain).toMatch(KEYSET_PAGE);
     expect(chain).toContain('.order("id"');
     expect(code(FILES.scope)).not.toMatch(/"Laser treatment entries"/);
   });
@@ -76,10 +80,14 @@ describe("HON-46 export reads exclude private and payment data", () => {
       const at = src.indexOf(`.from("${table}")`);
       expect(at, table).toBeGreaterThan(-1);
       const chain = src.slice(at, src.indexOf(".returns<", at));
-      expect(chain, `${table} must be ranged`).toContain(".range(from, to)");
+      expect(chain, `${table} must be paged by id cursor`).toMatch(KEYSET_PAGE);
       expect(chain, `${table} must have a stable order`).toContain('.order("id"');
     }
     expect(src).toMatch(/readAllPages|readAllForSessions/);
+    // No offset paging anywhere (Codex P2 4350759725): an offset into mutable
+    // id order skips a row when one before it is deleted between pages.
+    expect(src).not.toMatch(/\.range\(from\b/);
+    expect(src).toMatch(/return after === null \? query : \(query as unknown as [^\n]*\)\.gt\("id", after\);/);
   });
 
   it("filters clinical notes by CIVIL day, sessions by the studio-local window (Codex P1 4302644059)", () => {
@@ -105,7 +113,7 @@ describe("HON-46 export reads exclude private and payment data", () => {
     expect(at).toBeGreaterThan(-1);
     const chain = src.slice(at, src.indexOf(".returns<", at));
     expect(chain).toContain('.in("id", ids)');
-    expect(chain).toContain(".range(from, to)");
+    expect(chain).toMatch(KEYSET_PAGE);
     expect(src.match(/\.from\("practitioners"\)/g) ?? []).toHaveLength(1);
     expect(src).toMatch(/if \(authors === null\) return \{ ok: false \};/);
   });
@@ -117,7 +125,7 @@ describe("HON-46 export reads exclude private and payment data", () => {
     const chain = src.slice(at, src.indexOf(".returns<", at));
     expect(chain).toContain('.eq("client_id", clientId)');
     expect(chain).toContain('.not("supersedes_note_id", "is", null)');
-    expect(chain).toContain(".range(from, to)");
+    expect(chain).toMatch(KEYSET_PAGE);
     // Not bounded to the exported range: a later revision still obsoletes.
     expect(chain).not.toContain("occurred_at");
     expect(src).toMatch(/supersedingLinks === null\)\s*\{\s*return \{ ok: false \};/);
