@@ -231,7 +231,8 @@ describe("0169 — the command surface is untouched", () => {
         group by c.relname order by c.relname`,
     );
     const byTable = Object.fromEntries(r.rows.map((x) => [x.t, x.n]));
-    expect(byTable.sessions).toBe(4);
+    // 0214 adds the jurisdiction write guard alongside the four clinical guards.
+    expect(byTable.sessions).toBe(5);
     expect(byTable.treatment_images).toBe(3);
     // The remaining tables keep whatever guards they had; assert non-zero so a
     // dropped trigger cannot hide behind this cutover.
