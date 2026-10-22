@@ -26,7 +26,8 @@ function fail(message: string): never {
 // The owner practitioner row is NEVER inserted here. It is created by the
 // existing handle_new_user() trigger (migration 0081) on the owner's first
 // invited sign-in, which stamps terms/privacy acceptance. No Stripe, no fee
-// columns, no email automation, no services/availability seeding.
+// columns, no provider action, no services/availability seeding. An optional
+// verified jurisdiction goes through its audited service-only command.
 export async function createStudioWithOwnerInvite(
   formData: FormData,
 ): Promise<void> {
@@ -58,6 +59,9 @@ export async function createStudioWithOwnerInvite(
     timezone: formData.get("timezone"),
     bookingDescription: formData.get("booking_description"),
     address: formData.get("address"),
+    paymentPair: formData.get("payment_pair"),
+    paymentPairVerified: formData.get("payment_pair_verified"),
+    paymentVerificationReference: formData.get("payment_verification_reference"),
   });
   if (!parsed.ok) fail(parsed.error);
   const input = parsed.value;
@@ -147,6 +151,33 @@ export async function createStudioWithOwnerInvite(
       metadata: { slug: input.slug, reason: "studio_insert_failed" },
     });
     fail(`Failed to create studio: ${studioErr?.message ?? "unknown error"}`);
+  }
+
+  // A verified pair is recorded only through the existing service-only command,
+  // after the operator gate. No choice/evidence means no row: UNKNOWN, never CA.
+  if (input.paymentJurisdiction) {
+    const pair = input.paymentJurisdiction;
+    const { data: result, error } = await admin.rpc("set_studio_payment_jurisdiction", {
+      p_studio_id: studio.id,
+      p_payment_country: pair.country,
+      p_payment_currency: pair.currency,
+      p_actor: user.id,
+      p_reason: "Verified studio onboarding country and charge currency",
+      p_acknowledge_configured_prices: false,
+      p_verification_reference: pair.verificationReference,
+    });
+    const row = Array.isArray(result) ? result[0] : result;
+    if (error || row?.out_result !== "initialized") {
+      // Only this just-created empty studio is eligible for compensation.
+      const { error: cleanupErr } = await admin.from("studios").delete().eq("id", studio.id);
+      await logAdminAction({
+        actorUserId: user.id, actorEmail: user.email ?? null,
+        studioId: studio.id, targetType: "studio", targetId: studio.id,
+        action: "studio_created", outcome: "failed",
+        metadata: { slug: input.slug, reason: "jurisdiction_verification_failed", cleanupFailed: !!cleanupErr },
+      });
+      fail("The verified payment setup could not be recorded. Studio creation did not complete.");
+    }
   }
 
   // 2. Create the owner invitation. On failure, compensating-delete the

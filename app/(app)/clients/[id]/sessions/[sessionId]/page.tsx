@@ -77,6 +77,7 @@ import { MarkAppointmentCompleteControl } from "@/components/appointment/mark-co
 import { PostcareSection } from "@/components/appointment/postcare-section";
 import { ClinicalNotesSection } from "@/components/clinical-notes-section";
 import { getAppointmentSettlements } from "@/lib/billing/appointment-settlement";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import {
   FAST_CHART_PARAM,
   resolveAutoEditBlockId,
@@ -148,6 +149,7 @@ export default async function SessionDetailPage({
     sessionPaymentEligibility,
     pricedForPage,
     settlementLoad,
+    settlementJurisdiction,
   ] = await Promise.all([
     // FETT photos: this visit's photos, signed for 60 s under the Photos tab's
     // trust boundary. Depends only on (studio, client, session).
@@ -180,6 +182,14 @@ export default async function SessionDetailPage({
     linkedAppointmentId
       ? timed("session-chart.settlements", () =>
           getAppointmentSettlements(studio.id, [linkedAppointmentId]),
+        )
+      : Promise.resolve(null),
+    // PAY-CCY-04. The studio's currency, to label a NEW settlement amount.
+    // Same condition as the settlement read; a failed read labels nothing
+    // rather than assuming Canada.
+    linkedAppointmentId
+      ? timed("session-chart.payment-jurisdiction", () =>
+          getStudioPaymentJurisdiction(studio.id),
         )
       : Promise.resolve(null),
   ]);
@@ -1065,6 +1075,17 @@ export default async function SessionDetailPage({
           appointmentId={linkedAppointmentId}
           settledMethod={liveSettlement?.method ?? null}
           settledAmountCents={liveSettlement?.amountCents ?? null}
+          settledCurrency={liveSettlement?.currency ?? null}
+          settlementCurrency={
+            settlementJurisdiction?.ok
+              ? settlementJurisdiction.jurisdiction.currency
+              : null
+          }
+          settlementCountry={
+            settlementJurisdiction?.ok
+              ? settlementJurisdiction.jurisdiction.country
+              : null
+          }
           settlementQuotedAmountCents={settlementQuotedAmountCents}
           // The UI's copy of the database's own rule: only a COMPLETED
           // appointment can carry a disposition (0187 answers anything else

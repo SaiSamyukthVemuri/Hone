@@ -46,7 +46,8 @@ type ReminderProps = {
   startsAt: Date;
   endsAt: Date;
   timezone: string;
-  cancellationUrl: string;
+  // HON-47. Null when the studio has switched client cancellation off.
+  cancellationUrl: string | null;
   rescheduleUrl: string | null;
   // Token-FREE studio portal login URL (/portal/login?studio=slug). NOT a
   // one-time magic link. Optional so non-sender callers can omit it.
@@ -149,16 +150,24 @@ function reminderHtml(opts: {
               </td></tr>`
             : ""
         }
-        <tr><td style="padding:24px 0 32px 0;">
+        ${
+          // HON-47. The whole row goes when the studio offers neither action,
+          // rather than leaving an empty padded cell mid-email.
+          p.rescheduleUrl || p.cancellationUrl
+            ? `<tr><td style="padding:24px 0 32px 0;">
           ${
             p.rescheduleUrl
               ? `<a href="${p.rescheduleUrl}" style="display:inline-block; padding:12px 20px; margin-right:12px; background:#0A0A0A; color:#FFFFFF; font-family:-apple-system, system-ui, sans-serif; font-size:14px; font-weight:500; text-decoration:none; border-radius:6px;">Reschedule</a>`
               : ""
           }
-          <a href="${p.cancellationUrl}" style="font-family:-apple-system, system-ui, sans-serif; font-size:13px; color:#0A0A0A; letter-spacing:0.1em; text-transform:uppercase;">
-            Cancel
-          </a>
-        </td></tr>
+          ${
+            p.cancellationUrl
+              ? `<a href="${p.cancellationUrl}" style="font-family:-apple-system, system-ui, sans-serif; font-size:13px; color:#0A0A0A; letter-spacing:0.1em; text-transform:uppercase;">Cancel</a>`
+              : ""
+          }
+        </td></tr>`
+            : ""
+        }
         ${
           p.portalLoginUrl
             ? `<tr><td style="padding:20px 0; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.6; color:#0A0A0A;">
@@ -199,7 +208,7 @@ ${p.treatmentTimeLine ? `\n${p.treatmentTimeLine}\n` : ""}
 ${intake && p.intakeUrl ? `\n${intake.heading}\n\n${intake.body}\n\n${INTAKE_CTA_LABEL}: ${p.intakeUrl}\n\n${INTAKE_IGNORE_LINE}\n` : ""}
 ${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\n` : ""}
 ${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}
-Cancel: ${p.cancellationUrl}
+${p.cancellationUrl ? `Cancel: ${p.cancellationUrl}` : ""}
 ${p.portalLoginUrl ? `\nView your forms, appointments, and care instructions in your secure client portal:\n${p.portalLoginUrl}\n` : ""}`;
 }
 

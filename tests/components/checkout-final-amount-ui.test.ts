@@ -53,6 +53,7 @@ const ELIGIBILITY = {
   stripeAccountId: "acct_1",
   stripeCustomerId: "cus_1",
   stripePaymentMethodId: "pm_1",
+  paymentCurrency: "cad",
   existingAttempts: [],
 };
 
@@ -71,6 +72,7 @@ function render(
   overrides: {
     amountResult?: unknown;
     isOwner?: boolean;
+    paymentCurrency?: "cad" | "usd";
   } = {},
 ): string {
   // `in`, not `??`: `amountResult: null` is a MEANINGFUL case (the pricing
@@ -82,7 +84,10 @@ function render(
     createElement(SessionPaymentPrepareCard, {
       sessionId: "sess-1",
       clientId: "client-1",
-      eligibility: ELIGIBILITY,
+      eligibility: {
+        ...ELIGIBILITY,
+        paymentCurrency: overrides.paymentCurrency ?? ELIGIBILITY.paymentCurrency,
+      },
       amountResult: amountResult as never,
       isOwner: overrides.isOwner ?? true,
       prepareAction: noop as never,
@@ -121,6 +126,19 @@ describe("the prepare form offers an editable final charge", () => {
   it("labels the field so it is reachable by name, not by position", () => {
     const html = render();
     expect(html).toMatch(/Final charge \(CAD\)/);
+    // PAY-CCY-04: a Canadian studio's label and accessible name are unchanged.
+    expect(inputTag(html, "final_amount_dollars")).toMatch(
+      /aria-label="Final charge in Canadian dollars"/,
+    );
+  });
+
+  it("PAY-CCY-04: a US studio's final charge is labelled in US dollars", () => {
+    const html = render({ paymentCurrency: "usd" });
+    expect(html).toMatch(/Final charge \(USD\)/);
+    expect(html).not.toMatch(/\(CAD\)|Canadian dollars/);
+    expect(inputTag(html, "final_amount_dollars")).toMatch(
+      /aria-label="Final charge in US dollars"/,
+    );
   });
 
   it("uses a numeric-friendly keyboard and a real touch target", () => {

@@ -94,6 +94,23 @@ function WizardForm({ error }: { error: string | null }) {
         action={createStudioWithOwnerInvite}
         className="flex max-w-xl flex-col gap-5"
       >
+        <fieldset className="flex flex-col gap-3 rounded-md border border-neutral-200 p-4">
+          <legend className={LABEL}>Verified payment jurisdiction</legend>
+          <p className={HINT}>Verify the business country and intended charge currency with the studio owner. Leave unresolved when evidence is missing; payment setup stays blocked.</p>
+          <label htmlFor="payment_pair" className={LABEL}>Country and charge currency</label>
+          <select id="payment_pair" name="payment_pair" defaultValue="" className={`${FIELD} min-h-[44px]`}>
+            <option value="">Not yet verified</option>
+            <option value="CA/cad">Canada · CAD</option>
+            <option value="US/usd">United States · USD</option>
+          </select>
+          <label htmlFor="payment_verification_reference" className={LABEL}>Verification reference</label>
+          <input id="payment_verification_reference" name="payment_verification_reference" maxLength={1000} className={`${FIELD} min-h-[44px]`} />
+          <p className={HINT}>Reference the verified onboarding record. Do not enter contact or payment details.</p>
+          <label className="flex min-h-[44px] items-center gap-2 text-sm">
+            <input type="checkbox" name="payment_pair_verified" className="mt-1" />
+            Both the country and charge currency were verified with the studio owner.
+          </label>
+        </fieldset>
         <div>
           <label htmlFor="name" className={LABEL}>
             Studio name

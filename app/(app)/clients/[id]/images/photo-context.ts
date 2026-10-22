@@ -75,3 +75,13 @@ export function treatmentPhotoAreaLabel(
 export function sessionBlockOptionLabel(block: SessionBlockAreaInput): string {
   return composeBlockAreaText(block) ?? "Area not recorded";
 }
+
+
+// 0159: stage choices are for ordinary visits, never immutable legacy records.
+export function canLabelPhotoAttachment(
+  context: "client" | "session" | "block",
+  session: { recordStatus: string | null } | null,
+): boolean {
+  return context !== "client" && session !== null &&
+    session.recordStatus !== "finalized" && session.recordStatus !== "void";
+}

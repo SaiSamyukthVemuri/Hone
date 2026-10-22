@@ -6,13 +6,20 @@ import {
   bookingCardCopy,
   connectBannerCopy,
   currentRuntimeMode,
+  gateConnectBannerOnCountry,
   deriveConnectCapability,
   derivePortalCardCapability,
-  portalCardCopy,
+  portalCardCopyGatedOnCountry,
   publishableKeyOk,
 } from "@/lib/payments/payment-status-presenter";
 import { PaymentsSettings, type StripeStatusView } from "./PaymentsSettings";
 import { FeeAmountsCard } from "./FeeAmountsCard";
+import { PaymentCountryCard } from "./PaymentCountryCard";
+import { getStudioPaymentCountryStatus } from "@/lib/billing/payment-jurisdiction-server";
+import {
+  currencyLabel,
+  describePaymentCountry,
+} from "@/lib/billing/payment-jurisdiction";
 
 export const dynamic = "force-dynamic";
 
@@ -118,7 +125,26 @@ export default async function PaymentsSettingsPage() {
         hasActiveAuthorizationTemplate: authTemplate != null,
         publishableKeyOk: publishableKeyOk(),
       });
-  const banner = connectBannerCopy(runtimeMode, connect);
+  // PAY-CCY-04. The studio's payment country/currency and its Stripe account's
+  // reported country, for the CURRENT deployment mode. Owner-only page (gated
+  // above); the studio id is the server-resolved one.
+  const countryStatus = await getStudioPaymentCountryStatus(
+    studio.id,
+    inferStripeLivemode(),
+  );
+  const jurisdiction = countryStatus.jurisdiction.ok
+    ? countryStatus.jurisdiction.jurisdiction
+    : null;
+  const countrySummary = describePaymentCountry({
+    jurisdiction,
+    account: countryStatus.account,
+  });
+  // Codex P2 4249120309: Stripe's "ready" never outranks a blocked or
+  // unverifiable payment country.
+  const banner = gateConnectBannerOnCountry(
+    connectBannerCopy(runtimeMode, connect),
+    countrySummary,
+  );
 
   return (
     <section className="flex flex-col gap-8">
@@ -129,11 +155,12 @@ export default async function PaymentsSettingsPage() {
           {bookingCardCopy(bookingCardCollection())}
         </p>
       </div>
+      <PaymentCountryCard summary={countrySummary} />
       <PaymentsSettings
         status={status}
         runtimeMode={runtimeMode}
         banner={banner}
-        portalCardMessage={portalCardCopy(portalCard)}
+        portalCardMessage={portalCardCopyGatedOnCountry(portalCard, countrySummary)}
         bookingCardMessage={bookingCardCopy(bookingCardCollection())}
         paidServiceCount={paidServiceCount}
         hasCancellationPolicy={hasCancellationPolicy}
@@ -145,6 +172,7 @@ export default async function PaymentsSettingsPage() {
       <FeeAmountsCard
         initialLateCancelCents={studio.late_cancel_fee_cents}
         initialNoShowCents={studio.no_show_fee_cents}
+        currencyCode={jurisdiction ? currencyLabel(jurisdiction.currency) : null}
       />
     </section>
   );

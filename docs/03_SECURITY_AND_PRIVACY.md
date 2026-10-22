@@ -1,5 +1,11 @@
 # 03 Security and privacy
 
+> **HIPAA status (issue #828):** Hone is **not** verified HIPAA compliant.
+> The PHI flow map, processor register and gap matrix are in
+> [security/hipaa-readiness-assessment.md](./security/hipaa-readiness-assessment.md).
+> Agreements, configuration and cost decisions are in
+> [security/hipaa-decision-packet.md](./security/hipaa-decision-packet.md).
+
 ## Session payment amount authority
 
 The **reference price** is resolved **server-side** from current records at the
@@ -232,6 +238,17 @@ They are now route handlers (`app/ingest/[...path]/route.ts`, `app/monitoring/ro
 - **Tests:** pinned by `tests/lib/observability/egress-proxy.test.ts`. A real capture server records what reaches the upstream from `/clients/<uuid>` and `/calendar/<uuid>`. Its negative control sends the same request through Next's rewrite proxy, which forwards `Referer`, `Cookie` and `X-Forwarded-For`.
 - **Not covered:** Vercel's own platform request logs. Not a BAA.
 
+### Clinical-records export: what is audited, exactly (HON-46, #828 G-13)
+
+The owner-only export at `/clients/<id>/records/export` records its own use in `audit_logs`, stated precisely:
+- **A preview is always audited before any record is read.** `clinical_records_previewed` is written first, and if that write fails, nothing is shown (fail closed).
+- **The Print button's print is audited.** `clinical_records_printed` is written before the print dialog opens, and the print is bound to the preview on screen by a server-minted token.
+- **The browser's own print (Ctrl/Cmd+P) is gated, not audited.** The document is hidden in print media unless the audited Print button armed it. That gate is CLIENT-SIDE.
+
+It is never "every print is audited".
+
+Both events are written only through `record_clinical_records_audit` (migration `0233`, **pending, not applied**). The database derives the studio from the client and the actor from `auth.uid()` as the studio's active owner. It allow-lists and shape-checks the scope metadata: a session scope must name that client's own session, and a range must run forward and span at most 366 days. A print must cite that owner's own preview of that client. Direct member inserts of `clinical_records_*`, or of any other practitioner's actor id, are refused. No client telemetry starts on the export document, and it is served with `Referrer-Policy: no-referrer`.
+
 ## 3. Portal session model
 
 | Step | What happens |
@@ -281,6 +298,12 @@ Token storage: the DB only ever holds `hashToken(rawToken)`. A DB compromise doe
 
   `tests/lib/analytics/vercel-url-redaction.test.ts` walks every dynamic page under the opted-in trees with synthetic ids, so a new route is covered automatically. Vercel's own `route` field is already a template and is left untouched.
 - **PostHog token-path redaction follows the canonical registry (#828).** `TOKEN_PATH_PREFIXES` in `lib/analytics/client-boundary.ts` is derived from `TOKEN_ROUTE_PREFIXES` (`lib/security/token-routes.ts`). The hand-written copy lacked `/invitation`, so an invitation token in a marketing pageview's `$prev_pageview_pathname` or `$referrer` passed unredacted. No client-side link from `/invitation` to a marketing page was found, so this is defence in depth against drift. Pinned by Scenario 12 in `tests/lib/analytics/client-boundary.test.ts`.
+- **PostHog URL properties lose record ids, and `/flags` is off (#828 G-07/G-26).** Browser events leave only from canonical marketing pages, but their URL-valued properties can name app pages.
+  - **Where app URLs appear:** a `$referrer` of `/clients/<uuid>/sessions/<uuid>` after a practitioner follows a link to a marketing page, plus `$initial_*`, `$session_entry_*`, and `$set` / `$set_once`.
+  - **The fix:** `guardBrowserEvent` treats every named URL key, and any key ending in `_url`, `_referrer` or `_pathname`, as a URL. It applies the same segment rules as Vercel Analytics (`lib/analytics/path-ids.ts`): `[id]` and `[token]`, percent-decoded first. It does the same in `properties`, `$set` and `$set_once`. PostHog's own ids (`$session_id`, `distinct_id`) are kept.
+  - **`/flags`:** posthog-js 1.404.1 sends the person properties, including the first page that browser loaded, in every `/flags` request body. `before_send` never sees that request. Hone uses no feature flags, so `advanced_disable_flags: true` stops the request entirely.
+  - **Tests:** `tests/lib/analytics/posthog-url-ids.test.ts` pins both, including the SDK's own gate on that option name.
+  - **Not a BAA.**
 - **Server-side PostHog events are checked by key AND value (#828 G-26 row 18).** `captureServerEvent` (`lib/analytics/server.ts`) already allowed only six property keys. Each now also has a value shape:
   - `studio_id` must be a UUID;
   - `modality`, `source` and `provider` must come from closed enums;
@@ -288,12 +311,6 @@ Token storage: the DB only ever holds `hashToken(rawToken)`. A DB compromise doe
   - the event name must belong to the closed set of supported server event constants.
 
   A mismatch drops the whole event, fail closed, and only the property name is logged. `distinctId` identity (raw practitioner UUID or `studio:<uuid>`) is unchanged; that is an identity decision for Sam. `tests/lib/analytics/server-property-shapes.test.ts` checks what the real posthog-node client puts on the wire, with zero network.
-- **PostHog URL properties lose record ids, and `/flags` is off (#828 G-07/G-26).** Browser events leave only from canonical marketing pages, but their URL-valued properties can name app pages.
-  - **Where app URLs appear:** a `$referrer` of `/clients/<uuid>/sessions/<uuid>` after a practitioner follows a link to a marketing page, plus `$initial_*`, `$session_entry_*`, and `$set` / `$set_once`.
-  - **The fix:** `guardBrowserEvent` treats every named URL key, and any key ending in `_url`, `_referrer` or `_pathname`, as a URL. It applies the same segment rules as Vercel Analytics (`lib/analytics/path-ids.ts`): `[id]` and `[token]`, percent-decoded first. It does the same in `properties`, `$set` and `$set_once`. PostHog's own ids (`$session_id`, `distinct_id`) are kept.
-  - **`/flags`:** posthog-js 1.404.1 sends the person properties, including the first page that browser loaded, in every `/flags` request body. `before_send` never sees that request. Hone uses no feature flags, so `advanced_disable_flags: true` stops the request entirely.
-  - **Tests:** `tests/lib/analytics/posthog-url-ids.test.ts` pins both, including the SDK's own gate on that option name.
-  - **Not a BAA.**
 - **Why a pathname denylist is not enough:** the analytics script can already have loaded on a previous safe page in the same SPA navigation. By the time a runtime denylist runs, the script is already in the document and ready to observe the new URL.
 
 ## 7. Production config fail-closed (PR #143)
@@ -310,7 +327,7 @@ This is the honest list. Do not hide gaps.
 |---|---|
 | Email reminder outbox / claim discipline | **Resolved (PR #189, migration 0080).** The 24h / 2h reminder cron claims each row atomically via `claim_email_send` before sending (mirror of the SMS claim from 0049: conditional UPDATE on sent-is-null + attempts cap + 5-minute stale-claim window). Overlapping cron runs can no longer double-send. |
 | Hashed `calendar_feed_token` storage | **Partially resolved (PR #182, phase 1).** Migration 0079 added `practitioners.calendar_feed_token_hash` (SHA-256 hex, backfilled); the feed route looks up by hash only and no longer SELECTs the raw column. The raw column is kept for rollout compatibility until phase 2 (settings UI shows the URL only at rotation time, then the raw value is nulled). Phase 2 is not started; do not proceed until real Google/Apple calendar subscriptions are confirmed still polling cleanly after phase 1. |
-| Comprehensive automated coverage | **Substantial.** Vitest suite (~1,990 tests as of PR #225) plus the GitHub Actions CI job (PR #154) run typecheck, lint, build, `npm test`, `git diff --check`, and `npm run check:stripe-gates` on every PR; the separate `db-integration` job (PR #220/#221) applies the full migration chain to a local Supabase Postgres and runs real RLS/trigger/claim-RPC behavior tests plus the generated types drift check (Supabase CLI pinned to 2.102.0 for grants parity; bumps require re-verification). **CORRECTION (2026-07-27): browser E2E is NOT deferred** — `playwright.config.ts` plus 97 specs under `e2e/` exist in this tree (the count tracks this branch, not deployed production coverage) and run as the `browser-e2e` CI job. Manual smoke (docs/12) remains a complement for real provider sends, real Stripe Elements and real webhook delivery, not the only browser check. |
+| Comprehensive automated coverage | **Substantial.** Vitest suite (~1,990 tests as of PR #225) plus the GitHub Actions CI job (PR #154) run typecheck, lint, build, `npm test`, `git diff --check`, and `npm run check:stripe-gates` on every PR; the separate `db-integration` job (PR #220/#221) applies the full migration chain to a local Supabase Postgres and runs real RLS/trigger/claim-RPC behavior tests plus the generated types drift check (Supabase CLI pinned to 2.102.0 for grants parity; bumps require re-verification). **CORRECTION (2026-07-27): browser E2E is NOT deferred** — `playwright.config.ts` plus 111 specs under `e2e/` exist in this tree and run as the `browser-e2e` CI job (the count tracks the branch, not production: `tests/docs/docs-drift-pr226.test.ts` compares it against `e2e/*.spec.ts` on disk, so re-derive it whenever specs are added or composed). Manual smoke (docs/12) remains a complement for real provider sends, real Stripe Elements and real webhook delivery, not the only browser check. |
 | Real legal review of consent / cancellation / card-authorization wording | **Required before live payment.** Drafts exist in code (`docs/05_CONSENT_AND_FORMS.md`). Enforceability under Ontario law depends on lawyer-reviewed wording. |
 | Stripe metadata search for stale pending recovery | **Test mode acceptable today.** PR #146 reconciles within a 60-minute window with the deterministic idempotency key; older pending attempts surface "needs manual review." A live-mode PR must add `paymentIntents.search` by metadata before any blind retry. |
 | Receipts / charge notice email | **Built in test mode (PR #175)** for session payments on `payment_charge_attempts`: a receipt email is sent on a successful test charge. Still open for live: content/legal review of the template and a charge notice for the legacy manual-fee path. |

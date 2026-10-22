@@ -1,5 +1,5 @@
-import Link from "next/link";
 import { requirePlatformAdmin } from "@/lib/auth/require-platform-admin";
+import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   loadPlatformPaymentSummary,
@@ -12,6 +12,15 @@ import {
   type ReminderSchedulerStatus,
 } from "@/lib/cron/reminder-heartbeat";
 import { markDemoContactedAction } from "./actions";
+import { leadAlertConfigurationStatus } from "@/lib/platform-leads/alert-delivery";
+import { leadAnchorId } from "@/lib/platform-leads/alert-status";
+import {
+  failedPageFrom,
+  LeadAlertCell,
+  LeadAlertsCard,
+  loadLeadAlerts,
+  type LeadAlertsView,
+} from "./lead-alerts";
 
 // PR #265: the reminder-scheduler status is read from the Upstash heartbeat
 // (not Supabase), so it is computed outside loadConsole's Promise.all.
@@ -226,8 +235,13 @@ async function loadConsole(): Promise<{
   };
 }
 
-export default async function AdminIndexPage() {
+export default async function AdminIndexPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   await requirePlatformAdmin();
+  const params = (await searchParams) ?? {};
   const { studios, overview, practitioners, waitlist, waitlistTotal, demoRequests } =
     await loadConsole();
   // PR B (smart payment status): platform payment summary: capability
@@ -240,6 +254,15 @@ export default async function AdminIndexPage() {
     await readReminderHeartbeat(),
     Date.now(),
   );
+  // LEAD-ALERT-01 (#826): new-lead alert email status, for the card and for
+  // each lead row below. Its own load: a failure here is shown, not thrown.
+  const leadAlerts = await loadLeadAlerts(
+    createAdminClient(),
+    demoRequests.map((r) => r.id),
+    waitlist.map((r) => r.id),
+    failedPageFrom(params.leadAlertsFailedPage),
+  );
+  const leadAlertConfig = leadAlertConfigurationStatus();
 
   return (
     <div className="flex flex-col gap-10">
@@ -255,14 +278,15 @@ export default async function AdminIndexPage() {
       <AuditLogCard />
       <OverviewCards overview={overview} />
       <ReminderSchedulerCard status={reminderScheduler} />
+      <LeadAlertsCard config={leadAlertConfig} view={leadAlerts} />
       <StudiosSection studios={studios} />
       <QuickLinks />
 
       <hr className="border-neutral-200 dark:border-neutral-800" />
 
       <PractitionersSection practitioners={practitioners} />
-      <WaitlistSection rows={waitlist} total={waitlistTotal} />
-      <DemoRequestsSection rows={demoRequests} />
+      <WaitlistSection rows={waitlist} total={waitlistTotal} alerts={leadAlerts} />
+      <DemoRequestsSection rows={demoRequests} alerts={leadAlerts} />
     </div>
   );
 }
@@ -656,7 +680,15 @@ function PractitionersSection({
   );
 }
 
-function WaitlistSection({ rows, total }: { rows: WaitlistRow[]; total: number }) {
+function WaitlistSection({
+  rows,
+  total,
+  alerts,
+}: {
+  rows: WaitlistRow[];
+  total: number;
+  alerts: LeadAlertsView;
+}) {
   return (
     <SectionShell
       title="Waitlist"
@@ -669,17 +701,24 @@ function WaitlistSection({ rows, total }: { rows: WaitlistRow[]; total: number }
               <Th>Email</Th>
               <Th>Practice name</Th>
               <Th>Created</Th>
+              <Th>Alert</Th>
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
             {rows.map((r) => (
-              <tr key={r.id}>
+              <tr key={r.id} id={leadAnchorId("early_access", r.id)} className="scroll-mt-6">
                 <Td className="font-medium">{r.email}</Td>
                 <Td className="text-neutral-600 dark:text-neutral-400">
                   {r.practice_name ?? ""}
                 </Td>
                 <Td className="text-neutral-500">
                   <FormattedDateTime iso={r.created_at} />
+                </Td>
+                <Td>
+                  <LeadAlertCell
+                    alert={alerts.byWaitlist.get(r.id)}
+                    loadError={alerts.loadError}
+                  />
                 </Td>
               </tr>
             ))}
@@ -690,7 +729,13 @@ function WaitlistSection({ rows, total }: { rows: WaitlistRow[]; total: number }
   );
 }
 
-function DemoRequestsSection({ rows }: { rows: DemoRequestRow[] }) {
+function DemoRequestsSection({
+  rows,
+  alerts,
+}: {
+  rows: DemoRequestRow[];
+  alerts: LeadAlertsView;
+}) {
   return (
     <SectionShell title="Demo requests" subtitle={`Latest ${rows.length} shown.`}>
       <div className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800">
@@ -706,12 +751,13 @@ function DemoRequestsSection({ rows }: { rows: DemoRequestRow[] }) {
               <Th>Tool</Th>
               <Th>Status</Th>
               <Th>Created</Th>
+              <Th>Alert</Th>
               <Th></Th>
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
             {rows.map((r) => (
-              <tr key={r.id}>
+              <tr key={r.id} id={leadAnchorId("demo_request", r.id)} className="scroll-mt-6">
                 <Td className="font-medium">{r.name}</Td>
                 <Td className="text-neutral-600 dark:text-neutral-400">
                   {r.email}
@@ -724,6 +770,12 @@ function DemoRequestsSection({ rows }: { rows: DemoRequestRow[] }) {
                 <Td>{r.status ?? "new"}</Td>
                 <Td className="text-neutral-500">
                   <FormattedDateTime iso={r.created_at} />
+                </Td>
+                <Td>
+                  <LeadAlertCell
+                    alert={alerts.byDemoRequest.get(r.id)}
+                    loadError={alerts.loadError}
+                  />
                 </Td>
                 <Td>
                   {r.status !== "contacted" && (

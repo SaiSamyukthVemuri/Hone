@@ -1,6 +1,10 @@
 "use server";
 
+import { questionnaireForRow, QUESTIONNAIRE_UNAVAILABLE, type Questionnaire } from "@/lib/intake/questionnaire";
 import { isDeepStrictEqual } from "node:util";
+
+import { intakeRevision, INTAKE_CONFLICT } from "@/lib/intake/revision";
+import { writeIntakeRevision } from "@/lib/intake/write-revision";
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
@@ -16,8 +20,6 @@ import { sendIntakeUpdateRequestToClient } from "@/lib/email/send-appointment";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import {
   findInvalidChoiceAnswers,
-  PRACTITIONER_ENTERABLE_STEPS,
-  TOTAL_STEPS,
 } from "@/lib/intake/questions";
 import {
   assistedKeysChanged,
@@ -167,6 +169,38 @@ export async function markIntakeReviewedAction(formData: FormData): Promise<Revi
   }
 
   const supabase = await createClient();
+
+  // 0246 requires every serving/rollback reader to decode known provenance
+  // or hold its writes. NULL is the explicit legacy case; absent/malformed
+  // non-NULL provenance must never become a reviewed clinical record here.
+  // This scoped read is NOT authorization for the later UPDATE. Its complete
+  // atomic tenant/client/submission/actor predicates remain below. The exact
+  // 0246 immutable-snapshot trigger prevents a runtime writer from changing
+  // this catalogue between this read and that UPDATE.
+  try {
+    const { data: intake, error: catalogueError } = await supabase
+      .from("client_intake_forms")
+      .select("id, questionnaire_snapshot")
+      .eq("id", intakeId)
+      .eq("studio_id", studio.id)
+      .eq("client_id", clientId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (catalogueError) {
+      logIntakeActionFailure("intake_review_catalogue_read_failed", {
+        code: (catalogueError as { code?: string }).code,
+      });
+      return { ok: false, error: REVIEW_NOT_PERMITTED };
+    }
+    if (!intake || intake.id !== intakeId) return { ok: false, error: REVIEW_NOT_PERMITTED };
+    if (questionnaireForRow(intake.questionnaire_snapshot).kind === "invalid") {
+      logIntakeActionFailure("intake_review_catalogue_unavailable", { code: "catalogue_unavailable" });
+      return { ok: false, error: QUESTIONNAIRE_UNAVAILABLE };
+    }
+  } catch {
+    logIntakeActionFailure("intake_review_catalogue_read_failed", { code: "read_unavailable" });
+    return { ok: false, error: REVIEW_NOT_PERMITTED };
+  }
 
   // THE single authority. Every predicate is in the statement:
   //   id          : the intake being reviewed
@@ -652,11 +686,12 @@ export async function resendIntakeEmailAction(
 //      automatically;
 //   2. assistedKeysRejected() refuses the whole request when one is present,
 //      so a bug surfaces instead of half-succeeding;
-//   3. migration 0162's trigger raises `check_violation` on ANY authenticated
-//      status -> 'submitted' transition. That is why these actions use
-//      createClient() and NOT createAdminClient(): the service role is exempt
-//      from that rule, so reaching for it would hand this code the ability to
-//      submit on the client's behalf. It must never have it.
+//   3. session/RLS authority is checked before0243's service-only CAS. Assisted
+//      callers hard-code save/handoff, never submit; neither operation nor
+//      scope/actor comes from browser input. Source guards pin those exact
+//      governed calls (not arbitrary service-role writes). Migration0162 still
+//      refuses direct authenticated submission; the service role is trusted,
+//      so the server-only caller/operation boundary remains load-bearing.
 //
 // WHAT THIS DOES NOT PROVE
 // ------------------------
@@ -666,7 +701,7 @@ export async function resendIntakeEmailAction(
 // cannot author the provenance. See lib/intake/entry-provenance.ts.
 
 export type AssistedSaveResult =
-  | { ok: true; updatedAt: string }
+  | { ok: true; revision: string }
   | { ok: false; error: string };
 
 export type AssistedHandoffResult =
@@ -692,7 +727,8 @@ async function loadAssistedIntake(
       studioId: string;
       actor: { practitioner_id: string; display_name: string };
       responses: Record<string, unknown>;
-      updatedAt: string;
+      revision: string;
+      catalogue: Questionnaire;
     }
   | { ok: false; error: string }
 > {
@@ -702,7 +738,7 @@ async function loadAssistedIntake(
   const supabase = await createClient();
   const { data: intake, error: intakeErr } = await supabase
     .from("client_intake_forms")
-    .select("id, status, responses, updated_at")
+    .select("id, status, responses, revision, questionnaire_snapshot")
     .eq("id", intakeId)
     .eq("studio_id", auth.studioId)
     .eq("client_id", auth.client.id)
@@ -718,7 +754,10 @@ async function loadAssistedIntake(
   }
   // Absent / other studio / other client / deleted / already submitted all
   // collapse here into one message. No existence oracle.
-  if (!intake) return { ok: false, error: ASSISTED_NOT_PERMITTED };
+  if (!intake || intakeRevision(intake.revision) === null) return { ok: false, error: ASSISTED_NOT_PERMITTED };
+
+  const catalogue = questionnaireForRow(intake.questionnaire_snapshot);
+  if (catalogue.kind === "invalid") return { ok: false, error: QUESTIONNAIRE_UNAVAILABLE };
 
   return {
     ok: true,
@@ -728,14 +767,15 @@ async function loadAssistedIntake(
       display_name: auth.practitionerName,
     },
     responses: (intake.responses as Record<string, unknown>) ?? {},
-    updatedAt: intake.updated_at as string,
+    revision: intakeRevision(intake.revision)!,
+    catalogue,
   };
 }
 
 // Record the client's answers to one questionnaire step.
 //
-// `expectedUpdatedAt` is an optimistic-concurrency token, not identity: it is
-// the `updated_at` this editor last saw. Because the UPDATE assigns the whole
+// `expectedRevision` is an optimistic-concurrency token, not identity: it is
+// the monotonic revision this editor last saw. Because the UPDATE assigns the whole
 // `responses` jsonb, a concurrent save (most plausibly the client through
 // their own still-live link) would otherwise be silently clobbered by whoever
 // wrote last. With the predicate in place the loser is REFUSED and told to
@@ -745,29 +785,31 @@ export async function saveAssistedIntakeStepAction(payload: {
   clientId: string;
   step: number;
   responses: Record<string, unknown>;
-  expectedUpdatedAt: string;
+  expectedRevision?: unknown;
 }): Promise<AssistedSaveResult> {
-  const { intakeId, clientId, expectedUpdatedAt } = payload;
+  const { intakeId, clientId } = payload;
+  const expectedRevision = intakeRevision(payload.expectedRevision);
   if (typeof intakeId !== "string" || !intakeId) {
     return { ok: false, error: ASSISTED_NOT_PERMITTED };
   }
   if (typeof clientId !== "string" || !clientId) {
     return { ok: false, error: ASSISTED_NOT_PERMITTED };
   }
-  if (typeof expectedUpdatedAt !== "string" || !expectedUpdatedAt) {
+  if (expectedRevision === null) {
     return { ok: false, error: ASSISTED_STALE };
   }
 
   // The step must be one a practitioner may fill in. The acknowledgements
   // step is not in this set, so it cannot even be addressed here.
   const step = Math.floor(Number(payload.step));
-  const enterable = PRACTITIONER_ENTERABLE_STEPS.some((s) => s.id === step);
-  if (!enterable) return { ok: false, error: ASSISTED_CLIENT_OWNED };
-
-  const answers = sanitizePractitionerAssistedAnswers(payload.responses);
 
   const loaded = await loadAssistedIntake(intakeId, clientId);
   if (!loaded.ok) return loaded;
+  if (loaded.revision !== expectedRevision) return { ok: false, error: INTAKE_CONFLICT };
+  const enterable = loaded.catalogue.steps.slice(0, -1).some((s) => s.id === step);
+  if (!enterable) return { ok: false, error: ASSISTED_CLIENT_OWNED };
+  const answers = sanitizePractitionerAssistedAnswers(payload.responses, loaded.catalogue.steps, loaded.catalogue.clientOwnedKeys);
+
 
   // Refuse loudly if the payload would CHANGE a client-owned answer.
   //
@@ -778,7 +820,7 @@ export async function saveAssistedIntakeStepAction(payload: {
   // boundary is unchanged in strength: a practitioner still cannot set, alter
   // or clear one, and sanitization drops these keys regardless. This is the
   // loud backstop for a UI bug or a crafted request.
-  const forbidden = assistedKeysChanged(payload.responses, loaded.responses);
+  const forbidden = assistedKeysChanged(payload.responses, loaded.responses, loaded.catalogue.clientOwnedKeys);
   if (forbidden.length > 0) {
     logIntakeActionFailure("assisted_client_owned_key_rejected", {
       message: `rejected ${forbidden.length} client-owned key change(s)`,
@@ -802,7 +844,7 @@ export async function saveAssistedIntakeStepAction(payload: {
   // Navigation posts the entire editor map: unchanged historical choices are
   // not newly authored answers. Changed malformed choices still refuse, and
   // the client's final submit validates the full applicable questionnaire.
-  const invalidChoices = findInvalidChoiceAnswers(merged).filter(
+  const invalidChoices = findInvalidChoiceAnswers(merged, loaded.catalogue.steps).filter(
     (key) => Object.hasOwn(answers, key) && !isDeepStrictEqual(answers[key], loaded.responses[key]),
   );
   if (invalidChoices.length > 0) {
@@ -822,51 +864,13 @@ export async function saveAssistedIntakeStepAction(payload: {
     new Date().toISOString(),
   );
 
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("client_intake_forms")
-    .update({ responses: merged, current_step: step })
-    .eq("id", intakeId)
-    .eq("studio_id", loaded.studioId)
-    .eq("client_id", clientId)
-    .is("deleted_at", null)
-    .eq("status", "in_progress")
-    .eq("updated_at", expectedUpdatedAt)
-    .select("id, client_id, updated_at");
-
-  if (error) {
-    logIntakeActionFailure("assisted_intake_save_failed", {
-      code: (error as { code?: string }).code,
-      message: error.message,
-    });
-    return { ok: false, error: ASSISTED_DB_FAILURE };
-  }
-
-  const rows = data ?? [];
-  if (rows.length !== 1) {
-    if (rows.length > 1) {
-      logIntakeActionFailure("assisted_intake_multi_row", {
-        message: `expected 1 affected row, got ${rows.length}`,
-      });
-      return { ok: false, error: ASSISTED_NOT_PERMITTED };
-    }
-    // Zero rows: the row moved under us. The concurrency token is the most
-    // likely predicate to have missed, and it is the only one the
-    // practitioner can act on.
-    return { ok: false, error: ASSISTED_STALE };
-  }
-  if (rows[0].client_id !== clientId) {
-    // Unreachable while the .eq("client_id", ...) predicate is present; kept
-    // so a future edit that drops it fails closed rather than silently
-    // writing to a foreign route.
-    logIntakeActionFailure("assisted_intake_client_mismatch", {
-      message: "affected row client_id did not match the constrained route",
-    });
-    return { ok: false, error: ASSISTED_NOT_PERMITTED };
-  }
-
+  const written = await writeIntakeRevision(createAdminClient(), {
+    intakeId, studioId: loaded.studioId, clientId, expectedRevision,
+    responses: merged, step, operation: "save",
+  });
+  if (!written.ok) return written;
   revalidatePath(`/clients/${clientId}/intake`);
-  return { ok: true, updatedAt: rows[0].updated_at as string };
+  return { ok: true, revision: written.revision };
 }
 
 // Hand the intake back to the client for their own acknowledgements.
@@ -890,10 +894,14 @@ export async function handOffAssistedIntakeAction(
     return { ok: false, error: ASSISTED_NOT_PERMITTED };
   }
 
+  const expectedRevision = intakeRevision(formData.get("expected_revision"));
+  if (expectedRevision === null) return { ok: false, error: INTAKE_CONFLICT };
   const loaded = await loadAssistedIntake(intakeId, clientId);
   if (!loaded.ok) return { ok: false, error: loaded.error };
+  if (loaded.revision !== expectedRevision) return { ok: false, error: INTAKE_CONFLICT };
 
-  const patch: Record<string, unknown> = { current_step: TOTAL_STEPS };
+  const lastStep = loaded.catalogue.steps[loaded.catalogue.steps.length - 1].id;
+  const patch: Record<string, unknown> = { current_step: lastStep };
 
   // Only stamp a handover onto an intake that actually carries assisted
   // provenance. A practitioner who opened the editor and recorded nothing has
@@ -911,34 +919,12 @@ export async function handOffAssistedIntakeAction(
     };
   }
 
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("client_intake_forms")
-    .update(patch)
-    .eq("id", intakeId)
-    .eq("studio_id", loaded.studioId)
-    .eq("client_id", clientId)
-    .is("deleted_at", null)
-    .eq("status", "in_progress")
-    // Same concurrency guard as the save. This UPDATE also assigns the whole
-    // responses jsonb (when there is provenance to stamp), so without it a
-    // client draft-save landing between the read above and this write would be
-    // reinstated from a stale snapshot, including re-setting a checkbox the
-    // client had just cleared.
-    .eq("updated_at", loaded.updatedAt)
-    .select("id, client_id");
-
-  if (error) {
-    logIntakeActionFailure("assisted_intake_handoff_failed", {
-      code: (error as { code?: string }).code,
-      message: error.message,
-    });
-    return { ok: false, error: ASSISTED_DB_FAILURE };
-  }
-  const rows = data ?? [];
-  if (rows.length !== 1 || rows[0].client_id !== clientId) {
-    return { ok: false, error: ASSISTED_NOT_PERMITTED };
-  }
+  const written = await writeIntakeRevision(createAdminClient(), {
+    intakeId, studioId: loaded.studioId, clientId, expectedRevision,
+    responses: (patch.responses ?? loaded.responses) as Record<string, unknown>,
+    step: lastStep, operation: "handoff",
+  });
+  if (!written.ok) return written;
 
   // Mint the client's link only AFTER the write succeeded. Same helper the
   // existing "Copy link" path uses; the URL is returned to the practitioner's

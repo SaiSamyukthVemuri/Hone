@@ -8,12 +8,18 @@ import {
   type SettlementActionResult,
 } from "@/app/(app)/appointment-settlement-actions";
 import {
-  PRACTITIONER_METHODS,
   SETTLEMENT_ACTION_LABEL,
   SETTLEMENT_BADGE_LABEL,
+  practitionerMethodsFor,
+  settlementActionLabel,
   type SettlementMethod,
 } from "@/lib/billing/settlement-types";
-import { formatCadFromCents } from "@/lib/billing/cad-amount";
+import {
+  currencyLabel,
+  formatMoneyWithCurrency,
+  type PaymentCountry,
+  type PaymentCurrency,
+} from "@/lib/billing/payment-jurisdiction";
 
 // PAY-SETTLE. The outcome controls, rendered UNDER the existing Charge path
 // inside SessionPaymentPrepareCard.
@@ -37,6 +43,21 @@ type Props = {
   /** The live disposition, when one already exists. */
   settledMethod?: SettlementMethod | null;
   settledAmountCents?: number | null;
+  /**
+   * PAY-CCY-04. The currency the live disposition was RECORDED in (its own
+   * row, stamped by 0214), and the studio's currency for a new one. Required,
+   * so no caller can render an unlabelled amount by omission; null is shown
+   * as "(currency unknown)", never as Canadian.
+   */
+  settledCurrency: PaymentCurrency | null;
+  currency: PaymentCurrency | null;
+  /**
+   * PAY-CCY-07 (option B). The studio's payment COUNTRY, which decides which
+   * outcomes are offered and how "Paid another way" is worded. Required so no
+   * caller silently gets the Canadian list for a US studio; null (unread)
+   * keeps today's full list.
+   */
+  paymentCountry: PaymentCountry | null;
   /** Hidden entirely once Hone has verified card money — see the card. */
   defaultAmountCents?: number | null;
   /**
@@ -62,6 +83,9 @@ export function AppointmentSettlementControls({
   isOwner,
   settledMethod = null,
   settledAmountCents = null,
+  settledCurrency,
+  currency,
+  paymentCountry,
   defaultAmountCents = null,
   onRecorded,
 }: Props) {
@@ -89,7 +113,7 @@ export function AppointmentSettlementControls({
           {SETTLEMENT_BADGE_LABEL[settledMethod]}
         </span>
         {typeof settledAmountCents === "number" && (
-          <> {"·"} {formatCadFromCents(settledAmountCents)}</>
+          <> {"·"} {formatMoneyWithCurrency(settledAmountCents, settledCurrency)}</>
         )}
         <p className="mt-1 text-neutral-500 dark:text-neutral-400">
           Recorded by the studio, not verified by Hone.
@@ -144,9 +168,10 @@ export function AppointmentSettlementControls({
     });
   };
 
+  const offered = practitionerMethodsFor(paymentCountry);
   const methods: SettlementMethod[] = isOwner
-    ? [...PRACTITIONER_METHODS, "waived"]
-    : [...PRACTITIONER_METHODS];
+    ? [...offered, "waived"]
+    : [...offered];
 
   return (
     <div
@@ -179,7 +204,7 @@ export function AppointmentSettlementControls({
                 : "border-neutral-300 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
             }`}
           >
-            {SETTLEMENT_ACTION_LABEL[m]}
+            {settlementActionLabel(m, paymentCountry)}
           </button>
         ))}
       </div>
@@ -194,11 +219,7 @@ export function AppointmentSettlementControls({
       {open && (
         <div className="mt-3 flex flex-col gap-2">
           <label className="text-xs text-neutral-700 dark:text-neutral-300">
-            {open === "waived"
-              ? "Amount waived"
-              : open === "still_owes"
-                ? "Amount still owed"
-                : "Amount collected"}
+            {settlementAmountLabel(open, currency)}
             <input
               inputMode="decimal"
               value={amount}
@@ -248,6 +269,24 @@ export function AppointmentSettlementControls({
 
 // Local, deliberately strict. The server re-parses and the database bounds the
 // value, so this exists to give immediate feedback, never to decide anything.
+/**
+ * The amount field's label, naming the studio's currency. Codex P2
+ * 4249009847: a failed studio-currency read (null) is said out loud, exactly
+ * like the recorded line, never left blank and never assumed Canadian.
+ */
+export function settlementAmountLabel(
+  method: SettlementMethod,
+  currency: PaymentCurrency | null,
+): string {
+  const what =
+    method === "waived"
+      ? "Amount waived"
+      : method === "still_owes"
+        ? "Amount still owed"
+        : "Amount collected";
+  return `${what} (${currency ? currencyLabel(currency) : "currency unknown"})`;
+}
+
 function parseAmountToCents(raw: string): number | null {
   const text = raw.trim();
   if (!/^\d{1,5}(\.\d{1,2})?$/.test(text)) return null;

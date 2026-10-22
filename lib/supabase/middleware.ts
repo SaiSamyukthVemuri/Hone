@@ -1,6 +1,12 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isAdmin } from "@/lib/admin";
+import { FRONT_DESK_PATH, isFrontDeskPath } from "@/lib/receptionist/membership";
+import {
+  ADMIN_RETURN_COOKIE,
+  ADMIN_RETURN_MAX_AGE_SECONDS,
+  safeAdminReturnPath,
+} from "@/lib/auth/return-path";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -153,12 +159,32 @@ export async function updateSession(request: NextRequest) {
     // X-Twilio-Signature over the full URL (the ledger row id rides in its
     // query) plus sorted POST fields, validated before any DB write. Exact
     // path, for the reason above.
-    pathname === "/api/twilio/message-status";
+    pathname === "/api/twilio/message-status" ||
+    // DELIVERY-EVENTS-01 Resend delivery-event webhook. Authenticates via
+    // the Svix signature (svix-id / svix-timestamp / svix-signature over the
+    // raw body, five-minute replay window), verified inside the route handler
+    // before any DB write. Exact path: do NOT broaden to /api/resend/*.
+    pathname === "/api/resend/webhook";
 
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    return NextResponse.redirect(url);
+    const response = NextResponse.redirect(url);
+    // LEAD-ALERT-01 (Codex P2 4248920454): an operator opening an /admin link
+    // (the lead alert's) signs in and lands back on it. Only a validated
+    // same-origin /admin path is remembered, in a short-lived httpOnly cookie
+    // the sign-in callback consumes; nothing else is ever a return target.
+    const returnTo = safeAdminReturnPath(`${pathname}${request.nextUrl.search}`);
+    if (returnTo) {
+      response.cookies.set(ADMIN_RETURN_COOKIE, returnTo, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: request.nextUrl.protocol === "https:",
+        path: "/",
+        maxAge: ADMIN_RETURN_MAX_AGE_SECONDS,
+      });
+    }
+    return response;
   }
 
   // PR #253 invite-only gate: an AUTHENTICATED user with no active
@@ -221,6 +247,40 @@ export async function updateSession(request: NextRequest) {
       const usable =
         activeStudioIds.length === 1 ||
         (activeStudioIds.length > 1 && hasValidSelection);
+      // STUDIO-READY-02d (#824): a receptionist has NO practitioners row, so
+      // they arrive here with zero memberships. They may reach /front-desk and
+      // nothing else: every other path is sent to /front-desk instead of
+      // /no-access. Read only in the zero-practitioner branch, so a
+      // practitioner's request pays nothing and routes exactly as before. The
+      // read is RLS-scoped to the caller's own rows (0216), and the page
+      // re-resolves membership itself (requireReceptionistWithStudio).
+      if (activeStudioIds.length === 0) {
+        const { data: deskRows, error: deskErr } = await supabase
+          .from("studio_receptionists")
+          .select("studio_id")
+          .eq("user_id", user.id)
+          .eq("active", true)
+          .limit(1);
+        // A FAILED read is not "no membership" (Codex P2 4243919027 on #845).
+        // Defer to /front-desk, whose guard re-reads the membership itself and
+        // fails loudly if the read still fails, rather than telling a real
+        // receptionist they have no access. This grants nothing: the page decides.
+        if (deskErr || (deskRows ?? []).length > 0) {
+          if (isFrontDeskPath(pathname)) return supabaseResponse;
+          const deskUrl = request.nextUrl.clone();
+          deskUrl.pathname = FRONT_DESK_PATH;
+          deskUrl.search = "";
+          return NextResponse.redirect(deskUrl);
+        }
+      }
+      // A user who is ALSO a receptionist somewhere, with 2+ practitioner
+      // memberships and no selection, must still reach /front-desk (Codex P2
+      // 4243982486 on #850): the practitioner chooser governs the practitioner
+      // app, not the front desk. This grants nothing: every /front-desk page
+      // re-resolves receptionist membership itself and refuses anyone without one.
+      if (!usable && activeStudioIds.length > 1 && isFrontDeskPath(pathname)) {
+        return supabaseResponse;
+      }
       if (!usable) {
         const url = request.nextUrl.clone();
         url.pathname = "/no-access";

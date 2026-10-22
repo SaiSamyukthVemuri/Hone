@@ -101,6 +101,8 @@ const ELIGIBLE = {
   stripeAccountId: "acct_SERVER",
   stripeCustomerId: "cus_SERVER",
   stripePaymentMethodId: "pm_SERVER",
+  // PAY-CCY-02: the studio's currency, as the eligibility helper reads it.
+  paymentCurrency: "cad",
   existingAttempts: [],
 };
 
@@ -557,6 +559,15 @@ describe("H · lineage cannot be substituted through the form", () => {
       status: "ready",
       amount_cents: 10_000,
     });
+  });
+
+  it("PAY-CCY-02: a US studio's attempt is prepared in usd, whatever the form says", async () => {
+    eligibility = { ...ELIGIBLE, paymentCurrency: "usd" };
+    const fd = form({ final: "100.00", reason: "Client discount" });
+    fd.set("currency", "cad");
+    const res = await prepareSessionPaymentChargeAction(fd);
+    expect(res.ok).toBe(true);
+    expect(inserted[0]).toMatchObject({ currency: "usd", amount_cents: 10_000 });
   });
 });
 

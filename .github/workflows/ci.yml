@@ -688,7 +688,14 @@ jobs:
     # 482 observed passes/4skips/0assertion failures before cancellation.
     # Worst measured projection22.15min + finiteheadroom => hard25.
     # Keep target <10 min per shard and targeted hard15; investigate slow npm ci.
-    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 25 || 15 }}
+    # HON-18 proof workload: ordinary coverage plus formerly skipped storage
+    # cases and a second, synthetic-native-only server invocation. Run39620772010
+    # already took15m59s with those cases skipped; native20 was9.1m unsharded.
+    # The24 native cases are disjoint6/6/6/6 (3way8/8/8), one worker per runner.
+    # Allow second build/storage/teardown headroom with a finite35m ceiling;
+    # investigate augmented runs over25m. This is new work, not a new target for
+    # unchanged ordinary coverage; non-machine targeted jobs retain15m.
+    timeout-minutes: ${{ (needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')) && 35 || 15 }}
     strategy:
       fail-fast: false
       matrix:
@@ -727,10 +734,28 @@ jobs:
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
+
+      # Fail the required job if storage cannot exercise the selected photo
+      # cases. A missing service must not silently turn acceptance into skips.
+      - name: Verify isolated photo storage prerequisite
+        run: |
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          const response = await fetch('http://127.0.0.1:54321/storage/v1/version');
+          if (!response.ok) throw new Error('Local storage prerequisite unavailable');
+          const db = new pg.Client({ connectionString: 'postgresql://postgres:postgres@127.0.0.1:54322/postgres' });
+          try {
+            await db.connect();
+            const { rows } = await db.query('select id, public from storage.buckets where id = $1', ['treatment-images']);
+            if (rows.length !== 1 || rows[0].public !== false) throw new Error('Local treatment-images bucket must exist and remain private');
+          } finally {
+            await db.end();
+          }
+          NODE
 
       # Playwright browsers are ~150MB and were previously re-downloaded on
       # every browser job (Chromium + FFmpeg + headless shell). Keyed to the
@@ -801,6 +826,38 @@ jobs:
           # deterministic.
           HONE_E2E_FAKE_RESEND: "1"
 
+      # Preserve ordinary flag-OFF coverage above. Only this supplemental
+      # invocation enables six synthetic identities; deployed runtimes refuse
+      # this gate. Existing config propagates it to the local server only.
+      - name: Native Senior and Junior 3G acceptance
+        id: native3g
+        if: needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.changes.outputs.browser_extended }}" = "true" ]; then
+            SHARD_TOTAL=4
+          else
+            SHARD_TOTAL="${{ needs.changes.outputs.browser_shard_total }}"
+          fi
+          npx playwright test e2e/machine-create-mode-journey.spec.ts --project=chromium --grep='native 3G (durability|text durability|uncommitted recovery)' --fully-parallel --workers=1 --shard=${{ matrix.shard }}/${SHARD_TOTAL} --retries=0 --max-failures=1 --reporter=list,json --output=test-results/native-3g-shard-${{ matrix.shard }}
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const report = JSON.parse(readFileSync(process.env.PLAYWRIGHT_JSON_OUTPUT_FILE, 'utf8'));
+          const tests = [];
+          const collect = (suite) => {
+            for (const spec of suite.specs ?? []) tests.push(...spec.tests);
+            for (const child of suite.suites ?? []) collect(child);
+          };
+          for (const suite of report.suites ?? []) collect(suite);
+          if (report.errors?.length || tests.length === 0 || tests.some((test) => test.expectedStatus !== 'passed' || test.results.length !== 1 || test.results[0].status !== 'passed')) {
+            throw new Error('Native acceptance requires actual passing cases, with no skips or retries');
+          }
+          console.log(`Native acceptance: ${tests.length} actual passes, zero skips/retries`);
+          NODE
+        env:
+          HONE_SYNTHETIC_MACHINE_PROFILE: "1"
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/native-3g-shard-${{ matrix.shard }}/results.json
+
       - name: Upload Playwright traces on failure
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -831,6 +888,7 @@ jobs:
           fi
           echo "job status at timing: $JOB_STATUS"
           echo "browser step outcome: $E2E_OUTCOME"
+          echo "native 3G outcome  : ${{ steps.native3g.outcome }}"
           if [ "$E2E_OUTCOME" = "cancelled" ]; then
             echo "NOTE: cancelled. Most likely the job exceeded its timeout budget."
           fi

@@ -105,18 +105,27 @@ describe("reminder route preserves claim-before-send, idempotency, and auth", ()
     expect(ROUTE_CODE).not.toMatch(/105 \* 60|135 \* 60/);
   });
 
-  it("claims BEFORE sending and records the result AFTER", () => {
-    const claimIdx = ROUTE_CODE.indexOf("claimEmailSendOutcome(");
-    const sendIdx = ROUTE_CODE.indexOf("result = await sendFn(");
-    const recordIdx = ROUTE_CODE.indexOf("recordEmailResult(admin, appt.id, emailType, result.ok)");
-    expect(claimIdx).toBeGreaterThan(-1);
-    expect(sendIdx).toBeGreaterThan(claimIdx);
-    expect(recordIdx).toBeGreaterThan(sendIdx);
+  // 0247 (D8 extension): the email pass no longer claims, sends or records in
+  // the route. One governed operation owns claim -> authorize -> send -> record
+  // (behaviour: tests/lib/email/appointment-send-transport.test.ts), so the
+  // route pin is that the email pass goes through it and nothing else.
+  const EMAIL_PASS = ROUTE_CODE.slice(ROUTE_CODE.indexOf("async function sendReminderPass"), ROUTE_CODE.indexOf("async function sendSmsReminderPass"));
+  const SMS_PASS = ROUTE_CODE.slice(ROUTE_CODE.indexOf("async function sendSmsReminderPass"), ROUTE_CODE.indexOf("async function runLeadAlertRecovery"));
+
+  it("the email pass sends only through the governed 0247 operation", () => {
+    expect(EMAIL_PASS.length).toBeGreaterThan(200);
+    expect(EMAIL_PASS.match(/await sendAppointmentReminderOperation\(/g)).toHaveLength(1);
+    for (const bypass of ["claimEmailSend", "recordEmailResult(", "send24hReminderToClient(", "send2hReminderToClient(", "sendIntakeReminderToClient(", "emails.send("]) {
+      expect(EMAIL_PASS).not.toContain(bypass);
+    }
   });
 
-  it("re-checks appointment status immediately before send in BOTH the email and SMS passes (cancellation race)", () => {
-    const reChecks = ROUTE_CODE.match(/\.status !== "confirmed"/g) ?? [];
-    expect(reChecks.length).toBeGreaterThanOrEqual(2);
+  it("the SMS pass re-checks status before send (cancellation race)", () => {
+    // The email pass's status re-check now lives in SQL (0247 snapshot_authority,
+    // DB-held proof), so this pin is scoped to the SMS pass, where it still is.
+    expect(SMS_PASS.length).toBeGreaterThan(2000);
+    expect((SMS_PASS.match(/\.status !== "confirmed"/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(SMS_PASS.indexOf('freshSms.status !== "confirmed"')).toBeLessThan(SMS_PASS.indexOf("result = await sendFn("));
   });
 
   it("alerts the operator when a reminder exhausts max attempts (safe metadata only)", () => {
@@ -191,9 +200,9 @@ describe("an unauthorized reminder invocation is side-effect free (PR OPS-01)", 
     const gate = handler.indexOf("isAuthorizedCronRequest(req)");
     expect(gate).toBeGreaterThan(-1);
     for (const sideEffect of [
+      // 0247: the email claim/record live inside sendReminderPass's operation,
+      // so the legacy claimEmailSendOutcome(/recordEmailResult( tokens are gone.
       "createAdminClient(",
-      "claimEmailSendOutcome(",
-      "recordEmailResult(",
       "recordReminderRunSuccess(",
       "sendReminderPass(",
       "sendSmsReminderPass(",
@@ -201,6 +210,10 @@ describe("an unauthorized reminder invocation is side-effect free (PR OPS-01)", 
     ]) {
       const at = handler.indexOf(sideEffect);
       if (at > -1) expect(at).toBeGreaterThan(gate);
+    }
+    // Not vacuous: the handler really performs these side effects after the gate.
+    for (const present of ["createAdminClient(", "recordReminderRunSuccess(", "sendReminderPass(", "sendSmsReminderPass("]) {
+      expect(handler.indexOf(present)).toBeGreaterThan(gate);
     }
   });
 

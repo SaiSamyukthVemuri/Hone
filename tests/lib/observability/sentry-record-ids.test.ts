@@ -48,7 +48,7 @@ describe("G-25: record ids are removed from every Sentry error-event surface", (
         request: { url: `https://hone.care/clients/${CLIENT}/sessions/${SESSION}?tab=photos#top` },
         exception: { values: [{ type: "Error", value: `appointment ${APPT} not found in studio ${STUDIO}` }] },
       }),
-    );
+    )!;
     expectNoRecordId(out, "error event");
     expect(out.request?.url).toBe("https://hone.care/clients/[id]/sessions/[id]");
     expect(out.transaction).toBe("GET /clients/[id]/sessions/[id]");
@@ -78,7 +78,7 @@ describe("G-25: record ids are removed from every Sentry error-event surface", (
         },
         fingerprint: ["{{ default }}", `/clients/${CLIENT}`],
       } as Partial<ErrorEvent>),
-    );
+    )!;
     expectNoRecordId(out, "logentry/fingerprint");
     expect(out.logentry?.message).toBe("Failed to load client [id]");
     expect((out.logentry as { formatted?: string }).formatted).toBe("Failed to load client [id] in studio [id]");
@@ -106,7 +106,7 @@ describe("G-25: record ids are removed from every Sentry error-event surface", (
         },
         threads: { values: [{ id: 1, stacktrace: { frames: [{ abs_path: `https://hone.care/clients/${CLIENT}` }] } }] },
       } as Partial<ErrorEvent>),
-    );
+    )!;
     expectNoRecordId(out, "exception structure / threads");
     const frames = out.exception?.values?.[0]?.stacktrace?.frames ?? [];
     expect(frames[0]).toEqual({ filename: chunk, lineno: 12, colno: 3 });
@@ -120,14 +120,14 @@ describe("G-25: record ids are removed from every Sentry error-event surface", (
         contexts: { trace: { trace_id: TRACE_ID, span_id: SPAN_ID } },
         transaction: `GET /clients/${CLIENT}`,
       }),
-    );
+    )!;
     expect(out.event_id).toBe(EVENT_ID);
     expect((out.contexts?.trace as Record<string, unknown>).trace_id).toBe(TRACE_ID);
     expect((out.contexts?.trace as Record<string, unknown>).span_id).toBe(SPAN_ID);
   });
 
   it("still canonicalizes a token route to [Redacted] first (F-PRIV-001 unchanged)", () => {
-    const out = scrubErrorEvent(errorEvent({ request: { url: `https://hone.care/intake/${CLIENT}` } }));
+    const out = scrubErrorEvent(errorEvent({ request: { url: `https://hone.care/intake/${CLIENT}` } }))!;
     expect(out.request?.url).toBe(`https://hone.care/intake/${TOKEN_PLACEHOLDER}`);
   });
 });
@@ -158,7 +158,7 @@ describe("G-25: breadcrumbs and spans", () => {
         { description: `select * from sessions where id = '${SESSION}'`, data: { "db.statement": `... '${APPT}'` } },
         { description: `GET https://db.example.test/rest/v1/clients?id=eq.${CLIENT}`, data: { "http.url": `https://db.example.test/rest/v1/clients?id=eq.${CLIENT}` } },
       ] as unknown as Event["spans"],
-    } as Event);
+    } as Event)!;
     expectNoRecordId(out, "transaction event");
     expect(out.transaction).toBe("GET /clients/[id]");
     expect((out.contexts?.trace as Record<string, unknown>).trace_id).toBe(TRACE_ID);
@@ -175,27 +175,27 @@ describe("G-25: record ids as object KEYS (Codex P2 4301012675)", () => {
         request: { url: "https://hone.care/dashboard", data: { [APPT]: "body" } },
         user: { [STUDIO]: "member" } as unknown as ErrorEvent["user"],
       }),
-    );
+    )!;
     expectNoRecordId(out, "keys in extra/tags/contexts/request/user");
     expect((out.extra as Record<string, unknown>)["[id]"]).toBe("failed");
   });
 
   it("keeps both values when two id keys collapse to the same name", () => {
-    const out = scrubErrorEvent(errorEvent({ extra: { [CLIENT]: "a", [SESSION]: "b" } }));
+    const out = scrubErrorEvent(errorEvent({ extra: { [CLIENT]: "a", [SESSION]: "b" } }))!;
     expect(out.extra).toEqual({ "[id]": "a", "[id]#2": "b" });
   });
 
   it("keeps every value when a literal placeholder key follows a scrubbed one, in either order (Codex P2 4301073939)", () => {
-    const after = scrubErrorEvent(errorEvent({ extra: { [CLIENT]: "a", "[id]": "b", "[id]#2": "c" } }));
+    const after = scrubErrorEvent(errorEvent({ extra: { [CLIENT]: "a", "[id]": "b", "[id]#2": "c" } }))!;
     expect(Object.values(after.extra as Record<string, unknown>).sort()).toEqual(["a", "b", "c"]);
-    const before = scrubErrorEvent(errorEvent({ extra: { "[id]": "b", [CLIENT]: "a" } }));
+    const before = scrubErrorEvent(errorEvent({ extra: { "[id]": "b", [CLIENT]: "a" } }))!;
     expect(Object.values(before.extra as Record<string, unknown>).sort()).toEqual(["a", "b"]);
     expectNoRecordId(after, "collision keys");
   });
 
   it("leaves ordinary keys named like Object.prototype members unchanged (Codex P2 4301342389)", () => {
     const extra = JSON.parse('{"constructor":"a","toString":"b","hasOwnProperty":"c","valueOf":"d"}');
-    const out = scrubErrorEvent(errorEvent({ extra }));
+    const out = scrubErrorEvent(errorEvent({ extra }))!;
     expect(Object.keys(out.extra as object).sort()).toEqual(["constructor", "hasOwnProperty", "toString", "valueOf"]);
   });
 
@@ -217,7 +217,7 @@ describe("G-25: ids inside compound identifiers (Codex P2 4301012678)", () => {
         message: `event hone_booking_${APPT} for client_${CLIENT}_x and z${SESSION}q`,
         tags: { key: `studio${STUDIO}` },
       }),
-    );
+    )!;
     expectNoRecordId(out, "compound identifiers");
     expect(out.message).toBe("event hone_booking_[id] for client_[id]_x and z[id]q");
   });
@@ -232,7 +232,7 @@ describe("G-25: ids inside compound identifiers (Codex P2 4301012678)", () => {
         message: `load ${mixed} failed`,
         extra: { [upper]: "key" },
       }),
-    );
+    )!;
     const json = JSON.stringify(out).toLowerCase();
     for (const id of [upper, lower, mixed]) expect(json).not.toContain(id.toLowerCase());
     expect(out.request?.url).toBe("https://hone.care/clients/[id]/sessions/[id]");
@@ -240,21 +240,21 @@ describe("G-25: ids inside compound identifiers (Codex P2 4301012678)", () => {
   });
 
   it("removes a UUID glued to hex letters on either side (Codex P1 4301586679, on #903)", () => {
-    const out = scrubErrorEvent(errorEvent({ message: `abc${CLIENT} ${SESSION}fed deadbeef${APPT}cafe` }));
+    const out = scrubErrorEvent(errorEvent({ message: `abc${CLIENT} ${SESSION}fed deadbeef${APPT}cafe` }))!;
     expectNoRecordId(out, "hex-adjacent");
     expect(out.message).toBe("abc[id] [id]fed deadbeef[id]cafe");
   });
 
   it("removes a UUID whose hex digits are percent-encoded (Codex P2 4301707490)", () => {
     const ENCODED = `/clients/%36f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e%35 and %30a1b2c3d%2D4e5f-4061-8273-8495a6b7c8d%39`;
-    const out = scrubErrorEvent(errorEvent({ message: ENCODED, request: { url: `https://hone.care${ENCODED.split(" ")[0]}` } }));
+    const out = scrubErrorEvent(errorEvent({ message: ENCODED, request: { url: `https://hone.care${ENCODED.split(" ")[0]}` } }))!;
     expect(out.message).toBe("/clients/[id] and [id]");
     expect(out.request?.url).toBe("https://hone.care/clients/[id]");
   });
 
   it("does not touch a longer hex run that is not a UUID", () => {
     const notUuid = `a${CLIENT.replace(/-/g, "")}ff`; // dashless hex, like Sentry's own ids
-    const out = scrubErrorEvent(errorEvent({ message: `trace ${notUuid}` }));
+    const out = scrubErrorEvent(errorEvent({ message: `trace ${notUuid}` }))!;
     expect(out.message).toBe(`trace ${notUuid}`);
   });
 });
@@ -269,7 +269,7 @@ describe("G-25: the final whole-event sweep (backstop for fields no pass lists)"
         debug_meta: { images: [{ code_file: `/srv/${STUDIO}/chunk.js` }] },
         future_field: { nested: [{ deep: { deeper: `/clients/${CLIENT}` } }] },
       } as unknown as Partial<ErrorEvent>),
-    );
+    )!;
     expectNoRecordId(out, "whole-event sweep");
     expect(out.event_id).toBe(EVENT_ID);
   });
@@ -289,7 +289,7 @@ describe("G-25: the final whole-event sweep (backstop for fields no pass lists)"
       type: "transaction",
       transaction: `GET /clients/${CLIENT}`,
       sdkProcessingMetadata: meta,
-    } as unknown as Event);
+    } as unknown as Event)!;
     const outMeta = out.sdkProcessingMetadata as unknown as typeof meta;
     expect(outMeta.capturedSpanScope).toBe(scope);
     expect(outMeta.normalizedRequest).toBe(request);
@@ -303,7 +303,7 @@ describe("G-25: the final whole-event sweep (backstop for fields no pass lists)"
       errorEvent({
         sdkProcessingMetadata: { dynamicSamplingContext: { transaction: `/sessions/${SESSION}` } },
       } as unknown as Partial<ErrorEvent>),
-    );
+    )!;
     expect(JSON.stringify(out.sdkProcessingMetadata)).not.toContain(SESSION);
   });
 
@@ -313,7 +313,7 @@ describe("G-25: the final whole-event sweep (backstop for fields no pass lists)"
       errorEvent({
         debug_meta: { images: [{ type: "sourcemap", debug_id: DEBUG_ID, code_file: `app:///clients/${CLIENT}/page.js` }] },
       } as unknown as Partial<ErrorEvent>),
-    );
+    )!;
     const image = (out.debug_meta?.images?.[0] ?? {}) as Record<string, unknown>;
     expect(image.debug_id).toBe(DEBUG_ID);
     expect(image.code_file).toBe("app:///clients/[id]/page.js");
@@ -324,7 +324,7 @@ describe("G-25: the final whole-event sweep (backstop for fields no pass lists)"
       type: "transaction",
       contexts: { trace: { trace_id: TRACE_ID, span_id: SPAN_ID } },
       spans: [{ description: "load", data: { a: { b: { c: 1 } } } }] as unknown as Event["spans"],
-    } as Event);
+    } as Event)!;
     expect((out.spans as unknown as Array<{ data: unknown }>)[0]?.data).toEqual({ a: { b: { c: 1 } } });
     expect((out.contexts?.trace as Record<string, unknown>).trace_id).toBe(TRACE_ID);
   });
@@ -392,17 +392,17 @@ describe("THE GUARANTEE for encodings (ASCII percent-decoding to a fixed point)"
   });
 
   it("an id-bearing URL is written decoded, keeping the route shape", () => {
-    const out = scrubErrorEvent(errorEvent({ request: { url: "https://hone.care/clients/%36f1c2d3e%252D4a5b-4c6d-8e7f-90a1b2c3d4e5/sessions" } }));
+    const out = scrubErrorEvent(errorEvent({ request: { url: "https://hone.care/clients/%36f1c2d3e%252D4a5b-4c6d-8e7f-90a1b2c3d4e5/sessions" } }))!;
     expect(out.request?.url).toBe("https://hone.care/clients/[id]/sessions");
   });
 
   it("a token still changing after the decode bound is dropped, never sent undecoded", () => {
-    const out = scrubErrorEvent(errorEvent({ message: "at /clients/%2525252536f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5" }));
+    const out = scrubErrorEvent(errorEvent({ message: "at /clients/%2525252536f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5" }))!;
     expect(out.message).toBe("at [Redacted]");
   });
 
   it("tokens with % but no id keep their original encoding", () => {
-    const out = scrubErrorEvent(errorEvent({ message: "100% done q=a%20b bad %zz escape" }));
+    const out = scrubErrorEvent(errorEvent({ message: "100% done q=a%20b bad %zz escape" }))!;
     expect(out.message).toBe("100% done q=a%20b bad %zz escape");
   });
 });

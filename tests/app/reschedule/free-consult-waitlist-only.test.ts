@@ -429,7 +429,7 @@ describe("C — fetchNextAvailableDateForRescheduleAction refuses", () => {
 });
 
 describe("D — a FORGED submit refuses and mutates nothing", () => {
-  it("never reaches reschedule_appointment_v2", async () => {
+  it("never reaches the reschedule command, under EITHER name", async () => {
     const r = await rescheduleAppointmentViaTokenAction(submitForm());
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe(FREE_CONSULT_WAITLIST_ONLY_CODE);
@@ -441,7 +441,17 @@ describe("D — a FORGED submit refuses and mutates nothing", () => {
     expect(
       rpcCalls.some((c) => "p_new_cancellation_token_hash" in c.args),
     ).toBe(false);
-    expect(rpcCalls.some((c) => c.fn === "reschedule_appointment_v2")).toBe(
+    // BOTH NAMES. HON-47 moved the implementation to v3 and left v2 as a
+    // deploy-skew wrapper, so asserting only the old name would now pass
+    // vacuously — the app never calls it. The claim is that EMERG-01 refuses
+    // before any reschedule command runs, whichever name it would have used.
+    expect(
+      rpcCalls.some(
+        (c) =>
+          c.fn === "reschedule_appointment_v2" ||
+          c.fn === "reschedule_appointment_v3",
+      ),
+    ).toBe(
       false,
     );
   });
@@ -499,7 +509,7 @@ describe("E — a PAID consultation keeps its existing reschedule behaviour", ()
 
   it("reaches the command on submit", async () => {
     await rescheduleAppointmentViaTokenAction(submitForm());
-    expect(rpcCalls.map((c) => c.fn)).toContain("reschedule_appointment_v2");
+    expect(rpcCalls.map((c) => c.fn)).toContain("reschedule_appointment_v3");
   });
 });
 
@@ -514,7 +524,7 @@ describe("F — a $0 NON-consultation keeps its existing reschedule behaviour", 
 
   it("reaches the command on submit", async () => {
     await rescheduleAppointmentViaTokenAction(submitForm());
-    expect(rpcCalls.map((c) => c.fn)).toContain("reschedule_appointment_v2");
+    expect(rpcCalls.map((c) => c.fn)).toContain("reschedule_appointment_v3");
   });
 });
 
@@ -534,7 +544,7 @@ describe("G — an OPEN studio keeps its existing reschedule behaviour", () => {
 
   it("reaches the command on submit", async () => {
     await rescheduleAppointmentViaTokenAction(submitForm());
-    expect(rpcCalls.map((c) => c.fn)).toContain("reschedule_appointment_v2");
+    expect(rpcCalls.map((c) => c.fn)).toContain("reschedule_appointment_v3");
   });
 
   it("DEFAULT OFF — clearing the gate restores rescheduling everywhere", async () => {

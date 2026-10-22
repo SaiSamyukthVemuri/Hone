@@ -108,6 +108,14 @@ const h = vi.hoisted(() => {
 });
 
 
+vi.mock("@/lib/platform-leads/alert-delivery", () => ({
+  recoverLeadAlertsOnReminderTrigger: async () => ({ ran: false, reason: "offline_fixture" }),
+}));
+vi.mock("@/lib/email/delivery-ledger", () => ({
+  beginAppointmentEmailMessage: async () => null,
+  settleEmailMessage: async () => undefined,
+  settleOutcomeForEmailSend: () => "accepted",
+}));
 vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/cron/reminder-scan-coordinator")>();
   return { ...actual, createUpstashReminderScanCoordinator: () => ({

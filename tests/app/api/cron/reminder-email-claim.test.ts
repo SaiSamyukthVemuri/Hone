@@ -42,113 +42,29 @@ const EMAIL_PASS = CODE.slice(
   EMAIL_PASS_END,
 );
 
-describe("email reminder pass: claim before send", () => {
-  it("imports claimEmailSend + recordEmailResult from the email module", () => {
-    expect(ROUTE).toMatch(/claimEmailSendOutcome,/);
-    expect(ROUTE).toMatch(/recordEmailResult,/);
-    expect(ROUTE).toMatch(/from "@\/lib\/email\/send-appointment"/);
+describe("0247 governed email caller boundary", () => {
+  it("has a real email-only slice and a single governed dispatch site", () => {
+    expect(EMAIL_PASS.length).toBeGreaterThan(500);
+    expect(EMAIL_PASS.match(/await sendAppointmentReminderOperation\(/g)).toHaveLength(1);
+    expect(EMAIL_PASS).not.toMatch(/claimEmailSend|recordEmailResult|send24hReminderToClient|sendIntakeReminderToClient/);
   });
-
-  it("every send is claimed first: claim call precedes the send dispatch", () => {
-    const claimIdx = EMAIL_PASS.indexOf(
-      "await claimEmailSendOutcome(admin, appt.id, emailType)",
-    );
-    const sendIdx = EMAIL_PASS.indexOf("result = await sendFn(");
-    expect(claimIdx).toBeGreaterThan(-1);
-    expect(sendIdx).toBeGreaterThan(claimIdx);
+  it("passes candidate identity only, never cached joined render inputs", () => {
+    expect(EMAIL_PASS).toContain("sendAppointmentReminderOperation(admin, appt.studio_id, appt.id, emailType)");
+    expect(EMAIL_PASS).not.toMatch(/appt\.client|appt\.service|appt\.practitioner|appt\.studio\./);
   });
-
-  it("a lost claim skips the row without sending", () => {
-    expect(EMAIL_PASS).toMatch(
-      /if \(!claimed\) \{\s*\n?\s*stats\.skipped \+= 1;\s*\n?\s*return;\s*\n?\s*\}/,
-    );
-  });
-
-  it("the claim also precedes the missing-token failure record", () => {
-    const claimIdx = EMAIL_PASS.indexOf("await claimEmailSendOutcome(");
-    const tokenIdx = EMAIL_PASS.indexOf("if (!token) {");
-    expect(tokenIdx).toBeGreaterThan(claimIdx);
-  });
-
-  it("outcomes are recorded via record_email_result, never record_email_attempt", () => {
-    // recordEmailAttempt increments attempts; the claim already did.
-    // Using it after a claim would double-count, so the claimed pass
-    // must not reference it at all.
-    expect(EMAIL_PASS).toMatch(
-      /await recordEmailResult\(admin, appt\.id, emailType, false\);/,
-    );
-    expect(EMAIL_PASS).toMatch(
-      /await recordEmailResult\(admin, appt\.id, emailType, result\.ok\);/,
-    );
-    expect(EMAIL_PASS).not.toMatch(/recordEmailAttempt/);
-    expect(CODE).not.toMatch(/recordEmailAttempt/);
-  });
-
-  it("duplicate cron passes cannot double-send: no send path bypasses the claim", () => {
-    // Exactly one sendFn dispatch exists in the email pass and exactly
-    // one claim call guards it (asserted in order above). If a second
-    // unclaimed dispatch is ever added, this count catches it.
-    const sends = EMAIL_PASS.match(/await sendFn\(/g) ?? [];
-    expect(sends.length).toBe(1);
-    const claims = EMAIL_PASS.match(/await claimEmailSendOutcome\(/g) ?? [];
-    expect(claims.length).toBe(1);
-  });
-});
-
-describe("email reminder pass: preserved behavior", () => {
-  it("the selection query is unchanged (sent-is-null + attempts cap + window)", () => {
+  it("keeps candidate window/cap, auth, response keys and SMS authority", () => {
     expect(CODE).toMatch(/\.is\(opts\.notSentColumn, null\)/);
     expect(CODE).toMatch(/\.lt\(opts\.attemptsColumn, MAX_ATTEMPTS\)/);
+    expect(CODE).toContain("if (!isAuthorizedCronRequest(req))");
+    expect(CODE).toMatch(/reminder_24h,\s*reminder_2h,/);
+    expect(CODE.slice(CODE.indexOf("async function sendSmsReminderPass"))).toContain("send24hReminderSmsToClient");
+    expect(CODE).not.toMatch(/paymentIntents|refunds\.create|charges\.create/);
   });
-
-  it("attempt numbering for failure logs is unchanged", () => {
-    expect(EMAIL_PASS).toMatch(
-      /const attemptNumber = \(appt\[attemptsColumn\] as number\) \+ 1;/,
-    );
-  });
-
-  it("the cheap row guards are all evaluated before any claim", () => {
-    // Since 0186 the studio reminder toggle is no longer a SKIP - it is an
-    // input to which email gets composed, because a studio with the reminder
-    // off may still owe a standalone intake reminder. What must not regress is
-    // that nothing claims a slot before the cheap in-memory guards have run:
-    // a claim costs an attempt off the 3-strike cap.
-    const toggleIdx = EMAIL_PASS.indexOf("[studioToggle]");
-    const emailIdx = EMAIL_PASS.indexOf("if (!appt.client?.email) return;");
-    const claimIdx = EMAIL_PASS.indexOf("await claimEmailSendOutcome(");
-    expect(toggleIdx).toBeGreaterThan(-1);
-    expect(emailIdx).toBeGreaterThan(-1);
-    expect(claimIdx).toBeGreaterThan(toggleIdx);
-    expect(claimIdx).toBeGreaterThan(emailIdx);
-    // A row that can produce no email at all never reaches the claim.
-    expect(EMAIL_PASS).toMatch(
-      /if \(!wantsReminder && !intakeEnabled\) return;/,
-    );
-  });
-
-  it("the SMS pass still uses its own claim (claim_sms_send path untouched)", () => {
-    const smsPass = CODE.slice(CODE.indexOf("async function sendSmsReminderPass"));
-    expect(smsPass).toMatch(/send24hReminderSmsToClient/);
-    expect(ROUTE).not.toMatch(/claim_sms_send"/);
-  });
-
-  it("response keys reminder_24h / reminder_2h are unchanged", () => {
-    expect(CODE).toMatch(/reminder_24h,\s*\n?\s*reminder_2h,/);
+  it("never stamps current UI metadata on unconfirmed or superseded evidence", () => {
+    expect(EMAIL_PASS).toContain('result.persistence === "recorded" && result.projection === "current" && result.intakeId');
+    expect(EMAIL_PASS).toContain('result.kind === "held"');
   });
 });
-
-describe("PR #189 boundaries (cron route)", () => {
-  it("no payment / Stripe code", () => {
-    expect(CODE).not.toMatch(
-      /paymentIntents|refunds\.create|charges\.create|checkout\.sessions|STRIPE_ALLOW_LIVE_MODE/,
-    );
-  });
-
-  it("cron auth gate unchanged", () => {
-    expect(CODE).toMatch(/if \(!isAuthorizedCronRequest\(req\)\)/);
-  });
-});
-
 
 // Exercise the real route across the query/claim boundary with synthetic rows.
 const race = vi.hoisted(() => ({
@@ -174,11 +90,23 @@ const race = vi.hoisted(() => ({
   alerts: vi.fn(async () => undefined),
   store: new Map<string, { value: string; expiry: number }>(),
   failStore: false,
+  cancellationEnabled: true, rescheduleEnabled: true,
+  leadRecovery: vi.fn(async () => ({ ran: false, reason: "offline_fixture" })),
+  ledgerBegin: vi.fn(async (...args: unknown[]): Promise<string | null> => { void args; return null; }),
+  ledgerSettle: vi.fn(async (...args: unknown[]) => { void args; }),
   pages: [] as Array<{ cursor: string | null; orders: string[] }>,
   smsSend: vi.fn(async () => ({ ok: true, intakeLinkIncluded: false })),
-  send: vi.fn(async () => ({ ok: true })),
-  claim: vi.fn(async (_admin?: unknown, _id?: string, _kind?: string) => { void [_admin, _id, _kind]; return true; }),
-  record: vi.fn(async () => undefined),
+  send: vi.fn(async (...args: unknown[]): Promise<{ ok: boolean; messageId?: string }> => { void args; return { ok: true }; }),
+  claim: vi.fn(async (_admin?: unknown, _id?: string) => { void [_admin, _id]; return true; }),
+  record: vi.fn(async (_admin?: unknown, _id?: string, _purpose?: unknown, _ok?: boolean) => { void [_admin, _id, _purpose, _ok]; }),
+}));
+vi.mock("@/lib/platform-leads/alert-delivery", () => ({
+  recoverLeadAlertsOnReminderTrigger: race.leadRecovery,
+}));
+vi.mock("@/lib/email/delivery-ledger", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/email/delivery-ledger")>()),
+  beginAppointmentEmailMessage: race.ledgerBegin,
+  settleEmailMessage: race.ledgerSettle,
 }));
 vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/cron/reminder-scan-coordinator")>();
@@ -215,23 +143,23 @@ vi.mock("@/lib/intake/queries", () => ({ generateIntakeLinkUrl: () => "https://e
 vi.mock("@/lib/booking/tokens", () => ({ generateCancellationToken: () => "synthetic-token" }));
 vi.mock("@/lib/cron/reminder-heartbeat", () => ({ recordReminderRunSuccess: race.heartbeat }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: race.alerts }));
-vi.mock("@/lib/email/send-appointment", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/email/send-appointment")>();
-  const invokeClaim = async (original: Parameters<typeof actual.claimEmailSend>, richer = false) => {
-    const admin = { rpc: async () => {
-      race.claimRpc();
-      if (race.claimRpcMode === "throw") throw new Error("SYNTHETIC_PRIVATE unavailable claim");
-      if (race.claimRpcMode === "error") return { data: null, error: new Error("SYNTHETIC_PRIVATE unavailable claim") };
-      if (race.claimRpcMode === "malformed") return { data: null, error: null };
-      return { data: await race.claim(...original), error: null };
-    } } as unknown as Parameters<typeof actual.claimEmailSend>[0];
-    return richer ? actual.claimEmailSendOutcome(admin, original[1], original[2]) : actual.claimEmailSend(admin, original[1], original[2]);
-  };
-  return { claimEmailSend: (...args: Parameters<typeof actual.claimEmailSend>) => invokeClaim(args),
-    claimEmailSendOutcome: (...args: Parameters<typeof actual.claimEmailSend>) => invokeClaim(args, true),
-    recordEmailResult: race.record, logEmailFailure: vi.fn(),
-    send24hReminderToClient: race.send, send2hReminderToClient: race.send, sendIntakeReminderToClient: race.send };
-});
+vi.mock("@/lib/email/send-appointment", () => ({
+  sendAppointmentReminderOperation: async (admin: unknown, studioId: string, id: string, purpose: string) => {
+    const n = Number(id.slice(-12));
+    if (race.backlog && n <= race.backlog.skipped && race.backlog.reason !== "claim") return { kind: "held" };
+    try { if (!await race.claim(admin, id)) return { kind: "held" }; } catch { return { kind: "unavailable" }; }
+    const ledgerMessageId = await race.ledgerBegin(admin, { studioId, appointmentId: id, purpose: purpose === "reminder_24h" ? "appointment_reminder_24h" : "appointment_reminder_2h" });
+    const result = await race.send({ cancellationUrl: race.cancellationEnabled ? "synthetic-cancel" : null, rescheduleUrl: race.rescheduleEnabled ? "synthetic-reschedule" : null, ledgerMessageId });
+    await race.record(admin, id, purpose, result.ok);
+    if (ledgerMessageId) await race.ledgerSettle(admin, ledgerMessageId, result.ok ? { outcome: "accepted", providerEmailId: result.messageId } : { outcome: "refused", providerError: "provider_refused" });
+    return { kind: "observed", sdkAttempted: true, observation: result.ok ? { kind: "accepted", messageId: result.messageId ?? "synthetic" } : { kind: "definite_refusal" }, persistence: "recorded", projection: "current", attemptNumber: 1, intakeId: null };
+  },
+  recordEmailResult: race.record,
+  logEmailFailure: vi.fn(),
+  send24hReminderToClient: race.send,
+  send2hReminderToClient: race.send,
+  sendIntakeReminderToClient: race.send,
+}));
 vi.mock("@/lib/sms/send-appointment", () => ({
   createLedgerBudget: () => ({}),
   send24hReminderSmsToClient: race.smsSend,
@@ -250,6 +178,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           id, studio_id: "synthetic-studio", client_id: "synthetic-client",
           status: "confirmed", starts_at: race.start, reminder_24h_send_attempts: 0,
           studio: { id: "synthetic-studio", name: "Synthetic", timezone: "UTC",
+            client_cancellation_enabled: race.cancellationEnabled, client_reschedule_enabled: race.rescheduleEnabled,
             send_24h_reminders: !race.intakeOnly && !(skipped && reason === "toggle"), send_intake_reminders: race.intakeOnly || race.intakeEnabled,
             send_24h_sms_reminders: !(skipped && reason === "toggle") },
           client: { name: "Synthetic", email: skipped && reason === "destination" ? null : "synthetic@example.invalid",
@@ -316,6 +245,9 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     vi.setSystemTime(new Date("2026-10-21T12:00:00.000Z"));
     race.store.clear(); race.store.set("reminder_scan:v1:rotation", { value: JSON.stringify({version:1,next:"email24h",known:[]}), expiry: Date.now() + 10800000 }); race.failStore = false; race.heartbeat.mockClear(); race.alerts.mockClear();
     race.start = "2026-10-22T12:00:00.000Z"; race.freshStart = race.start;
+    race.readError = false; race.incidentRead = "none"; race.incidentSqlState = "42703"; race.incidentThrown = undefined; race.incidentCoordinationError = undefined;
+    race.cancellationEnabled = true; race.rescheduleEnabled = true;
+    race.leadRecovery.mockClear(); race.ledgerBegin.mockReset().mockResolvedValue(null); race.ledgerSettle.mockClear();
     race.claimRpcMode = "normal"; race.claimRpc.mockClear();
     race.intakeEnabled = false;
     race.intakeOnly = false; race.intakeReads = [];
@@ -329,56 +261,12 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
   });
   afterEach(() => { vi.useRealTimers(); });
 
-  it.each([["probe", false], ["live", false], ["probe", true], ["live", true]] as const)("INTAKE_AUTH %s error with data=%s cannot masquerade as submitted", async (stage, withData) => {
-    race.intakeOnly = true;
-    const incomplete = { data: { id: "synthetic-intake", status: "in_progress" }, error: null };
-    const unavailable = { data: withData ? incomplete.data : null, error: { message: "SYNTHETIC_PRIVATE intake read error" } };
-    race.intakeReads = stage === "probe" ? [unavailable] : [incomplete, unavailable];
-    const response = await GET(new Request("https://example.invalid"));
-    console.info(JSON.stringify({ event: "synthetic_intake_authority_observation", stage, status: response.status,
-      claims: race.claimRpc.mock.calls.length, sdk_calls: race.send.mock.calls.length,
-      settlement_calls: race.record.mock.calls.length, failed_settlement_calls: race.record.mock.calls.filter((c) => (c as unknown[])[3] === false).length,
-      heartbeats: race.heartbeat.mock.calls.length }));
-    expect(race.send).not.toHaveBeenCalled();
-    expect(response.status).toBe(500);
-    expect(race.record).not.toHaveBeenCalled();
-    expect(race.heartbeat).not.toHaveBeenCalled();
-    expect(race.claimRpc).toHaveBeenCalledTimes(stage === "probe" ? 0 : 1);
-    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({
-      reason: "read_or_handler", failure_stage: "handler", failure_category: "handler_error",
-    }) }));
-    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
-  });
-
-  it("INTAKE_AUTH known incomplete standalone intake still sends once", async () => {
-    race.intakeOnly = true;
-    race.intakeReads = Array.from({ length: 2 }, () => ({ data: { id: "synthetic-intake", status: "in_progress" }, error: null }));
-    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
-    expect(race.claimRpc).toHaveBeenCalledTimes(1);
-    expect(race.send).toHaveBeenCalledTimes(1);
-    expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", true);
-    expect(race.heartbeat).toHaveBeenCalledTimes(1);
-  });
-
-  it("INTAKE_AUTH known submission after probe retains existing no-send settlement", async () => {
-    race.intakeOnly = true;
-    race.intakeReads = [{ data: { id: "synthetic-intake", status: "in_progress" }, error: null },
-      { data: { id: "synthetic-intake", status: "submitted" }, error: null }];
-    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
-    expect(race.claimRpc).toHaveBeenCalledTimes(1);
-    expect(race.send).not.toHaveBeenCalled();
-    expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", false);
-    expect(race.heartbeat).toHaveBeenCalledTimes(1);
-  });
-
-  it("INTAKE_AUTH plain appointment reminder keeps no-CTA error degradation", async () => {
-    race.intakeEnabled = true;
-    race.intakeReads = [{ data: null, error: { message: "SYNTHETIC_PRIVATE intake error" } }];
-    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
-    expect(race.send).toHaveBeenCalledTimes(1);
-    expect(race.send).toHaveBeenCalledWith(expect.objectContaining({ intakeUrl: null }));
-    expect(race.heartbeat).toHaveBeenCalledTimes(1);
-  });
+  // 0247 merge (D8): the six email INTAKE_AUTH route cases (probe/live read
+  // errors with and without data, known incomplete, submitted-after-probe,
+  // plain no-CTA degradation) are RETIRED at route level by design. The 0247
+  // route never reads intake; whether the CTA is rendered comes from the
+  // governed SQL projection, covered by the appointment-send-transport render
+  // tests. The SMS no-CTA case below is unchanged and still runs.
 
   it("INTAKE_AUTH SMS keeps no-CTA error degradation", async () => {
     race.intakeEnabled = true;
@@ -392,72 +280,18 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     expect(race.heartbeat).toHaveBeenCalledTimes(1);
   });
 
-  it("POSTCLAIM_READ failure must not become a healthy completed scan", async () => {
-    race.readError = true;
-    const response = await GET(new Request("https://example.invalid"));
-    const saved = race.store.get("reminder_scan:v1:checkpoint:email24h");
-    const checkpoint = saved ? JSON.parse(saved.value) : null;
-    console.info(JSON.stringify({ event: "synthetic_postclaim_read_observation", status: response.status,
-      claim_calls: race.claimRpc.mock.calls.length, sdk_calls: race.send.mock.calls.length,
-      settlement_calls: race.record.mock.calls.length, heartbeat_calls: race.heartbeat.mock.calls.length,
-      checkpoint_complete: checkpoint?.complete ?? null, checkpoint_after_null: checkpoint?.after === null }));
-    expect(race.claimRpc).toHaveBeenCalledTimes(1);
-    expect(race.send).not.toHaveBeenCalled();
-    expect(race.record).not.toHaveBeenCalled();
-    expect(response.status).toBe(500);
-    expect(race.heartbeat).not.toHaveBeenCalled();
-    if (checkpoint) expect(checkpoint.complete).toBe(false);
-  });
-
-  it("POSTCLAIM_READ error with returned data remains unavailable", async () => {
-    race.readError = true;
-    race.readErrorWithData = true;
-    expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
-    expect(race.claimRpc).toHaveBeenCalledTimes(1);
-    expect(race.send).not.toHaveBeenCalled();
-    expect(race.record).not.toHaveBeenCalled();
-    expect(race.heartbeat).not.toHaveBeenCalled();
-    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({
-      reason: "read_or_handler", failure_stage: "handler", failure_category: "handler_error",
-    }) }));
-    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("synthetic read failure");
-  });
-
-  it("POSTCLAIM_READ definite missing row without error remains an ordinary skip", async () => {
-    race.freshMissing = true;
-    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
-    expect(race.claimRpc).toHaveBeenCalledTimes(1);
-    expect(race.send).not.toHaveBeenCalled();
-    expect(race.record).not.toHaveBeenCalled();
-    expect(race.heartbeat).toHaveBeenCalledTimes(1);
-  });
-
-  it("POSTCLAIM_READ known successful current read retains normal send and heartbeat", async () => {
-    const response = await GET(new Request("https://example.invalid"));
-    expect(response.status).toBe(200);
-    expect(race.claimRpc).toHaveBeenCalledTimes(1);
-    expect(race.send).toHaveBeenCalledTimes(1);
-    expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", true);
-    expect(race.heartbeat).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([
-    ["moved outside window", "2026-10-23T12:00:00.000Z"],
-    ["moved within window", "2026-10-22T12:15:00.000Z"],
-    ["missing current start", null],
-    ["invalid current start", "invalid"],
-  ])("MSG002 refuses cached reminder when %s without settling the claim", async (_label, freshStart) => {
-    race.freshStart = freshStart;
-    const response = await GET(new Request("https://example.invalid"));
-    expect(response.status).toBe(200);
-    expect(race.claimRpc).toHaveBeenCalledTimes(1);
-    expect(race.send).not.toHaveBeenCalled();
-    expect(race.record).not.toHaveBeenCalled();
-    expect(race.heartbeat).toHaveBeenCalledTimes(1);
-  });
-
-  it("MSG002 accepts an unchanged instant with an equivalent timezone offset", async () => {
-    race.freshStart = "2026-10-22T08:00:00-04:00";
+  // 0247 merge (D8): #1032's POSTCLAIM_READ and MSG002 route regressions,
+  // ported onto the 0247 harness. The operation is mocked, so these prove the
+  // ROUTE's mapping of the authority's answer only: an unreadable/erroring
+  // current state -> "unavailable"; a missing, cancelled, moved (within or
+  // outside the window), missing-start or invalid-start row -> "held". Whether
+  // the SQL returns those answers (snapshot_authority/prepare/authorize) is
+  // NOT proven here; that is R1, still OPEN and DB-held. The old "equivalent
+  // timezone offset" case is retired: 0247 compares starts as timestamptz in
+  // SQL, never as strings.
+  // The unavailable and held mappings are the "0247 port:" cases below (Willow
+  // E4: one copy each); this keeps only the success control.
+  it("POSTCLAIM_READ: a known successful current state retains normal send and heartbeat", async () => {
     expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
     expect(race.send).toHaveBeenCalledTimes(1);
     expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", true);
@@ -528,6 +362,7 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     race.smsSend.mockResolvedValueOnce({ ok: false, skipped: true, reason: "reminder_claim_unavailable" } as never);
     expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
     expect(race.smsSend).toHaveBeenCalledTimes(1);
+    expect(race.leadRecovery).toHaveBeenCalledTimes(1);
     expect(race.pages).toHaveLength(1);
     expect(race.heartbeat).not.toHaveBeenCalled();
     const checkpoint = JSON.parse(race.store.get("reminder_scan:v1:checkpoint:sms24h")!.value);
@@ -537,6 +372,7 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     expect(retried.status).toBe(500); // still a bounded, unfinished backlog
     expect(race.smsSend).toHaveBeenNthCalledWith(2, expect.objectContaining({ appointmentId: "00000000-0000-4000-8000-000000000001" }));
     expect(race.smsSend).toHaveBeenCalledTimes(51); // one refused claim + max50 attempts
+    expect(race.leadRecovery).toHaveBeenCalledTimes(2);
     expect(race.heartbeat).not.toHaveBeenCalled();
   });
 
@@ -595,13 +431,31 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", false);
   });
 
+  it("#926/#995 union preserves ledger tag/settle ordering and suppresses disabled self-service links", async () => {
+    const id = "00000000-0000-4000-8000-000000000042";
+    race.cancellationEnabled = false; race.rescheduleEnabled = false;
+    race.ledgerBegin.mockResolvedValueOnce(id);
+    race.send.mockResolvedValueOnce({ ok: true, messageId: id } as never);
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(200);
+    expect(race.ledgerBegin).toHaveBeenCalledWith(expect.anything(), { studioId: "synthetic-studio", appointmentId: "00000000-0000-4000-8000-000000000001", purpose: "appointment_reminder_24h" });
+    expect(race.send).toHaveBeenCalledWith(expect.objectContaining({ cancellationUrl: null, rescheduleUrl: null, ledgerMessageId: id }));
+    expect(race.ledgerSettle).toHaveBeenCalledWith(expect.anything(), id, { outcome: "accepted", providerEmailId: id });
+    expect(race.ledgerBegin.mock.invocationCallOrder[0]).toBeLessThan(race.send.mock.invocationCallOrder[0]);
+    expect(race.send.mock.invocationCallOrder[0]).toBeLessThan(race.ledgerSettle.mock.invocationCallOrder[0]);
+    expect(race.record.mock.invocationCallOrder[0]).toBeLessThan(race.ledgerSettle.mock.invocationCallOrder[0]);
+    expect(race.leadRecovery).toHaveBeenCalledTimes(1);
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+    expect(race.heartbeat.mock.invocationCallOrder[0]).toBeLessThan(race.leadRecovery.mock.invocationCallOrder[0]);
+  });
+
   it.each(["db_error", "timeout"] as const)("16:15 incident signature: first-page %s fails before any claim/SDK and a later healthy fake run recovers without resets", async (failure) => {
     race.incidentRead = failure;
     const pending = GET(new Request("https://example.invalid/api/cron/appointment-reminders"));
     if (failure === "timeout") await vi.advanceTimersByTimeAsync(2000);
     const response = await pending;
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ ok: false, error: "cron_failed" });
+    expect(await response.json()).toEqual({ ok: false, error: "cron_failed", lead_alerts: { ran: false, reason: "offline_fixture" } });
     expect(race.alerts).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       event: "cron_route_failed", severity: "critical",
       message: "Reminder scan incomplete. Check scheduler progress before retrying work.",
@@ -703,7 +557,7 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     else race.heartbeat.mockRejectedValueOnce(hostile);
     const response = await GET(new Request("https://example.invalid"));
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ ok: false, error: "cron_failed" });
+    expect(await response.json()).toEqual({ ok: false, error: "cron_failed", lead_alerts: { ran: false, reason: "offline_fixture" } });
     expect(inspected).not.toHaveBeenCalled();
     expect(race.alerts).toHaveBeenCalledExactlyOnceWith({
       severity: "critical", event: "cron_route_failed",
@@ -729,7 +583,7 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     race.alerts.mockRejectedValueOnce(new Error("SYNTHETIC_PRIVATE alert writer"));
     const response = await GET(new Request("https://example.invalid"));
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ ok: false, error: "cron_failed" });
+    expect(await response.json()).toEqual({ ok: false, error: "cron_failed", lead_alerts: { ran: false, reason: "offline_fixture" } });
     expect(race.alerts).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
   });
@@ -748,32 +602,53 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
   });
 
-  it.each(["error", "throw", "malformed"] as const)("email claim %s keeps the candidate unacknowledged and heartbeat unhealthy", async (mode) => {
-    race.claimRpcMode = mode;
+  it("0247 lost authority call holds cursor and heartbeat before any SDK or ledger begin", async () => {
+    race.claim.mockRejectedValueOnce(new Error("synthetic authority unavailable"));
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
+    expect(race.send).not.toHaveBeenCalled(); expect(race.ledgerBegin).not.toHaveBeenCalled(); expect(race.heartbeat).not.toHaveBeenCalled();
+    // "Holds" means the saved cursor does not pass the unavailable row (as #995
+    // pins for SMS): the coordinator saves the handled prefix, so the next fire
+    // retries this row.
+    const held = race.store.get("reminder_scan:v1:checkpoint:email24h");
+    expect(held).toBeDefined();
+    expect(JSON.parse(held!.value)).toMatchObject({ pass: "email24h", after: null, complete: false });
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({ reason: "claim_unavailable" }) }));
+  });
+
+
+  // 0247 merge (D8): production's claim-availability invariants, ported onto
+  // the 0247 harness (race.claim drives the operation authority: reject ->
+  // "unavailable", false -> "held"). R1: cancelled / moved / out-of-window rows
+  // surface here as authority "held"; their SQL-side proof stays DB-held.
+  it("0247 port: unavailable authority keeps the candidate unacknowledged and the heartbeat unhealthy", async () => {
+    race.claim.mockRejectedValue(new Error("SYNTHETIC_PRIVATE unavailable authority"));
     const response = await GET(new Request("https://example.invalid"));
     expect(response.status).toBe(500);
-    expect(race.claimRpc).toHaveBeenCalledTimes(1);
     expect(race.send).not.toHaveBeenCalled(); expect(race.record).not.toHaveBeenCalled(); expect(race.heartbeat).not.toHaveBeenCalled();
     const saved = race.store.get("reminder_scan:v1:checkpoint:email24h");
     if (saved) expect(JSON.parse(saved.value).after).toBeNull();
-    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({ reason: "claim_unavailable", attempted: 0 }) }));
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({ reason: "claim_unavailable" }) }));
     expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
   });
-  it("a definite false claim remains a legitimate skip that can complete the pass", async () => {
+  it("0247 port: a held authority (incl. cancelled/moved/out-of-window) is a legitimate skip that completes the pass", async () => {
     race.claim.mockResolvedValue(false);
     expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
-    expect(race.claimRpc).toHaveBeenCalledTimes(1); expect(race.send).not.toHaveBeenCalled(); expect(race.record).not.toHaveBeenCalled();
+    expect(race.send).not.toHaveBeenCalled(); expect(race.record).not.toHaveBeenCalled(); expect(race.ledgerBegin).not.toHaveBeenCalled();
     expect(race.heartbeat).toHaveBeenCalledTimes(1);
   });
-
-  it("an unavailable second claim preserves the already-handled prefix without acknowledging that row", async () => {
+  it("0247 port: an unavailable second authority call preserves the handled prefix without acknowledging that row", async () => {
     race.backlog = { channel: "email", reason: "toggle", skipped: 0, eligible: 3 };
-    race.claim.mockImplementationOnce(async () => { race.claimRpcMode = "error"; return true; });
+    race.claim.mockResolvedValueOnce(true).mockRejectedValueOnce(new Error("SYNTHETIC_PRIVATE unavailable authority"));
     expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
-    expect(race.claimRpc).toHaveBeenCalledTimes(2); expect(race.send).toHaveBeenCalledTimes(1); expect(race.record).toHaveBeenCalledTimes(1);
+    expect(race.send).toHaveBeenCalledTimes(1); expect(race.record).toHaveBeenCalledTimes(1);
     expect(race.heartbeat).not.toHaveBeenCalled();
     const saved = race.store.get("reminder_scan:v1:checkpoint:email24h"); expect(saved).toBeDefined();
     expect(JSON.parse(saved!.value).after.id).toBe("00000000-0000-4000-8000-000000000001");
   });
+});
 
+it("0247 authority transport unavailability does not acknowledge candidate progress", () => {
+  expect(EMAIL_PASS).toContain('result.kind === "unavailable"');
+  expect(EMAIL_PASS).toContain('return "claim_unavailable"');
+  expect(CODE).toContain('unavailable === "claim_unavailable"');
 });

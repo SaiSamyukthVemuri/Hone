@@ -7,23 +7,18 @@ import type { ProbeLotOption } from "@/lib/record-keeping/probe-lot-inventory";
 import type {
   ElectrolysisEntry,
   SessionBlock,
-  SessionBlockArea,
 } from "@/lib/types/database";
-import { resolveBlockAreas, formatAreaLabel } from "@/lib/sessions/block-areas";
+import { resolveBlockAreas, formatAreaLabel, type BlockArea } from "@/lib/sessions/block-areas";
 import type {
   SessionBlockWithEntries,
   TreatmentParams,
 } from "@/lib/supabase/queries";
 import { ELECTROLYSIS_MODES, apilusModalityLabel } from "@/lib/constants";
-import {
-  isReactionType,
-  numbingDisplay,
-  reactionTypeLabel,
-  toleranceLabel,
-} from "@/lib/sessions/clinical-response";
-import { reactionLabelsFromChips } from "@/lib/sessions/reaction-unified";
+import { numbingDisplay, toleranceLabel } from "@/lib/sessions/clinical-response";
+import { legacyBlockReactionLabel } from "@/lib/sessions/reaction-unified";
+import { resolveDisplayChips } from "@/lib/observation-chips";
 import { sessionBlockSideLabel } from "@/lib/sessions/side-labels";
-import { ElectrolysisEntryRow } from "@/components/entry-row";
+import { ElectrolysisEntryRow, type SavedEntryFields } from "@/components/entry-row";
 import { BlockSetupForm } from "./block-setup-form";
 import { SimplifiedEntryForm } from "./simplified-entry-form";
 import { RemovePassButton } from "@/components/remove-pass-button";
@@ -43,7 +38,10 @@ import { SectionLabel } from "@/components/ui/section-label";
 //   2. block_name                         , legacy free-text label
 //   3. "Treatment area N" placeholder     : muted; no area chosen yet
 function areaTitle(
-  block: SessionBlock & { structured_areas?: SessionBlockArea[] },
+  block: Pick<
+    SessionBlock,
+    "primary_area" | "side" | "custom_area_detail" | "block_name" | "sort_order"
+  > & { structured_areas?: ReadonlyArray<BlockArea> },
 ): { text: string; placeholder: boolean } {
   // Multi-area (0128): structured child rows take precedence: render every
   // area with its own laterality ("Left cheek · Right sideburn"). Legacy blocks
@@ -251,56 +249,7 @@ function BlockSection({
   // additional passes on the same area.
   const [addingPass, setAddingPass] = useState(false);
 
-  const params: TreatmentParams = useMemo(
-    () => ({
-      mode: block.mode,
-      apilus_modality: block.apilus_modality,
-      energy_level: block.energy_level,
-      minutes_performed: block.minutes_performed,
-      probe_type: block.probe_type,
-      probe_size: block.probe_size,
-      machine_frequency: block.machine_frequency,
-    }),
-    [block],
-  );
-
-  const paramsLine = useMemo(() => {
-    const parts: string[] = [];
-    const mLabel = ELECTROLYSIS_MODES.find((m) => m.value === block.mode)?.label;
-    if (mLabel) parts.push(mLabel);
-    if (block.apilus_modality) parts.push(apilusModalityLabel(block.apilus_modality));
-    if (block.energy_level != null) parts.push(`EL ${block.energy_level}`);
-    if (block.machine_frequency) parts.push(block.machine_frequency);
-    if (block.minutes_performed != null) {
-      parts.push(`${block.minutes_performed} min`);
-    }
-    return parts.join(" · ");
-  }, [block]);
-
-  // Probe display (Session Logging Phase B). Prefer the structured probe
-  // label (migration 0041); fall back to the legacy probe_type / probe_size
-  // free text so older blocks still show their probe.
-  const probeLine = useMemo(() => {
-    // PR #205: append the lot/batch number wherever probe details
-    // show, so the health-inspection lot is visible at a glance.
-    // Null-lot blocks (all legacy rows) render exactly as before.
-    // PR #279: show whether the practitioner confirmed the lot for this
-    // treatment. Legacy rows (probe_lot_confirmed = false) read exactly as before.
-    const lot = block.probe_lot_number?.trim()
-      ? `Lot #${block.probe_lot_number.trim()}${
-          block.probe_lot_confirmed ? " (confirmed)" : ""
-        }`
-      : null;
-    if (block.probe_label) {
-      return lot ? `${block.probe_label} · ${lot}` : block.probe_label;
-    }
-    const legacy: string[] = [];
-    if (block.probe_type) legacy.push(block.probe_type);
-    if (block.probe_size) legacy.push(block.probe_size);
-    if (lot) legacy.push(lot);
-    return legacy.length > 0 ? legacy.join(" · ") : null;
-  }, [block]);
-
+  // The editor seeds from the first pass; the read-only record sorts its own.
   const entriesSorted = useMemo(
     () =>
       [...block.electrolysis_entries].sort(
@@ -312,10 +261,6 @@ function BlockSection({
 
   const title = areaTitle(block);
 
-  // New-flow (structured-area) blocks render entries flat (readings-only),
-  // because the card header already shows the area + machine/probe summary.
-  // Legacy blocks without a primary_area keep the full per-entry render.
-  const flat = Boolean(block.primary_area && block.primary_area.trim().length > 0);
 
   return (
     <section
@@ -344,182 +289,41 @@ function BlockSection({
         />
       ) : (
         <>
-          <div className="flex flex-wrap items-baseline justify-between gap-3">
-            {/* PR #268 (chart parts): name the recorded treatment area, with
-                an explicit "Area not recorded" eyebrow for legacy blocks that
-                have no structured area. */}
-            <div className="flex flex-col gap-0.5">
-              <SectionLabel size="caption">
-                {title.placeholder ? "Area not recorded" : "Recorded area"}
-              </SectionLabel>
-              <h3
-                className={
-                  title.placeholder
-                    ? "text-base font-normal text-neutral-400 dark:text-neutral-500"
-                    : "text-lg font-medium"
-                }
-              >
-                {title.text}
-              </h3>
-            </div>
-            <div className="flex flex-wrap items-start justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setEditing(true)}
-                data-testid={`edit-area-${block.id}`}
-                className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
-              >
-                Edit
-              </button>
-              <RemoveAreaButton
-                action={removeSessionAreaAction}
-                blockId={block.id}
+          {/* The read-only record is SHARED with the HON-46 printout
+              (SavedAreaRecord below), so screen and paper are one render.
+              Only the controls are this view's own. */}
+          <SavedAreaRecord
+            block={block}
+            controls={
+              <>
+                <button
+                  type="button"
+                  onClick={() => setEditing(true)}
+                  data-testid={`edit-area-${block.id}`}
+                  className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+                >
+                  Edit
+                </button>
+                <RemoveAreaButton
+                  action={removeSessionAreaAction}
+                  blockId={block.id}
+                  sessionId={sessionId}
+                  clientId={clientId}
+                  areaLabel={title.text}
+                  passCount={block.electrolysis_entries.length}
+                />
+              </>
+            }
+            entryControl={(e, idx, count) => (
+              <RemovePassButton
+                action={deleteElectrolysisEntryAction}
+                entryId={e.id}
                 sessionId={sessionId}
                 clientId={clientId}
-                areaLabel={title.text}
-                passCount={block.electrolysis_entries.length}
+                ariaLabel={count > 1 ? `Remove pass ${idx + 1}` : "Remove pass"}
               />
-            </div>
-          </div>
-
-          {paramsLine && (
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              {paramsLine}
-            </p>
-          )}
-
-          {probeLine && (
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              Probe: {probeLine}
-            </p>
-          )}
-
-          {/* PR #279 (migration 0095) + 0156: numbing record via the shared
-              presenter. Only renders when set; legacy rows (numbing_status NULL =
-              Not recorded) show nothing. The optional note shows beneath the
-              label ONLY when numbing was used and a note exists. */}
-          {(() => {
-            const numbing = numbingDisplay(
-              block.numbing_status,
-              block.numbing_notes,
-            );
-            if (!numbing) return null;
-            return (
-              <div className="text-sm text-neutral-600 dark:text-neutral-400">
-                <p>{numbing.label}</p>
-                {numbing.note && (
-                  <p className="whitespace-pre-wrap text-neutral-500">
-                    Numbing notes: {numbing.note}
-                  </p>
-                )}
-              </div>
-            );
-          })()}
-
-          {/* Charting unification: reactions are ONE unified findings concept,
-              new/migrated reactions render as chips in the entries above. There is
-              NO "Client / skin response" reaction section. This block level shows
-              only: (a) Client tolerance (its own concept), and (b) LEGACY, clearly
-              labeled, un-migrated data: a legacy reaction_type not yet captured as
-              a chip, and a legacy per-area response note, so old records stay
-              intact and truthful without recreating a second reaction group or
-              double-showing a migrated reaction. */}
-          {block.tolerance_rating != null && (
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              <span className="text-neutral-500">Client tolerance: </span>
-              {toleranceLabel(block.tolerance_rating)}
-            </p>
-          )}
-          {(() => {
-            const chipReactionLabels = new Set(
-              block.electrolysis_entries
-                .flatMap((e) => reactionLabelsFromChips(e.observation_chips))
-                .map((l) => l.toLowerCase()),
-            );
-            const legacyReaction =
-              isReactionType(block.reaction_type) &&
-              !chipReactionLabels.has(
-                reactionTypeLabel(block.reaction_type).toLowerCase(),
-              )
-                ? reactionTypeLabel(block.reaction_type)
-                : null;
-            if (!legacyReaction && !block.reaction_notes) return null;
-            return (
-              <p className="text-sm text-neutral-500">
-                {[
-                  legacyReaction ? `Legacy skin response: ${legacyReaction}` : null,
-                  block.reaction_notes
-                    ? `Legacy response note: ${block.reaction_notes}`
-                    : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </p>
-            );
-          })()}
-          {(block.caution_for_next_session || block.caution_note) && (
-            <p className="text-sm text-amber-700 dark:text-amber-400">
-              Caution for next session
-              {block.caution_note ? `: ${block.caution_note}` : ""}
-            </p>
-          )}
-
-          {entriesSorted.length === 0 ? (
-            <p className="text-xs text-neutral-500">No entries yet.</p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {entriesSorted.map((e, idx) => {
-                // Flatten: for structured-area (new-flow) blocks, the card
-                // header already shows the area + machine/probe summary, so
-                // render entries as readings-only and suppress the area when
-                // it just repeats the header. Legacy blocks (no primary_area,
-                // e.g. backfilled "Main") keep the full row so their distinct
-                // per-entry areas/params still show.
-                const entryArea =
-                  e.areas && e.areas.length > 0 ? e.areas.join(" · ") : e.area;
-                const hideArea =
-                  flat && entryArea === block.primary_area;
-                return (
-                  <li
-                    key={e.id}
-                    className={
-                      // Light divider only BETWEEN stacked passes; the single
-                      // (first) pass sits flush in the card with no rule.
-                      idx > 0
-                        ? "border-t border-neutral-100 pt-3 dark:border-neutral-800"
-                        : undefined
-                    }
-                  >
-                    <ElectrolysisEntryRow
-                      entry={e}
-                      treatmentParams={params}
-                      block={block}
-                      variant={flat ? "readings" : "full"}
-                      hideArea={hideArea}
-                      label={
-                        flat && entriesSorted.length > 1
-                          ? `Pass ${idx + 1}`
-                          : undefined
-                      }
-                      action={
-                        <RemovePassButton
-                          action={deleteElectrolysisEntryAction}
-                          entryId={e.id}
-                          sessionId={sessionId}
-                          clientId={clientId}
-                          ariaLabel={
-                            entriesSorted.length > 1
-                              ? `Remove pass ${idx + 1}`
-                              : "Remove pass"
-                          }
-                        />
-                      }
-                    />
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+            )}
+          />
 
           {addingPass ? (
             <div className="flex flex-col gap-2">
@@ -550,5 +354,277 @@ function BlockSection({
         </>
       )}
     </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// THE READ-ONLY RECORD OF ONE SAVED TREATMENT AREA. One render, used by this
+// view AND by the HON-46 clinical-records printout, so what prints is exactly
+// what the saved record shows, by construction rather than by a second
+// presenter kept in step (rounds 6-8 of #896 each found another field where a
+// second presenter had drifted). Hook-free, so the printout's server page can
+// render it. The interactive controls are this view's own and arrive through
+// the two slots; each is wrapped in [data-record-controls] so the parity test
+// can set them aside.
+// ---------------------------------------------------------------------------
+export type SavedAreaBlock = Pick<
+  SessionBlock,
+  | "id"
+  | "sort_order"
+  | "block_name"
+  | "primary_area"
+  | "side"
+  | "custom_area_detail"
+  | "mode"
+  | "apilus_modality"
+  | "energy_level"
+  | "machine_frequency"
+  | "minutes_performed"
+  | "probe_label"
+  | "probe_type"
+  | "probe_size"
+  | "probe_lot_number"
+  | "probe_lot_confirmed"
+  | "numbing_status"
+  | "numbing_notes"
+  | "tolerance_rating"
+  | "reaction_type"
+  | "reaction_notes"
+  | "caution_for_next_session"
+  | "caution_note"
+> & {
+  structured_areas?: ReadonlyArray<BlockArea>;
+  electrolysis_entries: ReadonlyArray<SavedEntryFields>;
+};
+
+export function SavedAreaRecord({
+  block,
+  controls,
+  entryControl,
+}: {
+  block: SavedAreaBlock;
+  controls?: React.ReactNode;
+  entryControl?: (entry: SavedEntryFields, idx: number, count: number) => React.ReactNode;
+}) {
+  const params: TreatmentParams = {
+    mode: block.mode,
+    apilus_modality: block.apilus_modality,
+    energy_level: block.energy_level,
+    minutes_performed: block.minutes_performed,
+    probe_type: block.probe_type,
+    probe_size: block.probe_size,
+    machine_frequency: block.machine_frequency,
+  };
+
+  const paramsLine = (() => {
+    const parts: string[] = [];
+    const mLabel = ELECTROLYSIS_MODES.find((m) => m.value === block.mode)?.label;
+    if (mLabel) parts.push(mLabel);
+    if (block.apilus_modality) parts.push(apilusModalityLabel(block.apilus_modality));
+    if (block.energy_level != null) parts.push(`EL ${block.energy_level}`);
+    if (block.machine_frequency) parts.push(block.machine_frequency);
+    if (block.minutes_performed != null) {
+      parts.push(`${block.minutes_performed} min`);
+    }
+    return parts.join(" · ");
+  })();
+
+  // Probe display (Session Logging Phase B). Prefer the structured probe
+  // label (migration 0041); fall back to the legacy probe_type / probe_size
+  // free text so older blocks still show their probe.
+  const probeLine = (() => {
+    // PR #205: append the lot/batch number wherever probe details
+    // show, so the health-inspection lot is visible at a glance.
+    // Null-lot blocks (all legacy rows) render exactly as before.
+    // PR #279: show whether the practitioner confirmed the lot for this
+    // treatment. Legacy rows (probe_lot_confirmed = false) read exactly as before.
+    const lot = block.probe_lot_number?.trim()
+      ? `Lot #${block.probe_lot_number.trim()}${
+          block.probe_lot_confirmed ? " (confirmed)" : ""
+        }`
+      : null;
+    if (block.probe_label) {
+      return lot ? `${block.probe_label} · ${lot}` : block.probe_label;
+    }
+    const legacy: string[] = [];
+    if (block.probe_type) legacy.push(block.probe_type);
+    if (block.probe_size) legacy.push(block.probe_size);
+    if (lot) legacy.push(lot);
+    return legacy.length > 0 ? legacy.join(" · ") : null;
+  })();
+
+  const entriesSorted = [...block.electrolysis_entries].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+  );
+
+  const title = areaTitle(block);
+
+  // New-flow (structured-area) blocks render entries flat (readings-only),
+  // because the card header already shows the area + machine/probe summary.
+  // Legacy blocks without a primary_area keep the full per-entry render.
+  const flat = Boolean(block.primary_area && block.primary_area.trim().length > 0);
+
+  return (
+    <>
+    <div className="flex flex-wrap items-baseline justify-between gap-3">
+      {/* PR #268 (chart parts): name the recorded treatment area, with
+          an explicit "Area not recorded" eyebrow for legacy blocks that
+          have no structured area. */}
+      <div className="flex flex-col gap-0.5">
+        <SectionLabel size="caption">
+          {title.placeholder ? "Area not recorded" : "Recorded area"}
+        </SectionLabel>
+        <h3
+          className={
+            title.placeholder
+              ? "text-base font-normal text-neutral-400 dark:text-neutral-500"
+              : "text-lg font-medium"
+          }
+        >
+          {title.text}
+        </h3>
+      </div>
+      {controls && (
+        <div
+          data-record-controls=""
+          className="flex flex-wrap items-start justify-end gap-3"
+        >
+          {controls}
+        </div>
+      )}
+    </div>
+
+    {paramsLine && (
+      <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        {paramsLine}
+      </p>
+    )}
+
+    {probeLine && (
+      <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        Probe: {probeLine}
+      </p>
+    )}
+
+    {/* PR #279 (migration 0095) + 0156: numbing record via the shared
+        presenter. Only renders when set; legacy rows (numbing_status NULL =
+        Not recorded) show nothing. The optional note shows beneath the
+        label ONLY when numbing was used and a note exists. */}
+    {(() => {
+      const numbing = numbingDisplay(
+        block.numbing_status,
+        block.numbing_notes,
+      );
+      if (!numbing) return null;
+      return (
+        <div className="text-sm text-neutral-600 dark:text-neutral-400">
+          <p>{numbing.label}</p>
+          {numbing.note && (
+            <p className="whitespace-pre-wrap text-neutral-500">
+              Numbing notes: {numbing.note}
+            </p>
+          )}
+        </div>
+      );
+    })()}
+
+    {/* Charting unification: reactions are ONE unified findings concept,
+        new/migrated reactions render as chips in the entries above. There is
+        NO "Client / skin response" reaction section. This block level shows
+        only: (a) Client tolerance (its own concept), and (b) LEGACY, clearly
+        labeled, un-migrated data: a legacy reaction_type not yet captured as
+        a chip, and a legacy per-area response note, so old records stay
+        intact and truthful without recreating a second reaction group or
+        double-showing a migrated reaction. */}
+    {block.tolerance_rating != null && (
+      <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        <span className="text-neutral-500">Client tolerance: </span>
+        {toleranceLabel(block.tolerance_rating)}
+      </p>
+    )}
+    {(() => {
+      // ONE shared rule with the clinical-records printout (HON-46,
+      // Codex P1 4304382927): a chip-backed reaction_type is not shown
+      // twice, and a stale "none" never sits beside a real response.
+      // Classified against the chips the entry rows DISPLAY, legacy
+      // comment chips hydrated (Codex P1 4305737599).
+      const legacyReaction = legacyBlockReactionLabel(
+        block.reaction_type,
+        block.electrolysis_entries.map(
+          (e) => resolveDisplayChips(e.observation_chips, e.comments).chips,
+        ),
+      );
+      if (!legacyReaction && !block.reaction_notes) return null;
+      return (
+        <p className="text-sm text-neutral-500">
+          {[
+            legacyReaction ? `Legacy skin response: ${legacyReaction}` : null,
+            block.reaction_notes
+              ? `Legacy response note: ${block.reaction_notes}`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
+      );
+    })()}
+    {(block.caution_for_next_session || block.caution_note) && (
+      <p className="text-sm text-amber-700 dark:text-amber-400">
+        Caution for next session
+        {block.caution_note ? `: ${block.caution_note}` : ""}
+      </p>
+    )}
+
+    {entriesSorted.length === 0 ? (
+      <p className="text-xs text-neutral-500">No entries yet.</p>
+    ) : (
+      <ul className="flex flex-col gap-2">
+        {entriesSorted.map((e, idx) => {
+          // Flatten: for structured-area (new-flow) blocks, the card
+          // header already shows the area + machine/probe summary, so
+          // render entries as readings-only and suppress the area when
+          // it just repeats the header. Legacy blocks (no primary_area,
+          // e.g. backfilled "Main") keep the full row so their distinct
+          // per-entry areas/params still show.
+          const entryArea =
+            e.areas && e.areas.length > 0 ? e.areas.join(" · ") : e.area;
+          const hideArea =
+            flat && entryArea === block.primary_area;
+          return (
+            <li
+              key={e.id}
+              className={
+                // Light divider only BETWEEN stacked passes; the single
+                // (first) pass sits flush in the card with no rule.
+                idx > 0
+                  ? "border-t border-neutral-100 pt-3 dark:border-neutral-800"
+                  : undefined
+              }
+            >
+              <ElectrolysisEntryRow
+                entry={e}
+                treatmentParams={params}
+                block={block}
+                variant={flat ? "readings" : "full"}
+                hideArea={hideArea}
+                label={
+                  flat && entriesSorted.length > 1
+                    ? `Pass ${idx + 1}`
+                    : undefined
+                }
+                action={
+                  entryControl ? (
+                    <div data-record-controls="">
+                      {entryControl(e, idx, entriesSorted.length)}
+                    </div>
+                  ) : undefined
+                }
+              />
+            </li>
+          );
+        })}
+      </ul>
+    )}
+    </>
   );
 }

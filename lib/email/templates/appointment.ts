@@ -56,7 +56,9 @@ type ConfirmationToClient = {
   startsAt: Date;
   endsAt: Date;
   timezone: string;
-  cancellationUrl: string;
+  // HON-47. Null when the studio has switched client cancellation off: the
+  // link must then be ABSENT, not an empty href behind a "Cancel" label.
+  cancellationUrl: string | null;
   rescheduleUrl: string | null;
   intakeUrl: string | null;
   // Token-FREE studio portal login URL (/portal/login?studio=slug). NOT a
@@ -135,16 +137,27 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
               </td></tr>`
             : ""
         }
-        <tr><td style="padding-bottom:32px;">
+        ${
+          // HON-47. The whole row goes when the studio offers neither action,
+          // rather than leaving an empty 32px-padded cell in the middle of the
+          // email.
+          p.rescheduleUrl || p.cancellationUrl
+            ? `<tr><td style="padding-bottom:32px;">
           ${
             p.rescheduleUrl
               ? `<a href="${p.rescheduleUrl}" style="display:inline-block; padding:12px 20px; margin-right:12px; background:#0A0A0A; color:#FFFFFF; font-family:-apple-system, system-ui, sans-serif; font-size:14px; font-weight:500; text-decoration:none; border-radius:6px;">Reschedule</a>`
               : ""
           }
-          <a href="${p.cancellationUrl}" style="font-family:-apple-system, system-ui, sans-serif; font-size:13px; color:#0A0A0A; letter-spacing:0.1em; text-transform:uppercase;">
+          ${
+            p.cancellationUrl
+              ? `<a href="${p.cancellationUrl}" style="font-family:-apple-system, system-ui, sans-serif; font-size:13px; color:#0A0A0A; letter-spacing:0.1em; text-transform:uppercase;">
             Cancel
-          </a>
-        </td></tr>
+          </a>`
+              : ""
+          }
+        </td></tr>`
+            : ""
+        }
         ${
           p.portalLoginUrl
             ? `<tr><td style="padding:20px 0; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.6; color:#0A0A0A;">
@@ -174,8 +187,7 @@ ${p.treatmentTimeLine ? `${p.treatmentTimeLine}\n` : ""}
 ${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\n` : ""}
 ${p.intakeUrl ? `\nBefore your appointment, please complete your health intake form (about 7 to 10 minutes):\n${p.intakeUrl}\n` : ""}
 ${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}
-Need to cancel? ${p.cancellationUrl}
-${p.portalLoginUrl ? `\nView your forms, appointments, and care instructions in your secure client portal:\n${p.portalLoginUrl}\n` : ""}
+${p.cancellationUrl ? `Need to cancel? ${p.cancellationUrl}\n` : ""}${p.portalLoginUrl ? `\nView your forms, appointments, and care instructions in your secure client portal:\n${p.portalLoginUrl}\n` : ""}
 Hone. Charting software for electrolysis and laser practitioners.
 hone.care
 `;
@@ -267,7 +279,7 @@ Open in Hone: ${p.appointmentUrl}
 // cancellation path (never a browser-supplied value); see the derivation at each
 // call site (public token cancel = the appointment's client; practitioner cancel =
 // the authenticated practitioner/owner; an automated cancel = the system).
-export type CancellationActorRole = "client" | "practitioner" | "owner" | "system";
+export type CancellationActorRole = "client" | "practitioner" | "owner" | "receptionist" | "system";
 
 // Human-readable role label for the practitioner-facing email. "owner" reads as
 // "Studio owner" so the recipient never sees an internal enum value.
@@ -279,6 +291,8 @@ export function cancellationActorRoleLabel(role: CancellationActorRole): string 
       return "Practitioner";
     case "owner":
       return "Studio owner";
+    case "receptionist":
+      return "Front desk";
     case "system":
       return "System";
   }

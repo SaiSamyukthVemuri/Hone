@@ -12,6 +12,10 @@ import type { ClientBudgetLevel } from "@/lib/budget/levels";
 export type Modality = "electrolysis" | "laser";
 export type ElectrolysisMode = "thermo" | "galv" | "blend";
 export type PractitionerRole = "owner" | "practitioner";
+// STUDIO-READY-02b (#824, migration 0218): an invitation may also be for the
+// front desk. Accepting one creates a studio_receptionists row, never a
+// practitioners row, so this is NOT a practitioner role.
+export type InvitationRole = PractitionerRole | "receptionist";
 export type PhotoType = "before" | "after" | "progress";
 export type FitzpatrickType = 1 | 2 | 3 | 4 | 5 | 6;
 
@@ -158,6 +162,19 @@ export type Studio = {
   // is enforced by CHECK (0..20000) at the column level.
   late_cancel_fee_cents: number | null;
   no_show_fee_cents: number | null;
+  // Migration 0234 (HON-47): whether CLIENTS may cancel or reschedule
+  // themselves. `not null default true`, so an existing studio is unchanged
+  // and no code may treat absence as "disabled". Enforced inside the two
+  // client-only commands (public_cancel_appointment_with_token,
+  // reschedule_appointment_v2), so staff scheduling is unaffected: it uses
+  // move_or_reassign_appointment and the receptionist_* commands.
+  //
+  // These are their OWN flags. Never derive them from, and never fold them
+  // into, new_client_admission_mode — EMERG-01's free-consultation rule reads
+  // that, and conflating the two would make disabling client cancellation
+  // silently change Willow's admission behaviour.
+  client_cancellation_enabled: boolean;
+  client_reschedule_enabled: boolean;
   // Migration 0049: per-studio SMS toggles. All default false. SMS
   // only goes out when the matching toggle is on AND the client has
   // explicit consent AND the client is not opted out AND Twilio is
@@ -170,6 +187,9 @@ export type Studio = {
   // to an eligible prospect. Default false. Optional because a row read before
   // 0206 is applied has no such column, and absent must mean OFF.
   send_waitlist_invitation_sms?: boolean;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 // Migration 0140: per-studio resumable onboarding-v2 (owner first-run) state.
@@ -395,7 +415,7 @@ export type AppointmentStatus =
   | "completed"
   | "no_show";
 
-export type CancelledBy = "client" | "practitioner" | "owner";
+export type CancelledBy = "client" | "practitioner" | "owner" | "receptionist";
 
 export type Appointment = {
   id: string;
@@ -436,6 +456,10 @@ export type Appointment = {
   // `cancelled_by_practitioner_id` complements it with WHICH practitioner.
   created_by_practitioner_id?: string | null;
   cancelled_by_practitioner_id?: string | null;
+  // 0220: the receptionist twins. At most one creator kind and one canceller
+  // kind per row (CHECKs). NULL unless the front desk created or cancelled it.
+  created_by_receptionist_id?: string | null;
+  cancelled_by_receptionist_id?: string | null;
   // The outside-hours override authoriser and their role AT THE TIME. Both
   // commands that can set booked_outside_availability refuse a non-owner, so
   // the role is always 'owner' when written. Cleared together with the flag
@@ -532,6 +556,9 @@ export type Appointment = {
   rescheduled_from_appointment_id: string | null;
   rescheduled_to_appointment_id: string | null;
   cancellation_kind: string | null;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 // Migration 0049: SMS types accepted by claim_sms_send and
@@ -737,12 +764,15 @@ export type AppointmentAudit = {
   // and never accepted from the caller. This is what keeps a detached row
   // tenant-authorizable, appointment_audit_member_read now reads it directly.
   studio_id: string;
-  actor_type: "practitioner" | "client" | "system";
+  actor_type: "practitioner" | "client" | "system" | "receptionist";
   actor_id: string | null;
   // Migration 0174: durable, same-studio-validated practitioner correlation.
   // NULL for client and system actors, never invented for a non-practitioner.
   // Complements, and does not replace, the historical bare actor_id above.
   actor_practitioner_id: string | null;
+  // Migration 0220: the receptionist twin, derived and same-studio-validated
+  // the same way. NULL for every actor but a receptionist.
+  actor_receptionist_id: string | null;
   action: string;
   details: Record<string, unknown> | null;
   // Migration 0174: DATABASE-derived at INSERT. A caller-supplied value is
@@ -780,7 +810,29 @@ export type Practitioner = {
   // seeds NEW treatment-area drafts. UI default only; the value
   // actually used stays on session_blocks.machine_frequency.
   default_machine_frequency: MachineFrequency | null;
+  // Migration 0223: the practitioner's remembered machine IN THIS STUDIO, and
+  // the mode she last worked in on it. One practitioners row is one
+  // (studio_id, user_id), so this is already per-practitioner-per-studio with
+  // no extra keying.
+  //
+  // A UI DEFAULT ONLY, never the clinical record: what was actually used lives
+  // on treatment_setup_readings. default_machine_id is cleared to null by the
+  // retire command when the unit goes out of service, so a stale remembered
+  // selection cannot outlive its machine.
+  default_machine_id: string | null;
+  default_machine_mode: string | null;
+  // Migration 0222 (THIS PR's amended revision, blob c27d9480 — the original
+  // 0222 on #868 does not add it): when public booking last SUCCESSFULLY
+  // assigned this practitioner. Advanced only by create_public_appointment_v2
+  // on a CREATED capacity-ON assignment, inside that command's studio
+  // transaction; refusals never advance it. NULL means never recorded, which
+  // sorts FIRST among equal loads in the fair-assignment ordering, and is never
+  // backfilled because history carries no such fact.
+  last_public_assignment_at: string | null;
   created_at: string;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 export type Client = {
@@ -834,6 +886,12 @@ export type Client = {
   // Migration 0052: lowercased/trimmed email maintained by trigger
   // for portal lookups. Added here by the PR #221 drift check.
   normalized_email: string | null;
+  // Migration 0231: the client's identification portrait, a pointer to one of
+  // their own client-scoped, unarchived treatment photos (null = none).
+  portrait_image_id: string | null;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 // Migration 0126 (Willow PR A): dedicated dated CONSULTATION notes + SKIN/HAIR
@@ -1336,6 +1394,9 @@ export type TreatmentImage = {
   // Optional practitioner-authored note/caption (migration 0099). Free text,
   // capped at 1000 chars by the update action; NULL = no note.
   practitioner_note: string | null;
+  // FETT photos (migration 0232): taken before or after treatment, on a visit
+  // photo only; NULL = unlabelled. Set via set_treatment_image_capture_stage.
+  capture_stage: "before" | "after" | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -1349,7 +1410,7 @@ export type PendingInvitation = {
   studio_id: string;
   email: string;
   invited_by: string | null;
-  role: PractitionerRole;
+  role: InvitationRole;
   display_name: string | null;
   status: InvitationStatus;
   created_at: string;
@@ -1401,6 +1462,8 @@ export type ClientTag = {
 export type IntakeStatus = "in_progress" | "submitted" | "reviewed";
 
 export type ClientIntakeForm = {
+  questionnaire_snapshot: unknown | null;
+  revision: string | number;
   id: string;
   studio_id: string;
   client_id: string;

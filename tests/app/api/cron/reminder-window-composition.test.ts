@@ -53,179 +53,34 @@ describe("the 7d/3d intake cadence is retired, not reinterpreted", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// ONE CLAIM OWNS THE WINDOW
-// ---------------------------------------------------------------------------
-describe("at most one email per appointment per window", () => {
-  it("claims the single reminder_24h / reminder_2h slot, whatever it composes", () => {
-    expect(PASS).toMatch(
-      /const emailType: ClaimableEmailType =\s*\n?\s*opts\.kind === "24h" \? "reminder_24h" : "reminder_2h";/,
-    );
-    expect(PASS).toMatch(/const claimOutcome = await claimEmailSendOutcome\(admin, appt\.id, emailType\)/);
-    expect(PASS).toMatch(/if \(claimOutcome === "unavailable"\) return "claim_unavailable";/);
-    expect(PASS).toMatch(/const claimed = claimOutcome === "claimed";/);
-    expect(PASS).toMatch(/if \(!claimed\)/);
+// Composition moved into one fresh governed DB projection; the existing fake
+// renderer tests exercise its three wire shapes. DB concurrency remains UNRUN.
+describe("0247 composition has one governed authority", () => {
+  it("uses the shared reminder purpose and no legacy writer fallback", () => {
+    expect(PASS).toContain('opts.kind === "24h" ? "reminder_24h" : "reminder_2h"');
+    expect(PASS.match(/await sendAppointmentReminderOperation\(/g)).toHaveLength(1);
+    expect(PASS).not.toMatch(/claimEmailSend|recordEmailResult|readLatestIntake|generateIntakeLinkUrl/);
   });
-
-  it("has exactly ONE claim call and ONE success-recording call site", () => {
-    expect(PASS.match(/claimEmailSendOutcome\(/g) ?? []).toHaveLength(1);
-    expect(
-      PASS.match(/recordEmailResult\(admin, appt\.id, emailType, result\.ok\)/g) ?? [],
-    ).toHaveLength(1);
+  it("does not reconstruct current content from cached joins", () => {
+    expect(PASS).not.toMatch(/appt\.client|appt\.service|appt\.practitioner|appt\.studio\./);
+    expect(PASS).toContain('result.kind === "held"');
+    expect(PASS).toContain('stats.skipped += 1; return;');
   });
-
-  it("has exactly ONE provider send per iteration: reminder OR standalone, never both", () => {
-    // Two mutually exclusive branches assigning the same `result`.
-    expect(PASS).toMatch(/let result: EmailSendResult;/);
-    expect(PASS).toMatch(/if \(wantsReminder\) \{/);
-    expect(PASS).toMatch(/result = await sendFn\(\{/);
-    expect(PASS).toMatch(/result = await sendIntakeReminderToClient\(\{/);
-    expect(PASS.match(/result = await /g) ?? []).toHaveLength(2);
+  it("stamps a carried intake link only for confirmed current acceptance", () => {
+    expect(PASS).toContain('result.observation.kind === "accepted"');
+    expect(PASS).toContain('result.persistence === "recorded" && result.projection === "current" && result.intakeId');
+    expect(PASS).toContain('stampIntakeLinkIssued(admin, result.intakeId, { emailed: true })');
   });
-});
-
-// ---------------------------------------------------------------------------
-// The six cases
-// ---------------------------------------------------------------------------
-describe("the six-case law", () => {
-  it("reads the two settings independently", () => {
-    expect(PASS).toMatch(
-      /const wantsReminder =\s*\n?\s*\(appt\.studio as unknown as Record<string, boolean>\)\[studioToggle\] === true;/,
-    );
-    // Absent column (pre-0186 row) must read as ENABLED: the column defaults true.
-    expect(PASS).toMatch(
-      /const intakeEnabled = appt\.studio\.send_intake_reminders !== false;/,
-    );
+  it("preserves the cap and only calls exhaustion for definite refusal", () => {
+    expect(CODE).toContain('const MAX_ATTEMPTS = 3;');
+    expect(CODE).toContain('.lt(opts.attemptsColumn, MAX_ATTEMPTS)');
+    expect(PASS).toContain('result.observation.kind === "definite_refusal"');
+    expect(PASS).toContain('intakeCtaIncluded: result.intakeId !== null');
   });
-
-  it("CASE 6 (both off) short-circuits before any intake read or claim", () => {
-    expect(PASS).toMatch(/if \(!wantsReminder && !intakeEnabled\) return;/);
-    const case6 = PASS.indexOf("if (!wantsReminder && !intakeEnabled) return;");
-    expect(case6).toBeGreaterThan(-1);
-    const claimAt = PASS.indexOf("claimEmailSendOutcome(");
-    expect(claimAt).toBeGreaterThan(-1);
-    expect(case6).toBeLessThan(claimAt);
-    expect(case6).toBeLessThan(PASS.indexOf("readLatestIntake("));
-  });
-
-  it("CASE 5 (reminder off, intake complete) never claims and never bumps an attempt", () => {
-    // The pre-claim probe exists ONLY in the !wantsReminder branch.
-    expect(PASS).toMatch(/if \(!wantsReminder\) \{[\s\S]*?const probe = await readLatestIntake\(/);
-    expect(PASS).toMatch(/if \(probe\?\.status !== "in_progress"\) \{[\s\S]*?stats\.skipped \+= 1;[\s\S]*?return;/);
-    const probeAt = PASS.indexOf("const probe = await readLatestIntake(");
-    expect(probeAt).toBeGreaterThan(-1);
-    const claimAt = PASS.indexOf("claimEmailSendOutcome(");
-    expect(claimAt).toBeGreaterThan(-1);
-    expect(probeAt).toBeLessThan(claimAt);
-  });
-
-  it("CASE 3 (intake off) never reads intake at all", () => {
-    expect(PASS).toMatch(
-      /const intake = intakeEnabled\s*\n?\s*\? await readLatestIntake\(admin, appt\.studio\.id, appt\.client_id, !wantsReminder\)\s*\n?\s*: null;/,
-    );
-  });
-
-  it("CASE 4 sends the standalone intake reminder for this window's kind", () => {
-    expect(PASS).toMatch(/sendIntakeReminderToClient\(\{\s*\n?\s*kind: opts\.kind,/);
-  });
-
-  it("a CASE 4 -> 5 flip after the claim sends nothing and clears the claim", () => {
-    expect(PASS).toMatch(
-      /if \(!wantsReminder && !intakeIncomplete\) \{[\s\S]*?await recordEmailResult\(admin, appt\.id, emailType, false\);[\s\S]*?stats\.skipped \+= 1;[\s\S]*?return;/,
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// LIVE state at the send decision
-// ---------------------------------------------------------------------------
-describe("nothing is inferred from an earlier cron query", () => {
-  it("re-reads appointment status after the claim and before the decision", () => {
-    expect(PASS).toMatch(/\.from\("appointments"\)\s*\n?\s*\.select\("status, starts_at"\)/);
-    expect(PASS).toMatch(/if \(!fresh \|\| fresh\.status !== "confirmed"\)/);
-    const claimAt = PASS.indexOf("claimEmailSendOutcome(");
-    const statusAt = PASS.indexOf('.select("status, starts_at")');
-    expect(claimAt).toBeGreaterThan(-1);
-    expect(statusAt).toBeGreaterThan(claimAt);
-  });
-
-  it("re-reads intake LIVE after the status re-check, as a SECOND query", () => {
-    // Two distinct readLatestIntake call sites: the pre-claim probe (cases
-    // 4/5 only) and the live read. Reusing the probe would be inference.
-    expect(PASS.match(/readLatestIntake\(/g) ?? []).toHaveLength(2);
-    const statusAt = PASS.indexOf('.select("status, starts_at")');
-    const liveAt = PASS.indexOf("const intake = intakeEnabled");
-    expect(statusAt).toBeGreaterThan(-1);
-    expect(liveAt).toBeGreaterThan(statusAt);
-  });
-
-  it("decides the CTA from the LIVE read, and sends after deciding", () => {
-    expect(PASS).toMatch(/const intakeIncomplete = intake\?\.status === "in_progress";/);
-    const liveAt = PASS.indexOf("const intakeIncomplete =");
-    expect(liveAt).toBeGreaterThan(-1);
-    expect(liveAt).toBeLessThan(PASS.indexOf("result = await "));
-  });
-
-  it("resolves the intake studio + client scoped, reading id and status only", () => {
-    expect(CODE).toMatch(/\.from\("client_intake_forms"\)\s*\n?\s*\.select\("id, status"\)/);
-    expect(CODE).toMatch(/\.eq\("studio_id", studioId\)/);
-    expect(CODE).toMatch(/\.eq\("client_id", clientId\)/);
-    expect(CODE).toMatch(/\.is\("deleted_at", null\)/);
-  });
-
-  it("preserves default no-CTA degradation and requires authority only for standalone email", () => {
-    expect(CODE).toMatch(/requireKnown = false/);
-    expect(CODE).toMatch(/const \{ data, error \} = await admin/);
-    expect(CODE).toMatch(/if \(requireKnown && error\) throw new Error\("reminder intake state unavailable"\)/);
-    expect(PASS).toMatch(/const probe = await readLatestIntake\([\s\S]*?appt\.client_id,\s*true,/);
-    expect(PASS).toMatch(/readLatestIntake\(admin, appt\.studio\.id, appt\.client_id, !wantsReminder\)/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Secure link + link accounting
-// ---------------------------------------------------------------------------
-describe("intake link minting and stamping", () => {
-  it("mints a FRESH link only when the live read says incomplete", () => {
-    expect(PASS).toMatch(
-      /const intakeUrl =\s*\n?\s*intakeIncomplete && intake\s*\n?\s*\? generateIntakeLinkUrl\(intake\.id, appOrigin\)\s*\n?\s*: null;/,
-    );
-  });
-
-  it("stamps intake-link metadata ONLY on a successful send that carried a link", () => {
-    expect(PASS).toMatch(
-      /if \(result\.ok\) \{[\s\S]*?if \(intakeUrl && intake\) \{[\s\S]*?await stampIntakeLinkIssued\(admin, intake\.id, \{ emailed: true \}\)/,
-    );
-    expect(PASS.match(/stampIntakeLinkIssued\(/g) ?? []).toHaveLength(1);
-  });
-
-  it("a plain appointment reminder cannot stamp intake-link use", () => {
-    // The only stamp is inside the `intakeUrl && intake` guard, which is null
-    // for cases 2 and 3.
-    const stampAt = PASS.indexOf("stampIntakeLinkIssued(");
-    const guardAt = PASS.indexOf("if (intakeUrl && intake) {");
-    expect(guardAt).toBeGreaterThan(-1);
-    expect(stampAt).toBeGreaterThan(guardAt);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Retry / exhaustion semantics
-// ---------------------------------------------------------------------------
-describe("retry and exhaustion semantics are preserved", () => {
-  it("keeps the 3-strike cap on the window query", () => {
-    expect(ROUTE).toMatch(/const MAX_ATTEMPTS = 3;/);
-    expect(CODE).toMatch(/\.lt\(opts\.attemptsColumn, MAX_ATTEMPTS\)/);
-  });
-
-  it("records the provider outcome and alerts on exhaustion", () => {
-    expect(PASS).toMatch(/await recordEmailResult\(admin, appt\.id, emailType, result\.ok\)/);
-    expect(PASS).toMatch(/await alertIfReminderExhausted\(\{/);
-  });
-
-  it("the exhaustion alert says whether the lost email carried an intake CTA", () => {
-    expect(CODE).toMatch(/intake_cta_included: opts\.intakeCtaIncluded,/);
-    expect(PASS).toMatch(/intakeCtaIncluded: intakeUrl !== null,/);
+  it("reports unconfirmed accounting without a private payload or retry", () => {
+    expect(PASS).toContain('result.persistence === "unconfirmed"');
+    expect(PASS).toContain('event: "reminder_email_accounting_failed"');
+    expect(PASS).not.toMatch(/console\.|recordEmailAttempt/);
   });
 });
 

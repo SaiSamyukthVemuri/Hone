@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
@@ -125,5 +127,126 @@ describe("a SETTLED visit shows the outcome and offers nothing further", () => {
     // Five distinct renderings: the distinction the schema keeps survives to
     // the screen.
     expect(seen.size).toBe(5);
+  });
+});
+
+// PAY-CCY-04. An attested amount names the currency its row was recorded in,
+// and a new amount is labelled with the studio's currency.
+describe("settlement amounts carry their currency", () => {
+  it("a recorded USD settlement reads USD; a CAD one reads CAD", () => {
+    expect(
+      render({ settledMethod: "paid_cash", settledAmountCents: 4500, settledCurrency: "usd", currency: "usd" }),
+    ).toContain("$45.00 USD");
+    expect(
+      render({ settledMethod: "paid_cash", settledAmountCents: 4500, settledCurrency: "cad", currency: "cad" }),
+    ).toContain("$45.00 CAD");
+  });
+
+  it("the RECORDED row's currency wins over the studio's current one", () => {
+    const html = render({ settledMethod: "paid_cash", settledAmountCents: 4500, settledCurrency: "cad", currency: "usd" });
+    expect(html).toContain("$45.00 CAD");
+    expect(html).not.toContain("USD");
+  });
+
+  it("an unknown currency is said so, never shown as Canadian", () => {
+    const html = render({ settledMethod: "paid_cash", settledAmountCents: 4500, settledCurrency: null, currency: null });
+    expect(html).toContain("$45.00 (currency unknown)");
+    expect(html).not.toContain("CAD");
+  });
+});
+
+// Codex P2 4249009847. The entry label names the studio's currency, and a
+// failed studio-currency read says so instead of rendering nothing.
+describe("the settlement amount field names its currency", () => {
+  it("USD, CAD, and an unknown currency said out loud", async () => {
+    const { settlementAmountLabel } = await import("@/components/appointment-settlement-controls");
+    expect(settlementAmountLabel("paid_cash", "usd")).toBe("Amount collected (USD)");
+    expect(settlementAmountLabel("paid_e_transfer", "cad")).toBe("Amount collected (CAD)");
+    expect(settlementAmountLabel("still_owes", "usd")).toBe("Amount still owed (USD)");
+    expect(settlementAmountLabel("waived", "cad")).toBe("Amount waived (CAD)");
+    expect(settlementAmountLabel("paid_cash", null)).toBe("Amount collected (currency unknown)");
+    expect(settlementAmountLabel("paid_other_external", null)).not.toMatch(/CAD|USD/);
+  });
+
+  it("the field renders that label, not a hand-written one", () => {
+    const src = readFileSync(
+      path.join(process.cwd(), "components/appointment-settlement-controls.tsx"),
+      "utf8",
+    );
+    expect(src).toContain("{settlementAmountLabel(open, currency)}");
+    expect(src).not.toMatch(/: ""\}\s*\n\s*<input/);
+  });
+});
+
+// PAY-CCY-07 (#824; option B chosen 2026-10-12). A US studio
+// is not offered Interac e-Transfer; its Zelle / Venmo / check is recorded as
+// paid_other_external with US wording. Canada and an unread country are
+// byte-for-byte today's list. Stored values and meanings are unchanged.
+describe("US external payments (option B, draft)", () => {
+  const buttons = (html: string) =>
+    [...html.matchAll(/data-testid="settlement-open-([a-z_]+)"[^>]*>([^<]*)</g)].map(
+      (m) => [m[1], m[2]] as const,
+    );
+  const TODAY = [
+    ["paid_cash", "Paid cash"],
+    ["paid_e_transfer", "Paid by e-transfer"],
+    ["paid_other_external", "Paid another way"],
+    ["still_owes", "Client still owes"],
+  ];
+
+  it("US: e-transfer is not offered; 'Paid another way' names the US rails", () => {
+    expect(buttons(render({ settledMethod: null, paymentCountry: "US" }))).toEqual([
+      ["paid_cash", "Paid cash"],
+      ["paid_other_external", "Paid another way (Zelle, Venmo, check)"],
+      ["still_owes", "Client still owes"],
+    ]);
+  });
+
+  it("US owner still gets Waive, and still no e-transfer", () => {
+    const html = render({ settledMethod: null, paymentCountry: "US", isOwner: true });
+    expect(html).toContain("settlement-open-waived");
+    expect(html).not.toContain("settlement-open-paid_e_transfer");
+  });
+
+  it("CANADIAN REGRESSION: a CA studio sees exactly today's four, worded exactly as today", () => {
+    expect(buttons(render({ settledMethod: null, paymentCountry: "CA" }))).toEqual(TODAY);
+  });
+
+  it("an UNREAD country keeps today's full list (no silent change on a failed read)", () => {
+    expect(buttons(render({ settledMethod: null, paymentCountry: null }))).toEqual(TODAY);
+  });
+
+  it("an existing paid_e_transfer record still reads truthfully, whatever the country", () => {
+    const html = render({
+      settledMethod: "paid_e_transfer",
+      settledAmountCents: 4500,
+      settledCurrency: "usd",
+      currency: "usd",
+      paymentCountry: "US",
+    });
+    expect(html).toContain("Paid · e-transfer");
+  });
+
+  it("the stored vocabulary and its meanings are unchanged; the server still accepts every value", async () => {
+    const t = await import("@/lib/billing/settlement-types");
+    expect([...t.SETTLEMENT_METHODS]).toEqual([
+      "paid_cash",
+      "paid_e_transfer",
+      "paid_other_external",
+      "waived",
+      "still_owes",
+    ]);
+    expect([...t.PRACTITIONER_METHODS]).toEqual([
+      "paid_cash",
+      "paid_e_transfer",
+      "paid_other_external",
+      "still_owes",
+    ]);
+    // The VOCABULARY still contains it: the per-country refusal lives in the
+    // server actions (tests/app/settlement-country-enforcement.test.ts) and
+    // the 0224 guard, not in the type.
+    expect(t.isPractitionerMethod("paid_e_transfer")).toBe(true);
+    expect(t.SETTLEMENT_BADGE_LABEL.paid_other_external).toBe("Paid · other");
+    expect(t.SETTLEMENT_ACTION_LABEL.paid_other_external).toBe("Paid another way");
   });
 });

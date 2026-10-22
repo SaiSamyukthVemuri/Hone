@@ -80,6 +80,10 @@ import {
 //     their stability, and a studio does not own their contents. The one
 //     exception is storage BUCKETS, which hold studio files and are therefore
 //     enumerated as resources in their own right.
+//   * Repository-owned PRIVATE schemas (today only appointment_email_private,
+//     0247) are named one by one with the decision behind them. They are not
+//     platform-provisioned, so each needs its own reviewed reason rather than
+//     the platform rule above.
 //   * Views and materialized views are excluded because they are projections of
 //     base tables that already carry a disposition; exporting both would be
 //     exporting the same fact twice.
@@ -112,6 +116,8 @@ export const NON_CUSTOMER_SCHEMAS: Readonly<Record<string, string>> = {
   cron: "pg_cron internals.",
   pgsodium: "pgsodium key management. Secret material.",
   information_schema: "SQL standard catalog.",
+  appointment_email_private:
+    "Hone's reminder-email send authority (migration 0247): the operation state machine, per-appointment cohorts and intake epochs. Repository-owned, not platform-provisioned, and decided rather than shrugged: its rows are delivery-accounting internals (lease tokens, capability and request digests, opaque authority revision vectors, provider message ids), several of them security material. The studio-visible history of the same sends is written to email_outbound_messages, which 0247 keeps as its secondary ledger and whose export is decided under TRUTH-01B.",
 };
 
 // ---------------------------------------------------------------------------
@@ -311,6 +317,8 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "normalized_email", reason: "internal_state", note: "Generated from email, which is exported; a second copy carries no new fact." },
       { column: "sms_phone", reason: "internal_state", note: "Generated from exported `phone`; carries no additional customer fact and exists to support canonical SMS routing/eligibility. Same call as normalized_email: the export preserves the AUTHORED customer value, never a second generated copy of it. Migration 0199 added the column as `generated always as (public.sms_normalized_phone(phone)) stored`." },
       { column: "archived_by", reason: "pending_review", note: "Archive attribution; see archived_at." },
+      { column: "email_operation_revision", reason: "delivery_mechanics", note: "Migration 0247. Trigger-maintained opaque sequence value that invalidates an in-flight reminder email when this row changes; no studio-authored fact." },
+      { column: "portrait_image_id", reason: "pending_review", note: "0231 identification-portrait pointer to one of the client's own treatment_images rows; it travels with the treatment-photo export decision, not as a bare id." },
     ],
     sourceCountCheck: { kind: "studio_scoped" },
     rowScope: "Every client row this studio holds is exported, archived clients included — the read does not filter on archived_at — and archived_at IS emitted, so archived state stays distinguishable from active.",
@@ -543,11 +551,15 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
       { column: "user_id", reason: "internal_state", note: "Supabase auth user identifier. Platform identity, not studio content." },
+      { column: "email_operation_revision", reason: "delivery_mechanics", note: "Migration 0247. Trigger-maintained opaque sequence value that invalidates an in-flight reminder email when this row changes; no studio-authored fact." },
+      { column: "default_machine_id", reason: "pending_review", note: "Migration 0223. A UI default, not a treatment record: what was actually used is on treatment_setup_readings. It is also an opaque uuid pointing at studio_machines, whose own export disposition is still pending, so emitting it would hand a studio an identifier it cannot resolve inside the archive. Unlike default_machine_frequency below, it is not self-describing. Revisit with the MPX-02 export decision." },
+      { column: "default_machine_mode", reason: "pending_review", note: "Migration 0223. The mode half of the same UI default, meaningful only alongside default_machine_id. Held with it rather than emitted on its own." },
       { column: "terms_accepted_at", reason: "internal_state", note: "Hone platform agreement acceptance, not studio-owned client content." },
       { column: "terms_version", reason: "internal_state", note: "See terms_accepted_at." },
       { column: "privacy_accepted_at", reason: "internal_state", note: "See terms_accepted_at." },
       { column: "privacy_version", reason: "internal_state", note: "See terms_accepted_at." },
       { column: "calendar_feed_token_hash", reason: "security_material", note: "Calendar-feed credential material. Never exported." },
+      { column: "last_public_assignment_at", reason: "internal_state", note: "0222 fair-assignment bookkeeping: when public booking last assigned this practitioner, read only by create_public_appointment_v2's ordering. It is a scheduling-fairness cursor, not studio-owned content, and it describes Hone's assignment mechanism rather than anything the studio recorded. Exporting it would invite reading it as an activity history, which it is not: NULL means NEVER RECORDED rather than never assigned, it is written only for capacity-ON assignments, and every legacy studio's rows are therefore empty. The practitioner's real activity is already exported through appointments and sessions." },
     ],
     sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
     rowScope:
@@ -642,6 +654,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "reminder_24h_send_attempts", reason: "delivery_mechanics" },
       { column: "reminder_2h_send_attempts", reason: "delivery_mechanics" },
       { column: "no_show_email_send_attempts", reason: "delivery_mechanics" },
+      { column: "email_operation_revision", reason: "delivery_mechanics", note: "Migration 0247. Trigger-maintained opaque sequence value that invalidates an in-flight reminder email when this row changes; no studio-authored fact." },
       { column: "buffer_minutes_snapshot", reason: "internal_state", note: "Trigger-managed scheduling snapshot." },
       { column: "blocked_ends_at", reason: "internal_state", note: "Trigger-managed scheduling snapshot." },
       { column: "postcare_email_sent_at", reason: "delivery_mechanics" },
@@ -673,6 +686,8 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "capacity_enabled", reason: "internal_state", note: "Feature-state snapshot at booking time." },
       { column: "created_by_practitioner_id", reason: "pending_review", note: "Booking attribution (migration 0174)." },
       { column: "cancelled_by_practitioner_id", reason: "pending_review", note: "Cancellation attribution (migration 0174)." },
+      { column: "created_by_receptionist_id", reason: "pending_review", note: "Front-desk booking attribution (migration 0220)." },
+      { column: "cancelled_by_receptionist_id", reason: "pending_review", note: "Front-desk cancellation attribution (migration 0220)." },
       { column: "outside_availability_authorized_by_practitioner_id", reason: "pending_review", note: "Override authorization (migration 0174)." },
       { column: "outside_availability_authorized_role", reason: "pending_review", note: "Override authorization (migration 0174)." },
       { column: "outside_availability_authorized_at", reason: "pending_review", note: "Override authorization (migration 0174)." },
@@ -1052,6 +1067,12 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "The Hone product waitlist from migration 0004. Platform marketing, not studio content, and unrelated to new_client_waitlist_entries.",
   },
+  platform_lead_alerts: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Hone's own operator-alert state for its sales leads, live since migration 0213 (LEAD-ALERT-01): one row per demo_requests or waitlist lead, holding only the alert's status, attempt count, lease and provider message id. The leads it points at are platform records excluded above, and the table carries no studio_id, so it is no studio's content.",
+  },
   calendar_sync_control: {
     kind: "excluded",
     category: "platform",
@@ -1096,6 +1117,24 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Delivery log for outbound marketing-tracking events. The underlying booking is already exported in appointments.csv.",
   },
+  delivery_incidents: {
+    kind: "excluded",
+    category: "derived",
+    reason:
+      "Deduplicated delivery-failure incidents, live since migration 0215 (DELIVERY-VISIBILITY-01). Each row is derived from attempts on the SMS and email delivery ledgers (one open row per studio, channel, purpose and failure class) and holds counts, timestamps and reason slugs, nothing a studio authored. The underlying attempt history is decided with sms_outbound_messages and email_outbound_messages.",
+  },
+  delivery_sweep_heartbeat: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "One row recording Hone's last email delivery-event recovery sweep, live since migration 0215 (DELIVERY-VISIBILITY-01). Platform scheduler health, holding no studio data.",
+  },
+  email_provider_events: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Hone's intake of Resend's signed delivery webhooks, live since migration 0212 (DELIVERY-EVENTS-01). One receipt per provider delivery, kept so an event is applied exactly once and a lost one can be finished. A receipt carries the provider's delivery id and email id plus normalised reason codes. It holds no studio content, and an unmatched or quarantined receipt is attributable to no studio by construction. What a studio would recognise, whether an email reached a client's mail server, lives on email_outbound_messages, which is decided separately.",
+  },
   stripe_events: {
     kind: "excluded",
     category: "derived",
@@ -1111,6 +1150,55 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     fieldReviewRequired: true,
     reason:
       "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the payment-consent decisions and the metadata recorded with them.",
+  },
+  treatment_setup_captures: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Introduced by migration 0223 (MPX-03, #829) when per-field revisions were replaced by atomic captures. One row per act of recording a settings group against a treatment block: which unit, which catalogue profile version, which mode, which channels, by whom, when, and which revision of that group it is. It is CLINICAL and studio-owned - the readings in treatment_setup_readings hang off it, and exporting readings without their captures would leave each reading unable to say what it was recorded under or in what order. Its disposition should therefore follow whatever treatment_setup_readings is given, and this lane was not asked to make that product decision. Note it carries recorded_by_practitioner_id, so it names a practitioner but no client directly.",
+  },
+  treatment_area_create_claims: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Introduced by migration 0223 (MPX-03, #829) to make the INITIAL save of a treatment area repeatable. One row per (session, caller-supplied retry key), recording a digest of the whole initial payload together with the block, entry and submission that key produced - so a retry after a lost response returns the original area instead of creating a second one carrying a second copy of the settings. TIER 2 RATHER THAN 1 because nothing in it is clinical content: it is a RECEIPT for a transport, and the three ids in it point at rows that each carry their own disposition in this registry. THE OBVIOUS ANSWER IS AN EXCLUSION on the same footing as studio_calendar_reservations - but `derived` would be an OVERCLAIM, and saying so is the point of leaving this pending. Two of its columns exist nowhere else: `idempotency_key`, which is opaque and minted by the caller's browser, and `payload_digest`, an md5 over the save's arguments. Neither is derivable from the rows it points at, and neither would mean anything to a client reading an archive - which is an argument for excluding it, not for calling it derived. It is studio-scoped and member-read like everything else here, because a key names a session and a session names a client.",
+  },
+  treatment_setup_submissions: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Introduced by migration 0223 (MPX-03, #829) when a Save of machine settings became ONE atomic fact rather than several independent calls. One row per press of Save, recording the setup identity it was made under - which physical unit, which catalogue profile version, which mode - plus a caller-supplied retry key and a digest of the payload, so a repeat after a lost response returns the original instead of appending a second capture. It is CLINICAL and studio-owned: the captures in treatment_setup_captures carry its id, and a submission without them says only that a save happened, while captures without it lose which groups were entered together in one act. Its disposition must therefore follow whatever treatment_setup_captures and treatment_setup_readings are given, and this lane was not asked to make that product decision. PROVENANCE: it carries recorded_by_practitioner_id, so it names a practitioner but no client directly - the client is reachable only through session_blocks -> sessions. The retry key is caller-supplied and opaque, and payload_digest is an md5 over the settings payload, not the readings themselves, so neither carries clinical values of its own; both are nonetheless studio-scoped operational metadata rather than anything a client would recognise, which is a reason to think an exported archive wants the captures and readings and not these two columns.",
+  },
+  machine_profile_field_contract: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Introduced by migration 0223 (MPX-03, #829). The FIELD half of the published contract: for a (profile, version, mode), which fields exist, in what native unit and precision, and what kind of quantity each is. record_treatment_setup_group validates every reading against it and derives unit and precision from it. Like its mode-level parent it is a GLOBAL PRODUCT FACT with no studio_id, published by deployment authority only and immutable once published, holding no client, clinical or provider data. A studio export probably should not carry it, but an exported reading is only interpretable against the contract version it was captured under, so the decision belongs with whoever decides the readings' disposition.",
+  },
+  machine_profile_mode_contract: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Introduced by migration 0223 (MPX-03, #829) when field-contract validation moved into the recording command's authority boundary. The MODE-level half of the published contract for a (profile, version, mode): how many independently controlled channels the model has and any physical option the mode requires. It is a GLOBAL PRODUCT FACT, not studio data - there is no studio_id, it is published by deployment authority only, and it is immutable once published. It holds no client, clinical or provider data. A studio export almost certainly should NOT carry it, but it may need to be resolvable to interpret exported readings, so the decision belongs with whoever decides the readings' disposition.",
+  },
+  studio_machines: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Introduced by migration 0223 (MPX-02, #829). The studio's own list of physical electrolysis machines: a display name, the catalogue profile and version it was registered against, the options physically fitted, and a retirement instant. It holds NO client or clinical data and no provider identifier. It is plainly studio-owned content and a studio export should probably carry it, but that is a product decision this lane was not asked to make, so nothing is claimed here. Whoever takes it should note that treatment_setup_readings references this table, so exporting the readings without the machines would leave an unresolvable identifier in the archive.",
+  },
+  treatment_setup_readings: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Introduced by migration 0223 (MPX-02, #829). What a machine actually showed for one treatment block: one row per settings group, stage and field, each carrying its own native unit, the machine's decimal precision, the profile version it was captured under, and who or what observed it. Append-only - UPDATE is refused by trigger. This is clinical treatment content of the same class as electrolysis_entries and laser_entries, both of which ARE exported, so the likely answer is that it should be too. It is left pending rather than assumed for two reasons: the field set is model-specific, so a CSV header list cannot be written until at least one machine profile passes its evidence review; and #828's HIPAA gate governs what may leave the system in a patient-identifiable archive. No finding is made here about either.",
   },
   pending_booking_payment_sessions: {
     kind: "pending",
@@ -1207,6 +1295,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     ],
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
+      { column: "email_operation_revision", reason: "delivery_mechanics", note: "Migration 0247. Trigger-maintained opaque sequence value that invalidates an in-flight reminder email when this row changes; no studio-authored fact." },
     ],
     sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database - the same posture as the other unverified files. Declaring the gap is what stops the manifest reading as though every file were checked." },
     rowScope: "Every service this studio has defined, active or not.",
@@ -1435,6 +1524,14 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Same 0159 retirement and the same unverified row-bearing question as clinical_record_snapshots.",
   },
+  treatment_reading_change_events: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    fieldReviewRequired: true,
+    reason:
+      "HON-18 / CLN-007: 0244 routine clinical reading correction diffs and actor snapshots. PENDING field review under TRUTH-01B, NOT EXPORTED: old/new values are clinical data; this registry entry grants no new export authority or retention policy. Retired signed-record ledgers and native setup captures remain separate.",
+  },
   clinical_audit_events: {
     kind: "pending",
     ticket: "TRUTH-01B",
@@ -1556,6 +1653,21 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Stripe Connect account state per mode. Provider configuration and identifiers, not studio content.",
   },
+  studio_payment_jurisdictions: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "PAY-CCY-02 (0214): the studio's payment country and charge currency. Payment configuration, not studio content; the currency of every exported amount is the deciding reader, so decide deliberately.",
+  },
+  studio_payment_jurisdiction_changes: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "PAY-CCY-02 (0214): operator audit of payment country/currency changes, with free-text actor and reason. Operator records; review before any export.",
+  },
   calendar_connections: {
     kind: "pending",
     ticket: "TRUTH-01B",
@@ -1593,6 +1705,14 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Outstanding team invitations. Transient onboarding state; decide deliberately.",
   },
+  studio_receptionists: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The studio's front-desk team, live since migration 0216 (STUDIO-READY-02a): who holds receptionist access, under what display name, and whether that access is active. Studio-owned staffing records, so this is PENDING rather than EXCLUDED. It is tier 2 and field-review-required because the row also carries the Supabase auth user identifier — platform identity, which practitioners.csv already withholds — and the owner attribution created_by_practitioner_id, whose export shape has not been reviewed.",
+  },
   studio_onboarding: {
     kind: "pending",
     ticket: "TRUTH-01B",
@@ -1623,6 +1743,30 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "The per-studio SMS sender Hone rents on a studio's behalf, live since migration 0191 (COMMS-01B). Studio-scoped and genuinely split down the middle, which is why this is a field review rather than a whole-resource verdict: the E.164 number IS studio-meaningful — it is the number their clients see and reply to — while phone_number_sid, messaging_service_sid and provisioning_claim_key are Hone's provider-infrastructure identifiers, carry no customer meaning, and are already withheld from the studio's own browser session by a column-level grant. Dumping them into an export would hand out through one door what the schema deliberately closes at another. The claim key is additionally an idempotency handle whose whole purpose is to be the unique thing that identifies one billable provisioning attempt. Same shape as calendar_connections: a real customer-facing half beside provider material that must never be emitted raw, decided column by column rather than by excluding the resource and hiding the studio's own number from the backlog. No export surface ships in COMMS-01B.",
   },
+  studio_sms_sender_registrations: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "US registration evidence (10DLC or toll-free verification) for a studio's live SMS sender, live since migration 0217 (SMS-SENDER-REG-01). Studio-scoped and split like studio_sms_senders: the registration status and what is missing are studio-meaningful, while provider_reference is a provider brand or campaign identifier already withheld from the studio's own session by a column grant. Decided column by column, not excluded. No export surface ships in SMS-SENDER-REG-01.",
+  },
+  studio_sms_sender_campaign_bindings: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "What a provider check observed about a studio sender's Messaging Service and its US A2P campaign, one current row per sender, live since migration 0229 (SMS-CAMPAIGN-BINDING-01, HON-50 G4a). Studio-scoped and split like studio_sms_sender_registrations: whether the campaign was verified, and when it was checked, are studio-meaningful, while messaging_service_sid and campaign_sid are Hone's provider identifiers with no customer meaning. Decided column by column, not excluded. Revoked from every client role; read only through the service-role snapshot. No export surface ships in SMS-CAMPAIGN-BINDING-01.",
+  },
+  studio_sms_sender_stop_preflights: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The recorded inbound STOP preflight of a studio sender, one current row per sender, live since migration 0230 (SMS-STOP-PREFLIGHT-RECORD-01, HON-50 G6). Studio-scoped and split like studio_sms_sender_campaign_bindings: whether the STOP path passed, which checks passed, and when it was checked are studio-meaningful, while messaging_service_sid is Hone's provider identifier and webhook_base and credentials_epoch are Hone deployment configuration with no customer meaning. It holds no secret and no free text. Decided column by column, not excluded. Revoked from every client role; read only through the service-role snapshot. No export surface ships in SMS-STOP-PREFLIGHT-RECORD-01.",
+  },
   sms_outbound_messages: {
     kind: "pending",
     ticket: "TRUTH-01B",
@@ -1631,6 +1775,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "The outbound SMS delivery ledger, live since migration 0206 (SMS-00): one row per appointment or waitlist-invitation text attempt, with its purpose, status, skip reason and timestamps. It holds no message body and no phone number. Studio-scoped operational history, so PENDING rather than EXCLUDED, and field-review-required for the same reason as studio_sms_senders: provider_message_sid is Hone's provider identifier for one message and carries no customer meaning, while the status history is what a studio would recognise (whether a reminder reached a client). No export surface ships in SMS-00.",
   },
+  delivery_concerns: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Owner-reported \"client says they did not receive it\" records, live since migration 0221 (DELIVERY-VISIBILITY-04). Studio-scoped operational history the owner created themselves: which message, which appointment, when, and what the delivery ledger said at that moment. It holds no free text, no client address and no provider payload, so it needs no field review. It is PENDING rather than EXCLUDED because the studio authored it, and it is decided with email_outbound_messages, whose attempts it refers to. No export surface ships in DELIVERY-VISIBILITY-04.",
+  },
   email_outbound_messages: {
     kind: "pending",
     ticket: "TRUTH-01B",
@@ -1638,12 +1789,6 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     fieldReviewRequired: true,
     reason:
       "The outbound email delivery ledger, live since migration 0212 (DELIVERY-EVENTS-01), the email counterpart of sms_outbound_messages. One row per appointment email attempt, with its purpose, status, skip reason, normalised provider reason codes and timestamps. It holds no recipient address, subject or body. It is studio-scoped operational history, so PENDING rather than EXCLUDED. It is field-review-required for the same reason as sms_outbound_messages: provider_email_id is Hone's provider identifier for one message and means nothing to a customer, while the status history is something a studio would recognise (whether a reminder reached a client's mail server). No export surface ships in DELIVERY-EVENTS-01.",
-  },
-  email_provider_events: {
-    kind: "excluded",
-    category: "platform",
-    reason:
-      "Hone's intake of Resend's signed delivery webhooks, live since migration 0212 (DELIVERY-EVENTS-01). One receipt per provider delivery, kept so an event is applied exactly once and a lost one can be finished. A receipt carries the provider's delivery id and email id plus normalised reason codes. It holds no studio content, and an unmatched or quarantined receipt is attributable to no studio by construction. What a studio would recognise, whether an email reached a client's mail server, lives on email_outbound_messages, which is decided separately.",
   },
   new_client_waitlist_entry_events: {
     kind: "pending",

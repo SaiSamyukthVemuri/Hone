@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 
 const h = vi.hoisted(() => ({ exchange: vi.fn(), reconcile: vi.fn(), identify: vi.fn(), capture: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({
@@ -11,7 +12,7 @@ function request(next?: string) {
   const url = new URL("/auth/callback", ORIGIN);
   url.searchParams.set("code", "synthetic-code");
   if (next !== undefined) url.searchParams.set("next", next);
-  return new Request(url);
+  return new NextRequest(url);
 }
 beforeEach(() => {
   vi.clearAllMocks();
@@ -26,7 +27,10 @@ describe("successful auth callback redirect boundary", () => {
     expect(h.reconcile).toHaveBeenCalledExactlyOnceWith("reconcile_my_pending_invitation");
   });
   it.each(["/dashboard", "/settings/team?tab=invites#pending", "/clients/synthetic?return=%2Fdashboard"])("preserves same-origin path/query/fragment %s", async (next) => {
-    expect((await GET(request(next))).headers.get("location")).toBe(new URL(next, ORIGIN).href);
+    // Integrated LEAD-ALERT return-path contract keeps query, drops fragment.
+    const expected = new URL(next, ORIGIN);
+    expected.hash = "";
+    expect((await GET(request(next))).headers.get("location")).toBe(expected.href);
   });
   it("defaults a missing destination and preserves opaque analytics", async () => {
     expect((await GET(request())).headers.get("location")).toBe(`${ORIGIN}/dashboard`);

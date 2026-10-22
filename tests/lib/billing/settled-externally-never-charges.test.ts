@@ -67,6 +67,15 @@ const fakeStripe = {
   },
 };
 
+// PAY-CCY-02 (0214): this suite is about other behaviour, on a Canadian studio.
+// The jurisdiction read is proved on its own and against a real database.
+vi.mock("@/lib/billing/payment-jurisdiction-server", () => ({
+  getStudioPaymentJurisdiction: async () => ({
+    ok: true,
+    jurisdiction: { country: "CA", currency: "cad" },
+  }),
+}));
+
 vi.mock("@/lib/stripe/server", () => ({
   inferStripeLivemode: () => false,
   getStripe: () => fakeStripe,
@@ -128,7 +137,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     },
     // THE REAL CLAIM CONTRACT, mirrored. The shape matches what 0187's
     // `returns table (...)` sends back through PostgREST.
-    rpc: async (name: string) => {
+    rpc: async (name: string, args: Record<string, unknown> = {}) => {
       h.rpcs.push(name);
       if (name !== "claim_session_payment_charge_attempt") {
         return { data: null, error: null };
@@ -156,9 +165,9 @@ vi.mock("@/lib/supabase/admin-server", () => ({
               stripe_customer_id: "cus_test",
               stripe_payment_method_id: "pm_test",
               stripe_payment_intent_id: null,
-              stripe_idempotency_key: "idem-1",
+              stripe_idempotency_key: args.p_idempotency_key,
               status_before_claim: "ready",
-              updated_at: "2026-08-01T00:00:00.000Z",
+              updated_at: new Date().toISOString(),
             },
           ],
           error: null,
@@ -315,29 +324,13 @@ describe("settled_externally is terminal, and lands BEFORE Stripe", () => {
     expect(res.message).not.toMatch(/settled_externally|PGRST|supabase|57014/i);
   });
 
-  it("NEGATIVE CONTROL — bypassing the new branch turns the Stripe spy red", async () => {
-    // The same harness, the same fixture, the same refusal SITUATION — but the
-    // RPC reports a result the caller does not recognise, which is precisely
-    // the pre-repair behaviour. If this did NOT reach Stripe, every assertion
-    // above would be passing for some unrelated reason.
+  it("an unknown claim result also refuses all provider access", async () => {
+    // Fresh-claim whitelist independently prevents the historical fallthrough.
     h.bypassRepair = true;
-    const res = await runSessionPaymentCharge({
-      attemptId: ATTEMPT,
-      studioId: STUDIO,
-      practitionerId: PRACTITIONER,
-    });
-
-    // THE SPY WENT RED. The card was charged for a visit already settled.
-    expect(h.stripeCalls).toContain("paymentIntents.create");
-
-    // AND THIS IS THE REPORTED SYMPTOM, REPRODUCED EXACTLY. The Stripe reach
-    // throws inside the executor, which cannot classify it, so the practitioner
-    // is told the charge needs manual review — for a visit that was never
-    // chargeable, after a card call that should never have happened. That is
-    // the shape of the defect this repair removes.
-    expect(res.ok).toBe(false);
-    if (res.ok) throw new Error("unreachable");
-    expect(res.outcome).toBe("needs_manual_review");
+    const res = await runSessionPaymentCharge({ attemptId: ATTEMPT, studioId: STUDIO, practitionerId: PRACTITIONER });
+    expect(res).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual([]);
+    expect(h.stmts.filter(s => s.op !== "select")).toEqual([]);
   });
 
   it("CONTROL — a successful claim still reaches Stripe, so nothing was over-blocked", async () => {

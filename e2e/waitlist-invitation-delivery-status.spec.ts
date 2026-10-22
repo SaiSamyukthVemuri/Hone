@@ -65,6 +65,8 @@ async function invite(page: Page, name: string) {
   // The service select is the one required answer.
   const service = row.locator('[data-testid="composer-service"]');
   await service.selectOption({ index: 1 });
+  // DIAGNOSTIC (composition-only, #874 6154077303): name the capacity state if send is disabled; changes no wait or assertion.
+  if (await row.locator('[data-testid="composer-send"]').isDisabled()) console.log(`[capacity-diagnostic] composer-send disabled: ${(await row.locator('[data-testid="composer-send-reason"]').first().textContent({ timeout: 1000 }).catch(() => "<no reason element>"))?.trim()}`);
   await row.locator('[data-testid="composer-send"]').click();
 }
 

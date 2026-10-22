@@ -75,6 +75,7 @@ export default async function SettingsLayout({
     { href: "/settings/intake", label: "Forms & Postcare" },
     ...(isOwner
       ? [
+          { href: "/settings/overview", label: "Overview" },
           { href: "/settings/studio", label: "Studio" },
           { href: "/settings/team", label: "Team" },
           { href: "/settings/booking", label: "Booking" },

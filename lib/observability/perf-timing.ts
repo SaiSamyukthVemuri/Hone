@@ -130,6 +130,9 @@ export const PERF_SPAN_IDS = [
   // exactly the kind that regresses unnoticed.
   "session-chart.treatment-counts",
   "session-chart.settlements",
+  // PAY-CCY-04. Linked-appointment-only, like settlements: the studio's
+  // currency for labelling a new settlement amount.
+  "session-chart.payment-jurisdiction",
   "session-chart.appointment",
   "session-chart.plans",
   "session-chart.previous-note",

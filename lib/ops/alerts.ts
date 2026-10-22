@@ -108,7 +108,15 @@ function structuredConsoleLog(payload: Record<string, unknown>): void {
 // invokes it after the durable write attempt.
 
 // Main entry point.
-export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
+//
+// `signal` (optional, LEAD-ALERT-01 Codex P2 4259034271): a caller working
+// under a deadline cancels the durable insert at that deadline. The structured
+// log is always written first.
+export async function recordOpsAlert(
+  input: OpsAlertInput,
+  opts: { signal?: AbortSignal | null } = {},
+): Promise<void> {
+  const signal = opts.signal ?? null;
   // Sanitize first so the structured log uses the redacted detail
   // shape too. The redactor never throws.
   const redacted = redactSafeDetails(input.safeDetails);
@@ -143,7 +151,7 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
   // Durable row insert. Service-role admin client only.
   try {
     const admin = createAdminClient();
-    const { error } = await admin.from("ops_alerts").insert({
+    const insert = admin.from("ops_alerts").insert({
       severity: input.severity,
       event: input.event,
       message,
@@ -156,6 +164,7 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
       route: input.route ?? null,
       safe_details: redacted,
     });
+    const { error } = await (signal ? insert.abortSignal(signal) : insert);
     if (error) {
       structuredConsoleLog({
         event: "ops_alert_insert_failed",

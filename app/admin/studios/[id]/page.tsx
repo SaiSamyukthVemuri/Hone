@@ -2,6 +2,8 @@ import { requirePlatformAdmin } from "@/lib/auth/require-platform-admin";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { SmsRegistrationSection } from "./SmsRegistrationSection";
+import { readLiveRegistrationState } from "@/lib/sms/sender-registration-admin";
 import {
   loadStudioPaymentStatus,
   type StudioModeRow,
@@ -180,6 +182,10 @@ export default async function AdminStudioPage({
   // PR B: per-studio payment status: capability/status/counts only, both
   // modes, redacted account suffix. Read via the shared admin helper.
   const payments = await loadStudioPaymentStatus(createAdminClient(), id);
+  // SMS-SENDER-REG-01: ONE snapshot of the live sender and its registration
+  // evidence (0217). The number shows before any record exists, and the form
+  // is bound to this sender (Codex P2 4244011188, 4244108801, 4244108809).
+  const registrationState = await readLiveRegistrationState(createAdminClient(), id);
 
   const inviteLabel =
     studio.owner_invite_status === "accepted"
@@ -332,6 +338,8 @@ export default async function AdminStudioPage({
           </div>
         )}
       </section>
+
+      <SmsRegistrationSection studioId={id} state={registrationState} />
 
       <section className="flex flex-wrap gap-4 text-sm">
         <Link href="/admin" className="underline">

@@ -1,11 +1,14 @@
 // Stripe webhook endpoint (Phase 1 + card-on-file Phase 1 + PR #179
-// payment_charge_attempts reconciliation, test mode only).
+// mode-bound payment_charge_attempts reconciliation).
 //
 // Allowed mutations:
-//   - account.updated, capability.updated -> sync_studio_account_status
+//   - account.updated, capability.updated -> sync_studio_account_status,
+//     then record_stripe_account_jurisdiction (PAY-CCY-03: the account's
+//     country; a mismatch with the studio's payment country alerts and
+//     blocks charging, never replaces the account)
 //   - setup_intent.succeeded               -> client_payment_methods INSERT
 //     (PR #135; portal card-on-file)
-//   - PR #179 (test mode only):
+//   - Mode-bound payment reconciliation:
 //       payment_intent.succeeded         -> reconcile to status='succeeded'
 //                                            with PI id + Charge id + charged_at,
 //                                            from {ready, pending_stripe} only.
@@ -20,6 +23,7 @@
 //                                            refunds: critical ops_alert + no
 //                                            mutation. Out-of-band full
 //                                            refunds: warning ops_alert.
+//       refund.created/updated/failed    -> bound actual-status observation
 //       charge.dispute.created           -> critical ops_alert ONLY (no
 //                                            mutation; no automated dispute
 //                                            response).
@@ -33,7 +37,7 @@
 // idempotency and marked processed with a payload_summary, but they
 // do NOT trigger any business-logic state change):
 //   - charge.* OTHER THAN refunded / dispute.created
-//   - refund.* (the refund row state mirrors charge.refunded)
+//   - refund.* OTHER THAN created / updated / failed (bound status events)
 //   - charge.dispute.* OTHER THAN created
 //   - customer.*
 //   - setup_intent.* OTHER THAN succeeded / setup_failed
@@ -72,7 +76,10 @@
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe/server";
-import { accountToStatusSnapshot } from "@/lib/stripe/account";
+import {
+  accountToStatusSnapshot,
+  recordStripeAccountObservation,
+} from "@/lib/stripe/account";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { captureServerEvent } from "@/lib/analytics/server";
@@ -80,6 +87,7 @@ import {
   handlePaymentIntentSucceeded,
   handlePaymentIntentPaymentFailed,
   handleChargeRefunded,
+  handleRefundStatusEvent,
   handleChargeDisputeCreated,
   shouldIgnoreLiveModeEvent,
 } from "@/lib/billing/payment-webhook-reconciliation";
@@ -395,6 +403,22 @@ async function handleStripeEvent(
         );
       }
 
+      // PAY-CCY-03. Record the account's country on every account/capability
+      // update. A mismatch with the studio's payment country raises a
+      // critical alert inside the helper and blocks charging (eligibility,
+      // charge-time lineage, the 0214 insert guard); nothing here replaces the
+      // account. A failed record is retried by throwing, like the sync above.
+      const observation = await recordStripeAccountObservation({
+        studioId: ctx.studioId,
+        stripeAccountId: ctx.stripeAccountId,
+        livemode: ctx.livemode,
+        account: accountObject,
+        route: "app/api/stripe/webhook",
+      });
+      if (observation.kind === "not_recorded" && observation.reason === "rpc_failed") {
+        throw new Error("record_stripe_account_jurisdiction failed");
+      }
+
       if (snapshot.chargesEnabled) {
         // Post-response, bounded: analytics failure must never 500 this
         // webhook and trigger Stripe retries (P1/P2-ANALYTICS-03).
@@ -412,6 +436,7 @@ async function handleStripeEvent(
         payoutsEnabled: snapshot.payoutsEnabled,
         requirementsCurrentlyDueCount: snapshot.requirementsCurrentlyDue.length,
         requirementsEventuallyDueCount: snapshot.requirementsEventuallyDue.length,
+        accountCountryObservation: observation.kind,
       };
     }
 
@@ -456,6 +481,11 @@ async function handleStripeEvent(
     }
     case "payment_intent.payment_failed": {
       return await handlePaymentIntentPaymentFailed(event, ctx);
+    }
+    case "refund.created":
+    case "refund.updated":
+    case "refund.failed": {
+      return await handleRefundStatusEvent(event, ctx);
     }
     case "charge.refunded": {
       return await handleChargeRefunded(event, ctx);
@@ -655,59 +685,12 @@ async function handleSetupIntentSucceeded(
     return await terminalCardRejection(event, ctx, si, "signature_lineage_mismatch");
   }
 
-  // 5. PR #135 hardening. Idempotency SELECT first: if a row already
-  //    exists for the same (studio, client, account, mode,
-  //    setup_intent_id), this is a duplicate Stripe re-delivery
-  //    after the first delivery already inserted. Return
-  //    idempotent success WITHOUT pre-flipping any active row.
-  //    Without this check, a re-delivery would UPDATE the active
-  //    row inserted by the FIRST delivery to status='removed' and
-  //    then hit the unique constraint on the INSERT, leaving the
-  //    (studio, client) with no active card.
-  //
-  //    The DB-side guarantee for this idempotency is the partial
-  //    unique index client_payment_methods_setup_intent_account_mode_uniq
-  //    added in migration 0059. The application check below short-
-  //    circuits the happy path; the 23505 catch on the INSERT
-  //    further down is a defensive backstop against any race we
-  //    do not anticipate (claim_stripe_event already serialises
-  //    deliveries of the same event id).
-  {
-    const { data: existing, error: existingErr } = await admin
-      .from("client_payment_methods")
-      .select("id")
-      .eq("studio_id", metaStudioId)
-      .eq("client_id", metaClientId)
-      .eq("stripe_account_id", ctx.stripeAccountId)
-      .eq("stripe_livemode", ctx.livemode)
-      .eq("stripe_setup_intent_id", si.id)
-      .maybeSingle();
-    if (existingErr) {
-      throw new Error(
-        `idempotency_lookup_failed:${existingErr.code}:${existingErr.message}`,
-      );
-    }
-    if (existing) {
-      // The card is already persisted (a prior delivery of THIS event
-      // inserted it). The notification may still be missing if that prior
-      // delivery failed after the card insert; ensure it now (deduped on the
-      // mode-scoped SetupIntent). This is awaited and throws on failure so the parent
-      // releases the claim and Stripe retries WITHOUT touching the card row.
-      const notif = await ensureCardChangeNotification(admin, {
-        studioId: metaStudioId,
-        clientId: metaClientId,
-        livemode: ctx.livemode,
-        setupIntentId: si.id,
-      });
-      return {
-        eventType: event.type,
-        setupIntentId: si.id,
-        idempotent: true,
-        existingClientPaymentMethodId: existing.id,
-        cardChangeNotification: notif.eventType,
-        cardChangeNotificationDeduped: notif.deduped,
-      };
-    }
+  // PAY-006: order selection by the authenticated SUCCESS event, not intent
+  // issuance, metadata or delivery time. The ordered command must adjudicate
+  // current selection under the existing client/mode lock; no app-side guess.
+  if (typeof event.id !== "string" || event.id.trim().length === 0
+      || !Number.isSafeInteger(event.created) || event.created < 0) {
+    throw new Error("card_setup_success_event_order_missing");
   }
 
   // 6. Retrieve the PaymentMethod from Stripe on the connected
@@ -730,6 +713,11 @@ async function handleSetupIntentSucceeded(
       `payment_method_retrieve_failed:${err instanceof Error ? err.message : String(err)}`,
     );
   }
+  if (si.status !== "succeeded" || si.livemode !== ctx.livemode
+      || pm.id !== si.payment_method || pm.livemode !== ctx.livemode
+      || (typeof pm.customer === "string" ? pm.customer : pm.customer?.id) !== si.customer) {
+    return terminalCardRejection(event, ctx, si, "payment_method_lineage_mismatch");
+  }
   const card = pm.card;
   if (!card || !card.brand || !card.last4 || !card.exp_month || !card.exp_year) {
     return await terminalCardRejection(event, ctx, si, "non_card_payment_method");
@@ -745,15 +733,18 @@ async function handleSetupIntentSucceeded(
   //    the partial unique index client_payment_methods_one_active_per_pair, so
   //    it cannot be reordered away; it has to commit as one transaction.
   //
-  //    save_client_card_on_file re-validates the customer and signature lineage
+  //    save_client_card_on_file_ordered re-validates signed success ordering,
+  //    customer and signature lineage
   //    inside that transaction, takes an advisory lock per
   //    (studio, client, mode) so two concurrent replacements cannot interleave,
   //    and returns 'inserted' or 'idempotent'. Anything else raises, which we
   //    surface as a throw so the parent releases the claim and Stripe retries,
   //    with the previous card still active, because the retire rolled back too.
   const { data: saveRows, error: saveErr } = await admin.rpc(
-    "save_client_card_on_file",
+    "save_client_card_on_file_ordered",
     {
+      p_success_event_id: event.id,
+      p_success_event_created: event.created,
       p_studio_id: metaStudioId,
       p_client_id: metaClientId,
       p_stripe_account_id: ctx.stripeAccountId,
@@ -785,7 +776,15 @@ async function handleSetupIntentSucceeded(
     );
   }
   const saved = Array.isArray(saveRows) ? saveRows[0] : saveRows;
-  if (!saved || typeof saved.card_id !== "string") {
+  if (saved?.outcome === "unknown_event_order") {
+    // Legacy unknown ordering requires trusted evidence under the command's
+    // CAS/lock contract, never a default timestamp or a silent replacement.
+    throw new Error("card_setup_active_event_order_unverified");
+  }
+  if (saved?.outcome === "stale_event" || saved?.outcome === "ambiguous_event_order") {
+    return terminalCardRejection(event, ctx, si, saved.outcome);
+  }
+  if (!saved || !["inserted", "idempotent"].includes(saved.outcome) || typeof saved.card_id !== "string") {
     throw new Error("save_client_card_on_file_returned_no_row");
   }
   const inserted = { id: saved.card_id as string };

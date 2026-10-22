@@ -4,6 +4,14 @@ import { createClient } from "@/lib/supabase/server";
 import { GoogleCalendarCard } from "../profile/GoogleCalendarCard";
 import { getOwnConnectionReadiness } from "@/lib/google-calendar/connection";
 import { SmsSenderStatusCard } from "./SmsSenderStatusCard";
+import { SmsSenderReadinessPanel } from "./SmsSenderReadinessPanel";
+import { SmsSenderControlsSection } from "./SmsSenderControlsSection";
+import { senderControlsGate, senderRecoveryFor } from "@/lib/sms/sender-controls";
+import { studioSenderReadiness } from "@/lib/sms/sender-readiness";
+import {
+  readOwnSenderRegistrations,
+  registrationEvidenceFor,
+} from "@/lib/sms/sender-registration";
 import {
   presentSenderStatus,
   readOwnStudioSmsSender,
@@ -37,14 +45,23 @@ export default async function IntegrationsSettingsPage() {
   // 0191's owner policy and column grant are what decide whether a row comes
   // back and which columns it carries. Handing this a service-role client would
   // move that decision out of the database and into this page.
+  const supabase = await createClient();
   const [google, smsRead] = await Promise.all([
     googleEnabled
       ? getOwnConnectionReadiness(studio.id, practitioner.id)
       : Promise.resolve({ metadata: null, readiness: "disconnected" as const }),
-    createClient().then((supabase) =>
-      readOwnStudioSmsSender(supabase, studio.id),
-    ),
+    readOwnStudioSmsSender(supabase, studio.id),
   ]);
+
+  // SMS-SENDER-REG-01: the live sender's recorded US registration (0217),
+  // through the same session client and the same owner-only policy shape.
+  const sender = smsRead.ok ? smsRead.sender : null;
+  const usRegistration = sender
+    ? registrationEvidenceFor(
+        await readOwnSenderRegistrations(supabase, sender.id),
+        sender.phone_number,
+      )
+    : ({ state: "not_recorded" } as const);
 
   return (
     <section className="flex flex-col gap-6">
@@ -89,6 +106,22 @@ export default async function IntegrationsSettingsPage() {
           nothing more: it starts no provisioning, constructs no provider, and
           offers no control. */}
       <SmsSenderStatusCard view={presentSenderStatus(smsRead)} />
+      {/* SMS-SENDER-READY-01 / SMS-SENDER-REG-01: the same read, per
+          recipient country, with the US registration evidence support has
+          recorded (none means "Requires information"). */}
+      <SmsSenderReadinessPanel rows={studioSenderReadiness(smsRead, usRegistration)} />
+
+      {/* SMS-SENDER-CONTROL-01: owner controls. The FAKE mode is shut in
+          production, on hosted previews and whenever live provisioning is
+          armed. The LIVE mode (HON-50) is decided per studio, so the gate is
+          asked about THIS studio (Codex P1 4301418258); the section and each
+          action re-check it. */}
+      {senderControlsGate(process.env, undefined, studio.id).open ? (
+        <SmsSenderControlsSection
+          studioId={studio.id}
+          recovery={senderRecoveryFor(sender?.status, sender?.last_error_code)}
+        />
+      ) : null}
     </section>
   );
 }

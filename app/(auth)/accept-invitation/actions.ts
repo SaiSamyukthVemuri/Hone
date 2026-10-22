@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { clearSelectedStudioId } from "@/lib/supabase/selected-studio";
+import { clearAdminReturn, fulfilAdminReturn } from "@/lib/auth/admin-return";
 
 export type AcceptState = { error: string } | null;
 
@@ -46,21 +47,47 @@ export async function acceptInvitationAction(
   const res = (rec && typeof rec === "object" ? rec : {}) as {
     status?: string;
     choose_studio?: boolean;
+    role?: string;
   };
 
+  // A refused invitation: an operator's remembered /admin target is
+  // forgotten with it (lib/auth/admin-return.ts).
+  if (res.status === "conflict" || res.status === "ambiguous" || res.status === "no_invitation") {
+    await clearAdminReturn();
+  }
   if (res.status === "conflict") redirect("/no-access?reason=invite-conflict");
   if (res.status === "ambiguous") redirect("/no-access?reason=invite-ambiguous");
   if (res.status === "no_invitation") redirect("/no-access");
 
-  // Complete acceptance only when the governed command confirms success.
-  // Missing or unknown responses must not clear selection or imply a join.
+  // Only the governed command's explicit success states complete acceptance.
+  // A missing/unknown response must not route on an unconfirmed role or fulfil
+  // an operator's remembered destination as though joining succeeded.
   if (res.status !== "linked" && res.status !== "already_linked") {
     return { error: "Something went wrong. Please try again." };
   }
 
-  // linked / already_linked. Force the chooser for a newly multi-studio user.
+  // A front-desk acceptance lands on the front desk, whatever other
+  // memberships the person holds (STUDIO-READY-02b, Codex P2 4243953164 on
+  // #850). The middleware only reroutes users with NO practitioner membership,
+  // so a practitioner elsewhere would otherwise stay in the practitioner app.
+  if (res.role === "receptionist") {
+    // This accepted role owns the destination. Do not leave a remembered
+    // operator target to influence a later sign-in after front-desk routing.
+    await clearAdminReturn();
+    if (res.choose_studio === true) {
+      await clearSelectedStudioId();
+      redirect("/front-desk/select");
+    }
+    redirect("/front-desk");
+  }
+
+  // linked / already_linked. Force the chooser for a newly multi-studio user:
+  // choosing a studio is still required, so any remembered target waits for
+  // the chooser (switchStudioAction) to complete.
   if (res.choose_studio === true) {
     await clearSelectedStudioId();
+    redirect("/dashboard");
   }
-  redirect("/dashboard");
+  // Acceptance COMPLETE: an operator returns to the lead they opened.
+  redirect((await fulfilAdminReturn(user.email)) ?? "/dashboard");
 }

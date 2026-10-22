@@ -151,6 +151,33 @@ describe("autoSendPostcareOnComplete — governed claim/settle orchestration", (
     }
   });
 
+  it("the AUTOMATIC send is LEDGERED (Codex P2 4307535216)", async () => {
+    // The `ledger` parameter arrived with the MANUAL postcare action and only
+    // the manual action was updated, so this path sent untagged with no
+    // `email_outbound_messages` row. Both production completion entry points
+    // route through here, so postcare delivery visibility was limited to manual
+    // sends — the feature's main path writing nothing the ledger could see.
+    const calls: RpcCall[] = [];
+    const send = okSender();
+    const out = await autoSendPostcareOnComplete(APPT, STUDIO, ACTOR, {
+      admin: fakeAdmin({ calls }),
+      sendPostcare: send as never,
+    });
+
+    expect(out).toBe("sent");
+    expect(send).toHaveBeenCalledTimes(1);
+    // `okSender` is typed with NO parameters, so `mock.calls` infers as an
+    // empty tuple; read it through an explicit shape rather than indexing that.
+    const recorded = send as unknown as {
+      mock: { calls: Array<[Record<string, unknown>]> };
+    };
+    const args = recorded.mock.calls[0]![0];
+    // The REFERENCE ITSELF, not merely that some ledger key is present: a
+    // wrong studio or appointment id would file the row against the wrong
+    // thing, which is worse than filing none.
+    expect(args.ledger).toEqual({ studioId: STUDIO, appointmentId: APPT });
+  });
+
   it("AUTO-3/AUTO-11/AUTO-12 — claim, provider, settle: sequence, actor and token", async () => {
     const calls: RpcCall[] = [];
     const send = okSender();
@@ -162,6 +189,17 @@ describe("autoSendPostcareOnComplete — governed claim/settle orchestration", (
     expect(out).toBe("sent");
     expect(calls.map((c) => c.fn)).toEqual(["claim_postcare_send", "settle_postcare_send"]);
     expect(send).toHaveBeenCalledTimes(1);
+
+    // THE LEDGER REF, not just the provider call. Without it the send takes
+    // sendLedgeredAppointmentEmail's UNTAGGED path: an automatic postcare
+    // failure opens no delivery incident, a webhook cannot attribute it, and
+    // the owner's report reads `no_record`. The practitioner-triggered send
+    // passes it, so the automatic one diverging was the defect.
+    // `okSender` is declared zero-arg and handed over as `never`, so the mock's
+    // own tuple type has no element 0; read the recorded call through unknown[]
+    // rather than loosening the sender's type.
+    const sentWith = (send.mock.calls[0] as unknown[])[0] as { ledger?: unknown };
+    expect(sentWith.ledger).toEqual({ studioId: STUDIO, appointmentId: APPT });
 
     // AUTO-11 — the SERVER-RESOLVED practitioner reaches the database, not a
     // synthetic actor and not the appointment's own practitioner guessed here.

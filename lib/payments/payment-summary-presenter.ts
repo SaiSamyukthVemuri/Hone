@@ -11,6 +11,7 @@
 // disclosure and the existing admin surfaces.
 
 import type { SessionPaymentExistingAttemptSummary } from "@/lib/billing/session-payment-types";
+import type { PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 
 const CENTS_PER_DOLLAR = 100;
 
@@ -111,39 +112,42 @@ export type PaymentSummary = {
   headline: string;
   tone: "paid" | "ready" | "neutral" | "processing" | "issue";
   amountCents: number | null;
+  // The attempt's own prepared currency (PAY-CCY-04). Null with no attempt.
+  currency: PaymentCurrency | null;
 };
 
 export function derivePaymentSummary(
   attempt: SessionPaymentExistingAttemptSummary | null,
 ): PaymentSummary {
   if (!attempt) {
-    return { kind: "not_charged", headline: "Not charged", tone: "neutral", amountCents: null };
+    return { kind: "not_charged", headline: "Not charged", tone: "neutral", amountCents: null, currency: null };
   }
   const amountCents = attempt.amountCents;
+  const currency = attempt.currency;
   if (attempt.status === "succeeded") {
     if (attempt.refundStatus === "succeeded") {
-      return { kind: "refunded", headline: "Refunded", tone: "neutral", amountCents };
+      return { kind: "refunded", headline: "Refunded", tone: "neutral", amountCents, currency };
     }
     if (attempt.refundStatus === "pending_stripe") {
-      return { kind: "refund_pending", headline: "Refund processing", tone: "processing", amountCents };
+      return { kind: "refund_pending", headline: "Refund processing", tone: "processing", amountCents, currency };
     }
     if (attempt.receiptStatus === "failed") {
-      return { kind: "paid_receipt_failed", headline: "Paid", tone: "paid", amountCents };
+      return { kind: "paid_receipt_failed", headline: "Paid", tone: "paid", amountCents, currency };
     }
-    return { kind: "paid", headline: "Paid", tone: "paid", amountCents };
+    return { kind: "paid", headline: "Paid", tone: "paid", amountCents, currency };
   }
   if (attempt.status === "pending_stripe") {
-    return { kind: "processing", headline: "Payment processing", tone: "processing", amountCents };
+    return { kind: "processing", headline: "Payment processing", tone: "processing", amountCents, currency };
   }
   if (attempt.status === "ready") {
-    return { kind: "ready", headline: "Ready to charge", tone: "ready", amountCents };
+    return { kind: "ready", headline: "Ready to charge", tone: "ready", amountCents, currency };
   }
   if (attempt.status === "failed") {
-    return { kind: "failed", headline: "Charge was not completed", tone: "issue", amountCents };
+    return { kind: "failed", headline: "Charge was not completed", tone: "issue", amountCents, currency };
   }
   // cancelled / blocked / unknown → treat as not-charged for the compact face
   // (the detail callout still explains why a new attempt is being prepared).
-  return { kind: "not_charged", headline: "Not charged", tone: "neutral", amountCents };
+  return { kind: "not_charged", headline: "Not charged", tone: "neutral", amountCents, currency };
 }
 
 // The technical rows for the owner-only disclosure: raw identifiers/codes that

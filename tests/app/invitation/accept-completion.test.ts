@@ -13,6 +13,13 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: ctx.rpc }) }));
 vi.mock("@/lib/supabase/selected-studio", () => ({ clearSelectedStudioId: ctx.clearSelection }));
+// The refreshed stack has admin-return handling. This action test has no
+// Next request cookie jar; model no remembered destination, as the role-routing
+// suite does. The existing lead-return suite proves that helper's behavior.
+vi.mock("@/lib/auth/admin-return", () => ({
+  clearAdminReturn: async () => undefined,
+  fulfilAdminReturn: async () => null,
+}));
 const { acceptInvitationAction } = await import("@/app/(auth)/accept-invitation/actions");
 const consented = () => { const fd = new FormData(); fd.set("consent", "on"); return fd; };
 const failed = { error: "Something went wrong. Please try again." };

@@ -139,7 +139,91 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // because it drives that journey. RECORDED AS A DECISION per the note above,
     // with the cost explicitly ZERO: the spec skips itself unless
     // HONE_PERF_TIMING=1, so the lane gains a selection entry and no runtime.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(39);
+    //
+    // Now 40: MPX-03's machine-first-charting.spec.ts joined `sessions` because
+    // the machine panel lives IN the settings-block form, the same surface
+    // conditional-numbing-notes and repeat-client-fast-charting drive - and
+    // those two are exactly the specs an earlier version of that panel broke,
+    // so it must run in the lane that can break it.
+    //
+    // RECORDED AS A DECISION, with the cost MEASURED rather than estimated.
+    // ONE test() at 390px only, with ten steps. Its runtime depends on the
+    // SERVER's environment, which is unusual enough to state:
+    //   * without HONE_SYNTHETIC_MACHINE_PROFILE=1 in webServer.env it runs
+    //     steps 1-2 and the gate-closed branch - MEASURED 7.3s - and still
+    //     asserts the claim that matters, that no real model is offered;
+    //   * with the flag set it runs all ten - MEASURED 34.9s.
+    // Both on an isolated local stack, re-measured 2026-10-16 on the tree
+    // synced with production (the 2026-10-15 figures were 7.3s and 37.1s on
+    // the pre-sync tree; a measurement names the tree it measured). THE ESTIMATES THIS
+    // REPLACES WERE 15-20s AND 45-70s, so the one that matters for CI was
+    // overstated by more than double - and CI only ever runs the CLOSED half,
+    // because the flag is not in its webServer.env.
+    //
+    // Now 41: MPX-03's machine-create-mode-journey.spec.ts joined `sessions`
+    // for the same reason as its sibling - it drives the settings-block form.
+    // It is a SEPARATE file rather than more steps on the existing one because
+    // it proves something that spec structurally cannot: what the machine
+    // panel may and may not do BEFORE the settings block exists. The sibling
+    // enters on a block that already exists, so the create-mode half of the
+    // journey has never been mounted at all.
+    //
+    // RECORDED AS A DECISION, with the cost MEASURED. ONE test() at 390px
+    // only, with eight steps, and its runtime depends on the SERVER's
+    // environment exactly as the sibling's does:
+    //   * gate closed, step 1 and the gate-closed branch - MEASURED 7.0s;
+    //   * gate open, all eight steps - MEASURED 20.6s.
+    // Re-measured 2026-10-16 on the synced tree; 9.5s and 24.6s pre-sync.
+    // The estimate this replaces was 60-90s for the open half: nearly three
+    // times the truth. Estimating browser cost upward feels prudent and is
+    // not - it is how a lane acquires a budget nobody trusts.
+    //
+    // Now 42: MPX-03's machine-switch-discards-draft.spec.ts joined `sessions`
+    // for the third time for the same reason - it drives the settings-block
+    // form's machine panel - and filing it anywhere else would hide it from
+    // the only lane its subject can regress in.
+    //
+    // A SEPARATE FILE, again for a structural reason rather than convenience:
+    // it changes the machine and the mode UNDERNEATH a draft and asserts what
+    // must NOT be in the record afterwards, so its row counts are deltas of
+    // things that did not happen. The journey's counts are the arithmetic of
+    // one walk down the happy path; merging the two would mean re-deriving
+    // every count in the journey for cases unrelated to it, which is exactly
+    // how that spec's counts went stale three times.
+    //
+    // COST, MEASURED on an isolated local stack on 2026-10-15. ONE test() at
+    // 390px with seven steps:
+    //   * gate closed - 6.0s;
+    //   * gate open - 21.2s, with four navigations, one block save, three
+    //     reading saves, one refused save and about fifteen queries, now
+    //     including the clear-to-none limb added for Codex's P1.
+    // Re-measured 2026-10-16 on the synced tree; 6.8s and 18.7s pre-sync.
+    // The estimate said "should land near the journey's 22.3s", and it came in
+    // under it.
+    //
+    // Now 43: MPX-03's machine-initial-save-retry.spec.ts, the fourth spec in
+    // `sessions` from this lane and the one with the least substitutable job.
+    // It drops the RESPONSE to the first Save - performing the request so the
+    // server commits, then failing the page's fetch - reads the database to
+    // prove the area is already there, and presses Save again. What that shows
+    // is that the APPLICATION reuses its retry key, which no database test can
+    // see: the DB proves the command absorbs a repeat carrying the same key,
+    // and a form minting a fresh key per attempt would leave every one of
+    // those tests passing with the hole wide open.
+    //
+    // COST, MEASURED on an isolated local stack on 2026-10-15. ONE test() at
+    // 390px, four steps, two saves and about eight queries:
+    //   * gate closed - 6.2s;
+    //   * gate open - 9.7s, the lightest of the four, as predicted.
+    // Re-measured 2026-10-16 on the synced tree; 8.2s and 13.0s pre-sync.
+    //
+    // THE FOUR MACHINE SPECS TOGETHER, which is the number this pin exists to
+    // keep visible: 25.2s with the gate CLOSED and 86.4s with it open. CI runs
+    // the closed half, so the lane pays about half a minute for all four -
+    // against a ~6 min target and a 15 min ceiling. The estimates these
+    // measurements replace added up to roughly two and a half minutes for two
+    // of them alone.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(43);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

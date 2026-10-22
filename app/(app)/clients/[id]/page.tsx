@@ -7,6 +7,8 @@ import { orderByRecency } from "@/lib/sessions/charted-session";
 import { PendingLink } from "@/components/pending-link";
 import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound } from "next/navigation";
+import { signedClientPortraitUrl } from "@/lib/images/client-portrait";
+import { ClientPortrait } from "./ClientPortrait";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
@@ -328,6 +330,7 @@ export default async function ClientCheatSheetPage({
     activeCard,
     importedMemory,
     portalAccessEvents,
+    portraitUrl,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
@@ -411,6 +414,14 @@ export default async function ClientCheatSheetPage({
     isOverview
       ? getRecentPortalAccessEvents(studio.id, client.id, 5)
       : Promise.resolve([] as Awaited<ReturnType<typeof getRecentPortalAccessEvents>>),
+    // 0231: the identification portrait in the header (every tab), signed for
+    // 60 s; null when none is set or it cannot be signed. Depends only on
+    // (studio.id, client), so it belongs in this wave, not after it.
+    signedClientPortraitUrl({
+      studioId: studio.id,
+      clientId: client.id,
+      portraitImageId: client.portrait_image_id,
+    }),
   ]);
 
   const selfReportedFitzpatrick = submittedIntake
@@ -883,6 +894,9 @@ export default async function ClientCheatSheetPage({
         <div className="mt-2 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
+              {portraitUrl && (
+                <ClientPortrait key={`${portraitUrl.url}:${portraitUrl.thumbUrl ?? ""}`} clientId={client.id} imageId={client.portrait_image_id!} url={portraitUrl.url} thumbUrl={portraitUrl.thumbUrl} clientName={client.name} />
+              )}
               <h1 className="break-words text-2xl font-semibold tracking-tight md:text-3xl">
                 {client.name}
               </h1>
@@ -912,12 +926,27 @@ export default async function ClientCheatSheetPage({
               </p>
             )}
           </div>
-          <Link
-            href={`/clients/${client.id}/edit`}
-            className="shrink-0 rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
-          >
-            Edit
-          </Link>
+          <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
+            {/* HON-46: print one treatment date's records. OWNER ONLY (the
+                export refuses anyone else) and a PLAIN <a>, never next/link:
+                the export must be entered by a full document load so this
+                page's analytics never runs inside it (#828 G-26). */}
+            {practitioner.role === "owner" && (
+              <a
+                href={`/clients/${client.id}/records/export`}
+                data-testid="client-print-records"
+                className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+              >
+                Print treatment records
+              </a>
+            )}
+            <Link
+              href={`/clients/${client.id}/edit`}
+              className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+            >
+              Edit
+            </Link>
+          </div>
         </div>
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
           {/* RESP-CLIENT-INTAKE-01 RANK 1. The entry to charting, and the

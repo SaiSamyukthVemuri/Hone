@@ -163,8 +163,9 @@ describe("blocks view: old null records render without clutter", () => {
       /if \(!legacyReaction && !block\.reaction_notes\) return null;/,
     );
     // legacyReaction is derived from the recorded reaction_type value and only
-    // shown when not already a chip (no double-show of a migrated reaction).
-    expect(VIEW).toMatch(/isReactionType\(block\.reaction_type\)/);
+    // shown when not already a chip (no double-show of a migrated reaction),
+    // through the rule SHARED with the HON-46 printout (Codex P1 4304382927).
+    expect(VIEW).toMatch(/legacyBlockReactionLabel\(\s*block\.reaction_type,/);
     expect(VIEW).toMatch(/Legacy skin response: /);
     // The caution line is unchanged: still gated on a recorded caution flag/note.
     expect(VIEW).toMatch(

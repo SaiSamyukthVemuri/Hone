@@ -6,6 +6,7 @@ import {
   seedE2eIntake,
   seedE2eStudio,
   setIntakeCurrentStep,
+  sql,
   type E2eSeed,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
@@ -15,6 +16,7 @@ import {
   TOTAL_STEPS,
 } from "@/lib/intake/questions";
 import { PRACTITIONER_ASSISTED_ENTRY } from "@/lib/intake/entry-provenance";
+import { ISSUED_QUESTIONNAIRE } from "@/lib/intake/questionnaire";
 
 // Practitioner-assisted intake, proven in a real browser against the real
 // local database.
@@ -646,3 +648,122 @@ async function seedResponses(
     [intakeId, JSON.stringify(responses)],
   );
 }
+
+
+// 0243 prepared stale-draft regression. Run only on a composed migration head
+// containing0243 with a fresh granted paired target; the retained861e stack
+// is not compatible and must never be reset implicitly by this spec.
+test.describe("0243 stale public and assisted drafts", () => {
+  test("two public editors retain the losing draft until explicit discard", async ({ page, context }) => {
+    const { clientId } = await seedE2eClient(seed);
+    const intakeId = await seedE2eIntake(seed.studioId, clientId, "in_progress", answeredQuestionnaire());
+    const url = `/intake/${await mintIntakeToken(intakeId)}`;
+    const stale = await context.newPage();
+    try {
+      await page.goto(url); await stale.goto(url);
+      await page.getByLabel("Preferred name", { exact: true }).fill("Committed winner");
+      await stale.getByLabel("Preferred name", { exact: true }).fill("Unsaved losing draft");
+      await page.getByRole("button", { name: "Continue", exact: true }).click();
+      await expect.poll(async () => (await getIntakeRow(intakeId))?.responses.preferred_name).toBe("Committed winner");
+      await stale.getByRole("button", { name: "Continue", exact: true }).click();
+      await expect(stale.getByText("This intake changed in another window.", { exact: false })).toBeVisible();
+      await expect(stale.getByLabel("Preferred name", { exact: true })).toHaveValue("Unsaved losing draft");
+      expect((await getIntakeRow(intakeId))?.responses.preferred_name).toBe("Committed winner");
+      await stale.getByRole("button", { name: "Discard my unsaved draft and reload saved answers", exact: true }).click();
+      // Step2 also has a legitimate body-area choice named Back. Scope the
+      // navigation action to the active questionnaire's Continue/Back footer.
+      const questionnaireActions = stale.getByRole("button", { name: "Continue", exact: true }).locator("..");
+      await expect(questionnaireActions.getByRole("button", { name: "Back", exact: true })).toBeEnabled();
+      await questionnaireActions.getByRole("button", { name: "Back", exact: true }).click();
+      await expect(stale.getByLabel("Preferred name", { exact: true })).toHaveValue("Committed winner");
+    } finally { await stale.close(); }
+  });
+  test("an assisted winner cannot be overwritten by a stale public wizard", async ({ page, context }) => {
+    const { clientId } = await seedE2eClient(seed);
+    const intakeId = await seedE2eIntake(seed.studioId, clientId, "in_progress", answeredQuestionnaire());
+    await loginAsOwner(page, seed);
+    const publicPage = await context.newPage();
+    try {
+      await page.goto(`/clients/${clientId}/intake/assist?intake=${intakeId}`);
+      await publicPage.goto(`/intake/${await mintIntakeToken(intakeId)}`);
+      await page.getByLabel("Preferred name", { exact: true }).fill("Assisted winner");
+      await publicPage.getByLabel("Preferred name", { exact: true }).fill("Retained public draft");
+      await page.getByRole("button", { name: /Continue|Save and continue/ }).click();
+      await expect.poll(async () => (await getIntakeRow(intakeId))?.responses.preferred_name).toBe("Assisted winner");
+      await publicPage.getByRole("button", { name: "Continue", exact: true }).click();
+      await expect(publicPage.getByText("This intake changed in another window.", { exact: false })).toBeVisible();
+      await expect(publicPage.getByLabel("Preferred name", { exact: true })).toHaveValue("Retained public draft");
+      expect((await getIntakeRow(intakeId))?.responses.preferred_name).toBe("Assisted winner");
+    } finally { await publicPage.close(); }
+  });
+  test("a public winner cannot be overwritten by a stale assisted editor", async ({ page, context }) => {
+    const { clientId } = await seedE2eClient(seed);
+    const intakeId = await seedE2eIntake(seed.studioId, clientId, "in_progress", answeredQuestionnaire());
+    await loginAsOwner(page, seed);
+    const publicPage = await context.newPage();
+    try {
+      await page.goto(`/clients/${clientId}/intake/assist?intake=${intakeId}`);
+      await publicPage.goto(`/intake/${await mintIntakeToken(intakeId)}`);
+      await page.getByLabel("Preferred name", { exact: true }).fill("Retained assisted draft");
+      await publicPage.getByLabel("Preferred name", { exact: true }).fill("Public winner");
+      await publicPage.getByRole("button", { name: "Continue", exact: true }).click();
+      await expect.poll(async () => (await getIntakeRow(intakeId))?.responses.preferred_name).toBe("Public winner");
+      await page.getByRole("button", { name: /Continue|Save and continue/ }).click();
+      await expect(page.getByText("This intake changed in another window.", { exact: false })).toBeVisible();
+      await expect(page.getByLabel("Preferred name", { exact: true })).toHaveValue("Retained assisted draft");
+      expect((await getIntakeRow(intakeId))?.responses.preferred_name).toBe("Public winner");
+    } finally { await publicPage.close(); }
+  });
+});
+
+// Prepared source only: separately aligned0246 target/slot required.
+test.describe("0246 prospective issue and legacy provenance", () => {
+  // c99c7e1b (decoder-first rollout): issuance of a KNOWN snapshot is deferred
+  // until every reader ships, so a new assisted issue is written explicitly
+  // unverified (null) and must be reviewed as such. The property kept: the
+  // review never claims a saved questionnaire the row does not carry, and the
+  // snapshot does not change through save. Re-pin to ISSUED_QUESTIONNAIRE when
+  // issuance is re-enabled.
+  test("normal no-email assisted issue stays explicitly unverified through save and review (issuance deferred)", async ({ page }) => {
+    const { clientId } = await seedE2eClient(seed);
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${clientId}?tab=health`);
+    // The existing start path delegates to the governed reissue helper.
+    await page.getByTestId("start-intake-with-client").click();
+    await expect(page).toHaveURL(/\/intake\/assist/);
+    const rows = await sql<{ id: string; questionnaire_snapshot: unknown; intake_link_last_sent_at: string | null }>(
+      `select id, questionnaire_snapshot, intake_link_last_sent_at::text from public.client_intake_forms where studio_id=$1 and client_id=$2 and deleted_at is null`, [seed.studioId,clientId]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].questionnaire_snapshot).toBeNull();
+    expect(rows[0].intake_link_last_sent_at).toBeNull();
+    await page.getByLabel("Preferred name", { exact: true }).fill("Synthetic issued draft");
+    await page.locator("#legal_name").fill("Synthetic Client");
+    await page.locator("#email").fill("synthetic@example.test");
+    await page.locator("#phone").fill("5551230000");
+    await page.locator("#date_of_birth").fill("1990-04-02");
+    await page.locator("#pronouns").fill("they/them");
+    await page.locator("#address").fill("1 Test Street");
+    await page.locator("#emergency_contact_name").fill("Synthetic Contact");
+    await page.locator("#emergency_contact_phone").fill("5559998888");
+    await page.getByRole("button", { name: /Continue|Save and continue/ }).click();
+    await expect.poll(async () => (await getIntakeRow(rows[0].id))?.responses.preferred_name).toBe("Synthetic issued draft");
+    await page.goto(`/clients/${clientId}/intake?intake=${rows[0].id}`);
+    await expect(page.getByText("The original questionnaire wording was not saved with this intake", { exact: false })).toBeVisible();
+    await expect(page.getByText("Labels below use the questionnaire saved when this intake was issued.", { exact: false })).toHaveCount(0);
+    const after = await sql<{ questionnaire_snapshot: unknown }>(`select questionnaire_snapshot from public.client_intake_forms where id=$1`,[rows[0].id]);
+    expect(after[0].questionnaire_snapshot).toBeNull();
+  });
+  test("a retained legacy intake remains unknown and terminal token discloses neither answers nor catalogue", async ({ page }) => {
+    const { clientId } = await seedE2eClient(seed);
+    const intakeId = await seedE2eIntake(seed.studioId,clientId,"submitted",answeredQuestionnaire());
+    await loginAsOwner(page,seed);
+    await page.goto(`/clients/${clientId}/intake?intake=${intakeId}`);
+    await expect(page.getByText("The original questionnaire wording was not saved with this intake",{exact:false})).toBeVisible();
+    const known = await sql<{id:string}>(`insert into public.client_intake_forms (studio_id,client_id,status,submitted_at,responses,questionnaire_snapshot) values ($1,$2,'submitted',now(),$3::jsonb,$4::jsonb) returning id`,[seed.studioId,clientId,JSON.stringify({preferred_name:"Synthetic terminal answer canary"}),JSON.stringify(ISSUED_QUESTIONNAIRE)]);
+    const response = await page.goto(`/intake/${await mintIntakeToken(known[0].id)}`);
+    const document = await response!.text();
+    expect(document).not.toContain(ISSUED_QUESTIONNAIRE.content_digest);
+    expect(document).not.toContain("Synthetic terminal answer canary");
+    await expect(page.getByLabel("Preferred name",{exact:true})).toHaveCount(0);
+  });
+});

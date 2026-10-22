@@ -110,13 +110,23 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     );
   });
 
-  it("uses a stable practitioner-mismatch error message", () => {
-    // The error message is part of the public contract for callers
-    // that surface it (today: the practitioner sees it in the
-    // browser). Pin the exact copy so a future refactor cannot drift
-    // the wording silently.
+  it("answers a practitioner mismatch with the stable refusal, not a thrown error", () => {
+    // The mismatch is EXPECTED (a booking assigned to a colleague, or an owner
+    // opening one) and used to be thrown, which surfaced the generic error
+    // boundary. It now redirects to the new-session page with a stable refusal
+    // code that the page renders; the refusal is no weaker.
     expect(SOURCE).toMatch(
-      /"Appointment is assigned to a different practitioner\."/,
+      /if \(appt\.practitioner_id && appt\.practitioner_id !== practitioner\.id\) \{\s*redirect\(sessionStartRefusalHref\(clientId, appointmentIdRaw, "assigned_elsewhere"\)\);\s*\}/,
+    );
+    expect(SOURCE).not.toMatch(/throw new Error\("Appointment is assigned to a different practitioner\."\)/);
+    // The command's raised copy is pinned in ONE place, which the action uses
+    // to recognise the same refusal coming back from start_session.
+    const REFUSAL = readFileSync(
+      path.resolve(__dirname, "../../../../lib/sessions/session-start-refusal.ts"),
+      "utf8",
+    );
+    expect(REFUSAL).toMatch(
+      /ASSIGNED_ELSEWHERE_RAISED = "Appointment is assigned to a different practitioner\."/,
     );
   });
 

@@ -9,6 +9,14 @@ import {
   RESCHEDULE_NUDGE_REASONS,
   type CancellationReasonValue,
 } from "@/lib/booking/cancellation-reasons";
+// HON-47. The COPY module, not the policy module: this is a client component,
+// and the policy module is server-only because it reads studio rows. Importing
+// the shared strings is the point — EMERG-01's equivalent copy is a literal in
+// this file, which is two copies of one sentence waiting to diverge.
+import {
+  CLIENT_RESCHEDULE_DISABLED_BODY,
+  CLIENT_RESCHEDULE_DISABLED_HEADLINE,
+} from "@/lib/booking/client-self-service-copy";
 
 // The page-level fetch surface only renders this component when the
 // supplied token maps to a future appointment with status='confirmed'.
@@ -38,6 +46,13 @@ type Props = {
   // true. Builds the post-cancellation "Join the waitlist" link into the
   // studio's existing public booking surface.
   waitlistBookingSlug: string | null;
+  /**
+   * HON-47. False when the STUDIO has switched client rescheduling off, so
+   * /reschedule would refuse. Separate from `freeConsultationWaitlistOnly`:
+   * both withdraw the reschedule pivot, the reasons differ, and so does what
+   * the client is told. Server-derived; it decides copy, never authority.
+   */
+  clientRescheduleAllowed: boolean;
 };
 
 export function CancelForm({
@@ -46,6 +61,7 @@ export function CancelForm({
   presentedPolicyHash,
   freeConsultationWaitlistOnly,
   waitlistBookingSlug,
+  clientRescheduleAllowed,
 }: Props) {
   const router = useRouter();
   // PR #144. The free-form textarea has been replaced with a
@@ -201,6 +217,7 @@ export function CancelForm({
         <CancellationNudge
           reason={reason}
           freeConsultationWaitlistOnly={freeConsultationWaitlistOnly}
+          clientRescheduleAllowed={clientRescheduleAllowed}
           rescheduleHref={rescheduleHref}
         />
 
@@ -314,10 +331,12 @@ export function CancelForm({
 export function CancellationNudge({
   reason,
   freeConsultationWaitlistOnly,
+  clientRescheduleAllowed,
   rescheduleHref,
 }: {
   reason: string;
   freeConsultationWaitlistOnly: boolean;
+  clientRescheduleAllowed: boolean;
   rescheduleHref: string;
 }) {
   const triggered =
@@ -343,6 +362,31 @@ export function CancellationNudge({
         <p className="text-[14px] leading-relaxed text-[#0A0A0A]">
           Free consultations can&rsquo;t be rescheduled. If you cancel, you can
           join the waitlist for the next available consultation.
+        </p>
+      </div>
+    );
+  }
+
+  // HON-47. The studio handles date changes itself, so the pivot would land
+  // on /reschedule's refusal. Same shape as the branch above — NO link, not
+  // even a disabled one — with the shared strings, and cancellation below
+  // stays exactly as available as it was. Checked AFTER the free-consult
+  // branch because that case is the more specific of the two: it can name the
+  // waitlist as the way back, and this one cannot.
+  if (!clientRescheduleAllowed) {
+    return (
+      <div
+        className="flex flex-col gap-3 p-5"
+        style={{ backgroundColor: "#FAFAF7", border: "1px solid #E5E2D9" }}
+      >
+        <h3
+          className="font-[var(--font-fraunces)] text-[16px] font-bold leading-tight"
+          style={{ letterSpacing: "-0.01em" }}
+        >
+          {CLIENT_RESCHEDULE_DISABLED_HEADLINE}
+        </h3>
+        <p className="text-[14px] leading-relaxed text-[#0A0A0A]">
+          {CLIENT_RESCHEDULE_DISABLED_BODY}
         </p>
       </div>
     );

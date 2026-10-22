@@ -43,6 +43,14 @@ const h = vi.hoisted(() => ({
 // control would be stopped by a DIFFERENT guard and would prove nothing about
 // the tripwires. It is ignored on `authorization_unverified`, which carries no
 // payload by design.
+// PAY-CCY-02 (0214): this suite is about other behaviour, on a Canadian studio.
+// The jurisdiction read is proved on its own and against a real database.
+vi.mock("@/lib/billing/payment-jurisdiction-server", () => ({
+  getStudioPaymentJurisdiction: async () => ({
+    ok: true,
+    jurisdiction: { country: "CA", currency: "cad" },
+  }),
+}));
 vi.mock("@/lib/consent/current-card-authorization", () => ({
   getChargeReadyCardAuthorizationStatus: async () => ({
     kind: h.cardAuthKind,

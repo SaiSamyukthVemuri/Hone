@@ -6,6 +6,10 @@ import {
   mapSessionCommandError,
   GENERIC_SESSION_COMMAND_ERROR,
 } from "@/lib/sessions/session-command-errors";
+import {
+  ASSIGNED_ELSEWHERE_RAISED,
+  sessionStartRefusalHref,
+} from "@/lib/sessions/session-start-refusal";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { Modality } from "@/lib/types/database";
@@ -151,21 +155,27 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     if (apptErr) {
       throw new Error(`Failed to verify appointment: ${apptErr.message}`);
     }
+    // Each refusal below is EXPECTED (a booking assigned to a colleague, a stale
+    // link) and is answered by redirecting back to this client's new-session
+    // page with a refusal code, which renders what happened. It used to be
+    // thrown, which put the generic error boundary in front of the person.
+    // The refusals themselves are unchanged and still happen BEFORE anything is
+    // written; start_session (0181) re-enforces them at the database boundary.
     if (!appt) {
-      throw new Error("Appointment not found.");
+      redirect(sessionStartRefusalHref(clientId, appointmentIdRaw, "appointment_missing"));
     }
     if (appt.studio_id !== studio.id) {
       // Studio mismatch is a hard reject: a tampered form value cannot
       // bind a session to another studio's appointment. RLS would
       // already have refused the lookup, but the check is defence in
       // depth.
-      throw new Error("Appointment is not in your studio.");
+      redirect(sessionStartRefusalHref(clientId, appointmentIdRaw, "other_studio"));
     }
     if (appt.client_id !== clientId) {
       // Same studio, different client. Refuse: a session is per-client,
       // and linking it to another client's appointment would corrupt
       // both clients' treatment timelines.
-      throw new Error("Appointment is for a different client.");
+      redirect(sessionStartRefusalHref(clientId, appointmentIdRaw, "other_client"));
     }
     // PR #156 patch. Practitioner lineage: refuse a session-to-
     // appointment link when the appointment is assigned to a
@@ -180,7 +190,7 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     // practitioner.id on the insert below; this check is about which
     // appointment the session links TO, not who performed it.
     if (appt.practitioner_id && appt.practitioner_id !== practitioner.id) {
-      throw new Error("Appointment is assigned to a different practitioner.");
+      redirect(sessionStartRefusalHref(clientId, appointmentIdRaw, "assigned_elsewhere"));
     }
     appointmentId = appt.id;
     appointmentStatus = (appt.status as string | null) ?? null;
@@ -262,6 +272,12 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   rpcSpan.end();
 
   if (startErr) {
+    // The command re-checks lineage; if the assignment changed between the
+    // check above and the command (an owner reassigned it meanwhile), answer
+    // the same expected refusal rather than the generic error boundary.
+    if (appointmentId && mapSessionCommandError(startErr) === ASSIGNED_ELSEWHERE_RAISED) {
+      redirect(sessionStartRefusalHref(clientId, appointmentId, "assigned_elsewhere"));
+    }
     throw new Error(`Failed to start session: ${mapSessionCommandError(startErr)}`);
   }
   const started = Array.isArray(startRows)

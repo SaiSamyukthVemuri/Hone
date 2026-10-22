@@ -403,7 +403,11 @@ export default async function WaitlistSettingsPage({
     .limit(2);
 
   const capacity: InvitationCapacity = await (async () => {
-    if (capacityRead.error) return { state: "unknown" } as const;
+    if (capacityRead.error) {
+      // DIAGNOSTIC (composition-only, #874 6154077303): sqlstate only, no payload.
+      console.error(JSON.stringify({ event: "waitlist_capacity_round_read_failed", studioId: studio.id, code: capacityRead.error.code ?? "unknown", timestamp: new Date().toISOString() }));
+      return { state: "unknown" } as const;
+    }
     const rows = capacityRead.data ?? [];
     if (rows.length > 1) {
       console.error(

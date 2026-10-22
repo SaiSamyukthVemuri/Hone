@@ -37,12 +37,18 @@ const PREFIX = "hone-e2e-stripe-";
 // server FakeStripeCall by the ledger append format; extra fields are ignored.
 export type FakeStripeCall = {
   runId?: string;
-  method: "pi_create" | "pi_retrieve" | "pi_cancel" | "refund_create";
+  method: "pi_create" | "pi_confirm" | "pi_retrieve" | "pi_cancel" | "refund_create";
   idempotencyKey: string | null;
   stripeAccount: string | null;
   amountCents: number | null;
   currency: string | null;
   resultId: string;
+  // The synthetic charge a pi_create produced / a refund_create targeted
+  // (PAY-CCY-09). Optional here: ledgers written before it carry none.
+  chargeId?: string | null;
+  // PAY-CCY-09 (Codex P2 4265594520): pi_create only, digest of the sent metadata.
+  metadataDigest?: string | null;
+  payerDigest?: string | null;
   // INVOCATION vs EFFECT: every adapter call is recorded (an invocation);
   // replay=false marks the calls that created a NEW processor result for a
   // previously-unseen idempotency key (an effect). See lib/stripe/e2e-fake-stripe.
@@ -103,22 +109,23 @@ export function countFakeStripeCalls(
   return readFakeStripeCalls(runId).filter((c) => c.method === method).length;
 }
 
-// INVOCATIONS = every fake paymentIntents.create call (including replays). This
+// INVOCATIONS = every fake confirmation call (including replays). This
 // count MUST reflect duplicate app-level server calls even when the idempotency
 // key was already seen — the fake can never hide a second invocation.
 export function readFakeStripeInvocations(
   runId: string = activeRunId(),
 ): FakeStripeCall[] {
-  return readFakeStripeCalls(runId).filter((c) => c.method === "pi_create");
+  return readFakeStripeCalls(runId).filter((c) => c.method === "pi_confirm");
 }
 
-// EFFECTS = only the creates that produced a NEW synthetic PaymentIntent for a
-// previously-unseen idempotency key (replay=false) = unique processor charges.
+// EFFECTS = unique confirmation outcomes (replay=false), including refusals.
+// This is not money proof alone: each success spec also requires a succeeded
+// ledger row, exact money and original object. Unconfirmed creates never count.
 export function readFakeStripeEffects(
   runId: string = activeRunId(),
 ): FakeStripeCall[] {
   return readFakeStripeCalls(runId).filter(
-    (c) => c.method === "pi_create" && c.replay === false,
+    (c) => c.method === "pi_confirm" && c.replay === false,
   );
 }
 

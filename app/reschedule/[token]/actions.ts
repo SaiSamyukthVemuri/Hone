@@ -46,6 +46,18 @@ import {
   isFreeConsultWaitlistOnlyReschedule,
   type FreeConsultWaitlistOnlyCode,
 } from "@/lib/booking/free-consult-reschedule-policy";
+// HON-47. The studio-level switch. Imported at the same place and used in the
+// same shared gate, so all four public reschedule entry points — including the
+// two that fetch SLOTS — refuse on exactly the same facts. A studio that has
+// switched rescheduling off must not have its availability computed and handed
+// to a browser that is then told no.
+import {
+  CLIENT_RESCHEDULE_DISABLED_CODE,
+  CLIENT_RESCHEDULE_DISABLED_ERROR,
+  clientCancellationAllowed,
+  clientRescheduleAllowed,
+  clientSelfServiceLinks,
+} from "@/lib/booking/client-self-service-policy";
 
 const POLICY_ACK_REQUIRED_ERROR =
   "Please review and acknowledge the appointment policies before rescheduling.";
@@ -229,7 +241,19 @@ type ReschedulableOriginal = {
 export type RescheduleRefusal = {
   ok: false;
   error: string;
-  code?: FreeConsultWaitlistOnlyCode;
+  code?: FreeConsultWaitlistOnlyCode | typeof CLIENT_RESCHEDULE_DISABLED_CODE;
+  /**
+   * HON-47. Whether the studio still permits CLIENT cancellation, carried on a
+   * refusal so a page rendering one knows whether offering "Cancel
+   * appointment" would land on a second refusal (Codex P2 4308948301).
+   *
+   * Set only on the refusals raised AFTER the studio row has been read, which
+   * is why it is optional: the collapse refusals above it have no studio and
+   * must not acquire one just to answer this. `undefined` therefore means "not
+   * known here", and a page must treat it as such rather than as `false` — the
+   * surfaces that need it are the ones that do get it.
+   */
+  cancellationAllowed?: boolean;
 };
 
 // The joined shape the policy needs. PostgREST types an embedded relation as
@@ -238,15 +262,31 @@ export type RescheduleRefusal = {
 type EmbeddedPolicyRow = {
   service:
     | { modality: string | null; name: string; price_cents: number | null }
-    | Array<{ modality: string | null; name: string; price_cents: number | null }>
+    | Array<{
+        modality: string | null;
+        name: string;
+        price_cents: number | null;
+      }>
     | null;
   // `id` is projected alongside `slug` because other reads in this file use it.
   // The free-consult policy takes the SLUG and consults EMERG-01's own env list:
   // it deliberately does not resolve the new-client admission mode, so an owner
   // changing that mode cannot move a confirmed appointment's rights.
+  // HON-47's `client_reschedule_enabled` rides the same embed. Typed nullable
+  // although 0234 makes it `not null`: this is a PROJECTION, not the table, so
+  // if a future edit drops it from the select the helper's `?? true` leaves
+  // rescheduling OPEN rather than refusing every studio silently.
   studio:
-    | { id: string; slug: string | null }
-    | Array<{ id: string; slug: string | null }>
+    | {
+        id: string;
+        slug: string | null;
+        client_reschedule_enabled: boolean | null;
+      }
+    | Array<{
+        id: string;
+        slug: string | null;
+        client_reschedule_enabled: boolean | null;
+      }>
     | null;
 };
 
@@ -269,7 +309,10 @@ async function assertReschedulableOriginal(
       // EMERG-01 embeds the service and the studio slug in the statement that
       // already proves the appointment's state, so the policy costs no extra
       // round trip and cannot read a different row than the one it gated.
-      "id, studio_id, client_id, practitioner_id, status, starts_at, duration_minutes, service:services(modality, name, price_cents), studio:studios(id, slug)",
+      // HON-47 adds `client_reschedule_enabled` to the studio embed that is
+      // already here, so the studio-level switch is read from the same row, in
+      // the same statement, as the appointment state it gates.
+      "id, studio_id, client_id, practitioner_id, status, starts_at, duration_minutes, service:services(modality, name, price_cents), studio:studios(id, slug, client_reschedule_enabled, client_cancellation_enabled)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -307,6 +350,33 @@ async function assertReschedulableOriginal(
       ok: false,
       error: FREE_CONSULT_WAITLIST_ONLY_ERROR,
       code: FREE_CONSULT_WAITLIST_ONLY_CODE,
+      // HON-47 (Codex P2 4308948301). This branch returns BEFORE the HON-47
+      // gate below, so without this the page's waitlist-only surface offered
+      // "Cancel appointment" to a studio that has cancellation switched off —
+      // one dead end replacing another.
+      cancellationAllowed: clientCancellationAllowed(
+        firstEmbedded(embedded.studio),
+      ),
+    };
+  }
+
+  // HON-47 / 0234. The studio handles date changes itself. Checked here, in
+  // the gate every reschedule entry point already passes through, so the two
+  // slot-fetching actions refuse BEFORE computing availability and the submit
+  // action refuses before spending a reservation attempt. 0234 refuses the
+  // command too, so this is defence in depth and not the authority.
+  //
+  // AFTER the state checks above, deliberately: a caller without a valid token
+  // for a future confirmed appointment learns nothing about the studio's
+  // policy, exactly as with EMERG-01.
+  if (!clientRescheduleAllowed(firstEmbedded(embedded.studio))) {
+    return {
+      ok: false,
+      error: CLIENT_RESCHEDULE_DISABLED_ERROR,
+      code: CLIENT_RESCHEDULE_DISABLED_CODE,
+      cancellationAllowed: clientCancellationAllowed(
+        firstEmbedded(embedded.studio),
+      ),
     };
   }
 
@@ -709,11 +779,18 @@ export type RescheduleResult =
   // EMERG-01 adds one more bounded code. A refusal carrying it means the
   // command was NEVER called: no cancellation of the original, no successor, no
   // reservation change, no token rotation.
-  | { ok: false; error: string; code?: "slot_taken" | FreeConsultWaitlistOnlyCode };
+  | {
+      ok: false;
+      error: string;
+      code?:
+        | "slot_taken"
+        | FreeConsultWaitlistOnlyCode
+        | typeof CLIENT_RESCHEDULE_DISABLED_CODE;
+    };
 
-export async function rescheduleAppointmentViaTokenAction(formData: FormData): Promise<
-  RescheduleResult
-> {
+export async function rescheduleAppointmentViaTokenAction(
+  formData: FormData,
+): Promise<RescheduleResult> {
   const token = stringOrEmpty(formData.get("token"));
   const newStartsAt = stringOrEmpty(formData.get("starts_at"));
   // PR #132 / #133. The acknowledgement field is read up front but
@@ -858,9 +935,31 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
 
   // Built in memory BEFORE the command so the success path cannot fail to
   // produce it. It is RETURNED only after the command reports success.
-  const cancellationUrl = `${appOrigin}/cancel/${newToken}`;
-  const rescheduleUrl = `${appOrigin}/reschedule/${newToken}`;
-  const manageUrl = `${appOrigin}/manage/${newToken}`;
+  // HON-47. One policy-aware helper for all three links: a studio that has
+  // switched an action off must not have that link SENT, in any channel.
+  // `/manage` is never suppressed — it is the honest fallback. The flags come
+  // from the studio row already read server-side.
+  //
+  // THE SUCCESSOR's MANAGE URL, built BEFORE the command — and only this one.
+  //
+  // A security guard asserts exactly this ordering
+  // (tests/security/public-reschedule-command-guard.test.ts): the management URL
+  // must exist before `reschedule_appointment_v3` is called, so a committed
+  // success can never be returned without one. /manage is also the one link
+  // HON-47 never suppresses, so it depends on no flag and nothing is gained by
+  // waiting for the command.
+  //
+  // THE OTHER TWO MOVED AFTER THE COMMAND (Codex P2 4309167887). They were built
+  // from `studioRow`, a snapshot read BEFORE the command took the studio lock,
+  // so an owner switching cancellation off in between produced a confirmation
+  // carrying a brand-new cancel link that refused on first use. They are now
+  // built from the flags the COMMAND returns, which it read under that lock —
+  // the only read that cannot be stale.
+  const { manageUrl } = clientSelfServiceLinks({
+    origin: appOrigin,
+    token: newToken,
+    studio: studioRow,
+  });
 
   // ONE AUTHORITATIVE MUTATION. The command owns the cancellation, the
   // successor, both lineage directions, both audits and the policy
@@ -868,7 +967,11 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // service/practitioner, no status and no lineage id: every one of those is
   // derived from the LOCKED original inside the transaction.
   const { data: rpcData, error: rpcErr } = await admin.rpc(
-    "reschedule_appointment_v2",
+    // v3, not v2. v3 returns the two client self-service flags as read under
+    // the studio lock; v2 remains as a deploy-skew wrapper over it, so an older
+    // build still calling v2 keeps working. Deploy order is migration-first:
+    // 0234 is applied before this build is live.
+    "reschedule_appointment_v3",
     {
       p_original_appointment_id: asserted.original.appointment_id,
       p_current_cancellation_token_hash: asserted.original.rpc_token_hash,
@@ -922,6 +1025,20 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
       case "appointment_not_found":
       case "appointment_not_reschedulable":
         return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+      // HON-47. THE RACE, and the reason this case has to exist even though
+      // `assertReschedulableOriginal` already refused once: the studio can
+      // switch rescheduling off BETWEEN that read and this call. 0234 then
+      // refuses under the studio lock, and without this arm the verdict fell
+      // through to `default` and the client was told the link was invalid.
+      // Mapped to the same code and sentence the gate uses, so the two paths
+      // are indistinguishable to the surface — which is the point: the client
+      // should not be able to tell whether they lost a race.
+      case CLIENT_RESCHEDULE_DISABLED_CODE:
+        return {
+          ok: false,
+          error: CLIENT_RESCHEDULE_DISABLED_ERROR,
+          code: CLIENT_RESCHEDULE_DISABLED_CODE,
+        };
       case "policy_ack_required":
         return { ok: false, error: POLICY_ACK_REQUIRED_ERROR };
       case "policy_changed":
@@ -975,6 +1092,27 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // documented fallback, and the independent effects run regardless of each
   // other's outcome.
   const parsed = parseRescheduleSuccessRow(row);
+
+  // HON-47 (Codex P2 4309167887). THE SUCCESSOR'S cancel and reschedule links,
+  // built from what the COMMAND read under the studio lock rather than from the
+  // snapshot taken before it. `??` falls back to the snapshot's own value when
+  // the command did not report one, so this is never more permissive than the
+  // code it replaces.
+  //
+  // `manageUrl` is NOT rebuilt here: it is never suppressed, and a guard
+  // requires it to exist before the command runs.
+  const { cancelUrl: cancellationUrl, rescheduleUrl } = clientSelfServiceLinks({
+    origin: appOrigin,
+    token: newToken,
+    studio: {
+      client_cancellation_enabled:
+        parsed?.clientCancellationEnabled ??
+        studioRow.client_cancellation_enabled,
+      client_reschedule_enabled:
+        parsed?.clientRescheduleEnabled ?? studioRow.client_reschedule_enabled,
+    },
+  });
+
   if (!parsed) {
     // The command said `success`, so the mutation IS committed. This is an
     // internal command-contract violation, not a visitor-facing failure, and it
@@ -1268,6 +1406,14 @@ type RescheduleSuccess = {
   endsAt: string;
   durationMinutes: number;
   createdAt: string;
+  /**
+   * HON-47. The studio's client self-service flags as the COMMAND read them,
+   * under the studio lock. `null` when the command did not report them, which
+   * means the caller falls back to its pre-command snapshot rather than to a
+   * permissive default.
+   */
+  clientCancellationEnabled: boolean | null;
+  clientRescheduleEnabled: boolean | null;
 };
 
 /** Names of the required fields that are missing/blank. Never the values. */
@@ -1303,6 +1449,21 @@ function parseRescheduleSuccessRow(
     endsAt: row.ends_at as string,
     durationMinutes: row.duration_minutes as number,
     createdAt: row.created_at as string,
+    // HON-47 (Codex P2 4309167887). Read UNDER THE STUDIO LOCK by the command.
+    //
+    // NOT defaulted to `true` when absent, deliberately: that is the one value
+    // that would silently re-open a studio that had switched the action off,
+    // which is the defect this field exists to close. `null` means "the command
+    // did not say", and the caller then falls back to the pre-command snapshot —
+    // the old behaviour, never something more permissive than either reading.
+    clientCancellationEnabled:
+      typeof row.client_cancellation_enabled === "boolean"
+        ? row.client_cancellation_enabled
+        : null,
+    clientRescheduleEnabled:
+      typeof row.client_reschedule_enabled === "boolean"
+        ? row.client_reschedule_enabled
+        : null,
   };
 }
 

@@ -12,6 +12,29 @@ import {
   removePractitionerAction,
   revokeInvitationAction,
 } from "./actions";
+import { setReceptionistActiveAction } from "./receptionist-actions";
+import { accessSummary, DEACTIVATED_SUMMARY, ROLE_LABELS, type StudioRole } from "@/lib/auth/capabilities";
+
+type ReceptionistRow = {
+  id: string;
+  display_name: string;
+  email: string | null;
+  active: boolean;
+};
+
+// STUDIO-READY-02d (#824): read under the OWNER's own session. The 0216 policy
+// lets an owner read their studio's receptionist rows, and nobody else's.
+async function getReceptionists(studioId: string): Promise<ReceptionistRow[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("studio_receptionists")
+    .select("id, display_name, email, active")
+    .eq("studio_id", studioId)
+    .order("active", { ascending: false })
+    .order("display_name", { ascending: true });
+  if (error) throw new Error(`Failed to load the front desk team: ${error.message}`);
+  return (data ?? []) as ReceptionistRow[];
+}
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -56,9 +79,10 @@ export default async function TeamSettingsPage() {
     );
   }
 
-  const [practitioners, invitations] = await Promise.all([
+  const [practitioners, invitations, receptionists] = await Promise.all([
     getPractitionersForStudio(studio.id),
     getPendingInvitations(studio.id),
+    getReceptionists(studio.id),
   ]);
 
   return (
@@ -74,16 +98,69 @@ export default async function TeamSettingsPage() {
             Invite a practitioner
           </h2>
           <p className="mt-1 text-sm text-neutral-500">
-            We don&rsquo;t send the email automatically. Share the message we
-            give you with your teammate. They sign in with the same email and
-            join your studio.
+            After creating an invite, you can share the message with your
+            teammate. They sign in with the invited email address and complete
+            the joining steps shown.
           </p>
         </div>
         <InviteForm />
       </section>
 
       <PendingInvitations invitations={invitations} />
+
+      <FrontDesk receptionists={receptionists} />
     </div>
+  );
+}
+
+function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
+  const active = receptionists.filter((r) => r.active).length;
+  return (
+    <section className="flex flex-col gap-4">
+      <div>
+        <h2 id="front-desk" className="scroll-mt-24 text-xl font-medium">
+          Front desk
+        </h2>
+        <p className="mt-1 text-sm text-neutral-500">
+          Receptionists see the schedule and client contact details, and whether intake and consent are complete.
+          They never see treatment records, clinical notes, images or payments, and they are never booked as a
+          practitioner.
+          {receptionists.length === 0 ? " No receptionists yet." : ` ${active} active.`}
+        </p>
+      </div>
+      {receptionists.length > 0 && (
+        <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+          {receptionists.map((r) => (
+            <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="font-medium">{r.display_name}</span>
+                  <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                    receptionist
+                  </span>
+                  {!r.active && <span className="text-xs text-neutral-500">inactive</span>}
+                </div>
+                {r.email && <div className="truncate text-xs text-neutral-500">{r.email}</div>}
+                <AccessSummary role="receptionist" active={r.active} />
+              </div>
+              <form action={setReceptionistActiveAction}>
+                <input type="hidden" name="id" value={r.id} />
+                <input type="hidden" name="active" value={r.active ? "false" : "true"} />
+                <button
+                  type="submit"
+                  className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+                >
+                  {r.active ? "Deactivate" : "Reactivate"}
+                </button>
+              </form>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-xs text-neutral-500">
+        Invite a receptionist above by choosing the Receptionist role. They sign in with that email and land on the front desk.
+      </p>
+    </section>
   );
 }
 
@@ -129,6 +206,7 @@ function CurrentPractitioners({
                 <div className="truncate text-xs text-neutral-500">
                   {p.email}
                 </div>
+                <AccessSummary role={p.role} />
               </div>
               {p.role !== "owner" && !isSelf && (
                 <form action={removePractitionerAction}>
@@ -205,7 +283,7 @@ function PendingInvitations({
   );
 }
 
-function RoleBadge({ role }: { role: "owner" | "practitioner" }) {
+function RoleBadge({ role }: { role: "owner" | "practitioner" | "receptionist" }) {
   return (
     <span
       className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
@@ -216,5 +294,36 @@ function RoleBadge({ role }: { role: "owner" | "practitioner" }) {
     >
       {role}
     </span>
+  );
+}
+
+// STUDIO-READY-02e (#824): the readable access summary, rendered from the FIXED
+// role definition (lib/auth/capabilities.ts). It describes; the database and
+// the server guards enforce.
+function AccessSummary({ role, active = true }: { role: StudioRole; active?: boolean }) {
+  if (!active) return <p className="mt-1 text-xs text-neutral-500">{DEACTIVATED_SUMMARY}</p>;
+  const { can, cannot } = accessSummary(role);
+  return (
+    <details className="mt-1 text-xs text-neutral-500">
+      <summary className="cursor-pointer select-none">What {ROLE_LABELS[role].toLowerCase()}s can do</summary>
+      <div className="mt-2 grid gap-3 sm:grid-cols-2">
+        <div>
+          <div className="font-medium text-neutral-700 dark:text-neutral-300">Can</div>
+          <ul className="mt-1 list-disc pl-4">
+            {can.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <div className="font-medium text-neutral-700 dark:text-neutral-300">Cannot</div>
+          <ul className="mt-1 list-disc pl-4">
+            {cannot.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </details>
   );
 }

@@ -19,6 +19,16 @@ import {
 // the cancel page can WARN about a restriction it does not itself impose:
 // nothing about cancellation changes here, only what the visitor is told.
 import { isFreeConsultWaitlistOnlyReschedule } from "@/lib/booking/free-consult-reschedule-policy";
+// HON-47. A studio may switch CLIENT self-service cancellation and
+// rescheduling off entirely. Unlike EMERG-01 above, this one DOES bind
+// cancellation on this surface — 0234 refuses the command itself, and these are
+// the codes it refuses with plus the copy that explains the refusal.
+import {
+  CLIENT_CANCELLATION_DISABLED_CODE,
+  CLIENT_CANCELLATION_DISABLED_ERROR,
+  clientCancellationAllowed,
+  clientRescheduleAllowed,
+} from "@/lib/booking/client-self-service-policy";
 
 const POLICY_ACK_REQUIRED_ERROR =
   "Please review and acknowledge the appointment policies before cancelling.";
@@ -105,7 +115,17 @@ export type PublicCancelResult =
   // treat specially: the studio's policy changed while the client was reading
   // it. Everything else keeps the public collapse rule, so `code` is absent and
   // no bearer-token state is distinguishable from the outside.
-  | { ok: false; code?: "policy_changed"; error: string };
+  //
+  // HON-47 adds exactly one more: the studio has switched client cancellation
+  // off, so 0234 refused. It is not a token-state signal either — only a
+  // holder of a VALID token for a future confirmed appointment can reach the
+  // command at all — so distinguishing it leaks nothing the caller did not
+  // already have.
+  | {
+      ok: false;
+      code?: "policy_changed" | typeof CLIENT_CANCELLATION_DISABLED_CODE;
+      error: string;
+    };
 
 export async function publicCancelAppointmentAction(
   formData: FormData,
@@ -294,6 +314,18 @@ export async function publicCancelAppointmentAction(
   }
   if (outcome.result === "ack_required") {
     return { ok: false, error: POLICY_ACK_REQUIRED_ERROR };
+  }
+  // HON-47 / 0234. The studio handles cancellations itself. Stated plainly
+  // rather than collapsed, because the generic "can't be used right now" would
+  // send a client who is trying to free their slot away believing the link is
+  // broken — and they would keep trying. ZERO mutation has occurred: the
+  // command refuses before it touches the appointment.
+  if (outcome.result === CLIENT_CANCELLATION_DISABLED_CODE) {
+    return {
+      ok: false,
+      code: CLIENT_CANCELLATION_DISABLED_CODE,
+      error: CLIENT_CANCELLATION_DISABLED_ERROR,
+    };
   }
   if (outcome.result !== "cancelled") {
     // Public-facing collapse rule (Blocker 2): 'invalid_token',
@@ -506,11 +538,28 @@ export type AppointmentSummary = {
   // a closed studio into the waitlist experience. Null otherwise, so this
   // never becomes a general studio-slug disclosure on a public token route.
   waitlistBookingSlug: string | null;
+  // HON-47. SERVER-DERIVED, presentation only: false when /reschedule will
+  // refuse because the STUDIO has switched client rescheduling off. The page
+  // withdraws the "Reschedule instead" nudge rather than offering a pivot into
+  // a refusal — the same reason EMERG-01 withdraws it, for a different cause,
+  // which is why they are separate fields and not one merged boolean.
+  //
+  // There is deliberately no `clientCancellationAllowed` here: when
+  // cancellation is off this fetch returns a REFUSAL instead of a summary, so
+  // a caller cannot render the cancel form and discover the refusal on submit.
+  clientRescheduleAllowed: boolean;
 };
 
-export async function fetchAppointmentForCancelAction(
-  token: string,
-): Promise<{ ok: true; summary: AppointmentSummary } | { ok: false; error: string }> {
+export async function fetchAppointmentForCancelAction(token: string): Promise<
+  | { ok: true; summary: AppointmentSummary }
+  // HON-47 carries a `code` on the one refusal the page must render as its own
+  // explained surface rather than as the generic collapse message.
+  | {
+      ok: false;
+      code?: typeof CLIENT_CANCELLATION_DISABLED_CODE;
+      error: string;
+    }
+> {
   // Rate limit the view fetch (looser than submit). Token never consumed.
   const gate = await limitTokenRoute({
     routeClass: "cancel_view",
@@ -536,7 +585,9 @@ export async function fetchAppointmentForCancelAction(
       // to the service embed. Both ride the read that already proves the
       // appointment's state, so the warning is derived from the same row the
       // page is about to render and costs no extra round trip.
-      "id, status, starts_at, studio:studios(id, name, slug, timezone, cancellation_policy_text, no_show_policy_text), service:services(name, modality, price_cents)",
+      // HON-47 adds the two self-service flags to the SAME embed, for the same
+      // reason: the page's CTAs must be decided from the row it renders.
+      "id, status, starts_at, studio:studios(id, name, slug, timezone, cancellation_policy_text, no_show_policy_text, client_cancellation_enabled, client_reschedule_enabled), service:services(name, modality, price_cents)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -556,6 +607,12 @@ export async function fetchAppointmentForCancelAction(
     timezone: string;
     cancellation_policy_text: string | null;
     no_show_policy_text: string | null;
+    // HON-47. `not null` in 0234, but typed nullable here because this is a
+    // PostgREST projection, not the table: if a future edit drops either
+    // column from the select above, the helper's `?? true` keeps the surface
+    // OPEN rather than silently refusing a studio that never asked for it.
+    client_cancellation_enabled: boolean | null;
+    client_reschedule_enabled: boolean | null;
   };
   type JoinedService = {
     name: string;
@@ -598,6 +655,24 @@ export async function fetchAppointmentForCancelAction(
     service,
   });
 
+  // HON-47. Derived AFTER the collapse rule above, from the same studio row,
+  // so a token that did not resolve to a future confirmed appointment never
+  // reaches it and the studio's policy stays invisible to a probing caller.
+  //
+  // The REFUSAL, not a flag on the summary. A page that received a summary
+  // with `clientCancellationAllowed: false` would still hold everything it
+  // needs to render the form, and the next careless edit would render it. This
+  // way the only thing the cancellation-disabled path can produce is the
+  // explained refusal — 0234 would refuse the submit regardless, but the
+  // client should never have been shown the button.
+  if (!clientCancellationAllowed(studio)) {
+    return {
+      ok: false,
+      code: CLIENT_CANCELLATION_DISABLED_CODE,
+      error: CLIENT_CANCELLATION_DISABLED_ERROR,
+    };
+  }
+
   return {
     ok: true,
     summary: {
@@ -611,6 +686,9 @@ export async function fetchAppointmentForCancelAction(
       waitlistBookingSlug: freeConsultationWaitlistOnly
         ? (studio?.slug ?? null)
         : null,
+      // HON-47. Separate from the EMERG-01 verdict above: both withdraw the
+      // reschedule pivot, for different reasons, and the copy differs.
+      clientRescheduleAllowed: clientRescheduleAllowed(studio),
     },
   };
 }

@@ -46,8 +46,9 @@ export function isPaymentManualReviewEvent(
   return PAYMENT_MANUAL_REVIEW_EVENT_PREFIXES.some((p) => event.startsWith(p));
 }
 
-// Non-sensitive amount label, e.g. "$50.00 CAD" or "$50.00 USD".
-// Missing currency stays unknown; missing amount has no label.
+// Non-sensitive amount label, e.g. "$50.00 CAD" or "$50.00 USD". null when not
+// present. PAY-CCY-04: a row that states no currency is labelled as such, never
+// assumed to be CAD — an operator reconciling money must see what is unknown.
 export function formatAmountLabel(
   amountCents: number | null | undefined,
   currency: string | null | undefined,

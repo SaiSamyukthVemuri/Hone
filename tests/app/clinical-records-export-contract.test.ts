@@ -1,0 +1,496 @@
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+
+// HON-46 — source contract for the per-client clinical-records export, so the
+// exclusions and the ordering rules cannot be quietly regressed:
+//   * the server reads never touch private warnings, personal notes, payment
+//     or planning columns, and they read the CURRENT charting fields;
+//   * the page refuses non-owners before reading the client, and audits before
+//     loading records (through auditThenLoad);
+//   * the route lives outside every analytics-mounting layout, and nothing
+//     soft-navigates into it;
+//   * nothing is logged, and the printable title carries no client name.
+
+const ROOT = path.resolve(__dirname, "../..");
+const DIR = "app/(records-export)/clients/[id]/records/export";
+const SESSION_TREATMENTS = "app/(records-export)/clients/[id]/records/export/session-treatments.tsx";
+const FILES = {
+  queries: "lib/clinical-records/export-queries.ts",
+  scope: "lib/clinical-records/export-scope.ts",
+  layout: "app/(records-export)/layout.tsx",
+  page: `${DIR}/page.tsx`,
+  action: `${DIR}/actions.ts`,
+  button: `${DIR}/print-button.tsx`,
+} as const;
+
+/** Source with whole-line comments removed (block-comment lines start with *). */
+function code(rel: string): string {
+  return readFileSync(path.join(ROOT, rel), "utf8")
+    .split("\n")
+    .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+    .join("\n");
+}
+
+describe("HON-46 export reads exclude private and payment data", () => {
+  it("never names the personal-notes table, its columns, payment or planning fields", () => {
+    for (const rel of [FILES.queries, FILES.page, FILES.action]) {
+      const src = code(rel);
+      for (const banned of [
+        "client_personal_notes",
+        "private_warnings",
+        "personal_notes",
+        "price_paid_cents",
+        "payment_charge_attempts",
+        "appointment_settlements",
+        "next_session_note",
+        "delete_reason",
+      ]) {
+        expect(src, `${rel} must not reference ${banned}`).not.toContain(banned);
+      }
+    }
+  });
+
+  it("selects named columns only (no select('*'))", () => {
+    expect(code(FILES.queries)).not.toMatch(/\.select\(\s*["'`]\*["'`]\s*\)/);
+  });
+
+  it("filters out deleted sessions, settings blocks, entries and laser passes", () => {
+    expect(code(FILES.queries).match(/\.is\("deleted_at", null\)/g) ?? []).toHaveLength(4);
+  });
+
+  it("exports laser treatment passes, paged like every child read (Codex P1 4301153312)", () => {
+    const src = code(FILES.queries);
+    const at = src.indexOf('.from("laser_entries")');
+    expect(at).toBeGreaterThan(-1);
+    const chain = src.slice(at, src.indexOf(".returns<", at));
+    expect(chain).toContain(".range(from, to)");
+    expect(chain).toContain('.order("id"');
+    expect(code(FILES.scope)).not.toMatch(/"Laser treatment entries"/);
+  });
+
+  it("pages every child read to exhaustion (Codex P1 4301307242)", () => {
+    const src = code(FILES.queries);
+    for (const table of ["session_blocks", "electrolysis_entries", "laser_entries", "client_clinical_notes"]) {
+      const at = src.indexOf(`.from("${table}")`);
+      expect(at, table).toBeGreaterThan(-1);
+      const chain = src.slice(at, src.indexOf(".returns<", at));
+      expect(chain, `${table} must be ranged`).toContain(".range(from, to)");
+      expect(chain, `${table} must have a stable order`).toContain('.order("id"');
+    }
+    expect(src).toMatch(/readAllPages|readAllForSessions/);
+  });
+
+  it("filters clinical notes by CIVIL day, sessions by the studio-local window (Codex P1 4302644059)", () => {
+    const src = code(FILES.queries);
+    expect(src).toMatch(/noteBounds = civilDayBounds\(from, to\)/);
+    expect(src).not.toMatch(/noteBounds = localDayBounds\(/);
+    const page = code(FILES.page);
+    expect(page).toContain("formatClinicalDate(n.occurredAt)");
+    expect(page).not.toContain("formatInstant(n.occurredAt");
+  });
+
+  it("a single-session export reads NO clinical notes, and says so (Codex P1 4302690099)", () => {
+    const src = code(FILES.queries);
+    const sessionBranch = src.slice(src.indexOf('if (scope.kind === "session") {\n    const only'));
+    expect(sessionBranch.slice(0, sessionBranch.indexOf("const sessionIds"))).toContain("noteBounds = null;");
+    expect(src).toMatch(/bounds === null\s*\?\s*Promise\.resolve\(\[\] as ExportNoteSource\[\]\)/);
+    expect(code(FILES.page)).toContain('data-testid="export-notes-session-scope"');
+  });
+
+  it("author names: referenced ids only, paged to completion (Codex P2 4302690102)", () => {
+    const src = code(FILES.queries);
+    const at = src.indexOf('.from("practitioners")');
+    expect(at).toBeGreaterThan(-1);
+    const chain = src.slice(at, src.indexOf(".returns<", at));
+    expect(chain).toContain('.in("id", ids)');
+    expect(chain).toContain(".range(from, to)");
+    expect(src.match(/\.from\("practitioners"\)/g) ?? []).toHaveLength(1);
+    expect(src).toMatch(/if \(authors === null\) return \{ ok: false \};/);
+  });
+
+  it("labels superseded note versions from the WHOLE note history, fail closed (Codex P1 4302740025)", () => {
+    const src = code(FILES.queries);
+    const at = src.indexOf('.select("id, supersedes_note_id")');
+    expect(at).toBeGreaterThan(-1);
+    const chain = src.slice(at, src.indexOf(".returns<", at));
+    expect(chain).toContain('.eq("client_id", clientId)');
+    expect(chain).toContain('.not("supersedes_note_id", "is", null)');
+    expect(chain).toContain(".range(from, to)");
+    // Not bounded to the exported range: a later revision still obsoletes.
+    expect(chain).not.toContain("occurred_at");
+    expect(src).toMatch(/supersedingLinks === null\)\s*\{\s*return \{ ok: false \};/);
+    const page = code(FILES.page);
+    expect(page).toContain("n.isSuperseded");
+    expect(page).toContain("superseded, not the current note");
+  });
+
+  it("never selects the RETIRED galvanic % (Codex P1 4303753479; live chart: components/entry-row.tsx)", () => {
+    expect(code(FILES.queries)).not.toContain("galvanic_intensity_percent");
+    expect(code(FILES.scope)).not.toMatch(/\bgalvanic_intensity_percent:|e\.galvanic_intensity_percent/);
+    // The live chart's own rule, which this mirrors, is still in place.
+    // (Read raw: the rule is stated in a comment, which code() strips.)
+    expect(readFileSync(path.join(ROOT, "components/entry-row.tsx"), "utf8")).toContain(
+      "Galvanic intensity % is a DEPRECATED reading",
+    );
+  });
+
+  it("reactions go through the SAME shared rule as the saved-record view (Codex P1 4304382927)", () => {
+    // STRUCTURAL since #896: the printout renders the view's own
+    // SavedAreaRecord, which applies legacyBlockReactionLabel; the export keeps
+    // no presenter of its own that could print a raw reaction_type.
+    const view = code("app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view.tsx");
+    expect(view).toContain("legacyBlockReactionLabel(");
+    expect(code(SESSION_TREATMENTS)).toContain("<SavedAreaRecord block={b.record} />");
+    expect(code(FILES.scope)).not.toMatch(/reaction_type\]|"Reaction"|legacyBlockReactionLabel/);
+  });
+
+  it("selects the probe-lot confirmation (Codex P2 4302799069)", () => {
+    expect(code(FILES.queries)).toMatch(/probe_lot_number, probe_lot_confirmed,/);
+  });
+
+  it("renders the recorded finalization time, studio-local, beside the status (Codex P2 4304674125)", () => {
+    const page = code(FILES.page);
+    expect(page).toContain("formatInstant(s.finalizedAt, tz)");
+    expect(page).toContain('data-testid="export-session-finalized"');
+  });
+
+  it("renders the recorded session end time (Codex P2 4302799074)", () => {
+    const page = code(FILES.page);
+    expect(page).toContain("formatInstant(s.endedAt, tz)");
+    expect(page).toContain('data-testid="export-session-ended"');
+  });
+
+  it("reads the caution flag on its own (Codex P2 4302644062)", () => {
+    expect(code(FILES.queries)).toContain("caution_for_next_session");
+  });
+
+  it("loads the authoritative multi-area rows through the shared loader (Codex P1 4301307238)", () => {
+    expect(code(FILES.queries)).toContain("getSessionBlockAreasByBlockIds(");
+    // ...and hands them to the view's own title rule (SavedAreaRecord's areaTitle).
+    expect(code(FILES.scope)).toContain("structured_areas: areas ? areas.map((a) => ({ area: a.area, laterality: a.laterality })) : [],");
+  });
+
+  it("the printout renders the saved view's OWN components, with no presenter of its own (#896)", () => {
+    const treatments = code(SESSION_TREATMENTS);
+    expect(treatments).toContain('import { SavedAreaRecord } from "@/app/(app)/clients/[id]/sessions/[sessionId]/session-blocks-view";');
+    expect(treatments).toContain('import { ElectrolysisEntryRow, LaserEntryRow } from "@/components/entry-row";');
+    expect(code(FILES.page)).toContain("<ExportSessionTreatments session={s} />");
+    // The deleted second presenter stays deleted.
+    expect(code(FILES.scope)).not.toMatch(/function exportEntry|function exportLaser|function blockTitle/);
+  });
+
+  it("reads the CURRENT charting fields as well as the legacy ones (Codex P1 4301165385)", () => {
+    const src = code(FILES.queries);
+    expect(src).toContain('.from("session_blocks")');
+    for (const col of [
+      "primary_area",
+      "probe_label",
+      "probe_lot_number",
+      "numbing_status",
+      "reaction_type",
+      "block_id",
+      "thermolysis_intensity_percent",
+      "galvanic_ma",
+      "pulse_delay_seconds",
+      "observation_chips",
+      "intensity",
+      "duration_seconds",
+    ]) {
+      expect(src, col).toContain(col);
+    }
+  });
+});
+
+describe("HON-46 authenticates in the PAGE, not the layout", () => {
+  // A Next layout's redirect never gates its page (recorded trap), so the page
+  // and the action each resolve identity themselves, before any read.
+  it("the page's first await is requirePractitionerWithStudio, before any read", () => {
+    const src = code(FILES.page);
+    const fn = src.slice(src.indexOf("export default async function ClinicalRecordsExportPage"));
+    const auth = fn.indexOf("await requirePractitionerWithStudio()");
+    expect(auth).toBeGreaterThan(-1);
+    for (const read of ["loadExportClientIdentity(", "loadClinicalRecordsForExport(", "recordClinicalRecordsAudit("]) {
+      expect(auth, read).toBeLessThan(fn.indexOf(read));
+    }
+  });
+
+  it("the print action resolves identity first too", () => {
+    const src = code(FILES.action);
+    expect(src.indexOf("await requirePractitionerWithStudio()")).toBeGreaterThan(-1);
+    expect(src.indexOf("await requirePractitionerWithStudio()")).toBeLessThan(src.indexOf("loadExportClientIdentity("));
+  });
+
+  it("the layout performs no auth of its own to rely on (the page does it)", () => {
+    expect(code(FILES.layout)).not.toMatch(/redirect\(|requirePractitioner/);
+  });
+
+  it("middleware does not list /clients among its public routes", () => {
+    const mw = code("lib/supabase/middleware.ts");
+    const pub = mw.slice(mw.indexOf("const isPublicRoute"), mw.indexOf(";", mw.indexOf("const isPublicRoute")));
+    // The slice really spans the list: it reaches entries from its far end.
+    expect(pub).toContain('"/login"');
+    expect(pub).toContain('"/manage/"');
+    expect(pub).not.toMatch(/["'`]\/clients/);
+    expect(pub).not.toMatch(/records\/export/);
+  });
+});
+
+describe("HON-46 authorization and audit ordering", () => {
+  it("the page refuses non-owners before reading the client", () => {
+    const src = code(FILES.page);
+    const ownerGate = src.indexOf('practitioner.role !== "owner"');
+    expect(ownerGate).toBeGreaterThan(-1);
+    expect(ownerGate).toBeLessThan(src.indexOf("loadExportClientIdentity("));
+  });
+
+  it("the page loads records only through auditThenLoad, with the preview audit first", () => {
+    const src = code(FILES.page);
+    expect(src).toContain("auditThenLoad<");
+    expect(src.indexOf('"clinical_records_previewed"')).toBeLessThan(src.indexOf("loadClinicalRecordsForExport("));
+    expect(src.match(/loadClinicalRecordsForExport\(/g) ?? []).toHaveLength(1);
+  });
+
+  it("the print action re-derives owner, client and scope, and audits the print", () => {
+    const src = code(FILES.action);
+    expect(src).toContain('practitioner.role !== "owner"');
+    expect(src).toContain("loadExportClientIdentity(");
+    // The scope is re-validated INSIDE the token verifier (Codex P1 4303617257),
+    // never parsed from browser-supplied arguments.
+    expect(src).toContain("verifyPrintToken(");
+    expect(src).toContain('"clinical_records_printed"');
+  });
+
+  it("the button prints only after the audit succeeded, through the armed gate", () => {
+    const src = code(FILES.button);
+    expect(src).toMatch(/if \(r\.ok\) printArmed\(\);/);
+    // The only window.print() is inside printArmed, after the gate is armed.
+    expect(src.match(/window\.print\(\)/g) ?? []).toHaveLength(1);
+    expect(src.indexOf("setAttribute(PRINT_ARMED_ATTRIBUTE")).toBeLessThan(src.indexOf("window.print()"));
+    expect(src).toContain('addEventListener("afterprint"');
+  });
+});
+
+describe("HON-46 reads only identity before the audit (Codex P1 4301153305)", () => {
+  it("neither the page nor the print action calls the broad profile loader", () => {
+    for (const rel of [FILES.page, FILES.action]) {
+      expect(code(rel), rel).not.toContain("getClientById(");
+    }
+  });
+
+  it("the identity read selects id and name only, studio-scoped", () => {
+    const src = code(FILES.queries);
+    const fn = src.slice(src.indexOf("export async function loadExportClientIdentity"));
+    const body = fn.slice(0, fn.indexOf("\n}\n") + 3);
+    expect(body).toContain('.from("clients")');
+    expect(body).toContain('.select("id, name")');
+    expect(body).toContain('.eq("studio_id", studioId)');
+  });
+});
+
+describe("HON-46 native print is gated (Codex P1 4301153310)", () => {
+  it("the page wraps the document in the gate and renders the unarmed notice", () => {
+    const src = code(FILES.page);
+    expect(src).toContain("<style>{PRINT_GATE_CSS}</style>");
+    expect(src).toContain("id={EXPORT_DOCUMENT_ID}");
+    expect(src).toContain('data-export-document=""');
+    expect(src).toContain('data-print-unarmed-notice=""');
+  });
+});
+
+describe("HON-46 single-session scope is reachable (Codex P2 4301153316)", () => {
+  it("each session in a day/range view links to its own single-session export with a plain anchor", () => {
+    const src = code(FILES.page);
+    expect(src).toMatch(/<a\s[^>]*href=\{`\/clients\/\$\{client\.id\}\/records\/export\?scope=session&session=\$\{s\.id\}`\}/);
+  });
+
+  it("the form no longer offers a session option it cannot fill", () => {
+    const src = code(FILES.page);
+    expect(src).not.toContain('<option value="session">');
+    expect(src).not.toContain('name="session"');
+  });
+});
+
+describe("HON-46 is structurally outside third-party telemetry (Codex P1 4301165382, #828 G-26)", () => {
+  it("the route is not under app/(app), whose layout mounts SafeAnalytics", () => {
+    for (const rel of Object.values(FILES)) expect(rel.startsWith("app/(app)/")).toBe(false);
+    expect(code("app/(app)/layout.tsx")).toContain("<SafeAnalytics />");
+  });
+
+  it("its layout mounts no analytics of any kind", () => {
+    const src = code(FILES.layout);
+    for (const banned of ["SafeAnalytics", "@vercel/analytics", "@vercel/speed-insights", "posthog", "identifyServerUser"]) {
+      expect(src, banned).not.toContain(banned);
+    }
+  });
+
+  it("the app root layout mounts no analytics either", () => {
+    const src = code("app/layout.tsx");
+    for (const banned of ["<SafeAnalytics", "@vercel/analytics", "@vercel/speed-insights"]) {
+      expect(src, banned).not.toContain(banned);
+    }
+  });
+
+  it("nothing soft-navigates OUT of the export either: no next/link or client router anywhere in its tree (Codex P1 4302941126)", () => {
+    const files = execSync("git ls-files 'app/(records-export)'", { cwd: ROOT, encoding: "utf8" })
+      .split("\n")
+      .filter((f) => /\.(tsx?|jsx?)$/.test(f));
+    expect(files.length).toBeGreaterThanOrEqual(4);
+    const offenders: string[] = [];
+    for (const f of files) {
+      const src = code(f);
+      for (const banned of [
+        /from\s+["']next\/link["']/,
+        /\buseRouter\b/,
+        /\brouter\.(push|replace|back|forward|prefetch|refresh)\b/,
+        /<Link\b/,
+      ]) {
+        if (banned.test(src)) offenders.push(`${f}: ${banned}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+    // The exit itself is a plain anchor.
+    expect(code(FILES.page)).toMatch(/<a href=\{`\/clients\/\$\{client\.id\}`\}/);
+  });
+
+  it("the client record's entry is a visible, owner-only, PLAIN anchor (HON-46 journey)", () => {
+    const src = code("app/(app)/clients/[id]/page.tsx");
+    const at = src.indexOf('data-testid="client-print-records"');
+    expect(at).toBeGreaterThan(-1);
+    const open = src.lastIndexOf("<", at);
+    expect(src.slice(open, open + 3)).toBe("<a\n");
+    expect(src.slice(open - 120, open)).toContain('practitioner.role === "owner" && (');
+    expect(src.slice(open, at)).toContain("href={`/clients/${client.id}/records/export`}");
+  });
+
+  it("the preview says what will print: client, selected date, both included kinds, and the header carries the date (Sam, HON-46)", () => {
+    const page = code(FILES.page);
+    expect(page).toContain('aria-label="This print includes"');
+    expect(page).toContain("`Treatment sessions and clinical notes recorded on ${scopeLabel}.`");
+    expect(page).toContain('data-testid="export-scope-label"');
+    // The summary and the dated header are inside the print-gated document, so
+    // they print; neither is print:hidden.
+    const doc = page.slice(page.indexOf("data-export-document"));
+    for (const id of ['data-testid="export-includes"', 'data-testid="export-scope-label"']) {
+      const at = doc.indexOf(id);
+      expect(at, id).toBeGreaterThan(-1);
+      expect(doc.slice(doc.lastIndexOf("<", at), at), id).not.toContain("print:hidden");
+    }
+  });
+
+  it("the print audit is bound to the rendered preview: the action takes ONLY a server-minted token (Codex P1 4303617257)", () => {
+    const action = code(FILES.action);
+    expect(action).toMatch(/export async function recordClinicalRecordsPrintAction\(token: string\)/);
+    expect(action).toContain("verifyPrintToken(token, { studioId: studio.id, actorId: practitioner.id })");
+    // Client and scope come from the verified claims, never from arguments.
+    expect(action).toContain("const { clientId, scope, previewAuditId } = check.claims;");
+    expect(action).not.toContain("parseExportScope");
+    expect(action).not.toMatch(/rawScope/);
+    // The button sends only the token.
+    const button = code(FILES.button);
+    expect(button).toContain("recordClinicalRecordsPrintAction(printToken)");
+    expect(button).not.toMatch(/clientId|rawScope/);
+    // The page mints it only after the preview's own audit row was written.
+    const page = code(FILES.page);
+    expect(page).toContain("id: previewAuditId,");
+    expect(page).toMatch(/const printToken =\s*outcome\?\.ok && parsed\.ok && !emptyDay/);
+  });
+
+  it("without a signing key, Print fails closed VISIBLY: an explicit 'unavailable' alert, never a dead button", () => {
+    const page = code(FILES.page);
+    const at = page.indexOf("!printToken && (");
+    expect(at).toBeGreaterThan(-1);
+    const block = page.slice(at, at + 400);
+    expect(block).toContain('role="alert"');
+    expect(block).toContain('data-testid="export-print-unavailable"');
+    expect(block).toContain("Printing is unavailable");
+    // Missing print signing cannot undo the successful preview audit.
+    expect(page).toContain("outcome?.ok && !emptyDay && !printToken");
+    expect(block).toMatch(/This preview was\s+audited, but printing remains blocked/);
+    expect(block).not.toContain("nothing can be printed or");
+  });
+
+  it("One day is the default scope, prefilled with the studio's today; an empty date offers no print", () => {
+    const page = code(FILES.page);
+    expect(page).toContain('defaultValue={rawScope.scope ?? "day"}');
+    expect(page).toContain("rawScope.day ?? todayInTz(tz)");
+    expect(page).toContain("outcome?.ok && !emptyDay && printToken && <AuditedPrintButton");
+  });
+
+  it("NO element anywhere that links to the export is a client-side link, even across lines", () => {
+    const files = execSync("git ls-files 'app/*.tsx' 'components/*.tsx' 'app/**/*.tsx' 'components/**/*.tsx'", {
+      cwd: ROOT,
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean);
+    const offenders: string[] = [];
+    for (const f of files) {
+      const src = code(f);
+      let i = src.indexOf("records/export");
+      while (i !== -1) {
+        // The JSX element this href belongs to: the nearest tag opener before it.
+        const open = src.lastIndexOf("<", i);
+        const tag = /^<([A-Za-z.]+)/.exec(src.slice(open))?.[1];
+        if (tag && tag !== "a" && /href=/.test(src.slice(open, i))) offenders.push(`${f}: <${tag}>`);
+        if (/router\.(push|replace)\([^)]*$/.test(src.slice(Math.max(0, i - 200), i))) offenders.push(`${f}: router`);
+        i = src.indexOf("records/export", i + 1);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("nothing soft-navigates into the export (no next/link to records/export)", () => {
+    const files = execSync("git ls-files 'app/*.tsx' 'components/*.tsx' 'app/**/*.tsx' 'components/**/*.tsx'", {
+      cwd: ROOT,
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean);
+    const offenders = files.filter((f) => {
+      const src = code(f);
+      return /<Link\b[^>]*href=\{?[^>]*records\/export/.test(src) || /router\.push\([^)]*records\/export/.test(src);
+    });
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe("HON-46 leaks nothing to logs or file names (#828)", () => {
+  it("no console output in any export file", () => {
+    for (const rel of Object.values(FILES)) {
+      expect(code(rel), rel).not.toMatch(/console\./);
+    }
+  });
+
+  it("the printable title is fixed and carries no client name", () => {
+    const src = code(FILES.page);
+    expect(src).toContain(
+      'export const metadata: Metadata = { title: "Clinical records export", referrer: "no-referrer" };',
+    );
+    expect(src).not.toMatch(/generateMetadata/);
+  });
+
+  it("no client telemetry starts on the export, and nothing it requests carries its URL (Codex P1 4303921817)", () => {
+    // 1. Both SDK inits are skipped on the export document, via the CANONICAL
+    //    route predicate, never a hand-copied path.
+    const inst = code("instrumentation-client.ts");
+    expect(inst).toContain('import { isRecordsExportPath } from "@/lib/clinical-records/route";');
+    expect(inst).toMatch(/const TELEMETRY_OFF =\s*typeof window !== "undefined" && isRecordsExportPath\(window\.location\.pathname\);/);
+    expect(inst).toContain("if (!TELEMETRY_OFF) Sentry.init({");
+    expect(inst).toContain("if (!TELEMETRY_OFF) posthog.init(");
+    expect(inst.match(/\bSentry\.init\(/g) ?? []).toHaveLength(1);
+    expect(inst.match(/\bposthog\.init\(/g) ?? []).toHaveLength(1);
+    expect(inst).not.toContain("records/export");
+    // 2. The route's Referrer-Policy is no-referrer, from the same constant.
+    const config = code("next.config.ts");
+    expect(config).toContain('import { RECORDS_EXPORT_HEADER_SOURCE } from "./lib/clinical-records/route";');
+    expect(config).toMatch(/source: RECORDS_EXPORT_HEADER_SOURCE,\s*headers: TOKEN_ROUTE_PRIVACY_HEADERS,/);
+    // It is declared AFTER the global block, so it overrides it.
+    expect(config.indexOf("source: RECORDS_EXPORT_HEADER_SOURCE")).toBeGreaterThan(config.indexOf('source: "/:path*"'));
+  });
+
+  it("the page is dynamic, so it is never cached", () => {
+    expect(code(FILES.page)).toContain('export const dynamic = "force-dynamic";');
+  });
+});

@@ -1,0 +1,544 @@
+{
+  "at": "2026-10-21T14:52:34.514404+00:00",
+  "purpose": "Ordered source/checksum evidence only, not apply/release authority",
+  "hosted_declaration": "0212 unchanged; originalapplyreceipts/history preserved; not re-read/applied here",
+  "source_SQL_tree": "a334e5a75bbb8debff77aa5cf3f7a9f33326fa0a",
+  "pending_versions": [
+    "0213",
+    "0214",
+    "0215",
+    "0216",
+    "0217",
+    "0218",
+    "0219",
+    "0220",
+    "0221",
+    "0222",
+    "0223",
+    "0224",
+    "0225",
+    "0226",
+    "0227",
+    "0228",
+    "0229",
+    "0230",
+    "0231",
+    "0232",
+    "0233",
+    "0234",
+    "0235",
+    "0236",
+    "0237",
+    "0238",
+    "0239",
+    "0240",
+    "0241",
+    "0242",
+    "0243",
+    "0244",
+    "0245",
+    "0246",
+    "0248"
+  ],
+  "source_migrations": [
+    {
+      "version": "0213",
+      "file": "supabase/migrations/0213_platform_lead_alerts.sql",
+      "raw_sha256": "5186bca250713e8db8eb17dc6a354202f98ea00388d489fb9f7d74d93c960d2b",
+      "git_blob": "47205a35b6209a9ce40e25ff05349f9004db0823",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0214",
+      "file": "supabase/migrations/0214_studio_payment_jurisdiction.sql",
+      "raw_sha256": "8ff9350eb53070c970b9548e4e4093e2aa878116fd7ad9dc118bfb3d401a3289",
+      "git_blob": "12b0a9f636addca1b86a20c3fbf593437aa2faa7",
+      "owner": "General",
+      "published_source": "5452f0ec697320bcae1b61ac2aec75eb41dd3460",
+      "application_order": "Verified-only policy; no default/backfill. Preserved oldlocal214 differs, so do not apply/rewrite its history. NewfreshCI only; existing bound studios require owner evidence/reconciliation before anylive rollout."
+    },
+    {
+      "version": "0215",
+      "file": "supabase/migrations/0215_delivery_incidents.sql",
+      "raw_sha256": "612f98fe62b9bb7113e32956a46eaeab07238fbf94cb305f6c1ab6ddaa2ec168",
+      "git_blob": "1f1a1e6f22684715a0c40b9c10ce345200f8b879",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0216",
+      "file": "supabase/migrations/0216_receptionist_membership_foundation.sql",
+      "raw_sha256": "1039bd49ab49849f2e0632aa896961572b4598ab46786fa194866730de10563e",
+      "git_blob": "1e1d9f2bb70afb96f1cbb316d0172d576855f310",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0217",
+      "file": "supabase/migrations/0217_studio_sms_sender_registrations.sql",
+      "raw_sha256": "beda95b6594c01da4f5b1eb9d52bbd5838991a51526874cfac41e18f9ccbb1f6",
+      "git_blob": "e7ebc9fcadc562e3e8970b041b6ad8b0d04a0fa5",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0218",
+      "file": "supabase/migrations/0218_receptionist_invitations.sql",
+      "raw_sha256": "58ad44c705797f3d5c48b9cea1fadcef2da23ab46a41ec41cc67ea7dcf0c3a7a",
+      "git_blob": "eb7f13f43a3ae5412d568ae7fc47b61d5b93ed17",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0219",
+      "file": "supabase/migrations/0219_public_practitioner_selection.sql",
+      "raw_sha256": "4d44fc6603301ad1b94d7af9ecd56f1d28cd798742271bd6b1b0cd25b3bd69fe",
+      "git_blob": "14975d4130e34ba7c09b20ab606782fb5fd84577",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0220",
+      "file": "supabase/migrations/0220_receptionist_scheduling.sql",
+      "raw_sha256": "329d70744996abe73a24c836e87e10bd842e9ba9f124940f9c95a5338fa4b0e2",
+      "git_blob": "a54434732f94562618bcc83b459636b4772d3306",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0221",
+      "file": "supabase/migrations/0221_delivery_concerns_and_purposes.sql",
+      "raw_sha256": "b881fa9052edabee0af3140ee8b7e09108b2013b16268dce894003f5bec4e19a",
+      "git_blob": "3f27e97109b921cef8a5f65d5e67d136cfba117e",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0222",
+      "file": "supabase/migrations/0222_public_practitioner_booking_command.sql",
+      "raw_sha256": "9d85ba09f8ddcd308848a5c8711b7e8da5b58e7c707f040a6b69cf0333a6b798",
+      "git_blob": "c27d948078f4b99fe7b0c1ff29cc681fc0f4e27b",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0223",
+      "file": "supabase/migrations/0223_machine_inventory_and_setup_readings.sql",
+      "raw_sha256": "12038b1eab95d84f0ed84b235f0bf00641f6e06007e6ba5008066fc0d852b948",
+      "git_blob": "8839115f1d95920eb7c822b1163c58c31e711cfa",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0224",
+      "file": "supabase/migrations/0224_us_settlement_method_guard.sql",
+      "raw_sha256": "761a76fbb04adc03f13b82d1e7e22594d688a7ba9d7bf53ae6fe742f83003246",
+      "git_blob": "bb3f21f57409443954f0da535b20157cceb597d0",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0225",
+      "file": "supabase/migrations/0225_public_new_client_practitioner_selection.sql",
+      "raw_sha256": "61d69c6f50ea66963298ff44ad27f21a8cef640e81f1f428b9c778d29a5892ab",
+      "git_blob": "3606b0141a2b1de1a35d8ee85c7f702a493812d4",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0226",
+      "file": "supabase/migrations/0226_studio_sms_sender_unpurchased_release.sql",
+      "raw_sha256": "1ee108d11c2ce3ffe7bcd7baa9a44082c6c6d5369bfb7f3ca1d80489fd9ca0e4",
+      "git_blob": "bb699fb4405b2ae2040982eeb44bd02549edfd49",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0227",
+      "file": "supabase/migrations/0227_email_receipt_quarantine_bound.sql",
+      "raw_sha256": "8b62d4d8b9c32608a0d2c9884184752068c64679eab2f913b04de9ba3a7e0313",
+      "git_blob": "67e837de463bba58062e0695caac595817d95499",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0228",
+      "file": "supabase/migrations/0228_legacy_new_client_refusal_atomicity.sql",
+      "raw_sha256": "0d43f23e16ec67a54cbe7df98e5c1a09f66321149ded4f43062fd2baae4841a3",
+      "git_blob": "3bace0bd7c0ab0d79837dfcb3879d1fbbd74fc9a",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0229",
+      "file": "supabase/migrations/0229_studio_sms_sender_campaign_bindings.sql",
+      "raw_sha256": "fe1499a590a90ad13597627c186010aaf0a486be7e2c3890cd31264d97d96f86",
+      "git_blob": "cc120ddc45dde5452a454f655b2e37a917ee95c6",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0230",
+      "file": "supabase/migrations/0230_studio_sms_sender_stop_preflights.sql",
+      "raw_sha256": "6fd46332f04a463890350041005626ffc7977751fd2e6c976c5530a8812aceaa",
+      "git_blob": "26746be430e77c7a1d9147f95b15503f3596bf0d",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0231",
+      "file": "supabase/migrations/0231_client_identification_portrait.sql",
+      "raw_sha256": "b9ad60aa947cb63a8f4b8c1c5dd273d03d6f58dbaa1bdb8dba895cfce1bcddf1",
+      "git_blob": "25afc5abb927c34fa4fff1e90463dff2ed63e263",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0232",
+      "file": "supabase/migrations/0232_treatment_image_capture_stage.sql",
+      "raw_sha256": "d58a05a21bb0de0a7cab8ac84ed936aa269634d6dc6b2c735760f291d2f526d4",
+      "git_blob": "351ce08d61739d844b066b9031e8e1ad485eb25a",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0233",
+      "file": "supabase/migrations/0233_clinical_records_audit_command.sql",
+      "raw_sha256": "2f2844fd92ff5ad744757ad8955ad238d79a99ceac9c25b5c5d77d864ab8621c",
+      "git_blob": "beb38844fd9d551e804ea9077a375a87e7e45d06",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0234",
+      "file": "supabase/migrations/0234_client_self_service_controls.sql",
+      "raw_sha256": "41af062c7c44d647589fc98fc5fc7b5956812a6b696be1bc57efad12d7f9633f",
+      "git_blob": "b33b80a948d0ee8065dd353b32c59d9a830490b8",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0235",
+      "file": "supabase/migrations/0235_machine_finite_readings.sql",
+      "raw_sha256": "2161c333016c28ddf473b05dae31c57674dc41fa8f18373b75d58ce7ee15fbb2",
+      "git_blob": "9e14b8381e7ca94b4cedec72da47d1f1621b8822",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0236",
+      "file": "supabase/migrations/0236_delivery_incident_retained_failures.sql",
+      "raw_sha256": "b83747ac1b86f54b8633571bd72ec732d904b0acf6bd1d073bc93f50b4c30060",
+      "git_blob": "77f1816af0abbdd21cc019afa88d3046f8a29290",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0237",
+      "file": "supabase/migrations/0237_machine_native_text_readings.sql",
+      "raw_sha256": "e565db62660ad237fa8b8541a2e021d9d755a8b7fb89492d436c251979db24e2",
+      "git_blob": "c187d0456199a2e141a56a1d41ebb082fdfad650",
+      "owner": "Existing source owner from pre-audit #926 train",
+      "published_source": "77a005f27b6104f70499cfd05c9f85ae16eed10a",
+      "application_order": "Preserve existing reviewed per-owner contract; no new apply/activation authority. See existing source-manifest and held release packets."
+    },
+    {
+      "version": "0238",
+      "file": "supabase/migrations/0238_stripe_account_country_alert.sql",
+      "raw_sha256": "716e833ecafd1b82d20edda7aca76d88c59f294548e5c27a3abaa4ea6f9d251a",
+      "git_blob": "8406fecb19b48bced15f90f2900d8185a54b6c07",
+      "owner": "General",
+      "published_source": "16161329878d1536e001bb42bb24f4a5c4d02d5e",
+      "application_order": "SCHEMA FIRST for dependent dedup caller; additive function compatible with old runtime but old writers still duplicate. New runtime without function retains country mismatch refusal but cannot persist first incident. No mixed-version dedup guarantee."
+    },
+    {
+      "version": "0239",
+      "file": "supabase/migrations/0239_bound_payment_event_reconciliation.sql",
+      "raw_sha256": "85a59bb59e6686d571043b290fa7c502729537d3be5afb65df10aff71914810a",
+      "git_blob": "efb9ad7d3a868541ccd4a79bc1230fea6a8e8463",
+      "owner": "General",
+      "published_source": "c3dda9d53f40d15654652b4a6b4e6c000d673985",
+      "application_order": "COORDINATED SCHEMA+RUNTIME WITH MONEY-WRITE HOLD. Old unbound3arg success RPC loses all runtime EXECUTE. New runtime requires new bound command; missing RPC fails/refuses and retains event retry. Old direct failed/refund writers remain a risk until drained; ACL closure is not universal table-write closure."
+    },
+    {
+      "version": "0240",
+      "file": "supabase/migrations/0240_provider_refund_status.sql",
+      "raw_sha256": "129f5e77b41de437e03a198c8947f8e86398b397f61e63e1c2db34d5acfbb89f",
+      "git_blob": "fb2eb8afddfe17398d199f7f9a0470d1cd17ffdd",
+      "owner": "General",
+      "published_source": "e858d1c9ade2acff3d22aa9069303652bae4ed39",
+      "application_order": "0239 BEFORE0240; compatible schema/evidence required before actual-refund callers, including the two nullable charge-aggregate provenance columns. Signed full captured charge plus complete distinct bound Refund set; actual succeeded amounts must sum to the original total. Actual individual Refund fields stay truthful and separate. Money-write hold/old-writer drain; no new caller against old240 shape."
+    },
+    {
+      "version": "0241",
+      "file": "supabase/migrations/0241_session_appointment_coalesce_identity.sql",
+      "raw_sha256": "39aa9596f97717c8e153267da62e8cbb0da15818645d9e6a559e640cafc641b8",
+      "git_blob": "9c48955eb32fa2b8bf9ec451a883a007b14e5d76",
+      "owner": "Machines",
+      "published_source": "f1f4785d54c109570f6b3dffef9e7902f762a41a",
+      "application_order": "SCHEMA FIRST compatible with existing old/new four/five-argument start_session APIs; code containment4f102 may precede."
+    },
+    {
+      "version": "0242",
+      "file": "supabase/migrations/0242_close_direct_generic_audit_inserts.sql",
+      "raw_sha256": "98707acb9053dfa78fadb7eaff59fcc98db678a9aee19b2375ec6ffa011c2f40",
+      "git_blob": "92389b14e46a6da0a91e4d9e9682798c28268bcb",
+      "owner": "Team",
+      "published_source": "b9c421bbd287d38422168aff26626f93091e108a",
+      "application_order": "COORDINATED WRITE HOLD / SCHEMA+APP. Two fixed trusted-owner definer commands retain0178 runtime practitioners SELECT-only; exactowner/nonassumability/non-grantable serviceEXEC/context preflight. Current actor/member/owner rowlock and fixedaudit INSERT atomic. MissingRPC withholds export; archive warning preserves committedstate. No old directINSERT fallback."
+    },
+    {
+      "version": "0243",
+      "file": "supabase/migrations/0243_intake_revision_cas_and_profile_sync.sql",
+      "raw_sha256": "3e8c89a857b3c450ac3c87257208b206ea42dcb415fcf46720ee35256976d332",
+      "git_blob": "ffe4ea8ba2ead0f4a90e3b488b45d4ee3c2e1f47",
+      "owner": "Team",
+      "published_source": "d2d515e389dfc1e358a82eb0cdde2ad4c1317db4",
+      "application_order": "ADDITIVE SCHEMA FIRST: revision/all-writer bump and service-only CAS/profile RPC remain compatible with legacy direct writes. Transitional stage does NOT close direct-DML clobber. Deploy/verify all public/assisted CAS callers and rollback artifacts, drain old editors/processes/profile callbacks, then separately gated0248 enforcement."
+    },
+    {
+      "version": "0244",
+      "file": "supabase/migrations/0244_treatment_reading_change_history.sql",
+      "raw_sha256": "046d5d11f06d011fd00fc994770382e1bf72079694d4eb0aaac0a69be2bb5964",
+      "git_blob": "5df4d73e139e08a98640db3b32f2110047f88ddc",
+      "owner": "Machines",
+      "published_source": "50fafeb50a8e7ca232ada57f08559d63ec06c0dc",
+      "application_order": "SCHEMA/REGISTRY TOGETHER on reviewed aligned prefix; old command APIs remain but every supported reading UPDATE now needs a real active attributed actor. Not blanket old-app/maintenance compatibility."
+    },
+    {
+      "version": "0245",
+      "file": "supabase/migrations/0245_ordered_card_setup_success.sql",
+      "raw_sha256": "623f967469cbc4bb5d29b38828fa95fd51539d4187af6b2b4d50a6900ca323ad",
+      "git_blob": "a1e65d5fdad8e3440f4a3c5500ef33057507cc34",
+      "owner": "General",
+      "published_source": "c878000792a8d7058fa750ec3e19be7d00b61756",
+      "application_order": "Coordinated schema/runtime with setup-write drain; old unordered API closes, unknownlegacy order refuses; no automatic evidence adoption."
+    },
+    {
+      "version": "0246",
+      "file": "supabase/migrations/0246_intake_questionnaire_snapshot.sql",
+      "raw_sha256": "03a30dab56524b87ebefdf2e7b915d7717b1a9de6bed87f34b039a41dfc64b1a",
+      "git_blob": "fd9e4b2190a9112ebb45efa539b48378a378c585",
+      "owner": "Team",
+      "published_source": "131db9a8618a1cfd52ccc94fb4e4ca10d251b211",
+      "application_order": "SCHEMA FIRST before known snapshot issuance; compatible serving/rollback decoders or hold known-row writes. Legacy NULL remains UNKNOWN/no adoption/backfill/grants. Preserve243 atomic CAS/profile write and issued clinical evidence basis.",
+      "owner_approved_union": "team/246-609-union/OWNER-APPROVAL.json"
+    },
+    {
+      "version": "0248",
+      "file": "supabase/migrations/0248_intake_protected_write_enforcement.sql",
+      "raw_sha256": "1f6f9ad0026cee66b970e9dc630f1497aa10966df2adb9433d8f8c85bbc44cc3",
+      "git_blob": "e66c5d2f30e1ebfe88b6c0007dd52f02f5327a61",
+      "owner": "Team",
+      "published_source": "a67bebf8c7b263afe1c22f66f90ad0aab663a371",
+      "application_order": "LATER ENFORCEMENT ONLY after0243 additive schema, all CAS serving/rollback callers verified and old direct writers drained. Repeats exact owner/delegate/non-grantable ACL preflight. No legacy fallback. Requires separately approved apply. Reserved0247 source is absent; prefix gap remains an explicit required-check/release blocker, not fabricated."
+    }
+  ],
+  "historical_ledger_tail_sha256": "70c606e503ddc66649ef67eae4d1bc777b943a202b650fb9f35eb5ae5e7fac17",
+  "local_target": "Preservedhone-hon47 max0237/tree861e NOTaligned; no apply/reset authorization",
+  "holds": [
+    "926NEVERMERGE/863frozen/223unchanged/held920alternativeexcluded",
+    "No hosted/provider/model/consent/customerdata actions",
+    "Changed tests/refund union require fresh exact-head CI; unchanged f7 SQL scoped DB proof retained in current_proof below. No complete-green or production/human acceptance claim.",
+    "0246 composed;0247 Willow reserved/source-native-held/ABSENT;0248 Team source-only composed for evidence;0249 derived, UNALLOCATED. No full contiguous prefix or release-ready claim."
+  ],
+  "source_corrections": {
+    "0240": {
+      "prior_unapplied_raw": "018538e3b1ae73a1f203b2b4404d2bca068300110a0e3f4d77ae80be3d547b72",
+      "new_unapplied_raw": "129f5e77b41de437e03a198c8947f8e86398b397f61e63e1c2db34d5acfbb89f",
+      "published_source": "e858d1c9ade2acff3d22aa9069303652bae4ed39",
+      "reason": "926 exact829 P24333035670 cumulative partial refunds reaching full total",
+      "prior_CI": 39543875313,
+      "prior_CI_state": "FAIL28unit/32DB/2payment; freshchainapplypassed for OLD240 source only",
+      "new_proof": "9newaggregateDBcasesUNRUN untilnewexactCI; no heldapply/oldDBprooftransfer"
+    },
+    "0243-protected-runtime-boundary": {
+      "version": "0243",
+      "old_source": {
+        "version": "0243",
+        "file": "supabase/migrations/0243_intake_revision_cas_and_profile_sync.sql",
+        "raw_sha256": "94cbccc2e47f7c2935beafdf83ba90ee8a0ef903202b69c599f050d1943096b1",
+        "git_blob": "0426c35bdd85e42a4f83f78c556e3b5a548eaa5d",
+        "owner": "Team",
+        "published_source": "ead86c90bf2409bf9d21cc620bba92cf71bd39a2",
+        "application_order": "SCHEMA FIRST: revision column/trigger+RPC must precede both public and assisted new CAS callers. Separate from242 app-first audit writer staging."
+      },
+      "published_source": "eec0c7f9fa697088b367967334162895fae98b43",
+      "reason": "Actual cc04 stale direct writer overwrote CAS winner; protected runtime writes now require exact governed owner; original failures retained",
+      "raw_sha256": "c3ac2585e52b1c6df0db081887cab50c8e4253d54543b7955d51a6b46006754a",
+      "DB_proof": "UNRUN new SQL head; requires fresh existing CI. Old C5 proof applies only old source."
+    },
+    "0243-exact-read-delegate-compatibility": {
+      "version": "0243",
+      "old_source": {
+        "version": "0243",
+        "file": "supabase/migrations/0243_intake_revision_cas_and_profile_sync.sql",
+        "raw_sha256": "c3ac2585e52b1c6df0db081887cab50c8e4253d54543b7955d51a6b46006754a",
+        "git_blob": "e44128ddbf9eb943d8376802ebf00749f5128c07",
+        "owner": "Team",
+        "published_source": "eec0c7f9fa697088b367967334162895fae98b43",
+        "application_order": "UNAPPLIED0243 amended source: schema first under explicit per-change approval; all old direct/detached intake writers drained and rollback versions compatible before writes resume. Same service-only RPC, trusted-owner definer and invoker protected-write guard; no runtime role/grant expansion. Preserve0162/246. No apply authority from this manifest."
+      },
+      "published_source": "69672ea123120b6c85445a74447935cef45eeacc",
+      "reason": "Actual628 setup rejected known read-only0216 projection. Exact read getter+helper source/owner/STABLE/path/ACL checks preserve unknown-delegate refusal; no grants or frozen-source changes.",
+      "DB_proof": "UNRUN new SQL hash; fresh existing CI required.628 failure preserved."
+    },
+    "0242-Wednesday-staged-atomic": {
+      "old_source": {
+        "version": "0242",
+        "file": "supabase/migrations/0242_close_direct_generic_audit_inserts.sql",
+        "raw_sha256": "ad63727f205f1d4a0d183132b502069f5d08ff7a8ea7e5c34753e48a15f49e89",
+        "git_blob": "43712e2bb6c8c5740c50edfe4d6c729fc9be74e7",
+        "owner": "Team",
+        "published_source": "c9537bf0d7160380f38473a453d88c4e630fc28e",
+        "application_order": "APP FIRST: governed archive/unarchive/export helpers and their call sites must precede direct member INSERT ACL closure. Can stage these app-only hunks without243 CAS callers; the whole c953 branch contains243 and is not a deploy-before-schema shortcut."
+      },
+      "published_source": "8e33127543d4bd6c2b7d9a0d6d9fd8b3d0d11e0b",
+      "raw_sha256": "1d1f8e313966635017d20a432d7054b015ab064763361475d97547a004c97c5f",
+      "reason": "Address current review findings without unsafe rolling order; grant-option denial and atomic membership audit source. Old failures/source history preserved.",
+      "DB_proof": "UNRUN current new source; existing fresh remote CI required; no local/hosted apply"
+    },
+    "0243-Wednesday-staged-atomic": {
+      "old_source": {
+        "version": "0243",
+        "file": "supabase/migrations/0243_intake_revision_cas_and_profile_sync.sql",
+        "raw_sha256": "e483bc412c90a1f210ebd90111db8ea8bac24f965fe2fca3baadc729bfa1d634",
+        "git_blob": "0ac734c810fa7a23020366397b37417558a7d67b",
+        "owner": "Team",
+        "published_source": "69672ea123120b6c85445a74447935cef45eeacc",
+        "application_order": "UNAPPLIED0243 amended source: schema first under explicit per-change approval; all old direct/detached intake writers drained and rollback versions compatible before writes resume. Same service-only RPC, trusted-owner definer and invoker protected-write guard; no runtime role/grant expansion. Preserve0162/246. No apply authority from this manifest. Exact reviewed0216 read projection AND transitive helper fingerprints/context are required; unknown/changed delegates still refuse."
+      },
+      "published_source": "d2d515e389dfc1e358a82eb0cdde2ad4c1317db4",
+      "raw_sha256": "3e8c89a857b3c450ac3c87257208b206ea42dcb415fcf46720ee35256976d332",
+      "reason": "Address current review findings without unsafe rolling order; grant-option denial and atomic membership audit source. Old failures/source history preserved.",
+      "DB_proof": "UNRUN current new source; existing fresh remote CI required; no local/hosted apply"
+    },
+    "0242-trusted-owner-after64526": {
+      "old_source": {
+        "version": "0242",
+        "file": "supabase/migrations/0242_close_direct_generic_audit_inserts.sql",
+        "raw_sha256": "1d1f8e313966635017d20a432d7054b015ab064763361475d97547a004c97c5f",
+        "git_blob": "6a41b27b83fd2fc1bbba8b17e95a0f1a657818bb",
+        "owner": "Team",
+        "published_source": "8e33127543d4bd6c2b7d9a0d6d9fd8b3d0d11e0b",
+        "application_order": "COORDINATED WRITE HOLD / SCHEMA+APP: approved atomic commands and matching helpers before writes resume. Missing RPC withholds export; archive audit refusal preserves already-committed state/navigation. Old direct writers drained; no legacy INSERT fallback."
+      },
+      "published_source": "b9c421bbd287d38422168aff26626f93091e108a",
+      "raw_sha256": "98707acb9053dfa78fadb7eaff59fcc98db678a9aee19b2375ec6ffa011c2f40",
+      "reason": "Actual64526setupfailed because0178 freezesserviceidentitytableSELECT-only; no broadUPDATEgrant. Narrow trusted commands preserve frozen identity boundary.",
+      "proof": "Owner153focusedPASS/TSC/lint/prepush; Privacy+Machinessourceclear. NewDB/ACLmutants/rowlockconcurrencyUNRUNuntilcurrentCI."
+    }
+  },
+  "known_source_gap": {
+    "version": "0247",
+    "owner": "Willow",
+    "reason": "Existing source allocation/native approval rejection; no SQL fabricated/imported/reallocated",
+    "effect": "Canonical pending-chain contiguity guard remains unchanged and expected to fail until legitimate source dependency/allocation adjudication. Existing DB/browser CI may still execute present real source for evidence only."
+  },
+  "current_proof": {
+    "source": "f7a18216c63a390b1fbd5f6dbb51bdaaf743e437",
+    "CI": 39601398180,
+    "review": "Completed exact f7, no findings",
+    "unit": "25519PASS1FAIL actual247chainhole guard unchanged",
+    "DB": "4564PASS4FAIL8SKIP; audit32+assisted41 scoped PASS;3legacy direct-positive expectations and247gap failed",
+    "browser": "665PASS42SKIP0flaky;20native+2recovery explicitlySKIPPEDflagOFF, NOTnativejourneyacceptance",
+    "payment": "67PASS1SKIP1FAIL futureappointmentcompletionfixture mismatch; correctproductgate retained",
+    "mobile": "6PASS",
+    "Google": "13PASS",
+    "historical_native": "fa08520PASS/a6312PASS scoped unchangedcontracts/UI; current214seed/241entry/244history changed, currentmountedjourneysUNRUN",
+    "limits": "Counts overlap with per-suite proof. Fresh proof required for new test cases and financial union; no hosted apply/production data or human acceptance."
+  },
+  "current_composition": {
+    "pre_manifest_commit": "628b671796a070a1af7c51392448e949e336b9c9",
+    "production_base": "d4fb5ab75c061e12e836ceb89d139a7cc396cce4",
+    "test_repairs": {
+      "Team_legacy_contracts_published": "02617476ec948588c5dc222d3993991b72e16226",
+      "Team_stale_service_submit_patch_sha256": "5288e96fd704a1855303219be79bea10b8494b354374b9d98214b3e70c7a9957",
+      "Insurance_same_appointment_time_patch_sha256": "15f02cb8b5c740849a07a40075f29431f3721b0b086407f9ad352d91a7e040c9",
+      "proof": "TSC/prepush PASS; newly edited DB/browser behavior UNRUN until fresh existing CI. Original phase positives/harddenials/future-timegate retained."
+    },
+    "refund_union": {
+      "owner_patch_sha256": "3d508b519737d60a466fafe3ac7d44de112051af3cb2a751bef0239156cfdb2a",
+      "owner_scope": "Existing future239/240 observation RPC/status/provenance + production998 strict same-durable-winner tuple/firsttimestamp; manual refusal already present. No oldCAS/newSDK/SQL imported.",
+      "proof": "Owner+root82focusedPASS; oldb40twoFAIL preserved; ownerlint/TSC PASS; Machines exactsourceclear. Root203PASS1held247canonicalFAIL across refund+canonical checks.",
+      "normal_merge_expected_actual_tree": "5eeaa3bf6e0365a0179cacba4c4a6cf3bee35741"
+    },
+    "SQL": "All35sources/SQLtree and historicalledger/frozen223 unchanged; no247fabrication, no new migration allocation."
+  },
+  "latest_settled_proof": {
+    "source": "8d983a13871f913484187f0bce84911ffa09cd82",
+    "CI": 39610815045,
+    "conclusion": "FAILURE",
+    "unit": "25549PASS5FAIL (247hole +4old reader source-contract assertions)",
+    "DB": "4571PASS1FAIL8SKIP; only247applied-chainhole. Three legacy phase contracts and new stale service submit now pass.",
+    "payment": "67PASS1SKIP1FAIL; E progressed through same appointment completion then correctly hid payment preparation for free service; no product gate weakened.",
+    "browser": "All4shards+aggregatePASS; detailedcounts prior/currentlogs, native20+recovery2stillSKIPPEDflagOFF",
+    "mobile": "6PASS",
+    "Google": "13PASS",
+    "limits": "Not wholegreen. New composition/sourceguards/Epaidfixture need fresh actualCI; no hosted/local reset/activation/human acceptance."
+  },
+  "current_composition_after_8d": {
+    "pre_manifest_commit": "00c423bca933f6c44731b8d93dfff8fb279a0560",
+    "production_code_base": "f7ec655c638581fefa17f5b00bc92322fdbd1f3a",
+    "published_record_owner_source": "d677407c7a85083a59c3c2f0a76ccd3e2dfa4f97",
+    "General_source_contract_repair": {
+      "patch_sha256": "02b0eca8472a2db2f793583473ca5273049308f7cd82a086fd7f09766d554f73",
+      "scope": "3existingtestfiles/same82cases;4strongerreadercontracts updated,78bodiesbyte-identical;runtime/SQL unchanged",
+      "proof": "Owner82PASS/lint+Machines sourceclear,rootincludedin558PASS1heldgapFAIL"
+    },
+    "Insurance_paid_E": {
+      "patch_sha256": "24072de4274616ffd28bca655bf82ed9fba84f1c2a84a58d7185d8a59a646bb1",
+      "postimage_sha256": "93900ff4230fa73e9ea97355711e3befede85c1309e1d6a6f32edef9751b1317",
+      "scope": "BeforeANYbooking exactnewsyntheticstudio/serviceprice0->12000/identityassertions; actualbooked120reference thenowner185+requiredreason; allA-D/temporal/financial/notification/denialoraclespreserved. Notproduct/freepolicy change.",
+      "proof": "Ownerlint/parse+Machines exactsourceclear; rootsemanticTSC;actualnewEUNRUNuntilfreshCI"
+    },
+    "Willow_current995_union": {
+      "patch_sha256": "8fb95db55b9a79a8f0908ea8303d4fee45c0fa1490d3653b717014d606c21b59",
+      "route_sha256": "3e29730e46223264e99ffeb78f1e8b133ba98822f5e26fb90704f75d1e2e06ce",
+      "coordinator_sha256": "c2fbe966ea8dc05d0a5358492576f4c0c1f1f1c4fa7d1e7dded6b72cd9b48995",
+      "scope": "Deployed995 bounds/cursor/fencing +future emailledger/settingslinks/currentSMScontext/boundedleadrecovery; sixownerpostimages, coordinator unchanged",
+      "proof": "267ownerPASS/TSC/lint+Privacy/Insurance exactsourceclear, rootincludedin558PASS1heldgapFAIL; actualRedisLuaUNRUN"
+    },
+    "Insurance_current984_union": {
+      "owner_postimage_sha256": "70e0027792d99275734fe2199beb332af54b41106725270c39770d6c65707931",
+      "root_cleaned_sha256": "4e49e9d945db95565f27f2e24d77206ed9ae61d5ea5ea73caa1d9252c1961a39",
+      "normalization": "Onlytrailingwhitespace on2blanklines removed forcommitcheck; no tokens/linecount change",
+      "scope": "Only2publicavailability wrappers;11otherfuturefunctions identical; actual0225/0222/0195/0170 locked publicON/OFFhoursauthority verified, internal/move allmodefailures refuseRPC",
+      "proof": "Owner88PASS/TSC/lint+Machines exactsourceclear; root88PASS/finalTSC andincludedin558PASS1heldgapFAIL"
+    },
+    "current_focused_proof": {
+      "source_before_manifest": "00c423bca933f6c44731b8d93dfff8fb279a0560",
+      "files": 19,
+      "passed": 558,
+      "failed": 1,
+      "failure": "ONLY unchanged canonical247pendingchainhole; no skip/xfail/bypass",
+      "TSC": "RootsemanticTSCpassed afterbookingunion; finalcommittedtreeprepushrequired",
+      "runtime_DB_browser": "NewcomposedheadUNRUNpendingnormalCI; actual8dproof reusedonlyunchangedsubjects"
+    },
+    "local_target": "Retainedhone-hon47SQL861e/max237 stillunaligned; fresh0386754backupcaptured, structuralverificationonly; newrestore-onlydecisionpendingSam, no reset/apply authority."
+  }
+}

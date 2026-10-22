@@ -4,12 +4,12 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import type { PractitionerRole } from "@/lib/types/database";
-import { resend, FROM_ADDRESS } from "@/lib/email/client";
+import type { InvitationRole } from "@/lib/types/database";
+import { sendEmailSafely } from "@/lib/email/send-appointment";
 import { buildInvitationEmail } from "@/lib/email/templates/invitation";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const VALID_ROLES: ReadonlyArray<PractitionerRole> = ["owner", "practitioner"];
+const VALID_ROLES: ReadonlyArray<InvitationRole> = ["owner", "practitioner", "receptionist"];
 const PG_UNIQUE_VIOLATION = "23505";
 
 export type InviteResult =
@@ -54,27 +54,22 @@ async function sendInvitationEmail(params: {
   studioName: string;
   inviterName: string;
 }): Promise<void> {
-  if (!resend) {
-    console.warn(
-      "Skipping invitation email: Resend client is not configured.",
-    );
-    return;
-  }
-
-  const { subject, html, text } = buildInvitationEmail(params);
   try {
-    const { error } = await resend.emails.send({
-      from: FROM_ADDRESS,
+    const { subject, html, text } = buildInvitationEmail(params);
+    // Reuse the fake-aware transport and its existing 15s provider bound.
+    // The committed invitation/share message must survive a stalled send.
+    const result = await sendEmailSafely({
       to: params.inviteeEmail,
       subject,
       html,
       text,
     });
-    if (error) {
-      console.error("Failed to send invitation email:", error);
+    if (!result.ok) {
+      console.error(`invitation_email_error:send:${result.attempt}`);
     }
-  } catch (error) {
-    console.error("Failed to send invitation email:", error);
+  } catch {
+    // No recipient, provider body or token in this operational marker.
+    console.error("invitation_email_error:send:exception");
   }
 }
 
@@ -89,8 +84,8 @@ export async function invitePractitionerAction(
 
   const roleRaw = formData.get("role");
   const role =
-    typeof roleRaw === "string" && VALID_ROLES.includes(roleRaw as PractitionerRole)
-      ? (roleRaw as PractitionerRole)
+    typeof roleRaw === "string" && VALID_ROLES.includes(roleRaw as InvitationRole)
+      ? (roleRaw as InvitationRole)
       : "practitioner";
   const displayName = nullableString(formData.get("display_name"));
 
@@ -123,6 +118,26 @@ export async function invitePractitionerAction(
       ok: false,
       error: `${email} is already a practitioner at this studio.`,
     };
+  }
+
+  // Already on this studio's front desk? (0216: the owner reads the studio's
+  // receptionist rows under RLS.) Accepting a second receptionist invitation
+  // would be harmless, since it reactivates in place, but it is a confusing
+  // no-op, so refuse it the same way as a duplicate practitioner.
+  if (role === "receptionist") {
+    const { data: existingDesk, error: deskErr } = await supabase
+      .from("studio_receptionists")
+      .select("id")
+      .eq("studio_id", studioId)
+      .ilike("email", email)
+      .eq("active", true)
+      .maybeSingle();
+    if (deskErr) {
+      return { ok: false, error: "Could not check the front desk team." };
+    }
+    if (existingDesk) {
+      return { ok: false, error: `${email} is already on this studio's front desk.` };
+    }
   }
 
   // Already invited at this studio (still pending)?
@@ -162,8 +177,8 @@ export async function invitePractitionerAction(
     return { ok: false, error: `Failed to send invite: ${error.message}` };
   }
 
-  // Fire-and-forget the email. Any failure stays inside sendInvitationEmail
-  // and is logged; the invite row + share-message UI cover the user path.
+  // Await the bounded notification, not an unbounded provider request. Failure
+  // stays inside sendInvitationEmail; the row + share UI remain authoritative.
   await sendInvitationEmail({
     inviteeEmail: email,
     inviteeDisplayName: displayName,

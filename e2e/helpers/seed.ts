@@ -38,12 +38,26 @@ export type E2eSeed = {
 export async function sql<T = Record<string, unknown>>(
   text: string,
   params: unknown[] = [],
+  fixtureActorUserId?: string,
 ): Promise<T[]> {
   const client = new PgClient({ connectionString: E2E_DB_URL });
   await client.connect();
   try {
+    // Explicit actor context for privileged clinical fixture maintenance only.
+    // Default SQL and all transport grants remain unchanged; transaction-local
+    // claims cannot leak onto another fixture connection.
+    if (fixtureActorUserId) {
+      await client.query("begin");
+      await client.query("select set_config('request.jwt.claims',$1,true)", [
+        JSON.stringify({ sub: fixtureActorUserId, role: "authenticated" }),
+      ]);
+    }
     const result = await client.query(text, params);
+    if (fixtureActorUserId) await client.query("commit");
     return result.rows as T[];
+  } catch (error) {
+    if (fixtureActorUserId) await client.query("rollback").catch(() => undefined);
+    throw error;
   } finally {
     await client.end();
   }
@@ -72,6 +86,14 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
      values ($1, $2, $3, $4, $5, 0, 30)`,
     [studioId, studioName, ownerEmail, slug, timezoneWithLocalMorning()],
   );
+
+  // This existing synthetic fixture explicitly uses a verified CA/cad pair;
+  // real studios have no default and remain UNKNOWN without onboarding evidence.
+  const verified = await sql<{ out_result: string }>(
+    `select * from public.set_studio_payment_jurisdiction($1,'CA','cad',$2,$3,false,$4)`,
+    [studioId, "fixture:e2e", "Synthetic verified onboarding pair", `fixture:${runId}`],
+  );
+  if (verified[0]?.out_result !== "initialized") throw new Error("synthetic jurisdiction initialization failed");
 
   // Weekly availability: open every day with a wide window so the
   // booking page has slots no matter which weekday the run lands on.
@@ -1774,10 +1796,17 @@ export async function getSessionContentDigest(sessionId: string): Promise<string
 
 // Mutate the source session so its fingerprint changes (stale-preview test).
 export async function bumpSourceBlockEnergy(sessionId: string): Promise<void> {
+  const [actor] = await sql<{ user_id: string }>(
+    `select p.user_id from public.sessions s
+       join public.practitioners p on p.id=s.practitioner_id and p.studio_id=s.studio_id
+      where s.id=$1 and p.active and p.user_id is not null`, [sessionId],
+  );
+  if (!actor) throw new Error("bumpSourceBlockEnergy: no active fixture practitioner");
   await sql(
     `update public.session_blocks set energy_level = coalesce(energy_level,0) + 1
       where session_id = $1 and deleted_at is null`,
     [sessionId],
+    actor.user_id,
   );
 }
 
@@ -2139,10 +2168,12 @@ export async function seedE2eFullDetailSentinels(
   },
 ): Promise<void> {
   const block = (
-    await sql<{ id: string; session_id: string }>(
-      `select b.id, b.session_id
+    await sql<{ id: string; session_id: string; user_id: string }>(
+      `select b.id, b.session_id, p.user_id
          from public.session_blocks b
          join public.sessions s on s.id = b.session_id
+         join public.practitioners p on p.id=s.practitioner_id and p.studio_id=s.studio_id
+                                  and p.active and p.user_id is not null
         where s.studio_id = $1 and s.client_id = $2
         order by s.started_at desc
         limit 1`,
@@ -2157,12 +2188,14 @@ export async function seedE2eFullDetailSentinels(
             numbing_notes = $4
       where id = $1`,
     [block.id, sentinels.probeLot, sentinels.reactionNote, sentinels.numbingNote],
+    block.user_id,
   );
   await sql(
     `update public.electrolysis_entries
         set comments = $2
       where block_id = $1`,
     [block.id, sentinels.entryComment],
+    block.user_id,
   );
 }
 

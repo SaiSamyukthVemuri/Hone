@@ -21,6 +21,7 @@ function codeOnly(src: string): string {
     .join("\n");
 }
 const HELPER_CODE = codeOnly(HELPER);
+const BOUND_SQL = readFileSync(path.resolve(__dirname, "../../../supabase/migrations/0239_bound_payment_event_reconciliation.sql"), "utf8");
 
 const ROUTE_PATH = path.resolve(
   __dirname,
@@ -136,10 +137,14 @@ describe("PR #319: setup_intent.succeeded live-mode dormancy guard", () => {
     );
     // Anchor on the actual DB operations (.from("...")), not bare mentions —
     // a comment naming the tables must not fool the ordering check.
-    const pmIdx = block.indexOf('.from("client_payment_methods")');
+    const pmIdx = block.search(/await admin\.rpc\(\s*"save_client_card_on_file_ordered"/);
     const lineageIdx = block.indexOf('.from("client_stripe_customers")');
     expect(guardIdx).toBeGreaterThan(-1);
-    expect(pmIdx).toBeGreaterThan(-1); // the handler does write cards in test mode
+    expect(pmIdx).toBeGreaterThan(-1); // actual atomic ordered persistence
+    expect(lineageIdx).toBeGreaterThan(-1);
+    // No direct card mutation or unordered command may bypass adjudication.
+    expect(block).not.toMatch(/\.from\("client_payment_methods"\)[\s\S]*?\.(?:insert|update|upsert|delete)\(/);
+    expect(block).not.toMatch(/admin\.rpc\(\s*"save_client_card_on_file"/);
     // Guard runs first — before the card write AND before the lineage read.
     expect(guardIdx).toBeLessThan(pmIdx);
     expect(guardIdx).toBeLessThan(lineageIdx);
@@ -237,7 +242,7 @@ describe("resolved-row livemode guard — symmetric across ALL mutating handlers
       expect(body).toMatch(/livemodeRowMismatch:\s*true/);
       // The guard sits BEFORE the row-mutating UPDATE (no mutation on mismatch).
       const guard = body.indexOf("livemodeRowMismatch: true");
-      const update = body.indexOf(".update(");
+      const update = body.indexOf("reconcileBoundEvent(event, ctx, attempt)");
       expect(guard).toBeGreaterThan(-1);
       expect(update).toBeGreaterThan(-1);
       expect(guard).toBeLessThan(update);
@@ -248,7 +253,7 @@ describe("resolved-row livemode guard — symmetric across ALL mutating handlers
 describe("payment_intent.succeeded: status-conditional reconciliation", () => {
   it("idempotent on already-succeeded rows (no flip, may stamp missing charge id)", () => {
     expect(HELPER).toMatch(
-      /attempt\.status === "succeeded"[\s\S]{0,2000}alreadySucceeded:\s*true/,
+      /reconcileResult === "already_succeeded"[\s\S]{0,1000}alreadySucceeded:\s*true/,
     );
   });
 
@@ -269,10 +274,10 @@ describe("payment_intent.succeeded: status-conditional reconciliation", () => {
   // rather than being deleted: the shape is pinned in SQL, and the handler is
   // pinned to route through the command and to refuse on conflict.
   it("flips ready/pending_stripe to succeeded through the LOCKED command", () => {
-    expect(HELPER).toMatch(/rpc\(\s*\n?\s*"reconcile_card_payment_succeeded"/);
+    expect(HELPER).toMatch(/rpc\(\s*"reconcile_bound_payment_event"/);
     // And no longer writes the status itself.
     const succeededHandler = HELPER.slice(
-      HELPER.indexOf("reconcile_card_payment_succeeded"),
+      HELPER.indexOf("export async function handlePaymentIntentSucceeded"),
       HELPER.indexOf("payment_intent.payment_failed"),
     );
     expect(succeededHandler).not.toMatch(/\.update\(/);
@@ -325,15 +330,15 @@ describe("payment_intent.payment_failed: status-conditional reconciliation", () 
   });
 
   it("flips ready/pending_stripe to failed with sanitised code + message", () => {
-    expect(HELPER).toMatch(
-      /status:\s*"failed"[\s\S]{0,2000}failure_code:\s*code[\s\S]{0,2000}failure_message_safe:\s*safeMessage/,
-    );
+    expect(BOUND_SQL).toContain("set status='failed',failed_at=now()");
+    expect(BOUND_SQL).toContain("failure_code=left(p_object->>'failure_code',100)");
+    expect(BOUND_SQL).toContain("failure_message_safe=left(p_object->>'failure_message_safe',500)");
+    expect(HELPER).toContain("reconcileBoundEvent(event, ctx, attempt)");
   });
 
-  it("sanitises the failure code and uses fixed copy instead of provider error prose", () => {
-    expect(HELPER).toMatch(/sanitizeFailureCode\(lastError\?\.code/);
-    expect(HELPER).toContain('const safeMessage = "Stripe could not charge the saved card.";');
-    expect(HELPER).toMatch(/failure_message_safe:\s*safeMessage/);
+  it("bounds failure codes and sends fixed failure copy only for failed-event evidence", () => {
+    expect(HELPER).toMatch(/sanitizeFailureCode\(pi\.last_payment_error\?\.code/);
+    expect(HELPER).toMatch(/failure_message_safe:\s*event\.type === "payment_intent\.payment_failed"\s*\? "Stripe could not charge the saved card\." : null/);
     expect(HELPER).not.toMatch(/lastError\s*(?:\?\.|\.)\s*message/);
     expect(HELPER).not.toMatch(/pi\.last_payment_error\s*(?:\?\.|\.)\s*message/);
   });
@@ -362,14 +367,14 @@ describe("charge.refunded: full vs partial discrimination", () => {
 describe("charge.refunded: full refund reconciliation paths", () => {
   it("idempotent on already-refunded rows (may stamp missing refund id)", () => {
     expect(HELPER).toMatch(
-      /attempt\.refund_status === "succeeded"[\s\S]{0,2000}alreadyRefunded:\s*true/,
+      /commandResult === "already_refunded"[\s\S]{0,300}alreadyRefunded:\s*true/,
     );
   });
 
   it("pending_stripe refund: flip to succeeded via conditional UPDATE", () => {
-    expect(HELPER).toMatch(
-      /refund_status === "pending_stripe"[\s\S]{0,2000}\.eq\("refund_status",\s*"pending_stripe"\)/,
-    );
+    expect(HELPER).toMatch(/refund_status === "pending_stripe"[\s\S]{0,1000}reconcileBoundEvent/);
+    expect(BOUND_SQL).toContain("elsif v_row.refund_status='succeeded' then v_result:='already_refunded'");
+    expect(BOUND_SQL).toContain("set refund_status='succeeded'");
   });
 
   it("out-of-band (null or failed) full refund: warning ops_alert charge_refunded_out_of_band_reconciled", () => {
@@ -379,9 +384,11 @@ describe("charge.refunded: full refund reconciliation paths", () => {
   });
 
   it("out-of-band UPDATE is scoped to null OR 'failed' refund_status (no concurrent race)", () => {
-    expect(HELPER).toMatch(
-      /\.or\("refund_status\.is\.null,refund_status\.eq\.failed"\)/,
-    );
+    // The bound command now holds the attempt lock across identity/state reads
+    // and writes; a discarded PostgREST filter cannot masquerade as authority.
+    expect(BOUND_SQL).toContain("where a.id=p_attempt_id for update");
+    expect(BOUND_SQL).toContain("v_row.stripe_refund_id<>v_refund");
+    expect(HELPER).not.toMatch(/\.update\(/);
   });
 });
 
@@ -463,9 +470,9 @@ describe("payment-webhook-reconciliation: reason-agnostic by construction", () =
 });
 
 describe("Webhook route wiring (PR #179)", () => {
-  it("imports all four reconciliation handlers (+ the shared live-mode guard, PR #319)", () => {
+  it("imports all five reconciliation handlers (+ the shared live-mode guard, PR #319)", () => {
     expect(ROUTE).toMatch(
-      /import \{\s*\n?\s*handlePaymentIntentSucceeded,\s*\n?\s*handlePaymentIntentPaymentFailed,\s*\n?\s*handleChargeRefunded,\s*\n?\s*handleChargeDisputeCreated,\s*\n?\s*shouldIgnoreLiveModeEvent,\s*\n?\s*\} from "@\/lib\/billing\/payment-webhook-reconciliation"/,
+      /import \{\s*\n?\s*handlePaymentIntentSucceeded,\s*\n?\s*handlePaymentIntentPaymentFailed,\s*\n?\s*handleChargeRefunded,\s*\n?\s*handleRefundStatusEvent,\s*\n?\s*handleChargeDisputeCreated,\s*\n?\s*shouldIgnoreLiveModeEvent,\s*\n?\s*\} from "@\/lib\/billing\/payment-webhook-reconciliation"/,
     );
   });
 
