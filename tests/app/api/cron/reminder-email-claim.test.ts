@@ -155,6 +155,8 @@ const race = vi.hoisted(() => ({
   start: "2026-10-22T12:00:00.000Z",
   freshStart: "2026-10-22T12:00:00.000Z" as string | null,
   readError: false,
+  freshMissing: false,
+  readErrorWithData: false,
   claimRpcMode: "normal" as "normal" | "error" | "throw" | "malformed",
   claimRpc: vi.fn(),
   incidentRead: "none" as "none" | "db_error" | "timeout" | "invalid_row" | "throw" | "timeout_once",
@@ -280,7 +282,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           return b;
         },
         maybeSingle: async () => ({
-          data: race.readError ? null : { ...row("00000000-0000-4000-8000-000000000001"), starts_at: race.freshStart },
+          data: race.freshMissing || (race.readError && !race.readErrorWithData) ? null : { ...row("00000000-0000-4000-8000-000000000001"), starts_at: race.freshStart },
           error: race.readError ? { message: "synthetic read failure" } : null,
         }),
         then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => {
@@ -305,7 +307,7 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     race.store.clear(); race.store.set("reminder_scan:v1:rotation", { value: JSON.stringify({version:1,next:"email24h",known:[]}), expiry: Date.now() + 10800000 }); race.failStore = false; race.heartbeat.mockClear(); race.alerts.mockClear();
     race.start = "2026-10-22T12:00:00.000Z"; race.freshStart = race.start;
     race.claimRpcMode = "normal"; race.claimRpc.mockClear();
-    race.readError = false; race.incidentRead = "none"; race.incidentSqlState = "42703"; race.incidentThrown = undefined; race.incidentCoordinationError = undefined;
+    race.readError = false; race.freshMissing = false; race.readErrorWithData = false; race.incidentRead = "none"; race.incidentSqlState = "42703"; race.incidentThrown = undefined; race.incidentCoordinationError = undefined;
     race.backlog = null; race.sent.clear(); race.pages = [];
     race.setupThrown = undefined; race.originThrown = undefined;
     race.heartbeat.mockReset().mockResolvedValue(undefined); race.alerts.mockReset().mockResolvedValue(undefined);
@@ -314,6 +316,78 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     race.record.mockReset().mockImplementation(async () => undefined);
   });
   afterEach(() => { vi.useRealTimers(); });
+
+  it("POSTCLAIM_READ failure must not become a healthy completed scan", async () => {
+    race.readError = true;
+    const response = await GET(new Request("https://example.invalid"));
+    const saved = race.store.get("reminder_scan:v1:checkpoint:email24h");
+    const checkpoint = saved ? JSON.parse(saved.value) : null;
+    console.info(JSON.stringify({ event: "synthetic_postclaim_read_observation", status: response.status,
+      claim_calls: race.claimRpc.mock.calls.length, sdk_calls: race.send.mock.calls.length,
+      settlement_calls: race.record.mock.calls.length, heartbeat_calls: race.heartbeat.mock.calls.length,
+      checkpoint_complete: checkpoint?.complete ?? null, checkpoint_after_null: checkpoint?.after === null }));
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.record).not.toHaveBeenCalled();
+    expect(response.status).toBe(500);
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    if (checkpoint) expect(checkpoint.complete).toBe(false);
+  });
+
+  it("POSTCLAIM_READ error with returned data remains unavailable", async () => {
+    race.readError = true;
+    race.readErrorWithData = true;
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(500);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.record).not.toHaveBeenCalled();
+    expect(race.heartbeat).not.toHaveBeenCalled();
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({
+      reason: "read_or_handler", failure_stage: "handler", failure_category: "handler_error",
+    }) }));
+    expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("synthetic read failure");
+  });
+
+  it("POSTCLAIM_READ definite missing row without error remains an ordinary skip", async () => {
+    race.freshMissing = true;
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.record).not.toHaveBeenCalled();
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("POSTCLAIM_READ known successful current read retains normal send and heartbeat", async () => {
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(200);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).toHaveBeenCalledTimes(1);
+    expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", true);
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["moved outside window", "2026-10-23T12:00:00.000Z"],
+    ["moved within window", "2026-10-22T12:15:00.000Z"],
+    ["missing current start", null],
+    ["invalid current start", "invalid"],
+  ])("MSG002 refuses cached reminder when %s without settling the claim", async (_label, freshStart) => {
+    race.freshStart = freshStart;
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(200);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.record).not.toHaveBeenCalled();
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("MSG002 accepts an unchanged instant with an equivalent timezone offset", async () => {
+    race.freshStart = "2026-10-22T08:00:00-04:00";
+    expect((await GET(new Request("https://example.invalid"))).status).toBe(200);
+    expect(race.send).toHaveBeenCalledTimes(1);
+    expect(race.record).toHaveBeenCalledWith(expect.anything(), "00000000-0000-4000-8000-000000000001", "reminder_24h", true);
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
 
   it.each([
     ["email", "toggle"], ["email", "destination"],

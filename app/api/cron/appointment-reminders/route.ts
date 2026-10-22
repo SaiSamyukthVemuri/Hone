@@ -272,14 +272,30 @@ async function sendReminderPass(opts: {
     return;
   }
 
-  // PR #258: a confirmed appointment can be cancelled / no-showed between
-  // the window query and now; the claim does not re-validate status.
-  const { data: fresh } = await admin
+  // Recheck the current start used to compose this cached email after claiming.
+  // This contains observed reschedules; it is not an atomic send-time fence.
+  const { data: fresh, error: freshError } = await admin
     .from("appointments")
-    .select("status")
+    .select("status, starts_at")
     .eq("id", appt.id)
     .maybeSingle();
+  // An unavailable read is not evidence that this row was handled. Use the
+  // existing handler failure path; never settle or clear the counted claim.
+  if (freshError) throw new Error("reminder appointment state unavailable");
   if (!fresh || fresh.status !== "confirmed") {
+    stats.skipped += 1;
+    return;
+  }
+
+  const currentStart = Date.parse(fresh.starts_at);
+  if (
+    !Number.isFinite(currentStart) ||
+    currentStart !== Date.parse(appt.starts_at) ||
+    currentStart < Date.parse(opts.windowStartIso) ||
+    currentStart > Date.parse(opts.windowEndIso)
+  ) {
+    // No send occurred. Preserve the counted claim and existing TTL; do not
+    // settle, clear, refund or create a retry from this unfenced observation.
     stats.skipped += 1;
     return;
   }
