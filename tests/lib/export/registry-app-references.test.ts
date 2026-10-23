@@ -111,12 +111,18 @@ function appReferenceFaults(
     if (d.kind !== "pending" && d.kind !== "excluded") continue;
     const cited = citedFunctions(d.reason, snapshot);
     if (cited.length === 0) continue;
-    const named = [...new Set(d.reason.match(NAMED_FILE) ?? [])];
+    const mentions = [...d.reason.matchAll(NAMED_FILE)].map((m) => ({ rel: m[0], at: m.index ?? 0 }));
+    const named = [...new Set(mentions.map((m) => m.rel))];
     for (const rel of named) if (!fileExists(rel)) faults.push(`${resource}: its reason names ${rel}, which does not exist`);
     for (const fn of cited) {
+      // The file the prose pairs with this function: the first one named AFTER
+      // it ("f (app/x.ts)", "f, g and h are invoked from lib/y.ts"). Photos F4:
+      // any-of let a call move between two files one reason names.
+      const at = d.reason.search(new RegExp(String.raw`\b${fn}\b`));
+      const paired = mentions.find((m) => m.at > at)?.rel;
       if (!sources.some((s) => uses(s.code, fn))) faults.push(`${resource}: its reason cites ${fn}, which no application source calls`);
-      else if (named.length > 0 && !sources.some((s) => named.includes(s.rel) && uses(s.code, fn))) {
-        faults.push(`${resource}: its reason cites ${fn}, but none of the files it names (${named.join(", ")}) calls it`);
+      else if (paired !== undefined && !sources.some((s) => s.rel === paired && uses(s.code, fn))) {
+        faults.push(`${resource}: its reason pairs ${fn} with ${paired}, which does not call it`);
       }
     }
   }
@@ -195,7 +201,20 @@ describe("the export registry's application claims hold against application sour
   it("RED when the call moves to a file the reason does not name", () => {
     const sources: Source[] = [good[0], { rel: "lib/pay/elsewhere.ts", code: 'rpc("claim_ledger")' }];
     expect(appReferenceFaults(registry, snapshot, sources, () => true, fixtureExport)).toEqual([
-      "ledger: its reason cites claim_ledger, but none of the files it names (lib/pay/ledger.ts) calls it",
+      "ledger: its reason pairs claim_ledger with lib/pay/ledger.ts, which does not call it",
+    ]);
+  });
+
+  it("RED when a call moves to the OTHER file the same reason names (Photos F4)", () => {
+    const two = {
+      ...registry,
+      ledger: { kind: "pending", ticket: "T", tier: 2, reason: "LIVE: claim_ledger (lib/pay/ledger.ts) and other_fn (lib/pay/other.ts) read it." } as ResourceDisposition,
+    };
+    const paired: Source[] = [good[0], { rel: "lib/pay/ledger.ts", code: 'rpc("claim_ledger")' }, { rel: "lib/pay/other.ts", code: 'rpc("other_fn")' }];
+    expect(appReferenceFaults(two, snapshot, paired, () => true, fixtureExport)).toEqual([]);
+    const moved: Source[] = [good[0], { rel: "lib/pay/ledger.ts", code: "export {};" }, { rel: "lib/pay/other.ts", code: 'rpc("other_fn"); rpc("claim_ledger")' }];
+    expect(appReferenceFaults(two, snapshot, moved, () => true, fixtureExport)).toEqual([
+      "ledger: its reason pairs claim_ledger with lib/pay/ledger.ts, which does not call it",
     ]);
   });
 
