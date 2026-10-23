@@ -424,6 +424,8 @@ describe("PR CI — path-aware lane selection", () => {
       "mobile",
       "ci_workflows",
       "full_matrix_required",
+      "docs_consistency",
+      "docs_reader_tests",
     ]) {
       expect(CI, `${k} must be a job output`).toMatch(
         new RegExp(`${k}: \\$\\{\\{ steps\\.classify\\.outputs\\.${k} \\}\\}`),
@@ -2349,5 +2351,126 @@ describe("browser timing diagnostic truthfulness", () => {
   });
   it.each(["", "malformed", "1700000001", "999999999999999999999999"])("rejects invalid timestamp %j even when a browser outcome exists", timestamp => {
     expect(runTiming(timestamp, "failure", "failure")).toContain("test duration (s)  : unavailable");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G4 — documents read by unit tests (RECORD-BATCHING-PROPOSAL.md part 2).
+//
+// The classifier emits docs_consistency and docs_reader_tests. An output
+// nothing consumes is a selection that silently never happens, so the wiring
+// is checked as a whole by ONE function, and that function is proved to red
+// when any link is cut.
+// ---------------------------------------------------------------------------
+type Step = { name?: string; if?: string; run?: string; env?: Record<string, string> };
+type Job = { name?: string; if?: string; outputs?: Record<string, string>; steps?: Step[] };
+
+function docsConsistencyWiringFaults(doc: unknown): string[] {
+  const faults: string[] = [];
+  const jobs = (isRecord(doc) && isRecord(doc.jobs) ? doc.jobs : {}) as Record<string, Job>;
+  const changes = jobs.changes;
+  for (const k of ["docs_consistency", "docs_reader_tests"]) {
+    if (changes?.outputs?.[k] !== `\${{ steps.classify.outputs.${k} }}`) faults.push(`changes job does not export ${k}`);
+  }
+
+  const record = jobs["canonical-record"];
+  if (!record) return [...faults, "canonical-record job is missing"];
+  // Branch protection, the aggregator and ENG-LOOP tables pin these.
+  if (record.name !== "canonical production record (docs-only)") faults.push("canonical-record display name changed");
+  const cond = record.if ?? "";
+  for (const k of ["docs_only", "production_record", "docs_consistency"]) {
+    if (!cond.includes(`needs.changes.outputs.${k}`)) faults.push(`canonical-record if: does not read ${k}`);
+  }
+
+  const steps = record.steps ?? [];
+  const docs = steps.find((s) => s.run?.trim() === "npx vitest run tests/docs");
+  if (!docs) faults.push("the enforced tests/docs step is missing");
+  else {
+    if (docs.env?.CANONICAL_FRESHNESS !== "enforce") faults.push("tests/docs step is no longer enforced");
+    if (!(docs.if ?? "").includes("needs.changes.outputs.production_record")) faults.push("tests/docs step is not gated on production_record");
+  }
+
+  const readers = steps.find((s) => s.env && "DOCS_READER_TESTS" in s.env);
+  if (!readers) faults.push("no step receives DOCS_READER_TESTS");
+  else {
+    if (readers.env!.DOCS_READER_TESTS !== "${{ needs.changes.outputs.docs_reader_tests }}") faults.push("DOCS_READER_TESTS is not the classifier output");
+    if (!(readers.if ?? "").includes("needs.changes.outputs.docs_consistency")) faults.push("reader step is not gated on docs_consistency");
+    const run = readers.run ?? "";
+    if (run.includes("${{")) faults.push("reader step interpolates an expression into its script");
+    if (!/npx vitest run "\$\{files\[@\]\}"/.test(run)) faults.push("reader step does not run the named tests");
+  }
+
+  const aggregator = Object.values(jobs).find((j) => j.name === "browser e2e (local stack)");
+  const aggEnv = (aggregator?.steps ?? []).find((s) => s.env && "RECORD_RESULT" in s.env)?.env ?? {};
+  if (aggEnv.DOCS_CONSISTENCY !== "${{ needs.changes.outputs.docs_consistency }}") faults.push("the aggregator cannot require the reader run");
+  return faults;
+}
+
+describe("G4 — docs-only changes run the unit tests that read them", () => {
+  const doc = yaml.load(CI);
+
+  it("ci.yml consumes docs_consistency end to end", () => {
+    expect(docsConsistencyWiringFaults(doc)).toEqual([]);
+  });
+
+  it("the classifier really emits what ci.yml consumes", async () => {
+    // @ts-expect-error - .mjs utility ships without type declarations
+    const { classify, dependenciesFor } = await import("../../scripts/classify-changes.mjs");
+    // A document taken FROM the live scan, never named here: a literal path in
+    // this file would make it look like a reader of that document.
+    const deps = dependenciesFor() as { docReaders: Record<string, string[]> };
+    const doc = Object.keys(deps.docReaders).sort()[0];
+    expect(doc, "the scan names no document reader at all").toBeDefined();
+    const r = classify([doc]) as Record<string, unknown>;
+    expect(r.docs_consistency).toBe(true);
+    expect(Array.isArray(r.docs_reader_tests) && (r.docs_reader_tests as string[]).length > 0).toBe(true);
+  });
+
+  // NEGATIVE CONTROLS. Each cuts one link in a copy of the real workflow; the
+  // guard must name it. Without these, a guard that returned [] for anything
+  // would pass the case above.
+  const cut = (mutate: (jobs: Record<string, Job>) => void) => {
+    const copy = structuredClone(doc) as { jobs: Record<string, Job> };
+    mutate(copy.jobs);
+    return docsConsistencyWiringFaults(copy);
+  };
+
+  it.each([
+    ["the output dropped from the changes job", (j: Record<string, Job>) => delete j.changes.outputs!.docs_consistency, "changes job does not export docs_consistency"],
+    ["the reader list dropped from the changes job", (j: Record<string, Job>) => delete j.changes.outputs!.docs_reader_tests, "changes job does not export docs_reader_tests"],
+    ["the job no longer runs for docs_consistency", (j: Record<string, Job>) => {
+      j["canonical-record"].if = "${{ needs.changes.outputs.docs_only == 'true' && needs.changes.outputs.production_record == 'true' }}";
+    }, "canonical-record if: does not read docs_consistency"],
+    ["the list interpolated into the script", (j: Record<string, Job>) => {
+      const s = j["canonical-record"].steps!.find((x) => x.env && "DOCS_READER_TESTS" in x.env)!;
+      s.run = 'npx vitest run ${{ needs.changes.outputs.docs_reader_tests }} "${files[@]}"';
+    }, "reader step interpolates an expression into its script"],
+    ["the record step no longer gated", (j: Record<string, Job>) => {
+      delete j["canonical-record"].steps!.find((x) => x.run?.trim() === "npx vitest run tests/docs")!.if;
+    }, "tests/docs step is not gated on production_record"],
+    ["the aggregator no longer requires it", (j: Record<string, Job>) => {
+      const agg = Object.values(j).find((x) => x.name === "browser e2e (local stack)")!;
+      delete agg.steps!.find((x) => x.env && "RECORD_RESULT" in x.env)!.env!.DOCS_CONSISTENCY;
+    }, "the aggregator cannot require the reader run"],
+  ] as const)("reds when %s", (_label, mutate, fault) => {
+    expect(cut(mutate)).toContain(fault);
+  });
+
+  it("the reader step runs exactly the named tests and fails on an empty list", () => {
+    // Executed, not pattern-matched: `npx vitest run` is swapped for a printer
+    // so the real shell logic is what is judged.
+    const jobs = (doc as { jobs: Record<string, Job> }).jobs;
+    const run = jobs["canonical-record"].steps!.find((x) => x.env && "DOCS_READER_TESTS" in x.env)!.run!;
+    const script = run.replace("npx vitest run", "printf '[%s]\\n'");
+    const exec = (list: string) => {
+      try {
+        return { code: 0, out: execFileSync("bash", ["-c", script], { env: { ...process.env, DOCS_READER_TESTS: list }, encoding: "utf8", stdio: "pipe" }) };
+      } catch (e) {
+        return { code: (e as { status: number }).status, out: "" };
+      }
+    };
+    expect(exec("tests/a.test.ts; tests/b.test.ts")).toEqual({ code: 0, out: "[tests/a.test.ts]\n[tests/b.test.ts]\n" });
+    expect(exec("").code).not.toBe(0);
+    expect(exec(" ; ").code).not.toBe(0);
   });
 });

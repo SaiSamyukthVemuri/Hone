@@ -39,6 +39,12 @@ const addSuggested = (label, cmd, why) => suggested.push({ label, cmd, why });
 if (c.docs_only) {
   addAuto("documentation consistency", "npx vitest run tests/docs/", "docs-only diff");
   addAuto("migration state derives", "node scripts/migration-state.mjs", "docs may quote migration state");
+  // CI's canonical-record job runs these too (docs_reader_tests); without them a doc edit that breaks a reader
+  // passes here and fails there. Each path is single-quoted: it reaches a shell.
+  if (c.docs_consistency) {
+    const quoted = c.docs_reader_tests.map((t) => `'${t.replaceAll("'", "'\\''")}'`).join(" ");
+    addAuto("unit tests that read the changed docs", `npx vitest run ${quoted}`, "a changed doc is test input");
+  }
 } else {
   if (c.database) {
     addAuto("migration source contracts", "npx vitest run tests/migrations/", "migration paths changed");

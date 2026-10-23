@@ -92,6 +92,10 @@ jobs:
       mobile: ${{ steps.classify.outputs.mobile }}
       ci_workflows: ${{ steps.classify.outputs.ci_workflows }}
       full_matrix_required: ${{ steps.classify.outputs.full_matrix_required }}
+      # G4: a docs-only change to a document a unit test reads, and exactly
+      # those tests ('; '-joined). Consumed by canonical-record below.
+      docs_consistency: ${{ steps.classify.outputs.docs_consistency }}
+      docs_reader_tests: ${{ steps.classify.outputs.docs_reader_tests }}
       production_record: ${{ steps.record.outputs.production_record }}
       browser_run: ${{ steps.browser.outputs.browser_run }}
       browser_extended: ${{ steps.browser.outputs.browser_extended }}
@@ -426,9 +430,17 @@ jobs:
     # validate is skipped for docs-only diffs, so a production-record PR never
     # ran the canonical checks at all (#825 6215529089). This runs ONLY the
     # docs tests, enforced, for a docs-only change to docs/production/**.
+    #
+    # G4 widens WHEN it runs, not what the record step does. A docs-only change
+    # to a document a unit test reads (the ledger wording 0179 pins, the
+    # AGENTS.md text the OpenWiki guards read) ran no test at all and broke
+    # first on the production push. The classifier names exactly those readers
+    # and the second step runs them: unit-only, no build, no DB, no browser.
+    # The job id and name are unchanged because required checks and ENG-LOOP
+    # tables pin them.
     name: canonical production record (docs-only)
     needs: changes
-    if: ${{ needs.changes.outputs.docs_only == 'true' && needs.changes.outputs.production_record == 'true' }}
+    if: ${{ needs.changes.outputs.docs_only == 'true' && (needs.changes.outputs.production_record == 'true' || needs.changes.outputs.docs_consistency == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -448,9 +460,34 @@ jobs:
         run: npm ci
 
       - name: Canonical production-record checks (enforced)
+        # Exactly the job's ORIGINAL condition: the record step runs when it
+        # always did, and a document-reader-only run does not trigger it.
+        if: ${{ needs.changes.outputs.docs_only == 'true' && needs.changes.outputs.production_record == 'true' }}
         run: npx vitest run tests/docs
         env:
           CANONICAL_FRESHNESS: enforce
+
+      - name: Unit tests that read the changed documents
+        if: ${{ needs.changes.outputs.docs_consistency == 'true' }}
+        # THROUGH env, never interpolated into the script, so no path can
+        # become shell. An EMPTY list fails: docs_consistency=true with no
+        # reader is a classifier defect, and running nothing must not pass.
+        env:
+          DOCS_READER_TESTS: ${{ needs.changes.outputs.docs_reader_tests }}
+        run: |
+          set -euo pipefail
+          files=()
+          IFS=';' read -ra listed <<< "$DOCS_READER_TESTS"
+          for t in "${listed[@]}"; do
+            t="${t#"${t%%[![:space:]]*}"}"
+            t="${t%"${t##*[![:space:]]}"}"
+            if [ -n "$t" ]; then files+=("$t"); fi
+          done
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "docs_consistency is true but no reader test was named" >&2
+            exit 1
+          fi
+          npx vitest run "${files[@]}"
 
   db-integration:
     name: db integration (local supabase)
@@ -962,6 +999,7 @@ jobs:
           RECORD_RESULT: ${{ needs.canonical-record.result }}
           DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
           PRODUCTION_RECORD: ${{ needs.changes.outputs.production_record }}
+          DOCS_CONSISTENCY: ${{ needs.changes.outputs.docs_consistency }}
         run: |
           set -euo pipefail
 
@@ -996,9 +1034,11 @@ jobs:
           # docs/production/** change validate is skipped, so canonical-record is
           # the only check that can reject a stale record. Its result is carried
           # HERE, failing closed, rather than relying on a new check name.
-          if [ "${DOCS_ONLY:-}" = "true" ] && [ "${PRODUCTION_RECORD:-}" = "true" ]; then
+          # The same job also runs the unit tests that read a changed document
+          # (G4, docs_consistency), so that case is required on the same terms.
+          if [ "${DOCS_ONLY:-}" = "true" ] && { [ "${PRODUCTION_RECORD:-}" = "true" ] || [ "${DOCS_CONSISTENCY:-}" = "true" ]; }; then
             if [ "${RECORD_RESULT:-}" != "success" ]; then
-              echo "::error::canonical production record check did not succeed (result: ${RECORD_RESULT:-<missing>}) on a production-record change, so this required check fails closed"
+              echo "::error::canonical production record / document-reader check did not succeed (result: ${RECORD_RESULT:-<missing>}) on a docs-only change that requires it, so this required check fails closed"
               exit 1
             fi
             echo "canonical record : success"
