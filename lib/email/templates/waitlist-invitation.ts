@@ -113,6 +113,7 @@
 // one import is lib/email/studio-identity.ts, which is pure on the same terms.
 
 import { sanitizeStudioDisplayName } from "@/lib/email/studio-identity";
+import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 
 export type WaitlistInvitationEmailInput = {
   /**
@@ -305,5 +306,19 @@ export function buildWaitlistInvitationEmail(
   </table>
 </body></html>`;
 
-  return { subject, html, text };
+  // PREVIEW RULE (HIPAA-READY-01, #828): the neutral preheader opens the HTML
+  // and the text part. The link carries the raw bearer token, and a plain-text
+  // client previews the start of the text part: with the preheader first, the
+  // link sits outside the preview window instead of on a lock screen. Proved by
+  // tests/lib/email/waitlist-preview-minimum-necessary.test.ts.
+  //
+  // IDEMPOTENCY: this send is keyed on the invitation id alone, so the payload
+  // must be a pure function of the invitation within one build. It still is:
+  // the preheader is derived from the same sanitized studio name as the rest.
+  const preheader = clientPreheader(studio);
+  return {
+    subject,
+    html: withPreheader(html, preheader),
+    text: withTextPreheader(text, preheader),
+  };
 }

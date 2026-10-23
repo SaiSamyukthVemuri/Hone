@@ -72,7 +72,17 @@
 // had here: determinism is required WITHIN a build, between the first attempt
 // and its bounded retry, which hold the same in-memory payload. Nothing about
 // this change is new in kind.
+//
+// PREVIEW RULE (HIPAA-READY-01, #828). A mail client previews the START of a
+// message: the HTML body in most clients, the text part in plain-text ones.
+// Both emails therefore open with the neutral preheader (lib/email/preheader.ts)
+// and a lead that names only the studio. The prospect's name, email and phone
+// follow it, outside the preview window; the client email no longer greets by
+// name. That moved the key once more, under the contract above. Proved by
+// tests/lib/email/waitlist-preview-minimum-necessary.test.ts.
 // ===========================================================================
+
+import { clientPreheader, studioPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 
 function escapeHtml(s: string): string {
   return s
@@ -125,11 +135,13 @@ export function buildNewClientWaitlistStudioEmail(p: {
   const subject = `${WAITLIST_SUBJECT_PREFIX} New client · ${p.studioName}`;
   const phoneLine = p.phone ?? "Not provided";
 
-  // UNCHANGED, byte for byte. This slice converts the studio notice's STYLING
-  // only; its facts, ordering and plain-text rendering are exactly what they
-  // were. Widening operator copy belongs to its own slice.
+  // The facts and their order are unchanged; a lead naming only the studio now
+  // precedes them (PREVIEW RULE above).
+  const lead = `A new client joined the waitlist at ${p.studioName}. Their details are below.`;
   const text = [
     "New-client waitlist request",
+    "",
+    lead,
     "",
     `Name: ${p.name}`,
     `Email: ${p.email}`,
@@ -147,6 +159,9 @@ export function buildNewClientWaitlistStudioEmail(p: {
     SHELL_OPEN(subject) +
     headline("New-client waitlist request.") +
     `
+        <tr><td style="padding-bottom:24px; font-family:${SANS}; font-size:16px; line-height:1.6;">
+          ${escapeHtml(lead)}
+        </td></tr>
         <tr><td style="padding:24px 0; border-top:1px solid #E5E2DA; border-bottom:1px solid #E5E2DA; font-family:${SANS}; font-size:15px; line-height:1.8;">
           <strong>${nameH}</strong><br/>
           ${emailH}<br/>
@@ -158,7 +173,12 @@ export function buildNewClientWaitlistStudioEmail(p: {
         </td></tr>` +
     SHELL_CLOSE("Hone");
 
-  return { subject, html, text };
+  const preheader = studioPreheader(p.studioName);
+  return {
+    subject,
+    html: withPreheader(html, preheader),
+    text: withTextPreheader(text, preheader),
+  };
 }
 
 export function buildNewClientWaitlistClientEmail(p: {
@@ -176,8 +196,6 @@ export function buildNewClientWaitlistClientEmail(p: {
   const text = [
     "You're on the waitlist.",
     "",
-    `Hi ${p.name},`,
-    "",
     `You're on the new-client waitlist for ${p.studioName}.`,
     "",
     "WHAT HAPPENS NEXT",
@@ -191,16 +209,12 @@ export function buildNewClientWaitlistClientEmail(p: {
     `${p.studioName} via Hone`,
   ].join("\n");
 
-  const nameH = escapeHtml(p.name);
   const studioH = escapeHtml(p.studioName);
 
   const html =
     SHELL_OPEN(subject) +
     headline("You&rsquo;re on the waitlist.") +
     `
-        <tr><td style="padding-bottom:20px; font-family:${SANS}; font-size:16px; line-height:1.6;">
-          Hi ${nameH},
-        </td></tr>
         <tr><td style="padding-bottom:24px; font-family:${SANS}; font-size:16px; line-height:1.6;">
           You&rsquo;re on the new-client waitlist for <strong>${studioH}</strong>.
         </td></tr>
@@ -223,5 +237,10 @@ export function buildNewClientWaitlistClientEmail(p: {
         </td></tr>` +
     SHELL_CLOSE(`${studioH} via Hone`);
 
-  return { subject, html, text };
+  const preheader = clientPreheader(p.studioName);
+  return {
+    subject,
+    html: withPreheader(html, preheader),
+    text: withTextPreheader(text, preheader),
+  };
 }

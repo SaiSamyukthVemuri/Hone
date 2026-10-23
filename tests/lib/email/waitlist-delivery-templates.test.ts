@@ -152,8 +152,10 @@ describe("waitlist invitation email", () => {
       expect(rendered).not.toContain(NUL);
     }
     // The text body is newline-delimited by construction, so assert on the
-    // studio-bearing line rather than the whole document.
-    const headingLine = out.text.split(LF)[0];
+    // studio-bearing line rather than the whole document. Since #828 the text
+    // part opens with the neutral preheader line, so find the heading by its
+    // words rather than by position.
+    const headingLine = out.text.split(LF).find((l) => l.includes("has invited you to book.")) ?? "";
     expect(headingLine).toContain("has invited you to book.");
     expect(headingLine).not.toContain("Bcc:");
   });
@@ -404,15 +406,16 @@ describe("the templates cannot send, so these tests cannot either", () => {
         .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
         .join("\n");
       // NOT "imports nothing": the invitation template imports the canonical
-      // sanitizer from lib/email/studio-identity.ts, which is pure on the same
-      // terms. The property that matters is that nothing reachable from here
-      // can send, read the filesystem or read the environment — so the
-      // allowlist is explicit and anything else fails.
+      // sanitizer from lib/email/studio-identity.ts, and both templates import
+      // the neutral preheader from lib/email/preheader.ts (#828), which imports
+      // nothing at all (pinned below). The property that matters is that
+      // nothing reachable from here can send, read the filesystem or read the
+      // environment — so the allowlist is explicit and anything else fails.
       const imports = [...code.matchAll(/^import\s[^;]*?from\s+"([^"]+)"/gm)].map(
         (m) => m[1],
       );
       expect(imports, `${rel} may only import pure siblings`).toEqual(
-        imports.filter((i) => i === "@/lib/email/studio-identity"),
+        imports.filter((i) => i === "@/lib/email/studio-identity" || i === "@/lib/email/preheader"),
       );
       expect(code, `${rel} must not read env`).not.toMatch(/process\.env/);
       expect(code, `${rel} must not reach a provider`).not.toMatch(
@@ -422,6 +425,10 @@ describe("the templates cannot send, so these tests cannot either", () => {
         /readFileSync|writeFileSync/,
       );
     }
+    // The preheader sibling is pure on the same terms: no import of its own.
+    const preheaderSrc = readFileSync(join(process.cwd(), "lib/email/preheader.ts"), "utf8");
+    expect(preheaderSrc).not.toMatch(/^import\s/m);
+    expect(preheaderSrc).not.toMatch(/process\.env|Date\.now|new Date|Math\.random/);
   });
 });
 

@@ -537,7 +537,9 @@ describe("HTML / email injection safety", () => {
     expect(html).not.toContain("<img");
     expect(html).toContain("&lt;script&gt;");
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    // The client acknowledgement no longer renders the name at all (#828,
+    // minimum-necessary preview), which is stronger than escaping it.
     expect(sends[1].html).not.toContain("<script>");
-    expect(sends[1].html).toContain("&lt;script&gt;");
+    expect(sends[1].html).not.toContain("&lt;script&gt;");
   });
 });
