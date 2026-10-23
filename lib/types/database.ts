@@ -395,7 +395,7 @@ export type AppointmentStatus =
   | "completed"
   | "no_show";
 
-export type CancelledBy = "client" | "practitioner" | "owner";
+export type CancelledBy = "client" | "practitioner" | "owner" | "receptionist";
 
 export type Appointment = {
   id: string;
@@ -436,6 +436,9 @@ export type Appointment = {
   // `cancelled_by_practitioner_id` complements it with WHICH practitioner.
   created_by_practitioner_id?: string | null;
   cancelled_by_practitioner_id?: string | null;
+  // 0220: receptionist attribution follows the same nullable, same-studio contract.
+  created_by_receptionist_id?: string | null;
+  cancelled_by_receptionist_id?: string | null;
   // The outside-hours override authoriser and their role AT THE TIME. Both
   // commands that can set booked_outside_availability refuse a non-owner, so
   // the role is always 'owner' when written. Cleared together with the flag
@@ -737,12 +740,13 @@ export type AppointmentAudit = {
   // and never accepted from the caller. This is what keeps a detached row
   // tenant-authorizable, appointment_audit_member_read now reads it directly.
   studio_id: string;
-  actor_type: "practitioner" | "client" | "system";
+  actor_type: "practitioner" | "client" | "system" | "receptionist";
   actor_id: string | null;
   // Migration 0174: durable, same-studio-validated practitioner correlation.
   // NULL for client and system actors, never invented for a non-practitioner.
   // Complements, and does not replace, the historical bare actor_id above.
   actor_practitioner_id: string | null;
+  actor_receptionist_id: string | null;
   action: string;
   details: Record<string, unknown> | null;
   // Migration 0174: DATABASE-derived at INSERT. A caller-supplied value is
@@ -780,10 +784,32 @@ export type Practitioner = {
   // seeds NEW treatment-area drafts. UI default only; the value
   // actually used stays on session_blocks.machine_frequency.
   default_machine_frequency: MachineFrequency | null;
+  // Migration 0223: the practitioner's remembered machine IN THIS STUDIO, and
+  // the mode she last worked in on it. One practitioners row is one
+  // (studio_id, user_id), so this is already per-practitioner-per-studio with
+  // no extra keying.
+  //
+  // A UI DEFAULT ONLY, never the clinical record: what was actually used lives
+  // on treatment_setup_readings. default_machine_id is cleared to null by the
+  // retire command when the unit goes out of service, so a stale remembered
+  // selection cannot outlive its machine.
+  default_machine_id: string | null;
+  default_machine_mode: string | null;
+  // Migration 0222 (THIS PR's amended revision, blob c27d9480 — the original
+  // 0222 on #868 does not add it): when public booking last SUCCESSFULLY
+  // assigned this practitioner. Advanced only by create_public_appointment_v2
+  // on a CREATED capacity-ON assignment, inside that command's studio
+  // transaction; refusals never advance it. NULL means never recorded, which
+  // sorts FIRST among equal loads in the fair-assignment ordering, and is never
+  // backfilled because history carries no such fact.
+  last_public_assignment_at: string | null;
   created_at: string;
 };
 
 export type Client = {
+  // Migration 0231: the client's identification portrait, a pointer to one of
+  // their own client-scoped, unarchived treatment photos (null = none).
+  portrait_image_id: string | null;
   id: string;
   studio_id: string;
   name: string;

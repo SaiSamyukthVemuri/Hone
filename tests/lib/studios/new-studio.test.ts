@@ -125,3 +125,26 @@ describe("isValidTimeZone / normalizeEmail helpers", () => {
     expect(normalizeEmail("  OWNER@Studio.CA ")).toBe("owner@studio.ca");
   });
 });
+
+
+describe("verified payment onboarding pair", () => {
+  it("leaves country/currency unresolved even when timezone/address look Canadian", () => {
+    const r = parseNewStudioInput({ ...VALID, address: "Canada", timezone: "America/Toronto" });
+    expect(r.ok && r.value.paymentJurisdiction).toBeNull();
+  });
+  it.each([["CA/cad", "CA", "cad"], ["US/usd", "US", "usd"]])("accepts explicitly verified %s with its evidence reference", (pair, country, currency) => {
+    const r = parseNewStudioInput({ ...VALID, paymentPair: pair, paymentPairVerified: "on", paymentVerificationReference: "owner-onboarding:fixture-42" });
+    expect(r.ok && r.value.paymentJurisdiction).toEqual({ country, currency, verificationReference: "owner-onboarding:fixture-42" });
+  });
+  it.each([
+    { paymentPair: "CA/cad" },
+    { paymentPair: "CA/cad", paymentPairVerified: "on" },
+    { paymentPair: "US/usd", paymentPairVerified: true, paymentVerificationReference: "x" },
+    { paymentPair: "CA/usd", paymentPairVerified: "on", paymentVerificationReference: "x" },
+    { paymentPair: "US/cad", paymentPairVerified: "on", paymentVerificationReference: "x" },
+    { paymentPair: "CA/cad", paymentPairVerified: "on", paymentVerificationReference: "x".repeat(1001) },
+    { paymentVerificationReference: "evidence-without-pair" },
+  ])("refuses partial, unverified or inconsistent pair %j", (input) => {
+    expect(parseNewStudioInput({ ...VALID, ...input }).ok).toBe(false);
+  });
+});

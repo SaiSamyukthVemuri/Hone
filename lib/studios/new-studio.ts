@@ -11,6 +11,7 @@ export type NewStudioInput = {
   timezone: string;
   bookingDescription: string | null;
   address: string | null;
+  paymentJurisdiction: { country: "CA" | "US"; currency: "cad" | "usd"; verificationReference: string } | null;
 };
 
 export type ParseResult =
@@ -79,6 +80,9 @@ export function parseNewStudioInput(raw: {
   timezone?: unknown;
   bookingDescription?: unknown;
   address?: unknown;
+  paymentPair?: unknown;
+  paymentPairVerified?: unknown;
+  paymentVerificationReference?: unknown;
 }): ParseResult {
   const name = str(raw.name);
   if (!name) return { ok: false, error: "Studio name is required." };
@@ -113,6 +117,25 @@ export function parseNewStudioInput(raw: {
     return { ok: false, error: `"${timezone}" is not a valid IANA time zone.` };
   }
 
+  // A timezone, name, address or provider settlement default is never evidence
+  // for either part of this pair. Unknown is allowed and stays unresolved.
+  const pair = str(raw.paymentPair);
+  const reference = str(raw.paymentVerificationReference);
+  let paymentJurisdiction: NewStudioInput["paymentJurisdiction"] = null;
+  if (pair || reference || raw.paymentPairVerified) {
+    if (pair !== "CA/cad" && pair !== "US/usd") {
+      return { ok: false, error: "Choose the verified country and charge currency, or leave them unresolved." };
+    }
+    if (raw.paymentPairVerified !== "on" || !reference || reference.length > 1000) {
+      return { ok: false, error: "Confirm both values were verified and provide a verification reference." };
+    }
+    paymentJurisdiction = {
+      country: pair === "CA/cad" ? "CA" : "US",
+      currency: pair === "CA/cad" ? "cad" : "usd",
+      verificationReference: reference,
+    };
+  }
+
   return {
     ok: true,
     value: {
@@ -123,6 +146,7 @@ export function parseNewStudioInput(raw: {
       timezone,
       bookingDescription: str(raw.bookingDescription) || null,
       address: str(raw.address) || null,
+      paymentJurisdiction,
     },
   };
 }

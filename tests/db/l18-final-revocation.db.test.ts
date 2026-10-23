@@ -231,8 +231,30 @@ describe("0169 — the command surface is untouched", () => {
         group by c.relname order by c.relname`,
     );
     const byTable = Object.fromEntries(r.rows.map((x) => [x.t, x.n]));
-    expect(byTable.sessions).toBe(4);
+    // 0214 adds a jurisdiction lock alongside every prior clinical guard.
+    // This0231candidate does not carry0232's additional photo-stage trigger.
+    expect(byTable.sessions).toBe(5);
     expect(byTable.treatment_images).toBe(3);
+    const identities = await adminQuery(
+      `select c.relname t, g.tgname
+         from pg_trigger g join pg_class c on c.oid = g.tgrelid
+         join pg_namespace ns on ns.oid = c.relnamespace
+        where ns.nspname='public' and not g.tgisinternal
+          and c.relname in ('sessions','treatment_images')
+        order by c.relname, g.tgname`,
+    );
+    expect(identities.rows.filter(x => x.t === "sessions").map(x => x.tgname)).toEqual([
+      "sessions_aftercare_audit",
+      "sessions_guard_finalized",
+      "sessions_guard_retired_finalization",
+      "sessions_immutable_lineage",
+      "sessions_price_jurisdiction_lock",
+    ]);
+    expect(identities.rows.filter(x => x.t === "treatment_images").map(x => x.tgname)).toEqual([
+      "treatment_images_enforce_integrity",
+      "treatment_images_guard_finalized",
+      "treatment_images_set_updated_at",
+    ]);
     // The remaining tables keep whatever guards they had; assert non-zero so a
     // dropped trigger cannot hide behind this cutover.
     for (const t of ["session_blocks", "electrolysis_entries", "laser_entries"]) {

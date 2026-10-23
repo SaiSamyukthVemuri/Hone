@@ -1,0 +1,759 @@
+{
+  "title": "#905 narrow production-based release candidate source manifest",
+  "production_base": "65ac524e816b6e9283362630f196e7943ffaabad",
+  "portrait_source": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
+  "hosted_anchor": {
+    "version": "0212",
+    "owner_pr": 832,
+    "owner_head": "7116c66848574b0e02e7c2b8f500a6d3198edb58",
+    "path": "supabase/migrations/0212_email_delivery_events.sql",
+    "sha256": "cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1",
+    "status": "already applied; carried byte-identical for canonical repository provenance; never reapply"
+  },
+  "pending_migrations": [
+    {
+      "version": "0213",
+      "owner_pr": 831,
+      "owner_head": "4f1b20b85cc0346cac24b3d1d002525217551126",
+      "path": "supabase/migrations/0213_platform_lead_alerts.sql",
+      "raw_sha256": "5186bca250713e8db8eb17dc6a354202f98ea00388d489fb9f7d74d93c960d2b",
+      "application_order_contract": "After #827/#832 lineage; migration-first; old app compatible during apply/deploy interval.",
+      "candidate_sha256": "5186bca250713e8db8eb17dc6a354202f98ea00388d489fb9f7d74d93c960d2b",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0214",
+      "owner_pr": 833,
+      "owner_head": "5452f0ec697320bcae1b61ac2aec75eb41dd3460",
+      "path": "supabase/migrations/0214_studio_payment_jurisdiction.sql",
+      "raw_sha256": "8ff9350eb53070c970b9548e4e4093e2aa878116fd7ad9dc118bfb3d401a3289",
+      "application_order_contract": "After0213; reviewed verified-country/currency only, no default/backfill. Missing pair staysUNKNOWN. New7arg caller requiresDBfirst; oldfinancial/provision paths mayrefuseUNKNOWN. Sevenstudioverification and3boundaccount/history reconciliation plus exacthosted/app/rollbackapproval required beforeapply; no USactivation inferred.",
+      "candidate_sha256": "8ff9350eb53070c970b9548e4e4093e2aa878116fd7ad9dc118bfb3d401a3289",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      },
+      "historical_application_order_contract": "After0213; migration-first; US studio activation waits for currency UI.",
+      "superseded_source": {
+        "owner_head": "b59c4d021981a01c7627df7ee7f2cad485a06b06",
+        "raw_sha256": "25da63b7bdacefa44e12c2357c85cb8b814cd7be4d25dfb8dbf8cf151e1ab65f",
+        "reason": "Sam rejected blanketCA/CAD backfill/futuredefault; historicalsourceprovenance retained, neverapplythese supersededbytes"
+      }
+    },
+    {
+      "version": "0215",
+      "owner_pr": 843,
+      "owner_head": "6b2d9c02f52c55eceaaf045c37cacce00f7f300d",
+      "path": "supabase/migrations/0215_delivery_incidents.sql",
+      "raw_sha256": "612f98fe62b9bb7113e32956a46eaeab07238fbf94cb305f6c1ab6ddaa2ec168",
+      "application_order_contract": "After0214; migration-first; ledger producers deploy only after schema.",
+      "candidate_sha256": "612f98fe62b9bb7113e32956a46eaeab07238fbf94cb305f6c1ab6ddaa2ec168",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0216",
+      "owner_pr": 838,
+      "owner_head": "7c8758ff71c921f0365dbc9bb23c9a14842ad49f",
+      "path": "supabase/migrations/0216_receptionist_membership_foundation.sql",
+      "raw_sha256": "1039bd49ab49849f2e0632aa896961572b4598ab46786fa194866730de10563e",
+      "application_order_contract": "After0215; migration-first; receptionist app follows foundation.",
+      "candidate_sha256": "1039bd49ab49849f2e0632aa896961572b4598ab46786fa194866730de10563e",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0217",
+      "owner_pr": 844,
+      "owner_head": "8187e59668e5003cf4fe615757b3ebb94dfadf3a",
+      "path": "supabase/migrations/0217_studio_sms_sender_registrations.sql",
+      "raw_sha256": "beda95b6594c01da4f5b1eb9d52bbd5838991a51526874cfac41e18f9ccbb1f6",
+      "application_order_contract": "After0216; migration-first; evidence SQL does not activate provider.",
+      "candidate_sha256": "beda95b6594c01da4f5b1eb9d52bbd5838991a51526874cfac41e18f9ccbb1f6",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0218",
+      "owner_pr": 850,
+      "owner_head": "41ea94b984426d4fc39a9531ae656c41e04d1b32",
+      "path": "supabase/migrations/0218_receptionist_invitations.sql",
+      "raw_sha256": "58ad44c705797f3d5c48b9cea1fadcef2da23ab46a41ec41cc67ea7dcf0c3a7a",
+      "application_order_contract": "After0217; migration-first; invitation app follows tables.",
+      "candidate_sha256": "58ad44c705797f3d5c48b9cea1fadcef2da23ab46a41ec41cc67ea7dcf0c3a7a",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0219",
+      "owner_pr": 864,
+      "owner_head": "15a604838e52009bdec5d91eb6d7d9871861632e",
+      "path": "supabase/migrations/0219_public_practitioner_selection.sql",
+      "raw_sha256": "4d44fc6603301ad1b94d7af9ecd56f1d28cd798742271bd6b1b0cd25b3bd69fe",
+      "application_order_contract": "After0218; migration-first; read-side selection alone is not complete picker.",
+      "candidate_sha256": "4d44fc6603301ad1b94d7af9ecd56f1d28cd798742271bd6b1b0cd25b3bd69fe",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0220",
+      "owner_pr": 862,
+      "owner_head": "de68b7c70d1bfb4a945afb0437ffd52d705285f1",
+      "path": "supabase/migrations/0220_receptionist_scheduling.sql",
+      "raw_sha256": "329d70744996abe73a24c836e87e10bd842e9ba9f124940f9c95a5338fa4b0e2",
+      "application_order_contract": "After0219; migration-first; scheduling follows shared core.",
+      "candidate_sha256": "329d70744996abe73a24c836e87e10bd842e9ba9f124940f9c95a5338fa4b0e2",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0221",
+      "owner_pr": 865,
+      "owner_head": "d2e3bd64895bef3b142be928b0b21c243e74ef06",
+      "path": "supabase/migrations/0221_delivery_concerns_and_purposes.sql",
+      "raw_sha256": "b881fa9052edabee0af3140ee8b7e09108b2013b16268dce894003f5bec4e19a",
+      "application_order_contract": "After0220; migration-first; delivery app follows schema.",
+      "candidate_sha256": "b881fa9052edabee0af3140ee8b7e09108b2013b16268dce894003f5bec4e19a",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0222",
+      "owner_pr": 874,
+      "owner_head": "2e9f47dd922a942199c75419b3219ab650efe821",
+      "path": "supabase/migrations/0222_public_practitioner_booking_command.sql",
+      "raw_sha256": "9d85ba09f8ddcd308848a5c8711b7e8da5b58e7c707f040a6b69cf0333a6b798",
+      "application_order_contract": "After0221; migration-first; routes use v2 command only after apply.",
+      "candidate_sha256": "9d85ba09f8ddcd308848a5c8711b7e8da5b58e7c707f040a6b69cf0333a6b798",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      },
+      "source_lineage": "Final reviewed source on #874; #868 is only the ancestor and its older SQL must not replace this file."
+    },
+    {
+      "version": "0223",
+      "owner_pr": 860,
+      "owner_head": "e928c11f844922c7f40cf48598223407299e2644",
+      "path": "supabase/migrations/0223_machine_inventory_and_setup_readings.sql",
+      "raw_sha256": "12038b1eab95d84f0ed84b235f0bf00641f6e06007e6ba5008066fc0d852b948",
+      "application_order_contract": "After0222; migration-first; frozen bytes; separate model activation hold.",
+      "candidate_sha256": "12038b1eab95d84f0ed84b235f0bf00641f6e06007e6ba5008066fc0d852b948",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      },
+      "frozen_source_sha256": "12038b1eab95d84f0ed84b235f0bf00641f6e06007e6ba5008066fc0d852b948"
+    },
+    {
+      "version": "0224",
+      "owner_pr": 872,
+      "owner_head": "ccc4be50024e017092cad2171a7d39017eb623ad",
+      "path": "supabase/migrations/0224_us_settlement_method_guard.sql",
+      "raw_sha256": "761a76fbb04adc03f13b82d1e7e22594d688a7ba9d7bf53ae6fe742f83003246",
+      "application_order_contract": "After0223; migration-first; US settlement app follows apply.",
+      "candidate_sha256": "761a76fbb04adc03f13b82d1e7e22594d688a7ba9d7bf53ae6fe742f83003246",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0225",
+      "owner_pr": 874,
+      "owner_head": "2e9f47dd922a942199c75419b3219ab650efe821",
+      "path": "supabase/migrations/0225_public_new_client_practitioner_selection.sql",
+      "raw_sha256": "61d69c6f50ea66963298ff44ad27f21a8cef640e81f1f428b9c778d29a5892ab",
+      "application_order_contract": "After0224; migration-first; picker ships only with0222 v2 route.",
+      "candidate_sha256": "61d69c6f50ea66963298ff44ad27f21a8cef640e81f1f428b9c778d29a5892ab",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0226",
+      "owner_pr": 863,
+      "owner_head": "1f813dfa843471b086678953754613a4460c733f",
+      "path": "supabase/migrations/0226_studio_sms_sender_unpurchased_release.sql",
+      "raw_sha256": "1ee108d11c2ce3ffe7bcd7baa9a44082c6c6d5369bfb7f3ca1d80489fd9ca0e4",
+      "application_order_contract": "After0225; migration-first; no provider purchase/provision/send.",
+      "candidate_sha256": "1ee108d11c2ce3ffe7bcd7baa9a44082c6c6d5369bfb7f3ca1d80489fd9ca0e4",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0227",
+      "owner_pr": 876,
+      "owner_head": "92fcdcccc4543b433827e44754f08f0078852505",
+      "path": "supabase/migrations/0227_email_receipt_quarantine_bound.sql",
+      "raw_sha256": "8b62d4d8b9c32608a0d2c9884184752068c64679eab2f913b04de9ba3a7e0313",
+      "application_order_contract": "After0226; migration-first; per-change apply approval.",
+      "candidate_sha256": "8b62d4d8b9c32608a0d2c9884184752068c64679eab2f913b04de9ba3a7e0313",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0228",
+      "owner_pr": 874,
+      "owner_head": "2e9f47dd922a942199c75419b3219ab650efe821",
+      "path": "supabase/migrations/0228_legacy_new_client_refusal_atomicity.sql",
+      "raw_sha256": "0d43f23e16ec67a54cbe7df98e5c1a09f66321149ded4f43062fd2baae4841a3",
+      "application_order_contract": "After0227; migration-first.",
+      "candidate_sha256": "0d43f23e16ec67a54cbe7df98e5c1a09f66321149ded4f43062fd2baae4841a3",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0229",
+      "owner_pr": 901,
+      "owner_head": "b290d12591cccbd268f947384e8462db50c297d1",
+      "path": "supabase/migrations/0229_studio_sms_sender_campaign_bindings.sql",
+      "raw_sha256": "fe1499a590a90ad13597627c186010aaf0a486be7e2c3890cd31264d97d96f86",
+      "application_order_contract": "After0228; migration-first; additive campaign-binding snapshot.",
+      "candidate_sha256": "fe1499a590a90ad13597627c186010aaf0a486be7e2c3890cd31264d97d96f86",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0230",
+      "owner_pr": 916,
+      "owner_head": "e61e5e6611ac48af0ba094ea1bf91934c84d44d2",
+      "path": "supabase/migrations/0230_studio_sms_sender_stop_preflights.sql",
+      "raw_sha256": "6fd46332f04a463890350041005626ffc7977751fd2e6c976c5530a8812aceaa",
+      "application_order_contract": "After0229; migration-first; STOP-preflight extension replaces0229 snapshot.",
+      "candidate_sha256": "6fd46332f04a463890350041005626ffc7977751fd2e6c976c5530a8812aceaa",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    },
+    {
+      "version": "0231",
+      "owner_pr": 905,
+      "owner_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
+      "path": "supabase/migrations/0231_client_identification_portrait.sql",
+      "raw_sha256": "b9ad60aa947cb63a8f4b8c1c5dd273d03d6f58dbaa1bdb8dba895cfce1bcddf1",
+      "application_order_contract": "After0230; STRICT apply-before-deploy. The portrait setter and compare-and-clear use the 3-argument RPC; apply and verify before deploying portrait application code.",
+      "candidate_sha256": "b9ad60aa947cb63a8f4b8c1c5dd273d03d6f58dbaa1bdb8dba895cfce1bcddf1",
+      "transaction_contract": {
+        "begin": "BEGIN",
+        "lock_timeout": "SET LOCAL lock_timeout = 5s",
+        "commit": "COMMIT"
+      }
+    }
+  ],
+  "included_portrait_sources": [
+    {
+      "path": "app/(app)/clients/[id]/ClientPortrait.tsx",
+      "source_blob": "fb4e065e3c960cc13770392137aa343729c43ec9",
+      "sha256": "8a8603169a1c6440950075c8f7c6e5aa6a9773fb8ddf108d01c840f63733c36f",
+      "candidate_current_sha256": "8a8603169a1c6440950075c8f7c6e5aa6a9773fb8ddf108d01c840f63733c36f",
+      "candidate_current_blob": "fb4e065e3c960cc13770392137aa343729c43ec9"
+    },
+    {
+      "path": "app/(app)/clients/[id]/images/PortraitControl.tsx",
+      "source_blob": "661f769286a94095e74417e00791e0cf19e7fa46",
+      "sha256": "f02cbc4a4dba84a9015d8b65d7935111a75160469a0d9b5020837eb6ddf410a1",
+      "source_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
+      "candidate_current_sha256": "f02cbc4a4dba84a9015d8b65d7935111a75160469a0d9b5020837eb6ddf410a1",
+      "candidate_current_blob": "661f769286a94095e74417e00791e0cf19e7fa46"
+    },
+    {
+      "path": "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx",
+      "source_blob": "1140fd15478a8f5db7b495771876e89e179c7f83",
+      "sha256": "88e3306d82a772b97ddc535bec8ff5ae7f4257a41d352fb66635d0e900ee887f",
+      "candidate_current_sha256": "4f1e2bf19e210096440d5951a10be22214603f164449a16703815d50505e086c",
+      "candidate_current_blob": "8ab5238b4ef6bfb4fbbf71b4c262bdf0d7a4bd15"
+    },
+    {
+      "path": "app/(app)/clients/[id]/images/actions.ts",
+      "source_blob": "28cbf5da6a1bf5ca7d2d5f1cb4dad28bc1b23399",
+      "sha256": "7981c6d440b5dcf622f9c85a7a23a2a3e53f79dd22fe43fd7e98a50c0a693718",
+      "source_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
+      "candidate_current_sha256": "7981c6d440b5dcf622f9c85a7a23a2a3e53f79dd22fe43fd7e98a50c0a693718",
+      "candidate_current_blob": "28cbf5da6a1bf5ca7d2d5f1cb4dad28bc1b23399"
+    },
+    {
+      "path": "app/(app)/clients/[id]/images/page.tsx",
+      "source_blob": "6ccc26c2ece05a167bcddbefbcf5ea2f0ad502c2",
+      "sha256": "4836cb8d6ce16de819b3d58abe97df384e6a7ed6ee3e9f6a0aec890200991313",
+      "candidate_current_sha256": "4836cb8d6ce16de819b3d58abe97df384e6a7ed6ee3e9f6a0aec890200991313",
+      "candidate_current_blob": "6ccc26c2ece05a167bcddbefbcf5ea2f0ad502c2"
+    },
+    {
+      "path": "app/(app)/clients/[id]/page.tsx",
+      "source_blob": "20ea9fe0da25ae10411e8aa65b3d16c535e6897d",
+      "sha256": "725a62f5785d648910054c373685187ecc892dc1304ddab8d41db91eb88bcd4f",
+      "candidate_current_sha256": "52e91b3a806d21029110abae630d490bbe92bcf72a27c611aec260af85e00335",
+      "candidate_current_blob": "0e3bb12d07f53844fbe69171f6600bc809219288"
+    },
+    {
+      "path": "lib/images/client-portrait.ts",
+      "source_blob": "76ece26a2ae41e4b3896c02d9267afa173d17f47",
+      "sha256": "2d4f79da1569af758f5ecd4aae46a9165c18a0a0428a279e193030b9ab9edaa7",
+      "candidate_current_sha256": "2d4f79da1569af758f5ecd4aae46a9165c18a0a0428a279e193030b9ab9edaa7",
+      "candidate_current_blob": "76ece26a2ae41e4b3896c02d9267afa173d17f47"
+    },
+    {
+      "path": "tests/app/clients/client-portrait-ui.test.ts",
+      "source_blob": "67b0a4e4fd3c682b8bd7cd2cfa76bec7bc9c3cd2",
+      "sha256": "e550b79e594f928500fd3ae194b9b19e1dac1863cf9fc9dcc005db1ba23c0698",
+      "source_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
+      "candidate_current_sha256": "e550b79e594f928500fd3ae194b9b19e1dac1863cf9fc9dcc005db1ba23c0698",
+      "candidate_current_blob": "67b0a4e4fd3c682b8bd7cd2cfa76bec7bc9c3cd2"
+    },
+    {
+      "path": "tests/db/client-identification-portrait.db.test.ts",
+      "source_blob": "38e891ecbb6088e2e50e08c47f06a497b8b222e8",
+      "sha256": "cdfad0c22403e72eecb49364245def30bc55e9a114fd3dba119418b66dabceee",
+      "source_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
+      "candidate_current_sha256": "cdfad0c22403e72eecb49364245def30bc55e9a114fd3dba119418b66dabceee",
+      "candidate_current_blob": "38e891ecbb6088e2e50e08c47f06a497b8b222e8"
+    },
+    {
+      "path": "tests/migrations/0231-client-identification-portrait.test.ts",
+      "source_blob": "2444b957844b2dfde213dbc9279ad034b762ce8c",
+      "sha256": "fa0d09ce8ff8162f21cb079b20c49ba8ac99e5962b968d1af3b1c1ec65bd93ff",
+      "source_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
+      "candidate_current_sha256": "fa0d09ce8ff8162f21cb079b20c49ba8ac99e5962b968d1af3b1c1ec65bd93ff",
+      "candidate_current_blob": "2444b957844b2dfde213dbc9279ad034b762ce8c"
+    },
+    {
+      "path": "e2e/fett-client-portrait.spec.ts",
+      "source_blob": "1845b6a18ba91cb2c938c88ec23887ab0238c8df",
+      "sha256": "54ea01d023dcda6deeae8ba867901bfa254fe46a353b4410cfe171f365b9da67",
+      "candidate_current_sha256": "54ea01d023dcda6deeae8ba867901bfa254fe46a353b4410cfe171f365b9da67",
+      "candidate_current_blob": "1845b6a18ba91cb2c938c88ec23887ab0238c8df"
+    },
+    {
+      "path": "supabase/migrations/0231_client_identification_portrait.sql",
+      "source_blob": "25afc5abb927c34fa4fff1e90463dff2ed63e263",
+      "sha256": "b9ad60aa947cb63a8f4b8c1c5dd273d03d6f58dbaa1bdb8dba895cfce1bcddf1",
+      "source_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
+      "candidate_current_sha256": "b9ad60aa947cb63a8f4b8c1c5dd273d03d6f58dbaa1bdb8dba895cfce1bcddf1",
+      "candidate_current_blob": "25afc5abb927c34fa4fff1e90463dff2ed63e263"
+    }
+  ],
+  "additional_owner_verification_source": {
+    "path": "tests/migrations/0221-delivery-concerns-and-purposes.test.ts",
+    "owner_pr": 865,
+    "owner_head": "d2e3bd64895bef3b142be928b0b21c243e74ef06",
+    "sha256": "26e101c41aaaf1fb860f7d63884d3cfd849cc944494a96b94700d632b9249257",
+    "purpose": "pins the reconciled 0212 and current #843 0215 exact source bytes"
+  },
+  "scope": {
+    "included_versions": [
+      "0213",
+      "0214",
+      "0215",
+      "0216",
+      "0217",
+      "0218",
+      "0219",
+      "0220",
+      "0221",
+      "0222",
+      "0223",
+      "0224",
+      "0225",
+      "0226",
+      "0227",
+      "0228",
+      "0229",
+      "0230",
+      "0231"
+    ],
+    "excluded": [
+      "0232 (separate Before/After release, not necessary for portrait)",
+      "0233 (separate clinical-print release)",
+      "0234 (outside narrow prefix; Team HON47 allocation legitimate; held Machines #920 alternative excluded)",
+      "0235",
+      "0236",
+      "0237",
+      "0238 (source-only dedup allocation; not necessary for portrait)"
+    ],
+    "frozen_0223_sha256": "12038b1eab95d84f0ed84b235f0bf00641f6e06007e6ba5008066fc0d852b948",
+    "production_907_session_photo_files_preserved": true
+  },
+  "order_contract": "Apply pending migrations strictly in ascending order 0213 through 0231, each with the owning migration's transaction and SET LOCAL lock_timeout = 5s contract. Apply through 0231 and verify before deploying portrait application code. No provider activation is implied.",
+  "candidate_test_support_files": [
+    {
+      "path": "tests/migrations/helpers/grant-posture.ts",
+      "sha256": "96eb3d31cea075960c94e8d825495418a6af4db60a54f88c75742951dc616171",
+      "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "purpose": "shared exact-role grant/revoke assertions required by 0231 source test",
+      "candidate_current_sha256": "96eb3d31cea075960c94e8d825495418a6af4db60a54f88c75742951dc616171"
+    },
+    {
+      "path": "tests/migrations/0211-client-sms-permission-guard.test.ts",
+      "sha256": "dedf935a3e36e5c3a5f174a70c94bc73bc8899c19622f80a6d26bb9ae14072e2",
+      "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "purpose": "transfers the obsolete repo-maximum assertion to a derived non-maximum contract while preserving 0211 allocation and behavior coverage",
+      "candidate_current_sha256": "cefd8a1f0cfc0496b3b82b065cfe779a8a5b02117b75dd74abdb8a9b0f05ee53",
+      "candidate_current_source_head": "f7922a68f661b03e10484fe738ec550e4fef2989"
+    },
+    {
+      "path": "tests/migrations/0212-email-delivery-events.test.ts",
+      "source_head": "92fcdcccc4543b433827e44754f08f0078852505",
+      "sha256": "78970778cfc96e0d33b421882c2cd30f67ffa23819675d22e846a4ef90bdcf9d",
+      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes",
+      "candidate_current_sha256": "b87dbcff975bf1fd78780e97ca562e992488f5eec766e79ee85911a2118d5261"
+    },
+    {
+      "path": "tests/migrations/email-delivery-grants.test.ts",
+      "source_head": "92fcdcccc4543b433827e44754f08f0078852505",
+      "sha256": "561e8428c89b6589aa8cd13e8977fd913ceea78bb9b124d1675ce8157c8078f4",
+      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes",
+      "candidate_current_sha256": "561e8428c89b6589aa8cd13e8977fd913ceea78bb9b124d1675ce8157c8078f4"
+    },
+    {
+      "path": "tests/migrations/helpers/email-delivery-grants.ts",
+      "source_head": "92fcdcccc4543b433827e44754f08f0078852505",
+      "sha256": "5098c985e004888467403f8aa7a8a952b3be5901b44b47c271837cefd28ee0d8",
+      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes",
+      "candidate_current_sha256": "5098c985e004888467403f8aa7a8a952b3be5901b44b47c271837cefd28ee0d8"
+    }
+  ],
+  "candidate_test_compatibility_sources": [
+    {
+      "path": "tests/db/appointment-audit-invariant.db.test.ts",
+      "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "sha256": "d53b49c8f88acc369f9dc866fcc7f50a8a4111904b564f1640769fcb64debeb1",
+      "reason": "assertions updated for the exact included schema train; no behavior under test removed",
+      "candidate_current_sha256": "d53b49c8f88acc369f9dc866fcc7f50a8a4111904b564f1640769fcb64debeb1"
+    },
+    {
+      "path": "tests/db/appointment-boundary-revocation.db.test.ts",
+      "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "sha256": "368165e6ae93d4eee2d3803f78d9f6995e5c2f78b0572438f91cab3ca45ea722",
+      "reason": "assertions updated for the exact included schema train; no behavior under test removed",
+      "candidate_current_sha256": "368165e6ae93d4eee2d3803f78d9f6995e5c2f78b0572438f91cab3ca45ea722"
+    },
+    {
+      "path": "tests/db/public-reschedule-command.db.test.ts",
+      "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "sha256": "646370f36c02312248a16b08cc416b1e12ef6b36abe780a0c00c06e4ca9d383b",
+      "reason": "assertions updated for the exact included schema train; no behavior under test removed",
+      "candidate_current_sha256": "646370f36c02312248a16b08cc416b1e12ef6b36abe780a0c00c06e4ca9d383b"
+    },
+    {
+      "path": "tests/db/studio-sms-sender.db.test.ts",
+      "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "sha256": "46a6ec8fd3954e6b0fdc6f9985e65af0b810544031a04c1e6b34484de7eaeb26",
+      "reason": "assertions updated for the exact included schema train; no behavior under test removed",
+      "candidate_current_sha256": "2eaf69ea7db9c4dac9d902ec4b271ce4a40975b88fabe4ebeb38076092056783"
+    },
+    {
+      "path": "tests/db/export-resource-registry.db.test.ts",
+      "source_head": "8c6d57f64bdd78eb753e9d235a10abe5e5a968df",
+      "sha256": "118204eb9a67d761bf771da24292465ba6ffe3bef5544de2753c1cf75e4cb708",
+      "reason": "assertions updated for the exact included schema train; no behavior under test removed",
+      "candidate_current_sha256": "118204eb9a67d761bf771da24292465ba6ffe3bef5544de2753c1cf75e4cb708"
+    },
+    {
+      "path": "tests/db/email-delivery-events.db.test.ts",
+      "source_head": "92fcdcccc4543b433827e44754f08f0078852505",
+      "sha256": "b000f5826990bf1eac36e4c85da788edcbb923a342cfb0bd08fe8919c4ffbdd0",
+      "purpose": "Restore existing0212behavior/source proof with the reviewed0227forward-repair bounce contract and exact-role grant checks; no SQL changes",
+      "candidate_current_sha256": "b000f5826990bf1eac36e4c85da788edcbb923a342cfb0bd08fe8919c4ffbdd0"
+    },
+    {
+      "owner": "General",
+      "path": "tests/db/waitlist-integration-seams.db.test.ts",
+      "repair": "One missing jar-backed getAll mock method; no assertion/runtime/guard change",
+      "owner_handoff": "general/939-nightly-seams-repair.json",
+      "patch_sha256": "f80262d75623d65dfb86caef9e3970abb557a912735a6110c9aba581a5536186",
+      "after_sha256": "31b24b2e0fd66b148ed5ff5060b557c17234813371a941e530be23f86d1ef50e"
+    }
+  ],
+  "schema_export_dispositions": {
+    "source": "existing owner migration/export policy entries, selected by migrated relation; no application implementations imported",
+    "tables": [
+      "platform_lead_alerts",
+      "delivery_incidents",
+      "delivery_sweep_heartbeat",
+      "email_provider_events",
+      "email_outbound_messages",
+      "delivery_concerns",
+      "treatment_setup_captures",
+      "treatment_area_create_claims",
+      "treatment_setup_submissions",
+      "machine_profile_field_contract",
+      "machine_profile_mode_contract",
+      "studio_machines",
+      "treatment_setup_readings",
+      "studio_payment_jurisdictions",
+      "studio_payment_jurisdiction_changes",
+      "studio_receptionists",
+      "studio_sms_sender_registrations",
+      "studio_sms_sender_campaign_bindings",
+      "studio_sms_sender_stop_preflights"
+    ],
+    "columns": {
+      "practitioners": [
+        "default_machine_id",
+        "default_machine_mode",
+        "last_public_assignment_at"
+      ],
+      "appointments": [
+        "created_by_receptionist_id",
+        "cancelled_by_receptionist_id"
+      ],
+      "clients": [
+        "portrait_image_id"
+      ]
+    }
+  },
+  "candidate_review_repairs": [
+    {
+      "path": "tests/db/studio-sms-sender.db.test.ts",
+      "source_before_sha256": "46a6ec8fd3954e6b0fdc6f9985e65af0b810544031a04c1e6b34484de7eaeb26",
+      "candidate_after_sha256": "2eaf69ea7db9c4dac9d902ec4b271ce4a40975b88fabe4ebeb38076092056783",
+      "reason": "replace modulo-7000 hash truncation with deterministic per-process unique allocation for each studio/slot key; test-only repair for exact-head Codex P2; no #863 owner branch or SMS behavior changed"
+    },
+    {
+      "finding_id": 4319379075,
+      "source_pr": 905,
+      "source_head": "affcb86727324b2c2505f5185b3ba3db3e9f4545",
+      "path": "supabase/migrations/0231_client_identification_portrait.sql",
+      "before_sha256": "e0368d9029b513d6de952c58aadddfbd67a8c07b3e0dc9c2b95c06eadef4c375",
+      "after_sha256": "b9ad60aa947cb63a8f4b8c1c5dd273d03d6f58dbaa1bdb8dba895cfce1bcddf1",
+      "exact_delta_paths": [
+        {
+          "path": "app/(app)/clients/[id]/images/PortraitControl.tsx",
+          "sha256": "f02cbc4a4dba84a9015d8b65d7935111a75160469a0d9b5020837eb6ddf410a1",
+          "blob": "661f769286a94095e74417e00791e0cf19e7fa46"
+        },
+        {
+          "path": "app/(app)/clients/[id]/images/actions.ts",
+          "sha256": "7981c6d440b5dcf622f9c85a7a23a2a3e53f79dd22fe43fd7e98a50c0a693718",
+          "blob": "28cbf5da6a1bf5ca7d2d5f1cb4dad28bc1b23399"
+        },
+        {
+          "path": "docs/production/migration-ledger.md",
+          "sha256": "44de4e0305fca6223054162987358223879bb4624232e726ddade5216a09084a",
+          "blob": "03f62631fbf26c5f47ca35a296b733475f7337d4",
+          "source_sha256": "5c562ded343b2150ac1b8413e64077f2c390d6116f5ef8f2c9c132ce5e0c4629",
+          "source_blob": "a56ac05065d9336d2d68851f24b3230d96c079cc"
+        },
+        {
+          "path": "supabase/migrations/0231_client_identification_portrait.sql",
+          "sha256": "b9ad60aa947cb63a8f4b8c1c5dd273d03d6f58dbaa1bdb8dba895cfce1bcddf1",
+          "blob": "25afc5abb927c34fa4fff1e90463dff2ed63e263"
+        },
+        {
+          "path": "tests/app/clients/client-portrait-ui.test.ts",
+          "sha256": "e550b79e594f928500fd3ae194b9b19e1dac1863cf9fc9dcc005db1ba23c0698",
+          "blob": "67b0a4e4fd3c682b8bd7cd2cfa76bec7bc9c3cd2"
+        },
+        {
+          "path": "tests/db/client-identification-portrait.db.test.ts",
+          "sha256": "cdfad0c22403e72eecb49364245def30bc55e9a114fd3dba119418b66dabceee",
+          "blob": "38e891ecbb6088e2e50e08c47f06a497b8b222e8"
+        },
+        {
+          "path": "tests/migrations/0231-client-identification-portrait.test.ts",
+          "sha256": "fa0d09ce8ff8162f21cb079b20c49ba8ac99e5962b968d1af3b1c1ec65bd93ff",
+          "blob": "2444b957844b2dfde213dbc9279ad034b762ce8c"
+        }
+      ],
+      "reason": "expected-current-image compare-and-clear under client row lock; stale removal fails closed and preserves newer portrait; exact seven-file owner delta composed without merging owner branch ancestry"
+    }
+  ],
+  "review_state": "Source-only #905 portrait release preparation with the pinned0213–0231 prefix. Reviewed0214 source5452f0ec/raw8ff9350e enforces verified country/currency and leaves unknowns unresolved; the paired application order is mandatory, not blanket old-app/new-DB compatibility. This manifest grants no hosted apply/reapply, production release, real-client consent, customer-data mutation or provider/model activation. Read current exact-head CI/review and retained prior proof from GitHub and the OPS release packet; historical entries retain their original source and scope.",
+  "previous_candidate_base": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
+  "candidate_base_history": [
+    "102faf94fc573c724d73419bc9e8a6262ac1a247",
+    "cda67e7c9f779838dfad2360a628ab81221cb43e",
+    "4f08de03c458dc381ddcb1e1011fdb50a14d66a9",
+    "462b16b0fa4d2c531ee3c6bfb67fd2d52345cb54",
+    "e91ddd43c932df726a100fc3f4e33c12258007bd",
+    {
+      "base": "4425b8ef4a024d5d3d34dbe2a9a752aa88d9524b",
+      "superseded_by": "aa90510354d7aa0ceeeeb70e631a85d8a9aa0b33",
+      "reason": "Normal merge deployed925 latest-treatment runtime and published dedicated record967; no pending SQL change"
+    },
+    {
+      "base": "aa90510354d7aa0ceeeeb70e631a85d8a9aa0b33",
+      "superseded_by": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
+      "reason": "Normalmerge current reviewed/deployed927 and record968; portraitimagecode and19SQLunchanged"
+    },
+    {
+      "base": "73a6f5770a6c09d67e74e7bed89494f7179d1a92",
+      "superseded_by": "cae869ac1e07676c55b4ab31b282afd67eff22dc",
+      "reason": "Normal merge reviewed deployed969 banner/current970 record; actual merge78058b7 changedonly3canonicaldocs, no portrait orSQLchanges. Priorf6 banner source already matched969."
+    }
+  ],
+  "canonical_record_source": {
+    "pr": 970,
+    "head": "9e04b9d98830dca40c7db439b5ffa8214aaaa0fc",
+    "merged": "cae869ac1e07676c55b4ab31b282afd67eff22dc",
+    "status": "ExactreviewCLEANfalsefalse/CI39524936560SUCCESS; mergednormally/READYdpl_Gi7czB765naZ89KXUe7DHpaPmwCi/automaticdocs39525407805SUCCESS; appDBbrowserpaymentmobileGoogleSKIPdocsplan",
+    "scope": "208/179datedproductionancestryat96910982; settled969push39523272195unit21296PASS2canonicalA3A5FAIL and603browser11SKIP/aggregatePASS retained. NoSQL/historychange."
+  },
+  "integration_compatibility_repairs": {
+    "source": "95a840518b270021d792eae2a52eb00096759566",
+    "paths": [
+      "lib/export/resource-registry.ts",
+      "tests/db/public-reschedule-command.db.test.ts",
+      "tests/db/export-resource-registry.db.test.ts"
+    ],
+    "reason": "Preserve complete narrow owner registry and independent guards already in this candidate. Deduplicate imported0212catalog entries and financial expected-table list; platform webhook receipts remain excluded. No guard was weakened and SQL is unchanged."
+  },
+  "frozen_migration_verification_source": {
+    "source_head": "b4961561d0c81c85327555a513caca8486c75899",
+    "path": "tests/migrations/0212-email-delivery-events.test.ts",
+    "purpose": "Exact applied0212SHA256guard from recordowner, composed with existing0227forward-compatible test/grant checks; SQL unchanged"
+  },
+  "phone_integration_owner_resolution": {
+    "owner": "Photos",
+    "receipt": "photos/939-ca9-d6-owner-resolution/receipt.json",
+    "basis_candidate": "ca9afec5bd53c48c16dd989b9227f68e3dd36be1",
+    "published_phone_source": "ad9186275add406223f4966a3012257b13fd9568",
+    "current_phone_release": "e91ddd43c932df726a100fc3f4e33c12258007bd",
+    "resolved_files": [
+      {
+        "path": "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx",
+        "sha256": "d88cb313f3de7803b18492fb1654bf93c5e114ac191ee886d87409b348bf1000",
+        "git_blob": "d7be10654bb23daea68884a0c0884963a98dc8b3"
+      },
+      {
+        "path": "docs/00_PRODUCT_OVERVIEW.md",
+        "sha256": "b74d5e198ebf7394a7392e742bca5967501988b2987b407773b81fc4969f1348",
+        "git_blob": "9b84efac8aaa51ba7ff990f9971df3003337181f"
+      },
+      {
+        "path": "docs/03_SECURITY_AND_PRIVACY.md",
+        "sha256": "7a4985a44e6925eddb2b49daa9db32415ff1847ebbb66921d6a83b44ef179d75",
+        "git_blob": "2957ad6525cd10b7cbbfda8f41d362b407efc6bb"
+      }
+    ],
+    "scope": "Portrait + current phone controls only; capture-stage/0232 excluded; SQL19 unchanged."
+  },
+  "nightly_budget_repair": {
+    "run": 39504054304,
+    "prior_attempts": 2,
+    "previous_minutes": 15,
+    "new_shard1_minutes": 18,
+    "observed_attempt2": "137/157 pass before timeout; no final result, remaining20 unrun",
+    "scope": "Only existing first core browser nightly lane ceiling; no command/permission/fixture/assertion/cache/concurrency change"
+  },
+  "candidate_digest_refresh": {
+    "basis_head": "d38026dd374d1cb29e44db4dc2a474b225fd8ad9",
+    "reason": "Deployed925 normalmerge changed profile body; source-provenancefields retained, onlycandidate-currentdigest corrected",
+    "fixes": [
+      {
+        "path": "app/(app)/clients/[id]/page.tsx",
+        "prior_candidate_current_sha256": "0de499b55d2c53039559093c3f075f136d3740a48aadab5bc5db27d228fbe66d",
+        "prior_candidate_current_blob": "6f81b6fde1e36bcdf302dcc9a500f067d5ecc4db",
+        "current_sha256": "9c5b088b7214f27c0e5bb1877683be472231ce476e0b75f077bdc5a4a2398703",
+        "current_blob": "d256a3e3b9d87fb0600351df4dff72ea718f55d6"
+      }
+    ],
+    "runtime_SQL_changed": false
+  },
+  "verified_parent_evidence": {
+    "head": "d38026dd374d1cb29e44db4dc2a474b225fd8ad9",
+    "PR_CI": 39510067856,
+    "nightly": 39510084795,
+    "result": "BothSUCCESS",
+    "unit": 21331,
+    "PR_DB": "3636PASS8SKIP",
+    "nightly_DB": "3644PASS0SKIP",
+    "PR_browser": "603PASS12SKIP",
+    "nightly_browser": "604PASS11SKIP",
+    "payment": 56,
+    "mobile": 6,
+    "Google": 13,
+    "review": "Exactreceipt6303466243 no majorissues; aggregatesummarytrue/true/historythreads preserved,notrewritten",
+    "reuse": "Evidenceatparentheadscope; field-onlydigestrepair doesnotalterUI/RPC/SQL/guards. Newcurrentreview/normalCI required onpublishedfinalhead."
+  },
+  "production_runtime_base": "717d6da08bc16af93ebd9a05dc593cbd78ee2521",
+  "candidate_banner_repair": {
+    "basis_head": "ebdbde8cd47763bf8c2e907661239cdcb552760d",
+    "source_head": "abcbfdd391a9fb2f6ed22bfc6eb359f614ca0dd5",
+    "isolated_patch_sha256": "a90ec134861ee993136ee3fd52019d610a4c2fdd1181cbbc78f8f69636aa786f",
+    "reason": "Exclude void rows from newest-visit banner comparison while retaining charted drafts. Three-file published owner unit; no portrait setter/read/authorization or SQL change.",
+    "profile_prior": {
+      "sha256": "9c5b088b7214f27c0e5bb1877683be472231ce476e0b75f077bdc5a4a2398703",
+      "blob": "d256a3e3b9d87fb0600351df4dff72ea718f55d6"
+    },
+    "profile_current": {
+      "sha256": "52e91b3a806d21029110abae630d490bbe92bcf72a27c611aec260af85e00335",
+      "blob": "0e3bb12d07f53844fbe69171f6600bc809219288"
+    },
+    "helper_blob": "bd65e7c899390579385c8d56035ad6e5158c4523",
+    "regression_blob": "ae1d2e18f662c1b46dd4a992ec415f7dcbebb1ba",
+    "historical_provenance": "Original portrait source pins and prior d380 digest-repair receipt remain unchanged.",
+    "production_release": {
+      "pr": 969,
+      "source": "a6b9e9370b8c3392f72691835bb5bb1cf8c2b496",
+      "merge": "10982f4a16bb113af335f1be3cdf5c2a5498aca9",
+      "state": "READY/exactreviewandCI39520213382SUCCESS; source21298unit603browser11SKIP, safeGET200200307307;ChloeUNRUN"
+    }
+  },
+  "jurisdiction_policy_preparation": {
+    "status": "Reviewedpublished5452source8ff nowcomposed, noSQLexecuted",
+    "policy": "Verified country/currency only; UNKNOWN remainsunresolved, no blanketdefault/backfill",
+    "source": "5452f0ec697320bcae1b61ac2aec75eb41dd3460",
+    "owner_packet_sha256": "eb3207980847f1b8fb5090614e25cf63f2441a4dbee90585c53c8ab6f14e6420",
+    "remaining": "Sevenverifiedstudioinputs/threeboundreconciliation +hosted/app release approval; portraitconsent/retention separate",
+    "optional_unrelated_helpers_excluded": "No new unusedpayment-jurisdiction pure/servermodules or their standaloneunit; all existingtargettests retained"
+  },
+  "current_candidate_digest_refresh": {
+    "basis_head": "1712346a52047ee0d8fe4e83a9117c949b3fdaf8",
+    "reason": "Normalmerge currentproduction retains latest shipped history/photo/security repairs; currentpostimage digests only, historicalowner/sourcepins untouched",
+    "fixes": [
+      {
+        "path": "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx",
+        "prior_sha256": "d88cb313f3de7803b18492fb1654bf93c5e114ac191ee886d87409b348bf1000",
+        "current_sha256": "4f1e2bf19e210096440d5951a10be22214603f164449a16703815d50505e086c",
+        "current_blob": "8ab5238b4ef6bfb4fbbf71b4c262bdf0d7a4bd15"
+      }
+    ]
+  }
+}
