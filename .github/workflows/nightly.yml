@@ -233,11 +233,36 @@ jobs:
 
       - name: Install Playwright browsers (cache miss)
         if: matrix.needs_browsers && steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
-      - name: Install Playwright system deps only (cache hit)
-        if: matrix.needs_browsers && steps.pw-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+      # System packages: cached per runner image + Playwright version and
+      # bounded, exactly as in ci.yml's four Playwright jobs (CLAUDE.md section
+      # 4; 2026-10-23 apt stall). The save runs straight after the install, not
+      # in a post step that a failed or cancelled lane would skip.
+      - name: Resolve runner image
+        id: img
+        if: matrix.needs_browsers
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        if: matrix.needs_browsers
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright system packages (bounded, .deb cache)
+        if: matrix.needs_browsers
+        timeout-minutes: 9
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: matrix.needs_browsers && steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Run lane
         run: ${{ matrix.command }}

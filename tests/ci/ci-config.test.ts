@@ -694,6 +694,60 @@ describe("PR CI — path-aware lane selection", () => {
     expect(CI).not.toMatch(/npx playwright install-deps/);
   });
 
+  // EVERY workflow, not just ci.yml (Codex P2 4361861942, #1059): CLAUDE.md
+  // section 4 says every Playwright job's apt phase is cached and bounded, and
+  // nightly.yml still ran the raw installs. Enrolled by existing in the
+  // directory, like the supply-chain guards above.
+  function unboundedPlaywrightInstalls(workflows: readonly Workflow[]): string[] {
+    const faults: string[] = [];
+    for (const [file, body] of workflows) {
+      const code = body.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+      if (/playwright install --with-deps/.test(code)) faults.push(`${file}: an unbounded \`playwright install --with-deps\``);
+      if (/playwright install-deps/.test(code)) faults.push(`${file}: an unbounded \`playwright install-deps\``);
+      if (/npx playwright install(?![-\w])/.test(code) && !code.includes("bash scripts/ci/playwright-system-deps.sh")) {
+        faults.push(`${file}: installs a Playwright browser but never runs the bounded system-deps script`);
+      }
+    }
+    return faults;
+  }
+
+  it("NO workflow runs an unbounded Playwright apt install", () => {
+    expect(unboundedPlaywrightInstalls(readWorkflowDir())).toEqual([]);
+  });
+
+  it("the all-workflows guard is not vacuous (fixture controls)", () => {
+    expect(unboundedPlaywrightInstalls([["x.yml", "      - run: npx playwright install-deps chromium\n"]])).toEqual([
+      "x.yml: an unbounded `playwright install-deps`",
+    ]);
+    expect(unboundedPlaywrightInstalls([["y.yaml", "      - run: npx playwright install --with-deps chromium\n"]])).toEqual([
+      "y.yaml: an unbounded `playwright install --with-deps`",
+      "y.yaml: installs a Playwright browser but never runs the bounded system-deps script",
+    ]);
+    expect(unboundedPlaywrightInstalls([["z.yml", "      # npx playwright install-deps chromium (prose)\n"]])).toEqual([]);
+  });
+
+  it("nightly.yml: browser lanes restore -> bounded install -> save, gated on matrix.needs_browsers", () => {
+    type Step = PwStep;
+    const doc = yaml.load(NIGHTLY) as { jobs: Record<string, { steps?: Step[] }> };
+    const job = Object.values(doc.jobs).find((j) => (j.steps ?? []).some((s) => s.id === "pw-cache"));
+    expect(job, "the nightly job that drives browsers").toBeDefined();
+    const steps = job!.steps!;
+    const at = (pred: (s: Step) => boolean) => steps.findIndex(pred);
+    const img = at((s) => s.id === "img");
+    const restore = at((s) => s.id === "deb-cache");
+    const deps = at((s) => (s.run ?? "").includes("scripts/ci/playwright-system-deps.sh"));
+    const save = at((s) => (s.uses ?? "").startsWith("actions/cache/save@"));
+    expect([img, restore, deps, save].every((i) => i >= 0)).toBe(true);
+    expect(img < restore && restore < deps && save === deps + 1).toBe(true);
+    for (const i of [img, restore, deps]) expect(steps[i].if, steps[i].name).toBe("matrix.needs_browsers");
+    expect(steps[save].if).toBe("matrix.needs_browsers && steps.deb-cache.outputs.cache-hit != 'true'");
+    expect(steps[restore].with).toMatchObject({ path: "~/apt-debs", key: DEB_KEY });
+    expect(steps[save].with).toMatchObject({ path: "~/apt-debs", key: DEB_KEY });
+    expect(steps[deps]["timeout-minutes"]).toBe(9);
+    const miss = steps.find((s) => s.id !== "pw-cache" && (s.if ?? "").includes("steps.pw-cache.outputs.cache-hit != 'true'"));
+    expect(miss?.run).toBe("npx playwright install chromium");
+  });
+
   it("the script bounds the install, retries once on another mirror, and round-trips the .deb cache", () => {
     const script = readFileSync("scripts/ci/playwright-system-deps.sh", "utf8");
     expect(script).toMatch(/timeout --kill-after=\S+ "\$FIRST" npx playwright install-deps chromium/);
