@@ -26,6 +26,7 @@ const baseConf = {
   intakeUrl: null,
   preCareInstructions: null,
   treatmentTimeLine: null,
+  bookingReference: "K3M9QX",
 };
 const baseRem = {
   clientName: "Sam",

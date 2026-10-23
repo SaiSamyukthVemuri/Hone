@@ -456,6 +456,7 @@ export async function sendBookingConfirmationToClient(params: {
     portalLoginUrl: portalLoginUrlForStudio(params.studio),
     preCareInstructions: params.service?.pre_care_instructions ?? null,
     treatmentTimeLine: params.treatmentTimeLine,
+    bookingReference: emailBookingReference(params.appointment.id),
   });
 
   const ics = buildIcs({

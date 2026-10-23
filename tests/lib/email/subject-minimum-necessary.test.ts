@@ -69,6 +69,7 @@ const cases: Array<[string, () => { subject: string; text: string }]> = [
         ...reminderProps,
         studioEmail: "studio@synthetic.invalid",
         intakeUrl: null,
+        bookingReference: "K3M9QX",
       }),
   ],
   [
@@ -225,6 +226,14 @@ describe("subjects keep unrelated messages out of one thread", () => {
     expect(normalizedSubject(a)).not.toBe(normalizedSubject(b));
     assertMinimal(a);
     assertMinimal(b);
+  });
+
+  it("two different bookings' client confirmations have different normalized subjects (Codex P1 4355048639)", () => {
+    const confirmation = (bookingReference: string) =>
+      buildClientConfirmationEmail({ ...reminderProps, studioEmail: "studio@synthetic.invalid", intakeUrl: null, bookingReference }).subject;
+    expect(normalizedSubject(confirmation("K3M9QX"))).not.toBe(normalizedSubject(confirmation("P7R2TD")));
+    expect(confirmation("K3M9QX")).toBe(confirmation("K3M9QX"));
+    assertMinimal(confirmation("K3M9QX"));
   });
 
   it("the same booking renders the same subject (a retry does not fork a thread)", () => {
