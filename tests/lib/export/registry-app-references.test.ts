@@ -20,7 +20,10 @@ import { buildSchemaSnapshot, serialise, SNAPSHOT_PATH } from "../../../scripts/
 // snapshot matches the live catalogue.
 //
 // The registry's application claims are the ones owners read:
-//   - an EXPORTED table is read by the export, so application code names it;
+//   - an EXPORTED table is read by THE EXPORT: a `.from("<table>")` in one of
+//     the export modules (EXPORT_MODULES), not merely a literal anywhere in
+//     app code (Photos F1: another file naming it proves nothing about the
+//     archive);
 //   - a reason that cites a database function ("NOT dead: reschedule_appointment_v2
 //     ... (app/...)") says the application calls it, from the file it names.
 // ===========================================================================
@@ -65,6 +68,21 @@ function appSources(): Source[] {
 const uses = (code: string, symbol: string) =>
   code.includes(`"${symbol}"`) || code.includes(`'${symbol}'`) || code.includes(`\`${symbol}\``);
 
+/** The modules that build the data export: the settings export action and the lib/export helpers it uses
+ * (the registry itself is the claim, not a reader). A module that moves must be updated here; a missing one is a
+ * fault, never a silent skip. */
+const EXPORT_ACTION = "app/(app)/settings/data/actions.ts";
+const EXPORT_MODULES = [
+  EXPORT_ACTION,
+  ...readdirSync("lib/export")
+    .filter((f) => /\.tsx?$/.test(f) && f !== "resource-registry.ts")
+    .map((f) => `lib/export/${f}`),
+];
+
+/** The code reads `table` through the query builder: `.from("table")`, any quote style. */
+const readsTable = (code: string, table: string) =>
+  new RegExp(String.raw`\.from\(\s*["'\`]${table}["'\`]\s*\)`).test(code);
+
 /** Application files a reason names, e.g. app/(app)/calendar/x.ts or lib/stripe/account.ts. */
 const NAMED_FILE = /\b(?:app|lib|components)\/[\w\-[\]().\/]*?\.tsx?\b/g;
 
@@ -77,13 +95,18 @@ function appReferenceFaults(
   snapshot: Snapshot,
   sources: Source[],
   fileExists: (rel: string) => boolean,
+  exportModules: readonly string[] = EXPORT_MODULES,
 ): string[] {
   const faults: string[] = [];
   const tables = new Set(snapshot.public.tables);
+  const exportCode = sources.filter((s) => exportModules.includes(s.rel));
+  for (const rel of exportModules) if (!fileExists(rel)) faults.push(`export module ${rel} does not exist`);
   for (const [resource, d] of Object.entries(registry)) {
     if (d.kind === "exported" && !resource.startsWith(STORAGE_RESOURCE_PREFIX)) {
       if (!tables.has(resource)) faults.push(`exported ${resource} is not a table in the schema snapshot`);
-      if (!sources.some((s) => uses(s.code, resource))) faults.push(`exported ${resource} is referenced by no application source`);
+      if (!exportCode.some((s) => readsTable(s.code, resource))) {
+        faults.push(`exported ${resource} is not read by the export (no .from("${resource}") in ${exportModules.join(", ")})`);
+      }
     }
     if (d.kind !== "pending" && d.kind !== "excluded") continue;
     const cited = citedFunctions(d.reason, snapshot);
@@ -133,37 +156,56 @@ describe("the export registry's application claims hold against application sour
     { rel: "lib/pay/ledger.ts", code: 'supabase.rpc("claim_ledger")' },
   ];
   const exists = (rel: string) => good.some((s) => s.rel === rel);
+  const fixtureExport = ["lib/export/build.ts"];
 
   it("CONTROL: the fixture is clean", () => {
-    expect(appReferenceFaults(registry, snapshot, good, exists)).toEqual([]);
+    expect(appReferenceFaults(registry, snapshot, good, exists, fixtureExport)).toEqual([]);
   });
 
-  it("RED when no application file references an exported table any more", () => {
-    const sources = good.map((s) => (s.rel === "lib/export/build.ts" ? { ...s, code: "// widgets moved" } : s));
-    expect(appReferenceFaults(registry, snapshot, sources, exists)).toEqual(["exported widgets is referenced by no application source"]);
+  it("RED when the export stops reading an exported table, even though another app file still names it (Photos C)", () => {
+    const sources: Source[] = [
+      ...good.map((s) => (s.rel === "lib/export/build.ts" ? { ...s, code: "export {};" } : s)),
+      { rel: "lib/widgets/queries.ts", code: 'supabase.from("widgets")' },
+    ];
+    expect(appReferenceFaults(registry, snapshot, sources, () => true, fixtureExport)).toEqual([
+      'exported widgets is not read by the export (no .from("widgets") in lib/export/build.ts)',
+    ]);
+  });
+
+  it("RED when the export only NAMES an exported table without reading it", () => {
+    const sources = good.map((s) => (s.rel === "lib/export/build.ts" ? { ...s, code: 'const label = "widgets";' } : s));
+    expect(appReferenceFaults(registry, snapshot, sources, exists, fixtureExport)).toEqual([
+      'exported widgets is not read by the export (no .from("widgets") in lib/export/build.ts)',
+    ]);
+  });
+
+  it("RED when an export module is gone", () => {
+    expect(appReferenceFaults(registry, snapshot, good, exists, [...fixtureExport, "lib/export/moved.ts"])).toContain(
+      "export module lib/export/moved.ts does not exist",
+    );
   });
 
   it("RED when the cited RPC is no longer called (the published 'NOT dead' reason is now false)", () => {
     const sources = good.map((s) => (s.rel === "lib/pay/ledger.ts" ? { ...s, code: "export {};" } : s));
-    expect(appReferenceFaults(registry, snapshot, sources, exists)).toEqual([
+    expect(appReferenceFaults(registry, snapshot, sources, exists, fixtureExport)).toEqual([
       "ledger: its reason cites claim_ledger, which no application source calls",
     ]);
   });
 
   it("RED when the call moves to a file the reason does not name", () => {
     const sources: Source[] = [good[0], { rel: "lib/pay/elsewhere.ts", code: 'rpc("claim_ledger")' }];
-    expect(appReferenceFaults(registry, snapshot, sources, () => true)).toEqual([
+    expect(appReferenceFaults(registry, snapshot, sources, () => true, fixtureExport)).toEqual([
       "ledger: its reason cites claim_ledger, but none of the files it names (lib/pay/ledger.ts) calls it",
     ]);
   });
 
   it("RED when the file a reason names is gone", () => {
-    expect(appReferenceFaults(registry, snapshot, good, () => false)).toContain("ledger: its reason names lib/pay/ledger.ts, which does not exist");
+    expect(appReferenceFaults(registry, snapshot, good, () => false, fixtureExport)).toContain("ledger: its reason names lib/pay/ledger.ts, which does not exist");
   });
 
   it("RED when an exported table is not in the schema snapshot", () => {
     const shrunk = { ...snapshot, public: { ...snapshot.public, tables: ["ledger"] } };
-    expect(appReferenceFaults(registry, shrunk, good, exists)).toEqual(["exported widgets is not a table in the schema snapshot"]);
+    expect(appReferenceFaults(registry, shrunk, good, exists, fixtureExport)).toEqual(["exported widgets is not a table in the schema snapshot"]);
   });
 
   it("a mention in a COMMENT is not a reference", () => {
