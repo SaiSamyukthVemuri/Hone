@@ -81,6 +81,9 @@ import {
   FAST_CHART_PARAM,
   resolveAutoEditBlockId,
 } from "@/lib/sessions/fast-chart-start";
+import { SectionLabel } from "@/components/ui/section-label";
+import { SessionPhotos } from "./SessionPhotos";
+import { signedSessionPhotos } from "./session-photos";
 
 export default async function SessionDetailPage({
   params,
@@ -136,6 +139,7 @@ export default async function SessionDetailPage({
   const linkedAppointmentId = session.appointment_id ?? null;
 
   const [
+    sessionPhotos,
     lastEntry,
     treatmentCounts,
     audit,
@@ -145,6 +149,11 @@ export default async function SessionDetailPage({
     pricedForPage,
     settlementLoad,
   ] = await Promise.all([
+    // FETT photos: this visit's photos, signed for 60 s under the Photos tab's
+    // trust boundary. Depends only on (studio, client, session).
+    timed("session-chart.photos", () =>
+      signedSessionPhotos({ studioId: studio.id, clientId: id, sessionId: session.id }),
+    ),
     timed("session-chart.recent-entry", () =>
       getRecentEntryForClient(studio.id, id, session.modality),
     ),
@@ -184,6 +193,17 @@ export default async function SessionDetailPage({
   const lastEntryNotFromThisSession =
     lastEntry && !sessionEntryIds.has(lastEntry.id) ? lastEntry : null;
   const sessionPaymentAmount = pricedForPage.ok ? pricedForPage.result : null;
+  // HON-11: the quoted price that prefills the cash/e-transfer amount when the
+  // prepare form is hidden (no card on file). Quick checkout passes the same
+  // fact; without it this page showed a blank box for the visit the dashboard
+  // prefilled. Same resolver, through this session's linked appointment, and no
+  // extra read. Null when unresolvable: a zero would be a manufactured price.
+  const settlementQuotedAmountCents =
+    sessionPaymentAmount?.kind === "resolved"
+      ? sessionPaymentAmount.amountCents
+      : sessionPaymentAmount?.kind === "free"
+        ? 0
+        : null;
   // Populated from the SAME widened appointment read below; feeds the Finish
   // appointment workflow without a second read of the same row.
   let apptContext: {
@@ -433,6 +453,9 @@ export default async function SessionDetailPage({
     .eq("studio_id", studio.id)
     .eq("client_id", id)
     .is("deleted_at", null)
+    // HON-10 row 1: a void session's note is never "From last visit".
+    // record_status is NOT NULL (0119), so `neq` drops nothing else.
+    .neq("record_status", "void")
     .not("next_session_note", "is", null)
     .lt("started_at", session.started_at)
     .order("started_at", { ascending: false })
@@ -792,6 +815,8 @@ export default async function SessionDetailPage({
         </>
       )}
 
+      <SessionPhotos clientId={id} photos={sessionPhotos} />
+
       {/* PR #190 (clinical memory): plan for the NEXT visit. Saved on
           sessions.next_session_note and shown as "From last visit"
           when the client returns. Optional; empty save clears it. */}
@@ -850,9 +875,9 @@ export default async function SessionDetailPage({
             chart, and silently introducing a clinical lock here would be a new
             restriction nobody asked for. */}
         <div className="flex flex-col gap-1 border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Treatment chart
-          </span>
+          </SectionLabel>
           <span
             data-testid="finish-charting-status"
             className={
@@ -869,9 +894,9 @@ export default async function SessionDetailPage({
             the postcare email. "Explained" means she discussed it; "sent" means
             an email was handed to the provider. Never auto-stamped. */}
         <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Risks &amp; aftercare explained
-          </span>
+          </SectionLabel>
           <span
             data-testid="finish-aftercare-status"
             className="text-sm text-neutral-700 dark:text-neutral-300"
@@ -899,9 +924,9 @@ export default async function SessionDetailPage({
             same ones the calendar surface has always used. No-show is
             deliberately absent. It stays gated on ends_at. */}
         <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Appointment completed
-          </span>
+          </SectionLabel>
           <span
             data-testid="finish-completion-status"
             className={
@@ -941,9 +966,9 @@ export default async function SessionDetailPage({
         <div className="flex flex-col gap-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
           {finishState.postcare.kind === "unlinked" ? (
             <>
-              <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+              <SectionLabel>
                 Postcare email
-              </span>
+              </SectionLabel>
               <span
                 data-testid="finish-postcare-status"
                 className="text-sm text-neutral-700 dark:text-neutral-300"
@@ -1040,6 +1065,7 @@ export default async function SessionDetailPage({
           appointmentId={linkedAppointmentId}
           settledMethod={liveSettlement?.method ?? null}
           settledAmountCents={liveSettlement?.amountCents ?? null}
+          settlementQuotedAmountCents={settlementQuotedAmountCents}
           // The UI's copy of the database's own rule: only a COMPLETED
           // appointment can carry a disposition (0187 answers anything else
           // with `not_completed`). Offering the controls on a visit that has

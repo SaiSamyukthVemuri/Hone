@@ -71,7 +71,19 @@ export async function GET(request: Request) {
         // Never block sign-in on reconciliation.
       }
 
-      const response = NextResponse.redirect(`${origin}${dest}`);
+      // Treat the caller's destination as a path, never an origin suffix.
+      // URL parsing also normalizes backslashes/control characters; compare
+      // origins after that normalization before emitting a redirect.
+      let destination = new URL("/dashboard", origin);
+      if (dest.startsWith("/")) {
+        try {
+          const candidate = new URL(dest, origin);
+          if (candidate.origin === origin) destination = candidate;
+        } catch {
+          // Malformed destinations keep the ordinary signed-in landing page.
+        }
+      }
+      const response = NextResponse.redirect(destination);
       if (clearSelection) {
         response.cookies.delete("hone_selected_studio");
       }

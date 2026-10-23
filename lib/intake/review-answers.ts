@@ -47,12 +47,18 @@
 // Nothing here invents a value, backfills, or mutates a stored response. It is
 // a pure read-time projection.
 
-import { isConditionalSatisfied, type Question } from "@/lib/intake/questions";
+import {
+  isCanonicalYesNoAnswer,
+  isConditionalSatisfied,
+  type Question,
+} from "@/lib/intake/questions";
 import type { IntakeLifecycleStatus } from "@/lib/intake/acknowledgements";
 
 export type ReviewAnswerState =
   // Show the stored answer.
   | "answered"
+  // Historic malformed values are not a clinical negative and are never rewritten.
+  | "unrecognized"
   // The question's parent condition is not satisfied by this record, so the
   // client was never shown it. Any value still stored under this key is stale
   // and is NOT the client's answer: callers must not render it.
@@ -71,10 +77,20 @@ export const REVIEW_ANSWER_COPY: Record<
   Exclude<ReviewAnswerState, "answered">,
   string
 > = {
+  unrecognized: "Unknown (unrecognized answer)",
   not_applicable: "Not applicable",
   not_collected: "Not collected on this intake",
   unanswered: "Not answered",
 };
+
+/** Never turn a missing or malformed historic yes/no value into "No". */
+export function yesNoAnswerLabel(value: unknown): string {
+  if (isCanonicalYesNoAnswer(value)) return value === "yes" ? "Yes" : "No";
+  if (value == null || (typeof value === "string" && value.trim() === "")) {
+    return REVIEW_ANSWER_COPY.unanswered;
+  }
+  return REVIEW_ANSWER_COPY.unrecognized;
+}
 
 // Is there a stored answer at all?
 //
@@ -103,7 +119,10 @@ export function reviewAnswerState(
   // stale child value non-authoritative at read time.
   if (!isConditionalSatisfied(responses, q.conditional)) return "not_applicable";
 
-  if (hasStoredAnswer(q, responses[q.key])) return "answered";
+  if (hasStoredAnswer(q, responses[q.key])) {
+    if (q.type === "yes_no" && !isCanonicalYesNoAnswer(responses[q.key])) return "unrecognized";
+    return "answered";
+  }
 
   const terminal = status === "submitted" || status === "reviewed";
   if (terminal && q.required) return "not_collected";

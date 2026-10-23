@@ -83,7 +83,9 @@ describe("modal reuses the existing card + actions (single hardened payment path
     expect(MODAL).toMatch(/role="dialog"/);
     expect(MODAL).toMatch(/aria-modal="true"/);
     expect(MODAL).toMatch(/aria-labelledby=/);
-    expect(MODAL).toMatch(/e\.key === "Escape"/);
+    expect(MODAL).toContain("useDialogKeyboard");
+    expect(MODAL).toContain("busy: false");
+    expect(read("components/use-dialog-keyboard.ts")).toContain('if (e.key === "Escape")');
     expect(MODAL).toMatch(/h-11 w-11/);
   });
   it("shows the ineligible reason + a link into the existing charting workflow", () => {

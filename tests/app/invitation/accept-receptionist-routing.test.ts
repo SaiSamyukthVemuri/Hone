@@ -60,6 +60,21 @@ describe("acceptInvitationAction routes by the accepted role", () => {
     expect(await destination({ status: "linked", role: "practitioner", choose_studio: false })).toBe("/dashboard");
   });
 
+  // Production's completion guard (accept only a confirmed linked /
+  // already_linked) met this routing when production was merged into #850.
+  // The guard runs first, so a receptionist role never routes on its own.
+  it.each([
+    { status: "unknown", role: "receptionist", choose_studio: true },
+    { role: "receptionist", choose_studio: false },
+  ])("an unconfirmed receptionist acceptance routes nowhere and clears nothing: %j", async (result) => {
+    expect(await destination(result)).toBe("no redirect");
+    expect(ctx.cleared).toBe(0);
+  });
+
+  it("an already_linked receptionist still lands on /front-desk", async () => {
+    expect(await destination({ status: "already_linked", role: "receptionist", choose_studio: false })).toBe("/front-desk");
+  });
+
   it("a conflict still goes to the conflict page", async () => {
     expect(await destination({ status: "conflict", choose_studio: false })).toBe("/no-access?reason=invite-conflict");
   });

@@ -1,10 +1,13 @@
 "use server";
 
+import { isDeepStrictEqual } from "node:util";
+
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyIntakeToken } from "@/lib/intake/tokens";
 import {
   findInvalidChoiceAnswers,
+  getQuestionByKey,
   findMissingRequiredAnswers,
   TOTAL_STEPS,
 } from "@/lib/intake/questions";
@@ -133,6 +136,18 @@ export async function saveIntakeStepAction(payload: {
     ...responses,
   };
 
+  // Both editors post whole maps. Validate changed draft values, not unchanged
+  // legacy answers carried through navigation; full submit stays strict.
+  // Deep equality also preserves unchanged malformed JSON historical values.
+  const invalidYesNo = findInvalidChoiceAnswers(merged).filter(
+    (key) => Object.hasOwn(responses, key)
+      && !isDeepStrictEqual(responses[key], (existing.responses as Record<string, unknown> | null)?.[key])
+      && getQuestionByKey(key)?.type === "yes_no",
+  );
+  if (invalidYesNo.length > 0) {
+    return { ok: false, error: "Please choose Yes or No for each yes/no answer before saving." };
+  }
+
   // Same draft posture for the live consent forms: a save is NEVER refused
   // for an unanswered or half-answered consent form: that is a normal
   // in-progress state, but what lands in the row is server-derived. Only a
@@ -253,7 +268,7 @@ export async function submitIntakeAction(payload: {
   // answer. Not relying on the browser having only drawn two buttons is the
   // entire point.
   //
-  // Draft saves stay permissive by design: the same posture the consent draft
+  // Draft saves allow incomplete answers by design: the same posture the consent draft
   // takes a few lines down. A draft is never authoritative; THIS is the gate,
   // and it re-checks the whole merged map, so a bad value planted by an earlier
   // save is caught here rather than waved through.

@@ -46,13 +46,14 @@ export function isPaymentManualReviewEvent(
   return PAYMENT_MANUAL_REVIEW_EVENT_PREFIXES.some((p) => event.startsWith(p));
 }
 
-// Non-sensitive amount label, e.g. "$50.00 CAD". null when not present.
+// Non-sensitive amount label, e.g. "$50.00 CAD" or "$50.00 USD".
+// Missing currency stays unknown; missing amount has no label.
 export function formatAmountLabel(
   amountCents: number | null | undefined,
   currency: string | null | undefined,
 ): string | null {
   if (amountCents == null || !Number.isFinite(amountCents)) return null;
-  const code = (currency ?? "").trim().toUpperCase() || "CAD";
+  const code = (currency ?? "").trim().toUpperCase() || "(currency unknown)";
   return `$${(amountCents / 100).toFixed(2)} ${code}`;
 }
 

@@ -48,6 +48,7 @@ import {
   sendBookingNotificationToPractitioner,
 } from "@/lib/email/send-appointment";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
+import { stampPublicBookingConsent } from "@/lib/booking/public-consent-stamp";
 import { normalizePhoneForMatch } from "@/lib/sms/twilio";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
@@ -209,25 +210,32 @@ export async function fetchPublicSlotsAction(params: {
   }
   if (!service) return { ok: false, error: "Service not found." };
 
-  const slots = await getAvailableSlots(
-    admin,
-    {
-      id: studio.id,
-      timezone: studio.timezone,
-      default_appointment_duration_minutes:
-        studio.default_appointment_duration_minutes,
-      buffer_minutes: studio.buffer_minutes,
-    },
-    params.date,
-    service.default_duration_minutes,
-  );
-  // Public-only past-time guard: never offer a slot whose start instant is
-  // already in the past (today's earlier hours). Shared helper in
-  // lib/booking/slots.ts so public booking + public reschedule cannot
-  // drift apart (PR #149). No lead-time buffer here.
-  // The shared getAvailableSlots() is untouched, so the internal calendar
-  // quick-book drawer (app/(app)/calendar/actions.ts) is unaffected.
-  return { ok: true, slots: filterFutureSlots(slots) };
+  // Discovery has a structured retryable refusal, never fabricated availability.
+  try {
+    const slots = await getAvailableSlots(
+      admin,
+      {
+        id: studio.id,
+        timezone: studio.timezone,
+        default_appointment_duration_minutes:
+          studio.default_appointment_duration_minutes,
+        buffer_minutes: studio.buffer_minutes,
+      },
+      params.date,
+      service.default_duration_minutes,
+    );
+    // Public-only past-time guard: never offer a slot whose start instant is
+    // already in the past (today's earlier hours). Shared helper in
+    // lib/booking/slots.ts so public booking + public reschedule cannot
+    // drift apart (PR #149). No lead-time buffer here.
+    // The shared getAvailableSlots() is untouched, so the internal calendar
+    // quick-book drawer (app/(app)/calendar/actions.ts) is unaffected.
+    return { ok: true, slots: filterFutureSlots(slots) };
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.startsWith("availability_read_failed:")) throw err;
+    logInternalBookingError("public_slots_availability_read_failed", { studioId: studio.id });
+    return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -754,24 +762,31 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // UTC date: a 10pm Toronto booking would otherwise look up slots
   // for the next calendar day.
   const dateStr = localDateString(start, studio.timezone);
-  const slots = await getAvailableSlots(
-    admin,
-    {
-      id: studio.id,
-      timezone: studio.timezone,
-      default_appointment_duration_minutes:
-        studio.default_appointment_duration_minutes,
-      buffer_minutes: studio.buffer_minutes,
-    },
-    dateStr,
-    service.default_duration_minutes,
-  );
-  const free = slots.some((s) => new Date(s.start).getTime() === start.getTime());
-  if (!free) {
-    return {
-      ok: false,
-      error: "That time is no longer available. Please choose another time.",
-    };
+  // Advisory only: a classified failed read defers to the locked command.
+  // Discovery still fails closed; successful empty reads still refuse here.
+  try {
+    const slots = await getAvailableSlots(
+      admin,
+      {
+        id: studio.id,
+        timezone: studio.timezone,
+        default_appointment_duration_minutes:
+          studio.default_appointment_duration_minutes,
+        buffer_minutes: studio.buffer_minutes,
+      },
+      dateStr,
+      service.default_duration_minutes,
+    );
+    const free = slots.some((s) => new Date(s.start).getTime() === start.getTime());
+    if (!free) {
+      return {
+        ok: false,
+        error: "That time is no longer available. Please choose another time.",
+      };
+    }
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.startsWith("availability_read_failed:")) throw err;
+    logInternalBookingError("public_booking_advisory_read_failed", { studioId: studio.id });
   }
 
   const end = new Date(start.getTime() + service.default_duration_minutes * 60_000);
@@ -1013,27 +1028,25 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
         submittedDigits.length > 0 &&
         submittedDigits === storedDigits
       ) {
-        const nowIso = new Date().toISOString();
-        const { error: consentErr } = await admin
-          .from("clients")
-          .update({
-            sms_consent_at: nowIso,
-            sms_consent_source: "public_booking",
-          })
-          .eq("id", resolvedClientId);
-        if (consentErr) {
+        // G3 / 0211: consent is write-once, so the stamp is a conditional
+        // FIRST write; an overlapping booking that got there first, or a STOP
+        // that landed meanwhile, is adopted from the row rather than lost
+        // (lib/booking/public-consent-stamp.ts).
+        const stamp = await stampPublicBookingConsent(admin, existingClient.id, new Date().toISOString());
+        if (stamp.result === "error") {
           // Soft fail. The booking and the email path must not break
           // because of a consent-stamp error; future bookings can
           // re-attempt. We log a sanitized error and proceed.
           // PR #261: sqlstate code + studioId + salted email
           // fingerprint; drop raw DB message.
           logInternalBookingError("public_booking_sms_consent_update_failed", {
-            code: consentErr.code,
+            code: stamp.code,
             studioId: studio.id,
             emailFingerprint: hashFingerprint(normalizedEmail),
           });
         } else {
-          clientSmsConsentAt = nowIso;
+          clientSmsConsentAt = stamp.smsConsentAt;
+          clientSmsOptedOutAt = stamp.smsOptedOutAt;
         }
       }
     }
