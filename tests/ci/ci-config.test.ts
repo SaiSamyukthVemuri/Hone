@@ -750,8 +750,22 @@ describe("PR CI — path-aware lane selection", () => {
 
   it("the script bounds the install, retries once on another mirror, and round-trips the .deb cache", () => {
     const script = readFileSync("scripts/ci/playwright-system-deps.sh", "utf8");
-    expect(script).toMatch(/timeout --kill-after=\S+ "\$FIRST" npx playwright install-deps chromium/);
-    expect(script).toMatch(/timeout --kill-after=\S+ "\$RETRY" npx playwright install-deps chromium/);
+    // The time limit is INSIDE sudo (Codex P1 r4362059036): an unprivileged
+    // timeout kills npx but not root's apt-get, which keeps the dpkg/apt locks.
+    expect(script).toMatch(/sudo env "PATH=\$PATH" timeout --kill-after="\$KILL_AFTER" "\$1" npx playwright install-deps chromium/);
+    expect(script).toMatch(/install_deps "\$FIRST"/);
+    expect(script).toMatch(/install_deps "\$RETRY"/);
+    const unprivileged = script.split("\n").filter((l) => /^\s*timeout\b.*playwright install-deps/.test(l));
+    expect(unprivileged, "no install-deps under a timeout that runs outside sudo").toEqual([]);
+    // Before the retry: apt quiet (processes + lock holders), else fail loudly; dpkg repaired.
+    for (const lock of ["/var/lib/dpkg/lock-frontend", "/var/lib/apt/lists/lock", "/var/cache/apt/archives/lock"]) expect(script).toContain(lock);
+    expect(script).toMatch(/sudo fuser "\$lock"/);
+    expect(script).toMatch(/pgrep -a -x apt-get/);
+    expect(script).toMatch(/pgrep -a -x dpkg/);
+    expect(script).toMatch(/::error::apt is still busy/);
+    const repair = script.indexOf('sudo timeout --kill-after="$KILL_AFTER" 120 dpkg --configure -a');
+    expect(repair, "dpkg is repaired as root, under its own bound").toBeGreaterThan(script.indexOf("::error::apt is still busy"));
+    expect(repair).toBeLessThan(script.indexOf('install_deps "$RETRY"'));
     expect(script).toMatch(/FIRST="\$\{PW_DEPS_FIRST_TIMEOUT:-180\}"/);
     expect(script).toMatch(/azure\\\.archive\\\.ubuntu\\\.com\|archive\.ubuntu\.com/);
   });

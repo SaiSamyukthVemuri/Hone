@@ -4,105 +4,155 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-// scripts/ci/playwright-system-deps.sh, EXECUTED: the real script against a fake
-// `npx` and a pass-through `sudo`, with every apt path redirected into a
-// throwaway directory. Never touches the host's /etc/apt or /var/cache/apt.
+// scripts/ci/playwright-system-deps.sh, EXECUTED against fakes that model the
+// PRIVILEGE BOUNDARY (Codex P1 r4362059036, #1059):
+//   - fake `sudo` runs its command in a NEW SESSION (setsid -w), so a signal
+//     from an unprivileged `timeout` outside it cannot reach what it started,
+//     exactly as a user cannot signal root's apt-get;
+//   - fake `npx` behaves like Playwright's install-deps: as "root" (inside
+//     sudo) it runs apt-get itself, otherwise it calls `sudo apt-get`;
+//   - fake `apt-get` holds an apt lock file open (flock) like dpkg does, and
+//     refuses with "Could not get lock" (exit 100) when it is already held.
+// Every apt path lives in a throwaway directory: the host's /etc/apt,
+// /var/lib/dpkg and /var/cache/apt are never touched.
 
 const SCRIPT = path.resolve(__dirname, "../../scripts/ci/playwright-system-deps.sh");
 const scratch: string[] = [];
 afterEach(() => {
-  for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of scratch.splice(0)) {
+    // Every fake apt process, including one that escaped its group (and the
+    // stalled ones the OLD script could not kill), holds this test's lock file
+    // open, so killing its holders reaps them all; then anything named by path.
+    spawnSync("fuser", ["-k", "-KILL", path.join(dir, "lock-frontend")], { stdio: "ignore" });
+    spawnSync("pkill", ["-KILL", "-f", dir]);
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-type Mode = "ok" | "stall-then-ok" | "stall" | "fail";
+type Mode = "ok" | "stall-then-ok" | "stall" | "stall-leak" | "fail";
 
-function run(mode: Mode, opts: { cached?: string[] } = {}) {
+function setup(mode: Mode, cached: string[] = []) {
   const dir = mkdtempSync(path.join(tmpdir(), "hone-pw-deps-"));
   scratch.push(dir);
   const bin = path.join(dir, "bin");
   const archives = path.join(dir, "archives");
   const cache = path.join(dir, "apt-debs");
   const mirrors = path.join(dir, "apt-mirrors.txt");
+  const lock = path.join(dir, "lock-frontend");
   const trace = path.join(dir, "trace");
   for (const d of [bin, archives]) mkdirSync(d);
-  if (opts.cached) {
+  if (cached.length) {
     mkdirSync(cache);
-    for (const f of opts.cached) writeFileSync(path.join(cache, f), "deb");
+    for (const f of cached) writeFileSync(path.join(cache, f), "deb");
   }
   writeFileSync(mirrors, "http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n");
-  // npx: records each call with the mirror it saw; "downloads" one .deb on success.
-  writeFileSync(
-    path.join(bin, "npx"),
-    `#!/bin/bash
-n=$(( $(cat "${dir}/count" 2>/dev/null || echo 0) + 1 )); echo $n > "${dir}/count"
-echo "npx $* | mirror=$(cut -f1 "${mirrors}")" >> "${trace}"
+  writeFileSync(lock, "");
+  const exe = (name: string, body: string) => {
+    writeFileSync(path.join(bin, name), `#!/bin/bash\n${body}\n`);
+    chmodSync(path.join(bin, name), 0o755);
+  };
+  exe("sudo", 'export FAKE_ROOT=1\nexec setsid -w "$@"');
+  exe(
+    "npx",
+    `echo "npx $* | root=\${FAKE_ROOT:-0} | mirror=$(cut -f1 "${mirrors}")" >> "${trace}"
+if [ "\${FAKE_ROOT:-0}" = 1 ]; then apt-get install; else sudo apt-get install; fi`,
+  );
+  exe(
+    "apt-get",
+    `n=$(( $(cat "${dir}/count" 2>/dev/null || echo 0) + 1 )); echo $n > "${dir}/count"
+exec 9>>"${lock}"
+flock -n 9 || { echo "E: Could not get lock ${lock}" >&2; echo "apt-get #$n: lock busy" >> "${trace}"; exit 100; }
 case "${mode}" in
   ok) ;;
   fail) exit 2 ;;
-  stall) sleep 30 ;;
-  stall-then-ok) [ $n -eq 1 ] && sleep 30 ;;
+  stall) sleep 60 ;;
+  stall-leak) setsid sleep 60 < /dev/null > /dev/null 2>&1 & sleep 60 ;;
+  stall-then-ok) [ $n -eq 1 ] && sleep 60 ;;
 esac
-touch "${archives}/libnss3_${"$"}{n}.deb"
-`,
+touch "${archives}/libnss3_$n.deb"`,
   );
-  writeFileSync(path.join(bin, "sudo"), '#!/bin/bash\nexec "$@"\n');
-  for (const f of ["npx", "sudo"]) chmodSync(path.join(bin, f), 0o755);
-  const result = spawnSync("bash", [SCRIPT], {
-    encoding: "utf8",
-    timeout: 30_000,
-    env: {
-      PATH: `${bin}:/usr/bin:/bin`,
-      NODE_ENV: "test",
-      HOME: dir,
-      PW_DEB_CACHE_DIR: cache,
-      APT_ARCHIVES_DIR: archives,
-      APT_MIRROR_FILES: `${mirrors} ${path.join(dir, "absent.sources")}`,
-      PW_DEPS_FIRST_TIMEOUT: "1",
-      PW_DEPS_RETRY_TIMEOUT: "1",
-    },
-  });
-  const calls = existsSync(trace) ? readFileSync(trace, "utf8").trim().split("\n") : [];
-  const ls = (d: string) => (existsSync(d) ? readdirSync(d).sort() : []);
-  return { ...result, calls, archives: ls(archives), cache: ls(cache), mirror: readFileSync(mirrors, "utf8") };
+  exe("dpkg", `echo "dpkg $*" >> "${trace}"`);
+  const env: NodeJS.ProcessEnv = {
+    PATH: `${bin}:/usr/bin:/bin`,
+    NODE_ENV: "test",
+    HOME: dir,
+    PW_DEB_CACHE_DIR: cache,
+    APT_ARCHIVES_DIR: archives,
+    APT_MIRROR_FILES: `${mirrors} ${path.join(dir, "absent.sources")}`,
+    APT_LOCK_FILES: lock,
+    PW_DEPS_FIRST_TIMEOUT: "1",
+    PW_DEPS_RETRY_TIMEOUT: "2",
+    PW_DEPS_KILL_AFTER: "1",
+    PW_DEPS_SETTLE_SECONDS: "2",
+  };
+  const run = () => {
+    const started = Date.now();
+    const r = spawnSync("bash", [SCRIPT], { encoding: "utf8", timeout: 45_000, env });
+    const calls = existsSync(trace) ? readFileSync(trace, "utf8").trim().split("\n") : [];
+    const ls = (d: string) => (existsSync(d) ? readdirSync(d).sort() : []);
+    // What is still alive from this test, and whether anything holds the lock.
+    const alive = spawnSync("pgrep", ["-a", "-f", dir], { encoding: "utf8" }).stdout.trim();
+    const lockHeld = spawnSync("fuser", [lock]).status === 0;
+    return { ...r, ms: Date.now() - started, calls, archives: ls(archives), cache: ls(cache), mirror: readFileSync(mirrors, "utf8"), alive, lockHeld };
+  };
+  return { dir, lock, run };
 }
 
-describe("playwright-system-deps.sh: cached, bounded, retried once on a stall", () => {
-  it("a healthy install runs once, keeps the mirror, and saves the downloaded .debs for the cache", () => {
-    const r = run("ok");
+describe("playwright-system-deps.sh: cached, bounded INSIDE sudo, retried once on a clean apt", () => {
+  it("a healthy install runs once, inside sudo, keeps the mirror, and saves the .debs for the cache", () => {
+    const r = setup("ok").run();
     expect(r.status, r.stderr).toBe(0);
-    expect(r.calls).toEqual(["npx playwright install-deps chromium | mirror=http://azure.archive.ubuntu.com/ubuntu/"]);
+    expect(r.calls).toEqual(["npx playwright install-deps chromium | root=1 | mirror=http://azure.archive.ubuntu.com/ubuntu/"]);
     expect(r.mirror).toContain("azure.archive.ubuntu.com");
     expect(r.cache).toEqual(["libnss3_1.deb"]);
   });
 
   it("cached .debs are put where apt looks BEFORE the install runs", () => {
-    const r = run("ok", { cached: ["libgbm1_1.deb", "libnss3_0.deb"] });
+    const r = setup("ok", ["libgbm1_1.deb", "libnss3_0.deb"]).run();
     expect(r.status, r.stderr).toBe(0);
     expect(r.archives).toEqual(expect.arrayContaining(["libgbm1_1.deb", "libnss3_0.deb"]));
     expect(r.stdout).toContain("restored 2 cached .deb file(s)");
   });
 
-  it("a STALLED install is cut off, the mirror switches to archive.ubuntu.com, and the retry succeeds", () => {
-    const r = run("stall-then-ok");
-    expect(r.status, r.stderr).toBe(0);
+  it("a STALLED privileged apt is killed within the bound and releases its lock; dpkg is repaired; the retry runs on archive.ubuntu.com", () => {
+    const r = setup("stall-then-ok").run();
+    expect(r.status, r.stdout + r.stderr).toBe(0);
     expect(r.calls).toEqual([
-      "npx playwright install-deps chromium | mirror=http://azure.archive.ubuntu.com/ubuntu/",
-      "npx playwright install-deps chromium | mirror=http://archive.ubuntu.com/ubuntu/",
+      "npx playwright install-deps chromium | root=1 | mirror=http://azure.archive.ubuntu.com/ubuntu/",
+      "dpkg --configure -a",
+      "npx playwright install-deps chromium | root=1 | mirror=http://archive.ubuntu.com/ubuntu/",
     ]);
-    expect(r.stdout).toContain("::warning::Playwright system packages did not install within 1s");
+    expect(r.calls.join("\n"), "the retry never met a held lock").not.toContain("lock busy");
+    expect(r.alive, "no apt process from the stalled attempt survives").toBe("");
+    expect(r.lockHeld).toBe(false);
     expect(r.cache).toEqual(["libnss3_2.deb"]);
-  });
+    expect(r.ms, "1 s limit + 1 s kill-after, not the 60 s stall").toBeLessThan(15_000);
+  }, 30_000);
 
-  it("a stall that outlasts the retry fails the step (bounded, never unbounded)", () => {
-    const started = Date.now();
-    const r = run("stall");
+  it("a stall that outlasts the retry fails the step, bounded, and leaves nothing running", () => {
+    const r = setup("stall").run();
     expect(r.status).not.toBe(0);
-    expect(r.calls).toHaveLength(2);
-    expect(Date.now() - started, "both attempts were cut off").toBeLessThan(20_000);
-  });
+    expect(r.calls.filter((c) => c.startsWith("npx"))).toHaveLength(2);
+    expect(r.alive).toBe("");
+    expect(r.lockHeld).toBe(false);
+    expect(r.ms).toBeLessThan(20_000);
+  }, 30_000);
+
+  it("a lock still held after the kill window FAILS LOUDLY and never retries into it", () => {
+    // The stalled apt leaves a child that escaped its process group (setsid)
+    // still holding the inherited lock descriptor: something the timeout's
+    // group kill cannot reach.
+    const t = setup("stall-leak");
+    const r = t.run();
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("::error::apt is still busy 2s after the timed-out install was killed; not retrying into a held lock:");
+    expect(r.stdout).toContain(`lock held: ${t.lock}`);
+    expect(r.calls.filter((c) => c.startsWith("npx")), "no retry").toHaveLength(1);
+    expect(r.calls, "no dpkg repair while apt is busy").not.toContain("dpkg --configure -a");
+  }, 30_000);
 
   it("a NON-timeout failure is returned as-is: no mirror switch, no retry", () => {
-    const r = run("fail");
+    const r = setup("fail").run();
     expect(r.status).toBe(2);
     expect(r.calls).toHaveLength(1);
     expect(r.mirror).toContain("azure.archive.ubuntu.com");
