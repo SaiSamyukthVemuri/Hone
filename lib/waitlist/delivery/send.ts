@@ -5,6 +5,7 @@ import {
 } from "@/lib/email/new-client-waitlist-send";
 import { studioEmailIdentity } from "@/lib/email/studio-identity";
 import { buildWaitlistInvitationEmail } from "@/lib/email/templates/waitlist-invitation";
+import { emailWaitlistReference } from "@/lib/email/waitlist-reference";
 import { buildWaitlistRecipientProofEmail } from "@/lib/email/templates/waitlist-recipient-proof";
 import {
   challengeMailability,
@@ -251,6 +252,9 @@ export async function sendWaitlistInvitationEmail(args: {
     // minted window was stable but claimed "3 days" on a send made a day after
     // issuance. A fixed point is stable AND stays true when delivery is late.
     expiresAtLabel: invitationExpiryLabel(args.expiresAt),
+    // Per-invitation subject reference (the email subject sweep). Derived from
+    // the invitation id, the same event this send is keyed on.
+    invitationReference: emailWaitlistReference(args.invitationId),
   });
 
   // THE SEND STAYS ON HONE'S PLATFORM IDENTITY — no `studioIdentity` below,

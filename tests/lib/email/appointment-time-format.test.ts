@@ -43,6 +43,7 @@ function baseConfirmationFixture() {
     intakeUrl: null,
     preCareInstructions: null,
     treatmentTimeLine: null,
+    bookingReference: "K3M9QX",
   };
 }
 
@@ -88,6 +89,7 @@ describe("practitioner notification email also renders with AM/PM", () => {
       // field; null here keeps the AM/PM assertion focused on time
       // formatting without rendering the new attribution row.
       referralSourceLabel: null,
+      bookingReference: "K3M9QX",
     });
     expect(out.html).toContain("11:00 AM to 12:00 PM");
     expect(out.text).toContain("11:00 AM to 12:00 PM");
@@ -97,6 +99,7 @@ describe("practitioner notification email also renders with AM/PM", () => {
 describe("cancellation email renders the start time with AM/PM", () => {
   it("html includes '11:00 AM' (single time, not a range)", () => {
     const out = buildCancellationEmail({
+      bookingReference: "K3M9QX",
       recipientName: "Sarah Wong",
       clientName: "Sarah Wong",
       studioName: "Willow Electrolysis",
@@ -120,8 +123,9 @@ describe("cancellation email renders the start time with AM/PM", () => {
 });
 
 describe("24h reminder subject + body render with AM/PM", () => {
-  it("subject line contains '11:00 AM'", () => {
+  it("body carries '11:00 AM'; the subject carries no time (#828 subject rule)", () => {
     const out = build24hReminderEmail({
+      bookingReference: "K3M9QX",
       clientName: "Sarah Wong",
       studioName: "Willow Electrolysis",
       studioAddress: null,
@@ -136,7 +140,7 @@ describe("24h reminder subject + body render with AM/PM", () => {
       preCareInstructions: null,
       treatmentTimeLine: null,
     });
-    expect(out.subject).toContain("11:00 AM");
+    expect(out.subject).not.toMatch(/\d{1,2}:\d{2}|AM|PM/);
     // The body uses the range label.
     expect(out.html).toContain("11:00 AM to 12:00 PM");
     expect(out.text).toContain("11:00 AM to 12:00 PM");
@@ -144,6 +148,7 @@ describe("24h reminder subject + body render with AM/PM", () => {
 
   it("does NOT regress to bare 24h '11:00 to 12:00' in body", () => {
     const out = build24hReminderEmail({
+      bookingReference: "K3M9QX",
       clientName: "Sarah Wong",
       studioName: "Willow Electrolysis",
       studioAddress: null,
@@ -164,8 +169,9 @@ describe("24h reminder subject + body render with AM/PM", () => {
 });
 
 describe("2h reminder subject + body render with AM/PM", () => {
-  it("subject line contains '11:00 AM'", () => {
+  it("body carries '11:00 AM'; the subject carries no time (#828 subject rule)", () => {
     const out = build2hReminderEmail({
+      bookingReference: "K3M9QX",
       clientName: "Sarah Wong",
       studioName: "Willow Electrolysis",
       studioAddress: null,
@@ -180,7 +186,7 @@ describe("2h reminder subject + body render with AM/PM", () => {
       preCareInstructions: null,
       treatmentTimeLine: null,
     });
-    expect(out.subject).toContain("11:00 AM");
+    expect(out.subject).not.toMatch(/\d{1,2}:\d{2}|AM|PM/);
     expect(out.html).toContain("11:00 AM to 12:00 PM");
     expect(out.text).toContain("11:00 AM to 12:00 PM");
   });
@@ -189,6 +195,7 @@ describe("2h reminder subject + body render with AM/PM", () => {
 describe("postcare email greeting renders the appointment time with AM/PM", () => {
   it("html and text bodies include '11:00 AM'", () => {
     const out = buildPostcareEmail({
+      bookingReference: "K3M9QX",
       clientName: "Sarah Wong",
       studioName: "Willow Electrolysis",
       studioEmail: "willow@example.com",

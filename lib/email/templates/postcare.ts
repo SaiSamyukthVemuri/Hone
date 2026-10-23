@@ -1,5 +1,7 @@
 import { localTimeString12h } from "@/lib/booking/tz";
 import { markdownLiteToHtml } from "@/lib/email/markdown-lite";
+import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
+import { withReference } from "@/lib/email/subject-reference";
 
 // Postcare email template (v1).
 //
@@ -45,14 +47,15 @@ function textBlockToHtml(text: string | null | undefined): string {
   return markdownLiteToHtml(text);
 }
 
-// First name extraction. Falls back to the full name when there's no
-// whitespace split. Used for the greeting only; the appointment record
-// stores the full name.
-function firstNameOf(fullName: string): string {
-  const trimmed = fullName.trim();
-  if (trimmed.length === 0) return "there";
-  const first = trimmed.split(/\s+/)[0];
-  return first || trimmed;
+// PREVIEW RULE (HIPAA-READY-01, #828): a mail client that strips the
+// preheader's invisible filler shows the preheader followed by the first body
+// text. A postcare email exists because a treatment happened, so its OPENING
+// names only the studio: no greeting by name, no visit date, no "aftercare".
+// The settings preview shows this same opening, so the two cannot drift. It
+// takes the STUDIO name only (Codex P2 4354990824): the practitioner is named
+// later, in the "contact ... directly" line, outside the preview window.
+export function postcareOpening(studioName: string): string {
+  return `A message from ${studioName}, with what to do for the next little while. Please read it when you have a moment.`;
 }
 
 export type PostcareEmailInputs = {
@@ -76,6 +79,9 @@ export type PostcareEmailInputs = {
   // When null/empty, the existing neutral default is used. The
   // prompt itself is rendered ONLY when reviewUrl is also set.
   reviewPromptText?: string | null;
+  // Per-booking label (lib/email/booking-reference.ts): two visits' postcare
+  // must not thread together (tests/lib/email/email-subject-sweep.test.ts).
+  bookingReference: string;
 };
 
 export type PostcareEmail = {
@@ -87,13 +93,24 @@ export type PostcareEmail = {
   preview: string;
 };
 
+// SUBJECT RULE (HIPAA-READY-01, #828): "Aftercare for your appointment" told
+// anyone who sees the inbox that a treatment took place. The body keeps it.
+// The settings preview shows this same subject, so the two cannot drift. The
+// per-booking reference keeps separate visits in separate threads; the preview,
+// which has no booking, passes POSTCARE_PREVIEW_REFERENCE.
+export function postcareSubject(studioName: string, bookingReference: string): string {
+  return withReference(`A message from ${studioName}`, bookingReference);
+}
+
+/** What the settings preview shows in place of a real booking reference. */
+export const POSTCARE_PREVIEW_REFERENCE = "(booking reference)";
+
 export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
-  const greetingName = firstNameOf(p.clientName);
   const studioLine = p.practitionerName
     ? `${p.practitionerName} at ${p.studioName}`
     : p.studioName;
   // PR #157 patch. Postcare references "your appointment on X at Y"
-  // in the greeting; 12h matches the rest of the client-facing email
+  // in its second line (after the opening); 12h matches the rest of the client-facing email
   // surfaces so a single recipient does not see "11:00" on one email
   // and "11:00 AM" on the next.
   const appointmentLine = p.startsAt
@@ -107,14 +124,14 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
   const warningHtml = textBlockToHtml(p.warningSignsText);
   const productsHtml = textBlockToHtml(p.productRecommendationsText);
 
-  const subject = `Aftercare for your appointment with ${p.studioName}`;
+  const subject = postcareSubject(p.studioName, p.bookingReference);
 
   const htmlSections: string[] = [];
   htmlSections.push(
-    `<p>Hi ${escapeHtml(greetingName)},</p>`,
+    `<p>${escapeHtml(postcareOpening(p.studioName))}</p>`,
     `<p>Thanks for coming in${
       appointmentLine ? ` on ${escapeHtml(appointmentLine)}` : ""
-    }. Here's what to do for the next little while.</p>`,
+    }.</p>`,
   );
   if (p.serviceName) {
     htmlSections.push(
@@ -176,17 +193,18 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
     );
   }
 
+  htmlSections.push(
+    `<p style="margin-top:16px;color:#6B6B6B;font-size:12px;">Booking reference: ${escapeHtml(p.bookingReference.trim())}</p>`,
+  );
   const html = `<!doctype html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0A0A0A;line-height:1.55;">${htmlSections.join(
     "\n",
   )}</body></html>`;
 
   // Plain-text version + practitioner preview share the same content.
   const textSections: string[] = [];
-  textSections.push(`Hi ${greetingName},`);
+  textSections.push(postcareOpening(p.studioName));
   textSections.push(
-    `Thanks for coming in${
-      appointmentLine ? ` on ${appointmentLine}` : ""
-    }. Here's what to do for the next little while.`,
+    `Thanks for coming in${appointmentLine ? ` on ${appointmentLine}` : ""}.`,
   );
   if (p.serviceName) {
     textSections.push(`Service: ${p.serviceName}`);
@@ -221,7 +239,13 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
         : "If you had a good experience, reviews help small businesses";
     textSections.push("", `${promptCopy}: ${p.reviewUrl}`);
   }
+  textSections.push("", `Booking reference: ${p.bookingReference.trim()}`);
   const text = textSections.join("\n");
 
-  return { subject, html, text, preview: text };
+  return {
+    subject,
+    html: withPreheader(html, clientPreheader(p.studioName)),
+    text: withTextPreheader(text, clientPreheader(p.studioName)),
+    preview: text,
+  };
 }

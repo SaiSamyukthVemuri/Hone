@@ -26,6 +26,7 @@ const baseConf = {
   intakeUrl: null,
   preCareInstructions: null,
   treatmentTimeLine: null,
+  bookingReference: "K3M9QX",
 };
 const baseRem = {
   clientName: "Sam",
@@ -41,6 +42,7 @@ const baseRem = {
   rescheduleUrl: "https://hone.care/reschedule/APPTTOK",
   preCareInstructions: null,
   treatmentTimeLine: null,
+  bookingReference: "K3M9QX",
 };
 
 function assertPortalCta(email: { html: string; text: string }) {
