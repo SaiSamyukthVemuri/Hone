@@ -1,4 +1,4 @@
-import { clientPreheader, withPreheader } from "@/lib/email/preheader";
+import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 // Practitioner-triggered intake reissue email (PR: intake reissue +
 // history). Sent when the practitioner clicks "Request intake update"
 // from the client profile. Distinct from the booking-confirmation
@@ -21,9 +21,12 @@ export function buildIntakeRequestEmail(p: {
 }): IntakeRequestEmail {
   const studioName = p.studioName.trim() || "Your studio";
   const subject = "Please complete your updated intake form";
+  // PREVIEW RULE (HIPAA-READY-01, #828): this sentence opens the body, so a
+  // client that strips the preheader filler previews it. "visit", not
+  // "treatment": the opening states no treatment fact.
 
   const text = [
-    `${studioName} is asking you to complete an updated intake form before your appointment or next treatment.`,
+    `${studioName} is asking you to complete an updated intake form before your appointment or next visit.`,
     "",
     "Please complete it using the secure link below:",
     p.intakeUrl,
@@ -42,7 +45,7 @@ export function buildIntakeRequestEmail(p: {
             <tr>
               <td style="padding:32px;">
                 <p style="margin:0 0 16px 0; font-size:16px; line-height:1.6;">
-                  ${escapeHtml(studioName)} is asking you to complete an updated intake form before your appointment or next treatment.
+                  ${escapeHtml(studioName)} is asking you to complete an updated intake form before your appointment or next visit.
                 </p>
                 <p style="margin:0 0 24px 0; font-size:15px; line-height:1.6; color:#3F3F3F;">
                   Please complete it using the secure link below.
@@ -65,7 +68,7 @@ export function buildIntakeRequestEmail(p: {
   </body>
 </html>`.trim();
 
-  return { subject, html: withPreheader(html, clientPreheader(null)), text };
+  return { subject, html: withPreheader(html, clientPreheader(null)), text: withTextPreheader(text, clientPreheader(null)) };
 }
 
 function escapeHtml(s: string): string {

@@ -1,4 +1,4 @@
-import { clientPreheader, withPreheader } from "@/lib/email/preheader";
+import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 // Client portal magic-link email template.
 //
 // Builds the {subject, html, text} shape that lib/email/send-appointment.ts
@@ -123,5 +123,5 @@ export function buildPortalMagicLinkEmail(
   </table>
 </body></html>`;
 
-  return { subject, html: withPreheader(html, clientPreheader(studio)), text };
+  return { subject, html: withPreheader(html, clientPreheader(studio)), text: withTextPreheader(text, clientPreheader(studio)) };
 }

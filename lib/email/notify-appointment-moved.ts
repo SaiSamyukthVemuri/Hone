@@ -4,7 +4,7 @@ import { sendEmailSafely } from "./send-appointment";
 import { resolveReplyTo, studioClientContactEmail } from "@/lib/email/studio-identity";
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { localLongDate, formatTimeForStudio } from "@/lib/booking/tz";
-import { clientPreheader, withPreheader } from "@/lib/email/preheader";
+import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 
 // Practitioner Move appointment: the NARROW client "appointment updated" notification.
 //
@@ -91,7 +91,6 @@ export async function notifyAppointmentMoved(
 
     const tz = row.studio?.timezone ?? "America/Toronto";
     const start = new Date(row.starts_at);
-    const clientName = row.client?.name ?? "there";
     const serviceName = row.service?.name ?? "your appointment";
     const studioName = row.studio?.name ?? "the studio";
     const dateStr = localLongDate(start, tz);
@@ -134,13 +133,18 @@ export async function notifyAppointmentMoved(
       bodyText = `Your ${serviceName} appointment at ${studioName} has been moved to ${dateStr} at ${timeStr}. Everything else stays the same.`;
     }
 
+    // PREVIEW RULE (HIPAA-READY-01, #828): a client that strips the preheader
+    // filler previews the first body text, so the body opens with a lead that
+    // names only the studio. The client's name is not repeated; the service and
+    // the new time follow the lead.
+    const lead = `${studioName} has updated your appointment. The details are below.`;
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8" /><title>${esc(subject)}</title></head>
 <body style="margin:0;padding:0;background:#FAFAF7;color:#0A0A0A;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FAFAF7;padding:40px 20px;"><tr><td align="center">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
       <tr><td style="padding-bottom:24px;font-family:Georgia,serif;font-weight:700;font-size:18px;">Hone</td></tr>
       <tr><td style="padding-bottom:16px;font-family:Georgia,serif;font-weight:700;font-size:28px;line-height:1.15;">${esc(headline)}</td></tr>
-      <tr><td style="padding-bottom:20px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">Hi ${esc(clientName)},</td></tr>
+      <tr><td style="padding-bottom:20px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">${esc(lead)}</td></tr>
       <tr><td style="padding-bottom:24px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">
         ${bodyHtml}</td></tr>
       <tr><td style="padding-bottom:16px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">
@@ -149,7 +153,10 @@ export async function notifyAppointmentMoved(
   </td></tr></table>
 </body></html>`;
     const htmlWithPreheader = withPreheader(html, clientPreheader(studioName));
-    const text = `Hi ${clientName},\n\n${bodyText}\n\nManage or reschedule: ${manageUrl}\n`;
+    const text = withTextPreheader(
+      `${lead}\n\n${bodyText}\n\nManage or reschedule: ${manageUrl}\n`,
+      clientPreheader(studioName),
+    );
 
     const res = await sendEmailSafely({
       studioIdentity: {

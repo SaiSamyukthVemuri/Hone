@@ -5,11 +5,17 @@
 // the opening body text: appointment details, the service, the time, sometimes
 // the client's name. This module puts a neutral line first, then invisible
 // filler to limit body preview in clients that retain it. Clients that strip
-// the filler can still append sensitive body text; this is partial mitigation.
+// the filler append the start of the body, so every template's body OPENS with
+// text that names only the studio (the PREVIEW RULE in each template), and the
+// plain-text part opens with the same neutral line (withTextPreheader). Both
+// are proved for every preheader-bearing template, over a 140-character
+// preview window, by tests/lib/email/preheader-minimum-necessary.test.ts and
+// tests/lib/email/appointment-moved-preview.test.ts.
 //
 // What this is NOT: it does not make an email PHI-free. The body, the
 // recipient address, the From line and the provider's own records are
-// unchanged, and plain-text-only clients still preview the text part. See
+// unchanged, and a client that shows a longer preview than that window can
+// reach the details that follow the opening. See
 // docs/security/email-provider-visible-inventory.md.
 //
 // Content rule (same as the subject rule in docs/08): the preheader never
@@ -68,4 +74,12 @@ export function withPreheader(html: string, preheader: string): string {
   if (!m) return block + html;
   const at = m.index + m[0].length;
   return html.slice(0, at) + block + html.slice(at);
+}
+
+/**
+ * The plain-text counterpart: a plain-text client previews the start of the
+ * text part, which has no hidden block, so the same neutral line opens it.
+ */
+export function withTextPreheader(text: string, preheader: string): string {
+  return `${preheader}\n\n${text}`;
 }

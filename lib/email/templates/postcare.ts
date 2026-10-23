@@ -1,6 +1,6 @@
 import { localTimeString12h } from "@/lib/booking/tz";
 import { markdownLiteToHtml } from "@/lib/email/markdown-lite";
-import { clientPreheader, withPreheader } from "@/lib/email/preheader";
+import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 
 // Postcare email template (v1).
 //
@@ -46,14 +46,13 @@ function textBlockToHtml(text: string | null | undefined): string {
   return markdownLiteToHtml(text);
 }
 
-// First name extraction. Falls back to the full name when there's no
-// whitespace split. Used for the greeting only; the appointment record
-// stores the full name.
-function firstNameOf(fullName: string): string {
-  const trimmed = fullName.trim();
-  if (trimmed.length === 0) return "there";
-  const first = trimmed.split(/\s+/)[0];
-  return first || trimmed;
+// PREVIEW RULE (HIPAA-READY-01, #828): a mail client that strips the
+// preheader's invisible filler shows the preheader followed by the first body
+// text. A postcare email exists because a treatment happened, so its OPENING
+// names only the studio: no greeting by name, no visit date, no "aftercare".
+// The settings preview shows this same opening, so the two cannot drift.
+export function postcareOpening(studioLine: string): string {
+  return `A message from ${studioLine}, with what to do for the next little while. Please read it when you have a moment.`;
 }
 
 export type PostcareEmailInputs = {
@@ -96,12 +95,11 @@ export function postcareSubject(studioName: string): string {
 }
 
 export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
-  const greetingName = firstNameOf(p.clientName);
   const studioLine = p.practitionerName
     ? `${p.practitionerName} at ${p.studioName}`
     : p.studioName;
   // PR #157 patch. Postcare references "your appointment on X at Y"
-  // in the greeting; 12h matches the rest of the client-facing email
+  // in its second line (after the opening); 12h matches the rest of the client-facing email
   // surfaces so a single recipient does not see "11:00" on one email
   // and "11:00 AM" on the next.
   const appointmentLine = p.startsAt
@@ -119,10 +117,10 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
 
   const htmlSections: string[] = [];
   htmlSections.push(
-    `<p>Hi ${escapeHtml(greetingName)},</p>`,
+    `<p>${escapeHtml(postcareOpening(studioLine))}</p>`,
     `<p>Thanks for coming in${
       appointmentLine ? ` on ${escapeHtml(appointmentLine)}` : ""
-    }. Here's what to do for the next little while.</p>`,
+    }.</p>`,
   );
   if (p.serviceName) {
     htmlSections.push(
@@ -190,11 +188,9 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
 
   // Plain-text version + practitioner preview share the same content.
   const textSections: string[] = [];
-  textSections.push(`Hi ${greetingName},`);
+  textSections.push(postcareOpening(studioLine));
   textSections.push(
-    `Thanks for coming in${
-      appointmentLine ? ` on ${appointmentLine}` : ""
-    }. Here's what to do for the next little while.`,
+    `Thanks for coming in${appointmentLine ? ` on ${appointmentLine}` : ""}.`,
   );
   if (p.serviceName) {
     textSections.push(`Service: ${p.serviceName}`);
@@ -234,7 +230,7 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
   return {
     subject,
     html: withPreheader(html, clientPreheader(p.studioName)),
-    text,
+    text: withTextPreheader(text, clientPreheader(p.studioName)),
     preview: text,
   };
 }

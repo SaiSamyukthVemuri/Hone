@@ -7,7 +7,7 @@ import {
   type IntakeReminderKind,
   type IntakeSectionCopy,
 } from "@/lib/email/templates/intake-reminder";
-import { clientPreheader, withPreheader } from "@/lib/email/preheader";
+import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 
 function escapeHtml(s: string): string {
   return s
@@ -61,6 +61,16 @@ type ReminderProps = {
   intakeUrl?: string | null;
 };
 
+// PREVIEW RULE (HIPAA-READY-01, #828): a mail client that strips the
+// preheader's invisible filler shows the preheader followed by the first body
+// text, so the reminder OPENS with a headline and a lead that name only the
+// studio. When the appointment is, the client's name and the service follow
+// them, out of the preview window. Proved in
+// tests/lib/email/preheader-minimum-necessary.test.ts.
+function reminderLead(studioName: string): string {
+  return `This is a reminder from ${studioName} about your upcoming appointment. The details are below.`;
+}
+
 function reminderHtml(opts: {
   headline: string;
   lead: string;
@@ -71,7 +81,6 @@ function reminderHtml(opts: {
   const { headline, lead, p, intake } = opts;
   const dayStr = dayLabel(p.startsAt, p.timezone);
   const timeStr = rangeLabel(p.startsAt, p.endsAt, p.timezone);
-  const safeClient = escapeHtml(p.clientName);
   const safeStudio = escapeHtml(p.studioName);
   const safeService = escapeHtml(p.serviceName);
   const safePract = p.practitionerName ? escapeHtml(p.practitionerName) : null;
@@ -88,7 +97,7 @@ function reminderHtml(opts: {
           ${escapeHtml(headline)}
         </td></tr>
         <tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6;">
-          Hi ${safeClient},
+          ${escapeHtml(reminderLead(p.studioName))}
         </td></tr>
         <tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6;">
           ${escapeHtml(lead)}
@@ -103,12 +112,11 @@ function reminderHtml(opts: {
         </td></tr>
         ${
           // PLACEMENT IS A PRIVACY CONSTRAINT, not a layout preference.
-          // These templates carry no preheader element, so mail clients
-          // derive preview text from the FIRST visible nodes - brand,
-          // headline, greeting, lead. Keeping the intake section below the
-          // appointment details keeps intake-completion state off the
-          // recipient's lock screen while leaving it the first thing read
-          // after the facts.
+          // A client that strips the preheader filler derives preview text
+          // from the FIRST visible nodes - brand, headline, lead. Keeping the
+          // intake section below the appointment details keeps
+          // intake-completion state off the recipient's lock screen while
+          // leaving it the first thing read after the facts.
           //
           // THE CAVEAT IS LOAD-BEARING, not politeness. Intake state is read
           // LIVE before the send decision, but the client can still submit
@@ -187,7 +195,7 @@ function reminderText(opts: {
   const timeStr = rangeLabel(p.startsAt, p.endsAt, p.timezone);
   return `${headline}
 
-Hi ${p.clientName},
+${reminderLead(p.studioName)}
 
 ${lead}
 
@@ -224,14 +232,14 @@ export function build24hReminderEmail(p: ReminderProps): {
   // on a lock screen and is stored by the email provider, so the time now
   // lives in the headline and body only (12h, as PR #157 chose).
   const subject = `Appointment reminder from ${p.studioName}`;
-  const headline = "Your appointment is tomorrow.";
-  const lead =
-    "This is a reminder that you have an appointment with us tomorrow.";
+  // The headline names no day: "tomorrow" is a relative date (PREVIEW RULE).
+  const headline = "Your appointment is coming up.";
+  const lead = "Your appointment is tomorrow.";
   const intake = intakeSectionFor("24h", p);
   return {
     subject,
     html: withPreheader(reminderHtml({ headline, lead, subject, p, intake }), clientPreheader(p.studioName)),
-    text: reminderText({ headline, lead, p, intake }),
+    text: withTextPreheader(reminderText({ headline, lead, p, intake }), clientPreheader(p.studioName)),
   };
 }
 
@@ -248,7 +256,7 @@ export function build2hReminderEmail(p: ReminderProps): {
   return {
     subject,
     html: withPreheader(reminderHtml({ headline, lead, subject, p, intake }), clientPreheader(p.studioName)),
-    text: reminderText({ headline, lead, p, intake }),
+    text: withTextPreheader(reminderText({ headline, lead, p, intake }), clientPreheader(p.studioName)),
   };
 }
 
@@ -264,10 +272,11 @@ export function buildNoShowFollowupEmail(p: NoShowFollowupProps): {
   text: string;
 } {
   // SUBJECT RULE (HIPAA-READY-01, #828): no date, relative date or attendance
-  // fact in a subject (Codex P1 on #859). The body keeps "We missed you today."
+  // fact in a subject (Codex P1 on #859), and the PREVIEW RULE keeps it out of
+  // the body's opening too. The body still says the client was not seen.
   const subject = `A message from ${p.studioName}`;
-  const safeClient = escapeHtml(p.clientName);
   const safeStudio = escapeHtml(p.studioName);
+  const lead = `This is a note from ${p.studioName} about your recent appointment.`;
 
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" /><title>${escapeHtml(subject)}</title></head>
@@ -277,10 +286,10 @@ export function buildNoShowFollowupEmail(p: NoShowFollowupProps): {
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
         <tr><td style="padding-bottom:24px; font-family:Georgia, serif; font-weight:700; font-size:18px; letter-spacing:-0.02em;">Hone</td></tr>
         <tr><td style="padding-bottom:16px; font-family:Georgia, serif; font-weight:700; font-size:28px; letter-spacing:-0.02em; line-height:1.15;">
-          We missed you today.
+          We hope you&rsquo;re well.
         </td></tr>
         <tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6;">
-          Hi ${safeClient},
+          ${escapeHtml(lead)}
         </td></tr>
         <tr><td style="padding-bottom:24px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6;">
           We didn&rsquo;t see you at your appointment today. We hope everything is okay.
@@ -300,12 +309,18 @@ export function buildNoShowFollowupEmail(p: NoShowFollowupProps): {
   </table>
 </body></html>`;
 
-  const text = `Hi ${p.clientName},
+  const text = `We hope you're well.
+
+${lead}
 
 We didn't see you at your appointment today. We hope everything is okay.
 ${p.rebookUrl ? `\nIf you'd like to rebook: ${p.rebookUrl}\n` : ""}
 ${p.studioName} via Hone
 `;
 
-  return { subject, html: withPreheader(html, clientPreheader(p.studioName)), text };
+  return {
+    subject,
+    html: withPreheader(html, clientPreheader(p.studioName)),
+    text: withTextPreheader(text, clientPreheader(p.studioName)),
+  };
 }

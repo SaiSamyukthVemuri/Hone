@@ -1,4 +1,4 @@
-import { studioPreheader, withPreheader } from "@/lib/email/preheader";
+import { studioPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 // Notification email to the studio side when a client posts a reply
 // to a secure portal message.
 //
@@ -89,5 +89,5 @@ export function buildPortalReplyNotificationEmail(
   </table>
 </body></html>`;
 
-  return { subject, html: withPreheader(html, studioPreheader(studio)), text };
+  return { subject, html: withPreheader(html, studioPreheader(studio)), text: withTextPreheader(text, studioPreheader(studio)) };
 }

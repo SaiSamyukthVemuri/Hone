@@ -1,5 +1,5 @@
 import { localTimeString12h } from "@/lib/booking/tz";
-import { clientPreheader, studioPreheader, withPreheader } from "@/lib/email/preheader";
+import { clientPreheader, studioPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 
 function escapeHtml(s: string): string {
   return s
@@ -33,6 +33,13 @@ function dayLabel(d: Date, tz: string): string {
 function rangeLabel(start: Date, end: Date, tz: string): string {
   return `${localTimeString12h(start, tz)} to ${localTimeString12h(end, tz)}`;
 }
+
+// PREVIEW RULE (HIPAA-READY-01, #828): a mail client that strips the
+// preheader's invisible filler shows the preheader followed by the first body
+// text, so every body OPENS with a line that names only the studio. The
+// client's name, the service, the date and time and any attendance fact come
+// after it, out of the preview window. Proved for every template in
+// tests/lib/email/preheader-minimum-necessary.test.ts.
 
 // PR #160. Prior versions of this template carried a hardcoded
 // "Please arrive 5 minutes early. Wear comfortable clothing. Avoid
@@ -85,11 +92,11 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
   // stay in the body. The studio name is allowed: the From line already
   // shows it.
   const subject = `Your appointment with ${p.studioName} is confirmed`;
-  const safeClient = escapeHtml(p.clientName);
   const safeStudio = escapeHtml(p.studioName);
   const safeService = escapeHtml(p.serviceName);
   const safePract = p.practitionerName ? escapeHtml(p.practitionerName) : null;
   const safeAddress = p.studioAddress ? escapeHtml(p.studioAddress) : null;
+  const lead = `Thank you for booking with ${p.studioName}. Your appointment details, and the links to manage your booking, are below.`;
 
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" /><title>${escapeHtml(subject)}</title></head>
@@ -102,7 +109,7 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
           Your appointment is confirmed.
         </td></tr>
         <tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6;">
-          ${safeClient},
+          ${escapeHtml(lead)}
         </td></tr>
         <tr><td style="padding-bottom:24px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6;">
           You're booked for <strong>${safeService}</strong>${safePract ? ` with ${safePract}` : ""} at <strong>${safeStudio}</strong>.
@@ -166,9 +173,9 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
   </table>
 </body></html>`;
 
-  const text = `${p.clientName},
+  const text = `Your appointment is confirmed.
 
-Your appointment is confirmed.
+${lead}
 
 ${p.serviceName}${p.practitionerName ? ` with ${p.practitionerName}` : ""} at ${p.studioName}
 
@@ -186,7 +193,11 @@ Hone. Charting software for electrolysis and laser practitioners.
 hone.care
 `;
 
-  return { subject, html: withPreheader(html, clientPreheader(p.studioName)), text };
+  return {
+    subject,
+    html: withPreheader(html, clientPreheader(p.studioName)),
+    text: withTextPreheader(text, clientPreheader(p.studioName)),
+  };
 }
 
 type NotifyPractitioner = {
@@ -221,6 +232,7 @@ export function buildPractitionerNotificationEmail(p: NotifyPractitioner): {
   const safeService = escapeHtml(p.serviceName);
   const safePract = escapeHtml(p.practitionerName);
   const safeStudio = escapeHtml(p.studioName);
+  const lead = `A client booked an appointment at ${p.studioName} through Hone. The booking details are below.`;
 
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" /></head>
@@ -234,6 +246,9 @@ export function buildPractitionerNotificationEmail(p: NotifyPractitioner): {
         </td></tr>
         <tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">
           ${safePract},
+        </td></tr>
+        <tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">
+          ${escapeHtml(lead)}
         </td></tr>
         <tr><td style="padding-bottom:24px; border-top:1px solid #E5E2DA; border-bottom:1px solid #E5E2DA; padding-top:24px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.8;">
           <strong>${safeClient}</strong><br/>
@@ -256,6 +271,8 @@ export function buildPractitionerNotificationEmail(p: NotifyPractitioner): {
 
   const text = `New booking at ${p.studioName}.
 
+${lead}
+
 ${p.clientName}
 ${p.clientEmail}${p.clientPhone ? `, ${p.clientPhone}` : ""}
 
@@ -267,7 +284,11 @@ ${p.referralSourceLabel ? `How they heard about us: ${p.referralSourceLabel}\n` 
 Open in Hone: ${p.appointmentUrl}
 `;
 
-  return { subject, html: withPreheader(html, studioPreheader(p.studioName)), text };
+  return {
+    subject,
+    html: withPreheader(html, studioPreheader(p.studioName)),
+    text: withTextPreheader(text, studioPreheader(p.studioName)),
+  };
 }
 
 // Who performed the cancellation. Server-derived from the authoritative
@@ -341,6 +362,11 @@ export function buildCancellationEmail(p: CancellationEmail): {
   const safeStudio = escapeHtml(p.studioName);
   const safeService = escapeHtml(p.serviceName);
 
+  // The heading may say "cancelled": the subject already does. The lead names
+  // only the studio; whose appointment, the service and the time follow it.
+  const lead = p.isClient
+    ? `${p.studioName} has an update about your appointment. The details are below.`
+    : `An appointment at ${p.studioName} has changed. The details are below.`;
   const htmlShell = (bodyRowsHtml: string, ctaHtml: string) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" /></head>
 <body style="margin:0; padding:0; background:#FAFAF7; color:#0A0A0A;">
@@ -350,6 +376,9 @@ export function buildCancellationEmail(p: CancellationEmail): {
         <tr><td style="padding-bottom:24px; font-family:Georgia, serif; font-weight:700; font-size:18px; letter-spacing:-0.02em;">Hone</td></tr>
         <tr><td style="padding-bottom:16px; font-family:Georgia, serif; font-weight:700; font-size:24px; letter-spacing:-0.02em; line-height:1.2;">
           Appointment cancelled.
+        </td></tr>
+        <tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">
+          ${escapeHtml(lead)}
         </td></tr>
         ${bodyRowsHtml}
         ${ctaHtml}
@@ -362,11 +391,9 @@ export function buildCancellationEmail(p: CancellationEmail): {
     // ---- Client-facing email. Behaviour unchanged: the client never sees which
     // internal actor cancelled, only "your appointment ... was cancelled [by the
     // studio]". ----
-    const safeName = escapeHtml(p.recipientName);
-    const lead = `Your ${safeService} appointment at ${safeStudio} on <strong>${escapeHtml(dayStr)}</strong> at ${escapeHtml(timeStr)} has been cancelled${p.actorRole !== "client" ? " by the studio" : ""}.`;
-    const bodyRowsHtml = `<tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">${safeName},</td></tr>
-        <tr><td style="padding-bottom:24px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">
-          ${lead}
+    const detail = `Your ${safeService} appointment at ${safeStudio} on <strong>${escapeHtml(dayStr)}</strong> at ${escapeHtml(timeStr)} has been cancelled${p.actorRole !== "client" ? " by the studio" : ""}.`;
+    const bodyRowsHtml = `<tr><td style="padding-bottom:24px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">
+          ${detail}
           ${p.reason ? `<br/><br/>Reason: ${escapeHtml(p.reason)}` : ""}
         </td></tr>`;
     const ctaHtml = p.rebookUrl
@@ -376,7 +403,7 @@ export function buildCancellationEmail(p: CancellationEmail): {
                 </a>
               </td></tr>`
       : "";
-    const text = `${p.recipientName},
+    const text = `${lead}
 
 Your ${p.serviceName} appointment at ${p.studioName} on ${dayStr} at ${timeStr} has been cancelled${p.actorRole !== "client" ? " by the studio" : ""}.
 ${p.reason ? `\nReason: ${p.reason}` : ""}
@@ -386,7 +413,7 @@ ${p.rebookUrl ? `\nBook another: ${p.rebookUrl}` : ""}
       // SUBJECT RULE (#828): no client name, service, date or time in a subject.
       subject: `Appointment cancelled · ${p.studioName}`,
       html: withPreheader(htmlShell(bodyRowsHtml, ctaHtml), clientPreheader(p.studioName)),
-      text,
+      text: withTextPreheader(text, clientPreheader(p.studioName)),
     };
   }
 
@@ -429,8 +456,14 @@ ${p.rebookUrl ? `\nBook another: ${p.rebookUrl}` : ""}
 
   const text = `Appointment cancelled
 
+${lead}
+
 ${rows.map(([label, value]) => `${label}: ${value}`).join("\n")}
 `;
 
-  return { subject, html: withPreheader(htmlShell(bodyRowsHtml, ""), studioPreheader(p.studioName)), text };
+  return {
+    subject,
+    html: withPreheader(htmlShell(bodyRowsHtml, ""), studioPreheader(p.studioName)),
+    text: withTextPreheader(text, studioPreheader(p.studioName)),
+  };
 }

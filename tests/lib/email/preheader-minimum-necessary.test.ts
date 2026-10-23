@@ -21,6 +21,13 @@ import { buildPortalReplyNotificationEmail } from "@/lib/email/templates/portal-
 import { buildPortalMagicLinkEmail } from "@/lib/email/templates/portal-magic-link";
 import { buildIntakeRequestEmail } from "@/lib/email/templates/intake-request";
 import { buildIntakeReminderEmail } from "@/lib/email/templates/intake-reminder";
+import {
+  FORBIDDEN,
+  plainTextPreview,
+  previewLeaks,
+  previewWindow,
+  simulatedPreview,
+} from "./helpers/email-preview";
 
 // HIPAA-READY-01 (#828): the hidden PREHEADER. A mail client builds its inbox
 // and lock-screen preview from the first text in the HTML body. This proves,
@@ -45,52 +52,6 @@ const STUDIO = "Synthetic Studio";
 const TZ = "America/Toronto";
 const START = new Date("2031-03-04T20:45:00Z");
 const END = new Date("2031-03-04T21:30:00Z");
-const PREVIEW_CHARS = 140;
-
-const FORBIDDEN: RegExp[] = [
-  /Zephyrine/,
-  /Electrolysis|Upper Lip/i,
-  /\b\d{1,2}:\d{2}\b/,
-  /\b(AM|PM)\b/,
-  /\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i,
-  /\b(January|February|March|April|May|June|July|August|September|October|November|December)\b/i,
-  /\b(today|tomorrow|tonight|missed|aftercare|treatment|cancel)/i,
-  /\b2031\b/,
-];
-
-const decode = (s: string) =>
-  s
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-
-/** What a mail client shows as the preview: the first visible-text characters of <body>. */
-function simulatedPreview(html: string): string {
-  const body = html.slice(html.search(/<body\b[^>]*>/i));
-  const text = decode(
-    body
-      .replace(/<(style|title|head)[\s\S]*?<\/\1>/gi, "")
-      .replace(/<[^>]+>/g, " "),
-  );
-  // Filler code points render as nothing; drop them and collapse whitespace.
-  return text
-    .replace(/[ ﻿͏]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, PREVIEW_CHARS);
-}
-
-function previewWindow(html: string): string {
-  // The characters a client takes BEFORE any body text could appear: the
-  // preheader plus the filler, decoded but not collapsed.
-  const body = html.slice(html.search(/<body\b[^>]*>/i));
-  return decode(body.replace(/<[^>]+>/g, "")).slice(0, PREVIEW_CHARS);
-}
-
 const reminderProps = {
   clientName: CLIENT,
   studioName: STUDIO,
@@ -107,7 +68,11 @@ const reminderProps = {
   treatmentTimeLine: null,
 };
 
-type Case = [label: string, build: () => { html: string }, expected: string];
+type Case = [
+  label: string,
+  build: () => { subject: string; html: string; text: string },
+  expected: string,
+];
 
 const cases: Case[] = [
   [
@@ -252,56 +217,38 @@ const cases: Case[] = [
 
 // A client that DROPS the invisible filler (normalizes it away, as
 // simulatedPreview does) shows the neutral line followed directly by the start
-// of the body. The preheader does NOT protect those clients (Codex P2
-// 4301045743): for the templates below, the start of the body carries these
-// forbidden facts. Pinned EXACTLY, so any new leak, or any leak in a template
-// not listed here, fails. Removing them needs the body openings rewritten,
-// which is a copy and design decision (queued via #828), not this test.
-const KNOWN_FILLER_STRIPPING_LEAKS: Record<string, string[]> = {
-  "client confirmation": ["/Zephyrine/"],
-  "cancellation, client-facing": ["/Zephyrine/", "/\\b(today|tomorrow|tonight|missed|aftercare|treatment|cancel)/i"],
-  "cancellation, studio-facing": ["/Zephyrine/", "/\\b(today|tomorrow|tonight|missed|aftercare|treatment|cancel)/i"],
-  "24h reminder": ["/Zephyrine/", "/\\b(today|tomorrow|tonight|missed|aftercare|treatment|cancel)/i"],
-  "2h reminder": ["/Zephyrine/"],
-  "no-show follow-up": ["/Zephyrine/", "/\\b(today|tomorrow|tonight|missed|aftercare|treatment|cancel)/i"],
-  postcare: [
-    "/Zephyrine/",
-    "/\\b\\d{1,2}:\\d{2}\\b/",
-    "/\\b(AM|PM)\\b/",
-    "/\\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\\b/i",
-    "/\\b(January|February|March|April|May|June|July|August|September|October|November|December)\\b/i",
-    "/\\b2031\\b/",
-  ],
-  "intake reminder (no studio name, per the intake rule)": [
-    "/\\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\\b/i",
-    "/\\b(January|February|March|April|May|June|July|August|September|October|November|December)\\b/i",
-    "/\\b2031\\b/",
-  ],
-};
-
+// of the body (Codex P2 4301045743). So the body OPENING is held to the same
+// rule as the preheader: within the preview window it names only the studio.
+// The client's name, the service, the date and time and any attendance or
+// treatment fact come after it. There is no per-template allowance: a leak in
+// any template fails. A fact the subject itself states is not a second
+// disclosure (see previewLeaks).
 describe("every preheader-bearing template: the preview is the neutral preheader only", () => {
   it.each(cases)("%s", (_label, build, expected) => {
-    const { html } = build();
+    const { html, subject } = build();
     // 1. The preheader is the first content of <body>, exactly once.
     const afterBody = html.slice(html.search(/<body\b[^>]*>/i)).replace(/^<body\b[^>]*>/i, "");
     expect(afterBody.startsWith("<div data-hone-preheader")).toBe(true);
     expect(html.match(/data-hone-preheader/g)).toHaveLength(1);
     // 2. The simulated (filler-stripped) preview starts with exactly the
-    //    neutral preheader, and what follows it in that same preview window
-    //    leaks EXACTLY the pinned facts for this template, nothing more.
+    //    neutral preheader, and nothing after it in that window leaks.
     const normalized = simulatedPreview(html);
     expect(normalized.startsWith(expected)).toBe(true);
-    const rest = normalized.slice(expected.length);
-    const leaked = FORBIDDEN.filter((re) => re.test(rest)).map(String).sort();
-    expect(leaked, `filler-stripping preview of ${_label}`).toEqual(
-      [...(KNOWN_FILLER_STRIPPING_LEAKS[_label] ?? [])].sort(),
-    );
+    expect(previewLeaks(subject, normalized.slice(expected.length)), `filler-stripping preview of ${_label}: ${normalized}`).toEqual([]);
     // 3. ...and the client's preview window holds nothing but it and filler.
     const window = previewWindow(html);
     expect(window.startsWith(expected)).toBe(true);
-    expect(window.slice(expected.length)).toMatch(/^[ ﻿͏\s]*$/);
+    expect(window.slice(expected.length)).toMatch(/^[\u2007\ufeff\u034f\s]*$/);
     // 4. The preheader itself carries none of the forbidden facts.
     for (const re of FORBIDDEN) expect(expected).not.toMatch(re);
+  });
+});
+
+describe("every preheader-bearing template: a plain-text client's preview leaks nothing", () => {
+  it.each(cases)("%s", (_label, build) => {
+    const { text, subject } = build();
+    const preview = plainTextPreview(text);
+    expect(previewLeaks(subject, preview), `text-part preview of ${_label}: ${preview}`).toEqual([]);
   });
 });
 

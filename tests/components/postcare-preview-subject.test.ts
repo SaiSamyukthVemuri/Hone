@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PostcarePreviewModal } from "@/app/(app)/settings/studio/PostcareEditingHelpers";
-import { buildPostcareEmail } from "@/lib/email/templates/postcare";
+import { buildPostcareEmail, postcareOpening } from "@/lib/email/templates/postcare";
 
 // The owner's postcare preview must show the subject the client actually
 // receives. #859 changed the sent subject to a minimum-necessary one; the
@@ -51,5 +51,23 @@ describe("postcare preview subject matches the sent subject", () => {
   });
   it("falls back to a neutral studio label before a name is saved", () => {
     expect(previewText("")).toContain(`Subject: ${sentSubject("your studio")}`);
+  });
+});
+
+// HIPAA-READY-01 (#828), PREVIEW RULE: the email now opens without the client's
+// name or the visit date. The settings preview restated the old opening by hand
+// ("Hi (client first name), Thanks for coming in..."), the same drift as F1.
+describe("postcare preview opening matches the sent opening", () => {
+  it("shows the email's own opening line", () => {
+    const sentBody = buildPostcareEmail({
+      clientName: "Synthetic Client", studioName: "Studio Synthetica", studioEmail: null,
+      practitionerName: null, serviceName: null, startsAt: null, timezone: "America/Toronto",
+      aftercareText: null, warningSignsText: null, productRecommendationsText: null, reviewUrl: null,
+    }).preview;
+    expect(sentBody.startsWith(postcareOpening("Studio Synthetica"))).toBe(true);
+    expect(previewText("Studio Synthetica")).toContain(postcareOpening("Studio Synthetica"));
+  });
+  it("never shows a greeting by name", () => {
+    expect(previewText("Studio Synthetica")).not.toMatch(/client first name|\bHi\b/i);
   });
 });

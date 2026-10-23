@@ -26,7 +26,7 @@
 // escape hatch so the message is honest under both races.
 
 import { localTimeString12h } from "@/lib/booking/tz";
-import { clientPreheader, withPreheader } from "@/lib/email/preheader";
+import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 
 export type IntakeReminderKind = "24h" | "2h";
 
@@ -66,6 +66,15 @@ export const INTAKE_STANDALONE_SUBJECT: Readonly<
  */
 export const INTAKE_IGNORE_LINE =
   "If you've already completed it, you can ignore this message.";
+
+/**
+ * PREVIEW RULE (HIPAA-READY-01, #828): the standalone email's second line. A
+ * client that strips the preheader filler previews the first body text, so
+ * the appointment's date and time follow this line instead of opening the
+ * email. It states no completion state either way.
+ */
+export const INTAKE_STANDALONE_LEAD =
+  "You can complete it with the secure link in this message, before your appointment.";
 
 export const INTAKE_LINK_FALLBACK_LINE =
   "If the button does not work, copy and paste this link into your browser:";
@@ -113,6 +122,8 @@ export function buildIntakeReminderEmail(p: {
   const text = [
     heading,
     "",
+    INTAKE_STANDALONE_LEAD,
+    "",
     whenLine,
     "",
     body,
@@ -134,6 +145,9 @@ export function buildIntakeReminderEmail(p: {
               <td style="padding:32px;">
                 <p style="margin:0 0 16px 0; font-size:16px; font-weight:600; line-height:1.5;">
                   ${escapeHtml(heading)}
+                </p>
+                <p style="margin:0 0 16px 0; font-size:16px; line-height:1.6;">
+                  ${escapeHtml(INTAKE_STANDALONE_LEAD)}
                 </p>
                 <p style="margin:0 0 16px 0; font-size:16px; line-height:1.6;">
                   ${escapeHtml(whenLine)}
@@ -162,5 +176,5 @@ export function buildIntakeReminderEmail(p: {
   </body>
 </html>`.trim();
 
-  return { subject, html: withPreheader(html, clientPreheader(null)), text };
+  return { subject, html: withPreheader(html, clientPreheader(null)), text: withTextPreheader(text, clientPreheader(null)) };
 }

@@ -1,4 +1,4 @@
-import { clientPreheader, withPreheader } from "@/lib/email/preheader";
+import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 // Notification email for a new secure portal message.
 //
 // The body is INTENTIONALLY a one-line notification + a link to the
@@ -102,5 +102,5 @@ export function buildPortalMessageNotificationEmail(
   </table>
 </body></html>`;
 
-  return { subject, html: withPreheader(html, clientPreheader(studio)), text };
+  return { subject, html: withPreheader(html, clientPreheader(studio)), text: withTextPreheader(text, clientPreheader(studio)) };
 }
