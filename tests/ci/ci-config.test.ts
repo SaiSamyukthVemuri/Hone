@@ -2135,12 +2135,12 @@ describe("G4 — docs-only changes run the unit tests that read them", () => {
 
   it("the classifier really emits what ci.yml consumes", async () => {
     // @ts-expect-error - .mjs utility ships without type declarations
-    const { classify } = await import("../../scripts/classify-changes.mjs");
-    // A document taken FROM the committed map, never named here: a literal
-    // path in this file would make it look like a reader of that document.
-    const deps = JSON.parse(readFileSync("scripts/test-dependencies.json", "utf8")) as { docReaders: Record<string, string[]> };
+    const { classify, dependenciesFor } = await import("../../scripts/classify-changes.mjs");
+    // A document taken FROM the live scan, never named here: a literal path in
+    // this file would make it look like a reader of that document.
+    const deps = dependenciesFor() as { docReaders: Record<string, string[]> };
     const doc = Object.keys(deps.docReaders).sort()[0];
-    expect(doc, "the committed map names no document reader at all").toBeDefined();
+    expect(doc, "the scan names no document reader at all").toBeDefined();
     const r = classify([doc]) as Record<string, unknown>;
     expect(r.docs_consistency).toBe(true);
     expect(Array.isArray(r.docs_reader_tests) && (r.docs_reader_tests as string[]).length > 0).toBe(true);

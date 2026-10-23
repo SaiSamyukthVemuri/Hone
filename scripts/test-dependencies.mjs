@@ -12,46 +12,60 @@
 //       on the production push (#814);
 //   G2  a tests/db suite IMPORTS a module and exercises it against real RLS,
 //       so editing the module must run the DB lane;
-//   G4  a unit test reads a Markdown document, so a docs-only change to that
-//       document must run that test - a docs-only diff ran no tests at all.
+//   G4  a unit test reads a document, so a docs-only change to that document
+//       must run that test - a docs-only diff ran no tests at all.
 //
-// This scanner derives those edges FROM THE TESTS THEMSELVES, so there is no
-// hand-maintained list to drift. It reads only test files, which is why it is
-// not a second competing path map: the classifier's own rules stay the one
-// map, and this adds the edges a path cannot see.
+// This scanner derives those edges FROM THE TESTS THEMSELVES. It reads only
+// test files, which is why it is not a second competing path map: the
+// classifier's own rules stay the one map, and this adds the edges a path
+// cannot see.
 //
-// The output is committed as scripts/test-dependencies.json so every caller of
-// `classify()` - CI, `npm run ci:plan`, `verify:changed`, ENG-LOOP's local CI
-// model - selects identically without each having to run a scan. A freshness
-// test in tests/ci/classify-changes.test.ts regenerates it from the checkout
-// and fails on any difference, so a PR that adds an edge must commit it.
+// COMPUTED, NEVER COMMITTED. `classify()` runs this over the checkout it is
+// classifying - in CI that is the PR's merge ref, so tests that reached
+// production through OTHER PRs are seen. A committed copy went stale whenever
+// any other PR added a reading test, and its freshness check would have failed
+// the unit lane of unrelated PRs (#1053 round 4, CI run 39889013435).
+//
+// Edges, from the most to the least precise:
+//   - a literal path, or a join/resolve of literals, naming a file;
+//   - a directory named the same way in a test that ENUMERATES directories
+//     (readdirSync, glob, git ls-files): every file beneath it counts as read,
+//     INCLUDING files that do not exist yet - so it is kept as a directory
+//     prefix and matched at classify time, never expanded into today's list;
+//   - a unit test that enumerates AND touches documentation at all is a reader
+//     of EVERY document (`docWildcard`). Its directory usually arrives through a
+//     variable (`readdirSync(ROOT)`, `walk(full)`), which a scanner cannot
+//     follow, so it is selected conservatively (Codex, #1053 4355527598).
 //
 // LIMITS, stated so nobody mistakes this for a proof:
 //   - DIRECT edges only. A transitive import closure would pull most of lib/
 //     into the DB lane; measure before proposing it.
-//   - Paths computed at runtime (a readdir loop, a template with a variable
-//     segment) are not seen. A literal or a join/resolve of literals is.
+//   - A DB suite that enumerates through variables only (no literal directory)
+//     is not seen. Every DB suite that enumerates today names its roots.
+//   - A DB suite that walks a WHOLE top-level source root (app/, lib/,
+//     components/) is REPORTED in `dbRootWalkers` but does not select the DB
+//     lane: honoured, it would run the DB lane for every application change,
+//     which is a CI-cost decision for the operator, not a scanner default.
+//     Today that is tests/db/export-resource-registry.db.test.ts (#1053 round 4).
 //   - A literal that names a MISSING file still counts when it is shaped like a
 //     repository path under a real top-level directory (or is a root document
 //     such as AGENTS.md), so deleting a file a test still reads stays
-//     attributable. The price: paths a test creates inside a throwaway fixture
-//     repository (openwiki/topic/kept-page.md, docs/x.md) are kept too. They are
-//     inert unless that exact path changes here, and then they add a cheap unit
-//     test - over-selection, never a missed lane.
+//     attributable (Codex, #1053 4355376850). The price: paths a test creates
+//     inside a throwaway fixture repository (openwiki/topic/kept-page.md,
+//     docs/x.md) are kept too. They are inert unless that exact path changes
+//     here, and then they add a cheap unit test - over-selection, never a
+//     missed lane.
 //
 // Usage:
 //   node scripts/test-dependencies.mjs           # print the derived map
-//   node scripts/test-dependencies.mjs --write   # regenerate the committed JSON
 // ---------------------------------------------------------------------------
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isDocsPath } from "./classify-changes.mjs";
-
-export const OUTPUT = "scripts/test-dependencies.json";
 
 const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$|\.[cm]?[jt]sx?$/;
+const UNIT_TEST = /\.(test|spec)\.[cm]?[jt]sx?$/;
 const IMPORT_EXT = ["", ".ts", ".tsx", ".mts", ".mjs", ".js", ".jsx", "/index.ts", "/index.tsx", "/index.js"];
 /** Where an edge's TARGET may live. Tests, fixtures and dependencies are never targets. */
 const SOURCE_TARGET = /^(app|lib|components|hooks|types|scripts|supabase|middleware\.[cm]?[jt]s$)/;
@@ -61,48 +75,56 @@ const SKIP_DIRS = new Set(["node_modules", ".next", ".git", "test-results", "pla
 // uses as a fixture. Anywhere else a stray literal only over-selects a cheap
 // test, which is the safe direction; this one file would do it by design.
 const NOT_A_READER = new Set(["tests/ci/classify-changes.test.ts"]);
+/** A test that lists directories rather than naming files. */
+const ENUMERATES = /\b(readdirSync|readdir|opendirSync|opendir|globSync|glob)\s*\(|\bls-files\b/;
+/** ...and touches documentation at all: a `.md` name or a docs/ path. */
+const TOUCHES_DOCS = /\.md\b|["'`]docs["'`/]|\bdocs\//;
 
 const toPosix = (p) => p.split(path.sep).join("/");
 
-function walk(root, rel) {
-  const abs = path.join(root, rel);
-  if (!existsSync(abs)) return [];
-  const out = [];
-  for (const entry of readdirSync(abs, { withFileTypes: true })) {
+function walk(root, rel, out = { files: [], dirs: [] }) {
+  let entries;
+  try {
+    entries = readdirSync(path.join(root, rel), { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
     if (SKIP_DIRS.has(entry.name)) continue;
     const child = rel ? `${rel}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) out.push(...walk(root, child));
-    else if (entry.isFile()) out.push(child);
+    if (entry.isDirectory()) {
+      out.dirs.push(child);
+      walk(root, child, out);
+    } else if (entry.isFile()) out.files.push(child);
   }
   return out;
 }
 
-// ONE walk of the checkout, then set lookups. Statting every string literal
-// in ~1,200 test files cost five seconds; the index costs a fraction of that.
-let index = null;
-const isFile = (root, rel) => {
-  if (!index || index.root !== root) index = { root, files: new Set(walk(root, "")) };
-  return index.files.has(rel);
-};
+/** ONE walk of the checkout per scan, then set lookups. */
+function indexOf(root) {
+  const { files, dirs } = walk(root, "");
+  const top = new Set(dirs.filter((d) => !d.includes("/")));
+  return { files: new Set(files), fileList: files.sort(), dirs: new Set(dirs), top };
+}
 
 /** A repo-relative path, or null when the candidate escapes the repository. */
-function normalise(root, fromDir, candidate) {
+function normalise(fromDir, candidate) {
   const cleaned = candidate.replace(/^\$\{[^}]*\}\/?/, "");
   if (!cleaned || /\$\{/.test(cleaned)) return null;
   const base = /^\.\.?\//.test(cleaned) ? fromDir : "";
   const rel = toPosix(path.posix.normalize(path.posix.join(base, cleaned)));
-  if (rel.startsWith("../") || path.isAbsolute(rel)) return null;
+  if (rel === "." || rel.startsWith("../") || path.isAbsolute(rel)) return null;
   return rel;
 }
 
-function resolveImport(root, fromDir, spec) {
+function resolveImport(idx, fromDir, spec) {
   let base;
   if (spec.startsWith("@/")) base = spec.slice(2);
-  else if (spec.startsWith("./") || spec.startsWith("../")) base = normalise(root, fromDir, spec);
+  else if (spec.startsWith("./") || spec.startsWith("../")) base = normalise(fromDir, spec);
   else return null; // a package, never a repository edge
   if (!base) return null;
   for (const ext of IMPORT_EXT) {
-    if (isFile(root, base + ext)) return base + ext;
+    if (idx.files.has(base + ext)) return base + ext;
   }
   return null;
 }
@@ -117,27 +139,18 @@ const JOIN_CALL = /\b(?:join|resolve)\s*\(([^()]*)\)/g;
 // read: `// lib/practitioner-colors.ts says adding a colour...` in a DB suite
 // would otherwise put that file in the DB lane. Trailing `//` is left alone on
 // purpose - stripping it would also cut "https://..." literals in half.
-const COMMENT_LINE = /^\s*(\/\/|\/\*|\*)/;
-const withoutCommentLines = (text) =>
-  text
-    .split("\n")
-    .filter((line) => !COMMENT_LINE.test(line))
-    .join("\n");
+const COMMENT_LINES = /^[ \t]*(\/\/|\/\*|\*).*$/gm;
+const withoutCommentLines = (text) => text.replace(COMMENT_LINES, "");
 
-let topDirs = null;
 /**
  * A path that does NOT exist is still an edge when a test names it under one
  * of the checkout's real top-level directories (or as a root-level document).
- * Otherwise a PR DELETING a file its tests still read regenerates a map
- * without the edge, classifies the deletion away from those tests, and the
- * ENOENT first surfaces on the production push (Codex, #1053 4355376850).
- * Anchoring to roots that exist keeps prose, URLs and scratch paths out.
+ * Otherwise a PR DELETING a file its tests still read would classify the
+ * deletion away from those tests, and the ENOENT would first surface on the
+ * production push (Codex, #1053 4355376850).
  */
-function attributable(root, rel) {
-  if (isFile(root, rel)) return true;
-  if (!topDirs || topDirs.root !== root) {
-    topDirs = { root, dirs: new Set(readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory() && !SKIP_DIRS.has(e.name)).map((e) => e.name)) };
-  }
+function attributable(idx, rel, isDoc) {
+  if (idx.files.has(rel)) return true;
   // A real repository path, not prose or a fixture name: only the characters
   // this tree's paths use (Next's `(group)` and `[param]` segments included).
   if (!/^[A-Za-z0-9_.@()[\]+-]+(\/[A-Za-z0-9_.@()[\]+-]+)*$/.test(rel)) return false;
@@ -145,34 +158,56 @@ function attributable(root, rel) {
   // A root-level file only by the root-document convention (AGENTS.md,
   // README.md, CLAUDE.md...): bare basenames like "current-state.md" are joined
   // onto a directory at runtime and name nothing at the root.
-  if (segments.length === 1) return /^[A-Z][A-Z0-9_]*\.md$/.test(rel) && isDocsPath(rel);
-  return topDirs.dirs.has(segments[0]);
+  if (segments.length === 1) return /^[A-Z][A-Z0-9_]*\.md$/.test(rel) && isDoc(rel);
+  return idx.top.has(segments[0]);
 }
 
-/** Every repo path a test file names as data: literals and literal joins. */
-function namedPaths(root, file, raw) {
-  const text = withoutCommentLines(raw);
+// No whitespace, quotes or control characters: prose and messages are most of
+// the ~140k literals in tests/, and rejecting them before any path work is what
+// keeps a whole-tree scan inside the changes job's budget.
+const PATHLIKE = /^[^\s"'`<>|*?]{1,300}$/;
+
+/** Every repo path a test names as data: files (by extension) and directories. */
+function namedPaths(idx, file, text, isDoc) {
   const fromDir = path.posix.dirname(file);
-  const found = new Set();
+  const files = new Set();
+  const dirs = new Set();
   const consider = (candidate) => {
+    if (!PATHLIKE.test(candidate)) return;
+    // Without a slash a literal can only be a root-level file (it has an
+    // extension) or a top-level directory: identifiers and ids are neither.
+    if (!candidate.includes("/") && !candidate.includes(".") && !idx.top.has(candidate)) return;
+    const rel = normalise(fromDir, candidate);
+    if (!rel) return;
+    if (idx.dirs.has(rel)) dirs.add(rel);
     // A file path has an extension; most literals in a test are not paths.
-    if (!/\.[A-Za-z0-9]+$/.test(candidate)) return;
-    const rel = normalise(root, fromDir, candidate);
-    if (rel && attributable(root, rel)) found.add(rel);
+    else if (/\.[A-Za-z0-9]+$/.test(candidate) && attributable(idx, rel, isDoc)) files.add(rel);
   };
-  for (const m of text.matchAll(STRING)) consider(m[2]);
+  // A literal that is one PART of a multi-literal join names only the joined
+  // path: join(ROOT, "docs", "runbooks") reads docs/runbooks, not all of docs.
+  const joinedSpans = [];
   for (const m of text.matchAll(JOIN_CALL)) {
     const parts = [...m[1].matchAll(STRING)].map((s) => s[2]);
-    if (parts.length > 1) consider(parts.join("/"));
+    if (parts.length > 1) {
+      consider(parts.join("/"));
+      joinedSpans.push([m.index, m.index + m[0].length]);
+    }
   }
-  return found;
+  // Spans and literal matches both arrive in source order: one moving pointer.
+  let span = 0;
+  for (const m of text.matchAll(STRING)) {
+    while (span < joinedSpans.length && joinedSpans[span][1] <= m.index) span++;
+    const inside = span < joinedSpans.length && m.index >= joinedSpans[span][0];
+    if (!inside) consider(m[2]);
+  }
+  return { files, dirs };
 }
 
-function importedPaths(root, file, text) {
+function importedPaths(idx, file, text) {
   const fromDir = path.posix.dirname(file);
   const found = new Set();
   for (const m of text.matchAll(IMPORT_SPEC)) {
-    const rel = resolveImport(root, fromDir, m[2]);
+    const rel = resolveImport(idx, fromDir, m[2]);
     if (rel) found.add(rel);
   }
   return found;
@@ -189,45 +224,71 @@ const addEdge = (map, target, test) => {
 /**
  * Derive the dependency map from a checkout.
  *
- * - `db`: source file -> the tests/db files that import it or read it.
- * - `docReaders`: documentation file -> the UNIT-lane test files that read it.
- *   "Documentation" is the classifier's own rule (`isDocsPath`), any extension:
- *   a `.md`-only copy missed a JSON manifest under docs/ (Codex, #1053
- *   4355376845). tests/db readers are excluded: a docs-only change cannot
+ * `isDoc` is the classifier's documentation rule, passed in so the two can
+ * never disagree about what a document is (a `.md`-only copy missed a JSON
+ * manifest under docs/: Codex, #1053 4355376845).
+ *
+ * - `db`: source file -> the tests/db files that import or read it.
+ * - `dbDirs`: directory -> the tests/db files that enumerate it (every file
+ *   beneath it, present or future). Below a top-level root only.
+ * - `dbRootWalkers`: top-level source root -> the tests/db files that walk all
+ *   of it. Reported, NOT selected (see LIMITS).
+ * - `docReaders`: document -> the UNIT-lane test files that read it by name.
+ * - `docReaderDirs`: directory -> the UNIT-lane test files that enumerate it.
+ * - `docWildcard`: UNIT-lane tests that enumerate directories and touch
+ *   documentation: readers of every document.
+ *   tests/db readers of documents are not tracked: a docs-only change cannot
  *   start the DB lane, and nothing under tests/db reads a document today.
  */
-export function scanTestDependencies(root = process.cwd()) {
+export function scanTestDependencies(root, isDoc) {
+  if (typeof isDoc !== "function") throw new TypeError("scanTestDependencies(root, isDoc): isDoc is required");
+  const idx = indexOf(root);
   const db = new Map();
+  const dbDirs = new Map();
+  const dbRootWalkers = new Map();
   const docReaders = new Map();
+  const docReaderDirs = new Map();
+  const docWildcard = new Set();
 
-  for (const file of walk(root, "tests").filter((f) => TEST_FILE.test(f) && !NOT_A_READER.has(f)).sort()) {
+  for (const file of idx.fileList.filter((f) => f.startsWith("tests/") && TEST_FILE.test(f) && !NOT_A_READER.has(f))) {
     const text = readFileSync(path.join(root, file), "utf8");
-    const named = namedPaths(root, file, text);
+    const code = withoutCommentLines(text);
+    const { files: named, dirs } = namedPaths(idx, file, code, isDoc);
+    // A substring check first: the regex alone was a measurable share of the scan.
+    const enumerates = (code.includes("readdir") || code.includes("opendir") || code.includes("glob") || code.includes("ls-files")) && ENUMERATES.test(code);
+    // Only an enumerating test reads a directory; elsewhere "app" is a word.
+    const listedDirs = enumerates ? [...dirs].filter((d) => d !== "tests" && !d.startsWith("tests/")) : [];
 
     if (file.startsWith("tests/db/")) {
-      for (const target of [...importedPaths(root, file, text), ...named]) {
+      for (const target of [...importedPaths(idx, file, text), ...named]) {
         if (SOURCE_TARGET.test(target) && !target.endsWith(".md")) addEdge(db, target, file);
       }
-    } else if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(file)) {
-      for (const target of named) {
-        if (isDocsPath(target) && !target.startsWith("tests/")) addEdge(docReaders, target, file);
+      for (const dir of listedDirs) {
+        if (!SOURCE_TARGET.test(dir)) continue;
+        addEdge(dir.includes("/") ? dbDirs : dbRootWalkers, dir, file);
       }
+    } else if (UNIT_TEST.test(file)) {
+      for (const target of named) {
+        if (isDoc(target) && !target.startsWith("tests/")) addEdge(docReaders, target, file);
+      }
+      // A directory holds documentation when the classifier would call a file
+      // in it documentation by location (docs/, openwiki/...).
+      for (const dir of listedDirs) if (isDoc(`${dir}/x`)) addEdge(docReaderDirs, dir, file);
+      if (enumerates && TOUCHES_DOCS.test(code)) docWildcard.add(file);
     }
   }
 
-  return { db: sortObject(db), docReaders: sortObject(docReaders) };
-}
-
-export function renderTestDependencies(map) {
-  return JSON.stringify(map, null, 2) + "\n";
+  return {
+    db: sortObject(db),
+    dbDirs: sortObject(dbDirs),
+    dbRootWalkers: sortObject(dbRootWalkers),
+    docReaders: sortObject(docReaders),
+    docReaderDirs: sortObject(docReaderDirs),
+    docWildcard: [...docWildcard].sort(),
+  };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  const rendered = renderTestDependencies(scanTestDependencies(process.cwd()));
-  if (process.argv.includes("--write")) {
-    writeFileSync(path.join(process.cwd(), OUTPUT), rendered);
-    console.log(`wrote ${OUTPUT}`);
-  } else {
-    process.stdout.write(rendered);
-  }
+  const { isDocsPath } = await import("./classify-changes.mjs");
+  process.stdout.write(`${JSON.stringify(scanTestDependencies(process.cwd(), isDocsPath), null, 2)}\n`);
 }

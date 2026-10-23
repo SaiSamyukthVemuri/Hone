@@ -1,13 +1,13 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error - .mjs utility ships without type declarations
-import { classify, highestTier } from "../../scripts/classify-changes.mjs";
+import { REPO_ROOT, classify, dependenciesFor, highestTier, isDocsPath } from "../../scripts/classify-changes.mjs";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { selectBrowserGroups, EXTENDED } from "../../scripts/browser-groups.mjs";
 // @ts-expect-error - .mjs utility ships without type declarations
-import { OUTPUT, renderTestDependencies, scanTestDependencies } from "../../scripts/test-dependencies.mjs";
+import { scanTestDependencies } from "../../scripts/test-dependencies.mjs";
 
 // Path-classification is proved here rather than by pushing fake commits to
 // trigger every CI lane. These cases ARE the acceptance criteria.
@@ -428,31 +428,61 @@ describe("classifier — mixed diffs still take the highest tier", () => {
 // marked GUARD hold on both and exist so the fix cannot overreach.
 // ---------------------------------------------------------------------------
 
-type Deps = { db: Record<string, string[]>; docReaders: Record<string, string[]> };
-const committed = JSON.parse(readFileSync(OUTPUT, "utf8")) as Deps;
+type Deps = {
+  db: Record<string, string[]>;
+  dbDirs?: Record<string, string[]>;
+  docReaders: Record<string, string[]>;
+  docReaderDirs?: Record<string, string[]>;
+  docWildcard?: string[];
+};
+const EMPTY = { db: {}, dbDirs: {}, dbRootWalkers: {}, docReaders: {}, docReaderDirs: {}, docWildcard: [] };
+// The live scan of this checkout: exactly what classify() uses by default.
+const scanned = dependenciesFor() as Deps;
+const scan = (root: string) => scanTestDependencies(root, isDocsPath) as Deps;
 
-describe("dependency map — derived from the tests, committed, and fresh", () => {
-  it("the committed map is exactly what the scanner derives from this checkout", () => {
-    // The map is generated, never hand-kept. A PR that adds a tests/db read or
-    // import, or a unit test that reads a doc, must commit the new edge:
-    //   node scripts/test-dependencies.mjs --write
-    expect(readFileSync(OUTPUT, "utf8"), `${OUTPUT} is stale - regenerate it`).toBe(
-      renderTestDependencies(scanTestDependencies(process.cwd())),
-    );
-    // A whole-tree scan: about a second alone, so give it room under a loaded
-    // parallel run rather than letting a budget read as a stale map.
-  }, 30_000);
+// Each tree has the repository's real top-level roots, so a missing path is
+// judged against roots that exist, as it is in a real checkout.
+const tree = (files: Record<string, string>) => {
+  const root = mkdtempSync(path.join(tmpdir(), "hone-deps-"));
+  const roots = { "docs/README.md": "# docs\n", "lib/keep.ts": "export {};\n", "app/page.tsx": "export {};\n" };
+  for (const [file, content] of Object.entries({ ...roots, ...files })) {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), content);
+  }
+  return root;
+};
+
+describe("dependency map — computed from the checkout being classified, never committed (#1053 round 4)", () => {
+  // A committed map went stale whenever ANY other PR added a reading test:
+  // CI run 39889013435 failed its freshness check on the merge ref, and merged
+  // that would have reddened the unit lane of unrelated PRs.
+  it("GAP: there is no committed map to go stale", () => {
+    expect(existsSync(path.join(REPO_ROOT, "scripts/test-dependencies.json"))).toBe(false);
+  });
+
+  it("GAP: classify() uses a scan of this checkout by default", () => {
+    expect(scanned).toEqual(scan(REPO_ROOT));
+  });
+
+  it("GAP: a reading test added by ANOTHER change is attributed with no regeneration step", () => {
+    const root = tree({ "tests/docs/added-elsewhere.test.ts": 'readFileSync("docs/production/current-state.md", "utf8");\n' });
+    try {
+      expect(scan(root).docReaders["docs/production/current-state.md"]).toEqual(["tests/docs/added-elsewhere.test.ts"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it("GUARD: the real scan finds the known edges, so an empty scan cannot pass quietly", () => {
     // Anti-vacuity. If the scanner broke and found nothing, every GAP case
     // below would fail - but a fixture-only suite would not, so pin real edges.
-    expect(committed.db["lib/waitlist/invite-to-book-adapter.ts"]).toContain(
+    expect(scanned.db["lib/waitlist/invite-to-book-adapter.ts"]).toContain(
       "tests/db/waitlist-integration-seams.db.test.ts",
     );
-    expect(committed.db["components/profile-tab.ts"]).toContain("tests/db/client-profile-tab-queries.db.test.ts");
-    const edges = Object.values(committed.db).reduce((n, tests) => n + tests.length, 0);
+    expect(scanned.db["components/profile-tab.ts"]).toContain("tests/db/client-profile-tab-queries.db.test.ts");
+    const edges = Object.values(scanned.db).reduce((n, tests) => n + tests.length, 0);
     expect(edges, "far fewer DB edges than the tree holds").toBeGreaterThanOrEqual(40);
-    expect(committed.docReaders["docs/production/migration-ledger.md"]).toContain(
+    expect(scanned.docReaders["docs/production/migration-ledger.md"]).toContain(
       "tests/migrations/0179-actor-fk-integrity.test.ts",
     );
   });
@@ -460,7 +490,7 @@ describe("dependency map — derived from the tests, committed, and fresh", () =
   it("GUARD: a path mentioned only in a comment is not an edge", () => {
     // practitioner-identity-boundary.db.test.ts names lib/practitioner-colors.ts
     // in a comment and never reads it. Prose must not widen the DB lane.
-    expect(committed.db["lib/practitioner-colors.ts"]).toBeUndefined();
+    expect(scanned.db["lib/practitioner-colors.ts"]).toBeUndefined();
   });
 });
 
@@ -485,7 +515,7 @@ describe("dependency-aware selection — G2: modules DB suites import", () => {
   it.each(["lib/booking/slots.ts", "lib/sessions/charted-session.ts", "lib/google-calendar/sync/operations.ts"])(
     "GAP: %s selects the database lane",
     (file) => {
-      expect(committed.db[file], `${file} is no longer imported by a DB suite`).toBeDefined();
+      expect(scanned.db[file], `${file} is no longer imported by a DB suite`).toBeDefined();
       expect(c(file).database).toBe(true);
     },
   );
@@ -517,8 +547,9 @@ describe("dependency-aware selection — G4: documents read by unit tests", () =
     const r = c("AGENTS.md");
     expect(r.docs_only).toBe(true);
     expect(r.docs_consistency).toBe(true);
-    expect(r.docs_reader_tests).toEqual(committed.docReaders["AGENTS.md"]);
-    expect((r.docs_reader_tests as string[]).every((t) => t.startsWith("tests/openwiki/"))).toBe(true);
+    // Its named readers, plus the tests that enumerate documentation.
+    for (const t of scanned.docReaders["AGENTS.md"]) expect(r.docs_reader_tests).toContain(t);
+    expect((r.docs_reader_tests as string[]).some((t) => t.startsWith("tests/openwiki/"))).toBe(true);
   });
 
   it("GAP: a ledger wording change selects the migration test that pins it", () => {
@@ -531,15 +562,24 @@ describe("dependency-aware selection — G4: documents read by unit tests", () =
     expect(r.full_matrix_required).toBe(false);
   });
 
-  it("GAP: a doc no test reads stays cheap", () => {
+  it("a doc no test names runs only the enumerating readers, and stays cheap", () => {
+    // Since #1053 round 4 every document has readers: the tests that enumerate
+    // documentation. No test NAMES this one, so those are exactly its readers,
+    // and nothing beyond the unit tests runs.
     const r = c("docs/no-test-reads-this-document.md");
     expect(r.docs_only).toBe(true);
-    expect(r.docs_consistency).toBe(false);
-    expect(r.docs_reader_tests).toEqual([]);
+    expect(r.docs_consistency).toBe(true);
+    expect(r.docs_reader_tests).toEqual(scanned.docWildcard);
+    expect(r.database).toBe(false);
+    expect(r.full_matrix_required).toBe(false);
+  });
+
+  it("a non-document change is never a document-reader selection", () => {
+    expect(c("components/sessions/SimplifiedEntryForm.tsx").docs_consistency).toBe(false);
   });
 
   it("GUARD: the reader list never contains a character that would corrupt $GITHUB_OUTPUT", () => {
-    for (const t of Object.values(committed.docReaders).flat()) {
+    for (const t of Object.values(scanned.docReaders).flat()) {
       expect(t, `"${t}" would break the "; "-joined output`).not.toMatch(/[\n;]/);
     }
   });
@@ -553,13 +593,6 @@ describe("dependency-aware selection — the selector's own files", () => {
     expect(selectBrowserGroups(["scripts/test-dependencies.mjs"]).groups).toEqual([EXTENDED]);
   });
 
-  it("GUARD: a regenerated map is NOT a full-matrix trigger", () => {
-    // It changes whenever a test gains an edge; the freshness test above is
-    // what proves it, so it must not cost every such PR the full matrix.
-    const r = c("scripts/test-dependencies.json", "tests/db/new-suite.db.test.ts");
-    expect(r.full_matrix_required).toBe(false);
-    expect(r.database).toBe(true);
-  });
 });
 
 describe("dependency-aware selection — file count never narrows a lane", () => {
@@ -597,7 +630,7 @@ describe("dependency-aware selection — a document is whatever the classifier c
 
   it("GUARD: every reader-map key is documentation by the classifier's own rule", () => {
     // One definition: a key outside it could never be part of a docs-only diff.
-    for (const doc of Object.keys(committed.docReaders)) {
+    for (const doc of Object.keys(scanned.docReaders)) {
       expect(c(doc).docs_only, `${doc} is not docs to the classifier`).toBe(true);
     }
   });
@@ -608,25 +641,13 @@ describe("dependency-aware selection — deleting a file a test still reads (435
   // that deleted a document (or a DB source contract) its readers still read
   // regenerated a map without the edge: the deletion classified docs-only, and
   // the ENOENT first surfaced on the production push.
-  // Each tree has the repository's real top-level roots, so a missing path is
-  // judged against roots that exist, as it is in a real checkout.
-  const tree = (files: Record<string, string>) => {
-    const root = mkdtempSync(path.join(tmpdir(), "hone-deps-"));
-    const roots = { "docs/README.md": "# docs\n", "lib/keep.ts": "export {};\n", "app/page.tsx": "export {};\n" };
-    for (const [file, content] of Object.entries({ ...roots, ...files })) {
-      mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-      writeFileSync(path.join(root, file), content);
-    }
-    return root;
-  };
-
   it("GAP: a deleted document keeps its reader, and its deletion runs that reader", () => {
     const root = tree({
       "tests/docs/reads-gone.test.ts": 'readFileSync("docs/production/gone.md", "utf8");\n',
       "tests/migrations/reads-gone-manifest.test.ts": 'readFileSync(join(ROOT, "docs", "roadmap", "GONE.json"), "utf8");\n',
     });
     try {
-      const deps = scanTestDependencies(root) as Deps;
+      const deps = scan(root);
       expect(deps.docReaders["docs/production/gone.md"]).toEqual(["tests/docs/reads-gone.test.ts"]);
       expect(deps.docReaders["docs/roadmap/GONE.json"]).toEqual(["tests/migrations/reads-gone-manifest.test.ts"]);
       const r = classify(["docs/production/gone.md"], deps) as Result;
@@ -641,7 +662,7 @@ describe("dependency-aware selection — deleting a file a test still reads (435
   it("GAP: a deleted DB source contract keeps its DB suite", () => {
     const root = tree({ "tests/db/reads-gone.db.test.ts": 'readFileSync("lib/waitlist/gone-adapter.ts", "utf8");\n' });
     try {
-      const deps = scanTestDependencies(root) as Deps;
+      const deps = scan(root);
       expect(deps.db["lib/waitlist/gone-adapter.ts"]).toEqual(["tests/db/reads-gone.db.test.ts"]);
       expect((classify(["lib/waitlist/gone-adapter.ts"], deps) as Result).database).toBe(true);
     } finally {
@@ -662,8 +683,86 @@ describe("dependency-aware selection — deleting a file a test still reads (435
       "tests/db/noise.db.test.ts": 'const doc = "docs/not-a-source.md"; const pkg = "node_modules/x/index.js";\n',
     });
     try {
-      const deps = scanTestDependencies(root) as Deps;
-      expect(deps).toEqual({ db: {}, docReaders: {} });
+      const deps = scan(root);
+      expect(deps).toEqual(EMPTY);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Codex #1053 P1 4355527598: tests that ENUMERATE a directory name no file.
+// tests/docs/reminder-cadence-truthfulness.test.ts reads every .md under
+// docs/ through readdirSync(ROOT) and a walker over join(ROOT, "docs"); no
+// literal names the documents, so a new or edited document selected nothing.
+// ---------------------------------------------------------------------------
+describe("dependency-aware selection — directory readers (4355527598)", () => {
+  it("GAP: a brand-new document selects the test that reads every document under docs/", () => {
+    const r = c("docs/brand-new-guide.md");
+    expect(r.docs_consistency).toBe(true);
+    expect(r.docs_reader_tests).toContain("tests/docs/reminder-cadence-truthfulness.test.ts");
+  });
+
+  it("GUARD (operator decision): a DB suite walking a WHOLE source root is reported, not selected", () => {
+    // tests/db/export-resource-registry.db.test.ts walks app/, lib/ and
+    // components/ to decide whether application code still references each
+    // table. Honoured, that runs the DB lane for every application change - a
+    // CI-cost decision left to the operator. It is surfaced, and flipping it
+    // is one line in the scanner.
+    const walkers = (scanned as Deps & { dbRootWalkers?: Record<string, string[]> }).dbRootWalkers ?? {};
+    for (const root of ["app", "lib", "components"]) {
+      expect(walkers[root]).toContain("tests/db/export-resource-registry.db.test.ts");
+    }
+    expect(Object.keys(scanned.dbDirs ?? {}).filter((d) => !d.includes("/"))).toEqual([]);
+    expect(c("components/brand-new-widget.tsx").database).toBe(false);
+  });
+
+  it("GAP: an enumerated literal directory covers every file beneath it, present or future", () => {
+    const root = tree({
+      "docs/runbooks/one.md": "# one\n",
+      "tests/docs/walks-runbooks.test.ts": 'for (const f of readdirSync(join(ROOT, "docs", "runbooks"))) read(f);\n',
+      "lib/billing/keep.ts": "export {};\n",
+      "tests/db/walks-billing.db.test.ts": 'for (const f of readdirSync(join("lib", "billing"))) read(f);\n',
+    });
+    try {
+      const deps = scan(root);
+      expect(deps.docReaderDirs).toEqual({ "docs/runbooks": ["tests/docs/walks-runbooks.test.ts"] });
+      expect(deps.dbDirs).toEqual({ "lib/billing": ["tests/db/walks-billing.db.test.ts"] });
+      expect((classify(["docs/runbooks/added-later.md"], deps) as Result).docs_reader_tests).toEqual(["tests/docs/walks-runbooks.test.ts"]);
+      expect((classify(["lib/billing/added-later.ts"], deps) as Result).database).toBe(true);
+      expect((classify(["lib/elsewhere/added-later.ts"], deps) as Result).database).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GAP: an enumerating test that touches docs through a VARIABLE reads every document", () => {
+    // `readdirSync(ROOT)` + a `.md` filter: the directory is not a literal, so
+    // the test is selected conservatively for any document.
+    const root = tree({ "tests/docs/root-docs.test.ts": 'readdirSync(ROOT).filter((f) => f.endsWith(".md"));\n' });
+    try {
+      const deps = scan(root);
+      expect(deps.docWildcard).toEqual(["tests/docs/root-docs.test.ts"]);
+      expect((classify(["SOMETHING.md"], deps) as Result).docs_reader_tests).toEqual(["tests/docs/root-docs.test.ts"]);
+      expect((classify(["lib/keep.ts"], deps) as Result).docs_reader_tests).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GUARD: naming a directory without enumerating is not a directory read", () => {
+    // Elsewhere "lib" and "docs" are words; only an enumerating test reads one.
+    const root = tree({
+      "tests/db/names-lib.db.test.ts": 'expect(where).toBe("lib");\n',
+      "tests/docs/names-docs.test.ts": 'expect(kind).toBe("docs");\n',
+      "tests/lib/enumerates-no-docs.test.ts": 'readdirSync(join(ROOT, "lib"));\n',
+    });
+    try {
+      const deps = scan(root);
+      expect(deps.dbDirs).toEqual({});
+      expect(deps.docReaderDirs).toEqual({});
+      expect(deps.docWildcard).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

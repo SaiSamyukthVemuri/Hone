@@ -14,13 +14,15 @@
 //
 // Path rules cannot see that a TEST reads or imports a file elsewhere in the
 // tree, so the classifier also takes a dependency map derived from the tests
-// themselves (scripts/test-dependencies.mjs, committed as
-// scripts/test-dependencies.json and kept fresh by a test). Every caller that
-// passes only `files` gets the committed map, so CI, `npm run ci:plan`,
-// `verify:changed` and ENG-LOOP's local model all select identically.
+// themselves (scripts/test-dependencies.mjs), computed from the checkout being
+// classified. Every caller that passes only `files` gets that scan, so CI,
+// `npm run ci:plan`, `verify:changed` and ENG-LOOP's local model all select
+// identically, and nothing committed can go stale.
 // ---------------------------------------------------------------------------
 
 import { readFileSync, appendFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { scanTestDependencies } from "./test-dependencies.mjs";
 
 /** Anything here genuinely affects every lane. Kept deliberately short. */
 const FULL_MATRIX = [
@@ -79,10 +81,7 @@ const RULES = [
   { key: "payment", patterns: [/payment/i, /stripe/i, /checkout/i, /manual-fee/i, /^lib\/billing\//, /^e2e-payment\//, /^playwright\.payment\.config/] },
   { key: "google_calendar", patterns: [/google[-_]?calendar/i, /^lib\/google-calendar\//, /^e2e-google\//, /^playwright\.google\.config/, /^app\/api\/cron\/calendar/] },
   { key: "mobile", patterns: [/^e2e-mobile\//, /^playwright\.mobile\.config/, /mobile/i, /responsive/i] },
-  // The dependency SCANNER is selection logic, like this file. Its committed
-  // OUTPUT (test-dependencies.json) is deliberately absent: it changes whenever
-  // a test gains an edge, and a freshness test proves it, so a regenerated map
-  // must not cost every such PR the full matrix.
+  // The dependency SCANNER is selection logic, like this file.
   { key: "ci_workflows", patterns: [/^\.github\/workflows\//, /^scripts\/classify-changes\.mjs$/, /^scripts\/test-dependencies\.mjs$/, /^scripts\/verify-prepush\.mjs$/, /^tests\/ci\//] },
   { key: "browser_core", patterns: [/^e2e\//, /^app\//, /^components\//, /^playwright\.config/] },
   { key: "application", patterns: [/^app\//, /^components\//, /^lib\//, /^hooks\//, /^types\//, /\.tsx?$/] },
@@ -247,15 +246,21 @@ function baselineRisk(list, lanes, docsOnly) {
   return { baselineRiskTier: tier, riskReasons: hits.filter((h) => h.tier === tier).map((h) => h.reason) };
 }
 
+/** The checkout this classifier lives in: the tree CI (or ci:plan) is classifying. */
+export const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+
+const scans = new Map();
 /**
- * The committed test-dependency map. Read on first use, not at import: the
- * scanner imports `isDocsPath` from here, and must still run when the map it
- * regenerates is missing or broken. A missing map at classification time is a
- * broken checkout, not an empty one, so that read still throws.
+ * The test-dependency map of a checkout, scanned once per process.
+ *
+ * COMPUTED, NEVER COMMITTED. A committed copy went stale whenever any other PR
+ * added a test that reads a document, and its freshness check would have
+ * failed the unit lane of unrelated PRs (#1053 round 4).
  */
-let defaultDeps;
-const committedDeps = () =>
-  (defaultDeps ??= JSON.parse(readFileSync(new URL("./test-dependencies.json", import.meta.url), "utf8")));
+export function dependenciesFor(root = REPO_ROOT) {
+  if (!scans.has(root)) scans.set(root, scanTestDependencies(root, isDocsPath));
+  return scans.get(root);
+}
 
 /**
  * What the classifier counts as documentation. Exported so the dependency
@@ -266,13 +271,20 @@ const committedDeps = () =>
 export const isDocsPath = (file) => match(file, DOCS);
 
 /**
- * `deps` is `{ db: { [source]: dbTests[] }, docReaders: { [doc]: unitTests[] } }`.
- * Callers pass only `files` and get the committed map; tests pass fixtures.
+ * `deps` is `{ db, dbDirs, docReaders, docReaderDirs, docWildcard }` from
+ * scripts/test-dependencies.mjs: file -> tests, directory -> tests (every file
+ * beneath, present or future), and the tests that read every document.
+ * Callers pass only `files` and get the scan of this checkout; tests pass
+ * fixtures, and any part a fixture omits is empty.
  */
-export function classify(files, deps = committedDeps()) {
+export function classify(files, deps = dependenciesFor()) {
   const list = (files ?? []).map((f) => f.trim()).filter(Boolean);
   const dbDeps = deps?.db ?? {};
+  const dbDirs = deps?.dbDirs ?? {};
   const docReaders = deps?.docReaders ?? {};
+  const docReaderDirs = deps?.docReaderDirs ?? {};
+  const docWildcard = deps?.docWildcard ?? [];
+  const underDirs = (dirs, f) => Object.keys(dirs).filter((d) => f.startsWith(`${d}/`)).flatMap((d) => dirs[d]);
 
   const out = {
     docs_only: false,
@@ -320,9 +332,16 @@ export function classify(files, deps = committedDeps()) {
   // rule gives: SELECTING tests and ASSIGNING ceremony are different questions.
   // `lib/booking/slots.ts` is imported by DB suites, so its edit must run them,
   // but that does not make a slot-maths change a T3 database change.
-  if (list.some((f) => Object.hasOwn(dbDeps, f))) out.database = true;
+  if (list.some((f) => Object.hasOwn(dbDeps, f) || underDirs(dbDirs, f).length > 0)) out.database = true;
 
-  const readers = new Set(list.flatMap((f) => (Object.hasOwn(docReaders, f) ? docReaders[f] : [])));
+  // A test that enumerates documentation reads EVERY document, so any changed
+  // document selects it (Codex, #1053 4355527598).
+  const readers = new Set(
+    list.flatMap((f) => [
+      ...(Object.hasOwn(docReaders, f) ? docReaders[f] : []),
+      ...(isDocsPath(f) ? [...underDirs(docReaderDirs, f), ...docWildcard] : []),
+    ]),
+  );
   out.docs_consistency = readers.size > 0;
   out.docs_reader_tests = [...readers].sort();
 
