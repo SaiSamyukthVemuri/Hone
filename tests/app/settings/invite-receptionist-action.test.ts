@@ -1,0 +1,93 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// STUDIO-READY-02b (#824): the owner invites a receptionist through the
+// existing invite action. The studio and inviter come from the server; the
+// browser chooses only email, name and one of three roles.
+
+const ctx = vi.hoisted(() => ({
+  role: "owner" as "owner" | "practitioner",
+  rows: {} as Record<string, unknown[]>,
+  inserted: [] as Array<{ table: string; row: Record<string, unknown> }>,
+  sent: 0,
+}));
+
+function builder(table: string) {
+  const b: Record<string, unknown> = {};
+  for (const m of ["select", "eq", "ilike"]) b[m] = () => b;
+  b.maybeSingle = async () => ({ data: (ctx.rows[table] ?? [])[0] ?? null, error: null });
+  b.insert = async (row: Record<string, unknown>) => {
+    ctx.inserted.push({ table, row });
+    return { error: null };
+  };
+  return b;
+}
+
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: (t: string) => builder(t) }) }));
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({}) }));
+vi.mock("@/lib/supabase/queries", () => ({
+  getCurrentPractitionerWithStudio: async () => ({
+    practitioner: { id: "owner-practitioner", role: ctx.role, display_name: "Owner", email: "owner@example.test" },
+    studio: { id: "studio-1", name: "Synthetic Studio" },
+  }),
+}));
+vi.mock("@/lib/email/client", () => ({
+  resend: { emails: { send: async () => ((ctx.sent += 1), { data: { id: "m" }, error: null }) } },
+  FROM_ADDRESS: "Hone <noreply@example.test>",
+}));
+
+const { invitePractitionerAction } = await import("@/app/(app)/settings/team/actions");
+
+const form = (fields: Record<string, string>) => {
+  const f = new FormData();
+  for (const [k, v] of Object.entries(fields)) f.set(k, v);
+  return f;
+};
+
+beforeEach(() => {
+  ctx.role = "owner";
+  ctx.rows = {};
+  ctx.inserted = [];
+  ctx.sent = 0;
+});
+
+describe("inviting a receptionist", () => {
+  it("records a receptionist invitation for the SERVER-resolved studio and inviter", async () => {
+    const r = await invitePractitionerAction(
+      form({ email: "Desk@Example.test", role: "receptionist", display_name: "Front Desk", studio_id: "forged" }),
+    );
+    expect(r).toEqual({ ok: true, email: "desk@example.test" });
+    expect(ctx.inserted).toEqual([
+      {
+        table: "pending_invitations",
+        row: {
+          studio_id: "studio-1",
+          email: "desk@example.test",
+          invited_by: "owner-practitioner",
+          role: "receptionist",
+          display_name: "Front Desk",
+          status: "pending",
+        },
+      },
+    ]);
+  });
+
+  it("refuses an email already on this studio's front desk", async () => {
+    ctx.rows = { studio_receptionists: [{ id: "existing" }] };
+    const r = await invitePractitionerAction(form({ email: "desk@example.test", role: "receptionist" }));
+    expect(r).toEqual({ ok: false, error: "desk@example.test is already on this studio's front desk." });
+    expect(ctx.inserted).toEqual([]);
+  });
+
+  it("an unknown role from the browser falls back to practitioner, never to anything wider", async () => {
+    await invitePractitionerAction(form({ email: "someone@example.test", role: "platform_admin" }));
+    expect(ctx.inserted[0].row.role).toBe("practitioner");
+  });
+
+  it("a non-owner cannot invite anyone, and nothing is written", async () => {
+    ctx.role = "practitioner";
+    const r = await invitePractitionerAction(form({ email: "desk@example.test", role: "receptionist" }));
+    expect(r.ok).toBe(false);
+    expect(ctx.inserted).toEqual([]);
+  });
+});

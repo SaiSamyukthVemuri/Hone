@@ -470,6 +470,10 @@ export async function loadLastChartedTreatmentForClient(input: {
   }
 
   const rows = (data ?? []) as unknown as AppointmentPrepSession[];
+  // HON-10. The SQL LIMIT runs BEFORE the content half below, so a full window
+  // whose rows are all empty, void or this visit's own proves nothing about the
+  // older history it cut off. Same rule as the batched path's `truncated`.
+  const truncated = rows.length >= limit;
 
   // THE CONTENT HALF: the same shared selector, with the appointment boundary
   // expressed through its own option rather than restated here.
@@ -492,9 +496,9 @@ export async function loadLastChartedTreatmentForClient(input: {
     case "selected":
       return { treatment: outcome.treatment, unavailable: false, narrative };
     case "none":
-      // Reads succeeded; this client genuinely has no charted prior treatment.
-      // Narrative may still exist and must still be shown.
-      return { treatment: null, unavailable: false, narrative };
+      // No charted prior treatment IN THE WINDOW: genuine absence unless the
+      // window was truncated (HON-10, see `truncated`). Narrative still shown.
+      return { treatment: null, unavailable: truncated, narrative };
     case "unavailable":
       // The block read failed. Say so, and keep the narrative that WAS loaded,
       // discarding it would hide a safety instruction we already have in hand.

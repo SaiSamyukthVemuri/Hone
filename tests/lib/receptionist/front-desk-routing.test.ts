@@ -106,6 +106,20 @@ describe("everyone else is unchanged", () => {
     expect(state.reads).toEqual(["practitioners"]);
   });
 
+  it("a mixed-role user with 2+ practitioner studios and no selection reaches /front-desk, not the chooser (Codex P2 4243982486 on #850)", async () => {
+    state.rows = {
+      practitioners: [{ studio_id: "studio-1" }, { studio_id: "studio-2" }],
+      studio_receptionists: [{ studio_id: "studio-3" }],
+    };
+    for (const p of ["/front-desk", "/front-desk/select", "/front-desk/contacts"]) {
+      expect(location(await go(p)), p).toBeNull();
+    }
+    // The practitioner app still requires a studio choice.
+    expect(location(await go("/dashboard"))).toBe("/no-access");
+    // And a practitioner's request still reads only practitioners.
+    expect(state.reads.every((t) => t === "practitioners")).toBe(true);
+  });
+
   it("a user with no membership of either kind still goes to /no-access", async () => {
     state.rows = { practitioners: [], studio_receptionists: [] };
     expect(location(await go("/dashboard"))).toBe("/no-access");

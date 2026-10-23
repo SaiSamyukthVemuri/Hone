@@ -156,7 +156,7 @@ function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
         </ul>
       )}
       <p className="text-xs text-neutral-500">
-        Inviting a receptionist is not available yet. It arrives with the invitation update.
+        Invite a receptionist above by choosing the Receptionist role. They sign in with that email and land on the front desk.
       </p>
     </section>
   );
@@ -280,7 +280,7 @@ function PendingInvitations({
   );
 }
 
-function RoleBadge({ role }: { role: "owner" | "practitioner" }) {
+function RoleBadge({ role }: { role: "owner" | "practitioner" | "receptionist" }) {
   return (
     <span
       className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${

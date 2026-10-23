@@ -170,19 +170,28 @@ export async function loadMoveSlotsAction(input: {
     }
   }
 
-  const slots = slotTarget
-    ? filterFutureSlots(
-        await getAvailableSlots(
-          admin,
-          studioRow(studio),
-          localDate,
-          appt.duration_minutes, // use the appointment's EXISTING duration
-          { sourceKind: "appointment", sourceId: appointmentId }, // exclude ONLY this appointment's own reservation
-          slotTarget, // Part 4/Item 7: the CURRENT practitioner (time-only) OR the proposed target
-          INTERNAL_SLOT_PACKING,
-        ),
-      ).map((s) => ({ start: s.start, end: s.end, label: s.startLabel }))
-    : [];
+  let slots: MoveSlot[];
+  try {
+    slots = slotTarget
+      ? filterFutureSlots(
+          await getAvailableSlots(
+            admin,
+            studioRow(studio),
+            localDate,
+            appt.duration_minutes, // use the appointment's EXISTING duration
+            { sourceKind: "appointment", sourceId: appointmentId }, // exclude ONLY this appointment's own reservation
+            slotTarget, // Part 4/Item 7: the CURRENT practitioner (time-only) OR the proposed target
+            INTERNAL_SLOT_PACKING,
+          ),
+        ).map((s) => ({ start: s.start, end: s.end, label: s.startLabel }))
+      : [];
+  } catch (err) {
+    if (!(err instanceof Error)) throw err;
+    const { message } = err;
+    if (!message.startsWith("availability_read_failed:")) throw err;
+    console.error("move_slots_availability_read_failed");
+    return { ok: false, error: "Could not load available times." };
+  }
 
   // Never propose a past instant; return a PHI-free list (no client/notes/token/provider data).
   return {
@@ -321,35 +330,47 @@ export async function moveAppointmentAction(input: {
     return { ok: false, error: "Choose a valid future time." };
   }
 
-  // §8: available-slot mode MUST match a currently-offered generated slot. The
-  // slot list is recomputed server-side (same studio/duration/own-exclusion as
-  // loadMoveSlotsAction) and matched by START INSTANT: a crafted request that was
-  // never offered cannot reach the RPC. Custom mode intentionally skips this so the
-  // owner can pick a studio-local time outside published operating hours.
+  // §8: recheck available-slot membership with the same studio/duration/own-
+  // exclusion as discovery. Successful reads must offer the requested instant.
+  // A failed read cannot authorize a move: the SQL validator skips working
+  // hours in capacity-OFF mode, and an ON pre-read is not a locked guarantee.
+  // Custom mode intentionally skips this check so the owner can pick a
+  // studio-local time outside published operating hours.
   if (mode === "available_slot") {
-    const offered = filterFutureSlots(
-      await getAvailableSlots(
-        admin,
-        studioRow(studio),
-        localDate,
-        appt.duration_minutes,
-        { sourceKind: "appointment", sourceId: appointmentId },
-        slotTarget, // Item 7: recheck against the FINAL target (reassignment) or the current practitioner
-        INTERNAL_SLOT_PACKING, // MUST match loadMoveSlotsAction, or an offered slot becomes unbookable
-      ),
-    );
-    // Match by START INSTANT. Each offered slot is re-derived the SAME way the
-    // client submits (slot -> studio-local HH:MM -> UTC), so a legitimately-offered
-    // slot whose raw reservation-end anchor carries seconds is not falsely rejected,
-    // while an arbitrary crafted time that maps to no offered slot is refused.
-    const targetMs = newStart.getTime();
-    const isOffered = offered.some(
-      (s) =>
-        utcInstantFromLocal(localDate, localTimeString(new Date(s.start), studio.timezone), studio.timezone).getTime() ===
-        targetMs,
-    );
-    if (!isOffered) {
-      return { ok: false, code: "conflict", error: "That time is no longer available. Choose another time." };
+    // Refuse classified read failures before any mutation or notification;
+    // do not infer permission from a successful RPC mock or a capacity flag.
+    // Successful empty reads still refuse; unrelated exceptions propagate.
+    try {
+      const offered = filterFutureSlots(
+        await getAvailableSlots(
+          admin,
+          studioRow(studio),
+          localDate,
+          appt.duration_minutes,
+          { sourceKind: "appointment", sourceId: appointmentId },
+          slotTarget, // Item 7: recheck against the FINAL target (reassignment) or the current practitioner
+          INTERNAL_SLOT_PACKING, // MUST match loadMoveSlotsAction, or an offered slot becomes unbookable
+        ),
+      );
+      // Match by START INSTANT. Each offered slot is re-derived the SAME way the
+      // client submits (slot -> studio-local HH:MM -> UTC), so a legitimately-offered
+      // slot whose raw reservation-end anchor carries seconds is not falsely rejected,
+      // while an arbitrary crafted time that maps to no offered slot is refused.
+      const targetMs = newStart.getTime();
+      const isOffered = offered.some(
+        (s) =>
+          utcInstantFromLocal(localDate, localTimeString(new Date(s.start), studio.timezone), studio.timezone).getTime() ===
+          targetMs,
+      );
+      if (!isOffered) {
+        return { ok: false, code: "conflict", error: "That time is no longer available. Choose another time." };
+      }
+    } catch (err) {
+      if (!(err instanceof Error)) throw err;
+      const { message } = err;
+      if (!message.startsWith("availability_read_failed:")) throw err;
+      console.error("move_appointment_advisory_read_failed");
+      return { ok: false, error: "We couldn't move the appointment. Please try again." };
     }
   }
 
@@ -375,7 +396,7 @@ export async function moveAppointmentAction(input: {
     // outside-availability move (owner re-checked above AND re-authorized in the
     // command). It bypasses ONLY the working-hours window; the command still
     // enforces blockouts, collisions, buffers, breaks, pause and eligibility.
-    // available_slot came from the hours-respecting slot list → validated (false).
+    // available_slot must pass the generated-slot check and never requests an override (false).
     p_allow_outside_availability: mode === "custom_time",
   });
 

@@ -92,6 +92,7 @@ jobs:
       mobile: ${{ steps.classify.outputs.mobile }}
       ci_workflows: ${{ steps.classify.outputs.ci_workflows }}
       full_matrix_required: ${{ steps.classify.outputs.full_matrix_required }}
+      production_record: ${{ steps.record.outputs.production_record }}
       browser_run: ${{ steps.browser.outputs.browser_run }}
       browser_extended: ${{ steps.browser.outputs.browser_extended }}
       browser_specs: ${{ steps.browser.outputs.browser_specs }}
@@ -133,11 +134,51 @@ jobs:
             BASE="${{ github.event.pull_request.base.sha }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
             MB="$(git merge-base "$BASE" "$HEAD_SHA" 2>/dev/null || echo "$BASE")"
-            git diff --name-only "$MB" "$HEAD_SHA" > changed.txt || true
+            # --no-renames: a rename lists BOTH endpoints. With rename detection
+            # only the destination appeared, so moving a migration or a
+            # docs/production/** file into docs/ read as docs-only and skipped
+            # every lane that file belongs to (Codex P1 4297335910).
+            git diff --name-only --no-renames "$MB" "$HEAD_SHA" > changed.txt || true
           else
-            git show --name-only --pretty=format: "${{ github.sha }}" > changed.txt
+            # PUSH (and any other non-PR event): what this push SHIPPED, i.e.
+            # the diff from the previous tip. `git show --name-only` on a merge
+            # commit prints its COMBINED diff - only files touched on BOTH sides
+            # - so a production merge that shipped route handlers but shared one
+            # doc with production read as docs-only and skipped validate, db,
+            # the browser shards and the canonical lane while the run said
+            # success (6acea261 #912, 62ff27b2 #891).
+            #
+            # FAIL CLOSED. `before` is used only when it is a real commit in
+            # this clone AND an ancestor of the pushed sha (an ordinary push).
+            # A new or recreated branch (`before` all zeros or missing), a
+            # force-push (`before` not an ancestor) or any other event yields an
+            # EMPTY list, which the classifier turns into the FULL matrix. No
+            # `^1` fallback: it would see only the final commit, and a push whose
+            # earlier commit changed app code with a docs-only tip would read as
+            # docs-only (Codex P2 4305052075).
+            SHA="${{ github.sha }}"
+            BEFORE="${{ github.event.before }}"
+            BASE=""
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+               && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null \
+               && git merge-base --is-ancestor "$BEFORE" "$SHA" 2>/dev/null; then
+              BASE="$BEFORE"
+            fi
+            { if [ -n "$BASE" ]; then git diff --name-only --no-renames "$BASE" "$SHA" || true; fi; } > changed.txt
           fi
           echo "--- changed files ---"; cat changed.txt
+
+      - name: Production-record change?
+        id: record
+        # #825 6215529089 (v)(b): canonical A3/A5 freshness BLOCKS on a change
+        # to the production record (docs/production/**), and on pushes and the
+        # nightly lane; an ordinary application PR measures it non-blocking.
+        run: |
+          if grep -q '^docs/production/' changed.txt; then
+            echo "production_record=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "production_record=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Classify
         id: classify
@@ -279,11 +320,17 @@ jobs:
 
     steps:
       - name: Checkout repository
+        id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The canonical production-record checks need history and the
+          # production ref; a shallow clone made eight of them pass by
+          # asserting they could not run (#825 6204199888, 6215529089).
+          fetch-depth: 0
 
       - name: Set up Node.js
+        id: node_setup
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # No .nvmrc and no engines.node in package.json today.
@@ -293,6 +340,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
+        id: deps
         run: npm ci
 
       - name: Typecheck
@@ -318,18 +366,39 @@ jobs:
           NODE_OPTIONS: --require ./scripts/block-google-fonts.cjs
 
       - name: Unit tests
+        # Same mirror rule. `Lint` runs above with no `if:`, so a lint failure
+        # used to skip the entire unit suite — and unit results do not depend
+        # on lint, typecheck or the build in any way (vitest runs from source).
+        # Gated on the toolchain only.
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: npm test
+        env:
+          # enforce: pushes to production and production-record changes;
+          # measure (non-blocking, annotated): ordinary application PRs.
+          CANONICAL_FRESHNESS: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.production_record == 'true') && 'enforce' || 'measure' }}
 
       - name: Whitespace + conflict-marker check
+        # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
+        # step must not be skipped behind an earlier failure.
+        # Git needs a checked-out tree, but no Node setup or npm install.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         # Catches stray trailing whitespace + leftover merge-conflict
         # markers. Matches the manual `git diff --check` step every
         # local PR is asked to run.
         run: git diff --check HEAD
 
       - name: Stripe / payment safety grep gates
+        # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
+        # step must not be skipped behind an earlier failure.
+        # Node built-ins need checkout and Node setup, but no npm install.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.node_setup.outcome == 'success' }}
         run: npm run check:stripe-gates
 
       - name: Migration extension-qualification check
+        # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
+        # step must not be skipped behind an earlier failure.
+        # Node built-ins need checkout and Node setup, but no npm install.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.node_setup.outcome == 'success' }}
         # Fresh-managed-project fence (RC hardening): every pgcrypto/uuid-ossp call
         # in supabase/migrations must be extensions.<fn>-qualified so the
         # 0001->NNNN chain applies on a FRESH managed project, where `extensions`
@@ -353,6 +422,36 @@ jobs:
   #     stack only. No project ref, no access token, no push.
   #   * Runs as a separate job so the fast unit/static lane above is
   #     untouched; a Docker hiccup here never blocks typecheck/lint.
+  canonical-record:
+    # validate is skipped for docs-only diffs, so a production-record PR never
+    # ran the canonical checks at all (#825 6215529089). This runs ONLY the
+    # docs tests, enforced, for a docs-only change to docs/production/**.
+    name: canonical production record (docs-only)
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only == 'true' && needs.changes.outputs.production_record == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Canonical production-record checks (enforced)
+        run: npx vitest run tests/docs
+        env:
+          CANONICAL_FRESHNESS: enforce
+
   db-integration:
     name: db integration (local supabase)
     needs: changes
@@ -442,9 +541,10 @@ jobs:
         # resolver), that needs kong (54321), not just Postgres (54322). Bring
         # up the same trimmed stack the browser-e2e job uses (proven in CI); the
         # node-pg harness (54322) and `db reset --local` are unaffected.
-        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
+        id: db_chain
         # Fails the job if ANY migration 0001-current cannot apply to
         # an empty database, or if any policy/function/trigger SQL
         # fails to compile. This is itself a guarantee no static test
@@ -461,9 +561,50 @@ jobs:
         run: npm run check:fresh-managed
 
       - name: DB/RLS integration tests
+        # THE MIRROR RULE: a VERIFICATION must not hide a TEST either.
+        # `Fresh-managed extension proof` runs just above with no `if:`, so a
+        # red extension proof used to SKIP this entire suite — one check
+        # costing every DB/RLS result in the lane. Gated on the migration chain
+        # (transitively: install, start, reset) and NOT on the proof above it.
+        if: ${{ !cancelled() && steps.db_chain.outcome == 'success' }}
         run: npm run test:db
 
       - name: Generated types drift check
+        # CI-HARDEN-POSTTEST. Runs even when an EARLIER step failed, because a
+        # step with no `if:` inherits `success()` and is silently SKIPPED behind
+        # one. `check:db-types` sat unreachable behind `test:db` on the whole G1
+        # stack, where test:db fails on an inherited pending-suffix hole, so a
+        # REAL drift (0222's practitioners.last_public_assignment_at missing from
+        # the hand-rolled type) went unseen until a composed branch happened to
+        # make test:db pass. A verification step must not be hidden by the
+        # failure of the thing it verifies alongside.
+        #
+        # `!cancelled()` rather than `always()`: on a CANCELLED run (a shard cut
+        # at its hard timeout) `always()` would still run these and report their
+        # output as if the run had completed, and this repository has a long
+        # history of cancellations being misread as test failures. This runs on
+        # success and on failure, and stops at cancellation.
+        #
+        # The job's overall result is unchanged: a failing step still fails the
+        # job, this only stops a later check being skipped.
+        #
+        # GATED ON THE RESET, NOT MERELY ON `!cancelled()` (Codex P2 4307392979).
+        # `scripts/check-db-types.mjs` states its own prerequisite — "supabase db
+        # start && supabase db reset --local" — so running it when the stack
+        # failed to start, or the chain failed to apply, generates BOGUS schema
+        # drift against an absent or half-migrated database: a misleading
+        # secondary failure stacked on the real one, which is the opposite of
+        # what this change is for.
+        #
+        # `steps.db_chain.outcome == 'success'` covers the whole prerequisite
+        # chain transitively: if `Start local Supabase` fails, the reset step is
+        # skipped, its outcome is 'skipped' rather than 'success', and this stays
+        # skipped too.
+        #
+        # It deliberately does NOT depend on `Fresh-managed extension proof` or
+        # on the tests. Those are VERIFICATIONS, and gating one verification on
+        # another is exactly the hiding this change removes.
+        if: ${{ !cancelled() && steps.db_chain.outcome == 'success' }}
         # PR #221. Regenerates types from the just-migrated LOCAL
         # database (supabase gen types typescript --local) and
         # compares column sets exactly, both directions, against the
@@ -536,14 +677,18 @@ jobs:
     # its own result instead of being cut mid-run and misread as a test failure.
     #
     #   targeted  : target <10 min per shard, hard timeout 15 min  (3 shards)
-    #   extended  : target <10 min per shard, hard timeout 18 min  (4 shards)
+    #   extended  : target <10 min per shard, hard timeout 25 min  (4 shards)
     #
     # NEITHER CEILING MOVED WHEN TARGETED WAS SPLIT. The targeted lane was the
     # one breaching its budget, and the repair was to give it the sharding
     # extended already had rather than to buy every PR more time. Raising 15
     # would have moved the cliff for lanes that are nowhere near it; splitting
     # moves the work.
-    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 18 || 15 }}
+    # ENG-003/004 run39713000378: cold setup12–12.6min before150–158tests;
+    # 482 observed passes/4skips/0assertion failures before cancellation.
+    # Worst measured projection22.15min + finiteheadroom => hard25.
+    # Keep target <10 min per shard and targeted hard15; investigate slow npm ci.
+    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 25 || 15 }}
     strategy:
       fail-fast: false
       matrix:
@@ -582,7 +727,7 @@ jobs:
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -657,7 +802,7 @@ jobs:
           HONE_E2E_FAKE_RESEND: "1"
 
       - name: Upload Playwright traces on failure
-        if: failure()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # Per-shard so two shards never clobber each other's artifact.
@@ -667,16 +812,26 @@ jobs:
 
       - name: Timing diagnostics
         if: always()
+        env:
+          SETUP_END: ${{ steps.setup_done.outputs.at }}
+          E2E_OUTCOME: ${{ steps.e2e.outcome }}
+          JOB_STATUS: ${{ job.status }}
         run: |
           NOW=$(date +%s)
-          SETUP_END=${{ steps.setup_done.outputs.at }}
           echo "shard              : ${{ matrix.shard }}"
           echo "mode               : ${{ needs.changes.outputs.browser_extended == 'true' && 'extended (sharded)' || 'targeted' }}"
           echo "selected specs     : ${{ needs.changes.outputs.browser_specs }}"
           echo "selection reason   : ${{ needs.changes.outputs.browser_reason }}"
-          echo "test duration (s)  : $(( NOW - SETUP_END ))"
-          echo "job outcome        : ${{ steps.e2e.outcome }}"
-          if [ "${{ steps.e2e.outcome }}" = "cancelled" ]; then
+          # A failed setup has no timestamp; never subtract an empty value as zero.
+          # This is setup-complete-to-diagnostic elapsed, not exact test runtime.
+          if [[ "$SETUP_END" =~ ^[1-9][0-9]{0,9}$ ]] && (( SETUP_END <= NOW )) && [[ "$E2E_OUTCOME" =~ ^(success|cancelled|failure)$ ]]; then
+            echo "test duration (s)  : $(( NOW - SETUP_END ))"
+          else
+            echo "test duration (s)  : unavailable (setup incomplete, test not run, or invalid timestamp)"
+          fi
+          echo "job status at timing: $JOB_STATUS"
+          echo "browser step outcome: $E2E_OUTCOME"
+          if [ "$E2E_OUTCOME" = "cancelled" ]; then
             echo "NOTE: cancelled. Most likely the job exceeded its timeout budget."
           fi
 
@@ -685,7 +840,9 @@ jobs:
   # legitimately skipped, and fails if any shard failed or was cancelled.
   browser-e2e:
     name: browser e2e (local stack)
-    needs: [changes, browser-e2e-shard]
+    # canonical-record rides on this STABLE required check (#825 6215529089,
+    # Codex P1 4296967177): branch protection must never point at a new name.
+    needs: [changes, browser-e2e-shard, canonical-record]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -700,6 +857,9 @@ jobs:
           FULL_MATRIX: ${{ needs.changes.outputs.full_matrix_required }}
           EXTENDED: ${{ needs.changes.outputs.browser_extended }}
           SHARDS: ${{ needs.changes.outputs.browser_shards }}
+          RECORD_RESULT: ${{ needs.canonical-record.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          PRODUCTION_RECORD: ${{ needs.changes.outputs.production_record }}
         run: |
           set -euo pipefail
 
@@ -727,6 +887,21 @@ jobs:
           # a green required check.
           if [ "${CHANGES_RESULT:-}" != "success" ]; then
             echo "::error::changed-path detection did not succeed (result: ${CHANGES_RESULT:-<missing>}), browser coverage cannot be proven unnecessary, so this required check fails closed"
+            exit 1
+          fi
+
+          # Canonical production record (#825 6215529089). On a docs-only
+          # docs/production/** change validate is skipped, so canonical-record is
+          # the only check that can reject a stale record. Its result is carried
+          # HERE, failing closed, rather than relying on a new check name.
+          if [ "${DOCS_ONLY:-}" = "true" ] && [ "${PRODUCTION_RECORD:-}" = "true" ]; then
+            if [ "${RECORD_RESULT:-}" != "success" ]; then
+              echo "::error::canonical production record check did not succeed (result: ${RECORD_RESULT:-<missing>}) on a production-record change, so this required check fails closed"
+              exit 1
+            fi
+            echo "canonical record : success"
+          elif [ "${RECORD_RESULT:-}" = "failure" ] || [ "${RECORD_RESULT:-}" = "cancelled" ]; then
+            echo "::error::canonical production record check reported ${RECORD_RESULT}"
             exit 1
           fi
 
@@ -844,7 +1019,7 @@ jobs:
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -908,7 +1083,10 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.mobile == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # run39713000378 mobile:3 observed passes before10min cancellation;
+    # setup~10min + existing6-case phase~0.4min + finiteheadroom => hard12.
+    # This ceiling is not a performance or physical-device acceptance target.
+    timeout-minutes: 12
 
     steps:
       - name: Checkout repository
@@ -947,7 +1125,7 @@ jobs:
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -1054,7 +1232,7 @@ jobs:
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
