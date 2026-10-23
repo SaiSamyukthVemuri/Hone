@@ -88,6 +88,7 @@ describe("practitioner notification email also renders with AM/PM", () => {
       // field; null here keeps the AM/PM assertion focused on time
       // formatting without rendering the new attribution row.
       referralSourceLabel: null,
+      bookingReference: "K3M9QX",
     });
     expect(out.html).toContain("11:00 AM to 12:00 PM");
     expect(out.text).toContain("11:00 AM to 12:00 PM");

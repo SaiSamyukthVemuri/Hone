@@ -87,6 +87,7 @@ const cases: Array<[string, () => { subject: string; text: string }]> = [
         notes: null,
         appointmentUrl: "https://hone.care/calendar/x",
         referralSourceLabel: null,
+        bookingReference: "K3M9QX",
       }),
   ],
   [
@@ -187,5 +188,54 @@ describe("move notification subjects (source)", () => {
     for (const s of subjects) {
       expect(s).not.toMatch(/serviceName|dateStr|timeStr|clientName/);
     }
+  });
+});
+
+// THREADING (Codex P1 4354990813 / 4354990818 on #1049). Gmail and Outlook
+// thread on the normalized subject plus participants (the problem PR #127
+// fixed for the magic link). Minimum-necessary subjects must not collapse
+// DIFFERENT messages into one thread, so each must keep a non-sensitive
+// distinction. Normalization here is what the clients do: drop reply/forward
+// prefixes, fold case and whitespace.
+function normalizedSubject(subject: string): string {
+  return subject.replace(/^\s*((re|fwd?|aw|sv)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+const practitionerNotice = (bookingReference: string) =>
+  buildPractitionerNotificationEmail({
+    practitionerName: "Synthetic Practitioner",
+    clientName: CLIENT,
+    clientEmail: "client@synthetic.invalid",
+    clientPhone: null,
+    studioName: STUDIO,
+    serviceName: SERVICE,
+    startsAt: START,
+    endsAt: END,
+    timezone: TZ,
+    notes: null,
+    appointmentUrl: "https://hone.care/calendar/x",
+    referralSourceLabel: null,
+    bookingReference,
+  });
+
+describe("subjects keep unrelated messages out of one thread", () => {
+  it("two different bookings' practitioner notices have different normalized subjects", () => {
+    const a = practitionerNotice("K3M9QX").subject;
+    const b = practitionerNotice("P7R2TD").subject;
+    expect(normalizedSubject(a)).not.toBe(normalizedSubject(b));
+    assertMinimal(a);
+    assertMinimal(b);
+  });
+
+  it("the same booking renders the same subject (a retry does not fork a thread)", () => {
+    expect(practitionerNotice("K3M9QX").subject).toBe(practitionerNotice("K3M9QX").subject);
+  });
+
+  it("the 24-hour and 2-hour reminders have different normalized subjects", () => {
+    const day = build24hReminderEmail(reminderProps).subject;
+    const soon = build2hReminderEmail(reminderProps).subject;
+    expect(normalizedSubject(day)).not.toBe(normalizedSubject(soon));
+    assertMinimal(day);
+    assertMinimal(soon);
   });
 });

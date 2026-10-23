@@ -248,8 +248,10 @@ export function build2hReminderEmail(p: ReminderProps): {
   html: string;
   text: string;
 } {
-  // SUBJECT RULE (#828): same as the 24h reminder.
-  const subject = `Appointment reminder from ${p.studioName}`;
+  // SUBJECT RULE (#828): same as the 24h reminder, and DISTINCT from it (Codex
+  // P1 4354990818): identical subjects thread the 2-hour reminder under the
+  // 24-hour one. "see you soon" names the window without a date or time.
+  const subject = `Appointment reminder from ${p.studioName}: see you soon`;
   const headline = "See you soon.";
   const lead = "Your appointment is in about 2 hours.";
   const intake = intakeSectionFor("2h", p);

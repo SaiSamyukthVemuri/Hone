@@ -247,6 +247,7 @@ describe("Settings -> Services exposes the editable Pre-appointment instructions
       // referralSourceLabel field; null here keeps the prep
       // assertion focused on the prep block, not on attribution.
       referralSourceLabel: null,
+      bookingReference: "K3M9QX",
     });
     expect(out.html).toContain("60-minute electrolysis");
   });

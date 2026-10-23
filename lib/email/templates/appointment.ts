@@ -217,6 +217,9 @@ type NotifyPractitioner = {
   // referralSourceLabel by the caller; null when the visitor declined
   // to answer. NOT rendered in any client-facing email.
   referralSourceLabel: string | null;
+  // Codex P1 4354990813: a short non-sensitive per-booking label
+  // (lib/email/booking-reference.ts), so distinct bookings do not thread.
+  bookingReference: string;
 };
 
 export function buildPractitionerNotificationEmail(p: NotifyPractitioner): {
@@ -227,7 +230,9 @@ export function buildPractitionerNotificationEmail(p: NotifyPractitioner): {
   const dayStr = dayLabel(p.startsAt, p.timezone);
   const timeStr = rangeLabel(p.startsAt, p.endsAt, p.timezone);
   // SUBJECT RULE (#828): no client name, service, date or time in a subject.
-  const subject = `New booking at ${p.studioName}`;
+  // The reference keeps each booking in its own thread (booking-reference.ts).
+  const ref = p.bookingReference.trim();
+  const subject = `New booking at ${p.studioName} · Ref ${ref}`;
   const safeClient = escapeHtml(p.clientName);
   const safeService = escapeHtml(p.serviceName);
   const safePract = escapeHtml(p.practitionerName);
@@ -264,6 +269,9 @@ export function buildPractitionerNotificationEmail(p: NotifyPractitioner): {
             Open in Hone
           </a>
         </td></tr>
+        <tr><td style="padding-top:16px; font-family:-apple-system, system-ui, sans-serif; font-size:12px; color:#6B6B6B;">
+          Booking reference: ${escapeHtml(ref)}
+        </td></tr>
       </table>
     </td></tr>
   </table>
@@ -282,6 +290,7 @@ ${timeStr} (${p.timezone})
 ${p.notes ? `\nNotes: ${p.notes}\n` : ""}
 ${p.referralSourceLabel ? `How they heard about us: ${p.referralSourceLabel}\n` : ""}
 Open in Hone: ${p.appointmentUrl}
+Booking reference: ${ref}
 `;
 
   return {
