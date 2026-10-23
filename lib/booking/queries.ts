@@ -214,7 +214,7 @@ export async function getRecurringBreakOccurrencesForRange(
 // row was already accessible to this studio's session via the
 // underlying appointments query.
 export type AppointmentWithPractitionerColor = Appointment & {
-  practitioner: { id: string; color: string } | null;
+  practitioner: { id: string; color: string; display_name?: string | null } | null;
   client: { id: string; name: string } | null;
   service: {
     id: string;
@@ -231,7 +231,7 @@ export async function getAppointmentsForRange(
 ): Promise<AppointmentWithPractitionerColor[]> {
   const supabase = await createClient();
   const BASE =
-    "*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color), client:clients(id, name), ";
+    "*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color, display_name), client:clients(id, name), ";
   const runSelect = (serviceEmbed: string, afterId: string | null) => {
     let query = supabase
       .from("appointments")
@@ -277,8 +277,8 @@ export async function getAppointmentsForRange(
   // branching (same idiom for client and service).
   type Raw = Appointment & {
     practitioner:
-      | { id: string; color: string }
-      | { id: string; color: string }[]
+      | { id: string; color: string; display_name?: string | null }
+      | { id: string; color: string; display_name?: string | null }[]
       | null;
     client:
       | { id: string; name: string }
