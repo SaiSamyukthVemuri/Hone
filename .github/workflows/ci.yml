@@ -949,6 +949,19 @@ jobs:
           path: test-results/
           retention-days: 7
 
+      # React #418 attribution: the egress guard already holds every refused
+      # Sentry envelope (url, transaction, frames, breadcrumbs) from this
+      # synthetic-data run; upload it so a one-in-many diagnostic can be tied
+      # to its page and case instead of a minified count in the run log.
+      - name: Upload refused Sentry envelopes
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sentry-egress-shard-${{ matrix.shard }}
+          path: /tmp/hone-e2e-sentry-egress/*.jsonl
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Timing diagnostics
         if: always()
         env:
