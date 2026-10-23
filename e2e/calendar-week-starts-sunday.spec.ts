@@ -273,8 +273,10 @@ for (const mode of [
       await expect(chooser).toHaveCount(0);
       const edit = page.getByRole("dialog", { name: "Blocked time", exact: true });
       await expect(edit).toBeVisible();
-      await expect(edit.getByLabel("Private note (optional)", { exact: true })).toHaveValue(marker);
-      await expect(edit.getByLabel("Category", { exact: true })).toHaveValue("break");
+      // Not exact: each control sits inside its <label>, so the label's text also
+      // carries the textarea's content and every <option>. The values prove it.
+      await expect(edit.getByLabel("Private note (optional)")).toHaveValue(marker);
+      await expect(edit.getByLabel("Category")).toHaveValue("break");
       await expect(edit.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
       await expect(page.getByRole("dialog", { name: "New appointment", exact: true })).toHaveCount(0);
       await page.keyboard.press("Escape");
