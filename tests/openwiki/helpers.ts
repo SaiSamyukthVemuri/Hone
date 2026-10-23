@@ -1,6 +1,6 @@
 // Shared fixtures for the WIKI-AUTO-01 runner tests: a throwaway "production"
 // repository behind a local bare origin, built with real git. Every git call
-// runs with an empty global config so an operator's ~/.gitconfig (signing,
+// runs with an isolated global config so an operator's ~/.gitconfig (signing,
 // credential helpers, hooks) cannot change what the tests observe.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -18,18 +18,38 @@ export function makeTmp(label: string): string {
   return dir;
 }
 
+/**
+ * Remove every fixture directory.
+ *
+ * The retries are a BACKSTOP, not the fix. #893's CI run 39879248847 failed
+ * here with ENOTEMPTY on `work/.git/objects`: git 2.47+ (CI runs 2.55) detaches
+ * the automatic `git maintenance run --auto` every commit launches, and that
+ * background process takes `objects/maintenance.lock` while this removal walks
+ * the tree. The fix is `isolateGitConfig` turning automatic maintenance off, so
+ * no fixture git command leaves a process behind. The retries cover a writer
+ * that releases what it holds; one that leaves new files would still fail, and
+ * loudly, which is the right outcome.
+ */
 export function cleanupTmp(): void {
-  for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 }
+
+/**
+ * The isolated global config. Empty apart from one rule: no git command a
+ * fixture runs may leave a background process behind. Automatic maintenance
+ * and auto-gc are what commit, fetch and push otherwise launch, detached on
+ * git 2.47+, writing into `.git/objects` after the command has returned.
+ */
+export const ISOLATED_GIT_CONFIG = "[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n\tautoDetach = false\n";
 
 let isolated: { global: string; prev: Record<string, string | undefined> } | undefined;
 
-/** Point git at an empty global config for this test file's process. */
+/** Point git at the isolated global config (ISOLATED_GIT_CONFIG) for this test file's process. */
 export function isolateGitConfig(): void {
   if (isolated) return;
   const dir = makeTmp("gitconfig");
   const global = path.join(dir, "gitconfig");
-  writeFileSync(global, "");
+  writeFileSync(global, ISOLATED_GIT_CONFIG);
   isolated = {
     global,
     prev: { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM },
