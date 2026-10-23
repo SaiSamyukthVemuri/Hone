@@ -1,6 +1,11 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isAdmin } from "@/lib/admin";
+import {
+  ADMIN_RETURN_COOKIE,
+  ADMIN_RETURN_MAX_AGE_SECONDS,
+  safeAdminReturnPath,
+} from "@/lib/auth/return-path";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -153,12 +158,32 @@ export async function updateSession(request: NextRequest) {
     // X-Twilio-Signature over the full URL (the ledger row id rides in its
     // query) plus sorted POST fields, validated before any DB write. Exact
     // path, for the reason above.
-    pathname === "/api/twilio/message-status";
+    pathname === "/api/twilio/message-status" ||
+    // DELIVERY-EVENTS-01 Resend delivery-event webhook. Authenticates via
+    // the Svix signature (svix-id / svix-timestamp / svix-signature over the
+    // raw body, five-minute replay window), verified inside the route handler
+    // before any DB write. Exact path: do NOT broaden to /api/resend/*.
+    pathname === "/api/resend/webhook";
 
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    return NextResponse.redirect(url);
+    const response = NextResponse.redirect(url);
+    // LEAD-ALERT-01 (Codex P2 4248920454): an operator opening an /admin link
+    // (the lead alert's) signs in and lands back on it. Only a validated
+    // same-origin /admin path is remembered, in a short-lived httpOnly cookie
+    // the sign-in callback consumes; nothing else is ever a return target.
+    const returnTo = safeAdminReturnPath(`${pathname}${request.nextUrl.search}`);
+    if (returnTo) {
+      response.cookies.set(ADMIN_RETURN_COOKIE, returnTo, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: request.nextUrl.protocol === "https:",
+        path: "/",
+        maxAge: ADMIN_RETURN_MAX_AGE_SECONDS,
+      });
+    }
+    return response;
   }
 
   // PR #253 invite-only gate: an AUTHENTICATED user with no active

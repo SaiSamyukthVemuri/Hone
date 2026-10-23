@@ -601,7 +601,7 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     if (failure === "timeout") await vi.advanceTimersByTimeAsync(2000);
     const response = await pending;
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ ok: false, error: "cron_failed" });
+    expect(await response.json()).toEqual({ ok: false, error: "cron_failed", lead_alerts: { ran: false, reason: "recipient_not_configured" } });
     expect(race.alerts).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       event: "cron_route_failed", severity: "critical",
       message: "Reminder scan incomplete. Check scheduler progress before retrying work.",
@@ -703,7 +703,7 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     else race.heartbeat.mockRejectedValueOnce(hostile);
     const response = await GET(new Request("https://example.invalid"));
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ ok: false, error: "cron_failed" });
+    expect(await response.json()).toEqual({ ok: false, error: "cron_failed", lead_alerts: { ran: false, reason: "recipient_not_configured" } });
     expect(inspected).not.toHaveBeenCalled();
     expect(race.alerts).toHaveBeenCalledExactlyOnceWith({
       severity: "critical", event: "cron_route_failed",
@@ -729,7 +729,7 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     race.alerts.mockRejectedValueOnce(new Error("SYNTHETIC_PRIVATE alert writer"));
     const response = await GET(new Request("https://example.invalid"));
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ ok: false, error: "cron_failed" });
+    expect(await response.json()).toEqual({ ok: false, error: "cron_failed", lead_alerts: { ran: false, reason: "recipient_not_configured" } });
     expect(race.alerts).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(race.alerts.mock.calls)).not.toContain("SYNTHETIC_PRIVATE");
   });

@@ -1052,6 +1052,12 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "The Hone product waitlist from migration 0004. Platform marketing, not studio content, and unrelated to new_client_waitlist_entries.",
   },
+  platform_lead_alerts: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Hone's own operator-alert state for its sales leads, live since migration 0213 (LEAD-ALERT-01): one row per demo_requests or waitlist lead, holding only the alert's status, attempt count, lease and provider message id. The leads it points at are platform records excluded above, and the table carries no studio_id, so it is no studio's content.",
+  },
   calendar_sync_control: {
     kind: "excluded",
     category: "platform",
@@ -1095,6 +1101,12 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     category: "derived",
     reason:
       "Delivery log for outbound marketing-tracking events. The underlying booking is already exported in appointments.csv.",
+  },
+  email_provider_events: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Hone's intake of Resend's signed delivery webhooks, live since migration 0212 (DELIVERY-EVENTS-01). One receipt per provider delivery, kept so an event is applied exactly once and a lost one can be finished. A receipt carries the provider's delivery id and email id plus normalised reason codes. It holds no studio content, and an unmatched or quarantined receipt is attributable to no studio by construction. What a studio would recognise, whether an email reached a client's mail server, lives on email_outbound_messages, which is decided separately.",
   },
   stripe_events: {
     kind: "excluded",
@@ -1638,12 +1650,6 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     fieldReviewRequired: true,
     reason:
       "The outbound email delivery ledger, live since migration 0212 (DELIVERY-EVENTS-01), the email counterpart of sms_outbound_messages. One row per appointment email attempt, with its purpose, status, skip reason, normalised provider reason codes and timestamps. It holds no recipient address, subject or body. It is studio-scoped operational history, so PENDING rather than EXCLUDED. It is field-review-required for the same reason as sms_outbound_messages: provider_email_id is Hone's provider identifier for one message and means nothing to a customer, while the status history is something a studio would recognise (whether a reminder reached a client's mail server). No export surface ships in DELIVERY-EVENTS-01.",
-  },
-  email_provider_events: {
-    kind: "excluded",
-    category: "platform",
-    reason:
-      "Hone's intake of Resend's signed delivery webhooks, live since migration 0212 (DELIVERY-EVENTS-01). One receipt per provider delivery, kept so an event is applied exactly once and a lost one can be finished. A receipt carries the provider's delivery id and email id plus normalised reason codes. It holds no studio content, and an unmatched or quarantined receipt is attributable to no studio by construction. What a studio would recognise, whether an email reached a client's mail server, lives on email_outbound_messages, which is decided separately.",
   },
   new_client_waitlist_entry_events: {
     kind: "pending",

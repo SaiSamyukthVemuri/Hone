@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 // ===========================================================================
 // Migration 0212 — DELIVERY-EVENTS-01 email delivery events. SOURCE CONTRACT.
@@ -63,13 +63,6 @@ describe("0212 sits correctly in the migration sequence", () => {
     expect(createHash("sha256").update(SQL, "utf8").digest("hex")).toBe(
       "cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1",
     );
-  });
-
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It reached this file from 0210's test.
-    expect(isRepoMax(VERSION), "0212 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0212").toEqual([]);
   });
 
   it("is allocated exactly once", () => {

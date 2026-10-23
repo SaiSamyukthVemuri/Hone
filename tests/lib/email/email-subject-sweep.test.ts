@@ -252,6 +252,9 @@ const SEND_SITES: Record<string, string[] | { inline: string }> = {
   "lib/ops/alert-email.ts": {
     inline: "operator alert; subject is `[Hone CRITICAL] <event slug>`: grouping one failure class in one thread is intended, and it names no client, record or time",
   },
+  "lib/platform-leads/alert-delivery.ts": {
+    inline: "LEAD-ALERT-01 operator alert to Hone's own operator about a Hone sales lead (never a studio's client); subject is `New Hone <demo request|early-access signup> (<received time>)`, rendered by lib/platform-leads/alert-email.ts, and names no person",
+  },
 };
 
 function walk(dir: string, out: string[] = []): string[] {

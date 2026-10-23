@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 
 const h = vi.hoisted(() => ({ exchange: vi.fn(), reconcile: vi.fn(), identify: vi.fn(), capture: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({
@@ -11,7 +12,8 @@ function request(next?: string) {
   const url = new URL("/auth/callback", ORIGIN);
   url.searchParams.set("code", "synthetic-code");
   if (next !== undefined) url.searchParams.set("next", next);
-  return new Request(url);
+  // The route reads the operator's remembered /admin target from its cookies.
+  return new NextRequest(url);
 }
 beforeEach(() => {
   vi.clearAllMocks();
