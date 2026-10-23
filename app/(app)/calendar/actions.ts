@@ -526,6 +526,7 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
     if (client?.email) {
       try {
         await sendCancellationEmail({
+          appointmentId,
           to: client.email,
           recipientName: client.name,
           clientName: client.name,
@@ -1236,6 +1237,7 @@ export async function sendPostcareEmailAction(
 
   const startsAt = appt.starts_at ? new Date(appt.starts_at) : null;
   const result = await sendPostcareToClient({
+    appointmentId,
     clientName: client.name ?? "",
     clientEmail: client.email,
     studio: studioRow as unknown as import("@/lib/types/database").Studio,
