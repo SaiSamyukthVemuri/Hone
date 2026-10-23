@@ -122,10 +122,14 @@ describe("lane isolation", () => {
     expect(job).toMatch(/supabase db reset --local/);
     expect(job).toMatch(/npm run test:e2e/);
     expect(job).toMatch(/version: 2\.102\.0/);
-    const executable = job
-      .split("\n")
-      .filter((l) => !l.trim().startsWith("#"))
-      .join("\n");
+    // D7b (Sam, 2026-10-22): the only sanctioned secret is the read-only
+    // ghcr.io login token, once per pinned docker/login-action step; its full
+    // shape is pinned by tests/ci/ci-config.test.ts.
+    const SANCTIONED = "password: ${{ secrets.GITHUB_TOKEN }}";
+    const lines = job.split("\n").filter((l) => !l.trim().startsWith("#"));
+    expect(lines.filter((l) => l.trim() === SANCTIONED).length)
+      .toBe((job.match(/uses: docker\/login-action@dbcb813823bdd20940b903addbd779551569679f/g) ?? []).length);
+    const executable = lines.filter((l) => l.trim() !== SANCTIONED).join("\n");
     expect(executable).not.toMatch(/secrets\./);
     expect(executable).not.toMatch(/--linked/);
     expect(executable).not.toMatch(/SUPABASE_ACCESS_TOKEN/);

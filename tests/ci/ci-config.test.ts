@@ -756,6 +756,62 @@ describe("PR CI — path-aware lane selection", () => {
   });
 });
 
+describe("D7b: Supabase-starting jobs pull ghcr.io images authenticated, read-only", () => {
+  // Anonymous pulls were throttled on ghcr.io and public.ecr.aws on 2026-10-22.
+  it.each([["ci.yml", () => CI], ["nightly.yml", () => NIGHTLY]])("%s holds the ghcr.io login ONLY across a direct Supabase CLI start", (_n, body) => {
+    const steps = body().split(/\n(?=      - )/);
+    const setups = steps.map((s, i) => [s, i] as const).filter(([s]) => /uses: supabase\/setup-cli@/.test(s));
+    const isLogin = (s: string) => /uses: docker\/login-action@/.test(s);
+    expect(setups.length).toBeGreaterThan(0);
+    for (const [setup, i] of setups) {
+      const at = steps.findIndex((s, j) => j > i && isLogin(s));
+      expect(at, "every setup-cli is followed by its login").toBeGreaterThan(i);
+      const login = steps[at];
+      expect(login).toMatch(/uses: docker\/login-action@dbcb813823bdd20940b903addbd779551569679f # v4\.6\.0\n\s+with:\n\s+registry: ghcr\.io/);
+      // Codex P2 4354428027: nothing branch-controlled may have RUN in this job
+      // before the login (an npm lifecycle hook could leave a process waiting
+      // for ~/.docker/config.json). So every earlier step of the job is either a
+      // pinned action or an inline command that invokes no package manager,
+      // node or repository script; `npm ci` and friends come after the logout.
+      let first = at - 1;
+      while (first >= 0 && !/^    steps:\s*$/m.test(steps[first])) first -= 1;
+      const runsRepoCode = (s: string) => {
+        const code = s.replace(/^\s*#.*$/gm, "");
+        const run = code.match(/\n        run: ?([\s\S]*)$/);
+        return run !== null && /\b(npm|npx|node|yarn|pnpm)\b|scripts\//.test(run[1]);
+      };
+      const before = steps.slice(first + 1, at);
+      expect(before.length, "the job's pre-login steps were found").toBeGreaterThan(0);
+      expect(before.filter(runsRepoCode).map((s) => s.match(/- name: ([^\n]+)/)?.[1]), "steps running repo code before the login").toEqual([]);
+      // Codex P2 4353164800: the login must run whenever its setup-cli runs,
+      // or that lane silently falls back to anonymous pulls. So its `if:` is
+      // pinned EXACTLY: none in ci.yml, and nightly's must equal its
+      // setup-cli's own condition (matrix.needs_supabase).
+      const conds = (s: string) => s.match(/^\s+if:.*$/gm) ?? [];
+      expect(conds(login)).toEqual(conds(setup));
+      expect(conds(login)).toEqual(_n === "ci.yml" ? [] : ["        if: matrix.needs_supabase"]);
+      // Codex P2 4353990804: the credential lives in ~/.docker/config.json, so
+      // the ONLY step between login and logout is the Supabase start, and the
+      // logout runs even when that start fails.
+      // Codex P2 4354172124: that start is a DIRECT pinned-CLI call, never a
+      // checked-out script; its failure falls through to ONE retry step that
+      // runs the repo's wrapper only AFTER the logout.
+      const start = steps[at + 1];
+      expect(start).toMatch(/^      - name: (Start local Supabase|Bring up the database)/);
+      expect(start).toMatch(/\n        id: sb_start\n/);
+      expect(start).toMatch(/\n        continue-on-error: true\n        shell: bash\n        run: supabase start\b[^\n]* 2>&1 \| tee "\$RUNNER_TEMP\/supabase-start\.log"\n/);
+      expect(start.replace(/^\s*#.*$/gm, "")).not.toMatch(/scripts\/|\bbash scripts|\bnpm |\bnode |\.sh\b/);
+      const cond = _n === "ci.yml" ? "always()" : "always() && matrix.needs_supabase";
+      expect(steps[at + 2]).toMatch(new RegExp(`^      - name: Log out of ghcr\\.io \\(D7b\\)\\n        if: ${cond.replace(/[()&.]/g, "\\$&")}\\n        run: docker logout ghcr\\.io\\n`));
+      const retryIf = _n === "ci.yml" ? "steps.sb_start.outcome == 'failure'" : "matrix.needs_supabase && steps.sb_start.outcome == 'failure'";
+      expect(steps[at + 3]).toContain(`      - name: Retry Supabase start once on a port-bind collision (no credential)\n        if: ${retryIf}\n        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start`);
+    }
+    expect((body().match(/uses: docker\/login-action@/g) ?? []).length).toBe(setups.length);
+    expect((body().match(/run: docker logout ghcr\.io/g) ?? []).length).toBe(setups.length);
+    expect(body()).not.toMatch(/SUPABASE_INTERNAL_IMAGE_REGISTRY/);
+  });
+});
+
 describe("nightly / manual full matrix", () => {
   it("runs on a schedule and on demand", () => {
     expect(NIGHTLY).toMatch(/schedule:/);
@@ -1104,9 +1160,44 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   //    third-party action handed a PAT writes through the API just the same,
   //    while `permissions: contents: read` and the absence of `git push` and
   //    `gh` all still read clean.
+  // D7b (Sam, 2026-10-22, option A): the ONE sanctioned credential. Anonymous
+  // image pulls were throttled on both ghcr.io and public.ecr.aws, so the
+  // Supabase-starting jobs pull ghcr.io images AUTHENTICATED with their own
+  // token. Exempt only this exact step, in a job whose permissions are exactly
+  // { contents: read, packages: read }; any other spelling, scope, action,
+  // registry or credential is still refused below.
+  const SANCTIONED_LOGIN = "docker/login-action@dbcb813823bdd20940b903addbd779551569679f";
+  function isSanctionedGhcrLogin(job: unknown, step: unknown): boolean {
+    if (!isRecord(job) || !isRecord(step) || !isRecord(step.with)) return false;
+    const perms = job.permissions;
+    if (!isRecord(perms) || Object.keys(perms).sort().join(",") !== "contents,packages") return false;
+    if (perms.contents !== "read" || perms.packages !== "read") return false;
+    if (step.uses !== SANCTIONED_LOGIN) return false;
+    if (Object.keys(step).some((k) => !["name", "if", "uses", "with"].includes(k))) return false;
+    const w = step.with;
+    return Object.keys(w).sort().join(",") === "password,registry,username" &&
+      w.registry === "ghcr.io" && w.username === "${{ github.actor }}" && w.password === "${{ secrets.GITHUB_TOKEN }}";
+  }
+  function withoutSanctionedLogins(doc: unknown): unknown {
+    if (!isRecord(doc) || !isRecord(doc.jobs)) return doc;
+    const jobs: Record<string, unknown> = {};
+    for (const [k, job] of Object.entries(doc.jobs)) {
+      // Blank ONLY the sanctioned password value; every other field of the
+      // step (name, if, uses, with) is still scanned, so a secret smuggled
+      // into an `if:` or `name:` on this very step is still refused.
+      jobs[k] = isRecord(job) && Array.isArray(job.steps)
+        ? { ...job, steps: job.steps.map((s) => isSanctionedGhcrLogin(job, s) && isRecord(s) && isRecord(s.with)
+            ? { ...s, with: { ...s.with, password: "<sanctioned ghcr.io token>" } }
+            : s) }
+        : job;
+    }
+    return { ...doc, jobs };
+  }
+
   function writeCredentialViolations(sources: readonly Workflow[]): string[] {
     const bad: string[] = [];
-    for (const { file, doc } of parseAll(sources)) {
+    for (const { file, doc: parsed } of parseAll(sources)) {
+      const doc = withoutSanctionedLogins(parsed);
       const strings = taggedStrings(doc);
       const text = strings.map((s) => s.value).join("\n");
       if (/GITHUB_TOKEN/.test(text)) bad.push(`${file}: uses GITHUB_TOKEN`);
@@ -1155,6 +1246,37 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
 
   it("no workflow writes to GitHub, which is what makes the opt-out safe", () => {
     expect(writeCredentialViolations(WORKFLOWS)).toEqual([]);
+  });
+
+  it("D7b: the sanctioned ghcr.io login is exempt only in its exact shape", () => {
+    const LOGIN = [
+      "      - name: login",
+      `        uses: ${SANCTIONED_LOGIN} # v4.6.0`,
+      "        with:",
+      "          registry: ghcr.io",
+      "          username: ${{ github.actor }}",
+      "          password: ${{ secrets.GITHUB_TOKEN }}",
+    ];
+    const wf = (perms: string[], login: string[]): Workflow => [
+      "probe.yml",
+      ["permissions:", "  contents: read", "jobs:", "  j:", "    runs-on: ubuntu-latest", ...perms,
+        "    steps:", ...login].join("\n"),
+    ];
+    const READ_PKGS = ["    permissions:", "      contents: read", "      packages: read"];
+    expect(JSON.stringify(parseAll([wf(READ_PKGS, LOGIN)])[0].doc)).toContain("secrets.GITHUB_TOKEN");
+    expect(writeCredentialViolations([wf(READ_PKGS, LOGIN)])).toEqual([]);
+    // Each departure is refused again.
+    expect(writeCredentialViolations([wf([], LOGIN)]).length).toBeGreaterThan(0);
+    expect(writeCredentialViolations([wf([...READ_PKGS, "      pull-requests: read"], LOGIN)]).length).toBeGreaterThan(0);
+    expect(writeCredentialViolations([wf(READ_PKGS, LOGIN.map((l) => l.replace("secrets.GITHUB_TOKEN", "secrets.DEPLOY_PAT")))]).length).toBeGreaterThan(0);
+    expect(writeCredentialViolations([wf(READ_PKGS, LOGIN.map((l) => l.replace("registry: ghcr.io", "registry: docker.io")))]).length).toBeGreaterThan(0);
+    expect(writeCredentialViolations([wf(READ_PKGS, LOGIN.map((l) => l.replace(SANCTIONED_LOGIN, "docker/login-action@0000000000000000000000000000000000000000")))]).length).toBeGreaterThan(0);
+    expect(writeCredentialViolations([wf(READ_PKGS, [...LOGIN, "        env:", "          X: ${{ secrets.GITHUB_TOKEN }}"])]).length).toBeGreaterThan(0);
+    // Codex 4353055752: a secret in the sanctioned step's own if/name is still refused.
+    const withIf = [LOGIN[0], "        if: secrets.DEPLOY_PAT != ''", ...LOGIN.slice(1)];
+    expect(writeCredentialViolations([wf(READ_PKGS, withIf)]).join("\n")).toMatch(/DEPLOY_PAT/);
+    const withName = [LOGIN[0].replace("login", "login ${{ secrets.DEPLOY_PAT }}"), ...LOGIN.slice(1)];
+    expect(writeCredentialViolations([wf(READ_PKGS, withName)]).join("\n")).toMatch(/DEPLOY_PAT/);
   });
 
   // 6. The Supabase CLI pin is a DB-SAFETY invariant, not a preference: a newer
