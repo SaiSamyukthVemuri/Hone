@@ -11,9 +11,17 @@
 //   node scripts/classify-changes.mjs --files-from <file>   # newline-separated paths
 //   node scripts/classify-changes.mjs --files "a.ts,b.sql"
 //   node scripts/classify-changes.mjs --github-output       # append to $GITHUB_OUTPUT
+//
+// The CLI also scans the checkout's tests for direct dependencies
+// (scripts/test-dependencies.mjs) and passes them in; `classify()` itself stays
+// pure and takes them as an argument.
 // ---------------------------------------------------------------------------
 
 import { readFileSync, appendFileSync } from "node:fs";
+import { loadTestDependencies } from "./test-dependencies.mjs";
+
+/** No test-dependency edges: path-only selection, exactly as before part 2. */
+export const NO_TEST_DEPENDENCIES = Object.freeze({ db: new Map(), docReaders: new Map() });
 
 /** Anything here genuinely affects every lane. Kept deliberately short. */
 const FULL_MATRIX = [
@@ -47,12 +55,18 @@ const RULES = [
   // migrated local schema. Classifying a registry edit as application-only
   // would let someone retire a disposition without the guard that proves the
   // retirement is honest ever running.
-  { key: "database", patterns: [/^supabase\/migrations\//, /^supabase\/.*\.sql$/, /^tests\/db\//, /^tests\/migrations\//, /^scripts\/migration-state\.mjs$/, /^scripts\/check-migration-extension/, /^scripts\/check-fresh-managed/, /^lib\/export\/resource-registry\.ts$/] },
+  //
+  // G3 (record batching part 2) adds the generated DB types and their drift
+  // script for the same reason. `check:db-types` compares lib/types/database.ts
+  // with the migrated schema, and it runs ONLY inside db-integration, so a hand
+  // edit or a drifted regeneration classified as application-only was never
+  // compared on its own PR.
+  { key: "database", patterns: [/^supabase\/migrations\//, /^supabase\/.*\.sql$/, /^tests\/db\//, /^tests\/migrations\//, /^scripts\/migration-state\.mjs$/, /^scripts\/check-migration-extension/, /^scripts\/check-fresh-managed/, /^lib\/export\/resource-registry\.ts$/, /^lib\/types\/database\.ts$/, /^scripts\/check-db-types\.mjs$/] },
   { key: "security", patterns: [/^tests\/security\//, /^lib\/security\//, /^lib\/observability\//, /^scripts\/check-.*gates/] },
   { key: "payment", patterns: [/payment/i, /stripe/i, /checkout/i, /manual-fee/i, /^lib\/billing\//, /^e2e-payment\//, /^playwright\.payment\.config/] },
   { key: "google_calendar", patterns: [/google[-_]?calendar/i, /^lib\/google-calendar\//, /^e2e-google\//, /^playwright\.google\.config/, /^app\/api\/cron\/calendar/] },
   { key: "mobile", patterns: [/^e2e-mobile\//, /^playwright\.mobile\.config/, /mobile/i, /responsive/i] },
-  { key: "ci_workflows", patterns: [/^\.github\/workflows\//, /^scripts\/classify-changes\.mjs$/, /^scripts\/verify-prepush\.mjs$/, /^tests\/ci\//] },
+  { key: "ci_workflows", patterns: [/^\.github\/workflows\//, /^scripts\/classify-changes\.mjs$/, /^scripts\/test-dependencies\.mjs$/, /^scripts\/verify-prepush\.mjs$/, /^tests\/ci\//] },
   { key: "browser_core", patterns: [/^e2e\//, /^app\//, /^components\//, /^playwright\.config/] },
   { key: "application", patterns: [/^app\//, /^components\//, /^lib\//, /^hooks\//, /^types\//, /\.tsx?$/] },
 ];
@@ -216,7 +230,18 @@ function baselineRisk(list, lanes, docsOnly) {
   return { baselineRiskTier: tier, riskReasons: hits.filter((h) => h.tier === tier).map((h) => h.reason) };
 }
 
-export function classify(files) {
+/**
+ * `deps` is the result of scanTestDependencies() (or a fixture). It only ever
+ * ADDS lanes, so a missing or partial scan can never select fewer lanes than
+ * path-only selection did:
+ *
+ *   * G1/G2: a changed file that a tests/db suite imports or reads as source
+ *     selects the database lane;
+ *   * G4: a docs-only change to a Markdown file read by a unit test sets
+ *     `docs_consistency` and lists exactly those readers in
+ *     `docs_consistency_tests` (space-separated, for `npx vitest run`).
+ */
+export function classify(files, deps = NO_TEST_DEPENDENCIES) {
   const list = (files ?? []).map((f) => f.trim()).filter(Boolean);
 
   const out = {
@@ -230,6 +255,8 @@ export function classify(files) {
     mobile: false,
     ci_workflows: false,
     full_matrix_required: false,
+    docs_consistency: false,
+    docs_consistency_tests: "",
     changed_file_count: list.length,
     baselineRiskTier: "T3",
     riskReasons: [],
@@ -258,8 +285,21 @@ export function classify(files) {
     for (const k of ["application", "database", "security", "payment", "google_calendar", "browser_core", "mobile", "ci_workflows"]) {
       out[k] = false;
     }
+    // G4. validate is skipped for a docs-only diff, so a doc that a unit test
+    // reads (the migration ledger, AGENTS.md, CLAUDE.md) used to break that
+    // test first on the release push. Only the readers run: no build, no DB,
+    // no browser.
+    const readers = new Set(list.flatMap((f) => deps.docReaders.get(f) ?? []));
+    out.docs_consistency = readers.size > 0;
+    out.docs_consistency_tests = [...readers].sort().join(" ");
     return out;
   }
+
+  // G1/G2. A file a DB suite imports or reads as source is a database-lane
+  // dependency. Applied AFTER the baseline tier: the tier describes the paths
+  // that changed, and a module being exercised by a DB suite does not by
+  // itself move it across a risk boundary.
+  if (list.some((f) => deps.db.has(f))) out.database = true;
 
   // Shared infrastructure forces the full matrix. Docs, the ledger and
   // apply-record files are NEVER full-matrix triggers, which is why the
@@ -286,7 +326,7 @@ function parseArgs(argv) {
 }
 
 if (process.argv[1] && process.argv[1].endsWith("classify-changes.mjs")) {
-  const result = classify(parseArgs(process.argv));
+  const result = classify(parseArgs(process.argv), loadTestDependencies());
   // `$GITHUB_OUTPUT` is newline-delimited, so a value may never contain one.
   const render = (v) => (Array.isArray(v) ? v.join("; ") : String(v)).replace(/\n/g, " ");
   const lines = Object.entries(result).map(([k, v]) => `${k}=${render(v)}`);

@@ -13,6 +13,7 @@
 
 import { execFileSync } from "node:child_process";
 import { classify } from "./classify-changes.mjs";
+import { loadTestDependencies } from "./test-dependencies.mjs";
 import { selectBrowserGroups, specsForGroups, BROWSER_GROUPS, EXTENDED } from "./browser-groups.mjs";
 
 const BASE_BRANCH = process.env.HONE_BASE_BRANCH ?? "claude/build-hone-saas-hOex7";
@@ -35,8 +36,10 @@ export function changedFiles() {
   }
 }
 
-export function buildPlan(files) {
-  const c = classify(files);
+export function buildPlan(files, deps = loadTestDependencies()) {
+  // The same test-dependency scan the CI classifier step uses, so a module a
+  // DB suite depends on selects the database lane here too (CLAUDE.md §3).
+  const c = classify(files, deps);
   const b = selectBrowserGroups(files);
 
   const lanes = [];

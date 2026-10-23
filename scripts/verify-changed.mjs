@@ -39,6 +39,9 @@ const addSuggested = (label, cmd, why) => suggested.push({ label, cmd, why });
 if (c.docs_only) {
   addAuto("documentation consistency", "npx vitest run tests/docs/", "docs-only diff");
   addAuto("migration state derives", "node scripts/migration-state.mjs", "docs may quote migration state");
+  if (c.docs_consistency) {
+    addAuto("unit tests that read the changed docs", `npx vitest run ${c.docs_consistency_tests}`, "a changed doc is test input");
+  }
 } else {
   if (c.database) {
     addAuto("migration source contracts", "npx vitest run tests/migrations/", "migration paths changed");

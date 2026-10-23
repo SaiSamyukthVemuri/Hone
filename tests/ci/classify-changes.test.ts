@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import path from "node:path";
 // @ts-expect-error - .mjs utility ships without type declarations
-import { classify, highestTier } from "../../scripts/classify-changes.mjs";
+import { classify, highestTier, NO_TEST_DEPENDENCIES } from "../../scripts/classify-changes.mjs";
+// @ts-expect-error - .mjs utility ships without type declarations
+import { loadTestDependencies } from "../../scripts/test-dependencies.mjs";
+// @ts-expect-error - .mjs utility ships without type declarations
+import { buildPlan } from "../../scripts/ci-plan.mjs";
 
 // Path-classification is proved here rather than by pushing fake commits to
 // trigger every CI lane. These cases ARE the acceptance criteria.
@@ -150,6 +157,7 @@ describe("classifier — output contract", () => {
       "mobile",
       "ci_workflows",
       "full_matrix_required",
+      "docs_consistency",
     ]) {
       expect(typeof r[k], `${k} must be boolean`).toBe("boolean");
     }
@@ -405,5 +413,201 @@ describe("classifier — mixed diffs still take the highest tier", () => {
     const a = c("supabase/migrations/0177_x.sql", "lib/security/x.ts").riskReasons;
     const b = c("lib/security/x.ts", "supabase/migrations/0177_x.sql").riskReasons;
     expect(a).toEqual(b);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Record batching part 2: dependency-aware selection (G1-G4).
+//
+// Path-only selection skipped the database lane for a file a tests/db suite
+// imports or reads as source (#814), never compared generated DB types on their
+// own PR, and ran no test at all for a docs-only change to a doc a unit test
+// reads. Every case here uses the REAL scan of this checkout, so they also fail
+// if the scan silently goes empty (see the anti-vacuity case). The WIRING cases
+// spawn the real CLI, which scans every test file, so they carry an explicit
+// timeout: a loaded parallel run must not report a budget as a failure.
+// ---------------------------------------------------------------------------
+
+type Deps = { db: Map<string, string[]>; docReaders: Map<string, string[]> };
+const REAL = loadTestDependencies() as Deps;
+const withDeps = (deps: Deps, ...files: string[]) => classify(files, deps) as Result;
+const real = (...files: string[]) => withDeps(REAL, ...files);
+
+describe("classifier — test-dependency selection (record batching part 2)", () => {
+  it("G1: a tests/db source-contract target selects the database lane (the #814 regression)", () => {
+    const r = real("lib/waitlist/invite-to-book-adapter.ts");
+    expect(r.database).toBe(true);
+    expect(r.application).toBe(true);
+    expect(r.full_matrix_required).toBe(false);
+  });
+
+  it("G1: every source-contract target the proposal measured selects the database lane", () => {
+    for (const f of [
+      "lib/waitlist/invite-to-book-adapter.ts",
+      "lib/waitlist/invite-to-book-contract.ts",
+      "app/(app)/settings/waitlist/page.tsx",
+      "app/(app)/settings/waitlist/invite-actions.ts",
+      "app/invitation/[token]/actions.ts",
+      "components/profile-tab.ts",
+    ]) {
+      expect(real(f).database, f).toBe(true);
+    }
+  });
+
+  it("G2: a module imported by a DB suite selects the database lane", () => {
+    expect(real("lib/booking/slots.ts").database).toBe(true);
+    expect(real("lib/google-calendar/sync/handler.ts").database).toBe(true);
+  });
+
+  it("G3: generated DB types and the drift script select the database lane, with or without the scan", () => {
+    for (const f of ["lib/types/database.ts", "scripts/check-db-types.mjs"]) {
+      expect(c(f).database, `${f} (path rule)`).toBe(true);
+      expect(real(f).database, `${f} (with scan)`).toBe(true);
+    }
+  });
+
+  it("an unrelated app file still does not select the database lane (no blanket DB lane)", () => {
+    expect(REAL.db.has("components/add-pricing-form.tsx")).toBe(false);
+    const r = real("components/add-pricing-form.tsx");
+    expect(r.database).toBe(false);
+    expect(r.application).toBe(true);
+  });
+
+  it("the scanner finds the known edges (anti-vacuity)", () => {
+    expect(REAL.db.get("lib/waitlist/invite-to-book-adapter.ts")).toContain(
+      "tests/db/waitlist-integration-seams.db.test.ts",
+    );
+    expect(REAL.db.get("components/profile-tab.ts")).toContain("tests/db/client-profile-tab-queries.db.test.ts");
+    const edges = [...REAL.db.values()].reduce((n, l) => n + l.length, 0);
+    expect(edges).toBeGreaterThanOrEqual(40);
+    expect(REAL.docReaders.get("docs/production/migration-ledger.md")?.length ?? 0).toBeGreaterThanOrEqual(10);
+  });
+
+  it("the scanner sees a path built by path.join/resolve from literal segments", () => {
+    // This test reads the doc through join(..., "docs", "integrations", ...),
+    // never as one literal, so only the joined-literal pass finds it.
+    expect(REAL.docReaders.get("docs/integrations/google-calendar-sync.md")).toContain(
+      "tests/app/google-calendar/b2-3-c-worker-activation-gate.test.ts",
+    );
+  });
+
+  it("the scan lists only real files, DB suites as DB readers and unit tests as doc readers", () => {
+    for (const [target, suites] of REAL.db) {
+      expect(target, "a path-selected database file is not listed").not.toMatch(/^(tests\/(db|migrations)|supabase)\//);
+      for (const s of suites) expect(s).toMatch(/^tests\/db\/.*\.db\.test\.ts$/);
+    }
+    for (const [doc, readers] of REAL.docReaders) {
+      expect(doc).toMatch(/\.md$/);
+      for (const t of readers) {
+        expect(t).toMatch(/^tests\/.*\.test\.ts$/);
+        expect(t.startsWith("tests/db/"), `${t} needs a database and cannot run docs-only`).toBe(false);
+      }
+    }
+  });
+
+  it("the dependency edges come from the injected scan, not from the path map", () => {
+    const fixture: Deps = { db: new Map([["lib/zz/only-in-fixture.ts", ["tests/db/zz.db.test.ts"]]]), docReaders: new Map() };
+    expect(withDeps(fixture, "lib/zz/only-in-fixture.ts").database).toBe(true);
+    expect(withDeps(NO_TEST_DEPENDENCIES as Deps, "lib/zz/only-in-fixture.ts").database).toBe(false);
+    expect(c("lib/waitlist/invite-to-book-adapter.ts").database, "no scan means path-only, as before").toBe(false);
+  });
+
+  it("a dependency edge never lowers or raises the baseline tier", () => {
+    for (const f of ["lib/waitlist/invite-to-book-adapter.ts", "lib/booking/slots.ts", "components/profile-tab.ts"]) {
+      expect(real(f).baselineRiskTier, f).toBe(c(f).baselineRiskTier);
+      expect(real(f).riskReasons, f).toEqual(c(f).riskReasons);
+    }
+  });
+
+  it("the scan only ever ADDS lanes", () => {
+    const lanes = ["application", "database", "security", "payment", "google_calendar", "browser_core", "mobile", "ci_workflows", "full_matrix_required"];
+    for (const f of [
+      "app/(app)/dashboard/page.tsx",
+      "lib/booking/slots.ts",
+      "lib/billing/session-payment-amount.ts",
+      "lib/google-calendar/sync/handler.ts",
+      "package.json",
+      "supabase/migrations/0166_example.sql",
+      "docs/production/migration-ledger.md",
+    ]) {
+      const before = c(f);
+      const after = real(f);
+      for (const k of lanes) if (before[k] === true) expect(after[k], `${f}: ${k}`).toBe(true);
+    }
+  });
+
+  it("G4: a docs-only change to a doc read by a unit test selects docs consistency", () => {
+    const r = real("AGENTS.md");
+    expect(r.docs_only).toBe(true);
+    expect(r.docs_consistency).toBe(true);
+    expect(r.docs_consistency_tests).toContain("tests/openwiki/");
+
+    const ledger = real("docs/production/migration-ledger.md");
+    expect(ledger.docs_consistency).toBe(true);
+    expect((ledger.docs_consistency_tests as string).split(" ")).toContain(
+      "tests/migrations/0179-actor-fk-integrity.test.ts",
+    );
+    // Still cheap: docs consistency is unit-only.
+    for (const k of ["application", "database", "browser_core", "full_matrix_required"]) {
+      expect(ledger[k], k).toBe(false);
+    }
+  });
+
+  it("G4: the selected readers are exactly the union for the changed docs, sorted and de-duplicated", () => {
+    const r = real("AGENTS.md", "CLAUDE.md");
+    const expected = [...new Set([...(REAL.docReaders.get("AGENTS.md") ?? []), ...(REAL.docReaders.get("CLAUDE.md") ?? [])])].sort();
+    expect((r.docs_consistency_tests as string).split(" ")).toEqual(expected);
+  });
+
+  it("G4: an unread doc stays cheap", () => {
+    const r = real("docs/zz-never-read-by-any-test.md");
+    expect(r.docs_only).toBe(true);
+    expect(r.docs_consistency).toBe(false);
+    expect(r.docs_consistency_tests).toBe("");
+    for (const k of ["application", "database", "security", "browser_core", "full_matrix_required"]) {
+      expect(r[k], k).toBe(false);
+    }
+  });
+
+  it("G4: docs consistency is only for docs-only diffs (validate already runs every unit test otherwise)", () => {
+    const r = real("AGENTS.md", "app/page.tsx");
+    expect(r.docs_only).toBe(false);
+    expect(r.docs_consistency).toBe(false);
+  });
+
+  it("every selected reader path is safe as an unquoted `npx vitest run` argument", () => {
+    for (const readers of REAL.docReaders.values()) {
+      for (const t of readers) expect(t).toMatch(/^[A-Za-z0-9._/-]+$/);
+    }
+  });
+
+  it("the scanner is a CI control file: changing it forces the full matrix", () => {
+    const r = c("scripts/test-dependencies.mjs");
+    expect(r.ci_workflows).toBe(true);
+    expect(r.full_matrix_required).toBe(true);
+  });
+
+  it("WIRING: the CLI that ci.yml runs passes the real scan", () => {
+    const out = execFileSync("node", ["scripts/classify-changes.mjs", "--files", "lib/waitlist/invite-to-book-adapter.ts"], {
+      encoding: "utf8",
+    });
+    expect(out).toMatch(/^database=true$/m);
+    const docs = execFileSync("node", ["scripts/classify-changes.mjs", "--files", "AGENTS.md"], { encoding: "utf8" });
+    expect(docs).toMatch(/^docs_consistency=true$/m);
+    expect(docs).toMatch(/^docs_consistency_tests=.*\btests\/openwiki\//m);
+  }, 30_000);
+
+  it("WIRING: the scan reads the script's own repository, whatever the cwd", () => {
+    const out = execFileSync("node", [path.resolve("scripts/classify-changes.mjs"), "--files", "lib/booking/slots.ts"], {
+      cwd: tmpdir(),
+      encoding: "utf8",
+    });
+    expect(out).toMatch(/^database=true$/m);
+  }, 30_000);
+
+  it("WIRING: ci:plan (and so verify:changed) uses the same scan", () => {
+    const plan = buildPlan(["lib/waitlist/invite-to-book-adapter.ts"]);
+    const db = plan.lanes.find((l: { lane: string }) => l.lane === "db integration (local supabase)");
+    expect(db.run).toBe(true);
   });
 });
