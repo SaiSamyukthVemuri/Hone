@@ -183,6 +183,41 @@ function parseEnvelope(buf) {
 }
 
 /** What a spec needs to attribute an envelope, and nothing more. */
+// Attribution fields for an error event, sanitized: a URL keeps only its path
+// (a query or fragment can carry a token), frames keep location only, and only
+// the newest breadcrumbs are kept. Enough to tie a one-in-many diagnostic such
+// as React #418 to its page, component and the navigation that led there.
+function pathOnly(value) {
+  if (typeof value !== "string" || value === "") return undefined;
+  try {
+    return clip(new URL(value, "http://local.invalid").pathname, 300);
+  } catch {
+    return clip(value.split(/[?#]/)[0], 300);
+  }
+}
+
+function frameSummary(frames) {
+  return (Array.isArray(frames) ? frames : []).slice(-8).map((f) => ({
+    filename: pathOnly(f && (f.filename || f.abs_path)),
+    function: clip(f && f.function, 120),
+    lineno: f && f.lineno,
+    colno: f && f.colno,
+  }));
+}
+
+function breadcrumbSummary(breadcrumbs) {
+  const list = Array.isArray(breadcrumbs) ? breadcrumbs : (breadcrumbs && breadcrumbs.values) || [];
+  return list.slice(-10).map((b) => ({
+    timestamp: b && b.timestamp,
+    category: b && b.category,
+    type: b && b.type,
+    message: clip(b && b.message, 200),
+    from: pathOnly(b && b.data && b.data.from),
+    to: pathOnly(b && b.data && b.data.to),
+    url: pathOnly(b && b.data && b.data.url),
+  }));
+}
+
 function summarizeItem({ type, payload }) {
   const p = payload || {};
   if (type === "event") {
@@ -198,11 +233,14 @@ function summarizeItem({ type, payload }) {
       browser: p.contexts && p.contexts.browser ? p.contexts.browser.name : undefined,
       message: clip(p.message),
       logentry: p.logentry ? clip(p.logentry.message) : undefined,
+      url: pathOnly(p.request && p.request.url),
       exceptions: ((p.exception && p.exception.values) || []).map((e) => ({
         type: e.type,
         value: clip(e.value),
         mechanism: e.mechanism ? { type: e.mechanism.type, handled: e.mechanism.handled } : null,
+        frames: frameSummary(e.stacktrace && e.stacktrace.frames),
       })),
+      breadcrumbs: breadcrumbSummary(p.breadcrumbs),
     };
   }
   if (type === "transaction") {

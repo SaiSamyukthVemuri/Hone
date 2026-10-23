@@ -183,6 +183,46 @@ describe("a Sentry-bound request is answered locally and recorded, on every requ
     expect(rec.items[0].exceptions?.[0]?.value).toBe("guard probe");
   });
 
+  it("keeps sanitized attribution: URL path, innermost frames and recent breadcrumbs", () => {
+    const frames = Array.from({ length: 12 }, (_, i) => ({
+      filename: `http://localhost:3111/_next/static/chunks/c${i}.js?v=secret`, function: `f${i}`, lineno: i + 1, colno: 7,
+    }));
+    const crumbs = Array.from({ length: 14 }, (_, i) => ({
+      timestamp: i, category: "navigation", data: { from: `/clients/${i}?token=x`, to: `/clients/${i + 1}#frag` },
+    }));
+    const rich = [
+      JSON.stringify({ event_id: "b".repeat(32), dsn: DSN }),
+      JSON.stringify({ type: "event" }),
+      JSON.stringify({
+        event_id: "b".repeat(32), platform: "javascript",
+        request: { url: "http://localhost:3111/clients/abc/sessions/def?magic=SECRET#x" },
+        exception: { values: [{ type: "Error", value: "Minified React error #418", stacktrace: { frames } }] },
+        breadcrumbs: { values: crumbs },
+      }),
+    ].join("\n");
+    const probe = runWithGuard(`${INTERLOCK}
+      const req = require("node:https").request(
+        { hostname: ${JSON.stringify(INGEST_HOST)}, path: ${JSON.stringify(ENVELOPE_PATH)}, method: "POST" },
+        (res) => { res.resume(); res.on("end", () => console.log(JSON.stringify({ status: res.statusCode }))); },
+      );
+      req.end(${JSON.stringify(rich)});
+    `);
+
+    expect(probe.status, probe.stderr).toBe(0);
+    const item = envelopes(probe)[0].items[0] as unknown as {
+      url: string;
+      exceptions: Array<{ frames: Array<{ filename: string; function: string }> }>;
+      breadcrumbs: Array<{ from: string; to: string }>;
+    };
+    expect(item.url).toBe("/clients/abc/sessions/def");
+    const kept = item.exceptions[0].frames;
+    expect(kept).toHaveLength(8);
+    expect(kept[7]).toMatchObject({ filename: "/_next/static/chunks/c11.js", function: "f11" });
+    expect(item.breadcrumbs).toHaveLength(10);
+    expect(item.breadcrumbs[9]).toMatchObject({ from: "/clients/13", to: "/clients/14" });
+    expect(JSON.stringify(item)).not.toMatch(/SECRET|secret|token=|#frag/);
+  });
+
   it("the REAL @sentry/node SDK, initialised with the production DSN", () => {
     const probe = runWithGuard(`${INTERLOCK}
       const Sentry = require("@sentry/node");
