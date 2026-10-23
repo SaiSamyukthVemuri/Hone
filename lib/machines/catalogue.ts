@@ -286,6 +286,13 @@ const Q_XHD_FREQUENCIES: OpenQuestion = {
   blocks: ["@frequency"],
 };
 
+const Q_GEMM_CURRENT: OpenQuestion = {
+  id: "gemm-current-unit",
+  question: "GEMM-16 US: what native current unit and display precision does this exact variant use?",
+  resolvedBy: "The matching supplied manual or a labelled current-control screen for the US variant.",
+  blocks: ["current"],
+};
+
 const Q_GEMM_TIMER: OpenQuestion = {
   id: "gemm-timer-unit",
   question:
@@ -741,7 +748,7 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
             verification: "manufacturer-documented",
             unverified: ["decimals", "editability"],
             evidence: [EVO_ST350_MANUAL.id],
-            note: "Milliamps here, microamps on the GEMM-16. Never convert between them to share a column. The retired legacy galvanic_intensity_percent must never be reinterpreted as a current in either unit.",
+            note: "Milliamps are documented here; the GEMM-16 native current unit remains pending. Never infer or convert its unit to share a column. The retired legacy galvanic_intensity_percent must never be reinterpreted as a current in either unit.",
           },
           {
             key: "ul",
@@ -805,18 +812,18 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
     variant: "US",
     availability: "blocked",
     availabilityReason:
-      "Current is documented in microamps and per-probe independent control is established first-hand, but the timer's unit, limits and step require the supplied manual. Duration is half of the core chart, so the profile cannot activate without it.",
+      "Per-probe independent control is established first-hand. The current unit and precision, regional channel count, and timer unit, limits and step remain pending exact-model evidence; the profile stays blocked.",
     verification: "manufacturer-documented",
     frequency: { kind: "not-applicable" },
     channels: {
-      count: 16,
+      count: 16, // Unevidenced legacy placeholder, never an enforced ceiling.
       nativeLabel: "Channel",
       // The practitioner ruling: a setup saves without sixteen mandatory rows.
       associationRequired: false,
       supportsDistinctSettingGroups: true,
-      verification: "manufacturer-documented",
+      verification: "pending-evidence",
       evidence: [GEMM_DESIGNER.id, GEMM_PRODUCT.id],
-      note: "Independently controlled galvanic channels, per the designer's first-hand account of adjusting current and duration for each probe. A channel is not a pulse count and not a hair treated. No rotating-probe position, status LED or 16-row tracker is required; channel association is optional and workflow-confirmed.",
+      note: "Independently controlled galvanic channels, per the designer's first-hand account of adjusting current and duration for each probe. The count 16 is an unverified legacy placeholder, not established by either cited source and not enforced. A channel is not a pulse count and not a hair treated. No rotating-probe position, status LED or 16-row tracker is required; channel association is optional and workflow-confirmed.",
     },
     modes: [
       {
@@ -833,14 +840,15 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
             key: "current",
             nativeLabel: "Current",
             quantity: "current",
-            unit: "µA",
+            unit: "device-display",
             decimals: 0,
             optional: false,
             expectedSource: "practitioner-entered",
             editable: true,
-            verification: "manufacturer-documented",
+            verification: "pending-evidence",
+            unverified: ["unit", "decimals"],
             evidence: [GEMM_DESIGNER.id, GEMM_PRODUCT.id],
-            note: "Microamps natively. Not milliamps, and never converted into the ST 350's mA column.",
+            note: "The cited sources do not establish the native current unit or precision. device-display and decimals 0 are storage placeholders, not a microamp/milliamp or display-precision claim; no conversion is inferred.",
           },
           {
             key: "duration",
@@ -852,6 +860,7 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
             expectedSource: "practitioner-entered",
             editable: true,
             verification: "pending-evidence",
+            unverified: ["unit", "decimals"],
             evidence: [GEMM_DESIGNER.id],
             note: "Blocked by gemm-timer-unit: seconds and minutes are both plausible and the choice changes every stored value. The reviewer's approximate five-to-six minutes per hair is guidance from one practitioner — never a default, never a bound.",
           },
@@ -859,7 +868,7 @@ export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
       },
     ],
     evidence: [GEMM_PRODUCT, GEMM_DESIGNER],
-    openQuestions: [Q_GEMM_TIMER, Q_GEMM_VARIANTS],
+    openQuestions: [Q_GEMM_CURRENT, Q_GEMM_TIMER, Q_GEMM_VARIANTS],
   },
   {
     profileId: "permanence-gemm:gemm-16-beauty",
