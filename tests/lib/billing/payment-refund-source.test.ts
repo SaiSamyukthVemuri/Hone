@@ -248,7 +248,10 @@ describe("refundPaymentChargeAttempt: atomic claim", () => {
   });
 
   it("zero-row claim returns outcome='claim_lost' (no duplicate Stripe call)", () => {
-    expect(HELPER).toMatch(
+    // HELPER_CODE, not HELPER: the window bounds intervening EXECUTABLE code,
+    // so a comment between the check and the return cannot push the return out
+    // of range, and cannot pad the window to hide real code either.
+    expect(HELPER_CODE).toMatch(
       /claimedRows\.length === 0[\s\S]{0,400}outcome:\s*"claim_lost"/,
     );
   });
@@ -350,8 +353,14 @@ describe("refundPaymentChargeAttempt: failure handling discriminates Stripe vs u
     expect(HELPER).toMatch(/sanitizeFailureCode\(err\.code/);
   });
 
-  it("sanitises Stripe failure message via the strip-and-slice helper", () => {
-    expect(HELPER).toMatch(/sanitizeFailureMessage\(err\.message\)/);
+  it("uses fixed refund failure copy and never forwards provider error prose", () => {
+    // Normalizing whitespace/length leaves private provider prose intact.
+    // Pin both actual provider-error branches and their safe persistence sink.
+    expect(HELPER_CODE).toContain('const safeMessage = "Stripe refused this refund.";');
+    expect(HELPER_CODE).toContain('const safeMessage = "Refund Stripe call did not return a response.";');
+    expect(HELPER_CODE).toMatch(/refund_failure_message_safe:\s*safeMessage/);
+    expect(HELPER_CODE).toMatch(/message:\s*safeMessage/);
+    expect(HELPER_CODE).not.toMatch(/\berr\s*(?:\?\.|\.)\s*message|\bString\s*\(\s*err\s*\)/);
   });
 });
 

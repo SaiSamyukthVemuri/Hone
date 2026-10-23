@@ -65,7 +65,7 @@ const SURFACES = [
   {
     rel: "components/waitlist/waitlist-join-form.tsx",
     html: renderToStaticMarkup(
-      createElement(WaitlistJoinForm, {
+      createElement(WaitlistJoinForm, { collectsSmsConsent: true,
         studioName: "Willow",
         onSubmit: async () => ({ ok: true }) as const,
       }),
@@ -74,7 +74,7 @@ const SURFACES = [
   {
     rel: "components/waitlist/complete-profile-panel.tsx",
     html: renderToStaticMarkup(
-      createElement(CompleteProfilePanel, {
+      createElement(CompleteProfilePanel, { collectsSmsConsent: true,
         studioName: "Willow",
         stored: { legacyName: "Sarah Jones", email: "sarah@example.com" },
         onSubmit: async () => ({ ok: true }) as const,
@@ -280,7 +280,7 @@ describe("the adjacency check itself refuses the shapes that broke it", () => {
 
 describe("a NON-submission ProfileFields rendering acquires no disclosure", () => {
   const bare = renderToStaticMarkup(
-    createElement(ProfileFields, {
+    createElement(ProfileFields, { collectsSmsConsent: true,
       draft: emptyJoinProfileDraft(),
       errors: {},
       onChange: () => {},

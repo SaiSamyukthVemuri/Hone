@@ -3,7 +3,7 @@
 // redirect to it.
 
 import { redirect } from "next/navigation";
-import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   createConnectOnboardingLink,
   createOrLoadConnectedAccountForStudio,
@@ -13,7 +13,7 @@ import { getAppOrigin } from "@/lib/stripe/server";
 export const dynamic = "force-dynamic";
 
 export default async function StripeOnboardingRefreshPage() {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
     redirect("/settings/payments");
   }

@@ -1,0 +1,193 @@
+---
+type: integration
+title: Email delivery (Resend)
+description: How Hone sends transactional email through Resend — the client and its configuration, the five send paths and the failure model each was built for (the shared timeout-bounded transport, the idempotent waitlist transport and its three-way outcome, the single-flight welcome email), studio-branded sender identity and its guards, what protects each message family from duplicates and what can still double-send, and the fail-closed E2E fake transport.
+tags: [email, resend, idempotency, sender-identity, ops-alerts, e2e-fakes]
+verified:
+  - by: openwiki/0.6.1
+    at: 2026-10-04T01:59:59.625Z
+sources:
+  - id: openwiki-source-2839b99018288867e9b2b1b6
+    resource: repo://app/(app)/calendar/actions.ts
+  - id: openwiki-source-032982430374c85e558f9e28
+    resource: repo://app/(app)/settings/team/actions.ts
+  - id: openwiki-source-bf5a2621b9e8be808f7c47ed
+    resource: repo://app/book/%5Bslug%5D/actions.ts
+  - id: openwiki-source-e22186a801086b80b0b0eae0
+    resource: repo://docs/10_DEPLOYMENT_AND_ENV.md
+  - id: openwiki-source-0c99578f8e5bb59cb894065b
+    resource: repo://lib/email/client.ts
+  - id: openwiki-source-3e7b32a3d061ff902b408f90
+    resource: repo://lib/email/e2e-fake-resend.ts
+  - id: openwiki-source-a4d8d0bf18fa9cb4c31063ef
+    resource: repo://lib/email/new-client-waitlist-send.ts
+  - id: openwiki-source-764c003db91b96a7dad3a729
+    resource: repo://lib/email/send-appointment.ts
+  - id: openwiki-source-b85b20322d9a6fdcbb52b2f6
+    resource: repo://lib/email/send-refusals.ts
+  - id: openwiki-source-b90ea8d9b946a7ce3d1c214b
+    resource: repo://lib/email/send-welcome.ts
+  - id: openwiki-source-b17f7f234ba5fd14eb80f465
+    resource: repo://lib/email/studio-identity.ts
+  - id: openwiki-source-be736c68cca5445e1f222acf
+    resource: repo://lib/ops/alert-email.ts
+  - id: openwiki-source-8c6df6258eb9ed2effadb50d
+    resource: repo://lib/waitlist/delivery/send.ts
+  - id: openwiki-source-c5aec7f439d23f3d3990f696
+    resource: repo://supabase/migrations/0033_pre_stripe_operational_hardening.sql
+  - id: openwiki-source-ad2f08a2d8b1c6274859d2c7
+    resource: repo://tests/db/welcome-email-claim.db.test.ts
+  - id: openwiki-source-ebe7fa1cf3266063612132b7
+    resource: repo://tests/source-guards/client-facing-email-identity.test.ts
+  - id: openwiki-source-29bfe99243de7778cb244d6b
+    resource: repo://tests/source-guards/studio-email-identity-guards.test.ts
+generated: { by: "claude-code", at: "2026-10-04T01:59:59.625Z" }
+---
+
+# Email delivery (Resend)
+
+All outbound email goes through the Resend SDK. There is **no** delivery webhook, bounce or complaint tracking,
+or suppression list: Hone learns only that Resend **accepted** a message
+([`docs/10_DEPLOYMENT_AND_ENV.md` § Resend](../../docs/10_DEPLOYMENT_AND_ENV.md#resend), pinned by
+[`studio-email-identity-guards.test.ts` L107-L111](../../tests/source-guards/studio-email-identity-guards.test.ts#L107-L111)).
+"Sent" anywhere in the product means "provider accepted", never "delivered".
+
+## 1. The client
+
+[`lib/email/client.ts`](../../lib/email/client.ts#L9-L35):
+
+- runs the fake-transport deployment assertion **at module load**, then constructs a Resend client only when
+  `RESEND_API_KEY` is set; otherwise it warns once and exports `resend = null`, so a missing key never crashes
+  the app and every send path turns it into a "not configured" outcome;
+- exports the platform `FROM_ADDRESS` and `getResendTransport()`, which returns the E2E fake when explicitly
+  enabled and the real client otherwise.
+
+## 2. Send paths
+
+`emails.send(...)` is called from five places, each built for a different failure model.
+
+| Path | Used for | Idempotency and recording | Outcome |
+|---|---|---|---|
+| **`sendEmailSafely`** ([`send-appointment.ts` L82-L195](../../lib/email/send-appointment.ts#L82-L195)) | booking confirmation, practitioner notification, cancellation, reminders, postcare, intake requests, portal links and messages, receipts, move notifications | none in the transport; each caller records against a durable row (§4) | `{ok:true,messageId}` or `{ok:false,error,retryable}` |
+| **`sendWaitlistEmailIdempotent`** ([`new-client-waitlist-send.ts` L330-L452](../../lib/email/new-client-waitlist-send.ts#L330-L452)) | waitlist join notifications, invitation emails, recipient-proof codes | provider `Idempotency-Key` | `accepted` / `rejected` / `ambiguous` |
+| **`deliverWelcomeEmail`** ([`send-welcome.ts` L10-L84](../../lib/email/send-welcome.ts#L10-L84)) | the new-studio owner welcome | attempt-id single-flight state machine | `sent` / `failed` / `not_configured` / `already_in_progress` |
+| Team invitation (`app/(app)/settings/team/actions.ts` L50-L79) | inviting a practitioner | none; the pending-invitation row and share UI are the record | fire and log |
+| Critical ops alert ([`lib/ops/alert-email.ts`](../../lib/ops/alert-email.ts#L1-L27)) | operator email for **critical** `ops_alerts` only | none; the `ops_alerts` row is the source of truth | never throws |
+
+### `sendEmailSafely`: the shared transport
+
+- Refuses without a client (`retryable: false`) or without an `@` in the recipient.
+- Builds `From` from server-resolved studio identity when supplied, else `FROM_ADDRESS`; attaches `Reply-To`
+  only when one was resolved.
+- Races the provider promise against a **15-second timer** that does **not** cancel the request, so a send
+  reported as a retryable timeout can still be accepted afterwards.
+- Classifies errors: 429 and 5xx retryable, other 4xx and known validation names terminal, unknown shapes
+  retryable ([L45-L80](../../lib/email/send-appointment.ts#L45-L80)).
+
+### `sendWaitlistEmailIdempotent`: when the email is the record
+
+Waitlist flows have no durable row a duplicate could be reconciled against, so this transport sends a
+provider idempotency key and keeps the provider's error name
+([rationale L24-L122](../../lib/email/new-client-waitlist-send.ts#L24-L122)):
+
+- **Key** = `<namespace>/<server-resolved studio id>/[<event scope>/]sha256(exact payload)`
+  ([L175-L228](../../lib/email/new-client-waitlist-send.ts#L175-L228)). The tenant component exists because
+  studio names and owner emails are not unique; the **event scope** (entry, invitation or challenge id) makes a
+  re-join or a second invitation cycle a new send rather than a replay.
+- When the payload carries a credential (a proof code), `payloadCarriesSecret` switches to an **event-only**
+  key so the secret never reaches a provider header, and the send fails closed without an event scope.
+- **Local refusals** (`not_configured`, `invalid_recipient`, `missing_tenant_scope`, `missing_event_scope`)
+  happen before any request and are typed separately from provider refusals
+  ([L376-L396](../../lib/email/new-client-waitlist-send.ts#L376-L396),
+  [`send-refusals.ts` L1-L60](../../lib/email/send-refusals.ts#L1-L60)).
+- **Outcomes:** a timeout, a network throw, a missing message id or `concurrent_idempotent_requests` is
+  `ambiguous`; any other error, including `invalid_idempotent_request`, is `rejected`
+  ([L265-L311](../../lib/email/new-client-waitlist-send.ts#L265-L311)).
+- **One bounded retry** on ambiguity, with the same key and payload. Only an acceptance on the retry resolves
+  it; anything else stays `ambiguous` with the first attempt's reason, because the first request was never
+  cancelled ([L424-L452](../../lib/email/new-client-waitlist-send.ts#L424-L452)).
+
+Invitation and proof delivery wrap this transport in `lib/waitlist/delivery/send.ts`: the recipient is always
+the address stored on the entry, an expired invitation is never mailed, and the invitation or challenge id is
+the event scope ([L21-L60](../../lib/waitlist/delivery/send.ts#L21-L60),
+[L161-L200](../../lib/waitlist/delivery/send.ts#L161-L200)). How dispositions are persisted is on
+[Waitlist entries and invitation lifecycle](../waitlist/entries-and-invitation-lifecycle.md).
+
+### `deliverWelcomeEmail`: single-flight per studio
+
+`claim_welcome_email_attempt` mints an attempt id and moves the studio's welcome state `not_sent → sending`; a
+concurrent caller gets no attempt id and returns `already_in_progress` without sending. The result is written
+with a compare-and-set on the attempt id, so a stale attempt cannot overwrite a newer one; an unconfigured
+transport reverts to `not_sent`. The DB tests prove one attempt under concurrency, a stale-`sending` recovery
+fence, and that neither `anon` nor `authenticated` can execute the commands
+([`welcome-email-claim.db.test.ts` L47-L200](../../tests/db/welcome-email-claim.db.test.ts#L47-L200)).
+
+## 3. Sender identity
+
+[`lib/email/studio-identity.ts`](../../lib/email/studio-identity.ts) is the only place a branded identity is
+built:
+
+- **One envelope address, never per studio.** The studio name is display text only (`"<studio> via Hone"`),
+  or the plain platform value when the name sanitises to nothing
+  ([L28-L76](../../lib/email/studio-identity.ts#L28-L76)).
+- The sanitiser **removes** C0/C1 control characters and RFC 5322 specials, collapses whitespace and caps the
+  name at 60 characters.
+- **Reply-To** is the studio's postcare contact address if valid, else the owner address if valid, else
+  **omitted**: never invented, never the client's own address
+  ([L99-L170](../../lib/email/studio-identity.ts#L99-L170)).
+- Hone-facing mail (ops alerts, team invitations) deliberately stays unbranded.
+
+Guards: [`studio-email-identity-guards.test.ts`](../../tests/source-guards/studio-email-identity-guards.test.ts#L17-L60)
+forbids hand-assembled `From` headers and pins the Reply-To rule, and
+[`client-facing-email-identity.test.ts`](../../tests/source-guards/client-facing-email-identity.test.ts#L186-L300)
+discovers every `sendEmailSafely` caller and requires each to be studio-branded or explicitly Hone-facing, with
+identity resolved server-side.
+
+## 4. Duplicate protection by message family
+
+| Family | Mechanism | Remaining duplicate risk |
+|---|---|---|
+| ~24h / ~2h reminders | `claim_email_send` → send → `record_email_result`; three attempts; five-minute stale claim | a crash after acceptance and before the result write ([Cron jobs and reminders](cron-reminders-and-idempotency.md)) |
+| Booking confirmation | one shot inside the booking request; `record_email_attempt` increments attempts and stamps `confirmation_sent_at` only on success ([booking action L1707-L1772](../../app/book/[slug]/actions.ts#L1707-L1772)); the function is `service_role`-only ([`0033` L111-L114](../../supabase/migrations/0033_pre_stripe_operational_hardening.sql#L111-L114)) | a user retry; a timeout reported as failure that was in fact accepted |
+| Postcare | `claim_postcare_send` → provider → `settle_postcare_send`, with SQL owning the completed-only gate, attempts and the stale window (`app/(app)/calendar/actions.ts` L1000-L1010) | the crash window, as above |
+| Welcome email | attempt-id state machine | provider accepted but the result write failed |
+| Waitlist mail | provider idempotency key | none from Hone retries within the provider's key-retention window; `ambiguous` is surfaced, not hidden |
+| Team invitation, ops alert email | none | caller retries |
+
+`logEmailFailure` always writes a structured log line and records an `email_send_gave_up` warning ops alert
+only for a final or terminal failure ([`send-appointment.ts` L313-L382](../../lib/email/send-appointment.ts#L313-L382)).
+A failed claim RPC counts as "claim not won", so an RPC outage cannot cause a duplicate
+([L240-L282](../../lib/email/send-appointment.ts#L240-L282)).
+
+## 5. The fake transport (E2E only)
+
+[`lib/email/e2e-fake-resend.ts`](../../lib/email/e2e-fake-resend.ts#L1-L80) is `server-only`, off unless
+`HONE_E2E_FAKE_RESEND=1`, and **throws** when that flag is set in a deployed runtime. It supports `success`,
+`reject`, `throw`, `failonce` and `hold` modes, chosen by an env override or a recipient-address prefix.
+
+Only `getResendTransport()` callers (the welcome email and the idempotent waitlist transport) reach the fake.
+`sendEmailSafely` uses the real client, which is `null` in a keyless E2E environment, so those sends return
+"not configured" rather than a fake success ([`send-appointment.ts` L104-L110](../../lib/email/send-appointment.ts#L104-L110)).
+See [Browser E2E suites and provider fakes](../testing/browser-e2e-suites-and-fakes.md).
+
+## 6. Change checklist
+
+- Use `sendEmailSafely` with `studioIdentity` for client-facing mail, and record the outcome against the
+  durable row the email is about.
+- If the email *is* the record, use the idempotent transport with a server-resolved studio id and a durable
+  event scope; never hash a credential into a key, set `payloadCarriesSecret`.
+- Never derive display name, From or Reply-To from request input; never log recipient addresses.
+
+## 7. Contradictions and open questions
+
+1. **"Exactly ONE Resend path" is not true of the code.** `sendEmailSafely`'s documentation says "There is
+   exactly ONE Resend path in this codebase" ([L88-L95](../../lib/email/send-appointment.ts#L88-L95)), but
+   `emails.send(` is called from five modules: `send-appointment.ts`, `new-client-waitlist-send.ts`,
+   `send-welcome.ts`, `lib/ops/alert-email.ts` and `app/(app)/settings/team/actions.ts`.
+2. **The guard named "there is still exactly ONE transport, not two"** only asserts that `FROM_ADDRESS` exists
+   with its historical fallback value
+   ([L42-L46](../../tests/source-guards/studio-email-identity-guards.test.ts#L42-L46)); it cannot detect a second
+   transport.
+3. **The missing-key warning understates the blast radius.** `client.ts` warns that invitation emails will not
+   send when `RESEND_API_KEY` is absent ([L12-L18](../../lib/email/client.ts#L12-L18)), but every send path
+   returns "not configured" in that state.

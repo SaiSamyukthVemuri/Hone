@@ -110,7 +110,7 @@ describe("CLAUSE — treatment areas are a controlled multi-select, no free text
 
   it("the rendered picker offers checkboxes and no text input for an area", () => {
     const html = renderToStaticMarkup(
-      createElement(WaitlistJoinForm, {
+      createElement(WaitlistJoinForm, { collectsSmsConsent: true,
         studioName: "Willow",
         onSubmit: async () => ({ ok: true }) as const,
       }),
@@ -142,7 +142,7 @@ describe("CLAUSE — availability is weekdays / weekends / both, with NO default
 
   it("renders no pre-selected radio", () => {
     const html = renderToStaticMarkup(
-      createElement(WaitlistJoinForm, {
+      createElement(WaitlistJoinForm, { collectsSmsConsent: true,
         studioName: "Willow",
         onSubmit: async () => ({ ok: true }) as const,
       }),
@@ -191,7 +191,7 @@ describe("CLAUSE — legacy entries stay honestly incomplete", () => {
 
   it("and the guess is not made in the markup either", () => {
     const html = renderToStaticMarkup(
-      createElement(CompleteProfilePanel, {
+      createElement(CompleteProfilePanel, { collectsSmsConsent: true,
         studioName: "Willow",
         stored: legacy,
         onSubmit: async () => ({ ok: true }) as const,
@@ -214,7 +214,7 @@ describe("CLAUSE — the public completion payload names neither the row nor the
 
   it("and the completion surface renders no email control at all", () => {
     const html = renderToStaticMarkup(
-      createElement(CompleteProfilePanel, {
+      createElement(CompleteProfilePanel, { collectsSmsConsent: true,
         studioName: "Willow",
         stored: { legacyName: "Sarah Jones", email: "sarah@example.com" },
         onSubmit: async () => ({ ok: true }) as const,

@@ -7,7 +7,6 @@ import { isConsultationService } from "@/lib/booking/consultation";
 import { InviteComposer } from "@/components/waitlist/invite-composer";
 import {
   BOOKING_WINDOW_PRESETS,
-  TTL_PRESETS,
   WEEKDAYS_IN_DISPLAY_ORDER,
   emptyDraft,
   waitlistDomId,
@@ -124,8 +123,8 @@ describe("the composer is one screen, not a wizard", () => {
     expect(html).toContain("Invite Sarah to book");
   });
 
-  it("shows all four questions at once", () => {
-    for (const field of ["service", "window", "days", "expiry"]) {
+  it("shows all THREE questions at once — the expiry question was removed, not hidden", () => {
+    for (const field of ["service", "window", "days"]) {
       expect(html, `field ${field} is missing`).toContain(
         `data-testid="composer-field-${field}"`,
       );
@@ -320,22 +319,49 @@ describe("allowed days", () => {
   });
 });
 
-describe("invitation expiry", () => {
-  it("offers presets that are all inside the command's own bounds", () => {
+describe("invitation expiry — THE QUESTION IS GONE, NOT DEFAULTED", () => {
+  // NEGATIVE, AND THIS IS THE POINT OF THE SLICE. Level 3 is a FIXED 48-hour
+  // opportunity. #748 shipped 48 as a DEFAULT and left the chooser standing, so
+  // a practitioner could still tap "7 days" and issue a 168-hour opportunity.
+  //
+  // These assert on RENDERED HTML rather than on the model, because the model
+  // could be correct while a control still paints — and a control that paints
+  // is a control a practitioner can use.
+  it("renders NO expiry selector — no preset radio for any former option", () => {
     const html = compose();
-    for (const preset of TTL_PRESETS) {
-      expect(html).toContain(`data-testid="composer-expiry-${preset.hours}"`);
-      expect(html).toContain(preset.label);
+    // The four presets the composer used to offer, by the test ids they carried.
+    for (const hours of [24, 48, 72, 168]) {
+      expect(html, `a ${hours}h preset still renders`).not.toContain(
+        `data-testid="composer-expiry-${hours}"`,
+      );
     }
+    expect(html).not.toContain('data-testid="composer-expiry-custom"');
   });
 
-  it("states the bound where a custom value is entered", () => {
-    // The command REFUSES an out-of-range window rather than clamping it, so a
-    // practitioner who types 200 needs to know why nothing happened.
-    const html = compose({ expiresInHours: 5 });
-    expect(html).toContain('data-testid="composer-expiry-hours"');
-    expect(html).toContain("1 hour to 7 days");
-    expect(controlTag(html, "composer-expiry-hours")).toContain('max="168"');
+  it("renders NO custom TTL control, and no field that could submit one", () => {
+    const html = compose();
+    expect(html).not.toContain('data-testid="composer-expiry-hours"');
+    expect(html).not.toContain('name="expires_in_hours"');
+    expect(html).not.toContain('name="expires_in_hours_custom"');
+  });
+
+  it("asks no expiry question at all — no section, label or help text", () => {
+    const html = compose();
+    expect(html).not.toContain("Invitation expires");
+    expect(html).not.toContain("composer-error-expiry");
+    expect(html.toLowerCase()).not.toMatch(/from \d+ hours? to \d+ days?/);
+  });
+
+  it("ANTI-VACUITY — compose() really produces the composer these greps search", () => {
+    // Every assertion above is an absence, so the fixture is proved to render
+    // the surrounding form. Without this, a compose() that returned "" would
+    // satisfy all of them.
+    const html = compose();
+    expect(html).toContain('data-testid="composer-field-window"');
+    expect(html).toContain('data-testid="composer-field-days"');
+    expect(html).toContain("Booking window");
+    expect(html).toContain("Allowed days");
+    expect(html).toContain('data-testid="composer-send"');
   });
 });
 
@@ -456,16 +482,9 @@ describe("every validation error is wired to the control it explains", () => {
     expect(html.split(`aria-describedby="${errId("days")}"`).length - 1).toBe(1);
   });
 
-  it("3b — an out-of-range expiry points the expiry control at its error", () => {
-    const html = compose({ expiresInHours: 999 }, CONNECTED);
-    const input = tagFor(html, "composer-expiry-hours");
-    expect(input).toContain('aria-invalid="true"');
-    expect(input).toContain(`aria-describedby="${errId("expiry")}"`);
-    expect(html).toContain(`id="${errId("expiry")}"`);
-  });
 
   it("4 — a corrected field leaves no stale invalid state and no dangling reference", () => {
-    const html = compose({ serviceId: "svc-1", windowDays: 14, expiresInHours: 48 }, CONNECTED);
+    const html = compose({ serviceId: "svc-1", windowDays: 14 }, CONNECTED);
     expect(tagFor(html, "composer-service")).not.toContain("aria-invalid");
     expect(tagFor(html, "composer-service")).not.toContain("aria-describedby");
     expect(html).not.toContain(`id="${errId("service")}"`);
@@ -487,9 +506,8 @@ describe("every validation error is wired to the control it explains", () => {
       { serviceId: "svc-deleted" },
       { windowDays: 900 },
       { allowedWeekdays: [] },
-      { expiresInHours: 999 },
-      { serviceId: "svc-deleted", windowDays: 0, allowedWeekdays: [], expiresInHours: 0 },
-      { serviceId: "svc-1", windowDays: 45, allowedWeekdays: [1, 3], expiresInHours: 5 },
+      { serviceId: "svc-deleted", windowDays: 0, allowedWeekdays: [] },
+      { serviceId: "svc-1", windowDays: 45, allowedWeekdays: [1, 3] },
     ];
     let checked = 0;
     for (const over of cases) {
@@ -512,14 +530,15 @@ describe("every validation error is wired to the control it explains", () => {
     // Every field invalid at once: each control must reference its own error
     // and no other.
     const html = compose(
-      { serviceId: "svc-deleted", windowDays: 0, allowedWeekdays: [], expiresInHours: 0 },
+      { serviceId: "svc-deleted", windowDays: 0, allowedWeekdays: [] },
       CONNECTED,
     );
     const pairs: Array<[string, string]> = [
       ["composer-service", "service"],
       ["composer-window-days", "window"],
       ["composer-weekday-group", "days"],
-      ["composer-expiry-hours", "expiry"],
+      // NO EXPIRY PAIR. There is no expiry control to attach an error to, and
+      // no expiry error to attach — the field was removed with the question.
     ];
     for (const [testId, field] of pairs) {
       const tag = tagFor(html, testId);
@@ -543,12 +562,6 @@ describe("the send control", () => {
     expect(html.toLowerCase()).not.toContain("sending is not available");
   });
 
-  it("blames a fixable field before blaming the missing service", () => {
-    const html = compose({ expiresInHours: 999 });
-    expect(html).toContain("Fix the highlighted fields");
-    expect(html).toContain('data-testid="composer-error-expiry"');
-    expect(controlTag(html, "composer-expiry-hours")).toContain('aria-invalid="true"');
-  });
 
   it("refuses to send a scope the adapter cannot carry", () => {
     // Sending anyway would produce an invitation that ignores the service and
@@ -772,7 +785,7 @@ describe("a real caller can bind this composer and receive the draft", () => {
 
   it("C. submits exactly the practitioner's four current selections", () => {
     const html = compose(
-      { serviceId: "svc-1", windowDays: 14, allowedWeekdays: [1, 3], expiresInHours: 24 },
+      { serviceId: "svc-1", windowDays: 14, allowedWeekdays: [1, 3] },
       CONNECTED,
     );
     expect(submissionOf(html)).toEqual({
@@ -780,7 +793,6 @@ describe("a real caller can bind this composer and receive the draft", () => {
       serviceId: "svc-1",
       windowDays: 14,
       allowedWeekdays: [1, 3],
-      expiresInHours: 24,
     });
   });
 
@@ -801,13 +813,10 @@ describe("a real caller can bind this composer and receive the draft", () => {
     expect(days.allowedWeekdays).toEqual([2, 4]);
     expect(days.allowedWeekdays).not.toEqual(base.allowedWeekdays);
 
-    // 24, deliberately: the default draft already expires in 72 hours, so
-    // asserting 72 "changed" would have passed without anything changing.
-    const expiry = submissionOf(
-      compose({ serviceId: "svc-1", expiresInHours: 24 }, CONNECTED),
-    );
-    expect(expiry.expiresInHours).toBe(24);
-    expect(expiry.expiresInHours).not.toBe(base.expiresInHours);
+    // THE EXPIRY LIMB IS GONE WITH THE FIELD. It asserted that a chosen window
+    // travelled from the composer into the submission; there is no longer a
+    // window to choose, and `invitation-window.test.ts` proves the submission
+    // cannot carry one even when the form data supplies it.
   });
 
   it("D2. an off-preset value travels through the custom field", () => {
@@ -1055,17 +1064,6 @@ describe("one live draft drives everything", () => {
     expect(visibleSummary).toContain("Mon");
   });
 
-  it("7. EXPIRY: an invalid custom value cannot block after switching to a preset", () => {
-    const state = interact({ serviceId: "svc-1" }, [
-      { type: "expiryPreset", preset: CUSTOM },
-      { type: "expiryCustom", hours: 9999 },
-      { type: "expiryPreset", preset: 48 },
-    ]);
-    const { html, sendDisabled, submitted } = answers(state);
-    expect(html).not.toContain('data-testid="composer-expiry-hours"');
-    expect(sendDisabled).toBe(false);
-    expect(submitted.expiresInHours).toBe(48);
-  });
 
   it("8. INITIAL INVALID: repairing it interactively enables Send, no refresh", () => {
     // The composer opens on a service that has since been deleted.
@@ -1089,15 +1087,12 @@ describe("one live draft drives everything", () => {
       [{ type: "daysPreset", preset: "weekdays" }],
       [{ type: "daysPreset", preset: "weekends" }],
       [{ type: "daysPreset", preset: "custom" }, { type: "weekday", index: 3, checked: true }],
-      [{ type: "expiryPreset", preset: 24 }],
-      [{ type: "expiryPreset", preset: CUSTOM }, { type: "expiryCustom", hours: 100 }],
       [
         { type: "service", serviceId: "svc-2" },
         { type: "windowPreset", preset: 14 },
         { type: "daysPreset", preset: "custom" },
         { type: "weekday", index: 2, checked: true },
         { type: "weekday", index: 5, checked: true },
-        { type: "expiryPreset", preset: 168 },
       ],
     ];
 
@@ -1107,7 +1102,6 @@ describe("one live draft drives everything", () => {
       // The payload IS the live draft — not the prop the composer opened on.
       expect(submitted.windowDays, JSON.stringify(script)).toBe(state.draft.windowDays);
       expect(submitted.serviceId, JSON.stringify(script)).toBe(state.draft.serviceId);
-      expect(submitted.expiresInHours, JSON.stringify(script)).toBe(state.draft.expiresInHours);
       expect(submitted.allowedWeekdays ?? null, JSON.stringify(script)).toEqual(
         state.draft.allowedWeekdays ?? null,
       );

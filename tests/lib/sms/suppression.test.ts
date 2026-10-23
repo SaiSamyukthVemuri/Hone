@@ -3,6 +3,7 @@ import {
   CARRIER_SUPPRESSION_SCOPE,
   HONE_SUPPRESSION_SCOPE,
   honeSuppressionAllowsSend,
+  isPhoneSuppressedPhoneWide,
   selectHoneSuppressionTargets,
   type SuppressionCandidate,
 } from "@/lib/sms/suppression";
@@ -183,5 +184,50 @@ describe("MUTATION CONTROL (suppression rule)", () => {
       fromPhone: "+14165550100",
     });
     expect(real.targets.map((t) => t.id).sort()).toEqual(["a-client", "b-client"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0208 — THE SAME LAW, READ RATHER THAN APPLIED
+// ---------------------------------------------------------------------------
+//
+// A STOP stamps the rows that exist when it arrives. A row created later with
+// the same number carries no stamp, so a consent recorded against it would
+// look textable. `isPhoneSuppressedPhoneWide` asks the STOP route's own
+// question of the stamps that already exist, anywhere.
+describe("0208 — isPhoneSuppressedPhoneWide", () => {
+  it("is true when ANY row with this number, in ANY studio, already said STOP", () => {
+    const candidates = [client({ id: "b-client", studio_id: "studio-b", sms_opted_out_at: OPTED_OUT })];
+    expect(isPhoneSuppressedPhoneWide({ candidates, phone: "+14165550100" })).toBe(true);
+  });
+
+  it("matches the number however it was typed, exactly as the STOP route does", () => {
+    const candidates = [client({ phone: "(416) 555-0100", sms_opted_out_at: OPTED_OUT })];
+    for (const phone of ["+1 416 555 0100", "416.555.0100", "14165550100", "+14165550100"]) {
+      expect(isPhoneSuppressedPhoneWide({ candidates, phone }), phone).toBe(true);
+    }
+  });
+
+  it("is false for a different number, or a matching row that never said STOP", () => {
+    expect(
+      isPhoneSuppressedPhoneWide({
+        candidates: [client({ sms_opted_out_at: OPTED_OUT })],
+        phone: "+14165550199",
+      }),
+    ).toBe(false);
+    expect(isPhoneSuppressedPhoneWide({ candidates: [client()], phone: "+14165550100" })).toBe(false);
+    expect(isPhoneSuppressedPhoneWide({ candidates: [], phone: "+14165550100" })).toBe(false);
+  });
+
+  it("agrees with selectHoneSuppressionTargets on every case, because it IS that selection", () => {
+    const candidates = [
+      client({ id: "a", phone: "+14165550100", sms_opted_out_at: OPTED_OUT }),
+      client({ id: "b", phone: "+14165550101" }),
+      client({ id: "c", phone: null, sms_opted_out_at: OPTED_OUT }),
+    ];
+    for (const phone of ["+14165550100", "+14165550101", "+14165550102", "", "no digits"]) {
+      const law = selectHoneSuppressionTargets({ candidates, fromPhone: phone }).alreadyOptedOutCount > 0;
+      expect(isPhoneSuppressedPhoneWide({ candidates, phone }), phone).toBe(law);
+    }
   });
 });

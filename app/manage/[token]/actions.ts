@@ -117,7 +117,7 @@ export async function fetchAppointmentForManageAction(
     .select(
       // EMERG-01 adds the studio slug and the service's modality + price so
       // the policy is derived from the same row this page renders.
-      "id, status, starts_at, studio:studios(name, slug, timezone, cancellation_policy_text, no_show_policy_text), service:services(name, modality, price_cents)",
+      "id, status, starts_at, studio:studios(id, name, slug, timezone, cancellation_policy_text, no_show_policy_text), service:services(name, modality, price_cents)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -131,6 +131,9 @@ export async function fetchAppointmentForManageAction(
   if (!data) return { ok: false, error: PUBLIC_MANAGE_GENERIC_ERROR };
 
   type JoinedStudio = {
+    // `id` rides along with `slug`; the free-consult policy takes the SLUG and
+    // consults EMERG-01's own env list, never the new-client admission mode.
+    id: string;
     name: string;
     slug: string | null;
     timezone: string;
@@ -185,6 +188,7 @@ export async function fetchAppointmentForManageAction(
       // policy stays invisible to a probing caller. The slug is consumed here
       // and never returned: this surface has no waitlist CTA to build.
       freeConsultationWaitlistOnly: isFreeConsultWaitlistOnlyReschedule({
+        // EMERG-01's OWN authority, not the new admission mode.
         studioSlug: studio?.slug ?? null,
         service,
       }),

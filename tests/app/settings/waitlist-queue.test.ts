@@ -34,6 +34,14 @@ import {
 // asks the right questions and renders the right answers.
 
 const STUDIO_ID = "44444444-4444-4444-8444-444444444444";
+/**
+ * The one entries projection. 0208 added the four SMS-standing columns; the
+ * evidence reference and the recorder are deliberately absent, because the
+ * queue states what is on record and never renders the owner's own note.
+ */
+const ENTRY_COLUMNS =
+  "id,name,email,phone,joined_at,status,source,joined_at_provenance," +
+  "sms_consent_at,sms_consent_source,sms_consent_given_on,sms_opted_out_at";
 const USER_ID = "55555555-5555-4555-8555-555555555555";
 const SLUG = "queue-studio";
 
@@ -187,16 +195,51 @@ function reset() {
   });
 }
 
+// NEW-CLIENT-MODE-01: admission now comes from the canonical authority.
+// Delegating to the REAL resolver with no stored value routes it through the
+// transition bridge, so the env stubbing below keeps meaning what it meant.
+vi.mock("@/lib/booking/new-client-admission", async (orig) => {
+  const actual =
+    await orig<typeof import("@/lib/booking/new-client-admission")>();
+  return {
+    ...actual,
+    getNewClientAdmissionMode: vi.fn(async (studio: { slug: string | null }) =>
+      actual.resolveAdmission({
+        storedMode: null,
+          storedSetAt: null,
+        readFailed: false,
+        studioSlug: studio.slug,
+      }),
+    ),
+    studioIsInWaitlistMode: vi.fn(async (studio: { slug?: string | null }) => {
+      const a = actual.resolveAdmission({
+        storedMode: null,
+          storedSetAt: null,
+        readFailed: false,
+        studioSlug: studio?.slug ?? null,
+      });
+      return a.ok && a.mode === "waitlist";
+    }),
+  };
+});
+
 vi.mock("next/cache", () => ({
   revalidatePath: (p: string) => revalidated.push(p),
 }));
 
-vi.mock("@/lib/supabase/queries", () => ({
-  getCurrentPractitionerWithStudio: async () => ({
+vi.mock("@/lib/supabase/queries", () => {
+  // ONE identity under both names: the page and the settings layout resolve it
+  // through the redirecting guard, server actions through the throwing
+  // backstop (SENTRY-IDENTITY-01).
+  const identity = async () => ({
     practitioner: { id: "prac-1", role: scenario.role, user_id: scenario.userId },
     studio: { id: STUDIO_ID, slug: SLUG, name: "Queue Studio", timezone: "America/Toronto" },
-  }),
-}));
+  });
+  return {
+    getCurrentPractitionerWithStudio: identity,
+    requirePractitionerWithStudio: identity,
+  };
+});
 
 // A minimal PostgREST-shaped builder that RECORDS the question rather than
 // answering a pre-baked one, so the assertions are about the query the page
@@ -435,6 +478,12 @@ function entry(overrides: Partial<Record<string, unknown>> = {}) {
     // been made against a row that cannot exist.
     source: "public_booking",
     joined_at_provenance: "form",
+    // 0202's consent columns are nullable with no default, so a row that
+    // nobody has recorded consent or STOP for reads exactly like this.
+    sms_consent_at: null,
+    sms_consent_source: null,
+    sms_consent_given_on: null,
+    sms_opted_out_at: null,
     ...overrides,
   };
 }
@@ -526,7 +575,7 @@ describe("the query the page asks", () => {
 
   it("selects only the columns it renders — no `*`", async () => {
     await render();
-    expect(entriesQuery().columns).toBe("id,name,email,phone,joined_at,status,source,joined_at_provenance");
+    expect(entriesQuery().columns).toBe(ENTRY_COLUMNS);
     expect(entriesQuery().columns).not.toContain("*");
   });
 
@@ -696,12 +745,19 @@ describe("rendered rows", () => {
     //
     // Enumerated, not excluded, exactly as before: the next unannounced
     // control still fails here.
+    //
+    // 0208 — AND AGAIN, PER-ROW. The owner's SMS-consent record: a disclosure
+    // naming the person, and its one submit. Offered only on a row with a
+    // mobile, no consent and no STOP, which this fixture is; the cases where
+    // it is withheld are proved in the 0208 block below.
     expect(controls.sort()).toEqual([
       "Add to waitlist",
       "Cancel",
       "Confirm removal",
       "Invite to book",
       "Record",
+      "Record SMS consent for Jo Smith",
+      "Record consent",
       "Remove",
       "Send invitation",
       "Start inviting",
@@ -1319,22 +1375,34 @@ describe("the Settings tab is server-gated", () => {
     "utf8",
   );
 
-  it("requires BOTH rollout flags, not just the durable one", () => {
-    // Either half alone describes a studio that is not taking durable waitlist
-    // requests. With the gate cleared, new clients book normally and nothing
-    // new can arrive; with the durable flag cleared, the queue is still the
-    // inbox. Advertising an intake surface in either state presents a stale
-    // queue as a live one — and the durable flag is documented as SUBORDINATE
-    // to the gate, so consulting it alone contradicts the contract.
+  it("requires the DURABLE COMMIT PATH for the live path, OR an active queue", () => {
+    // NEW-CLIENT-MODE-01: the two rollout flags are replaced by the one mode.
+    // WAITLIST-NAV-VIS-01's second path is UNCHANGED and load-bearing: a studio
+    // already holding active entries keeps its navigation to them, whatever the
+    // mode says - which is also why UNKNOWN cannot strand a real queue.
+    //
+    // P2-B: the FIRST path is the durable commit decision, not the mode. A
+    // bridged WAITLIST studio whose joins still commit by email has no durable
+    // queue, so the tab would open an empty operator surface. Reusing the
+    // bridge's own decision is what stops the nav and the commit point drifting
+    // apart. Behavioural proof lives in waitlist-nav-visibility.test.ts.
     expect(LAYOUT).toMatch(
-      /const waitlistTabVisible =\s*\n\s*isOwner &&\s*\n\s*isNewClientWaitlistEnabled\(studio\.slug\) &&\s*\n\s*isNewClientWaitlistDurableEnabled\(studio\.slug\);/,
+      /const waitlistLive = newClientWaitlistCommitIsDurable\(admission, studio\.slug\);/,
+    );
+    expect(LAYOUT).toMatch(
+      /const waitlistTabVisible =\s*\n\s*isOwner &&\s*\n\s*\(waitlistLive \|\|\s*\n\s*\(await hasActiveWaitlistEntries\(await createClient\(\), studio\.id\)\)\);/,
     );
     expect(LAYOUT).toContain('{ href: "/settings/waitlist", label: "Waitlist" }');
   });
 
-  it("derives BOTH flags from the SERVER-RESOLVED studio, never a browser value", () => {
-    expect(LAYOUT).toContain("isNewClientWaitlistEnabled(studio.slug)");
-    expect(LAYOUT).toContain("isNewClientWaitlistDurableEnabled(studio.slug)");
+  it("derives the mode from the SERVER-RESOLVED studio, never a browser value", () => {
+    // NEW-CLIENT-MODE-01: the two env predicates are gone from this consumer.
+    // The property that mattered is unchanged and now stronger - the authority
+    // is keyed by the server-resolved studio, and nothing browser-supplied
+    // reaches it.
+    expect(LAYOUT).toContain("getNewClientAdmissionMode(studio)");
+    expect(LAYOUT).not.toContain("isNewClientWaitlistEnabled");
+    expect(LAYOUT).not.toContain("isNewClientWaitlistDurableEnabled");
     expect(LAYOUT).not.toMatch(/searchParams|useSearchParams|props\.slug/);
   });
 
@@ -1488,6 +1556,109 @@ describe("action visibility follows the row's lifecycle state", () => {
     expect(html).toContain("has been used");
   });
 
+  it("WAIT-P1-EXIT — that row is no longer a dead end: it offers Close", async () => {
+    // THE REGRESSION TEST FOR THE DEAD END, AT THE SURFACE.
+    //
+    // Before 0200 this row rendered with NO lifecycle control at all, under
+    // "this entry stays here until the booking is recorded" — which was true
+    // and permanent, because release, expire, requeue and remove all refuse a
+    // redeemed entry. `close_unbooked_new_client_waitlist_invitation` is the
+    // exit, and it is the ONLY control this row may show.
+    scenario.rows = [entry({ id: "e-stuck", status: "invited" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [];
+    scenario.redeemedInvitations = [{ entry_id: "e-stuck" }];
+    const html = await render();
+    expect(actionsFor(html)).toEqual(["close"]);
+    expect(html).toContain("Close without booking");
+    // The sentence beside it must not contradict the control next to it.
+    expect(html).not.toContain("stays here until");
+    expect(html).toContain("no booking has been recorded");
+  });
+
+  it("WAIT-P1-EXIT — a CLOSED entry cannot go back on the waitlist", async () => {
+    // 0200 answers `already_redeemed` for a requeue of an entry holding a
+    // redeemed invitation, because returning it to the active set would let one
+    // entry acquire a SECOND redeemed invitation. A control that can only fail
+    // is not offered, and the remedy is named instead.
+    //
+    // THE WIRING THIS PROVES is that the page reads invitation facts for
+    // `released` rows at all — deciding this from status alone is impossible,
+    // because a released entry that was merely set aside IS requeueable.
+    scenario.rows = [entry({ id: "e-closed", status: "released" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [];
+    scenario.redeemedInvitations = [{ entry_id: "e-closed" }];
+    const html = await render();
+    expect(actionsFor(html)).toEqual([]);
+    // AND THE ROW SAYS SO, rather than leaving the missing control to imply it.
+    // The default `released` sentence promises "Return them to it to put them
+    // back in line" — a promise this row cannot keep, which is the label-promise
+    // rule applied to prose.
+    // SCOPED TO THE ROW, NOT THE PAGE. The section heading carries the generic
+    // `released` description, exactly as the `invited` section carries a
+    // generic one that per-row context refines — an earlier revision of this
+    // assertion read the heading and reported the row.
+    const row = html.slice(
+      html.indexOf('data-entry-id="e-closed"'),
+      html.indexOf("</li>", html.indexOf('data-entry-id="e-closed"')),
+    );
+    expect(row).toContain("used their invitation without booking");
+    expect(row, "the ROW still promises a return the command refuses").not.toMatch(
+      /back in line/i,
+    );
+    // AND THE LIFECYCLE STILL TERMINATES. Removal is its own disclosure and
+    // carries no action test id, so it is asserted by its own copy.
+    expect(html).toMatch(/Remove/);
+  });
+
+  it("WAIT-P1-EXIT — an ORDINARY released row is untouched by that rule", async () => {
+    // NON-VACUITY. Set-aside-without-redemption is the far commoner way to
+    // reach `released`, and it must still offer Return to waitlist.
+    scenario.rows = [entry({ id: "e-setaside", status: "released" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [];
+    scenario.redeemedInvitations = [];
+    const html = await render();
+    expect(actionsFor(html)).toEqual(["requeue"]);
+    expect(html).not.toContain("used their invitation without booking");
+    // The instruction is what it keeps, and the control backs it up.
+    expect(html).toContain("Return them to it to put them back in line");
+  });
+
+  it("WAIT-P1-EXIT — the Released SECTION never instructs, because it is mixed", async () => {
+    // THE REVIEW FINDING THIS PINS. The section description is rendered
+    // unconditionally above the group, and that group can now hold BOTH a
+    // set-aside entry (which can be returned) and a closed one (which cannot).
+    // It used to say "Return them to it to put them back in line", so the
+    // section instructed owners to do exactly what the row beneath it said was
+    // impossible.
+    scenario.rows = [
+      entry({ id: "e-plain", status: "released", name: "Plain Person" }),
+      entry({ id: "e-shut", status: "released", name: "Shut Person" }),
+    ];
+    scenario.count = 2;
+    scenario.liveInvitations = [];
+    scenario.redeemedInvitations = [{ entry_id: "e-shut" }];
+    const html = await render();
+
+    // The section heading and its description carry no instruction at all.
+    const head = html.slice(
+      html.indexOf('data-testid="waitlist-section-released"'),
+      html.indexOf("<ul"),
+    );
+    expect(head, "the section still instructs, above a group it cannot speak for").not.toMatch(
+      /back in line|return them/i,
+    );
+
+    // Each ROW still says the right thing for itself.
+    const rowOf = (id: string) =>
+      html.slice(html.indexOf(`data-entry-id="${id}"`), html.indexOf("</li>", html.indexOf(`data-entry-id="${id}"`)));
+    expect(rowOf("e-plain")).toMatch(/back in line/i);
+    expect(rowOf("e-shut")).toMatch(/used their invitation without booking/i);
+    expect(rowOf("e-shut")).not.toMatch(/back in line/i);
+  });
+
   it("a FAILED invitation read withholds the control and SAYS it could not check", async () => {
     // The wrong answer here is silence that reads as "still live". Unknown is
     // not the same as not-elapsed, and the sentence has to say which it is.
@@ -1505,17 +1676,20 @@ describe("action visibility follows the row's lifecycle state", () => {
     expect(html).not.toContain("either way");
   });
 
-  it("the invitation window is read ONLY when some row is invited", async () => {
+  it("the invitation window is read ONLY for rows whose controls depend on it", async () => {
+    // WIDENED BY 0200, AND STILL BOUNDED. `released` rows joined `invited` ones
+    // because requeue's availability now depends on whether this entry's
+    // invitation was used — but `waiting`, `claimed`, `converted` and `removed`
+    // still trigger nothing, which is what keeps this a per-page read rather
+    // than a per-row one.
     scenario.rows = [entry({ status: "waiting" })];
     scenario.count = 1;
     await render();
-    // ONE read per section, and no invitation read at all because no row is
-    // invited.
     expect(queries.filter((q) => q.table === "new_client_waitlist_invitations")).toHaveLength(0);
     expect(queries.filter((q) => q.table === "new_client_waitlist_entries")).toHaveLength(5);
   });
 
-  it("and IS read when one is", async () => {
+  it("and IS read when a row is invited", async () => {
     // Non-vacuity for the assertion above.
     scenario.rows = [entry({ id: "e-inv", status: "invited" })];
     scenario.count = 1;
@@ -1523,6 +1697,17 @@ describe("action visibility follows the row's lifecycle state", () => {
     // TWO invitation reads: the live-cycle predicate and the redeemed one.
     // Identity comes from the 0189 unique index, never from ordering — so
     // neither read carries an `order`.
+    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations");
+    expect(inv).toHaveLength(2);
+    for (const q of inv) expect(q.orders).toEqual([]);
+  });
+
+  it("and when a row is released — the same two reads, not a third", async () => {
+    // WAIT-P1-EXIT rides the EXISTING queries: one `.in()` list widened, no new
+    // round trip, no new policy, and still no ordering of any kind.
+    scenario.rows = [entry({ id: "e-rel", status: "released" })];
+    scenario.count = 1;
+    await render();
     const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations");
     expect(inv).toHaveLength(2);
     for (const q of inv) expect(q.orders).toEqual([]);
@@ -1828,7 +2013,7 @@ describe("a section past one page is navigable, not truncated", () => {
       ["eq", "studio_id", STUDIO_ID],
       ["eq", "status", "claimed"],
     ]);
-    expect(readFor("claimed").columns).toBe("id,name,email,phone,joined_at,status,source,joined_at_provenance");
+    expect(readFor("claimed").columns).toBe(ENTRY_COLUMNS);
   });
 });
 
@@ -2539,6 +2724,106 @@ describe("WAIT-04A — truncation copy is provenance-neutral", () => {
     expect(row).toBeTruthy();
     for (const forbidden of [/\bposition\b/i, /\brank\b/i, /\b#\d+\b/, /\b\d+(st|nd|rd|th)\b/i]) {
       expect(row!, `ordinal leaked: ${forbidden}`).not.toMatch(forbidden);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0208 — EACH ROW STATES ITS SMS STANDING, AS RECORDED
+// ---------------------------------------------------------------------------
+//
+// The row says what is on record and nothing more: STOP first, then whose
+// consent it is and when, then "none". The owner's recording form appears only
+// where the command would accept it. The command's own refusals are proved in
+// tests/db/waitlist-sms-consent-practitioner-and-signup.db.test.ts; the action
+// in tests/app/settings/waitlist-sms-consent-action.test.ts.
+describe("0208 — each row states its SMS standing, as recorded", () => {
+  const standing = (row: string) =>
+    row.match(/data-testid="sms-consent-status"[^>]*>([^<]*)</)?.[1] ?? null;
+  const rowOf = async (over: Record<string, unknown>) => {
+    scenario.rows = [entry({ id: "e-sms", ...over })];
+    scenario.count = 1;
+    const row = rowMarkup(await render(), "e-sms");
+    expect(row, "the row must render").not.toBeNull();
+    return row!;
+  };
+
+  it("a row with a mobile and no consent offers the recording form, nothing preselected", async () => {
+    const row = await rowOf({});
+    expect(standing(row)).toBe("Texts: no consent on record");
+    expect(row).toContain('data-testid="sms-consent-form"');
+    expect(row).toMatch(/<input type="hidden" name="entry_id" value="e-sms"\/>/);
+    // NO DEFAULTS: the attestation is unticked and neither date answer is
+    // chosen, so a hurried press records nothing nobody stated.
+    const form = row.slice(row.indexOf('data-testid="sms-consent-form"'));
+    expect(form).toContain('name="sms_consent_attest"');
+    expect(form).toContain('name="sms_consent_date_known"');
+    expect(form).not.toMatch(/\bchecked\b/);
+    // The day field appears only once "I know the day" is chosen.
+    expect(form).not.toContain('name="sms_consent_given_on"');
+  });
+
+  it("STOP wins: an opted-out row says so and offers no form, even with consent on record", async () => {
+    const row = await rowOf({
+      sms_consent_at: "2026-08-20T09:00:00.000Z",
+      sms_consent_source: "public_form",
+      sms_opted_out_at: "2026-08-21T09:00:00.000Z",
+    });
+    expect(standing(row)).toBe("Texts: opted out (replied STOP)");
+    expect(row).not.toContain('data-testid="sms-consent-form"');
+    expect(row).not.toMatch(/agreed/);
+  });
+
+  it("the person's own Yes reads as theirs, on the studio's calendar day", async () => {
+    // 02:30 UTC on the 21st is still the 20th in Toronto: the day is the
+    // studio's, not the server's.
+    const row = await rowOf({
+      sms_consent_at: "2026-08-21T02:30:00.000Z",
+      sms_consent_source: "public_form",
+    });
+    expect(standing(row)).toBe("Texts: agreed on the waitlist form on Aug 20, 2026");
+    expect(row).not.toContain('data-testid="sms-consent-form"');
+  });
+
+  it("a studio-recorded consent says so, with the day they agreed, unshifted", async () => {
+    // A bare date read as an instant would render as Feb 28 in Toronto.
+    const row = await rowOf({
+      sms_consent_at: "2026-08-22T15:00:00.000Z",
+      sms_consent_source: "practitioner",
+      sms_consent_given_on: "2026-03-01",
+    });
+    expect(standing(row)).toBe(
+      "Texts: consent recorded by the studio on Aug 22, 2026 · they agreed on Mar 1, 2026",
+    );
+    expect(row).not.toContain('data-testid="sms-consent-form"');
+  });
+
+  it("an unknown agreement day is stated as unknown, never as the recording day", async () => {
+    const row = await rowOf({
+      sms_consent_at: "2026-08-22T15:00:00.000Z",
+      sms_consent_source: "practitioner",
+      sms_consent_given_on: null,
+    });
+    expect(standing(row)).toBe(
+      "Texts: consent recorded by the studio on Aug 22, 2026 · they agreed on a day not known",
+    );
+  });
+
+  it("a row with no mobile says so, and offers no form", async () => {
+    const row = await rowOf({ phone: null });
+    expect(standing(row)).toBe("Texts: no consent on record · no mobile number on file");
+    expect(row).not.toContain('data-testid="sms-consent-form"');
+  });
+
+  it("the read never asks for the owner's evidence note, the recorder or the scope", async () => {
+    await rowOf({});
+    for (const column of [
+      "sms_consent_evidence_ref",
+      "sms_consent_recorded_by_practitioner_id",
+      "sms_consent_scope",
+      "sms_consent_text_version",
+    ]) {
+      expect(entriesQuery().columns).not.toContain(column);
     }
   });
 });

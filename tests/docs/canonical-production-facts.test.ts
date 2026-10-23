@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, writeSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { currentProse, ignoreMarkers, matchAll } from "./helpers/canonical-facts";
 
@@ -96,6 +98,148 @@ const SHALLOW = git("rev-parse", "--is-shallow-repository") === "true";
 const GIT_USABLE = GIT_AVAILABLE && !SHALLOW;
 
 // ---------------------------------------------------------------------------
+// CANONICAL FRESHNESS POLICY (Sam, #825 6215529089).
+//
+// Eight checks below need history. In CI they used to "pass" by asserting that
+// they could not run, because validate's checkout was shallow. A check that
+// cannot run is now a FAILURE everywhere, never a skip.
+//
+// A3 and A5 are FRESHNESS facts about production, not about the branch under
+// test, so they are measured against the verified production ref, never PR
+// HEAD. Whether a stale result BLOCKS depends on CANONICAL_FRESHNESS:
+//   enforce (default, and in CI for production-record changes, pushes to
+//            production and the nightly unit lane): stale fails;
+//   measure (CI for ordinary application PRs only): stale is reported as a
+//            distinct non-blocking warning annotation, and the test title says
+//            MEASURED, so it can never read as a checked-clean result.
+// ---------------------------------------------------------------------------
+const FRESHNESS_RAW = process.env.CANONICAL_FRESHNESS ?? "enforce";
+const FRESHNESS: "enforce" | "measure" = FRESHNESS_RAW === "measure" ? "measure" : "enforce";
+const FRESHNESS_TAG = FRESHNESS === "measure" ? " [MEASURED, non-blocking]" : "";
+
+/** The history prerequisite as a pure decision: null when git is usable. */
+export function gitPrerequisiteError(rule: string, available: boolean, shallow: boolean): string | null {
+  if (available && !shallow) return null;
+  return (
+    `${rule} cannot run: ${available ? "this checkout is SHALLOW" : "git is not available"}. ` +
+    "A canonical check that cannot run is a failure, not a pass (#825 6215529089). " +
+    "Give the job full history (actions/checkout fetch-depth: 0)."
+  );
+}
+
+/** Unusable git FAILS; it is never a quiet skip. */
+function requireUsableGit(rule: string): void {
+  if (GIT_USABLE) return;
+  const err = gitPrerequisiteError(rule, GIT_AVAILABLE, SHALLOW);
+  if (err) throw new Error(err);
+}
+
+type Git = (...args: string[]) => string | null;
+
+/** The production branch is a recorded fact; read it from the document. */
+function productionBranch(): string | null {
+  return (
+    currentProse(CURRENT_STATE).match(/\|\s*\*{0,2}Production branch\*{0,2}\s*\|\s*`([^`]+)`/i)?.[1] ??
+    null
+  );
+}
+
+/**
+ * The verified production commit. The remote-tracking ref is preferred: on a
+ * PR branch only it describes production, and on the production branch it is
+ * the same commit. Missing or unresolvable is null, and callers FAIL on null.
+ */
+export function resolveProductionRef(g: Git, branch: string | null): string | null {
+  if (!branch) return null;
+  return (
+    g("rev-parse", "--verify", "-q", `refs/remotes/origin/${branch}^{commit}`) ??
+    g("rev-parse", "--verify", "-q", `refs/heads/${branch}^{commit}`)
+  );
+}
+
+const RECORD_ONLY = /^docs\/production\//;
+
+/**
+ * (iv): every first-parent production commit after the recorded HEAD must
+ * change ONLY docs/production/** against its first parent. Decided from the
+ * actual changed paths, never from a title or label. Anything that cannot be
+ * inspected is NOT record-only.
+ */
+export function recordOnlySince(
+  g: Git,
+  recorded: string,
+  target: string,
+): { ok: true; commits: number } | { ok: false; reason: string } {
+  if (recorded === target) return { ok: true, commits: 0 };
+  if (g("merge-base", "--is-ancestor", recorded, target) === null) {
+    return { ok: false, reason: `recorded HEAD ${recorded.slice(0, 8)} is not an ancestor of production ${target.slice(0, 8)}, or the ancestry cannot be inspected` };
+  }
+  const listed = g("rev-list", "--first-parent", `${recorded}..${target}`);
+  if (listed === null) return { ok: false, reason: "the first-parent history cannot be listed" };
+  const commits = listed.split("\n").filter(Boolean);
+  for (const c of commits) {
+    const parents = g("rev-list", "--parents", "-n", "1", c)?.split(" ") ?? [];
+    if (parents.length < 2) return { ok: false, reason: `${c.slice(0, 8)} has no inspectable first parent` };
+    // --no-renames: both endpoints, so moving app/x.ts into docs/production/
+    // is NOT record-only (Codex P1 4297335910).
+    const files = g("diff", "--name-only", "--no-renames", parents[1], c);
+    if (files === null) return { ok: false, reason: `${c.slice(0, 8)}'s changed paths cannot be read` };
+    const other = files.split("\n").filter(Boolean).filter((f) => !RECORD_ONLY.test(f));
+    if (other.length) {
+      return { ok: false, reason: `${c.slice(0, 8)} changes ${other.length} non-record path(s), e.g. ${JSON.stringify(other.slice(0, 6))}` };
+    }
+  }
+  return { ok: true, commits: commits.length };
+}
+
+/** A3 over the production boundary: runtime-bearing paths changed pinned..target. */
+export async function runtimeChangedSince(g: Git, pinned: string, target: string): Promise<string[] | null> {
+  // --no-renames: a runtime file MOVED into docs/ is a runtime deletion, and
+  // rename detection would report only the docs destination (Codex P1 4297335910).
+  const out = g("diff", "--name-only", "--no-renames", pinned, target);
+  if (out === null) return null;
+  const classify = await loadClassifier();
+  return out
+    .split("\n")
+    .filter(Boolean)
+    .filter((f) => nonShippingReason(f) === null && !classify([f]).docs_only);
+}
+
+/** A freshness verdict as a pure decision, so both modes are testable. */
+export function freshnessOutcome(
+  mode: "enforce" | "measure",
+  rule: string,
+  fresh: boolean,
+  detail: string,
+): { kind: "fresh" } | { kind: "warn"; line: string } | { kind: "fail"; message: string } {
+  if (fresh) return { kind: "fresh" };
+  if (mode === "measure") {
+    // Existing Actions reporting: a workflow-command annotation on stdout.
+    return { kind: "warn", line: `::warning title=Canonical record STALE (non-blocking, ${rule})::${detail.replace(/\s+/g, " ")}` };
+  }
+  return { kind: "fail", message: `${rule} (enforced): ${detail}` };
+}
+
+/**
+ * Emit a workflow command so GitHub Actions actually PARSES it. Actions only
+ * recognises "::warning" at the very START of a line, and vitest's console
+ * interception prefixes output with colour resets ("\e[22m\e[39m::warning"),
+ * so console.log silently produced no annotation: a stale record looked like a
+ * green job with nothing on the PR (#887). Written straight to fd 1, on its own
+ * line, it bypasses that interception.
+ */
+export function emitWorkflowCommand(line: string, write: (text: string) => void = (t) => writeSync(1, t)): void {
+  write(`\n${line}\n`);
+}
+
+/** One verdict for a freshness fact: fresh passes; stale fails or warns by mode. */
+function freshnessVerdict(rule: string, fresh: boolean, detail: string): void {
+  const out = freshnessOutcome(FRESHNESS, rule, fresh, detail);
+  if (out.kind === "warn") emitWorkflowCommand(out.line);
+  if (out.kind === "fail") expect.fail(out.message);
+}
+
+// ---------------------------------------------------------------------------
 // RUNTIME-BEARING CLASSIFICATION IS NOT DEFINED HERE.
 //
 // It was, once: a hand-written path list that omitted instrumentation.ts,
@@ -138,6 +282,11 @@ const NON_SHIPPING_ROOTS: ReadonlyArray<readonly [RegExp, string]> = [
   [/^playwright(\.[\w.-]+)?\.config\./, "test-runner configuration"],
   [/^vitest(\.[\w.-]+)?\.config\./, "test-runner configuration"],
   [/^eslint\.config\./, "linter configuration: gates the build, never served by it"],
+  // WIKI-AUTO-01. Each changed file is classified ALONE, and only Markdown is
+  // docs-only, so OpenWiki's Claim sidecars and run metadata (JSON) counted as
+  // runtime: every wiki regeneration would have invalidated a correct pin.
+  [/^openwiki\//, "OpenWiki generated docs, Claim sidecars and run metadata: never built or served"],
+  [/^\.openwikiignore$/, "OpenWiki read-boundary configuration: never built or served"],
 ];
 
 /**
@@ -883,51 +1032,563 @@ describe("canonical production docs: synthetic rows are never customer activity"
   });
 });
 
-describe("canonical production docs: WAIT-02B is never described as live", () => {
-  it("the durable waitlist is recorded as deployed-but-dormant, with zero rows", () => {
+// ===========================================================================
+// WAIT-02B — POLARITY CORRECTED 2026-09-19 (WAIT-DOCS-RECON).
+//
+// THIS BLOCK USED TO MANDATE A CLAIM PRODUCTION HAD ALREADY DISPROVED.
+//
+// It required current-state.md to say the durable waitlist is "NOT ENABLED"
+// with "0 rows" and an "absent" allowlist, and it forbade any canonical
+// document from calling the feature enabled. Every one of those was true when
+// written. None of them was true when this was corrected.
+//
+// A read-only hosted query on 2026-09-19 returned 31 rows in
+// `new_client_waitlist_entries`, 28 of them for `willow-electrolysis`, the
+// oldest joined 2026-08-25. The guard was therefore not merely stale: it was
+// actively holding the canonical documentation at a falsehood, and a lane that
+// tried to tell the truth would have gone red for doing so.
+//
+// THE ACTIVATION IS PROVEN STRUCTURALLY, WITHOUT READING ANY ENV VALUE - which
+// matters, because that value is Sensitive and no record may depend on reading
+// it. Migration 0193's CHECK constraints make `source = 'public_booking'`
+// exclusive to the public path (it holds if and only if
+// `joined_at_provenance = 'form'` AND `created_by_practitioner_id IS NULL`); a
+// practitioner-created entry is `'practitioner'` and an imported one is
+// `'legacy_import'`. The only writer of `'public_booking'` is
+// `join_new_client_waitlist`, whose only caller is
+// `app/book/[slug]/waitlist-actions.ts`, reached only after BOTH
+// `isNewClientWaitlistEnabled` and `isNewClientWaitlistDurableEnabled` return
+// true. One durable public row therefore proves both allowlists name that
+// studio.
+//
+// THE GUARD'S PURPOSE IS UNCHANGED - canonical documents must match production
+// - so only its polarity moves. It now refuses the STALE posture rather than
+// requiring it, which keeps the same class of drift caught in the direction
+// drift can now travel.
+// ===========================================================================
+describe("canonical production docs: WAIT-02B's durable waitlist is recorded as ACTIVATED", () => {
+  /**
+   * The documents these rules read.
+   *
+   * The roadmap is here but NOT in NO_CURRENT_MAX_DOCS, and the distinction is
+   * deliberate: it is not a production-state document, so it must not be held to
+   * the migration-number rules — but it IS what operators and the migration
+   * allocator plan from, and it carried the disproved posture inside its own
+   * "CURRENT SNAPSHOT" for three weeks while every guard stayed green.
+   */
+  /** Read the durable-waitlist flag name from the module that owns it. */
+  function durableFlagName(): string {
+    const name = read("lib/booking/new-client-waitlist.ts").match(
+      /DURABLE_SLUGS_ENV\s*=\s*\n?\s*"([A-Z0-9_]+)"/,
+    )?.[1];
+    expect(name, "the durable-waitlist env var name must be derivable").toBeTruthy();
+    return name as string;
+  }
+
+  const SCANNED_DOCS = [
+    ...NO_CURRENT_MAX_DOCS,
+    ["docs/roadmap/CANONICAL_ROADMAP.md", read("docs/roadmap/CANONICAL_ROADMAP.md")],
+    // ADDED after Codex #740 observed that the security and deployment docs
+    // carried the same disproved claims and were not scanned AT ALL. A guard
+    // that reads three documents while the claim lives in five is a guard
+    // against three documents.
+    ["docs/03_SECURITY_AND_PRIVACY.md", read("docs/03_SECURITY_AND_PRIVACY.md")],
+    ["docs/10_DEPLOYMENT_AND_ENV.md", read("docs/10_DEPLOYMENT_AND_ENV.md")],
+  ] as const;
+
+  it("current-state records the durable activation as a DATED BOUND, with a non-zero row count", () => {
     const cs = currentProse(CURRENT_STATE);
-    expect(cs, "current-state must carry the durable-waitlist posture").toMatch(
-      /NOT ENABLED/i,
-    );
+    // THIS RULE USED TO REQUIRE THE WORD "ACTIVATED", FULL STOP.
+    //
+    // That was the last place the original defect was still living. The guard
+    // this branch began by inverting MANDATED "NOT ENABLED"; replacing it with
+    // one that MANDATES a present-tense "ACTIVATED" reproduces the same failure
+    // with the sign flipped -- if an operator cleared the allowlist after the
+    // last measured row, every persisted row would remain, no studio would be
+    // activated, and CI would still be demanding the document say otherwise.
+    //
+    // So the requirement is now the BOUND, which stays true forever: one studio
+    // WAS activated at every measured instant. A bound is a historical fact and
+    // cannot rot; a posture is a reading of configuration and rots the moment
+    // the configuration changes.
     expect(
       cs,
-      "it must state that the durable table holds no rows — a table existing is not " +
-        "data being collected",
-    ).toMatch(/holds \*\*0 rows\*\*|=\s*\*\*0 rows\*\*|\b0 rows\b/i);
-    // The flag NAME is read from the module that owns it rather than written
-    // here. tests/app/book/new-client-waitlist-durable-commit.test.ts keeps a
-    // deliberately CLOSED list of non-markdown files naming that variable —
-    // the mechanism that stops a config file or seed switching a studio on
-    // quietly. This guard has no business widening that list to check a
-    // sentence, and deriving the name also means a rename cannot leave the
-    // documentation assertion silently pointing at a variable nobody reads.
+      "current-state must record the durable activation as a DATED BOUND -- one studio was " +
+        "activated at the measured instants -- never as a current posture. Rows outlive the " +
+        "flag, so they can bound an activation in time and can never report configuration now.",
+    ).toMatch(/\bWAS activated at every measured instant\b/i);
+    // SCOPED TO THE SECTION, AND TO ITS DATE. Codex #740 P2: this previously
+    // scanned the WHOLE document for /[1-9]\d* rows/, and current-state.md
+    // carries several unrelated counts ("24 rows", "7 rows"). Every measured
+    // durable-waitlist number could have been deleted and this still passed on
+    // a sentence about something else entirely — a positive assertion that
+    // cannot detect loss of the evidence it names is not evidence of anything.
+    const stageA = cs.match(
+      /###\s+WAIT-02B Stage A[\s\S]*?(?=\n###\s|\n##\s|$)/,
+    )?.[0];
+    expect(
+      stageA,
+      "current-state must still carry a WAIT-02B Stage A section for the durable-waitlist " +
+        "posture to live in",
+    ).toBeTruthy();
+    expect(
+      stageA,
+      "the Stage A section must carry a MEASURED, NON-ZERO row count. A bare adjective, or a " +
+        "count that lives somewhere else in the document, does not establish that production " +
+        "is collecting.",
+    ).toMatch(/\b[1-9]\d*\s*rows\b/i);
+    expect(
+      stageA,
+      "...and the DATE it was measured, in the same section. A dated 31 is no more a standing " +
+        "fact than a dated 0 was; an undated count is the exact defect the previous polarity " +
+        "enforced, restated with the opposite number.",
+    ).toMatch(/\b20\d\d-\d\d-\d\d\b/);
+  });
+
+  it("no canonical doc still calls the durable waitlist dormant, dark or zero-rowed", () => {
+    // The stale shapes, in the exact phrasings the canonical set actually used.
+    // Historical rows stay legal: `currentProse` strips every explicitly-marked
+    // frozen region first, so a superseded claim preserved inside an auditable
+    // ignore block is untouched by this rule.
+    const STALE: RegExp[] = [
+      // THE CLAIM CLASS, NOT ONE PHRASING. Codex #740, second round: the list
+      // below previously held only "durable … waitlist … is dormant/dark", and
+      // the canonical set was carrying the same disproved posture in at least
+      // six other wordings — "reachable by nobody", "unreachable", "NO STUDIO
+      // ENABLED", "enabled for nobody", "NOT STARTED", and the durable waitlist
+      // sitting inside a Dormant list. A blacklist that matches one phrasing is
+      // a guard against one sentence, not against the claim.
+      //
+      // SCOPED TO THE SUBJECT so unrelated capabilities keep their own honest
+      // "unreachable" and "not started" — clinical finalization, whole-session
+      // copy and the retired corrections backend are all legitimately those.
+      /durable[^.\n]{0,40}waitlist[^.\n]{0,40}\bis\s+(?:dormant|dark)\b/i,
+      /durable[^.\n]{0,60}\b(?:reachable by nobody|unreachable|enabled for nobody)\b/i,
+      /\b(?:reachable by nobody|enabled for nobody)[^.\n]{0,60}(?:durable|waitlist)/i,
+      /waitlist[^.\n]{0,60}\bdormant and enabled for nobody\b/i,
+      /\bNO STUDIO ENABLED\b/,
+      /durable[^\n]{0,80}\bNOT STARTED\b/i,
+      // The same claim as a SWITCH rather than a state. Codex #740, third
+      // round: the roadmap said "Willow durable WAIT is deliberately OFF" in
+      // its own CURRENT SNAPSHOT, and an operator planning from that row would
+      // have re-performed a cutover that had already happened.
+      // PRESENT-TENSE STANDING CLAIMS ONLY. A first draft of this matched any
+      // "durable WAIT ... OFF" and produced two false positives that are worth
+      // recording, because both are shapes a stale-wording guard must tolerate:
+      //   * a genuine PAST observation -- "the navigation disappeared while
+      //     durable WAIT was intentionally OFF" -- which is true history; and
+      //   * a CONDITIONAL -- "navigation can disappear when the durable flag is
+      //     off" -- which describes a behaviour, not a current state.
+      // Neither asserts that the flag is off now, and banning them would push
+      // real history out of the document to satisfy a regex.
+      /durable\s+WAIT\s+(?:is|remains|stays)\s+(?:deliberately\s+|intentionally\s+)?OFF\b/i,
+      /Willow[^.\n]{0,40}durable[^.\n]{0,40}\b(?:is|remains|stays)\s+(?:deliberately\s+|intentionally\s+)?off\b/i,
+      // ADJECTIVE FORM, where OFF modifies "durable" instead of following the
+      // verb: "Willow remains legacy-enabled and durable-OFF". Codex #740,
+      // fourth round, found this after the narrowing above -- the hole was
+      // real, and it sat in an active roadmap row. Still anchored on a
+      // present-tense verb, so "was durable-OFF" stays legal history.
+      /\b(?:is|remains|stays)\b[^.\n]{0,60}\bdurable[-\u2011\s]?OFF\b/i,
+      /\bNOT ENABLED anywhere\b/i,
+      /durable[^.\n]{0,60}\b0 rows\b/i,
+    ];
+
+    /**
+     * DISABLED-STATE CLAIMS, which are stale ONLY while undated.
+     *
+     * Codex #740, sixth round, and it is the same defect one last time. These
+     * shapes were in the list above, rejected unconditionally, in every scanned
+     * document, forever. But the committed rows bound an activation INTERVAL --
+     * 2026-08-25T22:27Z through 2026-09-15 -- and say nothing about what
+     * follows it. If an operator clears the allowlist tomorrow, "no studio was
+     * enabled as of <tomorrow>" becomes the truthful observation, every
+     * persisted row still exists, and CI would have forbidden recording it.
+     *
+     * A guard that forbids the opposite claim PINS THE POSTURE just as surely as
+     * one that mandates it. So these are rejected only as STANDING claims: carry
+     * a date, in either direction within the sentence, and the observation is
+     * admissible.
+     */
+    const DISABLED_STATE: RegExp[] = [
+      // EVERY CONJUGATION, not one. Codex #740 P2: the list previously held
+      // only "is enabled", so `known-limitations.md` sat green while its L25
+      // table still said "No studio HAS BEEN enabled" three rows below the
+      // correction that contradicted it.
+      /\bNo studio (?:is|has been|was|had been) enabled\b/i,
+      /\bWillow is\s+\*{0,2}not\s+enabled\*{0,2}/i,
+      // The activation-authorization claim, which is the same falsehood stated
+      // as a gate rather than as a count.
+      /activation\s+(?:—|-|--)?\s*is ungranted/i,
+      /Stage B2[^.\n]{0,40}\b(?:has not been granted|remains blocked|is ungranted)\b/i,
+      // ROUTE OCCUPANCY. Codex #740, sixth direction on this class: "WAIT-01
+      // currently serves NO studio" and "applies only to ... — currently none".
+      // Which route a studio occupies is decided by configuration re-read on
+      // every request, so persisted rows cannot establish it either way. Same
+      // rule as the rest: date it and it is an observation.
+      /WAIT-01[^.\n]{0,60}\b(?:currently\s+)?serves\s+(?:NO|no|nobody|any)\b/i,
+      /\bcurrently serves\s+(?:NO|no|nobody)\s+studio\b/i,
+      // BROADENED: the first draft required an em-dash immediately before
+      // "currently none", so "of which there are currently none" and "the
+      // allowlist names none" both walked past it. Membership and occupancy are
+      // the same claim class -- what the environment holds RIGHT NOW -- and
+      // neither is derivable from rows.
+      // SCOPED TO THE SUBJECT. Codex #740: the first draft of these two was
+      // SUBJECT-FREE -- any "currently none" or "there are none" anywhere in six
+      // canonical documents would have failed a WAIT-specific test, including a
+      // perfectly legitimate statement about alerts, migrations or any other
+      // capability. An over-broad guard does not merely annoy; it taxes
+      // unrelated work with a failure whose message names the wrong subject.
+      // Punctuation support is kept; WAIT context is now required.
+      //
+      // AND `studio` IS NOT WAIT CONTEXT. A second pass by Codex showed the
+      // token was still too generic -- "The studio has unresolved payment
+      // alerts; currently none remain" matches within 70 characters and fails a
+      // WAIT test about an absence of alerts. Only allowlist / WAIT-01 /
+      // durable / waitlist count.
+      /(?:allowlist|WAIT-01|durable|waitlist)[^.\n]{0,70}\bcurrently none\b/i,
+      /\bcurrently none\b[^.\n]{0,70}(?:allowlist|WAIT-01|durable|waitlist)/i,
+      /(?:allowlist|WAIT-01|durable|waitlist)[^.\n]{0,70}\bthere are\s+(?:currently\s+)?none\b/i,
+      /\bthere are\s+(?:currently\s+)?none\b[^.\n]{0,70}(?:allowlist|WAIT-01|durable|waitlist)/i,
+      /\ballowlist\s+names\s+(?:none|no studio)\b/i,
+      /\ballowlist\s+(?:is|remains)\s+empty\b/i,
+    ];
+
+    /** A date anywhere in the surrounding sentence makes it an observation. */
+    const DATED = /\b(?:as of|as at|20\d\d-\d\d-\d\d)\b/i;
+    const sentenceAround = (text: string, at: number): string => {
+      const start = Math.max(0, text.lastIndexOf(".", at) + 1, text.lastIndexOf("\n", at) + 1);
+      const dot = text.indexOf(".", at);
+      const nl = text.indexOf("\n", at);
+      const ends = [dot, nl].filter((n) => n !== -1);
+      return text.slice(start, ends.length > 0 ? Math.min(...ends) : text.length);
+    };
+    // (SCANNED_DOCS is defined once for the whole block, below.)
+    // THE ROADMAP IS IN SCOPE FOR THIS RULE, THOUGH NOT FOR THE MIGRATION-NUMBER
+    // RULES ABOVE. It is not a production-state document, so it is correctly
+    // absent from NO_CURRENT_MAX_DOCS — but it IS what operators and the
+    // migration allocator plan from, and it carried the disproved posture in its
+    // own "CURRENT SNAPSHOT" for three weeks while every guard stayed green.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      for (const shape of STALE) {
+        expect(
+          prose.match(shape)?.[0] ?? null,
+          `${name} still describes the durable waitlist with a posture production has ` +
+            `disproved. Correct it, or move the sentence into an auditable ` +
+            `canonical-facts:ignore block if it is being preserved as history.`,
+        ).toBeNull();
+      }
+      for (const shape of DISABLED_STATE) {
+        const hit = [...prose.matchAll(new RegExp(shape.source, `${shape.flags}g`))].find(
+          (m) => !DATED.test(sentenceAround(prose, m.index ?? 0)),
+        );
+        expect(
+          hit?.[0] ?? null,
+          `${name} states a disabled posture as a STANDING claim. The committed rows bound the ` +
+            `activation to 2026-08-25T22:27Z - 2026-09-15 and say nothing about what follows, ` +
+            `so a later observation is legitimate -- DATE IT ("as of <date>") and it is ` +
+            `admissible. What is banned is the undated standing form.`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("no canonical doc presents WAIT-01's email as Willow's commit point", () => {
+    // CLASS, NOT INSTANCE. Codex #740 found this in one table row; a sweep by
+    // CLAIM found it in four places across three documents. `waitlist-actions.ts`
+    // routes a studio on BOTH allowlists to the durable branch, so for Willow the
+    // email is a notification and the row is the record. Getting it backwards
+    // hands an operator the wrong commit point AND the wrong kill switch.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      for (const shape of [
+        // BROADENED after Codex #740 found two survivors: the first draft could
+        // not cross the period before "LIVE" and accepted only "at Willow", so
+        // a heading reading "WAIT-01 - the email-delivered waitlist. LIVE at
+        // Willow." and a row reading "LIVE for Willow" both slipped through.
+        // `[\s\S]` spans sentences; at|for covers both prepositions.
+        /WAIT-01[\s\S]{0,90}?\b(?:enabled|live)\b[^\n]{0,40}?\b(?:at|for)\s+Willow\b/i,
+        /\bWillow\b[^.\n]{0,50}\bWAIT-01\b[^.\n]{0,40}\bcommit point\b/i,
+        /WAIT-01[^.\n]{0,40}\bcommit point\b[^.\n]{0,40}\bWillow\b/i,
+      ]) {
+        expect(
+          prose.match(shape)?.[0] ?? null,
+          `${name} still presents WAIT-01's email as Willow's commit point. Willow has been ` +
+            `on the durable commit point since on or before 2026-08-25.`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("the durable waitlist is never rounded down to flatly unexercised", () => {
+    // Zero invitations proves the LATER STAGES are unexercised. The join path is
+    // live and taking real prospects, and a rollup that erases that is how an
+    // active collection surface gets planned as if it were dark.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      const shape =
+        /durable[^.\n]{0,50}(?:waitlist|path)[^.\n]{0,60}\b(?:is|remains)\s+(?:still\s+)?not\s+(?:production-)?exercised\b/i;
+      expect(
+        prose.match(shape)?.[0] ?? null,
+        `${name} calls the durable waitlist unexercised. Say "not exercised beyond joining" — ` +
+          `31 rows were measured on 2026-09-19.`,
+      ).toBeNull();
+    }
+  });
+
+  it("no canonical doc still instructs enabling durable WAIT for Willow as future work", () => {
+    // PRE-CUTOVER INSTRUCTIONS OUTLIVE THE CUTOVER. Two rows still told an
+    // operator to durable-enable Willow after reconciliation; the enable happened
+    // first, in August, before any of it. Following them would mean manipulating
+    // an activation that already exists.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      for (const shape of [
+        /\bthen\s+explicitly\s+enable\s+durable\b/i,
+        /\b(?:before|prior to)\s+Willow\s+migration\b/i,
+        /\bsilently\s+durable-enabling\s+Willow\b/i,
+        // Codex #740, eighth round: the same instruction phrased as a CUTOVER
+        // rather than an enable. Five active sections still sequenced work
+        // "before" or "only then authorize" a cutover performed in August.
+        /\b(?:before|prior to)\s+(?:Willow\s+)?durable\s+cutover\b/i,
+        /\bonly then\s+authoriz\w*[^.\n]{0,40}\bcutover\b/i,
+        /\bauthorize\s+Willow\s+durable\s+cutover\b/i,
+        // GENERIC "before migration", with no Willow or durable token in the
+        // sentence at all. Codex #740, twelfth direction: an acceptance-debt row
+        // told operators to close WAIT-CONTINUITY-01 "before migration". Scoped
+        // to WAIT work items so unrelated migrations keep their own ordering
+        // language.
+        /\b(?:WAIT|waitlist|continuity)[^.\n]{0,60}\bbefore migration\b/i,
+        /\bbefore migration\b[^.\n]{0,60}\b(?:WAIT|waitlist|rollout state)\b/i,
+        // BARE WORDING. Codex #740, ninth round: "then Willow cutover" listed as
+        // remaining work, with no "durable" and no verb to anchor on. The guard
+        // had been matching the decorated forms only.
+        /\bthen\s+Willow\s+cutover\b/i,
+        /\bWillow\s+cutover\b[^.\n]{0,30}\bremain\w*/i,
+        /\bremain\w*[^.\n]{0,40}\bWillow\s+cutover\b/i,
+      ]) {
+        expect(
+          prose.match(shape)?.[0] ?? null,
+          `${name} carries a pre-cutover Willow instruction. The durable enable happened on ` +
+            `or before 2026-08-25; what remains is retrospective reconciliation.`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("no doc presents 0199 as claimable — it is applied and frozen", () => {
+    // THE ONE FINDING IN THIS FAMILY WITH A CONCRETE HAZARD. An allocator
+    // reading "0199 is unclaimed" from an ACTIVE allocation section would author
+    // against a number already applied to production and frozen. Codex #740
+    // found it in two such sections -- "Current allocation" and "Current
+    // assigned WIP" -- after four earlier rounds had corrected the same claim
+    // elsewhere in the same file.
+    //
+    // Scoped to CLAIMABILITY, not to the literal. Apply records, checksums and
+    // historical rows must keep saying 0199 freely; what is banned is calling it
+    // free.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      for (const shape of [
+        /`?0199`?[^.\n]{0,40}\b(?:is|remains|stays)\s+(?:still\s+)?(?:unclaimed|unallocated|not claimed|not allocated|available|free)\b/i,
+        /\bnext[- ]free[^.\n]{0,30}\b0199\b/i,
+        /\bnext free (?:number|migration)[^.\n]{0,25}\b0199\b/i,
+        /\b0199\b[^.\n]{0,30}\bclaimable\b/i,
+      ]) {
+        expect(
+          prose.match(shape)?.[0] ?? null,
+          `${name} presents 0199 as claimable. It was APPLIED to production on 2026-09-18 and ` +
+            `is frozen; the next free number is 0200. An allocator acting on this collides ` +
+            `with a live migration.`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("no doc infers CURRENT allowlist configuration from persisted rows", () => {
+    // THE SYMMETRY THIS GUARD EXISTS TO HOLD. The original version of this block
+    // mandated "NOT ENABLED" and carried a dated ABSENCE forward as a standing
+    // posture for three weeks. Correcting it to mandate a present-tense ENABLED
+    // would be the same error wearing the other sign, and Codex #740 caught the
+    // documents doing exactly that.
+    //
+    // A durable row proves both allowlists matched AT THE INSTANT IT WAS
+    // WRITTEN. It proves nothing about now: rows outlive the flag, and
+    // lib/booking/new-client-waitlist.ts re-reads process.env on every call, so
+    // clearing the variable returns new submissions to WAIT-01 immediately while
+    // every existing row stays put.
+    //
+    // So the documents may state a DATED BOUND and must not state a current
+    // configuration. This rule bans the inference; the row-count rule above
+    // requires the date that makes the bound legible.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      for (const shape of [
+        /\brows?\b[^.\n]{0,70}\b(?:prove|proves|proof|shows?|confirms?)\b[^.\n]{0,50}\b(?:currently|right now|today)\b[^.\n]{0,40}\b(?:named?|enabled|configured)\b/i,
+        // THE FLAG NAME IS DERIVED, NEVER WRITTEN HERE.
+        // tests/app/book/new-client-waitlist-durable-commit.test.ts keeps a
+        // deliberately CLOSED census of non-markdown files naming that variable
+        // — the mechanism that stops a config file or seed switching a studio on
+        // quietly. Writing the literal in this regex ADDED THIS FILE to that
+        // census and went red, which is the census working exactly as intended.
+        // Deriving it keeps the census closed and survives a rename.
+        //
+        // No \b before the identifier: it is preceded by "_" in the full name,
+        // "_" is a word character, and \b never matches there. A negative
+        // control caught that too.
+        new RegExp(`${durableFlagName()}\`?\\s+(?:currently\\s+)?names\\b`, "i"),
+        /\bproduction\s+(?:currently\s+)?names\s+one\s+studio\b/i,
+        // PRESENT-TENSE ENABLEMENT IN ANY WORDING. Codex #740: the first draft
+        // rejected only "names one studio" and an explicit rows-to-currently
+        // phrase, while the register said "ENABLED for one studio" and the
+        // security doc "PRODUCTION ENABLES ONE STUDIO". All are the same
+        // inference. Past tense ("was enabled", "at every measured instant")
+        // stays legal -- that is the bound the documents are supposed to state.
+        /\bPRODUCTION\s+ENABLES\s+ONE\s+STUDIO\b/,
+        /\b(?:is|are)\s+ENABLED\s+for\s+one\s+studio\b/i,
+        // CASE-INSENSITIVE LOOKBEHIND. A negative control caught this: the
+        // lookbehinds were written lowercase with no `i` flag, so documents
+        // writing "WAS ENABLED" in caps -- which several of these tables do --
+        // would have tripped the rule for using the LEGAL past-tense form.
+        /(?<!\bwas\s)(?<!\bwere\s)\bENABLED\s+for\s+one\s+studio\b(?![^.\n]{0,60}\bat every measured instant\b)/i,
+        /\bone studio (?:is|remains) on the durable allowlist\b/i,
+        // BARE NOUN PHRASES, with no verb at all to anchor tense on. Codex
+        // #740: status cells are written as pipe-separated fragments --
+        // "Deployed · ONE STUDIO ENABLED · exercised" -- so every shape above
+        // that keys on is/are/was walked straight past them. A sweep found the
+        // same fragment in a second document Codex had not named.
+        //
+        // The negative lookahead is what keeps the LEGAL form legal: the claim
+        // is admissible the moment it carries its dated boundary, which is the
+        // whole point of the rule rather than a loophole in it.
+        /\bONE STUDIO ENABLED\b(?![^.\n|]{0,80}\b(?:at every measured instant|dated bound|20\d\d-\d\d-\d\d)\b)/i,
+        /\bONE STUDIO ON THE DURABLE ALLOWLIST\b(?![^.\n|]{0,80}\b(?:at every measured instant|dated bound|20\d\d-\d\d-\d\d)\b)/i,
+        // THE ADJECTIVE FORM, AND THE POSTURE NOUN. Codex #740's fifth family:
+        // "Current posture: ACTIVATED for one studio", derived explicitly from
+        // committed rows. Same lookahead, so the dated form stays admissible.
+        /(?<!\bwas\s)(?<!\bwere\s)\bACTIVATED\s+for\s+one\s+studio\b(?![^.\n|]{0,80}\b(?:at every measured instant|dated bound|20\d\d-\d\d-\d\d)\b)/i,
+        /\bCurrent posture:\s*ACTIVATED\b/i,
+      ]) {
+        expect(
+          prose.match(shape)?.[0] ?? null,
+          `${name} infers CURRENT allowlist configuration from persisted rows. Rows prove the ` +
+            `allowlists matched WHEN THEY WERE WRITTEN — state that dated bound, and confirm ` +
+            `present configuration in the product instead.`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("the activation is never recorded as read from the environment variable", () => {
+    // The allowlist VALUE is Sensitive and is never read back. A record that
+    // claimed to have read it would be unreproducible by the next reader, which
+    // is how the previous "absent from Vercel Production" line survived three
+    // weeks past the activation it described.
+    const cs = currentProse(CURRENT_STATE);
     const durableFlag = read("lib/booking/new-client-waitlist.ts").match(
       /DURABLE_SLUGS_ENV\s*=\s*\n?\s*"([A-Z0-9_]+)"/,
     )?.[1];
     expect(durableFlag, "the durable-waitlist env var name must be derivable").toBeTruthy();
     expect(
       cs,
-      "and that the production allowlist is absent, so no studio is enabled",
-    ).toMatch(new RegExp(`${durableFlag}[\\s\\S]{0,120}absent`, "i"));
+      `current-state must not assert that ${durableFlag}'s VALUE was read. Activation is ` +
+        `established from committed rows, not from configuration.`,
+    ).not.toMatch(new RegExp(`${durableFlag}[\\s\\S]{0,80}\\bvalue (?:was |is )?read\\b`, "i"));
+  });
+});
+
+const APPLY_HISTORY_ENTRIES = 13;
+const APPLY_HISTORY_DIGEST =
+  "fed1cd9b704626f739f9459a1bdc3b4a9b786a881b052fbd117fac1eaab98e33";
+
+describe("canonical production docs: the apply history is append-only", () => {
+  /**
+   * HISTORICAL APPLY RECORDS ARE NOT REWRITTEN -- and until now nothing enforced it.
+   *
+   * CLAUDE.md states the rule, `hosted_note` carries a "PREVIOUS ENTRY, PRESERVED"
+   * boundary by convention, and `$comment` accumulates one dated entry per apply.
+   * No test read any of it. #779 Codex P2 found that out the hard way: I appended an
+   * evidence correction, wrote that the superseded entry "is asserted byte-identical
+   * programmatically", and what I actually had was a one-time check inside the script
+   * that performed the edit. A transient verification described as a standing
+   * guarantee is worse than no guarantee, because it stops anyone looking.
+   *
+   * So the prefix is pinned the same way the execution record is: entries may be
+   * ADDED, never edited or removed. Advance ENTRIES and DIGEST together, and only
+   * when a genuinely new apply record is appended.
+   */
+  const comments = CANONICAL_RECORD["$comment"] as unknown;
+
+  it("$comment is an array of dated entries, not a single blob", () => {
+    expect(Array.isArray(comments)).toBe(true);
   });
 
-  it("no canonical doc calls the durable waitlist live or enabled", () => {
-    for (const [name, doc] of NO_CURRENT_MAX_DOCS) {
-      expect(
-        currentProse(doc),
-        `${name} must not describe the durable waitlist as live`,
-      ).not.toMatch(/durable[^.\n]{0,40}waitlist[^.\n]{0,30}\bis\s+(?:live|enabled|active)\b/i);
-    }
+  it("no entry is removed", () => {
+    expect(
+      (comments as string[]).length,
+      "an entry was REMOVED from the apply history. Historical apply records are " +
+        "not deleted; if one is wrong, append a dated correction entry as entry [9] " +
+        "and entry [11] do",
+    ).not.toBeLessThan(APPLY_HISTORY_ENTRIES);
+  });
+
+  it("an APPEND must advance the pin, so the new entry is immutable immediately", () => {
+    // THE PIN IS AN EQUALITY, NOT A FLOOR. A floor pinned only the history that
+    // existed when the constant was written: entry [12] would have been appendable
+    // and then freely rewritten or deleted for as long as the count stayed above
+    // the floor. That preserves a snapshot, not an append-only history -- which is
+    // the property this block claims, so the floor was the claim outrunning the
+    // code for the second time in one round.
+    //
+    // With equality, recording a new apply means advancing ENTRIES and DIGEST in the
+    // same commit, and the entry you just recorded is frozen from that moment.
+    expect(
+      (comments as string[]).length,
+      "a new apply entry was appended without advancing the pin. Update " +
+        "APPLY_HISTORY_ENTRIES and APPLY_HISTORY_DIGEST in the SAME commit, so the " +
+        "entry you just recorded becomes immutable immediately rather than staying " +
+        "editable until someone notices",
+    ).not.toBeGreaterThan(APPLY_HISTORY_ENTRIES);
+  });
+
+  it("no existing entry may be rewritten", () => {
+    // Hashed WHOLE, not as a prefix: with the equality above, the array and the
+    // pinned prefix are the same thing, and slicing would quietly re-admit the gap.
+    expect(
+      createHash("sha256")
+        .update(JSON.stringify(comments as string[]))
+        .digest("hex"),
+      "a recorded apply entry was edited. Historical records are not rewritten -- " +
+        "append a dated correction entry instead, as entry [9] and entry [11] do, " +
+        "and advance APPLY_HISTORY_ENTRIES with the new DIGEST in the same commit",
+    ).toBe(APPLY_HISTORY_DIGEST);
   });
 });
 
 describe("canonical production docs: frozen-region markers are explicit and justified", () => {
+  /**
+   * EVERY DOCUMENT WHOSE IGNORE BLOCKS ARE VALIDATED.
+   *
+   * Codex #740: the marker tests inspected NO_CURRENT_MAX_DOCS, the changelog
+   * and the ledger, while the durable-waitlist rules had since grown to scan the
+   * roadmap, the security doc and the deployment doc too. A balanced block
+   * without `reason=` in any of those three would have silently exempted
+   * arbitrary text -- the exact invariant the helper header says is
+   * non-negotiable -- and nothing would have gone red. An exemption mechanism
+   * that is itself unguarded in half the documents it applies to is not an
+   * exemption mechanism.
+   */
+  const MARKER_VALIDATED_DOCS = [
+    ...NO_CURRENT_MAX_DOCS,
+    ["docs/production/release-changelog.md", RELEASE_CHANGELOG],
+    ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
+    ["docs/roadmap/CANONICAL_ROADMAP.md", read("docs/roadmap/CANONICAL_ROADMAP.md")],
+    ["docs/03_SECURITY_AND_PRIVACY.md", read("docs/03_SECURITY_AND_PRIVACY.md")],
+    ["docs/10_DEPLOYMENT_AND_ENV.md", read("docs/10_DEPLOYMENT_AND_ENV.md")],
+  ] as const;
+
   it("every ignore marker declares a reason", () => {
-    for (const [name, doc] of [
-      ...NO_CURRENT_MAX_DOCS,
-      ["docs/production/release-changelog.md", RELEASE_CHANGELOG],
-      ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
-    ] as const) {
+    for (const [name, doc] of MARKER_VALIDATED_DOCS) {
       for (const marker of ignoreMarkers(doc)) {
         expect(
           marker,
@@ -939,11 +1600,7 @@ describe("canonical production docs: frozen-region markers are explicit and just
   });
 
   it("every ignore block is closed", () => {
-    for (const [name, doc] of [
-      ...NO_CURRENT_MAX_DOCS,
-      ["docs/production/release-changelog.md", RELEASE_CHANGELOG],
-      ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
-    ] as const) {
+    for (const [name, doc] of MARKER_VALIDATED_DOCS) {
       const starts = (doc.match(/canonical-facts:ignore-start/g) ?? []).length;
       const ends = (doc.match(/canonical-facts:ignore-end/g) ?? []).length;
       expect(starts, `${name} has unbalanced ignore markers`).toBe(ends);
@@ -1163,10 +1820,7 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
     // absent — including the production head the checkout is derived from.
     // "Not in this clone" and "not a commit" are different claims and only the
     // second is a defect.
-    if (!GIT_USABLE) {
-      expect(GIT_USABLE, "shallow clone or no git — A1 could not run").toBe(false);
-      return;
-    }
+    requireUsableGit("A1");
     const unreal = shasIn(CURRENT_STATE).filter((sha) => git("cat-file", "-t", sha) !== "commit");
     expect(
       unreal,
@@ -1205,10 +1859,7 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
   it("A2: the pinned runtime-bearing SHA exists and is an ancestor of HEAD", () => {
     const pinned = pinnedRuntimeSha();
     expect(pinned, "current-state.md must pin a runtime-bearing application HEAD").toBeTruthy();
-    if (!GIT_USABLE) {
-      expect(GIT_USABLE, "shallow clone or no git — A2 could not run").toBe(false);
-      return;
-    }
+    requireUsableGit("A2");
     expect(git("cat-file", "-t", pinned as string), `${pinned} is not a commit`).toBe("commit");
     expect(
       git("merge-base", "--is-ancestor", pinned as string, "HEAD"),
@@ -1217,29 +1868,31 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
     ).toBe("");
   });
 
-  it("A3: nothing newer than the pinned SHA changes the runtime — via the repo's own classifier", async () => {
+  it(`A3${FRESHNESS_TAG}: nothing SHIPPED to production after the pinned SHA changes the runtime — via the repo's own classifier`, async () => {
     const pinned = pinnedRuntimeSha();
-    if (!GIT_USABLE || !pinned) {
-      expect(GIT_USABLE && !!pinned, "shallow clone or no git — A3 could not run").toBe(false);
-      return;
+    expect(pinned, "current-state.md must pin a runtime-bearing application HEAD").toBeTruthy();
+    requireUsableGit("A3");
+    // The production boundary (#825 6215529089): pinned -> the verified
+    // production ref, NEVER this branch's HEAD. An unmerged application PR's
+    // own diff has not shipped, so it cannot make the production record stale.
+    const branch = productionBranch();
+    const target = resolveProductionRef(git, branch);
+    if (!target) {
+      throw new Error(`A3 cannot run: the production ref for ${branch ?? "(no branch recorded)"} is not present in this clone. Fetch it (fetch-depth: 0).`);
     }
-    const changed = (git("diff", "--name-only", pinned, "HEAD") ?? "")
-      .split("\n")
-      .filter(Boolean);
+    const deployed = await runtimeChangedSince(git, pinned as string, target);
+    if (deployed === null) throw new Error(`A3 cannot run: git cannot diff ${String(pinned).slice(0, 8)}..${target.slice(0, 8)}`);
 
-    const classify = await loadClassifier();
-    const deployed = changed.filter(
-      (f) => nonShippingReason(f) === null && !classify([f]).docs_only,
+    freshnessVerdict(
+      "A3",
+      deployed.length === 0,
+      `current-state.md pins ${String(pinned).slice(0, 8)} as the runtime-bearing baseline, but ` +
+        `${deployed.length} file(s) changed between it and production ${target.slice(0, 8)} are ` +
+        "classified as runtime-bearing by scripts/classify-changes.mjs, so the pin is stale: a " +
+        "runtime change shipped and the record has not caught up. This is the check the " +
+        'document\'s own "verified mechanically, not asserted" sentence describes. Changed: ' +
+        JSON.stringify(deployed.slice(0, 12)),
     );
-
-    expect(
-      deployed,
-      `current-state.md pins ${pinned.slice(0, 8)} as the runtime-bearing baseline, but ` +
-        `${deployed.length} file(s) changed since it are classified as runtime-bearing by ` +
-        "scripts/classify-changes.mjs. Either the pin is stale, or this branch carries runtime " +
-        'changes it should not. This is the check the document\'s own "verified mechanically, ' +
-        'not asserted" sentence describes. Changed: ' + JSON.stringify(deployed.slice(0, 12)),
-    ).toEqual([]);
   });
 
   it("A3's deployed decision: runtime paths ship, CI/test/tooling paths do not", async () => {
@@ -1287,6 +1940,10 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
       "vitest.config.ts",
       "docs/production/current-state.md",
       "README.md",
+      "openwiki/.claims/payments/stripe-payments-and-settlement.json",
+      "openwiki/.last-update.json",
+      "openwiki/.page-manifest.json",
+      ".openwikiignore",
     ]) {
       expect(deployed(f), `${f} must NOT count as deployed runtime`).toBe(false);
     }
@@ -1982,10 +2639,7 @@ describe("RULE X — canonical documents agree with each other", () => {
       "the two documents count the same merges since the same baseline and must agree",
     ).toBe(csN);
 
-    if (!GIT_USABLE) {
-      expect(GIT_USABLE, "shallow clone or no git — X4's Git derivation could not run").toBe(false);
-      return;
-    }
+    requireUsableGit("X4's Git derivation");
     // ENDPOINT = the CURRENT PRODUCTION GIT HEAD. Two wrong endpoints were
     // tried before this one, and both produced a confidently wrong number:
     //
@@ -2019,7 +2673,7 @@ describe("RULE X — canonical documents agree with each other", () => {
     ).toBe(actual);
   });
 
-  it("A5: the recorded Current Git branch HEAD equals the real production ref", () => {
+  it(`A5${FRESHNESS_TAG}: the recorded Current Git branch HEAD is the production ref, or only record-only merges follow it`, () => {
     // READING THE VALUE FROM THE DOCUMENT IS NOT VERIFYING IT. X4 counts to the
     // recorded Git head, which closed one hole and left a subtler one: the
     // RECORDED VALUE can itself be stale. After a documentation-only production
@@ -2034,35 +2688,32 @@ describe("RULE X — canonical documents agree with each other", () => {
     // locally - no network. Where the ref is not present, as in a shallow CI
     // clone, this reports that it could not run rather than passing quietly,
     // the same contract A1/A2/A3 use.
+    //
+    // (iv), #825 6215529089: equality alone was unsatisfiable ON production -
+    // a record refresh records its own base, and its own merge is a newer HEAD.
+    // So later first-parent merges that change ONLY docs/production/** are
+    // record-only and do not make the recorded HEAD stale. Anything else - any
+    // other path, or ancestry that cannot be inspected - still does.
     const recorded = currentGitHeadSha();
     expect(recorded, "current-state must record a Current Git branch HEAD").toBeTruthy();
 
-    const branch = currentProse(CURRENT_STATE).match(
-      /\|\s*\*{0,2}Production branch\*{0,2}\s*\|\s*`([^`]+)`/i,
-    )?.[1];
+    const branch = productionBranch();
     expect(branch, "current-state must name the production branch for this rule to resolve it").toBeTruthy();
 
-    if (!GIT_USABLE) {
-      expect(GIT_USABLE, "shallow clone or no git — A5 could not run").toBe(false);
-      return;
-    }
-    // Prefer the remote-tracking ref: on the production branch itself the local
-    // ref is the same commit, and on a PR branch only the remote-tracking ref
-    // describes production at all.
-    const ref =
-      git("rev-parse", "--verify", "-q", `refs/remotes/origin/${branch}`) ??
-      git("rev-parse", "--verify", "-q", `refs/heads/${branch}`);
+    requireUsableGit("A5");
+    const ref = resolveProductionRef(git, branch);
     if (!ref) {
-      expect(ref, `neither origin/${branch} nor ${branch} is present in this clone — A5 could not run`).toBeNull();
-      return;
+      throw new Error(`A5 cannot run: neither origin/${branch} nor ${branch} is present in this clone. Fetch it (fetch-depth: 0).`);
     }
-    expect(
-      recorded,
+    const since = recordOnlySince(git, recorded as string, ref);
+    freshnessVerdict(
+      "A5",
+      since.ok,
       `current-state records the Current Git branch HEAD as ${(recorded as string).slice(0, 8)}, but ` +
-        `${branch} actually points at ${ref.slice(0, 8)}. A documentation-only production merge ` +
-        "advances the branch without moving the runtime pin, so A2 and A3 both stay green while " +
-        "this row and every count derived from it go stale.",
-    ).toBe(ref);
+        `${branch} points at ${ref.slice(0, 8)} and not everything after the recorded HEAD is ` +
+        `record-only: ${since.ok ? "" : since.reason}. A non-record production merge advances the ` +
+        "branch, so this row and every count derived from it are stale until the record is refreshed.",
+    );
   });
 
   it("X4's endpoint is the production GIT HEAD, not the runtime pin — they are different facts", () => {
@@ -2095,10 +2746,7 @@ describe("RULE X — canonical documents agree with each other", () => {
         "collapsing them is what makes a docs-only production merge invisible to the count",
     ).not.toBe(pinRow);
 
-    if (!GIT_USABLE) {
-      expect(GIT_USABLE, "shallow clone or no git — the endpoint check could not run").toBe(false);
-      return;
-    }
+    requireUsableGit("the endpoint check");
     // The head must be an ancestor-or-equal of nothing weaker than the pin:
     // production only ever moves forward, so the head can never be BEHIND the
     // runtime pin. If it ever is, one of the two rows is stale.
@@ -2180,10 +2828,7 @@ describe("RULE X — canonical documents agree with each other", () => {
     ).toBe(1);
     const upper = distinct[0];
 
-    if (!GIT_USABLE) {
-      expect(GIT_USABLE, "shallow clone or no git — X6's completeness check could not run").toBe(false);
-      return;
-    }
+    requireUsableGit("X6's completeness check");
     // THE DOCUMENT'S CLAIM MUST NEVER NARROW THE AUTHORITY. The previous
     // revision filtered the merged set to `pr <= upper`, so a production merge
     // BEYOND the stated bound was removed from the evidence before comparison:
@@ -2195,9 +2840,18 @@ describe("RULE X — canonical documents agree with each other", () => {
     const baseline = currentGitHeadSha();
     expect(baseline, "current-state must record a Current Git branch HEAD").toBeTruthy();
     const subjects = git("log", "--first-parent", "--merges", "--format=%s", `b9e0003f..${baseline}`) ?? "";
+    // TWO SUBJECT FORMS, AND ONLY ONE WAS READ. GitHub's merge button writes
+    // "Merge pull request #N from ...", but this repository also carries
+    // squash-style merges whose subject ends in "(#N)" — `8e1e5009` (#696) and
+    // `db4762db` (#697). Matching only the first form silently shrank the
+    // authority: Git held 81 PR merges in the span, the extraction saw 79, and
+    // a changelog missing both rows was certified COMPLETE. A completeness rule
+    // that cannot see part of the history is not a completeness rule, and the
+    // failure is invisible precisely because the omission is on the evidence
+    // side rather than the claim side.
     const merged = new Set(
-      [...subjects.matchAll(/Merge pull request #(\d{3,4})\b/g)]
-        .map((m) => Number(m[1]))
+      [...subjects.matchAll(/Merge pull request #(\d{3,4})\b|\(#(\d{3,4})\)\s*$/gm)]
+        .map((m) => Number(m[1] ?? m[2]))
         // Lower bound only: this is the reconciliation span. NO upper bound -
         // that is the defect above.
         .filter((n) => n >= 632),
@@ -2425,13 +3079,14 @@ describe("RULE F — open PRs are declared, and never described as shipped", () 
     // Decided from the Git graph, not from GitHub: a merge commit reachable
     // from HEAD whose subject names the PR is proof it landed. Skips on a
     // shallow clone for the same reason A2/A3 do.
-    if (!GIT_USABLE) {
-      expect(GIT_USABLE, "shallow clone or no git — the converse check could not run").toBe(false);
-      return;
-    }
+    requireUsableGit("the converse check");
     const merged = git("log", "--merges", "--format=%s", "HEAD") ?? "";
+    // Both subject forms, for the same reason X6 reads both: a PR squash-merged
+    // as "(#N)" would otherwise be invisible here, so it could sit in the
+    // open-PR table for ever while being part of production — exactly the
+    // falsehood this rule exists to catch.
     const landed = declaredOpenPrs().filter((pr) =>
-      new RegExp(`Merge pull request #${pr}\\b`).test(merged),
+      new RegExp(`Merge pull request #${pr}\\b|\\(#${pr}\\)\\s*$`, "m").test(merged),
     );
     expect(
       landed,
@@ -2935,5 +3590,326 @@ describe("NEGATIVE CONTROLS — rules A, F and G go red on the shapes they targe
       open.every((n) => /^\d{3,5}$/.test(n)),
       "every declared-open entry must be a PR number",
     ).toBe(true);
+  });
+});
+
+// ===========================================================================
+// FRESHNESS POLICY CONTROLS (#825 6215529089). Each required control runs on
+// a real throwaway Git repository - never asserted - plus the wiring that
+// makes the strict paths actually run in CI.
+// ===========================================================================
+describe("freshness policy controls (#825 6215529089)", () => {
+  function throwaway() {
+    const dir = mkdtempSync(path.join(tmpdir(), "canon-fresh-"));
+    const g: Git = (...args) => {
+      try {
+        return execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      } catch {
+        return null;
+      }
+    };
+    const run = (...args: string[]) =>
+      execFileSync("git", ["-c", "user.email=t@example.invalid", "-c", "user.name=t", ...args], { cwd: dir, stdio: "ignore" });
+    const write = (f: string, body: string) => {
+      mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+      writeFileSync(path.join(dir, f), body);
+    };
+    const head = () => g("rev-parse", "HEAD") as string;
+    run("init", "-q", "-b", "prod");
+    write("app/page.tsx", "v1\n");
+    write("docs/production/current-state.md", "r1\n");
+    run("add", "-A");
+    run("commit", "-qm", "baseline");
+    let n = 0;
+    /** Merge a branch carrying `files` into prod with a real merge commit. */
+    const land = (files: Record<string, string>) => {
+      const br = `b${++n}`;
+      run("checkout", "-q", "-b", br, "prod");
+      for (const [f, body] of Object.entries(files)) write(f, body);
+      run("add", "-A");
+      run("commit", "-qm", br);
+      run("checkout", "-q", "prod");
+      run("merge", "-q", "--no-ff", br, "-m", `Merge pull request #${n} from x/${br}`);
+      return head();
+    };
+    return { dir, g, run, write, head, land };
+  }
+
+  it("1. an application PR's OWN diff does not violate A3 (production boundary, not PR HEAD)", async () => {
+    const r = throwaway();
+    const pinned = r.head();
+    const prod = r.land({ "docs/production/current-state.md": "r2\n" });
+    // The PR: an unmerged application change on top of production.
+    r.run("checkout", "-q", "-b", "pr", "prod");
+    r.write("app/page.tsx", "v2 (unmerged)\n");
+    r.run("add", "-A");
+    r.run("commit", "-qm", "pr");
+    expect(await runtimeChangedSince(r.g, pinned, prod)).toEqual([]);
+    // The old HEAD-based measure would have condemned every application PR.
+    expect(await runtimeChangedSince(r.g, pinned, r.head())).toEqual(["app/page.tsx"]);
+    // And the real A3 rule measures to the RESOLVED PRODUCTION REF, not HEAD:
+    // on a branch whose own diff is non-runtime the two agree, so only the call
+    // site can tell them apart.
+    const src = read("tests/docs/canonical-production-facts.test.ts");
+    const a3 = src.slice(src.indexOf("it(`A3${FRESHNESS_TAG}"), src.indexOf("it(\"A3's deployed decision"));
+    expect(a3).toMatch(/const target = resolveProductionRef\(git, branch\);/);
+    expect(a3).toMatch(/runtimeChangedSince\(git, pinned as string, target\)/);
+    expect(a3).not.toMatch(/"HEAD"/);
+  });
+
+  it("2. a runtime change SHIPPED after the pin IS caught by A3", async () => {
+    const r = throwaway();
+    const pinned = r.head();
+    const prod = r.land({ "app/page.tsx": "v2 shipped\n" });
+    expect(await runtimeChangedSince(r.g, pinned, prod)).toEqual(["app/page.tsx"]);
+  });
+
+  it("3. record-only merges after the recorded HEAD pass A5", () => {
+    const r = throwaway();
+    const recorded = r.head();
+    r.land({ "docs/production/current-state.md": "r2\n" });
+    const prod = r.land({ "docs/production/release-changelog.md": "c\n" });
+    expect(recordOnlySince(r.g, recorded, prod)).toEqual({ ok: true, commits: 2 });
+    expect(recordOnlySince(r.g, prod, prod)).toEqual({ ok: true, commits: 0 });
+  });
+
+  it("4. ANY non-record later change IS caught by A5 — application, guide, or mixed", () => {
+    const nonRecord: Array<Record<string, string>> = [
+      { "app/page.tsx": "v2\n" },
+      { "CLAUDE.md": "guide\n" },
+      { "docs/production/current-state.md": "r2\n", "lib/x.ts": "x\n" },
+      { "docs/marketing/x.md": "m\n" },
+    ];
+    for (const files of nonRecord) {
+      const r = throwaway();
+      const recorded = r.head();
+      r.land({ "docs/production/release-changelog.md": "c\n" });
+      const prod = r.land(files);
+      const out = recordOnlySince(r.g, recorded, prod);
+      expect(out.ok, JSON.stringify(files)).toBe(false);
+    }
+  });
+
+  it("5. missing or unusable refs FAIL: no branch, unknown ref, non-ancestor, shallow history", () => {
+    const r = throwaway();
+    expect(resolveProductionRef(r.g, null)).toBeNull();
+    expect(resolveProductionRef(r.g, "no-such-branch")).toBeNull();
+    expect(resolveProductionRef(r.g, "prod")).toBe(r.head());
+    // A recorded HEAD that is not in production's history is not record-only.
+    r.run("checkout", "-q", "--orphan", "elsewhere");
+    r.write("x.md", "x\n");
+    r.run("add", "-A");
+    r.run("commit", "-qm", "unrelated");
+    const stranger = r.head();
+    r.run("checkout", "-q", "prod");
+    expect(recordOnlySince(r.g, stranger, r.head()).ok).toBe(false);
+    expect(recordOnlySince(r.g, "0".repeat(40), r.head()).ok).toBe(false);
+    // A shallow clone cannot inspect the ancestry: not record-only, never a pass.
+    const recorded = r.head();
+    const prod = r.land({ "docs/production/current-state.md": "r2\n" });
+    const shallowDir = mkdtempSync(path.join(tmpdir(), "canon-shallow-"));
+    execFileSync("git", ["clone", "-q", "--depth", "1", "--branch", "prod", `file://${r.dir}`, shallowDir], { stdio: "ignore" });
+    const sg: Git = (...args) => {
+      try {
+        return execFileSync("git", args, { cwd: shallowDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      } catch {
+        return null;
+      }
+    };
+    expect(sg("rev-parse", "--is-shallow-repository")).toBe("true");
+    expect(recordOnlySince(sg, recorded, prod).ok).toBe(false);
+    // And the prerequisite itself fails loudly for shallow or no-git.
+    expect(gitPrerequisiteError("A5", true, true)).toMatch(/SHALLOW.*failure, not a pass/);
+    expect(gitPrerequisiteError("A5", false, false)).toMatch(/git is not available/);
+    expect(gitPrerequisiteError("A5", true, false)).toBeNull();
+  });
+
+  it("the STABLE required aggregator carries the record check, failing closed (Codex P1 4296967177)", () => {
+    // Runs the aggregator's REAL shell block from ci.yml, not a paraphrase.
+    const ci = read(".github/workflows/ci.yml");
+    const agg = ci.slice(ci.indexOf("\n  browser-e2e:\n"), ci.indexOf("\n  payment-browser-e2e:"));
+    expect(agg).toMatch(/needs: \[changes, browser-e2e-shard, canonical-record\]/);
+    expect(agg).toMatch(/RECORD_RESULT: \$\{\{ needs\.canonical-record\.result \}\}/);
+    const body = agg.slice(agg.indexOf("run: |\n") + "run: |\n".length);
+    const script = body
+      .split("\n")
+      .map((l) => l.replace(/^ {10}/, ""))
+      .join("\n");
+    const exitOf = (env: Record<string, string>) => {
+      try {
+        execFileSync("bash", ["-c", script], {
+          env: {
+            NODE_ENV: "test",
+            PATH: process.env.PATH ?? "",
+            HOME: process.env.HOME ?? "/tmp",
+            CHANGES_RESULT: "success",
+            SHARD_RESULT: "",
+            BROWSER_RUN: "false",
+            FULL_MATRIX: "false",
+            EXTENDED: "false",
+            SHARDS: "[1]",
+            ...env,
+          },
+          stdio: "ignore",
+        });
+        return 0;
+      } catch (e) {
+        return (e as { status?: number }).status ?? -1;
+      }
+    };
+    const record = { DOCS_ONLY: "true", PRODUCTION_RECORD: "true" };
+    expect(exitOf({ ...record, RECORD_RESULT: "success" })).toBe(0);
+    for (const bad of ["failure", "cancelled", "skipped", ""]) {
+      expect(exitOf({ ...record, RECORD_RESULT: bad }), `record change, result "${bad}"`).toBe(1);
+    }
+    // Not a record change: a skipped record job is legitimate; a failed one is not.
+    expect(exitOf({ DOCS_ONLY: "false", PRODUCTION_RECORD: "false", RECORD_RESULT: "skipped" })).toBe(0);
+    expect(exitOf({ DOCS_ONLY: "false", PRODUCTION_RECORD: "true", RECORD_RESULT: "failure" })).toBe(1);
+  });
+
+  it("measure mode WARNS distinctly and never reads as clean; enforce FAILS", () => {
+    expect(freshnessOutcome("measure", "A5", true, "x")).toEqual({ kind: "fresh" });
+    const warn = freshnessOutcome("measure", "A5", false, "stale\nrecord");
+    expect(warn).toEqual({ kind: "warn", line: "::warning title=Canonical record STALE (non-blocking, A5)::stale record" });
+    expect(freshnessOutcome("enforce", "A5", false, "stale")).toEqual({ kind: "fail", message: "A5 (enforced): stale" });
+    // The emitted bytes put the command at the START of its own line, with no
+    // prefix: Actions ignores a workflow command anywhere else (#887 run
+    // 38935982909 lost its annotation to vitest's colour prefix).
+    let written = "";
+    emitWorkflowCommand((warn as { line: string }).line, (t) => (written += t));
+    const lines = written.split("\n");
+    expect(lines.some((l) => l.startsWith("::warning title=Canonical record STALE"))).toBe(true);
+    expect(written.startsWith("\n")).toBe(true);
+    expect(read("tests/docs/canonical-production-facts.test.ts")).not.toMatch(/console\.log\(out\.line\)/);
+  });
+
+  // ---- Renames (Codex P1 4297335910): a move lists BOTH endpoints ----------
+  /** Run ci.yml's REAL PR changed-files command in a repo, then its real record grep. */
+  function ciChangedFiles(dir: string, base: string, head: string) {
+    const ci = read(".github/workflows/ci.yml");
+    const diffLine = ci.split("\n").find((l) => /git diff --name-only[^\n]*> changed\.txt/.test(l));
+    expect(diffLine, "ci.yml's PR changed-files command").toBeTruthy();
+    execFileSync("bash", ["-c", (diffLine as string).trim()], {
+      cwd: dir,
+      env: { NODE_ENV: "test", PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "/tmp", MB: base, HEAD_SHA: head },
+      stdio: "ignore",
+    });
+    const changed = readFileSync(path.join(dir, "changed.txt"), "utf8").split("\n").filter(Boolean);
+    const recordStep = ci.slice(ci.indexOf("id: record"), ci.indexOf("- name: Classify"));
+    const grepBlock = recordStep.slice(recordStep.indexOf("run: |\n") + "run: |\n".length)
+      .split("\n").map((l) => l.replace(/^ {10}/, "")).join("\n");
+    const out = path.join(dir, "gh-output");
+    writeFileSync(out, "");
+    execFileSync("bash", ["-c", grepBlock], {
+      cwd: dir,
+      env: { NODE_ENV: "test", PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "/tmp", GITHUB_OUTPUT: out },
+      stdio: "ignore",
+    });
+    const productionRecord = /production_record=true/.test(readFileSync(out, "utf8"));
+    const classified = execFileSync("node", [path.join(ROOT, "scripts/classify-changes.mjs"), "--files-from", path.join(dir, "changed.txt")], {
+      encoding: "utf8",
+    });
+    const flag = (k: string) => new RegExp(`^${k}=true$`, "m").test(classified);
+    return { changed, productionRecord, docsOnly: flag("docs_only"), database: flag("database") };
+  }
+
+  it("R1. moving docs/production/x.md to docs/x.md is a production-record change; the record job runs", () => {
+    const r = throwaway();
+    r.write("docs/production/x.md", "l1\nl2\nl3\nl4\n");
+    r.run("add", "-A");
+    r.run("commit", "-qm", "x");
+    const base = r.head();
+    r.run("mv", "docs/production/x.md", "docs/x.md");
+    r.run("commit", "-qm", "move");
+    const ci = ciChangedFiles(r.dir, base, r.head());
+    expect(ci.changed).toEqual(expect.arrayContaining(["docs/production/x.md", "docs/x.md"]));
+    expect(ci.productionRecord).toBe(true);
+    // docs-only AND production_record: exactly the canonical-record job's condition.
+    expect(ci.docsOnly).toBe(true);
+  });
+
+  it("R2. moving a migration into docs/ is NOT docs-only: the database lane is selected", () => {
+    const r = throwaway();
+    r.write("supabase/migrations/0300_x.sql", "create table t();\n-- a\n-- b\n");
+    r.run("add", "-A");
+    r.run("commit", "-qm", "m");
+    const base = r.head();
+    r.run("mv", "supabase/migrations/0300_x.sql", "docs/0300_x.sql");
+    r.run("commit", "-qm", "move");
+    const ci = ciChangedFiles(r.dir, base, r.head());
+    expect(ci.changed).toContain("supabase/migrations/0300_x.sql");
+    expect(ci.docsOnly).toBe(false);
+    expect(ci.database).toBe(true);
+  });
+
+  it("R3. A5: moving an application file INTO docs/production/ is not record-only", () => {
+    const r = throwaway();
+    const recorded = r.head();
+    r.run("checkout", "-q", "-b", "mv", "prod");
+    r.run("mv", "app/page.tsx", "docs/production/page.md");
+    r.run("commit", "-qm", "move");
+    r.run("checkout", "-q", "prod");
+    r.run("merge", "-q", "--no-ff", "mv", "-m", "Merge mv");
+    expect(recordOnlySince(r.g, recorded, r.head()).ok).toBe(false);
+  });
+
+  it("R4. A3: moving a runtime file into docs/ is a shipped runtime change", async () => {
+    const r = throwaway();
+    const pinned = r.head();
+    r.run("checkout", "-q", "-b", "mv", "prod");
+    r.run("mv", "app/page.tsx", "docs/page.md");
+    r.run("commit", "-qm", "move");
+    r.run("checkout", "-q", "prod");
+    r.run("merge", "-q", "--no-ff", "mv", "-m", "Merge mv");
+    expect(await runtimeChangedSince(r.g, pinned, r.head())).toEqual(["app/page.tsx"]);
+  });
+
+  it("R5. EVERY changed-file producer sees both rename endpoints — grepped, not pinned", () => {
+    for (const wf of [".github/workflows/ci.yml", ".github/workflows/nightly.yml"]) {
+      const exec = read(wf).split("\n").filter((l) => !l.trim().startsWith("#"));
+      for (const l of exec.filter((x) => /--name-only/.test(x) && /\b(diff|show|log)\b/.test(x))) {
+        expect(l, `${wf}: a --name-only producer without --no-renames`).toMatch(/--no-renames/);
+      }
+    }
+    const ci = read(".github/workflows/ci.yml");
+    expect((ci.match(/> changed\.txt/g) ?? []).length, "changed.txt producers").toBe(2);
+    const plan = read("scripts/ci-plan.mjs");
+    expect(plan).toMatch(/"diff", "--name-only", "--no-renames"/);
+    expect(plan).not.toMatch(/"diff", "--name-only", base/);
+    const src = read("tests/docs/canonical-production-facts.test.ts");
+    expect(src).toMatch(/g\("diff", "--name-only", "--no-renames", pinned, target\)/);
+    expect(src).toMatch(/g\("diff", "--name-only", "--no-renames", parents\[1\], c\)/);
+  });
+
+  it("6. the strict paths really run: docs-PR job, push/record validate, nightly — all with full history", () => {
+    const ci = read(".github/workflows/ci.yml");
+    const nightly = read(".github/workflows/nightly.yml");
+    const job = (src: string, name: string) => {
+      const start = src.indexOf(`\n  ${name}:\n`);
+      expect(start, `${name} job must exist`).toBeGreaterThan(-1);
+      const rest = src.slice(start + 1);
+      const next = rest.slice(1).search(/\n {2}[a-z0-9_-]+:\n/);
+      return next === -1 ? rest : rest.slice(0, next + 1);
+    };
+    // changes publishes the production-record signal from its changed files.
+    const changes = job(ci, "changes");
+    expect(changes).toMatch(/production_record: \$\{\{ steps\.record\.outputs\.production_record \}\}/);
+    expect(changes).toMatch(/grep -q '\^docs\/production\/' changed\.txt/);
+    // validate: full history, and enforce on push or a record change.
+    const validate = job(ci, "validate");
+    expect(validate).toMatch(/fetch-depth: 0/);
+    expect(validate).toMatch(
+      /CANONICAL_FRESHNESS: \$\{\{ \(github\.event_name != 'pull_request' \|\| needs\.changes\.outputs\.production_record == 'true'\) && 'enforce' \|\| 'measure' \}\}/,
+    );
+    // docs-only record PRs (validate skipped) still run the docs tests, enforced.
+    const record = job(ci, "canonical-record");
+    expect(record).toMatch(/docs_only == 'true' && needs\.changes\.outputs\.production_record == 'true'/);
+    expect(record).toMatch(/fetch-depth: 0/);
+    expect(record).toMatch(/run: npx vitest run tests\/docs/);
+    expect(record).toMatch(/CANONICAL_FRESHNESS: enforce/);
+    expect(record).toMatch(/persist-credentials: false/);
+    // nightly: full history, enforced.
+    expect(nightly).toMatch(/persist-credentials: false\n(?:\s*#[^\n]*\n)*\s*fetch-depth: 0/);
+    expect(nightly).toMatch(/run: \$\{\{ matrix\.command \}\}\n\s*env:\n\s*#[^\n]*\n\s*CANONICAL_FRESHNESS: enforce/);
   });
 });

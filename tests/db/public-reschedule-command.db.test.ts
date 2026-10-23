@@ -1031,9 +1031,11 @@ describe("0171 — the financial census is complete", () => {
         "appointment_policy_acknowledgements", // evidence, stays on the original
         "appointments", //                 the lineage self-reference
         "booking_tracking_consents", //    marketing consent, ON DELETE SET NULL
+        "email_outbound_messages", //       delivery ledger, no money
         "ops_alerts", //                   operator signal, ON DELETE SET NULL
         "practitioner_notifications", //   in-app notice, ON DELETE SET NULL
         "sessions", //                     clinical record, ON DELETE SET NULL
+        "sms_outbound_messages", //        SMS-00 delivery ledger, ON DELETE CASCADE; no money
         // APPOINTMENT-BOUND MONEY THAT THIS GATE STRUCTURALLY CANNOT MEET
         // (PAY-SETTLE / 0187):
         "appointment_settlements", //      see the justification below

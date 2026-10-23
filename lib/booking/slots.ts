@@ -304,6 +304,37 @@ export function protectedIntervals(
     });
 }
 
+/**
+ * The earliest instant a reservation may END and still protect time inside a
+ * search window that begins at `windowStartUtc`.
+ *
+ * WAIT-v4 PR0 — the midnight buffer spill. `studio_calendar_reservations` stores
+ * an appointment's ACTUAL end (0152); `protectedIntervals` above re-applies the
+ * studio buffer to reach its PROTECTED end. A loader that filters on the actual
+ * end therefore drops exactly the reservation whose protected end reaches into
+ * the window: a 23:50 appointment under a 30-minute buffer is protected to
+ * 00:20, but `ends_at > 00:00` is false, so it was never loaded and 00:00 was
+ * offered. The database's own `enforce_appointment_buffer` (0152) then refused
+ * the write with HB001 — an offer the authority would not accept.
+ *
+ * Widening the lower bound by the buffer is the whole repair, and it belongs
+ * here rather than at each call site so the two loaders cannot drift: every
+ * query that feeds `protectedIntervals` must select on the same boundary that
+ * function reconstructs.
+ *
+ * Non-appointment reservations are unaffected in substance. They are protected
+ * to their raw end, so one loaded by this wider bound ends at or before
+ * `windowStartUtc` and can collide with nothing inside the window.
+ */
+export function reservationWindowStartUtc(
+  windowStartUtc: Date,
+  bufferMinutes: number,
+): Date {
+  return new Date(
+    windowStartUtc.getTime() - Math.max(0, bufferMinutes) * 60_000,
+  );
+}
+
 export async function getAvailableSlots(
   supabase: SupabaseClient,
   studio: StudioRow,
@@ -350,12 +381,13 @@ export async function getAvailableSlots(
     serviceDurationMinutes ?? studio.default_appointment_duration_minutes ?? 60;
 
   // Blockout?
-  const { data: blockouts } = await supabase
+  const { data: blockouts, error: blockoutsError } = await supabase
     .from("studio_blockouts")
     .select("starts_on, ends_on")
     .eq("studio_id", studio.id)
     .lte("starts_on", dateStr)
     .gte("ends_on", dateStr);
+  if (blockoutsError) throw new Error("availability_read_failed:blockouts");
   if (blockouts && (blockouts as BlockoutRow[]).length > 0) {
     return [];
   }
@@ -369,53 +401,62 @@ export async function getAvailableSlots(
     // the three columns through the one shared rule.
     window = pickDayWindow(row, null);
   };
+  // SCH-002: only a successful absence permits fallback. A failed read must
+  // never advertise another timeline's hours or an apparently empty calendar.
+  const readWindow = async (
+    request: PromiseLike<{ data: unknown; error: unknown }>,
+  ): Promise<AvailabilityWindowRow | null> => {
+    const { data, error } = await request;
+    if (error) throw new Error("availability_read_failed:window");
+    return data as AvailabilityWindowRow | null;
+  };
 
   if (capacityOn) {
     // ON: practitioner-specific override, else studio-wide (practitioner_id NULL);
     // then default the same way. Two maybeSingle probes keep each unique.
-    const pOverride = (
-      await supabase
+    const pOverride = await readWindow(
+      supabase
         .from("studio_availability_overrides")
         .select("is_open, open_time, close_time")
         .eq("studio_id", studio.id)
         .eq("effective_date", dateStr)
         .eq("practitioner_id", practitionerId)
         .maybeSingle()
-    ).data as OverrideRow | null;
+    );
     const override =
       pOverride ??
-      ((
-        await supabase
+      (await readWindow(
+        supabase
           .from("studio_availability_overrides")
           .select("is_open, open_time, close_time")
           .eq("studio_id", studio.id)
           .eq("effective_date", dateStr)
           .is("practitioner_id", null)
           .maybeSingle()
-      ).data as OverrideRow | null);
+      ));
     if (override) {
       applyWindow(override);
     } else {
-      const pDefault = (
-        await supabase
+      const pDefault = await readWindow(
+        supabase
           .from("studio_availability_default")
           .select("is_open, open_time, close_time")
           .eq("studio_id", studio.id)
           .eq("day_of_week", dow)
           .eq("practitioner_id", practitionerId)
           .maybeSingle()
-      ).data as DefaultRow | null;
+      );
       const def =
         pDefault ??
-        ((
-          await supabase
+        (await readWindow(
+          supabase
             .from("studio_availability_default")
             .select("is_open, open_time, close_time")
             .eq("studio_id", studio.id)
             .eq("day_of_week", dow)
             .is("practitioner_id", null)
             .maybeSingle()
-        ).data as DefaultRow | null);
+        ));
       if (def) applyWindow(def);
     }
   } else {
@@ -451,10 +492,17 @@ export async function getAvailableSlots(
     .from("studio_calendar_reservations")
     .select("starts_at, ends_at, source_kind, source_id")
     .lt("starts_at", windowEndUtc.toISOString())
-    .gt("ends_at", windowStartUtc.toISOString());
-  const { data: reservations } = await (capacityOn
+    // Widened by the buffer: see reservationWindowStartUtc. Filtering on the
+    // raw end dropped a previous-day appointment whose protected end crossed
+    // into this window, and the write authority then refused the offer.
+    .gt(
+      "ends_at",
+      reservationWindowStartUtc(windowStartUtc, buffer).toISOString(),
+    );
+  const { data: reservations, error: reservationsError } = await (capacityOn
     ? reservationBase.eq("resource_key", practitionerId)
     : reservationBase.eq("studio_id", studio.id));
+  if (reservationsError) throw new Error("availability_read_failed:reservations");
 
   // Everything above this line LOADS one day's inputs; every RULE lives in
   // buildDaySlots below, which getAvailableSlots is now simply the day-loader

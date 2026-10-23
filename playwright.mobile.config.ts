@@ -34,6 +34,18 @@ import {
 // ALWAYS false, so this lane never adopts an already-running server - it starts
 // its own or fails loudly.
 export default defineConfig({
+  // E2E SCHEMA PREFLIGHT. Refuses to run when the local Supabase stack's applied
+  // migrations do not match the migrations THIS checkout defines. Every browser
+  // lane reaches the same stack (local-env's endpoints are literals), so a
+  // reset from another worktree's branch would otherwise let this lane test its
+  // application against that branch's schema and report green.
+  // One shared module, deliberately: see e2e/global-setup.ts.
+  globalSetup: "./e2e/global-setup",
+  // Re-checks at the END that the database is still the one the preflight
+  // verified. The preflight is a snapshot; the stack is shared, so a reset
+  // landing mid-run would otherwise produce a green run against a schema
+  // this lane never verified.
+  globalTeardown: "./e2e/global-teardown",
   testDir: "./e2e-mobile",
   timeout: 180_000,
   expect: { timeout: 20_000 },

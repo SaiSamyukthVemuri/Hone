@@ -31,6 +31,12 @@ export const BROWSER_GROUPS = {
   sessions: {
     description: "sessions / treatment-memory charting",
     specs: [
+      // UI-06: the flattened dashboard memory cards at 390/768/1440.
+      // PATH_TO_GROUP maps /treatment[-_]?memory/i here, and these three cards
+      // ARE the treatment-memory surface, so a diff to them selects this group
+      // and runs this spec — unlike UI-04, whose /clients/** paths match no
+      // pattern at all.
+      "ui06-dashboard-chrome.spec.ts",
       "charting-usability-polish.spec.ts",
       // Budget context is a peer section of the Consultation & Skin/Hair
       // surface, so it belongs with the clinical-notes coverage.
@@ -41,6 +47,14 @@ export const BROWSER_GROUPS = {
       "custom-area-commit.spec.ts",
       "galvanic-intensity-retirement.spec.ts",
       "multi-area-charting.spec.ts",
+      // SESSION-START-01. /clients/[id]/sessions/new IS a sessions route, so
+      // this is its group. Filing it elsewhere to dodge the targeted-lane cost
+      // pin would be misfiling to avoid a decision the pin exists to surface.
+      "session-start-01-modality-ack.spec.ts",
+      // SESSION-START-01 slice 2A measurement rig. Skips itself unless
+      // HONE_PERF_TIMING=1, so it adds no runtime to the lane — but every spec
+      // on disk must map to a group, and this one drives a sessions journey.
+      "session-start-01-latency-measure.spec.ts",
       "multi-area-charting-release.spec.ts",
       "observation-chips-loading.spec.ts",
       "observation-chips-save-cycle.spec.ts",
@@ -120,6 +134,11 @@ export const BROWSER_GROUPS = {
   portal: {
     description: "client portal and tokenised links",
     specs: [
+      // UI-05: archiving a portal message now opens the shipped ConfirmDialog
+      // instead of window.confirm. Filed in `portal` because PATH_TO_GROUP maps
+      // /portal/i here, so a diff to the portal-messages card actually runs it —
+      // the targeting lesson from #721.
+      "ui05-native-confirm-retirement.spec.ts",
       "appointment-token-hash.spec.ts",
       // B7 / 0176: the only browser proof that a policy edited between render
       // and submit is refused, re-presented, and requires a SECOND consent.
@@ -127,6 +146,13 @@ export const BROWSER_GROUPS = {
       // PR #526: the only browser proof of the consent render -> comparand
       // -> submit chain (stale-form refusal + photo deny).
       "portal-consent-signing-integrity.spec.ts",
+      // EMERG-PORTAL-REBOOK-01: the only browser proof that an authenticated
+      // returning client can create an appointment at all — including the
+      // all-caught-up client the card used to be invisible to — plus the
+      // cross-studio isolation of that surface. Filed in `portal` because
+      // PATH_TO_GROUP maps /portal/i here, so a diff to the rebooking action,
+      // the card or the portal page actually runs it.
+      "portal-rebook.spec.ts",
       "personal-notes-bullets-mobile.spec.ts",
       "pinned-note-edit-mobile.spec.ts",
     ],
@@ -136,6 +162,11 @@ export const BROWSER_GROUPS = {
     specs: [
       "ui01g-cluster-b-touch-floor.spec.ts",
       "client-booking-outside-hours.spec.ts",
+      // BOOK-NEXT-FAST-01: the public "Next available" press — acknowledgement,
+      // the day it lands on, that day's slots, and one-press-one-request. It is
+      // the /book/[slug] surface, so it belongs with the other public booking
+      // specs rather than with the shell interaction family.
+      "book-next-available-fast.spec.ts",
       // 0171: the public reschedule v2 contract (policy hash, exclusion,
       // duration authority, same-time, duplicate submit, post-commit success).
       "public-reschedule-v2.spec.ts",
@@ -163,6 +194,10 @@ export const BROWSER_GROUPS = {
       // moves waiting -> invited, the composer unmounts, and the delivery
       // disposition must still be on screen. Same waitlist surface, same group.
       "waitlist-invitation-delivery-status.spec.ts",
+      // SENTRY-BOOKING-ERR-01: the /book/[slug] error boundary contains a failed
+      // or stale Server Action and recovers. A diff to app/book/** selects this
+      // group, which is the diff that can break it.
+      "public-booking-error-containment.spec.ts",
     ],
   },
   calendar: {
@@ -186,6 +221,12 @@ export const BROWSER_GROUPS = {
     specs: [
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
+      // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
+      // the 60 s signed-URL expiry. Here and not in `sessions` for UI-04's two
+      // reasons: /clients/** has no PATH_TO_GROUP pattern (a photo diff already
+      // runs extended) and `sessions` carries a cost pin. Needs REAL storage,
+      // so it SELF-SKIPS in CI (no storage-api); its evidence is a local run.
+      "fett-photos-thumbnail-recovery.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the
@@ -212,6 +253,15 @@ export const BROWSER_GROUPS = {
       // this mechanism is unattributable application code that already fails
       // safe to EXTENDED.
       "perceived-speed.spec.ts",
+      // RESP-CLIENT-INTAKE-01: the same primitive as the line above, adopted on
+      // the clinical navigation controls (Client Profile -> Log session /
+      // previous session / intake / photos, Intake -> client) and the two raw
+      // <a> controls converted to soft navigations. Grouped HERE and not in
+      // `sessions`, for the reason perceived-speed gives: the claim under test
+      // is the shared pending-navigation vocabulary, which any application diff
+      // can reach, so it belongs in the family that fails safe to EXTENDED.
+      // Its destinations happen to be clinical, but its subject is the shell.
+      "resp-client-intake-01-nav-ack.spec.ts",
       // UI-R01: the interaction foundations (press acknowledgement, the shared
       // spinner, geometry stability). Sits beside perceived-speed.spec.ts for
       // the same reason it gives above — this is the shell-wide interaction
@@ -223,6 +273,14 @@ export const BROWSER_GROUPS = {
       // as the line above — it measures the shared interaction vocabulary, not
       // one workflow, so any application diff can reach it.
       "ui-r02-danger-press.spec.ts",
+      // UX-01 Quick Wins: the day-nav current state, the shell's
+      // current-section state, the two flagship controls reaching the touch
+      // floor, and the postcare dialogs' keyboard contract. Grouped HERE for
+      // the reason perceived-speed gives above — it measures the shell-wide
+      // interaction vocabulary rather than one workflow, and its surfaces span
+      // dashboard, records, calendar and settings, so any application diff can
+      // reach it. Filing it under one of those page groups would under-run it.
+      "ux01-quick-wins.spec.ts",
       // UI-02: status text equivalents, proved by computed accessible name.
       // Same group and reasoning again — an accessibility contract on shared
       // status marks, reachable from any application diff.
@@ -254,6 +312,11 @@ export const BROWSER_GROUPS = {
       // extended to one group, and that is a coverage decision for every client
       // diff in the repository, not a presentation slice's to take in passing.
       "ui04-unarchive-pending.spec.ts",
+      // FETT photos (#892): the photo surface's mounted 44px floor at phone width
+      // and the deactivated-practitioner denial. Filed here for the same two
+      // reasons as UI-04 above: /clients/** has no PATH_TO_GROUP pattern, so a
+      // photo diff already runs extended, and `sessions` carries a cost pin.
+      "fett-photos-touch-floor.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",
@@ -268,7 +331,16 @@ export const BROWSER_GROUPS = {
   },
   marketing: {
     description: "public marketing site",
-    specs: ["marketing-homepage.spec.ts", "marketing-pages.spec.ts"],
+    specs: [
+      "marketing-homepage.spec.ts",
+      "marketing-pages.spec.ts",
+      // MKT-02B. The homepage film: lazy-until-asked, no autoplay under either
+      // motion preference, and the poster being preloaded eagerly. Filed here
+      // rather than in `smoke` on purpose — it is heavier than a smoke case
+      // (it decodes video) and nothing outside the marketing surface can break
+      // it.
+      "marketing-homepage-film.spec.ts",
+    ],
   },
   responsive: {
     description: "cross-cutting responsive behaviour",
@@ -297,6 +369,15 @@ export const BROWSER_GROUPS = {
       // Deliberately still not in `smoke`: that group runs on every targeted PR
       // and its size is a pinned cost.
       "signout-session-destruction.spec.ts",
+      // SIGNOUT-02 rides with it, for the same reasons in the same order: it
+      // drives BOTH shells, and the only file it adds — app/(app)/SignOutMenuItem.tsx
+      // — matches no path rule, so a diff touching just the leaf falls through
+      // to EXTENDED and runs this anyway. Same group, so the two specs can
+      // never be selected apart: a change that runs one and skips the other
+      // could ship a control that acknowledges beautifully and no longer signs
+      // anybody out, which is exactly the pair of facts SIGNOUT-01 learned had
+      // to be checked together.
+      "signout-acknowledgement.spec.ts",
     ],
   },
   google: {
@@ -336,7 +417,29 @@ const PATH_TO_GROUP = [
   { group: "intake", patterns: [/intake/i] },
   { group: "portal", patterns: [/portal/i, /pinned[-_]?note/i, /personal[-_]?note/i] },
   { group: "booking", patterns: [/booking/i, /appointments?/i, /reschedule/i, /\bbook\b/i, /treatment-plans/i] },
-  { group: "sessions", patterns: [/sessions?\//i, /charting/i, /electrolysis/i, /laser/i, /session[-_]?block/i, /probe/i, /observation[-_]?chip/i, /treatment[-_]?memory/i, /clinical[-_]?note/i] },
+  // UI-06. `appointment-prep-memory-card` is matched by the BOOKING rule's
+  // /appointments?/i purely because of its filename, and by nothing here — so a
+  // diff touching it selected `booking` + `smoke` and never ran
+  // ui06-dashboard-chrome.spec.ts, which lives in `sessions` and exists to
+  // prove that card. Registering a spec in a group is only half the job; the
+  // CHANGED PATH has to select that group. Same hole the OWNER-CAP note below
+  // records for the capacity page, and the third time this class has been
+  // caught in this stack.
+  //
+  // The pattern is ANCHORED TO THE CARD rather than a bare /prep[-_]?memory/i,
+  // following the OWNER-CAP precedent in this file. A loose pattern would also
+  // capture app/(app)/dashboard/prep-memory-actions.ts and
+  // lib/sessions/appointment-prep-memory.ts, and the first of those currently
+  // falls through to EXTENDED — so a loose rule would NARROW that file's
+  // coverage from everything to one group. Additive only: the card already
+  // selected `booking`, and now also selects `sessions`.
+  //
+  // Its sibling last-treatment-memory-card already reaches `sessions` via
+  // /treatment[-_]?memory/i. before-today-card still matches no rule and keeps
+  // its EXTENDED fail-safe; that is pre-existing behaviour for an
+  // unattributable path, and narrowing it would reduce coverage, so it is
+  // reported rather than changed here.
+  { group: "sessions", patterns: [/sessions?\//i, /charting/i, /electrolysis/i, /laser/i, /session[-_]?block/i, /probe/i, /observation[-_]?chip/i, /treatment[-_]?memory/i, /clinical[-_]?note/i, /appointment[-_]?prep[-_]?memory[-_]?card/i] },
   { group: "calendar", patterns: [/calendar/i, /\bservices?\b/i, /disinfectant/i] },
   // OWNER-CAP Slice 1. Registering the SPEC in the group above is only half the
   // job: selection maps CHANGED PATHS to groups, and the capacity page matched

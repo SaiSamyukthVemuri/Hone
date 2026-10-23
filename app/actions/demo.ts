@@ -6,6 +6,7 @@ import {
   limitDemoRequestSubmit,
   RATE_LIMIT_MESSAGE,
 } from "@/lib/rate-limit/public";
+import { CONTACT_EMAIL } from "@/lib/marketing/content";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -46,11 +47,11 @@ export async function submitDemoRequest(
   payload: DemoPayload,
 ): Promise<DemoResult> {
   const name = payload.name.trim();
-  if (!name) return { ok: false, error: "Your name is required." };
+  if (!name) return { ok: false, error: "Enter your name." };
 
   const email = payload.email.trim().toLowerCase();
   if (!EMAIL_RE.test(email)) {
-    return { ok: false, error: "That doesn't look like a valid email." };
+    return { ok: false, error: "Enter an email address we can reply to." };
   }
 
   // Anonymous public form: rate-limit BEFORE the insert (PR #187).
@@ -81,7 +82,10 @@ export async function submitDemoRequest(
   });
 
   if (error) {
-    return { ok: false, error: "Something went wrong. Try again in a moment." };
+    return {
+      ok: false,
+      error: `Your request didn't send. Try again in a moment, or email ${CONTACT_EMAIL}.`,
+    };
   }
 
   return { ok: true };

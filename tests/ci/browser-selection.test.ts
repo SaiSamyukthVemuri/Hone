@@ -109,7 +109,37 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // has a ~6 min target against a 15 min ceiling, and this adds one spec with
     // two short cases, so the margin is not the concern here — the visibility
     // is.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(36);
+    // Now 37: ui06-dashboard-chrome.spec.ts joined `sessions`, and unlike the
+    // UI-04 spec — which was deliberately kept OUT of this selection because
+    // app/(app)/clients/** matches no PATH_TO_GROUP pattern and so gained no
+    // targeting from membership — this one earns its place: PATH_TO_GROUP maps
+    // /treatment[-_]?memory/i to `sessions`, and the three cards it proves ARE
+    // the treatment-memory surface. A diff to them selects this group, so the
+    // spec runs in the lane that can actually break it.
+    //
+    // RECORDED AS A DECISION, per the note above. Cost: 10 cases (three
+    // viewports x three assertions, plus one motion check) at roughly 4-5s
+    // each, so about 45s against a ~6 min target and a 15 min ceiling. The
+    // margin is not the concern; the visibility is.
+    //
+    // Now 38: SESSION-START-01's modality-acknowledgement proof joined
+    // `sessions` because /clients/[id]/sessions/new is a sessions route.
+    // RECORDED AS A DECISION, per the note above. Cost: EIGHT executed cases
+    // (seven test() declarations, one of which loops over desktop and 390px),
+    // at roughly 4-8s each — the three that hold the server action are the slow
+    // ones by design. That is well under a minute against a ~6 min target and a
+    // 15 min ceiling, so the margin is not the concern; the visibility is.
+    //
+    // The count was prose-only and said "three" through several revisions of
+    // this slice while the file already ran seven. A cost pin whose NUMBER is
+    // asserted and whose DESCRIPTION is not will drift exactly this way, so the
+    // description is now stated in terms a reader can check against the file.
+    //
+    // Now 39: SESSION-START-01 slice 2A's measurement rig joined `sessions`
+    // because it drives that journey. RECORDED AS A DECISION per the note above,
+    // with the cost explicitly ZERO: the spec skips itself unless
+    // HONE_PERF_TIMING=1, so the lane gains a selection entry and no runtime.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(39);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
@@ -155,9 +185,32 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     expect(s.groups).toEqual([]);
   });
 
-  it("targeted coverage is still ONE shard and extended still FOUR", () => {
-    expect(plan("app/(app)/clients/[id]/sessions/[sessionId]/actions.ts").browser.sharded).toBe(false);
-    expect(plan("e2e/helpers/seed.ts").browser.sharded).toBe(true);
+  it("targeted coverage is THREE shards and extended still FOUR", () => {
+    // WAS "targeted is still ONE shard". Both lanes are sharded now: the
+    // targeted lane was running 36 specs in a single job at ~95% of its 15 min
+    // ceiling and being cancelled on the slower half of the runner spread.
+    //
+    // SELECTION is what this describe block asserts is unchanged, and it still
+    // is — the groups and specs above are untouched. Only the number of jobs
+    // they are spread over moved.
+    const targeted = plan("app/(app)/clients/[id]/sessions/[sessionId]/actions.ts").browser;
+    const extended = plan("e2e/helpers/seed.ts").browser;
+
+    expect(targeted.sharded).toBe(true);
+    expect(targeted.shards).toBe(3);
+    expect(extended.sharded).toBe(true);
+    expect(extended.shards).toBe(4);
+  });
+
+  it("a full-matrix diff with NO browser groups is planned as the EXTENDED lane", () => {
+    // `vitest.config.ts` yields no groups, so `browser_specs` is empty and the
+    // shard command runs the WHOLE suite. The workflow treats that as extended
+    // coverage — 4 shards, 18 min — and this planner has to agree, or it tells
+    // a contributor the targeted lane runs when CI runs the other one.
+    const p = plan("vitest.config.ts");
+    expect(p.full_matrix_required).toBe(true);
+    expect(p.browser.groups).toEqual([]);
+    expect(p.browser.shards).toBe(4);
   });
 });
 

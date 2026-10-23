@@ -1,7 +1,7 @@
 import Link from "next/link";
 import {
   getClientsForStudio,
-  getCurrentPractitionerWithStudio,
+  requirePractitionerWithStudio,
 } from "@/lib/supabase/queries";
 import {
   EMPTY_AUDIT_HISTORY,
@@ -141,7 +141,7 @@ export default async function RecordKeepingPrintPage({
   const sp = await searchParams;
   const section: SectionKey = isSection(sp.section) ? sp.section : "sterile";
   const includeHistory = sp.history === "1";
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   // PR #222: exposure incident history is owner-only (RLS, migration
   // 0088); the print surface mirrors that with an explicit note.
   const isOwner = practitioner.role === "owner";

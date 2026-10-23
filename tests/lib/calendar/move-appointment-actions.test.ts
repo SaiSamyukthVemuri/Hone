@@ -22,6 +22,7 @@ type St = {
     timezone: string;
     default_appointment_duration_minutes: number;
     buffer_minutes: number;
+    practitioner_capacity_enabled?: boolean | null;
   };
   appt: Record<string, unknown> | null;
   slots: Array<{ start: string; end: string; startLabel: string }>;
@@ -91,6 +92,8 @@ function baseMove(over: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
+  state.studio.practitioner_capacity_enabled = undefined;
   state.practitioner = { id: "prac-1", role: "owner" };
   state.appt = { id: APPT_ID, status: "confirmed", starts_at: EXPECT_START, client_id: "client-1", duration_minutes: 60, practitioner_id: "pr-1" };
   state.slots = [
@@ -194,6 +197,78 @@ describe("available_slot — server-side membership verification", () => {
   it("rejects an arbitrary time not present in the slot list; RPC never called", async () => {
     const res = await moveAppointmentAction(avail({ localTime: "13:37" }));
     expect(res).toEqual({ ok: false, code: "conflict", error: "That time is no longer available. Choose another time." });
+    expect(state.rpcCalls).toHaveLength(0);
+  });
+
+  it.each([false, undefined, null, true])(
+    "classified advisory read failure refuses a member's move before RPC with capacity=%s", async (capacity) => {
+      state.studio.practitioner_capacity_enabled = capacity;
+      state.practitioner = { id: "pr-1", role: "practitioner" };
+      h.getAvailableSlots.mockRejectedValueOnce(new Error("availability_read_failed:defaults:42501"));
+      // The RPC mock would report success. OFF SQL does not enforce the studio
+      // hours, and even an ON pre-read is not locked authority for a fallback.
+      const res = await moveAppointmentAction(avail({ localTime: "03:00" }));
+      expect(res).toEqual({ ok: false, error: "We couldn't move the appointment. Please try again." });
+      expect(state.rpcCalls).toHaveLength(0);
+      expect(h.notify).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a capacity-ON pre-read cannot authorize fallback after capacity changes during the failed read", async () => {
+    state.studio.practitioner_capacity_enabled = true;
+    state.practitioner = { id: "pr-1", role: "practitioner" };
+    h.getAvailableSlots.mockImplementationOnce(async () => {
+      state.studio.practitioner_capacity_enabled = false;
+      throw new Error("availability_read_failed:defaults:42501");
+    });
+    const res = await moveAppointmentAction(avail({ localTime: "03:00" }));
+    expect(res).toEqual({ ok: false, error: "We couldn't move the appointment. Please try again." });
+    expect(state.rpcCalls).toHaveLength(0);
+    expect(h.notify).not.toHaveBeenCalled();
+  });
+
+  it("a successful empty advisory read refuses without invoking the command", async () => {
+    state.slots = [];
+    const res = await moveAppointmentAction(avail({ localTime: "10:00" }));
+    expect(res.ok).toBe(false);
+    expect(state.rpcCalls).toHaveLength(0);
+    expect(h.notify).not.toHaveBeenCalled();
+  });
+
+  it.each([new Error("unrelated failure"), "availability_read_failed:defaults:42501"])(
+    "does not classify an unrelated error or non-Error rejection as an advisory read failure (%s)", async (failure) => {
+      h.getAvailableSlots.mockRejectedValueOnce(failure);
+      await expect(moveAppointmentAction(avail({ localTime: "10:00" }))).rejects.toBe(failure);
+      expect(state.rpcCalls).toHaveLength(0);
+      expect(h.notify).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["blockouts", "defaults", "overrides", "reservations"])(
+    "slot discovery returns a sanitized failure, never an empty success, for classified %s read errors", async (stage) => {
+      h.getAvailableSlots.mockRejectedValueOnce(new Error(`availability_read_failed:${stage}:PRIVATE_DB_DETAIL`));
+      const res = await loadMoveSlotsAction({ appointmentId: APPT_ID, localDate: DAY });
+      expect(res).toEqual({ ok: false, error: "Could not load available times." });
+      expect(res).not.toHaveProperty("slots");
+      expect(state.rpcCalls).toHaveLength(0);
+      expect(h.notify).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([new Error("unrelated discovery error"), "availability_read_failed:defaults:42501"])(
+    "slot discovery does not hide unrelated errors or non-Error rejections (%s)", async (failure) => {
+      h.getAvailableSlots.mockRejectedValueOnce(failure);
+      await expect(loadMoveSlotsAction({ appointmentId: APPT_ID, localDate: DAY })).rejects.toBe(failure);
+      expect(state.rpcCalls).toHaveLength(0);
+    },
+  );
+
+  it("successful empty slot discovery remains distinct from a read failure", async () => {
+    state.slots = [];
+    const res = await loadMoveSlotsAction({ appointmentId: APPT_ID, localDate: DAY });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.slots).toEqual([]);
+    expect(res).not.toHaveProperty("error");
     expect(state.rpcCalls).toHaveLength(0);
   });
 

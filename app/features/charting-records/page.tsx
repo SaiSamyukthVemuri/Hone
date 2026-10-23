@@ -1,21 +1,28 @@
 import type { Metadata } from "next";
 import { SafeAnalytics } from "../../_components/SafeAnalytics";
 import { SiteHeader } from "../../_components/marketing/SiteHeader";
+import { SkipLink } from "@/app/_components/marketing/SkipLink";
 import { SiteFooter } from "../../_components/marketing/SiteFooter";
 import {
   MarketingSurface,
   Container,
   Section,
-  Eyebrow,
   Display,
   Title,
   Lede,
   CTAButton,
 } from "../../_components/marketing/primitives";
-import { Reveal } from "../../_components/marketing/Reveal";
 import { Breadcrumbs } from "../../_components/marketing/JsonLd";
 import { SessionRecordPreview } from "../../_components/marketing/visuals/SessionRecordPreview";
-import { WalkthroughCTA, RelatedLinks, FeatureMatrix } from "../../_components/marketing/sections";
+import {
+  WalkthroughCTA,
+  RelatedLinks,
+  FeatureMatrix,
+  SpecRows,
+  SpecRow,
+  SpecRowHead,
+  SpecRowBody,
+} from "../../_components/marketing/sections";
 import { WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
@@ -29,13 +36,115 @@ import { marketingMetadata } from "@/lib/marketing/metadata";
 // export as electrolysis_entries.csv and laser_entries.csv; the session BLOCK
 // that groups them has no file of its own yet, so do not imply the charting
 // record leaves whole.
+//
+// MKT-02E. Structure and copy follow marketing copy deck v2.2 section 5.
+//
+// THE EDIT-HISTORY SECTION IS NEITHER THE DECK'S NOR THE REGISTER'S SENTENCE,
+// AND THE SECOND HALF OF THAT IS A REGISTER DEFECT WORTH REPORTING.
+//
+// The deck heads it "Corrections are recorded, not written over". Truth-register
+// standing rule 7 (clinical-record rule, 2026-07-29) forbids marketing a
+// *correction / amendment workflow* — signed / finalized clinical records are
+// RETIRED and permanently rejected — and offers its own replacement wording:
+// "treatment records stay editable, and every change is attributed and
+// time-stamped."
+//
+// THAT REPLACEMENT DOES NOT HOLD FOR THE FIELDS THIS PAGE IS ABOUT. Checked in
+// the schema, not taken from the register. `update_session_block_with_areas` is
+// last defined in 0156_conditional_numbing_notes.sql:102-169 (0155 and 0129
+// before it; 0166 only calls it) and it UPDATEs the block in place, then DELETEs
+// and reinserts its areas, writing no `session_audit` row at all. Exactly two
+// live writers put rows in that table: `edit_session_started_at` (0167:425,
+// field `started_at`) and `soft_delete_session_area` (0123:116, field
+// `area_removed`). A third, in retired `finalize_session` (0119:603), is dead —
+// 0159 revoked EXECUTE from every runtime role. So changing mode, energy,
+// frequency, probe, lot, tolerance, reaction or the treated-area set retains
+// nothing of the previous value, and a general "every change is attributed and
+// time-stamped" on a page that lists exactly those fields would be read as an
+// audit trail that does not exist.
+//
+// The register row is the sharper defect, and it is not this page's to fix.
+// §2 (Charting & Records) line 113, "Correcting a charting mistake", is classed
+// LIVE_FOR_ALL_ONBOARDED / MARKET with the phrasing "records stay editable, and
+// every change is captured in the session edit history". Correcting a mis-charted
+// session means changing those same fields, which is precisely what
+// `session_audit` does not capture. (Its neighbour at line 105, "Session edit
+// history — see who changed a session and when", stays true for the two events
+// above; it is the generalisation to *every* change that is not.) No other
+// marketing surface carries either sentence today — the homepage does not — so
+// this page is the only copy affected, and the register row should be corrected
+// at source before the next page inherits it.
+//
+// What IS true is what this section now says, and rule 7 preserves all of it:
+// `client_clinical_notes` (0126) is append-only with in-place UPDATE blocked by
+// trigger, so a correction is a new revision via `supersedes_note_id`; and
+// migration 0086 keeps the sterile-item and disinfectant record-keeping trail.
+// (Named by migration rather than by table: tests/app/records/audit-trail.test.ts
+// allowlists which files under app/, lib/ and components/ may mention that
+// table's name, and a marketing comment is not one of them.)
+//
+// WHAT IS PER-AREA AND WHAT IS PER-BLOCK, BECAUSE THE COPY GOT THIS WRONG ONCE.
+//
+// This page said "Four areas, four records" and "every field is attached to the
+// area it describes". Both were false, and Codex was right to call it. The write
+// path is one command: `create_block_with_entry` (0166:390) makes ONE
+// `session_blocks` row plus its complete area set, then at most ONE
+// `electrolysis_entries` row. So a four-area block is one record, not four.
+//
+// `session_block_areas` (0128:26) carries only `area`, `laterality` and
+// `display_order` — and nothing was ever added to it. Every treatment field
+// lives on the parent block, which 0019 labels in as many words: "Treatment-level
+// params that apply to every entry in this block" — mode, apilus_modality,
+// energy_level, minutes_performed, probe_type, probe_size, machine_frequency.
+// That is why the capability line above no longer says "minutes performed per
+// area": `minutes_performed` is a block column.
+//
+// WHAT IS TRUE, AND IS WHAT THE SECTION NOW CLAIMS. Per-area history is real:
+// `lib/sessions/treatment-intelligence.ts:41-45` states that when structured
+// areas are present "the block contributes to EVERY area's intelligence (not just
+// primary_area)", so a "Cheeks + Sideburns" block appears under both areas. And a
+// secondary area is independently findable — `lib/search/treatment-memory-merge.ts`
+// exists to close exactly that recall gap, while merging so one treatment still
+// shows up as one result. So each area does keep its own history; what it does
+// not get is its own settings inside a shared block.
+//
+// THREE KINDS OF NOTE, AND ONLY ONE OF THEM IS APPEND-ONLY. The eyebrow read
+// "Notes are append-only" over a field list that includes "Next-treatment note",
+// which made a true statement about one table read as a promise about the chart.
+// `set_next_session_note` (0167:315-334) is a plain `update public.sessions set
+// next_session_note = ...` — in place, no revision, nothing retained. `block_notes`
+// is a `session_blocks` column (0019) replaced by the block update. Only
+// `client_clinical_notes` (0126) is append-only: in-place UPDATE is blocked by
+// trigger and a correction inserts a new row via `supersedes_note_id`. The
+// distinction is now named in the eyebrow, the title and the body, and pinned by
+// tests/app/marketing-feature-pages.test.ts so the qualifier cannot be dropped.
+//
+// The deck's two [DECIDE] items are left as they already ship: Apilus is named
+// in the capability list exactly as production names it today, and no laser line
+// is added. Neither is an MKT-02E decision to take.
 
 export const metadata: Metadata = marketingMetadata("/features/charting-records");
+
+/** Deck section 5, "The fields", verbatim. A list for layout, not an ordering claim. */
+const FIELDS: readonly string[] = [
+  "Area and side",
+  "Mode and modality",
+  "Energy",
+  "Frequency",
+  "Pulse count",
+  "Split readings",
+  "Probe type",
+  "Probe lot",
+  "Tolerance",
+  "Skin response",
+  "Aftercare",
+  "Next-treatment note",
+];
 
 const CAPABILITIES: { title: string; body: string }[] = [
   {
     title: "Point-of-care charting",
-    body: "Chart electrolysis and laser sessions on one page, mode (thermolysis, blend, galvanic), Apilus modality, energy, machine frequency, and per-pass readings.",
+    body: "Chart electrolysis and laser sessions on one page: mode (thermolysis, blend or galvanic), Apilus modality, energy, machine frequency and per-pass readings.",
   },
   {
     title: "Structured probe and lot",
@@ -43,11 +152,11 @@ const CAPABILITIES: { title: string; body: string }[] = [
   },
   {
     title: "Areas, laterality, and minutes",
-    body: "Record several treatment areas under one machine-settings block, each with its own laterality, plus minutes performed per area for treatment-time tracking.",
+    body: "Record several treatment areas under one machine-settings block, each with its own laterality, plus the minutes performed for that block for treatment-time tracking.",
   },
   {
     title: "Observations and response",
-    body: "Tag what you saw with quick observation chips, and capture how each area was tolerated and any reaction, as structured, factual records alongside free-text notes.",
+    body: "Tag what you saw with quick observation chips, and record how each area was tolerated and any reaction, alongside free-text notes.",
   },
   {
     title: "Procedure records and print views",
@@ -62,6 +171,7 @@ const CAPABILITIES: { title: string; body: string }[] = [
 export default function ChartingRecordsPage() {
   return (
     <MarketingSurface>
+      <SkipLink />
       <SiteHeader />
       <Breadcrumbs
         items={[
@@ -70,80 +180,142 @@ export default function ChartingRecordsPage() {
           { name: "Charting and records", path: "/features/charting-records" },
         ]}
       />
-      <main className="overflow-x-hidden">
-        <Container className="grid items-start gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
-          <Reveal immediate>
-            <Eyebrow>Charting and records</Eyebrow>
-            <Display className="mt-4">
-              Chart the treatment while it&apos;s fresh, keep clean records.
-            </Display>
-            <Lede className="mt-6 max-w-xl">
-              Record electrolysis and laser sessions at the point of care, machine settings,
-              structured probe and lot, treatment areas, and observations, and keep
-              print-ready procedure records for your files and inspections.
+      <main id="main-content" className="scroll-mt-16">
+        <Container className="grid items-start gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-10 pb-[var(--mk-section-pad)] pt-[clamp(1rem,0.5rem+1.25vw,1.75rem)] lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+          <div>
+            <Display className="max-w-[18ch]">Electrolysis charting for each treated area</Display>
+            <Lede className="mt-5 max-w-[38rem]">
+              Each treated area is charted with its side, the settings used, probe and lot,
+              tolerance and skin response.
             </Lede>
-            <div className="mt-8">
-              <CTAButton href={WALKTHROUGH.href} event={ANALYTICS_EVENTS.primaryCtaClick}>
-                {WALKTHROUGH.primaryLabel}
-              </CTAButton>
-            </div>
-          </Reveal>
-          <Reveal delay={80} className="lg:pl-4">
-            <SessionRecordPreview />
-          </Reveal>
+            <CTAButton
+              href={WALKTHROUGH.href}
+              event={ANALYTICS_EVENTS.primaryCtaClick}
+              className="mt-7 max-sm:w-full"
+            >
+              {WALKTHROUGH.primaryLabel}
+            </CTAButton>
+          </div>
+          <SessionRecordPreview />
         </Container>
 
         <Section tone="warm">
-          <Container size="wide">
-            <Eyebrow>What it captures</Eyebrow>
-            <Title className="mt-4 max-w-2xl">The detail an electrolysis record needs.</Title>
+          <Container>
+            <Title className="max-w-2xl">What one treatment record holds</Title>
+            {/* A ruled list, not a wall of pills: these are the record's fields,
+                and a spec sheet is how a record's fields are read. */}
+            <ul className="mt-6 grid grid-cols-2 gap-x-8 border-t border-[color:var(--color-hairline-strong)] sm:grid-cols-3 lg:grid-cols-4">
+              {FIELDS.map((field) => (
+                <li
+                  key={field}
+                  className="border-b border-[color:var(--color-hairline)] py-2.5 text-[1rem] text-ink"
+                >
+                  {field}
+                </li>
+              ))}
+            </ul>
             <FeatureMatrix items={CAPABILITIES} />
           </Container>
         </Section>
 
+        {/* ONE SPEC SHEET, NOT FIVE BANDS. Each of these was its own section
+            with its own background: a label, a heading and two lines, then a
+            64px gap. As rows they read in one pass. The words are unchanged,
+            and each heading and sentence is still its own element, which the
+            append-only guard in tests/app/marketing-feature-pages.test.ts
+            depends on. */}
         <Section tone="paper">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>Records you can stand behind</Eyebrow>
-              <Title className="mt-4">Structured now, useful later.</Title>
-              <Lede className="mt-5">
-                Because charting is structured, not a free-text blob, the record you make
-                today becomes the treatment memory you rely on next time, the procedure record
-                you print for an inspection, and part of the CSV data export you can download
-                any time.
-              </Lede>
-              <p className="mt-4 text-[0.9375rem] leading-[1.6] text-muted">
-                Hone supports record-keeping workflows; studios remain responsible for meeting
-                their local public-health requirements.
-              </p>
-            </Reveal>
+          <Container>
+            <Title className="max-w-2xl">How the record is kept</Title>
+            <SpecRows>
+              <SpecRow>
+                <SpecRowHead>Recorded by area</SpecRowHead>
+                <SpecRowBody>
+                  <p>
+                    Each treated area is recorded as an area, with its own side. Treat several
+                    areas at the same settings and those settings are recorded once, for that
+                    group, and every area in it carries the treatment into its own history.
+                    Months later, the chin&rsquo;s history lists every treatment that included the
+                    chin.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>Clinical notes are append-only</SpecRowHead>
+                <SpecRowBody>
+                  <p>
+                    Correcting a clinical note records a new revision that supersedes the old
+                    one, so the original stays readable. Sterile-item and disinfectant records
+                    keep an append-only log of their own.
+                  </p>
+                  <p>
+                    Treatment records themselves stay editable, so a value you change is the
+                    value the record shows, and the same is true of the next-treatment note. Only
+                    clinical notes are append-only.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>Lots, sterile items and expiry</SpecRowHead>
+                <SpecRowBody>
+                  <p>
+                    The probe lot is part of the treatment record and linked to your inventory.
+                    Sterile items and disinfectant carry expiry dates in a log. When you need to
+                    show what was used on a given day, there&rsquo;s a print-friendly view.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>Photos</SpecRowHead>
+                <SpecRowBody>
+                  <p>
+                    Treatment photos attach to the record. They are stored privately, with
+                    location and camera data removed, and open only through links that expire
+                    within a minute.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+              <SpecRow>
+                <SpecRowHead>Gaps are flagged</SpecRowHead>
+                <SpecRowBody>
+                  <p>
+                    Hone flags a missing probe lot, aftercare not marked and a completed
+                    appointment not yet charted.
+                  </p>
+                  <p>
+                    Hone supports record-keeping workflows; studios remain responsible for
+                    meeting their local public-health requirements.
+                  </p>
+                </SpecRowBody>
+              </SpecRow>
+            </SpecRows>
           </Container>
         </Section>
 
         <RelatedLinks
-          title="Where the record goes."
+          title="Related pages"
           links={[
             {
               href: "/features/treatment-memory",
               label: "Treatment memory",
-              blurb: "Structured charting is what makes the Before Today briefing possible next visit.",
+              blurb: "The Before Today briefing is built from this charting.",
             },
             {
               href: "/features/booking-calendar",
               label: "Booking and calendar",
-              blurb: "Each appointment links to the session you chart against it.",
+              blurb: "Each appointment links to the session you chart for it.",
             },
             {
               href: "/electrolysis-software",
               label: "Electrolysis practice software",
-              blurb: "See how charting and records fit the whole workflow.",
+              blurb: "See how charting and records fit the rest of the practice.",
             },
           ]}
         />
 
         <WalkthroughCTA
-          title="See charting on a real session."
-          body="We'll walk through charting a session and pulling a procedure record, and reply within one business day."
+          title="See a session charted"
+          body="We reply within one business day to set a time, then chart a session with you and pull a procedure record."
         />
       </main>
       <SiteFooter />

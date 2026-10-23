@@ -1,18 +1,17 @@
 import type { Metadata } from "next";
 import { SafeAnalytics } from "../../_components/SafeAnalytics";
 import { SiteHeader } from "../../_components/marketing/SiteHeader";
+import { SkipLink } from "@/app/_components/marketing/SkipLink";
 import { SiteFooter } from "../../_components/marketing/SiteFooter";
 import {
   MarketingSurface,
   Container,
   Section,
-  Eyebrow,
   Display,
   Title,
   Lede,
   CTAButton,
 } from "../../_components/marketing/primitives";
-import { Reveal } from "../../_components/marketing/Reveal";
 import { Breadcrumbs } from "../../_components/marketing/JsonLd";
 import { TreatmentMemoryPanel } from "../../_components/marketing/visuals/TreatmentMemoryPanel";
 import { WalkthroughCTA, RelatedLinks, FeatureMatrix } from "../../_components/marketing/sections";
@@ -28,33 +27,34 @@ export const metadata: Metadata = marketingMetadata("/features/treatment-memory"
 const CAPABILITIES: { title: string; body: string }[] = [
   {
     title: "The Before Today briefing",
-    body: "Open a returning client and Hone assembles a briefing from what you already charted, the last treatment's areas and settings, the probe lot, how the client responded, and what to record today.",
+    body: "Open a returning client and Hone builds a briefing from what you charted: the last treatment's areas and settings, the probe lot, how the client responded and what to record today.",
   },
   {
     title: "From last visit, for today",
-    body: "Cautions you flag and the plan you leave for next time resurface automatically, on the client's last-visit card and in the new-session panel, so nothing is lost between appointments.",
+    body: "Cautions you flag and the plan you leave for next time come back on their own, on the client's last-visit card and in the new-session panel.",
   },
   {
     title: "A for-next-visit note",
-    body: "Leave a short plan at the end of a session and Hone puts it in front of you before the next appointment, without digging back through notes.",
+    body: "Leave a short plan at the end of a session and Hone puts it in front of you before the next appointment.",
   },
   {
     title: "Memory per treatment area",
-    body: "Each treated area keeps its own history, last settings, probe, tolerance, and response, so multi-area sessions stay legible instead of collapsing to a single line.",
+    body: "Each treated area keeps its own history of settings, probe, tolerance and response, so a multi-area session stays readable area by area.",
   },
   {
     title: "Record-gap reminders",
-    body: "Hone points out incomplete records, a missing probe lot, aftercare not marked, a completed appointment not yet charted, on the client card and a dashboard follow-up list. Rules-based, not AI.",
+    body: "Hone points out incomplete records, such as a missing probe lot, aftercare not marked or a completed appointment not yet charted, on the client card and in a dashboard follow-up list. The checks follow fixed rules and use no AI.",
   },
   {
     title: "Imported history, clearly labelled",
-    body: "During guided onboarding, bring history over from paper cards, a spreadsheet, or another tool. It appears in the Before Today briefing marked as imported, never mixed with what you charted in Hone.",
+    body: "During guided onboarding, bring history over from paper cards, a spreadsheet or another tool. It appears in the Before Today briefing marked as imported, kept apart from what you chart in Hone.",
   },
 ];
 
 export default function TreatmentMemoryPage() {
   return (
     <MarketingSurface>
+      <SkipLink />
       <SiteHeader />
       <Breadcrumbs
         items={[
@@ -63,82 +63,77 @@ export default function TreatmentMemoryPage() {
           { name: "Treatment memory", path: "/features/treatment-memory" },
         ]}
       />
-      <main className="overflow-x-hidden">
-        <Container className="grid items-start gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
-          <Reveal immediate>
-            <Eyebrow>Treatment memory</Eyebrow>
-            <Display className="mt-4">
-              Remember every treatment, before the client sits down.
+      <main id="main-content" className="scroll-mt-16">
+        <Container className="grid items-start gap-x-[clamp(2.5rem,5vw,5rem)] gap-y-10 pb-[var(--mk-section-pad)] pt-[clamp(1rem,0.5rem+1.25vw,1.75rem)] lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+          <div>
+            <Display className="max-w-[18ch]">
+              See the last treatment before the client sits down
             </Display>
-            <Lede className="mt-6 max-w-xl">
-              Treatment memory is the part generic booking tools forget. Hone carries the
-              detail that shapes a returning client&apos;s session from one appointment into
-              the next, assembled automatically from your own records.
+            <Lede className="mt-5 max-w-[38rem]">
+              Hone carries the details that shape a returning client&apos;s session from one
+              appointment to the next, built from what you have already charted.
             </Lede>
-            <div className="mt-8">
-              <CTAButton href={WALKTHROUGH.href} event={ANALYTICS_EVENTS.primaryCtaClick}>
-                {WALKTHROUGH.primaryLabel}
-              </CTAButton>
-            </div>
-          </Reveal>
-          <Reveal delay={80} className="lg:pl-4">
-            <TreatmentMemoryPanel />
-          </Reveal>
+            <CTAButton
+              href={WALKTHROUGH.href}
+              event={ANALYTICS_EVENTS.primaryCtaClick}
+              className="mt-7 max-sm:w-full"
+            >
+              {WALKTHROUGH.primaryLabel}
+            </CTAButton>
+          </div>
+          <TreatmentMemoryPanel />
         </Container>
 
         <Section tone="warm">
-          <Container size="wide">
-            <Eyebrow>What it does</Eyebrow>
-            <Title className="mt-4 max-w-2xl">
-              Your charting, brought forward when it matters.
-            </Title>
+          <Container>
+            <Title className="max-w-2xl">What Hone brings forward</Title>
             <FeatureMatrix items={CAPABILITIES} />
           </Container>
         </Section>
 
         <Section tone="paper">
-          <Container size="prose">
-            <Reveal>
-              <Eyebrow>Why it matters</Eyebrow>
-              <Title className="mt-4">Every session builds on the last.</Title>
-              <Lede className="mt-5">
-                Electrolysis is a course of treatment. When the record of what worked lives in
-                your head or on a paper card, continuity depends on memory and luck. Hone keeps
-                it structured and close to the next visit, so you can start each appointment
-                already knowing where you left off, and record cleaner history as you go.
+          <Container className="grid gap-x-[clamp(2rem,5vw,5rem)] gap-y-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.7fr)]">
+            <div>
+              <Title>Each appointment starts from the last one</Title>
+            </div>
+            <div className="max-w-[64ch]">
+              <Lede>
+                Electrolysis takes a course of treatments. When what worked lives on a paper card
+                or in your memory, you rebuild it at every visit. Hone keeps it in the record and
+                shows it before the next appointment.
               </Lede>
               <p className="mt-4 text-[0.9375rem] leading-[1.6] text-muted">
-                Hone surfaces what you recorded; it does not diagnose, recommend settings, or
-                make clinical decisions. The judgement stays yours.
+                Hone shows what you recorded. It does not diagnose, recommend settings or make
+                clinical decisions; those stay with you.
               </p>
-            </Reveal>
+            </div>
           </Container>
         </Section>
 
         <RelatedLinks
-          title="How treatment memory connects."
+          title="Related pages"
           links={[
             {
               href: "/features/charting-records",
               label: "Charting and records",
-              blurb: "Treatment memory is only as good as the charting behind it, see how sessions are recorded.",
+              blurb: "Treatment memory comes from your charting. See how a session is recorded.",
             },
             {
               href: "/features/booking-calendar",
               label: "Booking and calendar",
-              blurb: "Every appointment feeds the record, and reminders help returning clients keep their course going.",
+              blurb: "Each appointment adds to the record, and email reminders help clients keep their course on schedule.",
             },
             {
               href: "/electrolysis-software",
               label: "Electrolysis practice software",
-              blurb: "See where treatment memory fits in the whole electrolysis workflow.",
+              blurb: "See where treatment memory fits in the rest of the practice.",
             },
           ]}
         />
 
         <WalkthroughCTA
-          title="See treatment memory on a real client history."
-          body="We'll walk through the Before Today briefing and how your charting carries forward, and reply within one business day."
+          title="See treatment memory on a returning client"
+          body="We reply within one business day to set a time, then open a returning client and walk you through the Before Today briefing."
         />
       </main>
       <SiteFooter />

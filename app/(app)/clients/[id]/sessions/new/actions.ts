@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { Modality } from "@/lib/types/database";
 import { captureServerEvent } from "@/lib/analytics/server";
+import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 
 // PR #180. Loaded from a separate scope so the RPC call can use the
 // service role (the mark_appointment_complete RPC is SECURITY DEFINER
@@ -114,7 +115,9 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     throw new Error("Invalid modality.");
   }
 
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await timed("session-start.identity", () =>
+    getCurrentPractitionerWithStudio(),
+  );
   const supabase = await createClient();
 
   // PR #156. Validate the optional appointment lineage BEFORE touching
@@ -134,11 +137,17 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     if (!UUID_RE.test(appointmentIdRaw)) {
       throw new Error("Invalid appointment id.");
     }
-    const { data: appt, error: apptErr } = await supabase
-      .from("appointments")
-      .select("id, studio_id, client_id, practitioner_id, status, ends_at")
-      .eq("id", appointmentIdRaw)
-      .maybeSingle();
+    const { data: appt, error: apptErr } = await timed(
+      "session-start.lineage",
+      // async, not a bare arrow: a PostgREST builder is a THENABLE, not a
+      // Promise, so timed<T> cannot accept it directly.
+      async () =>
+        await supabase
+          .from("appointments")
+          .select("id, studio_id, client_id, practitioner_id, status, ends_at")
+          .eq("id", appointmentIdRaw)
+          .maybeSingle(),
+    );
     if (apptErr) {
       throw new Error(`Failed to verify appointment: ${apptErr.message}`);
     }
@@ -204,6 +213,7 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   // absent → "Client not found in this studio." → HTTP 500). The value is
   // still not trusted: the command re-proves an active membership in this
   // studio at the SECURITY DEFINER boundary before it reads anything.
+  const rpcSpan = startPerfSpan("session-start.rpc");
   let { data: startRows, error: startErr } = await supabase.rpc("start_session", {
     p_client_id: clientId,
     p_modality: modality as Modality,
@@ -249,6 +259,7 @@ export async function startSessionAction(formData: FormData): Promise<void> {
       p_coalesce_minutes: COALESCE_MINUTES,
     }));
   }
+  rpcSpan.end();
 
   if (startErr) {
     throw new Error(`Failed to start session: ${mapSessionCommandError(startErr)}`);
@@ -264,6 +275,24 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   // which is exactly what the old `existing` lookup told the analytics event.
   const reusedExisting = started.reused === true;
 
+  // CLN-002: an older command can coalesce appointment B onto A's chart.
+  // Read the committed lineage through RLS before completing/postcare for B
+  // or redirecting to that chart. Missing/unreadable lineage is not permission
+  // to proceed. This also contains reverse skew until the additive command
+  // repair is applied; it does not claim to repair the database's selection.
+  if (appointmentId) {
+    const { data: linkedSession, error: linkError } = await supabase
+      .from("sessions")
+      .select("appointment_id")
+      .eq("id", sessionId)
+      .eq("studio_id", studio.id)
+      .eq("client_id", clientId)
+      .maybeSingle();
+    if (linkError || !linkedSession || linkedSession.appointment_id !== appointmentId) {
+      throw new Error("The chart could not be linked to this appointment. Refresh the appointment and try again.");
+    }
+  }
+
   // PR #180. Auto-mark the linked appointment completed BEFORE
   // revalidate so the calendar / appointment detail page sees the
   // new terminal status when the practitioner navigates back. The
@@ -274,13 +303,15 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   // start. The practitioner can still complete the appointment
   // by hand via the calendar Mark completed button.
   if (appointmentId && appointmentStatus && appointmentEndsAt) {
-    await maybeMarkAppointmentCompletedOnSessionStart({
-      appointmentId,
-      studioId: studio.id,
-      practitionerId: practitioner.id,
-      status: appointmentStatus,
-      endsAt: appointmentEndsAt,
-    });
+    await timed("session-start.appointment-complete", () =>
+      maybeMarkAppointmentCompletedOnSessionStart({
+        appointmentId,
+        studioId: studio.id,
+        practitionerId: practitioner.id,
+        status: appointmentStatus,
+        endsAt: appointmentEndsAt,
+      }),
+    );
     revalidatePath(`/calendar/${appointmentId}`);
   }
 
@@ -295,7 +326,9 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     },
   });
 
+  const revalidateSpan = startPerfSpan("session-start.revalidate");
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");
+  revalidateSpan.end();
   redirect(`/clients/${clientId}/sessions/${sessionId}`);
 }

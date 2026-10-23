@@ -1,10 +1,17 @@
 import Link from "next/link";
+import { orderByRecency } from "@/lib/sessions/charted-session";
+// RESP-CLIENT-INTAKE-01. The four outbound controls measured as dead clicks on
+// this page use the shipped navigation leaf (DESIGN contract 2c). The remaining
+// bare <Link>s here — the /clients back link and the two Edit links — were NOT
+// in the measured slice and are deliberately left alone.
+import { PendingLink } from "@/components/pending-link";
 import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
   pickLastTreatment,
+  pickNewestNonVoidSession,
   pickPreClientWatchPlanSource,
   type ClinicalSummaryBlock,
   type LastSessionSummary,
@@ -33,7 +40,7 @@ import {
 import {
   getAppointmentsForClientProfile,
   getClientById,
-  getCurrentPractitionerWithStudio,
+  requirePractitionerWithStudio,
   sessionPerformerName,
 } from "@/lib/supabase/queries";
 import { ClientAppointmentTimeline } from "@/components/client-appointment-timeline";
@@ -216,7 +223,7 @@ export default async function ClientCheatSheetPage({
   // resolution is measured separately from its domain reads so the summary
   // can attribute time to the shell, to identity, and to page content.
   const { studio, practitioner } = await timed("client-profile.identity", () =>
-    getCurrentPractitionerWithStudio(),
+    requirePractitionerWithStudio(),
   );
   // Domain window opens here and closes immediately before the render return
   // below, so it covers the whole data-assembly phase INCLUDING the
@@ -232,6 +239,8 @@ export default async function ClientCheatSheetPage({
   }
 
   const { client, pricing, sessions, practitioners } = data;
+  const sessionsByRecency = orderByRecency(sessions);
+  const newestSession = pickNewestNonVoidSession(sessionsByRecency);
   // PR Willow launch fixes: surface past appointments that the
   // practitioner has not charted yet under the Sessions tab. The
   // helper filters out appointments that already have a session
@@ -455,7 +464,7 @@ export default async function ClientCheatSheetPage({
   // (or, for laser/legacy sessions, raw entries) wins. An uncharted
   // newer session still appears under Needs charting; it just can't
   // blank out the summary.
-  const recentSessions = sessions.slice(0, 25);
+  const recentSessions = sessionsByRecency.slice(0, 25);
   let lastTreatment: (typeof sessions)[number] | null = null;
   let lastTreatmentSummary: LastSessionSummary | null = null;
   let lastTreatmentBlocks: ClinicalSummaryBlock[] = [];
@@ -483,15 +492,15 @@ export default async function ClientCheatSheetPage({
   // PERF-02A. BOTH clinical block reads are issued first, their structured
   // areas are attached in ONE read, and only then is each result consumed.
   //
-  // WHY. `recentSessions` is `sessions.slice(0, 25)` and the intelligence
-  // window is `sessions.slice(0, 200)`, so the summary's block ids are ALWAYS a
-  // strict subset of the intelligence read's. `getSessionBlockAreasByBlockIds`
+  // WHY. Both windows use sessionsByRecency: <=25 summary and <=200
+  // intelligence, so the summary block ids are a subset of the intelligence read's. `getSessionBlockAreasByBlockIds`
   // opens with `[...new Set(blockIds)]`, so the second attach was re-issuing a
   // query whose rows the first had just fetched — a wholly redundant round trip
   // on the slowest route in the app, paid on every overview load.
   //
   // WHAT IS DELIBERATELY UNCHANGED. Selection semantics: pickLastTreatment and
-  // pickPreClientWatchPlanSource receive exactly the rows they received before.
+  // pickPreClientWatchPlanSource retain the bounded window. Shared recency is
+  // applied before truncation so timestamp ties cannot omit the winning row.
   // Both `session_blocks` reads keep their own projection, their own session
   // window and their own CLIN-01-B unavailability flag — the rows are held in
   // two variables rather than merged into one array precisely so that one read
@@ -505,8 +514,8 @@ export default async function ClientCheatSheetPage({
   //
   // This is a REORDERING, not a dedupe. Every projection, filter, session
   // window (<=25 summary, <=200 intelligence), ordering and tab gate below is
-  // byte-for-byte what it was, so each tab issues exactly the queries it issued
-  // before; only the order they are awaited in changed.
+  // preserved with shared recency applied before bounds. The reads retain
+  // their tab gates and concurrency; no additional query is introduced.
   //
   // EACH UNIT RESOLVES; NONE REJECTS. That is the correctness crux, not a style
   // choice. A bare Promise.all over three throwing promises rejects as a unit,
@@ -642,7 +651,7 @@ export default async function ClientCheatSheetPage({
           .eq("studio_id", studio.id)
           .in(
             "session_id",
-            sessions.slice(0, 200).map((sess) => sess.id),
+            sessionsByRecency.slice(0, 200).map((sess) => sess.id),
           )
           .is("deleted_at", null);
         if (intelBlocksError) {
@@ -911,12 +920,18 @@ export default async function ClientCheatSheetPage({
           </Link>
         </div>
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Link
+          {/* RESP-CLIENT-INTAKE-01 RANK 1. The entry to charting, and the
+              highest-frequency outbound control on this page. Its destination
+              is a TRUE depth-3 dependency chain (identity -> client -> last
+              charted treatment), so no wave collapse is available there and
+              acknowledgement is the only remedy the route admits. */}
+          <PendingLink
             href={`/clients/${client.id}/sessions/new`}
+            pendingLabel="Opening new session…"
             className="rounded-md bg-neutral-900 px-4 py-2.5 text-center text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
           >
             + Log session
-          </Link>
+          </PendingLink>
           {/* Collapsed: a compact "+ Book appointment" button paired
               with Log session. Expanded: the booking card grows into
               the remaining row width (full-width on phones). */}
@@ -1017,12 +1032,20 @@ export default async function ClientCheatSheetPage({
                 visually outranked the real clinical record. This link makes the
                 canonical path the obvious one and is deliberately rendered
                 BEFORE the legacy block below. */}
-            <a
+            {/* RESP-CLIENT-INTAKE-01 RANK 3. This was a raw <a>, and a raw <a>
+                to an in-app URL leaves the client router entirely: measured, the
+                tap issued a DOCUMENT request carrying no RSC header and REPLACED
+                the document, re-running the whole shell and re-hydrating all JS
+                — for a navigation that only changes the query string. The href
+                is byte-identical; only the element changed. The dashboard already
+                ships a PendingLink to this very destination. */}
+            <PendingLink
               href={`/clients/${client.id}?tab=consultation`}
+              pendingLabel="Opening consultation…"
               className="mt-4 inline-flex items-center rounded-md border border-neutral-900 px-3 py-2 text-xs font-medium uppercase tracking-wider text-neutral-900 hover:bg-neutral-50 dark:border-neutral-100 dark:text-neutral-100 dark:hover:bg-neutral-900"
             >
               Add skin &amp; hair analysis
-            </a>
+            </PendingLink>
 
             {/* LEGACY, READ-ONLY (Chloe Session 1A). This column predates the
                 append-only clinical record and was editable in place: every
@@ -1076,7 +1099,7 @@ export default async function ClientCheatSheetPage({
             performerName={lastTreatmentPerformer}
             aftercareExplainedAt={lastTreatmentAftercareAt}
             totalMinutes={lastTreatmentTotalMinutes}
-            isLatestSession={lastTreatment?.id === sessions[0]?.id}
+            isLatestSession={lastTreatment?.id === newestSession?.id}
             summary={lastTreatmentSummary}
             unavailable={clinicalHistoryUnavailable}
           />
@@ -1465,12 +1488,17 @@ export default async function ClientCheatSheetPage({
                   Intake started <FormattedDateTime iso={intake.started_at} />,
                   not yet submitted.
                 </p>
-                <Link
+                {/* RESP-CLIENT-INTAKE-01 RANK 4 (1 of 3). All three status
+                    branches reach the same route and must acknowledge
+                    identically — a branch left bare would acknowledge only for
+                    some intake states, which reads as a bug in the others. */}
+                <PendingLink
                   href={`/clients/${client.id}/intake`}
+                  pendingLabel="Opening intake…"
                   className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
                 >
                   View intake →
-                </Link>
+                </PendingLink>
               </div>
               {/* PR #293 follow-up: surface the Resend intake link CTA on the
                   Health & Forms tab practitioners actually use (this overview
@@ -1493,12 +1521,14 @@ export default async function ClientCheatSheetPage({
               <p className="text-sm text-neutral-600">
                 Submitted <FormattedDateTime iso={intake.submitted_at} />
               </p>
-              <Link
+              {/* RESP-CLIENT-INTAKE-01 RANK 4 (2 of 3). */}
+              <PendingLink
                 href={`/clients/${client.id}/intake`}
+                pendingLabel="Opening intake…"
                 className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
               >
                 View intake →
-              </Link>
+              </PendingLink>
             </div>
           )}
           {intake?.status === "reviewed" && intake.reviewed_at && (
@@ -1506,12 +1536,14 @@ export default async function ClientCheatSheetPage({
               <p className="text-sm text-neutral-600">
                 Reviewed <FormattedDateTime iso={intake.reviewed_at} />
               </p>
-              <Link
+              {/* RESP-CLIENT-INTAKE-01 RANK 4 (3 of 3). */}
+              <PendingLink
                 href={`/clients/${client.id}/intake`}
+                pendingLabel="Opening intake…"
                 className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
               >
                 View intake →
-              </Link>
+              </PendingLink>
             </div>
           )}
         </section>
@@ -1546,52 +1578,70 @@ export default async function ClientCheatSheetPage({
                 belongs only to a read that succeeded and found nothing. */}
             {clinicalHistoryUnavailable ? (
               <ClinicalUnavailableNotice testId="sessions-last-treatment-unavailable" />
-            ) : lastTreatment ? (
+            ) : lastTreatment ||
+              (preClientWatchPlan &&
+                hasFromLastVisitContent(preClientWatchPlan)) ? (
               <div className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
-                <div className="flex flex-wrap items-baseline justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-medium">
-                      <FormattedDateTime iso={lastTreatment.started_at} />
+                {/* HON-10: with no charted treatment, a plan written on an uncharted
+                    visit (consultation-only, abandoned) still gets this card, so its
+                    Watch/Plan band below is not hidden; the appointment page already
+                    shows it in that case. Still the ONE band render on this tab. */}
+                {lastTreatment ? (
+                  <>
+                    <div className="flex flex-wrap items-baseline justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-medium">
+                          <FormattedDateTime iso={lastTreatment.started_at} />
+                        </div>
+                        <div className="text-xs text-neutral-500">
+                          {lastTreatment.modality}
+                          {lastTreatmentPerformer && ` · ${lastTreatmentPerformer}`}
+                          {lastTreatment.price_paid_cents != null &&
+                            ` · Session price ${formatPrice(lastTreatment.price_paid_cents)}`}
+                        </div>
+                        {/* A newer uncharted session exists; say so quietly
+                            instead of letting it blank out this card. It
+                            still shows under Needs charting below. */}
+                        {lastTreatment.id !== newestSession?.id && (
+                          <p className="mt-1 text-xs text-neutral-500">
+                            Most recent charted treatment. A newer session has no
+                            treatment details yet.
+                          </p>
+                        )}
+                      </div>
+                      {/* RESP-CLIENT-INTAKE-01 RANK 2. This lands on Session
+                          Detail, the slowest destination measured on this surface
+                          (714 ms median against 444-463 ms for the others), and
+                          said nothing for all of it. The route's own waterfall is
+                          owned by #732 and is deliberately untouched here. */}
+                      <PendingLink
+                        href={`/clients/${client.id}/sessions/${lastTreatment.id}`}
+                        pendingLabel="Opening session…"
+                        className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                      >
+                        Open →
+                      </PendingLink>
                     </div>
-                    <div className="text-xs text-neutral-500">
-                      {lastTreatment.modality}
-                      {lastTreatmentPerformer && ` · ${lastTreatmentPerformer}`}
-                      {lastTreatment.price_paid_cents != null &&
-                        ` · Session price ${formatPrice(lastTreatment.price_paid_cents)}`}
-                    </div>
-                    {/* A newer uncharted session exists; say so quietly
-                        instead of letting it blank out this card. It
-                        still shows under Needs charting below. */}
-                    {lastTreatment.id !== sessions[0]?.id && (
-                      <p className="mt-1 text-xs text-neutral-500">
-                        Most recent charted treatment. A newer session has no
-                        treatment details yet.
-                      </p>
+                    {/* The same per-area summary the charting screen
+                        shows. Charted laser/legacy sessions without
+                        treatment areas fall back to their raw entries
+                        list; a charted session always has one or the
+                        other. */}
+                    {lastTreatmentSummary &&
+                    lastTreatmentSummary.areas.length > 0 ? (
+                      <div className="mt-3">
+                        <AreaSummaries summary={lastTreatmentSummary} />
+                      </div>
+                    ) : (
+                      <LastSessionEntries
+                        modality={lastTreatment.modality}
+                        electrolysisEntries={lastTreatment.electrolysis_entries}
+                        laserEntries={lastTreatment.laser_entries}
+                      />
                     )}
-                  </div>
-                  <Link
-                    href={`/clients/${client.id}/sessions/${lastTreatment.id}`}
-                    className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
-                  >
-                    Open →
-                  </Link>
-                </div>
-                {/* The same per-area summary the charting screen
-                    shows. Charted laser/legacy sessions without
-                    treatment areas fall back to their raw entries
-                    list; a charted session always has one or the
-                    other. */}
-                {lastTreatmentSummary &&
-                lastTreatmentSummary.areas.length > 0 ? (
-                  <div className="mt-3">
-                    <AreaSummaries summary={lastTreatmentSummary} />
-                  </div>
+                  </>
                 ) : (
-                  <LastSessionEntries
-                    modality={lastTreatment.modality}
-                    electrolysisEntries={lastTreatment.electrolysis_entries}
-                    laserEntries={lastTreatment.laser_entries}
-                  />
+                  <p className="text-sm text-neutral-500">No charted treatments yet.</p>
                 )}
                 {/* PR #200 (Chloe iPad retest): the Watch/Plan box is
                     the card's flush footer band (attached variant +

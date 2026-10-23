@@ -7,7 +7,13 @@ import path from "node:path";
 import {
   NEW_CLIENT_WAITLIST_SLUGS_ENV,
   NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV,
+  NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED,
+  NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE,
 } from "@/lib/booking/new-client-waitlist";
+import {
+  WAITLIST_PHONE_INVALID,
+  WAITLIST_PHONE_REQUIRED,
+} from "@/lib/waitlist/signup-contact";
 
 // ===========================================================================
 // WAIT-02 — THE COMMIT POINT MOVED TO THE DATABASE
@@ -73,9 +79,15 @@ const scenario = {
   studioSendThrows: false,
   studioSendHangs: false,
   clientSendThrows: false,
+  // SMS-04: what claim_waitlist_join_ack_sms answers. The default is the
+  // switched-off studio, so no suite below can reach a provider through it;
+  // the sender's own suite proves what happens after a real claim.
+  claimResult: "studio_disabled" as string,
+  claimThrows: false,
 };
 
 function reset() {
+  storedModeForTest = "waitlist";
   deferred.length = 0;
   sends.length = 0;
   rpcCalls.length = 0;
@@ -95,8 +107,43 @@ function reset() {
     studioSendThrows: false,
     studioSendHangs: false,
     clientSendThrows: false,
+    claimResult: "studio_disabled",
+    claimThrows: false,
   });
 }
+
+// NEW-CLIENT-MODE-01: the admission authority now performs the read these
+// suites used to make via the env predicate. Delegating to the REAL
+// `resolveAdmission` with no stored value routes it through the transition
+// bridge, so every `stubEnv` below keeps meaning exactly what it meant.
+// Defaults to a CUT-OVER studio. One test below needs a studio the new
+// authority has NOT persisted, so the gate env can decide instead.
+let storedModeForTest: string | null = "waitlist";
+
+vi.mock("@/lib/booking/new-client-admission", async (orig) => {
+  const actual =
+    await orig<typeof import("@/lib/booking/new-client-admission")>();
+  return {
+    ...actual,
+    // A CUT-OVER studio: its WAITLIST mode is PERSISTED, not inherited from the
+    // legacy env list. That is what this suite is about - the durable commit
+    // path and its ordering, refusal and scoping properties - and stating it as
+    // persisted makes every claim below independent of the migration bridge, so
+    // they stay true when the bridge is deleted.
+    getNewClientAdmissionMode: vi.fn(
+      async (studio: { slug: string | null }) =>
+        actual.resolveAdmission({
+          storedMode: storedModeForTest,
+          // A stored mode in these suites means an OWNER CHOSE it, so it
+          // carries the audit stamp the real command always writes. `null`
+          // means nothing was chosen and the gate env decides.
+          storedSetAt: storedModeForTest == null ? null : "2026-09-30T12:00:00.000Z",
+          readFailed: false,
+          studioSlug: studio.slug,
+        }),
+    ),
+  };
+});
 
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 
@@ -159,6 +206,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     rpc: async (fn: string, args: Record<string, unknown>) => {
       rpcCalls.push({ fn, args });
       trace.push(`rpc:${fn}`);
+      if (fn === "claim_waitlist_join_ack_sms") {
+        if (scenario.claimThrows) throw new Error(`claim exploded ${CANARY_PHONE}`);
+        return { data: [{ result: scenario.claimResult }], error: null };
+      }
       if (scenario.commandThrows) throw new Error(`transport exploded ${CANARY_EMAIL}`);
       if (scenario.commandError) return { data: null, error: scenario.commandError };
       return {
@@ -174,13 +225,24 @@ const { submitNewClientBookingWaitlistAction } = await import(
   "@/app/book/[slug]/waitlist-actions"
 );
 
-function form(overrides: Record<string, string> = {}): FormData {
+/**
+ * A complete submission. 0208 made the SMS question part of it: a visitor who
+ * has not answered cannot submit, so the fixture answers. "no" is the default
+ * because it is the answer that grants nothing; the Yes path is proved
+ * explicitly below. A `null` override REMOVES a field, which is how "not
+ * answered" is modelled.
+ */
+function form(overrides: Record<string, string | null> = {}): FormData {
   const fd = new FormData();
   fd.set("slug", SLUG);
   fd.set("name", CANARY_NAME);
   fd.set("email", CANARY_EMAIL);
   fd.set("phone", CANARY_PHONE);
-  for (const [k, v] of Object.entries(overrides)) fd.set(k, v);
+  fd.set("sms_consent_answer", "no");
+  for (const [k, v] of Object.entries(overrides)) {
+    if (v === null) fd.delete(k);
+    else fd.set(k, v);
+  }
   return fd;
 }
 
@@ -216,9 +278,9 @@ describe("the database is the commit point", () => {
     const result = await submitNewClientBookingWaitlistAction(form());
     expect(result).toEqual({ ok: true });
     // Nothing has been sent yet: the sends are post-response work.
-    expect(trace).toEqual(["rpc:join_new_client_waitlist"]);
+    expect(trace).toEqual(["rpc:join_new_client_waitlist_with_phone_and_sms_answer"]);
     await flushPostResponse();
-    expect(trace).toEqual(["rpc:join_new_client_waitlist", "send:studio", "send:client"]);
+    expect(trace).toEqual(["rpc:join_new_client_waitlist_with_phone_and_sms_answer", "send:studio", "send:client"]);
   });
 
   it("A REFUSED STUDIO NOTIFICATION STILL REPORTS JOINED", async () => {
@@ -264,12 +326,22 @@ describe("the database is the commit point", () => {
   it("passes the SERVER-RESOLVED studio id and the bounded submission, nothing else", async () => {
     await submitNewClientBookingWaitlistAction(form({ slug: "attacker-chosen-slug" }));
     expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0].fn).toBe("join_new_client_waitlist");
+    expect(rpcCalls[0].fn).toBe("join_new_client_waitlist_with_phone_and_sms_answer");
     expect(rpcCalls[0].args).toEqual({
       p_studio_id: STUDIO_ID,
       p_name: CANARY_NAME,
       p_email: CANARY_EMAIL,
       p_phone: CANARY_PHONE,
+      // The ONE transition fact 0204 cannot read for itself. TRUE here, and that
+      // is the point: this suite lists the studio's REAL slug, while the post
+      // above carries an attacker-chosen one that is NOT listed and would give
+      // false. So the value is proved to come from the server-resolved studio.
+      // Consulted only while the row is unstamped; retired with the bridge.
+      p_legacy_bridge_waitlist: true,
+      // 0208. The visitor's own answer, as a boolean and nothing more: no
+      // wording version, no timestamp, no source. The command stamps those
+      // itself, and only for a Yes on a newly created entry.
+      p_sms_consent: false,
     });
     // No status, no source, no joined_at, no entry id: the command owns all of
     // them, so a forged post cannot propose one.
@@ -281,7 +353,113 @@ describe("the database is the commit point", () => {
   it("performs NO direct table access at all", async () => {
     await submitNewClientBookingWaitlistAction(form());
     expect(tableAccess).toEqual([]);
-    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist"]);
+    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist_with_phone_and_sms_answer"]);
+  });
+});
+
+describe("0208 — the SMS answer is the visitor's own, and explicit", () => {
+  it("a Yes reaches the command as `p_sms_consent: true`, with every other field unchanged", async () => {
+    expect(await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }))).toEqual({
+      ok: true,
+    });
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].fn).toBe("join_new_client_waitlist_with_phone_and_sms_answer");
+    expect(rpcCalls[0].args).toEqual({
+      p_studio_id: STUDIO_ID,
+      p_name: CANARY_NAME,
+      p_email: CANARY_EMAIL,
+      p_phone: CANARY_PHONE,
+      p_legacy_bridge_waitlist: true,
+      p_sms_consent: true,
+    });
+  });
+
+  it("a No joins exactly like a Yes: same answer to the visitor, same emails", async () => {
+    // Declining removes SMS eligibility only. The place on the waitlist and
+    // the email acknowledgement do not depend on it.
+    expect(await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "no" }))).toEqual({
+      ok: true,
+    });
+    await flushPostResponse();
+    expect(rpcCalls.map((c) => c.args.p_sms_consent)).toEqual([false]);
+    expect(sends.map((s) => s.namespace)).toEqual(["studio", "client"]);
+  });
+
+  // SMS-04 (approved): a phone number is REQUIRED on every new public signup,
+  // whatever the answer. This replaces "a No needs no number". A No still
+  // joins -- with a number -- and gets the same entry, emails and place.
+  for (const answer of ["no", "yes"] as const) {
+    it(`SMS-04: a ${answer === "no" ? "No" : "Yes"} without a phone is refused before the lookup, the limiter and the command`, async () => {
+      for (const [phone, error] of [
+        [null, WAITLIST_PHONE_REQUIRED],
+        ["", WAITLIST_PHONE_REQUIRED],
+        ["   ", WAITLIST_PHONE_REQUIRED],
+        ["\t\n", WAITLIST_PHONE_REQUIRED],
+      ] as const) {
+        const result = await submitNewClientBookingWaitlistAction(
+          form({ sms_consent_answer: answer, phone }),
+        );
+        expect(result, JSON.stringify(phone)).toEqual({ ok: false, error });
+      }
+      expect(rpcCalls).toEqual([]);
+      expect(tableAccess).toEqual([]);
+      await flushPostResponse();
+      expect(sends).toEqual([]);
+    });
+
+    it(`SMS-04: a ${answer === "no" ? "No" : "Yes"} with a number the sender could not text is refused, and nothing is written`, async () => {
+      for (const phone of ["555-12", "12345", "not a phone", "+123", "020 7946 0958"]) {
+        const result = await submitNewClientBookingWaitlistAction(
+          form({ sms_consent_answer: answer, phone }),
+        );
+        expect(result, phone).toEqual({ ok: false, error: WAITLIST_PHONE_INVALID });
+      }
+      expect(rpcCalls).toEqual([]);
+      await flushPostResponse();
+      expect(sends).toEqual([]);
+    });
+  }
+
+  it("SMS-04: a No with a usable number joins, and the number reaches the command as typed", async () => {
+    expect(
+      await submitNewClientBookingWaitlistAction(
+        form({ sms_consent_answer: "no", phone: "  (416) 555-0100 " }),
+      ),
+    ).toEqual({ ok: true });
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].args.p_phone).toBe("(416) 555-0100");
+    expect(rpcCalls[0].args.p_sms_consent).toBe(false);
+    await flushPostResponse();
+    expect(sends.map((s) => s.namespace)).toEqual(["studio", "client"]);
+  });
+
+  for (const [label, value] of [
+    ["missing", null],
+    ["empty", ""],
+    ["a checkbox's default value", "on"],
+    ["a differently-cased Yes", "YES"],
+    ["a boolean spelling", "true"],
+  ] as const) {
+    it(`an answer that is ${label} is NOT ANSWERED: refused before the lookup, the limiter and the command`, async () => {
+      const result = await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: value }));
+      expect(result).toEqual({ ok: false, error: NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED });
+      // Never read as "no" and joined anyway: nothing at all happened.
+      expect(rpcCalls).toEqual([]);
+      expect(tableAccess).toEqual([]);
+      await flushPostResponse();
+      expect(sends).toEqual([]);
+    });
+  }
+
+  it("the refusal copy names the form, never the studio or the queue", () => {
+    for (const copy of [
+      NEW_CLIENT_WAITLIST_SMS_ANSWER_REQUIRED,
+      NEW_CLIENT_WAITLIST_SMS_NEEDS_PHONE,
+      WAITLIST_PHONE_REQUIRED,
+      WAITLIST_PHONE_INVALID,
+    ]) {
+      expect(copy).not.toMatch(/full|capacity|queue|position|already/i);
+    }
   });
 });
 
@@ -305,7 +483,7 @@ describe("duplicate submission", () => {
     // it: a duplicate must not manufacture a row or a message.
     scenario.commandResult = "already_waiting";
     await submitNewClientBookingWaitlistAction(form());
-    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist"]);
+    expect(rpcCalls.map((c) => c.fn)).toEqual(["join_new_client_waitlist_with_phone_and_sms_answer"]);
     expect(sends).toHaveLength(0);
     expect(tableAccess).toEqual([]);
   });
@@ -397,7 +575,7 @@ describe("a duplicate is externally indistinguishable from a fresh join", () => 
 
       expect(sends, `${outcome} sent mail before responding`).toHaveLength(0);
       expect(trace, `${outcome} awaited more than the command`).toEqual([
-        "rpc:join_new_client_waitlist",
+        "rpc:join_new_client_waitlist_with_phone_and_sms_answer",
       ]);
     }
   });
@@ -644,6 +822,9 @@ describe("notification idempotency is scoped to the join", () => {
 
 describe("the gate still governs everything", () => {
   it("a studio NOT in the waitlist gate never reaches the command", async () => {
+    // Nothing persisted, so the GATE is what decides - and it names another
+    // studio, so this one is not admitting joins at all.
+    storedModeForTest = null;
     setEnv(NEW_CLIENT_WAITLIST_SLUGS_ENV, "some-other-studio");
     expect(await submitNewClientBookingWaitlistAction(form())).toEqual({
       ok: false,
@@ -665,34 +846,52 @@ describe("the gate still governs everything", () => {
     expect(rpcCalls).toHaveLength(0);
   });
 
-  it("with the DURABLE flag unset, no database command runs at all", async () => {
-    // Stage A of the rollout: migration applied, code deployed, dark.
-    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, undefined);
-    const result = await submitNewClientBookingWaitlistAction(form());
-    expect(rpcCalls).toHaveLength(0);
-    expect(result).toEqual({ ok: true });
-  });
-
-  it("the durable flag is EXACT-MATCH, not a prefix or substring", async () => {
-    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, `${SLUG}-archive,other-studio`);
-    await submitNewClientBookingWaitlistAction(form());
-    expect(rpcCalls).toHaveLength(0);
-  });
-
-  it("the durable flag is derived from the SERVER-RESOLVED slug, not the posted one", async () => {
-    // The form claims a slug that IS listed; the resolved studio's slug is not.
-    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, "attacker-chosen-slug");
-    await submitNewClientBookingWaitlistAction(form({ slug: "attacker-chosen-slug" }));
-    expect(rpcCalls).toHaveLength(0);
-  });
-
-  it("a blank or whitespace-only durable list is OFF", async () => {
-    for (const value of ["", "   ", ",, ,"]) {
+  // NEW-CLIENT-MODE-01 RETARGET. These four tests asserted that a SECOND env
+  // list chose between a durable write and an email-only notification, AFTER
+  // the gate had already admitted the join. That switch is gone: `waitlist`
+  // now MEANS durable, so there is nothing left for it to gate and the cases
+  // below assert the contract that replaced it.
+  it("the durable env list no longer gates a CUT-OVER studio", async () => {
+    for (const value of [undefined, "", "   ", `${SLUG}-archive,other-studio`, "attacker-chosen-slug"]) {
       reset();
       setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, value);
-      await submitNewClientBookingWaitlistAction(form());
-      expect(rpcCalls, `value ${JSON.stringify(value)} must be OFF`).toHaveLength(0);
+      const result = await submitNewClientBookingWaitlistAction(form());
+      expect(
+        rpcCalls.length,
+        `durable list ${JSON.stringify(value)} must not stop the command`,
+      ).toBe(1);
+      expect(result.ok).toBe(true);
     }
+  });
+
+  it("REGRESSION: dropping the durable slug cannot make a CUT-OVER join email-only", async () => {
+    // The named regression, and its exact scope. Once a studio's WAITLIST mode
+    // has been PERSISTED through the new authority, an edit to the legacy
+    // durable list must not move it off the durable path - the database row is
+    // the commitment and an email cannot stand in for it.
+    //
+    // A studio still on the legacy bridge is the OTHER case and is deliberately
+    // not this test's: it keeps whatever commit point it has in production
+    // today, which is proved in
+    // tests/lib/booking/new-client-waitlist-durability-bridge.test.ts.
+    reset();
+    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, SLUG);
+    await submitNewClientBookingWaitlistAction(form());
+    const withFlag = rpcCalls.length;
+    reset();
+    setEnv(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, undefined);
+    await submitNewClientBookingWaitlistAction(form());
+    expect(rpcCalls.length, "the row is written either way").toBe(withFlag);
+    expect(withFlag).toBe(1);
+  });
+
+  it("the action carries no email-only commit branch at all", async () => {
+    // Structural, because the absence is the point: a second commit point that
+    // exists but is unreachable is worse than one that is gone.
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/book/[slug]/waitlist-actions.ts", "utf8");
+    expect(src).not.toMatch(/isNewClientWaitlistDurableEnabled\s*\(/);
+    expect(src).not.toMatch(/\?\s*submitToDurableWaitlist/);
   });
 });
 
@@ -777,7 +976,7 @@ describe("Stage B records what closed, and what is still open", () => {
   it("ANTI-VACUITY: the durable write path is still present", () => {
     // If this stops being true the rest of this block is moot, and that must
     // be a visible decision rather than a silently passing suite.
-    expect(ACTION).toContain('rpc("join_new_client_waitlist"');
+    expect(ACTION).toContain('rpc("join_new_client_waitlist_with_phone_and_sms_answer"');
   });
 
   it("still records it as a studio-scoped personal-data class", () => {
@@ -916,16 +1115,38 @@ describe("Stage B records what closed, and what is still open", () => {
     expect(m0010).not.toMatch(/studios_slug_(?:format|shape|length)_check/);
   });
 
-  it("states the CONSEQUENCE: activation stays explicit, and has not been taken", () => {
-    expect(RISKS).toContain("PRODUCTION STILL ENABLES ZERO STUDIOS");
-    expect(RISKS).toContain("Activation remains an explicit operator step");
+  it("states the CONSEQUENCE: activation stays explicit, and HAS been taken", () => {
+    // POLARITY CORRECTED 2026-09-19 (WAIT-DOCS-RECON). This test used to require
+    // the two canonical documents to say production enabled ZERO studios and
+    // named NO studio. Both were true when written and were disproved by
+    // production on 2026-08-25, when the durable commit point began accepting
+    // public joins. A guard that mandates a stale fact keeps it stale, so the
+    // assertions are re-pointed at the corrected claims rather than relaxed.
+    // RE-POINTED 2026-09-20, same correction as the ENV_DOC assertion below.
+    // "PRODUCTION ENABLES ONE STUDIO" was a present-tense claim that persisted
+    // rows cannot support: rows outlive the flag, so they bound the activation
+    // in time and say nothing about the value now. The risk register must carry
+    // the DATED BOUND instead.
+    expect(RISKS).toContain("ONE STUDIO WAS ENABLED at every instant a durable row was written");
+    expect(RISKS).toContain("Activation is an explicit operator step");
+    expect(RISKS).toContain("it has been taken for one studio");
     // ...and the same law is stated where an operator would actually go to
     // turn the flag on, not only in the risk register.
-    expect(ENV_DOC).toContain("PRODUCTION CURRENTLY NAMES NO STUDIO");
+    // RE-POINTED 2026-09-20. This asserted "PRODUCTION NAMES ONE STUDIO", which
+    // was the same over-reach in the opposite direction from the "NAMES NO
+    // STUDIO" it replaced: a durable row proves the allowlists matched WHEN IT
+    // WAS WRITTEN, never that they match now. The env doc must carry the dated
+    // bound instead, and must say plainly that it is not a current reading.
+    expect(ENV_DOC).toContain("DATED EVIDENCE, NOT A CURRENT READING");
+    expect(ENV_DOC).toContain("2026-08-25T22:27Z");
     expect(ENV_DOC).toContain("release decision, never a configuration tweak");
     // The §13 notice process is named at the point of activation, because that
     // is the decision an operator is about to make.
     expect(ENV_DOC).toContain("confirm the §13 notice process");
+    // EXPLICITNESS IS THE PART THAT SURVIVES. Activation having been taken must
+    // never be recorded as having been automatic, inferred, or read from the
+    // variable: the value is Sensitive and is never read back.
+    expect(ENV_DOC).toContain("The value is Sensitive and was NOT read");
   });
 });
 
@@ -982,6 +1203,10 @@ describe("no studio is enabled at merge time", () => {
     expect(filesNamingTheFlag()).toEqual([
       "e2e/helpers/local-env.ts",
       "e2e/new-client-waitlist.spec.ts",
+      // The migration bridge, and the ONLY consumer of this flag. It exists so
+      // the flag has exactly one reader and one deletion point; when it goes,
+      // this entry goes with it. Sorts BEFORE the module below: "-" < ".".
+      "lib/booking/new-client-waitlist-durability-bridge.ts",
       "lib/booking/new-client-waitlist.ts",
       "scripts/check-production-env-gates.mjs",
       "tests/app/book/new-client-waitlist-action.test.ts",
@@ -1039,5 +1264,120 @@ describe("no studio is enabled at merge time", () => {
     // pre-filled there, a fresh deploy would arrive already enabled.
     const example = read(".env.local.example");
     expect(example).not.toContain("NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS");
+  });
+});
+
+// ===========================================================================
+// SMS-04 — THE ONE JOIN ACKNOWLEDGEMENT TEXT, AS THE ACTION ASKS FOR IT
+// ===========================================================================
+//
+// The action's half of the guarantee: it asks the database for the text ONLY
+// for an entry this request created with a Yes, only after the commit and
+// after the response, and it starts that ask before the two emails so a slow
+// email cannot hold it back. Whether a text is then sent is the database
+// claim's decision (0210, proved against a real database in
+// tests/db/sms-waitlist-join-ack.db.test.ts) and the sender's
+// (tests/lib/waitlist/join-ack-sms.test.ts). The claim here answers
+// `studio_disabled` unless a case says otherwise, so no case can reach a
+// provider.
+describe("SMS-04 — the join text is asked for once, and only for a new Yes", () => {
+  const claims = () => rpcCalls.filter((c) => c.fn === "claim_waitlist_join_ack_sms");
+
+  it("a created Yes: nothing before the response; afterwards exactly ONE claim, for THIS entry", async () => {
+    expect(await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }))).toEqual({
+      ok: true,
+    });
+    expect(claims(), "the claim must not run before the response").toEqual([]);
+    await flushPostResponse();
+    expect(claims()).toEqual([
+      { fn: "claim_waitlist_join_ack_sms", args: { p_studio_id: STUDIO_ID, p_entry_id: "entry-1" } },
+    ]);
+  });
+
+  it("is started BEFORE the two emails", async () => {
+    await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }));
+    await flushPostResponse();
+    expect(trace).toEqual([
+      "rpc:join_new_client_waitlist_with_phone_and_sms_answer",
+      "rpc:claim_waitlist_join_ack_sms",
+      "send:studio",
+      "send:client",
+    ]);
+  });
+
+  it("a studio email that never answers cannot hold the text back", async () => {
+    scenario.studioSendHangs = true;
+    await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }));
+    const queued = deferred.splice(0, deferred.length);
+    expect(queued).toHaveLength(1);
+    void queued[0]!(); // never settles: the studio email hangs
+    await new Promise((r) => setTimeout(r, 0));
+    expect(claims()).toHaveLength(1);
+  });
+
+  it("a No: the person joins and is emailed, and NO claim is made", async () => {
+    expect(await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "no" }))).toEqual({
+      ok: true,
+    });
+    await flushPostResponse();
+    expect(claims()).toEqual([]);
+    expect(sends.map((s) => s.namespace)).toEqual(["studio", "client"]);
+  });
+
+  it("a DUPLICATE submission with a Yes: no claim, nothing scheduled, the same answer", async () => {
+    scenario.commandResult = "already_waiting";
+    expect(await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }))).toEqual({
+      ok: true,
+    });
+    expect(deferred).toHaveLength(0);
+    await flushPostResponse();
+    expect(claims()).toEqual([]);
+    expect(sends).toEqual([]);
+  });
+
+  it("a command that refused, failed or lost its answer: no claim", async () => {
+    for (const set of [
+      () => (scenario.commandResult = "invalid_input"),
+      () => (scenario.commandResult = "studio_not_found"),
+      () => (scenario.commandError = { code: "P0001" }),
+      () => (scenario.commandError = { code: "" }),
+      () => (scenario.commandThrows = true),
+    ]) {
+      reset();
+      set();
+      await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }));
+      await flushPostResponse();
+      expect(claims()).toEqual([]);
+    }
+  });
+
+  it("a created entry with no id from the command: no claim (nothing to name)", async () => {
+    scenario.entryId = null;
+    await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }));
+    await flushPostResponse();
+    expect(claims()).toEqual([]);
+  });
+
+  it("a claim that throws changes nothing the visitor sees or the emails, and logs no number", async () => {
+    scenario.claimThrows = true;
+    const logs: string[] = [];
+    const logSpy = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => {
+      logs.push(a.map(String).join(" "));
+    });
+    try {
+      expect(await submitNewClientBookingWaitlistAction(form({ sms_consent_answer: "yes" }))).toEqual({
+        ok: true,
+      });
+      await flushPostResponse();
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(claims()).toHaveLength(1);
+    expect(sends.map((s) => s.namespace)).toEqual(["studio", "client"]);
+    for (const line of [...logs, ...consoleErrors]) {
+      expect(line).not.toContain(CANARY_PHONE);
+      expect(line).not.toContain(CANARY_EMAIL);
+      expect(line).not.toContain(CANARY_NAME);
+    }
   });
 });

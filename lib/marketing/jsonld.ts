@@ -4,7 +4,7 @@
 // (addendum §7). Visible prices must equal the offer prices, both come from the
 // same PRICING_PLANS source of truth.
 
-import { CANONICAL_HOST, CONTACT_EMAIL, CURRENCY, PRICING_PLANS } from "./content";
+import { CANONICAL_HOST, CONTACT_EMAIL, CURRENCY, MARKETING_PAGES, PRICING_PLANS } from "./content";
 import type { ResourceArticle } from "./resources";
 
 const abs = (path: string): string =>
@@ -37,6 +37,23 @@ export function webSiteLd() {
 }
 
 /** SoftwareApplication with an OfferCatalog of the published plans (CAD). */
+/**
+ * The homepage's own declared description, or a hard failure.
+ *
+ * THROWS RATHER THAN FALLING BACK. A silent `?? ""` would emit structured data
+ * with an empty description if the route were ever renamed — invisible to every
+ * test that only checks the shape, and read by search engines. The route is
+ * declared in the same module, so its absence is a programming error and should
+ * read like one.
+ */
+function homeDescription(): string {
+  const home = MARKETING_PAGES.find((p) => p.path === "/");
+  if (!home?.description) {
+    throw new Error('jsonld: the "/" route has no declared description');
+  }
+  return home.description;
+}
+
 export function softwareApplicationLd() {
   const offers = PRICING_PLANS.filter((p) => p.priceLabel).map((p) => ({
     "@type": "Offer",
@@ -53,8 +70,16 @@ export function softwareApplicationLd() {
     applicationCategory: "BusinessApplication",
     operatingSystem: "Web",
     url: CANONICAL_HOST,
-    description:
-      "Electrolysis practice software that remembers every treatment, booking, intake, consent, charting, treatment memory, photos, records, and follow-up.",
+    // REUSES THE ROUTE'S OWN DESCRIPTION — deck §2: "OG description and JSON-LD
+    // description reuse the description".
+    //
+    // THIS FILE'S HEADER ALREADY PROMISED THIS AND THE CODE DID NOT KEEP IT.
+    // It says structured data "can never drift from the visible content it is
+    // derived from", while this field held a SECOND, independently written
+    // homepage description. That is exactly how it came to still emit retired
+    // copy after the route metadata was updated: nothing compared the two. One
+    // source now, so the drift is not merely fixed but unrepresentable.
+    description: homeDescription(),
     offers: {
       "@type": "OfferCatalog",
       name: "Hone plans",

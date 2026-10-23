@@ -102,6 +102,7 @@ export function CompleteProfilePanel({
   studioName,
   onSubmit,
   initialDraft,
+  collectsSmsConsent,
 }: {
   /**
    * Named in the point-of-collection disclosure, so the sentence says WHOSE
@@ -115,6 +116,15 @@ export function CompleteProfilePanel({
   studioName: string;
   /** What the entry already holds. Read for pre-fill only; never trusted as complete. */
   stored: StoredWaitlistProfile;
+  /**
+   * Whether this surface may ASK for operational-SMS consent.
+   *
+   * REQUIRED and passed straight to `ProfileFields`. It is a property of the
+   * BINDING, not of the form: consent is askable only where an inbound STOP
+   * can reach this row. The server that renders the page decides it from
+   * `ProfileAdapterCapabilities.recordsSmsConsent`; the client never infers it.
+   */
+  collectsSmsConsent: boolean;
   /**
    * Bound in WAIT-04B. Receives the PATCH plus consent as a separate argument,
    * because consent is not a profile field — it is an act with its own record
@@ -221,6 +231,7 @@ export function CompleteProfilePanel({
         // open when it does not, because a legacy entry has none and supplying
         // one is the point of this visit.
         mobileLocked={mobileOnFile}
+        collectsSmsConsent={collectsSmsConsent}
         showMobileCandidateNote={!mobileOnFile}
       />
 
@@ -229,6 +240,7 @@ export function CompleteProfilePanel({
           link; that the person is already on the list has no bearing on whether
           the collection needs disclosing. */}
       <PublicCollectionSubmit
+        collectsSmsConsent={collectsSmsConsent}
         studioName={studioName}
         label={COMPLETE_SUBMIT}
         pendingLabel="Saving…"

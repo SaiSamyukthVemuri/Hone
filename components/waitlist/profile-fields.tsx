@@ -132,11 +132,32 @@ export function ProfileFields({
   emailLocked = false,
   mobileLocked = false,
   showMobileCandidateNote = false,
+  collectsSmsConsent,
 }: {
   draft: JoinProfileDraft;
   errors: ProfileFieldErrors;
   onChange: (next: JoinProfileDraft) => void;
   disabled?: boolean;
+  /**
+   * Whether this surface may ASK for operational-SMS consent at all.
+   *
+   * REQUIRED, and deliberately not defaulted. Consent is only askable where the
+   * system can honour the withdrawal it implies, and that is a property of the
+   * BINDING, not of the form — `ProfileAdapterCapabilities.recordsSmsConsent`
+   * is true only when the six SMS columns can be written AND an inbound STOP
+   * reaches the row. Today `app/api/twilio/inbound-sms` suppresses `clients`
+   * and never touches `new_client_waitlist_entries`, so it is FALSE.
+   *
+   * WHY THE CONTROL DISAPPEARS RATHER THAN DISABLING. A disabled tick still
+   * says "there is a texting option here"; an absent one makes no offer. A
+   * consent whose opt-out cannot be honoured is a promise the label makes and
+   * the system breaks, and the cheapest way not to break it is not to ask.
+   *
+   * Making it required rather than `= false` is the point: a future surface
+   * cannot acquire the tick by forgetting a prop, and a reviewer sees the
+   * decision at every call site.
+   */
+  collectsSmsConsent: boolean;
   /**
    * Render the email as READ-ONLY text instead of an input.
    *
@@ -165,11 +186,12 @@ export function ProfileFields({
    */
   mobileLocked?: boolean;
   /**
-   * Say out loud that a newly typed number is not yet usable.
+   * Say out loud where agreed texts will go.
    *
-   * Product-visible because the alternative is implying we will text a number
-   * we have not confirmed. `prospectMayReceiveSms` refuses to send to an
-   * unverified number, so without this note the copy and the behaviour disagree.
+   * Product-visible because nobody confirms a typed number before texting it
+   * (verification is optional since Roadmap v1.25, D4(2)), and a stored number
+   * can never be changed afterwards. The note asks the person to check it is
+   * their own; it never promises a confirmation step.
    */
   showMobileCandidateNote?: boolean;
 }) {
@@ -406,7 +428,13 @@ export function ProfileFields({
       </fieldset>
 
       {/* Its own bordered block so it reads as a separate question rather than
-          the tail of the availability group. Optional, and says so. */}
+          the tail of the availability group. Optional, and says so.
+
+          ASKED ONLY WHERE THE WITHDRAWAL CAN BE HONOURED — see
+          `collectsSmsConsent`. When the binding cannot receive a STOP for this
+          row, the question is not rendered at all rather than rendered and
+          ignored. */}
+      {collectsSmsConsent && (
       <div
         className="flex flex-col gap-1 pt-1"
         style={{ borderTop: `1px solid ${CARD_BORDER}` }}
@@ -459,6 +487,7 @@ export function ProfileFields({
           </p>
         )}
       </div>
+      )}
     </div>
   );
 }

@@ -4,8 +4,9 @@ import { inferStripeLivemode } from "@/lib/stripe/server";
 
 // PR #135. Server-only reads for client_payment_methods. Every
 // function is scoped by explicit (studioId, clientId) that callers
-// must resolve from getCurrentPractitionerWithStudio() (practitioner
-// side) or getCurrentPortalSession() (portal side).
+// must resolve from the practitioner session (requirePractitionerWithStudio()
+// in a page, getCurrentPractitionerWithStudio() in an action) or
+// getCurrentPortalSession() (portal side).
 //
 // We DELIBERATELY do not select Stripe id columns
 // (stripe_customer_id, stripe_payment_method_id, stripe_setup_intent_id,

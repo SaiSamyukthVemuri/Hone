@@ -1,7 +1,12 @@
 import Link from "next/link";
+// RESP-CLIENT-INTAKE-01. Only the back control was in the measured slice; the
+// "view current intake" and "assisted intake" links below stay bare <Link> on
+// purpose — they were not measured, and converting them would be exactly the
+// blanket adoption this slice is scoped against.
+import { PendingLink } from "@/components/pending-link";
 import { notFound } from "next/navigation";
 import {
-  getCurrentPractitionerWithStudio,
+  requirePractitionerWithStudio,
   getPractitionersForStudio,
 } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
@@ -41,6 +46,7 @@ import {
 import {
   REVIEW_ANSWER_COPY,
   reviewAnswerState,
+  yesNoAnswerLabel,
 } from "@/lib/intake/review-answers";
 import {
   deriveIntakeReviewFlags,
@@ -102,12 +108,12 @@ function renderResponse(q: Question, value: unknown, notes: unknown): React.Reac
   if (q.type === "single_select" && typeof value === "string") {
     return <span>{optionLabel(q, value)}</span>;
   }
-  if (q.type === "yes_no" && typeof value === "string") {
+  if (q.type === "yes_no") {
     const notesText =
       typeof notes === "string" && notes.trim().length > 0 ? notes : null;
     return (
       <span>
-        <span className="font-medium">{value === "yes" ? "Yes" : "No"}</span>
+        <span className="font-medium">{yesNoAnswerLabel(value)}</span>
         {notesText && (
           <span className="block whitespace-pre-wrap text-neutral-600">
             {notesText}
@@ -136,7 +142,7 @@ export default async function ClientIntakePage({
   const sp = await searchParams;
   const requestedIntakeId =
     typeof sp.intake === "string" && sp.intake ? sp.intake : null;
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { studio } = await requirePractitionerWithStudio();
 
   const supabase = await createClient();
   const { data: client, error: clientErr } = await supabase
@@ -187,12 +193,15 @@ export default async function ClientIntakePage({
   if (!intake) {
     return (
       <div className="flex flex-col gap-6">
-        <Link
+        {/* RESP-CLIENT-INTAKE-01 (1 of 2 — the no-intake branch). Both branches
+            render the same back control and must acknowledge identically. */}
+        <PendingLink
           href={`/clients/${id}`}
+          pendingLabel="Opening client…"
           className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
           ← {client.name}
-        </Link>
+        </PendingLink>
         <h1 className="text-3xl font-semibold tracking-tight">Health intake</h1>
         <p className="text-sm text-neutral-600">
           No intake on file for this client. An intake link is sent
@@ -235,12 +244,14 @@ export default async function ClientIntakePage({
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-2">
-        <Link
+        {/* RESP-CLIENT-INTAKE-01 (2 of 2 — the normal branch). */}
+        <PendingLink
           href={`/clients/${id}`}
+          pendingLabel="Opening client…"
           className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
           ← {client.name}
-        </Link>
+        </PendingLink>
         <h1 className="text-3xl font-semibold tracking-tight">Health intake</h1>
         <p className="text-sm text-neutral-500">
           {intake.status === "in_progress" && (
@@ -549,7 +560,6 @@ function AllergiesSummary({
   responses: Record<string, unknown>;
 }) {
   const hasAllergies = responses.has_allergies === "yes";
-  const requiresEpipen = responses.requires_epipen === "yes";
   const allergyNotes =
     typeof responses.has_allergies_notes === "string"
       ? responses.has_allergies_notes.trim()
@@ -588,7 +598,7 @@ function AllergiesSummary({
       <ul className="mt-3 flex flex-col gap-1.5 text-sm text-rose-900 dark:text-rose-100">
         <li>
           <span className="font-medium">Severe reaction / EpiPen:</span>{" "}
-          {requiresEpipen ? "Yes" : "No"}
+          {yesNoAnswerLabel(responses.requires_epipen)}
         </li>
         {hasAllergies && (
           <li>

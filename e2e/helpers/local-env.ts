@@ -25,6 +25,8 @@
 // See scripts/worktree-resources.mjs.
 // @ts-expect-error - .mjs utility ships without type declarations
 import { resolveResources } from "../../scripts/worktree-resources.mjs";
+import os from "node:os";
+import path from "node:path";
 
 const LOCAL_SUPABASE_URL = "http://127.0.0.1:54321";
 const LOCAL_DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
@@ -39,6 +41,61 @@ const LOCAL_SERVICE_ROLE_KEY =
 const BANNED_URL_PATTERNS =
   /supabase\.co|supabase\.com|supabase\.in|pooler\.|amazonaws\.com|rds\.|azure|neon\.tech/i;
 
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+
+// Query parameters a PostgreSQL client gives PRECEDENCE over the URL authority
+// (pg-connection-string, libpq). With one present, the authority this guard
+// checks is not where the client connects: `postgresql://…@127.0.0.1:63322/
+// postgres?host=prod-db.internal` would pass a hostname check and seed SQL
+// off-machine, and `?port=54322` would pass the pair check while reaching the
+// shared stack (Codex P1 on #879). So any such override is refused outright.
+const CONNECTION_OVERRIDES = new Set(["host", "hostaddr", "port", "service"]);
+
+export function isLoopbackUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    for (const key of url.searchParams.keys()) {
+      if (CONNECTION_OVERRIDES.has(key.toLowerCase())) return false;
+    }
+    return LOOPBACK_HOSTS.has(url.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+/** Refuse a half-moved stack: the API and the database must leave the default together or not at all. */
+export function assertSameStackPair(supabaseUrl: string, dbUrl: string): void {
+  // By PORT, so `localhost:54322` and `127.0.0.1:54322` are the same default stack.
+  const port = (u: string) => new URL(u).port;
+  const apiMoved = port(supabaseUrl) !== port(LOCAL_SUPABASE_URL);
+  const dbMoved = port(dbUrl) !== port(LOCAL_DB_URL);
+  if (apiMoved !== dbMoved) {
+    throw new Error(
+      `e2e refuses to run: ${apiMoved ? "E2E_SUPABASE_URL" : "HONE_LOCAL_DB_URL"} selects another local stack ` +
+        `but ${apiMoved ? "HONE_LOCAL_DB_URL" : "E2E_SUPABASE_URL"} does not. Set both to the same stack, or neither.`,
+    );
+  }
+  // Both moved: they must name the SAME stack, or this is the original defect
+  // between two isolated stacks (API on one, fixtures seeding another). A CONVENTION,
+  // not a law: the Supabase CLI allocates each stack a contiguous port block with the
+  // database one above the API (54321/54322, 63321/63322, ...), the same assumption
+  // the two defaults above encode. A stack laid out otherwise is refused, fail-closed.
+  const offset = (api: string, db: string) => Number(port(db)) - Number(port(api));
+  if (apiMoved && offset(supabaseUrl, dbUrl) !== offset(LOCAL_SUPABASE_URL, LOCAL_DB_URL)) {
+    throw new Error(
+      `e2e refuses to run: E2E_SUPABASE_URL (port ${port(supabaseUrl)}) and HONE_LOCAL_DB_URL (port ${port(dbUrl)}) ` +
+        `are not one stack (expected the database on the API port + ${offset(LOCAL_SUPABASE_URL, LOCAL_DB_URL)}).`,
+    );
+  }
+}
+
+/** The Mailpit of the stack whose API is `supabaseUrl`: same loopback host, API port + the default offset (3). */
+export function mailpitFor(supabaseUrl: string): string {
+  const port = (u: string) => Number(new URL(u).port);
+  const api = new URL(supabaseUrl);
+  return `http://${api.hostname}:${port(supabaseUrl) + port(LOCAL_MAILPIT_URL) - port(LOCAL_SUPABASE_URL)}`;
+}
+
 function refuseHostedOverrides() {
   for (const name of [
     "NEXT_PUBLIC_SUPABASE_URL",
@@ -48,7 +105,9 @@ function refuseHostedOverrides() {
   ]) {
     const value = process.env[name];
     if (!value) continue;
-    if (BANNED_URL_PATTERNS.test(value) || !/127\.0\.0\.1|localhost/.test(value)) {
+    // The HOST must be loopback, not merely MENTION it: a substring test let
+    // `http://127.0.0.1.attacker.example` or `https://x.example/?127.0.0.1` through.
+    if (BANNED_URL_PATTERNS.test(value) || !isLoopbackUrl(value)) {
       throw new Error(
         `e2e refuses to run: ${name} points away from the local Supabase stack. This lane is local-only.`,
       );
@@ -84,43 +143,125 @@ const RESOURCES: { port: number; origin: string; host: string; worktree: string 
 export const E2E_APP_ORIGIN: string = RESOURCES.origin;
 export const E2E_APP_PORT: number = RESOURCES.port;
 export const E2E_WORKTREE: string = RESOURCES.worktree;
-export const E2E_SUPABASE_URL = LOCAL_SUPABASE_URL;
-export const E2E_DB_URL = LOCAL_DB_URL;
-export const E2E_MAILPIT_URL = LOCAL_MAILPIT_URL;
+// An isolated stack is selected as a PAIR: E2E_SUPABASE_URL (API + GoTrue) and
+// HONE_LOCAL_DB_URL (Postgres), both already proven loopback by
+// refuseHostedOverrides(). Honouring only one half is the defect this replaces:
+// tests/db's PostgREST/GoTrue clients reached the shared 54321 stack while its pg
+// pool followed HONE_LOCAL_DB_URL, and wrote auth users into the wrong stack. The
+// mirror image -- app on the isolated stack, e2e fixtures seeding the shared 54322
+// -- would be a green run against the wrong database. So a half-moved pair is
+// REFUSED below, never silently half-honoured. Neither set: byte-for-byte unchanged.
+// The APP SERVER (E2E_WEB_SERVER_ENV) and MAILPIT follow the same stack, so the
+// browser, the fixtures and GoTrue's mail all reach ONE stack (Codex P2 4265873832).
+// Mailpit takes no variable of its own: it is DERIVED from the validated API URL by
+// the same contiguous-port convention the pair check relies on (API, DB = API+1,
+// Mailpit = API+3), so it cannot name a different stack or leave this machine.
+export const E2E_SUPABASE_URL = process.env.E2E_SUPABASE_URL || LOCAL_SUPABASE_URL;
+export const E2E_DB_URL = process.env.HONE_LOCAL_DB_URL || LOCAL_DB_URL;
+assertSameStackPair(E2E_SUPABASE_URL, E2E_DB_URL);
+export const E2E_MAILPIT_URL = mailpitFor(E2E_SUPABASE_URL);
 export const E2E_SERVICE_ROLE_KEY = LOCAL_SERVICE_ROLE_KEY;
+
+// SENTRY-E2E-NOISE-02. The preload that keeps every browser lane out of the
+// operational Sentry project, and the file it records to. The guard answers
+// each request bound for *.sentry.io from a loopback sink and writes what would
+// have been sent here, so a spec can assert on the real runtime path. Keyed by
+// worktree and port so two worktrees never read each other's records; a spec
+// filters by time, so records from earlier runs are inert.
+// See e2e/helpers/sentry-egress-guard.cjs.
+export const E2E_SENTRY_EGRESS_GUARD = path.join(__dirname, "sentry-egress-guard.cjs");
+export const E2E_SENTRY_EGRESS_LOG = path.join(
+  os.tmpdir(),
+  "hone-e2e-sentry-egress",
+  `${path.basename(E2E_WORKTREE)}-${E2E_APP_PORT}.jsonl`,
+);
+
+/**
+ * NODE_OPTIONS carrying the guard, COMPOSED with whatever the caller already
+ * set. This environment is applied over the inherited one, so assigning the
+ * guard alone would silently discard an operator's or CI's own options.
+ * Idempotent, and quoted only when the path needs it (NODE_OPTIONS splits on
+ * spaces outside double quotes).
+ */
+export function withSentryEgressGuard(existing: string | undefined): string {
+  const current = (existing ?? "").trim();
+  if (current.includes(E2E_SENTRY_EGRESS_GUARD)) return current;
+  const target = /[\s"\\]/.test(E2E_SENTRY_EGRESS_GUARD)
+    ? `"${E2E_SENTRY_EGRESS_GUARD.replace(/(["\\])/g, "\\$1")}"`
+    : E2E_SENTRY_EGRESS_GUARD;
+  return [current, `--require ${target}`].filter(Boolean).join(" ");
+}
 
 // Environment for the Next dev server under test. Mirrors the fast
 // CI lane's dummy/test-safe values, with Supabase pointed at the
 // LOCAL stack. Nothing here is a real secret.
 export const E2E_WEB_SERVER_ENV: Record<string, string> = {
-  // Explicitly propagate the fake-Resend marker to the Next server when the
-  // browser-e2e job requests it (the webServer.env replaces process.env, so it
-  // must be listed here — same pattern as the fake-Stripe lane). Only the
-  // welcome/invitation path reads getResendTransport, so other emails are
-  // unaffected. Server-only marker; the module's own guard refuses it in any
-  // deployed runtime.
-  // The fake transport's MODE travels with the switch that enables it, so a spec
-  // can drive a provider REFUSAL as well as an acceptance. Same guard, same
-  // fail-closed posture: absent the "1" switch neither variable is forwarded,
-  // and the fake refuses to exist in any deployed environment regardless.
-  ...(process.env.HONE_E2E_FAKE_RESEND === "1" && process.env.HONE_E2E_FAKE_RESEND_MODE
+  // RESCHEDULE-E2E-01: THE FAKE EMAIL TRANSPORT IS ARMED FOR EVERY RUN OF THIS
+  // LANE, not only when the outer job opts in.
+  //
+  // It used to be conditional, so an ordinary lane run sent appointment mail
+  // through the REAL Resend SDK carrying `RESEND_API_KEY: re_dummy_resend_key`
+  // below. The public-reschedule spec then asserted the failure copy and was
+  // correct only for as long as api.resend.com kept rejecting that key
+  // promptly: the same tree passed, then failed repeatedly, with no code
+  // change. A test whose verdict is decided by a third party is not a test.
+  //
+  // Armed unconditionally for the same reason HONE_E2E_ROUTE_FAULT is below:
+  // this lane is hardcoded to 127.0.0.1, the marker is server-only and never
+  // NEXT_PUBLIC_*, and the module's own guard (lib/email/e2e-fake-resend.ts)
+  // REFUSES to exist in any deployed runtime — so it cannot reach production.
+  // Default mode is `success`; a spec drives a refusal per-recipient with a
+  // `reject+`/`throw+` local-part, needing no restart and no global switch.
+  HONE_E2E_FAKE_RESEND: "1",
+  // AND THE DEFAULT IS REFUSAL, because that is what this lane already did.
+  //
+  // Every send here used to go through the real SDK with the dummy key above
+  // and be refused. Arming the fake with `success` as the fallback silently
+  // converted every documented degraded-path scenario in the suite into an
+  // accepted send -- portal-rebook's degraded acknowledgement, the dashboard
+  // card's safe-failure copy, the waitlist spec's refused notifications -- and
+  // all of them kept PASSING, because each asserts what is absent on a refusal,
+  // which is also absent on success. Three separate specs lost their scenario
+  // without a single red test.
+  //
+  // So the lane default reproduces the old behaviour exactly, and a spec that
+  // needs ACCEPTANCE opts in with a `success+` recipient. New coverage is
+  // explicit; existing coverage is untouched.
+  HONE_E2E_FAKE_RESEND_DEFAULT_MODE: "reject",
+  // A global MODE override, when the outer process sets one, forces every
+  // recipient. Specs do NOT rely on it (it would apply to the whole server);
+  // it exists for a deliberate whole-run refusal sweep.
+  ...(process.env.HONE_E2E_FAKE_RESEND_MODE
     ? { HONE_E2E_FAKE_RESEND_MODE: process.env.HONE_E2E_FAKE_RESEND_MODE }
     : {}),
-  ...(process.env.HONE_E2E_FAKE_RESEND === "1"
-    ? { HONE_E2E_FAKE_RESEND: "1" }
-    : {}),
+  // SESSION-START-01 slice 2 measurement. webServer.env REPLACES process.env,
+  // so the timing switch has to be listed here to reach the server — same
+  // pattern as the fake-Resend and fake-Stripe markers above. Forwarded ONLY
+  // when the outer process asks for it, so ordinary e2e runs are unmeasured
+  // and unaffected.
+  ...(process.env.HONE_PERF_TIMING === "1" ? { HONE_PERF_TIMING: "1" } : {}),
   // REL-001 route fault injection. Server-only marker; the module's own guard
   // (lib/reliability/e2e-route-fault.ts) refuses it in any deployed runtime and
   // the fault page 404s without it, so it is safe to arm unconditionally for
   // this hardcoded-to-127.0.0.1 lane. Set here rather than passed through from
   // the outer process because webServer.env REPLACES process.env.
   HONE_E2E_ROUTE_FAULT: "1",
+  // SENTRY-E2E-NOISE-02. Nothing this lane's server sends may reach the
+  // operational Sentry project: not the deliberate faults above, not a real
+  // failure raised during a run, not the browser envelopes the /monitoring
+  // tunnel forwards. The guard is a NODE_OPTIONS preload rather than an app
+  // setting so that the Sentry runtime wiring stays byte-identical and no
+  // NEXT_PUBLIC_* input is involved. An inherited deployed-runtime signal
+  // (AWS_REGION, VERCEL_ENV, ...) makes it refuse to start, failing the lane
+  // before any spec runs rather than letting it send.
+  NODE_OPTIONS: withSentryEgressGuard(process.env.NODE_OPTIONS),
+  HONE_E2E_SENTRY_EGRESS_LOG: E2E_SENTRY_EGRESS_LOG,
   // `next start` reads PORT when no -p flag is given (commander `.env("PORT")`),
   // so the derived port reaches the server without any shell interpolation in
   // package.json - which also keeps the npm script portable.
   PORT: String(E2E_APP_PORT),
   NEXT_PUBLIC_APP_ORIGIN: E2E_APP_ORIGIN,
-  NEXT_PUBLIC_SUPABASE_URL: LOCAL_SUPABASE_URL,
+  NEXT_PUBLIC_SUPABASE_URL: E2E_SUPABASE_URL,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: LOCAL_ANON_KEY,
   SUPABASE_SERVICE_ROLE_KEY: LOCAL_SERVICE_ROLE_KEY,
   RESEND_API_KEY: "re_dummy_resend_key",

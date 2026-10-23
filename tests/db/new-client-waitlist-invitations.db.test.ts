@@ -528,7 +528,20 @@ describe("0188 — privilege", () => {
     //
     // STILL AN EXACT SET over a sorted query: no subset, no contains-only, no
     // regex, no tolerated extra.
+    // WIDENED AGAIN BY 0200, AND AGAIN DECLARED RATHER THAN ALLOWED.
+    //
+    // `closed_at` and `closed_by_practitioner_id` record that an operator ended
+    // a REDEEMED cycle that never became a booking (WAIT-P1-EXIT). The
+    // practitioner surface has to be able to tell a closed cycle from an open
+    // one: without them it would offer the exit on a row it has already acted
+    // on, and would offer "Return to waitlist" where 0200 can only refuse.
+    //
+    // SAME CLASS AS THE FOUR LIFECYCLE STAMPS BESIDE THEM. Neither is credential
+    // or authority material; `token_hash`, every `proof_*` field, the `scope_*`
+    // offer terms and `admission_round_id` stay withheld, asserted positively by
+    // the complement check below.
     expect(granted).toEqual([
+      "closed_at","closed_by_practitioner_id",
       "declined_at",
       "delivery_disposition","delivery_recorded_at",
       "entry_id","expired_at","expires_at","id","issued_at",

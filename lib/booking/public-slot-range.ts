@@ -4,6 +4,8 @@ import {
   buildDaySlots,
   filterFutureSlots,
   pickDayWindow,
+  reservationWindowStartUtc,
+  type ReservationExclusion,
   type ReservationRow,
   type Slot,
 } from "@/lib/booking/slots";
@@ -15,6 +17,7 @@ import { isPubliclyBookable } from "@/lib/booking/readiness";
 import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { utcInstantFromLocal } from "@/lib/booking/tz";
 import { fetchAllRows } from "@/lib/export/paginate";
+import { loadScopedAvailability } from "@/lib/booking/practitioner-availability";
 
 // ===========================================================================
 // PUBLIC SLOTS FOR A RANGE OF DATES — loaded in bulk, throttled by the caller
@@ -37,17 +40,18 @@ import { fetchAllRows } from "@/lib/export/paginate";
 // once-per-operation throttle far too permissive for what a single call
 // actually costs. Batching concurrency did not fix that; it only spread it.
 //
-// So the horizon inputs are read ONCE — four queries total, whatever the window
-// — and `buildDaySlots` runs per date over in-memory data. That split is the one
+// So the horizon inputs are read ONCE — four studio-wide queries, or six for a
+// scoped reschedule, plus reservation pages — and `buildDaySlots` runs per date
+// over in-memory data. That split is the one
 // `lib/booking/slots.ts` documents at `buildDaySlots`: "a caller that read a
 // whole horizon in a single query rather than three per day can reach the same
 // candidate generation without a second implementation of it." This is that
 // caller. Every RULE still lives in `buildDaySlots`; nothing here re-decides
 // what a slot is.
 //
-// IT PROPAGATES READ FAILURES. `getAvailableSlots` discards the `error` field
-// of each query, so a failed availability read becomes an empty day and a failed
-// reservation read yields apparently-open times that are unbookable. For a
+// IT PROPAGATES READ FAILURES. Historically, discarding the `error` field made
+// a failed availability read an empty day and a failed reservation read yield
+// apparently-open times that were unbookable. Both loaders now refuse. For a
 // surface whose whole job is telling one invited person what is genuinely
 // available, "I could not read" must not render as "nothing is open" — the
 // caller turns a failure into a retryable state, and it can only do that if it
@@ -153,25 +157,140 @@ export async function fetchPublicSlotsForDates(params: {
   if (serviceError) return { ok: false, error: "Availability could not be read." };
   if (!service) return { ok: false, error: "Service not found." };
 
+  // Everything above this line is the AUTHORITY pass — studio, readiness,
+  // service — and everything below it is the DATA pass. BOOK-NEXT-FAST-01 split
+  // them so a caller that has already done the authority pass can reach the data
+  // pass without repeating it; see `loadPublicSlotsByDate`.
+  const grouped = await loadPublicSlotsByDate(
+    admin,
+    {
+      studioId: studio.id,
+      timezone: tz,
+      publicBookingHorizonMonths: studio.public_booking_horizon_months,
+      bufferMinutes: studio.buffer_minutes,
+      serviceDurationMinutes: service.default_duration_minutes as number,
+    },
+    params.dates,
+  );
+  if (!grouped.ok) return grouped;
+
+  // This entry point's contract is a FLAT slot list, and it is preserved
+  // exactly: the groups are built in sorted-date order, so flattening them
+  // reproduces the order the single list was always emitted in.
+  return {
+    ok: true,
+    slots: grouped.byDate.flatMap((d) => d.slots),
+    scanned: grouped.scanned,
+    skippedOutsideHorizon: grouped.skippedOutsideHorizon,
+  };
+}
+
+/** A studio + service context that has ALREADY passed the authority checks. */
+export type PublicRangeContext = {
+  studioId: string;
+  timezone: string;
+  publicBookingHorizonMonths: number | null;
+  bufferMinutes: number | null;
+  serviceDurationMinutes: number;
+  /** Server-resolved original appointment context; ordinary public booking omits it. */
+  practitionerCapacityEnabled?: boolean;
+  practitionerId?: string | null;
+  excludeReservation?: ReservationExclusion;
+};
+
+export type PublicSlotsByDateResult =
+  | {
+      ok: true;
+      /** Sorted ascending by date. Only dates with at least one slot appear. */
+      byDate: Array<{ date: string; slots: Slot[] }>;
+      scanned: string[];
+      skippedOutsideHorizon: string[];
+    }
+  | { ok: false; error: string };
+
+/**
+ * The DATA pass: one bulk load for a whole window, grouped by local date.
+ *
+ * WHY THIS IS SEPARATE FROM `fetchPublicSlotsForDates` (BOOK-NEXT-FAST-01).
+ *
+ * That function performs its own authority pass — studio lookup, public
+ * readiness, service lookup — which is exactly right for a caller that has none.
+ * `fetchNextAvailableDateAction` has all three ALREADY, because it must resolve
+ * the studio's timezone and horizon before it can even name the dates it wants.
+ * Calling the wrapper from there would have re-read the studio, re-run
+ * readiness and re-read the service, and re-read `studio_availability_default`
+ * a second time — four redundant round trips on the public path, for answers the
+ * caller was holding. So the pass it actually needs is exported on its own.
+ *
+ * WHY IT RETURNS GROUPS RATHER THAN A FLAT LIST. `Slot` carries `start`/`end` as
+ * ISO UTC instants and no date. Recovering "which local day is this slot on"
+ * from a UTC instant is the precise mistake `weekdayOfLocalDate` above exists to
+ * prevent: at UTC+13/+14 the arithmetic lands on the neighbouring day. The date
+ * is known for free at generation time — `buildDaySlots` is called per
+ * `dateStr` — so it is kept rather than thrown away and re-derived. A caller
+ * asking "the earliest date with a slot" then reads it directly.
+ *
+ * THE QUERY BUDGET IS THE POINT, and it is flat in the number of dates: four
+ * studio-wide queries, or six for a practitioner, plus reservation pages.
+ * A 12-month window costs the same waves as a 7-day
+ * one. Every RULE still lives in `buildDaySlots`; nothing here re-decides what
+ * a slot is.
+ *
+ * `now` is taken as a parameter so a caller that evaluates many dates applies
+ * ONE clock reading to all of them, rather than letting the boundary move
+ * underneath a long scan.
+ */
+export async function loadPublicSlotsByDate(
+  admin: ReturnType<typeof createAdminClient>,
+  ctx: PublicRangeContext,
+  dates: readonly string[],
+  now: Date = new Date(),
+  opts: {
+    /**
+     * Stop generating once a date with at least one offerable slot is found.
+     *
+     * MEASURED, not assumed. With the whole horizon evaluated, the bulk pass
+     * answered a 12-month "nothing is open" case in 24 ms but took 1.5-2.3 s
+     * whenever slots DID exist — the inverse of what a query-cost problem looks
+     * like, because the all-blocked case never reaches slot generation at all.
+     * The remaining time was `buildDaySlots` running over ~370 open days and
+     * formatting every candidate's label through `Intl.DateTimeFormat`.
+     *
+     * A caller that wants the EARLIEST date needs exactly one group, so the
+     * rest of that work is waste. This flag is off by default because the
+     * range caller genuinely wants every slot; `fetchNextAvailableDateAction`
+     * turns it on.
+     *
+     * It changes no RULE and no ANSWER: the dates are evaluated in ascending
+     * order, so the first group found is the same first group a full pass
+     * would have produced.
+     */
+    stopAfterFirstMatch?: boolean;
+  } = {},
+): Promise<PublicSlotsByDateResult> {
+  const tz = ctx.timezone;
+  const capacityOn = ctx.practitionerCapacityEnabled === true && ctx.practitionerId != null;
+
   // THE HORIZON CLAMP. Beyond it a date is unbookable by any route, so querying
   // it buys nothing and discovering that one refusal at a time is how an
   // over-wide range spends its budget on nothing.
-  const horizon = horizonRangeInStudioTz(tz, studio.public_booking_horizon_months);
+  const horizon = horizonRangeInStudioTz(tz, ctx.publicBookingHorizonMonths);
   const scanned: string[] = [];
   const skippedOutsideHorizon: string[] = [];
-  for (const d of params.dates) {
+  for (const d of dates) {
     if (d < horizon.minDateStr || d > horizon.maxDateStr) skippedOutsideHorizon.push(d);
     else scanned.push(d);
   }
   if (scanned.length === 0) {
-    return { ok: true, slots: [], scanned, skippedOutsideHorizon };
+    return { ok: true, byDate: [], scanned, skippedOutsideHorizon };
   }
 
   const sorted = [...scanned].sort();
   const first = sorted[0]!;
   const last = sorted[sorted.length - 1]!;
 
-  // ---- FOUR QUERIES FOR THE WHOLE WINDOW, whatever its length ----
+  // Four studio-wide reads, or six for a practitioner, plus reservation pages;
+  // the number of dates never adds database round trips.
   const rangeStartUtc = utcInstantFromLocal(first, "00:00", tz);
   // The same 36-hour tail the per-day loader uses, so a reservation running past
   // midnight into the last day is still seen.
@@ -184,10 +303,21 @@ export async function fetchPublicSlotsForDates(params: {
   try {
     // Both FAIL CLOSED by throwing on any error other than a genuinely absent
     // 0135 column, which is exactly the propagation this helper needs.
-    [overrides, defaults] = (await Promise.all([
-      getStudioWideOverridesSafe(admin, studio.id, first, last),
-      getStudioWideDefaultsSafe(admin, studio.id),
-    ])) as [typeof overrides, typeof defaults];
+    if (capacityOn) {
+      // Reuse the existing schedule model: personal date override, studio date
+      // override, personal weekday, then studio weekday. Failed reads throw;
+      // only successful absence permits inheritance.
+      const scoped = await loadScopedAvailability(
+        admin, ctx.studioId, { kind: "practitioner", practitionerId: ctx.practitionerId! }, first, last,
+      );
+      overrides = scoped.overrides;
+      defaults = scoped.week;
+    } else {
+      [overrides, defaults] = (await Promise.all([
+        getStudioWideOverridesSafe(admin, ctx.studioId, first, last),
+        getStudioWideDefaultsSafe(admin, ctx.studioId),
+      ])) as [typeof overrides, typeof defaults];
+    }
   } catch {
     return { ok: false, error: "Availability could not be read." };
   }
@@ -196,7 +326,7 @@ export async function fetchPublicSlotsForDates(params: {
     admin
       .from("studio_blockouts")
       .select("starts_on, ends_on")
-      .eq("studio_id", studio.id)
+      .eq("studio_id", ctx.studioId)
       .lte("starts_on", last)
       .gte("ends_on", first),
     // PAGINATED, because PostgREST caps a response at `max_rows` (1000 in
@@ -213,17 +343,28 @@ export async function fetchPublicSlotsForDates(params: {
     // own tables. Ordering is `starts_at, id`: pagination over a non-unique
     // sort can put one row on two pages and drop another, and `id` is the
     // primary key.
-    fetchAllRows<ReservationRow>((from, to) =>
-      admin
+    fetchAllRows<ReservationRow>((from, to) => {
+      const query = admin
         .from("studio_calendar_reservations")
         .select("starts_at, ends_at, source_kind, source_id")
-        .eq("studio_id", studio.id)
+        .eq("studio_id", ctx.studioId)
         .lt("starts_at", rangeEndUtc.toISOString())
-        .gt("ends_at", rangeStartUtc.toISOString())
+        // Same widened boundary as the day loader — one rule, one helper, so
+        // the two engines cannot disagree about which reservations exist.
+        .gt(
+          "ends_at",
+          reservationWindowStartUtc(
+            rangeStartUtc,
+            ctx.bufferMinutes ?? 0,
+          ).toISOString(),
+        );
+      // The resource timeline already includes studio-wide blocks fanned to
+      // this practitioner. Keep studio scope on every page as well.
+      return (capacityOn ? query.eq("resource_key", ctx.practitionerId) : query)
         .order("starts_at", { ascending: true })
         .order("id", { ascending: true })
-        .range(from, to),
-    ),
+        .range(from, to);
+    }),
   ]);
   // A blockout read that failed is not "no blockouts", and a reservation read
   // that failed is not "nothing is booked" — that one would generate open times
@@ -241,10 +382,10 @@ export async function fetchPublicSlotsForDates(params: {
   const overrideByDate = new Map(overrides.map((o) => [o.effective_date, o]));
   const defaultByDow = new Map(defaults.map((d) => [d.day_of_week, d]));
 
-  const duration = service.default_duration_minutes as number;
-  const buffer = Math.max(0, studio.buffer_minutes ?? 0);
+  const duration = ctx.serviceDurationMinutes;
+  const buffer = Math.max(0, ctx.bufferMinutes ?? 0);
 
-  const collected: Slot[] = [];
+  const byDate: Array<{ date: string; slots: Slot[] }> = [];
   for (const dateStr of sorted) {
     if (blockouts.some((b) => b.starts_on <= dateStr && b.ends_on >= dateStr)) continue;
 
@@ -259,15 +400,34 @@ export async function fetchPublicSlotsForDates(params: {
 
     const dayStart = utcInstantFromLocal(dateStr, "00:00", tz).getTime();
     const dayEnd = dayStart + 36 * 3600 * 1000;
+    // THE SAME WIDENED BOUND AS THE QUERY, and it has to be stated twice because
+    // this is a SECOND window: the query loads the whole horizon, then each date
+    // re-filters that set down to its own day. Testing the raw `ends_at` here
+    // dropped the previous day's appointment again, buffer and all, however wide
+    // the query had been — so the horizon path kept offering local midnight even
+    // with the read repaired. One helper, both windows.
+    const dayReservationStart = reservationWindowStartUtc(
+      new Date(dayStart),
+      buffer,
+    ).getTime();
     const dayReservations = reservations.filter((r) => {
       const s = Date.parse(r.starts_at);
       const e = Date.parse(r.ends_at);
-      return Number.isFinite(s) && Number.isFinite(e) && s < dayEnd && e > dayStart;
+      return (
+        Number.isFinite(s) &&
+        Number.isFinite(e) &&
+        s < dayEnd &&
+        e > dayReservationStart
+      );
     });
 
-    collected.push(
+    // The same past-time guard the single-date action applies, so the two
+    // cannot drift about whether today's earlier hours are offerable. Applied
+    // PER DATE with the caller's single `now`, which is what lets a long scan
+    // avoid letting the boundary move underneath it.
+    const daySlots = filterFutureSlots(
       // The SAME candidate generation the single-date path uses. One algorithm.
-      ...buildDaySlots({
+      buildDaySlots({
         dateStr,
         tz,
         duration,
@@ -275,16 +435,19 @@ export async function fetchPublicSlotsForDates(params: {
         openTime,
         closeTime,
         reservations: dayReservations,
+        excludeReservation: ctx.excludeReservation,
       }),
+      now,
     );
+
+    // A date with no offerable time is not a date — omitting it here is what
+    // makes "the first group" mean "the first date that actually has a slot"
+    // for the caller, with no second emptiness rule to keep in step.
+    if (daySlots.length > 0) {
+      byDate.push({ date: dateStr, slots: daySlots });
+      if (opts.stopAfterFirstMatch) break;
+    }
   }
 
-  // The same past-time guard the single-date action applies, so the two cannot
-  // drift about whether today's earlier hours are offerable.
-  return {
-    ok: true,
-    slots: filterFutureSlots(collected),
-    scanned: sorted,
-    skippedOutsideHorizon,
-  };
+  return { ok: true, byDate, scanned: sorted, skippedOutsideHorizon };
 }

@@ -83,16 +83,26 @@ const PLATFORM_IDENTITY_CLIENT_CALLERS: ReadonlyArray<{
     to: "args.recipientEmail",
     eventScope: "args.invitationId",
     why:
-      "WAIT DELIVERY-01 invitation. Sent to a PROSPECT, deliberately unbranded: " +
-      "the invitation is retried under one idempotency key that carries no " +
-      "payload digest (the body holds a bearer token), so the payload must be a " +
-      "pure function of the invitation. studios.name, postcare_contact_email and " +
-      "owner_email are all mutable, and any of them moving the bytes under an " +
-      "unchanged key makes the provider answer invalid_idempotent_request " +
-      "instead of replaying — so a retry that still needed delivering would " +
-      "fail. The prospect sees studio identity on the invitation page, which " +
-      "renders fresh and has no key to contradict. Branding this email needs a " +
-      "delivery snapshot (schema) that WAIT DELIVERY-01 does not build.",
+      "WAIT DELIVERY-01 invitation. Sent to a PROSPECT on Hone's platform " +
+      "HEADERS. Note what this exemption does and does not cover: this guard " +
+      "classifies a call site by whether it passes studioIdentity, so it is " +
+      "about From/Reply-To only. The BODY of this email DOES name the studio. " +
+      "BODY — the P1 client-trust fix puts studios.name in the subject, " +
+      "heading, lead sentence and footer, because a prospect who cannot tell " +
+      "who is inviting them until after clicking an unfamiliar link is being " +
+      "sent something shaped like phishing. The idempotency objection that " +
+      "previously kept the name out is closed by the sender's own " +
+      "one-invitation-is-one-delivery-event law: different bytes under one " +
+      "key would need a SECOND invocation for the same invitation id, and the " +
+      "raw token is never persisted, there is no resend operation, " +
+      "sameEventRetryAllowed is the literal false, and a reissue mints a new " +
+      "id. Written out in lib/email/templates/waitlist-invitation.ts. " +
+      "HEADERS — From and Reply-To stay Hone. studios.name in From means " +
+      "sending as a domain Hone does not authenticate, and " +
+      "postcare_contact_email / owner_email in Reply-To routes replies to an " +
+      "address nothing has verified belongs to that studio. That needs a " +
+      "studio-sender contract review of its own and is deliberately not part " +
+      "of the hotfix.",
   },
 ];
 

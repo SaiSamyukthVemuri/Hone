@@ -14,7 +14,1092 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-16, post-0198 apply; `0198` APPLIED)
+
+## Current state (reconciled 2026-10-20; 0212 already APPLIED, source restored byte-identically)
+
+> **This is a documentation/source reconciliation of an existing apply, not an authorization or execution of an apply.** A fresh read-only query on 2026-10-19 at 21:23:10.258674Z ran with `transaction_read_only=on` against the verified canonical Hone production project: migration history max **0212**, **211** rows, exactly one each for 0211 and 0212, and no entries above 0212. Migration-history presence establishes a recorded apply; it does not by itself claim a table's present existence or contents.
+>
+> Existing apply receipt `cead71c5` records the successful migration-first apply from reviewed PR #832 head `7116c66848574b0e02e7c2b8f500a6d3198edb58`. The exact source is `supabase/migrations/0212_email_delivery_events.sql`, 44,462 bytes, Git blob `cd8a4908fdad8b68e917842d5ffe1590c86eb875`, raw SHA-256 `cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1`. The source was restored here byte-identically from existing commit `cbb567afed08550e29e165bdc91adb4324a93181`; no SQL bytes were edited. The stored-history statement serialization hash `bc13731bb8c36b8a1db2f5a5185d0700308e598e92347a3ab87df696814ef142` is not the raw migration checksum. No server apply timestamp was captured, so `hosted_applied_at` remains null.
+>
+> The prior production record's 0211 declaration and missing 0212 source were stale repository documentation/source, not grounds to reapply. The full 0211 apply account below remains unchanged as historical evidence. **Do not reapply 0212.** No hosted database, migration history, schema, table or row was changed in this reconciliation.
+>
+> Repository and hosted migration state reconcile, with nothing pending and nothing remote-only.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), recorded in read-only history as described above. |
+| **Repo migration max** | **0212** on this branch; the restored source file matches the existing applied source checksum exactly. |
+| **Remote-only migrations** | **none** after restoring the exact applied 0212 source. |
+| **Pending migrations** | **none** on this branch. |
+| **Next free migration** | Next free number is **0213**, derived by `npm run migration:state` from this tree's migration filenames; not claimed by this record. |
+| **Project ref** | Canonical Hone production project; see the verified linked-project evidence retained in the apply receipt. No credentials or new project identifiers are recorded here. |
+| **0212 apply source** | PR #832 reviewed head `7116c66848574b0e02e7c2b8f500a6d3198edb58`; exact raw file SHA-256 `cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1`; source reintroduced unchanged from `cbb567afed08550e29e165bdc91adb4324a93181`. |
+| **Apply timestamp** | `hosted_applied_at` remains `null`; the receipt contains client-side bounds and a server history bracket, not a server-generated apply timestamp. |
+
+
+## Previous state (verified 2026-10-12, post-0211 apply; historical 0211 record preserved)
+
+> **0211 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #827 HEAD, BEFORE ANY MERGE.**
+> `0211_client_sms_permission_guard.sql` was applied to production on
+> 2026-10-12 under explicit per-change owner authorization (D1 / DEC-1), from
+> `481e60c60ae8c873a2e1b6e2a0ccc5b9dc0b8c11`. **#827 was NOT merged and no
+> application code was deployed.**
+>
+> **THE RULES ADOPTED WITH THE APPROVAL** (#827 "Remaining decisions" 1 and 2, as recommended):
+> - a member may record a client's withdrawal by a direct write, with source `practitioner`, stamped by the database clock;
+> - trusted roles also obey write-once consent and terminal opt-out, so any future START or re-subscribe flow needs its own migration.
+>
+> **THE GATES, EACH REQUIRED TO PASS BEFORE THE PUSH.**
+> - The file's sha256 `33232496322727b2db67e33f15a38bd6281898d112d4d6b4d3b25534766578c3` matched the authorized value.
+> - The linked project read `alhhybgqdmcdyzpybykj`, named **Hone**, in the link file, `linked-project.json` and `supabase projects list`.
+> - A **fresh detached throwaway** worktree at the reviewed head, with a clean tree, never a shared checkout.
+> - `supabase migration list --linked` showed remote max `0210` with `0211` as the **only** local-only row and **no** remote-only row, across 210 rows.
+> - The **dry run listed exactly `0211_client_sms_permission_guard.sql`**.
+> - The read-only preflight found **no** trigger on `public.clients`, and recorded 136 clients, 54 consents (54 with a source) and 0 opt-outs.
+> - The head carried green CI (run `38164242975`). The operator **accepted a missing shepherd receipt** for this migration-only apply: the shepherd returned `UNKNOWN` (`read_failed`) because `HONE_ENG_READ_TOKEN` was not set in the applying session. **It is recorded as UNKNOWN, never green.**
+>
+> **THE APPLY.** One `supabase db push --linked` (CLI 2.102.0), **without `--include-all`**, run once,
+> **exit code 0**. The only output beyond progress was the expected NOTICE from the file's own
+> `drop trigger if exists`. The client-side window, from the final gate assertions to the push
+> returning, was `2026-10-12T19:40:01.830Z`-`19:41:21.758Z`. It bounds the push from outside and is
+> **not** a server apply time, so `hosted_applied_at` stays null. Server bracket: `19:39:21.592596Z`
+> (0210, 209 rows) to `19:41:53.41194Z` (0211, 210 rows).
+>
+> **WHAT IT ADDED, AND ONLY THAT:**
+> - one `SECURITY INVOKER` function, `public.clients_sms_permission_guard()`: `prosecdef` false, `search_path` pinned to `pg_catalog, pg_temp`, execute revoked from `public`, `anon`, `authenticated` and `service_role`;
+> - one trigger, `clients_sms_permission_guard`, `BEFORE INSERT OR UPDATE OF sms_consent_at, sms_consent_source, sms_opted_out_at, sms_opt_out_source`, enabled (`O`).
+>
+> **WHAT IT DID NOT CHANGE:**
+> - no table, column, constraint, policy, index or grant; `authenticated` still holds INSERT and UPDATE on `clients`;
+> - **zero rows written**: 136 clients, 54 consents (54 sources) and 0 opt-outs after the apply, identical to the preflight.
+>
+> **POST-APPLY VERIFICATION, all read-only.**
+> - `supabase migration list --linked`: 210 rows, no mismatch. `0211` present exactly once, `0210` exactly once and not re-applied, nothing above `0211`.
+> - `verify-production.mjs`: **10 PASS, 1 FAIL, 1 INCOMPLETE**, with "Remote migration max: = 0211". The FAIL is the two accepted historical payment alerts (`session_payment_succeeded_write_zero_rows`, 2026-09-17 and 2026-09-27), unchanged. The INCOMPLETE is the scheduler heartbeat, with no Upstash env on the apply host.
+> - `check-stripe-gates.mjs`: **15 PASS, 0 FAIL**.
+> - **0** critical-or-error `ops_alerts` in the preceding hour, and 0 since 19:40Z.
+>
+> **`0212` (#832) WAS NOT APPLIED.** Its approval (DEC-2) is conditional on clean exact-head Codex
+> review evidence for `ba8fc5057c1ab3c331caec4be64801f5e8d901b0`, which was requested and was not
+> available at the time of this record.
+>
+> `0211` is now **FROZEN**. Any correction is a new forward migration; there is no
+> manual down-migration.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0211** (`0211_client_sms_permission_guard.sql`), applied 2026-10-12 from #827's reviewed head. |
+| **Repo migration max** | **0211** on this branch, so repo and hosted are equal here: the PARITY shape. A branch stacked above it carries its own pending suffix. |
+| **Remote-only migrations** | **none**: no migration exists on production that this branch lacks. |
+| **Pending migrations** | **none** on this branch. |
+| **Next free migration** | Next free number is **0212**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. The coordination record already holds it for #832. |
+| **Project ref** | `alhhybgqdmcdyzpybykj`, the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
+| **Reviewed release head** | `481e60c60ae8c873a2e1b6e2a0ccc5b9dc0b8c11` (PR #827): CI green (run `38164242975`), 0 review threads, migration bytes reviewed byte-identical inside #831. The shepherd was UNKNOWN (`read_failed`), and that was accepted by the operator for this migration-only apply. |
+| **Production application SHA at apply time** | `6c5eac80` (the #821 merge). **No application behaviour was deployed by this apply.** |
+
+## Previous state (verified 2026-10-11, post-0210 apply; `0210` APPLIED, `0211` AUTHORED AND PENDING on the G3 branch)
+
+> **0211 IS AUTHORED AND PENDING (added after the 0210 apply), on the draft G3 branch `fix/g3-client-sms-field-guard` only.**
+> `0211_client_sms_permission_guard.sql` closes finding G3: studio members could rewrite a client's SMS consent and opt-out through the database API. It adds ONE `SECURITY INVOKER` trigger function and ONE trigger on `public.clients`, nothing else:
+> - a member (`anon` / `authenticated`) can never add, change or remove SMS consent;
+> - recorded consent evidence is write-once, and an opt-out is terminal, for every role;
+> - a member may still record a withdrawal (source `practitioner`, on the database clock).
+>
+> No table, column, constraint, policy, index or grant changes, and no row is written. The census of every writer of the four fields, which the trigger must keep working, is in the migration header: the 0204 new-client booking command, the public booking action and the inbound STOP route.
+>
+> **NUMBERING, from a fresh census at authoring time (2026-10-11 ~18:00Z):** hosted max `0210` (read-only query), repository max `0210`, and no remote branch, open PR (#823 and #825 included) or worktree on this host carrying a migration above `0210`. `0211` was free and is used here. **It is not reserved beyond this draft:** issue #824 and WAIT v4 allocate their own numbers at write time, and the pending suffix must stay contiguous, so a lane that needs a migration before this one merges re-censuses, and stacks or renumbers. `0209` and `0210` stay frozen and byte-identical (pinned by `tests/migrations/0211-client-sms-permission-guard.test.ts`).
+>
+> **NOT APPLIED, NOT MERGED.** Apply it migration-first, under separate approval, from the exact reviewed head. No application change depends on it: either order is safe for the application, and the guard binds only raw member writes that no screen makes.
+>
+> **THE BLOCK BELOW IS THE 0210 APPLY RECORD.** Its hosted row is still current. Its repo-max, pending and next-free rows have been updated for `0211` while it is pending.
+
+> **0210 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #822 HEAD, BEFORE ANY MERGE.**
+> `0210_sms_waitlist_join_acknowledgement.sql` was applied to production on
+> 2026-10-11 under explicit per-change owner authorization (A4), from
+> `3096e1f41dd00291e14885c16b8061e078b4b05d`. **#822 was NOT merged and no
+> application code was deployed.**
+>
+> **THE GATES, EACH REQUIRED TO PASS BEFORE THE PUSH.**
+> - The file's sha256 `b1d33743235644447da41a17778e890c05c14deda6c299303cc5febdceea7157` (28,104 bytes, blob `a6168bba87efc1d776c6780b3f2144bc1195b51c`) matched the authorized value.
+> - The linked project read `alhhybgqdmcdyzpybykj`, named **Hone**, in the link file and in `supabase projects list`.
+> - A **fresh detached throwaway** worktree at the reviewed head — never a shared checkout.
+> - Census: repo 0210, hosted 0209, pending `0210`, next free 0211, permanently skipped 0158.
+> - `supabase migration list --linked` showed `0210` as the **only** local-only row, with **no** remote-only row.
+> - The **dry run listed exactly `0210_sms_waitlist_join_acknowledgement.sql`**, asserted programmatically from the bullet lines.
+> - The read-only preflight: 0 rows that would fail the new purpose, subject or version checks; the FK target `UNIQUE (id, studio_id)` present; none of 0210's objects present; `public.sms_normalized_phone` IMMUTABLE and byte-identical to the reviewed chain; `studios_waitlist_sms_on` 0.
+> - The head carried green CI (run 38107988921), a clean explicit exact-head review ("Reviewed commit `3096e1f41d`"), 0 unresolved review threads, and the operator's live shepherd `CANDIDATE_READY_FOR_HUMAN_REVIEW` (2026-10-11T08:08:55Z).
+>
+> **THE APPLY.** One `supabase db push --linked --yes`, **without `--include-all`**,
+> run once, **exit code 0**, no NOTICE, WARNING or ERROR. The client-side window was
+> `2026-10-11T08:20:37.447Z`-`08:21:07.383Z` (~29.9 s), which is **not** a server
+> apply time; `hosted_applied_at` stays null.
+>
+> **COMPLETE STATEMENT INVENTORY — thirty statements**, inside the file's own
+> `begin;` / `set local lock_timeout = '5s';` / `commit;`:
+> - **one `add column`** (`sms_outbound_messages.waitlist_entry_id uuid`, nullable, no default);
+> - **three `drop constraint` and four `add constraint`**: the ledger's purpose and subject checks replaced whole for the fifth purpose `waitlist_join_acknowledgement` and its entry subject; the composite same-studio FK `(waitlist_entry_id, studio_id)` → `new_client_waitlist_entries (id, studio_id)` on delete cascade; the entries' wording-version check widened to v1 or v2;
+> - **one `create unique index`** (`sms_outbound_messages_one_join_ack_per_entry`) and **one `create index`** (`new_client_waitlist_entries_sms_number_idx` on `public.sms_normalized_phone(phone)`, the cooldown lookup's access path, from the D3 architecture review for Codex P2 4239987967);
+> - **three `create or replace function`**: the identity guard (one write-once clause added), `claim_waitlist_join_ack_sms` (serialised per normalized number by a transaction-level advisory lock, every lock wait bounded by its own 5 s `lock_timeout`) and `join_new_client_waitlist_with_phone_and_sms_answer`;
+> - **eight `revoke execute`, two `grant execute … to service_role`, one `revoke all`** on the guard, and **six `comment on`**.
+>
+> NO table created or dropped, NO column dropped, NO trigger or policy created, and
+> **zero** migration-level DML. 0208's signup command is not redefined, dropped or re-granted.
+>
+> **WHAT IT CHANGED, AND ONLY THAT**, across the read-only before/after pair:
+> `max_version` 0209 → **0210**; `history_rows` 208 → **209**; `v0210_rows` 0 → **1**;
+> `has_waitlist_entry_id` false → **true**; `new_commands` 0 → **2** (both `service_role`
+> only); `version_check` v1 → **v1 or v2**; `public_columns` 1,481 → **1,482**; and the
+> catalog equals `EXPECTED_POST_APPLY_0210.json` on all ten fields — including the function
+> fingerprints (claim `b9721f23…`, signup `49bf151a…`, guard `1f5ff03a…`), the **exact**
+> values pre-proved on an isolated PostgreSQL 17.6 stack matching production's 17.6.
+>
+> **WHAT IT DID NOT CHANGE**, each verified against the before reading:
+> - `signup_0208_md5` `f5fd4ac6fb32769e892b4aa13dbe8d6a` and `other_functions_md5` `c50c4578b3a79db07d20c686371ce2e0`;
+> - `studio_switches_md5` `6aa05fe5c3cf36c6d72d29402c7a9a5f` and **`studios_waitlist_sms_on` 0 — Willow's waitlist SMS remains OFF**;
+> - `join_ack_rows` 0; `unresolved_critical_ids`, still exactly the two accepted historical payment alerts; `critical_error_24h` 0;
+> - `ledger_rows` 3, `entries_total` 61, `consents_total` 1 — none moved during the window.
+>
+> **POST-APPLY VERIFICATION, all read-only.**
+> - `supabase migration list --linked`: `0210` on both sides; nothing local-only or remote-only. `0210` present exactly once, `0209` exactly once and not re-applied, nothing above `0210`.
+> - `verify-production.mjs`: **10 PASS, 1 FAIL, 1 INCOMPLETE**, with "Remote migration max: = 0210". The FAIL is the two accepted payment alerts; the INCOMPLETE is the scheduler heartbeat, no Upstash env on the apply host.
+> - `check-stripe-gates.mjs`: **15 PASS**.
+> - **0** critical-or-error `ops_alerts` in the preceding hour, and 0 alerts of any kind since the apply.
+>
+> `0210` is now **FROZEN**. Any correction is a new forward migration; there is no
+> manual down-migration.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0210** (`0210_sms_waitlist_join_acknowledgement.sql`), applied 2026-10-11 from #822's reviewed head. |
+| **Repo migration max** | **0211** — `0211_client_sms_permission_guard.sql`, authored on the draft G3 branch: one `SECURITY INVOKER` trigger function and one trigger on `public.clients`. `0209` and `0210` are byte-identical. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0211`** — `0211_client_sms_permission_guard.sql`, **NOT applied**, so `repo > hosted` by exactly one: the MIGRATION-FIRST PENDING shape. Apply it migration-first, under separate approval, before or with the merge of its branch. |
+| **Next free migration** | Next free number is **0212**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. A lane that needs it must stack on `0211` or wait for it, because the pending suffix must be contiguous. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
+| **Reviewed release head** | `3096e1f41dd00291e14885c16b8061e078b4b05d` (PR #822) — CI green (run 38107988921), explicit exact-head review clean ("Reviewed commit `3096e1f41d`"), 3 of 3 review threads resolved, operator shepherd `CANDIDATE_READY_FOR_HUMAN_REVIEW` (2026-10-11T08:08:55Z). |
+| **Production application SHA at apply time** | `0e16257ed7332d512cc4d500377a790d7c66b9b5` (the #820 merge). **No application behaviour was deployed by this apply.** |
+
+## Previous state (verified 2026-10-10, post-0209 apply; `0209` APPLIED, `0210` AUTHORED AND PENDING on the SMS-04 branch)
+
+> **0210 IS AUTHORED AND PENDING (added after the 0209 apply), on the SMS-04 branch `feat/sms-04-waitlist-join-ack` only.**
+> `0210_sms_waitlist_join_acknowledgement.sql` does two things:
+> - **A phone number becomes required for every new public waitlist signup.** A new signup command, `join_new_client_waitlist_with_phone_and_sms_answer`, refuses a missing or unsendable phone for a Yes and a No alike, and records a Yes as wording version 2. 0208's command is left in place, unchanged, for the deployed application.
+> - **The waitlist join acknowledgement text.** It adds a fifth SMS ledger purpose with its own subject column, a once-per-entry index, and the `service_role`-only claim `claim_waitlist_join_ack_sms`.
+>
+> It also widens the wording-version check to v1 or v2, and indexes the entries' normalized phone (`new_client_waitlist_entries_sms_number_idx`) for the claim's one-text-per-number check. It writes no data.
+>
+> **0209 IS APPLIED AND FROZEN** (WAIT #820, merged into production as `0e16257e`). This tree carries it byte-identical (sha256 `9fa04999b974d70d838ba27800a22338b1f08fd7977f553dec38fba034e3f877`), so the pending suffix is exactly `0210`, contiguous from hosted + 1. `0210` is applied migration-first from this PR's reviewed head under its own approval, before this PR's application deploys.
+>
+> **NOT APPLIED, NOT MERGED.**
+>
+> **THE BLOCK BELOW IS THE 0209 APPLY RECORD.** Its hosted row is still current. Its repo-max, pending and next-free rows have been updated for `0210` while it is pending.
+
+> **0209 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #820 HEAD, BEFORE ANY MERGE.**
+> `0209_public_slot_candidate_buffer_window.sql` was applied to production on
+> 2026-10-10 under explicit per-change owner authorization (A1), from
+> `0d45c3ca50e6d8840b3106a13dbfe19ae2278417`. **#820 was NOT merged and no
+> application code was deployed.**
+>
+> **THE GATES, EACH REQUIRED TO PASS BEFORE THE PUSH.**
+> - The file's sha256 `9fa04999b974d70d838ba27800a22338b1f08fd7977f553dec38fba034e3f877` (19,620 bytes, blob `bc185ae384ade382db874f8f4aad34a471dfd6cd`) matched the authorized value.
+> - The linked project read `alhhybgqdmcdyzpybykj`, named **Hone**.
+> - A **fresh detached throwaway** worktree at the reviewed head — never a shared checkout.
+> - Census: repo 0209, hosted 0208, pending `0209`, next free 0210, permanently skipped 0158.
+> - `supabase migration list --linked` showed `0209` as the **only** local-only row, with **no** remote-only row.
+> - The **dry run listed exactly `0209_public_slot_candidate_buffer_window.sql`**, asserted programmatically from the bullet lines.
+>
+> **THE APPLY.** One `supabase db push --linked --yes`, **without `--include-all`**,
+> run once, **exit code 0**, no NOTICE, WARNING or ERROR. The client-side window was
+> `2026-10-10T16:07:27.389Z`-`16:08:05.718Z` (~38.3 s), which is **not** a server
+> apply time; `hosted_applied_at` stays null.
+>
+> **COMPLETE STATEMENT INVENTORY — twelve statements**, inside the file's own
+> `begin;` / `set local lock_timeout = '5s';` / `commit;`: **two
+> `create or replace function`** (`public_booking_slot_candidates(uuid, date, integer)`
+> and `public_reschedule_slot_candidates(uuid, date, integer, uuid, uuid)`, **both
+> signatures unchanged**, so the 0170/0171 bodies are replaced in place), **eight
+> `revoke execute`** (each function from `public`, `anon`, `authenticated` and
+> `service_role`, by name) and **two `grant execute … to service_role`**. NO table,
+> column, index, constraint, trigger, policy or `COMMENT ON`, and **zero**
+> migration-level DML.
+>
+> **WHAT IT CHANGED, AND ONLY THAT**, across the read-only before/after pair:
+> `max_version` 0208 → **0209**; `history_rows` 207 → **208**; `v0209_rows` 0 → **1**;
+> and `slot_functions_md5` `4c09e5966982df27370d0a2ba803d9aa` →
+> **`2adca657b9a1bd8113fefc6c7d64f04c`**, the exact value pre-proved on an isolated
+> PostgreSQL 17.6 stack matching production's 17.6.
+>
+> **WHAT IT DID NOT CHANGE**, each verified against the before reading:
+> - `slot_function_signatures`, and `slot_function_privileges` (`service_role` true, `anon` and `authenticated` false, for both);
+> - `other_functions_md5` `12993331c7e48a354a2f24403a097f7c`;
+> - 1,481 public columns, 119 user triggers, 7 studios;
+> - `studio_switches_md5` `6aa05fe5c3cf36c6d72d29402c7a9a5f` and **`studios_waitlist_sms_on` 0 — Willow's waitlist SMS remains OFF**;
+> - `unresolved_critical_ids`, still exactly the two accepted historical payment alerts; `critical_error_24h` 0;
+> - `ledger_rows` 2, `entries_total` 61, `consents_total` 1 — none moved during the window.
+>
+> **POST-APPLY VERIFICATION, all read-only.**
+> - Both new bodies **executed** against production's schema (`booking_candidates` 0, `reschedule_candidates` 0; counts informational).
+> - `verify-production.mjs`: **10 PASS, 1 FAIL, 1 INCOMPLETE**, with "Remote migration max: = 0209". The FAIL is the two accepted payment alerts; the INCOMPLETE is the scheduler heartbeat, no Upstash env on the apply host.
+> - `check-stripe-gates.mjs`: **15 PASS**, 0 FAIL.
+> - **0** critical-or-error `ops_alerts` in the preceding hour.
+>
+> `0209` is now **FROZEN**. Any correction is a new forward migration; there is no
+> manual down-migration.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0209** (`0209_public_slot_candidate_buffer_window.sql`), applied 2026-10-10 from #820's reviewed head. |
+| **Repo migration max** | **0210** — `0210_sms_waitlist_join_acknowledgement.sql`, authored on the SMS-04 branch (`feat/sms-04-waitlist-join-ack`).<br>It adds:<br>• a ledger subject column with a composite same-studio FK, its purpose and subject checks and a once-per-entry index;<br>• the ledger identity guard redefined with one clause;<br>• the wording-version check widened to v1/v2;<br>• an index on the entries' normalized phone for the claim's per-number check;<br>• two `service_role`-only commands.<br>No data. `0199`, `0202`, `0204`, `0206`, `0207` and `0208` stay byte-identical. `0209` (WAIT #820) is applied and frozen, and this tree carries it byte-identical. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0210`** only — `0210_sms_waitlist_join_acknowledgement.sql`, authored on the SMS-04 branch and **NOT applied**, so `repo > hosted` is the MIGRATION-FIRST PENDING shape and **not** a parity violation. `0209` is applied, so the suffix is contiguous. Apply `0210` from the reviewed head of its own PR, before that PR's application deploys. |
+| **Next free migration** | Next free number is **0211**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. It must be re-censused immediately before anyone authors against it. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list`. |
+| **Reviewed release head** | `0d45c3ca50e6d8840b3106a13dbfe19ae2278417` (PR #820) — CI **9 pass / 3 skipping / 0 fail** (run 38018893247), explicit exact-head Codex review clean ("Reviewed commit `0d45c3ca50`"), 0 review threads. |
+| **Production application SHA at apply time** | `4564383c3171dac66cb21e40dc3190d26f22c072` (the #819 merge). **No application behaviour was deployed by this apply.** |
+
+## Previous state (verified 2026-10-10, post-0208 apply; `0208` APPLIED, `0209` AUTHORED AND PENDING)
+
+> **AUTHORED, NOT APPLIED — MIGRATION-FIRST PENDING.** WAIT-v4 PR0 authors
+> `0209_public_slot_candidate_buffer_window.sql`. It is **not** applied to
+> production, no production write was performed, and
+> `docs/production/migration-state.json` is **untouched** — `hosted_migration_max`
+> stays **0208**. The repository therefore sits legitimately ABOVE hosted, which
+> is the second of the two legal shapes the parity guard admits.
+>
+> **COMPLETE STATEMENT INVENTORY.** Twelve statements, and nothing else: **two
+> `create or replace function`** (`public_booking_slot_candidates`, 0170, and
+> `public_reschedule_slot_candidates`, 0171), **eight `revoke execute`** — each
+> function from `public`, `anon`, `authenticated` and `service_role` by name —
+> and **two `grant execute` to `service_role`**, which is the posture 0170/0171
+> already had. The revoke block is required, not decorative: Supabase's
+> `ALTER DEFAULT PRIVILEGES` grants EXECUTE to `anon`, `authenticated` **and**
+> `service_role` at function-create time, so each must be revoked explicitly by
+> name (CLAUDE.md §5; missed once in 0129 and again in 0164). **NO** table,
+> column, index, constraint, trigger, policy or `COMMENT ON`, and **zero**
+> migration-level DML — no top-level `insert`/`update`/`delete`/`truncate`.
+>
+> **WHAT THE TWO FUNCTIONS DO WRONG TODAY.** Both read
+> `studio_calendar_reservations` with `cr.ends_at > v_win_start` — the ACTUAL end
+> — while re-applying the studio buffer to reach the PROTECTED end, so a 23:50
+> appointment under a 30-minute buffer is protected to 00:20 and was never loaded
+> for the following day. **Local midnight was offered and the write authority then
+> refused it.** No table, column, index, constraint or trigger is touched, and
+> there is **zero** migration-level DML. The file opens its own `begin;`/`commit;`
+> with `set local lock_timeout = '5s'` inside the transaction. Both signatures are
+> preserved exactly, so `create or replace` replaces the bodies in place.
+>
+> **THE EARLIER STACKING DEPENDENCY IS CLEARED.** `0209` was previously illegal
+> standalone: the parity guard requires the pending suffix to be **CONTIGUOUS**
+> from `hosted + 1`, admitting only PERMANENTLY-skipped slots, and `0208` was then
+> only pending on the SMS-01 consent branch. `0208` is now **merged and applied**
+> (#819, hosted max 0208), so the pending suffix is exactly `0209` and contiguous.
+> Nothing about this change is stacked on another lane any more.
+>
+> **NONE OF 0206, 0207 OR 0208 TOUCHES THIS SURFACE.** None references
+> `public_booking_slot_candidates` or `public_reschedule_slot_candidates`, so
+> `0209` replaces the two bodies production is actually running.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0208** (`0208_waitlist_sms_consent_practitioner_and_signup_answer.sql`) — unchanged by this branch; no apply was performed or claimed. |
+| **Repo migration max** | **0209** — this branch authors `0209_public_slot_candidate_buffer_window.sql` (WAIT-v4 PR0): **two `create or replace function`**, **eight `revoke execute`** and **two `grant execute` to `service_role`** — twelve statements total. No table, column, index, constraint, trigger, policy or `COMMENT ON`, and **no top-level `insert`/`update`/`delete`/`truncate`**. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0209`** only — authored on this branch and **NOT applied**, so `repo > hosted` is the MIGRATION-FIRST PENDING shape and **not** a parity violation. |
+| **Next free migration** | Next free number is **0210**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`, and is **not claimed** here. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. No Supabase command was run against it for this change. |
+
+## Previous state (verified 2026-10-10, post-0208 apply; `0208` APPLIED, repo == hosted)
+
+> **0208 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #819 HEAD, BEFORE ANY MERGE.**
+> `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql` was applied to production on 2026-10-10 under explicit per-change owner authorization, from the reviewed PR #819 head `82d2ef1acb7f17145ccfbb5274f587f87f85eceb`. It lets a studio owner record SMS consent a prospect gave outside Hone, and makes the public signup ask Yes or No. It is applied before the SMS-01 application that calls its commands is deployed, as runbook §1b requires.
+>
+> **THE GATES, EACH REQUIRED TO PASS BEFORE THE PUSH.**
+> - The file's sha256 `1c6c512b6f59fc7cde5cc61f538b8acac4a526d9131df7c3e4a4b35d324637f0` (33,598 bytes) matched the authorized value.
+> - The linked project read `alhhybgqdmcdyzpybykj`, named **Hone**, in both the link file and `supabase projects list`.
+> - `npm run migration:state` read repo `0208`, hosted `0207`, pending `0208`, next free `0209`.
+> - `supabase migration list --linked` showed `0208` as the **only** local-only row, with no remote-only row.
+> - The **dry run listed exactly `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql`**, re-asserted programmatically.
+> - The preflight read **0** practitioner-sourced consents, so 0208's own preflight could not refuse.
+>
+> **THE APPLY.**
+> - One `supabase db push --linked --yes`, **without `--include-all`**, run once, **exit code 0**. Three expected notices (`drop constraint if exists`, skipping).
+> - The client-side window was `2026-10-10T01:26:13.191Z` to `01:26:41.823Z` (about 28.6 s). It is **not** a server apply time.
+> - The server-observed bracket: max `0207` with 206 history rows at 01:25:58.059Z, and max `0208` with 207 rows at 01:26:44.636Z.
+>
+> **WHAT IT CHANGED, AND ONLY THAT.**
+> - Four nullable provenance columns on `new_client_waitlist_entries`; public columns 1,477 → 1,481.
+> - Its four constraints, all validated.
+> - The transition guard, now carrying the write-once clause for consent evidence.
+> - The two commands, `record_waitlist_sms_consent_by_practitioner` and `join_new_client_waitlist_with_sms_answer`, with `EXECUTE` for `service_role` only.
+> - It wrote no data.
+>
+> **WHAT IT DID NOT CHANGE**, each verified against a read-only baseline taken just before:
+> - every other public function definition (fingerprint unchanged);
+> - 119 user triggers, 0 SMS ledger rows, 7 studios, and every studio's four SMS switches (fingerprint unchanged);
+> - **Willow Electrolysis's SMS settings**: confirmation, 24h and 2h on; waitlist invitation off;
+> - 0 studios with waitlist SMS on;
+> - 60 waitlist entries, 0 consents, 0 practitioner-sourced consents, 0 opted-out prospects;
+> - 0 critical or error alerts in 24h, with exactly the two accepted historical payment alerts unresolved.
+>
+> **NO APPLICATION CODE WAS DEPLOYED.** Production stays at `1bdc10ba` until #819 merges under separate approval, and the deployed application calls neither 0208 command. The consent backfill, activation and real messages are separate approvals.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0208** (`0208_waitlist_sms_consent_practitioner_and_signup_answer.sql`) |
+| **Repo migration max** | **0208**: `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql`, on PR #819. Four nullable columns, one composite FK, three consent checks (one replacing 0202's evidence check), the 0203 guard redefined with one write-once clause, and two `service_role`-only commands. No data. `0202`, `0203`, `0204` and `0207` stay byte-identical. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **none** — repo == hosted, PARITY. |
+| **Next free migration** | Next free number is **0209**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. It must be re-censused immediately before anyone authors against it, and the parked WAIT-v4 PR0 candidate re-derives its number when it lands. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list` before the push. It is distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
+| **Reviewed release head** | `82d2ef1acb7f17145ccfbb5274f587f87f85eceb` (PR #819, draft). At apply time: CI green (run 38002593747, database lane included); the exact-head Codex review was clean, naming the commit (`Reviewed commit: 82d2ef1acb`, comment 6090799757); all 3 review threads were resolved under explicit owner authorization. **Not merged at apply time.** |
+| **Production application SHA at apply time** | `1bdc10ba271484ffd3fba7979fce77ab486fe9fa`. **No application code was deployed by this apply.** |
+
+## Previous state (verified 2026-10-09, post-0207 apply; `0207` APPLIED, `0208` AUTHORED AND PENDING on the SMS-01 consent branch)
+
+> **0208 IS AUTHORED AND PENDING (added after the 0207 apply), on the local SMS-01 consent branch only.**
+> `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql` lets a studio owner record SMS consent a prospect gave OUTSIDE Hone, and makes the public signup ask Yes or No. It adds four nullable provenance columns to `new_client_waitlist_entries` (who recorded it, through a same-studio composite FK; the permission scope; an evidence reference; and the day they agreed, when known), replaces 0202's evidence check with three legal shapes (none, self-service, practitioner), and carries 0203's transition guard forward verbatim with one added clause: consent evidence is **write-once**. It adds two `service_role`-only commands, `record_waitlist_sms_consent_by_practitioner` and `join_new_client_waitlist_with_sms_answer`. **No existing row is changed, no data is written, and no applied migration is edited.** It was numbered by `npm run migration:state` at 0208, the derived next free number, with nothing else claiming it in this tree.
+>
+> **NOT APPLIED, NOT PUSHED, NOT MERGED.** It is a tested patch for the SMS-01 owner. Apply it migration-first, under separate approval, before any application change that calls its commands is deployed: the signup form and the owner's consent control both call commands that exist only after 0208.
+>
+> **THE BLOCK BELOW IS THE 0207 APPLY RECORD.** Its hosted row is still current. Its repo-max, pending and next-free rows have been updated for `0208` while it is pending.
+
+> **0207 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #812 HEAD, BEFORE ANY MERGE.**
+> `0207_sms_invitation_claim_serialized.sql` was applied to production on 2026-10-09 under explicit per-change owner authorization, from the reviewed PR #812 head `2998b6a30ecb656bc5b7b1b4bb946481f6f6af04`. It is the forward correction for Codex P2 4225516723: 0206's `FOR SHARE` let two claims of one invitation decide at once, so a claim waiting behind a rollback could claim an expired invitation. It was reviewed under Roadmap v1.25's convergence rule (handoff `SMS_01_INVITATION_CLAIM_CONCURRENCY_REVIEW_2026-10-09`) and proved by real two-session races with a negative control. **0206 was not re-applied** and stays byte-identical. **#812 was not merged and no application code was deployed.** The throwaway worktree's link files were removed and the worktree deleted afterwards.
+>
+> **THE GATES, EACH REQUIRED TO PASS BEFORE THE PUSH.**
+> - The file's sha256 `e85239e027623daac7b21c0541458f370c9a7ecedf78baef171575aeb4ed87b5` (6,890 bytes) matched the authorized value, and 0206's was unchanged.
+> - The linked project read `alhhybgqdmcdyzpybykj`, named **Hone**.
+> - `supabase migration list --linked` showed `0207` as the **only** local-only row.
+> - The **dry run listed exactly `0207_sms_invitation_claim_serialized.sql`**, re-asserted programmatically.
+>
+> **THE APPLY.** One `supabase db push --linked --yes`, **without `--include-all`**, run once, **exit code 0**. The client-side window was `2026-10-09T01:54:40.901Z`–`01:55:09.382Z` (~28.5 s), which is **not** a server apply time. The server-observed bracket was 01:53:44.443Z (max 0206) to 01:55:30.447Z (max 0207).
+>
+> **WHAT IT CHANGED, AND ONLY THAT.** `claim_waitlist_invitation_sms` now locks the invitation row **`FOR NO KEY UPDATE`** instead of `FOR SHARE`, so claimers of one invitation run one at a time. Its catalog comment now says so. It is still `SECURITY DEFINER`, still has `search_path` pinned, and is still `service_role`-only.
+>
+> **WHAT IT DID NOT CHANGE**, each verified against a read-only baseline taken just before:
+> - every other public function definition (fingerprint unchanged);
+> - 1,477 public columns, 128 user triggers, 0 ledger rows, 7 studios;
+> - **Willow Electrolysis's SMS settings**: confirmation on, 24h on, 2h on, waitlist invitation off, and no sender rows;
+> - 0 critical or error alerts.
+>
+> **PRODUCTION HEALTH.**
+> - `check-stripe-gates.mjs`: **15 PASS**.
+> - `verify-production.mjs`: **10 PASS** (remote max **0207**), 1 INCOMPLETE (the heartbeat, no Upstash env), and the **same pre-existing FAIL** recorded at the 0206 apply: 2 unresolved critical payment alerts from 2026-09-17 and 2026-09-27, which must be resolved, or accepted by the owner, before #812 merges.
+>
+> **THE BLOCK BELOW IS NOW HISTORY.** Its repo-max / pending / next-free rows were updated by #812 while `0207` was authored and pending, and are **preserved exactly as written**.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0207** (`0207_sms_invitation_claim_serialized.sql`) |
+| **Repo migration max** | **0208** — `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql`, authored on the SMS-01 consent branch. Four nullable columns, one composite FK, two checks (one replacing 0202's evidence check), the 0203 guard redefined with one write-once clause, and two `service_role`-only commands. No data. `0202`, `0203`, `0204` and `0207` stay byte-identical. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0208`** — `0208_waitlist_sms_consent_practitioner_and_signup_answer.sql`, **NOT applied**, so `repo > hosted` by exactly one and the chain is at MIGRATION-FIRST PENDING. Apply it migration-first, under separate approval, before the application that calls it is deployed. |
+| **Next free migration** | Next free number is **0209**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. It must be re-censused immediately before anyone authors against it, and the parked WAIT-v4 PR0 candidate re-derives its number when it lands. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list` before the push. It is distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
+| **Reviewed release head** | `2998b6a30ecb656bc5b7b1b4bb946481f6f6af04` (PR #812). At apply time: CI **13 pass** (run 37869009493), exact-head Codex review clean naming the commit (`Reviewed commit: 2998b6a30e`), **0** unresolved review threads (the two 2026-10-09 threads resolved under explicit owner authorization), and `mergeStateStatus` **CLEAN**. **Not merged at apply time.** |
+| **Production application SHA at apply time** | `88f5e3cdea32845e6a40002b3627ea315d2bf70c`. **No application code was deployed by this apply.** |
+
+## Previous state (verified 2026-10-09, post-0206 apply; `0206` APPLIED, repo == hosted)
+
+> **0206 APPLIED MIGRATION-FIRST, FROM THE REVIEWED #812 HEAD, BEFORE ANY MERGE.**
+> `0206_sms_delivery_foundation.sql` (SMS-00) was applied to production on 2026-10-09
+> under explicit per-change owner authorization, from the reviewed PR #812 head
+> `2467f347e1cad53a02d4d160957bb21ccae34afb`, using a throwaway detached worktree at that
+> head and the pinned Supabase CLI 2.102.0. **#812 was NOT merged at apply time and no
+> application code was deployed.** The worktree's link files were removed and the
+> worktree deleted afterwards.
+>
+> **THE GATES, EACH REQUIRED TO PASS BEFORE THE PUSH.**
+> - The linked project read `alhhybgqdmcdyzpybykj`, named **Hone**.
+> - The file's sha256 `e3cdaf222f39fc34fe04f7bf93cdbbef62f0b08c2b1033fd9c44010cda86b0ab` (32,472 bytes) matched the authorized value.
+> - `supabase migration list --linked` showed `0206` as the **only** local-only row, and no remote-only row.
+> - The **dry run listed exactly `0206_sms_delivery_foundation.sql`**, re-asserted programmatically before the push.
+>
+> **THE APPLY.** One `supabase db push --linked --yes`, **without `--include-all`**, run once, **exit code 0**, with no retry and no hand-copied SQL. The operator-observed **client-side** window was `2026-10-09T00:00:03.146Z`–`00:00:41.870Z` (~38.7 s), which is **not** a server apply time. The server emitted two expected NOTICEs from the file's own `drop trigger if exists` statements.
+>
+> **WHAT IT CREATED (additive only).**
+> - One table, `sms_outbound_messages`: no body and no phone number; RLS on, no policy, no grant; two triggers on it.
+> - One column, `studios.send_waitlist_invitation_sms boolean not null default false`.
+> - Five `SECURITY DEFINER` commands executable by `service_role` only, with `search_path` pinned.
+> - Two trigger functions closed to every role.
+>
+> **No trigger on any existing table, and no migration-level DML.**
+>
+> **POST-APPLY VERIFICATION (read-only).**
+> - History: max(version) `0206`, 204 → 205 rows (exactly +1), `0206` once, `0205` not re-applied, nothing above.
+> - The ledger table: 0 rows, RLS on, 0 policies, no table privilege for `anon`, `authenticated` or `service_role`.
+> - The commands: all five present and executable by `service_role` only.
+> - The studio switch: boolean, NOT NULL, default false, with **0 of 7** studios on (7 before and 7 after).
+> - Triggers: only the two new ones, both on the new table (126 → 128).
+> - Alerts: 0 critical or error ops alerts in the hour before and after.
+>
+> **PRODUCTION HEALTH.**
+> - `check-stripe-gates.mjs`: **15 PASS**.
+> - `verify-production.mjs`: **10 PASS, 1 INCOMPLETE, 1 FAIL**.
+>   - The INCOMPLETE is the reminder heartbeat: no Upstash env on the apply host, the runbook's accepted case.
+>   - The FAIL **pre-dates this apply and is unrelated to it**: 2 unresolved critical payment ops alerts, `session_payment_succeeded_write_zero_rows`, raised 2026-09-17 and 2026-09-27. Per the migration-first runbook it must be **resolved, or explicitly accepted by the owner, before #812 merges.**
+>
+> **0207 IS AUTHORED AND PENDING (added after the 0206 apply).** Codex P2 4225516723, on the head that recorded this apply, found that 0206's `FOR SHARE` let two claims of one invitation decide at once. If the first rolled back after expiry, the waiting second could claim an expired invitation. The forward correction `0207` serializes claimers on the invitation row. It was reviewed under Roadmap v1.25's convergence rule (handoff `SMS_01_INVITATION_CLAIM_CONCURRENCY_REVIEW_2026-10-09`) and proved by real two-session races with a negative control. The rows below that name `0207` were updated while it is pending.
+>
+> **NOTHING SENDS.** Every new path is behind a studio switch that defaults off. The application that calls the new commands ships only when #812 merges, which needs its own approval.
+>
+> **THE BLOCK BELOW IS NOW HISTORY.** Its repo-max / pending / next-free rows were updated by #812 while `0206` was authored and pending, and are **preserved exactly as written** rather than re-derived.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0206** (`0206_sms_delivery_foundation.sql`) |
+| **Repo migration max** | **0207** — this branch (#812) now also authors `0207_sms_invitation_claim_serialized.sql`, the forward correction for Codex P2 4225516723. It redefines `claim_waitlist_invitation_sms` with the identical body apart from the row lock (`FOR SHARE` → `FOR NO KEY UPDATE`), re-asserts its revokes and `service_role` grant by name, and corrects its catalog comment. No table, index, constraint or trigger changes, and no data. `0206` stays byte-identical. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0207`** — `0207_sms_invitation_claim_serialized.sql`, authored on #812 and **NOT applied**, so `repo > hosted` by exactly one and the chain is at MIGRATION-FIRST PENDING. Apply it migration-first, under separate approval, before #812 merges. |
+| **Next free migration** | Next free number is **0208**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation. It must be re-censused immediately before anyone authors against it, and the parked WAIT-v4 PR0 candidate re-derives its number when it lands. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project (PostgreSQL 17.6.1.121), confirmed from the applying worktree's `supabase/.temp/project-ref` and `supabase projects list` before the push. It is distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
+| **Reviewed release head** | `2467f347e1cad53a02d4d160957bb21ccae34afb` (PR #812). At apply time: CI **13 pass** (run 37825205985), exact-head Codex review clean naming the commit (`Reviewed commit: 2467f347e1`), **0** unresolved review threads (two resolutions ratified by the owner on 2026-10-08), and `mergeStateStatus` **CLEAN**. **Not merged at apply time.** |
+| **Production application SHA at apply time** | `88f5e3cdea32845e6a40002b3627ea315d2bf70c`. **No application code was deployed by this apply.** |
+
+## Previous state (verified 2026-10-03, post-0205 apply; `0205` APPLIED, repo == hosted)
+
+> **ONE DEFAULT, TWO COLUMN COMMENTS, AND ZERO ROWS WRITTEN.** The complete
+> inventory is: **one `alter table public.studios alter column
+> new_client_admission_mode_set_at set default now()`**, **two `comment on column`**
+> (`_set_at`, `_set_by`), and **one `do` block containing two `update public.studios`
+> statements PER REPAIR CANDIDATE** — a guard probe executed in order to be *refused*,
+> inside an exception-handled subtransaction that rolls back on every path, and the
+> bounded repair itself. No table created or dropped, no column added or dropped, no
+> index, no constraint, no function, no trigger, **no grant or revoke**, and no
+> `insert`/`delete`/`truncate` anywhere. The migration opens its own `begin;`/`commit;`
+> with `set local lock_timeout = '5s'` **inside** the transaction.
+>
+> **THE WINDOW THE REPAIR EXISTS FOR WAS EMPTY, SO THE APPLY WROTE NOTHING.** A column
+> default cannot reach a row that already exists, so 0205 carries a bounded repair for
+> any studio created between the 2026-10-01 census and this apply. At apply time
+> production held exactly **7** studios and **all 7 were census members**: zero
+> candidates, the loop never executed, and the server emitted
+> `0205: apply-time repair stamped 0 studio(s)`. **The per-candidate guard probe
+> therefore did not run at all**, which is correct by construction — it exists to prove
+> the guard polices the writes this migration actually makes, and it made none.
+> All **7** studio rows were verified **byte-for-byte identical** before and after,
+> across `mode`, `set_at`, `set_by` and `created_at`: the five unstamped legacy studios
+> keep their NULL and their cutover ceremony, and the two owner-stamped studios are
+> untouched. **None of the four fail-closed gates tripped** — census lineage 7 of 7
+> present, zero off-shape unstamped non-census rows, no probe required, post-condition
+> clean.
+>
+> **WHAT THE APPLY DID CHANGE.** `set_at` now defaults to `now()`, so every studio
+> created from here is **born stamped and system-initialized at `open`** and no longer
+> inherits the legacy cutover ceremony that belongs only to pre-0204 rows. The two
+> column comments were replaced **forward**, because `0204` is applied and FROZEN and
+> its descriptions had become false: non-null `set_at` no longer means "an owner chose".
+> Both now also disclaim INSERT-time validation.
+>
+> **NO APPLICATION BEHAVIOUR SHIPPED WITH THIS APPLY.**
+> `lib/booking/new-client-admission.ts` is byte-identical to production once comments
+> are stripped, so unlike `0204` this release had **no deploy-order constraint** and the
+> post-merge deployment is behaviourally a no-op.
+>
+> ⚠️ **ONE NUMBER WAS DISPLACED, AND THE WORK IT NAMED IS STILL OPEN.**
+> [new-client-admission-execution-record.md](./new-client-admission-execution-record.md)
+> earmarked **`0205`** for closing the `studios_admission_mode_guard()` grant deviation
+> that `0204` left behind. `0205` was used for this change instead and contains **zero**
+> grant or revoke statements, so **that deviation remains open** and must be closed by a
+> NEW migration — `0206` at the earliest, re-censused immediately before anyone authors
+> against it. The execution record is a historical release record and is **not** rewritten
+> here.
+>
+> **THE BLOCK BELOW IS NOW HISTORY.** Its repo-max / pending / next-free rows were
+> updated by #780 while `0205` was authored and pending, and are **preserved exactly as
+> merged** rather than restored or re-derived.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0205** (`0205_new_studio_admission_default.sql`) |
+| **Repo migration max** | **0206** — this branch authors `0206_sms_delivery_foundation.sql` (SMS-00): **one new table**, `sms_outbound_messages` (the outbound SMS delivery ledger, which holds no message body and no phone number), its four indexes and two triggers on it (none on any existing table); **four `service_role`-only commands** (`begin_appointment_sms_message`, `claim_waitlist_invitation_sms`, `settle_sms_message`, `record_sms_delivery_status`); and **one column on `studios`**, `send_waitlist_invitation_sms boolean not null default false`. Every new object is revoked from `public`, `anon`, `authenticated` and `service_role` BY NAME before the four commands are granted to `service_role` only; the table has RLS on and no policy. **Zero migration-level DML.** **AUTHORED, NOT APPLIED** — the chain has left parity and sits at **MIGRATION-FIRST PENDING**, the ordinary pre-apply position of a migration-bearing branch, not drift. The hosted row above carries the production claim and is unchanged by this branch. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0206`** — `0206_sms_delivery_foundation.sql`, authored on the SMS-00 branch and **NOT applied**, so `repo > hosted` by exactly one and the chain is at MIGRATION-FIRST PENDING. ⚠️ **NUMBER NOTE:** the parked WAIT-v4 PR0 candidate (local commit `e4a74605`, never pushed, no PR) authored a DIFFERENT `0206_public_slot_candidate_buffer_window.sql` and applied it to the shared LOCAL stack only; it holds no repository or hosted claim, and whichever of the two lands second re-derives its number with `npm run migration:state` at that moment. `0205` was the previous pending set and it was applied on **2026-10-03**, which is how the chain reached parity before this branch authored above it. |
+| **Next free migration** | Next free number is **0207**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation, nothing may assume it, and it must be re-censused immediately before anyone authors against it. **`0205` IS NO LONGER FREE** — it is applied and FROZEN. **`0206` IS NO LONGER FREE EITHER** — it is authored on this branch and pending apply. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` **before every** Supabase command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
+| **Reviewed release head** | `da15b753f1547da7978ac995a5cc32fbeb0cbf5b` (PR #780) — the exact authorized head: CI **10 pass / 2 skipping / 0 non-green**, exact-head Codex review clean and naming the commit (`Reviewed commit: da15b753f1`), **0** unresolved review threads, and `mergeStateStatus` **CLEAN**. Merged as `ef611b8460a41613d6b98fcc2932b49f2b831867`; the applying tree's `0205` blob is identical to the reviewed head's. |
+| **Production application SHA at apply time** | `ef611b8460a41613d6b98fcc2932b49f2b831867` (the #780 merge). **No application behaviour was deployed by this apply** — see above. |
+
+## Previous state (verified 2026-10-01, post-0204 apply; `0204` APPLIED, repo == hosted)
+
+> **ADDITIVE SCHEMA PLUS NEW AUTHORITY. ZERO MIGRATION-LEVEL DML.** The complete
+> inventory is: **three `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`** on
+> `public.studios` (`new_client_admission_mode` text NOT NULL DEFAULT `'open'`,
+> `new_client_admission_mode_set_at` timestamptz, `new_client_admission_mode_set_by`
+> uuid), **one CHECK constraint** (`studios_new_client_admission_mode_check`, closed
+> to `open | waitlist | closed`), **six `create or replace function`**, **one
+> `before update ... for each row` trigger** (`studios_admission_mode_guard`), and the
+> revoke/grant block. No table created or dropped, no index, and **no top-level
+> `insert`/`update`/`delete`/`truncate`** — verified by eliding all **seven**
+> dollar-quoted function bodies before scanning. The migration opens its own
+> `begin;`/`commit;` with `set local lock_timeout = '5s'` **inside** the transaction.
+>
+> **MIGRATION-FIRST, AND THE ORDER IS LOAD-BEARING.** The apply **preceded** the
+> application deploy. An earlier revision of the activation plan deployed code at
+> step 1 and applied at step 2; that became wrong the moment new-client booking
+> started calling `create_public_appointment_for_new_client`, because between those
+> two steps the function does not exist and **every ordinary new-client booking would
+> have failed**. The fix was the order, not a missing-RPC fallback in the booking path.
+>
+> **THE APPLY CHANGED NO STUDIO'S BEHAVIOUR.** Every one of the **7** studio rows was
+> left unstamped — `set_at` NULL, `set_by` NULL, mode `'open'` — so the legacy env
+> bridge remained the sole authority until a studio was deliberately cut over. That is
+> a dated reading taken immediately after the apply, not a claim about the table today.
+>
+> **THE TWO `drop function if exists` STATEMENTS WERE NO-OPS.**
+> `create_public_appointment_for_new_client` had **zero** hosted overloads before the
+> apply, confirmed read-only. The apply emitted three `NOTICE`s saying exactly that —
+> the trigger did not exist, and neither overload existed. **Nothing live was dropped.**
+> The statements exist so the migration stays safely re-appliable, not because
+> production held an older shape.
+>
+> ⚠️ **ONE GRANT DEVIATION, CARRIED FORWARD AND NOT FIXED HERE.**
+> `public.studios_admission_mode_guard()` received **no explicit `REVOKE`**, so
+> Supabase's `ALTER DEFAULT PRIVILEGES` left `EXECUTE` with `anon`, `authenticated`,
+> `service_role` **and `PUBLIC`**. It is **not exploitable** — its return type is
+> `trigger`, and PostgreSQL refuses to invoke such a function outside a trigger
+> context — but it is inconsistent with the discipline `0204` states for its own five
+> other functions. **`0204` is APPLIED and FROZEN: this must be closed by a NEW
+> migration, never by editing `0204`.**
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0204** (`0204_new_client_admission_mode.sql`) |
+| **Repo migration max** | **0205** — this branch authors `0205_new_studio_admission_default.sql` (NEW-STUDIO-ADMISSION-DEFAULT): one `alter column ... set default now()` on `studios.new_client_admission_mode_set_at`, two `comment on column`, and **TWO `update public.studios` STATEMENTS**. The first is a PER-CANDIDATE GUARD PROBE: for each row the repair is about to write, it attempts **that row's own `set_at` write without the permit** and requires the guard to refuse it, inside an exception-handled subtransaction so the attempt is rolled back on every path and **can never persist** — a precondition, not a change. It probes the repair's exact mutation because a narrower probe does not cover it: a guard scoped to `set_by` refuses a `set_by` write while never firing for `set_at`. With no candidates it performs no probe and no repair. The second is the **BOUNDED APPLY-TIME REPAIR** over the census-to-apply window, and **that one CAN write rows** — it stamps `new_client_admission_mode_set_at = created_at` for studios provably created after 0204 that are still unstamped, which is the apply's real blast radius; it preserves every owner-stamped row and every genuine pre-0204 legacy row, and it aborts the apply rather than write under a model that does not match the data. **AUTHORED, NOT APPLIED** — the chain has left parity and sits at **MIGRATION-FIRST PENDING**, which is the ordinary pre-apply position of a migration-bearing branch, not drift. The hosted row above carries the production claim and is unchanged by this branch. |
+| **Remote-only migrations** | **none** — derived by set arithmetic between the live remote version list (203 versions) and the applied tree's `supabase/migrations/*.sql`. ⚠️ **NOT** derived from `migration list --linked`: that command reports **false** remote-only rows when run from a worktree whose branch predates them, which it did during this release's preflight (a branch topping out at `0201` reported `0202`/`0203` as remote-only). Use the live version list, not the CLI's local comparison, whenever the invoking tree may not be the release tree. |
+| **Pending migrations** | **`0205`** — `0205_new_studio_admission_default.sql`, authored on the NEW-STUDIO-ADMISSION-DEFAULT branch and **NOT applied**. Hosted remains at **`0204`**: verified live after the 0204 apply, `max(version)` in `supabase_migrations.schema_migrations` is **`0204`** with **203** rows total, and re-confirmed still `0204` immediately before this branch was refreshed onto the post-#779 production head. |
+| **Next free migration** | Next free number is **0206**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation, nothing may assume it, and it must be re-censused immediately before anyone authors against it. **`0204` IS NO LONGER FREE** — it is applied and FROZEN. **`0205` IS NO LONGER FREE** — this branch authors it. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` before every Supabase command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
+| **Reviewed release head** | `d8617859831152306178b3ddca1126adcd5df54a` (PR #773) — the exact authorized head: tree clean and `tree == HEAD`, PR open and `MERGEABLE`/`CLEAN`, **0** non-green checks with the `browser e2e (local stack)` aggregator green, Vercel GREEN, exact-head Codex review **Completed at `d861785` with zero findings**, and **0 of 25** review threads unresolved. |
+| **Production application SHA at apply time** | `a5e179f2e29789c3a1bfc93041d65ed1b4820eac` (the #770 merge). **Unchanged by this apply: no application code was deployed by it.** The #773 application was deployed afterwards — see the release record below. |
+| **CLI** | `supabase` **2.102.0**, the pinned version — a grants-parity invariant, not a convenience. Invoked as `npx --yes supabase@2.102.0`; the ambient CLI on the apply host was **2.119.0** and was deliberately **not** used. |
+| **Command** | `supabase db push --linked`, **without** `--include-all`, preceded by `--dry-run` which listed **`0204` only**. The dry-run set was then **re-asserted programmatically** (size `== 1` **and** name `== 0204_new_client_admission_mode.sql`) so the push could not execute on any other set. Applied **once**; exit code 0. No retry, no hand-copied SQL. |
+| **`0204` sha256** | `186fa6cb3154c85d2987f1e75aeee6f7361004f1b535cc44a46a27f96b4db219` — computed from the file at the apply host immediately before the dry-run and re-checked at the moment of apply. ⚠️ **`0204` was revised during review**: an earlier head carried `ae778f2a1df114de4cb15d8ef3326b41b8bbaa58aa45f228a83ef0b9f2a36b29` (294 lines, later 794). That hash is **void** and must not be quoted. **An applied migration is FROZEN: never edit it.** |
+| **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` stays `null`. `supabase_migrations.schema_migrations` carries only `(version, statements, name)` — there is no timestamp column — so this limitation recurs by construction. **An operator-observed client-side window IS asserted**: `2026-10-01T20:01:04.049Z` – `2026-10-01T20:01:34.852Z` (~30.8 s), read from the apply host's clock around the single CLI invocation. **That window is NOT a server apply time and must never be copied into `hosted_applied_at`.** |
+| **Pre-apply evidence (read-only)** | hosted max **`0203`** / **202** history rows · `0203` present exactly once · **`0204` ABSENT** · nothing above `0203` · **0** duplicate versions · no remote-only migration · `studios` columns matching `%admission%` = **0** · **all six** functions `0204` creates **ABSENT** · `create_public_appointment` **present** and not touched by `0204` · **5** pre-existing non-internal triggers on `public.studios`. |
+| **Post-apply verification (read-only)** | hosted max **`0204`** / **203** history rows (**+1 exactly**) · `0204` present **exactly once** · `0203` still present exactly once and **not re-applied** · **nothing above `0204`** · **0** duplicate versions · the three columns present with expected types/nullability · CHECK constraint present · the five callable functions present · trigger present and **enabled** (`tgenabled = 'O'`), `studios` triggers **5 → 6** · exactly **ONE** FK relates `studios` and `practitioners` (`practitioners_studio_id_fkey`), so the `studio:studios(*)` embeds are intact · **all 7** studio rows unstamped (`set_at` NULL, `set_by` NULL, mode `'open'`). |
+| **Old-application inertness (verified BEFORE the apply, both sides)** | The then-serving application `a5e179f2` referenced **none** of `0204`'s new names anywhere in `app/`, `lib/`, `middleware` or `types` — **0 files** for each of `set_new_client_admission_mode`, `effective_new_client_admission`, `assert_new_client_admission`, `join_new_client_waitlist_guarded`, `create_public_appointment_for_new_client`, `new_client_admission_mode`, `studios_admission_mode_guard`, `hone.admission_mode_studio_id`. Its public booking commit was `rpc("create_public_appointment")`, which `0204` neither creates nor replaces. The new trigger computes `is distinct from` on the three new fields and **returns early** when none changed, which an application without those columns in its generated types cannot do. |
+| **Grants verified post-apply** | Revoked from `public`, `anon`, `authenticated` **and** `service_role` **by name**, then granted narrowly — re-verified with `has_function_privilege` plus an `aclexplode` check for `PUBLIC`: `set_new_client_admission_mode` → **`authenticated` only**; `join_new_client_waitlist_guarded` → **`service_role` only**; `create_public_appointment_for_new_client` → **`service_role` only**; `effective_new_client_admission` and `assert_new_client_admission` → **NOBODY**. The one exception is `studios_admission_mode_guard()`, recorded in the warning block above. |
+| **`effective_new_client_admission` is NOT a presentation read** | It is `volatile` and executes `perform 1 from public.studios s where s.id = p_studio_id for no key update` — it takes a **row lock**. It is a commit-time authority. It was deliberately **not** invoked during verification; effective mode was derived behaviourally from the public page instead, so that no verification step took a lock on a studio row mid-cutover. |
+
+| Migration | Hosted status | sha256 |
+|---|---|---|
+| `0200_waitlist_redeemed_unbooked_exit.sql` | **APPLIED** | `a6037f262c38df16fafe51a3178afc90c8fe2b814410eec4f2ad510fdd795158` |
+| `0201_waitlist_exit_authority_contraction.sql` | **APPLIED** | `1567610577e84cb717c77cf8451d57a97150f8fc169de33df2d48370be5ef82f` |
+| `0202_waitlist_profile_and_sms_consent_authority.sql` | **APPLIED** | `7a95e4e66c7c5fe50dbb2d7e73d54f7155c54f376a504ff2fbac47826dbb4ce1` |
+| `0203_waitlist_mobile_verification_authority.sql` | **APPLIED** | `c9453ebb8d9a6c94ff1af534c4f2e9930470f2274d205ecf2ad52ecfadbe340b` |
+| `0204_new_client_admission_mode.sql` | **APPLIED** | `186fa6cb3154c85d2987f1e75aeee6f7361004f1b535cc44a46a27f96b4db219` |
+
+### NEW-CLIENT-MODE-01 release record — deploy, studio cutover, and step-G acceptance
+
+The apply above is **one** of four distinct authorities exercised in this release.
+They are separate on purpose and are recorded separately. The step-by-step execution
+record lives in
+[new-client-admission-execution-record.md](./new-client-admission-execution-record.md)
+— split out of the activation plan, verbatim, so that plan could be frozen as the
+operator contract; the plan itself is
+[new-client-admission-activation.md](./new-client-admission-activation.md). This is the
+release-level summary.
+
+| Authority | Outcome |
+|---|---|
+| **1 · Migration apply** (plan step B) | `0204` applied, verified — the table above. |
+| **2 · Code release** (plan step D) | PR **#773** merged as **`d7e712efa28c4c9ef8d2e224f9250cc68c4e6ae4`** at **2026-10-01T20:25:16Z** — a **true merge commit**, parents `[a5e179f2, d8617859]`; no squash, no rebase, no force push. Deployed as `dpl_AQrWznf5fKqLKPZiH4RNCgDFwxsZ`, `target=production`, `READY`, `aliasError=null`, holding `hone.care` and `www.hone.care`, ready **2026-10-01T20:27:33.821Z**. Containment verified: `d8617859` is an ancestor of `d7e712ef`. |
+| **3 · Studio cutover** (plan step F — **one studio written; completeness UNKNOWN**) | **Willow Electrolysis** (`38cb3a8b-f0f1-409e-9ea4-ffa4b95cb4c6`, slug `willow-electrolysis`) moved from stored `'open'`/unstamped to stored **`waitlist`**, `set_at` **`2026-10-01T21:35:33.139540Z`** — a **server-generated** instant, unlike the apply window. Written by **its own owner** through the product UI (Settings → Booking → `new-client-admission`), which calls `set_new_client_admission_mode`. **Not** written by the release controller: that connection runs as `postgres` with `auth.uid()` NULL, and the command re-derives authority via `is_studio_owner(p_studio_id)`, so it answers `not_authorized` and writes nothing. `set_by` resolves to a **`practitioners` row of this studio with `role = 'owner'`** — matched on `practitioners.id`, not `user_id`, because the command stores the resolved practitioner. **WHAT THIS WRITE DEFINITIVELY DID:** it moved Willow's new-client admission **authority** from the legacy env bridge to the persisted `studios` row. A stamped row is answered as `persisted` before the bridge is consulted, so the env list no longer moves Willow. **Willow's effective ADMISSION MODE did not change** — it read WAITLIST on the public surface both before and after, which is a measured observation either side of the write, not an inference. ⚠️ **WHAT CANNOT BE SAID, AND WAS WRONGLY SAID IN AN EARLIER REVISION OF THIS ROW:** whether Willow's **commit point** changed at that instant is **UNKNOWN**. Read on **2026-10-01**, immediately before the cutover, Willow had **48** `new_client_waitlist_entries` rows pre-dating it — a dated reading, not a claim about the table now. Because an email-only join writes no row, those rows showed Willow used the **durable** path **at the instants they were written**. They prove nothing about `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` immediately before step F, because **step E deliberately never read it**. The earlier revision used those rows to conclude Willow was still on the live durable list and that its commit point therefore did not move; both conclusions are **withdrawn as unsupported**. This is precisely the inference the activation plan already prohibits — *"a studio that has waitlist entries may have been opened since"* — so the record had contradicted its own governing document. **Establishing it would require contemporaneous configuration evidence that was never captured, and it must not be asserted from rows, from `docs/`, or from stampedness.** |
+| **4 · Durable-join acceptance** (plan step G) | **PASSED.** One synthetic prospect joined through the **public** Willow waitlist form at **2026-10-01T22:25:36.347700Z**, committing entry **`ff942ef2-a272-4549-a3b9-c5d000b05b69`** — `status` **`waiting`**, `source` **`public_booking`**, `joined_at_provenance` **`form`**, and `removed_at`/`claimed_at`/`invited_at`/`converted_at`/`converted_client_id`/`created_by_practitioner_id` all **NULL**. Willow entries **48 → 49**; **globally 51 → 52**, so exactly one row was created anywhere. **The row is the check, and the row exists** — the legacy email-only path writes no row, so its non-use is proven by the row's existence rather than asserted. **No appointment** (Willow 330 → 330) and **no client record** (78 → 78; three pre-existing clients carry that address, newest created 2026-09-19, zero since). **No SMS**: `sms_consent_at`, `sms_consent_source` and `mobile_verified_at` all NULL, and the waitlist surface has no SMS field at all. Both emails fired: the **studio notification was provider-accepted** (`new_client_waitlist_joined` logged `notification: "sent"`, a branch reached only on `accepted`), and the **client acknowledgement logged no failure** — it logs only on failure, so acceptance is inferred from silence rather than positively confirmed. |
+
+> **WHAT THIS RELEASE DELIBERATELY DID NOT DO.**
+>
+> - **Plan step E was NOT performed.** The live `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` and
+>   `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` values were **never read**. **No slug set
+>   is recorded anywhere in these documents, and none may be inferred from them** — not
+>   from which studios are stamped, not from which hold waitlist rows. The live env
+>   remains the only authority for that, read at cutover by whoever holds the credential.
+>   **This is why the step-F row above records Willow's commit-point behaviour as
+>   UNKNOWN rather than unchanged:** with step E unperformed there is no
+>   contemporaneous evidence of durable-list membership, and historical rows are not a
+>   substitute for it.
+> - **ONE STUDIO WAS WRITTEN. STEP_F_COMPLETENESS = UNKNOWN.** Willow was stamped and
+>   verified. The other **6** studios were read as stored `'open'` and **unstamped** on
+>   2026-10-01, and **were therefore governed by the env bridge AT THAT READING**. ⚠️ **Whether
+>   they still are is UNKNOWN** — if any of those six owners has since written a mode, the
+>   persisted row took authority over from the bridge for that studio. **Re-read the rows
+>   before asserting any studio's current authority source.** ⚠️ **An earlier
+>   revision called step F "INCOMPLETE BY DESIGN"; that is withdrawn**, because it
+>   presumed the slug list has more members than the one studio written. F applies only to
+>   studios in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`, **step E never read that list**, and
+>   **unstamped means neither listed nor unlisted** — so **if Willow was the only listed
+>   studio, F is already COMPLETE.** Stamping an unlisted studio `waitlist` would move a
+>   currently OPEN studio, which is not what this release set out to do. Until a studio is stamped its owner **cannot** select OPEN or CLOSED — the
+>   command answers `legacy_waitlist_cutover_required`, and writing `waitlist` is the way out.
+> - **Step H was NOT started, and STEP_H_ELIGIBILITY = UNKNOWN** — not negative. H is
+>   gated on every studio in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` being stamped and
+>   verified; one was, and step E never read the list, so **if that was the whole list H
+>   is already eligible.** "Not started" and "not eligible" are different claims and only
+>   the first is supported. **BOTH BRIDGES REMAIN INTACT** in the deployed tree:
+>   `envForcesWaitlist` in `lib/booking/new-client-admission.ts`, and
+>   `lib/booking/new-client-waitlist-durability-bridge.ts` with
+>   `isNewClientWaitlistDurableEnabled`. No environment variable was deleted.
+> - **Twilio/Verify was NOT armed** and no provider was contacted beyond the two emails
+>   the join itself sends. The release touched **no** runtime Twilio/Verify/OTP/SMS code —
+>   the only matching paths in the whole diff are three **test** files.
+> - **The step-G synthetic entry was RETAINED, not removed.**
+>   `ff942ef2-a272-4549-a3b9-c5d000b05b69`. **TWO DATED OBSERVATIONS, and no claim
+>   about any instant after the second:**
+>   - **2026-10-01T22:25:36Z (at step-G acceptance)** — status **`waiting`**; position
+>     **47 of 47** of Willow's Waiting section (ordered `joined_at` ASC, `id` ASC,
+>     `SECTION_PAGE_SIZE` 100, so then the last row on page one); a submitted phone
+>     number, no SMS consent.
+>   - **2026-10-02T00:14:55Z (controlled invitation-acceptance exercise)** — the same
+>     entry was **claimed** (`00:14:55.732594Z`) and then **invited by a practitioner**
+>     (`00:14:55.792262Z`); status **`invited`**, so it was **no longer in the Waiting
+>     section at all**. The invitation's `delivery_disposition` read **`accepted`**
+>     (`00:14:56.001805Z`) and its stored `expires_at` is **`2026-10-04T00:14:55Z`**;
+>     `redeemed_at`, `declined_at`, `expired_at`, `released_at` and `closed_at` were all
+>     NULL. **Real inbox receipt was OPERATOR-OBSERVED** — that one is reported, not
+>     measured here; everything else in this bullet is a read-only database reading.
+>   ⚠️ **NOTHING IS ASSERTED ABOUT ITS STATE AFTER 2026-10-02T00:14:55Z.** The expiry
+>   above is a stored value, not a prediction, and an earlier revision of this bullet
+>   said the row "sits in" Waiting — **withdrawn**: by the time that wording was read it
+>   was already false, which is precisely why a status belongs to an instant.
+>   **Locate it by id**, never by queue position or status.
+>   **ORIGIN, which does not change: this row was created by a synthetic acceptance
+>   test, not by a real prospect, and its address is a real inbox.** **NO CLEANUP WAS
+>   PERFORMED IN THIS CHANGE.** Whoever picks this up must **re-read the entry and its
+>   invitation by id first**; if either is still outstanding at that moment, removing the
+>   entry or releasing the invitation is a **SEPARATELY AUTHORIZED** action. **This
+>   record deliberately makes no claim about whether they are outstanding now** — an
+>   earlier revision said the row "now carries a live invitation", which asserted a
+>   present state three lines below a promise not to, and is **withdrawn**.
+
+## Previous state (verified 2026-09-27, post-0203 apply; `0203` APPLIED, repo == hosted)
+
+> **AUTHORITY AND METADATA ONLY. NO SCHEMA CHANGE AND NO DATA WRITE.** The complete
+> statement inventory is: two `create or replace function` statements — a forward
+> redefinition of the live `new_client_waitlist_entries_transition_guard` and the new
+> command `mark_waitlist_mobile_verified(uuid, text)` — four `revoke execute`, one
+> `grant execute` to `service_role`, and **THREE `COMMENT ON` STATEMENTS**: one on the
+> new function and two on the `mobile_verified_at` and `phone` columns.
+>
+> **THE THREE COMMENTS MUTATE PRODUCTION `pg_description`, AND THAT IS A REAL CHANGE
+> RATHER THAN A NO-OP.** An earlier revision of this record described the apply as
+> two function definitions plus ACL statements, which omitted them; they are named
+> here because they replaced `0202`'s now-false column descriptions — that column
+> text asserted the column had NO writer, was NULL for every row, and that the guard
+> refused every change, all three of which this migration falsified. Verified
+> read-only after the apply: `mobile_verified_at`'s stored description no longer
+> contains the `0202` text and now carries the `0203` text, and `phone`'s description
+> likewise changed. **NO OTHER `pg_description` ROW CHANGED** — that is the precise
+> claim, and an earlier revision of this block overstated it as "no other catalog
+> metadata was altered", which is plainly false and contradicted the inventory
+> directly above it: both `CREATE OR REPLACE FUNCTION` statements alter `pg_proc`,
+> and the four revokes plus one grant alter the new function's ACL. Those are
+> catalog changes, they are intended, and they are inventoried above.
+>
+> **No table created or dropped, no column added
+> or dropped, no index, no constraint, and ZERO migration-level DML**: the only
+> `UPDATE` in the file sits inside the command's own body, verified by eliding both
+> function bodies and finding no top-level `insert`/`update`/`delete`/`truncate`.
+>
+> **NO CUSTOMER DATA WAS CREATED, MODIFIED OR DELETED, AND THE COMMAND WAS NOT
+> EXERCISED.** Measured read-only either side of the apply: **31** rows before and
+> **31** after, with `mobile_verified_at` non-null on **0** before and **0** after.
+> Those are dated readings, not a claim about the table today. `mark_waitlist_mobile_verified`
+> was **not invoked**, the permit GUC was not set by hand, **no provider was
+> contacted and no message was sent**. **#768 was not merged at apply time**, no
+> application code was deployed, and `verifiesMobile` therefore remains **false** in
+> the deployed application.
+>
+> **WHY THE GUARD REDEFINITION WAS THE BLAST RADIUS.** `create or replace function`
+> silently drops every rule the new body omits, so the risk here was never a wrong
+> new clause but a quiet loss of an old one. The deployed body is **byte-identical**
+> to the reviewed definition (md5 `fe315eb0f729ba14a71317fe4bf05f99`, 8853 chars)
+> and was confirmed read-only to still carry the one-writer raise,
+> immutable-once-proved, may-not-be-cleared, the row-scoped permit checked against
+> `new.id`, and every rule carried from `0202`.
+>
+> ⚠️ **THE DATABASE DOES NOT PROVE POSSESSION.** The command's identity arguments are
+> exactly `(p_entry_id uuid, p_expected_phone text)` — **it receives no provider
+> proof**. Provider-first ordering is an APPLICATION contract held by
+> `lib/waitlist/mobile-verification-server.ts`, which is unmerged at this apply. A
+> non-NULL `mobile_verified_at` means the command ran; it is evidence of a
+> provider-accepted proof only to the extent that every caller honours that
+> ordering.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0203** (`0203_waitlist_mobile_verification_authority.sql`) |
+| **Repo migration max** | **0204** — this branch authors `0204_new_client_admission_mode.sql` (NEW-CLIENT-MODE-01): one CHECK-closed column on `studios`, two audit columns, and one owner-authorized command. **AUTHORED, NOT APPLIED** — the repository now sits one above hosted. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks, confirmed from the live `migration list --linked` (zero rows present remotely and absent locally). |
+| **Pending migrations** | **`0204`** — `0204_new_client_admission_mode.sql`, authored on the NEW-CLIENT-MODE-01 branch and **NOT applied**. Hosted remains at **`0203`**: verified live at the 0203 apply, `max(version)` in `supabase_migrations.schema_migrations` is **`0203`** with **202** rows total. |
+| **Next free migration** | Next free number is **0205**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation, nothing may assume it, and it must be re-censused immediately before anyone authors against it. **`0203` IS NO LONGER FREE** — it is applied and FROZEN. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` before every Supabase command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. Both were seen side by side in `projects list`: different organisations. |
+| **Reviewed release head** | `1275486e7197d834294f58a85da774f4244aa176` (PR #768) — the exact authorized head: tree clean, PR open and `MERGEABLE`/`CLEAN`, required CI GREEN, Vercel GREEN, exact-head Codex review completed with **zero** new findings, and **0** unresolved review threads. |
+| **Production application SHA at apply time** | `4e8ea7aec8aea3b93ab149fb197f1caf190fc405` (post-B2a). **Unchanged by this apply: no application code was deployed.** |
+| **CLI** | `supabase` **2.102.0**, the pinned version — a grants-parity invariant, not a convenience. Invoked as `npx --yes supabase@2.102.0`; the ambient CLI on the apply host was 2.118.0 and was deliberately **not** used. |
+| **Command** | `supabase db push --linked`, **without** `--include-all`, preceded by `--dry-run` which listed **`0203` only**. Applied **once**; exit code 0. No retry, no hand-copied SQL. |
+| **`0203` sha256** | `c9453ebb8d9a6c94ff1af534c4f2e9930470f2274d205ecf2ad52ecfadbe340b` — computed from the file immediately before the push and re-checked against the same value at the moment of apply. **An applied migration is FROZEN: never edit it.** |
+| **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` stays `null`. `supabase_migrations.schema_migrations` carries only `(version, statements, name)` — there is no timestamp column — so this limitation recurs by construction. **An operator-observed client-side window IS asserted**: `2026-09-27T20:03:35.176Z` – `2026-09-27T20:04:02.911Z` (~27.7 s), read from the apply host's clock around the single CLI invocation. **That window is NOT a server apply time and must never be copied into `hosted_applied_at`.** |
+| **Pre-apply evidence (read-only)** | hosted max **`0202`** / **201** history rows · `0202` present exactly once · **`0203` ABSENT** · nothing above `0202` · no remote-only migration · `new_client_waitlist_entries` **31** rows with `mobile_verified_at` non-null on **0** · `mark_waitlist_mobile_verified` **did not exist** · guard body md5 `52f65c8d8bcfe72b2b101e1d3f9e5c02` (7377 chars, the `0202` body) · trigger enabled (`tgenabled = 'O'`). |
+| **Post-apply verification (read-only)** | hosted max **`0203`** / **202** history rows (**+1 exactly**) · `0203` present **exactly once** · `0202` still present exactly once and **not re-applied** · **nothing above `0203`** · **31** rows **unchanged** · `mobile_verified_at` non-null still **0** · command **present**, `SECURITY DEFINER`, `search_path` pinned to `pg_catalog, pg_temp` · EXECUTE granted to **`service_role` only** — `anon` **NO**, `authenticated` **NO**, and **PUBLIC absent from `proacl`** (`postgres=X/postgres`, `service_role=X/postgres`) · **no generic table DML introduced**: on `new_client_waitlist_entries`, `anon` holds nothing, `authenticated` holds **SELECT only**, and `service_role` holds **no INSERT/UPDATE/DELETE**, so `0185`'s wall is intact · guard **byte-identical** to the reviewed definition · trigger still enabled. |
+| **How the one-writer rule was verified** | **BY CONSTRUCTION, NOT BY EXERCISE, AND SCOPED TO THE APPLICATION ROLES.** For the roles the application can reach — `anon`, `authenticated`, `service_role` — none holds `UPDATE` on the table (`relacl` = `postgres=arwdDxtm/postgres`, `authenticated=r/postgres`), so no browser- or service-reachable caller can write `mobile_verified_at` outside the command. **THIS IS NOT A UNIVERSAL DATABASE INVARIANT and an earlier revision of this record wrongly stated it as one.** The table owner `postgres` retains `UPDATE` — that is precisely how the `SECURITY DEFINER` command writes — and the guard compares the permit GUC only against `new.id`, so it cannot prove the permit originated *inside* the command. **A privileged owner or admin session can therefore set the same GUC and issue a direct update.** That is an accepted property of superuser access, not a hole the guard closes, and it is recorded rather than implied. The command was deliberately **not** invoked against production data merely to demonstrate any of this; the behavioural proof lives in `tests/db/waitlist-mobile-verification-authority.db.test.ts`, which runs the candidate inside a rolled-back transaction on a local database. |
+
+| Migration | Hosted status | sha256 |
+|---|---|---|
+| `0200_waitlist_redeemed_unbooked_exit.sql` | **APPLIED** | `a6037f262c38df16fafe51a3178afc90c8fe2b814410eec4f2ad510fdd795158` |
+| `0201_waitlist_exit_authority_contraction.sql` | **APPLIED** | `1567610577e84cb717c77cf8451d57a97150f8fc169de33df2d48370be5ef82f` |
+| `0202_waitlist_profile_and_sms_consent_authority.sql` | **APPLIED** | `7a95e4e66c7c5fe50dbb2d7e73d54f7155c54f376a504ff2fbac47826dbb4ce1` |
+| `0203_waitlist_mobile_verification_authority.sql` | **APPLIED** | `c9453ebb8d9a6c94ff1af534c4f2e9930470f2274d205ecf2ad52ecfadbe340b` |
+
+## Previous state (verified 2026-09-21, post-0202 apply; `0202` APPLIED, `0203` AUTHORED AND PENDING)
+
+> **ADDITIVE SCHEMA ONLY, ON A 31-ROW TABLE. NO DATA WAS WRITTEN.** This apply
+> added **9 nullable columns** to `public.new_client_waitlist_entries`
+> (`first_name`, `last_name`, `treatment_area_ids`, `sms_consent_at`,
+> `sms_consent_source`, `sms_consent_text_version`, `sms_opted_out_at`,
+> `sms_opt_out_source`, `mobile_verified_at`), **10 CHECK constraints**, and
+> **5 functions** — 4 new `service_role` commands plus a forward redefinition of
+> the existing `new_client_waitlist_entries_transition_guard` trigger function.
+> **No table was created or dropped, no column dropped, no index, no DML.**
+>
+> **NO CUSTOMER DATA WAS CREATED, MODIFIED OR DELETED, AND NO COMMAND WAS
+> EXERCISED.** Measured read-only immediately after the apply, **2026-09-21T12:29Z**:
+> **31** row(s) — the same figure read before it — with `first_name` populated on
+> **0** and `sms_consent_at` on **0**. Those are dated readings, not a claim about
+> the table today. **No provider was contacted and no message was sent.** **#753 was not
+> merged at apply time** and the production application SHA is unchanged at
+> `27a4c960`.
+>
+> **WHY THE VALIDATED CHECKS WERE SAFE.** All 10 constraints were added
+> *validated* (no `NOT VALID`), which normally means a full scan under ACCESS
+> EXCLUSIVE. The table was measured read-only at **31 rows** before the apply, so
+> each scan is microseconds, and `set local lock_timeout = '5s'` bounds lock
+> acquisition rather than the scan. On a large table this same file would need
+> `NOT VALID` + a later `VALIDATE CONSTRAINT`.
+>
+> **THE TRIGGER REDEFINITION IS 3x STRICTER AND 1x LOOSER, DELIBERATELY.** The
+> live `BEFORE UPDATE` guard previously refused **all** contact-detail changes.
+> It now additionally refuses re-writing a terminal opt-out and any change to
+> `mobile_verified_at` (which has no writer in this release), and still refuses
+> name/email changes — but a **NULL `phone` may now be filled in**, while a
+> stored mobile still may not be replaced or cleared. That single relaxation is
+> WAIT-04B's purpose and was diffed against production's live definition before
+> the apply.
+>
+> ⚠️ **ONE CONSTRAINT NAME WAS TRUNCATED BY POSTGRES, AND THE SOURCE STILL READS
+> THE LONG NAME.** `0202` writes
+> `new_client_waitlist_entries_mobile_verified_requires_number_check` (65 chars);
+> the stored name is
+> `new_client_waitlist_entries_mobile_verified_requires_number_che` (63, the
+> identifier limit), reported as `NOTICE (42622)` during the apply. This is
+> **cosmetic and idempotent** — the parser truncates the `drop constraint if
+> exists` and the `add constraint` identically, so the block still re-runs
+> cleanly. It matters only for anything matching the constraint **by name**: use
+> the 63-character stored name, never the source literal. `0202` is FROZEN, so
+> this is recorded rather than corrected.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0202** (`0202_waitlist_profile_and_sms_consent_authority.sql`) |
+| **Repo migration max** | **0203** — `0203_waitlist_mobile_verification_authority.sql` (WAIT B2b mobile verification authority), derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. **AUTHORED, NOT APPLIED.** The chain has left parity and is back at **MIGRATION-FIRST PENDING**, which is the ordinary pre-apply position of a migration-bearing branch, not drift. This row states the BRANCH-derived position; the hosted row above carries the production claim, and the Pending row below states how the two stand. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0203`** — `0203_waitlist_mobile_verification_authority.sql`, authored on the WAIT B2b verified-mobile branch and **NOT applied**; apply is a separate gate. So `repo > hosted` by exactly one. **THE PRODUCTION READING BELOW IS DATED AND UNCHANGED BY THIS**: verified live at the 0202 apply, `max(version)` in `supabase_migrations.schema_migrations` was **`0202`** with **201** rows total. `0203` adds nothing to production until it is applied. |
+| **Next free migration** | Next free number is **0204**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** — availability is not allocation, nothing may assume it, and it must be re-censused immediately before anyone authors against it. **`0203` IS NO LONGER FREE** — it is allocated to WAIT B2b, authored on that branch and **NOT applied**. **`0202` IS NO LONGER FREE** — it is applied and FROZEN. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` before every Supabase command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
+| **Reviewed release head** | `b8fc30a60a11f643897bd3389261970f0d8a6259` (PR #753) — the exact authorized head: tree clean, current production incorporated (0 behind), exact-head CI GREEN, Vercel GREEN, exact-head Codex `COMPLETE_CLEAN` with 0 fresh findings. |
+| **Production application SHA at apply time** | `27a4c9603f1170b5e84edc1da86fe740117eb3f7` (post-#751). **Unchanged by this apply: no application code was deployed.** |
+| **CLI** | `supabase` **2.102.0**, the pinned version — a grants-parity invariant, not a convenience. |
+| **Command** | `supabase db push --linked`, **without** `--include-all`, preceded by `--dry-run` which listed **`0202` only**. Applied **once**; exit code 0. |
+| **`0202` sha256** | `7a95e4e66c7c5fe50dbb2d7e73d54f7155c54f376a504ff2fbac47826dbb4ce1` — computed from the file immediately before the push. **An applied migration is FROZEN: never edit it.** |
+| **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` stays `null`. `supabase_migrations.schema_migrations` carries only `(version, statements, name)` — there is no timestamp column — so this limitation recurs by construction. **An operator-observed client-side window IS asserted**: `2026-09-21T12:28:57Z` – `2026-09-21T12:29:20Z` (~23 s), read from the apply host's clock around the single CLI invocation. **That window is NOT a server apply time and must never be copied into `hosted_applied_at`.** |
+| **Post-apply verification (read-only)** | hosted max **`0202`** / **201** total · **9/9** columns present · **5/5** functions present · EXECUTE granted to **`service_role` only** on all four commands, with **zero** `anon` or `authenticated` grants · trigger `new_client_waitlist_entries_transition_guard` still **enabled** (`tgenabled = 'O'`) · table still **31** rows with **0** profile values written. |
+
+| Migration | Hosted status | sha256 |
+|---|---|---|
+| `0200_waitlist_redeemed_unbooked_exit.sql` | **APPLIED** | `a6037f262c38df16fafe51a3178afc90c8fe2b814410eec4f2ad510fdd795158` |
+| `0201_waitlist_exit_authority_contraction.sql` | **APPLIED** | `1567610577e84cb717c77cf8451d57a97150f8fc169de33df2d48370be5ef82f` |
+| `0202_waitlist_profile_and_sms_consent_authority.sql` | **APPLIED** | `7a95e4e66c7c5fe50dbb2d7e73d54f7155c54f376a504ff2fbac47826dbb4ce1` |
+
+## Previous state (verified 2026-09-20, post-0201 apply; `0201` APPLIED, `0202` AUTHORED and PENDING)
+
+> **ONE COMMAND REDEFINITION. NO SCHEMA CHANGE AT ALL.** This apply ran a single
+> `create or replace function` — `close_unbooked_new_client_waitlist_invitation`
+> — and created, altered or dropped nothing else. **No table, column, index,
+> constraint, trigger, grant change, and no DML.** It is the forward correction
+> of three behavioural defects in the FROZEN `0200`, which was **not edited and
+> not re-applied**; its bytes are unchanged
+> (`a6037f262c38df16fafe51a3178afc90c8fe2b814410eec4f2ad510fdd795158`).
+>
+> **NO CUSTOMER DATA WAS CREATED, MODIFIED OR DELETED, AND THE COMMAND WAS NOT
+> EXERCISED.** Verified read-only immediately after the apply: `closed_at` is set
+> on **0** invitations and **0** entries are `released`. **No provider was
+> contacted and no message was sent.** **Neither #747 nor #741 was merged**, and
+> the production application branch is unchanged at `85252e82`.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0201** (`0201_waitlist_exit_authority_contraction.sql`) |
+| **Repo migration max** | **0202** — `0202_waitlist_profile_and_sms_consent_authority.sql` (WAIT-04B durable prospect profile and SMS consent authority), derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. **AUTHORED, NOT APPLIED.** This row states the BRANCH-derived position; the hosted row above carries the production claim, and the Pending row below states how the two stand. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0202`** — `0202_waitlist_profile_and_sms_consent_authority.sql`, authored on the WAIT-04B profile branch and **NOT applied**. `0202` is currently pending, so `repo > hosted` by exactly one and the chain is at MIGRATION-FIRST PENDING. `0201` was the previous pending set and it was applied on **2026-09-20**, which is how the chain reached parity before this branch authored above it. |
+| **Next free migration** | Next free number is **0203**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. **`0202` IS NO LONGER FREE** — it is allocated to WAIT-04B, authored on this branch and **NOT applied**. `0203` is **not claimed** by this lane and **not allocated**: availability is not allocation, and it must be re-censused immediately before anyone authors against it. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` before every Supabase command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
+| **Reviewed release head** | `1f1f582314a6aa63b503e4d3850ae52e304138f5` (PR #747) — the exact authorized head, tree clean, exact-head CI GREEN with zero failing lanes (including `db integration`) and exact-head Codex **Completed, no major issues**. **Open and unmerged at the moment of the apply.** The apply was authorized at this head and performed from it; **the merge did not cause the apply, and the apply does not merge the PR.** |
+| **Stack base** | `399da488ebb1ec8ff220b5d8b6dca425dd943de5` (PR #741) — also **open and unmerged**. `0201` is stacked above it so the review diff carried only the forward repair. |
+| **Production application SHA at apply time** | `85252e828f59e75bde162603d544039de14429d3`. **Unchanged by this apply: no application code was deployed.** The deployed application contains **no caller** for `close_unbooked_new_client_waitlist_invitation` — verified by search across `app/` and `lib/` at that SHA — which is why redefining it has no runtime effect on production today. |
+| **CLI** | `supabase` **2.102.0**, the pinned version — a grants-parity invariant, not a convenience. |
+| **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` stays `null`. `supabase_migrations.schema_migrations` carries only `(version, statements, name)` — there is no timestamp column — so this limitation recurs by construction. **An operator-observed client-side window IS asserted**: `2026-09-20T20:45:12Z` – `2026-09-20T20:45:37Z` (~25 s), read from the apply host's clock around the single CLI invocation. **That window is NOT a server apply time and must never be copied into `hosted_applied_at`.** |
+
+| Migration | Status | sha256 |
+|---|---|---|
+| `0200_waitlist_redeemed_unbooked_exit.sql` | **APPLIED** | `a6037f262c38df16fafe51a3178afc90c8fe2b814410eec4f2ad510fdd795158` |
+| `0201_waitlist_exit_authority_contraction.sql` | **APPLIED** | `1567610577e84cb717c77cf8451d57a97150f8fc169de33df2d48370be5ef82f` |
+
+**NO `--include-all`.** `supabase db push --linked --dry-run` named exactly
+`0201_waitlist_exit_authority_contraction.sql` and nothing else, and the apply
+named the same single file. Exit status **0**.
+
+### Post-apply verification — read-only
+
+All by `supabase db query --linked` against the confirmed production ref:
+
+- `max(version)` = **0201**; **200** history rows (199 → 200, exactly **+1**);
+  `0201` present **exactly once**; `0200` present exactly once and **not
+  re-applied**; **nothing above 0201**.
+- **The deployed body is the authored body.** `md5(prosrc)` =
+  `1a490ada8d07b47779fe4074f28d9ea6`, identical to the same file applied to a
+  disposable local stack. The executable body references **no**
+  `public.appointments`, **no** `public.clients`, and **no**
+  `record_new_client_waitlist_conversion`; `converted_instead` is gone.
+  `SECURITY DEFINER` with `search_path = pg_catalog, pg_temp`.
+- **EXECUTE is `service_role` only** — `anon` **false**, `authenticated`
+  **false**, `service_role` **true**.
+- **`0200`'s objects are intact**: both columns on
+  `new_client_waitlist_invitations`, the partial unique index,
+  `requeue_new_client_waitlist_entry`, and all three non-internal triggers on
+  that table. `record_new_client_waitlist_conversion` **still exists** — `0201`
+  stops calling it; it is not dropped.
+- **No data effect**: 0 invitations carry `closed_at`, 0 entries are
+  `released`.
+
+### What this apply does NOT mean
+
+It does **not** merge #747 or #741, does **not** deploy application code, and
+does **not** put the exit command into service — production still has no caller
+for it. It does **not** license a `0202`, and it does **not** alter any earlier
+apply record.
+
+## Previous state (verified 2026-09-20, post-0200 apply; `0200` APPLIED, `0201` AUTHORED and PENDING)
+
+> **ONE COMMAND REDEFINITION. NO SCHEMA CHANGE AT ALL.** `0201` redefines
+> exactly one function — `close_unbooked_new_client_waitlist_invitation` — and
+> creates, alters and drops nothing. No table, no column, no index, no
+> constraint, no trigger, no grant change, no DML. It is the forward correction
+> of three behavioural defects in the FROZEN `0200`, which is not edited and
+> must never be.
+>
+> **WHAT THE REDEFINITION REMOVES.** `0200`'s Step 6 scanned
+> `public.appointments` to decide whether to record a conversion the entry did
+> not carry. That scan is deleted, together with the `public.clients ... FOR
+> SHARE` beside it and the `record_new_client_waitlist_conversion` call it fed.
+> The exit now closes the cycle on evidence it holds under its own lock and
+> claims no conversion it cannot prove. The three defects it closes are: a
+> cancellation committing across the decision, a qualifying creation committing
+> across it, and a predicate weaker than `0195`'s own scope rules — so `0200`
+> could move an entry to a TERMINAL `converted` on an appointment
+> `create_waitlist_public_appointment` would have refused.
+>
+> **`0201` is PENDING**: authored here, **NOT applied**, and apply is a separate
+> gate that has not been requested. Hosted remains **0200** and every apply
+> record below is untouched. **No customer data was read, created or modified;
+> no provider was contacted; no message was sent.**
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0200** (`0200_waitlist_redeemed_unbooked_exit.sql`) |
+| **Repo migration max** | **0201** — this branch authors `0201_waitlist_exit_authority_contraction.sql` (WAIT-P1-EXIT successor), derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. A SINGLE `create or replace function`, and the apply path carries no other DDL or DML — pinned by `tests/migrations/0201-waitlist-exit-authority-contraction.test.ts`. The lock order is unchanged from `0200`: entry `FOR UPDATE`, then invitation `FOR UPDATE`, so the one pairing that must serialise — the exit against `create_waitlist_public_appointment` — still does through the entry mutex, in both commit orders. This row states the BRANCH-derived position, not a production claim. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0201`** — the repository sits ONE migration above hosted, which is the ordinary MIGRATION-FIRST PENDING shape rather than the parity the block below records. `0192`–`0200` remain applied and every apply record below is untouched. This row remains the ledger's own exemption: the current block is the single place permitted to state that relationship. |
+| **Next free migration** | Next free number is **0202**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. **`0200` IS NO LONGER FREE** — it is allocated to WAIT-P1-EXIT and is applied to production. **`0201` IS NO LONGER FREE EITHER** — it is allocated exclusively to the WAIT-P1-EXIT successor under explicit owner allocation, authored on this branch and **NOT applied**. `0202` is **not claimed** by this lane and **not allocated**: availability is not allocation, and it must be re-censused immediately before anyone authors against it. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`). **Neither was contacted by this change**: nothing here was applied, and the project ref is recorded for the apply gate that has not yet been requested. |
+| **Reviewed release head** | ⚠️ **NONE YET.** This block records an AUTHORED migration, not an apply. No head has been authorized for apply, and the apply record for `0201` does not exist because the apply has not happened. |
+| **Evidence** | Fresh chain from zero on an isolated local stack (`project_id` distinct, ports 563xx): **200** migrations, max `0201` — 200 not 201 because `0158` is permanently skipped, which is what `npm run migration:state` reports as `total in repo`. Behavioural proof: `tests/db/waitlist-exit-authority-contraction.db.test.ts` (30 tests) and the `0200` suite carried forward (37 tests), both green, including independent-session race tests in BOTH commit orders and the service/date/weekday scope matrix. **MEASURED AND RECORDED**: the exit is NOT lock-free against ordinary booking — its entry `update` fires the audit trigger whose `INSERT` takes `FOR KEY SHARE` on `studios` through the event table's FK, and `create_public_appointment` holds that row `FOR UPDATE` — but its ANSWER cannot change, and it cannot deadlock against `0195`, whose `for no key update` does not conflict with `FOR KEY SHARE`. That wait is pre-existing: `0200` updates the same entry through the same trigger. |
+
+| Migration | Status | sha256 |
+|---|---|---|
+| `0200_waitlist_redeemed_unbooked_exit.sql` | **APPLIED** | `a6037f262c38df16fafe51a3178afc90c8fe2b814410eec4f2ad510fdd795158` |
+| `0201_waitlist_exit_authority_contraction.sql` | **PENDING** | `1567610577e84cb717c77cf8451d57a97150f8fc169de33df2d48370be5ef82f` |
+
+**`0201` IS NOT APPLIED.** No `supabase db push` has been run for it, no
+dry-run was performed against production, and no apply has been authorized.
+`0200`'s row above restates the applied head so this block states the whole
+relationship in one place; its bytes are unchanged and its apply record below
+is untouched.
+
+## Previous state (verified 2026-09-20, post-0200 apply; `0200` APPLIED)
+
+> **ADDITIVE SCHEMA + ONE COMMAND REDEFINITION. NO TABLE REWRITE.** This apply
+> added **two nullable columns** to `new_client_waitlist_invitations`
+> (`closed_at`, `closed_by_practitioner_id`) with no default and no generation
+> expression, so PostgreSQL updated the catalogue and did **not** rewrite the
+> heap; one partial unique index; one same-studio actor FK; one close-evidence
+> CHECK; one forward redefinition of that table's append-only trigger; one new
+> `SECURITY DEFINER` command, `close_unbooked_new_client_waitlist_invitation`;
+> and **one forward redefinition of the EXISTING
+> `requeue_new_client_waitlist_entry`**, adding a single exclusion to its UPDATE
+> predicate. **No DML backfill and no destructive statement.**
+>
+> **NO CUSTOMER DATA WAS CREATED, MODIFIED OR DELETED, AND THE NEW COMMAND WAS
+> NOT EXERCISED.** Verified read-only immediately after the apply: `closed_at`
+> is set on **0** rows and **0** entries are `released`. **No provider was
+> contacted and no message was sent.** Nothing from **#716** was applied or
+> deployed, and **`0199` was not re-applied** — it is present exactly once and
+> its bytes are unchanged.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0200** (`0200_waitlist_redeemed_unbooked_exit.sql`) |
+| **Repo migration max** | **0200** — `0200_waitlist_redeemed_unbooked_exit.sql` (WAIT-P1-EXIT), derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. This row states the BRANCH-derived position; the hosted row above carries the production claim, and the Pending row below states how the two stand. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **none** — `0200` was the entire pending set, and it was applied on **2026-09-20**, so the repository no longer sits above hosted. Repository and hosted are at parity, which is the PARITY shape rather than MIGRATION-FIRST PENDING. `0192`–`0199` remain applied and every apply record below is untouched. This row remains the ledger's own exemption: the current block is the single place permitted to state that relationship. |
+| **Next free migration** | Next free number is **0201**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. **`0200` IS NO LONGER FREE** — it is allocated to WAIT-P1-EXIT and is now applied to production. `0201` is **not claimed** by this lane and **not allocated**: availability is not allocation, and it must be re-censused immediately before anyone authors against it. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` before every hosted command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
+| **Reviewed release head** | `6de5fb4c6c3197ad3d2f1abdf33ef5c23f9d87b6` (PR #741) — the exact authorized head, tree clean, CI GREEN across 12 checks and exact-head Codex `COMPLETE_CLEAN` with zero fresh findings. **Open and unmerged at the moment of the apply.** The apply was authorized at this head and performed from it; **the merge did not cause the apply, and the apply does not merge the PR.** |
+| **Production application SHA at apply time** | `d6295aa90dac79ff04ca8a011084f06422eec231` — the #740 merge, normal-merged into this branch before the apply. Unchanged by this apply: no application code was deployed. |
+| **CLI** | `supabase` **2.102.0**, the pinned version — a grants-parity invariant, not a convenience. |
+| **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` stays `null`. **An operator-observed client-side window IS asserted**: the single `supabase db push --linked` invocation was bracketed with captured clock readings, `2026-09-20T14:06:05.471Z` – `2026-09-20T14:06:28.703Z`, **23.232 s**, read from the apply host's clock. **That window is not a server apply time and is never represented as one.** Same limitation as `0187`–`0191` and `0197`–`0199`. |
+| **Verified applied** | **2026-09-20** — read back by read-only query immediately after the apply: `max(version)` **0200**, **199** history rows (198 → 199, exactly +1), `0200` present **exactly once**, `0199` still present exactly once, **nothing above 0200**, **zero** duplicate versions. That is an observation of STATE, not of an apply instant. |
+
+| Migration | Status | sha256 (gated before the write) |
+|---|---|---|
+| `0200_waitlist_redeemed_unbooked_exit.sql` | **APPLIED** | `a6037f262c38df16fafe51a3178afc90c8fe2b814410eec4f2ad510fdd795158` |
+
+**NO `--include-all`.** `supabase db push --linked --dry-run` named exactly
+`0200_waitlist_redeemed_unbooked_exit.sql` and nothing else, and the apply named
+exactly the same one file. Exit **0**, first attempt, **no retry**.
+
+### Post-apply verification — read-only
+
+| Check | Result |
+|---|---|
+| CLI outcome | exit **0**, exactly one migration named, no ambiguity and **no retry** |
+| History | 198 → **199** rows, exactly **+1**, `0200` exactly once, **0** duplicates, nothing above |
+| `0199` untouched | present **exactly once**, not re-applied, bytes unchanged (sha256 `9561024b…`) |
+| **Close columns** | `closed_at` and `closed_by_practitioner_id` both present on `new_client_waitlist_invitations` |
+| **Index** | `new_client_waitlist_invitations_one_open_redeemed_per_entry` present |
+| **Constraints** | `..._close_evidence_check` and `..._closed_by_same_studio_fk` both present |
+| **New command** | `close_unbooked_new_client_waitlist_invitation` present, `prosecdef` **true** (SECURITY DEFINER) |
+| **Execute grants** | `service_role` **true**; `authenticated` **false**; `anon` **false** — the `0129`/`0164` trap, closed |
+| **Requeue ACL preserved** | `requeue_new_client_waitlist_entry`: `service_role` **true**, `authenticated` **false** |
+| **Requeue shape** | carries the redeemed exclusion; takes **no row lock** — the schedule `waitlist-invitation-wall-clock` measures is preserved |
+| **Append-only trigger** | carries the new write-once arm for the operator close |
+| **Column grants** | `authenticated` SELECT on **14** columns (12 → 14, the two lifecycle stamps); `token_hash` **not** among them |
+| **No data mutated** | entries **31**, invitations **3**, clients **136**, appointments **473**; `closed_at` set on **0** rows; **0** entries `released` |
+| **No message sent** | no provider contacted; nothing from #716 applied or deployed |
+
+### What this apply does NOT mean
+
+- **PR #741 is applied, not merged.** The migration is on production; the PR was
+  open at the moment of the apply. **The merge did not cause the apply.**
+- **No application was deployed by the apply.** The runtime pin stayed
+  `d6295aa9`, so the practitioner surface does not yet render the new control.
+- **The escape hatch has not been used.** The command exists and is reachable
+  only through a server action that is not deployed. `closed_at` is set on zero
+  rows.
+
+## Previous state (verified 2026-09-18, post-0199 apply; `0199` APPLIED)
+
+> **SCHEMA CHANGE, NOT PRIVILEGE ONLY.** This apply created two `IMMUTABLE`
+> normalisers, two `STABLE` `SECURITY DEFINER` selection functions, one
+> `security_invoker` view, and **one `STORED` generated column on
+> `public.clients`, which rewrote that table under `ACCESS EXCLUSIVE`**.
+> **No table, index, trigger, policy or RLS change, and no DML backfill** —
+> PostgreSQL populated the generated column itself as part of the `ADD COLUMN`.
+> **PR #716 was NOT merged and no application code was deployed.** No customer
+> data was created, modified or deleted; **no provider was contacted and no
+> message was sent**; `studio_sms_senders` remains empty and no sender was
+> provisioned.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0199** (`0199_reminder_sms_candidate_selection.sql`) |
+| **Repo migration max** | **0200** — this branch authors `0200_waitlist_redeemed_unbooked_exit.sql` (WAIT-P1-EXIT): two nullable columns on `new_client_waitlist_invitations`, one partial unique index, one forward redefinition of that table's append-only trigger, one new `SECURITY DEFINER` command, `close_unbooked_new_client_waitlist_invitation`, and **one forward redefinition of an EXISTING shipped command, `requeue_new_client_waitlist_entry`**. No table rewrite, no DML backfill and no destructive statement. **THE REQUEUE REDEFINITION IS THE RUNTIME BLAST RADIUS OF THIS MIGRATION and is named here rather than left to the diff**: it carries 0188's body through unchanged -- authority resolution, cleared cycle evidence, and the `unique_violation` -> `already_active` handler -- and adds ONE exclusion to its UPDATE predicate, so a `released` or `expired` entry holding a REDEEMED invitation is refused with `already_redeemed` instead of being returned to the queue. That state was unreachable before this migration (release and expire both refuse a redeemed entry, and removal has no edge from `invited`), so the exclusion matches no row and no path that exists today; every other requeue answer, including `not_requeueable` for an `invited` entry, is returned unchanged. It takes NO row lock, deliberately: `tests/db/waitlist-invitation-wall-clock` measures that requeue is excluded by its own predicate and never parks, and a lock here would change that schedule. **`0200` is PENDING**: authored here, **not applied**, apply is a separate gate. Hosted remains **0199** and the apply record above is unchanged; this row is the BRANCH-derived position, not a production claim. It also carries `0199` itself, whose file and apply record were authored on `feat/wait-s3-studio-sender-routing` (PR #716) and are imported here byte-identical, because a branch taken from production derives `next free = 0199` — a number production has already used. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **`0200`** — the repository now sits ONE migration above hosted, which is the ordinary MIGRATION-FIRST PENDING shape rather than the parity the previous reading recorded. `0192`–`0199` remain applied and every apply record below is untouched. This row remains the ledger's own exemption: the current block is the single place permitted to state that relationship. |
+| **Next free migration** | Next free number is **0201**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. **`0199` IS NO LONGER FREE** — it is allocated to WAIT S3 candidate selection and is applied to production. **`0200` IS NO LONGER FREE EITHER** — it is allocated to WAIT-P1-EXIT, authored on this branch and **NOT applied**. `0201` is **not claimed** by this lane and **not allocated**: availability is not allocation, and it must be re-censused immediately before anyone authors against it. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` before every hosted command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
+| **Reviewed release head** | `0b6e5f6f47e67fec0bb895b05064cdd7b73c9a3f` (PR #716) — the exact authorized head, tree clean, applied from a throwaway worktree checked out at that commit. **A draft and unmerged at the moment of the apply.** The apply was authorized at this head and performed from it; **the merge did not cause the apply, and the apply does not merge the PR.** |
+| **Production application SHA at apply time** | `b1d4badba085ecfee36e81ee9719d26fa0cc4ddc` — the runtime pin, unchanged by this apply. It carries WAIT S3 **Part 1** (the resolver, PR #715) and **not** Part 2; the routing rewire is still unmerged. |
+| **CLI** | `supabase` **2.102.0**, the pinned version — a grants-parity invariant, not a convenience. |
+| **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` stays `null`. **An operator-observed client-side window IS asserted**: the single `supabase db push --linked` invocation was bracketed with captured clock readings, `2026-09-18T11:19:12.148Z` – `2026-09-18T11:19:35.142Z`, **22.994 s**, read from the apply host's clock. **That window is not a server apply time and is never represented as one.** Same limitation as `0187`–`0191`, `0197` and `0198`. |
+| **Verified applied** | **2026-09-18** — read back by read-only query immediately after the apply: `max(version)` **0199**, **198** history rows, `0199` present **exactly once**, **nothing above 0199**, **zero** duplicate versions. That is an observation of STATE, not of an apply instant. |
+
+| Migration | Status | sha256 (gated before the write) |
+|---|---|---|
+| `0199_reminder_sms_candidate_selection.sql` | **APPLIED** | `9561024b06311526ea04e91b81a006abd8dd92c89296cb761887e34a6d04fca5` |
+
+The hash was recomputed from the file at the authorized head and required to match
+byte-for-byte before the write, and the dry run was required to name `0199` and
+nothing else. **No `--include-all`** — exactly one migration was pending and the
+CLI named exactly one.
+
+### What was applied
+
+One transaction, opening its own `begin;` with `set local lock_timeout = '5s'`
+and `set local statement_timeout = '60s'`:
+
+- `public.sms_trimmable_whitespace()` and `public.sms_normalized_phone(text)` —
+  both `IMMUTABLE`, `parallel safe`, `search_path` pinned to `pg_catalog, pg_temp`.
+- `alter table public.clients add column sms_phone text generated always as
+  (public.sms_normalized_phone(phone)) stored;` — **a full table rewrite under
+  `ACCESS EXCLUSIVE`**.
+- `public.reminder_sms_eligible_appointments` — a `security_invoker` view,
+  revoked from every role by name.
+- `public.reminder_sms_candidates(...)` and
+  `public.reminder_sms_unroutable_studios(...)` — `STABLE`, `SECURITY DEFINER`,
+  `search_path` pinned, **`service_role` only**.
+
+No DML backfill ran; PostgreSQL populated `sms_phone` during the `ADD COLUMN`.
+
+### Why it was applied
+
+A routing refusal is deliberately free — nothing sent, no attempt claimed — so an
+unroutable row's eligibility is unchanged and it re-occupies the same page slot on
+every later pass. A fixed page was therefore filled forever by the same unroutable
+prefix. The predicate "this appointment's studio can send" is a join, and the join
+now lives in the database, so the application asks one bounded question and
+receives one bounded page.
+
+### Post-apply verification — read-only
+
+| Check | Result |
+|---|---|
+| CLI outcome | exit **0**, exactly one migration named, no ambiguity and **no retry** |
+| History | 197 → **198** rows, exactly **+1**, `0199` exactly once, **0** duplicates, nothing above |
+| **Generated column** | `sms_phone` present, `attgenerated` = **`s`** (STORED), type `text`, expression **`sms_normalized_phone(phone)`** |
+| **No data mutated** | `clients` **135** rows before and after; **81** rows with a phone before and after |
+| **Derivation correct** | **81** of 81 phone-bearing rows normalised to a sendable destination; **0** disagreements against `sms_normalized_phone(phone)`; **0** rows with a phone but no sendable destination |
+| **Normalisation behaviour** | `'+14155550123'` → `+14155550123`; `'(415) 555-0123'` → `+14155550123`; `'(415) 555'`, `'abc'`, `'   '` and `null` → **NULL** |
+| **Function posture** | helpers **IMMUTABLE**, selection functions **STABLE** + `SECURITY DEFINER`; all four pin `search_path=pg_catalog, pg_temp` |
+| **Execute grants** | `reminder_sms_candidates` and `reminder_sms_unroutable_studios`: `anon` **false**, `authenticated` **false**, `service_role` **true**. Production's default ACL grants EXECUTE to all three at create time, so all three were revoked **by name** — the `0129`/`0164` trap, closed. The two pure normalisers are deliberately executable by all three; neither reads a table. |
+| **View posture** | `relkind` **`v`**, `security_invoker=true`, `SELECT` **false** for `anon`, `authenticated` **and** `service_role` |
+| **Table integrity after rewrite** | RLS still **enabled**, **3** policies, **8** constraints, **33** inbound FKs, **5** indexes all **valid**; `authenticated` retains `SELECT`/`INSERT`/`UPDATE`. Heap compacted 144 kB → **120 kB**, as a rewrite does. |
+| **Schema delta** | public functions 484 → **488** (exactly the four created); public tables **96**, unchanged — **no table was created** |
+| **No lock left behind** | **0** exclusive locks on `clients`, **0** transactions older than 5 s, **0** idle-in-transaction |
+| **No message sent** | **0** reminder SMS in the apply window; lifetime totals **129** (24h) and **126** (2h) unchanged; `studio_sms_senders` **0 rows** — no sender provisioned, no provider contacted |
+
+### What this apply does NOT mean
+
+- **PR #716 is applied, not merged.** The migration is on production; the branch
+  was a draft at the moment of the apply. **The merge did not cause the apply.**
+- **No application was deployed by the apply.** The runtime pin stayed
+  `b1d4badb`, which carries WAIT S3 Part 1 only.
+- **SMS routing is not live.** `studio_sms_senders` was measured at **0 rows**
+  on **2026-09-18**, so on that evidence Part 2 cannot send until it merges *and*
+  a sender is provisioned. Provisioning is a separate, unauthorised gate.
+
+
+## Previous state (verified 2026-09-16, post-0198 apply; `0198` APPLIED)
 
 > **PRIVILEGE ONLY.** This apply ran ONE statement — a single **column** grant —
 > and created nothing. **PR #713 was NOT merged and no application code was
@@ -26,10 +1111,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0198** (`0198_waitlist_live_invitation_read.sql`) |
-| **Repo migration max** | **0198** — `0198_waitlist_live_invitation_read.sql` (WAIT-LIVE-READ-01), derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. This row states the BRANCH-derived position; the hosted row above carries the production claim, and the Pending row below states how the two stand. |
+| **Repo migration max** | **0199** — this branch authors `0199_reminder_sms_candidate_selection.sql` (WAIT S3): two read-only `SECURITY DEFINER` selection functions, two `IMMUTABLE` normalisers, one `security_invoker` view, one generated column `clients.sms_phone`. No table, index or DML backfill. **The ALTER rewrites `clients` under `ACCESS EXCLUSIVE`**; `lock_timeout` armed; rollback is `drop column` after the view. **`0199` is PENDING**: authored here, **not applied**, apply is a separate gate. Hosted remains **0198** and the apply record above is unchanged; this row is the BRANCH-derived position, not a production claim. Census 2026-09-17: no pushed branch (0 of 710 refs), open PR, worktree or stash held an `0199`. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **none** — `0198` was the entire pending set, and it was applied on **2026-09-16**, so the repository no longer sits above hosted. Repository and hosted are at parity, which is the PARITY shape rather than MIGRATION-FIRST PENDING. `0192`–`0197` remain applied and every apply record below is untouched. This row remains the ledger's own exemption: the current block is the single place permitted to state that relationship. |
-| **Next free migration** | Next free number is **0199**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. **`0198` IS NO LONGER FREE** — it is allocated to WAIT-LIVE-READ-01 (S6), authored on this branch and now applied to production. `0199` is **not claimed** by this lane and **not allocated**: availability is not allocation. |
+| **Pending migrations** | **`0199`** — the repository now sits ONE migration above hosted, which is the ordinary MIGRATION-FIRST PENDING shape rather than the parity the previous reading recorded. `0192`–`0198` remain applied and every apply record below is untouched. This row remains the ledger's own exemption: the current block is the single place permitted to state that relationship. |
+| **Next free migration** | Next free number is **0200**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. **`0199` IS NO LONGER FREE** — it is allocated to WAIT S3 candidate selection, authored on this branch and **NOT applied**. `0200` is **not claimed** by this lane and **not allocated**: availability is not allocation, and it must be re-censused immediately before anyone authors against it. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` before every hosted command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
 | **Reviewed release head** | `c3182292336d2a219fc8da57bd95e1024c12598a` (PR #713) — the exact authorized head, tree clean. **Still a draft, still unmerged.** The apply was authorized at this head and performed from it; **the merge did not cause the apply, and the apply does not merge the PR.** |
 | **CLI** | `supabase` **2.102.0**, the pinned version — a grants-parity invariant, not a convenience. |

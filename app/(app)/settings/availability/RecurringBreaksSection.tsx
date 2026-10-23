@@ -16,6 +16,7 @@ import {
   type ScopeSelectable,
   type ViewScope,
 } from "./ScopeField";
+import { SectionLabel } from "@/components/ui/section-label";
 
 type Props = {
   rules: ReadonlyArray<StudioRecurringBreakRule>;
@@ -245,9 +246,9 @@ export function RecurringBreaksSection({
         )}
         <div className="flex flex-col gap-1.5">
           <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            <SectionLabel>
               Label
-            </span>
+            </SectionLabel>
             <input
               type="text"
               value={label}
@@ -280,9 +281,9 @@ export function RecurringBreaksSection({
 
         <div className="grid gap-3 md:grid-cols-2">
           <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            <SectionLabel>
               Start
-            </span>
+            </SectionLabel>
             <input
               type="time"
               value={startLocal}
@@ -292,9 +293,9 @@ export function RecurringBreaksSection({
             />
           </label>
           <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            <SectionLabel>
               End
-            </span>
+            </SectionLabel>
             <input
               type="time"
               value={endLocal}
@@ -306,9 +307,9 @@ export function RecurringBreaksSection({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+          <SectionLabel>
             Weekdays
-          </span>
+          </SectionLabel>
           <div className="flex flex-wrap gap-2" role="group" aria-label="Weekdays">
             {WEEKDAY_LABELS.map((d) => {
               const checked = days.includes(d.value);

@@ -100,12 +100,22 @@ export function WaitlistJoinForm({
   studioName,
   onSubmit,
   initialDraft,
+  collectsSmsConsent,
 }: {
   studioName: string;
   /** Bound in WAIT-04B. Receives a VALIDATED profile — never a raw draft. */
   onSubmit: (profile: WaitlistJoinProfile) => Promise<JoinSubmitResult>;
   /** Test seam. Production opens blank. */
   initialDraft?: JoinProfileDraft;
+  /**
+   * Whether this surface may ASK for operational-SMS consent.
+   *
+   * REQUIRED and passed straight to `ProfileFields`. It is a property of the
+   * BINDING, not of the form: consent is askable only where an inbound STOP
+   * can reach this row. The server that renders the page decides it from
+   * `ProfileAdapterCapabilities.recordsSmsConsent`; the client never infers it.
+   */
+  collectsSmsConsent: boolean;
 }) {
   const [draft, setDraft] = useState<JoinProfileDraft>(
     initialDraft ?? emptyJoinProfileDraft(),
@@ -174,6 +184,7 @@ export function WaitlistJoinForm({
         // verified would not remove the wrong-recipient defect — it would move
         // it here, where anyone could enrol a victim against a phone they
         // control. The copy says so rather than implying a text will follow.
+        collectsSmsConsent={collectsSmsConsent}
         showMobileCandidateNote
       />
 
@@ -182,6 +193,7 @@ export function WaitlistJoinForm({
           hand-rolled a notice beside it, which is exactly how the sibling surface
           came to have one without the other. */}
       <PublicCollectionSubmit
+        collectsSmsConsent={collectsSmsConsent}
         studioName={studioName}
         label="Join waitlist"
         pendingLabel="Joining…"

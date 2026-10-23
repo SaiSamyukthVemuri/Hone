@@ -12,6 +12,8 @@
 // without being forced to reassign, but they cannot pick an inactive
 // practitioner for a source that isn't already scoped to them.
 
+import { SectionLabel } from "@/components/ui/section-label";
+
 export type ScopeSelectable = { id: string; display_name: string };
 export type ScopeDirectoryEntry = { display_name: string; active: boolean };
 export type ScopeDirectory = Record<string, ScopeDirectoryEntry>;
@@ -57,9 +59,9 @@ export function ScopeField({
 
   return (
     <label className="flex flex-col gap-1.5">
-      <span className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+      <SectionLabel>
         Applies to
-      </span>
+      </SectionLabel>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}

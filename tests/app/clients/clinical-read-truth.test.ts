@@ -144,6 +144,7 @@ function beforeTodayInput(over: Partial<BeforeTodayInput> = {}): BeforeTodayInpu
 const INTEL_SESSION: IntelligenceSessionInput = {
   id: "session-1",
   started_at: "2026-06-11T00:54:00Z",
+  record_status: "draft",
   next_session_note: "Client started doxycycline — do not treat the jawline.",
   electrolysis_entries: [],
   laser_entries: [],

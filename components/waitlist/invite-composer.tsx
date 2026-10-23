@@ -9,12 +9,12 @@ import { cx } from "@/components/ui/control-base";
 import { fieldControlClass } from "@/components/ui/field";
 import { SectionLabel } from "@/components/ui/section-label";
 import {
+} from "@/lib/waitlist/invitation-window";
+import {
   ALLOWED_DAYS_PRESET_LABEL,
   BOOKING_WINDOW_PRESETS,
-  TTL_PRESETS,
   WEEKDAYS_IN_DISPLAY_ORDER,
   activeAllowedDaysPreset,
-  activeTtlPreset,
   activeWindowPreset,
   scopeSummary,
   sendState,
@@ -42,7 +42,14 @@ import { useInviteOutcomeAction } from "@/components/waitlist/invite-outcome-bou
 // WAIT-03 B4 — the invitation composer
 // ===========================================================================
 //
-// ONE SCREEN, FOUR QUESTIONS, ONE SEND. Not a wizard.
+// ONE SCREEN, THREE QUESTIONS, ONE SEND. Not a wizard.
+//
+// IT WAS FOUR QUESTIONS UNTIL THE WINDOW BECAME FIXED. The fourth was
+// "Invitation expires" — presets 24/48/72/168 plus a custom 1..168 field — and
+// it is gone, not defaulted. Level 3 is a FIXED 48-hour opportunity, so there
+// is no expiry question to answer, no control to leave at a default, and no
+// form field a submission could carry one in. The window is supplied by the
+// server from `WAIT_INVITATION_TTL_HOURS`.
 //
 // The earlier revision was a six-step rail — who, service, horizon, days,
 // expiry, review — with a numbered progress strip across the top. Every step
@@ -383,7 +390,6 @@ export function InviteComposerView({
   // match a preset, mid-edit.
   const windowPreset = state.windowMode;
   const daysPreset = state.daysMode;
-  const ttlPreset = state.expiryMode;
   const selectedService =
     bookableServices.find((s) => s.id === draft.serviceId) ?? null;
   const serviceName = selectedService?.name ?? null;
@@ -619,62 +625,6 @@ export function InviteComposerView({
             ))}
           </ul>
           </div>
-        )}
-      </FieldSection>
-
-      <FieldSection entryId={entryId} id="expiry" title="Invitation expires" error={errors.expiry}>
-        <ul className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-          {TTL_PRESETS.map((preset) => (
-            <li key={preset.hours} className="w-full sm:w-auto">
-              <PresetRadio
-                name={COMPOSER_FIELD_NAMES.expiresInHours}
-                value={preset.hours}
-                testId={`composer-expiry-${preset.hours}`}
-                checked={ttlPreset === preset.hours}
-                onSelect={() => dispatch({ type: "expiryPreset", preset: preset.hours })}
-              >
-                {preset.label}
-              </PresetRadio>
-            </li>
-          ))}
-          <li className="w-full sm:w-auto">
-            <PresetRadio
-              name={COMPOSER_FIELD_NAMES.expiresInHours}
-              value={CUSTOM_PRESET_VALUE}
-              testId="composer-expiry-custom"
-              checked={ttlPreset === "custom"}
-              onSelect={() => dispatch({ type: "expiryPreset", preset: CUSTOM_PRESET_VALUE })}
-            >
-              Custom
-            </PresetRadio>
-          </li>
-        </ul>
-        {ttlPreset === CUSTOM_PRESET_VALUE && (
-          <label className="flex flex-col gap-1.5">
-            {/* The bound is the shipped command's own and is stated rather than
-                enforced silently: it REFUSES an out-of-range window instead of
-                clamping it, so a practitioner who types 200 needs to know why
-                nothing happened. */}
-            <span className="text-xs text-fg-muted">Hours, from 1 hour to 7 days</span>
-            <input
-              type="number"
-              name={COMPOSER_FIELD_NAMES.expiresInHoursCustom}
-              inputMode="numeric"
-              min={1}
-              max={168}
-              data-testid="composer-expiry-hours"
-              value={Number.isFinite(draft.expiresInHours) ? draft.expiresInHours : ""}
-              onChange={(event) =>
-                dispatch({
-                  type: "expiryCustom",
-                  hours: event.currentTarget.value === "" ? Number.NaN : Number(event.currentTarget.value),
-                })
-              }
-              aria-invalid={errors.expiry ? true : undefined}
-              aria-describedby={errors.expiry ? composerErrorId(entryId, "expiry") : undefined}
-              className={fieldControlClass()}
-            />
-          </label>
         )}
       </FieldSection>
 

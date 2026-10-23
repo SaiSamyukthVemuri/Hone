@@ -100,15 +100,18 @@ export const MOBILE_ON_FILE_NOTE =
   "Contact the studio if this number needs to change.";
 
 /**
- * Shown beside a mobile a legacy prospect is supplying for the first time.
+ * Shown beside a mobile someone is typing in: at the public join, or a legacy
+ * prospect supplying one for the first time.
  *
- * SAYS THE UNVERIFIED PART OUT LOUD. A number someone types is not yet a number
- * we can text — it may have a typo, or belong to someone else. Promising texts
- * against it would be a promise the system cannot keep, so the copy commits only
- * to what is true: we will confirm it first.
+ * SAYS THE IMPORTANT PART OUT LOUD, AND ONLY WHAT IS TRUE. Since Roadmap v1.25
+ * (operator decision D4(2), 2026-10-08) nobody confirms the number before a
+ * text: texts the person agrees to go to exactly this number, and a stored
+ * number can never be changed afterwards. So the copy asks them to check it
+ * is their own. It must never promise a confirmation step that does not
+ * exist.
  */
 export const MOBILE_CANDIDATE_NOTE =
-  "We'll confirm this number before sending any texts to it.";
+  "Check this is your own mobile number. If you agree to texts, they'll go to this number.";
 
 /**
  * Shown when the mobile ALREADY ON FILE cannot be used — it is present, so a
@@ -184,8 +187,28 @@ export const MOBILE_ON_FILE_UNUSABLE =
  * done prematurely here. A policy that described collection nobody performs yet
  * would be exactly the reverse of this PR's problem, and equally untrue.
  */
-export const JOIN_COLLECTION_NOTICE =
-  "use the details you enter here — your name, email, mobile number, treatment areas, availability, and whether you agreed to text messages — to manage this waitlist and contact you about availability.";
+export function joinCollectionNotice(collectsSmsConsent: boolean): string {
+  // THE NOTICE ENUMERATES WHAT IS ACTUALLY COLLECTED, and that set is not fixed.
+  // When the binding cannot honour a STOP the consent question is not asked at
+  // all (`ProfileFields.collectsSmsConsent`), and a notice that still listed
+  // "whether you agreed to text messages" would tell a prospect their answer to
+  // a question they never saw would be used. That is the same failure as
+  // describing collection nobody performs — just pointed at a field instead of
+  // a policy — and a point-of-collection disclosure is the one sentence that
+  // has to be exactly true.
+  const fields = collectsSmsConsent
+    ? "your name, email, mobile number, treatment areas, availability, and whether you agreed to text messages"
+    : "your name, email, mobile number, treatment areas, and availability";
+  return `use the details you enter here — ${fields} — to manage this waitlist and contact you about availability.`;
+}
+
+/**
+ * The consent-INCLUSIVE wording, for surfaces that do ask.
+ *
+ * Derived from the function rather than written twice, so the two cannot drift
+ * into disagreeing about the shared half of the sentence.
+ */
+export const JOIN_COLLECTION_NOTICE = joinCollectionNotice(true);
 
 /** Where the full notice lives. Same destination the shipped form links to. */
 export const PRIVACY_POLICY_PATH = "/privacy";

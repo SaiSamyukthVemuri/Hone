@@ -204,17 +204,20 @@ The audit records two further motion *candidates*. They are **not** pilots and
 
 ## Authorized work
 
-**UX-01 Quick Wins is AUTHORIZED**, to proceed once its prebuild is reconciled
-against current production. Its home is the canonical roadmap §23.6; this is a
-pointer, not a second register.
+**UX-01 Quick Wins is SHIPPED** (#743).
 
-It is stated **here rather than below** because the next section is defined as
-*not decided* — recording a decided item inside it would tell an agent both that
-UX-01 may proceed and that it may not.
+**UX-02 is AUTHORIZED** by Sam's explicit 2026-09-20 product/release decision to
+keep UI/UX moving and shipping in parallel with Level 3 WAIT. Its bounded
+contract remains the existing SectionLabel adoption slice and convergence-stop
+architecture; this authorization does **not** revive the removed general
+class-expression evaluator or authorize UX-03+.
 
-Nothing else **in the UX programme** is authorized. **UX-02 … UX-11 are PROPOSED
-and NOT SCHEDULED**, and MOTION-01 remains a **PILOT, not adopted**, with its
-sequencing constraint intact.
+**UX-03 … UX-11 remain PROPOSED and NOT SCHEDULED**, and MOTION-01 remains a
+**PILOT, not adopted**, with its sequencing constraint intact.
+
+The canonical roadmap §23.6 remains the product-priority/release home; this
+section records the design-program authority so the two documents do not issue
+contradictory instructions.
 
 **NAV-ACK-01 is AUTHORIZED** — a **bounded LAW 4 repair**, by owner product
 ruling of 2026-09-18. It sits **outside** the UX programme and must not be
@@ -240,6 +243,37 @@ navigation vocabulary, and no licence to convert the product's other links.
 Generalising this mechanism is UX-03's decision to make, and it has not been
 made.
 
+**SESSION-START-01 is AUTHORIZED** — also a **bounded LAW 4 repair**, by owner
+product ruling of 2026-09-18 ("session start responsiveness first"), and also
+**outside** the UX programme for the same reason NAV-ACK-01 is: UX-01's
+reconciled content does not reach this surface.
+
+Its scope is `/clients/[id]/sessions/new` and the charting page it leads to,
+in two slices:
+
+- the **modality press acknowledgement** — the controls acknowledged nothing at
+  all, because the page carried no client island;
+- the **measured latency** of the destination, taken from instrumentation
+  rather than from source shape.
+
+Its mechanism is **contract 2b's vocabulary** — `useFormStatus`, the
+geometry-stable spinner slot, `aria-busy` as the single voice — but **not
+`PendingButton` itself**, and that exception is bounded and deliberate.
+`PendingButton` reports `pending` for the whole form, which is correct for a
+form with one submit. The modality picker is one form with **two** submit
+buttons carrying `name="modality"`, where the requirement is that the pressed
+card announces and its sibling only locks. `useFormStatus().data` answers
+*which* button was pressed; a `pending` boolean cannot. **This is not a licence
+to hand-roll `useFormStatus` elsewhere** — anywhere a form has a single submit,
+2b remains the leaf.
+
+**SESSION-START-01 creates no new authority.** It does not detach any outbound
+send from a request path, move any authority or clinical validation off the
+critical path, adopt streaming or a route `loading.tsx`, or widen contract 2d.
+Postcare specifically remains on the session-start path: its durability recon
+returned **HOLD**, and detaching it is a separate decision with a separate
+proof.
+
 ---
 
 ## `[PRODUCT AUTHORITY REQUIRED]` — open, and not an agent's call
@@ -259,12 +293,13 @@ None of these is decided. None may be smuggled into a polish PR.
 5. Does the client-profile heading scale change?
 6. Are the inert `dark:` utilities retired? Mechanically safe, but it forecloses
    the class-based theme the token layer was built to enable.
-7. **Is any of UX-02 … UX-11 adopted, and in what order?** They remain
+7. **Is any of UX-03 … UX-11 adopted, and in what order?** They remain
    **PROPOSED and NOT SCHEDULED**, carrying no implementation authority.
    **Appearing in the sequence never authorizes a stage** — a later slice does not
    become startable because the one before it shipped. Adoption belongs in the
-   canonical roadmap, not in a review document and not here. *(UX-01 is **not**
-   part of this question — it is authorized; see "Authorized work" above.)*
+   canonical roadmap and must also be reflected here so the authority documents
+   agree. *(UX-01 is shipped and UX-02 is authorized; neither is part of this
+   undecided question — see "Authorized work" above.)*
 
    | Slice | Family |
    |---|---|

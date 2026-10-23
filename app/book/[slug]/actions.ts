@@ -9,6 +9,7 @@ import {
   RATE_LIMIT_MESSAGE,
 } from "@/lib/rate-limit/public";
 import { getStudioBySlug } from "@/lib/booking/queries";
+import { loadPublicSlotsByDate } from "@/lib/booking/public-slot-range";
 import {
   filterFutureSlots,
   getAvailableSlots,
@@ -47,10 +48,18 @@ import {
   sendBookingNotificationToPractitioner,
 } from "@/lib/email/send-appointment";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
+import { stampPublicBookingConsent } from "@/lib/booking/public-consent-stamp";
 import { normalizePhoneForMatch } from "@/lib/sms/twilio";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
-  isNewClientWaitlistEnabled,
+  getNewClientAdmissionMode,
+  newClientAdmissionLegacyBridgeWaitlist,
+  NEW_CLIENT_ADMISSION_CLOSED_REFUSAL,
+  NEW_CLIENT_ADMISSION_REFUSAL_CODE,
+  newClientAdmissionRefusesOutright,
+  newClientMayBook,
+} from "@/lib/booking/new-client-admission";
+import {
   NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
   NEW_CLIENT_WAITLIST_REFUSAL_CODE,
 } from "@/lib/booking/new-client-waitlist";
@@ -201,25 +210,32 @@ export async function fetchPublicSlotsAction(params: {
   }
   if (!service) return { ok: false, error: "Service not found." };
 
-  const slots = await getAvailableSlots(
-    admin,
-    {
-      id: studio.id,
-      timezone: studio.timezone,
-      default_appointment_duration_minutes:
-        studio.default_appointment_duration_minutes,
-      buffer_minutes: studio.buffer_minutes,
-    },
-    params.date,
-    service.default_duration_minutes,
-  );
-  // Public-only past-time guard: never offer a slot whose start instant is
-  // already in the past (today's earlier hours). Shared helper in
-  // lib/booking/slots.ts so public booking + public reschedule cannot
-  // drift apart (PR #149). No lead-time buffer here.
-  // The shared getAvailableSlots() is untouched, so the internal calendar
-  // quick-book drawer (app/(app)/calendar/actions.ts) is unaffected.
-  return { ok: true, slots: filterFutureSlots(slots) };
+  // Discovery has a structured retryable refusal, never fabricated availability.
+  try {
+    const slots = await getAvailableSlots(
+      admin,
+      {
+        id: studio.id,
+        timezone: studio.timezone,
+        default_appointment_duration_minutes:
+          studio.default_appointment_duration_minutes,
+        buffer_minutes: studio.buffer_minutes,
+      },
+      params.date,
+      service.default_duration_minutes,
+    );
+    // Public-only past-time guard: never offer a slot whose start instant is
+    // already in the past (today's earlier hours). Shared helper in
+    // lib/booking/slots.ts so public booking + public reschedule cannot
+    // drift apart (PR #149). No lead-time buffer here.
+    // The shared getAvailableSlots() is untouched, so the internal calendar
+    // quick-book drawer (app/(app)/calendar/actions.ts) is unaffected.
+    return { ok: true, slots: filterFutureSlots(slots) };
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.startsWith("availability_read_failed:")) throw err;
+    logInternalBookingError("public_slots_availability_read_failed", { studioId: studio.id });
+    return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -231,22 +247,50 @@ export async function fetchPublicSlotsAction(params: {
 // future-instant slot for the requested service.
 //
 // Why server-side: avoids 90 sequential client roundtrips for a 3-month
-// horizon. One client call -> one server action -> bounded server loop.
+// horizon. One client call -> one server action -> ONE bulk read.
 //
-// Algorithm: linear day-by-day scan from `from` to horizon.maxDateStr,
-// calling getAvailableSlots per day and applying the same past-time filter
-// fetchPublicSlotsAction uses. Returns the first date with a non-empty
-// future-slot list, or `date: null` if the horizon is exhausted.
+// BOOK-NEXT-FAST-01 — WHAT THIS USED TO DO, AND WHY IT HAD TO STOP.
 //
-// Worst case: horizon days (3-month = ~92, 4-month = ~123, 6-month = ~184)
-// getAvailableSlots calls, hard-capped by MAX_NEXT_AVAILABLE_SCAN_DAYS as a
-// belt-and-braces safety. Each getAvailableSlots is a single bounded
-// admin-scoped read of the day's overrides/blockouts/appointments; total
-// cost is O(N) cheap queries within one server roundtrip.
+// The previous implementation walked the horizon one day at a time, awaiting
+// `getAvailableSlots` per date. That call is a DAY LOADER: for the public
+// (capacity-off) path it issues a blockout read, an availability-override read,
+// a weekday-default read and a reservation read, each awaited in turn. So the
+// cost was not "N cheap queries" as the note here used to claim — it was
+// roughly 4N queries in 4N SERIAL round trips. At the 12-month horizon a studio
+// can configure, a "no availability anywhere" answer cost ~1,500 sequential
+// reads, and the person who pressed "Next available" waited for all of them.
+// This is F-SCALE-002.
 //
-// Boundaries preserved: same rate limiter as fetchPublicSlotsAction;
-// same soft-gate (loadPublicReadiness); same past-time filter; no booking
-// engine / conflict logic changes.
+// Parallelising those calls was considered and rejected: it converts a latency
+// problem into a connection-pool problem and leaves the database doing the same
+// ~1,500 reads. The work itself has to become bounded, not merely concurrent.
+//
+// Algorithm now: name the candidate dates (max(fromDate, today) through the
+// studio's horizon), then hand the whole range to `loadPublicSlotsByDate`,
+// which reads every input ONCE and evaluates each date in memory through the
+// same `buildDaySlots` the single-date path uses. The earliest group it returns
+// IS the answer, because that helper omits dates with no offerable slot.
+//
+// Cost is now FLAT IN THE HORIZON: two query waves over four queries, plus one
+// extra reservation page per 1,000 overlapping reservations. A 12-month scan
+// issues the same waves as a 7-day one.
+//
+// ONE AUTHORITY PASS, ONE DATA PASS. The sibling entry point
+// `fetchPublicSlotsForDates` does its own studio/readiness/service validation,
+// which this action has already done — it cannot name a date without first
+// knowing the studio's timezone and horizon. Calling that wrapper would have
+// re-read the studio, re-run readiness, re-read the service and re-read
+// `studio_availability_default`. It calls the lower-level pass instead.
+//
+// A READ FAILURE IS NO LONGER SILENCE. `getAvailableSlots` discards each
+// query's `error`, so a failed read used to become an empty day, the scan
+// continued, and the horizon was reported exhausted — "we could not read"
+// rendered as "nothing is open", on the surface where that lie costs a booking.
+// The range loader propagates the failure and this action now returns an error.
+//
+// Boundaries preserved: same rate limiter as fetchPublicSlotsAction; same
+// soft-gate (loadPublicReadiness); same past-time filter; same response
+// contract; no booking engine / conflict logic changes.
 // ---------------------------------------------------------------------------
 
 // Belt-and-braces cap on the next-available scan. Derived from the largest
@@ -312,33 +356,57 @@ export async function fetchNextAvailableDateAction(params: {
     return { ok: true, date: null };
   }
 
-  // Capture `now` ONCE before the loop so every iteration's
-  // future-filter uses a single clock reading (shared helper in
-  // lib/booking/slots.ts, PR #149).
-  const nowRef = new Date();
+  // The candidate dates, named up front. This is a string list, not a query
+  // plan: every one of them is answered by the single bulk pass below.
+  //
+  // MAX_NEXT_AVAILABLE_SCAN_DAYS survives as a LOOP GUARD, not as a cost
+  // control. It no longer bounds database work — the bulk pass does that — but
+  // a date-arithmetic bug that failed to advance the cursor would otherwise
+  // build an unbounded array, so the guard stays.
+  const dates: string[] = [];
   let cursor = startDate;
-  let scans = 0;
-  while (cursor <= horizon.maxDateStr && scans < MAX_NEXT_AVAILABLE_SCAN_DAYS) {
-    scans += 1;
-    const slots = await getAvailableSlots(
-      admin,
-      {
-        id: studio.id,
-        timezone: studio.timezone,
-        default_appointment_duration_minutes:
-          studio.default_appointment_duration_minutes,
-        buffer_minutes: studio.buffer_minutes,
-      },
-      cursor,
-      service.default_duration_minutes,
-    );
-    const futureSlots = filterFutureSlots(slots, nowRef);
-    if (futureSlots.length > 0) {
-      return { ok: true, date: cursor };
-    }
+  while (cursor <= horizon.maxDateStr && dates.length < MAX_NEXT_AVAILABLE_SCAN_DAYS) {
+    dates.push(cursor);
     cursor = addDays(cursor, 1);
   }
-  return { ok: true, date: null };
+
+  // Capture `now` ONCE for the whole range so every date's future-filter uses a
+  // single clock reading, exactly as the day-by-day version did across its
+  // iterations (shared helper in lib/booking/slots.ts, PR #149).
+  const nowRef = new Date();
+
+  const range = await loadPublicSlotsByDate(
+    admin,
+    {
+      studioId: studio.id,
+      timezone: studio.timezone,
+      publicBookingHorizonMonths: studio.public_booking_horizon_months,
+      bufferMinutes: studio.buffer_minutes,
+      serviceDurationMinutes: service.default_duration_minutes,
+    },
+    dates,
+    nowRef,
+    // Only the EARLIEST date is wanted, so generating candidates for the rest
+    // of the horizon is work nobody reads. Measured: without this the bulk pass
+    // answered in 1.5-2.3s whenever slots existed, because `buildDaySlots` ran
+    // over every open day in the window and formatted each label through Intl.
+    { stopAfterFirstMatch: true },
+  );
+
+  if (!range.ok) {
+    // A read that failed is NOT "no availability". Reporting `date: null` here
+    // would tell the client the studio is booked solid to the horizon on the
+    // strength of a query that never answered.
+    logInternalBookingError("public_next_available_range_read_failed", {
+      studioId: studio.id,
+    });
+    return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+  }
+
+  // `byDate` is ascending and contains only dates that HAVE an offerable slot,
+  // so the first group is the earliest available date and an empty list means
+  // the horizon really is exhausted.
+  return { ok: true, date: range.byDate[0]?.date ?? null };
 }
 
 // BOOK-01 Tranche 1. A COMMITTED booking now returns the client's management
@@ -372,6 +440,11 @@ export type PublicBookResult =
       code?:
         | "slot_taken"
         | typeof NEW_CLIENT_WAITLIST_REFUSAL_CODE
+        // NEW-CLIENT-MODE-01. `closed` or an UNREADABLE admission mode. Distinct
+        // from the waitlist refusal because there is no waitlist to join, and
+        // returned whether or not credentials were presented so it cannot be
+        // used to probe an invitation.
+        | typeof NEW_CLIENT_ADMISSION_REFUSAL_CODE
         // WAIT-03B B2. A scoped invitation was presented and did not authorise
         // THIS request. Distinct from the plain waitlist refusal so a caller can
         // tell "you need an invitation" from "your invitation doesn't cover this".
@@ -538,8 +611,46 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // rather than waved onto the ordinary path — a caller does not get to opt out
   // of invitation handling by omitting the half that identifies the invitation.
   const invitationPresented = Boolean(invitationToken) || Boolean(invitationCapability);
-  const admissionGateApplies = isNewClientWaitlistEnabled(studio.slug);
+  // NEW-CLIENT-MODE-01. `open` is the ONLY mode in which a new client books
+  // normally. Re-derived here from the server-resolved studio, so a stale tab
+  // cannot book around it.
+  //
+  // THE FOUR STATES ARE NOT ONE BOOLEAN, and collapsing them was a P1. The
+  // three non-ordinary states differ in exactly one respect - whether a valid
+  // scoped invitation may still admit the client:
+  //
+  //   waitlist -> the ORDINARY path refuses, and a valid scoped invitation is
+  //               the ONE exception that may authorise. This is the WAIT
+  //               invitation lifecycle and it is preserved unchanged below.
+  //   closed   -> NOBODY new books. A previously issued invitation must not
+  //               override a studio its owner has closed.
+  //   unknown  -> fail closed. A failed read must not be recoverable by
+  //               presenting credentials.
+  //
+  // `admissionGateApplies` alone could not tell those apart, so an invitation
+  // issued while a studio was WAITLISTED went on booking after the owner
+  // switched to CLOSED, and booked identically when the admission read failed.
+  const admission = await getNewClientAdmissionMode(studio);
+  const admissionGateApplies = !newClientMayBook(admission);
 
+  // BEFORE any invitation can be authorised. The refusal is returned whether or
+  // not credentials were presented and never consults them, so `closed` and
+  // `unknown` cannot be turned into an oracle for whether an invitation is
+  // valid - and `authorizeInvitationForBooking` is not reached at all, so no
+  // invitation is consumed on a path that cannot produce a booking.
+  //
+  // EXISTING CLIENTS ARE OUTSIDE THIS AUTHORITY: the condition is
+  // clientType === "new", exactly as the ordinary gate below.
+  if (clientType === "new" && newClientAdmissionRefusesOutright(admission)) {
+    return {
+      ok: false,
+      error: NEW_CLIENT_ADMISSION_CLOSED_REFUSAL,
+      code: NEW_CLIENT_ADMISSION_REFUSAL_CODE,
+    };
+  }
+
+  // Reaching here with the gate on means the mode is WAITLIST - the one state
+  // with an invitation exception - so the selector below is unchanged.
   if (clientType === "new" && (admissionGateApplies || invitationPresented)) {
     if (invitationToken && invitationCapability) {
       const requestedStartsAt = new Date(startsAtRaw);
@@ -651,24 +762,31 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // UTC date: a 10pm Toronto booking would otherwise look up slots
   // for the next calendar day.
   const dateStr = localDateString(start, studio.timezone);
-  const slots = await getAvailableSlots(
-    admin,
-    {
-      id: studio.id,
-      timezone: studio.timezone,
-      default_appointment_duration_minutes:
-        studio.default_appointment_duration_minutes,
-      buffer_minutes: studio.buffer_minutes,
-    },
-    dateStr,
-    service.default_duration_minutes,
-  );
-  const free = slots.some((s) => new Date(s.start).getTime() === start.getTime());
-  if (!free) {
-    return {
-      ok: false,
-      error: "That time is no longer available. Please choose another time.",
-    };
+  // Advisory only: a classified failed read defers to the locked command.
+  // Discovery still fails closed; successful empty reads still refuse here.
+  try {
+    const slots = await getAvailableSlots(
+      admin,
+      {
+        id: studio.id,
+        timezone: studio.timezone,
+        default_appointment_duration_minutes:
+          studio.default_appointment_duration_minutes,
+        buffer_minutes: studio.buffer_minutes,
+      },
+      dateStr,
+      service.default_duration_minutes,
+    );
+    const free = slots.some((s) => new Date(s.start).getTime() === start.getTime());
+    if (!free) {
+      return {
+        ok: false,
+        error: "That time is no longer available. Please choose another time.",
+      };
+    }
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.startsWith("availability_read_failed:")) throw err;
+    logInternalBookingError("public_booking_advisory_read_failed", { studioId: studio.id });
   }
 
   const end = new Date(start.getTime() + service.default_duration_minutes * 60_000);
@@ -830,7 +948,14 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     };
   };
 
-  let clientId: string;
+  // RESOLVED here, or CREATED inside the commit transaction. Creating a client
+  // before the locked admission decision would leave an ORPHAN for a request
+  // the owner had just refused, so the new-client path defers it. The final id
+  // is a `const` bound at the commit, below.
+  let resolvedClientId: string | null = null;
+  // Only ever reached when the TRANSPORT failed, where every path below returns
+  // before using it. Named so it cannot be mistaken for a real id in a log.
+  const NO_CLIENT_RESOLVED = "__transport_failed__";
   let clientName: string;
   let clientPhone: string | null;
   // SMS consent state used by the SMS confirmation attempt at the
@@ -878,7 +1003,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // signed magic-link to claim or merge a client identity) is
     // a separate, scoped change that has NOT been made in this
     // branch.
-    clientId = existingClient.id;
+    resolvedClientId = existingClient.id;
     clientName = existingClient.name;
     clientPhone = existingClient.phone;
     clientSmsConsentAt = existingClient.sms_consent_at ?? null;
@@ -903,146 +1028,50 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
         submittedDigits.length > 0 &&
         submittedDigits === storedDigits
       ) {
-        const nowIso = new Date().toISOString();
-        const { error: consentErr } = await admin
-          .from("clients")
-          .update({
-            sms_consent_at: nowIso,
-            sms_consent_source: "public_booking",
-          })
-          .eq("id", clientId);
-        if (consentErr) {
+        // G3 / 0211: consent is write-once, so the stamp is a conditional
+        // FIRST write; an overlapping booking that got there first, or a STOP
+        // that landed meanwhile, is adopted from the row rather than lost
+        // (lib/booking/public-consent-stamp.ts).
+        const stamp = await stampPublicBookingConsent(admin, existingClient.id, new Date().toISOString());
+        if (stamp.result === "error") {
           // Soft fail. The booking and the email path must not break
           // because of a consent-stamp error; future bookings can
           // re-attempt. We log a sanitized error and proceed.
           // PR #261: sqlstate code + studioId + salted email
           // fingerprint; drop raw DB message.
           logInternalBookingError("public_booking_sms_consent_update_failed", {
-            code: consentErr.code,
+            code: stamp.code,
             studioId: studio.id,
             emailFingerprint: hashFingerprint(normalizedEmail),
           });
         } else {
-          clientSmsConsentAt = nowIso;
+          clientSmsConsentAt = stamp.smsConsentAt;
+          clientSmsOptedOutAt = stamp.smsOptedOutAt;
         }
       }
     }
   } else {
-    // New client. If smsConsent is true, stamp consent_at immediately
-    // with source "public_booking" -- there is no prior phone to
-    // protect (this row is being created right now) so the gate is
-    // strictly the checkbox plus a normalizable phone, both of which
-    // were submitted by the same form post. Building the row with a
-    // base + conditional spread keeps Supabase's column-type inference
-    // happy across the two branches.
-    const nowIso = new Date().toISOString();
-    const newClientRow = {
-      studio_id: studio.id,
-      name,
-      email,
-      phone,
-      ...(smsConsent
-        ? {
-            sms_consent_at: nowIso,
-            sms_consent_source: "public_booking" as const,
-          }
-        : {}),
-    };
-    const { data: createdClient, error: clientErr } = await admin
-      .from("clients")
-      .insert(newClientRow)
-      .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
-      .single();
-    if (clientErr || !createdClient) {
-      // Race-safe path: the clients_studio_normalized_email_uniq
-      // partial unique index raises sqlstate 23505 when our INSERT
-      // collides on (studio_id, normalized_email). The winning row is
-      // either:
-      //   (a) an ACTIVE client created by a concurrent booking from
-      //       the same email (the original race-fallback case), or
-      //   (b) an ARCHIVED client (migration 0050) that owns the same
-      //       email. The initial lookup filters archived clients, so
-      //       case (b) falls through to the INSERT, which then trips
-      //       the unique index because the index is on the bare
-      //       normalized_email column (archived rows still occupy
-      //       their slot in the index).
-      //
-      // We re-read the winner WITHOUT the archived filter so we can
-      // distinguish (a) from (b). If the winner is archived, we
-      // refuse the booking with a generic non-revealing error -- we
-      // never attach a public appointment to an archived client,
-      // never auto-unarchive from a public surface, and never reveal
-      // to the booker that the email belongs to an archived row.
-      if (clientErr?.code === "23505") {
-        const { data: winner } = await admin
-          .from("clients")
-          .select(
-            "id, name, phone, sms_consent_at, sms_opted_out_at, archived_at",
-          )
-          .eq("studio_id", studio.id)
-          .eq("normalized_email", normalizedEmail)
-          .maybeSingle();
-        if (winner && winner.archived_at != null) {
-          // Archived-collision case. Log internally so an operator
-          // can see what happened; return a generic message that
-          // does not reveal the archive.
-          // PR #261: never write the raw booker email or the internal
-          // archived client UUID to logs from this unauthenticated
-          // path. The salted email fingerprint preserves operator
-          // correlation; archivedClientCollision flags the case without
-          // re-introducing the archive-enumeration linkage the visitor
-          // message deliberately hides.
-          logInternalBookingError("public_booking_archived_client_collision", {
-            studioId: studio.id,
-            emailFingerprint: hashFingerprint(normalizedEmail),
-            archivedClientCollision: true,
-          });
-          // P3-A: the offer is already spent on this path.
-          if (consumedInvitationId) return invitationConsumedWithoutBooking("client_identity_collision");
-          return {
-            ok: false,
-            error: archivedClientCollisionError(studio.name),
-          };
-        }
-        if (winner) {
-          clientId = winner.id;
-          clientName = winner.name;
-          clientPhone = winner.phone ?? phone;
-          clientSmsConsentAt = winner.sms_consent_at ?? null;
-          clientSmsOptedOutAt = winner.sms_opted_out_at ?? null;
-        } else {
-          // PR #261: keep the sqlstate code (the diagnostic that
-          // matters for an unresolved unique-index race) + studioId +
-          // salted email fingerprint; drop the raw booker email and the
-          // raw DB message.
-          logInternalBookingError("public_booking_unique_race_unresolved", {
-            studioId: studio.id,
-            emailFingerprint: hashFingerprint(normalizedEmail),
-            code: clientErr.code,
-          });
-          // P3-A: the offer is already spent on this path.
-          if (consumedInvitationId) return invitationConsumedWithoutBooking("client_not_created");
-          return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
-        }
-      } else {
-        // PR #261: sqlstate code + studioId + salted email fingerprint;
-        // drop raw DB message.
-        logInternalBookingError("public_booking_client_insert_failed", {
-          code: clientErr?.code,
-          studioId: studio.id,
-          emailFingerprint: hashFingerprint(normalizedEmail),
-        });
-        // P3-A: the offer is already spent on this path.
-        if (consumedInvitationId) return invitationConsumedWithoutBooking("client_not_created");
-        return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
-      }
-    } else {
-      clientId = createdClient.id;
-      clientName = createdClient.name;
-      clientPhone = createdClient.phone;
-      clientSmsConsentAt = createdClient.sms_consent_at ?? null;
-      clientSmsOptedOutAt = createdClient.sms_opted_out_at ?? null;
-    }
+    // DEFERRED TO THE COMMIT TRANSACTION, and that is the whole point.
+    //
+    // This used to insert the client here, through its own PostgREST request,
+    // before the appointment command ran. The admission read at the top of this
+    // action is NOT commit-time authority: the owner can change the mode in
+    // between, so a request that began under `open` could leave a client row
+    // behind for a booking that was then refused. Guarding only the appointment
+    // command could not have helped - the orphan is created before it runs.
+    //
+    // `create_public_appointment_for_new_client` instead takes the studios row
+    // lock, decides admission, and only then resolves-or-creates the client and
+    // creates the appointment, as ONE commit. It returns the id it used.
+    //
+    // The unique-violation race this branch used to handle cannot occur there:
+    // that same row lock serialises same-studio bookings, so the command's
+    // lookup-then-insert is safe. The ARCHIVED-client collision is still a real
+    // answer and comes back as its own outcome below.
+    clientName = name;
+    clientPhone = phone;
+    clientSmsConsentAt = smsConsent ? new Date().toISOString() : null;
+    clientSmsOptedOutAt = null;
   }
 
   // BOOK-01 P2-B. REQUIRED CONFIGURATION IS RESOLVED BEFORE THE DURABILITY
@@ -1105,7 +1134,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // submitted.
   const commitArgs = {
     p_studio_id: studio.id,
-    p_client_id: clientId,
+    p_client_id: resolvedClientId,
     p_service_id: serviceId,
     p_starts_at: start.toISOString(),
     p_cancellation_token_hash: hashAppointmentToken(appointmentToken),
@@ -1116,7 +1145,34 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // `redeemedEntryId` is a `let`, so a const binding is what makes the argument
   // provably non-null without a cast.
   const atomicEntryId = redeemedEntryId;
-  const { data: rpcRows, error: rpcErr } = atomicEntryId
+  // COMMIT-TIME ADMISSION, FOR NEW CLIENTS ONLY.
+  //
+  // Both new-client branches - ordinary and invited - commit through the one
+  // guarded command. It takes the studios row lock, decides admission for the
+  // operation it is actually performing (`book`, or `invited_book` when an entry
+  // id is present), resolves-or-creates the client, and creates the appointment,
+  // all in ONE transaction. So an owner who closes the studio first wins and
+  // nothing is written, and an invitation cannot carry a booking past CLOSED.
+  //
+  // AN EXISTING CLIENT IS UNTOUCHED. `clientType` is the branch, and the
+  // existing-client path reaches the same commands it always did with the same
+  // arguments, consulting no admission authority at any point.
+  const { data: rpcRows, error: rpcErr } = clientType === "new"
+    ? await admin.rpc("create_public_appointment_for_new_client", {
+        ...commitArgs,
+        p_client_name: clientName,
+        p_client_email: email,
+        p_client_phone: clientPhone,
+        // Only when this command is the one creating the row; a resolved client
+        // keeps whatever consent it already had.
+        p_sms_consent_at: resolvedClientId ? null : clientSmsConsentAt,
+        // SERVER-DERIVED and TEMPORARY: the transition fact 0204 cannot read for
+        // itself, consulted only while the row is unstamped.
+        p_legacy_bridge_waitlist: newClientAdmissionLegacyBridgeWaitlist(studio.slug),
+        // NULL is the ordinary path; non-null composes 0195's conversion.
+        p_entry_id: atomicEntryId,
+      })
+    : atomicEntryId
     ? await admin.rpc("create_waitlist_public_appointment", {
         ...commitArgs,
         // SERVER-DERIVED, from the locked redemption that just spent it. Never
@@ -1126,6 +1182,76 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     : await admin.rpc("create_public_appointment", commitArgs);
   const commandRow = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
   const rawCommandResult = (commandRow?.result as string | undefined) ?? null;
+
+  // THE COMMIT-TIME REFUSALS, answered before anything was written.
+  //
+  // Reaching either means the world moved after this action's own reads - the
+  // owner changed the mode, or this email resolved to an archived client under
+  // the lock. Both come back INSTEAD of a booking, so there is nothing to undo.
+  if (rawCommandResult === "new_client_admission_refused") {
+    if (consumedInvitationId) {
+      return invitationConsumedWithoutBooking("admission_refused_at_commit");
+    }
+    return {
+      ok: false,
+      error: NEW_CLIENT_ADMISSION_CLOSED_REFUSAL,
+      code: NEW_CLIENT_ADMISSION_REFUSAL_CODE,
+    };
+  }
+  if (rawCommandResult === "archived_client_collision") {
+    logInternalBookingError("public_booking_archived_client_collision", {
+      studioId: studio.id,
+      emailFingerprint: hashFingerprint(normalizedEmail),
+      archivedClientCollision: true,
+    });
+    if (consumedInvitationId) {
+      return invitationConsumedWithoutBooking("client_identity_collision");
+    }
+    return { ok: false, error: archivedClientCollisionError(studio.name) };
+  }
+
+  // The id the COMMAND used - resolved under the lock, or created by it. For an
+  // existing client it is the one this action already resolved.
+  //
+  // NOT a refusal when the TRANSPORT failed. `rpcErr` means the answer was lost,
+  // not that nothing happened: the transaction may have committed, so claiming
+  // "no client" here would report a spent invitation as unbooked. That case is
+  // INDETERMINATE and is handled below, which is why this guard excludes it.
+  const committedClientId =
+    (commandRow?.client_id as string | undefined) ?? resolvedClientId;
+  if (!rpcErr && !committedClientId) {
+    logInternalBookingError("public_booking_client_not_resolved", {
+      studioId: studio.id,
+      emailFingerprint: hashFingerprint(normalizedEmail),
+      code: rawCommandResult ?? undefined,
+    });
+    if (consumedInvitationId) {
+      return invitationConsumedWithoutBooking("client_not_created");
+    }
+    return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+  }
+  const clientId = committedClientId ?? resolvedClientId ?? NO_CLIENT_RESOLVED;
+
+  // THE WINNING CLIENT'S OWN CONTACT STATE WINS over the submission.
+  //
+  // The command may have adopted a row this action never saw - another writer
+  // created the same-studio email first, and the unique-violation re-read took
+  // it. Keeping the typed values would then send the post-commit SMS to the
+  // SUBMITTED phone, under SUBMITTED consent, for an appointment belonging to a
+  // client whose stored phone or consent differs. So whenever the command
+  // reports a profile, it replaces what was typed.
+  if (commandRow?.client_name !== undefined && commandRow?.client_name !== null) {
+    clientName = commandRow.client_name as string;
+  }
+  if (commandRow?.client_phone !== undefined) {
+    clientPhone = (commandRow.client_phone as string | null) ?? null;
+  }
+  if (commandRow?.client_sms_consent_at !== undefined) {
+    clientSmsConsentAt = (commandRow.client_sms_consent_at as string | null) ?? null;
+  }
+  if (commandRow?.client_sms_opted_out_at !== undefined) {
+    clientSmsOptedOutAt = (commandRow.client_sms_opted_out_at as string | null) ?? null;
+  }
   // 0195 speaks a superset: `created_and_converted` for success, and the nested
   // command's own refusal re-emitted under an `appointment:` prefix. Unwrapping
   // it here keeps ONE vocabulary in play rather than two.

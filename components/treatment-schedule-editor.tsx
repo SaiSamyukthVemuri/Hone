@@ -21,6 +21,10 @@
 //   "Estimated total"   , derived from stages, displayed with "about"
 
 import { useState, useTransition } from "react";
+import { useRef, type RefObject } from "react";
+import { useReturnFocus } from "@/components/use-return-focus";
+
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import type {
   TreatmentPlanStage,
   TreatmentPlanStageHowOftenUnit,
@@ -126,10 +130,22 @@ export function TreatmentScheduleEditor({
   // free-form editor below.
   const fixedMode = isFixedStageSet(stages);
 
+  // The dialog here is mounted INSIDE the stage row, so the row owns the open
+  // state the handoff must key on — but the row's own controls are exactly what
+  // the revalidation replaces. The editor therefore owns the ANCHOR and hands
+  // the ref down; the row does the arming. See components/use-return-focus.ts.
+  const scheduleLabelRef = useRef<HTMLParagraphElement>(null);
+
   return (
     <div className="flex flex-col gap-3 border-t border-neutral-200 pt-3 dark:border-neutral-800">
       <div className="flex items-baseline justify-between gap-2">
-        <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+        <p
+          ref={scheduleLabelRef}
+          // Programmatic focus target only; -1 keeps it out of the Tab order,
+          // and `outline-hidden` (not `outline-none`) per DESIGN.md LAW 3/6.
+          tabIndex={-1}
+          className="text-xs font-medium uppercase tracking-wider text-neutral-500 outline-hidden"
+        >
           Treatment schedule
         </p>
         {stages.length > 0 && (
@@ -180,6 +196,7 @@ export function TreatmentScheduleEditor({
                   planId={planId}
                   clientId={clientId}
                   deleteAction={deleteStageAction}
+                  anchorRef={scheduleLabelRef}
                   onEdit={() => setOpenMode({ kind: "edit", stage })}
                 />
               )}
@@ -228,6 +245,7 @@ function StageRow({
   planId,
   clientId,
   deleteAction,
+  anchorRef,
   onEdit,
 }: {
   index: number;
@@ -237,17 +255,41 @@ function StageRow({
   planId: string;
   clientId: string;
   deleteAction: TreatmentScheduleAction;
+  anchorRef: RefObject<HTMLParagraphElement | null>;
   onEdit: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [pending, startTransition] = useTransition();
 
+  // Keyed on this row's dialog open state, anchored on the editor's section
+  // label, which outlives the revalidation that replaces this row's controls.
+  const { arm: armScheduleFocus } = useReturnFocus<HTMLParagraphElement>(
+    confirming,
+    anchorRef,
+  );
+
+  // UI-05. This was `window.confirm()`, and confirm-dialog.tsx's own docblock
+  // explains why that is not merely a styling problem: iOS Safari can SUPPRESS
+  // a native confirm silently. When it does, the guard returns false and the
+  // removal simply never happens — a practitioner taps Remove, sees nothing,
+  // and has no way to tell whether Hone refused or ignored them. Two other
+  // surfaces in this repo already migrated away for exactly that reason and
+  // recorded it in their comments.
+  //
+  // ConfirmDialog is the shipped replacement and carries what a native dialog
+  // cannot: role="alertdialog", a focus trap, focus restored to the opener,
+  // Escape that closes ONLY while idle so an in-flight removal is never
+  // abandoned, and an error region that keeps the dialog open so the message
+  // can actually be read.
+  //
+  // The mutation is unchanged and still owned here; the dialog is presentation.
   function handleDelete() {
-    if (
-      !window.confirm(`Remove ${stage.name ?? `Stage ${index + 1}`}?`)
-    ) {
-      return;
-    }
+    setError(null);
+    setConfirming(true);
+  }
+
+  function runDelete() {
     setError(null);
     const fd = new FormData();
     fd.set("stage_id", stage.id);
@@ -255,7 +297,16 @@ function StageRow({
     fd.set("client_id", clientId);
     startTransition(async () => {
       const r = await deleteAction(fd);
-      if (!r.ok) setError(r.error);
+      if (r.ok) {
+        // Success only. Cancel and failure keep the primitive's opener
+        // restoration, because there the opener node is not replaced.
+        armScheduleFocus();
+        setConfirming(false);
+      } else {
+        // Stay open so the failure is readable and retryable, per the dialog's
+        // error contract.
+        setError(r.error);
+      }
     });
   }
 
@@ -327,11 +378,32 @@ function StageRow({
           {stage.notes}
         </p>
       )}
-      {error && (
+      {/* `!confirming` so a failure is not rendered TWICE — once inside the
+          dialog and once behind it. The dialog owns the message while it is
+          open; this row owns it afterwards. Same guard the mark-complete
+          consumer uses. */}
+      {error && !confirming && (
         <p className="text-[11px] text-red-700 dark:text-red-400" role="alert">
           {error}
         </p>
       )}
+
+      {/* Inside the row, so the dialog unmounts with the stage it removes. */}
+      <ConfirmDialog
+        open={confirming}
+        title={`Remove ${label}?`}
+        description="This removes the stage from the treatment plan. Sessions already recorded against it are not deleted."
+        confirmLabel="Remove stage"
+        busyLabel="Removing…"
+        tone="danger"
+        pending={pending}
+        error={confirming ? error : null}
+        onConfirm={runDelete}
+        onCancel={() => {
+          setConfirming(false);
+          setError(null);
+        }}
+      />
     </div>
   );
 }

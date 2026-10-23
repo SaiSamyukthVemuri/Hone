@@ -879,7 +879,7 @@ describe("the validated scope requires a service the draft may still lack", () =
       windowDays: 7,
       allowedWeekdays: null,
     };
-    const input: InviteToBookInput = { entryId: "e1", scope, expiresInHours: 72 };
+    const input: InviteToBookInput = { entryId: "e1", scope };
     expect(input.scope.serviceId).toBe("svc-1");
   });
 
@@ -896,7 +896,6 @@ describe("the validated scope requires a service the draft may still lack", () =
         windowDays: 7,
         allowedWeekdays: null,
       },
-      expiresInHours: 72,
     };
     expect(input).toBeDefined();
   });

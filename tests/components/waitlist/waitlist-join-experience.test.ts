@@ -21,13 +21,13 @@ const noop = async () => ({ ok: true }) as const;
 
 function joinMarkup(): string {
   return renderToStaticMarkup(
-    createElement(WaitlistJoinForm, { studioName: "Willow", onSubmit: noop }),
+    createElement(WaitlistJoinForm, { collectsSmsConsent: true, studioName: "Willow", onSubmit: noop }),
   );
 }
 
 function completionMarkup(): string {
   return renderToStaticMarkup(
-    createElement(CompleteProfilePanel, {
+    createElement(CompleteProfilePanel, { collectsSmsConsent: true,
         studioName: "Willow",
       stored: { legacyName: "Sarah Jones", email: "sarah@example.com" },
       onSubmit: async () => ({ ok: true }) as const,
@@ -172,7 +172,7 @@ describe("accessibility", () => {
 
   it("announces errors with role=alert, not colour alone", () => {
     const errored = renderToStaticMarkup(
-      createElement(WaitlistJoinForm, {
+      createElement(WaitlistJoinForm, { collectsSmsConsent: true,
         studioName: "Willow",
         onSubmit: noop,
         initialDraft: emptyJoinProfileDraft(),
@@ -229,7 +229,7 @@ describe("NON-VACUITY — the negative controls above can actually fail", () => 
   // guards look for is real markup this component emits, not a string that
   // never occurs under any input.
   const populated = renderToStaticMarkup(
-    createElement(WaitlistJoinForm, {
+    createElement(WaitlistJoinForm, { collectsSmsConsent: true,
       studioName: "Willow",
       onSubmit: noop,
       initialDraft: {

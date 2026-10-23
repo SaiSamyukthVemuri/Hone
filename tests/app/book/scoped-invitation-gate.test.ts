@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { NEW_CLIENT_WAITLIST_SLUGS_ENV } from "@/lib/booking/new-client-waitlist";
 
@@ -34,6 +34,13 @@ const INVITED_HASH = createHash("sha256").update(INVITED_EMAIL, "utf8").digest("
 
 // A Wednesday well inside the horizon, fixed so the scope window is stable.
 const START = new Date("2026-10-07T14:00:00.000Z");
+// Every instant this suite books is ABSOLUTE, and the booking action refuses a
+// start at or before the WALL CLOCK. Left unpinned, START expired as the
+// calendar caught up with it: from 2026-10-07T14:00Z this suite failed on every
+// branch, production included -- the same defect #794 fixed in
+// invitation-fail-closed.test.ts. `now` is a fixture fact, before every
+// instant below and inside the 2026-10-01..31 offer window.
+const FROZEN_NOW = new Date("2026-10-01T12:00:00.000Z");
 const START_ISO = START.toISOString();
 
 const rpcCalls: string[] = [];
@@ -114,7 +121,7 @@ function makeChain(table: string) {
 
 const admin = {
   from: (table: string) => makeChain(table),
-  rpc: async (fn: string) => {
+  rpc: async (fn: string, args: Record<string, unknown> = {}) => {
     rpcCalls.push(fn);
     if (fn === "resolve_new_client_waitlist_invitation") {
       return {
@@ -141,12 +148,20 @@ const admin = {
         error: null,
       };
     }
-    if (fn === "create_public_appointment") {
+    // NEW-client bookings now reach ONE composed command, which owns admission
+    // + client creation + the appointment as a single commit and tells the
+    // ordinary path from the invited one by the SERVER-DERIVED entry id.
+    // `create_public_appointment` stays for EXISTING clients, unchanged.
+    if (
+      fn === "create_public_appointment" ||
+      (fn === "create_public_appointment_for_new_client" && args.p_entry_id == null)
+    ) {
       if (scenario.bookingError) return { data: null, error: scenario.bookingError };
       return {
         data: [
           {
             result: scenario.bookingResult,
+            client_id: (args.p_client_id as string | null) ?? CLIENT_ID,
             appointment_id:
               scenario.bookingResult === "created" && !scenario.suppressAppointmentId
                 ? APPT_ID
@@ -160,13 +175,14 @@ const admin = {
     // WAIT-03. The invitation path's commit command. `scenario.bookingResult`
     // still drives it, mapped onto 0195's vocabulary, so every scenario these
     // tests set up behaves identically to before the binding.
-    if (fn === "create_waitlist_public_appointment") {
+    if (fn === "create_public_appointment_for_new_client" && args.p_entry_id != null) {
       if (scenario.bookingError) return { data: null, error: scenario.bookingError };
       const created = scenario.bookingResult === "created";
       return {
         data: [
           {
             result: created ? "created_and_converted" : `appointment:${scenario.bookingResult}`,
+            client_id: (args.p_client_id as string | null) ?? CLIENT_ID,
             appointment_id: created && !scenario.suppressAppointmentId ? APPT_ID : null,
             created_at: new Date().toISOString(),
           },
@@ -177,6 +193,27 @@ const admin = {
     return { data: null, error: null };
   },
 };
+
+// NEW-CLIENT-MODE-01: the admission authority now performs the read these
+// suites used to make via the env predicate. Delegating to the REAL
+// `resolveAdmission` with no stored value routes it through the transition
+// bridge, so every `stubEnv` below keeps meaning exactly what it meant.
+vi.mock("@/lib/booking/new-client-admission", async (orig) => {
+  const actual =
+    await orig<typeof import("@/lib/booking/new-client-admission")>();
+  return {
+    ...actual,
+    getNewClientAdmissionMode: vi.fn(
+      async (studio: { slug: string | null }) =>
+        actual.resolveAdmission({
+          storedMode: null,
+          storedSetAt: null,
+          readFailed: false,
+          studioSlug: studio.slug,
+        }),
+    ),
+  };
+});
 
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => admin }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
@@ -255,11 +292,21 @@ const redeemed = () => rpcCalls.includes("redeem_new_client_waitlist_invitation_
 /** Did a booking commit? Either command counts: an invitation books through
  *  0195, an ordinary visitor through the original command. Naming only one
  *  would make this read "did not book" for a journey that plainly did. */
-const APPOINTMENT_COMMANDS = ["create_public_appointment", "create_waitlist_public_appointment"];
+const APPOINTMENT_COMMANDS = [
+  // An EXISTING client's command, and the composed NEW-client command that now
+  // covers both the ordinary and the invited path. Naming only one would make
+  // this read "did not book" for a journey that plainly did.
+  "create_public_appointment",
+  "create_public_appointment_for_new_client",
+];
 const bookIndex = () => rpcCalls.findIndex((c) => APPOINTMENT_COMMANDS.includes(c));
 const booked = () => bookIndex() > -1;
 
 beforeEach(() => {
+  // Only `Date` is faked. The action awaits real promises, and faking timers
+  // wholesale would stall them.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(FROZEN_NOW);
   process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = SLUG;
   rpcCalls.length = 0;
   dbWrites.length = 0;
@@ -278,6 +325,9 @@ beforeEach(() => {
     bookingError: null,
     suppressAppointmentId: false,
   });
+});
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("scoped invitation — bearer possession is not authorisation", () => {

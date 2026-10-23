@@ -70,7 +70,7 @@ function fieldsMarkup(stored: StoredWaitlistProfile) {
     validated,
     errors,
     html: renderToStaticMarkup(
-      createElement(ProfileFields, {
+      createElement(ProfileFields, { collectsSmsConsent: true,
         draft,
         errors,
         onChange: () => {},
@@ -138,7 +138,7 @@ describe("1+2. LOCKED INVALID MOBILE — refusal is visible, and Save cannot pro
       it("and Save does not appear to succeed", () => {
         // The done panel is what a successful save renders; it must be absent.
         const panel = renderToStaticMarkup(
-          createElement(CompleteProfilePanel, {
+          createElement(CompleteProfilePanel, { collectsSmsConsent: true,
         studioName: "Willow",
             stored: entry,
             onSubmit: async () => ({ ok: true }) as const,

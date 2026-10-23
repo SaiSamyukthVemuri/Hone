@@ -180,19 +180,34 @@ describe("nothing else became readable", () => {
     ).rejects.toThrow();
   });
 
-  it("the granted inventory is EXACTLY the twelve operational columns", async () => {
+  it("the granted inventory is EXACTLY the fourteen operational columns", async () => {
+    // TWELVE AT 0198, FOURTEEN AT 0200. WAIT-P1-EXIT grants `closed_at` and
+    // `closed_by_practitioner_id` — the operator close on a redeemed cycle that
+    // never became a booking. Same class as the four lifecycle stamps this file
+    // already lists, and this exact-set equality is precisely the guard that
+    // forces each widening to be a decision someone wrote down.
+    //
+    // 0198'S OWN CLAIM IS UNCHANGED: `declined_at` is still granted, and nothing
+    // credential-bearing joined it.
     const r = await q<{ column_name: string }>(
       `select column_name from information_schema.column_privileges
         where table_schema='public' and table_name='new_client_waitlist_invitations'
           and grantee='authenticated' and privilege_type='SELECT'
         order by column_name`,
     );
-    expect(r.map((x) => x.column_name)).toEqual([
+    const granted = r.map((x) => x.column_name);
+    expect(granted).toEqual([
+      "closed_at","closed_by_practitioner_id",
       "declined_at",
       "delivery_disposition","delivery_recorded_at",
       "entry_id","expired_at","expires_at","id","issued_at",
       "issued_by_practitioner_id","redeemed_at","released_at","studio_id",
     ]);
+    for (const secret of ["token_hash", "admission_round_id"]) {
+      expect(granted, `${secret} became readable`).not.toContain(secret);
+    }
+    expect(granted.filter((c) => c.startsWith("proof_"))).toEqual([]);
+    expect(granted.filter((c) => c.startsWith("scope_"))).toEqual([]);
   });
 
   it("anon and service_role hold NO column privilege on this table", async () => {
