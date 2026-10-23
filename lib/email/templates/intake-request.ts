@@ -1,3 +1,5 @@
+import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
+import { withReference } from "@/lib/email/subject-reference";
 // Practitioner-triggered intake reissue email (PR: intake reissue +
 // history). Sent when the practitioner clicks "Request intake update"
 // from the client profile. Distinct from the booking-confirmation
@@ -17,17 +19,26 @@ export type IntakeRequestEmail = {
 export function buildIntakeRequestEmail(p: {
   studioName: string;
   intakeUrl: string;
+  // Per-intake-form label (emailIntakeReference): each reissue creates a new
+  // intake row, so two requests must not thread together
+  // (tests/lib/email/email-subject-sweep.test.ts).
+  intakeReference: string;
 }): IntakeRequestEmail {
   const studioName = p.studioName.trim() || "Your studio";
-  const subject = "Please complete your updated intake form";
+  const subject = withReference("Please complete your updated intake form", p.intakeReference);
+  // PREVIEW RULE (HIPAA-READY-01, #828): this sentence opens the body, so a
+  // client that strips the preheader filler previews it. "visit", not
+  // "treatment": the opening states no treatment fact.
 
   const text = [
-    `${studioName} is asking you to complete an updated intake form before your appointment or next treatment.`,
+    `${studioName} is asking you to complete an updated intake form before your appointment or next visit.`,
     "",
     "Please complete it using the secure link below:",
     p.intakeUrl,
     "",
     "If you have any questions, reply to this email.",
+    "",
+    `Intake reference: ${p.intakeReference.trim()}`,
   ].join("\n");
 
   const html = `
@@ -41,7 +52,7 @@ export function buildIntakeRequestEmail(p: {
             <tr>
               <td style="padding:32px;">
                 <p style="margin:0 0 16px 0; font-size:16px; line-height:1.6;">
-                  ${escapeHtml(studioName)} is asking you to complete an updated intake form before your appointment or next treatment.
+                  ${escapeHtml(studioName)} is asking you to complete an updated intake form before your appointment or next visit.
                 </p>
                 <p style="margin:0 0 24px 0; font-size:15px; line-height:1.6; color:#3F3F3F;">
                   Please complete it using the secure link below.
@@ -55,6 +66,9 @@ export function buildIntakeRequestEmail(p: {
                   If the button does not work, copy and paste this link into your browser:<br />
                   <span style="word-break:break-all;">${escapeHtml(p.intakeUrl)}</span>
                 </p>
+                <p style="margin:16px 0 0 0; font-size:12px; line-height:1.6; color:#6B6B6B;">
+                  Intake reference: ${escapeHtml(p.intakeReference.trim())}
+                </p>
               </td>
             </tr>
           </table>
@@ -64,7 +78,7 @@ export function buildIntakeRequestEmail(p: {
   </body>
 </html>`.trim();
 
-  return { subject, html, text };
+  return { subject, html: withPreheader(html, clientPreheader(null)), text: withTextPreheader(text, clientPreheader(null)) };
 }
 
 function escapeHtml(s: string): string {

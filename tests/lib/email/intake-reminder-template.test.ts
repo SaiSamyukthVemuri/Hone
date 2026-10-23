@@ -17,6 +17,7 @@ const base = {
   intakeUrl: "https://hone.care/intake/eyJhbGciOi.sig",
   startsAt: new Date("2026-07-15T14:00:00.000Z"),
   timezone: "America/Toronto",
+  bookingReference: "K3M9QX",
 };
 
 const KINDS: IntakeReminderKind[] = ["24h", "2h"];
