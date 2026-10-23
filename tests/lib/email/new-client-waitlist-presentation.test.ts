@@ -6,6 +6,15 @@ import {
   buildNewClientWaitlistClientEmail,
   buildNewClientWaitlistStudioEmail,
 } from "@/lib/email/templates/new-client-waitlist";
+import { studioPreheader } from "@/lib/email/preheader";
+
+// The email subject sweep appends a per-event reference (lib/email/subject-reference.ts):
+// the wording below is unchanged, and the reference is checked for its shape.
+const SUBJECT_REF = / · Ref [2-9A-HJKMNP-Z]{6}$/;
+function withoutRef(subject: string): string {
+  expect(subject).toMatch(SUBJECT_REF);
+  return subject.replace(SUBJECT_REF, "");
+}
 
 // ===========================================================================
 // WAIT-EMAIL-BRAND-01 — the acknowledgement's PRESENTATION contract
@@ -23,11 +32,12 @@ import {
 const STUDIO = "Willow Electrolysis";
 const NAME = "Avery Chen";
 const client = (over: Partial<{ studioName: string; name: string }> = {}) =>
-  buildNewClientWaitlistClientEmail({ studioName: STUDIO, name: NAME, ...over });
+  buildNewClientWaitlistClientEmail({ studioName: STUDIO, name: NAME, joinReference: "K3M9QX", ...over });
 const studioEmail = (
   over: Partial<{ studioName: string; name: string; email: string; phone: string | null }> = {},
 ) =>
   buildNewClientWaitlistStudioEmail({
+    joinReference: "K3M9QX",
     studioName: STUDIO,
     name: NAME,
     email: "avery@example.test",
@@ -40,12 +50,12 @@ describe("the subject and sender identity are UNCHANGED", () => {
     // The feedback named the subject and the sender identity as the good
     // parts. This redesign is presentation-only; if it moved the subject it
     // would also move the idempotency key for a reason nobody asked for.
-    expect(client().subject).toBe("You're on the waitlist · Willow Electrolysis");
+    expect(withoutRef(client().subject)).toBe("You're on the waitlist · Willow Electrolysis");
   });
 
   it("the studio notice keeps its filterable prefix", () => {
     // Operators build inbox rules on this string.
-    expect(studioEmail().subject).toBe(
+    expect(withoutRef(studioEmail().subject)).toBe(
       "[HONE WAITLIST] New client · Willow Electrolysis",
     );
     expect(studioEmail().subject.startsWith(WAITLIST_SUBJECT_PREFIX)).toBe(true);
@@ -98,14 +108,16 @@ describe("the client email adopts the Hone client-email shell", () => {
     expect(html).not.toContain("padding:24px; background-color:#FAFAF7");
   });
 
-  it("renders the headline, then greeting, then statement, in that order", () => {
+  it("renders the headline, then the statement, and no greeting by name", () => {
+    // HIPAA-READY-01 (#828): a client previews the START of a message, so the
+    // body opens without the prospect's name (waitlist-preview-minimum-necessary.test.ts).
     const html = client().html;
     const headline = html.indexOf("on the waitlist.");
-    const greeting = html.indexOf("Hi Avery Chen,");
     const statement = html.indexOf("new-client waitlist for");
     expect(headline).toBeGreaterThan(-1);
-    expect(greeting).toBeGreaterThan(headline);
-    expect(statement).toBeGreaterThan(greeting);
+    expect(statement).toBeGreaterThan(headline);
+    expect(html).not.toContain("Avery");
+    expect(client().text).not.toContain("Avery");
   });
 });
 
@@ -222,12 +234,14 @@ describe("NO call to action is introduced", () => {
 });
 
 describe("untrusted input is escaped in HTML and left bare in text", () => {
-  it("escapes a CLIENT NAME carrying markup", () => {
+  it("a CLIENT NAME carrying markup reaches neither rendering of the client email", () => {
+    // Since #828 the client email does not render the name at all, which is
+    // stronger than escaping it. The studio notice still renders it, escaped
+    // (below).
     const out = client({ name: '<script>alert(1)</script>' });
     expect(out.html).not.toContain("<script>");
-    expect(out.html).toContain("&lt;script&gt;");
-    // The text branch is not markup; it carries the raw value.
-    expect(out.text).toContain("<script>alert(1)</script>");
+    expect(out.html).not.toContain("&lt;script&gt;");
+    expect(out.text).not.toContain("alert(1)");
   });
 
   it("escapes a STUDIO NAME carrying markup, including inside <strong>", () => {
@@ -237,9 +251,8 @@ describe("untrusted input is escaped in HTML and left bare in text", () => {
   });
 
   it("escapes quotes and ampersands in both fields", () => {
-    const out = client({ name: 'A & B "C"', studioName: "Willow & Co" });
-    expect(out.html).toContain("A &amp; B &quot;C&quot;");
-    expect(out.html).toContain("<strong>Willow &amp; Co</strong>");
+    expect(client({ studioName: "Willow & Co" }).html).toContain("<strong>Willow &amp; Co</strong>");
+    expect(studioEmail({ name: 'A & B "C"' }).html).toContain("A &amp; B &quot;C&quot;");
   });
 
   it("escapes every interpolated field of the STUDIO notice too", () => {
@@ -286,25 +299,46 @@ describe("DETERMINISM — the idempotency key is a digest of these bytes", () =>
       .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
       .join("\n");
     expect(code).not.toMatch(/Date\.now|new Date|Math\.random|crypto\.|process\.env/);
-    expect(code).not.toMatch(/^import\s/m);
+    // The imports are the neutral preheader (#828) and the subject reference shape, which import nothing
+    // and reads no clock, random source or environment itself.
+    const imports = [...code.matchAll(/^import\s[^;]*?from\s+"([^"]+)"/gm)].map((m) => m[1]);
+    expect(imports).toEqual(["@/lib/email/preheader", "@/lib/email/subject-reference"]);
+    // The subject-reference sibling (the email subject sweep) is pure too.
+    const reference = readFileSync(join(process.cwd(), "lib/email/subject-reference.ts"), "utf8");
+    expect(reference).not.toMatch(/^import\s/m);
+    const preheader = readFileSync(join(process.cwd(), "lib/email/preheader.ts"), "utf8");
+    expect(preheader).not.toMatch(/^import\s/m);
+    expect(preheader).not.toMatch(/Date\.now|new Date|Math\.random|crypto\.|process\.env/);
   });
 
   it("different inputs still render different bytes", () => {
     // The control for the determinism assertions: if the builder ignored its
     // input entirely, every test above would still pass.
-    expect(client({ name: "Other Person" }).html).not.toBe(client().html);
     expect(client({ studioName: "Other Studio" }).html).not.toBe(client().html);
+    expect(studioEmail({ name: "Other Person" }).html).not.toBe(studioEmail().html);
+    // The client email no longer renders the name (#828), so a different name
+    // renders the SAME bytes. That is the minimum-necessary property, and the
+    // event-scoped key (app/book/[slug]/waitlist-actions.ts) is what keeps two
+    // genuinely different joins distinct.
+    expect(client({ name: "Other Person" }).html).toBe(client().html);
   });
 });
 
 describe("the STUDIO notice conversion is styling-only", () => {
-  it("its plain text is unchanged, line for line", () => {
-    // The brief allows the studio notice onto the shell ONLY as an exact
+  it("its plain text carries the same facts, after the neutral opening", () => {
+    // The brief allowed the studio notice onto the shell ONLY as an exact
     // styling conversion. The text branch is the proof: it carries no styling,
-    // so if the copy had widened, it would show here.
+    // so any widened copy shows here. #828 added exactly two lines ahead of
+    // the unchanged facts: the neutral preheader and a lead naming only the
+    // studio, so a plain-text preview shows neither the prospect's name nor
+    // their contact details.
     expect(studioEmail({ phone: "555-0100" }).text).toBe(
       [
+        studioPreheader("Willow Electrolysis"),
+        "",
         "New-client waitlist request",
+        "",
+        "A new client joined the waitlist at Willow Electrolysis. Their details are below.",
         "",
         "Name: Avery Chen",
         "Email: avery@example.test",

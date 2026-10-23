@@ -478,6 +478,7 @@ export async function requestIntakeUpdateAction(
     const studioRes = await loadStudioForReissue(auth.studioId);
     if (studioRes.ok) {
       const result = await sendIntakeUpdateRequestToClient({
+        intakeId: created.id,
         clientEmail: auth.client.email,
         studioName: studioRes.studio.name,
         intakeUrl: created.url,
@@ -638,6 +639,7 @@ export async function resendIntakeEmailAction(
 
   const url = generateIntakeLinkUrl(intake.id, getRequiredAppOrigin());
   const result = await sendIntakeUpdateRequestToClient({
+    intakeId: intake.id,
     clientEmail: auth.client.email,
     studioName: studioRes.studio.name,
     intakeUrl: url,

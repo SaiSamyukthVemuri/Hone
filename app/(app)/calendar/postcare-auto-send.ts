@@ -204,6 +204,7 @@ export async function autoSendPostcareOnComplete(
     // separately from the enclosing mark-complete so the two are not conflated.
     const result = await timed("session-start.postcare", () =>
       send({
+        appointmentId,
         clientName: client?.name ?? "",
         clientEmail: client!.email as string,
         studio: studio as unknown as Studio,
