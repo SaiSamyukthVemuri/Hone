@@ -11,6 +11,13 @@
 //   node scripts/classify-changes.mjs --files-from <file>   # newline-separated paths
 //   node scripts/classify-changes.mjs --files "a.ts,b.sql"
 //   node scripts/classify-changes.mjs --github-output       # append to $GITHUB_OUTPUT
+//
+// Path rules cannot see that a TEST reads or imports a file elsewhere in the
+// tree, so the classifier also takes a dependency map derived from the tests
+// themselves (scripts/test-dependencies.mjs, committed as
+// scripts/test-dependencies.json and kept fresh by a test). Every caller that
+// passes only `files` gets the committed map, so CI, `npm run ci:plan`,
+// `verify:changed` and ENG-LOOP's local model all select identically.
 // ---------------------------------------------------------------------------
 
 import { readFileSync, appendFileSync } from "node:fs";
@@ -47,12 +54,36 @@ const RULES = [
   // migrated local schema. Classifying a registry edit as application-only
   // would let someone retire a disposition without the guard that proves the
   // retirement is honest ever running.
-  { key: "database", patterns: [/^supabase\/migrations\//, /^supabase\/.*\.sql$/, /^tests\/db\//, /^tests\/migrations\//, /^scripts\/migration-state\.mjs$/, /^scripts\/check-migration-extension/, /^scripts\/check-fresh-managed/, /^lib\/export\/resource-registry\.ts$/] },
+  //
+  // G3 adds the generated DB types and their drift check on the same terms.
+  // `npm run check:db-types` compares lib/types/database.ts against the
+  // migrated schema, and it runs ONLY inside the database lane - so a hand
+  // edit to the types, or a change to the comparison itself, was never
+  // checked on its own PR.
+  {
+    key: "database",
+    patterns: [
+      /^supabase\/migrations\//,
+      /^supabase\/.*\.sql$/,
+      /^tests\/db\//,
+      /^tests\/migrations\//,
+      /^scripts\/migration-state\.mjs$/,
+      /^scripts\/check-migration-extension/,
+      /^scripts\/check-fresh-managed/,
+      /^lib\/export\/resource-registry\.ts$/,
+      /^lib\/types\/database\.ts$/,
+      /^scripts\/check-db-types\.mjs$/,
+    ],
+  },
   { key: "security", patterns: [/^tests\/security\//, /^lib\/security\//, /^lib\/observability\//, /^scripts\/check-.*gates/] },
   { key: "payment", patterns: [/payment/i, /stripe/i, /checkout/i, /manual-fee/i, /^lib\/billing\//, /^e2e-payment\//, /^playwright\.payment\.config/] },
   { key: "google_calendar", patterns: [/google[-_]?calendar/i, /^lib\/google-calendar\//, /^e2e-google\//, /^playwright\.google\.config/, /^app\/api\/cron\/calendar/] },
   { key: "mobile", patterns: [/^e2e-mobile\//, /^playwright\.mobile\.config/, /mobile/i, /responsive/i] },
-  { key: "ci_workflows", patterns: [/^\.github\/workflows\//, /^scripts\/classify-changes\.mjs$/, /^scripts\/verify-prepush\.mjs$/, /^tests\/ci\//] },
+  // The dependency SCANNER is selection logic, like this file. Its committed
+  // OUTPUT (test-dependencies.json) is deliberately absent: it changes whenever
+  // a test gains an edge, and a freshness test proves it, so a regenerated map
+  // must not cost every such PR the full matrix.
+  { key: "ci_workflows", patterns: [/^\.github\/workflows\//, /^scripts\/classify-changes\.mjs$/, /^scripts\/test-dependencies\.mjs$/, /^scripts\/verify-prepush\.mjs$/, /^tests\/ci\//] },
   { key: "browser_core", patterns: [/^e2e\//, /^app\//, /^components\//, /^playwright\.config/] },
   { key: "application", patterns: [/^app\//, /^components\//, /^lib\//, /^hooks\//, /^types\//, /\.tsx?$/] },
 ];
@@ -216,8 +247,17 @@ function baselineRisk(list, lanes, docsOnly) {
   return { baselineRiskTier: tier, riskReasons: hits.filter((h) => h.tier === tier).map((h) => h.reason) };
 }
 
-export function classify(files) {
+/** The committed test-dependency map. Read once; a missing map is a broken checkout, not an empty one. */
+const DEFAULT_DEPS = JSON.parse(readFileSync(new URL("./test-dependencies.json", import.meta.url), "utf8"));
+
+/**
+ * `deps` is `{ db: { [source]: dbTests[] }, docReaders: { [doc]: unitTests[] } }`.
+ * Callers pass only `files` and get the committed map; tests pass fixtures.
+ */
+export function classify(files, deps = DEFAULT_DEPS) {
   const list = (files ?? []).map((f) => f.trim()).filter(Boolean);
+  const dbDeps = deps?.db ?? {};
+  const docReaders = deps?.docReaders ?? {};
 
   const out = {
     docs_only: false,
@@ -230,6 +270,15 @@ export function classify(files) {
     mobile: false,
     ci_workflows: false,
     full_matrix_required: false,
+    // G4. A docs-only diff runs no unit lane, so a document READ BY A UNIT TEST
+    // (the ledger wording 0179 pins, the AGENTS.md text the OpenWiki guards
+    // read) broke first on the production push. True when any changed file is
+    // such a document; `docs_reader_tests` names exactly those tests, so the
+    // consuming job runs them and nothing else. Computed for every diff -
+    // outside docs-only the unit lane already runs them, and ci.yml gates the
+    // docs-consistency job on docs_only.
+    docs_consistency: false,
+    docs_reader_tests: [],
     changed_file_count: list.length,
     baselineRiskTier: "T3",
     riskReasons: [],
@@ -250,6 +299,17 @@ export function classify(files) {
   // full-matrix expansion rewrites them. The tier must describe the paths that
   // actually changed, not the lanes CI decided to run as a result.
   const rawLanes = { ...out };
+
+  // G1 + G2: a file a tests/db suite IMPORTS or READS selects the DB lane.
+  // Applied AFTER the tier snapshot on purpose, for the reason the payment tier
+  // rule gives: SELECTING tests and ASSIGNING ceremony are different questions.
+  // `lib/booking/slots.ts` is imported by DB suites, so its edit must run them,
+  // but that does not make a slot-maths change a T3 database change.
+  if (list.some((f) => Object.hasOwn(dbDeps, f))) out.database = true;
+
+  const readers = new Set(list.flatMap((f) => (Object.hasOwn(docReaders, f) ? docReaders[f] : [])));
+  out.docs_consistency = readers.size > 0;
+  out.docs_reader_tests = [...readers].sort();
 
   // Docs-only when EVERY changed file is documentation.
   out.docs_only = list.every((f) => match(f, DOCS));

@@ -1,6 +1,11 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { classify, highestTier } from "../../scripts/classify-changes.mjs";
+// @ts-expect-error - .mjs utility ships without type declarations
+import { selectBrowserGroups, EXTENDED } from "../../scripts/browser-groups.mjs";
+// @ts-expect-error - .mjs utility ships without type declarations
+import { OUTPUT, renderTestDependencies, scanTestDependencies } from "../../scripts/test-dependencies.mjs";
 
 // Path-classification is proved here rather than by pushing fake commits to
 // trigger every CI lane. These cases ARE the acceptance criteria.
@@ -150,10 +155,12 @@ describe("classifier — output contract", () => {
       "mobile",
       "ci_workflows",
       "full_matrix_required",
+      "docs_consistency",
     ]) {
       expect(typeof r[k], `${k} must be boolean`).toBe("boolean");
     }
     expect(typeof r.changed_file_count).toBe("number");
+    expect(Array.isArray(r.docs_reader_tests), "docs_reader_tests must be a list").toBe(true);
   });
 });
 
@@ -405,5 +412,168 @@ describe("classifier — mixed diffs still take the highest tier", () => {
     const a = c("supabase/migrations/0177_x.sql", "lib/security/x.ts").riskReasons;
     const b = c("lib/security/x.ts", "supabase/migrations/0177_x.sql").riskReasons;
     expect(a).toEqual(b);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DEPENDENCY-AWARE SELECTION (RECORD-BATCHING-PROPOSAL.md part 2).
+//
+// A path rule cannot see that a TEST reads or imports a file elsewhere in the
+// tree. Each gap below shipped a real hole: the file changed, the lane that
+// tests it was skipped, and the guard first ran on the production push.
+//
+// Every case marked GAP fails on the classifier before this change. Cases
+// marked GUARD hold on both and exist so the fix cannot overreach.
+// ---------------------------------------------------------------------------
+
+type Deps = { db: Record<string, string[]>; docReaders: Record<string, string[]> };
+const committed = JSON.parse(readFileSync(OUTPUT, "utf8")) as Deps;
+
+describe("dependency map — derived from the tests, committed, and fresh", () => {
+  it("the committed map is exactly what the scanner derives from this checkout", () => {
+    // The map is generated, never hand-kept. A PR that adds a tests/db read or
+    // import, or a unit test that reads a doc, must commit the new edge:
+    //   node scripts/test-dependencies.mjs --write
+    expect(readFileSync(OUTPUT, "utf8"), `${OUTPUT} is stale - regenerate it`).toBe(
+      renderTestDependencies(scanTestDependencies(process.cwd())),
+    );
+    // A whole-tree scan: about a second alone, so give it room under a loaded
+    // parallel run rather than letting a budget read as a stale map.
+  }, 30_000);
+
+  it("GUARD: the real scan finds the known edges, so an empty scan cannot pass quietly", () => {
+    // Anti-vacuity. If the scanner broke and found nothing, every GAP case
+    // below would fail - but a fixture-only suite would not, so pin real edges.
+    expect(committed.db["lib/waitlist/invite-to-book-adapter.ts"]).toContain(
+      "tests/db/waitlist-integration-seams.db.test.ts",
+    );
+    expect(committed.db["components/profile-tab.ts"]).toContain("tests/db/client-profile-tab-queries.db.test.ts");
+    const edges = Object.values(committed.db).reduce((n, tests) => n + tests.length, 0);
+    expect(edges, "far fewer DB edges than the tree holds").toBeGreaterThanOrEqual(40);
+    expect(committed.docReaders["docs/production/migration-ledger.md"]).toContain(
+      "tests/migrations/0179-actor-fk-integrity.test.ts",
+    );
+  });
+
+  it("GUARD: a path mentioned only in a comment is not an edge", () => {
+    // practitioner-identity-boundary.db.test.ts names lib/practitioner-colors.ts
+    // in a comment and never reads it. Prose must not widen the DB lane.
+    expect(committed.db["lib/practitioner-colors.ts"]).toBeUndefined();
+  });
+});
+
+describe("dependency-aware selection — G1: tests/db source contracts", () => {
+  // #814. A DB suite reads these files as source contracts. Editing one
+  // selected `application` only, so the DB lane was skipped.
+  it.each([
+    "lib/waitlist/invite-to-book-adapter.ts",
+    "lib/waitlist/invite-to-book-contract.ts",
+    "app/(app)/settings/waitlist/page.tsx",
+    "app/(app)/settings/waitlist/invite-actions.ts",
+    "app/invitation/[token]/actions.ts",
+    "components/profile-tab.ts",
+    // Read through `${process.cwd()}/app/book/[slug]/actions.ts`.
+    "app/book/[slug]/actions.ts",
+  ])("GAP: %s selects the database lane", (file) => {
+    expect(c(file).database).toBe(true);
+  });
+});
+
+describe("dependency-aware selection — G2: modules DB suites import", () => {
+  it.each(["lib/booking/slots.ts", "lib/sessions/charted-session.ts", "lib/google-calendar/sync/operations.ts"])(
+    "GAP: %s selects the database lane",
+    (file) => {
+      expect(committed.db[file], `${file} is no longer imported by a DB suite`).toBeDefined();
+      expect(c(file).database).toBe(true);
+    },
+  );
+
+  it("GUARD: selecting a lane is not assigning ceremony - the tier is unchanged", () => {
+    // The payment rule's distinction, applied here: a DB suite exercising
+    // slot maths makes its edit run the DB lane, not a T3 database change.
+    expect(tier("lib/booking/slots.ts")).toBe("T2");
+    expect(tier("lib/waitlist/invite-to-book-adapter.ts")).toBe("T1");
+  });
+
+  it("GAP: the classifier takes the map as data, so the rule is proved without the real tree", () => {
+    const deps: Deps = { db: { "lib/x/y.ts": ["tests/db/y.db.test.ts"] }, docReaders: {} };
+    expect((classify(["lib/x/y.ts"], deps) as Result).database).toBe(true);
+    expect((classify(["lib/x/y.ts"], { db: {}, docReaders: {} }) as Result).database).toBe(false);
+  });
+});
+
+describe("dependency-aware selection — G3: generated DB types and their drift check", () => {
+  // check:db-types runs ONLY in the database lane, so neither file was ever
+  // compared against the migrated schema on its own PR.
+  it.each(["lib/types/database.ts", "scripts/check-db-types.mjs"])("GAP: %s selects the database lane", (file) => {
+    expect(c(file).database).toBe(true);
+  });
+});
+
+describe("dependency-aware selection — G4: documents read by unit tests", () => {
+  it("GAP: a docs-only AGENTS.md change selects docs consistency and names its readers", () => {
+    const r = c("AGENTS.md");
+    expect(r.docs_only).toBe(true);
+    expect(r.docs_consistency).toBe(true);
+    expect(r.docs_reader_tests).toEqual(committed.docReaders["AGENTS.md"]);
+    expect((r.docs_reader_tests as string[]).every((t) => t.startsWith("tests/openwiki/"))).toBe(true);
+  });
+
+  it("GAP: a ledger wording change selects the migration test that pins it", () => {
+    const r = c("docs/production/migration-ledger.md");
+    expect(r.docs_consistency).toBe(true);
+    expect(r.docs_reader_tests).toContain("tests/migrations/0179-actor-fk-integrity.test.ts");
+    // ...and stays a cheap docs-only diff in every other respect.
+    expect(r.docs_only).toBe(true);
+    expect(r.database).toBe(false);
+    expect(r.full_matrix_required).toBe(false);
+  });
+
+  it("GAP: a doc no test reads stays cheap", () => {
+    const r = c("docs/no-test-reads-this-document.md");
+    expect(r.docs_only).toBe(true);
+    expect(r.docs_consistency).toBe(false);
+    expect(r.docs_reader_tests).toEqual([]);
+  });
+
+  it("GUARD: the reader list never contains a character that would corrupt $GITHUB_OUTPUT", () => {
+    for (const t of Object.values(committed.docReaders).flat()) {
+      expect(t, `"${t}" would break the "; "-joined output`).not.toMatch(/[\n;]/);
+    }
+  });
+});
+
+describe("dependency-aware selection — the selector's own files", () => {
+  it("GAP: the scanner is selection logic: full matrix, and extended browser coverage", () => {
+    const r = c("scripts/test-dependencies.mjs");
+    expect(r.ci_workflows).toBe(true);
+    expect(r.full_matrix_required).toBe(true);
+    expect(selectBrowserGroups(["scripts/test-dependencies.mjs"]).groups).toEqual([EXTENDED]);
+  });
+
+  it("GUARD: a regenerated map is NOT a full-matrix trigger", () => {
+    // It changes whenever a test gains an edge; the freshness test above is
+    // what proves it, so it must not cost every such PR the full matrix.
+    const r = c("scripts/test-dependencies.json", "tests/db/new-suite.db.test.ts");
+    expect(r.full_matrix_required).toBe(false);
+    expect(r.database).toBe(true);
+  });
+});
+
+describe("dependency-aware selection — file count never narrows a lane", () => {
+  // Six hundred presentational files must not drown the one file that needs
+  // the DB, payment or browser lane.
+  const NOISE = Array.from({ length: 600 }, (_, i) => `components/noise/presentational-${i}.tsx`);
+
+  it("GAP: a DB-dependent file among 600 others still selects the database lane", () => {
+    expect(c(...NOISE, "lib/waitlist/invite-to-book-adapter.ts").database).toBe(true);
+  });
+
+  it("GUARD: a payment file among 600 others still selects the payment lane", () => {
+    expect(c(...NOISE, "lib/stripe/account.ts").payment).toBe(true);
+  });
+
+  it("GUARD: unattributable application code among 600 others still fails safe to extended", () => {
+    expect(selectBrowserGroups([...NOISE, "app/(app)/dashboard/page.tsx"]).groups).toEqual([EXTENDED]);
   });
 });
