@@ -241,6 +241,52 @@ describe("the schema snapshot is fresh against supabase/migrations", () => {
     }
   });
 
+  // Photos F2: parser shapes that occur 0 times today but would silently corrupt the snapshot.
+  const parse = (...files: string[]) => {
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-schema-snapshot-"));
+    try {
+      files.forEach((sql, i) => writeFileSync(join(dir, `${String(i + 1).padStart(4, "0")}_m.sql`), sql));
+      return (buildSchemaSnapshot(dir) as Snapshot).public;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  it("P1: a schema-qualified non-public object is excluded, never recorded under its SCHEMA name", () => {
+    expect(
+      parse('create table private.zz (id int);\ncreate function auth.zz_fn() returns int language sql as $$ select 1 $$;\ncreate table "extensions"."zz2" (id int);\n'),
+    ).toEqual({ tables: [], functions: [] });
+    expect(parse('create table public.kept (id int);\ncreate table "public"."kept2" (id int);\n').tables).toEqual(["kept", "kept2"]);
+  });
+
+  it("P2: dropping ONE overload keeps the name while another overload is live", () => {
+    const fn = (sig: string) => `create or replace function public.f(${sig}) returns int language sql as $$ select 1 $$;\n`;
+    expect(parse(fn("p_id integer"), fn("p_label text"), "drop function public.f(int);\n").functions).toEqual(["f"]);
+    expect(parse(fn("p_id integer"), fn("p_label text"), "drop function public.f(int4);\ndrop function if exists public.f(text);\n").functions).toEqual([]);
+    // Parameter names, defaults, OUT parameters and typmods are not part of the identity.
+    expect(parse(fn("p_at timestamptz default now(), out n int"), "drop function public.f(timestamp with time zone);\n").functions).toEqual([]);
+    expect(parse(fn("p_s varchar(10)"), "drop function public.f(character varying);\n").functions).toEqual([]);
+    // A bare DROP (no argument list) names the only overload.
+    expect(parse(fn("p_id integer"), "drop function public.f;\n").functions).toEqual([]);
+  });
+
+  it("P3/P6/P7: UNLOGGED tables, multi-table DROP, and renames", () => {
+    expect(parse("create unlogged table public.u (id int);\n").tables).toEqual(["u"]);
+    expect(parse("create temporary table t (id int);\n").tables).toEqual([]);
+    expect(parse("create table a (id int); create table b (id int); create table c (id int);\n", "drop table if exists public.a, b;\n").tables).toEqual(["c"]);
+    expect(parse("create table old_t (id int);\n", "alter table if exists public.old_t rename to new_t;\n").tables).toEqual(["new_t"]);
+    expect(
+      parse("create function public.old_f(int) returns int language sql as $$ select 1 $$;\n", "alter function public.old_f(integer) rename to new_f;\n").functions,
+    ).toEqual(["new_f"]);
+    // A column rename is not a table rename.
+    expect(parse("create table t2 (a int);\n", "alter table t2 rename column a to b;\n").tables).toEqual(["t2"]);
+  });
+
+  it("P5: a '--' inside a string literal does not hide DDL after it", () => {
+    expect(parse("select '--'; create table public.hidden (id int);\nselect 'it''s -- fine'; create table public.also (id int);\n").tables).toEqual(["also", "hidden"]);
+    expect(parse("-- create table public.commented (id int);\n/* create table public.blocked (id int); */\n").tables).toEqual([]);
+  });
+
   it("a DROP removes what an earlier migration created", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "hone-schema-snapshot-"));
     try {

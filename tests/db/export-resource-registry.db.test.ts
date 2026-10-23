@@ -398,6 +398,25 @@ describe("what is excluded, and on what grounds", () => {
   // pg_class — never from migration text, and the closure lives in
   // tests/db/helpers/reachability.ts so the same algorithm can be driven by
   // fixtures for the shapes this schema happens not to contain.
+  /**
+   * Public functions the MIGRATIONS own: pg_proc in public minus extension
+   * members (pg_depend deptype 'e', e.g. btree_gist's support functions when it
+   * is installed into public). The extension set is read, never hard-coded.
+   */
+  async function liveOwnFunctionNames(): Promise<string[]> {
+    const res = await adminQuery(
+      `select distinct p.proname
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public'
+          and not exists (
+            select 1 from pg_depend d
+             where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e'
+          )
+        order by p.proname`,
+    );
+    return (res.rows as Array<{ proname: string }>).map((r) => r.proname);
+  }
+
   async function buildLiveGraph(): Promise<ReachabilityGraph> {
     const procs = await adminQuery(
       `select p.proname, p.prosrc
@@ -479,7 +498,9 @@ describe("what is excluded, and on what grounds", () => {
     // the registry's reasons say the application calls (registryCitedFunctions);
     // that the application really does is the unit lane's check
     // (tests/lib/export/registry-app-references.test.ts), not this file's.
-    const appFunctions = registryCitedFunctions(fnNames);
+    // Extension members are excluded so an extension function whose name
+    // happens to be a word in a reason never becomes a seed (Photos F6).
+    const appFunctions = registryCitedFunctions(await liveOwnFunctionNames());
 
     return {
       functionCalls,
@@ -525,13 +546,20 @@ describe("what is excluded, and on what grounds", () => {
     expect(checked, "no registry reason cites a live RPC: the check above is vacuous").toBeGreaterThan(0);
   });
 
-  it("the committed schema snapshot matches the live catalogue", async () => {
+  it("the committed schema snapshot matches the live catalogue, in BOTH directions", async () => {
     // The unit lane trusts supabase/schema-snapshot.json, which is parsed
     // from migration text. This is where that parse meets the database.
-    const graph = await buildLiveGraph();
-    const live = new Set(Object.keys(graph.functionCalls));
+    // Functions are compared two-way too (Photos F2): a function the parser
+    // LOST (e.g. a DROP of one overload removing the name) would otherwise
+    // silently drop out of the unit lane's cited-RPC check.
+    const own = await liveOwnFunctionNames();
+    const snapshotFns = new Set(SCHEMA_SNAPSHOT.public.functions);
     expect([...SCHEMA_SNAPSHOT.public.tables].sort()).toEqual([...liveTables].sort());
-    expect(SCHEMA_SNAPSHOT.public.functions.filter((f) => !live.has(f)), "snapshot functions the database does not have").toEqual([]);
+    expect(SCHEMA_SNAPSHOT.public.functions.filter((f) => !own.includes(f)), "snapshot functions the database does not have").toEqual([]);
+    expect(own.filter((f) => !snapshotFns.has(f)), "live functions the snapshot lost").toEqual([]);
+    // Independent of the snapshot: every RPC a reason cites (found from the
+    // LIVE names) is in the snapshot, so the unit lane checks all of them.
+    expect(registryCitedFunctions(own).filter((f) => !snapshotFns.has(f)), "cited RPCs missing from the snapshot").toEqual([]);
   });
 
   it("the LIVE studios -> pending_booking_payment_sessions cascade is a pg_constraint fact", async () => {
