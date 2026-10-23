@@ -22,6 +22,7 @@ function studioFacing(
   overrides: Partial<Parameters<typeof buildCancellationEmail>[0]> = {},
 ) {
   return buildCancellationEmail({
+    bookingReference: "K3M9QX",
     recipientName: "Willow Electrolysis",
     clientName: "Chloe Vemuri LE",
     studioName: "Willow Electrolysis",

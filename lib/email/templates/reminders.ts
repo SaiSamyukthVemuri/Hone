@@ -8,6 +8,7 @@ import {
   type IntakeSectionCopy,
 } from "@/lib/email/templates/intake-reminder";
 import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
+import { withReference } from "@/lib/email/subject-reference";
 
 function escapeHtml(s: string): string {
   return s
@@ -59,6 +60,10 @@ type ReminderProps = {
   // at the send decision. Optional (like portalLoginUrl) so the callers and
   // tests that build a plain reminder need no change.
   intakeUrl?: string | null;
+  // A short non-sensitive per-booking label (lib/email/booking-reference.ts):
+  // one booking's reminders must not thread into another's (Codex 4355360168;
+  // tests/lib/email/email-subject-sweep.test.ts).
+  bookingReference: string;
 };
 
 // PREVIEW RULE (HIPAA-READY-01, #828): a mail client that strips the
@@ -175,6 +180,9 @@ function reminderHtml(opts: {
         </td></tr>`
             : ""
         }
+        <tr><td style="padding-bottom:16px; font-family:-apple-system, system-ui, sans-serif; font-size:12px; color:#6B6B6B;">
+          Booking reference: ${escapeHtml(p.bookingReference.trim())}
+        </td></tr>
         <tr><td style="padding-top:24px; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">
           ${safeStudio} via Hone
         </td></tr>
@@ -209,6 +217,7 @@ ${intake && p.intakeUrl ? `\n${intake.heading}\n\n${intake.body}\n\n${INTAKE_CTA
 ${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\n` : ""}
 ${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}
 Cancel: ${p.cancellationUrl}
+Booking reference: ${p.bookingReference.trim()}
 ${p.portalLoginUrl ? `\nView your forms, appointments, and care instructions in your secure client portal:\n${p.portalLoginUrl}\n` : ""}`;
 }
 
@@ -231,7 +240,7 @@ export function build24hReminderEmail(p: ReminderProps): {
   // service and start time (PR #157). A subject persists in the inbox, shows
   // on a lock screen and is stored by the email provider, so the time now
   // lives in the headline and body only (12h, as PR #157 chose).
-  const subject = `Appointment reminder from ${p.studioName}`;
+  const subject = withReference(`Appointment reminder from ${p.studioName}`, p.bookingReference);
   // The headline names no day: "tomorrow" is a relative date (PREVIEW RULE).
   const headline = "Your appointment is coming up.";
   const lead = "Your appointment is tomorrow.";
@@ -251,7 +260,7 @@ export function build2hReminderEmail(p: ReminderProps): {
   // SUBJECT RULE (#828): same as the 24h reminder, and DISTINCT from it (Codex
   // P1 4354990818): identical subjects thread the 2-hour reminder under the
   // 24-hour one. "see you soon" names the window without a date or time.
-  const subject = `Appointment reminder from ${p.studioName}: see you soon`;
+  const subject = withReference(`Appointment reminder from ${p.studioName}: see you soon`, p.bookingReference);
   const headline = "See you soon.";
   const lead = "Your appointment is in about 2 hours.";
   const intake = intakeSectionFor("2h", p);
@@ -266,6 +275,8 @@ type NoShowFollowupProps = {
   clientName: string;
   studioName: string;
   rebookUrl: string | null;
+  // Per-booking label: two missed bookings must not share one thread.
+  bookingReference: string;
 };
 
 export function buildNoShowFollowupEmail(p: NoShowFollowupProps): {
@@ -276,7 +287,7 @@ export function buildNoShowFollowupEmail(p: NoShowFollowupProps): {
   // SUBJECT RULE (HIPAA-READY-01, #828): no date, relative date or attendance
   // fact in a subject (Codex P1 on #859), and the PREVIEW RULE keeps it out of
   // the body's opening too. The body still says the client was not seen.
-  const subject = `A message from ${p.studioName}`;
+  const subject = withReference(`A message from ${p.studioName}`, p.bookingReference);
   const safeStudio = escapeHtml(p.studioName);
   const lead = `This is a note from ${p.studioName} about your recent appointment.`;
 
@@ -303,6 +314,9 @@ export function buildNoShowFollowupEmail(p: NoShowFollowupProps): {
               </td></tr>`
             : ""
         }
+        <tr><td style="padding-bottom:16px; font-family:-apple-system, system-ui, sans-serif; font-size:12px; color:#6B6B6B;">
+          Booking reference: ${escapeHtml(p.bookingReference.trim())}
+        </td></tr>
         <tr><td style="padding-top:24px; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">
           ${safeStudio} via Hone
         </td></tr>
@@ -317,6 +331,7 @@ ${lead}
 
 We didn't see you at your appointment today. We hope everything is okay.
 ${p.rebookUrl ? `\nIf you'd like to rebook: ${p.rebookUrl}\n` : ""}
+Booking reference: ${p.bookingReference.trim()}
 ${p.studioName} via Hone
 `;
 

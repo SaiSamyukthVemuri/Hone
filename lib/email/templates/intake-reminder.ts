@@ -27,6 +27,7 @@
 
 import { localTimeString12h } from "@/lib/booking/tz";
 import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
+import { withReference } from "@/lib/email/subject-reference";
 
 export type IntakeReminderKind = "24h" | "2h";
 
@@ -110,9 +111,14 @@ export function buildIntakeReminderEmail(p: {
   intakeUrl: string;
   startsAt: Date;
   timezone: string;
+  // Per-booking label (lib/email/booking-reference.ts): reminders for two
+  // bookings must not thread together (tests/lib/email/email-subject-sweep.test.ts).
+  bookingReference: string;
 }): IntakeReminderEmail {
   const studioName = p.studioName.trim() || "Your studio";
-  const subject = INTAKE_STANDALONE_SUBJECT[p.kind];
+  // Still no completion state, studio name or date (SUBJECT RULE above); the
+  // reference is an opaque label.
+  const subject = withReference(INTAKE_STANDALONE_SUBJECT[p.kind], p.bookingReference);
   const { heading, body } = INTAKE_SECTION_COPY[p.kind];
 
   const dayStr = dayLabel(p.startsAt, p.timezone);
@@ -131,6 +137,8 @@ export function buildIntakeReminderEmail(p: {
     `${INTAKE_CTA_LABEL}: ${p.intakeUrl}`,
     "",
     INTAKE_IGNORE_LINE,
+    "",
+    `Booking reference: ${p.bookingReference.trim()}`,
   ].join("\n");
 
   const html = `
@@ -166,6 +174,9 @@ export function buildIntakeReminderEmail(p: {
                 </p>
                 <p style="margin:0; font-size:13px; line-height:1.6; color:#6B6B6B;">
                   ${escapeHtml(INTAKE_IGNORE_LINE)}
+                </p>
+                <p style="margin:16px 0 0 0; font-size:12px; line-height:1.6; color:#6B6B6B;">
+                  Booking reference: ${escapeHtml(p.bookingReference.trim())}
                 </p>
               </td>
             </tr>

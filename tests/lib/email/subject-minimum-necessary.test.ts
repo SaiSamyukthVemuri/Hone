@@ -59,6 +59,7 @@ const reminderProps = {
   rescheduleUrl: null,
   preCareInstructions: null,
   treatmentTimeLine: null,
+  bookingReference: "K3M9QX",
 };
 
 const cases: Array<[string, () => { subject: string; text: string }]> = [
@@ -95,6 +96,7 @@ const cases: Array<[string, () => { subject: string; text: string }]> = [
     "cancellation (client recipient)",
     () =>
       buildCancellationEmail({
+        bookingReference: "K3M9QX",
         recipientName: CLIENT,
         clientName: CLIENT,
         studioName: STUDIO,
@@ -112,6 +114,7 @@ const cases: Array<[string, () => { subject: string; text: string }]> = [
     "cancellation (practitioner recipient)",
     () =>
       buildCancellationEmail({
+        bookingReference: "K3M9QX",
         recipientName: "Synthetic Practitioner",
         clientName: CLIENT,
         studioName: STUDIO,
@@ -135,6 +138,7 @@ const subjectOnlyCases: Array<[string, () => { subject: string }]> = [
     "no-show follow-up (Codex P1 on #859: 'We missed you today')",
     () =>
       buildNoShowFollowupEmail({
+        bookingReference: "K3M9QX",
         clientName: CLIENT,
         studioName: STUDIO,
         rebookUrl: null,
@@ -144,6 +148,7 @@ const subjectOnlyCases: Array<[string, () => { subject: string }]> = [
     "postcare ('Aftercare for your appointment' revealed a treatment)",
     () =>
       buildPostcareEmail({
+        bookingReference: "K3M9QX",
         clientName: CLIENT,
         studioName: STUDIO,
         studioEmail: null,

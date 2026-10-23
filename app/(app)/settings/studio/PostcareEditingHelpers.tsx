@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
 import { markdownLiteToHtml } from "@/lib/email/markdown-lite";
 import { studioClientContactEmail } from "@/lib/email/studio-identity";
-import { postcareOpening, postcareSubject } from "@/lib/email/templates/postcare";
+import { POSTCARE_PREVIEW_REFERENCE, postcareOpening, postcareSubject } from "@/lib/email/templates/postcare";
 
 // Toolbar helpers and preview modal for the postcare editor. Both are
 // co-located here so PostcareSettingsForm.tsx stays focused on field
@@ -335,7 +335,7 @@ export function PostcarePreviewModal({
           <div className="flex flex-col">
             <h2 className="text-sm font-medium">Postcare email preview</h2>
             <p className="text-xs text-neutral-500">
-              Subject: {postcareSubject(studioName || "your studio")}
+              Subject: {postcareSubject(studioName || "your studio", POSTCARE_PREVIEW_REFERENCE)}
             </p>
           </div>
           <button
