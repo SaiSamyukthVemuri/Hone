@@ -5,6 +5,8 @@ import { resolveReplyTo, studioClientContactEmail } from "@/lib/email/studio-ide
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { localLongDate, formatTimeForStudio } from "@/lib/booking/tz";
 import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
+import { emailBookingReference } from "@/lib/email/booking-reference";
+import { withReference } from "@/lib/email/subject-reference";
 
 // Practitioner Move appointment: the NARROW client "appointment updated" notification.
 //
@@ -53,6 +55,84 @@ async function safeMoveAlert(studioId: string, appointmentId: string, category: 
 // time changed. Defaults to "moved" for the pre-Item-7 callers.
 export type MoveNotificationKind = "moved" | "reassigned" | "moved_and_reassigned";
 
+/**
+ * The "appointment updated" email, as a pure builder (no I/O), so the subject
+ * sweep (tests/lib/email/email-subject-sweep.test.ts) can render every kind.
+ */
+export function buildAppointmentMovedEmail(p: {
+  kind: MoveNotificationKind;
+  studioName: string;
+  serviceName: string;
+  startsAt: Date;
+  timezone: string;
+  practitionerName: string | null;
+  manageUrl: string;
+  rescheduleUrl: string;
+  bookingReference: string;
+}): { subject: string; html: string; text: string } {
+  const { kind, studioName, serviceName, practitionerName, manageUrl, rescheduleUrl } = p;
+  const dateStr = localLongDate(p.startsAt, p.timezone);
+  const timeStr = formatTimeForStudio(p.startsAt, p.timezone, "12h");
+  // SUBJECT RULE (HIPAA-READY-01, #828): no service, date or time in a
+  // subject. They stay in the body, which names the new time. The booking
+  // reference keeps one booking's updates out of another booking's thread
+  // (Codex 4355360162; tests/lib/email/email-subject-sweep.test.ts).
+  let subject: string;
+  let headline: string;
+  let bodyHtml: string;
+  let bodyText: string;
+  if (kind === "reassigned") {
+    // Practitioner changed, TIME UNCHANGED, never claim the time moved.
+    const who = practitionerName ? `<strong>${esc(practitionerName)}</strong>` : "a different practitioner";
+    const whoText = practitionerName ? practitionerName : "a different practitioner";
+    subject = `Your appointment with ${studioName} has been updated`;
+    headline = "Your appointment has a new practitioner.";
+    bodyHtml = `Your <strong>${esc(serviceName)}</strong> appointment at <strong>${esc(studioName)}</strong> on <strong>${esc(dateStr)} at ${esc(timeStr)}</strong> will now be with ${who}. The time is unchanged.`;
+    bodyText = `Your ${serviceName} appointment at ${studioName} on ${dateStr} at ${timeStr} will now be with ${whoText}. The time is unchanged.`;
+  } else if (kind === "moved_and_reassigned") {
+    const who = practitionerName ? ` with <strong>${esc(practitionerName)}</strong>` : "";
+    const whoText = practitionerName ? ` with ${practitionerName}` : "";
+    subject = `Your appointment with ${studioName} has been updated`;
+    headline = "Your appointment time and practitioner have changed.";
+    bodyHtml = `Your <strong>${esc(serviceName)}</strong> appointment at <strong>${esc(studioName)}</strong> has been moved to <strong>${esc(dateStr)} at ${esc(timeStr)}</strong>${who}.`;
+    bodyText = `Your ${serviceName} appointment at ${studioName} has been moved to ${dateStr} at ${timeStr}${whoText}.`;
+  } else {
+    subject = `Your appointment with ${studioName} has been updated`;
+    headline = "Your appointment time has changed.";
+    bodyHtml = `Your <strong>${esc(serviceName)}</strong> appointment at <strong>${esc(studioName)}</strong> has been moved to <strong>${esc(dateStr)} at ${esc(timeStr)}</strong>. Everything else stays the same.`;
+    bodyText = `Your ${serviceName} appointment at ${studioName} has been moved to ${dateStr} at ${timeStr}. Everything else stays the same.`;
+  }
+  subject = withReference(subject, p.bookingReference);
+
+  // PREVIEW RULE (HIPAA-READY-01, #828): a client that strips the preheader
+  // filler previews the first body text, so the body opens with a lead that
+  // names only the studio. The client's name is not repeated; the service and
+  // the new time follow the lead.
+  const lead = `${studioName} has updated your appointment. The details are below.`;
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8" /><title>${esc(subject)}</title></head>
+<body style="margin:0;padding:0;background:#FAFAF7;color:#0A0A0A;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FAFAF7;padding:40px 20px;"><tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
+    <tr><td style="padding-bottom:24px;font-family:Georgia,serif;font-weight:700;font-size:18px;">Hone</td></tr>
+    <tr><td style="padding-bottom:16px;font-family:Georgia,serif;font-weight:700;font-size:28px;line-height:1.15;">${esc(headline)}</td></tr>
+    <tr><td style="padding-bottom:20px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">${esc(lead)}</td></tr>
+    <tr><td style="padding-bottom:24px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">
+      ${bodyHtml}</td></tr>
+    <tr><td style="padding-bottom:16px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">
+      Need to make a change? <a href="${esc(rescheduleUrl)}">Reschedule</a> or <a href="${esc(manageUrl)}">manage your appointment</a>.</td></tr>
+  </table>
+  </td></tr></table>
+</body></html>`;
+  return {
+    subject,
+    html: withPreheader(html, clientPreheader(studioName)),
+    text: withTextPreheader(
+      `${lead}\n\n${bodyText}\n\nBooking reference: ${p.bookingReference.trim()}\nManage or reschedule: ${manageUrl}\n`,
+      clientPreheader(studioName),
+    ),
+  };
+}
+
 export async function notifyAppointmentMoved(
   admin: SupabaseClient,
   input: {
@@ -93,8 +173,6 @@ export async function notifyAppointmentMoved(
     const start = new Date(row.starts_at);
     const serviceName = row.service?.name ?? "your appointment";
     const studioName = row.studio?.name ?? "the studio";
-    const dateStr = localLongDate(start, tz);
-    const timeStr = formatTimeForStudio(start, tz, "12h");
     // Post-commit row → the NEW practitioner. Include the display name only when
     // present; never an id. Absent name falls back to neutral phrasing.
     const practitionerName = row.practitioner?.display_name ?? null;
@@ -104,59 +182,17 @@ export async function notifyAppointmentMoved(
     const manageUrl = `${input.appOrigin}/manage/${token}`;
     const rescheduleUrl = `${input.appOrigin}/reschedule/${token}`;
 
-    const kind: MoveNotificationKind = input.resultKind ?? "moved";
-    // SUBJECT RULE (HIPAA-READY-01, #828): no service, date or time in a
-    // subject. They stay in the body, which names the new time.
-    let subject: string;
-    let headline: string;
-    let bodyHtml: string;
-    let bodyText: string;
-    if (kind === "reassigned") {
-      // Practitioner changed, TIME UNCHANGED, never claim the time moved.
-      const who = practitionerName ? `<strong>${esc(practitionerName)}</strong>` : "a different practitioner";
-      const whoText = practitionerName ? practitionerName : "a different practitioner";
-      subject = `Your appointment with ${studioName} has been updated`;
-      headline = "Your appointment has a new practitioner.";
-      bodyHtml = `Your <strong>${esc(serviceName)}</strong> appointment at <strong>${esc(studioName)}</strong> on <strong>${esc(dateStr)} at ${esc(timeStr)}</strong> will now be with ${who}. The time is unchanged.`;
-      bodyText = `Your ${serviceName} appointment at ${studioName} on ${dateStr} at ${timeStr} will now be with ${whoText}. The time is unchanged.`;
-    } else if (kind === "moved_and_reassigned") {
-      const who = practitionerName ? ` with <strong>${esc(practitionerName)}</strong>` : "";
-      const whoText = practitionerName ? ` with ${practitionerName}` : "";
-      subject = `Your appointment with ${studioName} has been updated`;
-      headline = "Your appointment time and practitioner have changed.";
-      bodyHtml = `Your <strong>${esc(serviceName)}</strong> appointment at <strong>${esc(studioName)}</strong> has been moved to <strong>${esc(dateStr)} at ${esc(timeStr)}</strong>${who}.`;
-      bodyText = `Your ${serviceName} appointment at ${studioName} has been moved to ${dateStr} at ${timeStr}${whoText}.`;
-    } else {
-      subject = `Your appointment with ${studioName} has been updated`;
-      headline = "Your appointment time has changed.";
-      bodyHtml = `Your <strong>${esc(serviceName)}</strong> appointment at <strong>${esc(studioName)}</strong> has been moved to <strong>${esc(dateStr)} at ${esc(timeStr)}</strong>. Everything else stays the same.`;
-      bodyText = `Your ${serviceName} appointment at ${studioName} has been moved to ${dateStr} at ${timeStr}. Everything else stays the same.`;
-    }
-
-    // PREVIEW RULE (HIPAA-READY-01, #828): a client that strips the preheader
-    // filler previews the first body text, so the body opens with a lead that
-    // names only the studio. The client's name is not repeated; the service and
-    // the new time follow the lead.
-    const lead = `${studioName} has updated your appointment. The details are below.`;
-    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8" /><title>${esc(subject)}</title></head>
-<body style="margin:0;padding:0;background:#FAFAF7;color:#0A0A0A;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FAFAF7;padding:40px 20px;"><tr><td align="center">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
-      <tr><td style="padding-bottom:24px;font-family:Georgia,serif;font-weight:700;font-size:18px;">Hone</td></tr>
-      <tr><td style="padding-bottom:16px;font-family:Georgia,serif;font-weight:700;font-size:28px;line-height:1.15;">${esc(headline)}</td></tr>
-      <tr><td style="padding-bottom:20px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">${esc(lead)}</td></tr>
-      <tr><td style="padding-bottom:24px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">
-        ${bodyHtml}</td></tr>
-      <tr><td style="padding-bottom:16px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">
-        Need to make a change? <a href="${esc(rescheduleUrl)}">Reschedule</a> or <a href="${esc(manageUrl)}">manage your appointment</a>.</td></tr>
-    </table>
-  </td></tr></table>
-</body></html>`;
-    const htmlWithPreheader = withPreheader(html, clientPreheader(studioName));
-    const text = withTextPreheader(
-      `${lead}\n\n${bodyText}\n\nManage or reschedule: ${manageUrl}\n`,
-      clientPreheader(studioName),
-    );
+    const { subject, html: htmlWithPreheader, text } = buildAppointmentMovedEmail({
+      kind: input.resultKind ?? "moved",
+      studioName,
+      serviceName,
+      startsAt: start,
+      timezone: tz,
+      practitionerName,
+      manageUrl,
+      rescheduleUrl,
+      bookingReference: emailBookingReference(row.id),
+    });
 
     const res = await sendEmailSafely({
       studioIdentity: {

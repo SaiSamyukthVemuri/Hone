@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PostcarePreviewModal } from "@/app/(app)/settings/studio/PostcareEditingHelpers";
-import { buildPostcareEmail, postcareOpening } from "@/lib/email/templates/postcare";
+import { POSTCARE_PREVIEW_REFERENCE, buildPostcareEmail, postcareOpening } from "@/lib/email/templates/postcare";
 
 // The owner's postcare preview must show the subject the client actually
-// receives. #859 changed the sent subject to a minimum-necessary one; the
+// receives (with the placeholder reference, since a preview has no booking). #859 changed the sent subject to a minimum-necessary one; the
 // preview kept the old treatment-revealing wording (Willow peer review of
 // #1049, F1), so the owner was shown a subject no client ever gets.
 
@@ -28,6 +28,7 @@ function previewText(studioName: string): string {
 
 function sentSubject(studioName: string): string {
   return buildPostcareEmail({
+    bookingReference: POSTCARE_PREVIEW_REFERENCE,
     clientName: "Synthetic Client",
     studioName,
     studioEmail: null,
@@ -60,6 +61,7 @@ describe("postcare preview subject matches the sent subject", () => {
 describe("postcare preview opening matches the sent opening", () => {
   it("shows the email's own opening line", () => {
     const sentBody = buildPostcareEmail({
+      bookingReference: "K3M9QX",
       clientName: "Synthetic Client", studioName: "Studio Synthetica", studioEmail: null,
       practitionerName: null, serviceName: null, startsAt: null, timezone: "America/Toronto",
       aftercareText: null, warningSignsText: null, productRecommendationsText: null, reviewUrl: null,
@@ -80,6 +82,7 @@ describe("postcare preview opening matches the sent opening", () => {
 describe("postcare opening names the studio only", () => {
   const sent = () =>
     buildPostcareEmail({
+      bookingReference: "K3M9QX",
       clientName: "Synthetic Client", studioName: "Studio Synthetica", studioEmail: null,
       practitionerName: "Synthetic Practitioner", serviceName: null, startsAt: null,
       timezone: "America/Toronto", aftercareText: null, warningSignsText: null,

@@ -152,6 +152,7 @@ const reminderFixture = (preCareInstructions: string | null) => ({
   rescheduleUrl: null,
   preCareInstructions,
   treatmentTimeLine: null,
+  bookingReference: "K3M9QX",
 });
 
 describe("reminder emails stay on the editable-only path", () => {

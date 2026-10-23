@@ -1,5 +1,6 @@
 import { localTimeString12h } from "@/lib/booking/tz";
 import { clientPreheader, studioPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
+import { withReference } from "@/lib/email/subject-reference";
 
 function escapeHtml(s: string): string {
   return s
@@ -96,7 +97,7 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
   // stay in the body. The studio name is allowed: the From line already
   // shows it.
   const ref = p.bookingReference.trim();
-  const subject = `Your appointment with ${p.studioName} is confirmed · Ref ${ref}`;
+  const subject = withReference(`Your appointment with ${p.studioName} is confirmed`, ref);
   const safeStudio = escapeHtml(p.studioName);
   const safeService = escapeHtml(p.serviceName);
   const safePract = p.practitionerName ? escapeHtml(p.practitionerName) : null;
@@ -242,7 +243,7 @@ export function buildPractitionerNotificationEmail(p: NotifyPractitioner): {
   // SUBJECT RULE (#828): no client name, service, date or time in a subject.
   // The reference keeps each booking in its own thread (booking-reference.ts).
   const ref = p.bookingReference.trim();
-  const subject = `New booking at ${p.studioName} · Ref ${ref}`;
+  const subject = withReference(`New booking at ${p.studioName}`, ref);
   const safeClient = escapeHtml(p.clientName);
   const safeService = escapeHtml(p.serviceName);
   const safePract = escapeHtml(p.practitionerName);
@@ -362,6 +363,10 @@ type CancellationEmail = {
   reason: string | null;
   isClient: boolean; // recipient is the client
   rebookUrl?: string;
+  // A short non-sensitive per-booking label (lib/email/booking-reference.ts),
+  // so separate cancellations do not thread together (Codex 4355360172;
+  // tests/lib/email/email-subject-sweep.test.ts).
+  bookingReference: string;
 };
 
 export function buildCancellationEmail(p: CancellationEmail): {
@@ -380,6 +385,7 @@ export function buildCancellationEmail(p: CancellationEmail): {
   const timeStr = localTimeString12h(p.startsAt, p.timezone);
   const safeStudio = escapeHtml(p.studioName);
   const safeService = escapeHtml(p.serviceName);
+  const ref = p.bookingReference.trim();
 
   // The heading may say "cancelled": the subject already does. The lead names
   // only the studio; whose appointment, the service and the time follow it.
@@ -401,6 +407,9 @@ export function buildCancellationEmail(p: CancellationEmail): {
         </td></tr>
         ${bodyRowsHtml}
         ${ctaHtml}
+        <tr><td style="padding-top:16px; font-family:-apple-system, system-ui, sans-serif; font-size:12px; color:#6B6B6B;">
+          Booking reference: ${escapeHtml(ref)}
+        </td></tr>
       </table>
     </td></tr>
   </table>
@@ -427,10 +436,11 @@ export function buildCancellationEmail(p: CancellationEmail): {
 Your ${p.serviceName} appointment at ${p.studioName} on ${dayStr} at ${timeStr} has been cancelled${p.actorRole !== "client" ? " by the studio" : ""}.
 ${p.reason ? `\nReason: ${p.reason}` : ""}
 ${p.rebookUrl ? `\nBook another: ${p.rebookUrl}` : ""}
+Booking reference: ${ref}
 `;
     return {
       // SUBJECT RULE (#828): no client name, service, date or time in a subject.
-      subject: `Appointment cancelled · ${p.studioName}`,
+      subject: withReference(`Appointment cancelled · ${p.studioName}`, ref),
       html: withPreheader(htmlShell(bodyRowsHtml, ctaHtml), clientPreheader(p.studioName)),
       text: withTextPreheader(text, clientPreheader(p.studioName)),
     };
@@ -443,7 +453,10 @@ ${p.rebookUrl ? `\nBook another: ${p.rebookUrl}` : ""}
   // only, never by name (the actor can be the client), and never the service
   // or date. The body's labelled rows still show the actor's name, the client,
   // the original time and the service.
-  const subject = `Appointment cancelled by the ${cancellationActorRoleLabel(p.actorRole).toLowerCase()} · ${p.studioName}`;
+  const subject = withReference(
+    `Appointment cancelled by the ${cancellationActorRoleLabel(p.actorRole).toLowerCase()} · ${p.studioName}`,
+    ref,
+  );
 
   // Ordered, labelled rows. Every value is a display field (name/label/time/
   // service/duration/reason label), never an id, token, raw audit JSON, or note.
@@ -478,6 +491,7 @@ ${p.rebookUrl ? `\nBook another: ${p.rebookUrl}` : ""}
 ${lead}
 
 ${rows.map(([label, value]) => `${label}: ${value}`).join("\n")}
+Booking reference: ${ref}
 `;
 
   return {

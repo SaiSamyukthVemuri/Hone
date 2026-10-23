@@ -1,6 +1,7 @@
 import { localTimeString12h } from "@/lib/booking/tz";
 import { markdownLiteToHtml } from "@/lib/email/markdown-lite";
 import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
+import { withReference } from "@/lib/email/subject-reference";
 
 // Postcare email template (v1).
 //
@@ -78,6 +79,9 @@ export type PostcareEmailInputs = {
   // When null/empty, the existing neutral default is used. The
   // prompt itself is rendered ONLY when reviewUrl is also set.
   reviewPromptText?: string | null;
+  // Per-booking label (lib/email/booking-reference.ts): two visits' postcare
+  // must not thread together (tests/lib/email/email-subject-sweep.test.ts).
+  bookingReference: string;
 };
 
 export type PostcareEmail = {
@@ -91,10 +95,15 @@ export type PostcareEmail = {
 
 // SUBJECT RULE (HIPAA-READY-01, #828): "Aftercare for your appointment" told
 // anyone who sees the inbox that a treatment took place. The body keeps it.
-// The settings preview shows this same subject, so the two cannot drift.
-export function postcareSubject(studioName: string): string {
-  return `A message from ${studioName}`;
+// The settings preview shows this same subject, so the two cannot drift. The
+// per-booking reference keeps separate visits in separate threads; the preview,
+// which has no booking, passes POSTCARE_PREVIEW_REFERENCE.
+export function postcareSubject(studioName: string, bookingReference: string): string {
+  return withReference(`A message from ${studioName}`, bookingReference);
 }
+
+/** What the settings preview shows in place of a real booking reference. */
+export const POSTCARE_PREVIEW_REFERENCE = "(booking reference)";
 
 export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
   const studioLine = p.practitionerName
@@ -115,7 +124,7 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
   const warningHtml = textBlockToHtml(p.warningSignsText);
   const productsHtml = textBlockToHtml(p.productRecommendationsText);
 
-  const subject = postcareSubject(p.studioName);
+  const subject = postcareSubject(p.studioName, p.bookingReference);
 
   const htmlSections: string[] = [];
   htmlSections.push(
@@ -184,6 +193,9 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
     );
   }
 
+  htmlSections.push(
+    `<p style="margin-top:16px;color:#6B6B6B;font-size:12px;">Booking reference: ${escapeHtml(p.bookingReference.trim())}</p>`,
+  );
   const html = `<!doctype html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0A0A0A;line-height:1.55;">${htmlSections.join(
     "\n",
   )}</body></html>`;
@@ -227,6 +239,7 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
         : "If you had a good experience, reviews help small businesses";
     textSections.push("", `${promptCopy}: ${p.reviewUrl}`);
   }
+  textSections.push("", `Booking reference: ${p.bookingReference.trim()}`);
   const text = textSections.join("\n");
 
   return {

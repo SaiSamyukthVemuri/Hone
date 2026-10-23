@@ -20,7 +20,7 @@ import {
 } from "@/lib/email/templates/reminders";
 import { buildPostcareEmail } from "@/lib/email/templates/postcare";
 import { buildIntakeRequestEmail } from "@/lib/email/templates/intake-request";
-import { emailBookingReference } from "@/lib/email/booking-reference";
+import { emailBookingReference, emailIntakeReference } from "@/lib/email/booking-reference";
 import {
   buildIntakeReminderEmail,
   type IntakeReminderKind,
@@ -541,9 +541,12 @@ export async function sendCancellationEmail(params: {
   reason: string | null;
   isClient: boolean;
   rebookUrl?: string;
+  // Per-event subject reference (tests/lib/email/email-subject-sweep.test.ts).
+  appointmentId: string;
 }): Promise<EmailSendResult> {
   if (!params.to) return { ok: false, error: "Missing cancellation recipient", retryable: false };
   const { subject, html, text } = buildCancellationEmail({
+    bookingReference: emailBookingReference(params.appointmentId),
     recipientName: params.recipientName,
     clientName: params.clientName,
     studioName: params.studio.name,
@@ -603,6 +606,7 @@ export async function send24hReminderToClient(
   const start = new Date(p.appointment.starts_at);
   const end = new Date(p.appointment.ends_at);
   const { subject, html, text } = build24hReminderEmail({
+    bookingReference: emailBookingReference(p.appointment.id),
     clientName: p.clientName,
     studioName: p.studio.name,
     studioAddress: p.studio.address,
@@ -631,6 +635,7 @@ export async function send2hReminderToClient(
   const start = new Date(p.appointment.starts_at);
   const end = new Date(p.appointment.ends_at);
   const { subject, html, text } = build2hReminderEmail({
+    bookingReference: emailBookingReference(p.appointment.id),
     clientName: p.clientName,
     studioName: p.studio.name,
     studioAddress: p.studio.address,
@@ -666,11 +671,14 @@ export async function sendIntakeReminderToClient(p: {
   startsAt: Date;
   timezone: string;
   intakeUrl: string;
+  // Per-event subject reference (tests/lib/email/email-subject-sweep.test.ts).
+  appointmentId: string;
 }): Promise<EmailSendResult> {
   if (!p.clientEmail) {
     return { ok: false, error: "No client email on file", retryable: false };
   }
   const { subject, html, text } = buildIntakeReminderEmail({
+    bookingReference: emailBookingReference(p.appointmentId),
     kind: p.kind,
     studioName: p.studioName,
     intakeUrl: p.intakeUrl,
@@ -685,11 +693,14 @@ export async function sendNoShowFollowupToClient(params: {
   clientEmail: string;
   studio: Studio;
   rebookUrl: string | null;
+  // Per-event subject reference (tests/lib/email/email-subject-sweep.test.ts).
+  appointmentId: string;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
     return { ok: false, error: "No client email on file", retryable: false };
   }
   const { subject, html, text } = buildNoShowFollowupEmail({
+    bookingReference: emailBookingReference(params.appointmentId),
     clientName: params.clientName,
     studioName: params.studio.name,
     rebookUrl: params.rebookUrl,
@@ -724,6 +735,8 @@ export async function sendPostcareToClient(params: {
   productRecommendationsText: string | null;
   reviewUrl: string | null;
   reviewPromptText: string | null;
+  // Per-event subject reference (tests/lib/email/email-subject-sweep.test.ts).
+  appointmentId: string;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
     return { ok: false, error: "No client email on file", retryable: false };
@@ -735,6 +748,7 @@ export async function sendPostcareToClient(params: {
   // surfaces the same fallback to the practitioner.
   const studioContactEmail = postcareContactEmail(params.studio);
   const { subject, html, text } = buildPostcareEmail({
+    bookingReference: emailBookingReference(params.appointmentId),
     clientName: params.clientName,
     studioName: params.studio.name,
     studioEmail: studioContactEmail,
@@ -788,11 +802,14 @@ export async function sendIntakeUpdateRequestToClient(params: {
   clientEmail: string;
   studioName: string;
   intakeUrl: string;
+  // Per-event subject reference (tests/lib/email/email-subject-sweep.test.ts).
+  intakeId: string;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
     return { ok: false, error: "No client email on file", retryable: false };
   }
   const { subject, html, text } = buildIntakeRequestEmail({
+    intakeReference: emailIntakeReference(params.intakeId),
     studioName: params.studioName,
     intakeUrl: params.intakeUrl,
   });

@@ -84,6 +84,7 @@ function casesFor(STUDIO: string): Case[] {
     rescheduleUrl: null,
     preCareInstructions: null,
     treatmentTimeLine: null,
+    bookingReference: "K3M9QX",
   };
   return [
   [
@@ -121,6 +122,7 @@ function casesFor(STUDIO: string): Case[] {
     "cancellation, client-facing",
     () =>
       buildCancellationEmail({
+        bookingReference: "K3M9QX",
         recipientName: CLIENT,
         clientName: CLIENT,
         studioName: STUDIO,
@@ -139,6 +141,7 @@ function casesFor(STUDIO: string): Case[] {
     "cancellation, studio-facing",
     () =>
       buildCancellationEmail({
+        bookingReference: "K3M9QX",
         recipientName: "Synthetic Practitioner",
         clientName: CLIENT,
         studioName: STUDIO,
@@ -157,13 +160,14 @@ function casesFor(STUDIO: string): Case[] {
   ["2h reminder", () => build2hReminderEmail(reminderProps), clientPreheader(STUDIO)],
   [
     "no-show follow-up",
-    () => buildNoShowFollowupEmail({ clientName: CLIENT, studioName: STUDIO, rebookUrl: null }),
+    () => buildNoShowFollowupEmail({ bookingReference: "K3M9QX", clientName: CLIENT, studioName: STUDIO, rebookUrl: null }),
     clientPreheader(STUDIO),
   ],
   [
     "postcare",
     () =>
       buildPostcareEmail({
+        bookingReference: "K3M9QX",
         clientName: CLIENT,
         studioName: STUDIO,
         studioEmail: null,
@@ -209,6 +213,7 @@ function casesFor(STUDIO: string): Case[] {
     "intake request (no studio name, per the intake rule)",
     () =>
       buildIntakeRequestEmail({
+        intakeReference: "K3M9QX",
         studioName: STUDIO,
         intakeUrl: "https://hone.care/intake/tok_SYNTH",
       }),
@@ -218,6 +223,7 @@ function casesFor(STUDIO: string): Case[] {
     "intake reminder (no studio name, per the intake rule)",
     () =>
       buildIntakeReminderEmail({
+        bookingReference: "K3M9QX",
         kind: "24h",
         studioName: STUDIO,
         intakeUrl: "https://hone.care/intake/tok_SYNTH",
