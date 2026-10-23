@@ -114,6 +114,7 @@
 
 import { sanitizeStudioDisplayName } from "@/lib/email/studio-identity";
 import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
+import { withReference } from "@/lib/email/subject-reference";
 
 export type WaitlistInvitationEmailInput = {
   /**
@@ -147,6 +148,14 @@ export type WaitlistInvitationEmailInput = {
    * absolute instant stays true however late the message arrives.
    */
   expiresAtLabel: string;
+  /**
+   * Per-invitation label (lib/email/waitlist-reference.ts over the invitation
+   * id; the email subject sweep). One entry can be invited, expire, requeue and
+   * be invited again, so two invitations must not thread together. Derived
+   * from the invitation id alone, so the payload stays a pure function of the
+   * invitation, which its event-only idempotency key requires.
+   */
+  invitationReference: string;
 };
 
 export type WaitlistInvitationEmail = {
@@ -224,7 +233,7 @@ export function buildWaitlistInvitationEmail(
   // neither substitutes for the other.
   const studio = sanitizeStudioDisplayName(input.studioName) ?? "";
   const ttl = input.expiresAtLabel.trim() || "the time stated by the studio";
-  const subject = waitlistInvitationSubject(studio);
+  const subject = withReference(waitlistInvitationSubject(studio), input.invitationReference);
 
   // The identified copy is the normal path. The unidentified fallback is the
   // previous wording, kept so a studio with no name is no worse off than

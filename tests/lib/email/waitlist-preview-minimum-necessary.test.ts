@@ -52,6 +52,7 @@ const casesFor = (STUDIO: string): Case[] => [
     "waitlist invitation",
     () =>
       buildWaitlistInvitationEmail({
+        invitationReference: "K3M9QX",
         studioName: STUDIO,
         invitationUrl: `https://hone.care/invitation/${TOKEN}`,
         expiresAtLabel: "on Thursday, March 6, 2031 at 3:45 PM UTC",
@@ -74,13 +75,13 @@ const casesFor = (STUDIO: string): Case[] => [
   ],
   [
     "new-client waitlist, client acknowledgement",
-    () => buildNewClientWaitlistClientEmail({ studioName: STUDIO, name: CLIENT }),
+    () => buildNewClientWaitlistClientEmail({ studioName: STUDIO, name: CLIENT, joinReference: "K3M9QX" }),
     clientPreheader(STUDIO),
     [],
   ],
   [
     "new-client waitlist, studio notification",
-    () => buildNewClientWaitlistStudioEmail({ studioName: STUDIO, name: CLIENT, email: CLIENT_EMAIL, phone: CLIENT_PHONE }),
+    () => buildNewClientWaitlistStudioEmail({ studioName: STUDIO, name: CLIENT, email: CLIENT_EMAIL, phone: CLIENT_PHONE, joinReference: "K3M9QX" }),
     studioPreheader(STUDIO),
     [/synthetic\.invalid/, /555 0142/],
   ],

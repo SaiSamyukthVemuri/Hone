@@ -41,6 +41,7 @@ function studioPayload(over: Partial<{
   studioName: string; name: string; email: string; phone: string | null; to: string;
 }> = {}): ProviderPayload {
   const built = buildNewClientWaitlistStudioEmail({
+    joinReference: "K3M9QX",
     studioName: over.studioName ?? "Willow Electrolysis",
     name: over.name ?? "Ada Lovelace",
     email: over.email ?? "ada@example.test",
@@ -156,6 +157,7 @@ describe("namespaces, encoding and hygiene", () => {
       waitlistIdempotencyKey("studio", STUDIO_A, p),
     );
     const clientBuilt = buildNewClientWaitlistClientEmail({
+      joinReference: "K3M9QX",
       studioName: "Willow Electrolysis",
       name: "Ada Lovelace",
     });

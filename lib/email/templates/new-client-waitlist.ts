@@ -83,6 +83,7 @@
 // ===========================================================================
 
 import { clientPreheader, studioPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
+import { withReference } from "@/lib/email/subject-reference";
 
 function escapeHtml(s: string): string {
   return s
@@ -131,8 +132,18 @@ export function buildNewClientWaitlistStudioEmail(p: {
   name: string;
   email: string;
   phone: string | null;
+  /**
+   * Per-join label (lib/email/waitlist-reference.ts; the email subject sweep):
+   * separate joins must not thread together in the owner's inbox. The caller
+   * derives it from the durable entry id, or on the transitional path from the
+   * salted email fingerprint, so an identical resubmission keeps one subject
+   * and still collapses. NULL only when neither exists (no fingerprint salt
+   * configured): the subject is then the bare one, a recorded degradation.
+   */
+  joinReference: string | null;
 }): { subject: string; html: string; text: string } {
-  const subject = `${WAITLIST_SUBJECT_PREFIX} New client · ${p.studioName}`;
+  const base = `${WAITLIST_SUBJECT_PREFIX} New client · ${p.studioName}`;
+  const subject = p.joinReference ? withReference(base, p.joinReference) : base;
   const phoneLine = p.phone ?? "Not provided";
 
   // The facts and their order are unchanged; a lead naming only the studio now
@@ -184,11 +195,15 @@ export function buildNewClientWaitlistStudioEmail(p: {
 export function buildNewClientWaitlistClientEmail(p: {
   studioName: string;
   name: string;
+  /** Per-join label; same derivation and NULL rule as the studio notice above. */
+  joinReference: string | null;
 }): { subject: string; html: string; text: string } {
-  // UNCHANGED. Pinned by tests/app/book/new-client-waitlist-action.test.ts and
-  // seen in real production inboxes; the feedback said the subject and sender
-  // identity were the good parts.
-  const subject = `You're on the waitlist · ${p.studioName}`;
+  // The wording is UNCHANGED (pinned by tests/app/book/new-client-waitlist-action.test.ts
+  // and seen in real production inboxes; the feedback said the subject and
+  // sender identity were the good parts). Only the per-join reference is
+  // appended, so separate joins do not thread together.
+  const base = `You're on the waitlist · ${p.studioName}`;
+  const subject = p.joinReference ? withReference(base, p.joinReference) : base;
 
   // The plain-text branch gets the same hierarchy the HTML now has: a title,
   // a labelled section, and the two no-appointment facts standing alone

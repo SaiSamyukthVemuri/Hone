@@ -34,6 +34,7 @@ import {
   buildNewClientWaitlistStudioEmail,
 } from "@/lib/email/templates/new-client-waitlist";
 import { hashFingerprint } from "@/lib/portal/tokens";
+import { emailWaitlistReference } from "@/lib/email/waitlist-reference";
 import { sendWaitlistJoinAckSms } from "@/lib/waitlist/delivery/join-ack-sms";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import type { Studio } from "@/lib/types/database";
@@ -207,6 +208,19 @@ function studioNotificationRecipient(studio: Studio): string | null {
  * leaves the result successful: the request is already recorded and a failed
  * courtesy note must never erase it.
  */
+/**
+ * The per-join subject reference (the email subject sweep): the durable entry
+ * id when there is one, else the ALREADY-SALTED email fingerprint, so the
+ * transitional path keeps an identical resubmission on one subject. NULL when
+ * neither exists (no fingerprint salt): the bare subject is a recorded
+ * degradation, never a raw address in a digest.
+ */
+function waitlistJoinReference(entryId: string | null, emailFingerprint: string | null): string | null {
+  if (entryId) return emailWaitlistReference(`join:${entryId}`);
+  if (emailFingerprint) return emailWaitlistReference(`join-fp:${emailFingerprint}`);
+  return null;
+}
+
 async function sendClientAcknowledgement(
   studio: Studio,
   submission: WaitlistSubmission,
@@ -225,6 +239,7 @@ async function sendClientAcknowledgement(
     const clientEmail = buildNewClientWaitlistClientEmail({
       studioName: studio.name,
       name: submission.name,
+      joinReference: waitlistJoinReference(eventScope, emailFingerprint),
     });
     const clientSend = await sendWaitlistEmailIdempotent({
       // CLIENT-facing: this goes to the visitor, who has never heard of Hone.
@@ -438,6 +453,7 @@ async function submitToDurableWaitlist(
           name: submission.name,
           email: submission.email,
           phone: submission.phone,
+          joinReference: waitlistJoinReference(entryId, null),
         });
         const studioSend = await sendWaitlistEmailIdempotent({
           namespace: "studio",
@@ -542,6 +558,9 @@ async function submitViaStudioNotification(
     name: submission.name,
     email: submission.email,
     phone: submission.phone,
+    // Transitional path: no durable entry, so the salted fingerprint keeps an
+    // identical resubmission on one subject (and one payload digest).
+    joinReference: waitlistJoinReference(null, emailFingerprint),
   });
   // LAST-MOMENT RE-RESOLVE, immediately before the provider commit.
   //

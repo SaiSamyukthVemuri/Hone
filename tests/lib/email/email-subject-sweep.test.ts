@@ -97,12 +97,8 @@ type Decision =
  * which owns these templates. The decision is RECORDED here; it is ENFORCED
  * there, where this set is emptied.
  */
-const ENFORCED_ON_1051 = new Set<string>([
-  "buildWaitlistInvitationEmail",
-  "buildNewClientWaitlistClientEmail",
-  "buildNewClientWaitlistStudioEmail",
-  "buildWaitlistRecipientProofEmail",
-]);
+// Emptied on #1051, which owns the waitlist templates: every decision is enforced.
+const ENFORCED_ON_1051 = new Set<string>([]);
 
 const reminderProps = (studio: string, ref: string) => ({
   clientName: CLIENT,
@@ -221,15 +217,15 @@ const DECISIONS: Record<string, Decision[]> = {
   }],
   buildWaitlistInvitationEmail: [{
     kind: "PER_EVENT", event: "each invitation (an entry can be invited, expire, requeue and be invited again)",
-    build: (s, ref) => buildWaitlistInvitationEmail({ studioName: s, invitationUrl: "https://hone.care/invitation/tokSYNTH", expiresAtLabel: "on Thursday, March 6, 2031 at 3:45 PM UTC", invitationReference: ref } as never),
+    build: (s, ref) => buildWaitlistInvitationEmail({ studioName: s, invitationUrl: "https://hone.care/invitation/tokSYNTH", expiresAtLabel: "on Thursday, March 6, 2031 at 3:45 PM UTC", invitationReference: ref }),
   }],
   buildNewClientWaitlistClientEmail: [{
     kind: "PER_EVENT", event: "each waitlist join (a removed person may rejoin)",
-    build: (s, ref) => buildNewClientWaitlistClientEmail({ studioName: s, name: CLIENT, joinReference: ref } as never),
+    build: (s, ref) => buildNewClientWaitlistClientEmail({ studioName: s, name: CLIENT, joinReference: ref }),
   }],
   buildNewClientWaitlistStudioEmail: [{
     kind: "PER_EVENT", event: "each waitlist join (to the owner)",
-    build: (s, ref) => buildNewClientWaitlistStudioEmail({ studioName: s, name: CLIENT, email: "zephyrine@synthetic.invalid", phone: null, joinReference: ref } as never),
+    build: (s, ref) => buildNewClientWaitlistStudioEmail({ studioName: s, name: CLIENT, email: "zephyrine@synthetic.invalid", phone: null, joinReference: ref }),
   }],
   buildPaymentReceiptEmail: [{ kind: "HELD", owner: "Sam + legal", why: "Lawyer-approved receipt strings (lib/billing/receipt-document.ts 'DO NOT PARAPHRASE'); proposal in privacy/PRIV-EMAIL-REST-END.json R1." }],
   renderReceiptEmail: [{ kind: "HELD", owner: "Sam + legal", why: "Same document as buildPaymentReceiptEmail." }],
@@ -319,8 +315,8 @@ describe("the sweep covers every email (derived from the source)", () => {
       if (Array.isArray(v)) for (const b of v) expect(DECISIONS[b], b).toBeDefined();
     }
   });
-  it("only the waitlist family waits for #1051, and it is decided here already", () => {
-    for (const b of ENFORCED_ON_1051) expect(DECISIONS[b], b).toBeDefined();
+  it("nothing waits for #1051 any more: every decision is enforced", () => {
+    expect([...ENFORCED_ON_1051]).toEqual([]);
   });
 });
 

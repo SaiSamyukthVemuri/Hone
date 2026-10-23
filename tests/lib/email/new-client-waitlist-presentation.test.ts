@@ -8,6 +8,14 @@ import {
 } from "@/lib/email/templates/new-client-waitlist";
 import { studioPreheader } from "@/lib/email/preheader";
 
+// The email subject sweep appends a per-event reference (lib/email/subject-reference.ts):
+// the wording below is unchanged, and the reference is checked for its shape.
+const SUBJECT_REF = / · Ref [2-9A-HJKMNP-Z]{6}$/;
+function withoutRef(subject: string): string {
+  expect(subject).toMatch(SUBJECT_REF);
+  return subject.replace(SUBJECT_REF, "");
+}
+
 // ===========================================================================
 // WAIT-EMAIL-BRAND-01 — the acknowledgement's PRESENTATION contract
 // ===========================================================================
@@ -24,11 +32,12 @@ import { studioPreheader } from "@/lib/email/preheader";
 const STUDIO = "Willow Electrolysis";
 const NAME = "Avery Chen";
 const client = (over: Partial<{ studioName: string; name: string }> = {}) =>
-  buildNewClientWaitlistClientEmail({ studioName: STUDIO, name: NAME, ...over });
+  buildNewClientWaitlistClientEmail({ studioName: STUDIO, name: NAME, joinReference: "K3M9QX", ...over });
 const studioEmail = (
   over: Partial<{ studioName: string; name: string; email: string; phone: string | null }> = {},
 ) =>
   buildNewClientWaitlistStudioEmail({
+    joinReference: "K3M9QX",
     studioName: STUDIO,
     name: NAME,
     email: "avery@example.test",
@@ -41,12 +50,12 @@ describe("the subject and sender identity are UNCHANGED", () => {
     // The feedback named the subject and the sender identity as the good
     // parts. This redesign is presentation-only; if it moved the subject it
     // would also move the idempotency key for a reason nobody asked for.
-    expect(client().subject).toBe("You're on the waitlist · Willow Electrolysis");
+    expect(withoutRef(client().subject)).toBe("You're on the waitlist · Willow Electrolysis");
   });
 
   it("the studio notice keeps its filterable prefix", () => {
     // Operators build inbox rules on this string.
-    expect(studioEmail().subject).toBe(
+    expect(withoutRef(studioEmail().subject)).toBe(
       "[HONE WAITLIST] New client · Willow Electrolysis",
     );
     expect(studioEmail().subject.startsWith(WAITLIST_SUBJECT_PREFIX)).toBe(true);
@@ -290,10 +299,13 @@ describe("DETERMINISM — the idempotency key is a digest of these bytes", () =>
       .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
       .join("\n");
     expect(code).not.toMatch(/Date\.now|new Date|Math\.random|crypto\.|process\.env/);
-    // The ONE import is the neutral preheader (#828), which imports nothing
+    // The imports are the neutral preheader (#828) and the subject reference shape, which import nothing
     // and reads no clock, random source or environment itself.
     const imports = [...code.matchAll(/^import\s[^;]*?from\s+"([^"]+)"/gm)].map((m) => m[1]);
-    expect(imports).toEqual(["@/lib/email/preheader"]);
+    expect(imports).toEqual(["@/lib/email/preheader", "@/lib/email/subject-reference"]);
+    // The subject-reference sibling (the email subject sweep) is pure too.
+    const reference = readFileSync(join(process.cwd(), "lib/email/subject-reference.ts"), "utf8");
+    expect(reference).not.toMatch(/^import\s/m);
     const preheader = readFileSync(join(process.cwd(), "lib/email/preheader.ts"), "utf8");
     expect(preheader).not.toMatch(/^import\s/m);
     expect(preheader).not.toMatch(/Date\.now|new Date|Math\.random|crypto\.|process\.env/);
