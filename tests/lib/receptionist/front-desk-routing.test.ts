@@ -80,6 +80,20 @@ describe("a receptionist-only user", () => {
     }
   });
 
+  // FETT photos (HON-43): the photo RE-MINT route is refused before it runs,
+  // so no signed URL is ever minted for a receptionist. e2e/fett-photo-labels
+  // asserts the same in a browser, but it needs storage-api and self-skips in
+  // CI; this is the proof CI actually executes. The practitioner control below
+  // reaches the same path, so the redirect is the receptionist gate, not a
+  // blanket refusal of the route.
+  it("is sent to /front-desk from the photo re-mint API, before any signing", async () => {
+    const remint = "/api/clients/abc/images/img-1/signed-url?variant=thumb";
+    const r = await go(remint);
+    expect(r.status).toBe(307);
+    expect(location(r)).toBe("/front-desk");
+    expect(r.headers.get("location") ?? "").not.toMatch(/\/storage\/v1\/object\/sign\/|token=/);
+  });
+
   it("reaches its own studio chooser", async () => {
     expect(location(await go("/front-desk/select"))).toBeNull();
   });
@@ -103,6 +117,12 @@ describe("everyone else is unchanged", () => {
   it("a practitioner routes as before, and the receptionist table is never read", async () => {
     state.rows = { practitioners: [{ studio_id: "studio-1" }] };
     expect(location(await go("/dashboard"))).toBeNull();
+    expect(state.reads).toEqual(["practitioners"]);
+  });
+
+  it("a practitioner reaches the photo re-mint API (control for the receptionist refusal)", async () => {
+    state.rows = { practitioners: [{ studio_id: "studio-1" }] };
+    expect(location(await go("/api/clients/abc/images/img-1/signed-url?variant=thumb"))).toBeNull();
     expect(state.reads).toEqual(["practitioners"]);
   });
 
