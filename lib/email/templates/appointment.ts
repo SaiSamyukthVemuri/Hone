@@ -1,4 +1,6 @@
 import { localTimeString12h } from "@/lib/booking/tz";
+import { clientPreheader, studioPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
+import { withReference } from "@/lib/email/subject-reference";
 
 function escapeHtml(s: string): string {
   return s
@@ -32,6 +34,13 @@ function dayLabel(d: Date, tz: string): string {
 function rangeLabel(start: Date, end: Date, tz: string): string {
   return `${localTimeString12h(start, tz)} to ${localTimeString12h(end, tz)}`;
 }
+
+// PREVIEW RULE (HIPAA-READY-01, #828): a mail client that strips the
+// preheader's invisible filler shows the preheader followed by the first body
+// text, so every body OPENS with a line that names only the studio. The
+// client's name, the service, the date and time and any attendance fact come
+// after it, out of the preview window. Proved for every template in
+// tests/lib/email/preheader-minimum-necessary.test.ts.
 
 // PR #160. Prior versions of this template carried a hardcoded
 // "Please arrive 5 minutes early. Wear comfortable clothing. Avoid
@@ -69,6 +78,10 @@ type ConfirmationToClient = {
   // far: 23h 45m · This will be session 19" or "This will be Sarah's
   // first electrolysis session".
   treatmentTimeLine: string | null;
+  // Codex P1 4355048639: a short non-sensitive per-booking label
+  // (lib/email/booking-reference.ts), so a client's confirmations for
+  // different bookings do not thread together.
+  bookingReference: string;
 };
 
 export function buildClientConfirmationEmail(p: ConfirmationToClient): {
@@ -78,12 +91,18 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
 } {
   const dayStr = dayLabel(p.startsAt, p.timezone);
   const timeStr = rangeLabel(p.startsAt, p.endsAt, p.timezone);
-  const subject = `Appointment confirmed: ${p.serviceName} with ${p.studioName} on ${dayStr}`;
-  const safeClient = escapeHtml(p.clientName);
+  // SUBJECT RULE (HIPAA-READY-01, #828): a subject persists in the inbox, shows
+  // on a lock screen and is stored by the email provider, so it never carries
+  // the client's name, the service, or the appointment date or time. Those
+  // stay in the body. The studio name is allowed: the From line already
+  // shows it.
+  const ref = p.bookingReference.trim();
+  const subject = withReference(`Your appointment with ${p.studioName} is confirmed`, ref);
   const safeStudio = escapeHtml(p.studioName);
   const safeService = escapeHtml(p.serviceName);
   const safePract = p.practitionerName ? escapeHtml(p.practitionerName) : null;
   const safeAddress = p.studioAddress ? escapeHtml(p.studioAddress) : null;
+  const lead = `Thank you for booking with ${p.studioName}. Your appointment details, and the links to manage your booking, are below.`;
 
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" /><title>${escapeHtml(subject)}</title></head>
@@ -96,7 +115,7 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
           Your appointment is confirmed.
         </td></tr>
         <tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6;">
-          ${safeClient},
+          ${escapeHtml(lead)}
         </td></tr>
         <tr><td style="padding-bottom:24px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6;">
           You're booked for <strong>${safeService}</strong>${safePract ? ` with ${safePract}` : ""} at <strong>${safeStudio}</strong>.
@@ -152,6 +171,9 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
         </td></tr>`
             : ""
         }
+        <tr><td style="padding-bottom:16px; font-family:-apple-system, system-ui, sans-serif; font-size:12px; color:#6B6B6B;">
+          Booking reference: ${escapeHtml(ref)}
+        </td></tr>
         <tr><td style="padding-top:24px; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">
           Hone &middot; Charting software for electrolysis and laser practitioners
         </td></tr>
@@ -160,9 +182,9 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
   </table>
 </body></html>`;
 
-  const text = `${p.clientName},
+  const text = `Your appointment is confirmed.
 
-Your appointment is confirmed.
+${lead}
 
 ${p.serviceName}${p.practitionerName ? ` with ${p.practitionerName}` : ""} at ${p.studioName}
 
@@ -176,11 +198,17 @@ ${p.intakeUrl ? `\nBefore your appointment, please complete your health intake f
 ${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}
 Need to cancel? ${p.cancellationUrl}
 ${p.portalLoginUrl ? `\nView your forms, appointments, and care instructions in your secure client portal:\n${p.portalLoginUrl}\n` : ""}
+Booking reference: ${ref}
+
 Hone. Charting software for electrolysis and laser practitioners.
 hone.care
 `;
 
-  return { subject, html, text };
+  return {
+    subject,
+    html: withPreheader(html, clientPreheader(p.studioName)),
+    text: withTextPreheader(text, clientPreheader(p.studioName)),
+  };
 }
 
 type NotifyPractitioner = {
@@ -200,6 +228,9 @@ type NotifyPractitioner = {
   // referralSourceLabel by the caller; null when the visitor declined
   // to answer. NOT rendered in any client-facing email.
   referralSourceLabel: string | null;
+  // Codex P1 4354990813: a short non-sensitive per-booking label
+  // (lib/email/booking-reference.ts), so distinct bookings do not thread.
+  bookingReference: string;
 };
 
 export function buildPractitionerNotificationEmail(p: NotifyPractitioner): {
@@ -209,11 +240,15 @@ export function buildPractitionerNotificationEmail(p: NotifyPractitioner): {
 } {
   const dayStr = dayLabel(p.startsAt, p.timezone);
   const timeStr = rangeLabel(p.startsAt, p.endsAt, p.timezone);
-  const subject = `New booking: ${p.clientName} – ${p.serviceName} on ${dayStr}`;
+  // SUBJECT RULE (#828): no client name, service, date or time in a subject.
+  // The reference keeps each booking in its own thread (booking-reference.ts).
+  const ref = p.bookingReference.trim();
+  const subject = withReference(`New booking at ${p.studioName}`, ref);
   const safeClient = escapeHtml(p.clientName);
   const safeService = escapeHtml(p.serviceName);
   const safePract = escapeHtml(p.practitionerName);
   const safeStudio = escapeHtml(p.studioName);
+  const lead = `A client booked an appointment at ${p.studioName} through Hone. The booking details are below.`;
 
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" /></head>
@@ -227,6 +262,9 @@ export function buildPractitionerNotificationEmail(p: NotifyPractitioner): {
         </td></tr>
         <tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">
           ${safePract},
+        </td></tr>
+        <tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">
+          ${escapeHtml(lead)}
         </td></tr>
         <tr><td style="padding-bottom:24px; border-top:1px solid #E5E2DA; border-bottom:1px solid #E5E2DA; padding-top:24px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.8;">
           <strong>${safeClient}</strong><br/>
@@ -242,12 +280,17 @@ export function buildPractitionerNotificationEmail(p: NotifyPractitioner): {
             Open in Hone
           </a>
         </td></tr>
+        <tr><td style="padding-top:16px; font-family:-apple-system, system-ui, sans-serif; font-size:12px; color:#6B6B6B;">
+          Booking reference: ${escapeHtml(ref)}
+        </td></tr>
       </table>
     </td></tr>
   </table>
 </body></html>`;
 
   const text = `New booking at ${p.studioName}.
+
+${lead}
 
 ${p.clientName}
 ${p.clientEmail}${p.clientPhone ? `, ${p.clientPhone}` : ""}
@@ -258,9 +301,14 @@ ${timeStr} (${p.timezone})
 ${p.notes ? `\nNotes: ${p.notes}\n` : ""}
 ${p.referralSourceLabel ? `How they heard about us: ${p.referralSourceLabel}\n` : ""}
 Open in Hone: ${p.appointmentUrl}
+Booking reference: ${ref}
 `;
 
-  return { subject, html, text };
+  return {
+    subject,
+    html: withPreheader(html, studioPreheader(p.studioName)),
+    text: withTextPreheader(text, studioPreheader(p.studioName)),
+  };
 }
 
 // Who performed the cancellation. Server-derived from the authoritative
@@ -296,14 +344,6 @@ export function cancellationActorSummary(
   return name ? `${name} (${label})` : label;
 }
 
-// Month + day only (e.g. "July 21"), studio-timezone aware, for the subject line.
-function monthDayLabel(d: Date, tz: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    month: "long",
-    day: "numeric",
-  }).format(d);
-}
 
 type CancellationEmail = {
   recipientName: string;
@@ -323,6 +363,10 @@ type CancellationEmail = {
   reason: string | null;
   isClient: boolean; // recipient is the client
   rebookUrl?: string;
+  // A short non-sensitive per-booking label (lib/email/booking-reference.ts),
+  // so separate cancellations do not thread together (Codex 4355360172;
+  // tests/lib/email/email-subject-sweep.test.ts).
+  bookingReference: string;
 };
 
 export function buildCancellationEmail(p: CancellationEmail): {
@@ -341,7 +385,13 @@ export function buildCancellationEmail(p: CancellationEmail): {
   const timeStr = localTimeString12h(p.startsAt, p.timezone);
   const safeStudio = escapeHtml(p.studioName);
   const safeService = escapeHtml(p.serviceName);
+  const ref = p.bookingReference.trim();
 
+  // The heading may say "cancelled": the subject already does. The lead names
+  // only the studio; whose appointment, the service and the time follow it.
+  const lead = p.isClient
+    ? `${p.studioName} has an update about your appointment. The details are below.`
+    : `An appointment at ${p.studioName} has changed. The details are below.`;
   const htmlShell = (bodyRowsHtml: string, ctaHtml: string) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" /></head>
 <body style="margin:0; padding:0; background:#FAFAF7; color:#0A0A0A;">
@@ -352,8 +402,14 @@ export function buildCancellationEmail(p: CancellationEmail): {
         <tr><td style="padding-bottom:16px; font-family:Georgia, serif; font-weight:700; font-size:24px; letter-spacing:-0.02em; line-height:1.2;">
           Appointment cancelled.
         </td></tr>
+        <tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">
+          ${escapeHtml(lead)}
+        </td></tr>
         ${bodyRowsHtml}
         ${ctaHtml}
+        <tr><td style="padding-top:16px; font-family:-apple-system, system-ui, sans-serif; font-size:12px; color:#6B6B6B;">
+          Booking reference: ${escapeHtml(ref)}
+        </td></tr>
       </table>
     </td></tr>
   </table>
@@ -363,11 +419,9 @@ export function buildCancellationEmail(p: CancellationEmail): {
     // ---- Client-facing email. Behaviour unchanged: the client never sees which
     // internal actor cancelled, only "your appointment ... was cancelled [by the
     // studio]". ----
-    const safeName = escapeHtml(p.recipientName);
-    const lead = `Your ${safeService} appointment at ${safeStudio} on <strong>${escapeHtml(dayStr)}</strong> at ${escapeHtml(timeStr)} has been cancelled${p.actorRole !== "client" ? " by the studio" : ""}.`;
-    const bodyRowsHtml = `<tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">${safeName},</td></tr>
-        <tr><td style="padding-bottom:24px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">
-          ${lead}
+    const detail = `Your ${safeService} appointment at ${safeStudio} on <strong>${escapeHtml(dayStr)}</strong> at ${escapeHtml(timeStr)} has been cancelled${p.actorRole !== "client" ? " by the studio" : ""}.`;
+    const bodyRowsHtml = `<tr><td style="padding-bottom:24px; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">
+          ${detail}
           ${p.reason ? `<br/><br/>Reason: ${escapeHtml(p.reason)}` : ""}
         </td></tr>`;
     const ctaHtml = p.rebookUrl
@@ -377,29 +431,32 @@ export function buildCancellationEmail(p: CancellationEmail): {
                 </a>
               </td></tr>`
       : "";
-    const text = `${p.recipientName},
+    const text = `${lead}
 
 Your ${p.serviceName} appointment at ${p.studioName} on ${dayStr} at ${timeStr} has been cancelled${p.actorRole !== "client" ? " by the studio" : ""}.
 ${p.reason ? `\nReason: ${p.reason}` : ""}
 ${p.rebookUrl ? `\nBook another: ${p.rebookUrl}` : ""}
+Booking reference: ${ref}
 `;
     return {
-      subject: `Appointment cancelled: ${p.serviceName} at ${p.studioName}`,
-      html: htmlShell(bodyRowsHtml, ctaHtml),
-      text,
+      // SUBJECT RULE (#828): no client name, service, date or time in a subject.
+      subject: withReference(`Appointment cancelled · ${p.studioName}`, ref),
+      html: withPreheader(htmlShell(bodyRowsHtml, ctaHtml), clientPreheader(p.studioName)),
+      text: withTextPreheader(text, clientPreheader(p.studioName)),
     };
   }
 
   // ---- Practitioner-facing email. The recipient (studio/owner) must see, at a
   // glance, WHO cancelled, WHOSE appointment, WHEN, WHAT, and WHY. ----
   const cancelledBy = cancellationActorSummary(p.actorName, p.actorRole);
-  const actorName = p.actorName?.trim() || null;
-  const monthDay = monthDayLabel(p.startsAt, p.timezone);
-  // Clearer subject, e.g. "Appointment cancelled by Chloe Vemuri LE: 90 minute
-  // session on July 21"; with no name, name-free but still says who by role.
-  const subject = actorName
-    ? `Appointment cancelled by ${actorName}: ${p.serviceName} on ${monthDay}`
-    : `Appointment cancelled by the ${cancellationActorRoleLabel(p.actorRole).toLowerCase()}: ${p.serviceName} on ${monthDay}`;
+  // SUBJECT RULE (HIPAA-READY-01, #828): the subject says WHO cancelled by ROLE
+  // only, never by name (the actor can be the client), and never the service
+  // or date. The body's labelled rows still show the actor's name, the client,
+  // the original time and the service.
+  const subject = withReference(
+    `Appointment cancelled by the ${cancellationActorRoleLabel(p.actorRole).toLowerCase()} · ${p.studioName}`,
+    ref,
+  );
 
   // Ordered, labelled rows. Every value is a display field (name/label/time/
   // service/duration/reason label), never an id, token, raw audit JSON, or note.
@@ -431,8 +488,15 @@ ${p.rebookUrl ? `\nBook another: ${p.rebookUrl}` : ""}
 
   const text = `Appointment cancelled
 
+${lead}
+
 ${rows.map(([label, value]) => `${label}: ${value}`).join("\n")}
+Booking reference: ${ref}
 `;
 
-  return { subject, html: htmlShell(bodyRowsHtml, ""), text };
+  return {
+    subject,
+    html: withPreheader(htmlShell(bodyRowsHtml, ""), studioPreheader(p.studioName)),
+    text: withTextPreheader(text, studioPreheader(p.studioName)),
+  };
 }
