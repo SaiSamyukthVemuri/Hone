@@ -812,6 +812,82 @@ describe("PR CI — path-aware lane selection", () => {
     expect(jobBudget("google-browser-e2e")).toBeGreaterThanOrEqual(need(P90.google, "google-browser-e2e"));
   });
 
+  // COMMENTS MAY NOT RESTATE THE BOUNDS WRONGLY (Codex P3 4362454294, #1059):
+  // the four ci.yml blocks still said 180 s / 300 s after the script moved to
+  // 90 / 150. A comment block about the install (workflows, and CLAUDE.md's
+  // section 4 paragraph) may state a seconds figure only if it IS one of the
+  // script's constants or its derived worst case, and may not state the bound
+  // as minute arithmetic ("3 + 5 min"); the ci.yml blocks name the constants.
+  function installCommentDrift(sources: ReadonlyArray<readonly [string, string]>, script: string): string[] {
+    const def = (name: string) => Number(new RegExp(`^${name}="\\$\\{[A-Z_]+:-(\\d+)\\}"$`, "m").exec(script)?.[1]);
+    const allowed = new Set([...["FIRST", "RETRY", "KILL_AFTER", "SETTLE", "REPAIR"].map(def), scriptWorstCaseSeconds(script)]);
+    const ABOUT_INSTALL = /archive\.ubuntu\.com|playwright-system-deps|system[- ]packages?|bounded install|apt stall/i;
+    const faults: string[] = [];
+    for (const [file, body] of sources) {
+      const isMarkdown = file.endsWith(".md");
+      // Blocks: runs of comment lines (YAML), or paragraphs (Markdown).
+      const blocks: { text: string; line: number }[] = [];
+      let cur: string[] = [];
+      let start = 0;
+      body.split("\n").forEach((l, i) => {
+        const inBlock = isMarkdown ? l.trim() !== "" : /^\s*#/.test(l);
+        if (inBlock) {
+          if (cur.length === 0) start = i + 1;
+          cur.push(l);
+        } else if (cur.length) {
+          blocks.push({ text: cur.join("\n"), line: start });
+          cur = [];
+        }
+      });
+      if (cur.length) blocks.push({ text: cur.join("\n"), line: start });
+      for (const { text, line } of blocks) {
+        if (!ABOUT_INSTALL.test(text)) continue;
+        // Judged per SENTENCE, and only sentences about the install's bounds:
+        // a block can also record unrelated runner measurements (266s, 508s).
+        const flat = text.replace(/^\s*#\s?/gm, "").replace(/\s+/g, " ");
+        for (const sentence of flat.split(/(?<=[.;])\s+/)) {
+          if (!/(install|apt|archive\.ubuntu\.com|system-deps)/i.test(sentence)) continue;
+          if (!/(stall|cut|retr|bound|attempt|worst case|limit)/i.test(sentence)) continue;
+          for (const m of sentence.matchAll(/(?<![\d.])(\d+)\s*s\b/g)) {
+            if (!allowed.has(Number(m[1]))) faults.push(`${file}:${line}: states ${m[1]} s, which is not one of the script's bounds (${[...allowed].join(", ")})`);
+          }
+          for (const m of sentence.matchAll(/\d+\s*\+\s*\d+\s*min/g)) faults.push(`${file}:${line}: states the bound as "${m[0]}"; name the script's constants instead`);
+        }
+      }
+    }
+    return faults;
+  }
+
+  it("no workflow comment or CLAUDE.md paragraph states install bounds that differ from the script's constants", () => {
+    const script = readFileSync(DEPS_SCRIPT, "utf8");
+    const sources = [...readWorkflowDir(), ["CLAUDE.md", readFileSync("CLAUDE.md", "utf8")] as const];
+    expect(installCommentDrift(sources, script)).toEqual([]);
+  });
+
+  it("the ci.yml install blocks name the script's bounds instead of restating them", () => {
+    const blocks = CI.split("      # System packages: CACHED").slice(1).map((b) => b.split("      - name:")[0]);
+    expect(blocks).toHaveLength(4);
+    for (const b of blocks) {
+      expect(b).toMatch(/\bFIRST\b/);
+      expect(b).toMatch(/\bRETRY\b/);
+      expect(b).toContain("scripts/ci/playwright-system-deps.sh");
+    }
+  });
+
+  it("the comment-drift guard is not vacuous (fixture controls)", () => {
+    const script = readFileSync(DEPS_SCRIPT, "utf8");
+    const yml = (c: string) => [["x.yml", `jobs:\n${c}\n      - name: y\n`]] as const;
+    expect(installCommentDrift(yml("      # cuts a stalled install off at 180 s and retries on archive.ubuntu.com (300 s)"), script)).toEqual([
+      "x.yml:2: states 180 s, which is not one of the script's bounds (90, 150, 10, 45, 325)",
+      "x.yml:2: states 300 s, which is not one of the script's bounds (90, 150, 10, 45, 325)",
+    ]);
+    expect(installCommentDrift(yml("      # the bounded install (3 + 5 min worst case)"), script)).toEqual([
+      'x.yml:2: states the bound as "3 + 5 min"; name the script\'s constants instead',
+    ]);
+    expect(installCommentDrift(yml("      # cuts a stalled install off at 90 s and retries on archive.ubuntu.com (150 s)"), script)).toEqual([]);
+    expect(installCommentDrift(yml("      # npm ci took 300 s on a slow runner"), script), "unrelated blocks are not judged").toEqual([]);
+  });
+
   it("the script bounds the install, retries once on another mirror, and round-trips the .deb cache", () => {
     const script = readFileSync("scripts/ci/playwright-system-deps.sh", "utf8");
     // The time limit is INSIDE sudo (Codex P1 r4362059036): an unprivileged

@@ -832,9 +832,12 @@ jobs:
       # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
       # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
       # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
-      # restores the cached .debs, cuts a stalled install off at 180 s and retries
-      # once on archive.ubuntu.com (300 s); the save runs straight after, not in a
-      # post step that a failed or cancelled job would skip.
+      # restores the cached .debs, cuts a stalled install off after its FIRST
+      # bound and retries once on archive.ubuntu.com under its RETRY bound. The
+      # bounds are defined ONLY in scripts/ci/playwright-system-deps.sh (never
+      # restated here; tests/ci/ci-config.test.ts derives the step ceiling from
+      # them). The save runs straight after, not in a post step that a failed or
+      # cancelled job would skip.
       - name: Resolve runner image
         id: img
         run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
@@ -1182,9 +1185,12 @@ jobs:
       # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
       # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
       # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
-      # restores the cached .debs, cuts a stalled install off at 180 s and retries
-      # once on archive.ubuntu.com (300 s); the save runs straight after, not in a
-      # post step that a failed or cancelled job would skip.
+      # restores the cached .debs, cuts a stalled install off after its FIRST
+      # bound and retries once on archive.ubuntu.com under its RETRY bound. The
+      # bounds are defined ONLY in scripts/ci/playwright-system-deps.sh (never
+      # restated here; tests/ci/ci-config.test.ts derives the step ceiling from
+      # them). The save runs straight after, not in a post step that a failed or
+      # cancelled job would skip.
       - name: Resolve runner image
         id: img
         run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
@@ -1247,8 +1253,10 @@ jobs:
     # run39713000378 mobile:3 observed passes before10min cancellation;
     # setup~10min + existing6-case phase~0.4min + finiteheadroom => hard12.
     # 12 -> 15 (2026-10-23): run 39979564413 passed 6/6 and was cancelled at 12
-    # after an 8.4 min apt stall. Measured ~5.5 min + the bounded install (3 + 5
-    # min worst case) must fit. TARGET ~6 min is unchanged (CLAUDE.md section 4).
+    # after an 8.4 min apt stall. Measured ~5.8 min p90 + the bounded install
+    # step's own ceiling (derived from scripts/ci/playwright-system-deps.sh's
+    # constants by tests/ci/ci-config.test.ts) + margin must fit. TARGET ~6 min
+    # is unchanged (CLAUDE.md section 4).
     # This ceiling is not a performance or physical-device acceptance target.
     timeout-minutes: 15
 
@@ -1346,9 +1354,12 @@ jobs:
       # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
       # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
       # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
-      # restores the cached .debs, cuts a stalled install off at 180 s and retries
-      # once on archive.ubuntu.com (300 s); the save runs straight after, not in a
-      # post step that a failed or cancelled job would skip.
+      # restores the cached .debs, cuts a stalled install off after its FIRST
+      # bound and retries once on archive.ubuntu.com under its RETRY bound. The
+      # bounds are defined ONLY in scripts/ci/playwright-system-deps.sh (never
+      # restated here; tests/ci/ci-config.test.ts derives the step ceiling from
+      # them). The save runs straight after, not in a post step that a failed or
+      # cancelled job would skip.
       - name: Resolve runner image
         id: img
         run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
@@ -1515,9 +1526,12 @@ jobs:
       # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
       # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
       # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
-      # restores the cached .debs, cuts a stalled install off at 180 s and retries
-      # once on archive.ubuntu.com (300 s); the save runs straight after, not in a
-      # post step that a failed or cancelled job would skip.
+      # restores the cached .debs, cuts a stalled install off after its FIRST
+      # bound and retries once on archive.ubuntu.com under its RETRY bound. The
+      # bounds are defined ONLY in scripts/ci/playwright-system-deps.sh (never
+      # restated here; tests/ci/ci-config.test.ts derives the step ceiling from
+      # them). The save runs straight after, not in a post step that a failed or
+      # cancelled job would skip.
       - name: Resolve runner image
         id: img
         run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
