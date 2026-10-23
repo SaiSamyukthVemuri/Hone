@@ -203,6 +203,7 @@ describe("the lane default and the acceptance seam are ONE contract", () => {
 
 describe("MSG-004 cancellation transport result is observable", () => {
   const cancellation = (to: string) => sendCancellationEmail({
+    appointmentId: "appt-synthetic",
     to, recipientName: "Synthetic", clientName: "Synthetic",
     studio: { name: "Synthetic", timezone: "UTC" } as Parameters<typeof sendCancellationEmail>[0]["studio"],
     serviceName: "Consultation", durationMinutes: 30, startsAt: new Date("2099-01-01T12:00:00Z"),
