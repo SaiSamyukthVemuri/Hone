@@ -25,7 +25,7 @@ const CODE = ACTIONS.split("\n")
 function submitBody(): string {
   const start = ACTIONS.indexOf("export async function submitIntakeAction");
   expect(start).toBeGreaterThan(-1);
-  const after = ACTIONS.indexOf("\nasync function syncIntakeToClient", start);
+  const after = ACTIONS.indexOf("\nfunction intakeProfileContributions", start);
   return ACTIONS.slice(start, after > -1 ? after : undefined);
 }
 
@@ -59,9 +59,9 @@ describe("intake submit → in-app notification wiring", () => {
 });
 
 describe("intake submit → notification is once-only (idempotent)", () => {
-  it("fires only in the winner branch — AFTER the zero-rows-updated guard", () => {
+  it("fires only in the winner branch — AFTER the committed CAS-winner guard", () => {
     const body = submitBody();
-    const guardIdx = body.indexOf("if (!updated || updated.length === 0)");
+    const guardIdx = body.indexOf("if (!written.ok) return written");
     const notifyIdx = body.indexOf("recordPractitionerNotification(");
     expect(guardIdx).toBeGreaterThan(-1);
     expect(notifyIdx).toBeGreaterThan(-1);
@@ -71,9 +71,9 @@ describe("intake submit → notification is once-only (idempotent)", () => {
     expect(notifyIdx).toBeGreaterThan(guardIdx);
   });
 
-  it("fires only after the successful persist (after the submitted UPDATE)", () => {
+  it("fires only after the successful persist (after the atomic submitted command)", () => {
     const body = submitBody();
-    const updateIdx = body.indexOf('status: "submitted"');
+    const updateIdx = body.indexOf('operation: "submit"');
     const notifyIdx = body.indexOf("recordPractitionerNotification(");
     expect(updateIdx).toBeGreaterThan(-1);
     expect(notifyIdx).toBeGreaterThan(updateIdx);

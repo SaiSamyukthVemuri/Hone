@@ -16,6 +16,8 @@
 // status='ready', stripe_livemode=false. No PaymentIntent is
 // created here; that is a future PR.
 
+import type { StudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction";
+
 // Same $2,000 CAD ceiling enforced by the
 // payment_charge_attempts.amount_cents CHECK
 // (amount_cents > 0 and amount_cents <= 200000). The application
@@ -138,6 +140,10 @@ export type SessionPaymentEligibility =
       stripeCustomerId: string;
       stripePaymentMethodId: string;
       existingAttempts: SessionPaymentExistingAttemptSummary[];
+      // #1035 P1-C. The payment jurisdiction this eligibility was decided on.
+      // The prepare action takes the attempt's currency from it, and the 0214
+      // insert guard re-checks it under lock.
+      jurisdiction: StudioPaymentJurisdiction;
     }
   | {
       eligible: false;

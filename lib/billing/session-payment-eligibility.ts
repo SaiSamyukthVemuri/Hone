@@ -2,6 +2,8 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
+import { accountCountryBlockingReason, accountCountryVerdict, JURISDICTION_UNVERIFIED_REASON } from "@/lib/billing/payment-jurisdiction";
 import type {
   SessionPaymentCardAuthorizationSummary,
   SessionPaymentCardSummary,
@@ -64,8 +66,9 @@ import type {
 //   practitioner-confirmed form input; the helper carries the
 //   pre-existing sessions.price_paid_cents as a non-binding
 //   suggestion only.
-// * No currency lookup beyond launch. Sam's policy pegs launch
-//   currency at 'cad' (also enforced by the table CHECK).
+// * Current verified jurisdiction and observed account country gate readiness.
+//   An eligible result carries that jurisdiction (#1035 P1-C): the prepare
+//   action takes the attempt's currency from it, never from a constant.
 
 type Args = {
   studioId: string;
@@ -295,13 +298,19 @@ export async function getSessionPaymentEligibility(
   //    deployment mode (the read below is mode-scoped; a mode belt
   //    double-checks it).
   let resolvedStripeAccountId: string | null = stripeAccountIdFromCard;
+
+  // Reuse the published country authority; an absent/unreadable pair is UNKNOWN.
+  const jurisdictionRead = await getStudioPaymentJurisdiction(args.studioId);
+  const jurisdiction = jurisdictionRead.ok ? jurisdictionRead.jurisdiction : null;
+  if (!jurisdiction) reasons.push(JURISDICTION_UNVERIFIED_REASON);
+
   // Mode-scoped (0103): a studio can hold one settings row per Stripe mode;
   // eligibility verifies against the CURRENT deployment mode's row only
   // (the stripe_livemode !== livemode belt below stays as defense-in-depth).
   const { data: settings, error: settingsErr } = await admin
     .from("studio_payment_settings")
     .select(
-      "stripe_account_id, stripe_account_status, stripe_livemode",
+      "stripe_account_id, stripe_account_status, stripe_livemode, stripe_account_country, stripe_account_country_conflict",
     )
     .eq("studio_id", args.studioId)
     .eq("stripe_livemode", livemode)
@@ -339,6 +348,15 @@ export async function getSessionPaymentEligibility(
       reasons.push(
         "Studio payment settings mode does not match the deployment mode.",
       );
+    }
+    // A later agreeing report never erases a persisted country conflict.
+    if (jurisdiction && settings.stripe_account_id) {
+      const countryReason = accountCountryBlockingReason(accountCountryVerdict(
+        jurisdiction.country,
+        (settings.stripe_account_country as string | null) ?? null,
+        (settings.stripe_account_country_conflict as string | null) ?? null,
+      ));
+      if (countryReason) reasons.push(countryReason);
     }
     resolvedStripeAccountId =
       stripeAccountIdFromCard ?? (settings.stripe_account_id as string | null);
@@ -449,7 +467,8 @@ export async function getSessionPaymentEligibility(
     cardPaymentMethodId &&
     resolvedStripeAccountId &&
     stripeCustomerIdFromCard &&
-    stripePaymentMethodIdFromCard
+    stripePaymentMethodIdFromCard &&
+    jurisdiction
   ) {
     return {
       eligible: true,
@@ -466,6 +485,7 @@ export async function getSessionPaymentEligibility(
       stripeCustomerId: stripeCustomerIdFromCard,
       stripePaymentMethodId: stripePaymentMethodIdFromCard,
       existingAttempts,
+      jurisdiction,
     };
   }
 

@@ -168,6 +168,7 @@ function err(t: string) {
 }
 
 function healthySession() {
+  rows("studio_payment_jurisdictions", { payment_country: "CA", payment_currency: "cad" });
   rows("sessions", {
     id: SESSION,
     studio_id: STUDIO,
@@ -195,6 +196,8 @@ function healthySession() {
   rows("studio_payment_settings", {
     stripe_account_id: "acct_test",
     stripe_account_status: "enabled",
+    stripe_account_country: "CA",
+    stripe_account_country_conflict: null,
     stripe_livemode: false,
   });
   empty("payment_charge_attempts");
@@ -298,6 +301,7 @@ describe("SESSION PAYMENT prepare: an unverifiable eligibility reaches no money"
     "sessions",
     "client_payment_methods",
     "studio_payment_settings",
+    "studio_payment_jurisdictions",
     "payment_charge_attempts",
   ]) {
     it(`${table} read error -> no INSERT, no RPC, no Stripe`, async () => {
@@ -312,6 +316,20 @@ describe("SESSION PAYMENT prepare: an unverifiable eligibility reaches no money"
       expect(h.stripeCalls).toEqual([]);
     });
   }
+
+  it.each(["UNKNOWN jurisdiction", "persisted country conflict"])("%s -> no INSERT, RPC or Stripe", async (caseName) => {
+    healthySession();
+    if (caseName === "UNKNOWN jurisdiction") delete h.outcomes.studio_payment_jurisdictions;
+    else {
+      const settings = h.outcomes.studio_payment_settings;
+      rows("studio_payment_settings", { ...(settings.data as Record<string, unknown>), stripe_account_country_conflict: "US" });
+    }
+    const res = (await run(() => prepareSessionPaymentChargeAction(sessionForm()))) as { ok: boolean };
+    expect(res.ok).toBe(false);
+    expect(h.writes).toEqual([]);
+    expect(h.rpcs).toEqual([]);
+    expect(h.stripeCalls).toEqual([]);
+  });
 
   it("POSITIVE CONTROL: healthy reads reach the attempt INSERT", async () => {
     // NOTE: both prepare actions wrap their body in a top-level try/catch and

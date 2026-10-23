@@ -20,14 +20,20 @@ import Stripe from "stripe";
 class Tripwire extends Error {}
 
 const h = vi.hoisted(() => ({
+  livemode: false,
   rows: {} as Record<string, unknown>,
   updates: [] as Array<{ table: string; payload: Record<string, unknown> }>,
   rpcCalls: [] as string[],
+  boundObjects: [] as Array<Record<string, unknown>>,
   updateAttempts: [] as Array<{ payload: Record<string, unknown>; filters: Array<{ column: string; value: unknown }>; matched: boolean }>,
   afterRetrieve: null as null | (() => void),
+  afterClaim: null as null | (() => void),
   recheckReadError: false,
+  readErrors: [] as string[],
+  reads: [] as Array<{ table: string; filters: Array<{ column: string; value: unknown }> }>,
   alerts: [] as Array<{ severity: string; event: string; details: Record<string, unknown> }>,
   alertThrows: false,
+  refundObservationFailure: null as null | "rpc_error" | "refused",
   claim: {} as Record<string, unknown>,
   pi: {} as Record<string, unknown>,
   createError: null as unknown,
@@ -66,7 +72,7 @@ const fakeStripe = {
 };
 
 vi.mock("@/lib/stripe/server", () => ({
-  inferStripeLivemode: () => false,
+  inferStripeLivemode: () => h.livemode,
   getStripe: () => fakeStripe,
 }));
 vi.mock("@/lib/stripe/session-payment-stripe", () => ({
@@ -104,7 +110,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       const q: Record<string, unknown> = {};
       let updatePayload: Record<string, unknown> | null = null;
       const filters: Array<{ column: string; value: unknown }> = [];
-      const read = () => ({ data: h.rows[table] && typeof h.rows[table] === "object" ? { ...(h.rows[table] as Record<string, unknown>) } : h.rows[table] ?? null, error: h.recheckReadError ? { code: "XX000" } : null });
+      const read = () => { h.reads.push({ table, filters: [...filters] }); return ({ data: h.rows[table] && typeof h.rows[table] === "object" ? { ...(h.rows[table] as Record<string, unknown>) } : h.rows[table] ?? null, error: h.recheckReadError || h.readErrors.includes(table) ? { code: "XX000" } : null }); };
       q.select = () => {
         if (updatePayload) {
           const row = h.rows[table] as Record<string, unknown> | undefined;
@@ -137,7 +143,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       };
       return q;
     },
-    rpc: async (name: string) => {
+    rpc: async (name: string, args: Record<string, unknown> = {}) => {
       h.rpcCalls.push(name);
       if (name === "claim_session_payment_charge_attempt") {
         const row = h.rows.payment_charge_attempts as Record<string, unknown> | undefined;
@@ -145,7 +151,58 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           row.status = "pending_stripe";
           if (h.claim.stripe_payment_intent_id) row.stripe_payment_intent_id = h.claim.stripe_payment_intent_id;
         }
+        h.afterClaim?.();
         return { data: [h.claim], error: null };
+      }
+      if (name === "reconcile_bound_payment_event") {
+        const row = h.rows.payment_charge_attempts as Record<string, unknown>;
+        const object = args.p_object as Record<string, unknown>;
+        h.boundObjects.push(object);
+        const matches = args.p_attempt_id === row.id && args.p_studio_id === row.studio_id
+          && args.p_stripe_account_id === row.stripe_account_id && args.p_livemode === row.stripe_livemode
+          && object.customer_id === row.stripe_customer_id && object.payment_intent_id === row.stripe_payment_intent_id
+          && object.amount_cents === row.amount_cents && object.currency === row.currency
+          && (!row.stripe_charge_id || object.charge_id === row.stripe_charge_id);
+        if (!matches) return { data: [{ result: "identity_mismatch" }], error: null };
+        // These failures are injected only AFTER the original bound identity
+        // matched. They model a failed/refused durable observation, not a new
+        // provider object or a global successful-RPC stub.
+        if (args.p_event_type === "refund.observed" && h.refundObservationFailure) {
+          return h.refundObservationFailure === "rpc_error"
+            ? { data: null, error: { code: "08006", message: "synthetic observation unavailable" } }
+            : { data: [{ result: "refund_evidence_refused" }], error: null };
+        }
+        if (Array.isArray(object.charge_refund_components)) {
+          if (row.stripe_charge_refund_event_id) return { data: [{ result: "already_refunded", status_before: row.status }], error: null };
+          const payload = { refund_status: "succeeded", refund_amount_cents: row.amount_cents,
+            refunded_at: "2026-10-21T00:00:00.000Z", stripe_charge_refund_event_id: args.p_event_id,
+            stripe_charge_refund_event_created: object.event_created };
+          h.updates.push({ table: "payment_charge_attempts", payload });
+          Object.assign(row, payload);
+          return { data: [{ result: "reconciled", status_before: row.status }], error: null };
+        }
+        if (args.p_event_type === "refund.observed" && object.refund_status !== "succeeded") {
+          if (!["pending", "requires_action", "failed", "canceled"].includes(String(object.refund_status))) {
+            return { data: [{ result: "refund_evidence_refused" }], error: null };
+          }
+          const failed = object.refund_status === "failed" || object.refund_status === "canceled";
+          const payload = { refund_status: failed ? "failed" : "pending_stripe", stripe_refund_id: object.refund_id,
+            refund_amount_cents: object.refund_amount_cents, refunded_at: null,
+            refund_failure_code: failed ? `provider_refund_${object.refund_status}` : null,
+            refund_failure_message_safe: failed ? "Stripe did not complete this refund." : null };
+          h.updates.push({ table: "payment_charge_attempts", payload }); Object.assign(row, payload);
+          return { data: [{ result: failed ? "refund_failed" : "refund_pending" }], error: null };
+        }
+        const statusBefore = row.status;
+        const refund = args.p_event_type === "charge.refunded" || args.p_event_type === "refund.observed";
+        const failed = args.p_event_type === "payment_intent.payment_failed";
+        const payload = refund ? { refund_status: "succeeded", stripe_refund_id: object.refund_id,
+          refund_amount_cents: object.refund_amount_cents, refund_failure_code: null, refund_failure_message_safe: null,
+          refunded_at: "2026-10-21T00:00:00.000Z" }
+          : { status: failed ? "failed" : "succeeded", stripe_charge_id: object.charge_id };
+        h.updates.push({ table: "payment_charge_attempts", payload });
+        Object.assign(row, payload);
+        return { data: [{ result: "reconciled", status_before: statusBefore }], error: null };
       }
       if (name === "reconcile_card_payment_succeeded") {
         return { data: [{ result: "reconciled", status_before: "pending_stripe" }], error: null };
@@ -196,6 +253,9 @@ function attemptRow(currency: "cad" | "usd", over: Record<string, unknown> = {})
     refund_amount_cents: null,
     refunded_at: null,
     stripe_refund_id: null,
+    stripe_refund_status: null,
+    stripe_refund_event_created: null,
+    stripe_refund_event_id: null,
     updated_at: "2026-08-01T00:00:00.000Z",
     ...over,
   };
@@ -239,7 +299,8 @@ function seedLineage(currency: "cad" | "usd") {
       stripe_payment_method_id: "pm_test",
       card_authorization_signature_id: "sig-1",
     },
-    studio_payment_settings: { stripe_account_id: "acct_test", stripe_livemode: false },
+    studio_payment_settings: { stripe_account_id: "acct_test", stripe_livemode: false, stripe_account_country: currency === "usd" ? "US" : "CA", stripe_account_country_conflict: null },
+    studio_payment_jurisdictions: { payment_country: currency === "usd" ? "US" : "CA", payment_currency: currency },
     client_stripe_customers: { stripe_customer_id: "cus_test" },
     practitioners: { role: "owner" },
   };
@@ -256,14 +317,20 @@ const critical = (event: string) =>
   h.alerts.filter((a) => a.severity === "critical" && a.event === event);
 
 beforeEach(() => {
+  h.livemode = false;
   h.rows = {};
   h.updates = [];
   h.rpcCalls = [];
+  h.boundObjects = [];
   h.updateAttempts = [];
   h.afterRetrieve = null;
+  h.afterClaim = null;
   h.recheckReadError = false;
+  h.readErrors = [];
+  h.reads = [];
   h.alerts = [];
   h.alertThrows = false;
+  h.refundObservationFailure = null;
   h.stripeCalls = [];
   h.claim = {};
   h.pi = {};
@@ -602,17 +669,17 @@ describe("refund: Stripe's refund is recorded only when it is the claimed refund
           ...(status === undefined ? {} : { status }),
         };
         const result = await refund();
-        expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+        expect(result).toMatchObject({ ok: false, outcome: status === "failed" || status === "canceled" ? "failed" : "needs_manual_review" });
         expect(h.stripeCalls).toEqual(["refund_create"]);
         expect(refundSucceededWrites()).toEqual([]);
-        expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(1);
-        expect(h.updates.some((u) => u.payload.refund_status === "failed")).toBe(false);
+        expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(status === "pending" || status === "requires_action" ? 2 : 1);
+        expect(h.updates.some((u) => u.payload.refund_status === "failed")).toBe(status === "failed" || status === "canceled");
         expect(critical("payment_refund_provider_money_mismatch")).toEqual([]);
       },
     );
   }
 
-  it("a throwing status diagnostic retains manual review, pending claim and one refund call", async () => {
+  it("a pending status observation retains manual review and one refund call even with a failing diagnostic sink", async () => {
     seedSucceeded("cad");
     h.refund = { id: "re_synthetic_unresolved", status: "pending", amount: AMOUNT, currency: "cad", charge: CHARGE_ID, payment_intent: PI_ID };
     h.alertThrows = true;
@@ -620,10 +687,45 @@ describe("refund: Stripe's refund is recorded only when it is the claimed refund
     expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
     expect(h.stripeCalls).toEqual(["refund_create"]);
     expect(refundSucceededWrites()).toEqual([]);
-    expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(1);
+    expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(2);
     expect(h.updates.some((u) => u.payload.refund_status === "failed")).toBe(false);
-    expect(critical("payment_refund_provider_status_unresolved")).toHaveLength(1);
+    expect(h.boundObjects).toContainEqual(expect.objectContaining({ refund_status: "pending", refund_id: "re_synthetic_unresolved" }));
   });
+
+  // Preserve the deployed D1 diagnostic-failure invariant on the actual
+  // 239/240 bound-observation refusal path. A healthy diagnostic control proves
+  // the new event is reached; throwing it may not change the business result.
+  for (const currency of ["cad", "usd"] as const) {
+    for (const failure of ["rpc_error", "refused"] as const) {
+      for (const throws of [false, true]) {
+        it(`${currency}: ${failure} observation with ${throws ? "throwing" : "healthy"} diagnostic retains pending/manual review and one refund call`, async () => {
+          seedSucceeded(currency);
+          h.refund = { id: "re_synthetic_unresolved", status: "pending", amount: AMOUNT, currency,
+            charge: CHARGE_ID, payment_intent: PI_ID };
+          h.refundObservationFailure = failure;
+          h.alertThrows = throws;
+          const result = await refund();
+          expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+          expect(h.stripeCalls).toEqual(["refund_create"]);
+          expect(refundSucceededWrites()).toEqual([]);
+          expect(h.updates.filter((u) => u.payload.refund_status === "pending_stripe")).toHaveLength(1);
+          expect(h.updates.some((u) => u.payload.refund_status === "failed")).toBe(false);
+          expect(critical("payment_refund_outcome_write_refused")).toHaveLength(1);
+          expect(h.rpcCalls.filter(name => name === "reconcile_bound_payment_event")).toHaveLength(1);
+          expect(h.boundObjects).toEqual([expect.objectContaining({ evidence_kind: "action_response",
+            customer_id: "cus_test", payment_intent_id: PI_ID, charge_id: CHARGE_ID,
+            amount_cents: AMOUNT, currency, refund_id: "re_synthetic_unresolved",
+            refund_status: "pending", refund_amount_cents: AMOUNT, refund_currency: currency,
+            refund_charge_id: CHARGE_ID })]);
+          expect(h.rows.payment_charge_attempts).toMatchObject({ id: ATTEMPT, studio_id: STUDIO,
+            client_id: CLIENT, stripe_livemode: false, stripe_account_id: "acct_test",
+            stripe_customer_id: "cus_test", stripe_payment_intent_id: PI_ID, stripe_charge_id: CHARGE_ID,
+            amount_cents: AMOUNT, currency, status: "succeeded", refund_status: "pending_stripe",
+            stripe_refund_id: null, refunded_at: null });
+        });
+      }
+    }
+  }
 
   it.each([
     ["in another currency", { amount: AMOUNT, currency: "cad" }, "usd"],
@@ -758,7 +860,7 @@ describe("PRIVACY PAY-004 retrieved identity across terminal branches", () => {
 // 3. The webhooks
 // ---------------------------------------------------------------------------
 function event(type: string, object: Record<string, unknown>): Stripe.Event {
-  return { id: "evt_1", type, account: "acct_test", livemode: false, data: { object: { customer: "cus_test", ...(type.startsWith("charge.") ? { payment_intent: PI_ID } : {}), ...(type === "payment_intent.payment_failed" ? { status: "requires_payment_method" } : {}), ...object } } } as unknown as Stripe.Event;
+  return { id: "evt_1", created: 1770000000, type, account: "acct_test", livemode: false, data: { object: { customer: "cus_test", ...(type.startsWith("charge.") ? { payment_intent: PI_ID } : {}), ...(type === "payment_intent.payment_failed" ? { status: "requires_payment_method" } : {}), ...object } } } as unknown as Stripe.Event;
 }
 const META = {
   hone_payment_charge_attempt_id: ATTEMPT,
@@ -781,7 +883,7 @@ describe("payment_intent.succeeded webhook", () => {
       }),
       CTX,
     );
-    expect(h.rpcCalls).toContain("reconcile_card_payment_succeeded");
+    expect(h.rpcCalls).toContain("reconcile_bound_payment_event");
     expect(out.reconciledFromStatus).toBe("pending_stripe");
   });
 
@@ -867,7 +969,7 @@ describe("charge.refunded webhook", () => {
       id: CHARGE_ID,
       refunded: true,
       amount_refunded: money.amount,
-      refunds: { data: [{ id: "re_1" }] },
+      refunds: { data: [{ id: "re_1", status: "succeeded", charge: CHARGE_ID, payment_intent: PI_ID, amount: money.amount, currency: money.currency }] },
       metadata: META,
       ...money,
     });
@@ -1028,4 +1130,208 @@ describe("bound PI active-or-unknown failed-event retirement", () => {
     expect(h.stripeCalls).toEqual([]);
   });
 
+});
+
+describe("PAY002 cumulative full refund evidence", () => {
+  function prepare(components?: Array<Record<string, unknown>>, chargeOverrides: Record<string, unknown> = {}, rowOverrides: Record<string, unknown> = {}) {
+    h.rows.payment_charge_attempts = attemptRow("usd", { status: "succeeded", stripe_payment_intent_id: PI_ID,
+      stripe_charge_id: CHARGE_ID, ...rowOverrides });
+    const parts = components ?? [
+      { id: "re_part_a", amount: 5000 }, { id: "re_part_b", amount: 10000 },
+    ];
+    return event("charge.refunded", { object: "charge", id: CHARGE_ID, status: "succeeded", paid: true,
+      captured: true, amount_captured: AMOUNT, amount: AMOUNT, amount_refunded: AMOUNT,
+      refunded: true, livemode: false, customer: "cus_test", payment_intent: PI_ID, currency: "usd",
+      refunds: { object: "list", has_more: false, data: parts.map((part) => ({ object: "refund", status: "succeeded",
+        charge: CHARGE_ID, payment_intent: PI_ID, currency: "usd", ...part })) }, ...chargeOverrides });
+  }
+  it("two successful partials prove full charge total without fabricating one full Refund", async () => {
+    const out = await handleChargeRefunded(prepare(), CTX);
+    expect(out.outOfBandReconciled).toBe(true);
+    expect(h.boundObjects[0]).toMatchObject({ charge_amount_refunded: AMOUNT,
+      charge_refund_list_complete: true, refund_id: null, refund_status: null, refund_amount_cents: null,
+      charge_refund_components: [{ refund_id: "re_part_a", amount_cents: 5000 }, { refund_id: "re_part_b", amount_cents: 10000 }] });
+    const row = h.rows.payment_charge_attempts as Record<string, unknown>;
+    expect(row.refund_status).toBe("succeeded");
+    expect(row.stripe_refund_id).toBeNull();
+    expect(row.stripe_refund_status).toBeNull();
+    expect(h.stripeCalls).toEqual([]);
+  });
+  it.each(["failed", "succeeded"])("existing actual single %s evidence is preserved by separate cumulative completion", async (status) => {
+    await handleChargeRefunded(prepare(undefined, {}, { refund_status: status === "failed" ? "failed" : "pending_stripe",
+      stripe_refund_id: "re_original", stripe_refund_status: status }), CTX);
+    const row = h.rows.payment_charge_attempts as Record<string, unknown>;
+    expect(row.refund_status).toBe("succeeded");
+    expect(row.stripe_refund_id).toBe("re_original");
+    expect(row.stripe_refund_status).toBe(status);
+    expect(h.updates[0].payload).not.toHaveProperty("stripe_refund_id");
+    expect(h.updates[0].payload).not.toHaveProperty("stripe_refund_status");
+  });
+  it.each([
+    [{ id: "re_same", amount: 5000 }, { id: "re_same", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, status: "pending" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, status: "requires_action" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, status: "mystery" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, charge: "ch_other" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, payment_intent: "pi_other" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, currency: "cad" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, customer: "cus_other" }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5000, customer: null }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: Number.MAX_SAFE_INTEGER + 1 }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 5001 }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 4999 }, { id: "re_b", amount: 10000 }],
+    [{ id: "re_a", amount: 0 }, { id: "re_b", amount: AMOUNT }],
+  ].map((parts) => ({ parts })))("incomplete or contradictory component evidence cannot stamp full refund: %j", async ({ parts }) => {
+    const out = await handleChargeRefunded(prepare(parts), CTX);
+    expect(out.cumulativeRefundEvidenceRefused).toBe(true);
+    expect(h.boundObjects).toEqual([]);
+    expect(h.updates).toEqual([]);
+    expect(h.stripeCalls).toEqual([]);
+  });
+  it.each([
+    { refunds: { object: "list", has_more: true, data: [] } },
+    { refunds: { object: "list", data: [] } },
+    { refunds: null }, { object: "not_charge" }, { paid: false },
+    { captured: false }, { amount_captured: AMOUNT - 1 }, { livemode: true },
+  ])("missing complete/captured charge context refuses: %j", async (over) => {
+    const out = await handleChargeRefunded(prepare(undefined, over), CTX);
+    expect(out.cumulativeRefundEvidenceRefused).toBe(true);
+    expect(h.boundObjects).toEqual([]);
+    expect(h.updates).toEqual([]);
+  });
+});
+
+
+describe("G1 execution country authority before a new provider intent", () => {
+  const settings = () => h.rows.studio_payment_settings as Record<string, unknown>;
+  const pending = (piId: string | null) => {
+    Object.assign(h.rows.payment_charge_attempts as Record<string, unknown>, {
+      status: "pending_stripe", stripe_payment_intent_id: piId,
+    });
+    h.claim = claimFor("usd", { result: "already_pending", stripe_payment_intent_id: piId,
+      updated_at: new Date().toISOString() });
+  };
+  const refused = async () => {
+    const before = { ...(h.rows.payment_charge_attempts as Record<string, unknown>) };
+    expect(await charge()).toMatchObject({ ok: false, outcome: "blocked" });
+    expect(h.stripeCalls).toEqual([]);
+    expect(h.rpcCalls).not.toContain("claim_session_payment_charge_attempt");
+    expect(h.updates).toEqual([]);
+    expect(h.rows.payment_charge_attempts).toEqual(before);
+  };
+  beforeEach(() => {
+    seedLineage("usd"); h.claim = claimFor("usd");
+    h.pi = { id: PI_ID, status: "succeeded", amount: AMOUNT, currency: "usd", latest_charge: CHARGE_ID };
+  });
+  it("missing jurisdiction remains UNKNOWN and cannot claim or create", async () => {
+    delete h.rows.studio_payment_jurisdictions; await refused();
+  });
+  it("invalid country/currency pair cannot claim or create", async () => {
+    h.rows.studio_payment_jurisdictions = { payment_country: "US", payment_currency: "cad" }; await refused();
+  });
+  it("failed jurisdiction read cannot trust even an accompanying row", async () => {
+    h.readErrors = ["studio_payment_jurisdictions"]; await refused();
+  });
+  it("country mismatch after preparation cannot claim or create", async () => {
+    settings().stripe_account_country = "CA"; await refused();
+  });
+  it("persisted conflict blocks even when the original observation matches", async () => {
+    settings().stripe_account_country_conflict = "CA"; await refused();
+  });
+  it("unobserved US account cannot claim or create", async () => {
+    settings().stripe_account_country = null; await refused();
+  });
+  it("failed settings read cannot trust an accompanying bound row", async () => {
+    h.readErrors = ["studio_payment_settings"]; await refused();
+  });
+  it("healthy verified USD control still creates once with tenant/mode scoped reads", async () => {
+    expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(h.stripeCalls).toEqual(["pi_create"]);
+    expect(h.reads).toContainEqual({ table: "studio_payment_jurisdictions", filters: [{ column: "studio_id", value: STUDIO }] });
+    expect(h.reads).toContainEqual({ table: "studio_payment_settings", filters: [
+      { column: "studio_id", value: STUDIO }, { column: "stripe_livemode", value: false },
+      { column: "stripe_account_id", value: "acct_test" },
+    ] });
+  });
+  it.each([false, true])("deployment mode %s uses its own bound account settings", async (livemode) => {
+    h.livemode = livemode;
+    for (const table of ["payment_charge_attempts", "client_payment_methods", "studio_payment_settings"]) {
+      (h.rows[table] as Record<string, unknown>).stripe_livemode = livemode;
+    }
+    expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(h.stripeCalls).toEqual(["pi_create"]);
+    expect(h.reads).toContainEqual({ table: "studio_payment_settings", filters: [
+      { column: "studio_id", value: STUDIO }, { column: "stripe_livemode", value: livemode },
+      { column: "stripe_account_id", value: "acct_test" },
+    ] });
+  });
+  it.each([false, true])("deployment mode %s rejects an opposite-mode settings row before claiming", async (livemode) => {
+    h.livemode = livemode;
+    for (const table of ["payment_charge_attempts", "client_payment_methods"]) {
+      (h.rows[table] as Record<string, unknown>).stripe_livemode = livemode;
+    }
+    settings().stripe_livemode = !livemode;
+    const before = { ...(h.rows.payment_charge_attempts as Record<string, unknown>) };
+    // Existing lineage defense rejects the opposite mode before the country gate.
+    expect(await charge()).toMatchObject({ ok: false, outcome: "lineage_mismatch" });
+    expect(h.stripeCalls).toEqual([]);
+    expect(h.rpcCalls).not.toContain("claim_session_payment_charge_attempt");
+    expect(h.updates).toEqual([]);
+    expect(h.rows.payment_charge_attempts).toEqual(before);
+    expect(h.reads).toContainEqual({ table: "studio_payment_settings", filters: [
+      { column: "studio_id", value: STUDIO }, { column: "stripe_livemode", value: livemode },
+    ] });
+  });
+  it("existing CA legacy observation policy remains chargeable with verified CA/cad", async () => {
+    seedLineage("cad"); settings().stripe_account_country = null; h.claim = claimFor("cad");
+    h.pi = { id: PI_ID, status: "succeeded", amount: AMOUNT, currency: "cad", latest_charge: CHARGE_ID };
+    expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(h.stripeCalls).toEqual(["pi_create"]);
+  });
+  it("newly unavailable jurisdiction never hides a bound uncertain intent from reconciliation", async () => {
+    pending(PI_ID); delete h.rows.studio_payment_jurisdictions;
+    settings().stripe_account_country_conflict = "CA";
+    expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(h.stripeCalls).toEqual(["pi_retrieve"]);
+    expect(succeededWrites()).toHaveLength(1);
+  });
+  it("pending bound nonterminal intent retains EDF uncertainty without replacement create", async () => {
+    pending(PI_ID); delete h.rows.studio_payment_jurisdictions; h.pi.status = "processing";
+    expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual(["pi_retrieve"]);
+    expect((h.rows.payment_charge_attempts as Record<string, unknown>).status).toBe("pending_stripe");
+    expect(succeededWrites()).toEqual([]);
+  });
+  it("pending no-intent UNKNOWN refuses create and retains the uncertain claim", async () => {
+    pending(null); delete h.rows.studio_payment_jurisdictions;
+    expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual([]); expect(h.updates).toEqual([]);
+    expect((h.rows.payment_charge_attempts as Record<string, unknown>).status).toBe("pending_stripe");
+  });
+  it("healthy pending no-intent retains EDF same-key create recovery", async () => {
+    pending(null);
+    expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(h.stripeCalls).toEqual(["pi_create"]);
+  });
+  // The pre-claim read is unlocked: record_stripe_account_jurisdiction can land
+  // a conflict while the claim runs. The read before create must be fresh on
+  // EVERY path, a new ready attempt included.
+  const changedDuringClaim = async (change: () => void) => {
+    h.afterClaim = change;
+    expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.rpcCalls).toContain("claim_session_payment_charge_attempt");
+    expect(h.stripeCalls).toEqual([]); expect(h.updates).toEqual([]);
+    expect((h.rows.payment_charge_attempts as Record<string, unknown>).status).toBe("pending_stripe");
+  };
+  it("conflict recorded during a new attempt's claim refuses create and retains the claim", async () => {
+    await changedDuringClaim(() => { settings().stripe_account_country_conflict = "CA"; });
+  });
+  it("jurisdiction lost during a new attempt's claim refuses create and retains the claim", async () => {
+    await changedDuringClaim(() => { delete h.rows.studio_payment_jurisdictions; });
+  });
+  it("a new attempt reads country authority both before and after its claim", async () => {
+    expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(h.reads.filter((r) => r.table === "studio_payment_settings"
+      && r.filters.some((f) => f.column === "stripe_account_id"))).toHaveLength(2);
+  });
 });
