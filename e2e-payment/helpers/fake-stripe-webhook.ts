@@ -69,6 +69,7 @@ type AttemptFacts = {
   charge_reason: string;
   card_authorization_signature_id: string | null;
   stripe_account_id: string;
+  stripe_customer_id: string | null;
   stripe_payment_intent_id: string;
   stripe_charge_id: string | null;
   stripe_idempotency_key: string | null;
@@ -77,7 +78,7 @@ type AttemptFacts = {
 async function attemptFacts(attemptId: string): Promise<AttemptFacts> {
   const r = await adminQuery(
     `select id, studio_id, client_id, session_id, appointment_id, charge_reason,
-            card_authorization_signature_id, stripe_account_id,
+            card_authorization_signature_id, stripe_account_id, stripe_customer_id,
             stripe_payment_intent_id, stripe_charge_id, stripe_idempotency_key
        from public.payment_charge_attempts where id = $1`,
     [attemptId],
@@ -197,6 +198,17 @@ export function processorRefund(attemptId: string, runId: string = activeRunId()
     : null;
 }
 
+/** The Stripe Customer an event names. Real Stripe echoes the customer the
+ * charge path created the PaymentIntent for on the PaymentIntent and its Charge,
+ * and the webhook's identity check compares it to the attempt's
+ * stripe_customer_id. The fake ledger records no client identity (see
+ * ./fake-stripe-metadata-digest), so the attempt row is the only record of it.
+ * A row without one yields null: the event never invents a customer, and the
+ * app's refusal of a customerless attempt stays observable. */
+function eventCustomer(a: AttemptFacts): string | null {
+  return a.stripe_customer_id;
+}
+
 /** Refuse to build an event whose provider lineage does not hold. */
 function assertLineage(holds: boolean, what: string): void {
   if (!holds) {
@@ -249,6 +261,7 @@ export async function paymentIntentSucceededEvent(
     {
       id: a.stripe_payment_intent_id,
       object: "payment_intent",
+      customer: eventCustomer(a),
       status: "succeeded",
       amount,
       amount_received: amount,
@@ -294,6 +307,7 @@ export async function chargeRefundedEvent(
     {
       id: chargeId,
       object: "charge",
+      customer: eventCustomer(a),
       payment_intent: a.stripe_payment_intent_id,
       amount,
       amount_captured: amount,

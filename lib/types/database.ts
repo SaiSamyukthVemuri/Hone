@@ -864,6 +864,9 @@ export type Client = {
   // Migration 0052: lowercased/trimmed email maintained by trigger
   // for portal lookups. Added here by the PR #221 drift check.
   normalized_email: string | null;
+  // Migration 0231: the client's identification portrait, a pointer to one of
+  // their own client-scoped, unarchived treatment photos (null = none).
+  portrait_image_id: string | null;
 };
 
 // Migration 0126 (Willow PR A): dedicated dated CONSULTATION notes + SKIN/HAIR

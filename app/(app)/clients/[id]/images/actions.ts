@@ -8,10 +8,8 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import {
   TREATMENT_IMAGES_BUCKET,
-  TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS,
   TREATMENT_IMAGE_MAX_BYTES,
   validateTreatmentImageUpload,
-  validateTreatmentImagePath,
   sanitizeFilename,
   buildTreatmentImagePath,
   buildTreatmentImageThumbPath,
@@ -20,6 +18,7 @@ import {
 } from "@/lib/images/treatment-images";
 import { sanitizeTreatmentImage } from "@/lib/images/treatment-image-sanitize";
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
+import { signTreatmentImageUrl } from "./sign-treatment-image";
 
 // PR #271. Practitioner-only secure treatment image actions.
 //
@@ -294,79 +293,9 @@ export async function getTreatmentImageSignedUrlAction(input: {
   variant?: "original" | "thumb";
 }): Promise<SignedUrlResult> {
   const { studio } = await getCurrentPractitionerWithStudio();
-  try {
-    const supabase = await createClient();
-    // Re-check ownership: the row must belong to the caller's studio and not be
-    // archived. The bucket/path are read FROM the verified row, never input.
-    const { data: row, error } = await supabase
-      .from("treatment_images")
-      .select("storage_bucket, storage_path, studio_id, client_id")
-      .eq("id", input.imageId)
-      .eq("studio_id", studio.id)
-      .is("deleted_at", null)
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    if (!row) return { ok: false, error: "Image not available." };
-
-    // Trust boundary (PR #276): NEVER sign a path that does not bind to the
-    // caller's studio + the row's client. Rejects forged/malformed/cross-studio
-    // rows before the service-role signer touches storage.
-    const pathCheck = validateTreatmentImagePath({
-      expectedStudioId: studio.id,
-      rowStudioId: row.studio_id,
-      rowClientId: row.client_id,
-      storageBucket: row.storage_bucket,
-      storagePath: row.storage_path,
-    });
-    if (!pathCheck.ok) {
-      await recordOpsAlert({
-        severity: "critical",
-        event: "treatment_image_sign_rejected_invalid_path",
-        message: `signer rejected row: ${pathCheck.reason}`,
-        studioId: studio.id,
-        route: "/clients/[id]/images",
-        safeDetails: { imageId: input.imageId, reason: pathCheck.reason },
-      });
-      return { ok: false, error: "Image not available." };
-    }
-
-    const admin = createAdminClient();
-    if (input.variant === "thumb") {
-      // AUTHORIZATION CEILING (as on the page): a derivative URL is minted ONLY
-      // when the original itself signs, so it can never out-rank its original.
-      const { data: original, error: originalErr } = await admin.storage
-        .from(row.storage_bucket)
-        .createSignedUrl(row.storage_path, TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS);
-      if (originalErr || !original?.signedUrl) return { ok: false, error: "Image not available." };
-      const thumbPath = buildTreatmentImageThumbPath(row.storage_path);
-      if (!thumbPath) return { ok: false, error: "Image not available." };
-      const { data: thumb, error: thumbErr } = await admin.storage
-        .from(row.storage_bucket)
-        .createSignedUrl(thumbPath, TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS);
-      // No alert: a legacy photo without a derivative is expected.
-      if (thumbErr || !thumb?.signedUrl) return { ok: false, error: "Image not available." };
-      return { ok: true, url: thumb.signedUrl };
-    }
-    const { data: signed, error: signErr } = await admin.storage
-      .from(row.storage_bucket)
-      .createSignedUrl(row.storage_path, TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS);
-    if (signErr || !signed?.signedUrl) {
-      await recordOpsAlert({
-        severity: "warning",
-        event: "treatment_image_sign_failed",
-        // PR #285: generic message: a storage signing error can echo the
-        // signed URL / path. Central redaction is the backstop.
-        message: "Treatment image signed-URL creation failed.",
-        studioId: studio.id,
-        route: "/clients/[id]/images",
-        safeDetails: { imageId: input.imageId, bucket: row.storage_bucket },
-      });
-      return { ok: false, error: "Image not available." };
-    }
-    return { ok: true, url: signed.signedUrl };
-  } catch {
-    return { ok: false, error: "Image not available." };
-  }
+  // The signer is shared with the re-mint route (sign-treatment-image.ts); the
+  // action keeps its studio scope, exactly as before.
+  return signTreatmentImageUrl(studio.id, { imageId: input.imageId, variant: input.variant });
 }
 
 // PR #307: add / edit / clear the practitioner note under a treatment photo.
@@ -453,5 +382,38 @@ export async function archiveTreatmentImageAction(input: {
     return { ok: true };
   } catch {
     return { ok: false, error: "Could not archive the image." };
+  }
+}
+
+// FETT photos (HON-43), 0231: mark one of a client's own CLIENT-SCOPED photos
+// as their identification portrait, or clear it with imageId=null. The command
+// resolves the actor from auth.uid() per studio and the database refuses any
+// photo that is not a current client photo of the same client, so this action
+// only gates auth and maps the outcome. Errors stay generic: they never reveal
+// whether another client's or studio's photo exists.
+export async function setClientPortraitAction(input: {
+  clientId: string;
+  imageId: string | null;
+  expectedImageId?: string | null;
+}): Promise<ImageActionResult> {
+  await getCurrentPractitionerWithStudio();
+  try {
+    const supabase = await createClient();
+    const { error } = await supabase.rpc("set_client_portrait", {
+      p_client_id: input.clientId,
+      p_image_id: input.imageId,
+      p_expected_image_id: input.expectedImageId ?? null,
+    });
+    if (error) {
+      if (error.code === "P0231") {
+        return { ok: false, error: "The ID photo changed. Reload and try again." };
+      }
+      return { ok: false, error: "Could not update the ID photo." };
+    }
+    revalidatePath(`/clients/${input.clientId}/images`);
+    revalidatePath(`/clients/${input.clientId}`);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not update the ID photo." };
   }
 }
