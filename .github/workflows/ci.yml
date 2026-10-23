@@ -819,12 +819,36 @@ jobs:
 
       - name: Install Playwright Chromium (cache miss)
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
-      - name: Install Playwright system deps only (cache hit)
-        if: steps.pw-cache.outputs.cache-hit == 'true'
-        # Browser binaries come from the cache; only OS-level libs are needed.
-        run: npx playwright install-deps chromium
+      # System packages: CACHED per runner image + Playwright version and BOUNDED.
+      # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
+      # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
+      # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
+      # restores the cached .debs, cuts a stalled install off at 180 s and retries
+      # once on archive.ubuntu.com (300 s); the save runs straight after, not in a
+      # post step that a failed or cancelled job would skip.
+      - name: Resolve runner image
+        id: img
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright system packages (bounded, .deb cache)
+        timeout-minutes: 9
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Record setup duration
         id: setup_done
@@ -1145,12 +1169,36 @@ jobs:
 
       - name: Install Playwright Chromium (cache miss)
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
-      - name: Install Playwright system deps only (cache hit)
-        if: steps.pw-cache.outputs.cache-hit == 'true'
-        # Browser binaries come from the cache; only OS-level libs are needed.
-        run: npx playwright install-deps chromium
+      # System packages: CACHED per runner image + Playwright version and BOUNDED.
+      # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
+      # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
+      # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
+      # restores the cached .debs, cuts a stalled install off at 180 s and retries
+      # once on archive.ubuntu.com (300 s); the save runs straight after, not in a
+      # post step that a failed or cancelled job would skip.
+      - name: Resolve runner image
+        id: img
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright system packages (bounded, .deb cache)
+        timeout-minutes: 9
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Payment browser E2E (quick checkout, guarded fake Stripe)
         run: npm run test:e2e:payment
@@ -1191,8 +1239,11 @@ jobs:
       packages: read
     # run39713000378 mobile:3 observed passes before10min cancellation;
     # setup~10min + existing6-case phase~0.4min + finiteheadroom => hard12.
+    # 12 -> 15 (2026-10-23): run 39979564413 passed 6/6 and was cancelled at 12
+    # after an 8.4 min apt stall. Measured ~5.5 min + the bounded install (3 + 5
+    # min worst case) must fit. TARGET ~6 min is unchanged (CLAUDE.md section 4).
     # This ceiling is not a performance or physical-device acceptance target.
-    timeout-minutes: 12
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -1282,11 +1333,36 @@ jobs:
       - name: Install Playwright Chromium (cache miss)
         # Both projects (iPhone-profile + Pixel 5 control) run on Chromium.
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
-      - name: Install Playwright system deps only (cache hit)
-        if: steps.pw-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+      # System packages: CACHED per runner image + Playwright version and BOUNDED.
+      # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
+      # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
+      # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
+      # restores the cached .debs, cuts a stalled install off at 180 s and retries
+      # once on archive.ubuntu.com (300 s); the save runs straight after, not in a
+      # post step that a failed or cancelled job would skip.
+      - name: Resolve runner image
+        id: img
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright system packages (bounded, .deb cache)
+        timeout-minutes: 9
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Mobile completion browser E2E (chromium iphone-profile + control)
         run: npm run test:e2e:mobile
@@ -1426,12 +1502,36 @@ jobs:
 
       - name: Install Playwright Chromium (cache miss)
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
-      - name: Install Playwright system deps only (cache hit)
-        if: steps.pw-cache.outputs.cache-hit == 'true'
-        # Browser binaries come from the cache; only OS-level libs are needed.
-        run: npx playwright install-deps chromium
+      # System packages: CACHED per runner image + Playwright version and BOUNDED.
+      # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
+      # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
+      # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
+      # restores the cached .debs, cuts a stalled install off at 180 s and retries
+      # once on archive.ubuntu.com (300 s); the save runs straight after, not in a
+      # post step that a failed or cancelled job would skip.
+      - name: Resolve runner image
+        id: img
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright system packages (bounded, .deb cache)
+        timeout-minutes: 9
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Synthetic Google browser E2E (dual destination, guarded fake Google)
         run: npm run test:e2e:google

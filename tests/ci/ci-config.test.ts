@@ -616,22 +616,90 @@ describe("PR CI — path-aware lane selection", () => {
     expect(CI).toMatch(/require\('@playwright\/test\/package\.json'\)\.version/);
   });
 
-  it("a cache HIT skips the browser download and installs only system deps", () => {
+  it("a cache HIT skips the browser download; the system packages are installed either way", () => {
     expect((CI.match(/if: steps\.pw-cache\.outputs\.cache-hit != 'true'/g) ?? []).length).toBe(4);
-    expect((CI.match(/if: steps\.pw-cache\.outputs\.cache-hit == 'true'/g) ?? []).length).toBe(4);
-    expect((CI.match(/playwright install-deps chromium/g) ?? []).length).toBe(4);
+    expect((CI.match(/run: npx playwright install chromium$/gm) ?? []).length).toBe(4);
+    // Hit or miss, the OS packages come from the bounded, .deb-cached script.
+    expect((CI.match(/run: bash scripts\/ci\/playwright-system-deps\.sh$/gm) ?? []).length).toBe(4);
   });
 
   it("no browser download runs unconditionally", () => {
     const lines = CI.split("\n");
     const unguarded: number[] = [];
     lines.forEach((l, i) => {
-      if (l.includes("playwright install --with-deps chromium")) {
+      if (l.includes("npx playwright install chromium")) {
         const ctx = lines.slice(Math.max(0, i - 4), i).join("\n");
         if (!ctx.includes("cache-hit != 'true'")) unguarded.push(i + 1);
       }
     });
     expect(unguarded, "every browser download must be behind a cache-miss guard").toEqual([]);
+  });
+
+  // -------------------------------------------------------------------------
+  // SYSTEM PACKAGES: CACHED AND BOUNDED (2026-10-23 apt stall).
+  // Every ceiling cancellation on 2026-10-23 (6 of 6) was the Playwright
+  // system-deps step crawling at ~45 kB/s from the runner's Ubuntu mirror
+  // (up to 11.3 min) while the tests themselves passed
+  // (machines/SETUP-TIME-MEASURE-END.json). The .debs are cached per runner
+  // image + Playwright version, and an install that stalls is cut off and
+  // retried once on another mirror by scripts/ci/playwright-system-deps.sh.
+  // -------------------------------------------------------------------------
+  const PLAYWRIGHT_JOBS = ["browser-e2e-shard", "payment-browser-e2e", "mobile-completion-e2e", "google-browser-e2e"];
+  type PwStep = { name?: string; id?: string; if?: string; uses?: string; run?: string; with?: Record<string, string>; "timeout-minutes"?: number };
+  const pwSteps = (job: string): PwStep[] =>
+    ((yaml.load(CI) as { jobs: Record<string, { steps: PwStep[] }> }).jobs[job]?.steps ?? []);
+  const DEB_KEY = "pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}";
+
+  it.each(PLAYWRIGHT_JOBS)("%s: Playwright system .debs are restored and saved, keyed on runner image + Playwright version", (job) => {
+    const steps = pwSteps(job);
+    const at = (pred: (s: PwStep) => boolean) => steps.findIndex(pred);
+    const img = at((s) => s.id === "img");
+    const restore = at((s) => s.id === "deb-cache");
+    const deps = at((s) => (s.run ?? "").includes("scripts/ci/playwright-system-deps.sh"));
+    const save = at((s) => (s.uses ?? "").startsWith("actions/cache/save@"));
+    expect([img, restore, deps, save].every((i) => i >= 0), `${job}: image id, restore, install and save steps`).toBe(true);
+    expect(img < restore && restore < deps && deps < save, `${job}: resolve image -> restore -> install -> save`).toBe(true);
+    expect(steps[img].run).toContain("ImageOS");
+    expect(steps[img].run).toContain("ImageVersion");
+    // SHA-pinned (the parsed value drops the YAML comment, so the version
+    // comment is checked on the raw text below).
+    expect(steps[restore].uses).toMatch(/^actions\/cache\/restore@[0-9a-f]{40}$/);
+    expect(steps[save].uses).toMatch(/^actions\/cache\/save@[0-9a-f]{40}$/);
+    for (const ref of [steps[restore].uses, steps[save].uses]) {
+      expect(CI, `${ref} carries its # vX.Y.Z comment`).toMatch(new RegExp(`uses: ${ref!.replace(/[/.]/g, "\\$&")} # v\\d+\\.\\d+\\.\\d+\\n`));
+    }
+    expect(steps[restore].with).toMatchObject({ path: "~/apt-debs", key: DEB_KEY });
+    expect(steps[save].with).toMatchObject({ path: "~/apt-debs", key: DEB_KEY });
+    // Saved only on a miss, and straight after the install: a post-job save
+    // would be lost whenever the tests fail or the job is cancelled.
+    expect(steps[save].if).toBe("steps.deb-cache.outputs.cache-hit != 'true'");
+    expect(save).toBe(deps + 1);
+  });
+
+  it.each(PLAYWRIGHT_JOBS)("%s: the system-deps install always runs, bounded, through the script", (job) => {
+    const steps = pwSteps(job);
+    const deps = steps.filter((s) => (s.run ?? "").includes("scripts/ci/playwright-system-deps.sh"));
+    expect(deps).toHaveLength(1);
+    // Unconditional: a browser-cache MISS needs the system packages too, and
+    // the miss path no longer installs them itself (no --with-deps).
+    expect(deps[0].if).toBeUndefined();
+    expect(deps[0]["timeout-minutes"], "a step-level ceiling above the script's 3 + 5 min").toBeGreaterThanOrEqual(9);
+    expect(deps[0]["timeout-minutes"]).toBeLessThanOrEqual(10);
+    const miss = steps.find((s) => s.if === "steps.pw-cache.outputs.cache-hit != 'true'");
+    expect(miss?.run).toBe("npx playwright install chromium");
+  });
+
+  it("no unbounded apt install remains in ci.yml", () => {
+    expect(CI).not.toMatch(/playwright install --with-deps/);
+    expect(CI).not.toMatch(/npx playwright install-deps/);
+  });
+
+  it("the script bounds the install, retries once on another mirror, and round-trips the .deb cache", () => {
+    const script = readFileSync("scripts/ci/playwright-system-deps.sh", "utf8");
+    expect(script).toMatch(/timeout --kill-after=\S+ "\$FIRST" npx playwright install-deps chromium/);
+    expect(script).toMatch(/timeout --kill-after=\S+ "\$RETRY" npx playwright install-deps chromium/);
+    expect(script).toMatch(/FIRST="\$\{PW_DEPS_FIRST_TIMEOUT:-180\}"/);
+    expect(script).toMatch(/azure\\\.archive\\\.ubuntu\\\.com\|archive\.ubuntu\.com/);
   });
 
   it("emits timing diagnostics including a timeout hint", () => {
@@ -717,7 +785,9 @@ describe("PR CI — path-aware lane selection", () => {
     expect(budget("google-browser-e2e")).toBeGreaterThan(10);
     expect(budget("google-browser-e2e")).toBeLessThanOrEqual(15);
     expect(budget("mobile-completion-e2e")).toBeGreaterThan(10);
-    expect(budget("mobile-completion-e2e")).toBe(12);
+    // 12 -> 15 (2026-10-23): ~5.5 min measured + a bounded apt stall (3 + 5
+    // min) must fit. TARGET stays ~6 min (CLAUDE.md section 4).
+    expect(budget("mobile-completion-e2e")).toBe(15);
     // Targeted hard timeout 15, measured extended hard timeout 25 — both above
     // their <10 min targets. Parsed, not line-matched, so reformatting the
     // workflow cannot silently break this guard.
