@@ -24,8 +24,14 @@ import Stripe from "stripe";
 
 const h = vi.hoisted(() => ({
   createError: null as unknown,
+  createReply: null as Record<string, unknown> | null,
+  retrieveReply: null as Record<string, unknown> | null,
+  retrieveError: null as unknown,
+  retrieveCalls: 0,
+  claimPaymentIntentId: null as string | null,
   createKeys: [] as string[],
   alerts: [] as Array<{ severity: string; event: string }>,
+  alertInputs: [] as unknown[],
   updates: [] as Array<Record<string, unknown>>,
   rows: {} as Record<string, unknown>,
   claimResult: "claimed" as string,
@@ -37,10 +43,13 @@ const fakeStripe = {
   paymentIntents: {
     create: async (_params: unknown, opts: { idempotencyKey: string }) => {
       h.createKeys.push(opts.idempotencyKey);
+      if (h.createReply) return h.createReply;
       throw h.createError;
     },
     retrieve: async () => {
-      throw new Error("retrieve must not be reached");
+      h.retrieveCalls += 1;
+      if (h.retrieveReply) return h.retrieveReply;
+      throw h.retrieveError ?? new Error("retrieve must not be reached");
     },
     cancel: async () => {
       throw new Error("cancel must not be reached");
@@ -66,6 +75,7 @@ vi.mock("@/lib/stripe/session-payment-stripe", () => ({
 vi.mock("@/lib/ops/alerts", () => ({
   recordOpsAlert: async (input: { severity: string; event: string }) => {
     h.alerts.push({ severity: input.severity, event: input.event });
+    h.alertInputs.push(input);
   },
 }));
 vi.mock("@/lib/billing/charge-description", () => ({
@@ -143,7 +153,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
             stripe_account_id: "acct_test",
             stripe_customer_id: "cus_test",
             stripe_payment_method_id: "pm_test",
-            stripe_payment_intent_id: null,
+            stripe_payment_intent_id: h.claimPaymentIntentId,
             stripe_idempotency_key: null,
             status_before_claim: h.claimResult === "claimed" ? "ready" : "pending_stripe",
             // Recent, so an `already_pending` retry is inside the
@@ -182,8 +192,14 @@ const ATTEMPT_ROW = {
 
 beforeEach(() => {
   h.createError = null;
+  h.createReply = null;
+  h.retrieveReply = null;
+  h.retrieveError = null;
+  h.retrieveCalls = 0;
+  h.claimPaymentIntentId = null;
   h.createKeys = [];
   h.alerts = [];
+  h.alertInputs = [];
   h.updates = [];
   h.claimResult = "claimed";
   h.legacyRule = false;
@@ -323,3 +339,111 @@ describe("source shape: the runner consults the classifier in its terminal branc
     expect(src.match(/instanceof Stripe\.errors\.StripeError/g)).toHaveLength(1);
   });
 });
+
+
+// Runtime privacy regression: provider prose is untrusted even when its outcome
+// classification is definitive. Keep the financial state and SDK count pinned.
+describe("provider message privacy on the legacy charge producer", () => {
+  for (const code of ["card_declined", "authentication_required"]) {
+    it(`${code}: excludes provider prose from result, ledger, alerts and diagnostics`, async () => {
+      const privateText = "synthetic-private@example.invalid token=synthetic-secret";
+      const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        h.createError = new Stripe.errors.StripeCardError(raw({
+          message: privateText, code, type: "card_error", statusCode: 402,
+        }));
+        const result = await run();
+        expect(result).toMatchObject({ ok: false, outcome: "failed", failureCode: code });
+        expect(wroteFailed()).toBe(true);
+        expect(h.createKeys).toHaveLength(1);
+        expect(h.alerts).toContainEqual({
+          severity: code === "authentication_required" ? "critical" : "warning",
+          event: "session_payment_charge_failed",
+        });
+        expect(JSON.stringify([result, h.updates, h.alertInputs, diagnostic.mock.calls]))
+          .not.toContain(privateText);
+      } finally {
+        diagnostic.mockRestore();
+      }
+    });
+  }
+
+  it("unknown outcome keeps pending and one SDK call without logging provider prose", async () => {
+    const privateText = "synthetic-private@example.invalid token=synthetic-secret";
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      h.createError = new Error(privateText);
+      const result = await run();
+      expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+      expect(wroteFailed()).toBe(false);
+      expect(raisedManualReview()).toBe(true);
+      expect(h.createKeys).toHaveLength(1);
+      expect(JSON.stringify([result, h.updates, h.alertInputs, diagnostic.mock.calls]))
+        .not.toContain(privateText);
+    } finally {
+      diagnostic.mockRestore();
+    }
+  });
+});
+
+
+it("known-original retrieve failure excludes provider prose and never creates another intent", async () => {
+  const privateText = "synthetic-private@example.invalid token=synthetic-secret";
+  const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    h.claimResult = "already_pending";
+    h.claimPaymentIntentId = "pi_synthetic_original";
+    h.rows.payment_charge_attempts = {
+      ...ATTEMPT_ROW, status: "pending_stripe",
+      stripe_payment_intent_id: h.claimPaymentIntentId,
+    };
+    h.retrieveError = new Error(privateText);
+    const result = await run();
+    expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.retrieveCalls).toBe(1);
+    expect(h.createKeys).toHaveLength(0);
+    expect(wroteFailed()).toBe(false);
+    expect(raisedManualReview()).toBe(true);
+    expect(JSON.stringify([result, h.updates, h.alertInputs, diagnostic.mock.calls]))
+      .not.toContain(privateText);
+  } finally {
+    diagnostic.mockRestore();
+  }
+});
+
+
+for (const path of ["create reply", "known-original reconciliation"]) {
+  it(`${path}: canceled intent excludes last_payment_error prose without changing failed state`, async () => {
+    const privateText = "synthetic-private@example.invalid token=synthetic-secret";
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const reply = {
+        id: "pi_synthetic_canceled", status: "canceled", amount: AMOUNT, currency: "cad",
+        customer: "cus_test", livemode: false,
+        last_payment_error: { code: "card_declined", message: privateText },
+      };
+      if (path === "create reply") {
+        h.createReply = reply;
+      } else {
+        h.claimResult = "already_pending";
+        h.claimPaymentIntentId = reply.id;
+        h.rows.payment_charge_attempts = {
+          ...ATTEMPT_ROW, status: "pending_stripe", stripe_payment_intent_id: reply.id,
+        };
+        h.retrieveReply = reply;
+      }
+      const result = await run();
+      expect(result).toMatchObject({ ok: false, outcome: "failed", failureCode: "card_declined" });
+      expect(h.updates).toContainEqual(expect.objectContaining({
+        status: "failed", stripe_payment_intent_id: reply.id, stripe_status: "canceled",
+      }));
+      expect(h.createKeys).toHaveLength(path === "create reply" ? 1 : 0);
+      expect(h.retrieveCalls).toBe(path === "create reply" ? 0 : 1);
+      expect(h.alerts).toContainEqual({ severity: "warning", event: "session_payment_charge_failed" });
+      expect(JSON.stringify([result, h.updates, h.alertInputs, diagnostic.mock.calls]))
+        .not.toContain(privateText);
+    } finally {
+      diagnostic.mockRestore();
+    }
+  });
+}

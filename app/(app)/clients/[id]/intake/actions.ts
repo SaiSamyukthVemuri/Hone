@@ -1,5 +1,7 @@
 "use server";
 
+import { isDeepStrictEqual } from "node:util";
+
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -199,7 +201,6 @@ export async function markIntakeReviewedAction(formData: FormData): Promise<Revi
   if (error) {
     logIntakeActionFailure("intake_review_update_failed", {
       code: (error as { code?: string }).code,
-      message: error.message,
     });
     return { ok: false, error: REVIEW_DB_FAILURE };
   }
@@ -276,7 +277,6 @@ export async function saveIntakeNotesAction(formData: FormData): Promise<ReviewR
   if (error) {
     logIntakeActionFailure("intake_notes_update_failed", {
       code: (error as { code?: string }).code,
-      message: error.message,
     });
     return { ok: false, error: NOTES_DB_FAILURE };
   }
@@ -799,7 +799,12 @@ export async function saveAssistedIntakeStepAction(payload: {
   // Incompleteness is fine here and must stay fine: an assisted save is a
   // work-in-progress by definition, and findInvalidChoiceAnswers ignores absent
   // answers. Only a value that is present and not on the list is refused.
-  const invalidChoices = findInvalidChoiceAnswers(merged);
+  // Navigation posts the entire editor map: unchanged historical choices are
+  // not newly authored answers. Changed malformed choices still refuse, and
+  // the client's final submit validates the full applicable questionnaire.
+  const invalidChoices = findInvalidChoiceAnswers(merged).filter(
+    (key) => Object.hasOwn(answers, key) && !isDeepStrictEqual(answers[key], loaded.responses[key]),
+  );
   if (invalidChoices.length > 0) {
     logIntakeActionFailure("assisted_invalid_choice_rejected", {
       message: `rejected ${invalidChoices.length} out-of-range choice answer(s)`,

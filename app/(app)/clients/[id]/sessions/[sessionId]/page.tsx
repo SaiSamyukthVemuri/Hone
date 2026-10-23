@@ -193,6 +193,17 @@ export default async function SessionDetailPage({
   const lastEntryNotFromThisSession =
     lastEntry && !sessionEntryIds.has(lastEntry.id) ? lastEntry : null;
   const sessionPaymentAmount = pricedForPage.ok ? pricedForPage.result : null;
+  // HON-11: the quoted price that prefills the cash/e-transfer amount when the
+  // prepare form is hidden (no card on file). Quick checkout passes the same
+  // fact; without it this page showed a blank box for the visit the dashboard
+  // prefilled. Same resolver, through this session's linked appointment, and no
+  // extra read. Null when unresolvable: a zero would be a manufactured price.
+  const settlementQuotedAmountCents =
+    sessionPaymentAmount?.kind === "resolved"
+      ? sessionPaymentAmount.amountCents
+      : sessionPaymentAmount?.kind === "free"
+        ? 0
+        : null;
   // Populated from the SAME widened appointment read below; feeds the Finish
   // appointment workflow without a second read of the same row.
   let apptContext: {
@@ -442,6 +453,9 @@ export default async function SessionDetailPage({
     .eq("studio_id", studio.id)
     .eq("client_id", id)
     .is("deleted_at", null)
+    // HON-10 row 1: a void session's note is never "From last visit".
+    // record_status is NOT NULL (0119), so `neq` drops nothing else.
+    .neq("record_status", "void")
     .not("next_session_note", "is", null)
     .lt("started_at", session.started_at)
     .order("started_at", { ascending: false })
@@ -1051,6 +1065,7 @@ export default async function SessionDetailPage({
           appointmentId={linkedAppointmentId}
           settledMethod={liveSettlement?.method ?? null}
           settledAmountCents={liveSettlement?.amountCents ?? null}
+          settlementQuotedAmountCents={settlementQuotedAmountCents}
           // The UI's copy of the database's own rule: only a COMPLETED
           // appointment can carry a disposition (0187 answers anything else
           // with `not_completed`). Offering the controls on a visit that has

@@ -86,24 +86,31 @@ export async function fetchSlotsForClientBookingAction(params: {
     target = params.practitionerId;
   }
 
-  const slots = await getAvailableSlots(
-    supabase,
-    {
-      id: studio.id,
-      timezone: studio.timezone,
-      default_appointment_duration_minutes:
-        studio.default_appointment_duration_minutes,
-      buffer_minutes: studio.buffer_minutes,
-      practitioner_capacity_enabled: studio.practitioner_capacity_enabled,
-    },
-    params.date,
-    service.default_duration_minutes,
-    undefined,
-    // Legacy (flag off) ignores the id → studio-wide, exactly as today.
-    capacityOn ? target : null,
-    INTERNAL_SLOT_PACKING,
-  );
-  return { ok: true, slots };
+  // A failed read is a retryable refusal, never empty/free availability.
+  try {
+    const slots = await getAvailableSlots(
+      supabase,
+      {
+        id: studio.id,
+        timezone: studio.timezone,
+        default_appointment_duration_minutes:
+          studio.default_appointment_duration_minutes,
+        buffer_minutes: studio.buffer_minutes,
+        practitioner_capacity_enabled: studio.practitioner_capacity_enabled,
+      },
+      params.date,
+      service.default_duration_minutes,
+      undefined,
+      // Legacy (flag off) ignores the id → studio-wide, exactly as today.
+      capacityOn ? target : null,
+      INTERNAL_SLOT_PACKING,
+    );
+    return { ok: true, slots };
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.startsWith("availability_read_failed:")) throw err;
+    logBookingSlotError("availability", undefined);
+    return { ok: false, error: "Could not load times. Please try again.", code: "could_not_load_times" };
+  }
 }
 
 export type EligiblePractitioner = { id: string; displayName: string };

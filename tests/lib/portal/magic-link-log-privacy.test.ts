@@ -49,14 +49,28 @@ describe("portal magic-link operational logs withhold record ids", () => {
     noIds(event);
   });
 
-  it("redacts raw and encoded ids in a database failure, without sending", async () => {
+  it("omits raw and encoded ids in a database failure, without sending", async () => {
     const logs = captureLogs();
     const error = { code: "23503", message: `client=${CLIENT},studio=${STUDIO.replace(/-/g, "%2D")}` };
     expect(await issuePortalMagicLink({ from: () => ({ insert: async () => ({ error }) }) }, input)).toMatchObject({ ok: false });
     expect(mocks.send).not.toHaveBeenCalled();
     const event = payload(logs);
-    expect(event).toMatchObject({ event: "portal_magic_link_insert_failed", code: "23503", message: "client=[id],studio=[id]" });
+    expect(event).toEqual({ event: "portal_magic_link_insert_failed", code: "23503", timestamp: expect.any(String) });
     noIds(event);
+  });
+
+  it("withholds database error free text while preserving the failure code and return", async () => {
+    const logs = captureLogs();
+    const sentinel = `${input.email} clinical-private-sentinel synthetic-raw-secret synthetic-token-hash`;
+    const error = { code: "23514", message: `Rejected row: ${sentinel}` };
+    expect(await issuePortalMagicLink({ from: () => ({ insert: async () => ({ error }) }) }, input))
+      .toEqual({ ok: false, error: "Could not create the portal link. Please try again." });
+    expect(mocks.send).not.toHaveBeenCalled();
+    const event = payload(logs);
+    expect(event).toEqual({ event: "portal_magic_link_insert_failed", code: "23514", timestamp: expect.any(String) });
+    expect(Number.isNaN(Date.parse(String(event.timestamp)))).toBe(false);
+    noIds(event);
+    expect(JSON.stringify(event)).not.toContain("clinical-private-sentinel");
   });
 
   it("preserves the send-refusal marker and retryability without identifiers", async () => {

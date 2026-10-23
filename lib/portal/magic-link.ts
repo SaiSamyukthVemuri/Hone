@@ -55,12 +55,12 @@ export async function issuePortalMagicLink(
       user_agent_hash: input.userAgentHash ?? null,
     });
   if (insertErr) {
-    // Provider error messages can quote record ids; never log them raw.
+    // Database diagnostics can quote row content, email or token material.
+    // safeLog removes record ids only; omit free text at this call site.
     safeLog.error(
       JSON.stringify({
         event: "portal_magic_link_insert_failed",
         code: insertErr.code,
-        message: insertErr.message,
         timestamp: new Date().toISOString(),
       }),
     );

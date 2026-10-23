@@ -28,8 +28,8 @@ import { createRequire } from "node:module";
 //
 // WHAT THIS FILE IS NOT. It does not check that the conditions are
 // semantically ideal, and it deliberately says nothing about artifact, upload,
-// diagnostic or cleanup steps — those are already `if: failure()` or
-// `if: always()` by design and are not verification. See the limitations note
+// diagnostic or cleanup steps — those have deliberate retention/cleanup
+// conditions and are not verification. See the limitations note
 // at the bottom for what a future step could do to slip past this.
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -52,6 +52,7 @@ type Step = {
   run?: string;
   uses?: string;
   if?: string;
+  with?: Record<string, unknown>;
 };
 type Job = { steps?: Step[] };
 
@@ -707,19 +708,41 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
     ).toBe(true);
   });
 
-  it("artifact, diagnostic and cleanup steps are left alone", () => {
-    // Scope statement as a test: this change must not have widened conditions
-    // on steps that already had deliberate ones. Upload-on-failure stays
-    // failure-only; it is not verification and running it on success is waste.
+  it("only the browser matrix retains retry diagnostics after a completed successful job", () => {
+    // A failed attempt followed by a passing retry still has useful traces.
+    // This exact matrix upload is the sole retention exception; other uploads
+    // remain failure-only, and diagnostic/cleanup steps retain always().
     const conds: string[] = [];
-    for (const [, job] of jobs(CI_BODY)) {
+    let matrixUploads = 0;
+    let diagnostics = 0;
+    let cleanups = 0;
+    for (const [jobId, job] of jobs(CI_BODY)) {
       for (const s of job.steps ?? []) {
         const n = (s.name ?? "").toLowerCase();
-        if (n.includes("upload") && s.if) conds.push(s.if.replace(/\s+/g, ""));
+        if (n.includes("upload")) {
+          expect(typeof s.if, `${jobId}: ${s.name} needs an explicit retention condition`).toBe("string");
+          if (jobId === "browser-e2e-shard" && s.with?.name === "playwright-traces-shard-${{ matrix.shard }}") {
+            matrixUploads++;
+            expect(s.if).toBe("${{ !cancelled() }}");
+            expect(survivesFailure(s.if)).toBe(true);
+            expect(s.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
+            expect(s.with).toEqual({ name: "playwright-traces-shard-${{ matrix.shard }}", path: "test-results/", "retention-days": 7 });
+          } else {
+            conds.push(s.if!.replace(/\s+/g, ""));
+          }
+        }
+        if (n === "timing diagnostics" || n.startsWith("clean run-scoped fake ledger")) {
+          expect(s.if, `${jobId}: ${s.name}`).toBe("always()");
+          if (n === "timing diagnostics") diagnostics++;
+          else cleanups++;
+        }
       }
     }
+    expect(matrixUploads).toBe(1);
     expect(conds.length).toBeGreaterThan(0);
     for (const c of conds) expect(c).toContain("failure()");
+    expect(diagnostics).toBeGreaterThan(0);
+    expect(cleanups).toBeGreaterThanOrEqual(3);
   });
 });
 

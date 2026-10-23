@@ -307,10 +307,11 @@ before assuming the diff broke something.**
 | validate (typecheck/lint/build/unit) | 8 min |
 | db integration | 8 min |
 | targeted browser shard (×3) | target ~6 min · **hard timeout 15 min** |
-| extended browser shard (×4) | target <10 min · **hard timeout 18 min** |
-| nightly browser shard (×4) | hard timeout 15 min |
+| extended browser shard (×4) | target <10 min · **hard timeout 25 min** |
+| nightly browser shard (×4) | hard timeout 25 min (same quarter-suite as extended) |
+| nightly payment / Google · mobile | hard timeout 18 min · 15 min |
 | payment browser e2e (fake stripe) | target ~10 min · **hard timeout 18 min** |
-| Google / mobile | 10 min each |
+| Google / mobile | 15 min / 12 min |
 
 ---
 
@@ -366,6 +367,21 @@ never a blanket reset or email-domain deletion.
   checkout sets `persist-credentials: false`. No workflow holds write
   credentials. A new workflow that genuinely needs one declares **job-level**
   `permissions:` rather than widening the top-level block.
+- **One sanctioned credential (D7b, Sam, 2026-10-22).** Anonymous image pulls
+  were throttled on both `ghcr.io` and `public.ecr.aws`, so each
+  Supabase-starting job logs in to `ghcr.io` with its own token through the
+  SHA-pinned `docker/login-action`, and only those jobs declare job-level
+  `permissions: { contents: read, packages: read }`. That exact shape is the
+  only credential use `tests/ci/ci-config.test.ts` exempts; any other token,
+  scope, registry or secret is still refused. The login is held across ONE
+  step only: a direct pinned-CLI `supabase start` (no checked-out script), then
+  an `if: always()` `docker logout ghcr.io`. A failed start falls through to a
+  single credential-free retry step, where `supabase-start-bind-retry.sh
+  --after-failed-start` retries once only on the port-bind signature in the
+  first start's log. No step that runs a package manager, node or a
+  repository script (`npm ci` included) may precede the login in its job, so no
+  PR-controlled process exists while the credential does (Codex P2 4353990804,
+  4354172124, 4354428027).
 - Codex exact-head review (`npm run eng -- status <pr>`) is **operator-side**. Do
   not wire it into a workflow: it needs a GitHub API credential, which is exactly
   what the posture above removes.
