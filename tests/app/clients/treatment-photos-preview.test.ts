@@ -23,7 +23,10 @@ function grep(pattern: string, paths: string): string {
 
 const PAGE = read("app/(app)/clients/[id]/images/page.tsx");
 const MANAGER = read("app/(app)/clients/[id]/images/TreatmentImagesManager.tsx");
-const ACTIONS = read("app/(app)/clients/[id]/images/actions.ts");
+// The signer moved into sign-treatment-image.ts (shared with the re-mint route,
+// Codex P1 4307807754); the signed-URL surface is both files together.
+const ACTIONS =
+  read("app/(app)/clients/[id]/images/actions.ts") + "\n" + read("app/(app)/clients/[id]/images/sign-treatment-image.ts");
 
 describe("server-side preview signing (short-lived, ownership-checked)", () => {
   it("the page signs preview URLs with the service-role client after the studio-scoped load", () => {
@@ -101,4 +104,26 @@ describe("scope: no annotation/OCR/AI/AR assets/comparison/export", () => {
       expect(src).not.toMatch(/side-by-side|\bcomparison\b/i);
     });
   }
+});
+
+describe("CLN-005 current-image preview wiring", () => {
+  it("routes opens, closes, image failures and unmount through the request controller", () => {
+    expect(MANAGER).toContain("createPhotoPreviewController");
+    expect(MANAGER).toContain("preview?.imageId === modal?.id");
+    expect(MANAGER).toContain("previewRequests.current?.open(img.id)");
+    expect(MANAGER).toContain("previewRequests.current?.close()");
+    expect(MANAGER).toContain("previewRequests.current?.dispose()");
+    expect(MANAGER).toContain("previewRequests.current?.onImageError(modal.id, currentPreview?.generation ?? -1)");
+    expect(MANAGER).not.toContain("setModalUrl(res.url)");
+  });
+});
+
+
+describe("CLN-006 photo opener replaced by a label refresh", () => {
+  it("uses the shipped settled-close fallback only for a detached opener", () => {
+    expect(MANAGER).toContain("useReturnFocus<HTMLDivElement>(modal !== null)");
+    expect(MANAGER).toContain("previewOpener.current && !previewOpener.current.isConnected");
+    expect(MANAGER).toContain("returnToGallery()");
+    expect(MANAGER).toContain("ref={galleryFocusRef}");
+  });
 });

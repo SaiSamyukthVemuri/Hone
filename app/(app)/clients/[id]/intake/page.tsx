@@ -46,6 +46,7 @@ import {
 import {
   REVIEW_ANSWER_COPY,
   reviewAnswerState,
+  yesNoAnswerLabel,
 } from "@/lib/intake/review-answers";
 import {
   deriveIntakeReviewFlags,
@@ -107,12 +108,12 @@ function renderResponse(q: Question, value: unknown, notes: unknown): React.Reac
   if (q.type === "single_select" && typeof value === "string") {
     return <span>{optionLabel(q, value)}</span>;
   }
-  if (q.type === "yes_no" && typeof value === "string") {
+  if (q.type === "yes_no") {
     const notesText =
       typeof notes === "string" && notes.trim().length > 0 ? notes : null;
     return (
       <span>
-        <span className="font-medium">{value === "yes" ? "Yes" : "No"}</span>
+        <span className="font-medium">{yesNoAnswerLabel(value)}</span>
         {notesText && (
           <span className="block whitespace-pre-wrap text-neutral-600">
             {notesText}
@@ -559,7 +560,6 @@ function AllergiesSummary({
   responses: Record<string, unknown>;
 }) {
   const hasAllergies = responses.has_allergies === "yes";
-  const requiresEpipen = responses.requires_epipen === "yes";
   const allergyNotes =
     typeof responses.has_allergies_notes === "string"
       ? responses.has_allergies_notes.trim()
@@ -598,7 +598,7 @@ function AllergiesSummary({
       <ul className="mt-3 flex flex-col gap-1.5 text-sm text-rose-900 dark:text-rose-100">
         <li>
           <span className="font-medium">Severe reaction / EpiPen:</span>{" "}
-          {requiresEpipen ? "Yes" : "No"}
+          {yesNoAnswerLabel(responses.requires_epipen)}
         </li>
         {hasAllergies && (
           <li>

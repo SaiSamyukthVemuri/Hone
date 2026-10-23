@@ -261,6 +261,11 @@ export async function refreshAccountStatusFromStripe(params: {
   let account: Stripe.Account;
   try {
     account = await stripe.accounts.retrieve(params.stripeAccountId);
+    // A response must belong to the bound account before any readiness or
+    // completion fact is derived or synchronized onto that studio.
+    if (account?.id !== params.stripeAccountId) {
+      throw new Error("stripe_account_refresh_identity_unverified");
+    }
   } catch (err) {
     logInternalStripeError("stripe_accounts_retrieve_failed", {
       stripeAccountId: params.stripeAccountId,

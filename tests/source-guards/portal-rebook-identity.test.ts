@@ -709,8 +709,11 @@ describe("P2-1. the offered set is the public set", () => {
     // re-reads under the lock and decides.
     const book = CODE.slice(CODE.indexOf("export async function bookAnotherAppointmentAction"));
     expect(book).toContain("getAvailableSlots");
-    // The sentence is wrapped, so the assertion must sit inside one source line.
-    expect(RAW).toContain("failure-aware loader here would turn a transient blip");
+    // Only classified advisory failures may defer to the locked command.
+    // Unexpected errors must still throw, never become invented free slots.
+    expect(book).toContain('err.message.startsWith("availability_read_failed:")');
+    expect(book).toMatch(/if \(!\(err instanceof Error\) \|\| !err\.message\.startsWith\("availability_read_failed:"\)\) throw err/);
+    expect(book).toContain('logRebookError("portal_rebook_advisory_read_failed"');
   });
 
   it("NEGATIVE CONTROL: the discovery rule fires on the raw-generator shape", () => {

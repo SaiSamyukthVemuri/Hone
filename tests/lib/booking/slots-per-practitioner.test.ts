@@ -28,6 +28,7 @@ function mock(data: {
   overrides?: Win[];
   defaults?: Win[];
   reservationsByKey?: Record<string, Res[]>;
+  failAt?: { table: string; practitioner?: string | null };
 }) {
   function builder(table: string) {
     const f: Record<string, unknown> = {};
@@ -43,6 +44,10 @@ function mock(data: {
       return b;
     };
     const resolve = () => {
+      if (data.failAt?.table === table &&
+          (!("practitioner" in data.failAt) || data.failAt.practitioner === f.practitioner_id)) {
+        return { data: null, error: { code: "XX000", message: "synthetic private availability diagnostic" } };
+      }
       if (table === "studio_blockouts") return { data: data.blockouts ?? [] };
       if (table === "studio_availability_overrides") {
         const want = "practitioner_id" in f ? f.practitioner_id : null;
@@ -80,6 +85,27 @@ const open = (practitioner_id: string | null, o: string, c: string): Win => ({
   is_open: true,
   open_time: `${o}:00`,
   close_time: `${c}:00`,
+});
+
+describe("SCH-002 unread availability is unknown, never a free/fallback timeline", () => {
+  it.each([
+    { on: false, table: "studio_blockouts" },
+    { on: true, table: "studio_blockouts" },
+    { on: false, table: "studio_calendar_reservations" },
+    { on: true, table: "studio_calendar_reservations" },
+    { on: true, table: "studio_availability_overrides", practitioner: P1 },
+    { on: true, table: "studio_availability_overrides", practitioner: null },
+    { on: true, table: "studio_availability_default", practitioner: P1 },
+    { on: true, table: "studio_availability_default", practitioner: null },
+  ])("refuses an unread $table (capacity=$on, practitioner=$practitioner)", async ({ on, ...failAt }) => {
+    const result = await getAvailableSlots(
+      mock({ defaults: [open(null, "10:00", "17:00")], failAt }),
+      studio({ on }), DATE, 60, undefined, P1,
+    ).catch((error: unknown) => error);
+    expect(result).toBeInstanceOf(Error);
+    expect((result as Error).message).toMatch(/^availability_read_failed:/);
+    expect((result as Error).message).not.toContain("synthetic private");
+  });
 });
 
 describe("OFF-safety: capacity off ignores practitionerId entirely", () => {
