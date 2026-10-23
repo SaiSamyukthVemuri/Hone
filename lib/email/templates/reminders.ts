@@ -7,6 +7,8 @@ import {
   type IntakeReminderKind,
   type IntakeSectionCopy,
 } from "@/lib/email/templates/intake-reminder";
+import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
+import { withReference } from "@/lib/email/subject-reference";
 
 function escapeHtml(s: string): string {
   return s
@@ -58,7 +60,21 @@ type ReminderProps = {
   // at the send decision. Optional (like portalLoginUrl) so the callers and
   // tests that build a plain reminder need no change.
   intakeUrl?: string | null;
+  // A short non-sensitive per-booking label (lib/email/booking-reference.ts):
+  // one booking's reminders must not thread into another's (Codex 4355360168;
+  // tests/lib/email/email-subject-sweep.test.ts).
+  bookingReference: string;
 };
+
+// PREVIEW RULE (HIPAA-READY-01, #828): a mail client that strips the
+// preheader's invisible filler shows the preheader followed by the first body
+// text, so the reminder OPENS with a headline and a lead that name only the
+// studio. When the appointment is, the client's name and the service follow
+// them, out of the preview window. Proved in
+// tests/lib/email/preheader-minimum-necessary.test.ts.
+function reminderLead(studioName: string): string {
+  return `This is a reminder from ${studioName} about your upcoming appointment. The details are below.`;
+}
 
 function reminderHtml(opts: {
   headline: string;
@@ -70,7 +86,6 @@ function reminderHtml(opts: {
   const { headline, lead, p, intake } = opts;
   const dayStr = dayLabel(p.startsAt, p.timezone);
   const timeStr = rangeLabel(p.startsAt, p.endsAt, p.timezone);
-  const safeClient = escapeHtml(p.clientName);
   const safeStudio = escapeHtml(p.studioName);
   const safeService = escapeHtml(p.serviceName);
   const safePract = p.practitionerName ? escapeHtml(p.practitionerName) : null;
@@ -87,7 +102,7 @@ function reminderHtml(opts: {
           ${escapeHtml(headline)}
         </td></tr>
         <tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6;">
-          Hi ${safeClient},
+          ${escapeHtml(reminderLead(p.studioName))}
         </td></tr>
         <tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6;">
           ${escapeHtml(lead)}
@@ -102,12 +117,11 @@ function reminderHtml(opts: {
         </td></tr>
         ${
           // PLACEMENT IS A PRIVACY CONSTRAINT, not a layout preference.
-          // These templates carry no preheader element, so mail clients
-          // derive preview text from the FIRST visible nodes - brand,
-          // headline, greeting, lead. Keeping the intake section below the
-          // appointment details keeps intake-completion state off the
-          // recipient's lock screen while leaving it the first thing read
-          // after the facts.
+          // A client that strips the preheader filler derives preview text
+          // from the FIRST visible nodes - brand, headline, lead. Keeping the
+          // intake section below the appointment details keeps
+          // intake-completion state off the recipient's lock screen while
+          // leaving it the first thing read after the facts.
           //
           // THE CAVEAT IS LOAD-BEARING, not politeness. Intake state is read
           // LIVE before the send decision, but the client can still submit
@@ -166,6 +180,9 @@ function reminderHtml(opts: {
         </td></tr>`
             : ""
         }
+        <tr><td style="padding-bottom:16px; font-family:-apple-system, system-ui, sans-serif; font-size:12px; color:#6B6B6B;">
+          Booking reference: ${escapeHtml(p.bookingReference.trim())}
+        </td></tr>
         <tr><td style="padding-top:24px; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">
           ${safeStudio} via Hone
         </td></tr>
@@ -186,7 +203,7 @@ function reminderText(opts: {
   const timeStr = rangeLabel(p.startsAt, p.endsAt, p.timezone);
   return `${headline}
 
-Hi ${p.clientName},
+${reminderLead(p.studioName)}
 
 ${lead}
 
@@ -200,6 +217,7 @@ ${intake && p.intakeUrl ? `\n${intake.heading}\n\n${intake.body}\n\n${INTAKE_CTA
 ${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\n` : ""}
 ${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}
 Cancel: ${p.cancellationUrl}
+Booking reference: ${p.bookingReference.trim()}
 ${p.portalLoginUrl ? `\nView your forms, appointments, and care instructions in your secure client portal:\n${p.portalLoginUrl}\n` : ""}`;
 }
 
@@ -218,19 +236,19 @@ export function build24hReminderEmail(p: ReminderProps): {
   html: string;
   text: string;
 } {
-  // PR #157 patch. Subject line carries the appointment start time;
-  // recipient sees it in the inbox preview before opening the email.
-  // 12h with AM/PM is unambiguous; 24h "11:00" forced a guess.
-  const timeStr = localTimeString12h(p.startsAt, p.timezone);
-  const subject = `Reminder: ${p.serviceName} tomorrow at ${timeStr}`;
-  const headline = "Your appointment is tomorrow.";
-  const lead =
-    "This is a reminder that you have an appointment with us tomorrow.";
+  // SUBJECT RULE (HIPAA-READY-01, #828): the subject used to carry the
+  // service and start time (PR #157). A subject persists in the inbox, shows
+  // on a lock screen and is stored by the email provider, so the time now
+  // lives in the headline and body only (12h, as PR #157 chose).
+  const subject = withReference(`Appointment reminder from ${p.studioName}`, p.bookingReference);
+  // The headline names no day: "tomorrow" is a relative date (PREVIEW RULE).
+  const headline = "Your appointment is coming up.";
+  const lead = "Your appointment is tomorrow.";
   const intake = intakeSectionFor("24h", p);
   return {
     subject,
-    html: reminderHtml({ headline, lead, subject, p, intake }),
-    text: reminderText({ headline, lead, p, intake }),
+    html: withPreheader(reminderHtml({ headline, lead, subject, p, intake }), clientPreheader(p.studioName)),
+    text: withTextPreheader(reminderText({ headline, lead, p, intake }), clientPreheader(p.studioName)),
   };
 }
 
@@ -239,16 +257,17 @@ export function build2hReminderEmail(p: ReminderProps): {
   html: string;
   text: string;
 } {
-  // PR #157 patch. Same 12h subject-line fix as the 24h reminder.
-  const timeStr = localTimeString12h(p.startsAt, p.timezone);
-  const subject = `Reminder: ${p.serviceName} today at ${timeStr}`;
+  // SUBJECT RULE (#828): same as the 24h reminder, and DISTINCT from it (Codex
+  // P1 4354990818): identical subjects thread the 2-hour reminder under the
+  // 24-hour one. "see you soon" names the window without a date or time.
+  const subject = withReference(`Appointment reminder from ${p.studioName}: see you soon`, p.bookingReference);
   const headline = "See you soon.";
   const lead = "Your appointment is in about 2 hours.";
   const intake = intakeSectionFor("2h", p);
   return {
     subject,
-    html: reminderHtml({ headline, lead, subject, p, intake }),
-    text: reminderText({ headline, lead, p, intake }),
+    html: withPreheader(reminderHtml({ headline, lead, subject, p, intake }), clientPreheader(p.studioName)),
+    text: withTextPreheader(reminderText({ headline, lead, p, intake }), clientPreheader(p.studioName)),
   };
 }
 
@@ -256,6 +275,8 @@ type NoShowFollowupProps = {
   clientName: string;
   studioName: string;
   rebookUrl: string | null;
+  // Per-booking label: two missed bookings must not share one thread.
+  bookingReference: string;
 };
 
 export function buildNoShowFollowupEmail(p: NoShowFollowupProps): {
@@ -263,9 +284,12 @@ export function buildNoShowFollowupEmail(p: NoShowFollowupProps): {
   html: string;
   text: string;
 } {
-  const subject = "We missed you today";
-  const safeClient = escapeHtml(p.clientName);
+  // SUBJECT RULE (HIPAA-READY-01, #828): no date, relative date or attendance
+  // fact in a subject (Codex P1 on #859), and the PREVIEW RULE keeps it out of
+  // the body's opening too. The body still says the client was not seen.
+  const subject = withReference(`A message from ${p.studioName}`, p.bookingReference);
   const safeStudio = escapeHtml(p.studioName);
+  const lead = `This is a note from ${p.studioName} about your recent appointment.`;
 
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" /><title>${escapeHtml(subject)}</title></head>
@@ -275,10 +299,10 @@ export function buildNoShowFollowupEmail(p: NoShowFollowupProps): {
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
         <tr><td style="padding-bottom:24px; font-family:Georgia, serif; font-weight:700; font-size:18px; letter-spacing:-0.02em;">Hone</td></tr>
         <tr><td style="padding-bottom:16px; font-family:Georgia, serif; font-weight:700; font-size:28px; letter-spacing:-0.02em; line-height:1.15;">
-          We missed you today.
+          We hope you&rsquo;re well.
         </td></tr>
         <tr><td style="padding-bottom:20px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6;">
-          Hi ${safeClient},
+          ${escapeHtml(lead)}
         </td></tr>
         <tr><td style="padding-bottom:24px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6;">
           We didn&rsquo;t see you at your appointment today. We hope everything is okay.
@@ -290,6 +314,9 @@ export function buildNoShowFollowupEmail(p: NoShowFollowupProps): {
               </td></tr>`
             : ""
         }
+        <tr><td style="padding-bottom:16px; font-family:-apple-system, system-ui, sans-serif; font-size:12px; color:#6B6B6B;">
+          Booking reference: ${escapeHtml(p.bookingReference.trim())}
+        </td></tr>
         <tr><td style="padding-top:24px; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">
           ${safeStudio} via Hone
         </td></tr>
@@ -298,12 +325,19 @@ export function buildNoShowFollowupEmail(p: NoShowFollowupProps): {
   </table>
 </body></html>`;
 
-  const text = `Hi ${p.clientName},
+  const text = `We hope you're well.
+
+${lead}
 
 We didn't see you at your appointment today. We hope everything is okay.
 ${p.rebookUrl ? `\nIf you'd like to rebook: ${p.rebookUrl}\n` : ""}
+Booking reference: ${p.bookingReference.trim()}
 ${p.studioName} via Hone
 `;
 
-  return { subject, html, text };
+  return {
+    subject,
+    html: withPreheader(html, clientPreheader(p.studioName)),
+    text: withTextPreheader(text, clientPreheader(p.studioName)),
+  };
 }

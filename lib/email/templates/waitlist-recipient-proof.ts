@@ -58,6 +58,8 @@
 //
 // Pure module: no I/O, no env reads, no server-only import, no provider.
 
+import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
+
 export type WaitlistRecipientProofEmailInput = {
   /** Studio display name. Rendered as text only; never used to build a header. */
   studioName: string;
@@ -157,9 +159,14 @@ export function buildWaitlistRecipientProofEmail(
       ? `turn down the opening at ${studio}`
       : `book your consultation with ${studio}`;
 
+  // PREVIEW RULE (HIPAA-READY-01, #828). The code must not reach a lock-screen
+  // notification or a preview pane (see the header), and a client previews the
+  // START of the message. So the instruction comes first and the code after
+  // it, in both parts, behind the neutral preheader. Proved by
+  // tests/lib/email/waitlist-preview-minimum-necessary.test.ts.
   const text =
+    `Enter the code below on the page you already have open to ${consequence}.\n\n` +
     `Your confirmation code is ${code}\n\n` +
-    `Enter it on the page you already have open to ${consequence}.\n\n` +
     `The code expires in ${ttl} and can be used once. ` +
     `If you asked for a new code, any earlier code has already stopped working.\n\n` +
     `If you did not ask for this, you can ignore this email — nothing will ` +
@@ -202,5 +209,13 @@ export function buildWaitlistRecipientProofEmail(
   </table>
 </body></html>`;
 
-  return { subject, html, text };
+  // IDEMPOTENCY: this send is keyed on the challenge alone, so the payload must
+  // be a pure function of the challenge. The preheader is derived from the same
+  // studio value, so it is.
+  const preheader = clientPreheader(studio);
+  return {
+    subject,
+    html: withPreheader(html, preheader),
+    text: withTextPreheader(text, preheader),
+  };
 }

@@ -413,6 +413,7 @@ async function sendReminderPass(opts: {
     // non-null, and the link was minted.
     result = await sendIntakeReminderToClient({
       kind: opts.kind,
+      appointmentId: appt.id,
       clientEmail: appt.client.email,
       studioName: appt.studio.name,
       startsAt: new Date(appt.starts_at),

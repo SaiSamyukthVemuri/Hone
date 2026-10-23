@@ -413,6 +413,7 @@ export async function publicCancelAppointmentAction(
         .maybeSingle();
       if (owner?.email && apptStudio) {
         const sent = await sendCancellationEmail({
+          appointmentId: resolved.appointment_id,
           to: owner.email,
           recipientName: owner.display_name?.trim() || owner.email,
           // Actor + client are one and the same here: a public token
