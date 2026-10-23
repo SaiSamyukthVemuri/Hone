@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -92,5 +92,74 @@ describe("public login enumeration safety + flow are UNCHANGED", () => {
     for (const src of [ISSUE, ACTION, CARD]) {
       expect(src).not.toMatch(/twilio|sendSms|stripe/i);
     }
+  });
+});
+
+
+const portal = vi.hoisted(() => ({
+  identity: vi.fn(), limit: vi.fn(), lookup: vi.fn(), from: vi.fn(), send: vi.fn(), write: vi.fn(),
+  filters: [] as Array<[string, unknown]>,
+}));
+vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: portal.identity }));
+vi.mock("@/lib/rate-limit/public", () => ({ limitPractitionerClientEmail: portal.limit }));
+vi.mock("@/lib/email/send-appointment", () => ({ sendEmailSafely: portal.send }));
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ from: portal.from }) }));
+vi.mock("@/lib/email/studio-identity", () => ({ resolveReplyTo: vi.fn(), studioClientContactEmail: vi.fn() }));
+vi.mock("@/lib/email/templates/portal-message-notification", () => ({ buildPortalMessageNotificationEmail: vi.fn() }));
+vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://hone.example.test" }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+import { createPortalMessageAction } from "@/app/(app)/clients/[id]/portal-messages-actions";
+
+const PORTAL_STUDIO = "11111111-2222-4333-8444-555555555555";
+const PORTAL_CLIENT = "22222222-3333-4444-8555-666666666666";
+const PORTAL_ACTOR = "33333333-4444-4555-8666-777777777777";
+function portalForm() {
+  const data = new FormData(); data.set("client_id", PORTAL_CLIENT);
+  data.set("subject", "Synthetic subject"); data.set("body", "Synthetic body"); return data;
+}
+describe("portal-message client lookup log privacy", () => {
+  beforeEach(() => {
+    vi.clearAllMocks(); portal.filters = [];
+    portal.identity.mockResolvedValue({ practitioner: { id: PORTAL_ACTOR, active: true }, studio: { id: PORTAL_STUDIO } });
+    portal.limit.mockResolvedValue({ allowed: true });
+    portal.send.mockImplementation(() => { throw new Error("Unexpected provider path"); });
+    portal.write.mockImplementation(() => { throw new Error("Unexpected write path"); });
+    portal.from.mockImplementation((table: string) => {
+      expect(table).toBe("clients");
+      const q = {
+        select: () => q,
+        eq: (key: string, value: unknown) => { portal.filters.push([key, value]); return q; },
+        maybeSingle: portal.lookup, insert: portal.write, update: portal.write,
+      };
+      return q;
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+  it("omits database free text and retains the same scoped lookup failure without writing or sending", async () => {
+    portal.lookup.mockResolvedValue({ data: null, error: { code: "57014", message: `synthetic-patient@example.test clinical-sentinel synthetic-token ${PORTAL_CLIENT}` } });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(createPortalMessageAction(portalForm())).resolves.toEqual({ ok: false, error: "Couldn't load client. Please try again." });
+    expect(portal.identity).toHaveBeenCalledOnce();
+    expect(portal.limit).toHaveBeenCalledExactlyOnceWith({ action: "portal_message", practitionerId: PORTAL_ACTOR, clientId: PORTAL_CLIENT });
+    expect(portal.filters).toEqual([["id", PORTAL_CLIENT], ["studio_id", PORTAL_STUDIO]]);
+    expect(log).toHaveBeenCalledOnce();
+    const payload = JSON.parse(String(log.mock.calls[0]![0]));
+    expect(payload).toEqual({ event: "portal_message_client_lookup_failed", code: "57014", timestamp: expect.any(String) });
+    expect(Number.isNaN(Date.parse(payload.timestamp))).toBe(false);
+    for (const text of ["synthetic-patient", "clinical-sentinel", "synthetic-token", PORTAL_CLIENT]) expect(JSON.stringify(log.mock.calls)).not.toContain(text);
+    expect(portal.write).not.toHaveBeenCalled(); expect(portal.send).not.toHaveBeenCalled();
+  });
+  it("keeps a missing client refused without writing or sending", async () => {
+    portal.lookup.mockResolvedValue({ data: null, error: null });
+    await expect(createPortalMessageAction(portalForm())).resolves.toEqual({ ok: false, error: "Client not found." });
+    expect(portal.filters).toEqual([["id", PORTAL_CLIENT], ["studio_id", PORTAL_STUDIO]]);
+    expect(portal.write).not.toHaveBeenCalled(); expect(portal.send).not.toHaveBeenCalled();
+  });
+  it.each(["inactive", "rate-limited"])("keeps %s refusal ahead of client reads", async (mode) => {
+    if (mode === "inactive") portal.identity.mockResolvedValue({ practitioner: { id: PORTAL_ACTOR, active: false }, studio: { id: PORTAL_STUDIO } });
+    else portal.limit.mockResolvedValue({ allowed: false });
+    await expect(createPortalMessageAction(portalForm())).resolves.toEqual({ ok: false, error: mode === "inactive"
+      ? "Inactive practitioners cannot send messages." : "Too many messages sent to this client recently. Please try again later." });
+    expect(portal.from).not.toHaveBeenCalled(); expect(portal.write).not.toHaveBeenCalled(); expect(portal.send).not.toHaveBeenCalled();
   });
 });

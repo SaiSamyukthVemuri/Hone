@@ -26,6 +26,7 @@ function session(
   return {
     id,
     started_at: startedAt,
+    record_status: "draft",
     next_session_note: null,
     electrolysis_entries: [],
     laser_entries: [],
@@ -319,5 +320,30 @@ describe("safety wording", () => {
   it("read-only: builder is pure (no imports of supabase) and page query is a select", () => {
     expect(BUILDER).not.toMatch(/supabase|createClient/);
     expect(PAGE).toMatch(/from\("session_blocks"\)[\s\S]{0,700}\.is\("deleted_at", null\)/);
+  });
+});
+
+describe("session-level plans share the clinical recency rule", () => {
+  it.each([
+    ["2026-03-04T10:00:00Z", "2026-03-04T10:00:00Z", "plan B"],
+    ["2026-03-04T10:00:00.123999Z", "2026-03-04T10:00:00.123001Z", "plan A"],
+  ])("selects the latest plan independently of input order (%s, %s)", (aTime, bTime, expected) => {
+    const a = session("a", aTime, { next_session_note: "plan A" });
+    const b = session("b", bTime, { next_session_note: "plan B" });
+    for (const rows of [[a, b], [b, a]]) {
+      const inputOrder = rows.map((s) => s.id);
+      expect(buildTreatmentIntelligence({ sessionsNewestFirst: rows, blocks: [block("a"), block("b")] }).latestPlan)
+        .toBe(expected);
+      expect(rows.map((s) => s.id)).toEqual(inputOrder);
+    }
+  });
+
+  it("keeps the latest nonblank plan when the newest session has no plan", () => {
+    const rows = [
+      session("b", "2026-03-04T10:00:00Z", { next_session_note: "  " }),
+      session("a", "2026-03-04T10:00:00Z", { next_session_note: "keep recorded plan" }),
+    ];
+    expect(buildTreatmentIntelligence({ sessionsNewestFirst: rows, blocks: [block("a"), block("b")] }).latestPlan)
+      .toBe("keep recorded plan");
   });
 });

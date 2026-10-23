@@ -94,7 +94,7 @@ vi.mock("@/lib/notifications/practitioner-notifications", () => ({
   recordPractitionerNotification: vi.fn(),
 }));
 
-import { submitIntakeAction } from "@/app/intake/[token]/actions";
+import { saveIntakeStepAction, submitIntakeAction } from "@/app/intake/[token]/actions";
 import { getQuestionByKey, INTAKE_STEPS } from "@/lib/intake/questions";
 
 // Every required, UNCONDITIONAL answer. Conditional questions are skipped on
@@ -151,6 +151,33 @@ beforeEach(() => {
   db.consent_form_templates = [];
   db.client_consent_signatures = [];
   seedIntake();
+});
+
+describe("CLN-004 yes/no values on the real public write actions", () => {
+  it.each(["maybe", "YES", false, {}])("rejects malformed %j on draft save without writing", async (value) => {
+    seedIntake({ responses: { has_allergies: "yes", has_allergies_notes: "synthetic note" } });
+    const before = JSON.stringify(storedRow());
+    const result = await saveIntakeStepAction({ token: "good", step: 3, responses: { has_allergies: value } });
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(storedRow())).toBe(before);
+  });
+
+  it.each(["maybe", "YES", false, {}])("rejects malformed %j on submit without changing the draft", async (value) => {
+    const before = JSON.stringify(storedRow());
+    const result = await submitIntakeAction({ token: "good", responses: completeAnswers({ has_allergies: value }) });
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(storedRow())).toBe(before);
+  });
+
+  it("allows incomplete drafts and preserves untouched historic values until explicitly corrected", async () => {
+    seedIntake({ responses: { has_allergies: "historic-unknown" } });
+    expect((await saveIntakeStepAction({ token: "good", step: 1, responses: { preferred_name: "Demo" } })).ok).toBe(true);
+    expect(storedResponses().has_allergies).toBe("historic-unknown");
+    expect((await saveIntakeStepAction({ token: "good", step: 3, responses: { has_allergies: "" } })).ok).toBe(true);
+    expect(storedResponses().has_allergies).toBe("");
+    expect((await saveIntakeStepAction({ token: "good", step: 3, responses: { has_allergies: "no" } })).ok).toBe(true);
+    expect(storedResponses().has_allergies).toBe("no");
+  });
 });
 
 describe("1. a new intake reporting the condition must state the type", () => {
@@ -418,5 +445,23 @@ describe("3. intakes that predate the subtype are untouched", () => {
     });
     expect(done.ok).toBe(true);
     expect(storedResponses().diabetes_type).toBe("type_2");
+  });
+});
+
+
+describe("4332229852 whole-map draft navigation", () => {
+  it.each(["historic-unknown", false, { legacy: "unknown" }])("preserves unchanged legacy %j posted with the whole public map", async (legacy) => {
+    seedIntake({ responses: { has_allergies: legacy, preferred_name: "Before" } });
+    const wholeMap = JSON.parse(JSON.stringify(storedResponses()));
+    const result = await saveIntakeStepAction({ token: "good", step: 1, responses: { ...wholeMap, preferred_name: "After" } });
+    expect(result.ok).toBe(true);
+    expect(storedResponses().preferred_name).toBe("After");
+    expect(storedResponses().has_allergies).toEqual(legacy);
+    const before = JSON.stringify(storedRow());
+    expect((await saveIntakeStepAction({ token: "good", step: 3, responses: { ...storedResponses(), has_allergies: "new-invalid" } })).ok).toBe(false);
+    expect(JSON.stringify(storedRow())).toBe(before);
+    expect((await submitIntakeAction({ token: "good", responses: completeAnswers({ has_allergies: legacy }) })).ok).toBe(false);
+    expect(JSON.stringify(storedRow())).toBe(before);
+    expect((await saveIntakeStepAction({ token: "good", step: 3, responses: { ...storedResponses(), has_allergies: "no" } })).ok).toBe(true);
   });
 });

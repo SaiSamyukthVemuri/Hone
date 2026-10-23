@@ -1,3 +1,4 @@
+import { requirePlatformAdmin } from "@/lib/auth/require-platform-admin";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -52,6 +53,7 @@ type OnboardingAdminView = {
 };
 
 async function loadStudioDetail(id: string): Promise<StudioDetail | null> {
+  await requirePlatformAdmin();
   const admin = createAdminClient();
 
   const [studioRes, invitesRes, onboardingRes, flagRes] = await Promise.all([
@@ -173,6 +175,7 @@ export default async function AdminStudioPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await requirePlatformAdmin();
   const { id } = await params;
   const studio = await loadStudioDetail(id);
   if (!studio) notFound();
