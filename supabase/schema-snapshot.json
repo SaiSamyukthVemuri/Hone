@@ -1,5 +1,5 @@
 {
-  "generated_by": "node scripts/schema-snapshot.mjs --write",
+  "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
     "count": 211,
     "last": "0212_email_delivery_events.sql",

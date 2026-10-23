@@ -102,6 +102,11 @@ It derives from `supabase/migrations/*.sql`:
 - next free migration number (skipping permanently-skipped slots)
 - total migrations, duplicate detection, malformed-prefix rejection
 
+**After adding or editing a migration, regenerate the schema snapshot:**
+`npm run schema:snapshot -- --write`, and commit `supabase/schema-snapshot.json`
+with the migration. `verify:prepush` and the unit lane fail while it is stale.
+On a merge conflict in that file, re-run the command; never hand-merge it.
+
 **Do not add a `toBe(0166)` or a `/^01(6[7-9]|[7-9]\d)_/` "trip on the next one"
 regex to a test.** Those pins previously lived in **18 files** across
 `tests/migrations/`, `tests/docs/` and `tests/scripts/`, so every migration meant

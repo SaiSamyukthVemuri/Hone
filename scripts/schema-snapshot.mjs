@@ -3,8 +3,8 @@
 // The committed public-schema snapshot: table and function NAMES, derived from
 // supabase/migrations/*.sql in apply order. Never hand-written.
 //
-//   node scripts/schema-snapshot.mjs           # check: exit 1 when stale
-//   node scripts/schema-snapshot.mjs --write   # regenerate after a migration
+//   npm run schema:snapshot                # check: exit 1 when stale (verify:prepush runs it)
+//   npm run schema:snapshot -- --write     # regenerate after adding or editing a migration
 //
 // It exists so the "does application code still reference what the export
 // registry claims" checks can run as UNIT tests on every application change,
@@ -267,7 +267,7 @@ export function buildSchemaSnapshot(dir = path.join(REPO_ROOT, "supabase/migrati
     applyMigration(stripComments(raw.toString("utf8")), tables, functions);
   }
   return {
-    generated_by: "node scripts/schema-snapshot.mjs --write",
+    generated_by: "npm run schema:snapshot -- --write",
     migrations: { count: files.length, last: files.at(-1) ?? null, sha256: hash.digest("hex") },
     public: { tables: [...tables].sort(), functions: [...functions.keys()].sort() },
   };
@@ -291,7 +291,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       /* missing reads as stale */
     }
     if (committed !== fresh) {
-      console.error(`${SNAPSHOT_PATH} is stale: run node scripts/schema-snapshot.mjs --write`);
+      console.error(`${SNAPSHOT_PATH} is stale against supabase/migrations: run npm run schema:snapshot -- --write, then commit it`);
       process.exit(1);
     }
     console.log(`${SNAPSHOT_PATH} is current`);

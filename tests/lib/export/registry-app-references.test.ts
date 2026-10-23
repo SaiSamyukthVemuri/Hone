@@ -233,7 +233,7 @@ describe("the export registry's application claims hold against application sour
 });
 
 describe("the schema snapshot is fresh against supabase/migrations", () => {
-  it(`${SNAPSHOT_PATH} is exactly what the generator derives (regenerate: node scripts/schema-snapshot.mjs --write)`, () => {
+  it(`${SNAPSHOT_PATH} is exactly what the generator derives (regenerate: npm run schema:snapshot -- --write)`, () => {
     expect(readFileSync(SNAPSHOT_PATH, "utf8")).toBe(serialise(buildSchemaSnapshot()));
   });
 
