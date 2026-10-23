@@ -10,6 +10,7 @@ function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
 }
 const GUARD = read("app/(app)/clients/[id]/sessions/[sessionId]/DoneChartingButton.tsx");
+const KEYBOARD = read("components/use-dialog-keyboard.ts");
 const PAGE = read("app/(app)/clients/[id]/sessions/[sessionId]/page.tsx");
 const ACTIONS = read("app/(app)/records/actions.ts");
 
@@ -41,8 +42,14 @@ describe("Done-charting guard: non-blocking aftercare prompt", () => {
   });
   it("is accessible (dialog role + Escape to close) and touches no completion/postcare/payment", () => {
     expect(GUARD).toMatch(/role="dialog"/);
-    expect(GUARD).toMatch(/e\.key === "Escape"/);
-    expect(GUARD).not.toMatch(
+    // Escape is delegated, not removed. This caller must keep the emergency
+    // exit enabled even while its mark action is pending.
+    expect(GUARD).toMatch(/useDialogKeyboard<HTMLDivElement>\(\{\s*open,\s*busy: false,[\s\S]*?onClose: \(\) => setOpen\(false\)/);
+    expect(GUARD).toMatch(/ref=\{panelRef\}\s*tabIndex=\{-1\}/);
+    expect(KEYBOARD).toMatch(/if \(e\.key === "Escape"\) \{\s*if \(!busy\) onClose\(\)/);
+    // Documentation mentions the forbidden integrations to explain the
+    // boundary. Keep checking executable code rather than those comments.
+    expect(GUARD.replace(/^\s*\/\/.*$/gm, "")).not.toMatch(
       /mark_appointment_complete|markAppointmentComplete|postcare|autoSend|stripe|payment|sendEmail|sendSms/i,
     );
   });

@@ -904,7 +904,8 @@ export function findMissingRequiredAnswers(
 // `diabetes_type: "whatever I like"` into a clinical record. Hiding the control
 // in the browser is not a validation.
 //
-// SCOPED TO single_select ON PURPOSE, and the reason is a fact about this
+// Canonical yes_no values are exactly "yes" and "no" (CLN-004). Other choices
+// are SCOPED TO single_select ON PURPOSE, and the reason is a fact about this
 // repository rather than a preference. Across the whole history of
 // lib/intake/questions.ts exactly ONE option value has ever been removed from an
 // option set: "keloid", from the multi_select CONDITIONS list. So a strict
@@ -922,13 +923,17 @@ export function findMissingRequiredAnswers(
 // Pure compute; no I/O. Like findMissingRequiredAnswers it must only ever run
 // on a WRITE path: an already-submitted intake is never re-validated, which is
 // what keeps a historical record valid when today's option set has moved on.
+export function isCanonicalYesNoAnswer(value: unknown): value is "yes" | "no" {
+  return value === "yes" || value === "no";
+}
+
 export function findInvalidChoiceAnswers(
   responses: Record<string, unknown>,
 ): string[] {
   const invalid: string[] = [];
   for (const step of INTAKE_STEPS) {
     for (const q of step.questions) {
-      if (q.type !== "single_select" || !q.options) continue;
+      if (q.type !== "yes_no" && (q.type !== "single_select" || !q.options)) continue;
       if (!isConditionalSatisfied(responses, q.conditional)) continue;
       const value = responses[q.key];
       // Absent / cleared: not this function's concern. "Absent" is defined
@@ -940,8 +945,9 @@ export function findInvalidChoiceAnswers(
       if (value === undefined || value === null) continue;
       if (typeof value === "string" && value.trim() === "") continue;
       if (
-        typeof value !== "string" ||
-        !q.options.some((o) => o.value === value)
+        q.type === "yes_no"
+          ? !isCanonicalYesNoAnswer(value)
+          : typeof value !== "string" || !q.options!.some((o) => o.value === value)
       ) {
         invalid.push(q.key);
       }

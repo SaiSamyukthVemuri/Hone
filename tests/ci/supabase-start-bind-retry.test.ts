@@ -111,31 +111,74 @@ describe("supabase start bind-collision retry", () => {
   });
 });
 
+// Codex P2 4354172124: the first start runs as a direct CLI call while the
+// ghcr.io credential is held; this mode decides the retry from that start's
+// log AFTER the logout, so no checked-out script ever sees the credential.
+describe("--after-failed-start: the retry decision from a prior start's log", () => {
+  function prior(text: string) {
+    const f = path.join(mkdtempSync(path.join(tmpdir(), "bind-prior-")), "start.log");
+    writeFileSync(f, text);
+    return f;
+  }
+  const args = (log: string) => ["--after-failed-start", log, "supabase", "start", "-x", "studio"];
+
+  it("a logged bind collision: stops the partial stack and starts exactly once more", () => {
+    const r = run([{ out: "Started supabase local development setup.", rc: 0 }], args(prior(BIND_ERROR)));
+    expect(r).toMatchObject({ rc: 0, starts: 1, stops: 1 });
+    expect(r.out).toMatch(/::warning title=Supabase port-bind collision \(retrying once\)::.*54324/);
+    expect(r.out).toMatch(/\(recovered\)/);
+  });
+
+  it("a second collision still fails: one retry in total, never two", () => {
+    const r = run([{ out: BIND_ERROR, rc: 1 }, { out: "Started", rc: 0 }], args(prior(BIND_ERROR)));
+    expect(r).toMatchObject({ rc: 1, starts: 1, stops: 1 });
+  });
+
+  it("any other logged failure is NOT retried: it fails without starting again", () => {
+    const r = run([{ out: "Started", rc: 0 }], args(prior("Error: toomanyrequests")));
+    expect(r).toMatchObject({ rc: 1, starts: 0, stops: 0 });
+    expect(r.out).toMatch(/::error title=Supabase start failed::/);
+  });
+
+  it("refuses a missing log or anything but `supabase start`", () => {
+    expect(run([], ["--after-failed-start", "/nonexistent/start.log", "supabase", "start"]).rc).toBe(2);
+    expect(run([], ["--after-failed-start", prior(BIND_ERROR), "supabase", "db", "reset"]).rc).toBe(2);
+  });
+});
+
 describe("workflow wiring", () => {
   const workflows = [".github/workflows/ci.yml", ".github/workflows/nightly.yml"].map(
     (f) => [f, readFileSync(path.join(ROOT, f), "utf8")] as const,
   );
 
-  it("every `supabase start` step goes through the wrapper", () => {
-    let starts = 0;
+  it("every `supabase start` is a direct logged-in call paired with ONE credential-free retry", () => {
+    const LOG = '"$RUNNER_TEMP/supabase-start.log"';
+    let direct = 0;
     for (const [file, text] of workflows) {
+      const firsts: string[] = [];
+      const retries: string[] = [];
       for (const line of text.split("\n")) {
         if (line.trim().startsWith("#")) continue;
         if (!/\bsupabase start\b/.test(line)) continue;
-        starts += 1;
-        expect(line, file).toMatch(
-          /run: bash scripts\/ci\/supabase-start-bind-retry\.sh supabase start\b/,
-        );
+        const d = line.match(/^        run: (supabase start[^|]*?) 2>&1 \| tee "\$RUNNER_TEMP\/supabase-start\.log"$/);
+        const r = line.match(/^        run: bash scripts\/ci\/supabase-start-bind-retry\.sh --after-failed-start "\$RUNNER_TEMP\/supabase-start\.log" (supabase start.*)$/);
+        expect(d || r, `${file}: ${line}`).toBeTruthy();
+        if (d) firsts.push(d[1]);
+        if (r) retries.push(r[1]);
       }
+      // Same args, same order: each retry is for the start right above it.
+      expect(retries, file).toEqual(firsts);
+      expect(text, file).toContain(LOG);
+      direct += firsts.length;
     }
-    expect(starts).toBeGreaterThanOrEqual(6);
+    expect(direct).toBeGreaterThanOrEqual(6);
   });
 
   it("the wrapper wraps nothing else: no reset or test step is retried", () => {
     for (const [file, text] of workflows) {
       for (const line of text.split("\n")) {
         const m = line.match(/supabase-start-bind-retry\.sh\s+(.*)$/);
-        if (m) expect(m[1], file).toMatch(/^supabase start\b/);
+        if (m) expect(m[1], file).toMatch(/^--after-failed-start "\$RUNNER_TEMP\/supabase-start\.log" supabase start\b/);
       }
     }
   });

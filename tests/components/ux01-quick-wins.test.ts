@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { dialogTabTarget } from "@/components/use-dialog-keyboard";
 
 // UX-01 Quick Wins — the four repairs, pinned where a browser cannot look.
 //
@@ -239,6 +240,57 @@ describe("UX-01 QW4 · the trap has no open edge", () => {
     // content from assistive technology.
     const code = codeOnly(read(HOOK));
     expect(code).toContain("!focusables.includes(active as HTMLElement)");
-    expect(code).toContain("(e.shiftKey ? last : first).focus();");
+    expect(code).toContain("dialogTabTarget(focusables, document.activeElement, e.shiftKey)");
+    expect(code).toContain("target.focus();");
+  });
+});
+
+
+describe("CLN-006 clinical dialogs use the existing keyboard contract", () => {
+  it.each([
+    "app/(app)/clients/[id]/images/TreatmentImagesManager.tsx",
+    "app/(app)/clients/[id]/sessions/[sessionId]/DoneChartingButton.tsx",
+    "components/quick-checkout-modal.tsx",
+  ])("%s contains focus, restores its opener and keeps Escape available", (file) => {
+    const code = codeOnly(read(file));
+    expect(code).toContain("useDialogKeyboard");
+    expect(code).toContain("ref={panelRef}");
+    expect(code).toContain("tabIndex={-1}");
+    expect(code).toContain("busy: false");
+    expect(code).not.toContain('addEventListener("keydown"');
+  });
+});
+
+
+describe("CLN-006 native disclosure tab stops", () => {
+  it("includes the first native summary, while respecting explicit removal from tab order", () => {
+    expect(codeOnly(read(HOOK))).toContain('details > summary:first-of-type:not([tabindex="-1"])');
+  });
+});
+
+describe("CLN-006 executed focus-boundary decisions", () => {
+  const first = { id: "first" } as HTMLElement;
+  const middle = { id: "middle" } as HTMLElement;
+  const last = { id: "last" } as HTMLElement;
+  const outside = { id: "opener-or-panel" } as HTMLElement;
+  const controls = [first, middle, last];
+
+  it("Tab from the last control wraps to first", () => {
+    expect(dialogTabTarget(controls, last, false)).toBe(first);
+  });
+  it("Shift+Tab from first wraps to last", () => {
+    expect(dialogTabTarget(controls, first, true)).toBe(last);
+  });
+  it.each([false, true])("focus outside the set re-enters, reverse=%s", (reverse) => {
+    expect(dialogTabTarget(controls, outside, reverse)).toBe(reverse ? last : first);
+  });
+  it("interior focus retains ordinary tab order in both directions", () => {
+    expect(dialogTabTarget(controls, middle, false)).toBeNull();
+    expect(dialogTabTarget(controls, middle, true)).toBeNull();
+  });
+  it("one control wraps to itself, no controls delegates panel parking", () => {
+    expect(dialogTabTarget([first], first, false)).toBe(first);
+    expect(dialogTabTarget([first], first, true)).toBe(first);
+    expect(dialogTabTarget([], outside, false)).toBeNull();
   });
 });

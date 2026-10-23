@@ -2,6 +2,13 @@
 # Run `supabase start …` and retry it ONCE, only for a host-port bind collision.
 #
 # Usage: bash scripts/ci/supabase-start-bind-retry.sh supabase start [args…]
+#        bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start LOG supabase start [args…]
+#
+# --after-failed-start (Codex P2 4354172124): the FIRST start already ran as a
+# direct CLI call while the ghcr.io credential was held, and was logged out
+# before this script runs. LOG is that start's output. This mode skips the
+# first attempt and goes straight to the same narrow decision: retry once only
+# on the bind signature, otherwise fail with no retry.
 #
 # Why: on a fresh GitHub runner, `supabase start` occasionally dies before any
 # test runs with
@@ -18,21 +25,36 @@
 #   - at most ONE retry, announced as a workflow warning so it is never silent.
 set -uo pipefail
 
+prior_log=""
+if [ "${1:-}" = "--after-failed-start" ]; then
+  if [ "$#" -lt 2 ] || [ ! -r "$2" ]; then
+    echo "usage: $0 --after-failed-start LOG supabase start [args…] (LOG must be readable)" >&2
+    exit 2
+  fi
+  prior_log="$2"
+  shift 2
+fi
+
 if [ "$#" -lt 2 ] || [ "$1" != "supabase" ] || [ "$2" != "start" ]; then
   echo "usage: $0 supabase start [args…]" >&2
   exit 2
 fi
 
 SIGNATURE='failed to bind host port for [0-9.]+:543[0-9]{2}:[^ ]*: address already in use'
-log="$(mktemp)"
-
-"$@" 2>&1 | tee "$log"
-rc=${PIPESTATUS[0]}
-if [ "$rc" -eq 0 ]; then
-  exit 0
+if [ -n "$prior_log" ]; then
+  log="$prior_log"
+  rc=1
+else
+  log="$(mktemp)"
+  "$@" 2>&1 | tee "$log"
+  rc=${PIPESTATUS[0]}
+  if [ "$rc" -eq 0 ]; then
+    exit 0
+  fi
 fi
 
 if ! grep -Eq "$SIGNATURE" "$log"; then
+  [ -n "$prior_log" ] && echo "::error title=Supabase start failed::the first start failed without a port-bind collision; not retried."
   exit "$rc"
 fi
 

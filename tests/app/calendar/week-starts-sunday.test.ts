@@ -1,4 +1,13 @@
 import { describe, expect, it } from "vitest";
+
+describe("SCH-004 calendar hours are not an arbitrary practitioner's row", () => {
+  it("uses the shared daily scope projection in week/mobile and month views", () => {
+    expect(CAL_PAGE.match(/resolveCalendarDayAvailability\(/g)).toHaveLength(2);
+    expect(CAL_PAGE).not.toMatch(/availabilityByDow\.set\(d\.day_of_week/);
+    expect(CAL_PAGE).not.toMatch(/overrideByDate\.set\(o\.effective_date/);
+    expect(CAL_PAGE).toContain("Hours vary by practitioner");
+  });
+});
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { addDays, startOfWeek, utcInstantFromLocal } from "@/lib/booking/tz";

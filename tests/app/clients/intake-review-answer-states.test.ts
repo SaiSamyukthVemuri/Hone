@@ -32,6 +32,13 @@ const PAGE = read("app/(app)/clients/[id]/intake/page.tsx");
 const PAGE_CODE = codeOnly(PAGE);
 
 describe("the review grid asks the projection, not the raw response map", () => {
+  it("uses honest yes/no labels in both the answer grid and the allergy summary (CLN-004)", () => {
+    expect(PAGE_CODE).toContain("yesNoAnswerLabel(value)");
+    expect(PAGE_CODE).toContain("yesNoAnswerLabel(responses.requires_epipen)");
+    expect(PAGE_CODE).not.toContain('value === "yes" ? "Yes" : "No"');
+    expect(PAGE_CODE).not.toContain('requiresEpipen ? "Yes" : "No"');
+  });
+
   it("computes a state for every question it renders", () => {
     expect(PAGE_CODE).toMatch(/reviewAnswerState\(q, responses, intake\.status\)/);
   });

@@ -27,9 +27,9 @@ const count = (s: string, re: RegExp): number => (s.match(re) ?? []).length;
 // satisfy the failure-path assertions.
 const FAILED_FN = (() => {
   const start = CHARGE.indexOf("async function writeFailedOutcome");
-  // PR #320: bound at the next function (finalizeRequiresActionPaymentIntent)
-  // so this stays exactly the writeFailedOutcome body.
-  const end = CHARGE.indexOf("async function finalizeRequiresActionPaymentIntent");
+  // Bound at the next top-level function, including new private helpers, so
+  // unrelated safe identifier fields cannot be mistaken for raw failure data.
+  const end = CHARGE.indexOf("\nasync function ", start + 1);
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   return CHARGE.slice(start, end);

@@ -28,6 +28,22 @@ const FORMAT_TO_TYPE: Record<string, TreatmentImageContentType> = {
   webp: "image/webp",
 };
 
+// ENG-002: reject unsupported containers before invoking any native decoder.
+// This is only a routing gate, not proof of a valid image: Sharp must still
+// detect the same supported format and fully re-encode the bytes below.
+function supportedRasterHeader(bytes: Buffer): TreatmentImageContentType | null {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"))) {
+    return "image/png";
+  }
+  if (bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP") {
+    return "image/webp";
+  }
+  return null;
+}
+
 // Decompression-bomb guard: ~100 megapixels comfortably exceeds any real phone
 // photo (a 50MP camera is 50M px) while rejecting pathological pixel bombs.
 const MAX_INPUT_PIXELS = 100_000_000;
@@ -56,6 +72,11 @@ export async function sanitizeTreatmentImage(input: {
   declaredContentType: TreatmentImageContentType;
 }): Promise<SanitizeResult> {
   if (!input.bytes || input.bytes.length === 0) {
+    return { ok: false, error: GENERIC_ERROR };
+  }
+
+  const headerType = supportedRasterHeader(input.bytes);
+  if (!headerType || headerType !== input.declaredContentType) {
     return { ok: false, error: GENERIC_ERROR };
   }
 
