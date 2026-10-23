@@ -183,6 +183,10 @@ for (const mode of [
       const seed = await seedE2eStudio();
       const tz = "America/Los_Angeles";
       await setStudioTimezone(seed.studioId, tz);
+      // The 0135 guard refuses a practitioner-scoped weekday unless capacity
+      // is on; same studio shape as the five-card test above.
+      await setStudioCapacityEnabled(seed.studioId, true);
+      await setStudioCapacityBookingEnabled(seed.studioId, true);
       const practitionerId = await getOwnerPractitionerId(seed.studioId);
       const { clientId } = await seedE2eClient(seed);
       const [{ day, dow }] = await sql<{ day: string; dow: number }>(
