@@ -11,6 +11,12 @@
     "app/(app)/dashboard/capacity/page.tsx": [
       "tests/db/owner-capacity.db.test.ts"
     ],
+    "app/(app)/records/page.tsx": [
+      "tests/db/record-keeping-audit-history-truth.db.test.ts"
+    ],
+    "app/(app)/records/print/page.tsx": [
+      "tests/db/record-keeping-audit-history-truth.db.test.ts"
+    ],
     "app/(app)/settings/data/actions.ts": [
       "tests/db/export-column-round-trip.db.test.ts"
     ],
@@ -145,6 +151,9 @@
     ],
     "lib/rate-limit/public.ts": [
       "tests/db/waitlist-integration-seams.db.test.ts"
+    ],
+    "lib/record-keeping/queries.ts": [
+      "tests/db/record-keeping-audit-history-truth.db.test.ts"
     ],
     "lib/search/treatment-memory-merge.ts": [
       "tests/db/global-search-child-area-recall.db.test.ts"
