@@ -46,7 +46,9 @@
 //     components/) is REPORTED in `dbRootWalkers` but does not select the DB
 //     lane: honoured, it would run the DB lane for every application change,
 //     which is a CI-cost decision for the operator, not a scanner default.
-//     Today that is tests/db/export-resource-registry.db.test.ts (#1053 round 4).
+//     None does today: export-resource-registry.db.test.ts's application half
+//     became a unit test (OPS ruling 20261023T1430Z, option b), and
+//     tests/ci/classify-changes.test.ts pins the report empty.
 //   - A literal that names a MISSING file still counts when it is shaped like a
 //     repository path under a real top-level directory (or is a root document
 //     such as AGENTS.md), so deleting a file a test still reads stays

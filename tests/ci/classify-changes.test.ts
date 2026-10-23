@@ -801,18 +801,21 @@ describe("dependency-aware selection — directory readers (4355527598)", () => 
     expect(r.docs_reader_tests).toContain("tests/docs/reminder-cadence-truthfulness.test.ts");
   });
 
-  it("GUARD (operator decision): a DB suite walking a WHOLE source root is reported, not selected", () => {
-    // tests/db/export-resource-registry.db.test.ts walks app/, lib/ and
-    // components/ to decide whether application code still references each
-    // table. Honoured, that runs the DB lane for every application change - a
-    // CI-cost decision left to the operator. It is surfaced, and flipping it
-    // is one line in the scanner.
+  it("GUARD (operator decision, option b): no DB suite walks a WHOLE source root, so none is silently unselected", () => {
+    // tests/db/export-resource-registry.db.test.ts used to walk app/, lib/ and
+    // components/ to decide whether application code still references what the
+    // registry claims, which no application change could select. That half is
+    // now a unit test against supabase/schema-snapshot.json
+    // (tests/lib/export/registry-app-references.test.ts), run on every
+    // application PR. A NEW whole-root DB walker reappearing here is the same
+    // gap again and must be a deliberate decision, not a scan side effect.
     const walkers = (scanned as Deps & { dbRootWalkers?: Record<string, string[]> }).dbRootWalkers ?? {};
-    for (const root of ["app", "lib", "components"]) {
-      expect(walkers[root]).toContain("tests/db/export-resource-registry.db.test.ts");
-    }
+    expect(walkers).toEqual({});
     expect(Object.keys(scanned.dbDirs ?? {}).filter((d) => !d.includes("/"))).toEqual([]);
     expect(c("components/brand-new-widget.tsx").database).toBe(false);
+    // The schema snapshot that check trusts selects the DB lane, which is
+    // where it is compared with the live catalogue.
+    expect(c("supabase/schema-snapshot.json").database).toBe(true);
   });
 
   it("GAP: an enumerated literal directory covers every file beneath it, present or future", () => {

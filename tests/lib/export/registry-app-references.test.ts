@@ -1,0 +1,213 @@
+import { describe, expect, it } from "vitest";
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path, { join } from "node:path";
+
+import { EXPORT_RESOURCE_REGISTRY, STORAGE_RESOURCE_PREFIX, type ResourceDisposition } from "@/lib/export/resource-registry";
+// @ts-expect-error - .mjs utility ships without type declarations
+import { buildSchemaSnapshot, serialise, SNAPSHOT_PATH } from "../../../scripts/schema-snapshot.mjs";
+
+// ===========================================================================
+// Does APPLICATION code still reference what the export registry claims?
+// ===========================================================================
+//
+// Moved here from tests/db/export-resource-registry.db.test.ts (OPS ruling
+// 20261023T1430Z, option b). That file walked app/, lib/ and components/ from
+// the DB lane, so this check either ran the DB lane for every application
+// change or, as #1053 shipped, ran for none of them. As a unit test against
+// the committed schema snapshot it runs on every application PR, cheaply; the
+// DB lane keeps what only the live database can answer, including whether the
+// snapshot matches the live catalogue.
+//
+// The registry's application claims are the ones owners read:
+//   - an EXPORTED table is read by the export, so application code names it;
+//   - a reason that cites a database function ("NOT dead: reschedule_appointment_v2
+//     ... (app/...)") says the application calls it, from the file it names.
+// ===========================================================================
+
+type Snapshot = { migrations: { count: number; last: string | null; sha256: string }; public: { tables: string[]; functions: string[] } };
+type Source = { rel: string; code: string };
+
+const SNAPSHOT = JSON.parse(readFileSync(SNAPSHOT_PATH, "utf8")) as Snapshot;
+
+// The same rules the DB file used: comments stripped so prose does not count
+// as use, and the registry and the hand-rolled types skipped, because naming
+// every table is their whole job.
+const APP_ROOTS = ["app", "lib", "components"] as const;
+const NOT_A_REFERENCE = new Set(["lib/export/resource-registry.ts", "lib/types/database.ts"]);
+
+function walkTs(dir: string): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(dir)) {
+    if (name === "node_modules" || name === ".next") continue;
+    const full = join(dir, name);
+    if (statSync(full).isDirectory()) out.push(...walkTs(full));
+    else if (/\.tsx?$/.test(name)) out.push(full);
+  }
+  return out;
+}
+
+function stripComments(raw: string): string {
+  return raw
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join("\n");
+}
+
+function appSources(): Source[] {
+  return APP_ROOTS.flatMap((root) => walkTs(root))
+    .filter((rel) => !NOT_A_REFERENCE.has(rel))
+    .map((rel) => ({ rel, code: stripComments(readFileSync(rel, "utf8")) }));
+}
+
+/** `symbol` used as a real string literal, not as prose. */
+const uses = (code: string, symbol: string) =>
+  code.includes(`"${symbol}"`) || code.includes(`'${symbol}'`) || code.includes(`\`${symbol}\``);
+
+/** Application files a reason names, e.g. app/(app)/calendar/x.ts or lib/stripe/account.ts. */
+const NAMED_FILE = /\b(?:app|lib|components)\/[\w\-[\]().\/]*?\.tsx?\b/g;
+
+function citedFunctions(reason: string, snapshot: Snapshot): string[] {
+  return snapshot.public.functions.filter((fn) => new RegExp(String.raw`\b${fn}\b`).test(reason));
+}
+
+function appReferenceFaults(
+  registry: Record<string, ResourceDisposition>,
+  snapshot: Snapshot,
+  sources: Source[],
+  fileExists: (rel: string) => boolean,
+): string[] {
+  const faults: string[] = [];
+  const tables = new Set(snapshot.public.tables);
+  for (const [resource, d] of Object.entries(registry)) {
+    if (d.kind === "exported" && !resource.startsWith(STORAGE_RESOURCE_PREFIX)) {
+      if (!tables.has(resource)) faults.push(`exported ${resource} is not a table in the schema snapshot`);
+      if (!sources.some((s) => uses(s.code, resource))) faults.push(`exported ${resource} is referenced by no application source`);
+    }
+    if (d.kind !== "pending" && d.kind !== "excluded") continue;
+    const cited = citedFunctions(d.reason, snapshot);
+    if (cited.length === 0) continue;
+    const named = [...new Set(d.reason.match(NAMED_FILE) ?? [])];
+    for (const rel of named) if (!fileExists(rel)) faults.push(`${resource}: its reason names ${rel}, which does not exist`);
+    for (const fn of cited) {
+      if (!sources.some((s) => uses(s.code, fn))) faults.push(`${resource}: its reason cites ${fn}, which no application source calls`);
+      else if (named.length > 0 && !sources.some((s) => named.includes(s.rel) && uses(s.code, fn))) {
+        faults.push(`${resource}: its reason cites ${fn}, but none of the files it names (${named.join(", ")}) calls it`);
+      }
+    }
+  }
+  return faults;
+}
+
+describe("the export registry's application claims hold against application source", () => {
+  const sources = appSources();
+
+  it("every claim holds", () => {
+    expect(appReferenceFaults(EXPORT_RESOURCE_REGISTRY, SNAPSHOT, sources, existsSync)).toEqual([]);
+  });
+
+  it("is not vacuous: real tables, real cited functions, real sources", () => {
+    const exported = Object.entries(EXPORT_RESOURCE_REGISTRY).filter(
+      ([r, d]) => d.kind === "exported" && !r.startsWith(STORAGE_RESOURCE_PREFIX),
+    );
+    expect(exported.length).toBeGreaterThan(10);
+    const cited = Object.values(EXPORT_RESOURCE_REGISTRY).flatMap((d) =>
+      d.kind === "pending" || d.kind === "excluded" ? citedFunctions(d.reason, SNAPSHOT) : [],
+    );
+    expect(cited.length, "no reason cites a function: the RPC half checks nothing").toBeGreaterThanOrEqual(7);
+    expect(sources.length).toBeGreaterThan(200);
+    // Moved from the DB lane's live-graph anti-vacuity: the application names
+    // many database functions as RPC literals.
+    expect(SNAPSHOT.public.functions.filter((fn) => sources.some((s) => uses(s.code, fn))).length).toBeGreaterThan(50);
+  });
+
+  // MUTATION CONTROLS, on fixtures, so each fault is proved to fire.
+  const snapshot: Snapshot = { migrations: { count: 1, last: "x.sql", sha256: "0" }, public: { tables: ["widgets", "ledger"], functions: ["claim_ledger", "other_fn"] } };
+  const registry = {
+    widgets: { kind: "exported" } as unknown as ResourceDisposition,
+    ledger: { kind: "pending", ticket: "T", tier: 2, reason: "LIVE: claim_ledger is invoked from lib/pay/ledger.ts." } as ResourceDisposition,
+  };
+  const good: Source[] = [
+    { rel: "lib/export/build.ts", code: 'supabase.from("widgets")' },
+    { rel: "lib/pay/ledger.ts", code: 'supabase.rpc("claim_ledger")' },
+  ];
+  const exists = (rel: string) => good.some((s) => s.rel === rel);
+
+  it("CONTROL: the fixture is clean", () => {
+    expect(appReferenceFaults(registry, snapshot, good, exists)).toEqual([]);
+  });
+
+  it("RED when no application file references an exported table any more", () => {
+    const sources = good.map((s) => (s.rel === "lib/export/build.ts" ? { ...s, code: "// widgets moved" } : s));
+    expect(appReferenceFaults(registry, snapshot, sources, exists)).toEqual(["exported widgets is referenced by no application source"]);
+  });
+
+  it("RED when the cited RPC is no longer called (the published 'NOT dead' reason is now false)", () => {
+    const sources = good.map((s) => (s.rel === "lib/pay/ledger.ts" ? { ...s, code: "export {};" } : s));
+    expect(appReferenceFaults(registry, snapshot, sources, exists)).toEqual([
+      "ledger: its reason cites claim_ledger, which no application source calls",
+    ]);
+  });
+
+  it("RED when the call moves to a file the reason does not name", () => {
+    const sources: Source[] = [good[0], { rel: "lib/pay/elsewhere.ts", code: 'rpc("claim_ledger")' }];
+    expect(appReferenceFaults(registry, snapshot, sources, () => true)).toEqual([
+      "ledger: its reason cites claim_ledger, but none of the files it names (lib/pay/ledger.ts) calls it",
+    ]);
+  });
+
+  it("RED when the file a reason names is gone", () => {
+    expect(appReferenceFaults(registry, snapshot, good, () => false)).toContain("ledger: its reason names lib/pay/ledger.ts, which does not exist");
+  });
+
+  it("RED when an exported table is not in the schema snapshot", () => {
+    const shrunk = { ...snapshot, public: { ...snapshot.public, tables: ["ledger"] } };
+    expect(appReferenceFaults(registry, shrunk, good, exists)).toEqual(["exported widgets is not a table in the schema snapshot"]);
+  });
+
+  it("a mention in a COMMENT is not a reference", () => {
+    expect(uses(stripComments('// supabase.rpc("claim_ledger")\n/* "widgets" */'), "claim_ledger")).toBe(false);
+  });
+});
+
+describe("the schema snapshot is fresh against supabase/migrations", () => {
+  it(`${SNAPSHOT_PATH} is exactly what the generator derives (regenerate: node scripts/schema-snapshot.mjs --write)`, () => {
+    expect(readFileSync(SNAPSHOT_PATH, "utf8")).toBe(serialise(buildSchemaSnapshot()));
+  });
+
+  it("RED on a new migration that was not followed by --write", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-schema-snapshot-"));
+    try {
+      for (const f of readdirSync("supabase/migrations").filter((n) => n.endsWith(".sql"))) {
+        copyFileSync(join("supabase/migrations", f), join(dir, f));
+      }
+      const before = buildSchemaSnapshot(dir) as Snapshot;
+      expect(serialise(before)).toBe(readFileSync(SNAPSHOT_PATH, "utf8"));
+      writeFileSync(
+        join(dir, "9999_zz_new.sql"),
+        "begin;\ncreate table public.zz_new (id uuid);\ncreate or replace function public.zz_fn() returns int language sql as $$ select 1 $$;\n-- create table public.not_ddl (prose only)\ncommit;\n",
+      );
+      const after = buildSchemaSnapshot(dir) as Snapshot;
+      expect(serialise(after)).not.toBe(readFileSync(SNAPSHOT_PATH, "utf8"));
+      expect(after.migrations.sha256).not.toBe(before.migrations.sha256);
+      expect(after.public.tables).toContain("zz_new");
+      expect(after.public.functions).toContain("zz_fn");
+      expect(after.public.tables).not.toContain("not_ddl");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a DROP removes what an earlier migration created", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-schema-snapshot-"));
+    try {
+      writeFileSync(join(dir, "0001_a.sql"), "create table t1 (id int);\ncreate function public.f1() returns int language sql as $$ select 1 $$;\n");
+      writeFileSync(join(dir, "0002_b.sql"), "drop function if exists public.f1();\ndrop table if exists public.t1;\n");
+      const snap = buildSchemaSnapshot(dir) as Snapshot;
+      expect(snap.public).toEqual({ tables: [], functions: [] });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
