@@ -544,6 +544,32 @@ export async function runtimeCoveredSince(
   return { ok: true };
 }
 
+/**
+ * A3's verdict. Every runtime-bearing first-parent merge since the pin must be
+ * receipt-covered with runtime:true and lie after the recorded Current Git
+ * branch HEAD (F1).
+ *
+ * The per-merge HISTORY is checked even when the endpoint diff pin..target is
+ * empty (Codex P2 4355228345). A covered runtime merge reverted by a later
+ * covered merge leaves no net diff, yet both shipped. Without the history check
+ * a refresh could record past them with the pin unmoved, and A3 would pass
+ * while "Last runtime-bearing application HEAD" names the wrong commit.
+ * A3 still computes the endpoint diff itself, to describe a failure.
+ */
+export async function a3Decision(
+  g: Git,
+  pinned: string,
+  recorded: string | null,
+  target: string,
+  late: readonly PendingReceipt[],
+): Promise<{ fresh: boolean; covered: { ok: true } | { ok: false; reason: string } | null }> {
+  const covered =
+    recorded === null
+      ? ({ ok: false, reason: "current-state records no Current Git branch HEAD to bound coverage" } as const)
+      : await runtimeCoveredSince(g, pinned, recorded, target, late);
+  return { fresh: covered.ok, covered };
+}
+
 /** A7: batching is bounded in merges and in git time, so it cannot defer the record forever. */
 export function coveredLag(
   g: Git,
@@ -2175,21 +2201,12 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
     const deployed = await runtimeChangedSince(git, pinned as string, target);
     if (deployed === null) throw new Error(`A3 cannot run: git cannot diff ${String(pinned).slice(0, 8)}..${target.slice(0, 8)}`);
 
-    // Pending-release receipts (HON-18 39ad5aaf): a runtime change that shipped
-    // after the pin is acceptable only when every runtime-bearing merge since
-    // the pin is receipt-covered with runtime:true. An empty diff is decided
-    // exactly as before, without consulting receipts.
-    // Coverage only counts after the recorded Current Git branch HEAD (F1).
+    // Pending-release receipts (HON-18 39ad5aaf): see a3Decision.
     const recordedHead = currentGitHeadSha();
-    const covered =
-      deployed.length === 0
-        ? null
-        : recordedHead === null
-          ? ({ ok: false, reason: "current-state records no Current Git branch HEAD to bound coverage" } as const)
-          : await runtimeCoveredSince(git, pinned as string, recordedHead, target, loadLateReceipts(target));
+    const { fresh, covered } = await a3Decision(git, pinned as string, recordedHead, target, loadLateReceipts(target));
     freshnessVerdict(
       "A3",
-      deployed.length === 0 || covered?.ok === true,
+      fresh,
       `current-state.md pins ${String(pinned).slice(0, 8)} as the runtime-bearing baseline, but ` +
         `${deployed.length} file(s) changed between it and production ${target.slice(0, 8)} are ` +
         "classified as runtime-bearing by scripts/classify-changes.mjs, so the pin is stale: a " +
@@ -4524,8 +4541,8 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
     const a5 = src.slice(src.indexOf("it(`A5${FRESHNESS_TAG}"), src.indexOf("it(`A7${FRESHNESS_TAG}"));
     expect(a5).toMatch(/await coveredSince\(git, recorded as string, ref, loadLateReceipts\(ref\)\)/);
     const a3 = src.slice(src.indexOf("it(`A3${FRESHNESS_TAG}"), src.indexOf("it(\"A3's deployed decision"));
-    expect(a3).toMatch(/deployed\.length === 0 \|\| covered\?\.ok === true/);
-    expect(a3).toMatch(/runtimeCoveredSince\(git, pinned as string, recordedHead, target, loadLateReceipts\(target\)\)/);
+    expect(a3).toMatch(/await a3Decision\(git, pinned as string, recordedHead, target, loadLateReceipts\(target\)\)/);
+    expect(a3).toMatch(/freshnessVerdict\(\n\s*"A3",\n\s*fresh,/);
   });
 
   it("F1 (Privacy, #1052 peer review): a refresh that moves the recorded HEAD past a runtime merge but leaves the pin FAILS A3", async () => {
@@ -4569,5 +4586,27 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
     const out = await coveredSince(r.g, recorded, prod, two);
     expect(out.ok).toBe(false);
     expect((out as { reason: string }).reason).toMatch(/named by 2 late receipts/);
+  });
+
+  it("Codex P2 4355228345: a covered runtime merge REVERTED by a later covered merge still requires the pin to move", async () => {
+    const r = receiptRepo();
+    const P = r.head(); // pin = recorded HEAD = P; app/page.tsx is "v1"
+    r.land(120, { "app/page.tsx": "v2\n", [file(120)]: receipt(120, true) }); // runtime change, covered
+    const M2 = r.land(121, { "app/page.tsx": "v1\n", [file(121)]: receipt(121, true) }); // reverted, covered
+    // Record refresh moves the recorded HEAD to M2 and deletes both receipts; the pin stays at P.
+    const R = r.land(122, { "docs/production/current-state.md": "head=M2 pin=P\n" }, { rm: [file(120), file(121)] });
+    // The endpoint diff is EMPTY, so the old fast path passed A3 without looking at history.
+    const deployed = await runtimeChangedSince(r.g, P, R);
+    expect(deployed).toEqual([]);
+    expect((await coveredSince(r.g, M2, R, [])).ok).toBe(true); // A5 passes
+    const a3 = await a3Decision(r.g, P, M2, R, []);
+    expect(a3.fresh, "A3 must not pass while the pin is behind two shipped runtime merges").toBe(false);
+    expect((a3.covered as { reason: string }).reason).toMatch(/lies at or before the recorded Current Git branch HEAD/);
+    // Twin: before the refresh (both merges after the recorded HEAD, both covered) the batch is accepted.
+    const b = await a3Decision(r.g, P, P, M2, []);
+    expect(b.fresh).toBe(true);
+    // Twin: the refresh that also moves the pin to M2 passes.
+    const c = await a3Decision(r.g, M2, M2, R, []);
+    expect(c.fresh).toBe(true);
   });
 });
