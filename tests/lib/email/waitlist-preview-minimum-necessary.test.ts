@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { clientPreheader, studioPreheader } from "@/lib/email/preheader";
+import { sanitizeStudioDisplayName } from "@/lib/email/studio-identity";
 import { buildWaitlistInvitationEmail } from "@/lib/email/templates/waitlist-invitation";
 import { buildWaitlistRecipientProofEmail } from "@/lib/email/templates/waitlist-recipient-proof";
 import {
@@ -29,7 +30,10 @@ import {
 //
 // Every value is synthetic and deliberately distinctive.
 
-const STUDIO = "Synthetic Studio";
+// Codex P1 4355048631 on #1049: run at the SHORTEST admissible studio name
+// (one non-blank character: app/(app)/settings/studio/actions.ts:39-41 and
+// lib/studios/new-studio.ts:83-84), the usual one and a long one.
+const STUDIO_NAMES = ["Q", "Synthetic Studio", "Synthetic Studio of the Northern Riverside Wellness Collective"];
 const CLIENT = "Zephyrine Synthetic-Client";
 const CLIENT_EMAIL = "zephyrine@synthetic.invalid";
 const CLIENT_PHONE = "+1 555 0142 777";
@@ -43,7 +47,7 @@ type Case = [
   extra: RegExp[],
 ];
 
-const cases: Case[] = [
+const casesFor = (STUDIO: string): Case[] => [
   [
     "waitlist invitation",
     () =>
@@ -52,7 +56,8 @@ const cases: Case[] = [
         invitationUrl: `https://hone.care/invitation/${TOKEN}`,
         expiresAtLabel: "on Thursday, March 6, 2031 at 3:45 PM UTC",
       }),
-    clientPreheader(STUDIO),
+    // The template sanitizes (and length-caps) the name before using it.
+    clientPreheader(sanitizeStudioDisplayName(STUDIO) ?? ""),
     [new RegExp(TOKEN), /hone\.care\/invitation/],
   ],
   [
@@ -86,24 +91,34 @@ const leaks = (subject: string, preview: string, extra: RegExp[]) => [
   ...extra.filter((re) => re.test(preview)).map(String),
 ];
 
-describe("waitlist family: the preview is the neutral preheader only", () => {
-  it.each(cases)("%s", (label, build, expected, extra) => {
+// When the neutral preheader is longer than the window, the window is a prefix
+// of it; otherwise it opens with it and the remainder is checked.
+function afterPreheader(preview: string, preheader: string): string | null {
+  if (preheader.startsWith(preview)) return "";
+  if (preview.startsWith(preheader)) return preview.slice(preheader.length);
+  return null;
+}
+
+describe.each(STUDIO_NAMES)("waitlist family, studio %j: the preview is the neutral preheader only", (studioName) => {
+  it.each(casesFor(studioName))("%s", (label, build, expected, extra) => {
     const { html, subject } = build();
     const afterBody = html.slice(html.search(/<body\b[^>]*>/i)).replace(/^<body\b[^>]*>/i, "");
     expect(afterBody.startsWith("<div data-hone-preheader")).toBe(true);
     expect(html.match(/data-hone-preheader/g)).toHaveLength(1);
     const normalized = simulatedPreview(html);
-    expect(normalized.startsWith(expected)).toBe(true);
-    expect(leaks(subject, normalized.slice(expected.length), extra), `filler-stripping preview of ${label}: ${normalized}`).toEqual([]);
+    const rest = afterPreheader(normalized, expected);
+    expect(rest, `preview does not open with the preheader: ${normalized}`).not.toBeNull();
+    expect(leaks(subject, rest ?? "", extra), `filler-stripping preview of ${label}: ${normalized}`).toEqual([]);
     const window = previewWindow(html);
-    expect(window.startsWith(expected)).toBe(true);
-    expect(window.slice(expected.length)).toMatch(/^[ ﻿͏\s]*$/);
+    const windowRest = afterPreheader(window, expected);
+    expect(windowRest).not.toBeNull();
+    expect(windowRest ?? "").toMatch(/^[\u2007\ufeff\u034f\s]*$/);
     for (const re of [...FORBIDDEN, ...extra]) expect(expected).not.toMatch(re);
   });
 });
 
-describe("waitlist family: a plain-text client's preview leaks nothing", () => {
-  it.each(cases)("%s", (label, build, _expected, extra) => {
+describe.each(STUDIO_NAMES)("waitlist family, studio %j: a plain-text client's preview leaks nothing", (studioName) => {
+  it.each(casesFor(studioName))("%s", (label, build, _expected, extra) => {
     const { text, subject } = build();
     const preview = plainTextPreview(text);
     expect(leaks(subject, preview, extra), `text-part preview of ${label}: ${preview}`).toEqual([]);
@@ -111,7 +126,7 @@ describe("waitlist family: a plain-text client's preview leaks nothing", () => {
 });
 
 describe("waitlist family: the credential and the details are still delivered", () => {
-  it.each(cases)("%s", (_label, build, _expected, extra) => {
+  it.each(casesFor("Synthetic Studio"))("%s", (_label, build, _expected, extra) => {
     const { html, text } = build();
     for (const re of extra) {
       expect(text).toMatch(re);

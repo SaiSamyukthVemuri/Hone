@@ -6,6 +6,7 @@ import {
   buildNewClientWaitlistClientEmail,
   buildNewClientWaitlistStudioEmail,
 } from "@/lib/email/templates/new-client-waitlist";
+import { studioPreheader } from "@/lib/email/preheader";
 
 // ===========================================================================
 // WAIT-EMAIL-BRAND-01 — the acknowledgement's PRESENTATION contract
@@ -321,7 +322,7 @@ describe("the STUDIO notice conversion is styling-only", () => {
     // their contact details.
     expect(studioEmail({ phone: "555-0100" }).text).toBe(
       [
-        "New activity at Willow Electrolysis in Hone. Open it to see the details.",
+        studioPreheader("Willow Electrolysis"),
         "",
         "New-client waitlist request",
         "",
