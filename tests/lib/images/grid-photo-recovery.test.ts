@@ -3,6 +3,7 @@ import {
   GRID_PHOTO_REMINT_TIMEOUT_MS,
   gridPhotoKey,
   initialGridPhoto,
+  currentGridPhoto,
   onGridPhotoError,
   onGridPhotoRemint,
   onGridPhotoRemintFailed,
@@ -28,6 +29,25 @@ describe("initial state", () => {
   it("is tied to the server URLs it was computed from", () => {
     expect(initialGridPhoto(BOTH).key).toBe(gridPhotoKey(BOTH));
     expect(gridPhotoKey({ previewUrl: "orig-2", thumbUrl: "thumb-2" })).not.toBe(gridPhotoKey(BOTH));
+  });
+
+  it("keeps an unchanged URL's pending recovery and object identity", () => {
+    const pending = onGridPhotoError(initialGridPhoto(BOTH), BOTH).state;
+    expect(currentGridPhoto(pending, BOTH)).toBe(pending);
+  });
+
+  it("fresh URLs revive a failed cell and reset both retry budgets without remounting", () => {
+    const broken: GridPhotoState = { ...initialGridPhoto(BOTH), stage: "broken", src: null,
+      reminted: { thumb: true, original: true } };
+    const fresh = { previewUrl: "orig-2", thumbUrl: "thumb-2" };
+    expect(currentGridPhoto(broken, fresh)).toEqual(initialGridPhoto(fresh));
+  });
+
+  it("fresh URLs discard an old pending request; a missing original stays unavailable", () => {
+    const pending = onGridPhotoError(initialGridPhoto(BOTH), BOTH).state;
+    const fresh = { previewUrl: null, thumbUrl: "thumb-2" };
+    expect(currentGridPhoto(pending, fresh)).toEqual(initialGridPhoto(fresh));
+    expect(currentGridPhoto(pending, fresh).pending).toBeNull();
   });
 
   it("the re-mint timeout is a named constant, ~10x the observed round trip and under the 60 s TTL", () => {

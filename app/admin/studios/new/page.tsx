@@ -1,3 +1,4 @@
+import { requirePlatformAdmin } from "@/lib/auth/require-platform-admin";
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import type { PendingInvitation, Studio } from "@/lib/types/database";
@@ -19,6 +20,7 @@ async function loadCreated(id: string): Promise<{
   studio: Studio;
   invitation: PendingInvitation | null;
 } | null> {
+  await requirePlatformAdmin();
   const admin = createAdminClient();
   const { data: studio } = await admin
     .from("studios")

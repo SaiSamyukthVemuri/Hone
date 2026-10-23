@@ -20,6 +20,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //      studio-local date itself.
 
 const queries: Array<{ table: string; op: string }> = [];
+const scopedFilters: Array<{ table: string; filters: Array<[string, unknown]> }> = [];
 const scenario = {
   studio: {
     id: "studio-1",
@@ -38,6 +39,9 @@ const scenario = {
   reservationError: null as { code: string } | null,
   servicesError: null as { code: string } | null,
   defaultsThrow: false,
+  personalDefaults: [] as Array<Record<string, unknown>>,
+  personalOverrides: [] as Array<Record<string, unknown>>,
+  personalError: false,
 };
 
 vi.mock("@/lib/booking/queries", () => ({
@@ -62,6 +66,8 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       queries.push({ table, op: "select" });
       const chain: Record<string, unknown> = {};
       const self = () => chain;
+      const filters: Array<[string, unknown]> = [];
+      scopedFilters.push({ table, filters });
       // The requested page, when the caller paginates. `null` means it asked
       // for everything in one go — which is the shape that silently truncates.
       let page: { from: number; to: number } | null = null;
@@ -74,6 +80,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
                 count: scenario.activeServices,
                 error: null,
               };
+        }
+        if (table.startsWith("studio_availability_") && filters.some(([key]) => key === "practitioner_id")) {
+          if (scenario.personalError) return { data: null, error: { code: "42501", message: "PRIVATE_SENTINEL" } };
+          const rows = table === "studio_availability_default" ? scenario.personalDefaults : scenario.personalOverrides;
+          return { data: rows.filter((row) => filters.every(([key, value]) => row[key] === value)), error: null };
         }
         if (table === "studio_availability_default") {
           return { data: scenario.defaults, error: null };
@@ -91,10 +102,12 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         const MAX_ROWS = 1000;
         const from = page?.from ?? 0;
         const to = Math.min(page?.to ?? MAX_ROWS - 1, from + MAX_ROWS - 1);
-        return { data: scenario.reservations.slice(from, to + 1), error: null };
+        const resource = filters.find(([key]) => key === "resource_key")?.[1];
+        const rows = resource === undefined ? scenario.reservations : scenario.reservations.filter((row) => row.resource_key === resource);
+        return { data: rows.slice(from, to + 1), error: null };
       };
       Object.assign(chain, {
-        select: self, eq: self, lte: self, gte: self, lt: self, gt: self, is: self,
+        select: self, eq: (key: string, value: unknown) => { filters.push([key, value]); return chain; }, lte: self, gte: self, lt: self, gt: self, is: self,
         order: self,
         range: (from: number, to: number) => {
           page = { from, to };
@@ -108,7 +121,8 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   }),
 }));
 
-const { fetchPublicSlotsForDates } = await import("@/lib/booking/public-slot-range");
+const { createAdminClient } = await import("@/lib/supabase/admin-server");
+const { fetchPublicSlotsForDates, loadPublicSlotsByDate } = await import("@/lib/booking/public-slot-range");
 
 /** An open studio-wide weekday row. */
 function openDay(dow: number) {
@@ -130,6 +144,10 @@ function range(from: string, to: string): string[] {
 
 beforeEach(() => {
   queries.length = 0;
+  scopedFilters.length = 0;
+  scenario.personalDefaults = [];
+  scenario.personalOverrides = [];
+  scenario.personalError = false;
   scenario.studio = {
     id: "studio-1",
     slug: "studio-a",
@@ -356,5 +374,82 @@ describe("the horizon bounds what is queried at all", () => {
     if (!out.ok) throw new Error("unreachable");
     expect(out.scanned).toContain("2026-10-05");
     expect(out.skippedOutsideHorizon).toContain("2027-06-30");
+  });
+});
+
+
+describe("SCH-003 reschedule range preserves the original appointment timeline", () => {
+  const date = "2026-10-05";
+  const ctx = {
+    studioId: "studio-1", timezone: "America/Toronto", publicBookingHorizonMonths: 3,
+    bufferMinutes: 0, serviceDurationMinutes: 60, practitionerCapacityEnabled: true,
+    practitionerId: "P", excludeReservation: { sourceKind: "appointment" as const, sourceId: "original" },
+  };
+  const load = (context = ctx, dates = [date]) => loadPublicSlotsByDate(createAdminClient(), context, dates, new Date());
+  const personal = (row: Record<string, unknown>, practitioner_id = "P", studio_id = "studio-1") => ({ ...row, practitioner_id, studio_id });
+
+  it("uses only the original practitioner's hours with studio fallback; constant reads for a longer window", async () => {
+    scenario.personalDefaults = [personal({ ...openDay(1), open_time: "11:00", close_time: "12:00" }), personal({ ...openDay(1), is_open: false }, "OTHER"), personal({ ...openDay(1), is_open: false }, "P", "foreign")];
+    const out = await load();
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error("unreachable");
+    expect(out.byDate[0]?.slots.map((s) => s.start)).toEqual(["2026-10-05T15:00:00.000Z"]);
+    const count = queries.length;
+    for (const q of scopedFilters.filter((q) => q.table.startsWith("studio_availability_"))) {
+      expect(q.filters).toContainEqual(["studio_id", "studio-1"]);
+      expect(q.filters).toContainEqual(["practitioner_id", "P"]);
+    }
+    queries.length = 0;
+    await load(ctx, range(date, "2026-12-20"));
+    expect(queries.length).toBe(count);
+    expect(count).toBe(6);
+  });
+
+  it("preserves global date override ahead of personal weekly defaults, then personal date override ahead of global", async () => {
+    scenario.personalDefaults = [personal(openDay(1))];
+    scenario.overrides = [{ effective_date: date, is_open: false, open_time: null, close_time: null }];
+    expect(await load()).toMatchObject({ ok: true, byDate: [] });
+    scenario.personalOverrides = [personal({ effective_date: date, is_open: true, open_time: "11:00", close_time: "12:00" })];
+    const out = await load();
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.byDate[0]?.slots.map((s) => s.start)).toEqual(["2026-10-05T15:00:00.000Z"]);
+  });
+
+  it("excludes only the original appointment, retains other bookings/blocks, and ignores other practitioner reservations", async () => {
+    scenario.defaults = [{ ...openDay(1), close_time: "12:00" }];
+    scenario.reservations = [
+      { starts_at: "2026-10-05T13:00:00Z", ends_at: "2026-10-05T14:00:00Z", source_kind: "appointment", source_id: "original", resource_key: "P" },
+      { starts_at: "2026-10-05T14:00:00Z", ends_at: "2026-10-05T15:00:00Z", source_kind: "appointment", source_id: "other", resource_key: "P" },
+      { starts_at: "2026-10-05T15:00:00Z", ends_at: "2026-10-05T16:00:00Z", source_kind: "timed_block", source_id: "original", resource_key: "P" },
+      { starts_at: "2026-10-05T13:00:00Z", ends_at: "2026-10-05T16:00:00Z", source_kind: "appointment", source_id: "foreign-timeline", resource_key: "OTHER" },
+    ];
+    const out = await load();
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.byDate[0]?.slots.map((s) => s.start)).toEqual(["2026-10-05T13:00:00.000Z"]);
+    const q = scopedFilters.find((q) => q.table === "studio_calendar_reservations");
+    expect(q?.filters).toContainEqual(["studio_id", "studio-1"]);
+    expect(q?.filters).toContainEqual(["resource_key", "P"]);
+  });
+
+  it("does not consult personal columns when capacity is off", async () => {
+    scenario.personalError = true;
+    const out = await load({ ...ctx, practitionerCapacityEnabled: false });
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.byDate[0]?.slots.length).toBeGreaterThan(0);
+    expect(scopedFilters.some((q) => q.filters.some(([key]) => key === "practitioner_id" || key === "resource_key"))).toBe(false);
+  });
+
+  it.each([false, true])("keeps public closing-edge packing off with capacity %s", async (practitionerCapacityEnabled) => {
+    const out = await load({ ...ctx, serviceDurationMinutes: 45, practitionerCapacityEnabled });
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error("unreachable");
+    const starts = out.byDate[0]?.slots.map((slot) => slot.start);
+    expect(starts).toContain("2026-10-05T20:00:00.000Z"); // 16:00 Toronto
+    expect(starts).not.toContain("2026-10-05T20:15:00.000Z"); // internal-only packed edge
+  });
+
+  it("fails closed without personal row diagnostics instead of falling back to studio hours", async () => {
+    scenario.personalError = true;
+    expect(await load()).toEqual({ ok: false, error: "Availability could not be read." });
   });
 });

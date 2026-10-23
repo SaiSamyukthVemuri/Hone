@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { requirePlatformAdmin } from "@/lib/auth/require-platform-admin";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   loadPlatformPaymentSummary,
@@ -82,6 +83,7 @@ async function loadConsole(): Promise<{
   waitlistTotal: number;
   demoRequests: DemoRequestRow[];
 }> {
+  await requirePlatformAdmin();
   const admin = createAdminClient();
 
   const [
@@ -225,6 +227,7 @@ async function loadConsole(): Promise<{
 }
 
 export default async function AdminIndexPage() {
+  await requirePlatformAdmin();
   const { studios, overview, practitioners, waitlist, waitlistTotal, demoRequests } =
     await loadConsole();
   // PR B (smart payment status): platform payment summary: capability
