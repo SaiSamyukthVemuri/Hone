@@ -3,6 +3,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NEW_CLIENT_WAITLIST_SLUGS_ENV } from "@/lib/booking/new-client-waitlist";
 
+// The email subject sweep appends a per-event reference (lib/email/subject-reference.ts):
+// the wording below is unchanged, and the reference is checked for its shape.
+const SUBJECT_REF = / · Ref [2-9A-HJKMNP-Z]{6}$/;
+function withoutRef(subject: string): string {
+  expect(subject).toMatch(SUBJECT_REF);
+  return subject.replace(SUBJECT_REF, "");
+}
+
 // ===========================================================================
 // THE WAITLIST SUBMIT ACTION
 // ===========================================================================
@@ -238,11 +246,11 @@ describe("commit semantics", () => {
 
     const [studioSend, clientSend] = sends;
     expect(studioSend.to).toBe("owner@studio.test");
-    expect(studioSend.subject).toBe("[HONE WAITLIST] New client · Waitlisted Studio");
+    expect(withoutRef(studioSend.subject)).toBe("[HONE WAITLIST] New client · Waitlisted Studio");
     expect(studioSend.text).toContain(CANARY_NAME);
     expect(studioSend.text).toContain("No appointment has been created.");
     expect(clientSend.to).toBe(CANARY_EMAIL);
-    expect(clientSend.subject).toBe("You're on the waitlist · Waitlisted Studio");
+    expect(withoutRef(clientSend.subject)).toBe("You're on the waitlist · Waitlisted Studio");
   });
 
   it("each email is sent under its OWN key namespace", async () => {
@@ -537,7 +545,9 @@ describe("HTML / email injection safety", () => {
     expect(html).not.toContain("<img");
     expect(html).toContain("&lt;script&gt;");
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    // The client acknowledgement no longer renders the name at all (#828,
+    // minimum-necessary preview), which is stronger than escaping it.
     expect(sends[1].html).not.toContain("<script>");
-    expect(sends[1].html).toContain("&lt;script&gt;");
+    expect(sends[1].html).not.toContain("&lt;script&gt;");
   });
 });
