@@ -42,15 +42,25 @@ export function cleanupTmp(): void {
  */
 export const ISOLATED_GIT_CONFIG = "[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n\tautoDetach = false\n";
 
-let isolated: { global: string; prev: Record<string, string | undefined> } | undefined;
+let isolated: { dir: string; global: string; prev: Record<string, string | undefined> } | undefined;
 
-/** Point git at the isolated global config (ISOLATED_GIT_CONFIG) for this test file's process. */
+/**
+ * Point git at the isolated global config (ISOLATED_GIT_CONFIG) for this test
+ * file's process.
+ *
+ * NOT created through makeTmp. That registry is emptied by `cleanupTmp` after
+ * EVERY test, while this config must live until `restoreGitConfig` in
+ * afterAll: registered there, the first test's cleanup deleted it, and git
+ * reads a missing global config as empty, so every later test ran with
+ * automatic maintenance back on (Codex, #1054 4355365276).
+ */
 export function isolateGitConfig(): void {
   if (isolated) return;
-  const dir = makeTmp("gitconfig");
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), "hone-gitconfig-")));
   const global = path.join(dir, "gitconfig");
   writeFileSync(global, ISOLATED_GIT_CONFIG);
   isolated = {
+    dir,
     global,
     prev: { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM },
   };
@@ -64,6 +74,7 @@ export function restoreGitConfig(): void {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
+  rmSync(isolated.dir, { recursive: true, force: true });
   isolated = undefined;
 }
 

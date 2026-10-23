@@ -97,3 +97,41 @@ describe("cleanupTmp outlasts a short-lived lock holder", () => {
     expect(failures).toEqual([]);
   }, 60_000);
 });
+
+// Codex #1054 P1 4355365276. The isolated config was created through makeTmp,
+// so the FIRST afterEach deleted it while GIT_CONFIG_GLOBAL still named it, and
+// git reads a missing global config as EMPTY: every later test in the file ran
+// with automatic maintenance back on. The case above passed only because it
+// ran first. These two run in order: one cleans up, the next must still be
+// isolated.
+describe("the isolated git config outlives per-test cleanup", () => {
+  it("a test that creates a fixture and is cleaned up after", () => {
+    const fx = createFixture();
+    expect(existsSync(fx.work)).toBe(true);
+  });
+
+  it("the NEXT test still sees the config, and a commit still launches no maintenance", () => {
+    const global = process.env.GIT_CONFIG_GLOBAL;
+    expect(global, "GIT_CONFIG_GLOBAL is not set").toBeTruthy();
+    expect(existsSync(global!), `${global} was deleted by an earlier test's cleanup`).toBe(true);
+
+    const fx = createFixture();
+    write(fx.work, "lib/after-cleanup.ts", "export const after = 1;\n");
+    spawnSync("git", ["add", "-A"], { cwd: fx.work });
+    const traced = spawnSync("git", ["commit", "--quiet", "-m", "after cleanup"], {
+      cwd: fx.work,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_TRACE: "1",
+        GIT_AUTHOR_NAME: "Fixture Author",
+        GIT_AUTHOR_EMAIL: "fixture@example.com",
+        GIT_COMMITTER_NAME: "Fixture Author",
+        GIT_COMMITTER_EMAIL: "fixture@example.com",
+      },
+    });
+    expect(traced.status, traced.stderr).toBe(0);
+    expect(traced.stderr).toMatch(/trace: built-in: git commit/u);
+    expect(traced.stderr).not.toMatch(/maintenance run|gc --auto/u);
+  });
+});
