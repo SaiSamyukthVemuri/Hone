@@ -701,6 +701,99 @@ describe("dependency-aware selection — deleting a file a test still reads (435
 // docs/ through readdirSync(ROOT) and a walker over join(ROOT, "docs"); no
 // literal names the documents, so a new or edited document selected nothing.
 // ---------------------------------------------------------------------------
+describe("dependency-aware selection — reads through a DIRECTORY CONSTANT (Codex P1 4362833513)", () => {
+  // tests/audits/findings-register-consistency.test.ts reads
+  //   const DIR = join(process.cwd(), "docs/audits/2026-07-30");
+  //   const read = (f) => readFileSync(join(DIR, f), "utf8");
+  //   read("MASTER_FINDINGS_REGISTER.json"); read("MASTER_FINDINGS_REGISTER.csv");
+  // No literal names either register, so a docs-only edit that broke their
+  // JSON/CSV consistency skipped the one test built to catch it.
+  const REGISTER = "tests/audits/findings-register-consistency.test.ts";
+
+  it.each(["docs/audits/2026-07-30/MASTER_FINDINGS_REGISTER.json", "docs/audits/2026-07-30/MASTER_FINDINGS_REGISTER.csv"])(
+    "GAP: %s selects the register consistency test",
+    (doc) => {
+      const r = c(doc);
+      expect(r.docs_only).toBe(true);
+      expect(r.docs_reader_tests).toContain(REGISTER);
+    },
+  );
+
+  it("ANTI-OVERREACH: a document outside that directory does not select it", () => {
+    expect(c("docs/production/current-state.md").docs_reader_tests).not.toContain(REGISTER);
+  });
+
+  it("GAP: a basename that is not statically known makes the test a reader of EVERY file under the directory", () => {
+    const root = tree({
+      "docs/guides/a.json": "{}\n",
+      "tests/docs/reads-guides.test.ts":
+        'const DIR = join(process.cwd(), "docs/guides");\nconst read = (f: string) => readFileSync(join(DIR, f), "utf8");\nread(pick());\n',
+    });
+    try {
+      const deps = scan(root);
+      expect(deps.docReaderDirs).toEqual({ "docs/guides": ["tests/docs/reads-guides.test.ts"] });
+      const r = classify(["docs/guides/brand-new.md"], deps) as Result;
+      expect(r.docs_reader_tests).toEqual(["tests/docs/reads-guides.test.ts"]);
+      expect((classify(["docs/other/x.md"], deps) as Result).docs_reader_tests ?? []).not.toContain("tests/docs/reads-guides.test.ts");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GAP: a basename joined as a LITERAL resolves to that file only, not the whole directory", () => {
+    const root = tree({
+      "docs/guides/a.json": "{}\n",
+      "docs/guides/b.json": "{}\n",
+      "tests/docs/reads-one.test.ts": 'const DIR = path.join(process.cwd(), "docs", "guides");\nreadFileSync(path.join(DIR, "a.json"), "utf8");\n',
+    });
+    try {
+      const deps = scan(root);
+      expect(deps.docReaders?.["docs/guides/a.json"]).toEqual(["tests/docs/reads-one.test.ts"]);
+      expect(deps.docReaders?.["docs/guides/b.json"]).toBeUndefined();
+      expect(deps.docReaderDirs).toEqual({});
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GAP: a constant relative to __dirname, and a template use, resolve too", () => {
+    const root = tree({
+      "docs/guides/a.json": "{}\n",
+      "tests/docs/rel.test.ts": 'const GUIDES = resolve(__dirname, "../../docs/guides");\nreadFileSync(`${GUIDES}/a.json`, "utf8");\n',
+    });
+    try {
+      expect(scan(root).docReaders?.["docs/guides/a.json"]).toEqual(["tests/docs/rel.test.ts"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GUARD: a constant that names no repository directory, or is never used to read, adds nothing", () => {
+    const root = tree({
+      "tests/docs/none.test.ts": 'const TMP = join(tmpdir(), "scratch");\nconst UNUSED = join(process.cwd(), "docs");\nreadFileSync(join(TMP, f));\n',
+    });
+    try {
+      const deps = scan(root);
+      expect(deps.docReaderDirs).toEqual({});
+      expect(deps.docReaders).toEqual({});
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GAP (DB lane): a tests/db suite reading lib/ through a directory constant selects the database lane", () => {
+    const root = tree({
+      "lib/billing/x.ts": "export {};\n",
+      "tests/db/reads-billing.db.test.ts": 'const SRC = join(process.cwd(), "lib/billing");\nconst src = (f: string) => readFileSync(join(SRC, f), "utf8");\n',
+    });
+    try {
+      expect(scan(root).dbDirs).toEqual({ "lib/billing": ["tests/db/reads-billing.db.test.ts"] });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("dependency-aware selection — directory readers (4355527598)", () => {
   it("GAP: a brand-new document selects the test that reads every document under docs/", () => {
     const r = c("docs/brand-new-guide.md");

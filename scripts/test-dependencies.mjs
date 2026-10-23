@@ -204,6 +204,134 @@ function namedPaths(idx, file, text, isDoc) {
   return { files, dirs };
 }
 
+// ---------------------------------------------------------------------------
+// READS THROUGH A DIRECTORY CONSTANT (Codex P1 4362833513, #1053).
+//
+//   const DIR = join(process.cwd(), "docs/audits/2026-07-30");
+//   const read = (f) => readFileSync(join(DIR, f), "utf8");
+//
+// names no file, so the literal scan saw a directory it only honours for an
+// enumerating test. A string constant that resolves to a repository directory
+// is followed to every use: `join(DIR, "a.json")` or `${DIR}/a.json` with an
+// all-literal remainder names that path; ANY other use (a variable basename, a
+// call, a template with another hole) makes the test a reader of EVERY file
+// under the directory. Fails safe: an edge that cannot be resolved is widened,
+// never dropped.
+// ---------------------------------------------------------------------------
+const DECL = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*/g;
+const LITERAL = /^(["'])((?:\\.|(?!\1)[^\\\n])*)\1$|^`([^`$]*)`$/;
+const CALL = /^(?:path\s*\.\s*)?(?:join|resolve)\s*\(/;
+
+/** The balanced text from `(` at `open` to its `)`: [inner, index after]. */
+function parenSpan(text, open) {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "(") depth++;
+    else if (ch === ")" && --depth === 0) return [text.slice(open + 1, i), i + 1];
+    else if (ch === '"' || ch === "'" || ch === "`") {
+      for (i++; i < text.length && text[i] !== ch; i++) if (text[i] === "\\") i++;
+    }
+  }
+  return null;
+}
+
+/** Top-level comma-separated arguments, trimmed. */
+function splitArgs(inner) {
+  const args = [];
+  let depth = 0;
+  let cur = "";
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      let j = i + 1;
+      for (; j < inner.length && inner[j] !== ch; j++) if (inner[j] === "\\") j++;
+      cur += inner.slice(i, j + 1);
+      i = j;
+      continue;
+    }
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    if (ch === ")" || ch === "]" || ch === "}") depth--;
+    if (ch === "," && depth === 0) {
+      args.push(cur.trim());
+      cur = "";
+    } else cur += ch;
+  }
+  if (cur.trim() !== "") args.push(cur.trim());
+  return args;
+}
+
+const literalValue = (arg) => {
+  const m = LITERAL.exec(arg);
+  return m ? (m[2] ?? m[3]) : null;
+};
+
+/** Directory constants, then the files and directories their uses read. */
+function directoryConstantReads(idx, file, code) {
+  const fromDir = path.posix.dirname(file);
+  const files = new Set();
+  const dirs = new Set();
+  if (!code.includes("join") && !code.includes("resolve") && !code.includes("${")) return { files, dirs };
+  const constants = new Map(); // name -> repo-relative directory
+  const decls = [];
+  for (const m of code.matchAll(DECL)) {
+    const start = m.index + m[0].length;
+    const rest = code.slice(start);
+    let dir = null;
+    const lit = /^(["'`])/.test(rest) ? literalValue((/^(["'])(?:\\.|(?!\1)[^\\\n])*\1|^`[^`$]*`/.exec(rest) ?? [""])[0]) : null;
+    if (lit !== null) dir = normalise(fromDir, lit);
+    else if (CALL.test(rest)) {
+      const span = parenSpan(rest, rest.indexOf("("));
+      if (span) {
+        const args = splitArgs(span[0]);
+        let base = "";
+        const parts = [];
+        let ok = args.length > 0;
+        args.forEach((arg, i) => {
+          const v = literalValue(arg);
+          if (v !== null) parts.push(v);
+          else if (i === 0 && /^(?:__dirname|import\.meta\.dirname)$/.test(arg)) base = fromDir;
+          else if (i === 0 && constants.has(arg)) base = constants.get(arg);
+          else if (i !== 0) ok = false; // a hole after the root: not a constant
+        });
+        if (ok && parts.length) dir = toPosix(path.posix.normalize(path.posix.join(base, ...parts)));
+      }
+    }
+    if (dir && dir !== "." && !dir.startsWith("../") && idx.dirs.has(dir)) {
+      constants.set(m[1], dir);
+      decls.push({ name: m[1], at: m.index, end: start });
+    }
+  }
+  for (const { name, end } of decls) {
+    const dir = constants.get(name);
+    for (const use of code.slice(end).matchAll(new RegExp(`(?<![\\w$.])${name.replace(/\$/g, "\\$")}(?![\\w$])`, "g"))) {
+      const at = end + use.index;
+      const before = code.slice(Math.max(0, at - 40), at);
+      const after = code.slice(at + name.length);
+      let path_ = null; // the all-literal path this use names, if any
+      if (/(?:\bjoin|\bresolve)\s*\(\s*$/.test(before)) {
+        const open = code.lastIndexOf("(", at);
+        const span = parenSpan(code, open);
+        const tail = span ? splitArgs(span[0]).slice(1) : null;
+        const lits = tail ? tail.map(literalValue) : [null];
+        if (tail && lits.every((v) => v !== null)) path_ = [dir, ...lits].join("/");
+      } else if (/\$\{\s*$/.test(before)) {
+        const m = /^\s*\}([^`$]*)`/.exec(after);
+        if (m) path_ = `${dir}${m[1].startsWith("/") ? "" : "/"}${m[1]}`;
+      }
+      if (path_ === null) {
+        dirs.add(dir);
+        continue;
+      }
+      const rel = toPosix(path.posix.normalize(path_));
+      if (idx.dirs.has(rel)) dirs.add(rel);
+      else if (/\.[A-Za-z0-9]+$/.test(rel)) files.add(rel);
+      else dirs.add(dir);
+    }
+  }
+  return { files, dirs };
+}
+
 function importedPaths(idx, file, text) {
   const fromDir = path.posix.dirname(file);
   const found = new Set();
@@ -254,11 +382,17 @@ export function scanTestDependencies(root, isDoc) {
   for (const file of idx.fileList.filter((f) => f.startsWith("tests/") && TEST_FILE.test(f) && !NOT_A_READER.has(f))) {
     const text = readFileSync(path.join(root, file), "utf8");
     const code = withoutCommentLines(text);
-    const { files: named, dirs } = namedPaths(idx, file, code, isDoc);
+    const { files: literalFiles, dirs } = namedPaths(idx, file, code, isDoc);
+    // Reads assembled from a directory constant (Codex P1 4362833513): named
+    // files, plus whole directories wherever a basename is not static.
+    const viaConstant = directoryConstantReads(idx, file, code);
+    const named = new Set([...literalFiles, ...viaConstant.files]);
     // A substring check first: the regex alone was a measurable share of the scan.
     const enumerates = (code.includes("readdir") || code.includes("opendir") || code.includes("glob") || code.includes("ls-files")) && ENUMERATES.test(code);
-    // Only an enumerating test reads a directory; elsewhere "app" is a word.
-    const listedDirs = enumerates ? [...dirs].filter((d) => d !== "tests" && !d.startsWith("tests/")) : [];
+    // Only an enumerating test reads a directory literal; elsewhere "app" is a
+    // word. A directory reached THROUGH a constant is read either way.
+    const notTests = (d) => d !== "tests" && !d.startsWith("tests/");
+    const listedDirs = [...new Set([...(enumerates ? [...dirs] : []), ...viaConstant.dirs])].filter(notTests);
 
     if (file.startsWith("tests/db/")) {
       for (const target of [...importedPaths(idx, file, text), ...named]) {
