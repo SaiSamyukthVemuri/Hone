@@ -12,7 +12,10 @@ function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
 }
 const MGR = read("app/(app)/clients/[id]/images/TreatmentImagesManager.tsx");
-const ACTION = read("app/(app)/clients/[id]/images/actions.ts");
+// The signer moved into sign-treatment-image.ts (shared with the re-mint route,
+// Codex P1 4307807754); the signed-URL surface is both files together.
+const ACTION =
+  read("app/(app)/clients/[id]/images/actions.ts") + "\n" + read("app/(app)/clients/[id]/images/sign-treatment-image.ts");
 
 describe("per-file validation (same rules on client + server)", () => {
   it("accepts jpeg/png/webp within the 15MB limit", () => {

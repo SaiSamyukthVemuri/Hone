@@ -154,6 +154,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/clients/[id]/images/sign-treatment-image.ts",
+    purpose:
+      "FETT photos (HON-43): the ONE treatment-photo URL signer, shared by getTreatmentImageSignedUrlAction (View larger) and GET /api/clients/[clientId]/images/[imageId]/signed-url (photo-cell re-mint).",
+    why: "Storage signing only (createSignedUrl), never a table read or write through the admin client. Both callers resolve the studio from the session first (getCurrentPractitionerWithStudio); this function then reads the row through the caller's RLS client scoped to that studio.id (and the route's clientId) and not archived, and validateTreatmentImagePath binds the stored path to that studio and client before the service-role client signs the path that verified read returned. No bucket or path is taken from input.",
+    scopeGuard: "validateTreatmentImagePath",
+  },
+  {
     path: "app/(app)/clients/[id]/images/page.tsx",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via requirePractitionerWithStudio(); every query is scoped to that studio.id.",
@@ -303,6 +310,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Trusted onboarding completion + celebration adapters (wizard).",
     why: "completed_at / celebrated_at / status='completed' / the 'done' marker are PROTECTED fields — a SECURITY INVOKER guard trigger blocks any direct browser write. Completion + celebration are therefore the service-role-ONLY commands admin_complete_onboarding / admin_mark_onboarding_celebrated (public/anon/authenticated execute revoked). The adapter passes ONLY the session user id (resolved server-side by the owner-gated action) + the studio id; each command re-verifies IN-DB that the user is an ACTIVE OWNER of that studio AND onboarding_v2 is enabled, and accepts no role/status/timestamp/step state from the browser.",
     scopeGuard: "admin_complete_onboarding",
+  },
+  {
+    path: "app/api/cron/sms-confirmation-recovery/route.ts",
+    purpose: "Scheduled, session-less cron: D5 owed-confirmation recovery (#824, inert unless SMS_CONFIRMATION_RECOVERY=on).",
+    why: "Runs with no user session; authorized by the CRON_SECRET bearer, and creates no client while disabled. Service-role is required for the appointments read and claim_sms_send; every query is scoped to one listed studio in-query.",
+    scopeGuard: "isAuthorizedCronRequest",
   },
   {
     path: "app/api/cron/appointment-reminders/route.ts",
@@ -777,5 +790,11 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Authenticated OWNER settings page (redacted status read).",
     why: "Owner-gated via requirePractitionerWithStudio(); reads only redacted provider status (never encrypted_server_token) scoped to studio.id.",
     scopeGuard: "requirePractitionerWithStudio",
+  },
+  {
+    path: "app/(app)/clients/[id]/sessions/[sessionId]/session-photos.ts",
+    purpose: "Sign this visit's treatment photos for the session chart page (FETT photos, read-only).",
+    why: "Signing a private-bucket object needs the service role (storage is service-role only since 0093). Rows are first read through the RLS client scoped to the caller's studio + client + session, unarchived, and each path must pass validateTreatmentImagePath before the admin client signs it with the shared 60 s TTL: the Photos tab's own trust boundary.",
+    scopeGuard: "validateTreatmentImagePath",
   },
 ];

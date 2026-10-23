@@ -368,14 +368,14 @@ describe("Treatment intelligence — unified", () => {
   }
   it("(10) latest reaction reads the unified representation and retains all", () => {
     const intel = buildTreatmentIntelligence({
-      sessionsNewestFirst: [{ id: "s1", started_at: "2026-06-01T10:00:00Z", electrolysis_entries: [], laser_entries: [] }],
+      sessionsNewestFirst: [{ id: "s1", started_at: "2026-06-01T10:00:00Z", record_status: "draft", electrolysis_entries: [], laser_entries: [] }],
       blocks: [block({ observation_chips_list: [["Mild redness", "Swelling"]] })],
     });
     expect(intel.latestReactionLabel).toBe("Mild redness, Swelling");
   });
   it("legacy reaction_type still summarized", () => {
     const intel = buildTreatmentIntelligence({
-      sessionsNewestFirst: [{ id: "s1", started_at: "2026-06-01T10:00:00Z", electrolysis_entries: [], laser_entries: [] }],
+      sessionsNewestFirst: [{ id: "s1", started_at: "2026-06-01T10:00:00Z", record_status: "draft", electrolysis_entries: [], laser_entries: [] }],
       blocks: [block({ reaction_type: "swelling" })],
     });
     expect(intel.latestReactionLabel).toBe("Swelling");
@@ -384,7 +384,7 @@ describe("Treatment intelligence — unified", () => {
 
   it("D4 safety-relevant responses reach treatment intelligence", () => {
     const intel = buildTreatmentIntelligence({
-      sessionsNewestFirst: [{ id: "s1", started_at: "2026-06-01T10:00:00Z", electrolysis_entries: [], laser_entries: [] }],
+      sessionsNewestFirst: [{ id: "s1", started_at: "2026-06-01T10:00:00Z", record_status: "draft", electrolysis_entries: [], laser_entries: [] }],
       blocks: [
         block({
           observation_chips_list: [

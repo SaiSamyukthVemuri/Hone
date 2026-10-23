@@ -151,16 +151,97 @@ describe("source contract: the grid recovers through GridPhoto", () => {
   const mgr = readFileSync(`${DIR}/TreatmentImagesManager.tsx`, "utf8");
   const cell = readFileSync(`${DIR}/GridPhoto.tsx`, "utf8");
 
-  it("the grid renders GridPhoto keyed by the server URLs, so router.refresh() revives a dead cell", () => {
-    expect(mgr).toMatch(/<GridPhoto\s+key=\{`\$\{img\.id\}:\$\{img\.previewUrl \?\? ""\}:\$\{img\.thumbUrl \?\? ""\}`\}/);
+  it("keeps the opener keyed by image identity while fresh URLs reset recovery state", () => {
+    expect(mgr).toMatch(/<GridPhoto\s+key=\{img\.id\}\s+clientId=\{clientId\}/);
+    expect(readFileSync("lib/images/use-grid-photo-recovery.ts", "utf8"))
+      .toContain("const state = currentGridPhoto(storedState, { previewUrl, thumbUrl });");
     expect(mgr).not.toMatch(/thumbFailed|setBroken/);
   });
 
-  it("the cell stays lazy, re-mints through the shared action, and checks for a pre-hydration failure", () => {
+  it("the cell stays lazy and drives the SHARED hook with its client and image, never a server action", () => {
     expect(cell).toMatch(/loading="lazy"/);
-    expect(cell).toMatch(/getTreatmentImageSignedUrlAction\(\{ imageId, variant \}\)/);
-    expect(cell).toMatch(/el\.complete && el\.naturalWidth === 0/);
-    // Transitions never run inside a state updater (no duplicate re-mint).
-    expect(cell).not.toMatch(/setState\(\(current\) =>/);
+    expect(cell).toMatch(/useGridPhotoRecovery\(\{ previewUrl, thumbUrl, clientId, imageId \}\)/);
+    expect(cell).not.toMatch(/getTreatmentImageSignedUrlAction|from "\.\/actions"/);
+    expect(cell).toMatch(/ref=\{imgRef\}/);
+    expect(cell).toMatch(/onError=\{onError\}/);
+  });
+
+  it("the action delegates to the ONE shared signer (the route uses the same one)", () => {
+    const actions = readFileSync(`${DIR}/actions.ts`, "utf8");
+    expect(actions).toMatch(/return signTreatmentImageUrl\(studio\.id, \{ imageId: input\.imageId, variant: input\.variant \}\);/);
+    // The action stays studio-scoped: it passes no clientId.
+    expect(actions).not.toMatch(/signTreatmentImageUrl\([^)]*clientId/);
+  });
+});
+
+describe("source contract: the shared recovery hook (abortable re-mint + hydration window)", () => {
+  const hook = readFileSync("lib/images/use-grid-photo-recovery.ts", "utf8");
+  const ctl = readFileSync("lib/images/remint-controller.ts", "utf8");
+  const req = readFileSync("lib/images/remint-request.ts", "utf8");
+
+  it("is a client module that imports no application code and no server action", () => {
+    expect(hook).toMatch(/^"use client";/);
+    for (const src of [hook, ctl, req]) {
+      expect(src).not.toMatch(/from "@\/app\//);
+      expect(src).not.toMatch(/Action\(|"use server"/);
+    }
+  });
+
+  it("re-mints through the abortable GET, one controller per cell's server URLs", () => {
+    expect(hook).toMatch(/request: \(variant, signal\) => fetchSignedImageUrl\(\{ clientId, imageId, variant, signal \}\)/);
+    expect(hook).toMatch(/const key = `\$\{clientId\}\\n\$\{imageId\}\\n\$\{previewUrl \?\? ""\}\\n\$\{thumbUrl \?\? ""\}`;/);
+    expect(req).toMatch(/redirect: "manual"/);
+    expect(req).toMatch(/cache: "no-store"/);
+    expect(req).toMatch(/signal: input\.signal/);
+  });
+
+  it("a timeout ABORTS the attempt before the failed path; requests and timers end on unmount and when nothing is pending", () => {
+    expect(ctl).toMatch(/a\.timer = setTimeout\(\(\) => \{\s*a\.ac\.abort\(\);\s*fail\(\);\s*\}, timeoutMs\);/);
+    expect(ctl).toMatch(/timeoutMs = deps\.timeoutMs \?\? GRID_PHOTO_REMINT_TIMEOUT_MS/);
+    expect(hook).toMatch(/controller\.activate\(\);\s*return \(\) => controller\.dispose\(\);/);
+    // StrictMode's replay (dispose → activate) re-issues a stranded attempt (Codex 4308035620).
+    expect(ctl).toMatch(/activate\(\) \{[\s\S]{0,800}?const p = read\(\)\.pending;\s*if \(p && attempts\.size === 0\) issue\(p\);/);
+    expect(hook).toMatch(/if \(!state\.pending\) controller\.settle\(\);/);
+    // ...and settle is gated on the LIVE state, so a stale render's effect can
+    // never cancel a re-mint an earlier effect just started (Codex P2 4307931365).
+    expect(ctl).toMatch(/settle\(\) \{[\s\S]{0,600}?if \(read\(\)\.pending\) return;\s*for \(const a of \[\.\.\.attempts\]\)/);
+  });
+
+  it("handles an image that already failed, else listens NATIVELY for a later failure, per src", () => {
+    expect(hook).toMatch(/if \(el\.complete && el\.naturalWidth === 0\) \{\s*handleError\(\);\s*return;\s*\}/);
+    expect(hook).toMatch(/el\.addEventListener\("error", onNativeError\);/);
+    expect(hook).toMatch(/return \(\) => el\.removeEventListener\("error", onNativeError\);/);
+    expect(hook).toMatch(/\}, \[state\.src, handleError\]\);/);
+    // React's onError and the native listener get the SAME event: one
+    // delivery path per event (Codex 4308035614).
+    expect(hook).toMatch(/const handleError = useMemo\(\(\) => oncePerErrorEvent\(\(\) => controller\.onImageError\(\)\), \[controller\]\);/);
+    expect(hook).toMatch(/const onNativeError = \(e: Event\) => handleError\(e\);/);
+    expect(hook).toMatch(/return \{ state, imgRef, onError: handleError \};/);
+  });
+
+  it("transitions never run inside a state updater (no duplicate re-mint)", () => {
+    expect(hook).not.toMatch(/setState\(\(current\) =>/);
+    expect(hook).toMatch(/stateRef\.current = next;\s*setState\(next\);/);
+  });
+});
+
+describe("source contract: the signed-url route", () => {
+  const route = readFileSync("app/api/clients/[clientId]/images/[imageId]/signed-url/route.ts", "utf8");
+
+  it("calls the SHARED signer with the path's clientId and never signs itself", () => {
+    expect(route).toMatch(/signTreatmentImageUrl\(\s*studioId,\s*\{ imageId, clientId, variant \},/);
+    expect(route).not.toMatch(/createAdminClient|createSignedUrl|service_role/i);
+  });
+
+  it("every response is no-store; no CORS header is ever set; nothing is logged", () => {
+    expect(route).toMatch(/"Cache-Control": "no-store, private"/);
+    expect(route).toMatch(/NextResponse\.json\(body, \{ status, headers: NO_STORE \}\)/);
+    expect(route).not.toMatch(/Access-Control/i);
+    expect(route).not.toMatch(/console\.|recordOpsAlert|Sentry/);
+  });
+
+  it("adds no middleware exemption: the session gate still refuses it first", () => {
+    const mw = readFileSync("lib/supabase/middleware.ts", "utf8");
+    expect(mw).not.toMatch(/signed-url|\/api\/clients/);
   });
 });

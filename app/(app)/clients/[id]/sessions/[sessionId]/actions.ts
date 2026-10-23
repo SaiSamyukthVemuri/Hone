@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { safeLog } from "@/lib/logging/safe-log";
 import { mapSessionCommandError } from "@/lib/sessions/session-command-errors";
 import { mapBlockCommandError } from "@/lib/sessions/block-command-errors";
 import { redirect } from "next/navigation";
@@ -528,7 +529,7 @@ async function softDeleteEntry(
     // Never surface the raw database message to the practitioner: with the
     // service-role client it can name tables, columns and privilege state. Log
     // the sqlstate + non-clinical ids for operators and return fixed copy.
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "remove_pass_update_failed",
         table,
@@ -547,7 +548,7 @@ async function softDeleteEntry(
   // hard fault rather than assumed benign.
   if (!data || data.length !== 1) {
     if (data && data.length > 1) {
-      console.error(
+      safeLog.error(
         JSON.stringify({
           event: "remove_pass_multi_row",
           table,

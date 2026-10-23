@@ -84,9 +84,9 @@ function timeToMinutes(hhmmss: string | null): number | null {
   return h * 60 + m;
 }
 
-// Read-only weekly availability for one weekday, passed from the page.
-// `null` means "no default configured" → render no tint (keep the
-// existing blank look rather than fabricating a closed/open state).
+// Read-only shared availability for this date, including date overrides.
+// `null` means absent or differing practitioner hours: render no tint rather
+// than fabricating a shared closed/open state. Booking authority is separate.
 export type DayAvailability = {
   isOpen: boolean;
   openTime: string | null; // "HH:MM:SS"

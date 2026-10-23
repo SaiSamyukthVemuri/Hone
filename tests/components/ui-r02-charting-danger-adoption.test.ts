@@ -49,7 +49,8 @@ describe("UI-R02: the charting done-boundary uses the primitives", () => {
     // buttons are disabled during pending, so Escape and the backdrop are the
     // only two exits; adopting confirm-dialog's idle-only rule here would
     // remove one of them from a control documented as emergency-safe.
-    expect(DONE).toMatch(/e\.key === "Escape"/);
+    expect(DONE).toContain("useDialogKeyboard");
+    expect(DONE).toContain("busy: false");
     expect(DONE).not.toMatch(/Escape"\s*&&\s*!pending/);
     expect(DONE).toMatch(/onClick=\{proceed\}/);
     expect(DONE).toMatch(/role="dialog"/);

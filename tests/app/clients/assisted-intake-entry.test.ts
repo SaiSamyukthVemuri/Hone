@@ -726,3 +726,20 @@ describe("6. handoff", () => {
     expect(generateIntakeLinkUrl).toHaveBeenCalledTimes(1);
   });
 });
+
+
+describe("4332229852 whole-map draft navigation", () => {
+  it.each(["historic-unknown", false, { legacy: "unknown" }])("preserves unchanged legacy %j posted with the whole assisted map", async (legacy) => {
+    state.intakes = [intakeRow({ responses: { has_allergies: legacy, legal_name: "Before" } })];
+    const wholeMap = JSON.parse(JSON.stringify(storedResponses()));
+    const result = await save({ step: 1, responses: { ...wholeMap, legal_name: "After" } });
+    expect(result.ok).toBe(true);
+    expect(storedResponses().legal_name).toBe("After");
+    expect(storedResponses().has_allergies).toEqual(legacy);
+    const before = JSON.stringify(currentIntake());
+    const rejected = await save({ step: 3, responses: { ...storedResponses(), has_allergies: "new-invalid" } });
+    expect(rejected.ok).toBe(false);
+    expect(JSON.stringify(currentIntake())).toBe(before);
+    expect((await save({ step: 3, responses: { ...storedResponses(), has_allergies: "no" } })).ok).toBe(true);
+  });
+});

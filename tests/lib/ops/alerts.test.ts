@@ -10,15 +10,11 @@ import path from "node:path";
 //   * It redacts dangerous keys / values from safe_details before
 //     either the structured log OR the DB insert.
 //
-// We exercise the helper directly via `redactSafeDetails`. The
-// recordOpsAlert function itself takes an admin Supabase client
-// inside its body; testing the insert path would require either
-// mocking the entire Supabase module or running against a real DB.
-// We assert the never-throws contract at the call sites via the
-// source-grep tests below, and pin down the redaction logic via
-// the pure function.
+// Pure redaction and source contracts remain below. The MSG-007 cases also
+// drive the real writer with synthetic insert/dispatcher adapters, proving
+// external log privacy while first-party payloads/order remain intact.
 
-import { redactSafeDetails } from "@/lib/ops/alerts";
+import { recordOpsAlert, redactSafeDetails } from "@/lib/ops/alerts";
 
 describe("redactSafeDetails (PR #153)", () => {
   it("returns {} on undefined input", () => {
@@ -322,8 +318,8 @@ describe("recordOpsAlert never-throws (PR #153)", () => {
   // We don't run the helper against the live admin client. Instead
   // we patch console.error to swallow output and assert that the
   // function does not throw when called with a minimal valid input.
-  // The DB path will fail inside the try/catch (no env), but the
-  // helper's never-throw contract must hold.
+  // The synthetic insert throws inside the try/catch; the helper's
+  // never-throw contract must hold without touching a live database.
   let originalConsoleError: typeof console.error;
   beforeEach(() => {
     originalConsoleError = console.error;
@@ -337,6 +333,7 @@ describe("recordOpsAlert never-throws (PR #153)", () => {
     const mod = await import("@/lib/ops/alerts");
     let threw = false;
     try {
+      sink.mode = "throw"; // Exercise a real synthetic insert exception, not a silent successful mock.
       await mod.recordOpsAlert({
         severity: "info",
         event: "ops_alert_test_event",
@@ -346,5 +343,72 @@ describe("recordOpsAlert never-throws (PR #153)", () => {
       threw = true;
     }
     expect(threw).toBe(false);
+    sink.mode = "ok";
+  });
+});
+
+
+const sink = vi.hoisted(() => ({
+  mode: "ok" as "ok" | "error" | "error_bad_code" | "throw" | "dispatch_throw",
+  inserts: [] as Array<Record<string, unknown>>,
+  dispatches: [] as Array<Record<string, unknown>>,
+  order: [] as string[],
+}));
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({
+  from: (table: string) => {
+    if (table !== "ops_alerts") throw new Error("unexpected table");
+    return { insert: async (row: Record<string, unknown>) => {
+      sink.order.push("insert"); sink.inserts.push(row);
+      if (sink.mode === "throw") throw new Error("PRIVATE insert patient@example.invalid SECRET_TOKEN");
+      return { error: (sink.mode === "error" || sink.mode === "error_bad_code") ? { code: sink.mode === "error_bad_code" ? "PRIVATE patient@example.invalid" : "XX000", message: "PRIVATE insert patient@example.invalid SECRET_TOKEN" } : null };
+    } };
+  },
+}) }));
+vi.mock("@/lib/ops/alert-email", () => ({ notifyCriticalOpsAlert: async (payload: Record<string, unknown>) => {
+  sink.order.push("dispatch"); sink.dispatches.push(payload);
+  if (sink.mode === "dispatch_throw") throw new Error("PRIVATE dispatch patient@example.invalid SECRET_TOKEN");
+} }));
+
+describe("MSG-007 real ops alert sink preserves first-party lineage and scrubs external logs", () => {
+  const STUDIO = "11111111-1111-4111-8111-111111111111";
+  const APPOINTMENT = "22222222-2222-4222-8222-222222222222";
+  const CLIENT = "33333333-3333-4333-8333-333333333333";
+  beforeEach(() => { sink.mode = "ok"; sink.inserts = []; sink.dispatches = []; sink.order = []; vi.spyOn(console, "error").mockImplementation(() => {}); });
+  afterEach(() => { vi.restoreAllMocks(); });
+  const input = (severity: "critical" | "warning" | "info" = "critical") => ({
+    event: "sms_delivery_failed", severity, message: "Safe synthetic failure.",
+    studioId: STUDIO, appointmentId: APPOINTMENT, clientId: CLIENT, route: "/api/cron/appointment-reminders",
+    safeDetails: { attempt_number: 3, record: APPOINTMENT },
+  });
+  it.each(["ok", "error", "error_bad_code", "throw", "dispatch_throw"] as const)("%s leaves DB/dispatcher payloads intact but exports no record IDs or raw exceptions", async (mode) => {
+    sink.mode = mode;
+    await expect(recordOpsAlert(input())).resolves.toBeUndefined();
+    expect(sink.inserts).toEqual([{
+      severity: "critical", event: "sms_delivery_failed", message: "Safe synthetic failure.",
+      studio_id: STUDIO, appointment_id: APPOINTMENT, client_id: CLIENT,
+      stripe_event_id: null, stripe_payment_intent_id: null, manual_fee_attempt_id: null,
+      route: "/api/cron/appointment-reminders", safe_details: { attempt_number: 3, record: APPOINTMENT },
+    }]);
+    expect(sink.order).toEqual(["insert", "dispatch"]);
+    expect(sink.dispatches).toEqual([{
+      event: "sms_delivery_failed", message: "Safe synthetic failure.", createdAtIso: expect.any(String),
+      studioId: STUDIO, appointmentId: APPOINTMENT, clientId: CLIENT,
+      stripeEventId: null, stripePaymentIntentId: null, route: "/api/cron/appointment-reminders",
+    }]);
+    const logs = JSON.stringify(vi.mocked(console.error).mock.calls);
+    expect(logs).toContain("sms_delivery_failed");
+    if (mode === "error") expect(logs).toContain("XX000");
+    for (const privateValue of [STUDIO, APPOINTMENT, CLIENT, "PRIVATE", "patient@example.invalid", "SECRET_TOKEN"]) expect(logs).not.toContain(privateValue);
+  });
+  it("even a throwing console cannot fail persistence or critical dispatch", async () => {
+    vi.mocked(console.error).mockImplementation(() => { throw new Error("PRIVATE console"); });
+    await expect(recordOpsAlert(input())).resolves.toBeUndefined();
+    expect(sink.order).toEqual(["insert", "dispatch"]);
+  });
+  it.each(["warning", "info"] as const)("%s retains the exact no-email severity gate", async (severity) => {
+    await recordOpsAlert(input(severity));
+    expect(sink.order).toEqual(["insert"]);
+    expect(sink.dispatches).toEqual([]);
+    expect(sink.inserts).toHaveLength(1);
   });
 });

@@ -82,7 +82,13 @@ describe("CI db-integration job is local-only and secret-free", () => {
     const runLines = CI.split("\n").filter(
       (l) => !l.trim().startsWith("#"),
     );
-    const executable = runLines.join("\n");
+    // D7b (Sam, 2026-10-22): the ONE sanctioned credential is the read-only
+    // ghcr.io login's own token, once per pinned docker/login-action step
+    // (pinned in full by tests/ci/ci-config.test.ts). Nothing else may name a secret.
+    const SANCTIONED = "password: ${{ secrets.GITHUB_TOKEN }}";
+    const sanctioned = runLines.filter((l) => l.trim() === SANCTIONED).length;
+    expect(sanctioned).toBe((CI.match(/uses: docker\/login-action@dbcb813823bdd20940b903addbd779551569679f/g) ?? []).length);
+    const executable = runLines.filter((l) => l.trim() !== SANCTIONED).join("\n");
     expect(executable).not.toMatch(/--linked/);
     expect(executable).not.toMatch(/SUPABASE_ACCESS_TOKEN/);
     expect(executable).not.toMatch(/db push/);
