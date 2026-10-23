@@ -549,9 +549,10 @@ describe("PR CI — path-aware lane selection", () => {
     // 30767725631 (extended) and later run 30814919019 (targeted) were both
     // misreported as test failures.
     const b = shardTimeoutBudgets();
-    expect(b.targeted, "targeted hard timeout").toBe(15);
+    // 15 -> 19 (2026-10-23): + the bounded 6 min Playwright install step.
+    expect(b.targeted, "targeted hard timeout").toBe(19);
     expect(b.extended, "measured cold-setup hard timeout").toBe(25);
-    expect(CI).toMatch(/hard timeout 15 min/i);
+    expect(CI).toMatch(/hard timeout 19 min/i);
     expect(CI).toMatch(/hard timeout 25 min/i);
     expect(CI).toMatch(/target <10 min per shard/i);
     expect(CI).toMatch(/FAILURE CEILING, not a performance target/i);
@@ -683,8 +684,9 @@ describe("PR CI — path-aware lane selection", () => {
     // Unconditional: a browser-cache MISS needs the system packages too, and
     // the miss path no longer installs them itself (no --with-deps).
     expect(deps[0].if).toBeUndefined();
-    expect(deps[0]["timeout-minutes"], "a step-level ceiling above the script's 3 + 5 min").toBeGreaterThanOrEqual(9);
-    expect(deps[0]["timeout-minutes"]).toBeLessThanOrEqual(10);
+    // Exact: the worst-case guard below derives the floor; this pins the value
+    // the job budgets were computed against.
+    expect(deps[0]["timeout-minutes"], "the install step's ceiling").toBe(6);
     const miss = steps.find((s) => s.if === "steps.pw-cache.outputs.cache-hit != 'true'");
     expect(miss?.run).toBe("npx playwright install chromium");
   });
@@ -743,9 +745,71 @@ describe("PR CI — path-aware lane selection", () => {
     expect(steps[save].if).toBe("matrix.needs_browsers && steps.deb-cache.outputs.cache-hit != 'true'");
     expect(steps[restore].with).toMatchObject({ path: "~/apt-debs", key: DEB_KEY });
     expect(steps[save].with).toMatchObject({ path: "~/apt-debs", key: DEB_KEY });
-    expect(steps[deps]["timeout-minutes"]).toBe(9);
+    expect(steps[deps]["timeout-minutes"]).toBe(6);
     const miss = steps.find((s) => s.id !== "pw-cache" && (s.if ?? "").includes("steps.pw-cache.outputs.cache-hit != 'true'"));
     expect(miss?.run).toBe("npx playwright install chromium");
+  });
+
+  // THE STEP CEILING MUST EXCEED THE SCRIPT'S OWN WORST CASE (Codex P2
+  // 4362256407, #1059). A step cut by GitHub signals only the unprivileged
+  // shell, so a privileged cleanup or fallback still in flight would be
+  // abandoned. The worst case is DERIVED from the script's defaults, never
+  // restated here: attempt (FIRST + KILL_AFTER) + settle + dpkg repair
+  // (REPAIR + KILL_AFTER) + retry (RETRY + KILL_AFTER), plus 30 s for the
+  // .deb restore/save copies and the mirror edit.
+  const DEPS_SCRIPT = "scripts/ci/playwright-system-deps.sh";
+  function scriptWorstCaseSeconds(script: string): number {
+    const def = (name: string) => {
+      const m = new RegExp(`^${name}="\\$\\{[A-Z_]+:-(\\d+)\\}"$`, "m").exec(script);
+      expect(m, `${DEPS_SCRIPT} defines ${name} with a numeric default`).not.toBeNull();
+      return Number(m![1]);
+    };
+    const [first, retry, kill, settle, repair] = ["FIRST", "RETRY", "KILL_AFTER", "SETTLE", "REPAIR"].map(def);
+    return first + kill + settle + repair + kill + retry + kill;
+  }
+  const SCRIPT_OVERHEAD_S = 30;
+
+  it("the arithmetic is the script's: every bound it applies is one of the constants summed", () => {
+    const script = readFileSync(DEPS_SCRIPT, "utf8");
+    expect(script).toMatch(/timeout --kill-after="\$KILL_AFTER" "\$1" npx playwright install-deps chromium/);
+    expect(script).toMatch(/sudo timeout --kill-after="\$KILL_AFTER" "\$REPAIR" dpkg --configure -a/);
+    expect(script).toMatch(/while \[ -n "\$busy" \] && \[ "\$waited" -lt "\$SETTLE" \]/);
+    // No other literal time bound hides in the script.
+    expect(script.match(/timeout --kill-after=/g)).toHaveLength(2);
+  });
+
+  it("EVERY workflow step running the script has timeout-minutes above its worst case", () => {
+    const worst = scriptWorstCaseSeconds(readFileSync(DEPS_SCRIPT, "utf8")) + SCRIPT_OVERHEAD_S;
+    const offenders: string[] = [];
+    let seen = 0;
+    for (const [file, body] of readWorkflowDir()) {
+      const doc = yaml.load(body) as { jobs?: Record<string, { steps?: PwStep[] }> };
+      for (const [job, def] of Object.entries(doc.jobs ?? {})) {
+        for (const step of def.steps ?? []) {
+          if (!(step.run ?? "").includes(DEPS_SCRIPT)) continue;
+          seen += 1;
+          const t = step["timeout-minutes"];
+          if (typeof t !== "number" || t * 60 <= worst) offenders.push(`${file} ${job}: timeout-minutes ${t} (${(t ?? 0) * 60}s) <= ${worst}s`);
+        }
+      }
+    }
+    expect(seen, "ci.yml x4 + nightly.yml x1").toBe(5);
+    expect(offenders).toEqual([]);
+  });
+
+  it("each Playwright job's hard timeout clears measured no-stall time + the install step's ceiling + 1 min", () => {
+    // No-stall p90 totals measured 2026-10-23 (machines/SETUP-TIME-MEASURE-END.json,
+    // apt step < 1 min): the install step's ceiling is the worst it can add.
+    const P90 = { targeted: 11.2, extended: 14.5, payment: 10.3, mobile: 5.8, google: 6.7 };
+    const stepCeiling = (job: string) => pwSteps(job).find((s) => (s.run ?? "").includes(DEPS_SCRIPT))!["timeout-minutes"]!;
+    const need = (p90: number, job: string) => p90 + stepCeiling(job) + 1;
+    const b = shardTimeoutBudgets();
+    const jobBudget = (job: string) => Number(new RegExp(`  ${job}:\\n(?:.*\\n)*?    timeout-minutes: (\\d+)`).exec(CI)![1]);
+    expect(b.targeted, "targeted").toBeGreaterThanOrEqual(need(P90.targeted, "browser-e2e-shard"));
+    expect(b.extended, "extended").toBeGreaterThanOrEqual(need(P90.extended, "browser-e2e-shard"));
+    expect(jobBudget("payment-browser-e2e")).toBeGreaterThanOrEqual(need(P90.payment, "payment-browser-e2e"));
+    expect(jobBudget("mobile-completion-e2e")).toBeGreaterThanOrEqual(need(P90.mobile, "mobile-completion-e2e"));
+    expect(jobBudget("google-browser-e2e")).toBeGreaterThanOrEqual(need(P90.google, "google-browser-e2e"));
   });
 
   it("the script bounds the install, retries once on another mirror, and round-trips the .deb cache", () => {
@@ -763,10 +827,12 @@ describe("PR CI — path-aware lane selection", () => {
     expect(script).toMatch(/pgrep -a -x apt-get/);
     expect(script).toMatch(/pgrep -a -x dpkg/);
     expect(script).toMatch(/::error::apt is still busy/);
-    const repair = script.indexOf('sudo timeout --kill-after="$KILL_AFTER" 120 dpkg --configure -a');
+    const repair = script.indexOf('sudo timeout --kill-after="$KILL_AFTER" "$REPAIR" dpkg --configure -a');
     expect(repair, "dpkg is repaired as root, under its own bound").toBeGreaterThan(script.indexOf("::error::apt is still busy"));
     expect(repair).toBeLessThan(script.indexOf('install_deps "$RETRY"'));
-    expect(script).toMatch(/FIRST="\$\{PW_DEPS_FIRST_TIMEOUT:-180\}"/);
+    // 90 s: 3x the healthiest-slow install measured (26 s); the worst-case
+    // guard above derives every step ceiling from these defaults.
+    expect(script).toMatch(/FIRST="\$\{PW_DEPS_FIRST_TIMEOUT:-90\}"/);
     expect(script).toMatch(/azure\\\.archive\\\.ubuntu\\\.com\|archive\.ubuntu\.com/);
   });
 
@@ -853,8 +919,8 @@ describe("PR CI — path-aware lane selection", () => {
     expect(budget("google-browser-e2e")).toBeGreaterThan(10);
     expect(budget("google-browser-e2e")).toBeLessThanOrEqual(15);
     expect(budget("mobile-completion-e2e")).toBeGreaterThan(10);
-    // 12 -> 15 (2026-10-23): ~5.5 min measured + a bounded apt stall (3 + 5
-    // min) must fit. TARGET stays ~6 min (CLAUDE.md section 4).
+    // 12 -> 15 (2026-10-23): ~5.8 min measured p90 + the bounded install step
+    // (6 min ceiling) + margin must fit. TARGET stays ~6 min (CLAUDE.md section 4).
     expect(budget("mobile-completion-e2e")).toBe(15);
     // Targeted hard timeout 15, measured extended hard timeout 25 — both above
     // their <10 min targets. Parsed, not line-matched, so reformatting the
@@ -877,7 +943,7 @@ describe("PR CI — path-aware lane selection", () => {
     const b = shardTimeoutBudgets();
     expect(b.targeted).toBeGreaterThan(10);
     expect(b.extended).toBeGreaterThan(10);
-    expect(b.targeted).toBeLessThanOrEqual(15);
+    expect(b.targeted).toBeLessThanOrEqual(19);
     expect(b.extended).toBe(25);
   });
 

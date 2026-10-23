@@ -306,7 +306,7 @@ before assuming the diff broke something.**
 | changed-path detection | 2 min |
 | validate (typecheck/lint/build/unit) | 8 min |
 | db integration | 8 min |
-| targeted browser shard (×3) | target ~6 min · **hard timeout 15 min** |
+| targeted browser shard (×3) | target ~6 min · **hard timeout 19 min** |
 | extended browser shard (×4) | target <10 min · **hard timeout 25 min** |
 | nightly browser shard (×4) | hard timeout 25 min (same quarter-suite as extended) |
 | nightly payment / Google · mobile | hard timeout 18 min · 15 min |
@@ -319,8 +319,12 @@ ceiling cancellations were the Playwright system-package install crawling at
 ~45 kB/s from the runner's Ubuntu mirror (up to 11.3 min) while the tests
 passed. Every Playwright job now restores those `.deb`s from a cache keyed on
 runner image + Playwright version, and `scripts/ci/playwright-system-deps.sh`
-cuts a stalled install off at 3 min and retries once on `archive.ubuntu.com`
-(5 min). A ceiling must still clear that bounded worst case.
+cuts a stalled install off at 90 s and retries once on `archive.ubuntu.com`
+(150 s), with the time limit inside `sudo` so the apt tree really dies. Its
+worst case (325 s) sits under the install step's 6 min ceiling, and every
+Playwright job's hard timeout clears its measured time plus that ceiling
+(targeted 15 -> 19 for this reason); `tests/ci/ci-config.test.ts` derives both
+from the script's constants.
 
 ---
 

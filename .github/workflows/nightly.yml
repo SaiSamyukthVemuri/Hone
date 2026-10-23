@@ -254,7 +254,7 @@ jobs:
 
       - name: Install Playwright system packages (bounded, .deb cache)
         if: matrix.needs_browsers
-        timeout-minutes: 9
+        timeout-minutes: 6
         run: bash scripts/ci/playwright-system-deps.sh
 
       - name: Save Playwright system packages (.deb)

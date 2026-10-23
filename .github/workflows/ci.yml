@@ -714,7 +714,7 @@ jobs:
     # minutes is still too slow and still worth investigating; it now reports
     # its own result instead of being cut mid-run and misread as a test failure.
     #
-    #   targeted  : target <10 min per shard, hard timeout 15 min  (3 shards)
+    #   targeted  : target <10 min per shard, hard timeout 19 min  (3 shards)
     #   extended  : target <10 min per shard, hard timeout 25 min  (4 shards)
     #
     # NEITHER CEILING MOVED WHEN TARGETED WAS SPLIT. The targeted lane was the
@@ -725,8 +725,15 @@ jobs:
     # ENG-003/004 run39713000378: cold setup12–12.6min before150–158tests;
     # 482 observed passes/4skips/0assertion failures before cancellation.
     # Worst measured projection22.15min + finiteheadroom => hard25.
-    # Keep target <10 min per shard and targeted hard15; investigate slow npm ci.
-    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 25 || 15 }}
+    # Keep target <10 min per shard; targeted hard15 held until 2026-10-23 (below); investigate slow npm ci.
+    # TARGETED 15 -> 19 (2026-10-23, Codex P2 4362256407 on #1059): the
+    # Playwright system-package install is now BOUNDED at a 6 min step ceiling
+    # (scripts/ci/playwright-system-deps.sh, worst case 325 s), and every job
+    # must clear that ceiling on top of its own time. Targeted measured 11.2 min
+    # no-stall p90; 11.2 + 6 + 1 margin = 18.2 > 15. Before the bound, an apt
+    # stall (up to 11.3 min) cancelled targeted shards outright. The TARGET is
+    # unchanged; only the failure ceiling moves, by the bounded install's size.
+    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 25 || 19 }}
     strategy:
       fail-fast: false
       matrix:
@@ -840,7 +847,7 @@ jobs:
           key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Install Playwright system packages (bounded, .deb cache)
-        timeout-minutes: 9
+        timeout-minutes: 6
         run: bash scripts/ci/playwright-system-deps.sh
 
       - name: Save Playwright system packages (.deb)
@@ -1190,7 +1197,7 @@ jobs:
           key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Install Playwright system packages (bounded, .deb cache)
-        timeout-minutes: 9
+        timeout-minutes: 6
         run: bash scripts/ci/playwright-system-deps.sh
 
       - name: Save Playwright system packages (.deb)
@@ -1354,7 +1361,7 @@ jobs:
           key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Install Playwright system packages (bounded, .deb cache)
-        timeout-minutes: 9
+        timeout-minutes: 6
         run: bash scripts/ci/playwright-system-deps.sh
 
       - name: Save Playwright system packages (.deb)
@@ -1523,7 +1530,7 @@ jobs:
           key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Install Playwright system packages (bounded, .deb cache)
-        timeout-minutes: 9
+        timeout-minutes: 6
         run: bash scripts/ci/playwright-system-deps.sh
 
       - name: Save Playwright system packages (.deb)
