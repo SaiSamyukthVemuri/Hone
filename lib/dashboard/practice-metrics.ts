@@ -229,10 +229,10 @@ export async function getPracticeDashboardMetrics(
     Date.now() - CHARTED_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();
   const [
-    { data: apptRows },
-    { data: paymentRows },
+    { data: apptRows, error: appointmentsError },
+    { data: paymentRows, error: paymentsError },
     procedureRecords,
-    { data: completedAppts },
+    { data: completedAppts, error: completedError },
   ] = await Promise.all([
       supabase
         .from("appointments")
@@ -268,6 +268,12 @@ export async function getPracticeDashboardMetrics(
         .gte("ends_at", windowStartIso)
         .lte("ends_at", nowIso),
     ]);
+  // DAT-002: unread activity is unknown, not a successful empty period. Refuse
+  // the snapshot through the existing route error boundary; never expose a
+  // database diagnostic (which can quote clinical or payment row contents).
+  if (appointmentsError || paymentsError || completedError) {
+    throw new Error("Failed to load practice metrics");
+  }
 
   // PR #225 numerator: earliest non-deleted treatment-area save on a
   // linked, non-deleted session, per completed appointment. Two
@@ -278,24 +284,26 @@ export async function getPracticeDashboardMetrics(
   }>;
   const firstChartedByAppointment = new Map<string, string>();
   if (completedRows.length > 0) {
-    const { data: linkedSessions } = await supabase
+    const { data: linkedSessions, error: linkedError } = await supabase
       .from("sessions")
       .select("id, appointment_id")
       .eq("studio_id", studioId)
       .in("appointment_id", completedRows.map((r) => r.id))
       .is("deleted_at", null);
+    if (linkedError) throw new Error("Failed to load practice metrics");
     const sessionToAppointment = new Map(
       ((linkedSessions ?? []) as Array<{ id: string; appointment_id: string }>).map(
         (s) => [s.id, s.appointment_id],
       ),
     );
     if (sessionToAppointment.size > 0) {
-      const { data: blockRows } = await supabase
+      const { data: blockRows, error: blocksError } = await supabase
         .from("session_blocks")
         .select("session_id, created_at")
         .eq("studio_id", studioId)
         .in("session_id", [...sessionToAppointment.keys()])
         .is("deleted_at", null);
+      if (blocksError) throw new Error("Failed to load practice metrics");
       for (const b of (blockRows ?? []) as Array<{
         session_id: string;
         created_at: string;

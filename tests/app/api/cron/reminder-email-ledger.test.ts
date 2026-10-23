@@ -25,12 +25,12 @@ const PASS = CODE.slice(CODE.indexOf("async function sendReminderPass"), CODE.in
 describe("reminder email pass: begin, tag, settle", () => {
   it("the pass slice is real", () => {
     expect(PASS.length).toBeGreaterThan(2000);
-    expect(PASS).toContain("await claimEmailSend(admin, appt.id, emailType)");
+    expect(PASS).toContain("await claimEmailSendOutcome(admin, appt.id, emailType)");
   });
 
   it("begins the ledger row after the claim, the status re-check and the nothing-to-send exit", () => {
     const begin = PASS.indexOf("await beginAppointmentEmailMessage(admin, {");
-    expect(begin).toBeGreaterThan(PASS.indexOf("await claimEmailSend(admin, appt.id, emailType)"));
+    expect(begin).toBeGreaterThan(PASS.indexOf("await claimEmailSendOutcome(admin, appt.id, emailType)"));
     expect(begin).toBeGreaterThan(PASS.indexOf('fresh.status !== "confirmed"'));
     expect(begin).toBeGreaterThan(PASS.indexOf("if (!wantsReminder && !intakeIncomplete)"));
     expect(begin).toBeLessThan(PASS.indexOf("result = await sendFn("));

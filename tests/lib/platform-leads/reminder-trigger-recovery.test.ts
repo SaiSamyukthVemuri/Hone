@@ -95,16 +95,28 @@ describe("wiring in the reminders route (source guard)", () => {
   const SRC = readFileSync("app/api/cron/appointment-reminders/route.ts", "utf8");
 
   it("runs AFTER every reminder pass and the heartbeat on success, and AFTER cron_route_failed on failure (Codex P2 4254097611)", () => {
+    // Production's bounded scan (MSG-001) added a third exit: an incomplete or
+    // coverage-unconfirmed scan answers 500 BEFORE the heartbeat. A reminders
+    // failure must not stop lead-alert retries there either.
+    const partial = SRC.indexOf('if (batch.kind !== "complete" || batch.coverageUnconfirmed)');
     const heartbeat = SRC.indexOf("await recordReminderRunSuccess(");
-    const catchAt = SRC.indexOf("} catch (err) {", heartbeat);
+    const catchAt = SRC.indexOf("} catch {\n", heartbeat);
     const calls = [...SRC.matchAll(/await runLeadAlertRecovery\(\)/g)].map((m) => m.index!);
-    expect(calls).toHaveLength(2);
-    expect(calls[0]).toBeGreaterThan(heartbeat);
-    expect(calls[0]).toBeLessThan(catchAt);
-    const failureAlert = SRC.indexOf('event: "cron_route_failed"');
-    expect(calls[1]).toBeGreaterThan(failureAlert);
+    expect(partial).toBeGreaterThan(0);
+    expect(catchAt).toBeGreaterThan(heartbeat);
+    expect(calls).toHaveLength(3);
+    expect(calls[0]).toBeGreaterThan(partial);
+    expect(calls[0]).toBeLessThan(heartbeat);
+    expect(SRC.slice(calls[0], heartbeat)).toContain(
+      'return NextResponse.json({ ok: false, error: "cron_failed", lead_alerts }, { status: 500 });',
+    );
+    expect(calls[1]).toBeGreaterThan(heartbeat);
+    expect(calls[1]).toBeLessThan(catchAt);
+    const failureAlert = SRC.indexOf('event: "cron_route_failed"', catchAt);
+    expect(failureAlert).toBeGreaterThan(catchAt);
+    expect(calls[2]).toBeGreaterThan(failureAlert);
     // The reminders' failure answer is unchanged: still a 500.
-    expect(SRC.slice(calls[1])).toMatch(/\{ ok: false, error: "cron_failed", lead_alerts \},\s*\{ status: 500 \}/);
+    expect(SRC.slice(calls[2])).toMatch(/\{ ok: false, error: "cron_failed", lead_alerts \},\s*\{ status: 500 \}/);
     expect(SRC.match(/recoverLeadAlertsOnReminderTrigger\(/g)).toHaveLength(1);
   });
 

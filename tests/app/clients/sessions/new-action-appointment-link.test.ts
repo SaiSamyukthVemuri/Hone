@@ -1,6 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+
+const runtime = vi.hoisted(() => ({
+  from: vi.fn(), rpc: vi.fn(), adminRpc: vi.fn(), revalidate: vi.fn(),
+  postcare: vi.fn(), analytics: vi.fn(),
+}));
+vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error(`REDIRECT:${url}`); } }));
+vi.mock("next/cache", () => ({ revalidatePath: runtime.revalidate }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: runtime.from, rpc: runtime.rpc }) }));
+vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "practitioner" }, studio: { id: "studio" } }) }));
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: runtime.adminRpc }) }));
+vi.mock("@/app/(app)/calendar/postcare-auto-send", () => ({ autoSendPostcareOnComplete: runtime.postcare }));
+vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: runtime.analytics }));
+vi.mock("@/lib/observability/perf-timing", () => ({ timed: async (_name: string, fn: () => unknown) => fn(), startPerfSpan: () => ({ end: vi.fn() }) }));
+import { startSessionAction } from "../../../../app/(app)/clients/[id]/sessions/new/actions";
 
 // PR #156 (migration 0068). The new-session server action is the
 // single writer of sessions.appointment_id. Pin the lineage and
@@ -309,5 +323,67 @@ describe("write-forward surfaces include ?appointment_id in the chart-session li
     expect(text).toMatch(
       /\/clients\/\$\{clientId\}\/sessions\/new\?appointment_id=\$\{[^}]*appointmentId[^}]*\}/,
     );
+  });
+});
+
+// Exercise the real action against an old/skewed command response, before any
+// completion/postcare/redirect. No database or provider process is involved.
+describe("CLN-002 committed appointment lineage before action side effects", () => {
+  const appointmentB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  let linked: { data: { appointment_id: string | null } | null; error: { message: string } | null };
+  const sessionFilters: Array<[string, unknown]> = [];
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sessionFilters.length = 0;
+    linked = { data: { appointment_id: appointmentB }, error: null };
+    runtime.rpc.mockResolvedValue({ data: [{ session_id: "chart", reused: true }], error: null });
+    runtime.adminRpc.mockResolvedValue({ error: null });
+    runtime.postcare.mockResolvedValue(undefined);
+    runtime.from.mockImplementation((table: string) => {
+      const chain = {
+        select: vi.fn(() => chain),
+        eq: vi.fn((key: string, value: unknown) => {
+          if (table === "sessions") sessionFilters.push([key, value]);
+          return chain;
+        }),
+        maybeSingle: vi.fn(async () => table === "sessions" ? linked : ({
+          data: { id: appointmentB, studio_id: "studio", client_id: "client", practitioner_id: "practitioner", status: "confirmed", ends_at: "2020-01-01T00:00:00Z" }, error: null,
+        })),
+      };
+      return chain;
+    });
+  });
+  function form(appointment = appointmentB) {
+    const data = new FormData();
+    data.set("client_id", "client"); data.set("modality", "electrolysis");
+    if (appointment) data.set("appointment_id", appointment);
+    return data;
+  }
+  it.each([
+    ["appointment A", { data: { appointment_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }, error: null }],
+    ["unlinked chart", { data: { appointment_id: null }, error: null }],
+    ["invisible chart", { data: null, error: null }],
+    ["read failure", { data: null, error: { message: "unavailable" } }],
+  ] as const)("refuses %s without completing B, postcare, analytics or redirect", async (_name, result) => {
+    linked = result;
+    await expect(startSessionAction(form())).rejects.toThrow("The chart could not be linked to this appointment");
+    expect(runtime.adminRpc).not.toHaveBeenCalled();
+    expect(runtime.postcare).not.toHaveBeenCalled();
+    expect(runtime.analytics).not.toHaveBeenCalled();
+    expect(runtime.revalidate).not.toHaveBeenCalled();
+    expect(sessionFilters).toEqual([["id", "chart"], ["studio_id", "studio"], ["client_id", "client"]]);
+  });
+  it("continues matching appointment B including reused-chart completion recovery", async () => {
+    await expect(startSessionAction(form())).rejects.toThrow("REDIRECT:/clients/client/sessions/chart");
+    expect(runtime.adminRpc).toHaveBeenCalledWith("mark_appointment_complete", {
+      p_appointment_id: appointmentB, p_studio_id: "studio", p_practitioner_id: "practitioner",
+    });
+    expect(runtime.postcare).toHaveBeenCalledWith(appointmentB, "studio", "practitioner");
+  });
+  it("preserves chart-without-appointment starts without an appointment side effect", async () => {
+    await expect(startSessionAction(form(""))).rejects.toThrow("REDIRECT:/clients/client/sessions/chart");
+    expect(runtime.from).not.toHaveBeenCalled();
+    expect(runtime.adminRpc).not.toHaveBeenCalled();
+    expect(runtime.postcare).not.toHaveBeenCalled();
   });
 });

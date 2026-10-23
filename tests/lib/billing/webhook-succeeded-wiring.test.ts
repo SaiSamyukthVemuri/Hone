@@ -96,6 +96,8 @@ function baseAttempt(status: string): Record<string, unknown> {
     charge_reason: "session_payment",
     status,
     stripe_livemode: false,
+    stripe_account_id: "acct_test_1",
+    stripe_customer_id: "cus_test_1",
     stripe_payment_intent_id: "pi_test_1",
     stripe_charge_id: "ch_test_1",
     amount_cents: 4500,
@@ -111,10 +113,12 @@ function baseAttempt(status: string): Record<string, unknown> {
 const EVENT = {
   id: "evt_1",
   type: "payment_intent.succeeded",
+  account: "acct_test_1",
   livemode: false,
   data: {
     object: {
       id: "pi_test_1",
+      customer: "cus_test_1",
       // A real PaymentIntent states its money; the handler now requires it to
       // equal the row's (PAY-CCY-01).
       amount: 4500,
@@ -125,7 +129,7 @@ const EVENT = {
   },
 } as unknown as Stripe.Event;
 
-const CTX = { requestId: "req-1" } as never;
+const CTX = { studioId: "11111111-1111-4111-8111-111111111111", stripeAccountId: "acct_test_1", livemode: false };
 
 beforeEach(() => {
   h.attempt = baseAttempt("ready");
