@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "node scripts/check-production-env-gates.mjs && next build",
+    "build": "node -p \"'build runtime: node ' + process.version\" && node scripts/check-production-env-gates.mjs && next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
