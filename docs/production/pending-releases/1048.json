@@ -1,0 +1,7 @@
+{
+  "pr": 1048,
+  "merge": "a1164b9b44c28aa20bc326d894f460e018581e1c",
+  "runtime": false,
+  "migrations": [],
+  "release_receipt": "01-ops/1048-release-receipt.json"
+}
