@@ -430,17 +430,21 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    fetchExportRows("client_budget_context", (from, to) =>
-      supabase
-        .from("client_budget_context")
-        .select(
-          "client_id, budget_level, budget_notes, updated_by_practitioner_id, created_at, updated_at",
-        )
-        .eq("studio_id", studio.id)
-        // client_id is the PRIMARY KEY (one row per client), so ordering on
-        // it alone is already unique and deterministic — no tiebreak needed.
-        .order("client_id", { ascending: true })
-        .range(from, to),
+    fetchExportRows(
+      "client_budget_context",
+      (from, to) =>
+        supabase
+          .from("client_budget_context")
+          .select(
+            "client_id, budget_level, budget_notes, updated_by_practitioner_id, created_at, updated_at",
+          )
+          .eq("studio_id", studio.id)
+          // client_id is the PRIMARY KEY (one row per client), so ordering on
+          // it alone is already unique and deterministic — no tiebreak needed.
+          .order("client_id", { ascending: true })
+          .range(from, to),
+      // No `id` column: the page-boundary check keys on the primary key.
+      { rowKey: (row) => row.client_id },
     ),
   ]);
 
@@ -674,22 +678,26 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // records EVERY treated area + laterality, not just the legacy first-area
   // projection in block_primary_area/block_side. Studio-scoped, ordered.
   const areaRowsRes = await fetchAllRows<{
+    id: string;
     session_block_id: string;
     area: string;
     laterality: Laterality;
     display_order: number;
-  }>((from, to) =>
-    supabase
-      .from("session_block_areas")
-      .select("session_block_id, area, laterality, display_order")
-      .eq("studio_id", studio.id)
-      .order("display_order", { ascending: true })
-      .order("created_at", { ascending: true })
-      // `id` is not selected, but ordering by it is still valid and is what
-      // makes the page boundary deterministic: display_order + created_at
-      // repeat freely across blocks.
-      .order("id", { ascending: true })
-      .range(from, to),
+  }>(
+    (from, to) =>
+      supabase
+        .from("session_block_areas")
+        .select("id, session_block_id, area, laterality, display_order")
+        .eq("studio_id", studio.id)
+        .order("display_order", { ascending: true })
+        .order("created_at", { ascending: true })
+        // `id` is what makes the page boundary deterministic: display_order +
+        // created_at repeat freely across blocks. It is selected so the
+        // boundary check below can compare it.
+        .order("id", { ascending: true })
+        .range(from, to),
+    // OPS-DAT-EXPORT-01: a shifted page boundary must not drop an area row.
+    { rowKey: (row) => row.id },
   );
   // F5. FAIL CLOSED.
   //
