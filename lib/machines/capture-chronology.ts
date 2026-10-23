@@ -251,6 +251,7 @@ const sameValue = (a: RecordedReading, b: RecordedReading): boolean => {
   if (a.value.kind === "absent" && b.value.kind === "absent") {
     return a.value.reason === b.value.reason;
   }
+  if (a.value.kind === "text" && b.value.kind === "text") return a.value.value === b.value.value;
   if (a.value.kind === "value" && b.value.kind === "value") {
     // THE VALUE ALONE, and nothing about how it is DISPLAYED.
     //

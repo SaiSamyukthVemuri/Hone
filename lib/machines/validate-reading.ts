@@ -300,11 +300,11 @@ export function validateReading(
   // THE HISTORICAL PATH IS UNAFFECTED: `allowNonOffered` is exactly the
   // caller saying "this is not new capture", which is why re-rendering a
   // reading whose mode was blocked later still works.
-  if (!options.allowNonOffered && mode.availability !== "active") {
+  if (!options.allowNonOffered && (mode.availability !== "active" || mode.captureHold)) {
     return {
       ok: false,
       code: "mode_not_offered",
-      message: `Mode '${mode.key}' of '${profile.profileId}' is ${mode.availability} and is not offered for new capture.`,
+      message: mode.captureHold ?? `Mode '${mode.key}' of '${profile.profileId}' is ${mode.availability} and is not offered for new capture.`,
     };
   }
 
@@ -360,7 +360,7 @@ export function validateReading(
   if (
     input.channel == null &&
     profile.channels?.associationRequired === true &&
-    input.value.kind === "value"
+    input.value.kind !== "absent"
   ) {
     return {
       ok: false,
@@ -459,6 +459,17 @@ export function validateReading(
     }
     return { ok: true, recorded: input.value, field, notes };
   }
+
+  const kind = field.valueKind ?? "number";
+  if (input.value.kind === "text") {
+    if (kind === "number" || typeof input.value.value !== "string" ||
+        !input.value.value.trim() || [...input.value.value].length > 500 || input.value.value.includes("\0") ||
+        (kind === "choice" && !field.choices?.includes(input.value.value))) {
+      return { ok: false, code: "malformed_value", message: `Field '${field.key}' needs its documented text or choice, exactly as recorded.` };
+    }
+    return { ok: true, recorded: input.value, field, notes };
+  }
+  if (kind !== "number") return { ok: false, code: "malformed_value", message: `Field '${field.key}' needs text, not a number.` };
 
   // --- numbers ------------------------------------------------------------
   const value = input.value.value;

@@ -150,12 +150,13 @@ export type AbsenceReason =
   /** The machine displayed it but the practitioner could not read it. */
   | "not-legible";
 
-/** A recorded number, or a reasoned absence. Never a bare `null`. */
+/** A recorded number, exact text/choice, or a reasoned absence. Never a bare null. */
 export type ReadingValue =
   | { kind: "value"; value: number }
+  | { kind: "text"; value: string }
   | { kind: "absent"; reason: AbsenceReason };
 
-/** Who or what produced a number. Four different epistemic statuses. */
+/** Who or what produced the observation. Four distinct provenance states. */
 export type ObservationSource =
   /** The practitioner set it on the machine and typed it here. */
   | "practitioner-entered"
@@ -217,7 +218,8 @@ export type FieldQuantity =
   | "count"
   | "percentage"
   | "energy-display"
-  | "preset-identifier";
+  | "preset-identifier"
+  | "configuration";
 
 /**
  * A unit as the MACHINE displays it. Deliberately a closed list of native
@@ -261,6 +263,9 @@ export type UnverifiedAspect = "label" | "unit" | "decimals" | "editability";
 
 /** One field on one machine's operating screen. */
 export type MachineField = {
+  /** Omitted means the historical numeric contract. Text is never numeric-coerced. */
+  valueKind?: "number" | "text" | "choice";
+  choices?: string[];
   /** Stable key for storage. Never a generic `number_1` / `duration_2`. */
   key: string;
   /** The label the MACHINE uses, verbatim. Not our paraphrase. */
@@ -270,6 +275,7 @@ export type MachineField = {
   /**
    * Decimal places the machine actually displays. Preserved on storage and
    * render; a machine showing `1.1 s` must not be stored as an integer second.
+   * Text/choice fields use zero as a nonnumeric storage sentinel, with unit none.
    */
   decimals: number;
   /** Required to make a pass meaningful, or genuinely optional. */
@@ -351,6 +357,8 @@ export type ChannelStructure = {
 
 /** One selectable operating mode on one model. */
 export type MachineMode = {
+  /** A documented control cannot yet be captured faithfully. Blocks activation/publication. */
+  captureHold?: string;
   key: string;
   /** The mode name as the machine shows it. */
   nativeLabel: string;
@@ -527,27 +535,22 @@ function highestByProfileId(
 }
 
 /**
- * The CURRENT version of one profile, whatever its availability.
- *
- * WHAT THIS REPLACES, at three call sites that each had their own copy:
- * `catalogue.find((p) => p.profileId === id)`, which takes the FIRST match.
- * With two versions present that can be v1 while v2 is current, and all three
- * sites then compare a reading's version against the wrong one - flagging a
- * current reading as historical, so it renders raw field keys instead of
- * labels, or treating a superseded one as current and showing labels that no
- * longer apply. Order-dependent, so it would have surfaced the day a second
- * version was added and not before.
- *
- * AVAILABILITY IS DELIBERATELY NOT FILTERED. A caller choosing what to OFFER
- * wants `activeProfiles`; a caller rendering what was already RECORDED must be
- * able to resolve a blocked or legacy profile, or the record becomes
- * unreadable the moment a model is withdrawn.
+ * The current version for selection and catalogue policy, regardless of availability.
+ * Historical rendering uses recordedProfile instead: current labels must never
+ * replace a retained historical contract's labels.
  */
 export function currentProfile(
   profiles: readonly MachineProfile[],
   profileId: string,
 ): MachineProfile | undefined {
   return highestByProfileId(profiles).get(profileId);
+}
+
+/** Historical labels resolve against their exact immutable version, never today's. */
+export function recordedProfile(
+  profiles: readonly MachineProfile[], profileId: string, version: number,
+): MachineProfile | undefined {
+  return profiles.find((p) => p.profileId === profileId && p.version === version);
 }
 
 export function activeProfiles(

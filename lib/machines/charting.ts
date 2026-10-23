@@ -10,9 +10,8 @@
  * THREE RULES CARRIED FROM THE CONTRACT
  *
  * 1. A HISTORICAL RENDERER USES THE RECORDED VERSION. When a stored setup's
- *    contract version is not the current one, this does NOT relabel it with
- *    today's labels and units. It returns the recorded values with their
- *    recorded keys and says plainly that the contract moved. Relabelling old
+ *    contract version is not the current one, this resolves its retained exact
+ *    version for labels and units, falling back to keys if unavailable. Relabelling old
  *    numbers with new units is how a record quietly starts lying.
  *
  * 2. ADVISORY IS NOT BLOCKING. `blocksSubmission` is true only for an actual
@@ -40,11 +39,28 @@ import {
   type NativeUnit,
   type ReadingValue,
 } from "./profile-contract";
-import { MACHINE_CATALOGUE, profileById } from "./catalogue";
+import { MACHINE_CATALOGUE, profileById, profileAtVersion } from "./catalogue";
 import {
   carryForwardCompatibility,
   type ValidationOutcome,
 } from "./validate-reading";
+
+/**
+ * SQL/chronology key order is not native display order. The caller supplies the
+ * recorded version's mode; never resolve today's contract here. Unknown fields
+ * remain visible in received order, after known fields. Missing contracts keep
+ * the entire received order. Sorting a copy cannot rewrite the record.
+ */
+export function readingsInContractOrder<T extends { stageKey: string | null; fieldKey: string }>(
+  readings: readonly T[],
+  mode: MachineMode | undefined,
+): readonly T[] {
+  if (!mode) return readings;
+  const rank = new Map(modeFields(mode).map(({ field, stageKey }, index) =>
+    [`${stageKey ?? ""}::${field.key}`, index] as const));
+  const order = (r: T) => rank.get(`${r.stageKey ?? ""}::${r.fieldKey}`) ?? Number.MAX_SAFE_INTEGER;
+  return [...readings].sort((a, b) => order(a) - order(b));
+}
 
 // ---------------------------------------------------------------------------
 // Native field projection
@@ -128,6 +144,8 @@ export function observationSourceLabel(
 }
 
 export type FieldDescriptor = {
+  valueKind?: MachineField["valueKind"];
+  choices?: string[];
   key: string;
   stageKey: string | null;
   /**
@@ -181,6 +199,8 @@ function describe(field: MachineField, stageKey: string | null): FieldDescriptor
     );
   }
   return {
+    ...(field.valueKind ? { valueKind: field.valueKind } : {}),
+    ...(field.choices ? { choices: field.choices } : {}),
     key: field.key,
     stageKey,
     expectedSource: field.expectedSource,
@@ -324,7 +344,7 @@ export type RecordedSetup = {
 
 export type PriorSetupRow = {
   key: string;
-  /** The recorded contract's label, when it is still the current one. */
+  /** The exact recorded contract's label, when that version is retained. */
   label: string;
   unit: string;
   /** Rendered value, or the reasoned absence. */
@@ -341,8 +361,7 @@ export type PriorSetupView = {
   sessionId: string;
   /**
    * True when the stored version is not the catalogue's current one. The rows
-   * then carry recorded KEYS rather than current labels, because relabelling
-   * with a newer contract's words is exactly what must not happen.
+   * resolve the retained recorded version or fall back to keys; never today's labels.
    */
   renderedAgainstHistoricalVersion: boolean;
 };
@@ -357,6 +376,7 @@ function displayValue(v: ReadingValue, decimals: number): string {
   }
   // Pad to the contract's precision for display only. The stored number is
   // never altered, and a value finer than the contract keeps its own digits.
+  if (v.kind === "text") return v.value;
   const own = String(v.value).split(".")[1]?.length ?? 0;
   return v.value.toFixed(Math.max(decimals, own));
 }
@@ -377,9 +397,10 @@ export function priorSetupView(
   }
 
   const historical = setup.profileVersion !== profile.version;
-  const mode = findMode(profile, setup.modeKey);
+  const recorded = profileAtVersion(setup.profileId, setup.profileVersion, catalogue);
+  const mode = recorded ? findMode(recorded, setup.modeKey) : undefined;
   const byKey = new Map<string, MachineField>();
-  if (mode && !historical) {
+  if (mode) {
     for (const { field } of modeFields(mode)) byKey.set(field.key, field);
   }
 
@@ -389,7 +410,7 @@ export function priorSetupView(
     }`,
     profileId: profile.profileId,
     profileVersion: setup.profileVersion,
-    modeLabel: historical ? setup.modeKey : (mode?.nativeLabel ?? setup.modeKey),
+    modeLabel: mode?.nativeLabel ?? setup.modeKey,
     recordedAt: setup.recordedAt,
     sessionId: setup.sessionId,
     renderedAgainstHistoricalVersion: historical,

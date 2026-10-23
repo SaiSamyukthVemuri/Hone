@@ -3,6 +3,9 @@ import { randomUUID } from "node:crypto";
 
 import { seedE2eStudio, seedE2eDraftElectrolysisSession, sql } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
+import { APILUS_3G_NATIVE_FIXTURES, APILUS_3G_TEXT_FIXTURES } from "../lib/machines/apilus-3g-fixtures";
+import { modeFields } from "../lib/machines/profile-contract";
+import { planContractPublication } from "../lib/machines/contract-publication";
 
 // MPX-03 — THE CREATE-MODE JOURNEY, end to end, in a real browser.
 //
@@ -1186,3 +1189,450 @@ test("create mode: choose the machine, save the block, record one save, retrieve
     await noOverflow(page);
   });
 });
+
+// Prepared source, NOT executed proof. Reuses this spec's existing seed, login,
+// publication command, form and readback paths. Real model IDs stay blocked.
+for (const suite of [
+  { name: "native 3G durability", profiles: APILUS_3G_NATIVE_FIXTURES, choiceOnly: false },
+  { name: "native 3G text durability", profiles: APILUS_3G_TEXT_FIXTURES, choiceOnly: true },
+]) {
+for (const device of [
+  { name: "desktop", viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false, reloadInitial: false, blendOnly: false },
+  { name: "mobile", viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reloadInitial: true, blendOnly: false },
+  // One additional desktop initial-reload journey per model. Keep the original
+  // twenty durability cases unchanged, including their same-mount retry branch.
+  ...(suite.choiceOnly ? [
+    { name: "desktop initial reload", viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false, reloadInitial: true, blendOnly: true },
+  ] : []),
+]) {
+  test.describe(`${suite.name} ${device.name}`, () => {
+    test.use({ viewport: device.viewport, isMobile: device.isMobile, hasTouch: device.hasTouch });
+    for (const profile of suite.profiles) for (const mode of profile.modes.filter((m) => (!suite.choiceOnly || m.fields.some((f) => f.valueKind === "choice")) && (!device.blendOnly || m.key === "blend"))) {
+      test(`${profile.model} / ${mode.key}: save, retry, reload, history and next visit`, async ({ page }) => {
+        test.skip(process.env.HONE_SYNTHETIC_MACHINE_PROFILE !== "1",
+          "UNRUN native journey: existing synthetic server gate must explicitly be enabled; closed gate is not native acceptance.");
+        const seed = await seedE2eStudio();
+        const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+        const plan = planContractPublication([profile]);
+        expect(plan.publish).toHaveLength(profile.modes.length);
+        for (const contract of plan.publish) {
+          await sql("select public.sync_machine_profile_contract($1,$2,$3,$4,$5,$6::jsonb)", [
+            contract.p_machine_profile_id, contract.p_machine_profile_version, contract.p_mode_key,
+            contract.p_channels_max, contract.p_requires_installed_option, JSON.stringify(contract.p_fields),
+          ]);
+        }
+        const machineId = randomUUID();
+        await sql(`insert into public.studio_machines
+          (id, studio_id, machine_profile_id, machine_profile_version, display_name)
+          values ($1,$2,$3,$4,$5)`, [machineId, seed.studioId, profile.profileId, profile.version, profile.model]);
+        const fields = modeFields(mode);
+        const observations = fields.map(({ field, stageKey }, index) => ({
+          stageKey, field,
+          // Both documented choices per mode, without doubling the matrix.
+          // Mobile also exercises visible leading/trailing program whitespace.
+          value: field.valueKind === "choice" ? field.choices![device.isMobile ? 1 : 0]
+            : field.valueKind === "text" ? (device.isMobile ? " 003i " : "003i")
+              : (index + 1 + 27 / 10 ** field.decimals).toFixed(field.decimals),
+        }));
+        const readStored = () => sql<{
+          id: string; capture_id: string;
+          stage_key: string | null; field_key: string; value_numeric: string | null; value_text?: string | null;
+          native_unit: string; decimals: number; machine_profile_version: number;
+          observation_source: string;
+        }>(`select id,capture_id,stage_key,field_key,value_numeric::text as value_numeric,value_text,native_unit,
+          decimals,machine_profile_version,observation_source from public.treatment_setup_readings
+          where session_block_id=$1 order by stage_key nulls first,field_key,id`, [blockId]);
+        let blockId = "";
+        // Existing initial-save-retry pattern: the first request must COMMIT
+        // before losing its response. An aborted unsent request proves nothing.
+        const lost = { arm: false, fired: 0, upstreamCompleted: false };
+        await page.route(`**/clients/${clientId}/sessions/${sessionId}**`, async route => {
+          if (route.request().method() !== "POST" || !lost.arm) {
+            await route.continue();
+            return;
+          }
+          lost.arm = false;
+          lost.fired += 1;
+          const response = await route.fetch();
+          expect(response.ok(), "the original server action did not complete successfully").toBe(true);
+          lost.upstreamCompleted = true;
+          await route.abort("failed");
+        });
+        // Read every identity in this synthetic session, not just the first
+        // block found: a new-key retry could otherwise create a hidden duplicate.
+        const readIdentities = async () => (await sql<{
+          blocks: string[]; submissions: string[]; captures: string[];
+          readings: string[]; claims: string[];
+        }>(`select
+          array(select id::text from public.session_blocks where session_id=$1 order by id) as blocks,
+          array(select s.id::text from public.treatment_setup_submissions s join public.session_blocks b on b.id=s.session_block_id where b.session_id=$1 order by s.id) as submissions,
+          array(select c.id::text from public.treatment_setup_captures c join public.session_blocks b on b.id=c.session_block_id where b.session_id=$1 order by c.id) as captures,
+          array(select r.id::text from public.treatment_setup_readings r join public.session_blocks b on b.id=r.session_block_id where b.session_id=$1 order by r.id) as readings,
+          array(select id::text from public.treatment_area_create_claims where session_id=$1 order by id) as claims`, [sessionId]))[0]!;
+        await loginAsOwner(page, seed);
+        await openCreateForm(page, clientId, sessionId);
+        expect(await openMachinePanel(page), "enabled native fixture missing from server catalogue").toBe(true);
+        await page.getByTestId("machine-select").selectOption(machineId);
+        await page.getByTestId(`machine-mode-${mode.key}`).click({ timeout: T });
+        for (const held of ["blend", "omniblend", "multiblend", "thermolysis", "snap"].filter((key) => !profile.modes.some((m) => m.key === key))) {
+          await expect(page.getByTestId(`machine-mode-${held}`)).toHaveCount(0);
+        }
+        for (const stage of mode.stages) await expect(page.getByTestId("machine-setting-draft")).toContainText(stage.nativeLabel);
+        for (const { field, value } of observations) {
+          await expect(page.getByTestId(`field-label-${field.key}`)).toHaveText(field.nativeLabel);
+          const control = page.getByTestId(`reading-${field.key}`);
+          if (!field.valueKind || field.valueKind === "number") {
+            await expect(page.getByTestId(`field-unit-${field.key}`)).toHaveText(`(${field.unit})`);
+            await expect(control).toHaveAttribute("step", String(10 ** -field.decimals));
+          } else {
+            await expect(page.getByTestId(`field-unit-${field.key}`)).toHaveCount(0);
+          }
+          if (field.valueKind === "choice") await control.selectOption(value);
+          else await control.fill(value);
+        }
+        await noOverflow(page);
+        lost.arm = true;
+        await page.getByTestId("save-treatment-area").click({ timeout: T });
+        await expect(page.getByRole("alert").filter({ hasText: /press save again/i })).toBeVisible({ timeout: T });
+        expect(lost.fired).toBe(1);
+        expect(lost.upstreamCompleted).toBe(true);
+        await expect.poll(async () => (blockId = await blockIdOf(sessionId)), { timeout: T }).not.toBe("");
+        // Separate SQL call after the application transaction commits: unlike
+        // rollback-scoped DB helpers this checks the persisted durability boundary.
+        await expect.poll(async () => (await readStored()).length, { timeout: T }).toBe(observations.length);
+        const saved = await readStored();
+        for (const { stageKey, field, value } of observations) {
+          expect(saved.find((row) => row.stage_key === stageKey && row.field_key === field.key)).toMatchObject({
+            ...(field.valueKind && field.valueKind !== "number" ? { value_numeric: null, value_text: value } : { value_numeric: value, value_text: null }), native_unit: field.unit, decimals: field.decimals,
+            machine_profile_version: profile.version, observation_source: field.expectedSource,
+          });
+        }
+        const captures = await capturesFor(blockId);
+        expect(captures).toHaveLength(1);
+        expect(captures[0].setup_submission_id).not.toBeNull();
+        const identities = await readIdentities();
+        expect(identities.blocks).toEqual([blockId]);
+        expect(identities.submissions).toEqual([captures[0].setup_submission_id]);
+        expect(identities.captures).toHaveLength(1);
+        expect(identities.readings).toHaveLength(observations.length);
+        expect(identities.claims).toHaveLength(1);
+
+        const assertFrozenDraft = async (draft: typeof observations) => {
+          await expect(page.getByTestId("setting-draft-frozen")).toBeVisible();
+          for (const { field, value } of draft) {
+            const control = page.getByTestId(`reading-${field.key}`);
+            await expect(control).toBeDisabled();
+            await expect(control).toHaveValue(value);
+            // Drive the existing handler guard despite the disabled DOM control.
+            // As in the original retry spec, DOM text may now differ; the proof
+            // is the unchanged committed payload/identity after retry, below.
+            await control.evaluate((el, replacement) => {
+              const select = el instanceof HTMLSelectElement;
+              const prototype = select ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+              Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(el, replacement);
+              el.dispatchEvent(new Event(select ? "change" : "input", { bubbles: true }));
+            }, field.valueKind === "choice" ? field.choices!.find(choice => choice !== value)!
+              : field.valueKind === "text" ? "changed program" : "999");
+          }
+        };
+        await assertFrozenDraft(observations);
+        await noOverflow(page);
+        if (device.reloadInitial) {
+          // Existing reload reconciliation journey: every mobile mode and the
+          // additional model-specific desktop Blend cases use this same path.
+          // The address-bar identity must match the independently read claim.
+          const areaOp = () => new URL(page.url()).searchParams.get("area_op");
+          await expect.poll(areaOp, { timeout: T }).not.toBeNull();
+          const carried = areaOp();
+          const claims = await sql<{ idempotency_key: string }>(
+            "select idempotency_key from public.treatment_area_create_claims where id=$1", [identities.claims[0]],
+          );
+          expect(carried).toBe(claims[0].idempotency_key);
+          await page.reload();
+          expect(areaOp()).toBe(carried);
+          await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+          await expect(page.getByTestId("initial-save-already-saved")).toHaveAttribute("data-block-id", blockId, { timeout: T });
+          await expect.poll(areaOp, { timeout: T }).toBeNull();
+          await expect(page.getByTestId("save-treatment-area")).toBeDisabled();
+          // No native draft reconstruction and no second save: the committed
+          // claim answers the uncertainty. Closing must retain every original.
+          await page.getByTestId("initial-save-already-saved-close").click({ timeout: T });
+        } else {
+          await page.getByTestId("save-treatment-area").click({ timeout: T });
+          await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, { timeout: T });
+        }
+        expect(lost.fired).toBe(1);
+        expect(await readIdentities()).toEqual(identities);
+        expect(await readStored()).toEqual(saved);
+        expect(await capturesFor(blockId)).toEqual(captures);
+
+        await page.reload();
+        await page.getByTestId(`edit-area-${blockId}`).click({ timeout: T });
+        expect(await openMachinePanel(page)).toBe(true);
+        const history = page.getByTestId("machine-recorded-setups");
+        await expect(history).toBeVisible({ timeout: T });
+        const historyRows = history.getByTestId("recorded-capture-g1-1").locator("li");
+        await expect(historyRows).toHaveCount(observations.length);
+        expect(await historyRows.locator(":scope > span:first-child").allTextContents())
+          .toEqual(observations.map(({ field }) => field.nativeLabel));
+        expect(await history.locator('[data-testid^="recorded-stage-g1-"]').allTextContents())
+          .toEqual(mode.stages.map(stage => stage.nativeLabel));
+        for (const [index, { field, value }] of observations.entries()) {
+          await expect(history).toContainText(field.nativeLabel);
+          if (field.unit !== "none") await expect(history).toContainText(field.unit);
+          await expect(history).toContainText(value);
+          const displayed = historyRows.nth(index).locator("span.font-medium");
+          // toContainText normalizes whitespace; textContent plus computed CSS
+          // proves both exact bytes and the browser's whitespace treatment.
+          expect(await displayed.textContent()).toBe(value);
+          if (field.valueKind && field.valueKind !== "number") await expect(displayed).toHaveCSS("white-space", "break-spaces");
+          await expect(page.getByTestId(`reading-${field.key}`)).toHaveValue("");
+        }
+        expect(await readStored()).toEqual(saved);
+        expect(await capturesFor(blockId)).toEqual(captures);
+        expect(await readIdentities()).toEqual(identities);
+        await noOverflow(page);
+
+        // A later setting change uses the EXISTING revision save, a different
+        // command/key from initial creation. Prove its lost response too, then
+        // make next-visit guidance read that revision, never stale initial text.
+        const revised = observations.map(({ field, stageKey }, index) => ({
+          field, stageKey,
+          value: field.valueKind === "choice" ? field.choices!.find(choice => choice !== observations[index].value)!
+            : field.valueKind === "text" ? " 004i "
+              : (index + 2 + 27 / 10 ** field.decimals).toFixed(field.decimals),
+        }));
+        for (const { field, value } of revised) {
+          const control = page.getByTestId(`reading-${field.key}`);
+          if (field.valueKind === "choice") await control.selectOption(value);
+          else await control.fill(value);
+        }
+        lost.upstreamCompleted = false;
+        lost.arm = true;
+        await page.getByTestId("machine-reading-save").click({ timeout: T });
+        const revisionMessage = page.getByTestId("machine-reading-message");
+        await expect(revisionMessage).toBeVisible({ timeout: T });
+        await expect(revisionMessage).toHaveAttribute("role", "status");
+        await expect(revisionMessage).toContainText(/press save again/i);
+        expect(lost.fired).toBe(2);
+        expect(lost.upstreamCompleted).toBe(true);
+        await expect.poll(async () => (await capturesFor(blockId)).length, { timeout: T }).toBe(2);
+        const revisedSaved = await readStored();
+        const revisedCaptures = await capturesFor(blockId);
+        const revisedIdentities = await readIdentities();
+        expect(revisedIdentities.blocks).toEqual(identities.blocks);
+        expect(revisedIdentities.claims).toEqual(identities.claims);
+        expect(revisedIdentities.submissions).toHaveLength(2);
+        expect(revisedIdentities.captures).toHaveLength(2);
+        expect(revisedIdentities.readings).toHaveLength(2 * observations.length);
+        expect(revisedCaptures[0]).toEqual(captures[0]);
+        expect(revisedCaptures[1]).toMatchObject({ group_key: "g1", revision: 2 });
+        expect(revisedCaptures[1].setup_submission_id).not.toBe(captures[0].setup_submission_id);
+        expect(revisedCaptures[1].setup_submission_id).not.toBeNull();
+        const originalIds = new Set(saved.map(row => row.id));
+        expect(revisedSaved.filter(row => originalIds.has(row.id))).toEqual(saved);
+        const newRows = revisedSaved.filter(row => !originalIds.has(row.id));
+        expect(newRows).toHaveLength(revised.length);
+        expect(new Set(newRows.map(row => row.capture_id)).size).toBe(1);
+        expect(newRows[0].capture_id).not.toBe(saved[0].capture_id);
+        for (const { stageKey, field, value } of revised) {
+          expect(newRows.find(row => row.stage_key === stageKey && row.field_key === field.key)).toMatchObject({
+            ...(field.valueKind && field.valueKind !== "number" ? { value_numeric: null, value_text: value } : { value_numeric: value, value_text: null }),
+            native_unit: field.unit, decimals: field.decimals,
+            machine_profile_version: profile.version, observation_source: field.expectedSource,
+          });
+        }
+        await assertFrozenDraft(revised);
+        await expect(page.getByTestId("machine-select")).toBeDisabled();
+        const modeButtons = page.getByTestId("machine-mode-picker").getByRole("button");
+        await expect(modeButtons).toHaveCount(profile.modes.length);
+        expect(profile.modes.length, "native identity freeze must not be vacuous").toBeGreaterThan(1);
+        for (const button of await modeButtons.all()) await expect(button).toBeDisabled();
+        await noOverflow(page);
+        await page.getByTestId("machine-reading-save").click({ timeout: T });
+        await expect(page.getByTestId("machine-reading-saved")).toBeVisible({ timeout: T });
+        expect(lost.fired).toBe(2);
+        expect(await readIdentities()).toEqual(revisedIdentities);
+        expect(await readStored()).toEqual(revisedSaved);
+        expect(await capturesFor(blockId)).toEqual(revisedCaptures);
+
+        await page.reload();
+        await page.getByTestId(`edit-area-${blockId}`).click({ timeout: T });
+        expect(await openMachinePanel(page)).toBe(true);
+        // Both immutable captures stay visible, and each exact value is checked
+        // on its own row rather than matched somewhere else in the history.
+        for (const [revision, expected] of [[1, observations], [2, revised]] as const) {
+          const capture = history.getByTestId(`recorded-capture-g1-${revision}`);
+          const rows = capture.locator("li");
+          await expect(rows).toHaveCount(expected.length);
+          expect(await rows.locator(":scope > span:first-child").allTextContents()).toEqual(expected.map(({ field }) => field.nativeLabel));
+          expect(await capture.locator('[data-testid^="recorded-stage-g1-"]').allTextContents()).toEqual(mode.stages.map(stage => stage.nativeLabel));
+          for (const [index, { field, value }] of expected.entries()) {
+            const displayed = rows.nth(index).locator("span.font-medium");
+            expect(await displayed.textContent()).toBe(value);
+            if (field.valueKind && field.valueKind !== "number") await expect(displayed).toHaveCSS("white-space", "break-spaces");
+            await expect(page.getByTestId(`reading-${field.key}`)).toHaveValue("");
+          }
+        }
+        expect(await readIdentities()).toEqual(revisedIdentities);
+        expect(await readStored()).toEqual(revisedSaved);
+        await noOverflow(page);
+
+        await sql("update public.sessions set started_at=now()-interval '2 hours' where client_id=$1", [clientId]);
+        await page.goto(`/clients/${clientId}/sessions/new`);
+        await page.locator('[data-modality="electrolysis"]').click({ timeout: T });
+        await page.waitForURL(/\/clients\/[^/]+\/sessions\/[0-9a-f-]{36}/, { timeout: T });
+        expect(page.url().split("/sessions/")[1]!.split(/[?#]/)[0]).not.toBe(sessionId);
+        await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+        expect(await openMachinePanel(page)).toBe(true);
+        await page.getByTestId("machine-select").selectOption(machineId);
+        await page.getByTestId(`machine-mode-${mode.key}`).click({ timeout: T });
+        const priorPanel = page.getByTestId("machine-prior-setup");
+        await expect(priorPanel).toContainText(profile.model);
+        expect(await priorPanel.locator("li > span:first-child").allTextContents())
+          .toEqual(observations.map(({ field }) => field.nativeLabel));
+        expect(await priorPanel.locator('[data-testid^="prior-setup-stage-"]').allTextContents())
+          .toEqual(mode.stages.map(stage => stage.nativeLabel));
+        for (const { stageKey, field, value } of revised) {
+          const suffix = stageKey ? `${stageKey}-${field.key}` : field.key;
+          const prior = page.getByTestId(`prior-setup-g1-${suffix}`);
+          await expect(page.getByTestId(`reading-${field.key}`)).toHaveValue("");
+          await expect(prior).toContainText(field.nativeLabel);
+          await expect(prior).toContainText(value);
+          const displayed = prior.locator("span.font-medium");
+          expect(await displayed.textContent()).toBe(value);
+          if (field.valueKind && field.valueKind !== "number") await expect(displayed).toHaveCSS("white-space", "break-spaces");
+          if (field.unit !== "none") await expect(prior).toContainText(field.unit);
+        }
+        expect(await readStored()).toEqual(revisedSaved);
+        expect(await capturesFor(blockId)).toEqual(revisedCaptures);
+        expect(await readIdentities()).toEqual(revisedIdentities);
+        await noOverflow(page);
+      });
+    }
+  });
+}
+
+}
+
+// Two model-specific recovery cases, not another durability cross-product.
+// Recovery choice/key handling has no viewport branch in block-setup-form;
+// use the existing mobile viewport. Desktop initial reload has its own two
+// model-specific durability cases above; execution evidence is recorded separately.
+for (const profile of APILUS_3G_TEXT_FIXTURES) {
+  test(`native 3G uncommitted recovery ${profile.model}: explicit whole-draft reconstruction`, async ({ page }) => {
+    test.skip(process.env.HONE_SYNTHETIC_MACHINE_PROFILE !== "1",
+      "UNRUN recovery: existing synthetic server gate must explicitly be enabled.");
+    const mode = profile.modes.find((candidate) => candidate.key === "blend")!;
+    expect(mode).toBeDefined();
+    const seed = await seedE2eStudio();
+    const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+    for (const contract of planContractPublication([profile]).publish) {
+      await sql("select public.sync_machine_profile_contract($1,$2,$3,$4,$5,$6::jsonb)", [
+        contract.p_machine_profile_id, contract.p_machine_profile_version, contract.p_mode_key,
+        contract.p_channels_max, contract.p_requires_installed_option, JSON.stringify(contract.p_fields),
+      ]);
+    }
+    const machineId = randomUUID();
+    await sql(`insert into public.studio_machines
+      (id,studio_id,machine_profile_id,machine_profile_version,display_name)
+      values ($1,$2,$3,$4,$5)`, [machineId, seed.studioId, profile.profileId, profile.version, profile.model]);
+    const observations = modeFields(mode).map(({ field, stageKey }, index) => ({
+      field, stageKey,
+      value: field.valueKind === "choice" ? field.choices![0]
+        : field.valueKind === "text" ? " 003i "
+          : (index + 1 + 27 / 10 ** field.decimals).toFixed(field.decimals),
+    }));
+    const enterWholeDraft = async () => {
+      await page.getByRole("button", { name: "Upper lip", exact: true }).click();
+      await expect(page.getByTestId("area-row-Upper lip")).toBeVisible();
+      expect(await openMachinePanel(page)).toBe(true);
+      await page.getByTestId("machine-select").selectOption(machineId);
+      await page.getByTestId(`machine-mode-${mode.key}`).click({ timeout: T });
+      for (const { field, value } of observations) {
+        const control = page.getByTestId(`reading-${field.key}`);
+        if (field.valueKind === "choice") await control.selectOption(value);
+        else await control.fill(value);
+      }
+      await page.getByLabel("Hairs treated", { exact: true }).fill("7");
+      await page.getByLabel(/Minutes performed/).fill("5");
+      await page.getByTestId("additional-notes").fill(`Synthetic ${profile.model}\nwhole-draft recovery`);
+    };
+    const counts = async () => (await sql<{ blocks: number; claims: number; captures: number; readings: number }>(`select
+      (select count(*)::int from public.session_blocks where session_id=$1) as blocks,
+      (select count(*)::int from public.treatment_area_create_claims where session_id=$1) as claims,
+      (select count(*)::int from public.treatment_setup_captures c join public.session_blocks b on b.id=c.session_block_id where b.session_id=$1) as captures,
+      (select count(*)::int from public.treatment_setup_readings r join public.session_blocks b on b.id=r.session_block_id where b.session_id=$1) as readings`, [sessionId]))[0]!;
+    let phase: "idle" | "abort" | "resume" = "idle";
+    let originalPayload: unknown;
+    let intercepted = 0;
+    await page.route(`**/clients/${clientId}/sessions/${sessionId}**`, async route => {
+      if (route.request().method() !== "POST" || phase === "idle") {
+        await route.continue();
+        return;
+      }
+      const action = phase;
+      phase = "idle";
+      intercepted += 1;
+      // Existing plain server-action arguments: compare the WHOLE input,
+      // including clinical/area/entry defaults, not just the native readings.
+      const payload: unknown = JSON.parse(route.request().postData()!);
+      if (action === "abort") {
+        originalPayload = payload;
+        // Deliberately never delivered: deterministic synthetic no-write.
+        // The application still cannot infer non-write from an absent lookup.
+        await route.abort("failed");
+      } else {
+        expect(payload).toEqual(originalPayload);
+        await route.continue();
+      }
+    });
+    await loginAsOwner(page, seed);
+    await openCreateForm(page, clientId, sessionId);
+    await enterWholeDraft();
+    phase = "abort";
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect(page.getByRole("alert").filter({ hasText: /press save again/i })).toBeVisible({ timeout: T });
+    expect(intercepted).toBe(1);
+    expect(originalPayload).toBeDefined();
+    const key = new URL(page.url()).searchParams.get("area_op");
+    expect(key).toBeTruthy();
+    expect(JSON.stringify(originalPayload)).toContain(key!);
+    for (const { field, value } of observations) {
+      await expect(page.getByTestId(`reading-${field.key}`)).toBeDisabled();
+      await expect(page.getByTestId(`reading-${field.key}`)).toHaveValue(value);
+    }
+    expect(await counts()).toEqual({ blocks: 0, claims: 0, captures: 0, readings: 0 });
+    await page.reload();
+    expect(new URL(page.url()).searchParams.get("area_op")).toBe(key);
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    await expect(page.getByTestId("initial-save-resume-choice")).toBeVisible({ timeout: T });
+    await expect(page.getByTestId("save-treatment-area")).toBeDisabled();
+    await page.getByTestId("initial-save-resume-choice-resume").click();
+    await expect(page.getByTestId("save-treatment-area")).toBeDisabled();
+    await enterWholeDraft();
+    expect(new URL(page.url()).searchParams.get("area_op")).toBe(key);
+    await expect(page.getByTestId("save-treatment-area")).toBeDisabled();
+    await page.getByTestId("initial-save-resume-reconstructed").check();
+    await expect(page.getByTestId("save-treatment-area")).toBeEnabled({ timeout: T });
+    await noOverflow(page);
+    phase = "resume";
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, { timeout: T });
+    expect(intercepted).toBe(2);
+    expect(await counts()).toEqual({ blocks: 1, claims: 1, captures: 1, readings: observations.length });
+    const blockId = await blockIdOf(sessionId);
+    const stored = await sql<{ stage_key: string | null; field_key: string; value_numeric: string | null; value_text: string | null; machine_profile_version: number }>(
+      `select stage_key,field_key,value_numeric::text,value_text,machine_profile_version
+       from public.treatment_setup_readings where session_block_id=$1`, [blockId]);
+    for (const { field, stageKey, value } of observations) {
+      expect(stored.find(row => row.field_key === field.key && row.stage_key === stageKey)).toMatchObject({
+        machine_profile_version: profile.version,
+        ...((field.valueKind === "choice" || field.valueKind === "text")
+          ? { value_numeric: null, value_text: value } : { value_numeric: value, value_text: null }),
+      });
+    }
+    await page.reload();
+    expect(await counts()).toEqual({ blocks: 1, claims: 1, captures: 1, readings: observations.length });
+  });
+}

@@ -1378,6 +1378,14 @@ export async function createTreatmentAreaWithEntryAction(
   // the default and the new command is taken ONLY when there are settings to
   // record with the area - which is the case it exists for, and the case that
   // did not work at all before.
+  //
+  // A KEY ALONE IS NOT ENOUGH TO COME HERE, and a `withClaim` arm that let it
+  // was removed before it ever ran (ops01's ruling on #922 4307515255). It
+  // existed to let a resumed SETTINGS-FREE save carry its retry key, which
+  // 0223 permits - but such a save creates an area with NO settings whenever
+  // the original never committed, silently discarding what she entered. The
+  // form therefore holds a settings-free resume and asks her to re-enter,
+  // and nothing reaches here without settings.
   const withSetup =
     input.initialSetup != null && input.initialSetup.groups.length > 0;
 
@@ -1473,7 +1481,7 @@ export async function createTreatmentAreaWithEntryAction(
             // it is the same rule and not a new one.
             ...(r.value.kind === "value"
               ? { value: String(r.value.value) }
-              : { absence_reason: r.value.reason }),
+              : r.value.kind === "text" ? { value_text: r.value.value } : { absence_reason: r.value.reason }),
             native_unit: r.nativeUnit,
             decimals: r.decimals,
             observation_source: r.observationSource,

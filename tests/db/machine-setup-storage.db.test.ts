@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import {
   adminQuery,
+  adminTx,
   RECORD_GROUP_SQL,
   asUser,
   closePool,
@@ -509,7 +510,10 @@ describe("0223 · native readings persist, and cannot be rewritten", () => {
       // field, BEFORE the column's XOR constraint is reached. The constraint
       // is still there as a backstop; what changed is that a forged direct
       // call gets an explanation rather than a constraint name.
-    ).rejects.toThrow(/needs either a value or a reason/i);
+    ).rejects.toMatchObject({
+      code: "23514",
+      message: 'Field "nothing" needs exactly one number, text or reasoned absence.',
+    });
   });
 
   it("preserves TWO settings groups when probes differ", async () => {
@@ -1156,13 +1160,17 @@ describe("0223 · existing historical values are untouched", () => {
   it("adds its columns as NULL and alters no existing block value", async () => {
     const studio = await seedStudio("mpx-legacy");
     const { blockId, sessionId } = await seedSession(studio);
-    await adminQuery(
-      `update public.session_blocks
-          set apilus_modality = 'Multiplex', energy_level = 7.25,
-              machine_frequency = '13.56 MHz'
-        where id = $1`,
-      [blockId],
-    );
+    await adminTx(async q => {
+      // Privileged legacy fixture edit, explicitly attributed; no DML grant change.
+      await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: studio.userId, role: "authenticated" })]);
+      return q(
+        `update public.session_blocks
+            set apilus_modality = 'Multiplex', energy_level = 7.25,
+                machine_frequency = '13.56 MHz'
+          where id = $1`,
+        [blockId],
+      );
+    });
     const machineId = await registerMachine(studio, "Room 1");
     await asUser(studio.userId, (q) =>
       q(RECORD_GROUP_SQL, [

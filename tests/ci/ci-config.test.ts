@@ -380,20 +380,12 @@ function jobNames(yaml: string): string[] {
   return out;
 }
 
-/**
- * Parse the browser shard's conditional `timeout-minutes` into its two
- * branches. Parsing beats matching a literal expression: the guard then
- * survives whitespace and formatting changes, and states the two budgets as
- * NUMBERS rather than as one brittle regex.
- *
- *   timeout-minutes: ${{ ... browser_extended == 'true' && <extended> || <targeted> }}
- */
+/** Parse the actual browser job's finite augmented-proof / ordinary budgets. */
 function shardTimeoutBudgets(): { extended: number; targeted: number } {
-  const m =
-    /timeout-minutes:\s*\$\{\{\s*needs\.changes\.outputs\.browser_extended\s*==\s*'true'\s*&&\s*(\d+)\s*\|\|\s*(\d+)\s*\}\}/.exec(
-      CI,
-    );
-  if (!m) throw new Error("browser shard timeout-minutes expression not found in ci.yml");
+  const doc = yaml.load(CI) as { jobs: Record<string, Record<string, unknown>> };
+  const expression = String(doc.jobs["browser-e2e-shard"]["timeout-minutes"]);
+  const m = /&&\s*(\d+)\s*\|\|\s*(\d+)\s*\}\}$/.exec(expression);
+  if (!m) throw new Error("browser shard finite timeout branches missing in ci.yml");
   return { extended: Number(m[1]), targeted: Number(m[2]) };
 }
 
@@ -550,7 +542,7 @@ describe("PR CI — path-aware lane selection", () => {
     // misreported as test failures.
     const b = shardTimeoutBudgets();
     expect(b.targeted, "targeted hard timeout").toBe(15);
-    expect(b.extended, "measured cold-setup hard timeout").toBe(25);
+    expect(b.extended, "augmented native proof hard timeout").toBe(35);
     expect(CI).toMatch(/hard timeout 15 min/i);
     expect(CI).toMatch(/hard timeout 25 min/i);
     expect(CI).toMatch(/target <10 min per shard/i);
@@ -734,13 +726,15 @@ describe("PR CI — path-aware lane selection", () => {
     // The upper bounds here are a brake on ceilings drifting upward instead of
     // slow lanes being investigated, so they stay tight enough to notice: a
     // run39713000378 cold setup took12–12.6min before150–158tests.
-    // 25 clears the measured~22min projection with finite headroom; the
+    // The existing25min ordinary projection plus supplemental native work has a
+    // reviewed finite35min ceiling. The
     // <10min performance target stays, and slow dependency installs need investigation.
     const b = shardTimeoutBudgets();
     expect(b.targeted).toBeGreaterThan(10);
     expect(b.extended).toBeGreaterThan(10);
     expect(b.targeted).toBeLessThanOrEqual(15);
-    expect(b.extended).toBe(25);
+    expect(b.extended).toBeGreaterThan(25);
+    expect(b.extended).toBeLessThanOrEqual(35);
   });
 
   it("every job declares an explicit timeout", () => {
@@ -2069,5 +2063,55 @@ describe("browser timing diagnostic truthfulness", () => {
   });
   it.each(["", "malformed", "1700000001", "999999999999999999999999"])("rejects invalid timestamp %j even when a browser outcome exists", timestamp => {
     expect(runTiming(timestamp, "failure", "failure")).toContain("test duration (s)  : unavailable");
+  });
+});
+
+
+describe("HON-18 existing browser job executes guarded native proof", () => {
+  const doc = yaml.load(CI) as { env?: Record<string, string>; jobs: Record<string, { env?: Record<string, string>; steps: Array<Record<string, unknown>>; "timeout-minutes": string }> };
+  const job = doc.jobs["browser-e2e-shard"];
+  const native = job.steps.find((step) => step.id === "native3g") ?? {};
+
+  it("keeps the synthetic gate step-local and only supplements the ordinary pass", () => {
+    expect(doc.env?.HONE_SYNTHETIC_MACHINE_PROFILE).toBeUndefined();
+    expect(job.env?.HONE_SYNTHETIC_MACHINE_PROFILE).toBeUndefined();
+    expect((native.env as Record<string, string>).HONE_SYNTHETIC_MACHINE_PROFILE).toBe("1");
+    expect(job.steps.findIndex((step) => step.id === "e2e")).toBeLessThan(job.steps.indexOf(native));
+    expect(native.if).toBe("needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')");
+    const budget = job["timeout-minutes"].replace(/\s+/g, "");
+    expect(budget).toBe("${{(" + String(native.if).replace(/\s+/g, "") + ")&&35||15}}");
+    expect(native.run).toContain("--workers=1");
+    expect(native.run).toContain("--fully-parallel");
+    expect(native.run).toContain("--retries=0");
+    expect(native.run).toContain("--shard=${{ matrix.shard }}/${SHARD_TOTAL}");
+    expect(native.run).toContain('SHARD_TOTAL="${{ needs.changes.outputs.browser_shard_total }}"');
+  });
+
+
+  const verification = String(native.run).match(/node --input-type=module <<'NODE'\n([\s\S]*?)\nNODE/)!;
+  function check(report: unknown): string {
+    if (!verification) throw new Error("native verification program missing");
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-native-report-"));
+    const file = path.join(dir, "results.json");
+    try {
+      writeFileSync(file, JSON.stringify(report));
+      return execFileSync(process.execPath, ["--input-type=module", "-e", verification[1]], {
+        encoding: "utf8", env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_FILE: file }, stdio: "pipe",
+      });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  const report = (results: Array<{ status: string }>, errors: unknown[] = []) => ({
+    suites: [{ suites: [{ specs: [{ tests: [{ expectedStatus: "passed", results }] }] }] }], errors,
+  });
+  it("accepts a real nested passing case", () => {
+    expect(check(report([{ status: "passed" }]))).toContain("1 actual passes, zero skips/retries");
+  });
+  it.each(["skipped", "failed", "interrupted"])("refuses a %s native result", (status) => {
+    expect(() => check(report([{ status }]))).toThrow();
+  });
+  it("refuses empty selection, retries and runner errors", () => {
+    expect(() => check({ suites: [], errors: [] })).toThrow();
+    expect(() => check(report([{ status: "failed" }, { status: "passed" }]))).toThrow();
+    expect(() => check(report([{ status: "passed" }], [{ message: "synthetic runner error" }]))).toThrow();
   });
 });

@@ -8,14 +8,12 @@
  * from a sibling model, a family name, marketing copy or a rounded legacy
  * figure.
  *
- * WHY EVERY PROFILE IS CURRENTLY `blocked`. #829's own position is that "full
- * runtime support and exact Fett inventory remain unverified", and activation
- * requires exact-model evidence plus review. No manual in the source ledger
- * yields a verified numeric operating bound, and several yield conflicting
- * ones. `catalogueIntegrity()` enforces the activation rule mechanically, so a
- * profile flips to `active` exactly when its evidence lands — not when someone
- * edits a status by hand. An empty active set is the honest current state, and
- * the integrity test pins it as a measurement rather than an aspiration.
+ * ACTIVATION REMAINS HELD. The manufacturer-documented Senior/Junior 3G v2
+ * contracts now live in ./apilus-3g. Their v1 entries below remain unchanged
+ * for historical interpretation. Evidence readiness does not lift the explicit
+ * operator activation hold. Other models retain their own evidence gaps.
+ * `catalogueIntegrity()` checks evidence and capture capability per mode; a
+ * disagreement about one bound never authorizes rewriting another contract.
  *
  * THE 15/17-PAGE RESEARCH REFERENCE IS NOT ON THIS HOST. #829 cites it and
  * instructs: read available local copies, do not invent quotations if
@@ -63,6 +61,8 @@ import type {
   OpenQuestion,
   VerificationState,
 } from "./profile-contract";
+import { APILUS_3G_PROFILES, APILUS_3G_TEXT_PROFILES } from "./apilus-3g";
+import { recordedProfile } from "./profile-contract";
 
 // ---------------------------------------------------------------------------
 // Shared evidence — the source ledger from #829, by family
@@ -526,6 +526,8 @@ function apilus(
 // ---------------------------------------------------------------------------
 
 export const MACHINE_CATALOGUE: readonly MachineProfile[] = [
+  ...APILUS_3G_PROFILES,
+  ...APILUS_3G_TEXT_PROFILES,
   apilus("xCell", {
     modes: ["multiplex", "multiblend"],
     evidence: [APILUS_COMPARISON, APILUS_XCELL_MANUAL, CHLOE_FIELD_SCOPE],
@@ -969,6 +971,9 @@ export function catalogueIntegrity(
     // wider would reject honest profiles.
     const modeKeys = new Set<string>();
     for (const mode of p.modes) {
+      if (mode.availability === "active" && mode.captureHold) {
+        out.push({ profileId: p.profileId, problem: `mode ${mode.key} cannot capture its documented controls: ${mode.captureHold}` });
+      }
       if (modeKeys.has(mode.key)) {
         out.push({
           profileId: p.profileId,
@@ -1070,6 +1075,14 @@ export function catalogueIntegrity(
 
       for (const { f, stage } of fields) {
         cites(`field ${mode.key}.${f.key}`, f.evidence);
+        const kind = f.valueKind ?? "number";
+        if (!["number", "text", "choice"].includes(kind) ||
+            (kind !== "number" && (f.unit !== "none" || f.decimals !== 0 || f.ranges?.length)) ||
+            (kind === "choice" ? (!f.choices?.length || new Set(f.choices).size !== f.choices.length ||
+              f.choices.some((v) => typeof v !== "string" || !v.trim() || [...v].length > 500 || v.includes("\0"))) : !!f.choices?.length)) {
+          out.push({ profileId: p.profileId, problem: `field ${mode.key}.${f.key} has malformed text/choice metadata` });
+        }
+
         // A RANGE'S NUMBERS HAVE TO BE A RANGE (Codex, #855 4305364906).
         // Checked for every range regardless of class or availability,
         // because a non-finite bound, an inverted pair or a nonpositive step
@@ -1378,16 +1391,14 @@ export function profileAtVersion(
   version: number,
   profiles: readonly MachineProfile[] = MACHINE_CATALOGUE,
 ): MachineProfile | undefined {
-  return profiles.find(
-    (p) => p.profileId === profileId && p.version === version,
-  );
+  return recordedProfile(profiles, profileId, version);
 }
 
-/** Every unresolved question across the catalogue, for the evidence checklist. */
+/** Current-version questions only; retained history is not a current evidence blocker. */
 export function openEvidenceChecklist(
   profiles: readonly MachineProfile[] = MACHINE_CATALOGUE,
 ): Array<{ profileId: string; model: string; question: OpenQuestion }> {
-  return profiles.flatMap((p) =>
+  return profiles.filter((p) => profileById(p.profileId, profiles)?.version === p.version).flatMap((p) =>
     p.openQuestions.map((question) => ({
       profileId: p.profileId,
       model: p.variant ? `${p.model} (${p.variant})` : p.model,

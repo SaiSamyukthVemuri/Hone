@@ -1,3 +1,5 @@
+import { handleChargeRefunded } from "@/lib/billing/payment-webhook-reconciliation";
+import Stripe from "stripe";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // PAY-MUTUAL-01. Refund and receipt must serialize against EACH OTHER.
@@ -35,6 +37,9 @@ type Filter =
 
 const db = vi.hoisted(() => ({
   livemode: true,
+  refundProviderStatus: "succeeded" as string | null,
+  afterRefund: null as null | (() => void),
+  providerRefundOverrides: {} as Record<string, unknown>,
   // THE one row. Every claim is evaluated and applied against this object.
   row: {} as Record<string, unknown>,
   aux: {} as Record<string, { data: unknown; error: unknown }>,
@@ -88,8 +93,7 @@ vi.mock("@/lib/stripe/session-payment-stripe", () => ({
         opts: Record<string, unknown>,
       ) => {
         db.stripeRefunds.push({ params, opts });
-        const originalCharge = params.charge;
-        const originalIntent = db.row.stripe_payment_intent_id;
+        db.afterRefund?.();
         const callback = db.afterRefundCreate;
         db.afterRefundCreate = null;
         if (callback) await callback();
@@ -98,11 +102,12 @@ vi.mock("@/lib/stripe/session-payment-stripe", () => ({
         // helper now refuses one that does not match the row (PAY-CCY-01).
         return {
           id: "re_1",
-          status: "succeeded",
-          charge: originalCharge,
-          payment_intent: originalIntent,
+          status: db.refundProviderStatus,
+          charge: params.charge,
+          payment_intent: db.row.stripe_payment_intent_id,
           amount: params.amount,
           currency: "cad",
+          ...db.providerRefundOverrides,
         };
       },
     },
@@ -132,6 +137,49 @@ function allMatch(row: Record<string, unknown>, filters: Filter[]): boolean {
 
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
+    async rpc(name: string, args: Record<string, unknown>) {
+      if (name !== "reconcile_bound_payment_event") throw new Error(`unexpected RPC ${name}`);
+      const object = args.p_object as Record<string, unknown>;
+      if (args.p_event_type === "refund.observed" && db.paymentWriteError) {
+        return { data: null, error: { code: "XX000" } };
+      }
+      const identityMatches = args.p_attempt_id === db.row.id && args.p_studio_id === db.row.studio_id
+        && args.p_stripe_account_id === db.row.stripe_account_id && args.p_livemode === db.row.stripe_livemode
+        && object.customer_id === db.row.stripe_customer_id && object.payment_intent_id === db.row.stripe_payment_intent_id
+        && object.charge_id === db.row.stripe_charge_id && object.amount_cents === db.row.amount_cents
+        && object.currency === db.row.currency && object.refund_amount_cents === db.row.amount_cents
+        && object.refund_currency === db.row.currency && object.refund_charge_id === db.row.stripe_charge_id;
+      if (!identityMatches) return { data: [{ result: "identity_mismatch" }], error: null };
+      if (db.row.refund_status !== "pending_stripe") {
+        db.writes.push({ patch: {}, matched: false });
+        if (db.afterCompletionCas) {
+          const hook = db.afterCompletionCas; db.afterCompletionCas = null; hook();
+        }
+        return { data: [{ result: "stale_observation" }], error: null };
+      }
+      // A synchronous action response has no signed event clock; it cannot
+      // override a callback that arrived during the provider request. Full SQL
+      // transition behavior remains prepared DB proof, not this fake's claim.
+      if (db.row.stripe_refund_event_created !== null) {
+        return { data: [{ result: "stale_observation" }], error: null };
+      }
+      const status = object.refund_status;
+      const failed = status === "failed" || status === "canceled";
+      const succeeded = status === "succeeded";
+      const patch = {
+        stripe_refund_id: object.refund_id, stripe_refund_status: status,
+        refund_status: succeeded ? "succeeded" : failed ? "failed" : "pending_stripe",
+        refunded_at: succeeded ? (db.row.refunded_at ?? new Date().toISOString()) : null,
+        ...(object.evidence_kind === "signed_event" ? {
+          stripe_refund_event_id: args.p_event_id, stripe_refund_event_created: object.event_created,
+        } : {}),
+        refund_failure_code: failed ? `provider_refund_${status}` : null,
+        refund_failure_message_safe: failed ? "Stripe did not complete this refund." : null,
+      };
+      Object.assign(db.row, patch);
+      db.writes.push({ patch, matched: true });
+      return { data: [{ result: succeeded ? "reconciled" : failed ? "refund_failed" : "refund_pending" }], error: null };
+    },
     from(table: string) {
       const filters: Filter[] = [];
       let op: "select" | "update" = "select";
@@ -185,11 +233,6 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         const matched = table === "payment_charge_attempts" && allMatch(db.row, filters);
         if (matched) Object.assign(db.row, patch);
         db.writes.push({ patch, matched });
-        if (!matched && patch.refund_status === "succeeded" && db.afterCompletionCas) {
-          const hook = db.afterCompletionCas;
-          db.afterCompletionCas = null;
-          hook();
-        }
         return { data: matched ? [{ id: db.row.id }] : [], error: null };
       };
 
@@ -231,9 +274,6 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   }),
 }));
 
-import { handleChargeRefunded } from "@/lib/billing/payment-webhook-reconciliation";
-import Stripe from "stripe";
-
 import { refundPaymentChargeAttempt } from "@/lib/billing/payment-refund";
 import { sendPaymentChargeReceipt } from "@/lib/billing/payment-receipt";
 
@@ -261,6 +301,9 @@ function seedRow(over: Record<string, unknown> = {}) {
     refund_amount_cents: null,
     refunded_at: null,
     stripe_refund_id: null,
+    stripe_refund_status: null,
+    stripe_refund_event_created: null,
+    stripe_refund_event_id: null,
     receipt_status: null,
     receipt_sent_at: null,
     receipt_email_to: null,
@@ -270,6 +313,9 @@ function seedRow(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   db.livemode = true;
+  db.refundProviderStatus = "succeeded";
+  db.afterRefund = null;
+  db.providerRefundOverrides = {};
   db.writes = [];
   db.emails = [];
   db.stripeRefunds = [];
@@ -278,13 +324,13 @@ beforeEach(() => {
   db.beforeClaim = null;
   db.afterRefundCreate = null;
   db.afterCompletionCas = null;
-  db.alerts = [];
   db.terminalFailureWriteError = false;
   db.refundCreateError = null;
   db.paymentWriteError = false;
   db.paymentReadMissing = false;
   db.paymentReadError = false;
   db.paymentReadThrows = false;
+  db.alerts = [];
   db.aux = {
     practitioners: { data: { role: "owner" }, error: null },
     clients: {
@@ -719,6 +765,109 @@ describe("R1 — the post-claim classification, reached by a real race", () => {
   });
 });
 
+// PAY-002: a returned Refund object is not proof that money was returned.
+describe("PAY-002 provider refund status", () => {
+  it.each(["pending", "requires_action", "failed", "canceled", null])(
+    "does not complete a refund whose provider status is %s",
+    async (status) => {
+      db.refundProviderStatus = status;
+      const result = await refund();
+      expect(result.ok).toBe(false);
+      expect(db.row.refund_status).not.toBe("succeeded");
+      expect(db.row.refunded_at).toBeNull();
+      expect(db.stripeRefunds).toHaveLength(1);
+      expect(db.emails).toHaveLength(0);
+      expect(db.row.stripe_refund_id).toBe("re_1");
+      expect(db.row.stripe_refund_status).toBe(status);
+      expect(db.row.refund_status).toBe(status === "failed" || status === "canceled" ? "failed" : "pending_stripe");
+      if (status !== "failed" && status !== "canceled") {
+        // The unresolved claim must refuse a second provider request.
+        const retry = await refund();
+        expect(retry.ok).toBe(false);
+        expect(db.stripeRefunds).toHaveLength(1);
+      }
+    },
+  );
+  it("does not overwrite or report completion after losing the outcome write", async () => {
+    db.refundProviderStatus = "pending";
+    db.afterRefund = () => { db.row.refund_status = "succeeded"; };
+    const result = await refund();
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.outcome).toBe("needs_manual_review");
+    expect(db.row.stripe_refund_id).toBeNull();
+    expect(db.row.refunded_at).toBeNull();
+    expect(db.stripeRefunds).toHaveLength(1);
+    expect(db.writes.at(-1)?.matched).toBe(false);
+  });
+  it.each([{ charge: "ch_other" }, { payment_intent: "pi_other" }, { customer: "cus_other" }])("refuses a returned refund for another provider object: %j", async (provider) => {
+    db.providerRefundOverrides = provider;
+    const result = await refund();
+    expect(result.ok).toBe(false);
+    expect(db.row.refund_status).toBe("pending_stripe");
+    expect(db.row.refunded_at).toBeNull();
+    expect(db.row.stripe_refund_id).toBeNull();
+  });
+  it("refuses before asking Stripe when the original customer is missing", async () => {
+    db.row.stripe_customer_id = null;
+    expect((await refund()).ok).toBe(false);
+    expect(db.stripeRefunds).toHaveLength(0);
+  });
+  it("still records a genuinely succeeded provider refund", async () => {
+    const result = await refund();
+    expect(result.ok).toBe(true);
+    expect(db.row.refund_status).toBe("succeeded");
+    expect(db.row.stripe_refund_id).toBe("re_1");
+    expect(db.stripeRefunds).toHaveLength(1);
+  });
+});
+
+// PRIVACY-PAY002-TERMINAL-RETRY-01: an actual provider object is not a free retry slot.
+describe("PAY-002 recorded refund retry evidence", () => {
+  it.each(["failed", "canceled", null])("retains an existing provider object (%s) without claiming or calling Stripe", async (status) => {
+    seedRow({ refund_status: "failed", stripe_refund_id: "re_recorded",
+      stripe_refund_status: status, stripe_refund_event_created: status ? 1770000000 : null,
+      stripe_refund_event_id: status ? "evt_recorded_failure" : null });
+    const before = { ...db.row };
+    expect((await refund()).ok).toBe(false);
+    expect(db.stripeRefunds).toHaveLength(0);
+    expect(db.writes).toHaveLength(0);
+    expect(db.row).toEqual(before);
+  });
+  it("a terminal event winning after the read prevents the atomic claim and provider call", async () => {
+    seedRow({ refund_status: "failed", stripe_refund_status: null, stripe_refund_event_created: null, stripe_refund_event_id: null });
+    const evidence = { refund_status: "failed", stripe_refund_status: "failed", stripe_refund_id: "re_race",
+      stripe_refund_event_created: 1770000001, stripe_refund_event_id: "evt_race_failure" };
+    db.beforeClaim = () => { Object.assign(db.row, evidence); };
+    expect((await refund()).ok).toBe(false);
+    expect(db.stripeRefunds).toHaveLength(0);
+    expect(db.writes.filter((write) => write.matched)).toHaveLength(0);
+    expect(db.row).toMatchObject(evidence);
+  });
+  it("a legacy local failure with no provider object or evidence retains its existing retry", async () => {
+    seedRow({ refund_status: "failed", stripe_refund_status: null, stripe_refund_event_created: null, stripe_refund_event_id: null });
+    expect((await refund()).ok).toBe(true);
+    expect(db.stripeRefunds).toHaveLength(1);
+    expect(db.row.stripe_refund_id).toBe("re_1");
+  });
+});
+
+describe("PAY-002 recorded evidence during provider response", () => {
+  it("a terminal SDK error cannot erase a concurrent signed refund object or claim failure certainty", async () => {
+    const evidence = { refund_status: "pending_stripe", stripe_refund_status: "pending", stripe_refund_id: "re_concurrent",
+      stripe_refund_event_created: 1770000002, stripe_refund_event_id: "evt_concurrent" };
+    db.afterRefund = () => {
+      Object.assign(db.row, evidence);
+      throw new Stripe.errors.StripeInvalidRequestError({ type: "invalid_request_error", message: "synthetic refusal" });
+    };
+    const result = await refund();
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.outcome).toBe("needs_manual_review");
+    expect(db.row).toMatchObject(evidence);
+    expect(db.stripeRefunds).toHaveLength(1);
+    expect(db.writes.at(-1)?.matched).toBe(false);
+  });
+});
+
 
 // The callback executes the REAL existing webhook handler while the refund
 // request awaits its fake SDK response. It wins the terminal row before the
@@ -726,11 +875,11 @@ describe("R1 — the post-claim classification, reached by a real race", () => {
 describe("refund callback completion wins before action persistence", () => {
   async function completeByCallback() {
   const result = await handleChargeRefunded({
-    id: "evt_refund_race", type: "charge.refunded", account: "acct_1", livemode: true,
+    id: "evt_refund_race", created: 1786701605, type: "charge.refunded", account: "acct_1", livemode: true,
     data: { object: {
       id: "ch_live_1", payment_intent: "pi_live_1", customer: "cus_1",
       amount: 6000, currency: "cad", refunded: true, amount_refunded: 6000,
-      refunds: { data: [{ id: "re_1" }] },
+      refunds: { data: [{ id: "re_1", object: "refund", status: "succeeded", amount: 6000, currency: "cad", charge: "ch_live_1", payment_intent: "pi_live_1" }] },
       metadata: { hone_payment_charge_attempt_id: ATTEMPT, hone_studio_id: STUDIO,
         hone_client_id: CLIENT, hone_charge_reason: "session_payment" },
     } },
@@ -778,7 +927,7 @@ describe("refund callback completion wins before action persistence", () => {
     const result = await refund();
     expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
     expect(db.stripeRefunds).toHaveLength(1);
-    expect(db.alerts).toEqual([expect.objectContaining({ severity: "critical", event: "payment_refund_succeeded_write_failed" })]);
+    expect(db.alerts).toEqual([expect.objectContaining({ severity: "critical", event: "payment_refund_outcome_write_refused" })]);
     expect(db.emails).toEqual([]);
   });
   it.each(["error", "throw", "missing"])("an unreadable callback winner (%s) stays critical/manual review", async (mode) => {
@@ -789,7 +938,7 @@ describe("refund callback completion wins before action persistence", () => {
     };
     expect(await refund()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
     expect(db.stripeRefunds).toHaveLength(1);
-    expect(db.alerts).toEqual([expect.objectContaining({ severity: "critical", event: "payment_refund_succeeded_write_failed" })]);
+    expect(db.alerts).toEqual([expect.objectContaining({ severity: "critical", event: "payment_refund_outcome_write_refused" })]);
     expect(JSON.stringify(db.alerts)).not.toContain("synthetic private reread failure");
   });
   it("a write error stays critical even when the callback saved an identical outcome", async () => {
@@ -797,7 +946,7 @@ describe("refund callback completion wins before action persistence", () => {
     expect(await refund()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
     expect(db.row.refund_status).toBe("succeeded");
     expect(db.stripeRefunds).toHaveLength(1);
-    expect(db.alerts).toEqual([expect.objectContaining({ severity: "critical", event: "payment_refund_succeeded_write_failed" })]);
+    expect(db.alerts).toEqual([expect.objectContaining({ severity: "critical", event: "payment_refund_outcome_write_refused" })]);
     expect(db.emails).toEqual([]);
   });
   it("a later action sees already refunded and creates no second refund", async () => {

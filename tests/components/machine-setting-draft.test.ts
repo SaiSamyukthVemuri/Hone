@@ -244,7 +244,18 @@ describe("the handoff's shape, pinned on source", () => {
     // except while an attempt is unresolved, where dropping it would turn the
     // retry into a second treatment area. A remount reporting an empty draft
     // is exactly such a change.
-    expect(read(FORM)).toMatch(/if \(!saveUnresolved\) setPendingSaveKey\(null\)/);
+    // THE RESUME READ OWNS THE KEY WHILE IT IS IN FLIGHT (A1b). The
+    // collector reports an EMPTY draft on mount, which arrives before the
+    // claim read resolves, so this drop is held for the width of that round
+    // trip -- otherwise the parameter would leave the URL and a reload inside
+    // the window would lose the save's identity. Asserted on both terms
+    // rather than on the exact expression.
+    const drop = read(FORM).match(/if \(([^)]*)\) setPendingSaveKey\(null\)/);
+    expect(drop, "the draft-change drop site was not found").toBeTruthy();
+    expect(drop![1]).toContain("!saveUnresolved");
+    // AND NOT WHILE THE RESUMED OPERATION OWNS IT — in flight, or failed and
+    // therefore unanswerable (A1b, Codex #922 4305431332).
+    expect(drop![1]).toContain("!resumeOwnsKey");
   });
 
   it("the FORM computes the settings ONCE per attempt", () => {
@@ -884,7 +895,9 @@ describe("switching machine or mode clears the collected draft", () => {
     // records directly, Cancel stayed live through an unresolved revision
     // save — and unmounting the entry is what discards the retry key.
     const form = read(FORM_SRC);
-    const cancel = form.match(/onClick=\{onCancel\}\s*\n(?:\s*\/\/[^\n]*\n)*\s*disabled=\{([^}]*)\}/);
+    const cancel = form.match(
+      /disabled=\{([^}]*)\}\s*\n\s*data-testid="cancel-treatment-area"/,
+    );
     expect(
       cancel,
       "the Cancel button's disabled expression was not found — this guard would be blind",
@@ -1133,7 +1146,7 @@ describe("switching machine or mode clears the collected draft", () => {
     // guards fail on changes that strengthened them.
     const src = read(FORM_SRC);
     const cancel = src.match(
-      /onClick=\{onCancel\}\s*\n\s*disabled=\{([^}]*)\}/,
+      /disabled=\{([^}]*)\}\s*\n\s*data-testid="cancel-treatment-area"/,
     );
     expect(
       cancel,
@@ -1772,7 +1785,21 @@ describe("every block/capture consumer is bound to the authorized route", () => 
   /** Exported functions, split out of a module's source by their own header. */
   function exportedFunctions(src: string): Array<{ name: string; body: string }> {
     const out: Array<{ name: string; body: string }> = [];
-    const parts = src.split(/\n(?=export (?:async )?function )/);
+    // SPLIT ON ANY TOP-LEVEL `export`, not only on an exported FUNCTION.
+    //
+    // Splitting on functions alone gave each one a body running to the next
+    // FUNCTION, so anything between them -- an exported type, a constant --
+    // was attributed to the function ABOVE it. That made this guard wrong in
+    // both directions: `listSelectableForCaller`, which takes no arguments
+    // and touches no block id, was flagged the moment an exported type
+    // mentioning `blockId` was declared below it; and before that, the LAST
+    // function in the file was credited with every binding in the trailing
+    // text, so it could have passed on a predicate it never ran.
+    //
+    // Ending a body at the next `export` of any kind is what "this function's
+    // code" actually means. It is strictly tighter, and the discovery test
+    // below is the tripwire against tightening it into blindness.
+    const parts = src.split(/\n(?=export )/);
     for (const part of parts) {
       const m = /^export (?:async )?function (\w+)/.exec(part);
       if (m) out.push({ name: m[1]!, body: part });

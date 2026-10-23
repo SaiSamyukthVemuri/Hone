@@ -80,13 +80,34 @@ describe("the block arguments are built ONCE for both commands", () => {
 
 describe("the UNEXECUTED command is not on the default path", () => {
   it("is taken only when there are settings to record", () => {
-    // 0223 is pending and no database has run it. A twenty-six parameter
-    // forwarding wrapper is exactly the class where one wrong parameter name
-    // fails only at runtime, so routing EVERY treatment-area creation through
-    // it would put the whole charting flow behind unexecuted SQL.
+    // 0223 is pending and no database has run the whole of it. A twenty-six
+    // parameter forwarding wrapper is exactly the class where one wrong
+    // parameter name fails only at runtime, so routing EVERY treatment-area
+    // creation through it would put the whole charting flow behind SQL that
+    // has not been exercised. The proven path stays the default.
+    //
+    // A `withClaim` ARM WAS ADDED AND REMOVED WITHOUT EVER RUNNING (ops01's
+    // ruling on #922 4307515255). It let a resumed SETTINGS-FREE save carry
+    // its retry key, which 0223 permits - the settings half is nullable and
+    // the claim is written whenever a key is supplied. But such a save
+    // creates an area with NO machine settings whenever the original never
+    // committed, which is what "no claim found" usually means, silently
+    // discarding what she entered before the reload. Data loss dressed as
+    // recovery.
+    //
+    // So the form holds a settings-free resume and asks her to re-enter, and
+    // nothing reaches this action without settings. The way back from a
+    // retained key is the explicit CHOICE, not a bare save.
     expect(createBody).toMatch(
       /const withSetup\s*=\s*\n?\s*input\.initialSetup != null && input\.initialSetup\.groups\.length > 0;/,
     );
+    // THE DECLARATION, not the word: the comment above the boolean names
+    // `withClaim` to record why it went, and banning the bare word would be
+    // tripped by that explanation.
+    expect(
+      createBody,
+      "the claim-only arm is back, and it can create a settings-less area",
+    ).not.toMatch(/const withClaim/);
     const branchAt = createBody.indexOf("withSetup");
     const newAt = createBody.indexOf('"create_block_with_initial_setup"');
     const oldAt = createBody.indexOf('"create_block_with_entry"');

@@ -42,7 +42,10 @@ import type { ReadingSubmission } from "./machine-queries";
 // invents channels for it.
 
 /** A blank, non-numeric or non-finite entry is not a reading. */
-export function parse(raw: string): ReadingValue | null {
+export function parse(raw: string, field?: Pick<FieldDescriptor, "valueKind">): ReadingValue | null {
+  if (field?.valueKind === "text" || field?.valueKind === "choice") {
+    return raw.trim() === "" ? null : { kind: "text", value: raw };
+  }
   const trimmed = raw.trim();
   if (trimmed === "") return null;
   const n = Number(trimmed);
@@ -83,7 +86,7 @@ export function assembleReadings(
   const readings: ReadingSubmission[] = [];
   for (const g of groups) {
     for (const f of g.fields) {
-      const value = parse(draft[draftKey(g.key, f)] ?? "");
+      const value = parse(draft[draftKey(g.key, f)] ?? "", f);
       if (value === null) continue;
       readings.push({
         stageKey: f.stageKey,
@@ -398,12 +401,12 @@ export function groupReadiness(
   group: SettingGroupDraft,
 ): GroupReadiness {
   const entered = fieldGroups.some((fg) =>
-    fg.fields.some((f) => parse(group.values[draftKey(fg.key, f)] ?? "") !== null),
+    fg.fields.some((f) => parse(group.values[draftKey(fg.key, f)] ?? "", f) !== null),
   );
   if (!entered) return "empty";
   const requiredComplete = fieldGroups.every((fg) =>
     fg.fields.every(
-      (f) => f.optional || parse(group.values[draftKey(fg.key, f)] ?? "") !== null,
+      (f) => f.optional || parse(group.values[draftKey(fg.key, f)] ?? "", f) !== null,
     ),
   );
   return requiredComplete ? "complete" : "partial";

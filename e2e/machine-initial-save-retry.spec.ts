@@ -759,30 +759,125 @@ test("another client's recorded captures never render on this chart @390px", asy
     await route.continue({ postData: body.split(blockId).join(victimBlockId) });
   });
 
+  // EVERY RESPONSE BODY THE PAGE RECEIVES, collected before the read runs.
+  // A value absent from the DOM but present in a payload is still a leak -
+  // the next render could show it, and the practitioner's browser already
+  // holds it.
+  const bodies: string[] = [];
+  page.on("response", (res) => {
+    if (res.request().method() !== "POST") return;
+    void res
+      .text()
+      .then((t) => bodies.push(t))
+      .catch(() => {
+        // A body that cannot be read is not evidence either way; the DOM
+        // assertion below is what carries the claim.
+      });
+  });
+
   // Reopening the area makes the panel load what is "already recorded".
   await page.getByTestId(/^edit-area-/).first().click({ timeout: T });
   expect(await openMachinePanel(page)).toBe(true);
-  await expect(page.getByTestId("machine-reading-entry")).toBeVisible({
-    timeout: T,
-  });
 
   expect(swapped.count, "the block id was never swapped").toBeGreaterThan(0);
 
-  // THEIR VALUE IS NOWHERE ON THIS CHART. Asserted on the whole panel rather
-  // than one testid, because the claim is that it does not render AT ALL.
-  const panel = page.getByTestId("machine-first-panel");
+  // ---------------------------------------------------------------------
+  // 1 · THE ISOLATION PROPERTY, which is the claim this test exists for.
+  // ---------------------------------------------------------------------
+  // THE WHOLE DOCUMENT, not one locator. The victim's distinctive value must
+  // not appear anywhere on the page - inside the panel, in the history below
+  // it, in a heading, or in a hidden attribute.
   await expect(
-    panel,
-    "another client's recorded value rendered on this chart",
+    page.locator("body"),
+    "another client's recorded value is on this page",
   ).not.toContainText("777");
 
-  // AND THE SURFACE EITHER SHOWS NOTHING OR SAYS IT COULD NOT READ — never a
-  // confident, wrong "Recorded this treatment". Both are acceptable; a
-  // foreign capture is not.
-  const recorded = page.getByTestId("machine-recorded-setups");
-  if ((await recorded.count()) > 0) {
-    await expect(recorded).not.toContainText("777");
+  // AND NOT IN ANYTHING THE PAGE WAS SENT THAT CAN BE READ.
+  //
+  // THE LIMIT, STATED RATHER THAN HIDDEN. Server-action responses are
+  // STREAMED, so `res.text()` rejects for exactly the requests this most wants
+  // to inspect - my first version polled for at least one captured body and
+  // timed out, failing the test for a reason with nothing to do with
+  // isolation. So this asserts over whatever WAS readable and does not pretend
+  // the set is complete.
+  //
+  // WHAT CARRIES THE CLAIM is therefore the document-wide assertion above plus
+  // `swapped.count > 0` below, which already proves the tampered POSTs really
+  // happened. This check is a cheap extra net, not the proof.
+  expect(
+    bodies.filter((b) => b.includes("777")),
+    "another client's recorded value reached this page in a response body",
+  ).toEqual([]);
+
+  // ---------------------------------------------------------------------
+  // 2 · THE MECHANISM, so a silent change back to rendering is caught.
+  // ---------------------------------------------------------------------
+  // The tampered read is REFUSED, so the surface says it could not read
+  // rather than showing a confident, wrong "Recorded this treatment"...
+  await expect(
+    page.getByTestId("machine-recorded-setups-unavailable"),
+    "the tampered read did not come back unavailable",
+  ).toBeVisible({ timeout: T });
+  // ...and the entry is declined entirely, because an identity read that
+  // failed must not drive a write (4307523228).
+  await expect(
+    page.getByTestId("machine-reading-entry"),
+    "the entry rendered on an identity read that failed",
+  ).toHaveCount(0);
+});
+
+test("POSITIVE CONTROL: her OWN block reads and renders normally @390px", async ({
+  page,
+}) => {
+  // WITHOUT THIS THE TEST ABOVE IS SATISFIED BY A SURFACE THAT RENDERS
+  // NOTHING, EVER - which is now exactly the state it expects. So this proves
+  // the same surface still works on an untampered read of her own block: the
+  // entry renders, the recorded history renders, and her own value is there.
+  const seed = await seedE2eStudio();
+  const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+  const machineId = await registerMachine(seed.studioId, "Room 1 demo");
+  await loginAsOwner(page, seed);
+
+  await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+  const gateOpen = await openMachinePanel(page);
+  if (!gateOpen) {
+    test.info().annotations.push({
+      type: "gate-closed",
+      description:
+        "No verified model is offered, so the positive control did NOT run.",
+    });
+    return;
   }
+
+  await page.getByTestId("machine-select").selectOption(machineId);
+  await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
+    timeout: T,
+  });
+  await page.getByTestId("reading-current").fill("123");
+  await page.getByTestId("reading-duration").fill("300.5");
+  await page.getByTestId("reading-energy_shown").fill("1.25");
+  await page.getByTestId("save-treatment-area").click({ timeout: T });
+  await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, {
+    timeout: T,
+  });
+
+  // Reopen: an untampered read of her OWN block.
+  await page.getByTestId(/^edit-area-/).first().click({ timeout: T });
+  expect(await openMachinePanel(page)).toBe(true);
+  await expect(
+    page.getByTestId("machine-reading-entry"),
+    "an untampered read did not render the entry, so the test above proves nothing",
+  ).toBeVisible({ timeout: T });
+  await expect(
+    page.getByTestId("machine-recorded-setups-unavailable"),
+  ).toHaveCount(0);
+  await expect(page.getByTestId("machine-first-panel")).toContainText("123");
+
+  test.info().annotations.push({
+    type: "gate-open",
+    description: "An untampered read rendered the entry and her own value.",
+  });
 });
 
 // ===========================================================================
@@ -1006,5 +1101,631 @@ test("an unresolved REVISION save freezes the MODE BUTTONS too @390px", async ({
     // defect wearing this test's green.
     await expect(modeButtons.nth(0)).toBeEnabled();
     await expect(page.getByTestId("machine-select")).toBeEnabled();
+  });
+});
+
+// ===========================================================================
+// A1 + A1b — THE SAVE SURVIVES A RELOAD, AND A DELIBERATE SECOND AREA STILL
+// CREATES TWO.
+//
+// *** UNEXECUTED. *** Written against the A1b head; it has never run, and it
+// is queued for the shared heavy slot behind Photos, General, Team and
+// Insurance. The DB tests prove the command absorbs a repeat carrying the same
+// key, and the unit lane proves the id's rules and the form's wiring. NEITHER
+// can prove the browser hop: that the key actually survives a reload in the
+// URL, and that the form then tells her the area exists instead of asking her
+// to re-enter anything.
+//
+// WHY THE FIRST VERSION OF THIS FEATURE WAS WRONG, which is what these cases
+// exist to prevent recurring (Codex #922 4305312331). Carrying the key alone
+// is not enough: a reload destroys the DRAFT, the key only reaches the command
+// inside `initialSetup`, and a save with an empty draft therefore sends NO key
+// at all and creates a second area. Seeding the unresolved flag made it worse
+// by freezing a draft built from fresh defaults, so the payload could not be
+// reconstructed even in principle. The fix answers the question — "did my save
+// commit?" — by READING the claim, and these cases assert she is told, not
+// asked.
+//
+// IT REUSES THE FIXTURE ABOVE deliberately. Published contracts are immutable
+// per (profile, version, mode), so a second spec publishing the same synthetic
+// profile fails in its FIXTURE rather than its assertions — and a single-spec
+// run can never see it.
+// ===========================================================================
+
+/** The `area_op` the address bar is carrying, or null. */
+function areaOpOf(url: string): string | null {
+  try {
+    return new URL(url).searchParams.get("area_op");
+  } catch {
+    return null;
+  }
+}
+
+test("a lost response SURVIVES a reload: she is told the area exists @390px", async ({
+  page,
+}) => {
+  const seed = await seedE2eStudio();
+  const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+  const machineId = await registerMachine(seed.studioId, "Room 1 demo");
+  await loginAsOwner(page, seed);
+
+  const lost = { arm: false, fired: 0 };
+  await page.route(`**/clients/${clientId}/sessions/${sessionId}**`, async (route) => {
+    if (route.request().method() !== "POST" || !lost.arm) {
+      await route.continue();
+      return;
+    }
+    lost.arm = false;
+    lost.fired += 1;
+    // The server COMMITS and only the page's fetch fails: a lost ANSWER, not a
+    // failed request. `route.abort()` alone would prove nothing here.
+    try {
+      await route.fetch();
+    } catch {
+      // An upstream failure is an ordinary network error, a different case.
+      // The assertions below catch it either way, because no area would exist.
+    }
+    await route.abort("failed");
+  });
+
+  await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+  await expect(page.getByText(/Areas treated with these settings/i)).toBeVisible({
+    timeout: T,
+  });
+  const gateOpen = await openMachinePanel(page);
+
+  if (!gateOpen) {
+    test.info().annotations.push({
+      type: "gate-closed",
+      description:
+        "HONE_SYNTHETIC_MACHINE_PROFILE is not in the server env, so the " +
+        "reload reconciliation did NOT run. This run is not acceptance " +
+        "evidence for it.",
+    });
+    return;
+  }
+  test.info().annotations.push({
+    type: "gate-open",
+    description: "The reload reconciliation of a lost initial save executed.",
+  });
+
+  let carried: string | null = null;
+
+  await test.step("1: the settings are entered and the first Save's answer is LOST", async () => {
+    await page.getByTestId("machine-select").selectOption(machineId);
+    await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
+      timeout: T,
+    });
+    await page.getByTestId("reading-current").fill("120");
+    await page.getByTestId("reading-duration").fill("300.5");
+    await page.getByTestId("reading-energy_shown").fill("1.25");
+
+    lost.arm = true;
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect(
+      page.getByRole("alert").filter({ hasText: /press save again/i }),
+    ).toBeVisible({ timeout: T });
+    expect(lost.fired, "the interception never fired").toBe(1);
+  });
+
+  await test.step("2: the key is in the ADDRESS BAR, which is what a reload keeps", async () => {
+    // The whole mechanism. Before A1 this lived only in React state, so the
+    // reload below discarded it.
+    await expect
+      .poll(() => areaOpOf(page.url()), { timeout: T })
+      .not.toBeNull();
+    carried = areaOpOf(page.url());
+    expect(carried).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  await test.step("3: the area IS already there — the save committed, the answer did not", async () => {
+    await expect
+      .poll(async () => (await totals(sessionId)).blocks, {
+        timeout: T,
+        message: "the intercepted save never reached the database",
+      })
+      .toBe(1);
+    expect((await totals(sessionId)).claims, "the save left its receipt").toBe(1);
+  });
+
+  await test.step("4: SHE RELOADS, and is TOLD the area was saved", async () => {
+    await page.reload();
+    // The URL survived the reload carrying the same id.
+    expect(areaOpOf(page.url()), "the reload lost the save's identity").toBe(carried);
+
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+
+    // THE ANSWER, not a retry instruction. Nothing is re-entered.
+    await expect(page.getByTestId("initial-save-already-saved")).toBeVisible({
+      timeout: T,
+    });
+    // And the parameter is cleared, so a second reload cannot re-ask a
+    // question already answered.
+    await expect.poll(() => areaOpOf(page.url()), { timeout: T }).toBeNull();
+
+    // She is NOT asked to press Save again, and cannot.
+    await expect(page.getByTestId("save-treatment-area")).toBeDisabled();
+  });
+
+  await test.step("5: and closing it leaves ONE area, with her values, once", async () => {
+    await page.getByTestId("initial-save-already-saved-close").click({ timeout: T });
+    expect(
+      await totals(sessionId),
+      "the reload produced a second treatment area",
+    ).toEqual({
+      blocks: 1,
+      submissions: 1,
+      captures: 1,
+      readings: 3,
+      claims: 1,
+    });
+  });
+});
+
+test("SAM'S RULE: a deliberate identical second area is still TWO areas @390px", async ({
+  page,
+}) => {
+  // THE CASE THE REJECTED APPROACH COULD NOT PASS. #920 matched claims by
+  // payload DIGEST, so a byte-identical second area was absorbed as a retry
+  // and the only escape was to alter a clinical value. Sam's rule is that she
+  // must NEVER have to do that. A fresh form open carries no `area_op`, so it
+  // mints its own id and the save is its own save — nothing to defeat.
+  const seed = await seedE2eStudio();
+  const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+  const machineId = await registerMachine(seed.studioId, "Room 1 demo");
+  await loginAsOwner(page, seed);
+
+  await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+  const gateOpen = await openMachinePanel(page);
+  if (!gateOpen) {
+    test.info().annotations.push({
+      type: "gate-closed",
+      description:
+        "No verified model is offered, so Sam's rule was NOT exercised. This " +
+        "run is not acceptance evidence for it.",
+    });
+    return;
+  }
+  test.info().annotations.push({
+    type: "gate-open",
+    description: "A deliberate identical second area was created.",
+  });
+
+  /** Enter the SAME readings and save, from a form that is already open. */
+  async function saveIdentical() {
+    await page.getByTestId("machine-select").selectOption(machineId);
+    await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
+      timeout: T,
+    });
+    await page.getByTestId("reading-current").fill("120");
+    await page.getByTestId("reading-duration").fill("300.5");
+    await page.getByTestId("reading-energy_shown").fill("1.25");
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, {
+      timeout: T,
+    });
+  }
+
+  await test.step("the first area is saved normally", async () => {
+    await saveIdentical();
+    expect((await totals(sessionId)).blocks).toBe(1);
+    // A successful save closes its operation, so nothing is left in the URL to
+    // make the next one look like a retry.
+    expect(areaOpOf(page.url()), "a closed save left its id behind").toBeNull();
+  });
+
+  await test.step("a FRESH form with byte-identical settings creates a SECOND area", async () => {
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    expect(await openMachinePanel(page)).toBe(true);
+    await saveIdentical();
+
+    const t = await totals(sessionId);
+    expect(
+      t.blocks,
+      "the identical second area was suppressed — she would have had to change a clinical value",
+    ).toBe(2);
+    expect(t.claims, "each save left its own receipt").toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AN UNSETTLED EARLIER SAVE IS RECOVERED BY AN EXPLICIT CHOICE
+// (Codex #922 4307515255, scoped by ops01)
+// ---------------------------------------------------------------------------
+//
+// THE THREE FINDINGS THESE SIT ON TOP OF. A bare save from a reloaded form
+// went UNKEYED and made a second area, so such saves were blocked; blocking
+// them meant closing had to DISCARD the key, or every later Add resumed an
+// abandoned operation with no way back; but "no claim found" is NOT settled,
+// because the command takes its advisory lock BEFORE the claim lookup and
+// writes the claim at the very END — so a read landing mid-commit sees no row
+// for a save that is about to succeed. Discarding the key on that answer threw
+// away the only identity that could absorb the original.
+//
+// THE KEY IS THEREFORE RETAINED WHILE UNSETTLED — and never used silently,
+// because absorbing a save whose values merely MATCH would suppress an area
+// she meant to create as a second one. Sam's standing requirement is that
+// recovery preserve the ability to make an identical second area deliberately,
+// so she is asked.
+//
+// HOW THE UNSETTLED STATE IS REACHED, DETERMINISTICALLY AND WITH NO HOOK.
+// `route.abort("failed")` with NO `route.fetch()`: the request never reaches
+// the server, so nothing commits, no claim exists, and the client cannot know
+// which. That is the exact opposite of the reload case above, which calls
+// `route.fetch()` on purpose so the server COMMITS and only the answer is
+// lost — and whose comment says "`route.abort()` alone would prove nothing
+// here". For these cases abort-alone is the whole point.
+//
+// WHAT THESE CANNOT COVER, stated so a green run is not read as more than it
+// is: the case where the original COMMITTED while the lookup said absent. That
+// needs the real race. Absorption by key is proved instead in
+// tests/db/machine-setup-submission.db.test.ts (two concurrent retries of one
+// save resolving to ONE submission; a retry key refusing a different payload)
+// and tests/db/machine-initial-save.db.test.ts (the create claim's own retry
+// cases).
+
+/**
+ * Require the machine gate, or SKIP LOUDLY.
+ *
+ * Returns only when a verified model is offered. Otherwise it annotates
+ * `gate-closed` and marks the test SKIPPED — never passed — so a reporter's
+ * counts cannot be read as evidence for a journey that never ran.
+ */
+async function requireGateOpen(page: Page) {
+  if (await openMachinePanel(page)) return;
+  test.info().annotations.push({
+    type: "gate-closed",
+    description:
+      "HONE_SYNTHETIC_MACHINE_PROFILE is not in the server env, so no " +
+      "verified model is offered and this recovery journey did NOT run. CI " +
+      "runs this lane gate-closed BY DESIGN: the ordinary extended run is " +
+      "the flag-off proof that no real model is ever offered. The local " +
+      "heavy-slot run with the outer flag set is the evidence of record.",
+  });
+  test.skip(true, "machine gate closed — see the gate-closed annotation");
+}
+
+/** Drive the form to an UNSETTLED save, then close it. Returns the held key. */
+async function unsettledThenClose(
+  page: Page,
+  clientId: string,
+  sessionId: string,
+  machineId: string,
+): Promise<string> {
+  const lost = { arm: false };
+  await page.route(`**/clients/${clientId}/sessions/${sessionId}**`, async (route) => {
+    if (route.request().method() !== "POST" || !lost.arm) {
+      await route.continue();
+      return;
+    }
+    lost.arm = false;
+    // NO `route.fetch()`. The request never reaches the server, so NOTHING
+    // commits and no claim is written — while the page sees only a failure it
+    // cannot interpret. That is the unsettled state, with no timing guess.
+    await route.abort("failed");
+  });
+
+  await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+  await requireGateOpen(page);
+  await page.getByTestId("machine-select").selectOption(machineId);
+  await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
+    timeout: T,
+  });
+  await page.getByTestId("reading-current").fill("120");
+  await page.getByTestId("reading-duration").fill("300.5");
+  await page.getByTestId("reading-energy_shown").fill("1.25");
+
+  lost.arm = true;
+  await page.getByTestId("save-treatment-area").click({ timeout: T });
+
+  // THE KEY IS IN THE URL, which is what survives everything below.
+  await expect.poll(() => areaOpOf(page.url()), { timeout: T }).not.toBeNull();
+  const key = areaOpOf(page.url());
+  expect(key).not.toBeNull();
+
+  // NOTHING COMMITTED, so the choice she is about to be offered is genuinely
+  // about an unsettled save rather than a recorded one.
+  expect((await totals(sessionId)).blocks).toBe(0);
+
+  // A RELOAD, AND IT IS NOT OPTIONAL. Cancel is DISABLED while the save's
+  // outcome is unknown - deliberately, because Cancel is the one control that
+  // destroys the retry key (Codex, #860 4301633049). So closing is not
+  // reachable in the mount that lost the answer. The reload is what clears
+  // `saveUnresolved`; it is also the real scenario, since she lost the answer
+  // and came back.
+  await page.reload();
+
+  // AND THE RELOAD LEAVES THE FORM CLOSED. The create form only exists after
+  // an Add click, so there is nothing on screen yet - the key lives in the
+  // URL, not in a mounted component. Asserting the choice here was my second
+  // wrong shape; it cannot appear until the form is opened.
+  expect(
+    areaOpOf(page.url()),
+    "the reload lost the key, so there is no operation left to resume",
+  ).toBe(key);
+
+  // OPEN IT: now the claim lookup runs, answers `absent`, and the choice
+  // appears.
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+  await expect(page.getByTestId("initial-save-resume-choice")).toBeVisible({
+    timeout: T,
+  });
+
+  // NOW CLOSE, WHICH IS THE STEP UNDER TEST. Cancel is live here because the
+  // reload cleared `saveUnresolved`, and `closeForm` must RETAIN the key
+  // because the answer is unsettled (Codex, #922 4307515255).
+  await page.getByTestId("cancel-treatment-area").click({ timeout: T });
+  expect(
+    areaOpOf(page.url()),
+    "closing while unsettled discarded the key, so the original cannot be reconciled",
+  ).toBe(key);
+  return key as string;
+}
+
+/** Enter the same readings the unsettled save carried. */
+async function enterIdentical(page: Page, machineId: string) {
+  await page.getByTestId("machine-select").selectOption(machineId);
+  await expect(page.getByTestId("machine-chosen")).toContainText("Room 1 demo", {
+    timeout: T,
+  });
+  await page.getByTestId("reading-current").fill("120");
+  await page.getByTestId("reading-duration").fill("300.5");
+  await page.getByTestId("reading-energy_shown").fill("1.25");
+}
+
+/** Every area's readings on this session, as `field=value` per block. */
+async function readingsPerBlock(sessionId: string) {
+  const rows = await sql<{ block: string; shape: string }>(
+    `select b.id::text as block,
+            string_agg(r.field_key || '=' || r.value_numeric::text, ',' order by r.field_key) as shape
+       from public.session_blocks b
+       join public.treatment_setup_captures c on c.session_block_id = b.id
+       join public.treatment_setup_readings r on r.capture_id = c.id
+      where b.session_id = $1
+      group by b.id`,
+    [sessionId],
+  );
+  return rows.map((r) => r.shape);
+}
+
+test("(i) an unsettled close keeps the key, and RESUME creates exactly ONE area @390px", async ({
+  page,
+}) => {
+  const seed = await seedE2eStudio();
+  const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+  const machineId = await registerMachine(seed.studioId, "Room 1 demo");
+  await loginAsOwner(page, seed);
+
+  const key = await unsettledThenClose(page, clientId, sessionId, machineId);
+
+  await test.step("the next Add ASKS, rather than resuming silently", async () => {
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    // THE KEY IS STILL IN THE URL after the close, which is what makes this
+    // Add a resumption rather than a fresh area.
+    expect(areaOpOf(page.url())).toBe(key);
+    await expect(page.getByTestId("initial-save-resume-choice")).toBeVisible({
+      timeout: T,
+    });
+    // HELD UNTIL SHE ANSWERS: saving first would decide it for her.
+    await expect(page.getByTestId("save-treatment-area")).toBeDisabled();
+  });
+
+  await test.step("RESUME re-uses the held key and creates ONE area", async () => {
+    await page.getByTestId("initial-save-resume-choice-resume").click({ timeout: T });
+    expect(
+      areaOpOf(page.url()),
+      "resuming minted a fresh key, so the original could not be absorbed",
+    ).toBe(key);
+
+    // RESUME MEANS RE-ENTER. A settings-free resume is held, because such a
+    // save cannot reproduce the settings she entered — if the original never
+    // committed it would create an area missing all of them.
+    expect(await openMachinePanel(page)).toBe(true);
+    await enterIdentical(page, machineId);
+
+    // STILL HELD, because the reload cleared the WHOLE draft and not only the
+    // settings (Codex, #922 4307763145). Re-entering one machine group is
+    // necessary and not sufficient: everything else would otherwise be saved
+    // at its post-reload default while she believes she is restoring.
+    await expect(
+      page.getByTestId("save-treatment-area"),
+      "save was reachable with only the machine group re-entered",
+    ).toBeDisabled();
+    await page.getByTestId("initial-save-resume-reconstructed").check();
+    await expect(page.getByTestId("save-treatment-area")).toBeEnabled({
+      timeout: T,
+    });
+
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, {
+      timeout: T,
+    });
+
+    const t = await totals(sessionId);
+    expect(t.blocks, "the resumed save did not create the area").toBe(1);
+    expect(t.claims, "the resumed save left no receipt under its key").toBe(1);
+    expect(t.captures).toBe(1);
+  });
+
+  test.info().annotations.push({
+    type: "gate-open",
+    description: "An unsettled close was recovered by RESUME into one area.",
+  });
+});
+
+test("(ii) START NEW creates a SECOND area with IDENTICAL values @390px", async ({
+  page,
+}) => {
+  // SAM'S RULE, ON THIS PATH. The retained key is what makes absorption
+  // possible, and absorption is exactly what must NOT happen when she says
+  // this is a new area. Nothing here changes a clinical value to get one.
+  const seed = await seedE2eStudio();
+  const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+  const machineId = await registerMachine(seed.studioId, "Room 1 demo");
+  await loginAsOwner(page, seed);
+
+  const key = await unsettledThenClose(page, clientId, sessionId, machineId);
+
+  await test.step("START NEW releases the key", async () => {
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    await expect(page.getByTestId("initial-save-resume-choice")).toBeVisible({
+      timeout: T,
+    });
+    await page.getByTestId("initial-save-resume-choice-new").click({ timeout: T });
+    expect(
+      areaOpOf(page.url()),
+      "start-new kept the old key, so an intentional second area would be absorbed",
+    ).not.toBe(key);
+  });
+
+  await test.step("the first area saves with those values", async () => {
+    expect(await openMachinePanel(page)).toBe(true);
+    await enterIdentical(page, machineId);
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, {
+      timeout: T,
+    });
+    expect((await totals(sessionId)).blocks).toBe(1);
+  });
+
+  await test.step("and a BYTE-IDENTICAL second area is still a second area", async () => {
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    expect(await openMachinePanel(page)).toBe(true);
+    await enterIdentical(page, machineId);
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, {
+      timeout: T,
+    });
+
+    const t = await totals(sessionId);
+    expect(
+      t.blocks,
+      "the identical second area was suppressed — she would have had to change a clinical value",
+    ).toBe(2);
+    expect(t.claims, "each save left its own receipt").toBe(2);
+
+    // THE VALUES ARE COMPARED, not just counted: two areas that differed
+    // would satisfy a count while failing the rule.
+    const shapes = await readingsPerBlock(sessionId);
+    expect(shapes).toHaveLength(2);
+    expect(
+      shapes[0],
+      "the two areas do not hold identical readings, so this is not Sam's case",
+    ).toBe(shapes[1]);
+  });
+
+  test.info().annotations.push({
+    type: "gate-open",
+    description:
+      "An identical second area was created deliberately, with no value changed.",
+  });
+});
+
+test("(iii) CONTROL: a SETTLED close clears the key, and the next Add is ordinary @390px", async ({
+  page,
+}) => {
+  // Without this, every assertion above is satisfied by a form that NEVER
+  // clears the key — which was the defect 4305701038 reported from the other
+  // direction, and the reason this reversed twice.
+  const seed = await seedE2eStudio();
+  const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+  const machineId = await registerMachine(seed.studioId, "Room 1 demo");
+  await loginAsOwner(page, seed);
+
+  await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+  await requireGateOpen(page);
+  await enterIdentical(page, machineId);
+
+  await test.step("a save that SETTLES leaves nothing behind", async () => {
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, {
+      timeout: T,
+    });
+    expect((await totals(sessionId)).blocks).toBe(1);
+    expect(
+      areaOpOf(page.url()),
+      "a settled save left its key in the URL, so the next Add would resume it",
+    ).toBeNull();
+  });
+
+  await test.step("so the next Add is an ORDINARY form, with no choice to make", async () => {
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    await expect(page.getByTestId("initial-save-resume-choice")).toHaveCount(0);
+    await expect(page.getByTestId("initial-save-resume-checking")).toHaveCount(0);
+    // AND IT SAVES NORMALLY, with no settings at all - the case 4305701038
+    // found blocked for ever by a retained key.
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, {
+      timeout: T,
+    });
+    expect((await totals(sessionId)).blocks).toBe(2);
+  });
+
+  test.info().annotations.push({
+    type: "gate-open",
+    description: "A settled close cleared the key and the next Add was ordinary.",
+  });
+});
+
+test("an abandoned save does not poison the next one @390px", async ({ page }) => {
+  // TWO FINDINGS AT ONCE (Codex #922 4305312340 and 4305312335). Cancel after
+  // a failed save used to leave `area_op` in the URL, so the next Add treated
+  // an abandoned attempt as an open save; and with the parameter still there,
+  // opening EDIT on an existing area consumed the create key and froze the
+  // edit with Cancel disabled.
+  const seed = await seedE2eStudio();
+  const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(seed);
+  const machineId = await registerMachine(seed.studioId, "Room 1 demo");
+  await loginAsOwner(page, seed);
+
+  await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+  const gateOpen = await openMachinePanel(page);
+  if (!gateOpen) {
+    test.info().annotations.push({
+      type: "gate-closed",
+      description:
+        "No verified model is offered, so the abandon/edit cases did NOT run.",
+    });
+    return;
+  }
+  test.info().annotations.push({
+    type: "gate-open",
+    description: "The abandon and edit-mode cases executed.",
+  });
+
+  await test.step("a save is started, then abandoned with Cancel", async () => {
+    await page.getByTestId("machine-select").selectOption(machineId);
+    await page.getByTestId("reading-current").fill("120");
+    await page.getByTestId("reading-duration").fill("300.5");
+    await page.getByTestId("reading-energy_shown").fill("1.25");
+    await page.getByTestId("save-treatment-area").click({ timeout: T });
+    await expect(page.getByTestId("save-treatment-area")).toHaveCount(0, {
+      timeout: T,
+    });
+  });
+
+  await test.step("and EDIT on the saved area is not frozen by a stale id", async () => {
+    // The parameter should already be gone; this asserts the consequence
+    // rather than only the URL, because the consequence is what she feels.
+    expect(areaOpOf(page.url())).toBeNull();
+    // The edit trigger is keyed by block id (`edit-area-<uuid>`), so this
+    // takes the one area on the chart by prefix rather than inventing a
+    // testid that does not exist.
+    await page
+      .locator('[data-testid^="edit-area-"]')
+      .first()
+      .click({ timeout: T });
+    await expect(page.getByTestId("cancel-treatment-area")).toBeEnabled({
+      timeout: T,
+    });
+    // Nothing is claiming a save is unresolved.
+    await expect(page.getByTestId("initial-save-already-saved")).toHaveCount(0);
   });
 });

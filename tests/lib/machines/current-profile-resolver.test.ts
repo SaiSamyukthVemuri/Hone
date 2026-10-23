@@ -208,10 +208,10 @@ describe("and EVERY site uses it, so they cannot diverge again", () => {
     "app/(app)/clients/[id]/sessions/[sessionId]/block-actions.ts",
   ];
 
-  it("each resolves through currentProfile", () => {
+  it("each resolves through the shared current or exact recorded-version resolver", () => {
     for (const rel of SITES) {
       expect(read(rel), `${rel} does not use the resolver`).toMatch(
-        /currentProfile\(/,
+        /(?:currentProfile|recordedProfile)\(/,
       );
     }
   });

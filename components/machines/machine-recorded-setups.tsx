@@ -9,14 +9,15 @@ import {
 import {
   observationSourceLabel,
   recordedUnitLabel,
+  readingsInContractOrder,
 } from "@/lib/machines/charting";
 import type { RecordedReading } from "@/lib/machines/machine-queries";
 import {
-  currentProfile,
+  recordedProfile,
   findMode,
   modeFields,
 } from "@/lib/machines/profile-contract";
-import type { MachineProfile } from "@/lib/machines/profile-contract";
+import type { MachineMode, MachineProfile } from "@/lib/machines/profile-contract";
 
 // MPX-03 — WHAT HAS ALREADY BEEN RECORDED ON THIS TREATMENT.
 //
@@ -86,6 +87,7 @@ function formatValue(r: RecordedReading): string {
         ? "not legible"
         : "not recorded";
   }
+  if (r.value.kind === "text") return r.value.value;
   const own = String(r.value.value).split(".")[1]?.length ?? 0;
   return r.value.value.toFixed(Math.max(r.decimals, own));
 }
@@ -117,7 +119,7 @@ function ClockTime({ iso }: { iso: string }) {
 /**
  * The field's label, from the contract the reading was RECORDED under.
  *
- * Returns the recorded key whenever the version has moved on. Relabelling an
+ * Returns the recorded key when the exact recorded version is unavailable. Relabelling an
  * old number with a newer contract's words is how a record quietly starts
  * lying, and the unit is never taken from today's catalogue at all - see the
  * `nativeUnit` rule in machine-prior-setup.
@@ -144,12 +146,13 @@ function labelsFor(
   labels: Map<string, string>;
   stageLabels: Map<string, string>;
   historical: boolean;
+  mode: MachineMode | undefined;
 } {
-  const profile = currentProfile(catalogue, entry.profileId);
-  const historical = profile ? entry.profileVersion !== profile.version : true;
+  const profile = recordedProfile(catalogue, entry.profileId, entry.profileVersion);
+  const historical = !profile;
   const labels = new Map<string, string>();
   const mode = profile ? findMode(profile, entry.modeKey) : undefined;
-  if (mode && !historical) {
+  if (mode) {
     // KEYED BY STAGE AND FIELD (Codex, #860 4301851853, reported against the
     // guidance surface; the same collision is here). `{ field }` alone
     // merges two stages that reuse a key — MultiPlex repeats "Duration" and
@@ -162,10 +165,10 @@ function labelsFor(
   // THE MACHINE'S OWN NAME for each stage, so the grouping below can be
   // labelled the way she sees it on the unit.
   const stageLabels = new Map<string, string>();
-  if (mode && !historical) {
+  if (mode) {
     for (const stage of mode.stages) stageLabels.set(stage.key, stage.nativeLabel);
   }
-  return { labels, stageLabels, historical };
+  return { labels, stageLabels, historical, mode };
 }
 
 function ChangeLine({
@@ -182,11 +185,10 @@ function ChangeLine({
   // versions (the same field key can mean something else there), or a field
   // re-read at the SAME value (another capture, not an adjustment). So this
   // line cannot make any of those claims, whatever it says.
-  const profile = currentProfile(catalogue, change.to.profileId);
-  const historical = profile ? change.to.profileVersion !== profile.version : true;
+  const profile = recordedProfile(catalogue, change.to.profileId, change.to.profileVersion);
   const mode = profile ? findMode(profile, change.to.modeKey) : undefined;
   let label = change.to.fieldKey;
-  if (mode && !historical) {
+  if (mode) {
     // MATCHED ON STAGE TOO, for the same reason: a change line naming the
     // wrong stage's label is a change line about the wrong component.
     for (const { field, stageKey } of modeFields(mode)) {
@@ -219,7 +221,7 @@ function ChangeLine({
   const stage =
     change.stageKey === null
       ? null
-      : ((mode && !historical
+      : ((mode
           ? mode.stages.find((s) => s.key === change.stageKey)?.nativeLabel
           : undefined) ?? change.stageKey);
   const at = renderableInstant(change.to.recordedAt);
@@ -245,7 +247,7 @@ function ChangeLine({
       )}
       {stage && <span className="mx-1 text-neutral-400">·</span>}
       <span className="text-neutral-500">{label}</span>{" "}
-      <span className="font-medium">{formatValue(change.from)}</span>
+      <span className={change.from.value.kind === "text" ? "font-medium whitespace-break-spaces [overflow-wrap:anywhere]" : "font-medium"}>{formatValue(change.from)}</span>
       {/*
         THE UNIT COMES FROM EACH READING, not from one of them and not from
         the catalogue. Both sides are printed with their own recorded unit,
@@ -261,7 +263,7 @@ function ChangeLine({
       <span className="mx-1.5 text-neutral-500" aria-label="changed to">
         →
       </span>
-      <span className="font-medium">{formatValue(change.to)}</span>
+      <span className={change.to.value.kind === "text" ? "font-medium whitespace-break-spaces [overflow-wrap:anywhere]" : "font-medium"}>{formatValue(change.to)}</span>
       {recordedUnitLabel(change.to.nativeUnit) ? (
         <span className="ml-0.5 text-neutral-500">
           {recordedUnitLabel(change.to.nativeUnit)}
@@ -337,7 +339,7 @@ export function MachineRecordedSetups({
 
       <ol className="flex flex-col gap-2">
         {entries.map((entry) => {
-          const { labels, stageLabels, historical } = labelsFor(entry, catalogue);
+          const { labels, stageLabels, historical, mode } = labelsFor(entry, catalogue);
           const at = renderableInstant(entry.recordedAt);
           const unitName = unitNames[entry.deviceId] ?? null;
           return (
@@ -382,7 +384,7 @@ export function MachineRecordedSetups({
                 An UNSTAGED profile has exactly one bucket with a null key
                 and renders with no heading, identical to before.
               */}
-              {[...byStage(entry.readings).entries()].map(([stageKey, stageRows]) => (
+              {[...byStage(readingsInContractOrder(entry.readings, mode)).entries()].map(([stageKey, stageRows]) => (
               <div key={stageKey ?? ""} className="flex flex-col gap-0.5">
               {stageKey !== null && (
                 <span
@@ -402,7 +404,7 @@ export function MachineRecordedSetups({
                       {labels.get(`${r.stageKey ?? ""}::${r.fieldKey}`) ??
                         r.fieldKey}
                     </span>{" "}
-                    <span className="font-medium">{formatValue(r)}</span>
+                    <span className={r.value.kind === "text" ? "font-medium whitespace-break-spaces [overflow-wrap:anywhere]" : "font-medium"}>{formatValue(r)}</span>
                     {/*
                       ALWAYS the recorded unit, never today's catalogue - but
                       through the sentinel rule, which this printed straight

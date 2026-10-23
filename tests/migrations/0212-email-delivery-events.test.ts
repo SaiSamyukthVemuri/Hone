@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { countVersion } from "./helpers/migration-state";
+import { countVersion, versionsAbove } from "./helpers/migration-state";
 
 // ===========================================================================
 // Migration 0212 — DELIVERY-EVENTS-01 email delivery events. SOURCE CONTRACT.
@@ -63,6 +63,13 @@ describe("0212 sits correctly in the migration sequence", () => {
     expect(createHash("sha256").update(SQL, "utf8").digest("hex")).toBe(
       "cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1",
     );
+  });
+
+  it("keeps the later receipt repair in a forward migration", () => {
+    // 0212 is applied/frozen (raw hash above); 0227 supplies the reviewed
+    // receipt repair forward. Current-max coverage belongs to the derived guard.
+    expect(countVersion("0227")).toBe(1);
+    expect(versionsAbove(VERSION)).toContain("0227");
   });
 
   it("is allocated exactly once", () => {

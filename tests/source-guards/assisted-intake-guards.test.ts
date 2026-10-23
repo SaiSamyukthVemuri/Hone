@@ -86,66 +86,56 @@ describe("the client cannot author practitioner provenance", () => {
 });
 
 // ---------------------------------------------------------------------------
-describe("the assisted write uses the authenticated client, never the service role", () => {
+describe("the assisted writer authorizes through RLS before the governed service-only CAS", () => {
   const src = read(PRACTITIONER_ACTIONS);
   const saveBody = functionBody(src, "saveAssistedIntakeStepAction");
   const handoffBody = functionBody(src, "handOffAssistedIntakeAction");
 
-  it("the save action never touches createAdminClient", () => {
-    // Load-bearing: migration 0162 exempts the service role from its entire
-    // end-user block, including "Only the client can submit their own
-    // intake". Using the admin client here would hand this action the ability
-    // to submit on the client's behalf.
-    expect(codeOnly(saveBody)).not.toContain("createAdminClient");
+  it("the save can use the service client only for the exact authorized save command", () => {
+    const code = codeOnly(saveBody);
+    expect(code.match(/createAdminClient\(\)/g)).toHaveLength(1);
+    expect(code).toContain("writeIntakeRevision(createAdminClient(), {");
+    expect(code).toContain('operation: "save"');
+    expect(code).not.toContain('operation: "submit"');
+    expect(code).not.toMatch(/createAdminClient\(\)\.from/);
+    expect(code).not.toMatch(/operation:\s*payload/);
   });
-
-  it("the save action resolves the caller through the session", () => {
-    expect(saveBody).toContain("loadAssistedIntake");
-    expect(codeOnly(saveBody)).toContain("await createClient()");
+  it("the session-authorized snapshot is checked before the privileged call", () => {
+    const authority = saveBody.indexOf("await loadAssistedIntake");
+    const refused = saveBody.indexOf("if (!loaded.ok) return loaded");
+    const writer = saveBody.indexOf("writeIntakeRevision(createAdminClient()");
+    expect(authority).toBeGreaterThan(-1);
+    expect(refused).toBeGreaterThan(authority);
+    expect(writer).toBeGreaterThan(refused);
   });
-
-  it("the shared loader authorises before reading the intake", () => {
-    const loader = src.slice(
-      src.indexOf("async function loadAssistedIntake"),
-      src.indexOf("export async function saveAssistedIntakeStepAction"),
-    );
-    const auth = loader.indexOf("loadAuthorisedClient");
-    const query = loader.indexOf('.from("client_intake_forms")');
-    expect(auth).toBeGreaterThan(-1);
-    expect(query).toBeGreaterThan(auth);
+  it("the shared loader authorises before its RLS-scoped intake read", () => {
+    const loader = src.slice(src.indexOf("async function loadAssistedIntake"), src.indexOf("export async function saveAssistedIntakeStepAction"));
+    expect(loader.indexOf('.from("client_intake_forms")')).toBeGreaterThan(loader.indexOf("loadAuthorisedClient"));
+    expect(codeOnly(loader)).toContain("await createClient()");
     expect(codeOnly(loader)).not.toContain("createAdminClient");
   });
-
-  it("the handoff uses the service role ONLY to stamp link metadata", () => {
+  it("handoff can only CAS a draft and stamp link metadata after that winner", () => {
     const code = codeOnly(handoffBody);
-    const adminUses = code.match(/createAdminClient\(\)/g) ?? [];
-    expect(adminUses).toHaveLength(1);
-    expect(code).toMatch(/stampIntakeLinkIssued\(createAdminClient\(\)/);
-    // ...and only after the guarded UPDATE has already succeeded.
-    expect(code.indexOf("createAdminClient()")).toBeGreaterThan(
-      code.indexOf('.select("id, client_id")'),
-    );
+    expect(code.match(/createAdminClient\(\)/g)).toHaveLength(2);
+    expect(code).toContain('operation: "handoff"');
+    expect(code).not.toContain('operation: "submit"');
+    expect(code.indexOf("stampIntakeLinkIssued(createAdminClient()")).toBeGreaterThan(code.indexOf("if (!written.ok) return written"));
   });
-
-  it("both assisted writes carry the full predicate set", () => {
-    for (const [name, body] of [
-      ["save", saveBody],
-      ["handoff", handoffBody],
-    ] as const) {
-      expect(body, `${name}: studio predicate`).toMatch(/\.eq\("studio_id"/);
-      expect(body, `${name}: client predicate`).toMatch(/\.eq\("client_id"/);
-      expect(body, `${name}: soft-delete predicate`).toMatch(
-        /\.is\("deleted_at", null\)/,
-      );
-      expect(body, `${name}: in_progress predicate`).toMatch(
-        /\.eq\("status", "in_progress"\)/,
-      );
-      expect(body, `${name}: returns affected rows`).toMatch(/\.select\(/);
+  it("both callers supply resolved scope and the command retains every database predicate", () => {
+    for (const body of [saveBody, handoffBody]) {
+      expect(body).toContain("studioId: loaded.studioId, clientId, expectedRevision");
+      expect(body).toContain("if (loaded.revision !== expectedRevision)");
     }
+    const sql = read("supabase/migrations/0243_intake_revision_cas_and_profile_sync.sql");
+    expect(sql).toMatch(/f\.id = p_intake_id and f\.studio_id = p_studio_id\s+and f\.client_id = p_client_id and f\.deleted_at is null/);
+    expect(sql).toContain("f.status = 'in_progress' and f.revision = p_expected_revision");
+    expect(sql).toMatch(/revoke execute on function public\.write_intake_revision[^;]+from public, anon, authenticated;/);
   });
-
-  it("the save action carries the optimistic-concurrency predicate", () => {
-    expect(saveBody).toMatch(/\.eq\("updated_at", expectedUpdatedAt\)/);
+  it("save and handoff require the explicit revision the editor saw", () => {
+    expect(saveBody).toContain("intakeRevision(payload.expectedRevision)");
+    expect(handoffBody).toContain('formData.get("expected_revision")');
+    expect(read(EDITOR)).toContain("expectedRevision: revision");
+    expect(read(EDITOR)).toContain('fd.set("expected_revision", revision)');
   });
 
   it("neither assisted write can set status or submitted_at", () => {
@@ -420,7 +410,7 @@ describe("no schema change", () => {
   it("the provenance lives in the existing responses jsonb", () => {
     const save = functionBody(read(PRACTITIONER_ACTIONS), "saveAssistedIntakeStepAction");
     expect(save).toMatch(/merged\[PRACTITIONER_ASSISTED_ENTRY\.id\]/);
-    expect(save).toMatch(/\.update\(\{ responses: merged/);
+    expect(save).toMatch(/responses: merged, step, operation: "save"/);
   });
 
   it("the provenance module declares no column or table", () => {

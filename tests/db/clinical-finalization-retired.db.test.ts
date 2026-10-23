@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Client } from "pg";
 import {
   adminQuery,
+  adminTx,
   asRole,
   asUser,
   closePool,
@@ -459,10 +460,16 @@ describe("C. ordinary treatment charting stays editable", () => {
     // The column is unfrozen — which is this case's point. After 0169 the
     // practitioner reaches it through the 0166 commands, so the direct write is
     // performed as the owner here purely to prove the column is not read-only.
-    await adminQuery(
-      "update public.electrolysis_entries set hairs_treated = 25 where id=$1 and session_id=$2",
-      [entryId, sessionId],
-    );
+    await adminTx(async q => {
+      // Owner-only fixture edit with the real synthetic practitioner attribution.
+      await q("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: a.userId, role: "authenticated" }),
+      ]);
+      await q(
+        "update public.electrolysis_entries set hairs_treated = 25 where id=$1 and session_id=$2",
+        [entryId, sessionId],
+      );
+    });
     expect(
       (await adminQuery("select hairs_treated from public.electrolysis_entries where id=$1", [entryId]))
         .rows[0].hairs_treated,
