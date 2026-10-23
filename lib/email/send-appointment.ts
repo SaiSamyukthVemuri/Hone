@@ -20,6 +20,7 @@ import {
 } from "@/lib/email/templates/reminders";
 import { buildPostcareEmail } from "@/lib/email/templates/postcare";
 import { buildIntakeRequestEmail } from "@/lib/email/templates/intake-request";
+import { emailBookingReference } from "@/lib/email/booking-reference";
 import {
   buildIntakeReminderEmail,
   type IntakeReminderKind,
@@ -514,6 +515,7 @@ export async function sendBookingNotificationToPractitioner(params: {
     notes: params.notes,
     appointmentUrl: params.appointmentUrl,
     referralSourceLabel: params.referralSourceLabel,
+    bookingReference: emailBookingReference(params.appointment.id),
   });
   await sendEmailSafely({
     to: params.practitionerEmail,

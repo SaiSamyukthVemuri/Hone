@@ -71,3 +71,29 @@ describe("postcare preview opening matches the sent opening", () => {
     expect(previewText("Studio Synthetica")).not.toMatch(/client first name|\bHi\b/i);
   });
 });
+
+// Codex P2 4354990824 on #1049: the opening was built from the practitioner
+// line ("<practitioner> at <studio>"), so it named the practitioner in the
+// preview window and differed from the settings preview, which only knows the
+// studio. The opening names the studio alone; the practitioner stays in the
+// "contact ... directly" line further down.
+describe("postcare opening names the studio only", () => {
+  const sent = () =>
+    buildPostcareEmail({
+      clientName: "Synthetic Client", studioName: "Studio Synthetica", studioEmail: null,
+      practitionerName: "Synthetic Practitioner", serviceName: null, startsAt: null,
+      timezone: "America/Toronto", aftercareText: null, warningSignsText: null,
+      productRecommendationsText: null, reviewUrl: null,
+    });
+  it("carries no practitioner name in its opening line", () => {
+    const opening = sent().preview.split("\n")[0];
+    expect(opening).not.toContain("Synthetic Practitioner");
+    expect(opening).toBe(postcareOpening("Studio Synthetica"));
+  });
+  it("is exactly what the settings preview shows", () => {
+    expect(previewText("Studio Synthetica")).toContain(sent().preview.split("\n")[0]);
+  });
+  it("still names the practitioner later, where the client is told whom to contact", () => {
+    expect(sent().text).toMatch(/contact Synthetic Practitioner at Studio Synthetica directly/);
+  });
+});

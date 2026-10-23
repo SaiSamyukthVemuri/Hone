@@ -50,9 +50,11 @@ function textBlockToHtml(text: string | null | undefined): string {
 // preheader's invisible filler shows the preheader followed by the first body
 // text. A postcare email exists because a treatment happened, so its OPENING
 // names only the studio: no greeting by name, no visit date, no "aftercare".
-// The settings preview shows this same opening, so the two cannot drift.
-export function postcareOpening(studioLine: string): string {
-  return `A message from ${studioLine}, with what to do for the next little while. Please read it when you have a moment.`;
+// The settings preview shows this same opening, so the two cannot drift. It
+// takes the STUDIO name only (Codex P2 4354990824): the practitioner is named
+// later, in the "contact ... directly" line, outside the preview window.
+export function postcareOpening(studioName: string): string {
+  return `A message from ${studioName}, with what to do for the next little while. Please read it when you have a moment.`;
 }
 
 export type PostcareEmailInputs = {
@@ -117,7 +119,7 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
 
   const htmlSections: string[] = [];
   htmlSections.push(
-    `<p>${escapeHtml(postcareOpening(studioLine))}</p>`,
+    `<p>${escapeHtml(postcareOpening(p.studioName))}</p>`,
     `<p>Thanks for coming in${
       appointmentLine ? ` on ${escapeHtml(appointmentLine)}` : ""
     }.</p>`,
@@ -188,7 +190,7 @@ export function buildPostcareEmail(p: PostcareEmailInputs): PostcareEmail {
 
   // Plain-text version + practitioner preview share the same content.
   const textSections: string[] = [];
-  textSections.push(postcareOpening(studioLine));
+  textSections.push(postcareOpening(p.studioName));
   textSections.push(
     `Thanks for coming in${appointmentLine ? ` on ${appointmentLine}` : ""}.`,
   );

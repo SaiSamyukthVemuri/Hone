@@ -101,6 +101,7 @@ const cases: Case[] = [
         notes: null,
         appointmentUrl: "https://hone.care/calendar/x",
         referralSourceLabel: null,
+        bookingReference: "K3M9QX",
       }),
     studioPreheader(STUDIO),
   ],
