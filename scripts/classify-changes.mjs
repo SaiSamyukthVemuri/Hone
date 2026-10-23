@@ -11,9 +11,19 @@
 //   node scripts/classify-changes.mjs --files-from <file>   # newline-separated paths
 //   node scripts/classify-changes.mjs --files "a.ts,b.sql"
 //   node scripts/classify-changes.mjs --github-output       # append to $GITHUB_OUTPUT
+//
+// Path rules cannot see that a TEST reads or imports a file elsewhere in the
+// tree, so the classifier also takes a dependency map derived from the tests
+// themselves (scripts/test-dependencies.mjs), computed from the checkout being
+// classified. Every caller that passes only `files` gets that scan, so CI,
+// `npm run ci:plan`, `verify:changed` and ENG-LOOP's local model all select
+// identically, and nothing committed can go stale.
 // ---------------------------------------------------------------------------
 
 import { readFileSync, appendFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { DOCS, isDocsPath } from "./docs-paths.mjs";
+import { scanTestDependencies } from "./test-dependencies.mjs";
 
 /** Anything here genuinely affects every lane. Kept deliberately short. */
 const FULL_MATRIX = [
@@ -30,14 +40,8 @@ const FULL_MATRIX = [
   /^tests\/db\/helpers\//,
 ];
 
-/** Docs and records that never change runtime behaviour. */
-const DOCS = [
-  /^docs\//,
-  /^README\.md$/,
-  /^CLAUDE\.md$/,
-  /\.md$/,
-  /^\.github\/(ISSUE_TEMPLATE|PULL_REQUEST_TEMPLATE)/,
-];
+// Docs and records that never change runtime behaviour: DOCS, imported from
+// scripts/docs-paths.mjs, the one rule the dependency scanner shares.
 
 const RULES = [
   // TRUTH-01A adds lib/export/resource-registry.ts here deliberately. Its
@@ -47,12 +51,33 @@ const RULES = [
   // migrated local schema. Classifying a registry edit as application-only
   // would let someone retire a disposition without the guard that proves the
   // retirement is honest ever running.
-  { key: "database", patterns: [/^supabase\/migrations\//, /^supabase\/.*\.sql$/, /^tests\/db\//, /^tests\/migrations\//, /^scripts\/migration-state\.mjs$/, /^scripts\/check-migration-extension/, /^scripts\/check-fresh-managed/, /^lib\/export\/resource-registry\.ts$/] },
+  //
+  // G3 adds the generated DB types and their drift check on the same terms.
+  // `npm run check:db-types` compares lib/types/database.ts against the
+  // migrated schema, and it runs ONLY inside the database lane - so a hand
+  // edit to the types, or a change to the comparison itself, was never
+  // checked on its own PR.
+  {
+    key: "database",
+    patterns: [
+      /^supabase\/migrations\//,
+      /^supabase\/.*\.sql$/,
+      /^tests\/db\//,
+      /^tests\/migrations\//,
+      /^scripts\/migration-state\.mjs$/,
+      /^scripts\/check-migration-extension/,
+      /^scripts\/check-fresh-managed/,
+      /^lib\/export\/resource-registry\.ts$/,
+      /^lib\/types\/database\.ts$/,
+      /^scripts\/check-db-types\.mjs$/,
+    ],
+  },
   { key: "security", patterns: [/^tests\/security\//, /^lib\/security\//, /^lib\/observability\//, /^scripts\/check-.*gates/] },
   { key: "payment", patterns: [/payment/i, /stripe/i, /checkout/i, /manual-fee/i, /^lib\/billing\//, /^e2e-payment\//, /^playwright\.payment\.config/] },
   { key: "google_calendar", patterns: [/google[-_]?calendar/i, /^lib\/google-calendar\//, /^e2e-google\//, /^playwright\.google\.config/, /^app\/api\/cron\/calendar/] },
   { key: "mobile", patterns: [/^e2e-mobile\//, /^playwright\.mobile\.config/, /mobile/i, /responsive/i] },
-  { key: "ci_workflows", patterns: [/^\.github\/workflows\//, /^scripts\/classify-changes\.mjs$/, /^scripts\/verify-prepush\.mjs$/, /^tests\/ci\//] },
+  // The dependency SCANNER is selection logic, like this file.
+  { key: "ci_workflows", patterns: [/^\.github\/workflows\//, /^scripts\/classify-changes\.mjs$/, /^scripts\/test-dependencies\.mjs$/, /^scripts\/docs-paths\.mjs$/, /^scripts\/verify-prepush\.mjs$/, /^tests\/ci\//] },
   { key: "browser_core", patterns: [/^e2e\//, /^app\//, /^components\//, /^playwright\.config/] },
   { key: "application", patterns: [/^app\//, /^components\//, /^lib\//, /^hooks\//, /^types\//, /\.tsx?$/] },
 ];
@@ -216,8 +241,40 @@ function baselineRisk(list, lanes, docsOnly) {
   return { baselineRiskTier: tier, riskReasons: hits.filter((h) => h.tier === tier).map((h) => h.reason) };
 }
 
-export function classify(files) {
+/** The checkout this classifier lives in: the tree CI (or ci:plan) is classifying. */
+export const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+
+const scans = new Map();
+/**
+ * The test-dependency map of a checkout, scanned once per process.
+ *
+ * COMPUTED, NEVER COMMITTED. A committed copy went stale whenever any other PR
+ * added a test that reads a document, and its freshness check would have
+ * failed the unit lane of unrelated PRs (#1053 round 4).
+ */
+export function dependenciesFor(root = REPO_ROOT) {
+  if (!scans.has(root)) scans.set(root, scanTestDependencies(root, isDocsPath));
+  return scans.get(root);
+}
+
+/** Re-exported for existing callers; the rule itself lives in docs-paths.mjs. */
+export { isDocsPath };
+
+/**
+ * `deps` is `{ db, dbDirs, docReaders, docReaderDirs, docWildcard }` from
+ * scripts/test-dependencies.mjs: file -> tests, directory -> tests (every file
+ * beneath, present or future), and the tests that read every document.
+ * Callers pass only `files` and get the scan of this checkout; tests pass
+ * fixtures, and any part a fixture omits is empty.
+ */
+export function classify(files, deps = dependenciesFor()) {
   const list = (files ?? []).map((f) => f.trim()).filter(Boolean);
+  const dbDeps = deps?.db ?? {};
+  const dbDirs = deps?.dbDirs ?? {};
+  const docReaders = deps?.docReaders ?? {};
+  const docReaderDirs = deps?.docReaderDirs ?? {};
+  const docWildcard = deps?.docWildcard ?? [];
+  const underDirs = (dirs, f) => Object.keys(dirs).filter((d) => f.startsWith(`${d}/`)).flatMap((d) => dirs[d]);
 
   const out = {
     docs_only: false,
@@ -230,6 +287,15 @@ export function classify(files) {
     mobile: false,
     ci_workflows: false,
     full_matrix_required: false,
+    // G4. A docs-only diff runs no unit lane, so a document READ BY A UNIT TEST
+    // (the ledger wording 0179 pins, the AGENTS.md text the OpenWiki guards
+    // read) broke first on the production push. True when any changed file is
+    // such a document; `docs_reader_tests` names exactly those tests, so the
+    // consuming job runs them and nothing else. Computed for every diff -
+    // outside docs-only the unit lane already runs them, and ci.yml gates the
+    // docs-consistency job on docs_only.
+    docs_consistency: false,
+    docs_reader_tests: [],
     changed_file_count: list.length,
     baselineRiskTier: "T3",
     riskReasons: [],
@@ -250,6 +316,24 @@ export function classify(files) {
   // full-matrix expansion rewrites them. The tier must describe the paths that
   // actually changed, not the lanes CI decided to run as a result.
   const rawLanes = { ...out };
+
+  // G1 + G2: a file a tests/db suite IMPORTS or READS selects the DB lane.
+  // Applied AFTER the tier snapshot on purpose, for the reason the payment tier
+  // rule gives: SELECTING tests and ASSIGNING ceremony are different questions.
+  // `lib/booking/slots.ts` is imported by DB suites, so its edit must run them,
+  // but that does not make a slot-maths change a T3 database change.
+  if (list.some((f) => Object.hasOwn(dbDeps, f) || underDirs(dbDirs, f).length > 0)) out.database = true;
+
+  // A test that enumerates documentation reads EVERY document, so any changed
+  // document selects it (Codex, #1053 4355527598).
+  const readers = new Set(
+    list.flatMap((f) => [
+      ...(Object.hasOwn(docReaders, f) ? docReaders[f] : []),
+      ...(isDocsPath(f) ? [...underDirs(docReaderDirs, f), ...docWildcard] : []),
+    ]),
+  );
+  out.docs_consistency = readers.size > 0;
+  out.docs_reader_tests = [...readers].sort();
 
   // Docs-only when EVERY changed file is documentation.
   out.docs_only = list.every((f) => match(f, DOCS));

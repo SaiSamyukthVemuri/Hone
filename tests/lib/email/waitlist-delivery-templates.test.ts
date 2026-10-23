@@ -15,6 +15,14 @@ import {
   sanitizeStudioDisplayName,
 } from "@/lib/email/studio-identity";
 
+// The email subject sweep appends a per-event reference (lib/email/subject-reference.ts):
+// the wording below is unchanged, and the reference is checked for its shape.
+const SUBJECT_REF = / · Ref [2-9A-HJKMNP-Z]{6}$/;
+function withoutRef(subject: string): string {
+  expect(subject).toMatch(SUBJECT_REF);
+  return subject.replace(SUBJECT_REF, "");
+}
+
 // WAIT DELIVERY-01. These two templates are the visible half of a design whose
 // whole point is that the invitation link and the recipient proof are SEPARATE
 // authorities. The tests below are mostly about what must NOT appear in each
@@ -35,6 +43,7 @@ const STUDIO = "Willow Electrolysis";
 describe("waitlist invitation email", () => {
   const build = (over: Partial<Parameters<typeof buildWaitlistInvitationEmail>[0]> = {}) =>
     buildWaitlistInvitationEmail({
+      invitationReference: "K3M9QX",
       studioName: STUDIO,
       invitationUrl: URL,
       expiresAtLabel: EXPIRY_LABEL,
@@ -152,8 +161,10 @@ describe("waitlist invitation email", () => {
       expect(rendered).not.toContain(NUL);
     }
     // The text body is newline-delimited by construction, so assert on the
-    // studio-bearing line rather than the whole document.
-    const headingLine = out.text.split(LF)[0];
+    // studio-bearing line rather than the whole document. Since #828 the text
+    // part opens with the neutral preheader line, so find the heading by its
+    // words rather than by position.
+    const headingLine = out.text.split(LF).find((l) => l.includes("has invited you to book.")) ?? "";
     expect(headingLine).toContain("has invited you to book.");
     expect(headingLine).not.toContain("Bcc:");
   });
@@ -185,7 +196,7 @@ describe("waitlist invitation email", () => {
     // A name made only of control characters and specials is, after
     // sanitizing, no name at all — and must not render "...consultation with ".
     const out = build({ studioName: String.fromCharCode(13, 10, 9) + "<>[]" });
-    expect(out.subject).toBe("Your invitation to book");
+    expect(withoutRef(out.subject)).toBe("Your invitation to book");
     expect(out.text).toContain("A spot is available.");
   });
 
@@ -233,7 +244,7 @@ describe("waitlist invitation email", () => {
     // A studio with no name is a data defect. The degenerate case renders the
     // previous wording rather than an odd half-sentence like "with ".
     const out = build({ studioName: "   " });
-    expect(out.subject).toBe("Your invitation to book");
+    expect(withoutRef(out.subject)).toBe("Your invitation to book");
     expect(out.text).toContain("A spot is available.");
     expect(out.text).not.toContain(" at .");
     expect(out.text).not.toMatch(/with\s*$/m);
@@ -339,7 +350,7 @@ describe("waitlist invitation email", () => {
     // consultation" therefore misdescribed the appointment for every studio
     // that is not an electrolysis studio.
     const out = build();
-    expect(out.subject).toBe(
+    expect(withoutRef(out.subject)).toBe(
       "Your invitation to book a consultation with Willow Electrolysis",
     );
     // The studio may legitimately have a modality in its NAME, which is why
@@ -404,15 +415,16 @@ describe("the templates cannot send, so these tests cannot either", () => {
         .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
         .join("\n");
       // NOT "imports nothing": the invitation template imports the canonical
-      // sanitizer from lib/email/studio-identity.ts, which is pure on the same
-      // terms. The property that matters is that nothing reachable from here
-      // can send, read the filesystem or read the environment — so the
-      // allowlist is explicit and anything else fails.
+      // sanitizer from lib/email/studio-identity.ts, and both templates import
+      // the neutral preheader from lib/email/preheader.ts (#828), which imports
+      // nothing at all (pinned below). The property that matters is that
+      // nothing reachable from here can send, read the filesystem or read the
+      // environment — so the allowlist is explicit and anything else fails.
       const imports = [...code.matchAll(/^import\s[^;]*?from\s+"([^"]+)"/gm)].map(
         (m) => m[1],
       );
       expect(imports, `${rel} may only import pure siblings`).toEqual(
-        imports.filter((i) => i === "@/lib/email/studio-identity"),
+        imports.filter((i) => i === "@/lib/email/studio-identity" || i === "@/lib/email/preheader" || i === "@/lib/email/subject-reference"),
       );
       expect(code, `${rel} must not read env`).not.toMatch(/process\.env/);
       expect(code, `${rel} must not reach a provider`).not.toMatch(
@@ -422,6 +434,12 @@ describe("the templates cannot send, so these tests cannot either", () => {
         /readFileSync|writeFileSync/,
       );
     }
+    // The preheader sibling is pure on the same terms: no import of its own.
+    const preheaderSrc = readFileSync(join(process.cwd(), "lib/email/preheader.ts"), "utf8");
+    expect(preheaderSrc).not.toMatch(/^import\s/m);
+    expect(preheaderSrc).not.toMatch(/process\.env|Date\.now|new Date|Math\.random/);
+    // So is the subject-reference sibling (the email subject sweep).
+    expect(readFileSync(join(process.cwd(), "lib/email/subject-reference.ts"), "utf8")).not.toMatch(/^import\s/m);
   });
 });
 
