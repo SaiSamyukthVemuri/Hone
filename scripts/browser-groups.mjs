@@ -399,7 +399,7 @@ const SHARED_PATTERNS = [
   // full_matrix_required=true while selecting NO browser group: the lane
   // would be skipped exactly when the most caution is warranted.
   /^\.github\/workflows\//,
-  /^scripts\/(classify-changes|browser-groups|ci-plan|test-dependencies)\.mjs$/,
+  /^scripts\/(classify-changes|browser-groups|ci-plan|test-dependencies|docs-paths)\.mjs$/,
   /^e2e\/helpers\//,
   /^playwright\.config\./,
   /^lib\/supabase\//,

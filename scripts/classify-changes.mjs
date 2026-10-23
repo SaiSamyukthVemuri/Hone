@@ -22,6 +22,7 @@
 
 import { readFileSync, appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { DOCS, isDocsPath } from "./docs-paths.mjs";
 import { scanTestDependencies } from "./test-dependencies.mjs";
 
 /** Anything here genuinely affects every lane. Kept deliberately short. */
@@ -39,14 +40,8 @@ const FULL_MATRIX = [
   /^tests\/db\/helpers\//,
 ];
 
-/** Docs and records that never change runtime behaviour. */
-const DOCS = [
-  /^docs\//,
-  /^README\.md$/,
-  /^CLAUDE\.md$/,
-  /\.md$/,
-  /^\.github\/(ISSUE_TEMPLATE|PULL_REQUEST_TEMPLATE)/,
-];
+// Docs and records that never change runtime behaviour: DOCS, imported from
+// scripts/docs-paths.mjs, the one rule the dependency scanner shares.
 
 const RULES = [
   // TRUTH-01A adds lib/export/resource-registry.ts here deliberately. Its
@@ -82,7 +77,7 @@ const RULES = [
   { key: "google_calendar", patterns: [/google[-_]?calendar/i, /^lib\/google-calendar\//, /^e2e-google\//, /^playwright\.google\.config/, /^app\/api\/cron\/calendar/] },
   { key: "mobile", patterns: [/^e2e-mobile\//, /^playwright\.mobile\.config/, /mobile/i, /responsive/i] },
   // The dependency SCANNER is selection logic, like this file.
-  { key: "ci_workflows", patterns: [/^\.github\/workflows\//, /^scripts\/classify-changes\.mjs$/, /^scripts\/test-dependencies\.mjs$/, /^scripts\/verify-prepush\.mjs$/, /^tests\/ci\//] },
+  { key: "ci_workflows", patterns: [/^\.github\/workflows\//, /^scripts\/classify-changes\.mjs$/, /^scripts\/test-dependencies\.mjs$/, /^scripts\/docs-paths\.mjs$/, /^scripts\/verify-prepush\.mjs$/, /^tests\/ci\//] },
   { key: "browser_core", patterns: [/^e2e\//, /^app\//, /^components\//, /^playwright\.config/] },
   { key: "application", patterns: [/^app\//, /^components\//, /^lib\//, /^hooks\//, /^types\//, /\.tsx?$/] },
 ];
@@ -262,13 +257,8 @@ export function dependenciesFor(root = REPO_ROOT) {
   return scans.get(root);
 }
 
-/**
- * What the classifier counts as documentation. Exported so the dependency
- * scanner decides which files a test READS AS DOCS with this same rule rather
- * than a second, narrower one (a `.md`-only copy missed a manifest JSON under
- * docs/: Codex, #1053 4355376845).
- */
-export const isDocsPath = (file) => match(file, DOCS);
+/** Re-exported for existing callers; the rule itself lives in docs-paths.mjs. */
+export { isDocsPath };
 
 /**
  * `deps` is `{ db, dbDirs, docReaders, docReaderDirs, docWildcard }` from

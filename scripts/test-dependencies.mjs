@@ -63,6 +63,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDocsPath } from "./docs-paths.mjs";
 
 const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$|\.[cm]?[jt]sx?$/;
 const UNIT_TEST = /\.(test|spec)\.[cm]?[jt]sx?$/;
@@ -289,6 +290,5 @@ export function scanTestDependencies(root, isDoc) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  const { isDocsPath } = await import("./classify-changes.mjs");
   process.stdout.write(`${JSON.stringify(scanTestDependencies(process.cwd(), isDocsPath), null, 2)}\n`);
 }

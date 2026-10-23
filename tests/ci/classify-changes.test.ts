@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -586,12 +587,15 @@ describe("dependency-aware selection — G4: documents read by unit tests", () =
 });
 
 describe("dependency-aware selection — the selector's own files", () => {
-  it("GAP: the scanner is selection logic: full matrix, and extended browser coverage", () => {
-    const r = c("scripts/test-dependencies.mjs");
-    expect(r.ci_workflows).toBe(true);
-    expect(r.full_matrix_required).toBe(true);
-    expect(selectBrowserGroups(["scripts/test-dependencies.mjs"]).groups).toEqual([EXTENDED]);
-  });
+  it.each(["scripts/test-dependencies.mjs", "scripts/docs-paths.mjs"])(
+    "GAP: %s is selection logic: full matrix, and extended browser coverage",
+    (file) => {
+      const r = c(file);
+      expect(r.ci_workflows).toBe(true);
+      expect(r.full_matrix_required).toBe(true);
+      expect(selectBrowserGroups([file]).groups).toEqual([EXTENDED]);
+    },
+  );
 
 });
 
@@ -767,4 +771,20 @@ describe("dependency-aware selection — directory readers (4355527598)", () => 
       rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+// Codex #1053 P2 4355661335. The documented CLI deadlocked: the scanner
+// dynamically imported classify-changes.mjs, which statically imports the
+// scanner, so its top-level await never settled (exit 13, empty stdout).
+describe("the scanner's own CLI", () => {
+  it("`node scripts/test-dependencies.mjs` exits 0 and prints the map", () => {
+    const run = spawnSync(process.execPath, [path.join(REPO_ROOT, "scripts/test-dependencies.mjs")], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+    expect(run.status, `exit ${run.status}; stderr: ${run.stderr}`).toBe(0);
+    const map = JSON.parse(run.stdout) as Deps;
+    expect(map).toEqual(scanned);
+  }, 60_000);
 });
