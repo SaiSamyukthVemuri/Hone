@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { classify, highestTier } from "../../scripts/classify-changes.mjs";
@@ -575,5 +577,95 @@ describe("dependency-aware selection — file count never narrows a lane", () =>
 
   it("GUARD: unattributable application code among 600 others still fails safe to extended", () => {
     expect(selectBrowserGroups([...NOISE, "app/(app)/dashboard/page.tsx"]).groups).toEqual([EXTENDED]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Codex #1053, two P1s against the first scanner.
+// ---------------------------------------------------------------------------
+
+describe("dependency-aware selection — a document is whatever the classifier calls docs (4355376845)", () => {
+  // The reader map tracked `.md` only, so a unit test reading a JSON manifest
+  // under docs/ was invisible: editing that manifest was docs_only with
+  // docs_consistency false, and validate and canonical-record both skipped.
+  it("GAP: docs/roadmap/CAPABILITY_MANIFEST.json selects the migration test that reads it", () => {
+    const r = c("docs/roadmap/CAPABILITY_MANIFEST.json");
+    expect(r.docs_only).toBe(true);
+    expect(r.docs_consistency).toBe(true);
+    expect(r.docs_reader_tests).toContain("tests/migrations/0160-immutable-clinical-lineage.test.ts");
+  });
+
+  it("GUARD: every reader-map key is documentation by the classifier's own rule", () => {
+    // One definition: a key outside it could never be part of a docs-only diff.
+    for (const doc of Object.keys(committed.docReaders)) {
+      expect(c(doc).docs_only, `${doc} is not docs to the classifier`).toBe(true);
+    }
+  });
+});
+
+describe("dependency-aware selection — deleting a file a test still reads (4355376850)", () => {
+  // The scanner kept a literal only when it named an EXISTING file, so a PR
+  // that deleted a document (or a DB source contract) its readers still read
+  // regenerated a map without the edge: the deletion classified docs-only, and
+  // the ENOENT first surfaced on the production push.
+  // Each tree has the repository's real top-level roots, so a missing path is
+  // judged against roots that exist, as it is in a real checkout.
+  const tree = (files: Record<string, string>) => {
+    const root = mkdtempSync(path.join(tmpdir(), "hone-deps-"));
+    const roots = { "docs/README.md": "# docs\n", "lib/keep.ts": "export {};\n", "app/page.tsx": "export {};\n" };
+    for (const [file, content] of Object.entries({ ...roots, ...files })) {
+      mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      writeFileSync(path.join(root, file), content);
+    }
+    return root;
+  };
+
+  it("GAP: a deleted document keeps its reader, and its deletion runs that reader", () => {
+    const root = tree({
+      "tests/docs/reads-gone.test.ts": 'readFileSync("docs/production/gone.md", "utf8");\n',
+      "tests/migrations/reads-gone-manifest.test.ts": 'readFileSync(join(ROOT, "docs", "roadmap", "GONE.json"), "utf8");\n',
+    });
+    try {
+      const deps = scanTestDependencies(root) as Deps;
+      expect(deps.docReaders["docs/production/gone.md"]).toEqual(["tests/docs/reads-gone.test.ts"]);
+      expect(deps.docReaders["docs/roadmap/GONE.json"]).toEqual(["tests/migrations/reads-gone-manifest.test.ts"]);
+      const r = classify(["docs/production/gone.md"], deps) as Result;
+      expect(r.docs_only).toBe(true);
+      expect(r.docs_consistency).toBe(true);
+      expect(r.docs_reader_tests).toEqual(["tests/docs/reads-gone.test.ts"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GAP: a deleted DB source contract keeps its DB suite", () => {
+    const root = tree({ "tests/db/reads-gone.db.test.ts": 'readFileSync("lib/waitlist/gone-adapter.ts", "utf8");\n' });
+    try {
+      const deps = scanTestDependencies(root) as Deps;
+      expect(deps.db["lib/waitlist/gone-adapter.ts"]).toEqual(["tests/db/reads-gone.db.test.ts"]);
+      expect((classify(["lib/waitlist/gone-adapter.ts"], deps) as Result).database).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GUARD: a missing path is kept only when it is path-shaped under an attributable root", () => {
+    // Keeping absent paths must not turn every string in a test into an edge.
+    const root = tree({
+      "tests/docs/noise.test.ts": [
+        'expect(x).toBe("see the docs.");',
+        'expect(y).toBe("v1.2");',
+        'const url = "https://example.com/docs/page.md";',
+        'const elsewhere = "tmp/scratch/out.md";',
+        'const source = "lib/not-a-doc.ts";',
+      ].join("\n"),
+      "tests/db/noise.db.test.ts": 'const doc = "docs/not-a-source.md"; const pkg = "node_modules/x/index.js";\n',
+    });
+    try {
+      const deps = scanTestDependencies(root) as Deps;
+      expect(deps).toEqual({ db: {}, docReaders: {} });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

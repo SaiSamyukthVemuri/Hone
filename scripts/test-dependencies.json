@@ -264,6 +264,33 @@
     "CONTRIBUTING.md": [
       "tests/docs/docs-drift-pr226.test.ts"
     ],
+    "CRON_SETUP.md": [
+      "tests/docs/reminder-cadence-truthfulness.test.ts"
+    ],
+    "CURRENT_P0_P1_REPORT.md": [
+      "tests/audits/findings-register-consistency.test.ts"
+    ],
+    "DEPENDENCY_REMEDIATION_PLAN.md": [
+      "tests/audits/findings-register-consistency.test.ts"
+    ],
+    "DUPLICATE_AND_SUPERSESSION_MAP.md": [
+      "tests/audits/findings-register-consistency.test.ts"
+    ],
+    "EVIDENCE_LIMITATIONS.md": [
+      "tests/audits/findings-register-consistency.test.ts"
+    ],
+    "FIRST_REMEDIATION_PR_TRAIN.md": [
+      "tests/audits/findings-register-consistency.test.ts"
+    ],
+    "INDEPENDENT_REVIEW_FINDINGS.md": [
+      "tests/audits/findings-register-consistency.test.ts"
+    ],
+    "LAUNCH_GATE_MATRIX.md": [
+      "tests/audits/findings-register-consistency.test.ts"
+    ],
+    "P2_DISPOSITION_REPORT.md": [
+      "tests/audits/findings-register-consistency.test.ts"
+    ],
     "PRE_STRIPE_HARDENING_NOTES.md": [
       "tests/docs/reminder-cadence-truthfulness.test.ts"
     ],
@@ -276,6 +303,12 @@
       "tests/docs/docs-drift-pr226.test.ts",
       "tests/eng/v2/verify/collect-local-ci.verify.test.ts"
     ],
+    "RECONCILIATION_REPORT.md": [
+      "tests/audits/findings-register-consistency.test.ts"
+    ],
+    "REVIEW_CLOSURE_REGISTER.md": [
+      "tests/audits/findings-register-consistency.test.ts"
+    ],
     "docs/00_PRODUCT_OVERVIEW.md": [
       "tests/components/ui06-dashboard-chrome.test.ts",
       "tests/docs/docs-drift-pr219.test.ts",
@@ -284,6 +317,9 @@
     "docs/02_DOMAIN_MODEL.md": [
       "tests/docs/clinical-finalization-retired.test.ts",
       "tests/docs/session-payment-model.test.ts"
+    ],
+    "docs/0300_x.sql": [
+      "tests/docs/canonical-production-facts.test.ts"
     ],
     "docs/03_SECURITY_AND_PRIVACY.md": [
       "tests/app/book/new-client-waitlist-durable-commit.test.ts",
@@ -364,6 +400,20 @@
     "docs/23_STUDIO_MARKETING_TRACKING_PLAN.md": [
       "tests/app/privacy/marketing-tracking-disclosure.test.ts"
     ],
+    "docs/Synthetic-Person.md": [
+      "tests/openwiki/guards.test.ts",
+      "tests/openwiki/nightly.test.ts",
+      "tests/openwiki/report.test.ts"
+    ],
+    "docs/audits/2026/report.md": [
+      "tests/openwiki/paths.test.ts"
+    ],
+    "docs/audits/run.md": [
+      "tests/openwiki/source-head.test.ts"
+    ],
+    "docs/audits/synthetic-person-audit.md": [
+      "tests/openwiki/nightly.test.ts"
+    ],
     "docs/clinical-notes-append-only-contract.md": [
       "tests/docs/clinical-finalization-retired.test.ts"
     ],
@@ -375,6 +425,15 @@
     ],
     "docs/marketing/product-truth-register.md": [
       "tests/docs/clinical-finalization-retired.test.ts"
+    ],
+    "docs/marketing/x.md": [
+      "tests/docs/canonical-production-facts.test.ts"
+    ],
+    "docs/never-cleared.md": [
+      "tests/openwiki/report.test.ts"
+    ],
+    "docs/page.md": [
+      "tests/docs/canonical-production-facts.test.ts"
     ],
     "docs/production/capability-register.md": [
       "tests/docs/canonical-production-facts.test.ts",
@@ -416,18 +475,49 @@
       "tests/migrations/0202-waitlist-profile-and-sms-consent-authority.test.ts",
       "tests/migrations/0204-new-client-admission-mode.test.ts"
     ],
+    "docs/production/migration-state.json": [
+      "tests/ci/ci-config.test.ts",
+      "tests/docs/canonical-production-facts.test.ts",
+      "tests/migrations/0172-appointment-dml-revocation.test.ts",
+      "tests/migrations/0173-appointment-repair-commands.test.ts",
+      "tests/migrations/0174-appointment-attribution-audit-integrity.test.ts",
+      "tests/migrations/0177-postcare-write-boundary.test.ts",
+      "tests/migrations/0178-practitioner-identity-boundary.test.ts",
+      "tests/migrations/0179-actor-fk-integrity.test.ts",
+      "tests/migrations/0180-card-payment-method-replacement-integrity.test.ts",
+      "tests/migrations/0181-multi-studio-command-authority.test.ts",
+      "tests/migrations/0182-sterile-item-discard-lifecycle.test.ts",
+      "tests/migrations/0183-client-budget-context.test.ts",
+      "tests/migrations/0184-client-budget-context-least-privilege.test.ts",
+      "tests/migrations/0185-new-client-waitlist-entries.test.ts",
+      "tests/migrations/0186-intake-reminder-24h-2h.test.ts",
+      "tests/migrations/0187-appointment-settlement.test.ts"
+    ],
     "docs/production/new-client-admission-activation.md": [
       "tests/lib/booking/new-client-admission.test.ts"
     ],
     "docs/production/new-client-admission-execution-record.md": [
       "tests/lib/booking/new-client-admission.test.ts"
     ],
+    "docs/production/page.md": [
+      "tests/docs/canonical-production-facts.test.ts"
+    ],
     "docs/production/release-changelog.md": [
+      "tests/docs/canonical-production-facts.test.ts"
+    ],
+    "docs/production/x.md": [
       "tests/docs/canonical-production-facts.test.ts"
     ],
     "docs/roadmap/CANONICAL_ROADMAP.md": [
       "tests/docs/canonical-production-facts.test.ts",
       "tests/docs/clinical-finalization-retired.test.ts"
+    ],
+    "docs/roadmap/CAPABILITY_MANIFEST.json": [
+      "tests/docs/clinical-finalization-retired.test.ts",
+      "tests/migrations/0160-immutable-clinical-lineage.test.ts"
+    ],
+    "docs/roadmap/P1_MASTER_REGISTER_2026-07-18.csv": [
+      "tests/audits/findings-register-consistency.test.ts"
     ],
     "docs/roadmap/WAVE1_DESIGN.md": [
       "tests/docs/clinical-finalization-retired.test.ts"
@@ -450,18 +540,95 @@
     "docs/runbooks/sms-p0-activation.md": [
       "tests/docs/sms-activation-runbook.test.ts"
     ],
+    "docs/synthetic-person-notes.md": [
+      "tests/openwiki/nightly.test.ts"
+    ],
+    "docs/x.md": [
+      "tests/ci/browser-selection.test.ts",
+      "tests/docs/canonical-production-facts.test.ts",
+      "tests/eng/v2/ci.test.ts",
+      "tests/eng/v2/verify/collect-local-ci.verify.test.ts"
+    ],
     "openwiki/INSTRUCTIONS.md": [
       "tests/openwiki/guards.test.ts",
       "tests/openwiki/nightly.test.ts",
       "tests/openwiki/paths.test.ts",
       "tests/openwiki/source-head.test.ts"
     ],
+    "openwiki/a.md": [
+      "tests/openwiki/guards.test.ts",
+      "tests/openwiki/paths.test.ts",
+      "tests/openwiki/report.test.ts"
+    ],
+    "openwiki/b.md": [
+      "tests/openwiki/guards.test.ts"
+    ],
+    "openwiki/c.md": [
+      "tests/openwiki/guards.test.ts"
+    ],
+    "openwiki/d.md": [
+      "tests/openwiki/guards.test.ts"
+    ],
     "openwiki/index.md": [
       "tests/openwiki/guards.test.ts",
       "tests/openwiki/paths.test.ts"
     ],
+    "openwiki/new.md": [
+      "tests/openwiki/guards.test.ts"
+    ],
+    "openwiki/old/synthetic-studio-one.md": [
+      "tests/openwiki/guards.test.ts"
+    ],
+    "openwiki/p.md": [
+      "tests/openwiki/guards.test.ts"
+    ],
+    "openwiki/people/synthetic-person.md": [
+      "tests/openwiki/guards.test.ts",
+      "tests/openwiki/nightly.test.ts"
+    ],
     "openwiki/quickstart.md": [
       "tests/openwiki/nightly.test.ts",
+      "tests/openwiki/paths.test.ts"
+    ],
+    "openwiki/security/routes.md": [
+      "tests/openwiki/guards.test.ts"
+    ],
+    "openwiki/studios/synthetic-studio-one.md": [
+      "tests/openwiki/nightly.test.ts"
+    ],
+    "openwiki/topic/extra.md": [
+      "tests/openwiki/nightly.test.ts"
+    ],
+    "openwiki/topic/kept-page.md": [
+      "tests/openwiki/guards.test.ts",
+      "tests/openwiki/nightly.test.ts",
+      "tests/openwiki/source-head.test.ts"
+    ],
+    "openwiki/topic/merged.md": [
+      "tests/openwiki/nightly.test.ts"
+    ],
+    "openwiki/topic/new-page.md": [
+      "tests/openwiki/nightly.test.ts"
+    ],
+    "openwiki/topic/notes.md": [
+      "tests/openwiki/nightly.test.ts"
+    ],
+    "openwiki/topic/old-page.md": [
+      "tests/openwiki/nightly.test.ts"
+    ],
+    "openwiki/topic/residue.md": [
+      "tests/openwiki/nightly.test.ts"
+    ],
+    "openwiki/topic/stamped.md": [
+      "tests/openwiki/nightly.test.ts"
+    ],
+    "openwiki/topic/synthetic-person.md": [
+      "tests/openwiki/nightly.test.ts"
+    ],
+    "openwiki/topics/booking.md": [
+      "tests/openwiki/guards.test.ts"
+    ],
+    "openwiki/x.md": [
       "tests/openwiki/paths.test.ts"
     ]
   }

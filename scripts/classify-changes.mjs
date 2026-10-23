@@ -247,14 +247,29 @@ function baselineRisk(list, lanes, docsOnly) {
   return { baselineRiskTier: tier, riskReasons: hits.filter((h) => h.tier === tier).map((h) => h.reason) };
 }
 
-/** The committed test-dependency map. Read once; a missing map is a broken checkout, not an empty one. */
-const DEFAULT_DEPS = JSON.parse(readFileSync(new URL("./test-dependencies.json", import.meta.url), "utf8"));
+/**
+ * The committed test-dependency map. Read on first use, not at import: the
+ * scanner imports `isDocsPath` from here, and must still run when the map it
+ * regenerates is missing or broken. A missing map at classification time is a
+ * broken checkout, not an empty one, so that read still throws.
+ */
+let defaultDeps;
+const committedDeps = () =>
+  (defaultDeps ??= JSON.parse(readFileSync(new URL("./test-dependencies.json", import.meta.url), "utf8")));
+
+/**
+ * What the classifier counts as documentation. Exported so the dependency
+ * scanner decides which files a test READS AS DOCS with this same rule rather
+ * than a second, narrower one (a `.md`-only copy missed a manifest JSON under
+ * docs/: Codex, #1053 4355376845).
+ */
+export const isDocsPath = (file) => match(file, DOCS);
 
 /**
  * `deps` is `{ db: { [source]: dbTests[] }, docReaders: { [doc]: unitTests[] } }`.
  * Callers pass only `files` and get the committed map; tests pass fixtures.
  */
-export function classify(files, deps = DEFAULT_DEPS) {
+export function classify(files, deps = committedDeps()) {
   const list = (files ?? []).map((f) => f.trim()).filter(Boolean);
   const dbDeps = deps?.db ?? {};
   const docReaders = deps?.docReaders ?? {};

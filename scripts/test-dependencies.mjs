@@ -31,9 +31,13 @@
 //     into the DB lane; measure before proposing it.
 //   - Paths computed at runtime (a readdir loop, a template with a variable
 //     segment) are not seen. A literal or a join/resolve of literals is.
-//   - A literal counts only when it names a file that EXISTS in the checkout,
-//     so prose mentioning a path in a comment string is harmless but a typo is
-//     silently not an edge.
+//   - A literal that names a MISSING file still counts when it is shaped like a
+//     repository path under a real top-level directory (or is a root document
+//     such as AGENTS.md), so deleting a file a test still reads stays
+//     attributable. The price: paths a test creates inside a throwaway fixture
+//     repository (openwiki/topic/kept-page.md, docs/x.md) are kept too. They are
+//     inert unless that exact path changes here, and then they add a cheap unit
+//     test - over-selection, never a missed lane.
 //
 // Usage:
 //   node scripts/test-dependencies.mjs           # print the derived map
@@ -43,6 +47,7 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDocsPath } from "./classify-changes.mjs";
 
 export const OUTPUT = "scripts/test-dependencies.json";
 
@@ -119,6 +124,31 @@ const withoutCommentLines = (text) =>
     .filter((line) => !COMMENT_LINE.test(line))
     .join("\n");
 
+let topDirs = null;
+/**
+ * A path that does NOT exist is still an edge when a test names it under one
+ * of the checkout's real top-level directories (or as a root-level document).
+ * Otherwise a PR DELETING a file its tests still read regenerates a map
+ * without the edge, classifies the deletion away from those tests, and the
+ * ENOENT first surfaces on the production push (Codex, #1053 4355376850).
+ * Anchoring to roots that exist keeps prose, URLs and scratch paths out.
+ */
+function attributable(root, rel) {
+  if (isFile(root, rel)) return true;
+  if (!topDirs || topDirs.root !== root) {
+    topDirs = { root, dirs: new Set(readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory() && !SKIP_DIRS.has(e.name)).map((e) => e.name)) };
+  }
+  // A real repository path, not prose or a fixture name: only the characters
+  // this tree's paths use (Next's `(group)` and `[param]` segments included).
+  if (!/^[A-Za-z0-9_.@()[\]+-]+(\/[A-Za-z0-9_.@()[\]+-]+)*$/.test(rel)) return false;
+  const segments = rel.split("/");
+  // A root-level file only by the root-document convention (AGENTS.md,
+  // README.md, CLAUDE.md...): bare basenames like "current-state.md" are joined
+  // onto a directory at runtime and name nothing at the root.
+  if (segments.length === 1) return /^[A-Z][A-Z0-9_]*\.md$/.test(rel) && isDocsPath(rel);
+  return topDirs.dirs.has(segments[0]);
+}
+
 /** Every repo path a test file names as data: literals and literal joins. */
 function namedPaths(root, file, raw) {
   const text = withoutCommentLines(raw);
@@ -128,7 +158,7 @@ function namedPaths(root, file, raw) {
     // A file path has an extension; most literals in a test are not paths.
     if (!/\.[A-Za-z0-9]+$/.test(candidate)) return;
     const rel = normalise(root, fromDir, candidate);
-    if (rel && isFile(root, rel)) found.add(rel);
+    if (rel && attributable(root, rel)) found.add(rel);
   };
   for (const m of text.matchAll(STRING)) consider(m[2]);
   for (const m of text.matchAll(JOIN_CALL)) {
@@ -160,9 +190,11 @@ const addEdge = (map, target, test) => {
  * Derive the dependency map from a checkout.
  *
  * - `db`: source file -> the tests/db files that import it or read it.
- * - `docReaders`: Markdown file -> the UNIT-lane test files that read it.
- *   tests/db readers are excluded: a docs-only change cannot start the DB lane,
- *   and nothing under tests/db reads a document today.
+ * - `docReaders`: documentation file -> the UNIT-lane test files that read it.
+ *   "Documentation" is the classifier's own rule (`isDocsPath`), any extension:
+ *   a `.md`-only copy missed a JSON manifest under docs/ (Codex, #1053
+ *   4355376845). tests/db readers are excluded: a docs-only change cannot
+ *   start the DB lane, and nothing under tests/db reads a document today.
  */
 export function scanTestDependencies(root = process.cwd()) {
   const db = new Map();
@@ -178,7 +210,7 @@ export function scanTestDependencies(root = process.cwd()) {
       }
     } else if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(file)) {
       for (const target of named) {
-        if (target.endsWith(".md") && !target.startsWith("tests/")) addEdge(docReaders, target, file);
+        if (isDocsPath(target) && !target.startsWith("tests/")) addEdge(docReaders, target, file);
       }
     }
   }
