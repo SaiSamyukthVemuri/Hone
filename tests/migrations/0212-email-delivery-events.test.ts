@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 // ===========================================================================
 // Migration 0212 — DELIVERY-EVENTS-01 email delivery events. SOURCE CONTRACT.
@@ -58,16 +59,10 @@ function tableOf(name: string): string {
 }
 
 describe("0212 sits correctly in the migration sequence", () => {
-  it("is no longer the repository maximum", () => {
-    // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
-    // `isRepoMax`. It left this file for 0213's own test when the lanes were
-    // stacked 0211 -> 0212 -> 0213 (shared census,
-    // /home/sam/hone-migration-coordination.md).
-    expect(isRepoMax(VERSION)).toBe(false);
-    // DERIVED, NOT PINNED: something sits above it, and everything above it is greater.
-    const above = versionsAbove(VERSION);
-    expect(above.length, "nothing sits above this migration").toBeGreaterThan(0);
-    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
+  it("keeps the already-applied migration byte-identical to its recorded source", () => {
+    expect(createHash("sha256").update(SQL, "utf8").digest("hex")).toBe(
+      "cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1",
+    );
   });
 
   it("is allocated exactly once", () => {

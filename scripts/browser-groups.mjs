@@ -221,6 +221,12 @@ export const BROWSER_GROUPS = {
     specs: [
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
+      // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
+      // the 60 s signed-URL expiry. Here and not in `sessions` for UI-04's two
+      // reasons: /clients/** has no PATH_TO_GROUP pattern (a photo diff already
+      // runs extended) and `sessions` carries a cost pin. Needs REAL storage,
+      // so it SELF-SKIPS in CI (no storage-api); its evidence is a local run.
+      "fett-photos-thumbnail-recovery.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the
@@ -306,6 +312,11 @@ export const BROWSER_GROUPS = {
       // extended to one group, and that is a coverage decision for every client
       // diff in the repository, not a presentation slice's to take in passing.
       "ui04-unarchive-pending.spec.ts",
+      // FETT photos (#892): the photo surface's mounted 44px floor at phone width
+      // and the deactivated-practitioner denial. Filed here for the same two
+      // reasons as UI-04 above: /clients/** has no PATH_TO_GROUP pattern, so a
+      // photo diff already runs extended, and `sessions` carries a cost pin.
+      "fett-photos-touch-floor.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",

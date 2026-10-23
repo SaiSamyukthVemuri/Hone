@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import {
-  claimEmailSend,
+  claimEmailSendOutcome,
   logEmailFailure,
   recordEmailResult,
   send24hReminderToClient,
@@ -29,7 +29,7 @@ import type { Appointment, Client, Service, Studio } from "@/lib/types/database"
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
-import { reminderWindowIso } from "@/lib/cron/reminder-schedule";
+import { createUpstashReminderScanCoordinator, runReminderScanBatch, ReminderScanReadFailure, type ReminderScanPass, type ReminderScanCursor } from "@/lib/cron/reminder-scan-coordinator";
 import { recordReminderRunSuccess } from "@/lib/cron/reminder-heartbeat";
 import { recoverLeadAlertsOnReminderTrigger } from "@/lib/platform-leads/alert-delivery";
 
@@ -71,9 +71,12 @@ async function loadAppointmentsForWindow(opts: {
   endIso: string;
   notSentColumn: SentColumn;
   attemptsColumn: AttemptsColumn;
+  after: ReminderScanCursor | null;
+  limit: number;
+  signal: AbortSignal;
 }): Promise<Joined[]> {
   const admin = createAdminClient();
-  const { data, error } = await admin
+  let query = admin
     .from("appointments")
     .select(
       "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email, phone, sms_consent_at, sms_opted_out_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
@@ -84,8 +87,18 @@ async function loadAppointmentsForWindow(opts: {
     .gte("starts_at", opts.startIso)
     .lte("starts_at", opts.endIso)
     .order("starts_at", { ascending: true })
-    .limit(PER_RUN_LIMIT);
-  if (error) throw new Error(error.message);
+    .order("id", { ascending: true })
+    .limit(Math.min(PER_RUN_LIMIT, opts.limit))
+    .abortSignal(opts.signal);
+  if (opts.after) {
+    // A total keyset order survives rows leaving the candidate set as this
+    // pass records results. OFFSET would skip unsent work after those writes.
+    const time = JSON.stringify(opts.after.startsAt);
+    const id = JSON.stringify(opts.after.id);
+    query = query.or(`starts_at.gt.${time},and(starts_at.eq.${time},id.gt.${id})`);
+  }
+  const { data, error } = await query;
+  if (error) throw new ReminderScanReadFailure(error.code, opts.signal.aborted);
 
   return ((data ?? []) as unknown as Array<
     Appointment & {
@@ -162,16 +175,16 @@ async function alertIfReminderExhausted(opts: {
 // scoped so tenant isolation holds on the session-less admin client. Reads id
 // and status ONLY: no client PII, no responses, no token.
 //
-// FAIL-SAFE, NOT FAIL-LOUD. A read error yields null, which every caller reads
-// as "not incomplete" and therefore "no intake CTA". The appointment reminder
-// is the time-critical message; degrading it to nothing because an intake
-// lookup blipped would be strictly worse than sending it without the CTA.
+// Plain appointment reminders and SMS retain no-CTA degradation on read error.
+// Standalone intake email requires a known read: an error cannot establish
+// completion or justify clearing its counted claim without sending.
 async function readLatestIntake(
   admin: ReturnType<typeof createAdminClient>,
   studioId: string,
   clientId: string,
+  requireKnown = false,
 ): Promise<{ id: string; status: string } | null> {
-  const { data } = await admin
+  const { data, error } = await admin
     .from("client_intake_forms")
     .select("id, status")
     .eq("studio_id", studioId)
@@ -180,6 +193,7 @@ async function readLatestIntake(
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (requireKnown && error) throw new Error("reminder intake state unavailable");
   return (data as { id: string; status: string } | null) ?? null;
 }
 
@@ -209,9 +223,7 @@ async function sendReminderPass(opts: {
   kind: "24h" | "2h";
   windowStartIso: string;
   windowEndIso: string;
-}): Promise<EmailRunStats> {
-  const sentColumn =
-    opts.kind === "24h" ? "reminder_24h_sent_at" : "reminder_2h_sent_at";
+}, appt: Joined, admin: ReturnType<typeof createAdminClient>, stats: EmailRunStats, appOrigin: string): Promise<"claim_unavailable" | void> {
   const attemptsColumn =
     opts.kind === "24h"
       ? "reminder_24h_send_attempts"
@@ -221,227 +233,227 @@ async function sendReminderPass(opts: {
   const emailType: ClaimableEmailType =
     opts.kind === "24h" ? "reminder_24h" : "reminder_2h";
 
-  const appts = await loadAppointmentsForWindow({
-    startIso: opts.windowStartIso,
-    endIso: opts.windowEndIso,
-    notSentColumn: sentColumn,
-    attemptsColumn,
-  });
+  if (!appt.studio) return;
+  if (!appt.client?.email) return;
 
-  const admin = createAdminClient();
-  const stats: EmailRunStats = {
-    attempted: 0,
-    succeeded: 0,
-    failed: 0,
-    skipped: 0,
-    intakeCtaIncluded: 0,
-  };
-  const appOrigin = getRequiredAppOrigin();
+  const wantsReminder =
+    (appt.studio as unknown as Record<string, boolean>)[studioToggle] === true;
+  // Absent only on a studios row read before 0186 is applied. The column
+  // defaults true, so absent must mean ENABLED, never disabled.
+  const intakeEnabled = appt.studio.send_intake_reminders !== false;
 
-  for (const appt of appts) {
-    if (!appt.studio) continue;
-    if (!appt.client?.email) continue;
+  // CASE 6: nothing to send. No intake read, no claim, no attempt.
+  if (!wantsReminder && !intakeEnabled) return;
 
-    const wantsReminder =
-      (appt.studio as unknown as Record<string, boolean>)[studioToggle] === true;
-    // Absent only on a studios row read before 0186 is applied. The column
-    // defaults true, so absent must mean ENABLED, never disabled.
-    const intakeEnabled = appt.studio.send_intake_reminders !== false;
-
-    // CASE 6: nothing to send. No intake read, no claim, no attempt.
-    if (!wantsReminder && !intakeEnabled) continue;
-
-    // CASES 4/5 ONLY: whether to claim at all depends on intake state, so it
-    // has to be known BEFORE the claim. Claiming first would burn an attempt
-    // on every Case-5 row and could exhaust the 3-strike cap, blocking a
-    // legitimate reminder if the studio re-enabled it later in the window.
-    // When the appointment reminder is ON we are sending regardless, so this
-    // probe is skipped and the single post-claim live read below is enough.
-    if (!wantsReminder) {
-      const probe = await readLatestIntake(
-        admin,
-        appt.studio.id,
-        appt.client_id,
-      );
-      if (probe?.status !== "in_progress") {
-        // CASE 5. No claim, no attempt bump, no email.
-        stats.skipped += 1;
-        continue;
-      }
-    }
-
-    // Claim-before-send (PR #189, migration 0080): atomic attempt increment +
-    // _claimed_at, so two overlapping cron runs can never both send.
-    const claimed = await claimEmailSend(admin, appt.id, emailType);
-    if (!claimed) {
+  // CASES 4/5 ONLY: whether to claim at all depends on intake state, so it
+  // has to be known BEFORE the claim. Claiming first would burn an attempt
+  // on every Case-5 row and could exhaust the 3-strike cap, blocking a
+  // legitimate reminder if the studio re-enabled it later in the window.
+  // When the appointment reminder is ON we are sending regardless, so this
+  // probe is skipped and the single post-claim live read below is enough.
+  if (!wantsReminder) {
+    const probe = await readLatestIntake(
+      admin,
+      appt.studio.id,
+      appt.client_id,
+      true,
+    );
+    if (probe?.status !== "in_progress") {
+      // CASE 5. No claim, no attempt bump, no email.
       stats.skipped += 1;
-      continue;
+      return;
     }
+  }
 
-    // PR #258: a confirmed appointment can be cancelled / no-showed between
-    // the window query and now; the claim does not re-validate status.
-    const { data: fresh } = await admin
-      .from("appointments")
-      .select("status")
-      .eq("id", appt.id)
-      .maybeSingle();
-    if (!fresh || fresh.status !== "confirmed") {
-      stats.skipped += 1;
-      continue;
-    }
+  // Claim-before-send (PR #189, migration 0080): atomic attempt increment +
+  // _claimed_at, so two overlapping cron runs can never both send.
+  const claimOutcome = await claimEmailSendOutcome(admin, appt.id, emailType);
+  if (claimOutcome === "unavailable") return "claim_unavailable";
+  const claimed = claimOutcome === "claimed";
+  if (!claimed) {
+    stats.skipped += 1;
+    return;
+  }
 
-    // LIVE intake re-read, immediately before the send decision. Deliberately
-    // a SECOND query, never the pre-claim probe reused: the probe answered
-    // "should we claim", this answers "what do we send", and they are asked at
-    // different instants. Skipped entirely when intake reminders are off
-    // (CASE 3), which is also why a studio with the setting off never pays for
-    // an intake lookup.
-    const intake = intakeEnabled
-      ? await readLatestIntake(admin, appt.studio.id, appt.client_id)
+  // Recheck the current start used to compose this cached email after claiming.
+  // This contains observed reschedules; it is not an atomic send-time fence.
+  const { data: fresh, error: freshError } = await admin
+    .from("appointments")
+    .select("status, starts_at")
+    .eq("id", appt.id)
+    .maybeSingle();
+  // An unavailable read is not evidence that this row was handled. Use the
+  // existing handler failure path; never settle or clear the counted claim.
+  if (freshError) throw new Error("reminder appointment state unavailable");
+  if (!fresh || fresh.status !== "confirmed") {
+    stats.skipped += 1;
+    return;
+  }
+
+  const currentStart = Date.parse(fresh.starts_at);
+  if (
+    !Number.isFinite(currentStart) ||
+    currentStart !== Date.parse(appt.starts_at) ||
+    currentStart < Date.parse(opts.windowStartIso) ||
+    currentStart > Date.parse(opts.windowEndIso)
+  ) {
+    // No send occurred. Preserve the counted claim and existing TTL; do not
+    // settle, clear, refund or create a retry from this unfenced observation.
+    stats.skipped += 1;
+    return;
+  }
+
+  // LIVE intake re-read, immediately before the send decision. Deliberately
+  // a SECOND query, never the pre-claim probe reused: the probe answered
+  // "should we claim", this answers "what do we send", and they are asked at
+  // different instants. Skipped entirely when intake reminders are off
+  // (CASE 3), which is also why a studio with the setting off never pays for
+  // an intake lookup.
+  const intake = intakeEnabled
+    ? await readLatestIntake(admin, appt.studio.id, appt.client_id, !wantsReminder)
+    : null;
+  const intakeIncomplete = intake?.status === "in_progress";
+
+  if (!wantsReminder && !intakeIncomplete) {
+    // CASE 4 -> 5 between the probe and the live read: the client submitted,
+    // and there is no appointment reminder to fall back on. Clear the claim
+    // explicitly rather than letting it go stale, because unlike the
+    // cancellation branch above this row is still confirmed and WILL be
+    // re-queried. The attempt the claim already counted stands; the pre-claim
+    // probe stops every later fire before it claims again.
+    await recordEmailResult(admin, appt.id, emailType, false);
+    stats.skipped += 1;
+    return;
+  }
+
+  stats.attempted += 1;
+  const attemptNumber = (appt[attemptsColumn] as number) + 1;
+
+  // A FRESH link per send (now + 14-day TTL; the signed token stays the
+  // authoritative expiry). Saved answers are preserved: this reuses the
+  // existing intake row, never a new one. The raw token is never logged.
+  const intakeUrl =
+    intakeIncomplete && intake
+      ? generateIntakeLinkUrl(intake.id, appOrigin)
       : null;
-    const intakeIncomplete = intake?.status === "in_progress";
 
-    if (!wantsReminder && !intakeIncomplete) {
-      // CASE 4 -> 5 between the probe and the live read: the client submitted,
-      // and there is no appointment reminder to fall back on. Clear the claim
-      // explicitly rather than letting it go stale, because unlike the
-      // cancellation branch above this row is still confirmed and WILL be
-      // re-queried. The attempt the claim already counted stands; the pre-claim
-      // probe stops every later fire before it claims again.
+  let result: EmailSendResult;
+
+  if (wantsReminder) {
+    // CASES 1/2/3 - the appointment reminder, carrying the intake CTA only
+    // when intakeUrl is non-null.
+    // PR #260/#264: appointment tokens are hash-only at rest. The reminder
+    // mints the stateless HMAC token (expires at the appointment start);
+    // /cancel and /reschedule accept it, so the reminder links resolve.
+    const token = generateCancellationToken(appt.id, new Date(appt.starts_at));
+    if (!token) {
+      // Defensive: minting only fails if the appointment start is
+      // unparseable. Record a failed result via the RPC (clears the claim;
+      // the claim already counted the attempt) so we don't loop forever on a
+      // structurally broken row.
       await recordEmailResult(admin, appt.id, emailType, false);
-      stats.skipped += 1;
-      continue;
-    }
-
-    stats.attempted += 1;
-    const attemptNumber = (appt[attemptsColumn] as number) + 1;
-
-    // A FRESH link per send (now + 14-day TTL; the signed token stays the
-    // authoritative expiry). Saved answers are preserved: this reuses the
-    // existing intake row, never a new one. The raw token is never logged.
-    const intakeUrl =
-      intakeIncomplete && intake
-        ? generateIntakeLinkUrl(intake.id, appOrigin)
-        : null;
-
-    let result: EmailSendResult;
-
-    if (wantsReminder) {
-      // CASES 1/2/3 - the appointment reminder, carrying the intake CTA only
-      // when intakeUrl is non-null.
-      // PR #260/#264: appointment tokens are hash-only at rest. The reminder
-      // mints the stateless HMAC token (expires at the appointment start);
-      // /cancel and /reschedule accept it, so the reminder links resolve.
-      const token = generateCancellationToken(appt.id, new Date(appt.starts_at));
-      if (!token) {
-        // Defensive: minting only fails if the appointment start is
-        // unparseable. Record a failed result via the RPC (clears the claim;
-        // the claim already counted the attempt) so we don't loop forever on a
-        // structurally broken row.
-        await recordEmailResult(admin, appt.id, emailType, false);
-        logEmailFailure({
-          appointmentId: appt.id,
-          emailType,
-          error: "Missing appointment token",
-          retryable: false,
-          attemptNumber,
-        });
-        await alertIfReminderExhausted({
-          studioId: appt.studio.id,
-          appointmentId: appt.id,
-          emailType,
-          attemptNumber,
-          retryable: false,
-          reason: "missing_token",
-          intakeCtaIncluded: intakeUrl !== null,
-        });
-        stats.failed += 1;
-        continue;
-      }
-      const cancellationUrl = `${appOrigin}/cancel/${token}`;
-      const rescheduleUrl = `${appOrigin}/reschedule/${token}`;
-      const practitionerName =
-        appt.practitioner?.display_name?.trim() ||
-        appt.practitioner?.email ||
-        null;
-
-      const treatmentTimeLine = appt.studio.show_treatment_time_to_clients
-        ? buildTreatmentTimeLine({
-            enabled: true,
-            clientFirstName:
-              appt.client.name.split(/\s+/)[0] || appt.client.name,
-            context: await getTreatmentTimeContextForEmail(
-              appt.studio.id,
-              appt.client_id,
-            ),
-          })
-        : null;
-      const sendFn =
-        opts.kind === "24h" ? send24hReminderToClient : send2hReminderToClient;
-      result = await sendFn({
-        appointment: appt,
-        service: appt.service,
-        studio: appt.studio,
-        practitionerDisplayName: practitionerName,
-        clientName: appt.client.name,
-        clientEmail: appt.client.email,
-        cancellationUrl,
-        rescheduleUrl,
-        treatmentTimeLine,
-        intakeUrl,
-      });
-    } else {
-      // CASE 4 - the appointment reminder is off but intake reminders are on
-      // and the intake is still incomplete, so the nudge goes out on its own.
-      // Still under the window claim above, so it cannot race a reminder.
-      //
-      // intakeUrl is non-null here BY CONSTRUCTION: reaching this branch means
-      // !wantsReminder, and the !wantsReminder && !intakeIncomplete case
-      // already `continue`d above - so intakeIncomplete holds, `intake` is
-      // non-null, and the link was minted.
-      result = await sendIntakeReminderToClient({
-        kind: opts.kind,
-        clientEmail: appt.client.email,
-        studioName: appt.studio.name,
-        startsAt: new Date(appt.starts_at),
-        timezone: appt.studio.timezone,
-        intakeUrl: intakeUrl as string,
-      });
-    }
-
-    await recordEmailResult(admin, appt.id, emailType, result.ok);
-    if (result.ok) {
-      // Stamp the PR #303 intake-link display metadata ONLY when a link was
-      // actually in the email that actually sent. A plain appointment reminder
-      // must never look like an intake link was issued.
-      if (intakeUrl && intake) {
-        await stampIntakeLinkIssued(admin, intake.id, { emailed: true });
-        stats.intakeCtaIncluded += 1;
-      }
-      stats.succeeded += 1;
-    } else {
       logEmailFailure({
         appointmentId: appt.id,
         emailType,
-        error: result.error,
-        retryable: result.retryable,
+        error: "Missing appointment token",
+        retryable: false,
         attemptNumber,
-        studioId: appt.studio.id,
       });
       await alertIfReminderExhausted({
         studioId: appt.studio.id,
         appointmentId: appt.id,
         emailType,
         attemptNumber,
-        retryable: result.retryable,
-        reason: "send_failed",
+        retryable: false,
+        reason: "missing_token",
         intakeCtaIncluded: intakeUrl !== null,
       });
       stats.failed += 1;
+      return;
     }
+    const cancellationUrl = `${appOrigin}/cancel/${token}`;
+    const rescheduleUrl = `${appOrigin}/reschedule/${token}`;
+    const practitionerName =
+      appt.practitioner?.display_name?.trim() ||
+      appt.practitioner?.email ||
+      null;
+
+    const treatmentTimeLine = appt.studio.show_treatment_time_to_clients
+      ? buildTreatmentTimeLine({
+          enabled: true,
+          clientFirstName:
+            appt.client.name.split(/\s+/)[0] || appt.client.name,
+          context: await getTreatmentTimeContextForEmail(
+            appt.studio.id,
+            appt.client_id,
+          ),
+        })
+      : null;
+    const sendFn =
+      opts.kind === "24h" ? send24hReminderToClient : send2hReminderToClient;
+    result = await sendFn({
+      appointment: appt,
+      service: appt.service,
+      studio: appt.studio,
+      practitionerDisplayName: practitionerName,
+      clientName: appt.client.name,
+      clientEmail: appt.client.email,
+      cancellationUrl,
+      rescheduleUrl,
+      treatmentTimeLine,
+      intakeUrl,
+    });
+  } else {
+    // CASE 4 - the appointment reminder is off but intake reminders are on
+    // and the intake is still incomplete, so the nudge goes out on its own.
+    // Still under the window claim above, so it cannot race a reminder.
+    //
+    // intakeUrl is non-null here BY CONSTRUCTION: reaching this branch means
+    // !wantsReminder, and the !wantsReminder && !intakeIncomplete case
+    // already `continue`d above - so intakeIncomplete holds, `intake` is
+    // non-null, and the link was minted.
+    result = await sendIntakeReminderToClient({
+      kind: opts.kind,
+      appointmentId: appt.id,
+      clientEmail: appt.client.email,
+      studioName: appt.studio.name,
+      startsAt: new Date(appt.starts_at),
+      timezone: appt.studio.timezone,
+      intakeUrl: intakeUrl as string,
+    });
   }
 
-  return stats;
+  await recordEmailResult(admin, appt.id, emailType, result.ok);
+  if (result.ok) {
+    // Stamp the PR #303 intake-link display metadata ONLY when a link was
+    // actually in the email that actually sent. A plain appointment reminder
+    // must never look like an intake link was issued.
+    if (intakeUrl && intake) {
+      await stampIntakeLinkIssued(admin, intake.id, { emailed: true });
+      stats.intakeCtaIncluded += 1;
+    }
+    stats.succeeded += 1;
+  } else {
+    logEmailFailure({
+      appointmentId: appt.id,
+      emailType,
+      error: result.error,
+      retryable: result.retryable,
+      attemptNumber,
+      studioId: appt.studio.id,
+    });
+    await alertIfReminderExhausted({
+      studioId: appt.studio.id,
+      appointmentId: appt.id,
+      emailType,
+      attemptNumber,
+      retryable: result.retryable,
+      reason: "send_failed",
+      intakeCtaIncluded: intakeUrl !== null,
+    });
+    stats.failed += 1;
+  }
+
 }
 
 // SMS reminder pass (PR Twilio v1). Mirrors sendReminderPass above
@@ -455,157 +467,154 @@ async function sendSmsReminderPass(opts: {
   kind: "24h" | "2h";
   windowStartIso: string;
   windowEndIso: string;
-  /** The run's ONE ledger budget, shared with the other SMS pass. */
   ledgerBudget: LedgerBudget;
-}): Promise<SmsRunStats> {
-  const sentColumn: SentColumn =
-    opts.kind === "24h" ? "sms_reminder_24h_sent_at" : "sms_reminder_2h_sent_at";
-  const attemptsColumn: AttemptsColumn =
-    opts.kind === "24h"
-      ? "sms_reminder_24h_send_attempts"
-      : "sms_reminder_2h_send_attempts";
+}, appt: Joined, admin: ReturnType<typeof createAdminClient>, stats: SmsRunStats, smsAppOrigin: string): Promise<"claim_unavailable" | void> {
   const studioToggle =
     opts.kind === "24h" ? "send_24h_sms_reminders" : "send_2h_sms_reminders";
 
-  const appts = await loadAppointmentsForWindow({
-    startIso: opts.windowStartIso,
-    endIso: opts.windowEndIso,
-    notSentColumn: sentColumn,
-    attemptsColumn,
-  });
+  if (!appt.studio) return;
+  if (!(appt.studio as unknown as Record<string, boolean>)[studioToggle]) {
+    // Studio toggle is off: skip without an attempt counter bump.
+    // We do not call into the SMS helper because the gate inside it
+    // would just return skipped; saving the DB roundtrip on every
+    // pass is meaningful at scale.
+    return;
+  }
+  if (!appt.client) return;
+  // Hard prerequisites for the SMS helper. Skipping early avoids a
+  // claim roundtrip when there is no point.
+  if (!appt.client.phone) return;
+  if (!appt.client.sms_consent_at) return;
+  if (appt.client.sms_opted_out_at) return;
 
-  const admin = createAdminClient();
-  const stats: SmsRunStats = {
-    attempted: 0,
-    succeeded: 0,
-    failed: 0,
-    skipped: 0,
-    intakeCtaIncluded: 0,
-  };
-  const smsAppOrigin = getRequiredAppOrigin();
-
-  for (const appt of appts) {
-    if (!appt.studio) continue;
-    if (!(appt.studio as unknown as Record<string, boolean>)[studioToggle]) {
-      // Studio toggle is off: skip without an attempt counter bump.
-      // We do not call into the SMS helper because the gate inside it
-      // would just return skipped; saving the DB roundtrip on every
-      // pass is meaningful at scale.
-      continue;
-    }
-    if (!appt.client) continue;
-    // Hard prerequisites for the SMS helper. Skipping early avoids a
-    // claim roundtrip when there is no point.
-    if (!appt.client.phone) continue;
-    if (!appt.client.sms_consent_at) continue;
-    if (appt.client.sms_opted_out_at) continue;
-
-    // PR #258: same cancellation-race re-check as the email pass, never SMS a
-    // reminder for an appointment cancelled/no-showed after the window query.
-    // A cheap PRE-FILTER, so a cancelled row costs no intake read and no
-    // claim. SMS-02: the authoritative re-check (status AND start) runs inside
-    // the send helper's claim_reminder_sms_send, under the appointment row
-    // lock and in the same transaction as the claim.
-    const { data: freshSms } = await admin
-      .from("appointments")
-      .select("status")
-      .eq("id", appt.id)
-      .maybeSingle();
-    if (!freshSms || freshSms.status !== "confirmed") {
-      stats.skipped += 1;
-      continue;
-    }
-
-    // INTAKE CTA, composed into this one SMS. Reaching here already means
-    // this window's SMS toggle is on and the client has a phone, consent and
-    // no opt-out, so enabling send_intake_reminders can never open a new SMS
-    // channel on its own. There is deliberately NO standalone intake SMS: if
-    // the window's SMS toggle is off this pass already skipped the row, so the
-    // single claim_sms_send slot below still owns the window outright.
-    //
-    // The read is LIVE and its own query - never the email pass's result -
-    // and it fails safe: a read error yields null, so the appointment SMS
-    // still goes out without the CTA.
-    const smsIntake =
-      appt.studio.send_intake_reminders !== false
-        ? await readLatestIntake(admin, appt.studio.id, appt.client_id)
-        : null;
-    const smsIntakeUrl =
-      smsIntake?.status === "in_progress"
-        ? generateIntakeLinkUrl(smsIntake.id, smsAppOrigin)
-        : null;
-
-    // PR #260/#264: appointment tokens are hash-only at rest (the raw
-    // cancellation_token column was dropped in PR #264). Mint the stateless
-    // HMAC token so the SMS manage link resolves (/manage accepts it). Null
-    // only if minting fails (unparseable start); the SMS template then drops
-    // the manage line and still sends the moment-only reminder.
-    //
-    // SMS-02: a BUILDER, called by the helper with the start it re-read after
-    // the claim. The token expires at the start, so a link minted from the
-    // window query's start would be wrong for an appointment moved since.
-    const appointmentId = appt.id;
-    const manageUrlFor = (startsAt: Date): string | null => {
-      let manageToken: string | null;
-      try {
-        manageToken = generateCancellationToken(appointmentId, startsAt);
-      } catch {
-        manageToken = null;
-      }
-      return manageToken ? `${smsAppOrigin}/manage/${manageToken}` : null;
-    };
-
-    const sendFn =
-      opts.kind === "24h"
-        ? send24hReminderSmsToClient
-        : send2hReminderSmsToClient;
-    const result = await sendFn({
-      admin,
-      appointmentId: appt.id,
-      window: { startIso: opts.windowStartIso, endIso: opts.windowEndIso },
-      timezone: appt.studio.timezone,
-      studio: appt.studio,
-      client: {
-        phone: appt.client.phone,
-        sms_consent_at: appt.client.sms_consent_at,
-        sms_opted_out_at: appt.client.sms_opted_out_at,
-      },
-      manageUrlFor,
-      intakeUrl: smsIntakeUrl,
-      ledgerBudget: opts.ledgerBudget,
-    });
-    // Whether the intake link may now be in the client's hands: the message
-    // carrying it was accepted, or POSSIBLY accepted (an answer that was lost;
-    // recorded as sent and never retried). Never for a definite refusal or a
-    // skip, where the link never left Hone.
-    let linkMayHaveGone = false;
-    if (result.ok) {
-      stats.attempted += 1;
-      stats.succeeded += 1;
-      linkMayHaveGone = result.intakeLinkIncluded;
-    } else if (result.skipped) {
-      // Helper-level skip (toggle race, claim collision, gate miss, or a
-      // reminder claim that could not be reached). We do not count these
-      // as attempted because no Twilio call was made; the operator wants
-      // attempted/succeeded/failed to reflect actual Twilio invocations.
-      stats.skipped += 1;
-    } else {
-      // A refusal, or a possibly-sent answer: either way not proven sent.
-      stats.attempted += 1;
-      stats.failed += 1;
-      linkMayHaveGone = result.possiblySent === true && result.intakeLinkIncluded;
-    }
-    // Stamp intake-link metadata ONLY for a message that carried the link and
-    // may have reached the client. A plain appointment SMS must never look
-    // like an intake link was issued, and the email pass's own stamp is
-    // separate.
-    if (linkMayHaveGone && smsIntake) {
-      await stampIntakeLinkIssued(admin, smsIntake.id, { emailed: false });
-      stats.intakeCtaIncluded += 1;
-    }
+  // PR #258: same cancellation-race re-check as the email pass, never SMS a
+  // reminder for an appointment cancelled/no-showed after the window query.
+  // A cheap PRE-FILTER, so a cancelled row costs no intake read and no
+  // claim. SMS-02: the authoritative re-check (status AND start) runs inside
+  // the send helper's claim_reminder_sms_send, under the appointment row
+  // lock and in the same transaction as the claim.
+  const { data: freshSms } = await admin
+    .from("appointments")
+    .select("status")
+    .eq("id", appt.id)
+    .maybeSingle();
+  if (!freshSms || freshSms.status !== "confirmed") {
+    stats.skipped += 1;
+    return;
   }
 
-  return stats;
+  // INTAKE CTA, composed into this one SMS. Reaching here already means
+  // this window's SMS toggle is on and the client has a phone, consent and
+  // no opt-out, so enabling send_intake_reminders can never open a new SMS
+  // channel on its own. There is deliberately NO standalone intake SMS: if
+  // the window's SMS toggle is off this pass already skipped the row, so the
+  // single claim_sms_send slot below still owns the window outright.
+  //
+  // The read is LIVE and its own query - never the email pass's result -
+  // and it fails safe: a read error yields null, so the appointment SMS
+  // still goes out without the CTA.
+  const smsIntake =
+    appt.studio.send_intake_reminders !== false
+      ? await readLatestIntake(admin, appt.studio.id, appt.client_id)
+      : null;
+  const smsIntakeUrl =
+    smsIntake?.status === "in_progress"
+      ? generateIntakeLinkUrl(smsIntake.id, smsAppOrigin)
+      : null;
+
+  // PR #260/#264: appointment tokens are hash-only at rest (the raw
+  // cancellation_token column was dropped in PR #264). Mint the stateless
+  // HMAC token so the SMS manage link resolves (/manage accepts it). Null
+  // only if minting fails (unparseable start); the SMS template then drops
+  // the manage line and still sends the moment-only reminder.
+  //
+  // SMS-02: a BUILDER, called by the helper with the start it re-read after
+  // the claim. The token expires at the start, so a link minted from the
+  // window query's start would be wrong for an appointment moved since.
+  const appointmentId = appt.id;
+  const manageUrlFor = (startsAt: Date): string | null => {
+    let manageToken: string | null;
+    try {
+      manageToken = generateCancellationToken(appointmentId, startsAt);
+    } catch {
+      manageToken = null;
+    }
+    return manageToken ? `${smsAppOrigin}/manage/${manageToken}` : null;
+  };
+
+  // Candidate eligibility is only a snapshot. Refresh after intake work,
+  // immediately before dispatch, so STOP/consent/phone/switch changes made
+  // while the row was queued reach the real sender's consent gate.
+  const { data: recipient, error: recipientError } = await admin
+    .from("appointments")
+    .select("status, client_id, client:clients(phone, sms_consent_at, sms_opted_out_at), studio:studios(send_24h_sms_reminders, send_2h_sms_reminders)")
+    .eq("id", appt.id)
+    .eq("studio_id", appt.studio.id)
+    .maybeSingle();
+  const current = recipient as unknown as {
+    status: string;
+    client_id: string;
+    client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at"> | Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">[] | null;
+    studio: Pick<Studio, "send_24h_sms_reminders" | "send_2h_sms_reminders"> | Pick<Studio, "send_24h_sms_reminders" | "send_2h_sms_reminders">[] | null;
+  } | null;
+  const currentClient = pickRel(current?.client ?? null);
+  const currentStudio = pickRel(current?.studio ?? null);
+  if (
+    recipientError || !currentClient || !currentStudio ||
+    current?.status !== "confirmed" || current.client_id !== appt.client_id
+  ) {
+    // Do not attach the queued client's intake link to a reassigned client.
+    // A later run can select that appointment with its new context.
+    stats.skipped += 1;
+    return;
+  }
+
+  const sendFn =
+    opts.kind === "24h"
+      ? send24hReminderSmsToClient
+      : send2hReminderSmsToClient;
+  const result = await sendFn({
+    admin,
+    appointmentId: appt.id,
+    window: { startIso: opts.windowStartIso, endIso: opts.windowEndIso },
+    timezone: appt.studio.timezone,
+    studio: { ...appt.studio, ...currentStudio },
+    client: currentClient,
+    manageUrlFor,
+    intakeUrl: smsIntakeUrl,
+    ledgerBudget: opts.ledgerBudget,
+  });
+  // Whether the intake link may now be in the client's hands: the message
+  // carrying it was accepted, or POSSIBLY accepted (an answer that was lost;
+  // recorded as sent and never retried). Never for a definite refusal or a
+  // skip, where the link never left Hone.
+  let linkMayHaveGone = false;
+  if (result.ok) {
+    stats.attempted += 1;
+    stats.succeeded += 1;
+    linkMayHaveGone = result.intakeLinkIncluded;
+  } else if (result.skipped) {
+    if (result.reason === "reminder_claim_unavailable") return "claim_unavailable";
+    // Helper-level skip (toggle race, claim collision, gate miss, or a
+    // reminder claim that could not be reached). We do not count these
+    // as attempted because no Twilio call was made; the operator wants
+    // attempted/succeeded/failed to reflect actual Twilio invocations.
+    stats.skipped += 1;
+  } else {
+    // A refusal, or a possibly-sent answer: either way not proven sent.
+    stats.attempted += 1;
+    stats.failed += 1;
+    linkMayHaveGone = result.possiblySent === true && result.intakeLinkIncluded;
+  }
+  // Stamp intake-link metadata ONLY for a message that carried the link and
+  // may have reached the client. A plain appointment SMS must never look
+  // like an intake link was issued, and the email pass's own stamp is
+  // separate.
+  if (linkMayHaveGone && smsIntake) {
+    await stampIntakeLinkIssued(admin, smsIntake.id, { emailed: false });
+    stats.intakeCtaIncluded += 1;
+  }
+
 }
 
 /**
@@ -646,52 +655,86 @@ export async function GET(req: Request) {
   }
 
   const startedAt = Date.now();
+  let failureStage: "setup" | "scan" | "heartbeat" = "setup";
   try {
-    const now = Date.now();
-    // PR #258: windows come from the shared lib/cron/reminder-schedule module
-    // (single source of truth with the invariant tests + vercel.json cadence).
-    // 24h pass: 23-25h out. 2h pass: 1h45m-2h15m (30 min = 2x the */15 cadence,
-    // so no appointment minute offset is ever missed and a single skipped cron
-    // fire still leaves a grid point in-window).
-    const win24 = reminderWindowIso("24h", now);
-    const win2 = reminderWindowIso("2h", now);
-
-    const reminder_24h = await sendReminderPass({
-      kind: "24h",
-      windowStartIso: win24.startIso,
-      windowEndIso: win24.endIso,
-    });
-    const reminder_2h = await sendReminderPass({
-      kind: "2h",
-      windowStartIso: win2.startIso,
-      windowEndIso: win2.endIso,
-    });
-
-    // SMS reminder passes run immediately after their email counterparts,
-    // sharing the same time windows. They use independent queries on the
-    // sms_* columns; an email reminder failure does not block the SMS
-    // reminder and vice versa. Stats are added to the response JSON as
-    // additional fields; existing email keys (reminder_24h /
-    // reminder_2h) are unchanged so downstream log parsing stays
-    // compatible.
-    //
-    // SMS-02 (Codex P1 4232680578): ONE ledger budget for this run, shared
-    // by both SMS passes, so a stalled or slow ledger costs the run a bounded
-    // wait however many reminders it carries. The email passes never touch
-    // the SMS ledger.
+    const freshStats = (): EmailRunStats => ({ attempted: 0, succeeded: 0, failed: 0, skipped: 0, intakeCtaIncluded: 0 });
+    const reminder_24h = freshStats();
+    const reminder_2h = freshStats();
+    const sms_reminder_24h = freshStats();
+    const sms_reminder_2h = freshStats();
+    const statsByPass: Record<ReminderScanPass, EmailRunStats> = { email24h: reminder_24h, email2h: reminder_2h, sms24h: sms_reminder_24h, sms2h: sms_reminder_2h };
+    const admin = createAdminClient();
+    const appOrigin = getRequiredAppOrigin();
     const ledgerBudget = createLedgerBudget();
-    const sms_reminder_24h = await sendSmsReminderPass({
-      kind: "24h",
-      windowStartIso: win24.startIso,
-      windowEndIso: win24.endIso,
-      ledgerBudget,
+    failureStage = "scan";
+    const batch = await runReminderScanBatch({
+      coordinator: createUpstashReminderScanCoordinator(),
+      readPage: async (pass, page, signal) => {
+        const kind = pass.endsWith("24h") ? "24h" : "2h";
+        const prefix = pass.startsWith("sms") ? "sms_" : "";
+        return loadAppointmentsForWindow({
+          ...page, signal,
+          notSentColumn: (prefix + "reminder_" + kind + "_sent_at") as SentColumn,
+          attemptsColumn: (prefix + "reminder_" + kind + "_send_attempts") as AttemptsColumn,
+        });
+      },
+      handle: async (pass, appt, window) => {
+        const kind = pass.endsWith("24h") ? "24h" : "2h";
+        const stats = statsByPass[pass];
+        const attemptedBefore = stats.attempted;
+        const opts = { kind, windowStartIso: window.startIso, windowEndIso: window.endIso } as const;
+        const unavailable = pass.startsWith("sms")
+          ? await sendSmsReminderPass({ ...opts, ledgerBudget }, appt, admin, stats, appOrigin)
+          : await sendReminderPass(opts, appt, admin, stats, appOrigin);
+        return {
+          kind: unavailable === "claim_unavailable" ? "claim_unavailable" : stats.attempted > attemptedBefore ? "processed" : "skipped",
+          attempted: stats.attempted > attemptedBefore,
+        };
+      },
     });
-    const sms_reminder_2h = await sendSmsReminderPass({
-      kind: "2h",
-      windowStartIso: win2.startIso,
-      windowEndIso: win2.endIso,
-      ledgerBudget,
-    });
+    // Retain the factual timeout even when a bounded read retry recovers.
+    // This does not resolve prior alerts or establish message delivery.
+    if (batch.readRetry?.recovered && batch.kind === "complete" && !batch.coverageUnconfirmed) {
+      try {
+        await recordOpsAlert({
+          severity: "warning", event: "reminder_read_timeout",
+          message: "A reminder candidate read timed out before a bounded retry recovered. Check scheduler progress.",
+          route: "/api/cron/appointment-reminders",
+          safeDetails: { failure_stage: "read", failure_category: "read_timeout",
+            read_timeouts: batch.readRetry.timeouts, read_retries: batch.readRetry.attempted ? 1 : 0,
+            read_retry_recovered: true, candidate_queries: batch.queries },
+        });
+      } catch { /* Best-effort observation; completion still requires all passes. */ }
+    }
+    if (batch.kind !== "complete" || batch.coverageUnconfirmed) {
+      try {
+        await recordOpsAlert({
+          severity: batch.kind === "unavailable" ? "critical" : "warning",
+          event: batch.kind === "unavailable" ? "cron_route_failed" : "reminder_scan_incomplete",
+          message: "Reminder scan incomplete. Check scheduler progress before retrying work.",
+          route: "/api/cron/appointment-reminders",
+          safeDetails: {
+            reason: batch.reason, candidates_scanned: batch.scanned, candidate_queries: batch.queries,
+            attempted: batch.attempted, coverage_unconfirmed: batch.coverageUnconfirmed,
+            ...(batch.readRetry ? { read_timeouts: batch.readRetry.timeouts,
+              read_retries: batch.readRetry.attempted ? 1 : 0,
+              read_retry_recovered: batch.readRetry.recovered } : {}),
+            ...(batch.failure ? {
+              failure_stage: batch.failure.stage, failure_category: batch.failure.category,
+              ...(batch.failure.sqlState ? { sql_state: batch.failure.sqlState } : {}),
+            } : {}),
+          },
+        });
+      } catch { /* An incomplete run remains incomplete if its diagnostic fails. */ }
+      // LEAD-ALERT-01 (Codex P2 4254097611): an incomplete reminder scan is a
+      // reminders failure too, so the same bounded recovery runs after its
+      // diagnostic. The reminders' 500 is unchanged.
+      const lead_alerts = await runLeadAlertRecovery();
+      return NextResponse.json(
+        { ok: false, error: "cron_failed", lead_alerts },
+        { status: 500 },
+      );
+    }
 
     // PR #265: record a non-sensitive "last successful reminder cron run"
     // heartbeat AFTER all four passes complete (only reached on the authorized
@@ -704,6 +747,7 @@ export async function GET(req: Request) {
     // cadence is the spacing between invocations, so a slow or fast run can no
     // longer distort it. `previousInvokedAt` is filled in atomically by the
     // heartbeat merge from the value this write displaces.
+    failureStage = "heartbeat";
     await recordReminderRunSuccess({
       at: new Date().toISOString(),
       invokedAt: new Date(startedAt).toISOString(),
@@ -732,26 +776,28 @@ export async function GET(req: Request) {
       sms_reminder_2h,
       lead_alerts,
     });
-  } catch (err) {
-    // PR #153. Cron-route failure alert. The cron runs every few
-    // minutes; if it starts throwing, reminders silently stop. The
-    // 3-strike per-row attempt counter caps the blast radius once
-    // the scheduler resumes, but the operator needs to know now.
-    await recordOpsAlert({
-      severity: "critical",
-      event: "cron_route_failed",
-      message:
-        err instanceof Error ? err.message : String(err ?? "unknown error"),
-      route: "/api/cron/appointment-reminders",
-      safeDetails: {
-        duration_ms: Date.now() - startedAt,
-      },
-    });
+  } catch {
+    // Rejection values may contain private contents or hostile getters/proxies.
+    // Never inspect them. A failed diagnostic must not replace the route's 500.
+    try {
+      await recordOpsAlert({
+        severity: "critical",
+        event: "cron_route_failed",
+        message: "Reminder run failed. Check scheduler progress before retrying work.",
+        route: "/api/cron/appointment-reminders",
+        safeDetails: {
+          duration_ms: Date.now() - startedAt,
+          failure_stage: failureStage,
+          failure_category: failureStage === "setup" ? "setup_failed"
+            : failureStage === "heartbeat" ? "heartbeat_failed" : "scan_failed",
+        },
+      });
+    } catch { /* The original run remains failed if its diagnostic cannot be stored. */ }
     // LEAD-ALERT-01 (Codex P2 4254097611): an unrelated reminders failure must
     // not stop lead-alert retries -- the daily backstop alone cannot keep the
     // 20-hour schedule. The SAME bounded, gated, never-throwing recovery runs
-    // here too, AFTER the reminders' own failure alert. The reminders' 500 and
-    // cron_route_failed are unchanged.
+    // here too, AFTER the reminders' own failure diagnostic. The reminders'
+    // 500 and cron_route_failed are unchanged.
     const lead_alerts = await runLeadAlertRecovery();
     return NextResponse.json(
       { ok: false, error: "cron_failed", lead_alerts },

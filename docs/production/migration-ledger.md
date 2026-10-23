@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-10-12, post-0212 apply; hosted `0212`; `0213` AUTHORED AND PENDING on the LEAD-ALERT-01 branch)
+## Current state (refreshed onto production 2026-10-23; hosted `0212`; `0213` AUTHORED AND PENDING on the LEAD-ALERT-01 branch)
 
 > **`0211` and `0212` ARE APPLIED** (hosted max `0212`, the record below). This branch carries both
 > byte-identical through #832's head `cead71c5`, so the pending suffix above hosted is **`0213` alone**,
@@ -38,12 +38,33 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12 from #832's reviewed head (the record below). |
+| **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), applied 2026-10-12 from #832's reviewed head, and reconciled read-only on 2026-10-20 (the two records below). |
 | **Repo migration max** | **0213** — `0213_platform_lead_alerts.sql`, above the applied `0212` and `0211`, both carried byte-identical. |
 | **Remote-only migrations** | **none** — no migration exists on production that this branch lacks. |
 | **Pending migrations** | **`0213`** only, **NOT applied**: the MIGRATION-FIRST PENDING shape, `repo > hosted`, contiguous from hosted + 1. |
 | **Next free migration** | Next free number is **0214**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** and **not allocated** here (the census assigns `0214` to PAY-CCY). |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project. |
+
+## Previous state (reconciled 2026-10-20; 0212 already APPLIED, source restored byte-identically)
+
+> **This is a documentation/source reconciliation of an existing apply, not an authorization or execution of an apply.** A fresh read-only query on 2026-10-19 at 21:23:10.258674Z ran with `transaction_read_only=on` against the verified canonical Hone production project: migration history max **0212**, **211** rows, exactly one each for 0211 and 0212, and no entries above 0212. Migration-history presence establishes a recorded apply; it does not by itself claim a table's present existence or contents.
+>
+> Existing apply receipt `cead71c5` records the successful migration-first apply from reviewed PR #832 head `7116c66848574b0e02e7c2b8f500a6d3198edb58`. The exact source is `supabase/migrations/0212_email_delivery_events.sql`, 44,462 bytes, Git blob `cd8a4908fdad8b68e917842d5ffe1590c86eb875`, raw SHA-256 `cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1`. The source was restored here byte-identically from existing commit `cbb567afed08550e29e165bdc91adb4324a93181`; no SQL bytes were edited. The stored-history statement serialization hash `bc13731bb8c36b8a1db2f5a5185d0700308e598e92347a3ab87df696814ef142` is not the raw migration checksum. No server apply timestamp was captured, so `hosted_applied_at` remains null.
+>
+> The prior production record's 0211 declaration and missing 0212 source were stale repository documentation/source, not grounds to reapply. The full 0211 apply account below remains unchanged as historical evidence. **Do not reapply 0212.** No hosted database, migration history, schema, table or row was changed in this reconciliation.
+>
+> Repository and hosted migration state reconcile, with nothing pending and nothing remote-only.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0212** (`0212_email_delivery_events.sql`), recorded in read-only history as described above. |
+| **Repo migration max** | **0212** on this branch; the restored source file matches the existing applied source checksum exactly. |
+| **Remote-only migrations** | **none** after restoring the exact applied 0212 source. |
+| **Pending migrations** | **none** on this branch. |
+| **Next free migration** | Next free number is **0213**, derived by `npm run migration:state` from this tree's migration filenames; not claimed by this record. |
+| **Project ref** | Canonical Hone production project; see the verified linked-project evidence retained in the apply receipt. No credentials or new project identifiers are recorded here. |
+| **0212 apply source** | PR #832 reviewed head `7116c66848574b0e02e7c2b8f500a6d3198edb58`; exact raw file SHA-256 `cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1`; source reintroduced unchanged from `cbb567afed08550e29e165bdc91adb4324a93181`. |
+| **Apply timestamp** | `hosted_applied_at` remains `null`; the receipt contains client-side bounds and a server history bracket, not a server-generated apply timestamp. |
 
 ## Previous state (verified 2026-10-12, post-0212 apply; `0212` APPLIED, repo == hosted on the DELIVERY-EVENTS-01 branch)
 

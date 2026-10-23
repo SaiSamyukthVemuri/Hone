@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getSessionPaymentStripe } from "@/lib/stripe/session-payment-stripe";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import { isDefinitiveStripeRefusal } from "@/lib/billing/stripe-error-outcome";
 import {
   compareProviderMoney,
   providerMoneyMismatchDetails,
@@ -99,7 +100,6 @@ import {
 //   * No DML against manual_fee_charge_attempts.
 //   * No RLS relaxation.
 
-const FAILURE_MESSAGE_MAX = 1000;
 const FAILURE_CODE_MAX = 100;
 // Mode-mismatch refusal (PR C): fires when the ROW's stripe_livemode does
 // not equal the deployment mode. The old wording falsely claimed live
@@ -130,13 +130,6 @@ function logInternal(event: string, detail: unknown) {
 function sanitizeFailureCode(raw: string | null | undefined): string | null {
   if (!raw) return null;
   return raw.slice(0, FAILURE_CODE_MAX);
-}
-
-function sanitizeFailureMessage(
-  raw: string | null | undefined,
-): string | null {
-  if (!raw) return null;
-  return raw.replace(/\s+/g, " ").trim().slice(0, FAILURE_MESSAGE_MAX);
 }
 
 function sanitizeInternalNote(
@@ -186,6 +179,7 @@ type AttemptRow = {
   status: string;
   stripe_livemode: boolean;
   stripe_account_id: string | null;
+  stripe_customer_id: string | null;
   stripe_payment_intent_id: string | null;
   stripe_charge_id: string | null;
   amount_cents: number;
@@ -223,7 +217,7 @@ export async function refundPaymentChargeAttempt(args: {
   const { data: rawRow, error: loadErr } = await admin
     .from("payment_charge_attempts")
     .select(
-      "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id",
+      "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_customer_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id",
     )
     .eq("id", args.attemptId)
     .maybeSingle();
@@ -485,11 +479,15 @@ export async function refundPaymentChargeAttempt(args: {
     // can be classified; network errors leave the row pending so
     // a manual reconciliation can re-query Stripe with the
     // deterministic idempotency key.
-    if (err instanceof Stripe.errors.StripeError) {
+    // HON-11: only a DEFINITIVE refusal is terminal. A connection or API
+    // error may mean Stripe processed the request, so it falls through to
+    // the unknown-outcome path below (row stays pending_stripe).
+    if (
+      err instanceof Stripe.errors.StripeError &&
+      isDefinitiveStripeRefusal(err)
+    ) {
       const code = sanitizeFailureCode(err.code ?? err.type);
-      const safeMessage =
-        sanitizeFailureMessage(err.message) ??
-        "Stripe refused this refund.";
+      const safeMessage = "Stripe refused this refund.";
       const { data: failedRows, error: writeFailedErr } = await admin
         .from("payment_charge_attempts")
         .update({
@@ -532,6 +530,7 @@ export async function refundPaymentChargeAttempt(args: {
             zero_rows: failedWriteZeroRows,
           },
         });
+        return { ok: false, outcome: "needs_manual_review", message: "The refund outcome changed or could not be saved. The studio operator will reconcile it." };
       }
       await recordOpsAlert({
         severity: "warning",
@@ -560,10 +559,7 @@ export async function refundPaymentChargeAttempt(args: {
     // pending_stripe; an operator reconciliation can re-query
     // Stripe using the deterministic idempotency key. The
     // critical ops_alert is the operator's wake-up signal.
-    const safeMessage =
-      sanitizeFailureMessage(
-        err instanceof Error ? err.message : String(err),
-      ) ?? "Refund Stripe call did not return a response.";
+    const safeMessage = "Refund Stripe call did not return a response.";
     logInternal("payment_refund_stripe_unknown_outcome", {
       attemptId: attempt.id,
       message: safeMessage,
@@ -667,6 +663,73 @@ export async function refundPaymentChargeAttempt(args: {
     }
   }
 
+  // A returned refund object and matching money do not prove completion.
+  // Keep the existing pending claim for every unconfirmed provider outcome;
+  // this does not authorize a retry or replace durable status reconciliation.
+  if (refund.status !== "succeeded") {
+    try {
+      await recordOpsAlert({
+        severity: "critical",
+        event: "payment_refund_provider_status_unresolved",
+        message:
+          "Stripe returned a refund without confirmed success. Hone retained the pending claim and did not record completion.",
+        studioId: attempt.studio_id,
+        clientId: attempt.client_id,
+        route: ROUTE,
+        safeDetails: {
+          attempt_id: attempt.id,
+          charge_reason: attempt.charge_reason,
+          stripe_charge_id: attempt.stripe_charge_id,
+          reason: "provider_refund_not_succeeded",
+        },
+      });
+    } catch {
+      // Alerting cannot turn an unresolved refund into completion or retry.
+    }
+    return {
+      ok: false,
+      outcome: "needs_manual_review",
+      message:
+        "Stripe has not confirmed this refund as completed. The studio operator will reconcile it.",
+    };
+  }
+
+  const providerCharge = typeof refund.charge === "string"
+    ? refund.charge : refund.charge?.id;
+  const providerIntent = typeof refund.payment_intent === "string"
+    ? refund.payment_intent : refund.payment_intent?.id;
+  if (typeof refund.id !== "string" || refund.id.trim().length === 0 ||
+      typeof attempt.stripe_charge_id !== "string" || attempt.stripe_charge_id.trim().length === 0 ||
+      typeof attempt.stripe_payment_intent_id !== "string" || attempt.stripe_payment_intent_id.trim().length === 0 ||
+      providerCharge !== attempt.stripe_charge_id ||
+      providerIntent !== attempt.stripe_payment_intent_id) {
+    try {
+      await recordOpsAlert({
+        severity: "critical",
+        event: "payment_refund_provider_identity_mismatch",
+        message:
+          "The refund response could not be matched to the original charge and payment intent. Hone retained the pending claim without recording completion.",
+        studioId: attempt.studio_id,
+        clientId: attempt.client_id,
+        route: ROUTE,
+        safeDetails: {
+          attempt_id: attempt.id,
+          charge_reason: attempt.charge_reason,
+          stripe_charge_id: attempt.stripe_charge_id,
+          reason: "provider_refund_original_identity_mismatch",
+        },
+      });
+    } catch {
+      // Alerting cannot authorize completion or a retry of this refund.
+    }
+    return {
+      ok: false,
+      outcome: "needs_manual_review",
+      message:
+        "The refund response could not be matched to this payment. The studio operator will reconcile it.",
+    };
+  }
+
   const refundedAtIso = new Date().toISOString();
   const { data: okRows, error: writeOkErr } = await admin
     .from("payment_charge_attempts")
@@ -680,11 +743,45 @@ export async function refundPaymentChargeAttempt(args: {
     .eq("id", attempt.id)
     .eq("refund_status", "pending_stripe")
     .select("id");
-  // PR #263: a zero-row update (no matching pending_stripe row) means
-  // the refund is real on Stripe but nothing was persisted locally.
-  // Treat it identically to a write error, never report success
-  // without proving the row was stamped.
+  // A zero-row update alone proves no local completion. Require the exact
+  // durable callback outcome below; otherwise retain the critical refusal.
   const okWriteZeroRows = !writeOkErr && (!okRows || okRows.length === 0);
+  if (okWriteZeroRows) {
+    // A verified callback may have completed the same refund while the SDK
+    // request was in flight. Recognize only that exact durable outcome; never
+    // turn a write error, another refund, or an unreadable row into success.
+    try {
+      const { data: saved, error: savedError } = await admin
+        .from("payment_charge_attempts")
+        .select("id,studio_id,client_id,charge_reason,status,stripe_livemode,stripe_account_id,stripe_customer_id,stripe_payment_intent_id,stripe_charge_id,amount_cents,currency,charged_at,refund_status,refund_amount_cents,refunded_at,stripe_refund_id,refund_failure_code,refund_failure_message_safe")
+        .eq("id", attempt.id)
+        .eq("studio_id", attempt.studio_id)
+        .maybeSingle();
+      if (!savedError && saved &&
+        attempt.stripe_account_id && attempt.stripe_customer_id &&
+        attempt.stripe_payment_intent_id && attempt.stripe_charge_id && refund.id &&
+        saved.id === attempt.id && saved.studio_id === attempt.studio_id &&
+        saved.client_id === attempt.client_id && saved.charge_reason === attempt.charge_reason &&
+        saved.status === "succeeded" && saved.stripe_livemode === attempt.stripe_livemode &&
+        saved.stripe_account_id === attempt.stripe_account_id &&
+        saved.stripe_customer_id === attempt.stripe_customer_id &&
+        saved.stripe_payment_intent_id === attempt.stripe_payment_intent_id &&
+        saved.stripe_charge_id === attempt.stripe_charge_id &&
+        saved.amount_cents === attempt.amount_cents && saved.currency === attempt.currency &&
+        saved.charged_at === attempt.charged_at &&
+        saved.refund_status === "succeeded" && saved.stripe_refund_id === refund.id &&
+        saved.refund_amount_cents === refundAmountCents && refundAmountCents === saved.amount_cents &&
+        typeof saved.refunded_at === "string" && Number.isFinite(Date.parse(saved.refunded_at)) &&
+        saved.refund_failure_code === null && saved.refund_failure_message_safe === null) {
+        return {
+          ok: true, outcome: "succeeded", stripeRefundId: refund.id,
+          refundedAt: saved.refunded_at, refundAmountCents,
+        };
+      }
+    } catch {
+      // Preserve the existing critical/manual-review path on a failed re-read.
+    }
+  }
   if (writeOkErr || okWriteZeroRows) {
     // Stripe says refund is done but we could not persist the
     // success outcome (DB error or zero-row update). Critical alert;

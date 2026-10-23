@@ -1,0 +1,95 @@
+// HIPAA-READY-01 (#828): the hidden email PREHEADER.
+//
+// A mail client's inbox and lock-screen preview is built from the first text it
+// finds in the HTML body. Hone's templates had no preheader, so the preview was
+// the opening body text: appointment details, the service, the time, sometimes
+// the client's name. This module puts a neutral line first, then invisible
+// filler to limit body preview in clients that retain it. Clients that strip
+// the filler append the start of the body, so every template's body OPENS with
+// text that names only the studio (the PREVIEW RULE in each template), and the
+// plain-text part opens with the same neutral line (withTextPreheader). Both
+// are proved for every preheader-bearing template, over a 140-character
+// preview window, by tests/lib/email/preheader-minimum-necessary.test.ts and
+// tests/lib/email/appointment-moved-preview.test.ts.
+//
+// What this is NOT: it does not make an email PHI-free. The body, the
+// recipient address, the From line and the provider's own records are
+// unchanged, and a client that shows a longer preview than that window can
+// reach the details that follow the opening. See
+// docs/security/email-provider-visible-inventory.md.
+//
+// Content rule (same as the subject rule in docs/08): the preheader never
+// carries the client's name, the service, a date or time (relative ones too),
+// or an attendance or treatment fact. The studio name is allowed: the From
+// line already shows it.
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// LENGTH IS PART OF THE GUARANTEE (Codex P1 4355048631). A client that strips
+// the filler, and a plain-text client, preview the preheader and then the body.
+// Sized only by the studio name, a one-character name (the minimum settings and
+// studio creation admit) left a preview window of body text. So every
+// preheader ends with this fixed neutral tail, which keeps the preheader alone
+// longer than the whole preview window (pinned, for the shortest admissible
+// name and for none, in tests/lib/email/preheader-minimum-necessary.test.ts).
+const PRIVACY_TAIL =
+  " For your privacy, the details of this message are not shown in this preview. They appear only when you open the message.";
+
+/** Neutral preheader for a client-facing email. */
+export function clientPreheader(studioName: string | null | undefined): string {
+  const studio = studioName?.trim();
+  return (studio
+    ? `A message from ${studio}. Open it to see the details.`
+    : "Open this message to see the details.") + PRIVACY_TAIL;
+}
+
+/** Neutral preheader for a studio-facing (practitioner or owner) email. */
+export function studioPreheader(studioName: string | null | undefined): string {
+  const studio = studioName?.trim();
+  return (studio
+    ? `New activity at ${studio} in Hone. Open it to see the details.`
+    : "New activity in Hone. Open it to see the details.") + PRIVACY_TAIL;
+}
+
+// Zero-width and figure-space filler: renders as nothing, but fills the
+// client's preview length when it retains the filler. Filler-stripping clients
+// can still append body text; the existing regression pins those leaks.
+const FILLER = "&#8199;&#65279;&#847; ".repeat(90);
+
+const HIDDEN =
+  "display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;";
+
+/** The hidden preheader block, escaped. */
+export function preheaderBlock(preheader: string): string {
+  return (
+    `<div data-hone-preheader style="${HIDDEN}">${escapeHtml(preheader)}</div>` +
+    `<div style="${HIDDEN}">${FILLER}</div>`
+  );
+}
+
+/**
+ * Insert the preheader as the first content of <body>. If the document has no
+ * <body> tag, the block goes first, so the preheader is still the first text.
+ */
+export function withPreheader(html: string, preheader: string): string {
+  const block = preheaderBlock(preheader);
+  const m = /<body\b[^>]*>/i.exec(html);
+  if (!m) return block + html;
+  const at = m.index + m[0].length;
+  return html.slice(0, at) + block + html.slice(at);
+}
+
+/**
+ * The plain-text counterpart: a plain-text client previews the start of the
+ * text part, which has no hidden block, so the same neutral line opens it.
+ */
+export function withTextPreheader(text: string, preheader: string): string {
+  return `${preheader}\n\n${text}`;
+}

@@ -8,6 +8,17 @@ import { isAnalyticsUuid } from "@/lib/analytics/ids";
 import { ADMIN_RETURN_COOKIE, safeInternalPath } from "@/lib/auth/return-path";
 import { adminReturnTargetFor } from "@/lib/auth/admin-return";
 
+// A validated `next` keeps its fragment (path, query and fragment are all
+// same-origin). safeInternalPath decides whether the path is safe; the
+// fragment cannot change the origin, so it is re-attached only after that.
+// The remembered /admin target stays fragment-free.
+function safeNextWithFragment(raw: string | null): string | null {
+  const path = safeInternalPath(raw);
+  if (!path || raw === null) return path;
+  const hash = new URL(raw, "https://next.invalid").hash;
+  return `${path}${hash}`;
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
@@ -27,7 +38,7 @@ export async function GET(request: NextRequest) {
         data.user.email,
       );
       const next =
-        adminTarget ?? safeInternalPath(searchParams.get("next")) ?? "/dashboard";
+        adminTarget ?? safeNextWithFragment(searchParams.get("next")) ?? "/dashboard";
 
       // Post-response, bounded: sign-in must never fail or stall because
       // PostHog is unavailable (P1/P2-ANALYTICS-03). Identify by opaque UUID
@@ -85,7 +96,19 @@ export async function GET(request: NextRequest) {
         // Never block sign-in on reconciliation.
       }
 
-      const response = NextResponse.redirect(`${origin}${dest}`);
+      // Treat the caller's destination as a path, never an origin suffix.
+      // URL parsing also normalizes backslashes/control characters; compare
+      // origins after that normalization before emitting a redirect.
+      let destination = new URL("/dashboard", origin);
+      if (dest.startsWith("/")) {
+        try {
+          const candidate = new URL(dest, origin);
+          if (candidate.origin === origin) destination = candidate;
+        } catch {
+          // Malformed destinations keep the ordinary signed-in landing page.
+        }
+      }
+      const response = NextResponse.redirect(destination);
       if (clearSelection) {
         response.cookies.delete("hone_selected_studio");
       }

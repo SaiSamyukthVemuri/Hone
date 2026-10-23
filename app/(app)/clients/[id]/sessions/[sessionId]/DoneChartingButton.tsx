@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
+import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
 
 // Non-blocking aftercare prompt at the "Done charting" boundary (Charting
 // Validation PR 1). If the session has no aftercare_and_risks_explained_at stamp,
@@ -60,14 +61,11 @@ export function DoneChartingButton({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  const { panelRef } = useDialogKeyboard<HTMLDivElement>({
+    open,
+    busy: false, // Preserve the never-blocking Escape exit even while marking.
+    onClose: () => setOpen(false),
+  });
 
   function proceed() {
     router.push(doneHref);
@@ -118,6 +116,8 @@ export function DoneChartingButton({
             className="absolute inset-0 bg-black/30 backdrop-blur-[1px]"
           />
           <div
+            ref={panelRef}
+            tabIndex={-1}
             className="relative z-10 flex w-full max-w-sm flex-col gap-4 rounded-lg bg-white p-6 shadow-xl dark:bg-neutral-950"
             onClick={(e) => e.stopPropagation()}
           >

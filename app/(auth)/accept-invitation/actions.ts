@@ -58,6 +58,12 @@ export async function acceptInvitationAction(
   if (res.status === "ambiguous") redirect("/no-access?reason=invite-ambiguous");
   if (res.status === "no_invitation") redirect("/no-access");
 
+  // Complete acceptance only when the governed command confirms success.
+  // Missing or unknown responses must not clear selection or imply a join.
+  if (res.status !== "linked" && res.status !== "already_linked") {
+    return { error: "Something went wrong. Please try again." };
+  }
+
   // linked / already_linked. Force the chooser for a newly multi-studio user:
   // choosing a studio is still required, so any remembered target waits for
   // the chooser (switchStudioAction) to complete.

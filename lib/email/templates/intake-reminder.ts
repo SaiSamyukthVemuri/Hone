@@ -26,6 +26,8 @@
 // escape hatch so the message is honest under both races.
 
 import { localTimeString12h } from "@/lib/booking/tz";
+import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
+import { withReference } from "@/lib/email/subject-reference";
 
 export type IntakeReminderKind = "24h" | "2h";
 
@@ -66,6 +68,15 @@ export const INTAKE_STANDALONE_SUBJECT: Readonly<
 export const INTAKE_IGNORE_LINE =
   "If you've already completed it, you can ignore this message.";
 
+/**
+ * PREVIEW RULE (HIPAA-READY-01, #828): the standalone email's second line. A
+ * client that strips the preheader filler previews the first body text, so
+ * the appointment's date and time follow this line instead of opening the
+ * email. It states no completion state either way.
+ */
+export const INTAKE_STANDALONE_LEAD =
+  "You can complete it with the secure link in this message, before your appointment.";
+
 export const INTAKE_LINK_FALLBACK_LINE =
   "If the button does not work, copy and paste this link into your browser:";
 
@@ -100,9 +111,14 @@ export function buildIntakeReminderEmail(p: {
   intakeUrl: string;
   startsAt: Date;
   timezone: string;
+  // Per-booking label (lib/email/booking-reference.ts): reminders for two
+  // bookings must not thread together (tests/lib/email/email-subject-sweep.test.ts).
+  bookingReference: string;
 }): IntakeReminderEmail {
   const studioName = p.studioName.trim() || "Your studio";
-  const subject = INTAKE_STANDALONE_SUBJECT[p.kind];
+  // Still no completion state, studio name or date (SUBJECT RULE above); the
+  // reference is an opaque label.
+  const subject = withReference(INTAKE_STANDALONE_SUBJECT[p.kind], p.bookingReference);
   const { heading, body } = INTAKE_SECTION_COPY[p.kind];
 
   const dayStr = dayLabel(p.startsAt, p.timezone);
@@ -112,6 +128,8 @@ export function buildIntakeReminderEmail(p: {
   const text = [
     heading,
     "",
+    INTAKE_STANDALONE_LEAD,
+    "",
     whenLine,
     "",
     body,
@@ -119,6 +137,8 @@ export function buildIntakeReminderEmail(p: {
     `${INTAKE_CTA_LABEL}: ${p.intakeUrl}`,
     "",
     INTAKE_IGNORE_LINE,
+    "",
+    `Booking reference: ${p.bookingReference.trim()}`,
   ].join("\n");
 
   const html = `
@@ -133,6 +153,9 @@ export function buildIntakeReminderEmail(p: {
               <td style="padding:32px;">
                 <p style="margin:0 0 16px 0; font-size:16px; font-weight:600; line-height:1.5;">
                   ${escapeHtml(heading)}
+                </p>
+                <p style="margin:0 0 16px 0; font-size:16px; line-height:1.6;">
+                  ${escapeHtml(INTAKE_STANDALONE_LEAD)}
                 </p>
                 <p style="margin:0 0 16px 0; font-size:16px; line-height:1.6;">
                   ${escapeHtml(whenLine)}
@@ -152,6 +175,9 @@ export function buildIntakeReminderEmail(p: {
                 <p style="margin:0; font-size:13px; line-height:1.6; color:#6B6B6B;">
                   ${escapeHtml(INTAKE_IGNORE_LINE)}
                 </p>
+                <p style="margin:16px 0 0 0; font-size:12px; line-height:1.6; color:#6B6B6B;">
+                  Booking reference: ${escapeHtml(p.bookingReference.trim())}
+                </p>
               </td>
             </tr>
           </table>
@@ -161,5 +187,5 @@ export function buildIntakeReminderEmail(p: {
   </body>
 </html>`.trim();
 
-  return { subject, html, text };
+  return { subject, html: withPreheader(html, clientPreheader(null)), text: withTextPreheader(text, clientPreheader(null)) };
 }

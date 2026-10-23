@@ -41,6 +41,61 @@ const LOCAL_SERVICE_ROLE_KEY =
 const BANNED_URL_PATTERNS =
   /supabase\.co|supabase\.com|supabase\.in|pooler\.|amazonaws\.com|rds\.|azure|neon\.tech/i;
 
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+
+// Query parameters a PostgreSQL client gives PRECEDENCE over the URL authority
+// (pg-connection-string, libpq). With one present, the authority this guard
+// checks is not where the client connects: `postgresql://…@127.0.0.1:63322/
+// postgres?host=prod-db.internal` would pass a hostname check and seed SQL
+// off-machine, and `?port=54322` would pass the pair check while reaching the
+// shared stack (Codex P1 on #879). So any such override is refused outright.
+const CONNECTION_OVERRIDES = new Set(["host", "hostaddr", "port", "service"]);
+
+export function isLoopbackUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    for (const key of url.searchParams.keys()) {
+      if (CONNECTION_OVERRIDES.has(key.toLowerCase())) return false;
+    }
+    return LOOPBACK_HOSTS.has(url.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+/** Refuse a half-moved stack: the API and the database must leave the default together or not at all. */
+export function assertSameStackPair(supabaseUrl: string, dbUrl: string): void {
+  // By PORT, so `localhost:54322` and `127.0.0.1:54322` are the same default stack.
+  const port = (u: string) => new URL(u).port;
+  const apiMoved = port(supabaseUrl) !== port(LOCAL_SUPABASE_URL);
+  const dbMoved = port(dbUrl) !== port(LOCAL_DB_URL);
+  if (apiMoved !== dbMoved) {
+    throw new Error(
+      `e2e refuses to run: ${apiMoved ? "E2E_SUPABASE_URL" : "HONE_LOCAL_DB_URL"} selects another local stack ` +
+        `but ${apiMoved ? "HONE_LOCAL_DB_URL" : "E2E_SUPABASE_URL"} does not. Set both to the same stack, or neither.`,
+    );
+  }
+  // Both moved: they must name the SAME stack, or this is the original defect
+  // between two isolated stacks (API on one, fixtures seeding another). A CONVENTION,
+  // not a law: the Supabase CLI allocates each stack a contiguous port block with the
+  // database one above the API (54321/54322, 63321/63322, ...), the same assumption
+  // the two defaults above encode. A stack laid out otherwise is refused, fail-closed.
+  const offset = (api: string, db: string) => Number(port(db)) - Number(port(api));
+  if (apiMoved && offset(supabaseUrl, dbUrl) !== offset(LOCAL_SUPABASE_URL, LOCAL_DB_URL)) {
+    throw new Error(
+      `e2e refuses to run: E2E_SUPABASE_URL (port ${port(supabaseUrl)}) and HONE_LOCAL_DB_URL (port ${port(dbUrl)}) ` +
+        `are not one stack (expected the database on the API port + ${offset(LOCAL_SUPABASE_URL, LOCAL_DB_URL)}).`,
+    );
+  }
+}
+
+/** The Mailpit of the stack whose API is `supabaseUrl`: same loopback host, API port + the default offset (3). */
+export function mailpitFor(supabaseUrl: string): string {
+  const port = (u: string) => Number(new URL(u).port);
+  const api = new URL(supabaseUrl);
+  return `http://${api.hostname}:${port(supabaseUrl) + port(LOCAL_MAILPIT_URL) - port(LOCAL_SUPABASE_URL)}`;
+}
+
 function refuseHostedOverrides() {
   for (const name of [
     "NEXT_PUBLIC_SUPABASE_URL",
@@ -50,7 +105,9 @@ function refuseHostedOverrides() {
   ]) {
     const value = process.env[name];
     if (!value) continue;
-    if (BANNED_URL_PATTERNS.test(value) || !/127\.0\.0\.1|localhost/.test(value)) {
+    // The HOST must be loopback, not merely MENTION it: a substring test let
+    // `http://127.0.0.1.attacker.example` or `https://x.example/?127.0.0.1` through.
+    if (BANNED_URL_PATTERNS.test(value) || !isLoopbackUrl(value)) {
       throw new Error(
         `e2e refuses to run: ${name} points away from the local Supabase stack. This lane is local-only.`,
       );
@@ -86,9 +143,23 @@ const RESOURCES: { port: number; origin: string; host: string; worktree: string 
 export const E2E_APP_ORIGIN: string = RESOURCES.origin;
 export const E2E_APP_PORT: number = RESOURCES.port;
 export const E2E_WORKTREE: string = RESOURCES.worktree;
-export const E2E_SUPABASE_URL = LOCAL_SUPABASE_URL;
-export const E2E_DB_URL = LOCAL_DB_URL;
-export const E2E_MAILPIT_URL = LOCAL_MAILPIT_URL;
+// An isolated stack is selected as a PAIR: E2E_SUPABASE_URL (API + GoTrue) and
+// HONE_LOCAL_DB_URL (Postgres), both already proven loopback by
+// refuseHostedOverrides(). Honouring only one half is the defect this replaces:
+// tests/db's PostgREST/GoTrue clients reached the shared 54321 stack while its pg
+// pool followed HONE_LOCAL_DB_URL, and wrote auth users into the wrong stack. The
+// mirror image -- app on the isolated stack, e2e fixtures seeding the shared 54322
+// -- would be a green run against the wrong database. So a half-moved pair is
+// REFUSED below, never silently half-honoured. Neither set: byte-for-byte unchanged.
+// The APP SERVER (E2E_WEB_SERVER_ENV) and MAILPIT follow the same stack, so the
+// browser, the fixtures and GoTrue's mail all reach ONE stack (Codex P2 4265873832).
+// Mailpit takes no variable of its own: it is DERIVED from the validated API URL by
+// the same contiguous-port convention the pair check relies on (API, DB = API+1,
+// Mailpit = API+3), so it cannot name a different stack or leave this machine.
+export const E2E_SUPABASE_URL = process.env.E2E_SUPABASE_URL || LOCAL_SUPABASE_URL;
+export const E2E_DB_URL = process.env.HONE_LOCAL_DB_URL || LOCAL_DB_URL;
+assertSameStackPair(E2E_SUPABASE_URL, E2E_DB_URL);
+export const E2E_MAILPIT_URL = mailpitFor(E2E_SUPABASE_URL);
 export const E2E_SERVICE_ROLE_KEY = LOCAL_SERVICE_ROLE_KEY;
 
 // SENTRY-E2E-NOISE-02. The preload that keeps every browser lane out of the
@@ -190,7 +261,7 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // package.json - which also keeps the npm script portable.
   PORT: String(E2E_APP_PORT),
   NEXT_PUBLIC_APP_ORIGIN: E2E_APP_ORIGIN,
-  NEXT_PUBLIC_SUPABASE_URL: LOCAL_SUPABASE_URL,
+  NEXT_PUBLIC_SUPABASE_URL: E2E_SUPABASE_URL,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: LOCAL_ANON_KEY,
   SUPABASE_SERVICE_ROLE_KEY: LOCAL_SERVICE_ROLE_KEY,
   RESEND_API_KEY: "re_dummy_resend_key",

@@ -94,17 +94,28 @@ describe("recoverLeadAlertsOnReminderTrigger", () => {
 describe("wiring in the reminders route (source guard)", () => {
   const SRC = readFileSync("app/api/cron/appointment-reminders/route.ts", "utf8");
 
-  it("runs AFTER every reminder pass and the heartbeat on success, and AFTER cron_route_failed on failure (Codex P2 4254097611)", () => {
+  it("runs AFTER every reminder pass and the heartbeat on success, and AFTER the failure diagnostic on both failure paths (Codex P2 4254097611)", () => {
     const heartbeat = SRC.indexOf("await recordReminderRunSuccess(");
-    const catchAt = SRC.indexOf("} catch (err) {", heartbeat);
+    const incomplete = SRC.indexOf('"reminder_scan_incomplete"');
+    const catchAt = SRC.indexOf("  } catch {\n    // Rejection values", heartbeat);
+    const failureAlert = SRC.indexOf('event: "cron_route_failed"', catchAt);
+    expect(incomplete).toBeGreaterThan(0);
+    expect(catchAt).toBeGreaterThan(heartbeat);
+    expect(failureAlert).toBeGreaterThan(catchAt);
     const calls = [...SRC.matchAll(/await runLeadAlertRecovery\(\)/g)].map((m) => m.index!);
-    expect(calls).toHaveLength(2);
-    expect(calls[0]).toBeGreaterThan(heartbeat);
-    expect(calls[0]).toBeLessThan(catchAt);
-    const failureAlert = SRC.indexOf('event: "cron_route_failed"');
-    expect(calls[1]).toBeGreaterThan(failureAlert);
-    // The reminders' failure answer is unchanged: still a 500.
-    expect(SRC.slice(calls[1])).toMatch(/\{ ok: false, error: "cron_failed", lead_alerts \},\s*\{ status: 500 \}/);
+    expect(calls).toHaveLength(3);
+    // An incomplete scan: after its diagnostic, before the heartbeat.
+    expect(calls[0]).toBeGreaterThan(incomplete);
+    expect(calls[0]).toBeLessThan(heartbeat);
+    // Success: after every pass and the heartbeat.
+    expect(calls[1]).toBeGreaterThan(heartbeat);
+    expect(calls[1]).toBeLessThan(catchAt);
+    // A thrown run: after cron_route_failed.
+    expect(calls[2]).toBeGreaterThan(failureAlert);
+    // The reminders' failure answers are unchanged: still a 500.
+    for (const at of [calls[0], calls[2]]) {
+      expect(SRC.slice(at)).toMatch(/^await runLeadAlertRecovery\(\);\s*return NextResponse\.json\(\s*\{ ok: false, error: "cron_failed", lead_alerts \},\s*\{ status: 500 \}/);
+    }
     expect(SRC.match(/recoverLeadAlertsOnReminderTrigger\(/g)).toHaveLength(1);
   });
 
