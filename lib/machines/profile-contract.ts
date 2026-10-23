@@ -399,7 +399,20 @@ export type FrequencyContract =
 export type ManufacturerFamily =
   | "Dectro/Apilus"
   | "Silhouet-Tone"
-  | "Permanence/GEMM-16";
+  | "Permanence/GEMM-16"
+  /**
+   * SYNTHETIC FIXTURES, which are not a manufacturer and must not borrow one.
+   *
+   * The demo profiles previously declared `Permanence/GEMM-16`, because this
+   * vocabulary was closed to real families and something had to be chosen.
+   * That put a false claim in a shipped fixture: a synthetic single-probe
+   * model is not of the GEMM-16 family in any sense, and `family` is exactly
+   * the field a reader would trust to tell them what a profile IS.
+   *
+   * Safe to add because nothing reads `profile.family` - it is descriptive
+   * only; `mode.family` is a different field and is unaffected.
+   */
+  | "Synthetic/Demo";
 
 /**
  * One exact model at one contract version.
@@ -492,15 +505,57 @@ export function findField(
  * reproduce exactly this defect one case over. Every entry returned here can
  * therefore actually be recorded against, which is the property worth having.
  */
-export function activeProfiles(
+/**
+ * The HIGHEST version held for each profile id.
+ *
+ * ONE DEFINITION OF "CURRENT", shared by selection and by display (Codex,
+ * #860 4307914917). Selection wants the current version AND only if it is
+ * active; a display surface wants the current version WHATEVER its
+ * availability, because labelling a historical reading against a blocked or
+ * legacy profile is precisely its job. Those are two filters over one rule,
+ * and the rule lives here.
+ */
+function highestByProfileId(
   profiles: readonly MachineProfile[],
-): MachineProfile[] {
+): Map<string, MachineProfile> {
   const current = new Map<string, MachineProfile>();
   for (const p of profiles) {
     const held = current.get(p.profileId);
     if (!held || p.version > held.version) current.set(p.profileId, p);
   }
-  return [...current.values()].filter((p) => p.availability === "active");
+  return current;
+}
+
+/**
+ * The CURRENT version of one profile, whatever its availability.
+ *
+ * WHAT THIS REPLACES, at three call sites that each had their own copy:
+ * `catalogue.find((p) => p.profileId === id)`, which takes the FIRST match.
+ * With two versions present that can be v1 while v2 is current, and all three
+ * sites then compare a reading's version against the wrong one - flagging a
+ * current reading as historical, so it renders raw field keys instead of
+ * labels, or treating a superseded one as current and showing labels that no
+ * longer apply. Order-dependent, so it would have surfaced the day a second
+ * version was added and not before.
+ *
+ * AVAILABILITY IS DELIBERATELY NOT FILTERED. A caller choosing what to OFFER
+ * wants `activeProfiles`; a caller rendering what was already RECORDED must be
+ * able to resolve a blocked or legacy profile, or the record becomes
+ * unreadable the moment a model is withdrawn.
+ */
+export function currentProfile(
+  profiles: readonly MachineProfile[],
+  profileId: string,
+): MachineProfile | undefined {
+  return highestByProfileId(profiles).get(profileId);
+}
+
+export function activeProfiles(
+  profiles: readonly MachineProfile[],
+): MachineProfile[] {
+  return [...highestByProfileId(profiles).values()].filter(
+    (p) => p.availability === "active",
+  );
 }
 
 /** Modes offered for a profile: active profile, active mode. */

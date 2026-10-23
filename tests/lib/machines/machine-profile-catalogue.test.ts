@@ -414,15 +414,44 @@ describe("a recorded observation is never destroyed", () => {
     expect(r.notes.map((n) => n.code)).toContain("documentation_discrepancy");
   });
 
-  it("preserves precision finer than the contract instead of rounding it", () => {
+  it("REFUSES precision finer than the contract, rather than promising to keep it", () => {
+    // THIS ASSERTED THE OPPOSITE, and the old expectation is why the finding
+    // existed (Codex, #860 4289974660): the validator returned ok with a
+    // `precision_beyond_contract` NOTE whose message read "Stored exactly as
+    // entered". 0223's recording command refuses the same value
+    // (`scale(v_value) > v_decimals`), so that promise could never be kept -
+    // app and database disagreed and the app's half was the one talking to
+    // the practitioner.
+    //
+    // REFUSING IS THE SIDE THAT SURVIVES, for a reason one layer on from the
+    // disagreement: a reading row stores the CONTRACT's `decimals` beside the
+    // value, so persisting 1.234 against a 2-decimal contract would store a
+    // row that disagrees with itself, and a renderer formatting by `decimals`
+    // would show 1.23. Relaxing the database would not have preserved her
+    // reading - it would have hidden a digit later and more quietly.
     const r = validateReading(
       bench({ fieldKey: "secs", value: { kind: "value", value: 1.234 } }),
       { catalogue: FIXTURE_CATALOGUE },
     );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.code).toBe("precision_beyond_contract");
+    // IT STILL DOES NOT ROUND, which was the true half of the original rule:
+    // it says what it saw and asks her to read the machine again.
+    expect(r.message).toContain("1.234");
+    expect(r.message).toMatch(/not rounded for you/i);
+  });
+
+  it("accepts a value AT the contract's precision, so the refusal is not a ban on decimals", () => {
+    // Without this the assertion above would pass for a validator that
+    // refused every fractional value.
+    const r = validateReading(
+      bench({ fieldKey: "secs", value: { kind: "value", value: 1.2 } }),
+      { catalogue: FIXTURE_CATALOGUE },
+    );
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.recorded).toEqual({ kind: "value", value: 1.234 });
-    expect(r.notes.map((n) => n.code)).toContain("precision_beyond_contract");
+    expect(r.recorded).toEqual({ kind: "value", value: 1.2 });
   });
 
   it("treats a recorded zero as a value, not an absence", () => {
@@ -1275,29 +1304,44 @@ describe("a reading validates against the version it was CAPTURED under", () => 
   });
 
   it("validates it against v1's precision, not v2's", () => {
-    // The point of resolving the captured version: v1 allows 1 decimal and
-    // v2 allows 2. A v1 reading of 1.25 carries more precision than its own
-    // contract and must be noted as such, not silently accepted as v2.
+    // The point of resolving the captured version: v1 allows 1 decimal and v2
+    // allows 2, so the SAME value of 1.25 is beyond contract under v1 and
+    // exactly within it under v2. That asymmetry is the whole proof — it can
+    // only hold if the version a reading was captured under is the one being
+    // applied to it.
     //
-    // ASSERTED UNCONDITIONALLY. Wrapping these in `if (out.ok)` made the test
-    // pass by SKIP the moment the reading was refused for any reason — which
-    // is exactly what happened when the superseded-version gate landed: the
-    // refusal satisfied the test rather than failing it.
-    const out = read(1, 1.25, true);
-    expect(out.ok, "the v1 reading was refused outright").toBe(true);
-    if (!out.ok) throw new Error(out.code);
+    // THIS IS THE MERGE RESOLUTION BETWEEN THE TWO STACKED BRANCHES, and the
+    // compiler decided it. On #855 `precision_beyond_contract` is a NOTE, so
+    // the version of this test written there asserts `ok` with the code among
+    // `notes`. #860 promoted it to a REFUSAL (4289974660), because the app was
+    // promising "stored exactly as entered" for a value 0223's recording
+    // command refuses outright. An attempt to write this agnostically — "a
+    // refusal OR a note" — does not typecheck on this branch: TS2367, because
+    // `precision_beyond_contract` is no longer a member of `NoteCode` and the
+    // note half is unreachable. So the refusal form is the only honest one
+    // here, and the classification is additionally pinned on its own terms
+    // further up this file where `r.code` is asserted directly.
+    //
+    // ASSERTED UNCONDITIONALLY. The first version of this test wrapped its
+    // assertions in `if (out.ok)`, so it passed by SKIP the moment the reading
+    // was refused for any reason — which is exactly what happened when the
+    // superseded-version gate landed: the refusal satisfied the test rather
+    // than failing it.
+    const v1 = read(1, 1.25, true);
+    expect(v1.ok, "1.25 is beyond v1's 1-decimal contract").toBe(false);
+    if (v1.ok) throw new Error("expected a refusal");
     expect(
-      out.notes.map((n) => n.code),
+      v1.code,
       "v1's 1-decimal contract was not the one applied",
-    ).toContain("precision_beyond_contract");
+    ).toBe("precision_beyond_contract");
 
-    // And the same value under v2 is exactly within contract.
-    const v2 = read(2, 1.25);
-    expect(v2.ok).toBe(true);
-    if (!v2.ok) throw new Error(v2.code);
-    expect(v2.notes.map((n) => n.code)).not.toContain(
-      "precision_beyond_contract",
-    );
+    // The same value under v2 is exactly within contract and is accepted
+    // outright. Under v1's contract this call would be refused, so acceptance
+    // here is what proves v2's own contract was applied to a v2 reading.
+    expect(
+      read(2, 1.25).ok,
+      "v2 allows 2 decimals and must accept 1.25",
+    ).toBe(true);
   });
 
   it("REFUSES NEW CAPTURE against a superseded version, naming both", () => {
@@ -1910,8 +1954,32 @@ describe("a hardware step is a reachability constraint", () => {
     const tenths = { min: 0, max: 1, step: 0.1, class: "hardware-enforced", evidence: "fx" };
     expect(read(withRange(tenths), 0.3).ok).toBe(true);
     expect(read(withRange(tenths), 0.7).ok).toBe(true);
-    // And it still refuses a genuinely off-step value at that scale.
-    expect(read(withRange(tenths), 0.35).ok).toBe(false);
+  });
+
+  it("and still refuses an off-step value at decimal scale", () => {
+    // THE OFF-STEP VALUE MUST BE WITHIN THE FIELD'S PRECISION, or the step is
+    // not what refuses it. This is the merge resolution between the two
+    // stacked branches: on #855 `precision_beyond_contract` is a NOTE, so a
+    // 2-decimal value against a 1-decimal contract reached the step check and
+    // 0.35-against-step-0.1 proved enforcement there. On #860 the same code
+    // refuses that value for PRECISION (4289974660), so the assertion passed
+    // without the step being consulted at all — removing step enforcement
+    // entirely left it green, which the negative control caught.
+    //
+    // A coarser step than the contract's precision gives a value only the step
+    // can reject: 0.3 is one decimal, so it is within contract, and off a
+    // 0.5 step.
+    const halves = { min: 0, max: 1, step: 0.5, class: "hardware-enforced", evidence: "fx" };
+    const out = read(withRange(halves), 0.3);
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("expected a refusal");
+    expect(out.code).toBe("outside_hardware_limit");
+    expect(out.message, "something other than the step refused it").toContain(
+      "steps of 0.5",
+    );
+    // CONTROL: the on-step values at that scale are accepted.
+    expect(read(withRange(halves), 0.5).ok).toBe(true);
+    expect(read(withRange(halves), 1).ok).toBe(true);
   });
 
   it("CONTROL: an ADVISORY range's step never refuses", () => {
