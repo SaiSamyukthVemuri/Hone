@@ -5,6 +5,7 @@ import {
   filterFutureSlots,
   pickDayWindow,
   reservationWindowStartUtc,
+  type ReservationExclusion,
   type ReservationRow,
   type Slot,
 } from "@/lib/booking/slots";
@@ -16,6 +17,7 @@ import { isPubliclyBookable } from "@/lib/booking/readiness";
 import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { utcInstantFromLocal } from "@/lib/booking/tz";
 import { fetchAllRows } from "@/lib/export/paginate";
+import { loadScopedAvailability } from "@/lib/booking/practitioner-availability";
 
 // ===========================================================================
 // PUBLIC SLOTS FOR A RANGE OF DATES — loaded in bulk, throttled by the caller
@@ -38,17 +40,18 @@ import { fetchAllRows } from "@/lib/export/paginate";
 // once-per-operation throttle far too permissive for what a single call
 // actually costs. Batching concurrency did not fix that; it only spread it.
 //
-// So the horizon inputs are read ONCE — four queries total, whatever the window
-// — and `buildDaySlots` runs per date over in-memory data. That split is the one
+// So the horizon inputs are read ONCE — four studio-wide queries, or six for a
+// scoped reschedule, plus reservation pages — and `buildDaySlots` runs per date
+// over in-memory data. That split is the one
 // `lib/booking/slots.ts` documents at `buildDaySlots`: "a caller that read a
 // whole horizon in a single query rather than three per day can reach the same
 // candidate generation without a second implementation of it." This is that
 // caller. Every RULE still lives in `buildDaySlots`; nothing here re-decides
 // what a slot is.
 //
-// IT PROPAGATES READ FAILURES. `getAvailableSlots` discards the `error` field
-// of each query, so a failed availability read becomes an empty day and a failed
-// reservation read yields apparently-open times that are unbookable. For a
+// IT PROPAGATES READ FAILURES. Historically, discarding the `error` field made
+// a failed availability read an empty day and a failed reservation read yield
+// apparently-open times that were unbookable. Both loaders now refuse. For a
 // surface whose whole job is telling one invited person what is genuinely
 // available, "I could not read" must not render as "nothing is open" — the
 // caller turns a failure into a retryable state, and it can only do that if it
@@ -189,6 +192,10 @@ export type PublicRangeContext = {
   publicBookingHorizonMonths: number | null;
   bufferMinutes: number | null;
   serviceDurationMinutes: number;
+  /** Server-resolved original appointment context; ordinary public booking omits it. */
+  practitionerCapacityEnabled?: boolean;
+  practitionerId?: string | null;
+  excludeReservation?: ReservationExclusion;
 };
 
 export type PublicSlotsByDateResult =
@@ -223,9 +230,9 @@ export type PublicSlotsByDateResult =
  * `dateStr` — so it is kept rather than thrown away and re-derived. A caller
  * asking "the earliest date with a slot" then reads it directly.
  *
- * THE QUERY BUDGET IS THE POINT, and it is flat in the number of dates: two
- * waves, four queries, plus one extra reservation page per additional 1000
- * overlapping reservations. A 12-month window costs the same waves as a 7-day
+ * THE QUERY BUDGET IS THE POINT, and it is flat in the number of dates: four
+ * studio-wide queries, or six for a practitioner, plus reservation pages.
+ * A 12-month window costs the same waves as a 7-day
  * one. Every RULE still lives in `buildDaySlots`; nothing here re-decides what
  * a slot is.
  *
@@ -262,6 +269,7 @@ export async function loadPublicSlotsByDate(
   } = {},
 ): Promise<PublicSlotsByDateResult> {
   const tz = ctx.timezone;
+  const capacityOn = ctx.practitionerCapacityEnabled === true && ctx.practitionerId != null;
 
   // THE HORIZON CLAMP. Beyond it a date is unbookable by any route, so querying
   // it buys nothing and discovering that one refusal at a time is how an
@@ -281,7 +289,8 @@ export async function loadPublicSlotsByDate(
   const first = sorted[0]!;
   const last = sorted[sorted.length - 1]!;
 
-  // ---- FOUR QUERIES FOR THE WHOLE WINDOW, whatever its length ----
+  // Four studio-wide reads, or six for a practitioner, plus reservation pages;
+  // the number of dates never adds database round trips.
   const rangeStartUtc = utcInstantFromLocal(first, "00:00", tz);
   // The same 36-hour tail the per-day loader uses, so a reservation running past
   // midnight into the last day is still seen.
@@ -294,10 +303,21 @@ export async function loadPublicSlotsByDate(
   try {
     // Both FAIL CLOSED by throwing on any error other than a genuinely absent
     // 0135 column, which is exactly the propagation this helper needs.
-    [overrides, defaults] = (await Promise.all([
-      getStudioWideOverridesSafe(admin, ctx.studioId, first, last),
-      getStudioWideDefaultsSafe(admin, ctx.studioId),
-    ])) as [typeof overrides, typeof defaults];
+    if (capacityOn) {
+      // Reuse the existing schedule model: personal date override, studio date
+      // override, personal weekday, then studio weekday. Failed reads throw;
+      // only successful absence permits inheritance.
+      const scoped = await loadScopedAvailability(
+        admin, ctx.studioId, { kind: "practitioner", practitionerId: ctx.practitionerId! }, first, last,
+      );
+      overrides = scoped.overrides;
+      defaults = scoped.week;
+    } else {
+      [overrides, defaults] = (await Promise.all([
+        getStudioWideOverridesSafe(admin, ctx.studioId, first, last),
+        getStudioWideDefaultsSafe(admin, ctx.studioId),
+      ])) as [typeof overrides, typeof defaults];
+    }
   } catch {
     return { ok: false, error: "Availability could not be read." };
   }
@@ -323,8 +343,8 @@ export async function loadPublicSlotsByDate(
     // own tables. Ordering is `starts_at, id`: pagination over a non-unique
     // sort can put one row on two pages and drop another, and `id` is the
     // primary key.
-    fetchAllRows<ReservationRow>((from, to) =>
-      admin
+    fetchAllRows<ReservationRow>((from, to) => {
+      const query = admin
         .from("studio_calendar_reservations")
         .select("starts_at, ends_at, source_kind, source_id")
         .eq("studio_id", ctx.studioId)
@@ -337,11 +357,14 @@ export async function loadPublicSlotsByDate(
             rangeStartUtc,
             ctx.bufferMinutes ?? 0,
           ).toISOString(),
-        )
+        );
+      // The resource timeline already includes studio-wide blocks fanned to
+      // this practitioner. Keep studio scope on every page as well.
+      return (capacityOn ? query.eq("resource_key", ctx.practitionerId) : query)
         .order("starts_at", { ascending: true })
         .order("id", { ascending: true })
-        .range(from, to),
-    ),
+        .range(from, to);
+    }),
   ]);
   // A blockout read that failed is not "no blockouts", and a reservation read
   // that failed is not "nothing is booked" — that one would generate open times
@@ -412,6 +435,7 @@ export async function loadPublicSlotsByDate(
         openTime,
         closeTime,
         reservations: dayReservations,
+        excludeReservation: ctx.excludeReservation,
       }),
       now,
     );

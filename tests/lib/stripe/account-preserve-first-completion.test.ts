@@ -46,6 +46,8 @@ const h = vi.hoisted(() => ({
   settings: { kind: "zero_row" } as SettingsOutcome,
   // Stripe side
   accountRetrieveThrows: false,
+  returnedAccountId: "acct_test" as string | undefined,
+  retrieveCalls: [] as string[],
   chargesEnabled: true,
   // RPC side
   syncErr: null as { code: string; message: string } | null,
@@ -64,12 +66,13 @@ vi.mock("@/lib/stripe/server", () => ({
   inferStripeLivemode: () => h.livemode,
   getStripe: () => ({
     accounts: {
-      retrieve: async () => {
+      retrieve: async (accountId: string) => {
+        h.retrieveCalls.push(accountId);
         if (h.accountRetrieveThrows) {
           throw new Tripwire("stripe unreachable");
         }
         return {
-          id: "acct_test",
+          id: h.returnedAccountId,
           charges_enabled: h.chargesEnabled,
           payouts_enabled: true,
           requirements: { currently_due: [], eventually_due: [], disabled_reason: null },
@@ -136,6 +139,8 @@ beforeEach(() => {
   h.livemode = true;
   h.settings = { kind: "zero_row" };
   h.accountRetrieveThrows = false;
+  h.returnedAccountId = "acct_test";
+  h.retrieveCalls = [];
   h.chargesEnabled = true;
   h.syncErr = null;
   h.rpcCalls = [];
@@ -248,5 +253,28 @@ describe("scoping is exact", () => {
     await call();
     expect(syncCall()?.args.p_studio_id).toBe(STUDIO);
     expect(syncCall()?.args.p_stripe_livemode).toBe(true);
+  });
+});
+
+
+describe("owner refresh verifies retrieved account identity before any local status", () => {
+  it.each(["acct_other", undefined])("returned id %s refuses before preserve read and status synchronization", async (id) => {
+    h.returnedAccountId = id;
+    await expect(refreshAccountStatusFromStripe({ studioId: STUDIO, stripeAccountId: "acct_test" }))
+      .rejects.toThrow("Could not refresh status from Stripe. Try again.");
+    expect(h.retrieveCalls).toEqual(["acct_test"]);
+    expect(h.reads).toEqual([]);
+    expect(h.rpcCalls).toEqual([]);
+  });
+  it("correct identity retains one same SDK request and legitimate first-completion synchronization", async () => {
+    h.settings = { kind: "row", completedAt: null };
+    const result = await refreshAccountStatusFromStripe({ studioId: STUDIO, stripeAccountId: "acct_test" });
+    expect(result.chargesEnabled).toBe(true);
+    expect(h.retrieveCalls).toEqual(["acct_test"]);
+    expect(h.rpcCalls).toHaveLength(1);
+    expect(h.rpcCalls[0]).toMatchObject({ name: "sync_studio_account_status", args: {
+      p_studio_id: STUDIO, p_stripe_account_id: "acct_test", p_stripe_livemode: h.livemode,
+    } });
+    expect(h.rpcCalls[0].args.p_onboarding_completed_at).toEqual(expect.any(String));
   });
 });
