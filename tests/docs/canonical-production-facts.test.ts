@@ -495,24 +495,49 @@ export async function coveredSince(
 
 /**
  * A3 with receipts: every first-parent commit after the pin whose own diff is
- * runtime-bearing is covered by a receipt that says runtime:true. Only asked
- * when runtimeChangedSince is non-empty, so A3's unchanged fast path decides
- * every case it decided before.
+ * runtime-bearing is covered by a receipt that says runtime:true AND lies
+ * after the recorded Current Git branch HEAD. Only asked when
+ * runtimeChangedSince is non-empty, so A3's unchanged fast path decides every
+ * case it decided before.
+ *
+ * Coverage is bounded by the recorded HEAD, exactly as A5's is (Privacy peer
+ * review of #1052, F1). A receipt is read from its merge's own tree, so it
+ * keeps "covering" after a record refresh deletes the file. Without this bound
+ * a refresh could move the recorded HEAD past a runtime merge, leave the pin
+ * behind, and A3 would pass for ever. A refresh that records past a runtime
+ * merge must move the pin too, so a runtime-bearing commit in
+ * pin..recordedHEAD fails here whatever receipt it carries.
  */
 export async function runtimeCoveredSince(
   g: Git,
   pinned: string,
+  recorded: string,
   target: string,
   late: readonly PendingReceipt[],
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   const listed = g("rev-list", "--first-parent", `${pinned}..${target}`);
   if (listed === null) return { ok: false, reason: "the first-parent history cannot be listed" };
+  // Fail closed: if the recorded HEAD is not in production's history, nothing
+  // counts as lying after it.
+  const afterRecorded = new Set(
+    g("merge-base", "--is-ancestor", recorded, target) === null
+      ? []
+      : (g("rev-list", "--first-parent", `${recorded}..${target}`) ?? "").split("\n").filter(Boolean),
+  );
   for (const c of listed.split("\n").filter(Boolean)) {
     const parent = g("rev-parse", "-q", "--verify", `${c}^1`);
     if (parent === null) return { ok: false, reason: `${c.slice(0, 8)} has no inspectable first parent` };
     const shipped = await runtimeChangedSince(g, parent, c);
     if (shipped === null) return { ok: false, reason: `${c.slice(0, 8)}'s changed paths cannot be read` };
     if (shipped.length === 0) continue;
+    if (!afterRecorded.has(c)) {
+      return {
+        ok: false,
+        reason:
+          `${c.slice(0, 8)} ships ${JSON.stringify(shipped.slice(0, 6))} but lies at or before the recorded ` +
+          `Current Git branch HEAD ${recorded.slice(0, 8)}: the refresh that recorded past it must also move the runtime pin`,
+      };
+    }
     const cov = await receiptCoverage(g, c, late);
     if (!cov.ok) return { ok: false, reason: `${c.slice(0, 8)} ships ${JSON.stringify(shipped.slice(0, 6))} and is not covered: ${cov.reason}` };
   }
@@ -560,11 +585,31 @@ function loadLateReceipts(target: string | null): PendingReceipt[] {
       if (text !== null) texts.set(`production:${f}`, text);
     }
   }
+  return collectLateReceipts(texts);
+}
+
+/**
+ * The late receipts among `texts` (keyed by where each was read). Once a
+ * receipt is on production, every checkout that contains it reads the SAME
+ * receipt twice, from the checkout and from production; that is one receipt,
+ * not two (Privacy peer review of #1052, F2: A5 refused a1164b9b as "named by
+ * 2 late receipts" on #1052's own post-merge push). Identical receipts naming
+ * one merge are de-duplicated; two DIFFERENT receipts naming one merge are both
+ * kept, so receiptCoverage still refuses them as ambiguous.
+ */
+export function collectLateReceipts(texts: ReadonlyMap<string, string>): PendingReceipt[] {
+  const seen = new Set<string>();
   const out: PendingReceipt[] = [];
   for (const [where, text] of texts) {
     const parsed = parseReceipt(text);
     if (!parsed.ok) throw new Error(`pending-release receipt ${where} is malformed: ${parsed.reason}`);
-    if (parsed.receipt.merge) out.push(parsed.receipt);
+    const r = parsed.receipt;
+    if (!r.merge) continue;
+    // Canonical identity: every field, in a fixed order, migrations sorted.
+    const key = JSON.stringify([r.pr, r.merge, r.runtime, [...r.migrations].sort(), r.release_receipt]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
   }
   return out;
 }
@@ -2134,7 +2179,14 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
     // after the pin is acceptable only when every runtime-bearing merge since
     // the pin is receipt-covered with runtime:true. An empty diff is decided
     // exactly as before, without consulting receipts.
-    const covered = deployed.length === 0 ? null : await runtimeCoveredSince(git, pinned as string, target, loadLateReceipts(target));
+    // Coverage only counts after the recorded Current Git branch HEAD (F1).
+    const recordedHead = currentGitHeadSha();
+    const covered =
+      deployed.length === 0
+        ? null
+        : recordedHead === null
+          ? ({ ok: false, reason: "current-state records no Current Git branch HEAD to bound coverage" } as const)
+          : await runtimeCoveredSince(git, pinned as string, recordedHead, target, loadLateReceipts(target));
     freshnessVerdict(
       "A3",
       deployed.length === 0 || covered?.ok === true,
@@ -4236,10 +4288,11 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
     run(["commit", "-qm", "baseline"]);
     let n = 0;
     /** Merge a PR branch carrying `files` into prod as GitHub would title it. */
-    const land = (pr: number, files: Record<string, string>, opts: { at?: number; mv?: [string, string] } = {}) => {
+    const land = (pr: number, files: Record<string, string>, opts: { at?: number; mv?: [string, string]; rm?: string[] } = {}) => {
       const br = `b${++n}`;
       clock += 60;
       run(["checkout", "-q", "-b", br, "prod"]);
+      for (const f of opts.rm ?? []) run(["rm", "-q", f]);
       if (opts.mv) {
         mkdirSync(path.dirname(path.join(dir, opts.mv[1])), { recursive: true });
         run(["mv", opts.mv[0], opts.mv[1]]);
@@ -4285,7 +4338,7 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
     const prod = r.land(12, { "app/page.tsx": "v2\n", [file(12)]: receipt(12, true) });
     expect(recordOnlySince(r.g, pinned, prod).ok).toBe(false); // old A5: red
     expect(await runtimeChangedSince(r.g, pinned, prod)).toEqual(["app/page.tsx"]); // old A3: red
-    expect(await runtimeCoveredSince(r.g, pinned, prod, [])).toEqual({ ok: true });
+    expect(await runtimeCoveredSince(r.g, pinned, pinned, prod, [])).toEqual({ ok: true });
     const since = await coveredSince(r.g, pinned, prod, []);
     expect(since).toEqual({ ok: true, commits: 1, covered: [prod] });
     expect(coveredLag(r.g, (since as { covered: string[] }).covered, prod)).toEqual({ ok: true }); // A7 counts it
@@ -4298,20 +4351,20 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
     const a5 = await coveredSince(r.g, pinned, prod, []);
     expect(a5.ok).toBe(false);
     expect((a5 as { reason: string }).reason).toMatch(/has no receipt/);
-    expect((await runtimeCoveredSince(r.g, pinned, prod, [])).ok).toBe(false);
+    expect((await runtimeCoveredSince(r.g, pinned, pinned, prod, [])).ok).toBe(false);
     // Twin: the same merge WITH its receipt is covered, so the absence is the cause.
     const t = receiptRepo();
     const tPinned = t.head();
     const tProd = t.land(1042, { "lib/stripe/account.ts": "guard\n", [file(1042)]: receipt(1042, true) });
     expect((await coveredSince(t.g, tPinned, tProd, [])).ok).toBe(true);
-    expect((await runtimeCoveredSince(t.g, tPinned, tProd, [])).ok).toBe(true);
+    expect((await runtimeCoveredSince(t.g, tPinned, tPinned, tProd, [])).ok).toBe(true);
   });
 
   it("N2. a receipt that says runtime:false for a merge that ships lib/x.ts is a lie: A3 and A5 red", async () => {
     const r = receiptRepo();
     const pinned = r.head();
     const prod = r.land(21, { "lib/x.ts": "x\n", [file(21)]: receipt(21, false) });
-    const a3 = await runtimeCoveredSince(r.g, pinned, prod, []);
+    const a3 = await runtimeCoveredSince(r.g, pinned, pinned, prod, []);
     expect(a3.ok).toBe(false);
     expect((a3 as { reason: string }).reason).toMatch(/receipt says runtime:false, but its diff is runtime:true/);
     expect((await coveredSince(r.g, pinned, prod, [])).ok).toBe(false);
@@ -4472,6 +4525,49 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
     expect(a5).toMatch(/await coveredSince\(git, recorded as string, ref, loadLateReceipts\(ref\)\)/);
     const a3 = src.slice(src.indexOf("it(`A3${FRESHNESS_TAG}"), src.indexOf("it(\"A3's deployed decision"));
     expect(a3).toMatch(/deployed\.length === 0 \|\| covered\?\.ok === true/);
-    expect(a3).toMatch(/runtimeCoveredSince\(git, pinned as string, target, loadLateReceipts\(target\)\)/);
+    expect(a3).toMatch(/runtimeCoveredSince\(git, pinned as string, recordedHead, target, loadLateReceipts\(target\)\)/);
+  });
+
+  it("F1 (Privacy, #1052 peer review): a refresh that moves the recorded HEAD past a runtime merge but leaves the pin FAILS A3", async () => {
+    // Privacy's construction, step for step.
+    const r = receiptRepo();
+    const P = r.head(); // 1. recorded HEAD = pin = P
+    const M1 = r.land(100, { "app/page.tsx": "v2\n", [file(100)]: receipt(100, true) }); // 2. truthful runtime merge
+    expect((await runtimeCoveredSince(r.g, P, P, M1, [])).ok).toBe(true); //    covered while it is after the recorded HEAD
+    // 3. record refresh: recorded HEAD -> M1, 100.json deleted, pin NOT moved
+    const R = r.land(101, { "docs/production/current-state.md": "head=M1 pin=P\n" }, { rm: [file(100)] });
+    // 4. A5 and A7 pass with recorded HEAD = M1 ...
+    const a5 = await coveredSince(r.g, M1, R, []);
+    expect(a5.ok).toBe(true);
+    expect(coveredLag(r.g, (a5 as { covered: string[] }).covered, R)).toEqual({ ok: true });
+    // ... but A3 must not: M1 ships runtime at or before the recorded HEAD.
+    expect(await runtimeChangedSince(r.g, P, R)).toEqual(["app/page.tsx"]);
+    const a3 = await runtimeCoveredSince(r.g, P, M1, R, []);
+    expect(a3.ok).toBe(false);
+    expect((a3 as { reason: string }).reason).toMatch(/lies at or before the recorded Current Git branch HEAD/);
+    // 5. a later truthful runtime merge after the refresh does not rescue the stale pin.
+    const M2 = r.land(102, { "lib/x.ts": "x\n", [file(102)]: receipt(102, true) });
+    expect((await runtimeCoveredSince(r.g, P, M1, M2, [])).ok).toBe(false);
+    // Twin: the same refresh that ALSO moves the pin to M1 passes (only M2 is after the recorded HEAD, and it is covered).
+    expect(await runtimeCoveredSince(r.g, M1, M1, M2, [])).toEqual({ ok: true });
+  });
+
+  it("F2 (Privacy, #1052 peer review): the same late receipt read from the checkout AND production counts once", async () => {
+    const r = receiptRepo();
+    const recorded = r.head();
+    const prod = r.land(110, { ".github/workflows/ci.yml": "ci\n" }); // landed without a receipt
+    const text = receipt(110, false, [], prod);
+    // Once the receipt is on production, a checkout that contains it reads it twice.
+    const both = new Map([[`checkout:110.json`, text], [`production:110.json`, `${JSON.stringify(JSON.parse(text), null, 2)}\n`]]);
+    const loaded = collectLateReceipts(both);
+    expect(loaded).toHaveLength(1);
+    expect(await coveredSince(r.g, recorded, prod, loaded)).toEqual({ ok: true, commits: 1, covered: [prod] });
+    // Two DIFFERENT receipts naming one merge are still ambiguous and still fail.
+    const differ = new Map([[`checkout:110.json`, text], [`production:110.json`, receipt(110, true, [], prod)]]);
+    const two = collectLateReceipts(differ);
+    expect(two).toHaveLength(2);
+    const out = await coveredSince(r.g, recorded, prod, two);
+    expect(out.ok).toBe(false);
+    expect((out as { reason: string }).reason).toMatch(/named by 2 late receipts/);
   });
 });
