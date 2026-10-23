@@ -1,4 +1,5 @@
 import { buildPostcareEmail } from "@/lib/email/templates/postcare";
+import { emailBookingReference } from "@/lib/email/booking-reference";
 import { PostcareSendButton } from "@/app/(app)/calendar/PostcareSendButton";
 
 // THE postcare preview + send/status surface, one implementation, two mounts.
@@ -68,6 +69,7 @@ export function PostcareSection(props: {
     productRecommendationsText: props.productRecommendationsText,
     reviewUrl: props.reviewUrl,
     reviewPromptText: props.reviewPromptText,
+    bookingReference: emailBookingReference(props.appointmentId),
   });
 
   const aftercareConfigured =

@@ -22,6 +22,7 @@ function studioFacing(
   overrides: Partial<Parameters<typeof buildCancellationEmail>[0]> = {},
 ) {
   return buildCancellationEmail({
+    bookingReference: "K3M9QX",
     recipientName: "Willow Electrolysis",
     clientName: "Chloe Vemuri LE",
     studioName: "Willow Electrolysis",
@@ -64,10 +65,10 @@ describe("cancellationActorSummary: name with role, or role-only fallback", () =
 
 describe("practitioner-facing cancellation email: the reported example", () => {
   const out = studioFacing(); // client actor, named
-  it("subject names the actor + service + month/day", () => {
-    expect(out.subject).toBe(
-      "Appointment cancelled by Chloe Vemuri LE: 90 minute session on July 21",
-    );
+  // SUBJECT RULE (#828): role only, no name, service or date in the subject.
+  it("subject says who cancelled by role, without name, service or date", () => {
+    expect(out.subject).toMatch(/^Appointment cancelled by the client · /);
+    expect(out.subject).not.toMatch(/Chloe|90 minute|July/);
   });
   it("body shows Client, Cancelled by (name and role), Original time, Service+duration, Reason", () => {
     expect(out.text).toContain("Client: Chloe Vemuri LE");
@@ -95,32 +96,33 @@ describe("actor role is attributed correctly for every path", () => {
       role: "client",
       name: "Chloe Vemuri LE",
       expectSummary: "Chloe Vemuri LE (Client)",
-      expectSubject: "Appointment cancelled by Chloe Vemuri LE: 90 minute session on July 21",
+      expectSubject: "Appointment cancelled by the client · ",
     },
     {
       role: "practitioner",
       name: "Dr. Alex Kim",
       expectSummary: "Dr. Alex Kim (Practitioner)",
-      expectSubject: "Appointment cancelled by Dr. Alex Kim: 90 minute session on July 21",
+      expectSubject: "Appointment cancelled by the practitioner · ",
     },
     {
       role: "owner",
       name: "Sam Owner",
       expectSummary: "Sam Owner (Studio owner)",
-      expectSubject: "Appointment cancelled by Sam Owner: 90 minute session on July 21",
+      expectSubject: "Appointment cancelled by the studio owner · ",
     },
     {
       role: "system",
       name: "Hone",
       expectSummary: "Hone (System)",
-      expectSubject: "Appointment cancelled by Hone: 90 minute session on July 21",
+      expectSubject: "Appointment cancelled by the system · ",
     },
   ];
   for (const c of cases) {
     it(`${c.role}: "Cancelled by: ${c.expectSummary}"`, () => {
       const out = studioFacing({ actorName: c.name, actorRole: c.role });
       expect(out.text).toContain(`Cancelled by: ${c.expectSummary}`);
-      expect(out.subject).toBe(c.expectSubject);
+      expect(out.subject.startsWith(c.expectSubject)).toBe(true);
+      expect(out.subject).not.toContain(c.name);
     });
   }
 });
@@ -130,16 +132,12 @@ describe("missing-name fallback", () => {
     const out = studioFacing({ actorName: null, actorRole: "client" });
     expect(out.text).toContain("Cancelled by: Client");
     expect(out.text).not.toMatch(/Cancelled by: Client \(/); // no dangling separator
-    expect(out.subject).toBe(
-      "Appointment cancelled by the client: 90 minute session on July 21",
-    );
+    expect(out.subject).toMatch(/^Appointment cancelled by the client · /);
   });
   it("practitioner with no name → 'Cancelled by: Practitioner'", () => {
     const out = studioFacing({ actorName: "  ", actorRole: "practitioner" });
     expect(out.text).toContain("Cancelled by: Practitioner");
-    expect(out.subject).toBe(
-      "Appointment cancelled by the practitioner: 90 minute session on July 21",
-    );
+    expect(out.subject).toMatch(/^Appointment cancelled by the practitioner · /);
   });
 });
 

@@ -65,10 +65,10 @@ describe("last_seen_at touch: failure visibility", () => {
     expect(hits.length).toBe(2);
   });
 
-  it("the failure log carries the session id (safe identifier)", () => {
-    expect(SESSION_CODE).toMatch(
-      /portal_session_last_seen_update_failed",\s*\n?\s*sessionId: data\.id/,
-    );
+  it("the failure log withholds the session identifier and error text", () => {
+    const touch = SESSION_CODE.slice(SESSION_CODE.indexOf("void admin"), SESSION_CODE.indexOf("return {\n    id: data.id"));
+    expect(touch).not.toMatch(/sessionId:|message:|err:/);
+    expect(touch).toContain("code: touchError.code");
   });
 
   it("the failure log does NOT include the raw token, its hash, or email", () => {

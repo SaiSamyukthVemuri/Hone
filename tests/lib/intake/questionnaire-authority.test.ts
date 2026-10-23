@@ -6,6 +6,7 @@ import {
   PRACTITIONER_ENTERABLE_STEPS,
   TOTAL_STEPS,
   isAnswerProvided,
+  findInvalidChoiceAnswers,
   isConditionalSatisfied,
   isValidIntakeDate,
   isValidIntakeEmail,
@@ -14,6 +15,38 @@ import {
   visibleQuestionsForStep,
   type Question,
 } from "@/lib/intake/questions";
+import { reviewAnswerState, REVIEW_ANSWER_COPY, yesNoAnswerLabel } from "@/lib/intake/review-answers";
+
+describe("CLN-004 canonical yes/no answers", () => {
+  const question = INTAKE_STEPS.flatMap((s) => s.questions).find((q) => q.key === "has_allergies")!;
+
+  it.each(["maybe", "YES", "No", " yes ", true, false, 1, {}, ["no"]])(
+    "refuses noncanonical answer %j instead of treating it as a negative",
+    (value) => {
+      expect(findInvalidChoiceAnswers({ has_allergies: value })).toContain("has_allergies");
+      expect(reviewAnswerState(question, { has_allergies: value }, "submitted")).toBe("unrecognized");
+      expect(yesNoAnswerLabel(value)).toBe("Unknown (unrecognized answer)");
+    },
+  );
+
+  it.each(["yes", "no"])("accepts canonical %s without relabelling history", (value) => {
+    expect(findInvalidChoiceAnswers({ has_allergies: value })).not.toContain("has_allergies");
+    expect(reviewAnswerState(question, { has_allergies: value }, "submitted")).toBe("answered");
+    expect(yesNoAnswerLabel(value)).toBe(value === "yes" ? "Yes" : "No");
+  });
+
+  it("keeps incomplete drafts and missing historic answers distinct from invalid answers", () => {
+    for (const value of [undefined, null, "", "  "]) {
+      expect(findInvalidChoiceAnswers({ has_allergies: value })).not.toContain("has_allergies");
+    }
+    expect(reviewAnswerState(question, {}, "in_progress")).toBe("unanswered");
+    expect(reviewAnswerState(question, {}, "submitted")).toBe("not_collected");
+    expect(REVIEW_ANSWER_COPY).toHaveProperty("unrecognized", "Unknown (unrecognized answer)");
+    expect(yesNoAnswerLabel(undefined)).toBe("Not answered");
+    const conditional = INTAKE_STEPS.flatMap((s) => s.questions).find((q) => q.key === "requires_epipen")!;
+    expect(reviewAnswerState(conditional, { has_allergies: "no", requires_epipen: "maybe" }, "reviewed")).toBe("not_applicable");
+  });
+});
 
 // PARITY GUARD for the shared questionnaire authority.
 //

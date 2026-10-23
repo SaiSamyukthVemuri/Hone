@@ -11,6 +11,7 @@ import {
 } from "@/lib/email/studio-identity";
 import { buildPortalMessageNotificationEmail } from "@/lib/email/templates/portal-message-notification";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { safeLog } from "@/lib/logging/safe-log";
 
 const SUBJECT_MIN = 1;
 const SUBJECT_MAX = 160;
@@ -21,7 +22,7 @@ const BODY_MAX = 5000;
 // notification_email_error column. We never store the full error
 // payload; the column is for the practitioner UI to surface a
 // "send failed" badge, not for ops triage. A separate sanitized
-// console.error captures the operator-side detail.
+// safeLog.error (record ids removed, #828 G-26) captures the operator-side detail.
 //
 // Invariant: this function ALWAYS returns a non-empty string when
 // called from a failure branch. The practitioner card distinguishes
@@ -108,11 +109,10 @@ export async function createPortalMessageAction(
     .eq("studio_id", studio.id)
     .maybeSingle();
   if (clientErr) {
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "portal_message_client_lookup_failed",
         code: clientErr.code,
-        message: clientErr.message,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -139,7 +139,7 @@ export async function createPortalMessageAction(
     .select("id")
     .single();
   if (insertErr || !created) {
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "portal_message_insert_failed",
         code: insertErr?.code,
@@ -193,7 +193,7 @@ export async function createPortalMessageAction(
       emailSent = true;
     } else {
       emailErrorString = shortError(sendResult.error);
-      console.error(
+      safeLog.error(
         JSON.stringify({
           event: "portal_message_email_send_failed",
           messageId: created.id,
@@ -224,7 +224,7 @@ export async function createPortalMessageAction(
     .eq("id", created.id)
     .eq("studio_id", studio.id);
   if (stampErr) {
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "portal_message_notification_stamp_failed",
         messageId: created.id,
@@ -272,7 +272,7 @@ export async function markPortalReplySeenAction(
     .eq("client_id", clientId)
     .is("practitioner_seen_at", null);
   if (error) {
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "portal_reply_mark_seen_failed",
         code: error.code,
@@ -321,7 +321,7 @@ export async function archivePortalMessageAction(
     .eq("studio_id", studio.id)
     .eq("client_id", clientId);
   if (error) {
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event: "portal_message_archive_failed",
         messageId,

@@ -7,10 +7,11 @@ import {
   INTERNAL_SLOT_PACKING,
   type Slot,
 } from "@/lib/booking/slots";
+import { safeLog } from "@/lib/logging/safe-log";
 
 function logBookingSlotError(stage: string, code: string | undefined): void {
   // Bounded PHI-free marker only, never the raw DB/PostgREST message.
-  console.error(`booking_slot_db_error:${stage}:${code ?? "unknown"}`);
+  safeLog.error(`booking_slot_db_error:${stage}:${code ?? "unknown"}`);
 }
 
 // Part 4 Item 6: target-aware internal slot loader. An OWNER of a capacity-ON
@@ -85,24 +86,31 @@ export async function fetchSlotsForClientBookingAction(params: {
     target = params.practitionerId;
   }
 
-  const slots = await getAvailableSlots(
-    supabase,
-    {
-      id: studio.id,
-      timezone: studio.timezone,
-      default_appointment_duration_minutes:
-        studio.default_appointment_duration_minutes,
-      buffer_minutes: studio.buffer_minutes,
-      practitioner_capacity_enabled: studio.practitioner_capacity_enabled,
-    },
-    params.date,
-    service.default_duration_minutes,
-    undefined,
-    // Legacy (flag off) ignores the id → studio-wide, exactly as today.
-    capacityOn ? target : null,
-    INTERNAL_SLOT_PACKING,
-  );
-  return { ok: true, slots };
+  // A failed read is a retryable refusal, never empty/free availability.
+  try {
+    const slots = await getAvailableSlots(
+      supabase,
+      {
+        id: studio.id,
+        timezone: studio.timezone,
+        default_appointment_duration_minutes:
+          studio.default_appointment_duration_minutes,
+        buffer_minutes: studio.buffer_minutes,
+        practitioner_capacity_enabled: studio.practitioner_capacity_enabled,
+      },
+      params.date,
+      service.default_duration_minutes,
+      undefined,
+      // Legacy (flag off) ignores the id → studio-wide, exactly as today.
+      capacityOn ? target : null,
+      INTERNAL_SLOT_PACKING,
+    );
+    return { ok: true, slots };
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.startsWith("availability_read_failed:")) throw err;
+    logBookingSlotError("availability", undefined);
+    return { ok: false, error: "Could not load times. Please try again.", code: "could_not_load_times" };
+  }
 }
 
 export type EligiblePractitioner = { id: string; displayName: string };

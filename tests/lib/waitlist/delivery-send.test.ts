@@ -38,6 +38,14 @@ import type {
   WaitlistSendOutcome,
 } from "@/lib/email/new-client-waitlist-send";
 
+// The email subject sweep appends a per-event reference (lib/email/subject-reference.ts):
+// the wording below is unchanged, and the reference is checked for its shape.
+const SUBJECT_REF = / · Ref [2-9A-HJKMNP-Z]{6}$/;
+function withoutRef(subject: string): string {
+  expect(subject).toMatch(SUBJECT_REF);
+  return subject.replace(SUBJECT_REF, "");
+}
+
 // WAIT DELIVERY-01. Every send below goes through an INJECTED transport that
 // records its arguments and returns a canned result. Nothing in this file can
 // reach a provider: the real client is never constructed, because `transport`
@@ -125,7 +133,7 @@ describe("invitation delivery", () => {
       ...INV_BASE,
       transport,
     });
-    expect(calls[0].payload.subject).toBe(
+    expect(withoutRef(calls[0].payload.subject)).toBe(
       "Your invitation to book a consultation with Willow Electrolysis",
     );
     // And in the body, ahead of the link, in both renderings.
@@ -150,7 +158,7 @@ describe("invitation delivery", () => {
       ...INV_BASE,
       transport,
     });
-    expect(calls[0].payload.subject).toBe("Your invitation to book");
+    expect(withoutRef(calls[0].payload.subject)).toBe("Your invitation to book");
     expect(calls[0].payload.text).not.toMatch(/consultation with\s*$/m);
     expect(calls[0].payload.text).not.toContain("available at .");
   });

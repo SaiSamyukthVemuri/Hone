@@ -50,6 +50,7 @@ function baseConfirmation(overrides: Partial<{ preCareInstructions: string | nul
     intakeUrl: null,
     preCareInstructions: overrides.preCareInstructions ?? null,
     treatmentTimeLine: null,
+    bookingReference: "K3M9QX",
   };
 }
 
@@ -151,6 +152,7 @@ const reminderFixture = (preCareInstructions: string | null) => ({
   rescheduleUrl: null,
   preCareInstructions,
   treatmentTimeLine: null,
+  bookingReference: "K3M9QX",
 });
 
 describe("reminder emails stay on the editable-only path", () => {
@@ -247,6 +249,7 @@ describe("Settings -> Services exposes the editable Pre-appointment instructions
       // referralSourceLabel field; null here keeps the prep
       // assertion focused on the prep block, not on attribution.
       referralSourceLabel: null,
+      bookingReference: "K3M9QX",
     });
     expect(out.html).toContain("60-minute electrolysis");
   });

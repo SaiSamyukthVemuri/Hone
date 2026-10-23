@@ -62,7 +62,7 @@ git add -A                     # 1. stage everything, including new files
 git diff --cached --check      # 2. whitespace / conflict markers
 git status --porcelain         # 3. confirm no untracked file was omitted
 git commit -m "..."            # 4. commit
-git status --porcelain         # 5. must be empty (bar the allowlist below)
+git status --porcelain         # 5. must be empty
 git diff HEAD --exit-code      # 6. must be empty — commit == tree
 npm run verify:prepush         # 7. all of the above, mechanically
 git push                       # 8. push
@@ -78,8 +78,12 @@ git push                       # 8. push
 
 It installs no Git hook and mutates nothing. Run it explicitly.
 
-**Documented local-only allowlist** (never commit these):
-`supabase/config.toml` — local E2E stack config, untracked by CLI convention.
+**`supabase/config.toml` is tracked** (on production since `b2f20466`, 2026-08-02)
+and is not a local-only file. Preserve the tracked production config; never edit
+it, or `e2e/helpers/local-env.ts` ports, for a test run. Local test-stack
+overrides belong in an owned separate workdir, with the run-scoped pair
+`E2E_SUPABASE_URL` + `HONE_LOCAL_DB_URL` (#879, #885; see §5 *Local test-stack
+isolation*).
 
 ---
 
@@ -303,14 +307,36 @@ before assuming the diff broke something.**
 | validate (typecheck/lint/build/unit) | 8 min |
 | db integration | 8 min |
 | targeted browser shard (×3) | target ~6 min · **hard timeout 15 min** |
-| extended browser shard (×4) | target <10 min · **hard timeout 18 min** |
-| nightly browser shard (×4) | hard timeout 15 min |
+| extended browser shard (×4) | target <10 min · **hard timeout 25 min** |
+| nightly browser shard (×4) | hard timeout 25 min (same quarter-suite as extended) |
+| nightly payment / Google · mobile | hard timeout 18 min · 15 min |
 | payment browser e2e (fake stripe) | target ~10 min · **hard timeout 18 min** |
-| Google / mobile | 10 min each |
+| Google / mobile | 15 min / 12 min |
 
 ---
 
 ## 5. Production safety
+
+### Local test-stack isolation
+
+Before mutating DB/browser tests, verify one run-scoped target: source SHA,
+Supabase project/container, API and SQL endpoints, and the existing app/mail
+and outbound guards. Read back the CLI/container mapping; adjacent port numbers
+alone do not establish that two services belong to the same stack.
+
+Use the current paired-target guard in `e2e/helpers/local-env.ts` (#879).
+`vitest.db.config.ts` imports it before test collection, including for SQL-only
+suites. Set `E2E_SUPABASE_URL` and `HONE_LOCAL_DB_URL` together for an owned
+isolated stack. Do not rewrite tracked helper ports, skip the guard, or use a
+stale branch that lacks it. Raw GoTrue admin `fetch` calls are writes too.
+
+The config guard checks startup endpoints; it does not sandbox arbitrary test
+code or prove physical container identity. For a containment repair, prove
+API-only/SQL-only/cross-stack refusal and a valid owned pair, then compare the
+frozen shared stack before/after the affected run and require zero delta.
+One named owner controls resets. Shared-stack cleanup uses a verified exact-ID
+manifest, preserved evidence, rollback dry run and measured execution receipt;
+never a blanket reset or email-domain deletion.
 
 - No production write or migration without explicit, per-change authorization.
 - Read-only production SQL is `supabase db query --linked`. Never `db execute`.
@@ -341,6 +367,21 @@ before assuming the diff broke something.**
   checkout sets `persist-credentials: false`. No workflow holds write
   credentials. A new workflow that genuinely needs one declares **job-level**
   `permissions:` rather than widening the top-level block.
+- **One sanctioned credential (D7b, Sam, 2026-10-22).** Anonymous image pulls
+  were throttled on both `ghcr.io` and `public.ecr.aws`, so each
+  Supabase-starting job logs in to `ghcr.io` with its own token through the
+  SHA-pinned `docker/login-action`, and only those jobs declare job-level
+  `permissions: { contents: read, packages: read }`. That exact shape is the
+  only credential use `tests/ci/ci-config.test.ts` exempts; any other token,
+  scope, registry or secret is still refused. The login is held across ONE
+  step only: a direct pinned-CLI `supabase start` (no checked-out script), then
+  an `if: always()` `docker logout ghcr.io`. A failed start falls through to a
+  single credential-free retry step, where `supabase-start-bind-retry.sh
+  --after-failed-start` retries once only on the port-bind signature in the
+  first start's log. No step that runs a package manager, node or a
+  repository script (`npm ci` included) may precede the login in its job, so no
+  PR-controlled process exists while the credential does (Codex P2 4353990804,
+  4354172124, 4354428027).
 - Codex exact-head review (`npm run eng -- status <pr>`) is **operator-side**. Do
   not wire it into a workflow: it needs a GitHub API credential, which is exactly
   what the posture above removes.
