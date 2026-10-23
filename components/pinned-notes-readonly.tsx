@@ -10,9 +10,12 @@ export function PinnedNotesReadonly({ notes }: { notes: ClientPinnedNote[] }) {
       <h2 className="text-xs font-semibold uppercase tracking-wider text-amber-900 dark:text-amber-200">
         Pinned notes
       </h2>
-      <ul className="mt-2 flex flex-col gap-1.5 text-sm text-amber-950 dark:text-amber-100">
+      {/* HON-9: wrap long notes in place. Without break-words + min-w-0 a long
+          unbroken note (a URL, a run of characters) pushed the appointment page
+          sideways on a phone instead of wrapping. */}
+      <ul className="mt-2 flex min-w-0 flex-col gap-1.5 text-sm text-amber-950 dark:text-amber-100">
         {notes.map((n) => (
-          <li key={n.id} className="whitespace-pre-wrap">
+          <li key={n.id} className="min-w-0 whitespace-pre-wrap break-words">
             {n.text}
           </li>
         ))}

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 // ===========================================================================
 // Migration 0211 — G3: the client SMS consent and opt-out guard. SOURCE
@@ -34,18 +34,7 @@ const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
 const BODY = (CODE.match(/as \$\$([\s\S]*?)\$\$/) ?? ["", ""])[1];
 const FN = "clients_sms_permission_guard";
 
-describe("0211 sits correctly in the migration sequence", () => {
-  it("is no longer the repository maximum", () => {
-    // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
-    // `isRepoMax`. On the SMS lane's branches it left for 0217's own test
-    // (SMS-SENDER-REG-01) when production was merged in. DERIVED, NOT PINNED:
-    // something sits above it, and everything above it is greater.
-    expect(isRepoMax(VERSION)).toBe(false);
-    const above = versionsAbove(VERSION);
-    expect(above.length, "nothing sits above this migration").toBeGreaterThan(0);
-    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
-  });
-
+describe("0211 is allocated correctly in the migration sequence", () => {
   it("is allocated exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);
   });

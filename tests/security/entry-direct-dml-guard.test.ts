@@ -519,7 +519,10 @@ describe("L18 Phase 4 — command-bound table direct DML guard", () => {
   });
 
   it("16. the three 0168 image commands are called, and the reads are untouched", () => {
-    const src = readFileSync("app/(app)/clients/[id]/images/actions.ts", "utf8");
+    const src =
+      readFileSync("app/(app)/clients/[id]/images/actions.ts", "utf8") +
+      // Signing moved to the shared signer (Codex P1 4307807754).
+      readFileSync("app/(app)/clients/[id]/images/sign-treatment-image.ts", "utf8");
     for (const cmd of [
       "create_treatment_image_metadata",
       "set_treatment_image_note",

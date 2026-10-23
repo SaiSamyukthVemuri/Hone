@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
+  useRef,
   useState,
   useTransition,
   type ChangeEvent,
@@ -16,6 +18,10 @@ import {
   updateTreatmentImageNoteAction,
 } from "./actions";
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
+import { Button, buttonClasses } from "@/components/ui/button";
+import { createPhotoPreviewController, type PhotoPreviewState } from "@/lib/images/photo-preview-controller";
+import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
+import { useReturnFocus } from "@/components/use-return-focus";
 import {
   validateTreatmentImageUpload,
 } from "@/lib/images/treatment-images";
@@ -149,13 +155,14 @@ function PhotoNoteEditor({
             {note}
           </p>
         ) : null}
-        <button
-          type="button"
+        <Button
+          variant="quiet"
+          size="sm"
           onClick={startEdit}
-          className="mt-1 text-xs font-medium text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+          className="mt-1"
         >
           {note ? "Edit note" : "Add note"}
-        </button>
+        </Button>
       </div>
     );
   }
@@ -168,25 +175,26 @@ function PhotoNoteEditor({
         maxLength={TREATMENT_NOTE_MAX_LENGTH}
         rows={2}
         placeholder="Add a note for this photo…"
-        className="w-full rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+        className="min-h-[44px] w-full rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
       />
       <div className="mt-1 flex items-center gap-2">
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="sm"
           onClick={save}
-          disabled={pending}
-          className="rounded-md bg-neutral-900 px-3 py-1 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+          pending={pending}
+          busyLabel="Saving…"
         >
           {pending ? "Saving…" : "Save"}
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={cancel}
           disabled={pending}
-          className="rounded-md border border-neutral-300 px-3 py-1 text-xs text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-200"
         >
           Cancel
-        </button>
+        </Button>
       </div>
       {error && (
         <p className="mt-1 text-xs text-red-700" role="alert">
@@ -228,18 +236,37 @@ export function TreatmentImagesManager({
 
   // In-app larger preview modal.
   const [modal, setModal] = useState<Row | null>(null);
-  const [modalUrl, setModalUrl] = useState<string | null>(null);
-  const [modalLoading, setModalLoading] = useState(false);
-  const [modalError, setModalError] = useState(false);
+  const [preview, setPreview] = useState<PhotoPreviewState | null>(null);
+  const previewOpener = useRef<HTMLElement | null>(null);
+  const { anchorRef: galleryFocusRef, arm: returnToGallery } = useReturnFocus<HTMLDivElement>(modal !== null);
+  const previewRequests = useRef<ReturnType<typeof createPhotoPreviewController> | null>(null);
+  if (!previewRequests.current) {
+    previewRequests.current = createPhotoPreviewController({
+      request: (imageId) => getTreatmentImageSignedUrlAction({ imageId }),
+      write: setPreview,
+    });
+  }
+  // Never render a URL/error/loading result under another image's metadata.
+  const currentPreview = preview?.imageId === modal?.id ? preview : null;
+  const modalUrl = currentPreview?.url ?? null;
+  const modalLoading = currentPreview?.status === "loading";
+  const modalError = currentPreview?.status === "error";
 
-  useEffect(() => {
-    if (!modal) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setModal(null);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [modal]);
+  useEffect(() => () => previewRequests.current?.dispose(), []);
+
+  const closePreview = useCallback(() => {
+    // Label refresh can replace GridPhoto's opener. Use the existing settled-
+    // close handoff only then; ordinary close still restores the real opener.
+    if (previewOpener.current && !previewOpener.current.isConnected) returnToGallery();
+    previewRequests.current?.close();
+    setModal(null);
+  }, [returnToGallery]);
+
+  const { panelRef } = useDialogKeyboard<HTMLDivElement>({
+    open: modal !== null,
+    busy: false, // A read-only preview may always close, including during signing.
+    onClose: closePreview,
+  });
 
   function onPick(e: ChangeEvent<HTMLInputElement>) {
     setError(null);
@@ -336,18 +363,10 @@ export function TreatmentImagesManager({
   // Open the larger in-app preview. Lazily mints a FRESH signed URL via the
   // existing server action (which re-checks practitioner/studio ownership), so
   // the larger view works even if the grid's pre-signed URL has expired.
-  async function openPreview(img: Row) {
+  function openPreview(img: Row) {
+    previewOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setModal(img);
-    setModalUrl(null);
-    setModalError(false);
-    setModalLoading(true);
-    const res = await getTreatmentImageSignedUrlAction({ imageId: img.id });
-    setModalLoading(false);
-    if (!res.ok) {
-      setModalError(true);
-      return;
-    }
-    setModalUrl(res.url);
+    void previewRequests.current?.open(img.id);
   }
 
   async function onArchive(id: string) {
@@ -363,7 +382,7 @@ export function TreatmentImagesManager({
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div ref={galleryFocusRef} tabIndex={-1} role="region" aria-label="Treatment photos" className="flex flex-col gap-6">
       {/* Upload card: styled "Choose image" affordance over the native input. */}
       <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
@@ -392,7 +411,7 @@ export function TreatmentImagesManager({
                 ).map(([value, label]) => (
                   <label
                     key={value}
-                    className="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200"
+                    className="flex min-h-[44px] items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200"
                   >
                     <input
                       type="radio"
@@ -418,7 +437,7 @@ export function TreatmentImagesManager({
                       setCtxSessionId(e.target.value);
                       setCtxBlockId("");
                     }}
-                    className="w-full rounded-md border border-neutral-300 px-2 py-2 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+                    className="min-h-[44px] w-full rounded-md border border-neutral-300 px-2 py-2 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
                   >
                     <option value="">Select a session…</option>
                     {sessionOptions.map((s) => (
@@ -438,7 +457,7 @@ export function TreatmentImagesManager({
                     <select
                       value={ctxBlockId}
                       onChange={(e) => setCtxBlockId(e.target.value)}
-                      className="w-full rounded-md border border-neutral-300 px-2 py-2 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+                      className="min-h-[44px] w-full rounded-md border border-neutral-300 px-2 py-2 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
                     >
                       <option value="">Select a treatment area…</option>
                       {ctxBlocks.map((b) => (
@@ -473,17 +492,32 @@ export function TreatmentImagesManager({
           )}
 
           <div className="flex flex-wrap items-center gap-3">
-          <label className="cursor-pointer rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-900">
-            Choose images
-            <input
-              type="file"
-              name="file"
-              multiple
-              accept="image/jpeg,image/png,image/webp"
-              onChange={onPick}
-              className="sr-only"
-            />
-          </label>
+            <label className={buttonClasses({ className: "min-h-[44px] focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent" })}>
+              Take photo
+              <input
+                type="file"
+                name="cameraFile"
+                aria-label="Take a treatment photo"
+                accept="image/jpeg,image/png,image/webp"
+                capture="environment"
+                disabled={uploading}
+                onChange={onPick}
+                className="absolute inset-0 h-full min-h-[44px] w-full cursor-pointer opacity-0 disabled:cursor-wait"
+              />
+            </label>
+            <label className={buttonClasses({ className: "min-h-[44px] focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent" })}>
+              Choose images
+              <input
+                type="file"
+                name="file"
+                aria-label="Choose treatment images"
+                multiple
+                accept="image/jpeg,image/png,image/webp"
+                disabled={uploading}
+                onChange={onPick}
+                className="absolute inset-0 h-full min-h-[44px] w-full cursor-pointer opacity-0 disabled:cursor-wait"
+              />
+            </label>
           <span className="text-sm text-neutral-600 dark:text-neutral-300">
             {selectedFiles.length > 0 ? (
               <span className="font-medium">
@@ -494,17 +528,20 @@ export function TreatmentImagesManager({
               "No images chosen yet."
             )}
           </span>
-          <button
+          <Button
             type="submit"
-            disabled={uploading || selectedFiles.length === 0}
-            className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+            variant="primary"
+            size="md"
+            disabled={selectedFiles.length === 0}
+            pending={uploading}
+            busyLabel="Uploading…"
           >
             {uploading
               ? "Uploading…"
               : selectedFiles.length > 1
                 ? `Attach ${selectedFiles.length} images`
                 : "Attach image"}
-          </button>
+          </Button>
           </div>
           {fileResults.length > 0 && (
             <ul className="mt-3 flex flex-col gap-1">
@@ -560,11 +597,12 @@ export function TreatmentImagesManager({
               >
                 {/* PERF-IMG-03 + FETT thumbnail recovery: derivative first,
                     demote to the original, re-mint an EXPIRED URL once per
-                    variant (lib/images/grid-photo-recovery.ts). Keyed by the
-                    server URLs so fresh URLs from router.refresh() start the
-                    cell over. Availability still keys off the ORIGINAL. */}
+                    variant (lib/images/grid-photo-recovery.ts). The hook resets
+                    on fresh URLs; image identity keeps this opener mounted
+                    across router.refresh(). Availability keys off the ORIGINAL. */}
                 <GridPhoto
-                  key={`${img.id}:${img.previewUrl ?? ""}:${img.thumbUrl ?? ""}`}
+                  key={img.id}
+                  clientId={clientId}
                   imageId={img.id}
                   previewUrl={img.previewUrl}
                   thumbUrl={img.thumbUrl}
@@ -602,21 +640,24 @@ export function TreatmentImagesManager({
                   note={img.note}
                 />
                 <div className="flex gap-3 text-xs">
-                  <button
-                    type="button"
+                  <Button
+                    variant="quiet"
+                    size="sm"
                     onClick={() => openPreview(img)}
-                    className="underline hover:text-neutral-900 dark:hover:text-neutral-100"
+                    className="underline"
                   >
                     View larger
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="quiet"
+                    size="sm"
                     onClick={() => onArchive(img.id)}
-                    disabled={busyId === img.id}
-                    className="text-neutral-500 underline hover:text-neutral-900 disabled:opacity-60 dark:hover:text-neutral-100"
+                    pending={busyId === img.id}
+                    busyLabel="Archiving…"
+                    className="underline"
                   >
                     Archive
-                  </button>
+                  </Button>
                 </div>
               </div>
             );
@@ -632,10 +673,13 @@ export function TreatmentImagesManager({
           role="dialog"
           aria-modal="true"
           aria-label="Treatment photo preview"
-          onClick={() => setModal(null)}
+          onClick={closePreview}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
         >
           <div
+            ref={panelRef}
+            data-testid="photo-preview-panel"
+            tabIndex={-1}
             onClick={(e) => e.stopPropagation()}
             className="flex max-h-full w-full max-w-2xl flex-col overflow-auto rounded-lg bg-white p-4 dark:bg-neutral-900"
           >
@@ -672,14 +716,15 @@ export function TreatmentImagesManager({
                   note={modal.note}
                 />
               </div>
-              <button
-                type="button"
-                onClick={() => setModal(null)}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={closePreview}
                 aria-label="Close preview"
-                className="shrink-0 rounded-md border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                className="shrink-0"
               >
                 Close
-              </button>
+              </Button>
             </div>
             <div className="mt-3 flex min-h-[200px] items-center justify-center">
               {modalLoading ? (
@@ -687,9 +732,10 @@ export function TreatmentImagesManager({
               ) : modalUrl && !modalError ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
+                  key={`${modal.id}:${currentPreview?.generation}`}
                   src={modalUrl}
                   alt="Treatment photo"
-                  onError={() => setModalError(true)}
+                  onError={() => previewRequests.current?.onImageError(modal.id, currentPreview?.generation ?? -1)}
                   className="max-h-[70vh] w-auto rounded-md object-contain"
                 />
               ) : (

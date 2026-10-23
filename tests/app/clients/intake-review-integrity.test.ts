@@ -499,14 +499,23 @@ describe("F-CLIN-004 / 13. database errors are sanitized", () => {
     expect(row().status).toBe("submitted");
   });
 
-  it("logs the provider detail server-side only, with no client/intake identity", async () => {
+  it("omits review UPDATE diagnostic free text while preserving the fixed failure contract", async () => {
     state.rows = [submittedRow()];
-    state.failWith = { message: "permission denied for table", code: "42501" };
+    const diagnostic = "synthetic-patient@example.test private-intake-answer synthetic-token 604-555-0184";
+    state.failWith = { message: diagnostic, code: "42501" };
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    await markIntakeReviewedAction(fd());
-    const logged = spy.mock.calls.map((c) => String(c[0])).join("\n");
+    const result = await markIntakeReviewedAction(fd());
+    const calls = [...spy.mock.calls];
+    const logged = calls.map((c) => String(c[0])).join("\n");
     spy.mockRestore();
 
+    expect(result).toEqual({ ok: false, error: "Could not mark this intake reviewed. Please try again." });
+    expect(row().status).toBe("submitted");
+    expect(state.updates).toEqual([]);
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(logged)).toEqual({ event: "intake_review_update_failed", code: "42501", message: null, timestamp: expect.any(String) });
+    for (const value of [diagnostic, "synthetic-patient", "private-intake-answer", "synthetic-token", "604-555-0184"])
+      expect(logged).not.toContain(value);
     expect(logged).toMatch(/intake_review_update_failed/);
     expect(logged).toMatch(/42501/);
     // No identifiers, no answers, no notes in the log line.
@@ -732,15 +741,23 @@ describe("F-CLIN-004 / notes action hardening", () => {
     expect(r.reviewed_at).toBeNull();
   });
 
-  it("a raw DB error is never returned", async () => {
+  it("notes UPDATE errors omit raw diagnostic text from response and log", async () => {
     state.rows = [submittedRow()];
-    state.failWith = {
-      message: 'relation "public.client_intake_forms" does not exist',
-      code: "42P01",
-    };
+    const before = { ...row() };
+    const diagnostic = 'relation "public.client_intake_forms" does not exist: synthetic-patient@example.test private-notes-sentinel synthetic-token 604-555-0184';
+    state.failWith = { message: diagnostic, code: "42P01" };
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await saveIntakeNotesAction(fd());
+    const calls = [...spy.mock.calls];
     spy.mockRestore();
+
+    expect(row()).toEqual(before);
+    expect(state.updates).toEqual([]);
+    expect(revalidatePath).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(String(calls[0][0]))).toEqual({ event: "intake_notes_update_failed", code: "42P01", message: null, timestamp: expect.any(String) });
+    for (const text of [diagnostic, "synthetic-patient", "private-notes-sentinel", "synthetic-token", "604-555-0184"])
+      expect(JSON.stringify({ res, calls })).not.toContain(text);
 
     expect(res.ok).toBe(false);
     if (!res.ok) {

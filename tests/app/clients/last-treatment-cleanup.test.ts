@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { pickLastTreatment } from "@/lib/sessions/clinical-summary";
+import { orderByRecency } from "@/lib/sessions/charted-session";
+import { pickLastTreatment, pickNewestNonVoidSession } from "@/lib/sessions/clinical-summary";
 
 // PR #199: Last Treatment + charting redundancy + client info cleanup.
 //
@@ -42,25 +43,37 @@ const SUMMARY = read("components/last-session-summary.tsx");
 
 type Candidate = {
   id: string;
+  started_at: string;
+  record_status: string | null;
   electrolysis_entries: ReadonlyArray<unknown>;
   laser_entries: ReadonlyArray<unknown>;
 };
 
+// F3: `started_at` is now REQUIRED and is what establishes order. These fixtures
+// used to encode "newest" by array position alone, which is precisely the
+// assumption the selector no longer makes — it sorts by the shared recency rule
+// itself, so a caller cannot decide the winner by handing rows over in a
+// particular sequence.
 function session(
   id: string,
-  opts: { electro?: number; laser?: number } = {},
+  opts: { electro?: number; laser?: number; at?: string } = {},
 ): Candidate {
   return {
     id,
+    started_at: opts.at ?? "2026-01-01T10:00:00Z",
+    record_status: "draft",
     electrolysis_entries: Array.from({ length: opts.electro ?? 0 }, () => ({})),
     laser_entries: Array.from({ length: opts.laser ?? 0 }, () => ({})),
   };
 }
 
+const NEWER = "2026-03-10T10:00:00Z";
+const OLDER = "2026-01-10T10:00:00Z";
+
 describe("pickLastTreatment: most recent session with actual treatment details", () => {
   it("newest session has no entries/areas; the older charted session wins", () => {
-    const newestEmpty = session("new");
-    const olderCharted = session("old");
+    const newestEmpty = session("new", { at: NEWER });
+    const olderCharted = session("old", { at: OLDER });
     const blocks = new Map([["old", [{}, {}]]]);
     expect(pickLastTreatment([newestEmpty, olderCharted], blocks)).toBe(
       olderCharted,
@@ -68,8 +81,8 @@ describe("pickLastTreatment: most recent session with actual treatment details",
   });
 
   it("newest session has treatment areas; it wins", () => {
-    const newest = session("new");
-    const older = session("old");
+    const newest = session("new", { at: NEWER });
+    const older = session("old", { at: OLDER });
     const blocks = new Map([
       ["new", [{}]],
       ["old", [{}]],
@@ -79,25 +92,28 @@ describe("pickLastTreatment: most recent session with actual treatment details",
 
   it("no charted sessions at all returns null (empty state)", () => {
     expect(
-      pickLastTreatment([session("a"), session("b")], new Map()),
+      pickLastTreatment(
+        [session("a", { at: NEWER }), session("b", { at: OLDER })],
+        new Map(),
+      ),
     ).toBeNull();
   });
 
   it("legacy sessions qualify via raw electrolysis/laser entries", () => {
-    const newestEmpty = session("new");
-    const legacyElectro = session("e", { electro: 3 });
+    const newestEmpty = session("new", { at: NEWER });
+    const legacyElectro = session("e", { electro: 3, at: OLDER });
     expect(pickLastTreatment([newestEmpty, legacyElectro], new Map())).toBe(
       legacyElectro,
     );
-    const legacyLaser = session("l", { laser: 1 });
+    const legacyLaser = session("l", { laser: 1, at: OLDER });
     expect(pickLastTreatment([newestEmpty, legacyLaser], new Map())).toBe(
       legacyLaser,
     );
   });
 
   it("an empty blocks list does not count as charted", () => {
-    const newest = session("new");
-    const older = session("old", { electro: 1 });
+    const newest = session("new", { at: NEWER });
+    const older = session("old", { electro: 1, at: OLDER });
     const blocks = new Map([["new", [] as ReadonlyArray<unknown>]]);
     expect(pickLastTreatment([newest, older], blocks)).toBe(older);
   });
@@ -116,7 +132,21 @@ describe("Last treatment card (Sessions tab)", () => {
 
   it("a newer uncharted session is called out, not allowed to blank the card", () => {
     expect(PAGE).toMatch(/Most recent charted treatment/);
-    expect(PAGE).toMatch(/lastTreatment\.id !== sessions\[0\]\?\.id/);
+    expect(PAGE).toMatch(/const newestSession = pickNewestNonVoidSession\(sessionsByRecency\)/);
+    expect(PAGE).toMatch(/lastTreatment\.id !== newestSession\?\.id/);
+    expect(PAGE).not.toMatch(/lastTreatment\??\.id [!=]== sessions\[0\]\?\.id/);
+  });
+
+  it("a newer void row never announces an uncharted visit, but a live empty draft does", () => {
+    const treated = session("treated", { at: OLDER });
+    const newer = session("newer", { at: NEWER });
+    const voided = { ...newer, record_status: "void" };
+    expect(pickNewestNonVoidSession([treated, voided])?.id).toBe("treated");
+    // Old raw-row comparison would show the banner for this same void fixture.
+    expect(orderByRecency([treated, voided])[0]?.id).toBe("newer");
+    expect(pickNewestNonVoidSession([treated, newer])?.id).toBe("newer");
+    expect(pickNewestNonVoidSession([voided])).toBeUndefined();
+    expect(pickNewestNonVoidSession([{ ...treated, record_status: "finalized" }])?.id).toBe("treated");
   });
 
   it("empty state says no charted treatments yet; 'No entries logged' is gone", () => {
@@ -291,5 +321,48 @@ describe("Client info birthday row", () => {
     expect(skin).toBeGreaterThan(allergies);
     expect(info).toBeGreaterThan(skin);
     expect(pricing).toBeGreaterThan(info);
+  });
+});
+
+
+describe("latest-session banner uses shared recency", () => {
+  it("does not invent an uncharted newer session from a tied charted row", () => {
+    const a = session("a", { electro: 1 });
+    const b = session("b", { electro: 1 });
+    for (const rows of [[a, b], [b, a]]) {
+      expect(pickLastTreatment(rows, new Map())?.id).toBe(orderByRecency(rows)[0]?.id);
+    }
+  });
+
+  it("still distinguishes a genuinely newer empty session", () => {
+    const charted = session("a", { electro: 1 });
+    const empty = session("b", { at: "2026-01-02T10:00:00Z" });
+    const rows = [charted, empty];
+    expect(pickLastTreatment(rows, new Map())?.id).toBe("a");
+    expect(orderByRecency(rows)[0]?.id).toBe("b");
+  });
+});
+
+
+describe("profile candidate bounds follow shared recency", () => {
+  it("sorts before taking the bounded window and keeps the block-read windows nested", () => {
+    expect(PAGE).toMatch(/const sessionsByRecency = orderByRecency\(sessions\)/);
+    expect(PAGE).toMatch(/const recentSessions = sessionsByRecency\.slice\(0, 25\)/);
+    expect(PAGE).toMatch(/sessionsByRecency\.slice\(0, 200\)\.map/);
+  });
+
+  it("keeps the greater-ID charted winner at the 25/26 boundary in either query order", () => {
+    const newerEmpty = Array.from({ length: 24 }, (_, i) => session(`empty-${i}`, { at: "2026-02-01T10:00:00Z" }));
+    const a = session("a", { electro: 1 });
+    const b = session("b", { electro: 1 });
+    const retiredWindow = [...newerEmpty, a, b].slice(0, 25);
+    expect(pickLastTreatment(retiredWindow, new Map())?.id).toBe("a");
+    for (const tied of [[a, b], [b, a]]) {
+      const ordered = orderByRecency([...newerEmpty, ...tied]);
+      const candidates = ordered.slice(0, 25);
+      expect(pickLastTreatment(candidates, new Map())?.id).toBe("b");
+      expect(candidates.map((s) => s.id)).toContain("b");
+      expect(candidates.every((s) => ordered.slice(0, 200).includes(s))).toBe(true);
+    }
   });
 });

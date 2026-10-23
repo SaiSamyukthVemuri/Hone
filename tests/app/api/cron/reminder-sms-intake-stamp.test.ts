@@ -23,11 +23,16 @@ const h = vi.hoisted(() => {
   const state = {
     claim: "claimed" as "claimed" | "not_claimed" | "error",
     intakeStatus: "in_progress",
+    liveClient: { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_opted_out_at: null } as { phone: string | null; sms_consent_at: string | null; sms_opted_out_at: string | null },
+    liveClientId: "client-1",
+    liveSwitch: true,
+    liveReadError: false,
+    liveReads: [] as Array<Filter[]>,
     rpcs: [] as Array<{ fn: string; args: Record<string, unknown> }>,
     intakeUpdates: [] as Array<Record<string, unknown>>,
   };
   const APPT = {
-    id: "appt-1",
+    id: "00000000-0000-4000-8000-000000000001",
     studio_id: "studio-1",
     client_id: "client-1",
     status: "confirmed",
@@ -57,6 +62,7 @@ const h = vi.hoisted(() => {
   function query(table: string) {
     const filters: Filter[] = [];
     let patch: Record<string, unknown> | null = null;
+    let columns = "";
     const answer = () => {
       if (patch) {
         state.intakeUpdates.push(patch);
@@ -67,7 +73,8 @@ const h = vi.hoisted(() => {
       return { data: table === "appointments" && sms24 ? [APPT] : [], error: null };
     };
     const b: Record<string, unknown> = {};
-    for (const m of ["select", "order", "limit"]) b[m] = () => b;
+    for (const m of ["order", "limit", "abortSignal"]) b[m] = () => b;
+    b.select = (selected: string) => { columns = selected; return b; };
     for (const op of ["eq", "is", "lt", "gte", "lte"]) {
       b[op] = (column: string, value: unknown) => {
         filters.push([op, column, value]);
@@ -79,13 +86,21 @@ const h = vi.hoisted(() => {
       patch = p;
       return b;
     };
-    b.maybeSingle = () =>
-      Promise.resolve(
+    b.maybeSingle = () => {
+      if (columns.includes("client_id")) {
+        state.liveReads.push(filters);
+        return Promise.resolve({ data: state.liveReadError ? null : {
+          status: "confirmed", client_id: state.liveClientId, client: state.liveClient,
+          studio: { send_24h_sms_reminders: state.liveSwitch, send_2h_sms_reminders: state.liveSwitch },
+        }, error: state.liveReadError ? { message: "PRIVATE live read failure" } : null });
+      }
+      return Promise.resolve(
         table === "client_intake_forms"
           ? // The cron's live intake read (id, status) and the stamp's count read.
             { data: { id: "intake-1", status: state.intakeStatus, intake_link_send_count: 1 }, error: null }
           : { data: { status: "confirmed" }, error: null },
       );
+    };
     b.then = (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
       Promise.resolve(answer()).then(resolve, reject);
     return b;
@@ -109,6 +124,14 @@ const h = vi.hoisted(() => {
   return { state, admin };
 });
 
+
+vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/cron/reminder-scan-coordinator")>();
+  return { ...actual, createUpstashReminderScanCoordinator: () => ({
+    acquire: async () => "offline-fixture", rotation: async () => ({ version: 1 as const, next: "email24h" as const, known: [] }),
+    checkpoint: async () => null, renew: async () => true, save: async () => true, release: async () => undefined,
+  }) };
+});
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => h.admin }));
 vi.mock("@/lib/cron/auth", () => ({ isAuthorizedCronRequest: () => true }));
 vi.mock("@/lib/cron/reminder-heartbeat", () => ({ recordReminderRunSuccess: () => Promise.resolve() }));
@@ -131,6 +154,8 @@ const answer = (status: number, body: unknown) => () =>
   Promise.resolve(new Response(JSON.stringify(body), { status }));
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-08T17:00:00.000Z"));
   for (const k of ENV_KEYS) saved[k] = process.env[k];
   delete process.env.VERCEL_ENV;
   process.env.TWILIO_ACCOUNT_SID = `AC${"1".repeat(32)}`;
@@ -140,6 +165,9 @@ beforeEach(() => {
   process.env.INTAKE_SIGNING_SECRET = "reminder-sms-intake-stamp-fixture".padEnd(48, "x");
   h.state.claim = "claimed";
   h.state.intakeStatus = "in_progress";
+  h.state.liveClient = { phone: "604-555-0199", sms_consent_at: "2026-09-01T00:00:00Z", sms_opted_out_at: null };
+  h.state.liveClientId = "client-1"; h.state.liveSwitch = true; h.state.liveReadError = false;
+  h.state.liveReads = [];
   h.state.rpcs = [];
   h.state.intakeUpdates = [];
   fetchMock = vi.fn(answer(201, { sid: SID }));
@@ -148,6 +176,7 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   for (const k of ENV_KEYS) {
@@ -220,6 +249,13 @@ describe("NOT stamped: the link never left Hone, or the message did not carry it
   ] as const) {
     it(`a skipped send: ${label}`, async () => {
       h.state.claim = claim;
+      if (claim === "error") {
+        const response = await GET(new Request("https://hone.care/api/cron/appointment-reminders"));
+        expect(response.status).toBe(500);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(h.state.intakeUpdates).toEqual([]);
+        return;
+      }
       const { sms24 } = await run();
       expect(fetchMock).not.toHaveBeenCalled();
       expect(sms24).toMatchObject({ attempted: 0, skipped: 1, intakeCtaIncluded: 0 });
@@ -241,4 +277,33 @@ describe("NOT stamped: the link never left Hone, or the message did not carry it
       expect(h.state.intakeUpdates).toEqual([]);
     });
   }
+});
+
+
+describe("MSG-005: queued SMS uses current recipient eligibility", () => {
+  it.each(["STOP", "revoked consent", "missing phone", "switch disabled", "client reassigned", "read unavailable"] as const)("refuses %s after candidate selection, before claim/transport", async (change) => {
+    if (change === "STOP") h.state.liveClient.sms_opted_out_at = "2026-10-09T16:00:00Z";
+    if (change === "revoked consent") h.state.liveClient.sms_consent_at = null;
+    if (change === "missing phone") h.state.liveClient.phone = null;
+    if (change === "switch disabled") h.state.liveSwitch = false;
+    if (change === "client reassigned") h.state.liveClientId = "different-client";
+    if (change === "read unavailable") h.state.liveReadError = true;
+    const { sms24, recorded } = await run();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(h.state.rpcs).toEqual([]);
+    expect(recorded).toEqual([]);
+    expect(h.state.intakeUpdates).toEqual([]);
+    expect(sms24).toMatchObject({ attempted: 0, skipped: 1 });
+    expect(h.state.liveReads).toEqual([[ ["eq", "id", "00000000-0000-4000-8000-000000000001"], ["eq", "studio_id", "studio-1"] ]]);
+  });
+
+  it("dispatches only to the current phone, never the queued destination", async () => {
+    h.state.liveClient.phone = "+16045550188";
+    const { sms24 } = await run();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0]?.[1] as { body?: unknown };
+    expect(new URLSearchParams(String(init.body)).get("To")).toBe("+16045550188");
+    expect(sms24).toMatchObject({ attempted: 1, succeeded: 1 });
+    expectStampedOnce();
+  });
 });

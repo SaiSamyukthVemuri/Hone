@@ -68,7 +68,7 @@ const DUPLICATE_ATTEMPT_ERROR =
 
 function logInternal(event: string, detail: unknown) {
   try {
-    console.error(
+    safeLog.error(
       JSON.stringify({
         event,
         detail,
@@ -76,7 +76,7 @@ function logInternal(event: string, detail: unknown) {
       }),
     );
   } catch {
-    console.error(event, detail);
+    safeLog.error(event, detail);
   }
 }
 
@@ -103,8 +103,9 @@ export async function prepareManualFeeChargeAction(
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     practitionerId = practitioner.id;
     studioId = studio.id;
-  } catch (err) {
-    logInternal("manual_fee_prepare_auth_failed", { err: String(err) });
+  } catch {
+    // Identity errors may quote sensitive values; safeLog removes UUIDs only.
+    logInternal("manual_fee_prepare_auth_failed", {});
     return { ok: false, error: NOT_AUTHORIZED_ERROR };
   }
 
@@ -501,6 +502,7 @@ export async function cancelManualFeeChargeAttemptAction(
 // ---------------------------------------------------------------------------
 import { sendPaymentChargeReceipt } from "@/lib/billing/payment-receipt";
 import { refundPaymentChargeAttempt } from "@/lib/billing/payment-refund";
+import { safeLog } from "@/lib/logging/safe-log";
 
 export type FeeReceiptActionResult = { ok: true } | { ok: false; error: string };
 
