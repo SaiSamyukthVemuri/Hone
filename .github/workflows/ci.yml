@@ -714,7 +714,7 @@ jobs:
     # minutes is still too slow and still worth investigating; it now reports
     # its own result instead of being cut mid-run and misread as a test failure.
     #
-    #   targeted  : target <10 min per shard, hard timeout 15 min  (3 shards)
+    #   targeted  : target <10 min per shard, hard timeout 19 min  (3 shards)
     #   extended  : target <10 min per shard, hard timeout 25 min  (4 shards)
     #
     # NEITHER CEILING MOVED WHEN TARGETED WAS SPLIT. The targeted lane was the
@@ -725,8 +725,15 @@ jobs:
     # ENG-003/004 run39713000378: cold setup12–12.6min before150–158tests;
     # 482 observed passes/4skips/0assertion failures before cancellation.
     # Worst measured projection22.15min + finiteheadroom => hard25.
-    # Keep target <10 min per shard and targeted hard15; investigate slow npm ci.
-    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 25 || 15 }}
+    # Keep target <10 min per shard; targeted hard15 held until 2026-10-23 (below); investigate slow npm ci.
+    # TARGETED 15 -> 19 (2026-10-23, Codex P2 4362256407 on #1059): the
+    # Playwright system-package install is now BOUNDED at a 6 min step ceiling
+    # (scripts/ci/playwright-system-deps.sh, worst case 325 s), and every job
+    # must clear that ceiling on top of its own time. Targeted measured 11.2 min
+    # no-stall p90; 11.2 + 6 + 1 margin = 18.2 > 15. Before the bound, an apt
+    # stall (up to 11.3 min) cancelled targeted shards outright. The TARGET is
+    # unchanged; only the failure ceiling moves, by the bounded install's size.
+    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 25 || 19 }}
     strategy:
       fail-fast: false
       matrix:
@@ -819,12 +826,39 @@ jobs:
 
       - name: Install Playwright Chromium (cache miss)
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
-      - name: Install Playwright system deps only (cache hit)
-        if: steps.pw-cache.outputs.cache-hit == 'true'
-        # Browser binaries come from the cache; only OS-level libs are needed.
-        run: npx playwright install-deps chromium
+      # System packages: CACHED per runner image + Playwright version and BOUNDED.
+      # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
+      # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
+      # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
+      # restores the cached .debs, cuts a stalled install off after its FIRST
+      # bound and retries once on archive.ubuntu.com under its RETRY bound. The
+      # bounds are defined ONLY in scripts/ci/playwright-system-deps.sh (never
+      # restated here; tests/ci/ci-config.test.ts derives the step ceiling from
+      # them). The save runs straight after, not in a post step that a failed or
+      # cancelled job would skip.
+      - name: Resolve runner image
+        id: img
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright system packages (bounded, .deb cache)
+        timeout-minutes: 6
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Record setup duration
         id: setup_done
@@ -1145,12 +1179,39 @@ jobs:
 
       - name: Install Playwright Chromium (cache miss)
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
-      - name: Install Playwright system deps only (cache hit)
-        if: steps.pw-cache.outputs.cache-hit == 'true'
-        # Browser binaries come from the cache; only OS-level libs are needed.
-        run: npx playwright install-deps chromium
+      # System packages: CACHED per runner image + Playwright version and BOUNDED.
+      # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
+      # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
+      # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
+      # restores the cached .debs, cuts a stalled install off after its FIRST
+      # bound and retries once on archive.ubuntu.com under its RETRY bound. The
+      # bounds are defined ONLY in scripts/ci/playwright-system-deps.sh (never
+      # restated here; tests/ci/ci-config.test.ts derives the step ceiling from
+      # them). The save runs straight after, not in a post step that a failed or
+      # cancelled job would skip.
+      - name: Resolve runner image
+        id: img
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright system packages (bounded, .deb cache)
+        timeout-minutes: 6
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Payment browser E2E (quick checkout, guarded fake Stripe)
         run: npm run test:e2e:payment
@@ -1191,8 +1252,13 @@ jobs:
       packages: read
     # run39713000378 mobile:3 observed passes before10min cancellation;
     # setup~10min + existing6-case phase~0.4min + finiteheadroom => hard12.
+    # 12 -> 15 (2026-10-23): run 39979564413 passed 6/6 and was cancelled at 12
+    # after an 8.4 min apt stall. Measured ~5.8 min p90 + the bounded install
+    # step's own ceiling (derived from scripts/ci/playwright-system-deps.sh's
+    # constants by tests/ci/ci-config.test.ts) + margin must fit. TARGET ~6 min
+    # is unchanged (CLAUDE.md section 4).
     # This ceiling is not a performance or physical-device acceptance target.
-    timeout-minutes: 12
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -1282,11 +1348,39 @@ jobs:
       - name: Install Playwright Chromium (cache miss)
         # Both projects (iPhone-profile + Pixel 5 control) run on Chromium.
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
-      - name: Install Playwright system deps only (cache hit)
-        if: steps.pw-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+      # System packages: CACHED per runner image + Playwright version and BOUNDED.
+      # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
+      # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
+      # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
+      # restores the cached .debs, cuts a stalled install off after its FIRST
+      # bound and retries once on archive.ubuntu.com under its RETRY bound. The
+      # bounds are defined ONLY in scripts/ci/playwright-system-deps.sh (never
+      # restated here; tests/ci/ci-config.test.ts derives the step ceiling from
+      # them). The save runs straight after, not in a post step that a failed or
+      # cancelled job would skip.
+      - name: Resolve runner image
+        id: img
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright system packages (bounded, .deb cache)
+        timeout-minutes: 6
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Mobile completion browser E2E (chromium iphone-profile + control)
         run: npm run test:e2e:mobile
@@ -1426,12 +1520,39 @@ jobs:
 
       - name: Install Playwright Chromium (cache miss)
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
-      - name: Install Playwright system deps only (cache hit)
-        if: steps.pw-cache.outputs.cache-hit == 'true'
-        # Browser binaries come from the cache; only OS-level libs are needed.
-        run: npx playwright install-deps chromium
+      # System packages: CACHED per runner image + Playwright version and BOUNDED.
+      # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
+      # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
+      # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
+      # restores the cached .debs, cuts a stalled install off after its FIRST
+      # bound and retries once on archive.ubuntu.com under its RETRY bound. The
+      # bounds are defined ONLY in scripts/ci/playwright-system-deps.sh (never
+      # restated here; tests/ci/ci-config.test.ts derives the step ceiling from
+      # them). The save runs straight after, not in a post step that a failed or
+      # cancelled job would skip.
+      - name: Resolve runner image
+        id: img
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright system packages (bounded, .deb cache)
+        timeout-minutes: 6
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Synthetic Google browser E2E (dual destination, guarded fake Google)
         run: npm run test:e2e:google
