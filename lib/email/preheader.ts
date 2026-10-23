@@ -32,20 +32,30 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
+// LENGTH IS PART OF THE GUARANTEE (Codex P1 4355048631). A client that strips
+// the filler, and a plain-text client, preview the preheader and then the body.
+// Sized only by the studio name, a one-character name (the minimum settings and
+// studio creation admit) left a preview window of body text. So every
+// preheader ends with this fixed neutral tail, which keeps the preheader alone
+// longer than the whole preview window (pinned, for the shortest admissible
+// name and for none, in tests/lib/email/preheader-minimum-necessary.test.ts).
+const PRIVACY_TAIL =
+  " For your privacy, the details of this message are not shown in this preview. They appear only when you open the message.";
+
 /** Neutral preheader for a client-facing email. */
 export function clientPreheader(studioName: string | null | undefined): string {
   const studio = studioName?.trim();
-  return studio
+  return (studio
     ? `A message from ${studio}. Open it to see the details.`
-    : "Open this message to see the details.";
+    : "Open this message to see the details.") + PRIVACY_TAIL;
 }
 
 /** Neutral preheader for a studio-facing (practitioner or owner) email. */
 export function studioPreheader(studioName: string | null | undefined): string {
   const studio = studioName?.trim();
-  return studio
+  return (studio
     ? `New activity at ${studio} in Hone. Open it to see the details.`
-    : "New activity in Hone. Open it to see the details.";
+    : "New activity in Hone. Open it to see the details.") + PRIVACY_TAIL;
 }
 
 // Zero-width and figure-space filler: renders as nothing, but fills the

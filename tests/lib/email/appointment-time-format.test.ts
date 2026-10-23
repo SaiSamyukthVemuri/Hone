@@ -43,6 +43,7 @@ function baseConfirmationFixture() {
     intakeUrl: null,
     preCareInstructions: null,
     treatmentTimeLine: null,
+    bookingReference: "K3M9QX",
   };
 }
 

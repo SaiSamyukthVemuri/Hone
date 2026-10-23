@@ -77,6 +77,10 @@ type ConfirmationToClient = {
   // far: 23h 45m · This will be session 19" or "This will be Sarah's
   // first electrolysis session".
   treatmentTimeLine: string | null;
+  // Codex P1 4355048639: a short non-sensitive per-booking label
+  // (lib/email/booking-reference.ts), so a client's confirmations for
+  // different bookings do not thread together.
+  bookingReference: string;
 };
 
 export function buildClientConfirmationEmail(p: ConfirmationToClient): {
@@ -91,7 +95,8 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
   // the client's name, the service, or the appointment date or time. Those
   // stay in the body. The studio name is allowed: the From line already
   // shows it.
-  const subject = `Your appointment with ${p.studioName} is confirmed`;
+  const ref = p.bookingReference.trim();
+  const subject = `Your appointment with ${p.studioName} is confirmed · Ref ${ref}`;
   const safeStudio = escapeHtml(p.studioName);
   const safeService = escapeHtml(p.serviceName);
   const safePract = p.practitionerName ? escapeHtml(p.practitionerName) : null;
@@ -165,6 +170,9 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
         </td></tr>`
             : ""
         }
+        <tr><td style="padding-bottom:16px; font-family:-apple-system, system-ui, sans-serif; font-size:12px; color:#6B6B6B;">
+          Booking reference: ${escapeHtml(ref)}
+        </td></tr>
         <tr><td style="padding-top:24px; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">
           Hone &middot; Charting software for electrolysis and laser practitioners
         </td></tr>
@@ -189,6 +197,8 @@ ${p.intakeUrl ? `\nBefore your appointment, please complete your health intake f
 ${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}
 Need to cancel? ${p.cancellationUrl}
 ${p.portalLoginUrl ? `\nView your forms, appointments, and care instructions in your secure client portal:\n${p.portalLoginUrl}\n` : ""}
+Booking reference: ${ref}
+
 Hone. Charting software for electrolysis and laser practitioners.
 hone.care
 `;

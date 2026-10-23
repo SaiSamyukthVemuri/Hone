@@ -21,9 +21,11 @@ vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: async () => {} }));
 
 import { notifyAppointmentMoved, type MoveNotificationKind } from "@/lib/email/notify-appointment-moved";
 
-const STUDIO = "Synthetic Studio";
+// Codex P1 4355048631: run at the shortest admissible studio name (one
+// non-blank character; see preheader-minimum-necessary.test.ts) and a usual one.
+const STUDIO_NAMES = ["Q", "Synthetic Studio"];
 
-function admin() {
+function admin(STUDIO: string) {
   const row = {
     id: "appt",
     starts_at: "2031-03-04T20:45:00Z",
@@ -40,13 +42,13 @@ function admin() {
   return { from: () => chain } as never;
 }
 
-describe("appointment moved email: the preview names only the studio", () => {
+describe.each(STUDIO_NAMES)("appointment moved email, studio %j: the preview names only the studio", (STUDIO) => {
   beforeEach(() => {
     sent.length = 0;
   });
 
   it.each<MoveNotificationKind>(["moved", "reassigned", "moved_and_reassigned"])("%s", async (kind) => {
-    const status = await notifyAppointmentMoved(admin(), {
+    const status = await notifyAppointmentMoved(admin(STUDIO), {
       appointmentId: "appt",
       studioId: "studio",
       appOrigin: "https://hone.care",
@@ -57,8 +59,9 @@ describe("appointment moved email: the preview names only the studio", () => {
     const { subject, html, text } = sent[0];
     const expected = clientPreheader(STUDIO);
     const preview = simulatedPreview(html);
-    expect(preview.startsWith(expected)).toBe(true);
-    expect(previewLeaks(subject, preview.slice(expected.length)), preview).toEqual([]);
+    const rest = expected.startsWith(preview) ? "" : preview.startsWith(expected) ? preview.slice(expected.length) : null;
+    expect(rest, preview).not.toBeNull();
+    expect(previewLeaks(subject, rest ?? ""), preview).toEqual([]);
     expect(previewLeaks(subject, plainTextPreview(text)), text).toEqual([]);
     // The details are still in the body, after the opening.
     expect(text).toMatch(/Synthetic Upper Lip Electrolysis/);

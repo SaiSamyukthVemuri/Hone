@@ -50,6 +50,7 @@ function baseConfirmation(overrides: Partial<{ preCareInstructions: string | nul
     intakeUrl: null,
     preCareInstructions: overrides.preCareInstructions ?? null,
     treatmentTimeLine: null,
+    bookingReference: "K3M9QX",
   };
 }
 

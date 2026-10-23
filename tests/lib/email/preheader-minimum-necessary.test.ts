@@ -23,6 +23,7 @@ import { buildIntakeRequestEmail } from "@/lib/email/templates/intake-request";
 import { buildIntakeReminderEmail } from "@/lib/email/templates/intake-reminder";
 import {
   FORBIDDEN,
+  PREVIEW_CHARS,
   plainTextPreview,
   previewLeaks,
   previewWindow,
@@ -48,25 +49,19 @@ import {
 
 const CLIENT = "Zephyrine Synthetic-Client";
 const SERVICE = "Synthetic Upper Lip Electrolysis";
-const STUDIO = "Synthetic Studio";
+// Codex P1 4355048631: the preview guarantee must not depend on the studio
+// name's length. The SHORTEST name the product admits is one non-blank
+// character: settings (app/(app)/settings/studio/actions.ts:39-41) and studio
+// creation (lib/studios/new-studio.ts:83-84) only require a trimmed, non-empty
+// name, and studios.name has no length CHECK (0001). Every case runs at that
+// minimum, at the usual length and at a long name.
+const SHORTEST_STUDIO = "Q";
+const DEFAULT_STUDIO = "Synthetic Studio";
+const LONG_STUDIO = "Synthetic Studio of the Northern Riverside Wellness Collective";
+const STUDIO_NAMES = [SHORTEST_STUDIO, DEFAULT_STUDIO, LONG_STUDIO];
 const TZ = "America/Toronto";
 const START = new Date("2031-03-04T20:45:00Z");
 const END = new Date("2031-03-04T21:30:00Z");
-const reminderProps = {
-  clientName: CLIENT,
-  studioName: STUDIO,
-  studioAddress: null,
-  practitionerName: "Synthetic Practitioner",
-  serviceName: SERVICE,
-  durationMinutes: 45,
-  startsAt: START,
-  endsAt: END,
-  timezone: TZ,
-  cancellationUrl: "https://hone.care/cancel/tok_SYNTH",
-  rescheduleUrl: null,
-  preCareInstructions: null,
-  treatmentTimeLine: null,
-};
 
 type Case = [
   label: string,
@@ -74,7 +69,23 @@ type Case = [
   expected: string,
 ];
 
-const cases: Case[] = [
+function casesFor(STUDIO: string): Case[] {
+  const reminderProps = {
+    clientName: CLIENT,
+    studioName: STUDIO,
+    studioAddress: null,
+    practitionerName: "Synthetic Practitioner",
+    serviceName: SERVICE,
+    durationMinutes: 45,
+    startsAt: START,
+    endsAt: END,
+    timezone: TZ,
+    cancellationUrl: "https://hone.care/cancel/tok_SYNTH",
+    rescheduleUrl: null,
+    preCareInstructions: null,
+    treatmentTimeLine: null,
+  };
+  return [
   [
     "client confirmation",
     () =>
@@ -82,6 +93,7 @@ const cases: Case[] = [
         ...reminderProps,
         studioEmail: "studio@synthetic.invalid",
         intakeUrl: null,
+        bookingReference: "K3M9QX",
       }),
     clientPreheader(STUDIO),
   ],
@@ -214,7 +226,8 @@ const cases: Case[] = [
       }),
     clientPreheader(null),
   ],
-];
+  ];
+}
 
 // A client that DROPS the invisible filler (normalizes it away, as
 // simulatedPreview does) shows the neutral line followed directly by the start
@@ -224,8 +237,17 @@ const cases: Case[] = [
 // treatment fact come after it. There is no per-template allowance: a leak in
 // any template fails. A fact the subject itself states is not a second
 // disclosure (see previewLeaks).
-describe("every preheader-bearing template: the preview is the neutral preheader only", () => {
-  it.each(cases)("%s", (_label, build, expected) => {
+// When the neutral preheader is longer than the preview window, the window is
+// a PREFIX of it (nothing of the body can show); otherwise the window starts
+// with it and the remainder is checked.
+function afterPreheader(preview: string, preheader: string): string | null {
+  if (preheader.startsWith(preview)) return "";
+  if (preview.startsWith(preheader)) return preview.slice(preheader.length);
+  return null;
+}
+
+describe.each(STUDIO_NAMES)("every preheader-bearing template, studio %j: the preview is the neutral preheader only", (studioName) => {
+  it.each(casesFor(studioName))("%s", (_label, build, expected) => {
     const { html, subject } = build();
     // 1. The preheader is the first content of <body>, exactly once.
     const afterBody = html.slice(html.search(/<body\b[^>]*>/i)).replace(/^<body\b[^>]*>/i, "");
@@ -234,19 +256,21 @@ describe("every preheader-bearing template: the preview is the neutral preheader
     // 2. The simulated (filler-stripped) preview starts with exactly the
     //    neutral preheader, and nothing after it in that window leaks.
     const normalized = simulatedPreview(html);
-    expect(normalized.startsWith(expected)).toBe(true);
-    expect(previewLeaks(subject, normalized.slice(expected.length)), `filler-stripping preview of ${_label}: ${normalized}`).toEqual([]);
+    const rest = afterPreheader(normalized, expected);
+    expect(rest, `preview does not open with the preheader: ${normalized}`).not.toBeNull();
+    expect(previewLeaks(subject, rest ?? ""), `filler-stripping preview of ${_label}: ${normalized}`).toEqual([]);
     // 3. ...and the client's preview window holds nothing but it and filler.
     const window = previewWindow(html);
-    expect(window.startsWith(expected)).toBe(true);
-    expect(window.slice(expected.length)).toMatch(/^[\u2007\ufeff\u034f\s]*$/);
+    const windowRest = afterPreheader(window, expected);
+    expect(windowRest).not.toBeNull();
+    expect(windowRest ?? "").toMatch(/^[\u2007\ufeff\u034f\s]*$/);
     // 4. The preheader itself carries none of the forbidden facts.
     for (const re of FORBIDDEN) expect(expected).not.toMatch(re);
   });
 });
 
-describe("every preheader-bearing template: a plain-text client's preview leaks nothing", () => {
-  it.each(cases)("%s", (_label, build) => {
+describe.each(STUDIO_NAMES)("every preheader-bearing template, studio %j: a plain-text client's preview leaks nothing", (studioName) => {
+  it.each(casesFor(studioName))("%s", (_label, build) => {
     const { text, subject } = build();
     const preview = plainTextPreview(text);
     expect(previewLeaks(subject, preview), `text-part preview of ${_label}: ${preview}`).toEqual([]);
@@ -264,8 +288,18 @@ describe("helper", () => {
     expect(withPreheader("<p>x</p>", "P").startsWith("<div data-hone-preheader")).toBe(true);
   });
   it("the neutral copy names only the studio", () => {
-    expect(clientPreheader(STUDIO)).toBe(`A message from ${STUDIO}. Open it to see the details.`);
-    expect(clientPreheader("  ")).toBe("Open this message to see the details.");
-    expect(studioPreheader(null)).toBe("New activity in Hone. Open it to see the details.");
+    expect(clientPreheader(DEFAULT_STUDIO).startsWith(`A message from ${DEFAULT_STUDIO}. Open it to see the details.`)).toBe(true);
+    expect(clientPreheader("  ").startsWith("Open this message to see the details.")).toBe(true);
+    expect(studioPreheader(null).startsWith("New activity in Hone. Open it to see the details.")).toBe(true);
+  });
+  it("fills the whole preview window whatever the studio name's length (Codex P1 4355048631)", () => {
+    // Longer than the window by more than a word, so the whole-word cut can
+    // never reach the body even for the shortest admissible name.
+    for (const name of [SHORTEST_STUDIO, DEFAULT_STUDIO, LONG_STUDIO, null, "  "]) {
+      for (const p of [clientPreheader(name), studioPreheader(name)]) {
+        expect(p.length, JSON.stringify(p)).toBeGreaterThanOrEqual(PREVIEW_CHARS + 16);
+        for (const re of FORBIDDEN) expect(p).not.toMatch(re);
+      }
+    }
   });
 });
