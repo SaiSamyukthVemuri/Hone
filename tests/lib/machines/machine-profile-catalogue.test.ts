@@ -301,7 +301,7 @@ describe("the traps #829 names are absent by assertion", () => {
     expect(st250.frequency.kind).toBe("unverified");
   });
 
-  it("GEMM microamps never share a unit with ST 350 milliamps", () => {
+  it("GEMM current unit stays pending and never borrows ST 350 milliamps", () => {
     const gemm = findField(
       findMode(profileById("permanence-gemm:gemm-16")!, "galvanic")!,
       "current",
@@ -310,7 +310,9 @@ describe("the traps #829 names are absent by assertion", () => {
       findMode(profileById("silhouettone:evolution-st-350")!, "native")!,
       "galvanic_ma",
     )!;
-    expect(gemm.unit).toBe("µA");
+    expect(gemm.unit).toBe("device-display");
+    expect(gemm.verification).toBe("pending-evidence");
+    expect(gemm.unverified).toEqual(["unit", "decimals"]);
     expect(st350.unit).toBe("mA");
   });
 
@@ -369,7 +371,8 @@ describe("GEMM channel semantics", () => {
 
   it("records independently controlled channels, not a pulse or hair count", () => {
     const ch = gemm().channels!;
-    expect(ch.count).toBe(16);
+    expect(ch.verification).toBe("pending-evidence");
+    expect(ch.note).toMatch(/unverified legacy placeholder/);
     expect(ch.nativeLabel).toBe("Channel");
     expect(ch.note).toMatch(/not a pulse count/i);
   });
@@ -2445,6 +2448,13 @@ describe("readiness assesses the modes being PROPOSED, not every mode", () => {
     expect(review.ready, "the verified mode could not be offered").toBe(true);
   });
 
+  it("preserves a still-incomplete blocked mode beside the proposed active mode", () => {
+    const profile = { ...base(), modes: [goodMode("good"), incompleteMode("unfinished", "blocked")] };
+    const before = structuredClone(profile);
+    expect(activationReadiness(profile)).toEqual({ ready: true, blockers: [] });
+    expect(profile).toEqual(before);
+  });
+
   it("CONTROL: the same mode BLOCKED is a candidate and does contribute", () => {
     // `blocked` means "evidence incomplete", which is exactly what a reviewer
     // is asking about — so it must still be assessed. Without this control the
@@ -2501,11 +2511,8 @@ describe("an unsourced channel count is advisory, never refusing", () => {
   // refusing a true observation is a clinical record defect rather than a
   // safety feature.
   //
-  // WHAT THIS DOES NOT DO. It does not change the GEMM-16 contract, which
-  // declares its 16 channels `manufacturer-documented` and therefore still
-  // refuses. Whether that declaration overclaims its sources — the finding's
-  // actual complaint — is a SOURCE-EVIDENCE question escalated to Sam, not a
-  // code decision, and it is deliberately untouched here.
+  // GEMM now declares its unevidenced count pending; verified synthetic
+  // counts below remain refusal controls.
   const withChannels = (
     verification: "unverified" | "pending-evidence" | "manufacturer-documented" | "device-confirmed",
     count = 4,
@@ -2552,7 +2559,7 @@ describe("an unsourced channel count is advisory, never refusing", () => {
   }
 
   for (const strong of ["manufacturer-documented", "device-confirmed"] as const) {
-    it(`CONTROL: a ${strong} count still REFUSES — this is GEMM's case, unchanged`, () => {
+    it(`CONTROL: a ${strong} count still REFUSES`, () => {
       const out = readChannel(withChannels(strong), 7);
       expect(out.ok).toBe(false);
       if (out.ok) throw new Error("expected a refusal");
@@ -2582,17 +2589,11 @@ describe("an unsourced channel count is advisory, never refusing", () => {
     );
   });
 
-  it("and the real catalogue is UNAFFECTED by this change", () => {
-    // Stated as a test because it is the honest scope of the fix: exactly one
-    // profile carries a channel structure, and it declares itself documented,
-    // so nothing in MACHINE_CATALOGUE behaves differently today. This is a
-    // rule for future contracts and for the historical path, not a change to
-    // shipped data.
+  it("the real GEMM count is pending, as its cited sources require", () => {
     const withChannelStructures = MACHINE_CATALOGUE.filter((p) => p.channels);
     expect(withChannelStructures).toHaveLength(1);
-    expect(withChannelStructures[0]!.channels!.verification).toBe(
-      "manufacturer-documented",
-    );
+    expect(withChannelStructures[0]!.profileId).toBe("permanence-gemm:gemm-16");
+    expect(withChannelStructures[0]!.channels!.verification).toBe("pending-evidence");
   });
 });
 
@@ -2688,5 +2689,36 @@ describe("an INFERRED precision makes no precision claim", () => {
         `${id} no longer declares an unverified precision`,
       ).toBe(true);
     }
+  });
+});
+
+
+describe("GEMM source gaps remain visible on historical validation", () => {
+  const profile = profileById("permanence-gemm:gemm-16")!;
+  const reading = (channel: number) => validateReading({
+    profileId: profile.profileId, version: profile.version, modeKey: "galvanic",
+    fieldKey: "current", channel, value: { kind: "value", value: 1.234 },
+    source: "practitioner-entered",
+  }, { catalogue: [profile], allowNonOffered: true });
+
+  it("records a channel above the unsourced count with an evidence note, without a precision claim", () => {
+    const out = reading(17);
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error(out.message);
+    expect(out.field.unit).toBe("device-display");
+    expect(out.notes.map(n => n.code)).toContain("field_evidence_pending");
+    expect(out.notes.map(n => n.code)).toContain("channel_beyond_unverified_count");
+    expect(out.notes.map(n => String(n.code))).not.toContain("precision_beyond_contract");
+  });
+
+  it.each([0, -1, 1.5])("still refuses malformed channel %s", channel => {
+    expect(reading(channel)).toMatchObject({ ok: false, code: "channel_out_of_range" });
+  });
+
+  it("keeps current and count evidence gaps as activation blockers", () => {
+    const review = activationReadiness(profile);
+    expect(review.ready).toBe(false);
+    expect(review.blockers.join(" ")).toContain("current");
+    expect(review.blockers.join(" ")).toContain("channel structure");
   });
 });

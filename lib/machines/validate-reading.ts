@@ -396,13 +396,8 @@ export function validateReading(
     // for the regional variant, and the product entry records only that it is
     // a multiple-needle machine.
     //
-    // WHETHER 16 IS RIGHT IS A SOURCE QUESTION, escalated to Sam and NOT
-    // changed here. What is a code question is whether an unverified number
-    // may refuse, and the answer is the same one `ConstraintClass` already
-    // gives for ranges: only a constraint that is both established and
-    // undisputed may refuse input; everything else is advisory, because
-    // refusing a true observation is a clinical record defect rather than a
-    // safety feature.
+    // The GEMM count remains pending in the source ledger and is advisory.
+    // Only an established exact-model count can refuse an observation.
     const countQualifies =
       profile.channels.verification === "manufacturer-documented" ||
       profile.channels.verification === "device-confirmed";
