@@ -238,7 +238,7 @@ export default async function ClientCheatSheetPage({
     notFound();
   }
 
-  const { client, pricing, sessions, practitioners } = data;
+  const { client, pricing, sessions, practitioners, attributionRoster } = data;
   const sessionsByRecency = orderByRecency(sessions);
   const newestSession = pickNewestNonVoidSession(sessionsByRecency);
   // PR Willow launch fixes: surface past appointments that the
@@ -746,7 +746,7 @@ export default async function ClientCheatSheetPage({
   }
 
   const lastTreatmentPerformer = lastTreatment
-    ? sessionPerformerName(lastTreatment, practitioners)
+    ? sessionPerformerName(lastTreatment, attributionRoster)
     : null;
 
   // Overview "Last visit" card: derived from the SINGLE last session
@@ -1705,7 +1705,7 @@ export default async function ClientCheatSheetPage({
                   <SessionTimeline
                     clientId={client.id}
                     sessions={walkIns}
-                    practitioners={practitioners}
+                    practitioners={attributionRoster}
                   />
                 </div>
               </details>

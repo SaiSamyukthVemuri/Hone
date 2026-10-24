@@ -27,6 +27,7 @@ import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { formatClinicalDate } from "@/lib/clinical-notes/clinical-date";
+import { authorLabel } from "@/lib/attribution";
 import type {
   ClientClinicalNote,
   ClinicalNoteKind,
@@ -34,7 +35,7 @@ import type {
 } from "@/lib/types/database";
 
 export type ClinicalNoteActionResult =
-  | { ok: true; note: ClientClinicalNote }
+  | { ok: true; note: ClientClinicalNote; author_name: string | null }
   | {
       ok: false;
       code: "invalid" | "not_found" | "stale_revision" | "error";
@@ -186,13 +187,13 @@ function KindCard({
   // History = every note except the current head, newest first.
   const history = sortNotes(notes).filter((n) => !latest || n.id !== latest.id);
 
-  function handleSaved(note: ClientClinicalNote) {
+  function handleSaved(note: ClientClinicalNote, authorName: string | null) {
     setNotes((prev) => {
-      // Merge the verified note in (author name is unknown client-side for a
-      // just-created row; show "You"). Recompute supersede flags.
+      // Merge the verified note in, labelled with the author the server
+      // verified (the signed-in practitioner). Recompute supersede flags.
       const merged: ClinicalNoteWithAuthor[] = [
         ...prev.filter((n) => n.id !== note.id),
-        { ...note, author_name: null, is_superseded: false },
+        { ...note, author_name: authorName, is_superseded: false },
       ];
       return withDerivedSupersede(merged);
     });
@@ -306,7 +307,7 @@ function NoteBlock({
           {formatDate(note.occurred_at)}
         </span>
         <span className="text-[11px] text-neutral-500">
-          {note.author_name ? note.author_name : "You"}
+          {authorLabel(note.author_name)}
           {note.supersedes_note_id ? " · revision" : ""}
           {note.is_superseded ? " · superseded" : ""}
         </span>
@@ -361,7 +362,7 @@ function NoteForm({
   mode: "add" | "revise";
   revising: ClinicalNoteWithAuthor | null;
   action: ClinicalNoteAction;
-  onSaved: (note: ClientClinicalNote) => void;
+  onSaved: (note: ClientClinicalNote, authorName: string | null) => void;
   onCancel: () => void;
 }) {
   const router = useRouter();
@@ -372,7 +373,7 @@ function NoteForm({
     async (_prev: FormState, formData: FormData): Promise<FormState> => {
       const result = await action(formData);
       if (result.ok) {
-        onSaved(result.note);
+        onSaved(result.note, result.author_name);
         return { status: "idle" };
       }
       return { status: "error", code: result.code, message: result.error };

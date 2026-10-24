@@ -407,3 +407,54 @@ describe("a STOP is recorded however many rows precede the match", () => {
     expect(h.clientUpdates).toEqual([{ id: "c-000004" }]);
   });
 });
+
+// ===========================================================================
+// MSG-007 — the inbound route's SUCCESS-path lines carry no phone fragment.
+// ===========================================================================
+//
+// "+1***99" is the sender's phone with the middle masked: the last two digits
+// still identify the number among a studio's clients. The fixed facts an
+// operator acts on (the event, the match/opt-out counts, Twilio's message SID)
+// stay; the sender and the studio's own number do not.
+describe("MSG-007 success-path log privacy", () => {
+  const FROM = "+16045550199";
+  const TO = "+15550001111";
+
+  async function capture() {
+    const { captureConsole, expectMinimumNecessary } = await import("@/tests/lib/sms/helpers/log-capture");
+    return { logs: captureConsole(), expectMinimumNecessary };
+  }
+
+  it("a processed STOP logs counts and the SID, never the sender", async () => {
+    h.clients = [{ id: "c1", studio_id: "s1", phone: "604-555-0199", sms_opted_out_at: null }];
+    h.prospects = [P("p1", "s1", "604-555-0199")];
+    const { logs, expectMinimumNecessary } = await capture();
+    const res = await post({ From: FROM, To: TO, Body: "STOP", MessageSid: "SM1" });
+    expect(res.status).toBe(200);
+    expectMinimumNecessary(logs.text(), { phones: [FROM, TO] });
+    expect(logs.events()).toContainEqual(
+      expect.objectContaining({ event: "twilio_inbound_stop_processed", matchedCount: 1, messageSid: "SM1" }),
+    );
+  });
+
+  it("a non-STOP message logs only that it arrived, never sender, recipient or body", async () => {
+    const { logs, expectMinimumNecessary } = await capture();
+    const res = await post({ From: FROM, To: TO, Body: "running late, sorry", MessageSid: "SM2" });
+    expect(res.status).toBe(200);
+    expectMinimumNecessary(logs.text(), { phones: [FROM, TO], bodies: ["running late"] });
+    expect(logs.events()).toContainEqual(
+      expect.objectContaining({ event: "twilio_inbound_non_stop", messageSid: "SM2" }),
+    );
+  });
+
+  it("a STOP with no usable digits logs no fragment of what was sent", async () => {
+    const { logs, expectMinimumNecessary } = await capture();
+    const res = await post({ From: "ab-cd-ef-gh", To: TO, Body: "STOP", MessageSid: "SM3" });
+    expect(res.status).toBe(200);
+    expectMinimumNecessary(logs.text(), { phones: [TO] });
+    expect(logs.text()).not.toContain("ab");
+    expect(logs.events()).toContainEqual(
+      expect.objectContaining({ event: "twilio_inbound_stop_no_digits", messageSid: "SM3" }),
+    );
+  });
+});

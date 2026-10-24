@@ -338,3 +338,26 @@ describe("no number reaches a log", () => {
     expect(all).not.toContain("you've joined our waitlist");
   });
 });
+
+// ===========================================================================
+// MSG-007 — the SUCCESS path logs no record id (same rule as the invitation).
+// ===========================================================================
+describe("MSG-007 success-path log privacy", () => {
+  it("an accepted join acknowledgement logs its outcome with no record id, phone or body", async () => {
+    const { captureConsole, expectMinimumNecessary } = await import("@/tests/lib/sms/helpers/log-capture");
+    const logs = captureConsole();
+    const r = await sendWaitlistJoinAckSms({
+      admin: admin(),
+      studio: { id: "5e1d2c3b-4a59-4687-9a8b-7c6d5e4f3a2b", name: "Synthetic Studio" },
+      entryId: "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+      sleep: async () => undefined,
+    });
+    expect(r).toMatchObject({ state: "accepted" });
+    const phone = String(target().phone);
+    const body = new URLSearchParams(String(vi.mocked(fetch).mock.calls[0]![1]!.body)).get("Body")!;
+    expectMinimumNecessary(logs.text(), { phones: [phone], bodies: [body] });
+    expect(logs.events()).toContainEqual(
+      expect.objectContaining({ event: "waitlist_join_ack_sms", outcome: "accepted", messageSid: SID }),
+    );
+  });
+});

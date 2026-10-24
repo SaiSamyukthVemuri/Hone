@@ -1,9 +1,10 @@
 import Link from "next/link";
 import {
   sessionPerformerName,
+  sessionRecordedByName,
+  type AttributionPractitioner,
   type SessionWithEntries,
 } from "@/lib/supabase/queries";
-import type { Practitioner } from "@/lib/types/database";
 import { ElectrolysisEntryRow, LaserEntryRow } from "./entry-row";
 import { FormattedDateTime } from "./formatted-date-time";
 
@@ -24,7 +25,8 @@ export function SessionTimeline({
 }: {
   clientId: string;
   sessions: SessionWithEntries[];
-  practitioners: Practitioner[];
+  // The attribution roster: deactivated members included (HON-44 (a)).
+  practitioners: ReadonlyArray<AttributionPractitioner>;
 }) {
   if (sessions.length === 0) {
     return (
@@ -43,6 +45,7 @@ export function SessionTimeline({
     <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
       {sessions.map((s) => {
         const performer = sessionPerformerName(s, practitioners);
+        const recordedBy = sessionRecordedByName(s, practitioners);
         return (
           <li key={s.id}>
             <details className="group">
@@ -55,6 +58,7 @@ export function SessionTimeline({
                     {s.modality} · {entryCount(s)}{" "}
                     {entryCount(s) === 1 ? "entry" : "entries"}
                     {performer && ` · ${performer}`}
+                    {recordedBy && ` (recorded by ${recordedBy})`}
                     {s.price_paid_cents != null &&
                       ` · ${formatPrice(s.price_paid_cents)} paid`}
                   </div>
