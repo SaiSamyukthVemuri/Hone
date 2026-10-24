@@ -141,6 +141,13 @@ test.beforeAll(async () => {
     "select public.create_recurring_break_rule_and_materialize($1,'Sterilization',$2::int[],'15:00','15:30',true,$3,$4::date,$5)",
     [seed.studioId, `{${d.dow}}`, ownerId, nextDay, byKey("ed").id],
   );
+  // BLOCK-SCOPE F3: a studio-wide block (practitioner_id NULL), the row today's
+  // calendar drag-to-block writes. It closes 16:00-16:30 for every practitioner.
+  await sql(
+    "insert into public.studio_timed_blocks (studio_id,practitioner_id,created_by,starts_at,ends_at,category,private_note) " +
+    "select $1,null,$2,s,s+interval '30 minutes','other',null from (select ($3::date + time '16:00') at time zone $4 as s) t",
+    [seed.studioId, ownerId, day, TZ],
+  );
 });
 
 test("the rows the view must show: five simultaneous, one late across UTC midnight, scoped block and break", async () => {
@@ -155,7 +162,7 @@ test("the rows the view must show: five simultaneous, one late across UTC midnig
   expect(lateRow.practitioner_id).toBe(byKey("bo").id);
   expect(lateRow.utc_date).toBe(nextDay); // the UTC instant is on the next date
   const [scope] = await sql<{ block: string; brk: string }>(
-    "select (select practitioner_id::text from public.studio_timed_blocks where studio_id=$1) as block, " +
+    "select (select practitioner_id::text from public.studio_timed_blocks where studio_id=$1 and category='lunch') as block, " +
     "(select string_agg(distinct practitioner_id::text, ',') from public.studio_recurring_break_occurrences where studio_id=$1 and occurrence_date=$2::date) as brk",
     [seed.studioId, day],
   );
@@ -221,7 +228,12 @@ test.describe("desktop", () => {
     // Scoped lunch only in Di's column; scoped sterilization only in Ed's.
     for (const p of roster) {
       await expect(column(page, p.id).getByTitle(/^Lunch/)).toHaveCount(p.key === "di" ? 1 : 0);
-      await expect(column(page, p.id).getByTitle("Sterilization", { exact: true })).toHaveCount(p.key === "ed" ? 1 : 0);
+      await expect(column(page, p.id).getByTitle(/^Sterilization/)).toHaveCount(p.key === "ed" ? 1 : 0);
+      // BLOCK-SCOPE F3: scoped blocks say whose they are; the studio-wide
+      // block greys EVERY column and says so.
+      if (p.key === "di") await expect(column(page, p.id).getByTitle(/^Lunch/)).toHaveAttribute("title", new RegExp(`· Only ${p.name}$`));
+      if (p.key === "ed") await expect(column(page, p.id).getByTitle(/^Sterilization/)).toHaveAttribute("title", `Sterilization · Only ${p.name}`);
+      await expect(column(page, p.id).getByTitle("Unavailable · All practitioners", { exact: true })).toHaveCount(1);
     }
 
     await page.screenshot({ path: test.info().outputPath("team-day-desktop.png"), fullPage: true });

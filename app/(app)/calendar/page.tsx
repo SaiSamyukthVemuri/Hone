@@ -61,6 +61,7 @@ import { formatClockLabel, formatTimeForStudio, resolveTimeFormat, type TimeForm
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import { redirect } from "next/navigation";
 import { buildTeamDay, type TeamDayColumn } from "@/lib/calendar/team-day";
+import { blockScopeNamesFor } from "@/lib/calendar/block-scope";
 
 type Search = Promise<{
   week?: string;
@@ -203,6 +204,9 @@ export default async function CalendarPage({
     pronouns: c.pronouns,
   }));
 
+  // BLOCK-SCOPE F3: who each block closes time for, under capacity only.
+  const blockScopeNames = blockScopeNamesFor(studio.practitioner_capacity_enabled === true, activePractitioners);
+
   const prevWeek = addDays(weekStart, -7);
   const nextWeek = addDays(weekStart, 7);
 
@@ -326,6 +330,7 @@ export default async function CalendarPage({
         clients={drawerClients}
         services={services}
         returnTo={returnTo}
+        blockScopeNames={blockScopeNames}
       />
 
       {/* Desktop/tablet keep the existing week grid, untouched, at md+. */}
@@ -448,6 +453,7 @@ export default async function CalendarPage({
                 availability={availabilityForDate(date, i).availability}
                 closedDay={isClosedDate(date, i)}
                 returnTo={returnTo}
+                blockScopeNames={blockScopeNames}
               />
             ))}
           </div>
@@ -560,6 +566,7 @@ async function renderMonthView(opts: {
     recurringOccurrences,
     studio.timezone,
     isClosedDate,
+    blockScopeNamesFor(studio.practitioner_capacity_enabled === true, activePractitioners),
   );
 
   const lastWeekHref = `/calendar?view=week${
@@ -695,6 +702,9 @@ async function renderTeamDayView(opts: {
     pronouns: c.pronouns,
   }));
   const returnTo = buildCalendarReturnParams({ view: "day", day: date });
+  // A studio-wide block sits in EVERY column labelled "All practitioners"; a
+  // scoped one sits only in its own column (lib/calendar/team-day.ts).
+  const blockScopeNames = blockScopeNamesFor(true, activePractitioners);
   const gridColumns = `60px repeat(${Math.max(1, columns.length)}, minmax(9rem, 1fr))`;
 
   return (
@@ -783,6 +793,7 @@ async function renderTeamDayView(opts: {
                   availability={c.availability}
                   closedDay={c.closedDay}
                   returnTo={returnTo}
+                  blockScopeNames={blockScopeNames}
                   teamColumn={{
                     practitionerId: c.practitionerId,
                     name: c.name,
