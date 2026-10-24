@@ -925,6 +925,108 @@ describe("charge.refunded webhook", () => {
 });
 
 
+// ===========================================================================
+// PAY-002 — the charge.refunded WEBHOOK must not complete a refund that the
+// provider has not confirmed. Fake provider only; no live refund.
+//
+// The direct refund path is pinned above ("refund status %s never becomes a
+// succeeded ledger outcome", pending / requires_action / failed / canceled /
+// absent). These cases put the SAME question to the webhook writer. At
+// production 8a87e476 handleChargeRefunded decides completion from the
+// charge's aggregate fields (refunded === true, amount_refunded ===
+// amount) and never reads the refund object's own status. The fix lands with
+// the held 0240 refund-status protocol (#1035).
+//
+// Each case is `it.fails` with a "KNOWN DEFECT" name: it PASSES while the
+// defect exists and goes RED the moment the webhook stops completing an
+// unconfirmed refund. Whoever fixes it converts these to `it` (and keeps them).
+// ===========================================================================
+describe("PAY-002 charge.refunded never completes an unconfirmed refund", () => {
+  function refundedChargeWith(refunds: unknown) {
+    return event("charge.refunded", {
+      id: CHARGE_ID,
+      payment_intent: PI_ID,
+      refunded: true,
+      amount: AMOUNT,
+      amount_refunded: AMOUNT,
+      currency: "cad",
+      metadata: META,
+      ...(refunds === undefined ? {} : { refunds }),
+    });
+  }
+  const succeededWrites = () =>
+    h.updates.filter((u) => u.payload.refund_status === "succeeded");
+
+  // Hone's own refund left the row pending because Stripe answered `pending`
+  // or `requires_action` (the direct path's documented refusal). Stripe then
+  // sends charge.refunded for that same refund.
+  const heldPendingRow = () =>
+    attemptRow("cad", {
+      status: "succeeded",
+      stripe_payment_intent_id: PI_ID,
+      stripe_charge_id: CHARGE_ID,
+      refund_status: "pending_stripe",
+      refund_amount_cents: AMOUNT,
+    });
+
+  for (const status of ["pending", "requires_action"] as const) {
+    it.fails(
+      `KNOWN DEFECT PAY-002: a held pending_stripe row is completed by charge.refunded whose refund is ${status}`,
+      async () => {
+        h.rows = { payment_charge_attempts: heldPendingRow() };
+        await handleChargeRefunded(
+          refundedChargeWith({ data: [{ id: "re_1", status, amount: AMOUNT, currency: "cad" }] }),
+          CTX,
+        );
+        expect(succeededWrites()).toEqual([]);
+      },
+    );
+
+    it.fails(
+      `KNOWN DEFECT PAY-002: an out-of-band charge.refunded whose refund is ${status} is recorded as succeeded`,
+      async () => {
+        h.rows = {
+          payment_charge_attempts: attemptRow("cad", {
+            status: "succeeded",
+            stripe_payment_intent_id: PI_ID,
+            stripe_charge_id: CHARGE_ID,
+          }),
+        };
+        await handleChargeRefunded(
+          refundedChargeWith({ data: [{ id: "re_1", status, amount: AMOUNT, currency: "cad" }] }),
+          CTX,
+        );
+        expect(succeededWrites()).toEqual([]);
+      },
+    );
+  }
+
+  // Stripe API 2026-04-22 (lib/stripe/server.ts) does not embed `refunds` on a
+  // Charge unless expanded, so a real event carries NO refund object at all:
+  // no id and no status. Completion then rests on aggregates alone.
+  it.fails(
+    "KNOWN DEFECT PAY-002: charge.refunded with no refund object (default payload) completes a held refund with no status evidence",
+    async () => {
+      h.rows = { payment_charge_attempts: heldPendingRow() };
+      await handleChargeRefunded(refundedChargeWith(undefined), CTX);
+      expect(succeededWrites()).toEqual([]);
+    },
+  );
+
+  // Control, and the anti-vacuity proof for the cases above: the harness DOES
+  // record a succeeded write when the provider says succeeded, so an empty
+  // list above is never produced by a writer that cannot write.
+  it("control: a refund the provider reports succeeded is completed, with its refund id", async () => {
+    h.rows = { payment_charge_attempts: heldPendingRow() };
+    await handleChargeRefunded(
+      refundedChargeWith({ data: [{ id: "re_1", status: "succeeded", amount: AMOUNT, currency: "cad" }] }),
+      CTX,
+    );
+    expect(succeededWrites()).toHaveLength(1);
+    expect(succeededWrites()[0].payload.stripe_refund_id).toBe("re_1");
+  });
+});
+
 describe("PAY004 identical concurrent canceled failure", () => {
   function prepareRace(over: Record<string, unknown> = {}, readError = false) {
     seedLineage("cad");
