@@ -81,6 +81,17 @@ vi.mock("@/lib/ops/alerts", () => ({
     h.alerts.push({ severity: a.severity, event: a.event, details: a.safeDetails ?? {} });
     if (h.alertThrows) throw new Error("synthetic diagnostic sink failure");
   },
+  // The real function never throws and reports whether the row persisted.
+  // Persistence failure against the REAL sink is proved in
+  // tests/lib/billing/charge-refunded-refusal-durability.test.ts.
+  recordOpsAlertDurably: async (a: {
+    severity: string;
+    event: string;
+    safeDetails?: Record<string, unknown>;
+  }) => {
+    h.alerts.push({ severity: a.severity, event: a.event, details: a.safeDetails ?? {} });
+    return true;
+  },
 }));
 vi.mock("@/lib/billing/charge-description", () => ({
   buildChargeDescription: () => "desc",
@@ -867,7 +878,7 @@ describe("charge.refunded webhook", () => {
       id: CHARGE_ID,
       refunded: true,
       amount_refunded: money.amount,
-      refunds: { data: [{ id: "re_1" }] },
+      refunds: { data: [{ id: "re_1", status: "succeeded", amount: money.amount }] },
       metadata: META,
       ...money,
     });
@@ -924,6 +935,190 @@ describe("charge.refunded webhook", () => {
   });
 });
 
+
+// ===========================================================================
+// PAY-002 — the charge.refunded WEBHOOK must not complete a refund that the
+// provider has not confirmed. Fake provider only; no live refund.
+//
+// The direct refund path is pinned above ("refund status %s never becomes a
+// succeeded ledger outcome", pending / requires_action / failed / canceled /
+// absent). These cases put the SAME question to the webhook writer. At
+// production 8a87e476 handleChargeRefunded decided completion from the
+// charge's aggregates (refunded === true, amount_refunded === amount) and
+// never read the refund object's own status, so all five non-control cases
+// below FAILED there (#1077 recorded them as expected failures). The app-level
+// containment (providerConfirmedFullRefund) makes them pass; the governed
+// protocol is the held 0240 (#1035).
+// ===========================================================================
+describe("PAY-002 charge.refunded never completes an unconfirmed refund", () => {
+  function refundedChargeWith(refunds: unknown) {
+    return event("charge.refunded", {
+      id: CHARGE_ID,
+      payment_intent: PI_ID,
+      refunded: true,
+      amount: AMOUNT,
+      amount_refunded: AMOUNT,
+      currency: "cad",
+      metadata: META,
+      ...(refunds === undefined ? {} : { refunds }),
+    });
+  }
+  const succeededWrites = () =>
+    h.updates.filter((u) => u.payload.refund_status === "succeeded");
+
+  // Hone's own refund left the row pending because Stripe answered `pending`
+  // or `requires_action` (the direct path's documented refusal). Stripe then
+  // sends charge.refunded for that same refund.
+  const heldPendingRow = () =>
+    attemptRow("cad", {
+      status: "succeeded",
+      stripe_payment_intent_id: PI_ID,
+      stripe_charge_id: CHARGE_ID,
+      refund_status: "pending_stripe",
+      refund_amount_cents: AMOUNT,
+    });
+
+  for (const status of ["pending", "requires_action"] as const) {
+    it(
+      `PAY-002: a held pending_stripe row is NOT completed by charge.refunded whose refund is ${status}`,
+      async () => {
+        h.rows = { payment_charge_attempts: heldPendingRow() };
+        await handleChargeRefunded(
+          refundedChargeWith({ data: [{ id: "re_1", status, amount: AMOUNT, currency: "cad" }] }),
+          CTX,
+        );
+        expect(succeededWrites()).toEqual([]);
+      },
+    );
+
+    it(
+      `PAY-002: an out-of-band charge.refunded whose refund is ${status} is NOT recorded as succeeded`,
+      async () => {
+        h.rows = {
+          payment_charge_attempts: attemptRow("cad", {
+            status: "succeeded",
+            stripe_payment_intent_id: PI_ID,
+            stripe_charge_id: CHARGE_ID,
+          }),
+        };
+        await handleChargeRefunded(
+          refundedChargeWith({ data: [{ id: "re_1", status, amount: AMOUNT, currency: "cad" }] }),
+          CTX,
+        );
+        expect(succeededWrites()).toEqual([]);
+      },
+    );
+  }
+
+  // Stripe API 2026-04-22 (lib/stripe/server.ts) does not embed `refunds` on a
+  // Charge unless expanded, so a real event carries NO refund object at all:
+  // no id and no status. Completion then rests on aggregates alone.
+  it(
+    "PAY-002: charge.refunded with no refund object (default payload) does NOT complete a held refund",
+    async () => {
+      h.rows = { payment_charge_attempts: heldPendingRow() };
+      await handleChargeRefunded(refundedChargeWith(undefined), CTX);
+      expect(succeededWrites()).toEqual([]);
+    },
+  );
+
+  it.each(["failed", "canceled", undefined])(
+    "PAY-002: a refund the provider reports %s is never completed",
+    async (status) => {
+      h.rows = { payment_charge_attempts: heldPendingRow() };
+      await handleChargeRefunded(
+        refundedChargeWith({ data: [{ id: "re_1", amount: AMOUNT, currency: "cad", ...(status ? { status } : {}) }] }),
+        CTX,
+      );
+      expect(succeededWrites()).toEqual([]);
+    },
+  );
+
+  it("PAY-002: one unfinished refund among several blocks completion", async () => {
+    h.rows = { payment_charge_attempts: heldPendingRow() };
+    await handleChargeRefunded(
+      refundedChargeWith({ data: [
+        { id: "re_2", status: "succeeded", amount: AMOUNT - 5000 },
+        { id: "re_1", status: "pending", amount: 5000 },
+      ] }),
+      CTX,
+    );
+    expect(succeededWrites()).toEqual([]);
+  });
+
+  it("PAY-002: a truncated refund list (has_more) is not proof of completion", async () => {
+    h.rows = { payment_charge_attempts: heldPendingRow() };
+    await handleChargeRefunded(
+      refundedChargeWith({ has_more: true, data: [{ id: "re_1", status: "succeeded", amount: AMOUNT }] }),
+      CTX,
+    );
+    expect(succeededWrites()).toEqual([]);
+  });
+
+  it("PAY-002: succeeded refunds that do not cover the captured amount are not completion", async () => {
+    h.rows = { payment_charge_attempts: heldPendingRow() };
+    await handleChargeRefunded(
+      refundedChargeWith({ data: [{ id: "re_1", status: "succeeded", amount: AMOUNT - 1 }] }),
+      CTX,
+    );
+    expect(succeededWrites()).toEqual([]);
+  });
+
+  it("PAY-002: the refusal raises the direct path's unresolved-status alert and touches no row", async () => {
+    h.rows = { payment_charge_attempts: heldPendingRow() };
+    const out = await handleChargeRefunded(
+      refundedChargeWith({ data: [{ id: "re_1", status: "pending", amount: AMOUNT }] }),
+      CTX,
+    );
+    expect(out).toMatchObject({ refundStatusUnresolved: true, reason: "provider_refund_not_succeeded" });
+    expect(h.updates).toEqual([]);
+    const [alert] = critical("payment_refund_provider_status_unresolved");
+    expect(alert.details).toMatchObject({
+      target_event: "charge.refunded",
+      stripe_charge_id: CHARGE_ID,
+      previous_refund_status: "pending_stripe",
+      reason: "provider_refund_not_succeeded",
+    });
+  });
+
+  it("PAY-002: an already-refunded row with a default payload raises no false alert", async () => {
+    h.rows = {
+      payment_charge_attempts: attemptRow("cad", {
+        status: "succeeded", stripe_payment_intent_id: PI_ID, stripe_charge_id: CHARGE_ID,
+        refund_status: "succeeded", stripe_refund_id: "re_1", refund_amount_cents: AMOUNT,
+      }),
+    };
+    const out = await handleChargeRefunded(refundedChargeWith(undefined), CTX);
+    expect(out).toMatchObject({ alreadyRefunded: true });
+    expect(critical("payment_refund_provider_status_unresolved")).toEqual([]);
+    expect(h.updates).toEqual([]);
+  });
+
+  it("control: several refunds, all succeeded and covering the charge, complete", async () => {
+    h.rows = { payment_charge_attempts: heldPendingRow() };
+    await handleChargeRefunded(
+      refundedChargeWith({ data: [
+        { id: "re_2", status: "succeeded", amount: AMOUNT - 5000 },
+        { id: "re_1", status: "succeeded", amount: 5000 },
+      ] }),
+      CTX,
+    );
+    expect(succeededWrites()).toHaveLength(1);
+  });
+
+  // Control, and the anti-vacuity proof for the cases above: the harness DOES
+  // record a succeeded write when the provider says succeeded, so an empty
+  // list above is never produced by a writer that cannot write.
+  it("control: a refund the provider reports succeeded is completed, with its refund id", async () => {
+    h.rows = { payment_charge_attempts: heldPendingRow() };
+    await handleChargeRefunded(
+      refundedChargeWith({ data: [{ id: "re_1", status: "succeeded", amount: AMOUNT, currency: "cad" }] }),
+      CTX,
+    );
+    expect(succeededWrites()).toHaveLength(1);
+    expect(succeededWrites()[0].payload.stripe_refund_id).toBe("re_1");
+  });
+});
 
 describe("PAY004 identical concurrent canceled failure", () => {
   function prepareRace(over: Record<string, unknown> = {}, readError = false) {

@@ -6,7 +6,7 @@ import { TIMED_BLOCK_LABEL } from "./calendar-format";
 import type { AppointmentWithPractitionerColor } from "@/lib/booking/queries";
 import { formatTimeForStudio, type TimeFormat } from "@/lib/booking/tz";
 import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
-import { appointmentDisplayStatus } from "./appointment-display-status";
+import { appointmentDisplayStatus, appointmentStatusTag } from "./appointment-display-status";
 import { timeRangeLabel } from "./calendar-format";
 
 export function OverlapAppointmentSummary({ appointment: a, tz, timeFormat }: {
@@ -17,11 +17,13 @@ export function OverlapAppointmentSummary({ appointment: a, tz, timeFormat }: {
     a.ends_at ? formatTimeForStudio(new Date(a.ends_at), tz, timeFormat) : null,
   );
   const status = appointmentDisplayStatus(a.status, a.ends_at);
-  const tag = status === "done" ? "Done" : status === "completed" ? "Completed"
-    : status === "no_show" ? "No-show" : null;
+  const tag = appointmentStatusTag(status);
+  // A no-show leads the summary, where a clipped card still shows it.
+  const noShow = status === "no_show";
   return <>
+    {noShow ? <span className="block text-xs font-semibold">No-show</span> : null}
     <span className="block whitespace-normal font-semibold">{a.client?.name?.trim() || "Client"}</span>
-    <span className="block text-xs tabular-nums">{range}{tag ? ` · ${tag}` : ""}</span>
+    <span className="block text-xs tabular-nums">{range}{tag && !noShow ? ` · ${tag}` : ""}</span>
     {a.practitioner?.display_name?.trim() ? <span className="block text-xs">{a.practitioner.display_name.trim()}</span> : null}
     {a.service?.name?.trim() ? <span className="block text-xs opacity-70">{a.service.name.trim()}</span> : null}
   </>;
