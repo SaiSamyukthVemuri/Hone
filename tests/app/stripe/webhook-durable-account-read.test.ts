@@ -47,6 +47,9 @@ vi.mock("@/lib/ops/alerts", async (importActual) => {
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: CAPTURE_EVENT }));
 
 const ADMIN = { current: null as ReturnType<typeof makeAdmin> | null };
+// PAY-002 (#1081 review M1): an ops_alerts insert that FAILS, as PostgREST
+// reports it (an error result, not a throw). Null means the insert succeeds.
+const OPS_INSERT_ERROR = { current: null as null | { code: string; message: string } };
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ADMIN.current!.admin,
 }));
@@ -71,6 +74,7 @@ function makeAdmin(reads: Record<string, ReadResult[]>, rpcs: Record<string, Rea
         select: () => update ? Promise.resolve({ data: [{ id: "attempt-1" }], error: null }) : q,
         insert: async (payload: Record<string, unknown>) => {
           if (table !== "ops_alerts") throw new Error("Unexpected insert table");
+          if (OPS_INSERT_ERROR.current) return { error: OPS_INSERT_ERROR.current };
           opsRows.push(payload); return { error: null };
         },
         update: (payload: Record<string, unknown>) => {
@@ -149,6 +153,7 @@ beforeEach(() => {
   NOTIFY_CRITICAL_OPS_ALERT.mockClear();
   CAPTURE_EVENT.mockClear();
   ACCOUNTS_RETRIEVE.mockReset();
+  OPS_INSERT_ERROR.current = null;
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
   process.env.STRIPE_SECRET_KEY = "sk_test_x";
 });
@@ -827,5 +832,73 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
     noMoneyWrite();
     expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
     expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
+  });
+});
+
+// ===========================================================================
+// PAY-002 (#1081 review M1). THE REFUSAL IS DURABLE OR RETRYABLE.
+//
+// handleChargeRefunded refuses a refund the provider has not confirmed. That
+// refusal answers 2xx ONLY when its critical alert row was actually written.
+// These cases use the REAL alert writer (lib/ops/alerts is importActual'd
+// above; only the operator email transport is stubbed) against an ops_alerts
+// insert that returns an error, which recordOpsAlert swallows. A mocked throw
+// would prove nothing, because the real function never throws.
+// ===========================================================================
+describe("PAY-002 unconfirmed-refund refusal through the route, real alert writer", () => {
+  function prepareRefused(refunds: unknown) {
+    const row = {
+      id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
+      status: "succeeded", stripe_livemode: false, stripe_account_id: "acct_test_1",
+      stripe_customer_id: "cus_1", stripe_payment_intent_id: "pi_1", stripe_charge_id: "ch_1",
+      amount_cents: 5000, currency: "cad", charged_at: null, refund_status: "pending_stripe",
+      refund_amount_cents: 5000, refunded_at: null, stripe_refund_id: null,
+    };
+    const object = {
+      id: "ch_1", payment_intent: "pi_1", customer: "cus_1", amount: 5000, currency: "cad",
+      refunded: true, amount_refunded: 5000, metadata: { hone_payment_charge_attempt_id: "attempt-1" },
+      ...(refunds === undefined ? {} : { refunds }),
+    };
+    CONSTRUCT_EVENT.mockReturnValue({ id: "evt_refund_refused", type: "charge.refunded", account: "acct_test_1", livemode: false, data: { object } });
+    ADMIN.current = makeAdmin({
+      studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: row, error: null }],
+    }, { claim_stripe_event: CLAIM_OK });
+  }
+  const completionWrites = () =>
+    ADMIN.current!.updateCalls.filter((u) => u.payload.refund_status === "succeeded");
+
+  it("alert row written: the refusal is final (200), nothing completed, the alert is durable", async () => {
+    prepareRefused({ data: [{ id: "re_1", status: "pending", amount: 5000 }] });
+    expect((await callRoute()).status).toBe(200);
+    expect(completionWrites()).toEqual([]);
+    expect(ADMIN.current!.opsRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: "payment_refund_provider_status_unresolved", severity: "critical" }),
+    ]));
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+  });
+
+  it.each([
+    ["a pending refund", { data: [{ id: "re_1", status: "pending", amount: 5000 }] }],
+    ["the default payload with no refund object", undefined],
+  ] as const)("alert insert FAILS for %s: the route answers 500, releases the claim, completes nothing", async (_l, refunds) => {
+    prepareRefused(refunds);
+    OPS_INSERT_ERROR.current = { code: "XX000", message: "synthetic ops_alerts insert failure" };
+    expect((await callRoute()).status).toBe(500);
+    expect(completionWrites()).toEqual([]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+    expect(ADMIN.current!.opsRows).toEqual([]);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+  });
+
+  // Anti-vacuity: the same failing alert sink does not block a CONFIRMED
+  // refund, so the 500 above comes from the refusal, not from the sink alone.
+  it("control: with the same failing alert insert, a confirmed refund still completes (200)", async () => {
+    prepareRefused({ data: [{ id: "re_1", status: "succeeded", amount: 5000 }] });
+    OPS_INSERT_ERROR.current = { code: "XX000", message: "synthetic ops_alerts insert failure" };
+    expect((await callRoute()).status).toBe(200);
+    expect(completionWrites()).toHaveLength(1);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
   });
 });

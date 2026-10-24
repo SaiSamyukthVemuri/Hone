@@ -2,7 +2,7 @@ import "server-only";
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
-import { recordOpsAlert } from "@/lib/ops/alerts";
+import { recordOpsAlert, recordOpsAlertDurably } from "@/lib/ops/alerts";
 import {
   compareProviderMoney,
   providerMoneyMismatchDetails,
@@ -388,6 +388,17 @@ async function verifyProviderMoneyAgainstRow(args: {
     },
   });
   return false;
+}
+
+// PAY-002 (#1081 review M1). The unconfirmed-refund refusal returns 2xx only
+// when its critical alert is DURABLY recorded. If the ops_alerts row could not
+// be written, this is thrown instead, so the route releases the claim, answers
+// 500 and Stripe redelivers: the refusal is never both unrecorded and final.
+export class PaymentRefundRefusalUnrecordedError extends Error {
+  constructor() {
+    super("stripe_webhook_refund_refusal_unrecorded");
+    this.name = "PaymentRefundRefusalUnrecordedError";
+  }
 }
 
 // A normal create/confirm-to-persistence race, distinct from a genuine handler
@@ -1304,10 +1315,10 @@ export async function handleChargeRefunded(
   // the governed provider-refund-status protocol (0240, #1035) replaces this.
   const confirmed = providerConfirmedFullRefund(charge, amountCaptured);
   if (!confirmed.ok) {
-    // Not swallowed: if the alert cannot be written the handler throws, the
-    // webhook answers non-2xx and Stripe redelivers, so the refusal is never
-    // silent. The row is untouched either way.
-    await recordOpsAlert({
+    // recordOpsAlert never throws, so its outcome is checked instead: unless
+    // the durable alert row was written, throw a retryable error (route ->
+    // release claim -> 500 -> Stripe redelivers). The row is untouched either way.
+    const recorded = await recordOpsAlertDurably({
       severity: "critical",
       event: "payment_refund_provider_status_unresolved",
       message:
@@ -1325,6 +1336,7 @@ export async function handleChargeRefunded(
         reason: confirmed.reason,
       },
     });
+    if (recorded !== true) throw new PaymentRefundRefusalUnrecordedError();
     return {
       eventType: event.type,
       attemptId: attempt.id,

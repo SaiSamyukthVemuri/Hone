@@ -81,6 +81,17 @@ vi.mock("@/lib/ops/alerts", () => ({
     h.alerts.push({ severity: a.severity, event: a.event, details: a.safeDetails ?? {} });
     if (h.alertThrows) throw new Error("synthetic diagnostic sink failure");
   },
+  // The real function never throws and reports whether the row persisted.
+  // Persistence failure against the REAL sink is proved in
+  // tests/lib/billing/charge-refunded-refusal-durability.test.ts.
+  recordOpsAlertDurably: async (a: {
+    severity: string;
+    event: string;
+    safeDetails?: Record<string, unknown>;
+  }) => {
+    h.alerts.push({ severity: a.severity, event: a.event, details: a.safeDetails ?? {} });
+    return true;
+  },
 }));
 vi.mock("@/lib/billing/charge-description", () => ({
   buildChargeDescription: () => "desc",
@@ -1068,13 +1079,6 @@ describe("PAY-002 charge.refunded never completes an unconfirmed refund", () => 
       previous_refund_status: "pending_stripe",
       reason: "provider_refund_not_succeeded",
     });
-  });
-
-  it("PAY-002: an alert that cannot be written makes the event retryable, never completed", async () => {
-    h.rows = { payment_charge_attempts: heldPendingRow() };
-    h.alertThrows = true;
-    await expect(handleChargeRefunded(refundedChargeWith(undefined), CTX)).rejects.toThrow();
-    expect(h.updates).toEqual([]);
   });
 
   it("PAY-002: an already-refunded row with a default payload raises no false alert", async () => {
