@@ -46,6 +46,12 @@ export type Writer = {
   literals: string[];
   errorText: string[];
   opaque: string[];
+  /**
+   * DEFAULT-DENY: every written part that is not one of ALLOWED_SHAPES, with
+   * what it is. Empty means the whole line is proven; anything else makes the
+   * writer an inventory row (UNPROVEN in the test).
+   */
+  unproven: string[];
 };
 
 export type FileCensus = {
@@ -87,18 +93,37 @@ export const VERIFIED_FUNCTIONS: Readonly<Record<string, VerifiedFunction>> = {
 // Array or string methods whose result, on a verified function's result, is
 // still made only of that result (missingSuccessFields(row).join(",")).
 const PRESERVING_METHODS = new Set(["join", "trim", "toString", "toLowerCase", "toUpperCase"]);
-// Method calls whose result is a timestamp or a number whatever the receiver.
-const SAFE_METHODS = new Set(["toISOString", "toFixed", "getTime"]);
-// Constructors whose result is safe to write: a Date serialises as a timestamp.
-const SAFE_CONSTRUCTORS = new Set(["Date"]);
-// Names that do not say what a value holds. One of these, written whole and not
-// resolved to what it holds, cannot be judged by the name rule, so it is
-// UNRESOLVED (fail closed) rather than clean.
-const CONTAINER_WORDS = new Set([
-  "payload", "detail", "data", "fields", "row", "rows", "result", "res", "response", "input",
-  "args", "params", "opts", "options", "context", "ctx", "meta", "metadata", "extra", "info",
-  "obj", "object", "value", "values", "item", "record", "raw", "props", "parsed", "json", "out",
-]);
+
+// ===========================================================================
+// DEFAULT-DENY. A written value is CLEAN only when it is one of these shapes,
+// proved from the source. Anything else (a local property read, an unresolved
+// identifier, a call outside VERIFIED_FUNCTIONS, a computed member, a
+// constructor other than Date, an element access, ...) is UNPROVEN and makes
+// its writer an inventory row. The list is pinned by a test: adding a shape is
+// a deliberate, reviewed change, never a side effect of a new branch.
+// ===========================================================================
+export const ALLOWED_SHAPES = {
+  "string-literal": "a string or untagged no-substitution template (still held to the literal rule)",
+  "number-literal": "a numeric literal",
+  "boolean-literal": "true or false",
+  nullish: "null or undefined",
+  template: "a template literal whose every substitution is itself allowed",
+  "object-literal": "an object literal with plain (non-computed) keys whose every value is allowed",
+  "array-literal": "an array literal whose every element is allowed",
+  conditional: "a ? b : c whose both branches are allowed (the condition is never written)",
+  "pass-operator": "a ?? b, a || b, a && b, a + b whose both operands are allowed",
+  "right-operator": "a = b, a ??= b, a ||= b, a &&= b, (a, b) whose right operand is allowed",
+  "scalar-operator": "a comparison, instanceof, in, arithmetic or bitwise operator, !x, -x, +x, ~x, typeof x, void x: the result is a boolean, a number, a type word or undefined",
+  date: "new Date(...), or .toISOString() / .getTime() on a value proven to be such a Date",
+  stringify: "JSON.stringify(x) or String(x) whose argument is allowed",
+  "const-resolved": "an identifier bound once by const to an allowed initializer, or a property read of a const object literal whose property initializer is allowed",
+  "closed-type": "an identifier declared with a type annotation that is boolean, a literal type, or a union of only those (and null / undefined)",
+  "verified-function": "the result of a function in VERIFIED_FUNCTIONS, or a preserving method on it",
+  "array-length": ".length: a count",
+  "closed-result": "x.error, x.retryable or x.ok where x is a const holding the awaited result of a sender declared to return Promise<EmailSendResult>: the closed EmailSendFailure category, or a boolean (MSG-LOG-RAW-ERROR)",
+} as const;
+export type Shape = keyof typeof ALLOWED_SHAPES;
+
 // Binary operators whose result is a boolean or a number, whatever the operands.
 const SCALAR_OPERATORS = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.EqualsEqualsToken, ts.SyntaxKind.EqualsEqualsEqualsToken,
@@ -219,12 +244,7 @@ function verifiedCall(call: ts.CallExpression): VerifiedFunction | undefined {
   return undefined;
 }
 
-function lastWordOf(name: string): string {
-  const words = wordsOf(name);
-  return words[words.length - 1] ?? "";
-}
-
-type Acc = Pick<Writer, "names" | "literals" | "errorText" | "opaque"> & {
+type Acc = Pick<Writer, "names" | "literals" | "errorText" | "opaque" | "unproven"> & {
   /** Identifiers written whole, not through a property. */
   bare: string[];
   /** Functions whose result's `error` is a closed category by type. */
@@ -232,13 +252,16 @@ type Acc = Pick<Writer, "names" | "literals" | "errorText" | "opaque"> & {
 };
 
 function newAcc(closed: ReadonlySet<string> = new Set()): Acc {
-  return { names: [], literals: [], errorText: [], opaque: [], bare: [], closed };
+  return { names: [], literals: [], errorText: [], opaque: [], unproven: [], bare: [], closed };
 }
 
-// MSG-LOG-RAW-ERROR. `x.error` is closed text, not raw, when `x` is a const
-// holding the (awaited) result of a sender whose result type makes `error` a
-// closed category: the exported senders of lib/email/send-appointment.ts that
-// return Promise<EmailSendResult> (see closedResultFunctions).
+// MSG-LOG-RAW-ERROR. `x.error` is the closed EmailSendFailure category when `x`
+// is a const holding the (awaited) result of a sender whose declared result type
+// makes `error` closed: the exported senders of lib/email/send-appointment.ts
+// that return Promise<EmailSendResult> (see closedResultFunctions).
+// EmailSendResult's declared fields: error is EmailSendFailure, the rest boolean.
+const CLOSED_RESULT_FIELDS = new Set(["error", "retryable", "ok"]);
+
 function isClosedResult(root: ts.Expression, closed: ReadonlySet<string>): boolean {
   if (!ts.isIdentifier(root) || closed.size === 0) return false;
   const declared = declarationOf(root);
@@ -253,49 +276,117 @@ function segmentsOf(expr: ts.Expression): string[] {
   return expr.getText().replace(/\?\./g, ".").split(".").filter((s) => IDENT_RE.test(s));
 }
 
-// `whole` is false inside an ordinary call's arguments: there an identifier is
-// an input to the function (formDataStr(formData, "id")), not what is written,
-// so it is still checked by name but is never treated as a forwarded object.
-function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, depth = 0, whole = true): void {
-  if (depth > 12) {
-    acc.opaque.push(expr.getText());
-    return;
-  }
-  const next = (e: ts.Expression, w = whole) => walkValue(e, acc, skip, depth + 1, w);
-  if (
-    ts.isParenthesizedExpression(expr) ||
-    ts.isAsExpression(expr) ||
-    ts.isNonNullExpression(expr) ||
-    ts.isSatisfiesExpression(expr) ||
-    ts.isTypeAssertionExpression(expr) ||
-    ts.isAwaitExpression(expr)
+/** Record that a value was accepted as `shape`; a shape not on the list throws. */
+function allow(shape: Shape): void {
+  if (!Object.hasOwn(ALLOWED_SHAPES, shape)) throw new Error(`log census: ${shape} is not an allowed shape`);
+}
+
+function unwrap(expr: ts.Expression): ts.Expression {
+  let e = expr;
+  while (
+    ts.isParenthesizedExpression(e) ||
+    ts.isAsExpression(e) ||
+    ts.isNonNullExpression(e) ||
+    ts.isSatisfiesExpression(e) ||
+    ts.isTypeAssertionExpression(e) ||
+    ts.isAwaitExpression(e)
   ) {
-    return next(expr.expression);
+    e = e.expression;
   }
-  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {
-    acc.literals.push(expr.text);
-    return;
+  return e;
+}
+
+// The initializer a const-bound identifier resolves to, or undefined.
+function constValue(expr: ts.Expression): ts.Expression | undefined {
+  const e = unwrap(expr);
+  if (!ts.isIdentifier(e)) return undefined;
+  const declared = declarationOf(e);
+  return declared.kind === "const" ? declared.init : undefined;
+}
+
+// Is `expr` proven to be a Date: new Date(...), or a const bound to one?
+function isProvenDate(expr: ts.Expression, depth = 0): boolean {
+  const e = unwrap(expr);
+  if (ts.isNewExpression(e)) return e.expression.getText() === "Date";
+  const init = depth < 8 ? constValue(e) : undefined;
+  return !!init && isProvenDate(init, depth + 1);
+}
+
+// The initializer of `obj.prop` when obj is (a const bound to) an object
+// literal with a plain `prop` key; undefined when the source does not show it.
+function propertyInitializer(access: ts.PropertyAccessExpression, depth = 0): ts.Expression | undefined {
+  if (depth > 8) return undefined;
+  let obj = unwrap(access.expression);
+  const init = constValue(obj);
+  if (init) obj = unwrap(init);
+  if (ts.isPropertyAccessExpression(obj)) {
+    const inner = propertyInitializer(obj, depth + 1);
+    if (!inner) return undefined;
+    obj = unwrap(inner);
   }
-  if (ts.isTemplateExpression(expr)) {
-    acc.literals.push(expr.head.text);
-    for (const span of expr.templateSpans) {
+  if (!ts.isObjectLiteralExpression(obj)) return undefined;
+  const name = access.name.text;
+  let found: ts.Expression | undefined;
+  for (const prop of obj.properties) {
+    // A spread could override the key: the source no longer shows the value.
+    if (ts.isSpreadAssignment(prop)) found = undefined;
+    else if (ts.isPropertyAssignment(prop) && !ts.isComputedPropertyName(prop.name) && prop.name.getText().replace(/^["']|["']$/g, "") === name) found = prop.initializer;
+    else if (ts.isShorthandPropertyAssignment(prop) && prop.name.text === name) found = prop.name;
+  }
+  return found;
+}
+
+// A declared type that can only hold a boolean, a literal or nothing.
+function isClosedTypeNode(type: ts.TypeNode | undefined): boolean {
+  if (!type) return false;
+  const leaf = (t: ts.TypeNode) =>
+    t.kind === ts.SyntaxKind.BooleanKeyword ||
+    t.kind === ts.SyntaxKind.NullKeyword ||
+    t.kind === ts.SyntaxKind.UndefinedKeyword ||
+    ts.isLiteralTypeNode(t);
+  return leaf(type) || (ts.isUnionTypeNode(type) && type.types.every(leaf));
+}
+
+function declaredType(id: ts.Identifier): ts.TypeNode | undefined {
+  for (let n: ts.Node | undefined = id.parent; n; n = n.parent) {
+    if (isFn(n)) {
+      const p = n.parameters.find((q) => ts.isIdentifier(q.name) && q.name.text === id.text);
+      if (p) return p.type;
+    }
+  }
+  return undefined;
+}
+
+// `written` is false inside an unproven call's arguments: there a value is an
+// input to the function, not what is written. The call itself is already
+// unproven; its arguments are still read for names, literals and error text.
+function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, depth = 0, written = true): void {
+  const deny = (what: string) => {
+    if (written) acc.unproven.push(what);
+  };
+  if (depth > 12) return deny(`too deep: ${expr.getText().slice(0, 60)}`);
+  const next = (e: ts.Expression, w = written) => walkValue(e, acc, skip, depth + 1, w);
+  const e = unwrap(expr);
+  if (e !== expr) return next(e);
+
+  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
+    acc.literals.push(e.text);
+    return allow("string-literal");
+  }
+  if (ts.isNumericLiteral(e)) return allow("number-literal");
+  if (e.kind === ts.SyntaxKind.TrueKeyword || e.kind === ts.SyntaxKind.FalseKeyword) return allow("boolean-literal");
+  if (e.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(e) && e.text === "undefined")) return allow("nullish");
+  if (ts.isTemplateExpression(e)) {
+    acc.literals.push(e.head.text);
+    for (const span of e.templateSpans) {
       acc.literals.push(span.literal.text);
       next(span.expression);
     }
-    return;
+    return allow("template");
   }
-  if (
-    ts.isNumericLiteral(expr) ||
-    expr.kind === ts.SyntaxKind.TrueKeyword ||
-    expr.kind === ts.SyntaxKind.FalseKeyword ||
-    expr.kind === ts.SyntaxKind.NullKeyword ||
-    (ts.isIdentifier(expr) && expr.text === "undefined")
-  ) {
-    return;
-  }
-  if (ts.isObjectLiteralExpression(expr)) {
-    for (const prop of expr.properties) {
-      if (ts.isPropertyAssignment(prop)) {
+  if (ts.isObjectLiteralExpression(e)) {
+    for (const prop of e.properties) {
+      if (ts.isPropertyAssignment(prop) && !ts.isComputedPropertyName(prop.name)) {
         acc.names.push(prop.name.getText().replace(/^["']|["']$/g, ""));
         next(prop.initializer);
       } else if (ts.isShorthandPropertyAssignment(prop)) {
@@ -304,87 +395,110 @@ function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, dep
         next(prop.expression);
       } else {
         acc.opaque.push(prop.getText());
+        deny(`object member ${prop.getText().slice(0, 60)}`);
       }
     }
-    return;
+    return allow("object-literal");
   }
-  if (ts.isArrayLiteralExpression(expr)) {
-    for (const e of expr.elements) next(ts.isSpreadElement(e) ? e.expression : e);
-    return;
+  if (ts.isArrayLiteralExpression(e)) {
+    for (const el of e.elements) next(ts.isSpreadElement(el) ? el.expression : el);
+    return allow("array-literal");
   }
-  if (ts.isIdentifier(expr)) {
-    if (skip.has(expr.text)) return;
-    acc.names.push(expr.text);
-    if (whole) acc.bare.push(expr.text);
-    if (ERROR_NAME_RE.test(expr.text)) {
-      acc.errorText.push(expr.text);
-      return;
-    }
-    if (!whole) return;
-    const declared = declarationOf(expr);
-    if (declared.kind === "const") return next(declared.init);
-    // A caught value is an error whatever it is called.
-    if (declared.kind === "catch") return void acc.errorText.push(expr.text);
-    // A name that says what it holds is judged by the name rule; one that does
-    // not (payload, detail, result, ...) and could not be followed is unresolved.
-    if (CONTAINER_WORDS.has(lastWordOf(expr.text))) acc.errorText.push(`unresolved ${declared.kind} ${expr.text}`);
-    return;
+  if (ts.isConditionalExpression(e)) {
+    next(e.whenTrue);
+    next(e.whenFalse);
+    return allow("conditional");
   }
-  if (ts.isPropertyAccessExpression(expr)) {
-    acc.names.push(...segmentsOf(expr));
-    const closedText = expr.name.text === "error" && isClosedResult(expr.expression, acc.closed);
-    if (ERROR_PROPS.has(expr.name.text) && !closedText) acc.errorText.push(expr.getText());
-    else if (!closedText && whole && CONTAINER_WORDS.has(lastWordOf(expr.name.text))) acc.errorText.push(`unresolved property ${expr.getText()}`);
-    return;
-  }
-  if (ts.isCallExpression(expr)) {
-    const callee = expr.expression;
-    const calleeName = ts.isPropertyAccessExpression(callee) ? callee.name.text : callee.getText();
-    if (ts.isPropertyAccessExpression(callee) && SAFE_METHODS.has(calleeName)) return;
-    const writesArgs = calleeName === "stringify" || calleeName === "String";
-    if (!writesArgs) acc.names.push(calleeName);
-    const verified = verifiedCall(expr);
-    if (verified?.sanitizes) return;
-    if (ts.isPropertyAccessExpression(callee) && !writesArgs) next(callee.expression, false);
-    expr.arguments.forEach((a) => next(a, whole && writesArgs));
-    // Any other call's RESULT is what is written, and the source does not show
-    // it: its name and inputs are checked above, its value is unresolved.
-    if (whole && !writesArgs && !verified) acc.errorText.push(`unresolved call ${callee.getText()}()`);
-    return;
-  }
-  if (ts.isConditionalExpression(expr)) {
-    // The condition decides; only the branches are written.
-    next(expr.whenTrue);
-    next(expr.whenFalse);
-    return;
-  }
-  if (ts.isBinaryExpression(expr)) {
-    const op = expr.operatorToken.kind;
+  if (ts.isBinaryExpression(e)) {
+    const op = e.operatorToken.kind;
     if (PASS_OPERATORS.has(op)) {
-      next(expr.left);
-      next(expr.right);
+      next(e.left);
+      next(e.right);
+      return allow("pass-operator");
+    }
+    if (RIGHT_OPERATORS.has(op)) {
+      next(e.right);
+      return allow("right-operator");
+    }
+    if (SCALAR_OPERATORS.has(op)) return allow("scalar-operator");
+    return deny(`operator ${e.operatorToken.getText()}`);
+  }
+  if (ts.isPrefixUnaryExpression(e) || ts.isTypeOfExpression(e) || ts.isVoidExpression(e)) return allow("scalar-operator");
+  if (ts.isNewExpression(e)) {
+    const ctor = e.expression.getText();
+    if (ctor === "Date") return allow("date");
+    // Read what it was given, as written: new URL(link) serialises the link.
+    for (const a of e.arguments ?? []) next(a);
+    if (/Error$/.test(ctor)) acc.errorText.push(`new ${ctor}`);
+    return deny(`new ${ctor}`);
+  }
+  if (ts.isIdentifier(e)) {
+    if (skip.has(e.text)) return; // a forwarded parameter: judged at each call
+    acc.names.push(e.text);
+    if (written) acc.bare.push(e.text);
+    if (ERROR_NAME_RE.test(e.text)) {
+      acc.errorText.push(e.text);
+      return deny(`error ${e.text}`);
+    }
+    const declared = declarationOf(e);
+    if (declared.kind === "const") {
+      const before = acc.unproven.length;
+      next(declared.init);
+      if (acc.unproven.length === before) allow("const-resolved");
       return;
     }
-    if (RIGHT_OPERATORS.has(op)) return next(expr.right);
-    // A comparison, instanceof, in or arithmetic writes a boolean or a number.
-    if (SCALAR_OPERATORS.has(op)) return;
-    if (whole) acc.opaque.push(expr.getText());
-    return;
+    if (declared.kind === "catch") {
+      acc.errorText.push(e.text);
+      return deny(`caught ${e.text}`);
+    }
+    if (declared.kind === "param" && isClosedTypeNode(declaredType(e))) return allow("closed-type");
+    return deny(`${declared.kind} ${e.text}`);
   }
-  if (ts.isPrefixUnaryExpression(expr) || ts.isTypeOfExpression(expr) || ts.isVoidExpression(expr)) {
-    // !x, -x, +x, ~x, typeof x, void x: a boolean, a number, a type word, undefined.
-    return;
+  if (ts.isPropertyAccessExpression(e)) {
+    acc.names.push(...segmentsOf(e));
+    if (CLOSED_RESULT_FIELDS.has(e.name.text) && isClosedResult(e.expression, acc.closed)) return allow("closed-result");
+    if (ERROR_PROPS.has(e.name.text)) {
+      acc.errorText.push(e.getText());
+      return deny(`error ${e.getText()}`);
+    }
+    const init = propertyInitializer(e);
+    if (init) {
+      const before = acc.unproven.length;
+      next(init);
+      if (acc.unproven.length === before) allow("const-resolved");
+      return;
+    }
+    if (e.name.text === "length") return allow("array-length");
+    return deny(`property ${e.getText()}`);
   }
-  if (ts.isNewExpression(expr)) {
-    const ctor = expr.expression.getText();
-    if (SAFE_CONSTRUCTORS.has(ctor)) return; // new Date(...) writes a timestamp
-    // Any other constructor can serialise what it was given (new URL(link)),
-    // so its arguments are read as written, and its result is not trusted.
-    for (const a of expr.arguments ?? []) next(a);
-    if (whole) acc.errorText.push(/Error$/.test(ctor) ? `new ${ctor}` : `unresolved new ${ctor}`);
-    return;
+  if (ts.isCallExpression(e)) {
+    const callee = e.expression;
+    const calleeName = ts.isPropertyAccessExpression(callee) ? callee.name.text : callee.getText();
+    if (ts.isPropertyAccessExpression(callee) && (calleeName === "toISOString" || calleeName === "getTime") && isProvenDate(callee.expression)) {
+      return allow("date");
+    }
+    if (calleeName === "stringify" || calleeName === "String") {
+      e.arguments.forEach((a) => next(a));
+      return allow("stringify");
+    }
+    acc.names.push(calleeName);
+    const verified = verifiedCall(e);
+    if (verified) {
+      // A sanitizer's input is not written; any other verified function's
+      // inputs are read for names only, never as written values.
+      if (!verified.sanitizes) e.arguments.forEach((a) => next(a, false));
+      return allow("verified-function");
+    }
+    if (ts.isPropertyAccessExpression(callee)) next(callee.expression, false);
+    e.arguments.forEach((a) => next(a, false));
+    return deny(`call ${callee.getText().slice(0, 60)}()`);
   }
-  if (whole) acc.opaque.push(expr.getText());
+  if (ts.isElementAccessExpression(e)) {
+    next(e.expression, false);
+    return deny(`element ${e.getText().slice(0, 60)}`);
+  }
+  acc.opaque.push(e.getText());
+  return deny(`unknown ${ts.SyntaxKind[e.kind]}`);
 }
 
 // `positions`: the arguments that reach the line. A sink writes all of them; a
@@ -414,6 +528,7 @@ function writerOf(
     literals: acc.literals,
     errorText: acc.errorText,
     opaque: acc.opaque,
+    unproven: acc.unproven,
   };
 }
 
