@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,7 @@ import path from "node:path";
 // server, a real public booking reaching the SMS send) is
 // e2e/twilio-egress-fake.spec.ts. This file proves the fake on every request
 // stack, and against the REAL lib/sms/twilio.ts classifier, with no network.
+// Everything here runs on the CI Node (20) as well as 24: see the last block.
 //
 // SAFETY, TWICE OVER: every probe that addresses a Twilio host checks first
 // that the fake armed in its own process (exit 90, nothing sent, otherwise),
@@ -62,19 +64,6 @@ if (!globalThis[Symbol.for("hone.e2e.twilioEgressFake")]?.active) {
   console.log(JSON.stringify({ interlock: "fake not armed; nothing sent" }));
   process.exit(90);
 }
-`;
-
-// Lets a probe import the REAL lib/sms/twilio.ts with Node's own type
-// stripping: its relative imports carry no extension.
-const TS_RESOLVE = `
-require("node:module").registerHooks({
-  resolve(spec, ctx, next) {
-    try { return next(spec, ctx); } catch (e) {
-      if (spec.startsWith(".") && !/\\.[a-z]+$/.test(spec)) return next(spec + ".ts", ctx);
-      throw e;
-    }
-  },
-});
 `;
 
 type Probe = {
@@ -136,19 +125,55 @@ function lastJson(stdout: string): Record<string, unknown> {
   return JSON.parse(lines[lines.length - 1]) as Record<string, unknown>;
 }
 
+// The REAL classifier, loaded IN THIS PROCESS through vitest's own TypeScript
+// transform: CI runs Node 20, which has neither native type stripping nor
+// module.registerHooks, so a child process cannot load lib/sms/twilio.ts
+// (Codex P1 on #1117). Vitest's forks pool gives this file its own process, so
+// the backstop and the fake installed here never reach another test file.
 describe("the REAL lib/sms/twilio.ts reads each scripted outcome as intended", () => {
-  const probe = (to: string) =>
-    withFake(`${TS_RESOLVE}
-import(require("node:path").resolve("lib/sms/twilio.ts"))
-  .then((t) => t.sendSmsSafely({ to: ${JSON.stringify(to)}, body: "probe" }))
-  .then((r) => console.log(JSON.stringify(r)));`);
+  let sendSmsSafely: typeof import("@/lib/sms/twilio").sendSmsSafely;
+  let logFile: string;
+  let logDir: string;
+  const hits = () => (globalThis as Record<symbol, string[] | undefined>)[Symbol.for("hone.test.twilioBackstopHits")] ?? [];
+  const recordsSince = (offset: number) =>
+    (existsSync(logFile) ? readFileSync(logFile, "utf8").slice(offset) : "")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+  const logSize = () => (existsSync(logFile) ? readFileSync(logFile, "utf8").length : 0);
 
-  it("DEFAULT: a refusal before connecting is twilio_unreachable, retryable, attempt 'refused' (a definite non-send)", () => {
-    const p = probe("+16045550199");
-    expect(p.status, p.stderr).toBe(0);
-    expect(lastJson(p.stdout)).toEqual({ ok: false, error: "twilio_unreachable", retryable: true, attempt: "refused" });
-    expect(p.backstopHits).toEqual([]);
-    expect(p.records).toEqual([
+  beforeAll(async () => {
+    for (const name of ["VERCEL", "VERCEL_ENV", "AWS_REGION", "AWS_EXECUTION_ENV", "KUBERNETES_SERVICE_HOST", "TWILIO_MESSAGING_SERVICE_SID"]) {
+      vi.stubEnv(name, "");
+    }
+    logDir = mkdtempSync(path.join(os.tmpdir(), "twilio-egress-fake-inproc-"));
+    logFile = path.join(logDir, "twilio.jsonl");
+    vi.stubEnv("HONE_E2E_TWILIO_EGRESS_LOG", logFile);
+    vi.stubEnv("TWILIO_ACCOUNT_SID", "AC00000000000000000000000000000000");
+    vi.stubEnv("TWILIO_AUTH_TOKEN", "dummy-twilio-token");
+    vi.stubEnv("TWILIO_FROM_NUMBER", "+15555550100");
+    const load = createRequire(__filename);
+    load(BACKSTOP); // underneath, exactly as in the child probes
+    load(FAKE);
+    // Interlock: never call the sender unless the fake armed in this process.
+    expect((globalThis as Record<symbol, { active?: boolean } | undefined>)[Symbol.for("hone.e2e.twilioEgressFake")]?.active).toBe(true);
+    ({ sendSmsSafely } = await import("@/lib/sms/twilio"));
+  });
+
+  afterAll(() => {
+    rmSync(logDir, { recursive: true, force: true });
+  });
+
+  it("DEFAULT: a refusal before connecting is twilio_unreachable, retryable, attempt 'refused' (a definite non-send)", async () => {
+    const from = logSize();
+    expect(await sendSmsSafely({ to: "+16045550199", body: "probe" })).toEqual({
+      ok: false,
+      error: "twilio_unreachable",
+      retryable: true,
+      attempt: "refused",
+    });
+    expect(hits()).toEqual([]);
+    expect(recordsSince(from)).toEqual([
       expect.objectContaining({
         kind: "message",
         via: "fetch",
@@ -160,20 +185,26 @@ import(require("node:path").resolve("lib/sms/twilio.ts"))
     ]);
   });
 
-  it("...0153: a 503 is retryable but 'ambiguous' (the control: the message may exist)", () => {
-    const p = probe(`+1604555${config.TWILIO_FAKE_AMBIGUOUS_503_LAST4}`);
-    expect(p.status, p.stderr).toBe(0);
-    expect(lastJson(p.stdout)).toMatchObject({ ok: false, error: "twilio_http_503", retryable: true, attempt: "ambiguous" });
-    expect(p.backstopHits).toEqual([]);
-    expect(p.records).toEqual([expect.objectContaining({ mode: "ambiguous_503", toLast4: "0153" })]);
+  it("...0153: a 503 is retryable but 'ambiguous' (the control: the message may exist)", async () => {
+    const from = logSize();
+    expect(await sendSmsSafely({ to: `+1604555${config.TWILIO_FAKE_AMBIGUOUS_503_LAST4}`, body: "probe" })).toMatchObject({
+      ok: false,
+      error: "twilio_http_503",
+      retryable: true,
+      attempt: "ambiguous",
+    });
+    expect(hits()).toEqual([]);
+    expect(recordsSince(from)).toEqual([expect.objectContaining({ mode: "ambiguous_503", toLast4: "0153" })]);
   });
 
-  it("...0150: accepted, with a well-formed message SID", () => {
-    const p = probe(`+1604555${config.TWILIO_FAKE_ACCEPT_LAST4}`);
-    expect(p.status, p.stderr).toBe(0);
-    expect(lastJson(p.stdout)).toEqual({ ok: true, messageSid: expect.stringMatching(/^SM[0-9a-f]{32}$/) });
-    expect(p.backstopHits).toEqual([]);
-    expect(p.records).toEqual([expect.objectContaining({ mode: "accept", toLast4: "0150" })]);
+  it("...0150: accepted, with a well-formed message SID", async () => {
+    const from = logSize();
+    expect(await sendSmsSafely({ to: `+1604555${config.TWILIO_FAKE_ACCEPT_LAST4}`, body: "probe" })).toEqual({
+      ok: true,
+      messageSid: expect.stringMatching(/^SM[0-9a-f]{32}$/),
+    });
+    expect(hits()).toEqual([]);
+    expect(recordsSince(from)).toEqual([expect.objectContaining({ mode: "accept", toLast4: "0150" })]);
   });
 });
 
@@ -294,7 +325,7 @@ describe("every browser lane loads it, and nothing deployed can", () => {
 
   it("the lane env carries the fake beside the Sentry guard, and its record path", () => {
     expect(config.E2E_TWILIO_EGRESS_FAKE).toBe(FAKE);
-    expect(E2E_WEB_SERVER_ENV.NODE_OPTIONS).toContain(`--require ${FAKE}`);
+    expect(E2E_WEB_SERVER_ENV.NODE_OPTIONS).toContain(`--import ${FAKE}`);
     expect(E2E_WEB_SERVER_ENV.NODE_OPTIONS).toContain(`--require ${E2E_SENTRY_EGRESS_GUARD}`);
     expect(path.isAbsolute(E2E_WEB_SERVER_ENV.HONE_E2E_TWILIO_EGRESS_LOG)).toBe(true);
   });
@@ -320,8 +351,8 @@ describe("every browser lane loads it, and nothing deployed can", () => {
   });
 
   it("composes with existing NODE_OPTIONS instead of replacing them, once", () => {
-    expect(config.withTwilioEgressFake(undefined)).toBe(`--require ${FAKE}`);
-    expect(config.withTwilioEgressFake("--max-old-space-size=4096")).toBe(`--max-old-space-size=4096 --require ${FAKE}`);
+    expect(config.withTwilioEgressFake(undefined)).toBe(`--import ${FAKE}`);
+    expect(config.withTwilioEgressFake("--max-old-space-size=4096")).toBe(`--max-old-space-size=4096 --import ${FAKE}`);
     const once = config.withTwilioEgressFake("--max-old-space-size=4096");
     expect(config.withTwilioEgressFake(once)).toBe(once);
   });
@@ -338,6 +369,90 @@ describe("every browser lane loads it, and nothing deployed can", () => {
     ];
     for (const rel of productionInputs) {
       expect(readFileSync(path.join(ROOT, rel), "utf8"), rel).not.toContain("twilio-egress-fake");
+    }
+  });
+});
+
+describe("runs on CI's Node, and survives Next's NODE_OPTIONS re-formatting (#1117 run 40140137937)", () => {
+  const GUARD = path.join(ROOT, "e2e", "helpers", "sentry-egress-guard.cjs");
+
+  function withNodeOptions<T>(value: string, fn: () => T): T {
+    const previous = process.env.NODE_OPTIONS;
+    process.env.NODE_OPTIONS = value;
+    try {
+      return fn();
+    } finally {
+      if (previous === undefined) delete process.env.NODE_OPTIONS;
+      else process.env.NODE_OPTIONS = previous;
+    }
+  }
+
+  // Next's own function, the one its build and render workers are spawned with.
+  async function nextWorkerNodeOptions(value: string): Promise<string> {
+    const utils = (await import("next/dist/server/lib/utils")) as unknown as {
+      getFormattedNodeOptionsWithoutInspect: () => string;
+    };
+    return withNodeOptions(value, () => utils.getFormattedNodeOptionsWithoutInspect());
+  }
+
+  it("CI pins Node 20, and on CI this suite runs on that Node", () => {
+    const pinned = new Set(
+      [...readFileSync(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8").matchAll(/node-version:\s*"?(\d+)/g)].map((m) => m[1]),
+    );
+    expect([...pinned]).toEqual(["20"]);
+    if (process.env.GITHUB_ACTIONS === "true") {
+      expect(process.versions.node.split(".")[0]).toBe("20");
+    }
+  });
+
+  it("the preload, its config and the backstop use no API newer than Node 20", () => {
+    const NEWER_THAN_20 =
+      /registerHooks|getBuiltinModule|stripTypeScriptTypes|experimental-strip-types|import\.meta\.(dirname|filename)|process\.features\.typescript/;
+    for (const file of [FAKE, BACKSTOP, path.join(ROOT, "e2e", "helpers", "twilio-egress-config.ts")]) {
+      expect(readFileSync(file, "utf8"), file).not.toMatch(NEWER_THAN_20);
+    }
+  });
+
+  it("two --require entries are merged by Next into ONE bogus path (the trap the lane fell into)", async () => {
+    const merged = await nextWorkerNodeOptions(`--require ${GUARD} --require ${FAKE}`);
+    expect(merged).toContain(`${GUARD} ${FAKE}`);
+  });
+
+  it("the lane's NODE_OPTIONS keeps the guard and the fake as SEPARATE preloads through Next", async () => {
+    const formatted = await nextWorkerNodeOptions(E2E_WEB_SERVER_ENV.NODE_OPTIONS);
+    expect(formatted).toContain(`--require=${GUARD}`);
+    expect(formatted).toContain(`--import=${FAKE}`);
+  });
+
+  it("a worker started with Next's re-formatted options arms BOTH preloads on this Node", async () => {
+    const formatted = await nextWorkerNodeOptions(E2E_WEB_SERVER_ENV.NODE_OPTIONS);
+    const dir = mkdtempSync(path.join(os.tmpdir(), "twilio-egress-worker-"));
+    try {
+      const res = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          `console.log(JSON.stringify({
+            sentry: !!globalThis[Symbol.for("hone.e2e.sentryEgressGuard")]?.active,
+            twilio: !!globalThis[Symbol.for("hone.e2e.twilioEgressFake")]?.active,
+          }))`,
+        ],
+        {
+          cwd: ROOT,
+          env: {
+            ...cleanEnv(),
+            NODE_OPTIONS: formatted,
+            HONE_E2E_SENTRY_EGRESS_LOG: path.join(dir, "sentry.jsonl"),
+            HONE_E2E_TWILIO_EGRESS_LOG: path.join(dir, "twilio.jsonl"),
+          },
+          encoding: "utf8",
+          timeout: 60_000,
+        },
+      );
+      expect(res.status, res.stderr).toBe(0);
+      expect(lastJson(res.stdout)).toEqual({ sentry: true, twilio: true });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

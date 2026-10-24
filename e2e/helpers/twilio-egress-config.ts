@@ -26,6 +26,15 @@ export function twilioEgressLogPath(worktree: string, port: number | string): st
  * NODE_OPTIONS carrying the fake, COMPOSED with whatever is already there (the
  * Sentry guard, an operator's own options). Idempotent, and quoted only when
  * the path needs it (NODE_OPTIONS splits on spaces outside double quotes).
+ *
+ * `--import`, NOT a second `--require`. Next re-derives NODE_OPTIONS for its
+ * build and render workers (next/dist/server/lib/utils
+ * getFormattedNodeOptionsWithoutInspect), parsing it into ONE value per option
+ * name: a second `--require` is merged into the first as a single path with a
+ * space in it, and every worker then dies with MODULE_NOT_FOUND before any spec
+ * runs (#1117 run 40140137937, every browser lane). The Sentry guard keeps the
+ * `--require` slot; `--import` preloads this CommonJS file just as early on
+ * Node 20 and 24, and survives Next's re-formatting as its own option.
  */
 export function withTwilioEgressFake(existing: string | undefined): string {
   const current = (existing ?? "").trim();
@@ -33,5 +42,5 @@ export function withTwilioEgressFake(existing: string | undefined): string {
   const target = /[\s"\\]/.test(E2E_TWILIO_EGRESS_FAKE)
     ? `"${E2E_TWILIO_EGRESS_FAKE.replace(/(["\\])/g, "\\$1")}"`
     : E2E_TWILIO_EGRESS_FAKE;
-  return [current, `--require ${target}`].filter(Boolean).join(" ");
+  return [current, `--import ${target}`].filter(Boolean).join(" ");
 }

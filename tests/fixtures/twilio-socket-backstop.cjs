@@ -8,15 +8,21 @@
  * resolution error instead of reaching Twilio from it. A different mechanism
  * from the fake's: every stack must resolve the host and open a socket, and
  * this refuses both - dns.lookup and net.Socket.prototype.connect - for any
- * Twilio host, writing one TWILIO_BACKSTOP_HIT line to stderr per refusal so a
- * probe can count them. Never loaded outside those probes.
+ * Twilio host, writing one TWILIO_BACKSTOP_HIT line to stderr per refusal (and
+ * pushing it onto globalThis[Symbol.for("hone.test.twilioBackstopHits")] for an
+ * in-process probe) so a probe can count them. Never loaded outside those
+ * probes.
  */
 const dns = require("node:dns");
 const net = require("node:net");
 
 const TWILIO_HOST = /(^|\.)twilio\.com\.?$/i;
 
+const HITS = Symbol.for("hone.test.twilioBackstopHits");
+globalThis[HITS] = globalThis[HITS] || [];
+
 function hit(how, hostname) {
+  globalThis[HITS].push(`${how} ${hostname}`);
   process.stderr.write(`TWILIO_BACKSTOP_HIT ${how} ${hostname}\n`);
   return Object.assign(
     new Error(`getaddrinfo ENOTFOUND ${hostname} (twilio backstop: the fake let this through)`),

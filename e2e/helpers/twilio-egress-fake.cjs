@@ -1,12 +1,14 @@
 "use strict";
-/* eslint-disable @typescript-eslint/no-require-imports -- a CommonJS preload, loaded by `node --require` */
+/* eslint-disable @typescript-eslint/no-require-imports -- a CommonJS preload, loaded through NODE_OPTIONS */
 /**
  * TWILIO-EGRESS-FAKE (MSG-006) - the local browser lanes never reach Twilio.
  *
- * Loaded into the LOCAL E2E web server with `node --require`, through the
+ * Loaded into the LOCAL E2E web server as a preload (`--import` in the
  * NODE_OPTIONS that e2e/helpers/local-env.ts puts in E2E_WEB_SERVER_ENV - the
- * environment every browser lane (core, payment, mobile, Google) spreads. Same
- * posture as e2e/helpers/sentry-egress-guard.cjs, which it sits beside.
+ * environment every browser lane (core, payment, mobile, Google) spreads; see
+ * withTwilioEgressFake for why not a second `--require`). Same posture as
+ * e2e/helpers/sentry-egress-guard.cjs, which it sits beside. Plain CommonJS
+ * using only Node 20 APIs: CI runs Node 20.
  *
  * WHY IT EXISTS. The lane's server carries dummy TWILIO_* credentials, and
  * outboundSmsFence (lib/sms/twilio.ts) fences only a non-production Vercel
