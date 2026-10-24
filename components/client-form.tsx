@@ -40,10 +40,11 @@ export const EMPTY_CLIENT_FORM: ClientFormValues = {
 // Next.js production redact thrown errors to an opaque crash; this
 // return-shape lets the form render a clean error banner instead.
 //
-// HON-58: `possibleDuplicates` (staff create only) means nothing was saved
-// because the studio already has clients with the same phone, or the same
-// name and date of birth. The form names EVERY one and offers to save a new
-// record anyway, confirming each listed client (Team L1).
+// HON-58: `possibleDuplicates` (staff create, and an edit that changes the
+// name, phone or date of birth) means nothing was saved because the studio
+// already has clients with the same phone, or the same name and date of
+// birth. The form names EVERY one and offers to save anyway, confirming each
+// listed client (Team L1).
 export type ClientFormActionResult = {
   ok: false;
   error: string;
@@ -61,6 +62,9 @@ type Props = {
   pendingLabel: string;
   cancelHref: string;
   hiddenFields?: Record<string, string>;
+  // HON-58: the probable-duplicate "save anyway" button. Create saves a new
+  // record; the edit page saves the existing one and says so.
+  saveAnywayLabel?: string;
   action: (formData: FormData) => Promise<ClientFormActionResult | void>;
 };
 
@@ -88,6 +92,7 @@ export function ClientForm({
   pendingLabel,
   cancelHref,
   hiddenFields,
+  saveAnywayLabel = "Save as a new client anyway",
   action,
 }: Props) {
   const [values, setValues] = useState<ClientFormValues>(initialValues);
@@ -297,7 +302,7 @@ export function ClientForm({
               onClick={() => submit(possibleDuplicates.map((d) => d.clientId))}
               className="rounded-md border border-amber-400 px-3 py-2 font-medium hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:hover:bg-amber-900"
             >
-              Save as a new client anyway
+              {saveAnywayLabel}
             </button>
           </div>
         </div>

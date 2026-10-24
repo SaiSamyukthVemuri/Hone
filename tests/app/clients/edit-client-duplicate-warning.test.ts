@@ -36,6 +36,10 @@ vi.mock("@/lib/supabase/server", () => ({
       const filters: Array<[string, unknown]> = [];
       let columns = "";
       let limit = Infinity;
+      let after: string | null = null;
+      let ordered = false;
+      let from = 0;
+      let to = Infinity;
       const matching = () => db.rows.filter((r) => filters.every(([k, v]) => (r as Record<string, unknown>)[k] === v));
       const project = (r: Row) => Object.fromEntries(
         columns.split(",").map((c) => c.trim()).map((c) => [c, (r as Record<string, unknown>)[c]]),
@@ -44,6 +48,10 @@ vi.mock("@/lib/supabase/server", () => ({
         select: (c: string) => { columns = c; db.selects.push(c); return query; },
         eq: (k: string, v: unknown) => { filters.push([k, v]); return query; },
         limit: (n: number) => { limit = n; return query; },
+        // #1084's matcher pages by id (Codex P2 4365730664); a page holds at most 1000.
+        gt: (k: string, v: string) => { expect(k).toBe("id"); after = v; return query; },
+        order: (k: string, o: { ascending: boolean }) => { expect([k, o.ascending]).toEqual(["id", true]); ordered = true; return query; },
+        range: (a: number, b: number) => { from = a; to = b; return query; },
         maybeSingle: async () => {
           if (db.failStored && columns !== "id") return { data: null, error: { code: "57014" } };
           const r = matching()[0];
@@ -51,7 +59,11 @@ vi.mock("@/lib/supabase/server", () => ({
         },
         then: (resolve: (v: unknown) => unknown) => {
           if (db.failMatcher) return Promise.resolve({ data: null, error: { code: "57014" } }).then(resolve);
-          return Promise.resolve({ data: matching().slice(0, limit).map(project), error: null }).then(resolve);
+          let rows = matching();
+          if (after !== null) rows = rows.filter((r) => r.id > (after as string));
+          if (ordered) rows = [...rows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+          rows = rows.slice(from, Math.min(to + 1, from + 1000)).slice(0, limit);
+          return Promise.resolve({ data: rows.map(project), error: null }).then(resolve);
         },
         update: (row: Record<string, unknown>) => {
           db.updates.push(row);
@@ -163,5 +175,18 @@ describe("HON-58 I1: an edit that creates a probable duplicate warns before savi
     const text = JSON.stringify(result);
     expect(text).not.toContain("555");
     expect(text).not.toContain("1990");
+  });
+});
+
+// The warning's button on the EDIT page must not say "new client": an edit
+// saves the existing record. ClientForm takes the label; create keeps its own.
+describe("HON-58 I1: the edit page's 'save anyway' wording", () => {
+  it("the edit page asks to save the changes anyway, not to create a new client", async () => {
+    const { readFileSync } = await import("node:fs");
+    const edit = readFileSync("app/(app)/clients/[id]/edit/page.tsx", "utf8");
+    const form = readFileSync("components/client-form.tsx", "utf8");
+    expect(edit).toContain('saveAnywayLabel="Save changes anyway"');
+    expect(form).toContain('saveAnywayLabel = "Save as a new client anyway"');
+    expect(form).toContain("{saveAnywayLabel}");
   });
 });
