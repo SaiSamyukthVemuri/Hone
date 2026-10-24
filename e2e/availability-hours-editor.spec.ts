@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Route } from "@playwright/test";
 import { seedE2eStudio, getStudioWeeklyDefaults, type E2eSeed } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
@@ -43,6 +43,36 @@ async function openDay(page: Page, day: string) {
 test.beforeAll(async () => {
   expect(E2E_APP_ORIGIN).toMatch(/^https?:\/\/(localhost|127\.0\.0\.1)/);
   seed = await seedE2eStudio();
+});
+
+// WebKit only (#1094, runs 40077309473 and 40078281596): after the http
+// /login document, WebKit fetched every relative /_next/static chunk, CSS
+// file and font as https://localhost and failed the TLS handshake, so the
+// page never hydrated. That response carries both the app CSP's
+// upgrade-insecure-requests and Strict-Transport-Security, and bypassCSP did
+// not stop it, so the test browser strips both from document responses.
+// Redirects pass through unmodified. Chromium registers no route at all; the
+// app's headers are unchanged everywhere else.
+async function withoutHttpsUpgrade(route: Route) {
+  if (route.request().resourceType() !== "document") return route.fallback();
+  const response = await route.fetch({ maxRedirects: 0 });
+  if (response.status() >= 300 && response.status() < 400) return route.fulfill({ response });
+  const headers = { ...response.headers() };
+  delete headers["strict-transport-security"];
+  const csp = headers["content-security-policy"];
+  if (csp !== undefined) {
+    headers["content-security-policy"] = csp
+      .split(";")
+      .map((d) => d.trim())
+      .filter((d) => d !== "" && d !== "upgrade-insecure-requests")
+      .join("; ");
+  }
+  return route.fulfill({ response, headers });
+}
+
+test.beforeEach(async ({ context, browserName }) => {
+  if (browserName !== "webkit") return;
+  await context.route("**/*", withoutHttpsUpgrade);
 });
 
 test("an owner types Monday's hours with the keyboard, saves, and they survive a reload", async ({
