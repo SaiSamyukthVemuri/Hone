@@ -2,6 +2,7 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "./server";
 import { readSelectedStudioId } from "./selected-studio";
+import { authorLabel } from "@/lib/attribution";
 import type { BlockArea } from "@/lib/sessions/block-areas";
 import type {
   ApilusModality,
@@ -383,19 +384,66 @@ export type ClientCheatSheet = {
   pricing: ClientPricing[];
   sessions: SessionWithEntries[];
   practitioners: Practitioner[];
+  // HON-44 (a): every member of the studio INCLUDING deactivated ones, for
+  // naming who recorded or performed a historical session. `practitioners`
+  // stays active-only because it feeds pickers.
+  attributionRoster: AttributionPractitioner[];
 };
+
+export type AttributionPractitioner = Pick<Practitioner, "id" | "display_name" | "email">;
+
+function attributedName(
+  id: string | null,
+  roster: ReadonlyArray<AttributionPractitioner>,
+): string | null {
+  if (!id) return null;
+  const match = roster.find((p) => p.id === id);
+  return authorLabel(match ? match.display_name?.trim() || match.email : null);
+}
 
 // Resolves the human-readable name of who performed a session,
 // preferring performed_by_practitioner_id but falling back to the creator.
+// Pass the attribution roster (deactivated members included); an id that
+// still cannot be resolved reads "Unknown author" rather than disappearing.
 export function sessionPerformerName(
   session: Pick<Session, "performed_by_practitioner_id" | "practitioner_id">,
-  practitioners: Practitioner[],
+  roster: ReadonlyArray<AttributionPractitioner>,
 ): string | null {
-  const id = session.performed_by_practitioner_id ?? session.practitioner_id;
-  if (!id) return null;
-  const match = practitioners.find((p) => p.id === id);
-  if (!match) return null;
-  return match.display_name?.trim() ? match.display_name : match.email;
+  return attributedName(session.performed_by_practitioner_id ?? session.practitioner_id, roster);
+}
+
+// The session's ORIGINAL author (its creator), named only when someone else
+// is recorded as the performer; otherwise the performer line already says it.
+export function sessionRecordedByName(
+  session: Pick<Session, "performed_by_practitioner_id" | "practitioner_id">,
+  roster: ReadonlyArray<AttributionPractitioner>,
+): string | null {
+  const performer = session.performed_by_practitioner_id;
+  if (!performer || performer === session.practitioner_id) return null;
+  return attributedName(session.practitioner_id, roster);
+}
+
+// ONE roster read serves both lists, so the profile's per-tab query budget
+// (tests/db/client-profile-tab-queries.db.test.ts) is unchanged. Members read
+// their whole studio roster under RLS (0001 "practitioners: members read"),
+// deactivated rows included; the active list is filtered from it here, in the
+// same display_name order getPractitionersForStudio returns.
+async function getStudioRosters(studioId: string): Promise<{
+  practitioners: Practitioner[];
+  attributionRoster: AttributionPractitioner[];
+}> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("practitioners")
+    .select("*")
+    .eq("studio_id", studioId)
+    .order("display_name", { ascending: true });
+  if (error) throw new Error(`Failed to load practitioners: ${error.message}`);
+  const rows = (data ?? []) as Practitioner[];
+  return {
+    practitioners: rows.filter((p) => p.active === true),
+    attributionRoster: rows.map((p) => ({ id: p.id, display_name: p.display_name, email: p.email })),
+  };
 }
 
 // Migration 0114: a voided pass (deleted_at set) stays in the DB but must never
@@ -428,7 +476,7 @@ export async function getClientById(
   if (clientErr) throw new Error(`Failed to load client: ${clientErr.message}`);
   if (!client) return null;
 
-  const [pricingRes, sessionsRes, practitioners] = await Promise.all([
+  const [pricingRes, sessionsRes, { practitioners, attributionRoster }] = await Promise.all([
     supabase
       .from("client_pricing")
       .select("*")
@@ -442,7 +490,7 @@ export async function getClientById(
       .eq("client_id", clientId)
       .is("deleted_at", null)
       .order("started_at", { ascending: false }),
-    getPractitionersForStudio(studioId),
+    getStudioRosters(studioId),
   ]);
 
   if (pricingRes.error)
@@ -457,6 +505,7 @@ export async function getClientById(
       stripDeletedEntries,
     ),
     practitioners,
+    attributionRoster,
   };
 }
 

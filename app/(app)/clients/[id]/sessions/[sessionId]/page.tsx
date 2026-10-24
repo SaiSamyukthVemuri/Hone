@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import {
   getClientById,
+  sessionPerformerName,
+  sessionRecordedByName,
   requirePractitionerWithStudio,
   getLaserTreatmentCountsForClient,
   getPriorLaserSessionCount,
@@ -614,6 +616,8 @@ export default async function SessionDetailPage({
           initialPerformerId={
             session.performed_by_practitioner_id ?? session.practitioner_id
           }
+          performerName={sessionPerformerName(session, clientData.attributionRoster)}
+          recordedByName={sessionRecordedByName(session, clientData.attributionRoster)}
           updatePerformerAction={updateSessionPerformerAction}
         />
         {/* PR #194 (Chloe retest): when a treatment plan is attached,
