@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
 import Link from "next/link";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
@@ -50,8 +51,11 @@ export function QuickCheckoutModal({
   const [loadError, setLoadError] = useState<string | null>(null);
   const titleId = useId();
   const descId = useId();
-  const panelRef = useRef<HTMLDivElement>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
+  const { panelRef, initialFocusRef: closeRef } = useDialogKeyboard<HTMLDivElement, HTMLButtonElement>({
+    open,
+    busy: false, // Preserve existing Escape/Close behavior; payment gates are unchanged.
+    onClose,
+  });
 
   // Track open state + the latest request so a response that lands after the
   // modal closed (or after a newer request started) is ignored.
@@ -106,17 +110,6 @@ export function QuickCheckoutModal({
     void fetchContext();
   }, [open, fetchContext]);
 
-  // Escape to close + move focus into the dialog on open.
-  useEffect(() => {
-    if (!open) return;
-    closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
   // Wrap a payment action so a successful result advances the card in place by
   // silently re-resolving server context. Failures return unchanged so the
   // card renders its own error state. The action itself is called exactly once
@@ -160,6 +153,7 @@ export function QuickCheckoutModal({
     >
       <div
         ref={panelRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

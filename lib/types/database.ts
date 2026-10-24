@@ -1369,6 +1369,9 @@ export type TreatmentImage = {
   // Optional practitioner-authored note/caption (migration 0099). Free text,
   // capped at 1000 chars by the update action; NULL = no note.
   practitioner_note: string | null;
+  // FETT photos (migration 0232): taken before or after treatment, on a visit
+  // photo only; NULL = unlabelled. Set via set_treatment_image_capture_stage.
+  capture_stage: "before" | "after" | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;

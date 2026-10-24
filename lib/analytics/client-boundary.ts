@@ -30,7 +30,7 @@
 // Pure module (no posthog-js import); unit-tested against event-shaped payloads.
 
 import { MARKETING_PAGES } from "@/lib/marketing/content";
-import { redactIdsInPath } from "@/lib/analytics/path-ids";
+import { decodeBounded, redactIdsInPath, redactIdsInValue } from "@/lib/analytics/path-ids";
 import { TOKEN_ROUTE_PREFIXES } from "@/lib/security/token-routes";
 
 // The exact canonical marketing surfaces, derived from the single registry the
@@ -172,7 +172,8 @@ export function sanitizeMarketingUrl(raw: string): string {
   if (!tokenRoute && !isMarketingPath(pathname)) pathname = redactIdsInPath(pathname);
   const params = new URLSearchParams();
   for (const [k, v] of u.searchParams) {
-    if (ATTRIBUTION_PARAMS.has(k)) params.set(k, v);
+    // The VALUE is kept for attribution, minus any record id (Codex P1 4309025843).
+    if (ATTRIBUTION_PARAMS.has(k)) params.set(k, redactIdsInValue(v));
   }
   const qs = params.toString();
   const suffix = qs ? `?${qs}` : "";
@@ -184,26 +185,173 @@ export function sanitizeUrl(url: string): string {
   return sanitizeTokenPaths(url);
 }
 
+// Campaign parameters posthog-js copies into STANDALONE properties, bare or
+// with its $initial_ / $session_entry_ prefixes: the utm_* set plus the ad
+// click ids it collects. Their values are kept for attribution, minus any
+// record id (Codex P1 4309025843). PostHog's own ids ($session_id,
+// distinct_id, $device_id, uuid) are not here and are never touched.
+const CAMPAIGN_PROP = new RegExp(
+  "^(?:\\$initial_|\\$session_entry_)?(?:utm_(?:source|medium|campaign|term|content)|" +
+    "gclid|gad_source|gclsrc|dclid|gbraid|wbraid|fbclid|msclkid|twclid|li_fat_id|mc_cid|igshid|ttclid|rdt_cid|epik|qclid|sccid|irclid|_kx)$",
+);
+
+// A string that names a path or URL (has a "/") and carries a record id. Bare
+// UUIDs are PostHog's OWN ids ($session_id, distinct_id, $device_id, uuid:
+// UUIDv7) and are kept; any id inside a path-like string is replaced, whatever
+// the key (Codex P2/P1 audit, 4309044244).
+// Decided on the DECODED text (Codex 4309069522), never on a raw signal: an
+// encoded string (it decodes to something else) or one that contains "/" is
+// redacted; a bare, unencoded UUID (PostHog's own id) is kept. Undecodable or
+// over-encoded text fails closed to [token].
+function redactPathLikeIds(value: string): string {
+  const decoded = decodeBounded(value);
+  if (decoded === null) return "[token]";
+  // A BARE, unencoded UUID is PostHog's own id: kept. Any other string that
+  // holds a UUID ("word:<uuid>", "/clients/<uuid>", an encoded id) loses it.
+  if (decoded === value && BARE_UUID.test(value)) return value;
+  return redactIdsInValue(value);
+}
+const BARE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// A string that IS a URL, absolute (http/https) or app-relative, is sanitized
+// AS a URL whatever its key (Codex 4309069519): query and fragment dropped,
+// path ids redacted. Decided by PARSING the decoded text the way a browser
+// would (Codex 4309252679), never by a textual prefix: the WHATWG parser
+// trims leading/trailing C0 controls and spaces, drops tabs and newlines
+// anywhere, and reads "\\" as "/" in an http(s) URL, so " https:\\host\\…",
+// "https:host/…" and "ht<LF>tps://…" are all http(s) URLs.
+function whatwgTrim(value: string): string {
+  return value.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "").replace(/[\t\n\r]/g, "");
+}
+function looksLikeUrl(value: string): boolean {
+  const decoded = decodeBounded(value) ?? value;
+  try {
+    const u = new URL(decoded);
+    if (u.protocol === "http:" || u.protocol === "https:") return true;
+  } catch {
+    // not absolute; may still be app-relative
+  }
+  const trimmed = whatwgTrim(decoded);
+  return trimmed.startsWith("/") || trimmed.startsWith("\\");
+}
+
+// A STRING is treated as a non-http(s) URL only when that is UNAMBIGUOUS
+// (Codex 4309185282: "summer:sale" and autocapture's "a:attr__href=…" are not
+// URLs, and turning them into a placeholder broke attribution):
+//   * the scheme is followed by "//" (an authority form: ftp://, file://,
+//     custom-app://…), or
+//   * the scheme is one of the path-less schemes that carry data, or
+//   * the scheme is WHATWG-special (ftp, ws, wss, file), where "\\" is a
+//     separator too, so "ftp:\\\\host\\…" is as much a URL as "ftp://host/…"
+//     (Codex 4309252679).
+// Any other "word:rest" string is ordinary text and goes through the value
+// rules below, so a record id inside it is still redacted. URL INSTANCES are
+// unambiguous and handled in sanitizeProps by type.
+const NON_HTTP_URL_PLACEHOLDER = "[url]";
+const DATA_SCHEMES = new Set(["mailto", "data", "javascript", "blob", "tel", "sms", "file"]);
+const SPECIAL_SCHEMES = new Set(["ftp", "ws", "wss", "file"]);
+function isNonHttpUrl(value: string): boolean {
+  const decoded = whatwgTrim(decodeBounded(value) ?? value);
+  const m = /^([a-z][a-z0-9+.-]*):(.*)$/is.exec(decoded);
+  if (!m) return false;
+  const scheme = m[1]!.toLowerCase();
+  if (scheme === "http" || scheme === "https") return false;
+  return m[2]!.startsWith("//") || DATA_SCHEMES.has(scheme) || SPECIAL_SCHEMES.has(scheme);
+}
+
+// PostHog autocapture's own structural fields: never classified as URLs
+// (their syntax is selectors, "a:attr__href=…"), but record ids inside them
+// are still redacted.
+const STRUCTURAL_KEYS = new Set(["$elements_chain", "$el_text"]);
+
+/** Object keys lose record ids too (decoded first, unconditionally); a
+ *  collision gets a numeric suffix so no value is silently dropped. */
+function sanitizeKey(key: string, taken: Record<string, unknown>): string {
+  const base = redactIdsInValue(key);
+  if (!Object.hasOwn(taken, base)) return base;
+  let n = 2;
+  while (Object.hasOwn(taken, `${base}#${n}`)) n += 1;
+  return `${base}#${n}`;
+}
+
+/**
+ * Every value that leaves is sanitized; NOTHING passes through unexamined
+ * (Codex 4309044244: an over-depth container used to be returned as is).
+ *   * strings: URL keys as URLs, campaign keys by value, path-like strings
+ *     lose ids, all lose token paths; over the depth limit, "[redacted]";
+ *   * containers over the depth limit: "[depth-limited]", never the original;
+ *   * URL instances: withheld as "[url]" without reading their properties;
+ *     non-http(s) URL strings likewise "[url]";
+ *   * Date: sanitized as its ISO string through intrinsic methods only;
+ *   * every other object with a toJSON, and Map / Set / class instances /
+ *     any non-plain prototype: "[unsupported]", WITHOUT calling toJSON
+ *     (Codex 4309252682: a toJSON can serialize hidden state);
+ *   * arrays and plain objects: element by element, keys included;
+ *   * number / boolean / null / undefined: as is (no text to carry an id);
+ *   * bigint / symbol / function: dropped (undefined).
+ */
 function sanitizeProps(value: unknown, key: string, depth: number): unknown {
-  if (depth > MAX_DEPTH) {
-    return typeof value === "string" ? "[redacted]" : value;
-  }
+  if (value === null || value === undefined) return value;
+  if (typeof value === "number" || typeof value === "boolean") return value;
   if (typeof value === "string") {
-    return isUrlPropKey(key)
-      ? sanitizeMarketingUrl(value)
-      : sanitizeTokenPaths(value);
+    if (depth > MAX_DEPTH) return "[redacted]";
+    if (STRUCTURAL_KEYS.has(key)) return redactIdsInValue(sanitizeTokenPaths(value));
+    if (CAMPAIGN_PROP.test(key)) return redactIdsInValue(sanitizeTokenPaths(value));
+    if (isNonHttpUrl(value)) return NON_HTTP_URL_PLACEHOLDER;
+    if (isUrlPropKey(key)) return sanitizeMarketingUrl(value);
+    // A URL-shaped value under any other key: sanitized as the URL it decodes
+    // to, so an encoded "%2Fclients%2F…%3F…" loses its query too.
+    if (looksLikeUrl(value)) return sanitizeMarketingUrl(decodeBounded(value) ?? "[redacted]");
+    return redactPathLikeIds(sanitizeTokenPaths(value));
   }
+  if (typeof value !== "object") return undefined;
+  if (depth > MAX_DEPTH) return "[depth-limited]";
+  // URL objects previously exposed no fields. Do not introduce serialization
+  // of arbitrary hidden PII in their origin, path or retained attribution.
+  // SDK string URLs retain the separately reviewed URL/campaign rules.
+  if (value instanceof URL) return NON_HTTP_URL_PLACEHOLDER;
+  // Never dispatch through instance methods: even intrinsic toJSON calls an
+  // overridable toISOString. Read the internal time and serialize a fresh Date.
+  if (value instanceof Date) {
+    let iso: unknown;
+    try {
+      const time = Date.prototype.getTime.call(value);
+      iso = Number.isFinite(time) ? new Date(time).toISOString() : null;
+    } catch {
+      return "[unsupported]";
+    }
+    return sanitizeProps(iso, key, depth + 1);
+  }
+  // Checking a serializer must not execute it: even a non-enumerable getter
+  // can publish hidden state into fields that Object.entries would then send.
+  for (let owner: object | null = value; owner !== null; owner = Object.getPrototypeOf(owner)) {
+    const descriptor = Object.getOwnPropertyDescriptor(owner, "toJSON");
+    if (!descriptor) continue;
+    if (!Object.hasOwn(descriptor, "value") || typeof descriptor.value === "function") return "[unsupported]";
+    break;
+  }
+  // Reading a value must not execute arbitrary getters (not only toJSON).
+  // Snapshot data descriptors before traversal, and never call array methods
+  // supplied by the input: an overridden map could return unsanitized data.
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Object.values(descriptors).some((descriptor) => !Object.hasOwn(descriptor, "value")))
+    return "[unsupported]";
   if (Array.isArray(value)) {
-    return value.map((v) => sanitizeProps(v, key, depth + 1));
-  }
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = sanitizeProps(v, k, depth + 1);
+    const length = descriptors.length!.value as number;
+    const out: unknown[] = new Array(length);
+    for (let i = 0; i < length; i += 1) {
+      const descriptor = descriptors[String(i)];
+      if (descriptor) out[i] = sanitizeProps(descriptor.value, key, depth + 1);
     }
     return out;
   }
-  return value;
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return "[unsupported]";
+  const out: Record<string, unknown> = {};
+  for (const [k, descriptor] of Object.entries(descriptors)) {
+    if (descriptor.enumerable) out[sanitizeKey(k, out)] = sanitizeProps(descriptor.value, k, depth + 1);
+  }
+  return out;
 }
 
 // Loose structural constraint so this module avoids depending on posthog-js
@@ -229,8 +377,10 @@ export function guardBrowserEvent<T extends OutgoingEventShape | null>(
   if (typeof name !== "string" || name.length === 0) return null; // fail closed
 
   const props = event.properties;
-  const currentUrl =
-    props && typeof props.$current_url === "string" ? props.$current_url : null;
+  // The route decision must not invoke a payload accessor before sanitation.
+  const currentUrlDescriptor = props && Object.getOwnPropertyDescriptor(props, "$current_url");
+  const currentUrl = currentUrlDescriptor && Object.hasOwn(currentUrlDescriptor, "value") &&
+    typeof currentUrlDescriptor.value === "string" ? currentUrlDescriptor.value : null;
   const pathname = currentUrl ? pathnameOf(currentUrl) : null;
 
   // Fail closed: require a parsable marketing URL AND an allowed marketing

@@ -1,3 +1,4 @@
+import { orderByRecency } from "@/lib/sessions/charted-session";
 import { apilusModalityLabel } from "@/lib/constants";
 import { unifiedReactionLabels } from "@/lib/sessions/reaction-unified";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
@@ -29,6 +30,9 @@ import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
 export type IntelligenceSessionInput = {
   id: string;
   started_at: string;
+  // HON-10 row 1: required so every caller selects it; void sessions and every
+  // block keyed to them are dropped before anything is counted.
+  record_status: string | null;
   next_session_note?: string | null;
   electrolysis_entries: ReadonlyArray<{ hairs_treated: number | null }>;
   laser_entries: ReadonlyArray<unknown>;
@@ -190,8 +194,22 @@ export function buildTreatmentIntelligence(input: {
   sessionsNewestFirst: ReadonlyArray<IntelligenceSessionInput>;
   blocks: ReadonlyArray<IntelligenceBlockInput>;
 }): TreatmentIntelligence {
-  const { sessionsNewestFirst, blocks } = input;
-  const sessionsOldestFirst = [...sessionsNewestFirst].reverse();
+  // HON-10 row 1 (Sam): a void session contributes NOTHING — not as a charted
+  // session, not through its blocks, not through its entries. The blocks are
+  // read by session id from the caller's window, so a void session in that
+  // window would otherwise feed its blocks straight into the totals, the area
+  // cards and the "latest" fields. Same exclusion as pickLastTreatment,
+  // pickNewestChartedSession and 0157's SQL.
+  const voidIds = new Set(
+    input.sessionsNewestFirst
+      .filter((s) => s.record_status === "void")
+      .map((s) => s.id),
+  );
+  const sessionsNewestFirst = input.sessionsNewestFirst.filter(
+    (s) => !voidIds.has(s.id),
+  );
+  const blocks = input.blocks.filter((b) => !voidIds.has(b.session_id));
+  const sessionsOldestFirst = orderByRecency(sessionsNewestFirst).reverse();
   const sessionDate = new Map(
     sessionsNewestFirst.map((s) => [s.id, s.started_at]),
   );
@@ -232,10 +250,24 @@ export function buildTreatmentIntelligence(input: {
 
   // Blocks ordered oldest -> newest by their session date so "latest"
   // and tie-breaks are well-defined.
+  //
+  // F3: `session_id` ascending breaks a same-date tie, mirroring the shared
+  // recency rule (which resolves an equal `started_at` by id, newest = greatest
+  // id — so oldest-first here means id ascending). Without it two sessions
+  // sharing a date compared equal, the sort fell back to input order, and input
+  // order is the block read's `sort_order` interleaved across sessions — so
+  // which session supplied `latest` depended on the query plan. Blocks WITHIN
+  // one session still keep their `sort_order` sequence, which Array#sort
+  // preserves because this comparator now returns 0 only for genuine ties.
   const blocksOldestFirst = [...blocks].sort((a, b) => {
     const da = sessionDate.get(a.session_id) ?? "";
     const db = sessionDate.get(b.session_id) ?? "";
-    return da < db ? -1 : da > db ? 1 : 0;
+    if (da !== db) return da < db ? -1 : 1;
+    return a.session_id < b.session_id
+      ? -1
+      : a.session_id > b.session_id
+        ? 1
+        : 0;
   });
 
   // Overall totals. Hairs come from entries (via blocks) PLUS legacy
@@ -328,7 +360,30 @@ export function buildTreatmentIntelligence(input: {
         latestWatchNote: a.latestWatchNote,
       };
     })
-    .sort((x, y) => (x.lastTreated < y.lastTreated ? 1 : -1));
+    // F3. THIS COMPARATOR WAS NOT A TOTAL ORDER.
+    //
+    // It read `(x.lastTreated < y.lastTreated ? 1 : -1)`, which returns -1 in
+    // BOTH directions for two areas last treated on the same date — the normal
+    // case, since one session treating chin and upper lip gives both areas the
+    // same date. A comparator that is not antisymmetric makes Array#sort's
+    // output depend on input order and array length, so `areas[0]` — which
+    // becomes the "Latest setup" line on the dashboard row — could name a
+    // different area for the same data.
+    //
+    // This is the same defect clients-needing-attention.ts already fixed
+    // (review 3780005405); the sweep stopped at that one file.
+    //
+    // Name ascending is the tie-break: area keys are unique by construction
+    // (areasByKey is keyed on the lower-cased name). Collation can equate
+    // distinct Unicode spellings, so use binary order when collation ties.
+    .sort((x, y) =>
+      x.lastTreated !== y.lastTreated
+        ? x.lastTreated < y.lastTreated
+          ? 1
+          : -1
+        : x.name.localeCompare(y.name) ||
+          (x.name < y.name ? -1 : x.name > y.name ? 1 : 0),
+    );
 
   // Client-level reaction / tolerance / watch / plan.
   const allReactionsOldestFirst = blocksOldestFirst.map((b) =>

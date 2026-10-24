@@ -151,8 +151,10 @@ describe("source contract: the grid recovers through GridPhoto", () => {
   const mgr = readFileSync(`${DIR}/TreatmentImagesManager.tsx`, "utf8");
   const cell = readFileSync(`${DIR}/GridPhoto.tsx`, "utf8");
 
-  it("the grid renders GridPhoto keyed by the server URLs, so router.refresh() revives a dead cell", () => {
-    expect(mgr).toMatch(/<GridPhoto\s+key=\{`\$\{img\.id\}:\$\{img\.previewUrl \?\? ""\}:\$\{img\.thumbUrl \?\? ""\}`\}\s+clientId=\{clientId\}/);
+  it("keeps the opener keyed by image identity while fresh URLs reset recovery state", () => {
+    expect(mgr).toMatch(/<GridPhoto\s+key=\{img\.id\}\s+clientId=\{clientId\}/);
+    expect(readFileSync("lib/images/use-grid-photo-recovery.ts", "utf8"))
+      .toContain("const state = currentGridPhoto(storedState, { previewUrl, thumbUrl });");
     expect(mgr).not.toMatch(/thumbFailed|setBroken/);
   });
 

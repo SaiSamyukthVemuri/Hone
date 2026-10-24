@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // actual provider requests, and anything that never reached Twilio is
 // `skipped`. A reminder claim that cannot be reached (a database outage) makes
 // no provider request and spends no attempt, so it must land in `skipped`,
-// in both the response and the heartbeat. A real provider refusal is still
+// but must not publish a healthy heartbeat while claim authority is unavailable. A real provider refusal is still
 // an attempt that failed.
 //
 // Substituted: the database client, cron auth, the heartbeat writer, ops
@@ -29,7 +29,7 @@ const h = vi.hoisted(() => {
     alerts: [] as Array<Record<string, unknown>>,
   };
   const APPT = {
-    id: "appt-1",
+    id: "00000000-0000-4000-8000-000000000001",
     studio_id: "studio-1",
     client_id: "client-1",
     status: "confirmed",
@@ -62,11 +62,11 @@ const h = vi.hoisted(() => {
       // Only the 24h SMS window has a row; every email window and the 2h SMS
       // window are empty.
       const sms24 = filters.some(([op, c]) => op === "is" && c === "sms_reminder_24h_sent_at");
-      const rows = [APPT, { ...APPT, id: "appt-2" }].slice(0, state.appointments);
+      const rows = [APPT, { ...APPT, id: "00000000-0000-4000-8000-000000000002" }].slice(0, state.appointments);
       return { data: table === "appointments" && sms24 ? rows : [], error: null };
     };
     const b: Record<string, unknown> = {};
-    for (const m of ["select", "order", "limit"]) b[m] = () => b;
+    for (const m of ["select", "order", "limit", "abortSignal"]) b[m] = () => b;
     for (const op of ["eq", "is", "lt", "gte", "lte"]) {
       b[op] = (column: string, value: unknown) => {
         filters.push([op, column, value]);
@@ -74,7 +74,7 @@ const h = vi.hoisted(() => {
       };
     }
     // The pass's cheap "still confirmed?" pre-filter.
-    b.maybeSingle = () => Promise.resolve({ data: { status: "confirmed" }, error: null });
+    b.maybeSingle = () => Promise.resolve({ data: APPT, error: null });
     b.then = (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
       Promise.resolve(answer()).then(resolve, reject);
     return b;
@@ -107,6 +107,14 @@ const h = vi.hoisted(() => {
   return { state, admin };
 });
 
+
+vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/cron/reminder-scan-coordinator")>();
+  return { ...actual, createUpstashReminderScanCoordinator: () => ({
+    acquire: async () => "offline-fixture", rotation: async () => ({ version: 1 as const, next: "email24h" as const, known: [] }),
+    checkpoint: async () => null, renew: async () => true, save: async () => true, release: async () => undefined,
+  }) };
+});
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => h.admin }));
 vi.mock("@/lib/cron/auth", () => ({ isAuthorizedCronRequest: () => true }));
 vi.mock("@/lib/cron/reminder-heartbeat", () => ({
@@ -131,6 +139,8 @@ const saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {}
 let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-08T17:00:00.000Z"));
   for (const k of ENV_KEYS) saved[k] = process.env[k];
   delete process.env.VERCEL_ENV;
   process.env.TWILIO_ACCOUNT_SID = `AC${"1".repeat(32)}`;
@@ -151,6 +161,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.useRealTimers();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   for (const k of ENV_KEYS) {
@@ -167,13 +178,14 @@ async function run() {
 }
 
 describe("the reminder cron counts provider requests, not database misses", () => {
-  it("a reminder claim that cannot be reached is SKIPPED: no attempt, no failure, no provider call", async () => {
+  it("a reminder claim outage aborts without an attempt, provider call or healthy heartbeat", async () => {
     h.state.claim = "error";
-    const { sms24, heartbeat } = await run();
+    const response = await GET(new Request("https://hone.care/api/cron/appointment-reminders"));
+    expect(response.status).toBe(500);
     expect(h.state.rpcs).toEqual(["claim_reminder_sms_send"]);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(sms24).toEqual({ attempted: 0, succeeded: 0, failed: 0, skipped: 1, intakeCtaIncluded: 0 });
-    expect(heartbeat).toMatchObject({ smsAttempted: 0, smsSucceeded: 0, smsFailed: 0 });
+    expect(h.state.heartbeat).toEqual([]);
+    expect(h.state.alerts).toEqual([expect.objectContaining({ event: "cron_route_failed" })]);
   });
 
   it("control: a claimed reminder that Twilio accepts is one attempt that succeeded", async () => {

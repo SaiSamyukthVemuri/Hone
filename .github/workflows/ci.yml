@@ -320,6 +320,7 @@ jobs:
 
     steps:
       - name: Checkout repository
+        id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -329,6 +330,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Node.js
+        id: node_setup
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # No .nvmrc and no engines.node in package.json today.
@@ -338,6 +340,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
+        id: deps
         run: npm ci
 
       - name: Typecheck
@@ -363,6 +366,11 @@ jobs:
           NODE_OPTIONS: --require ./scripts/block-google-fonts.cjs
 
       - name: Unit tests
+        # Same mirror rule. `Lint` runs above with no `if:`, so a lint failure
+        # used to skip the entire unit suite — and unit results do not depend
+        # on lint, typecheck or the build in any way (vitest runs from source).
+        # Gated on the toolchain only.
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: npm test
         env:
           # enforce: pushes to production and production-record changes;
@@ -370,15 +378,27 @@ jobs:
           CANONICAL_FRESHNESS: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.production_record == 'true') && 'enforce' || 'measure' }}
 
       - name: Whitespace + conflict-marker check
+        # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
+        # step must not be skipped behind an earlier failure.
+        # Git needs a checked-out tree, but no Node setup or npm install.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         # Catches stray trailing whitespace + leftover merge-conflict
         # markers. Matches the manual `git diff --check` step every
         # local PR is asked to run.
         run: git diff --check HEAD
 
       - name: Stripe / payment safety grep gates
+        # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
+        # step must not be skipped behind an earlier failure.
+        # Node built-ins need checkout and Node setup, but no npm install.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.node_setup.outcome == 'success' }}
         run: npm run check:stripe-gates
 
       - name: Migration extension-qualification check
+        # CI-HARDEN-POSTTEST: see the drift-check step's note. A verification
+        # step must not be skipped behind an earlier failure.
+        # Node built-ins need checkout and Node setup, but no npm install.
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && steps.node_setup.outcome == 'success' }}
         # Fresh-managed-project fence (RC hardening): every pgcrypto/uuid-ossp call
         # in supabase/migrations must be extensions.<fn>-qualified so the
         # 0001->NNNN chain applies on a FRESH managed project, where `extensions`
@@ -437,6 +457,10 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.database == 'true' || needs.changes.outputs.security == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
+    # D7b: read-only package scope for the authenticated ghcr.io image pull only.
+    permissions:
+      contents: read
+      packages: read
     # A FAILURE CEILING, NOT A PERFORMANCE TARGET. The target for this lane is
     # UNCHANGED; 12 minutes is only the point at which a run is declared broken.
     # Twelve minutes is NOT an acceptable runtime for this lane.
@@ -489,9 +513,6 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
-
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
@@ -514,16 +535,50 @@ jobs:
           # locally; bump deliberately and re-verify grants parity.
           version: 2.102.0
 
+      # D7b (Sam, 2026-10-22, option A). Anonymous pulls were throttled on BOTH
+      # ghcr.io ("toomanyrequests") and public.ecr.aws ("Data limit exceeded") for
+      # parallel Supabase stacks. Pull the CLI's default ghcr.io images
+      # AUTHENTICATED with the job's own read-only token: this job alone declares
+      # packages: read; nothing here can write. The ONE sanctioned credential use
+      # in these workflows, pinned by tests/ci/ci-config.test.ts.
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Start local Supabase (DB + REST API)
+        id: sb_start
         # Was `supabase db start` (Postgres only). The DB-integration lane now
         # also exercises server-side code that reaches Supabase over the REST API
         # via createAdminClient() (e.g. the REAL getSessionPaymentEligibility
         # resolver), that needs kong (54321), not just Postgres (54322). Bring
         # up the same trimmed stack the browser-e2e job uses (proven in CI); the
         # node-pg harness (54322) and `db reset --local` are unaffected.
-        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        # Direct pinned-CLI call while the ghcr.io credential is held: no
+        # checked-out script runs before the logout (Codex P2 4354172124).
+        # A failure falls through to the credential-free retry step below.
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+
+      # Codex P2 4353990804: drop the registry credential the moment the
+      # images are pulled, before ANY later step runs branch-controlled code.
+      # always(): a failed start must not leave the token behind either.
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Apply full migration chain from scratch
+        id: db_chain
         # Fails the job if ANY migration 0001-current cannot apply to
         # an empty database, or if any policy/function/trigger SQL
         # fails to compile. This is itself a guarantee no static test
@@ -540,9 +595,50 @@ jobs:
         run: npm run check:fresh-managed
 
       - name: DB/RLS integration tests
+        # THE MIRROR RULE: a VERIFICATION must not hide a TEST either.
+        # `Fresh-managed extension proof` runs just above with no `if:`, so a
+        # red extension proof used to SKIP this entire suite — one check
+        # costing every DB/RLS result in the lane. Gated on the migration chain
+        # (transitively: install, start, reset) and NOT on the proof above it.
+        if: ${{ !cancelled() && steps.db_chain.outcome == 'success' }}
         run: npm run test:db
 
       - name: Generated types drift check
+        # CI-HARDEN-POSTTEST. Runs even when an EARLIER step failed, because a
+        # step with no `if:` inherits `success()` and is silently SKIPPED behind
+        # one. `check:db-types` sat unreachable behind `test:db` on the whole G1
+        # stack, where test:db fails on an inherited pending-suffix hole, so a
+        # REAL drift (0222's practitioners.last_public_assignment_at missing from
+        # the hand-rolled type) went unseen until a composed branch happened to
+        # make test:db pass. A verification step must not be hidden by the
+        # failure of the thing it verifies alongside.
+        #
+        # `!cancelled()` rather than `always()`: on a CANCELLED run (a shard cut
+        # at its hard timeout) `always()` would still run these and report their
+        # output as if the run had completed, and this repository has a long
+        # history of cancellations being misread as test failures. This runs on
+        # success and on failure, and stops at cancellation.
+        #
+        # The job's overall result is unchanged: a failing step still fails the
+        # job, this only stops a later check being skipped.
+        #
+        # GATED ON THE RESET, NOT MERELY ON `!cancelled()` (Codex P2 4307392979).
+        # `scripts/check-db-types.mjs` states its own prerequisite — "supabase db
+        # start && supabase db reset --local" — so running it when the stack
+        # failed to start, or the chain failed to apply, generates BOGUS schema
+        # drift against an absent or half-migrated database: a misleading
+        # secondary failure stacked on the real one, which is the opposite of
+        # what this change is for.
+        #
+        # `steps.db_chain.outcome == 'success'` covers the whole prerequisite
+        # chain transitively: if `Start local Supabase` fails, the reset step is
+        # skipped, its outcome is 'skipped' rather than 'success', and this stays
+        # skipped too.
+        #
+        # It deliberately does NOT depend on `Fresh-managed extension proof` or
+        # on the tests. Those are VERIFICATIONS, and gating one verification on
+        # another is exactly the hiding this change removes.
+        if: ${{ !cancelled() && steps.db_chain.outcome == 'success' }}
         # PR #221. Regenerates types from the just-migrated LOCAL
         # database (supabase gen types typescript --local) and
         # compares column sets exactly, both directions, against the
@@ -570,6 +666,10 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.browser_run == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
+    # D7b: read-only package scope for the authenticated ghcr.io image pull only.
+    permissions:
+      contents: read
+      packages: read
     # HARD TIMEOUT is a FAILURE CEILING, not a performance target. It is
     # deliberately ABOVE the target, so a job that is merely slow fails loudly on
     # its own terms instead of being cancelled at exactly its target. Run
@@ -615,14 +715,18 @@ jobs:
     # its own result instead of being cut mid-run and misread as a test failure.
     #
     #   targeted  : target <10 min per shard, hard timeout 15 min  (3 shards)
-    #   extended  : target <10 min per shard, hard timeout 18 min  (4 shards)
+    #   extended  : target <10 min per shard, hard timeout 25 min  (4 shards)
     #
     # NEITHER CEILING MOVED WHEN TARGETED WAS SPLIT. The targeted lane was the
     # one breaching its budget, and the repair was to give it the sharding
     # extended already had rather than to buy every PR more time. Raising 15
     # would have moved the cliff for lanes that are nowhere near it; splitting
     # moves the work.
-    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 18 || 15 }}
+    # ENG-003/004 run39713000378: cold setup12–12.6min before150–158tests;
+    # 482 observed passes/4skips/0assertion failures before cancellation.
+    # Worst measured projection22.15min + finiteheadroom => hard25.
+    # Keep target <10 min per shard and targeted hard15; investigate slow npm ci.
+    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 25 || 15 }}
     strategy:
       fail-fast: false
       matrix:
@@ -639,9 +743,6 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
 
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
@@ -660,8 +761,41 @@ jobs:
           sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
+      # D7b (Sam, 2026-10-22, option A). Anonymous pulls were throttled on BOTH
+      # ghcr.io ("toomanyrequests") and public.ecr.aws ("Data limit exceeded") for
+      # parallel Supabase stacks. Pull the CLI's default ghcr.io images
+      # AUTHENTICATED with the job's own read-only token: this job alone declares
+      # packages: read; nothing here can write. The ONE sanctioned credential use
+      # in these workflows, pinned by tests/ci/ci-config.test.ts.
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        id: sb_start
+        # Direct pinned-CLI call while the ghcr.io credential is held: no
+        # checked-out script runs before the logout (Codex P2 4354172124).
+        # A failure falls through to the credential-free retry step below.
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+
+      # Codex P2 4353990804: drop the registry credential the moment the
+      # images are pulled, before ANY later step runs branch-controlled code.
+      # always(): a failed start must not leave the token behind either.
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -736,7 +870,7 @@ jobs:
           HONE_E2E_FAKE_RESEND: "1"
 
       - name: Upload Playwright traces on failure
-        if: failure()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # Per-shard so two shards never clobber each other's artifact.
@@ -746,16 +880,26 @@ jobs:
 
       - name: Timing diagnostics
         if: always()
+        env:
+          SETUP_END: ${{ steps.setup_done.outputs.at }}
+          E2E_OUTCOME: ${{ steps.e2e.outcome }}
+          JOB_STATUS: ${{ job.status }}
         run: |
           NOW=$(date +%s)
-          SETUP_END=${{ steps.setup_done.outputs.at }}
           echo "shard              : ${{ matrix.shard }}"
           echo "mode               : ${{ needs.changes.outputs.browser_extended == 'true' && 'extended (sharded)' || 'targeted' }}"
           echo "selected specs     : ${{ needs.changes.outputs.browser_specs }}"
           echo "selection reason   : ${{ needs.changes.outputs.browser_reason }}"
-          echo "test duration (s)  : $(( NOW - SETUP_END ))"
-          echo "job outcome        : ${{ steps.e2e.outcome }}"
-          if [ "${{ steps.e2e.outcome }}" = "cancelled" ]; then
+          # A failed setup has no timestamp; never subtract an empty value as zero.
+          # This is setup-complete-to-diagnostic elapsed, not exact test runtime.
+          if [[ "$SETUP_END" =~ ^[1-9][0-9]{0,9}$ ]] && (( SETUP_END <= NOW )) && [[ "$E2E_OUTCOME" =~ ^(success|cancelled|failure)$ ]]; then
+            echo "test duration (s)  : $(( NOW - SETUP_END ))"
+          else
+            echo "test duration (s)  : unavailable (setup incomplete, test not run, or invalid timestamp)"
+          fi
+          echo "job status at timing: $JOB_STATUS"
+          echo "browser step outcome: $E2E_OUTCOME"
+          if [ "$E2E_OUTCOME" = "cancelled" ]; then
             echo "NOTE: cancelled. Most likely the job exceeded its timeout budget."
           fi
 
@@ -890,6 +1034,10 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.payment == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
+    # D7b: read-only package scope for the authenticated ghcr.io image pull only.
+    permissions:
+      contents: read
+      packages: read
     # TARGET ~10 min · HARD TIMEOUT 18 min. Separate numbers, deliberately.
     #
     # This lane sat at a single 10, which is a target being used as a ceiling —
@@ -916,9 +1064,6 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
-
       - name: Generate the per-job fake-Stripe run id
         # ONE validated run id, shared by the Next server + Playwright runner +
         # both ledger sides. Matches the fake-Stripe guard regex
@@ -942,8 +1087,41 @@ jobs:
           sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
+      # D7b (Sam, 2026-10-22, option A). Anonymous pulls were throttled on BOTH
+      # ghcr.io ("toomanyrequests") and public.ecr.aws ("Data limit exceeded") for
+      # parallel Supabase stacks. Pull the CLI's default ghcr.io images
+      # AUTHENTICATED with the job's own read-only token: this job alone declares
+      # packages: read; nothing here can write. The ONE sanctioned credential use
+      # in these workflows, pinned by tests/ci/ci-config.test.ts.
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        id: sb_start
+        # Direct pinned-CLI call while the ghcr.io credential is held: no
+        # checked-out script runs before the logout (Codex P2 4354172124).
+        # A failure falls through to the credential-free retry step below.
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+
+      # Codex P2 4353990804: drop the registry credential the moment the
+      # images are pulled, before ANY later step runs branch-controlled code.
+      # always(): a failed start must not leave the token behind either.
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -1007,7 +1185,14 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.mobile == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # D7b: read-only package scope for the authenticated ghcr.io image pull only.
+    permissions:
+      contents: read
+      packages: read
+    # run39713000378 mobile:3 observed passes before10min cancellation;
+    # setup~10min + existing6-case phase~0.4min + finiteheadroom => hard12.
+    # This ceiling is not a performance or physical-device acceptance target.
+    timeout-minutes: 12
 
     steps:
       - name: Checkout repository
@@ -1020,9 +1205,6 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
 
       - name: Generate the per-job fake-Stripe run id
         # ONE validated run id, shared by the Next server + Playwright runner +
@@ -1045,8 +1227,41 @@ jobs:
           sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
+      # D7b (Sam, 2026-10-22, option A). Anonymous pulls were throttled on BOTH
+      # ghcr.io ("toomanyrequests") and public.ecr.aws ("Data limit exceeded") for
+      # parallel Supabase stacks. Pull the CLI's default ghcr.io images
+      # AUTHENTICATED with the job's own read-only token: this job alone declares
+      # packages: read; nothing here can write. The ONE sanctioned credential use
+      # in these workflows, pinned by tests/ci/ci-config.test.ts.
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        id: sb_start
+        # Direct pinned-CLI call while the ghcr.io credential is held: no
+        # checked-out script runs before the logout (Codex P2 4354172124).
+        # A failure falls through to the credential-free retry step below.
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+
+      # Codex P2 4353990804: drop the registry credential the moment the
+      # images are pulled, before ANY later step runs branch-controlled code.
+      # always(): a failed start must not leave the token behind either.
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -1098,6 +1313,10 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.google_calendar == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
+    # D7b: read-only package scope for the authenticated ghcr.io image pull only.
+    permissions:
+      contents: read
+      packages: read
     # A FAILURE CEILING, NOT A PERFORMANCE TARGET. The target for this lane is
     # UNCHANGED and it should still finish materially faster under normal runner
     # conditions; 15 minutes is only the point at which a run is declared broken,
@@ -1129,9 +1348,6 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
-
       - name: Generate the per-job fake-Google run id
         # ONE validated run id shared by the Next server + Playwright runner +
         # both ledger sides. Matches the fake-Google guard regex
@@ -1152,8 +1368,41 @@ jobs:
           sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
           sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
 
+      # D7b (Sam, 2026-10-22, option A). Anonymous pulls were throttled on BOTH
+      # ghcr.io ("toomanyrequests") and public.ecr.aws ("Data limit exceeded") for
+      # parallel Supabase stacks. Pull the CLI's default ghcr.io images
+      # AUTHENTICATED with the job's own read-only token: this job alone declares
+      # packages: read; nothing here can write. The ONE sanctioned credential use
+      # in these workflows, pinned by tests/ci/ci-config.test.ts.
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Start local Supabase stack (db + auth + mail capture)
-        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+        id: sb_start
+        # Direct pinned-CLI call while the ghcr.io credential is held: no
+        # checked-out script runs before the logout (Codex P2 4354172124).
+        # A failure falls through to the credential-free retry step below.
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+
+      # Codex P2 4353990804: drop the registry credential the moment the
+      # images are pulled, before ANY later step runs branch-controlled code.
+      # always(): a failed start must not leave the token behind either.
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Apply full migration chain from scratch
         run: supabase db reset --local
@@ -1196,5 +1445,123 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: google-playwright-traces
+          path: test-results/
+          retention-days: 7
+
+  # HON-43 photo specs that need REAL storage. Every other browser lane starts
+  # Supabase with storage-api excluded, so fett-photo-labels,
+  # fett-photos-thumbnail-recovery and fett-client-portrait self-skip there (an
+  # upload 503s at Kong). This job starts the same trimmed stack WITH
+  # storage-api (imgproxy stays out: photos sign plain objects, no transforms)
+  # and runs only those three specs. Each spec sets bypassCSP itself because the
+  # local stack serves storage over http; the app CSP is not touched. A
+  # preflight fails the job if storage is not up, so a self-skip can never read
+  # as a pass here. Not required: no job needs it and branch protection does not
+  # name it.
+  storage-photos-hon-43:
+    name: storage photos (HON-43, not required)
+    needs: changes
+    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-labels.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') }}
+    runs-on: ubuntu-latest
+    # D7b: read-only package scope for the authenticated ghcr.io image pull only.
+    permissions:
+      contents: read
+      packages: read
+    # Target ~10 min (setup as in the mobile lane, plus storage-api and three
+    # specs). The hard timeout exceeds it (CLAUDE.md section 4).
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          # Same pin and rationale as the other browser lanes (grants parity, v1 branch).
+          version: 2.102.0
+
+      - name: Configure local auth for the E2E origin
+        run: |
+          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
+          test -f supabase/config.toml
+          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
+          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
+
+      # D7b (Sam, 2026-10-22, option A). Same sanctioned read-only ghcr.io
+      # login as the other Supabase-starting jobs, pinned by
+      # tests/ci/ci-config.test.ts.
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start local Supabase stack (db + auth + mail capture + storage)
+        id: sb_start
+        # storage-api is deliberately NOT in the -x list. Direct pinned-CLI
+        # call while the ghcr.io credential is held: no checked-out script runs
+        # before the logout (Codex P2 4354172124).
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply full migration chain from scratch
+        run: supabase db reset --local
+
+      - name: Storage preflight (the specs self-skip without it)
+        run: curl -fsS http://127.0.0.1:54321/storage/v1/version
+
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-
+
+      - name: Install Playwright Chromium (cache miss)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright system deps only (cache hit)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Storage photo E2E (HON-43)
+        run: npx playwright test e2e/fett-photo-labels.spec.ts e2e/fett-photos-thumbnail-recovery.spec.ts e2e/fett-client-portrait.spec.ts --project=chromium
+        env:
+          HONE_E2E_FAKE_RESEND: "1"
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: storage-photos-hon-43-traces
           path: test-results/
           retention-days: 7

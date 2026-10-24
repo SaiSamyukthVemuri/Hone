@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { emailDeliveryGrants as grants } from "./helpers/email-delivery-grants";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -59,6 +60,12 @@ function tableOf(name: string): string {
 }
 
 describe("0212 sits correctly in the migration sequence", () => {
+  it("keeps the already-applied migration byte-identical to its recorded source", () => {
+    expect(createHash("sha256").update(SQL, "utf8").digest("hex")).toBe(
+      "cc2abfa3059157b841c1c1c095a84045410121be13d96ff93e34f8332f81d6d1",
+    );
+  });
+
   it("is APPLIED and frozen: later fixes redefine its commands forward instead of editing it", () => {
     // The repo-max claim moved to the current maximum's own test (CLAUDE.md
     // §2) when DELIVERY-QUARANTINE-BOUND-01 stacked on this branch.

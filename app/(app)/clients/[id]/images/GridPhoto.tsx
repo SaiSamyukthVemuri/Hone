@@ -8,8 +8,8 @@ import { useGridPhotoRecovery } from "@/lib/images/use-grid-photo-recovery";
 // other action on the page behind a hung one). The bounded recovery (one retry
 // on a timed-out or rejected re-mint, then terminal; the hydration-window
 // check) is lib/images/use-grid-photo-recovery.ts, shared with the profile ID
-// photo and the visit chart. The parent keys this component by the server URLs, so fresh
-// URLs from router.refresh() remount it and clear any failure.
+// photo and the visit chart. The hook resets recovery on fresh server URLs;
+// the parent keeps image identity stable so the preview opener stays mounted.
 export function GridPhoto({
   clientId,
   imageId,

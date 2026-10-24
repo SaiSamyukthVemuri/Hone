@@ -523,63 +523,70 @@ export async function fetchPublicSlotsAction(params: {
   // THREE QUESTIONS, NOT TWO. The scoped case and the legacy studio-wide case
   // were already distinct; "Any available" under an ENABLED assignment switch
   // is a third, and it was the one silently answered by the legacy branch.
-  let slots: Slot[];
-  if (scopedPractitionerId) {
-    slots = await getAvailableSlots(
-      admin,
-      studioRowForSlots,
-      params.date,
-      service.default_duration_minutes,
-      undefined,
-      scopedPractitionerId,
-    );
-  } else if (forNewClient && studio.practitioner_capacity_booking_enabled === true) {
-    const eligible = await loadEligiblePractitioners(
-      admin,
-      studio.id,
-      params.serviceId,
-    );
-    if (eligible.length === 0) {
-      // NOBODY CAN BE ASSIGNED, so there is nothing to offer. An empty GRID
-      // would have said "fully booked" and a studio-wide grid would have
-      // offered times `create_public_appointment_v2` answers
-      // `no_practitioner_available`. `loadEligiblePractitioners` already fails
-      // CLOSED on a read error, so this covers the transient case too.
-      logInternalBookingError("public_slots_no_eligible_practitioner", {
-        studioId: studio.id,
-      });
-      return { ok: false, error: UNAVAILABLE_PUBLIC_BOOKING_MESSAGE };
+  // Discovery has a structured retryable refusal, never fabricated availability.
+  try {
+    let slots: Slot[];
+    if (scopedPractitionerId) {
+      slots = await getAvailableSlots(
+        admin,
+        studioRowForSlots,
+        params.date,
+        service.default_duration_minutes,
+        undefined,
+        scopedPractitionerId,
+      );
+    } else if (forNewClient && studio.practitioner_capacity_booking_enabled === true) {
+      const eligible = await loadEligiblePractitioners(
+        admin,
+        studio.id,
+        params.serviceId,
+      );
+      if (eligible.length === 0) {
+        // NOBODY CAN BE ASSIGNED, so there is nothing to offer. An empty GRID
+        // would have said "fully booked" and a studio-wide grid would have
+        // offered times `create_public_appointment_v2` answers
+        // `no_practitioner_available`. `loadEligiblePractitioners` already fails
+        // CLOSED on a read error, so this covers the transient case too.
+        logInternalBookingError("public_slots_no_eligible_practitioner", {
+          studioId: studio.id,
+        });
+        return { ok: false, error: UNAVAILABLE_PUBLIC_BOOKING_MESSAGE };
+      }
+      slots = await unionEligibleSlots(
+        admin,
+        studioRowForSlots,
+        params.date,
+        service.default_duration_minutes,
+        eligible.map((o) => o.id),
+      );
+    } else {
+      // LEGACY, AND UNCHANGED BY CONSTRUCTION: the sixth argument is NULL exactly
+      // as it was pre-G1, so this is byte-for-byte today's studio-wide behaviour.
+      // Reached by an EXISTING client (which commits through the legacy
+      // studio-wide `create_public_appointment`) and by any studio with the
+      // assignment switch off -- in both cases the studio-wide answer is the one
+      // the commit will agree with.
+      slots = await getAvailableSlots(
+        admin,
+        studioRowForSlots,
+        params.date,
+        service.default_duration_minutes,
+        undefined,
+        null,
+      );
     }
-    slots = await unionEligibleSlots(
-      admin,
-      studioRowForSlots,
-      params.date,
-      service.default_duration_minutes,
-      eligible.map((o) => o.id),
-    );
-  } else {
-    // LEGACY, AND UNCHANGED BY CONSTRUCTION: the sixth argument is NULL exactly
-    // as it was pre-G1, so this is byte-for-byte today's studio-wide behaviour.
-    // Reached by an EXISTING client (which commits through the legacy
-    // studio-wide `create_public_appointment`) and by any studio with the
-    // assignment switch off -- in both cases the studio-wide answer is the one
-    // the commit will agree with.
-    slots = await getAvailableSlots(
-      admin,
-      studioRowForSlots,
-      params.date,
-      service.default_duration_minutes,
-      undefined,
-      null,
-    );
+    // Public-only past-time guard: never offer a slot whose start instant is
+    // already in the past (today's earlier hours). Shared helper in
+    // lib/booking/slots.ts so public booking + public reschedule cannot
+    // drift apart (PR #149). No lead-time buffer here.
+    // The shared getAvailableSlots() is untouched, so the internal calendar
+    // quick-book drawer (app/(app)/calendar/actions.ts) is unaffected.
+    return { ok: true, slots: filterFutureSlots(slots) };
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.startsWith("availability_read_failed:")) throw err;
+    logInternalBookingError("public_slots_availability_read_failed", { studioId: studio.id });
+    return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
   }
-  // Public-only past-time guard: never offer a slot whose start instant is
-  // already in the past (today's earlier hours). Shared helper in
-  // lib/booking/slots.ts so public booking + public reschedule cannot
-  // drift apart (PR #149). No lead-time buffer here.
-  // The shared getAvailableSlots() is untouched, so the internal calendar
-  // quick-book drawer (app/(app)/calendar/actions.ts) is unaffected.
-  return { ok: true, slots: filterFutureSlots(slots) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1236,39 +1243,46 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // this re-verification MORE permissive than the command it hands off to: the
   // slot passed here and the legacy command refused it. `clientType` is the
   // same discriminator the commit uses, read from the same submission.
-  let slots: Slot[];
-  if (
-    !chosenPractitionerId &&
-    clientType === "new" &&
-    studio.practitioner_capacity_booking_enabled === true
-  ) {
-    const eligible = await loadEligiblePractitioners(admin, studio.id, serviceId);
-    slots =
-      eligible.length === 0
-        ? []
-        : await unionEligibleSlots(
-            admin,
-            reverifyStudioRow,
-            dateStr,
-            service.default_duration_minutes,
-            eligible.map((o) => o.id),
-          );
-  } else {
-    slots = await getAvailableSlots(
-      admin,
-      reverifyStudioRow,
-      dateStr,
-      service.default_duration_minutes,
-      undefined,
-      chosenPractitionerId,
-    );
-  }
-  const free = slots.some((s) => new Date(s.start).getTime() === start.getTime());
-  if (!free) {
-    return {
-      ok: false,
-      error: "That time is no longer available. Please choose another time.",
-    };
+  // Advisory only: a classified failed read defers to the locked command.
+  // Discovery still fails closed; successful empty reads still refuse here.
+  try {
+    let slots: Slot[];
+    if (
+      !chosenPractitionerId &&
+      clientType === "new" &&
+      studio.practitioner_capacity_booking_enabled === true
+    ) {
+      const eligible = await loadEligiblePractitioners(admin, studio.id, serviceId);
+      slots =
+        eligible.length === 0
+          ? []
+          : await unionEligibleSlots(
+              admin,
+              reverifyStudioRow,
+              dateStr,
+              service.default_duration_minutes,
+              eligible.map((o) => o.id),
+            );
+    } else {
+      slots = await getAvailableSlots(
+        admin,
+        reverifyStudioRow,
+        dateStr,
+        service.default_duration_minutes,
+        undefined,
+        chosenPractitionerId,
+      );
+    }
+    const free = slots.some((s) => new Date(s.start).getTime() === start.getTime());
+    if (!free) {
+      return {
+        ok: false,
+        error: "That time is no longer available. Please choose another time.",
+      };
+    }
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.startsWith("availability_read_failed:")) throw err;
+    logInternalBookingError("public_booking_advisory_read_failed", { studioId: studio.id });
   }
 
   const end = new Date(start.getTime() + service.default_duration_minutes * 60_000);

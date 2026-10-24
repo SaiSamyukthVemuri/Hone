@@ -36,15 +36,20 @@ type ClaimRow = {
   lease_generation: number | null;
 };
 
-// PER-STUDIO numbers. 0226 reserves a claimed number atomically across all
-// live rows (Codex P2 4252928398), so two studios can no longer hold live
-// claims on one number -- which is the point. Each studio here therefore
-// claims its own pair, derived from its id.
+// Per-test-process allocation avoids both cross-studio collisions and hash
+// collisions between studio/slot pairs. The 556 exchange is separate from
+// the fixed 555-xxxx numbers used by the other SMS DB tests.
+const testNumbers = new Map<string, string>();
+let nextTestNumber = 2000;
+
 function numFor(studioId: string, slot: "A" | "B"): string {
-  let h = 0x811c9dc5;
-  for (const ch of `${studioId}:${slot}`) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193) >>> 0;
-  // Exchange 556: never overlaps the fixed 555-xxxx numbers other SMS DB tests use.
-  return `+1416556${String(2000 + (h % 7000)).padStart(4, "0")}`;
+  const key = `${studioId}:${slot}`;
+  const existing = testNumbers.get(key);
+  if (existing) return existing;
+  if (nextTestNumber > 9999) throw new Error("SMS DB test number pool exhausted");
+  const allocated = `+1416556${String(nextTestNumber++).padStart(4, "0")}`;
+  testNumbers.set(key, allocated);
+  return allocated;
 }
 
 async function claim(

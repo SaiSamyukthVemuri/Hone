@@ -74,6 +74,12 @@ export function initialGridPhoto(urls: GridPhotoUrls): GridPhotoState {
   return { key, stage: "original", src: urls.previewUrl, reminted, pending: null };
 }
 
+// Refresh the URL-bound recovery state without remounting the photo's opener.
+// Unchanged URLs retain pending/recovered state; new URLs get a fresh budget.
+export function currentGridPhoto(state: GridPhotoState, urls: GridPhotoUrls): GridPhotoState {
+  return state.key === gridPhotoKey(urls) ? state : initialGridPhoto(urls);
+}
+
 /** Give up on `variant`: the derivative demotes to the original; the original breaks. */
 function giveUp(state: GridPhotoState, urls: GridPhotoUrls, variant: GridPhotoVariant): GridPhotoState {
   const reminted = { ...state.reminted, [variant]: true };

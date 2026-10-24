@@ -1,3 +1,4 @@
+import { safeLog } from "@/lib/logging/safe-log";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FROM_ADDRESS, getResendTransport } from "@/lib/email/client";
 import { EMAIL_LEDGER_TAG } from "@/lib/email/resend-webhook";
@@ -254,6 +255,25 @@ export async function sendEmailSafely(opts: {
   }
 }
 
+// Messaging diagnostics are a closed vocabulary. safeLog removes record IDs,
+// but intentionally does not sanitize arbitrary provider text; never pass it.
+const EMAIL_LOG_TYPES = new Set([
+  "confirmation", "reminder_24h", "reminder_2h", "no_show",
+  "intake_reminder_7d", "intake_reminder_3d",
+]);
+function emailTypeForLog(value: unknown): string {
+  return typeof value === "string" && EMAIL_LOG_TYPES.has(value) ? value : "unknown";
+}
+function emailAttemptForLog(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 3 ? value : null;
+}
+
+// A failed diagnostic must not replace settlement or suppress the existing
+// final-attempt event. Raw provider/RPC errors never enter this helper.
+function logEmailDiagnostic(payload: string): void {
+  try { safeLog.error(payload); } catch { /* Best-effort logging only. */ }
+}
+
 export type EmailType =
   | "confirmation"
   | "reminder_24h"
@@ -281,13 +301,11 @@ export async function recordEmailAttempt(
     p_success: success,
   });
   if (error) {
-    console.error(
+    logEmailDiagnostic(
       JSON.stringify({
         event: "record_email_attempt_failed",
-        appointmentId,
-        emailType,
-        success,
-        error: String(error),
+        emailType: emailTypeForLog(emailType),
+        success: success === true,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -313,28 +331,32 @@ export type ClaimableEmailType =
 // statement, so two overlapping cron runs can never both send.
 // Errors are treated as "claim not won" so an RPC outage cannot
 // cause a duplicate send.
+/** Preserve the legacy fail-closed boolean contract for other email callers. */
 export async function claimEmailSend(
   admin: SupabaseClient,
   appointmentId: string,
   emailType: ClaimableEmailType,
 ): Promise<boolean> {
-  const { data, error } = await admin.rpc("claim_email_send", {
-    p_appointment_id: appointmentId,
-    p_email_type: emailType,
-  });
-  if (error) {
-    console.error(
-      JSON.stringify({
-        event: "claim_email_send_failed",
-        appointmentId,
-        emailType,
-        error: String(error),
-        timestamp: new Date().toISOString(),
-      }),
-    );
-    return false;
-  }
-  return data === true;
+  return (await claimEmailSendOutcome(admin, appointmentId, emailType)) === "claimed";
+}
+
+/** A definite DB false may advance the scan; failure to learn claim authority
+ * must not. No retry, counter refund or provider action occurs in this seam. */
+export async function claimEmailSendOutcome(
+  admin: SupabaseClient,
+  appointmentId: string,
+  emailType: ClaimableEmailType,
+): Promise<"claimed" | "not_claimed" | "unavailable"> {
+  try {
+    const { data, error } = await admin.rpc("claim_email_send", {
+      p_appointment_id: appointmentId,
+      p_email_type: emailType,
+    });
+    if (error === null && typeof data === "boolean") return data ? "claimed" : "not_claimed";
+  } catch { /* A lost/throwing reply is not a proven collision. */ }
+  // Fixed diagnostic only; no RPC error text, identifiers or hostile getters.
+  try { console.error(JSON.stringify({ event: "claim_email_send_failed", timestamp: new Date().toISOString() })); } catch { /* Best effort cannot grant permission. */ }
+  return "unavailable";
 }
 
 // Record the outcome of a CLAIMED send (record_email_result,
@@ -357,13 +379,11 @@ export async function recordEmailResult(
     // 5-minute staleness window in claim_email_send bounds how long
     // the row stays blocked, and _sent_at remaining null means the
     // next pass may retry under the attempts cap.
-    console.error(
+    logEmailDiagnostic(
       JSON.stringify({
         event: "record_email_result_failed",
-        appointmentId,
-        emailType,
-        success,
-        error: String(error),
+        emailType: emailTypeForLog(emailType),
+        success: success === true,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -393,14 +413,14 @@ export function logEmailFailure(opts: {
   // alert row.
   studioId?: string | null;
 }): void {
-  console.error(
+  const emailType = emailTypeForLog(opts.emailType);
+  const attemptNumber = emailAttemptForLog(opts.attemptNumber);
+  logEmailDiagnostic(
     JSON.stringify({
       event: "email_send_failed",
-      appointmentId: opts.appointmentId,
-      emailType: opts.emailType,
-      error: opts.error,
-      retryable: opts.retryable,
-      attemptNumber: opts.attemptNumber,
+      emailType,
+      retryable: opts.retryable === true,
+      attemptNumber,
       timestamp: new Date().toISOString(),
     }),
   );
@@ -422,15 +442,15 @@ export function logEmailFailure(opts: {
       await recordOpsAlert({
         severity: "warning",
         event: "email_send_gave_up",
-        message: `Email ${opts.emailType} gave up after ${opts.attemptNumber ?? "?"} attempts.`,
+        message: `Email ${emailType} gave up after ${attemptNumber ?? "?"} attempts.`,
         studioId: opts.studioId ?? null,
         appointmentId: opts.appointmentId,
         route: "lib/email/send-appointment",
         safeDetails: {
-          email_type: opts.emailType,
-          attempt_number: opts.attemptNumber ?? null,
-          retryable: opts.retryable,
-          provider_error: opts.error,
+          email_type: emailType,
+          attempt_number: attemptNumber,
+          retryable: opts.retryable === true,
+          failure_class: "provider_or_transport",
         },
       });
     } catch {
@@ -615,8 +635,8 @@ export async function sendCancellationEmail(params: {
    * customer, not a client delivery.
    */
   ledger?: AppointmentLedgerRef | null;
-}) {
-  if (!params.to) return;
+}): Promise<EmailSendResult> {
+  if (!params.to) return { ok: false, error: "Missing cancellation recipient", retryable: false };
   const { subject, html, text } = buildCancellationEmail({
     recipientName: params.recipientName,
     clientName: params.clientName,
@@ -631,7 +651,7 @@ export async function sendCancellationEmail(params: {
     isClient: params.isClient,
     rebookUrl: params.rebookUrl,
   });
-  await sendLedgeredAppointmentEmail(
+  return sendLedgeredAppointmentEmail(
     params.isClient ? params.ledger : null,
     "appointment_cancellation",
     (ledgerMessageId) =>

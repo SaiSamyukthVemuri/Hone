@@ -26,8 +26,12 @@ export async function GET(request: NextRequest) {
         request.cookies.get(ADMIN_RETURN_COOKIE)?.value,
         data.user.email,
       );
+      // safeInternalPath is the gate; a `next` it accepts is kept verbatim so
+      // its fragment survives (#pending), and the same-origin check below
+      // re-validates it before any redirect is emitted.
+      const rawNext = searchParams.get("next");
       const next =
-        adminTarget ?? safeInternalPath(searchParams.get("next")) ?? "/dashboard";
+        adminTarget ?? (safeInternalPath(rawNext) ? rawNext! : null) ?? "/dashboard";
 
       // Post-response, bounded: sign-in must never fail or stall because
       // PostHog is unavailable (P1/P2-ANALYTICS-03). Identify by opaque UUID
@@ -92,7 +96,19 @@ export async function GET(request: NextRequest) {
         // Never block sign-in on reconciliation.
       }
 
-      const response = NextResponse.redirect(`${origin}${dest}`);
+      // Treat the caller's destination as a path, never an origin suffix.
+      // URL parsing also normalizes backslashes/control characters; compare
+      // origins after that normalization before emitting a redirect.
+      let destination = new URL("/dashboard", origin);
+      if (dest.startsWith("/")) {
+        try {
+          const candidate = new URL(dest, origin);
+          if (candidate.origin === origin) destination = candidate;
+        } catch {
+          // Malformed destinations keep the ordinary signed-in landing page.
+        }
+      }
+      const response = NextResponse.redirect(destination);
       if (clearSelection) {
         response.cookies.delete("hone_selected_studio");
       }

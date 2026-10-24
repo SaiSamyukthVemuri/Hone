@@ -375,6 +375,9 @@ describe("0168 — preserved protections and privileges", () => {
         order by tgname`,
     );
     expect(r.rows.map((x) => x.tgname)).toEqual([
+      // 0232 (Codex 4308037526): clears a before/after label when the row
+      // loses its session.
+      "treatment_images_clear_stage_without_session",
       "treatment_images_enforce_integrity",
       "treatment_images_guard_finalized",
       "treatment_images_set_updated_at",
