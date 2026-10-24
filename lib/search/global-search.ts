@@ -97,6 +97,15 @@ export function escapeIlike(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
+// The `%query%` pattern every global-search read uses. The same string is
+// interpolated into PostgREST `.or()` filters, whose grammar reserves `,`, `(`,
+// `)` and `"`. A typed "Smith, Jane" split the client filter into a malformed
+// clause, so the read failed and returned no clients (HON-58). Each reserved
+// character becomes `_`, which ILIKE matches against that same character.
+export function containsPattern(query: string): string {
+  return `%${escapeIlike(query).replace(/[,()"]/g, "_")}%`;
+}
+
 export function sanitizeQuery(raw: string): string {
   return raw.trim().slice(0, SEARCH_MAX_QUERY_LENGTH);
 }

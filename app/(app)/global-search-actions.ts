@@ -8,7 +8,7 @@ import {
 import { blockAreasLabel } from "@/lib/sessions/block-areas";
 import {
   capResults,
-  escapeIlike,
+  containsPattern,
   sanitizeQuery,
   statusForQuery,
   SEARCH_MIN_CHARS,
@@ -19,6 +19,11 @@ import {
   type NavSearchContext,
 } from "@/lib/search/navigation-registry";
 import { mergeMemoryBlockRows } from "@/lib/search/treatment-memory-merge";
+import {
+  matchesClientSearch,
+  nameCandidatePatterns,
+  phoneCandidatePattern,
+} from "@/lib/clients/name-search";
 
 // Global Search server action (V1: PR #232 · V2-A: settings + navigation).
 //
@@ -42,6 +47,10 @@ import { mergeMemoryBlockRows } from "@/lib/search/treatment-memory-merge";
 // trigram indexes if a studio ever grows past that).
 
 const CLIENT_CAP = 5;
+
+// HON-58: name candidates fetched by the wide prefilter before
+// matchesClientSearch confirms them. Wide on purpose, bounded by studio.
+const CLIENT_CANDIDATE_CAP = 50;
 const APPOINTMENT_CAP = 4;
 const MEMORY_CAP = 4;
 const RECORD_CAP = 3;
@@ -113,6 +122,76 @@ function fmtDate(iso: string | null | undefined): string | undefined {
   return d.toISOString().slice(0, 10);
 }
 
+type ClientSearchRow = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+};
+
+// Clients (HON-58). The direct ILIKE is today's rule, kept as-is so nothing
+// it found is lost. The candidate reads add what ILIKE alone cannot see:
+// word order ("smith jane"), a preferred name inside the stored string
+// ("Jane (Janie) Smith" by "janie smith"), punctuation ("obrien") and
+// diacritics ("jose"), and phone formatting. Their patterns are built only
+// from folded letters and digits (lib/clients/name-search.ts), and every
+// candidate must pass the same matchesClientSearch the client-side lists use.
+async function searchClientRows(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  studioId: string,
+  query: string,
+  like: string,
+): Promise<ClientSearchRow[]> {
+  const base = () =>
+    supabase
+      .from("clients")
+      .select("id, name, email, phone")
+      .eq("studio_id", studioId)
+      .is("archived_at", null);
+
+  const namePatterns = nameCandidatePatterns(query);
+  let byName = base();
+  for (const pattern of namePatterns) byName = byName.ilike("name", pattern);
+  const phonePattern = phoneCandidatePattern(query);
+
+  const [direct, named, phoned] = await Promise.all([
+    base()
+      .or(`name.ilike.${like},email.ilike.${like},phone.ilike.${like}`)
+      .order("name")
+      .limit(CLIENT_CAP)
+      .then((r) => (r.data ?? []) as ClientSearchRow[]),
+    namePatterns.length > 0
+      ? byName
+          .order("name")
+          .limit(CLIENT_CANDIDATE_CAP)
+          .then((r) => (r.data ?? []) as ClientSearchRow[])
+      : Promise.resolve([] as ClientSearchRow[]),
+    phonePattern
+      ? base()
+          .ilike("phone", phonePattern)
+          .order("name")
+          .limit(CLIENT_CANDIDATE_CAP)
+          .then((r) => (r.data ?? []) as ClientSearchRow[])
+      : Promise.resolve([] as ClientSearchRow[]),
+  ]);
+
+  const seen = new Set<string>();
+  const rows: ClientSearchRow[] = [];
+  for (const row of direct) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    rows.push(row);
+  }
+  for (const row of [...named, ...phoned]) {
+    if (seen.has(row.id) || !matchesClientSearch(row, query)) continue;
+    seen.add(row.id);
+    rows.push(row);
+  }
+  return rows
+    .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))
+    .slice(0, CLIENT_CAP);
+}
+
 export async function globalSearchAction(
   rawQuery: string,
 ): Promise<{ ok: true; results: SearchResult[] } | { ok: false }> {
@@ -142,7 +221,7 @@ export async function globalSearchAction(
     // one definition of "how many results may leave this action".
     return { ok: true, results: capResults(navResults("", navContext)) };
   }
-  const like = `%${escapeIlike(query)}%`;
+  const like = containsPattern(query);
   const supabase = await createClient();
 
   const [
@@ -153,15 +232,7 @@ export async function globalSearchAction(
     sterileRows,
     disinfectantRows,
   ] = await Promise.all([
-    supabase
-      .from("clients")
-      .select("id, name, email, phone")
-      .eq("studio_id", studioId)
-      .is("archived_at", null)
-      .or(`name.ilike.${like},email.ilike.${like},phone.ilike.${like}`)
-      .order("name")
-      .limit(CLIENT_CAP)
-      .then((r) => r.data ?? []),
+    searchClientRows(supabase, studioId, query, like),
     supabase
       .from("session_blocks")
       .select(MEMORY_BLOCK_SELECT)

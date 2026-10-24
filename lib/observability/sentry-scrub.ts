@@ -52,7 +52,7 @@ const SENSITIVE_KEY_RE = new RegExp(
     "^tel$",
     "telephone",
     "\\bfax\\b",
-    "(client|patient|customer|first|last|full|preferred|display|given|family|middle|maiden)[_-]?name",
+    "(client|patient|customer|first|last|full|preferred|display|given|family|middle|maiden|legal)[_-]?name",
     "^name$",
     "dob",
     "birth",

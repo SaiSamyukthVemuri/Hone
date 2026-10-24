@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   capResults,
+  containsPattern,
   escapeIlike,
   sanitizeQuery,
   groupResults,
@@ -37,6 +38,14 @@ function result(type: SearchResult["type"], n: number): SearchResult {
 describe("pure helpers", () => {
   it("escapeIlike makes %, _, and backslash literal", () => {
     expect(escapeIlike("50%_a\\b")).toBe("50\\%\\_a\\\\b");
+  });
+
+  it("containsPattern keeps PostgREST .or() reserved characters out of the filter (HON-58)", () => {
+    // A typed "Smith, Jane" used to split the client .or() filter in two.
+    expect(containsPattern("Smith, Jane")).toBe("%Smith_ Jane%");
+    expect(containsPattern('a(b)"c')).toBe("%a_b__c%");
+    expect(containsPattern("50%_")).toBe("%50\\%\\_%");
+    expect(containsPattern("x,y")).not.toMatch(/[,()"]/);
   });
 
   it("sanitizeQuery trims and caps length", () => {
