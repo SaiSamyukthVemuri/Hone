@@ -31,14 +31,14 @@ function nullableInt(value: FormDataEntryValue | null): number | null {
 // matching update action in app/(app)/clients/[id]/actions.ts for
 // the explanation of why this isn't a throw.
 //
-// HON-58: `possibleDuplicate` is set when the studio already has a client with
-// the same phone, or the same name and date of birth. Nothing was inserted;
-// the form offers "Save as a new client anyway", which resubmits with
-// confirm_possible_duplicate = that client's id.
+// HON-58: `possibleDuplicates` lists EVERY client in the studio with the same
+// phone, or the same name and date of birth. Nothing was inserted; the form
+// offers "Save as a new client anyway", which resubmits with one
+// confirm_possible_duplicate value per listed client.
 export type ClientSaveResult = {
   ok: false;
   error: string;
-  possibleDuplicate?: PossibleDuplicate;
+  possibleDuplicates?: PossibleDuplicate[];
 };
 
 const ACTIVE_DUPLICATE_ERROR =
@@ -47,11 +47,17 @@ const ARCHIVED_DUPLICATE_ERROR =
   "That email belongs to an archived client. Unarchive that client or use a different email.";
 const GENERIC_SAVE_ERROR = "Couldn't save the client. Please try again.";
 
-function possibleDuplicateMessage(d: PossibleDuplicate): string {
-  const why = d.reason === "phone" ? "the same phone number" : "the same name and date of birth";
-  return d.archived
-    ? `An archived client, ${d.clientName}, has ${why}. This may be the same person.`
-    : `${d.clientName} already has ${why}. This may be the same person.`;
+function possibleDuplicatesMessage(duplicates: PossibleDuplicate[]): string {
+  const describe = (d: PossibleDuplicate) =>
+    `${d.archived ? "an archived client, " : ""}${d.clientName} (${
+      d.reason === "phone" ? "same phone number" : "same name and date of birth"
+    })`;
+  if (duplicates.length === 1) {
+    return `This may be the same person as ${describe(duplicates[0])}.`;
+  }
+  return `This may be the same person as one of ${duplicates.length} existing clients: ${duplicates
+    .map(describe)
+    .join("; ")}.`;
 }
 
 function isClientDuplicateEmailDbError(
@@ -118,8 +124,9 @@ export async function createClientAction(
   }
 
   // HON-58: probable-duplicate warning (same phone, or same name + date of
-  // birth). Advisory, so a confirmation for exactly the matched client
-  // proceeds; a confirmation for anyone else does not cover a new match.
+  // birth). Advisory, so the create proceeds only when EVERY current match
+  // was confirmed by id (Team L1: confirming one must not pass another);
+  // a confirmation never covers a client it does not name.
   // A failed read refuses the create rather than implying "no duplicate".
   const phone = nullableString(formData.get("phone"));
   const dateOfBirth = nullableString(formData.get("date_of_birth"));
@@ -138,16 +145,16 @@ export async function createClientAction(
     );
     return { ok: false, error: GENERIC_SAVE_ERROR };
   }
-  if (
-    duplicateCheck.kind === "match" &&
-    formData.get("confirm_possible_duplicate") !== duplicateCheck.duplicate.clientId
-  ) {
-    const d = duplicateCheck.duplicate;
-    return {
-      ok: false,
-      error: possibleDuplicateMessage(d),
-      possibleDuplicate: d,
-    };
+  if (duplicateCheck.kind === "match") {
+    const confirmed = new Set(formData.getAll("confirm_possible_duplicate"));
+    const duplicates = duplicateCheck.duplicates;
+    if (duplicates.some((d) => !confirmed.has(d.clientId))) {
+      return {
+        ok: false,
+        error: possibleDuplicatesMessage(duplicates),
+        possibleDuplicates: duplicates,
+      };
+    }
   }
 
   const { data, error } = await supabase

@@ -8,8 +8,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // create now asks first, using the same existing fields and no schema.
 //
 // A warning is advisory: "Save as a new client anyway" resubmits with the
-// matched client's id. The confirmation covers only that client, so a changed
-// form that matches someone else warns again.
+// matched clients' ids. A confirmation covers only the clients it names, so a
+// changed form that matches someone else warns again, and (Team L1) EVERY
+// probable duplicate is shown and must be confirmed, not only the first.
 
 type Row = {
   id: string; studio_id: string; name: string; phone: string | null; sms_phone: string | null;
@@ -67,6 +68,11 @@ const JANE: Row = {
   sms_phone: "+16045550199", date_of_birth: "1990-01-02", archived_at: null, normalized_email: null,
 };
 
+const JANET: Row = {
+  id: "client-janet", studio_id: "studio-A", name: "Janet Lee", phone: null,
+  sms_phone: null, date_of_birth: "1985-05-06", archived_at: null, normalized_email: null,
+};
+
 function form(fields: Record<string, string>): FormData {
   const fd = new FormData();
   for (const [k, v] of Object.entries(fields)) fd.set(k, v);
@@ -95,21 +101,21 @@ describe("HON-58 staff create warns about a probable duplicate before inserting"
     const { result } = await create({ name: "J. Smith", phone: "604.555.0199" });
     expect(result).toMatchObject({
       ok: false,
-      possibleDuplicate: { reason: "phone", clientId: "client-jane", clientName: "Jane Smith", archived: false },
+      possibleDuplicates: [{ reason: "phone", clientId: "client-jane", clientName: "Jane Smith", archived: false }],
     });
     expect(db.inserts).toHaveLength(0);
   });
 
   it("same name (spacing and case aside) and same date of birth: warns, inserts nothing", async () => {
     const { result } = await create({ name: "  jane   SMITH ", date_of_birth: "1990-01-02" });
-    expect(result).toMatchObject({ ok: false, possibleDuplicate: { reason: "name_dob", clientId: "client-jane" } });
+    expect(result).toMatchObject({ ok: false, possibleDuplicates: [{ reason: "name_dob", clientId: "client-jane" }] });
     expect(db.inserts).toHaveLength(0);
   });
 
   it("an archived match still warns, and says it is archived", async () => {
     db.rows = [{ ...JANE, archived_at: "2026-09-01T00:00:00Z" }];
     const { result } = await create({ name: "Someone", phone: "+1 604 555 0199" });
-    expect(result).toMatchObject({ possibleDuplicate: { clientId: "client-jane", archived: true } });
+    expect(result).toMatchObject({ possibleDuplicates: [{ clientId: "client-jane", archived: true }] });
     expect(db.inserts).toHaveLength(0);
   });
 
@@ -135,7 +141,7 @@ describe("HON-58 staff create warns about a probable duplicate before inserting"
 
   it("a confirmation for a different client does not cover this match", async () => {
     const { result } = await create({ name: "J. Smith", phone: "604.555.0199", confirm_possible_duplicate: "client-other" });
-    expect(result).toMatchObject({ possibleDuplicate: { clientId: "client-jane" } });
+    expect(result).toMatchObject({ possibleDuplicates: [{ clientId: "client-jane" }] });
     expect(db.inserts).toHaveLength(0);
   });
 
@@ -152,5 +158,43 @@ describe("HON-58 staff create warns about a probable duplicate before inserting"
     expect(text).not.toContain("555");
     expect(text).not.toContain("1990");
     expect(db.selects.every((s) => s === "id, name, archived_at")).toBe(true);
+  });
+
+  it("L1: two different probable duplicates are both shown, once each", async () => {
+    db.rows = [JANE, JANET];
+    const { result } = await create({ name: "Janet Lee", phone: "604.555.0199", date_of_birth: "1985-05-06" });
+    expect(result).toMatchObject({
+      ok: false,
+      possibleDuplicates: [
+        { reason: "phone", clientId: "client-jane" },
+        { reason: "name_dob", clientId: "client-janet" },
+      ],
+    });
+    expect(db.inserts).toHaveLength(0);
+  });
+
+  it("L1: confirming only the first does not pass the second", async () => {
+    db.rows = [JANE, JANET];
+    const { result } = await create({
+      name: "Janet Lee", phone: "604.555.0199", date_of_birth: "1985-05-06",
+      confirm_possible_duplicate: "client-jane",
+    });
+    expect(result).toMatchObject({ possibleDuplicates: [{ clientId: "client-jane" }, { clientId: "client-janet" }] });
+    expect(db.inserts).toHaveLength(0);
+  });
+
+  it("L1: confirming every shown duplicate creates the record", async () => {
+    db.rows = [JANE, JANET];
+    const fd: Record<string, string> = { name: "Janet Lee", phone: "604.555.0199", date_of_birth: "1985-05-06" };
+    const f = form(fd);
+    f.append("confirm_possible_duplicate", "client-jane");
+    f.append("confirm_possible_duplicate", "client-janet");
+    await expect(createClientAction(f)).rejects.toThrow("NEXT_REDIRECT:/clients/new-client");
+    expect(db.inserts).toHaveLength(1);
+  });
+
+  it("L1: one client matching by both phone and name+DOB is shown once", async () => {
+    const { result } = await create({ name: "Jane Smith", phone: "604-555-0199", date_of_birth: "1990-01-02" });
+    expect((result as { possibleDuplicates: unknown[] }).possibleDuplicates).toHaveLength(1);
   });
 });

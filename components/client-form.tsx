@@ -40,19 +40,19 @@ export const EMPTY_CLIENT_FORM: ClientFormValues = {
 // Next.js production redact thrown errors to an opaque crash; this
 // return-shape lets the form render a clean error banner instead.
 //
-// HON-58: `possibleDuplicate` (staff create only) means nothing was saved
-// because the studio already has a client with the same phone, or the same
-// name and date of birth. The form names that client and offers to save a new
-// record anyway, confirming exactly that client.
+// HON-58: `possibleDuplicates` (staff create only) means nothing was saved
+// because the studio already has clients with the same phone, or the same
+// name and date of birth. The form names EVERY one and offers to save a new
+// record anyway, confirming each listed client (Team L1).
 export type ClientFormActionResult = {
   ok: false;
   error: string;
-  possibleDuplicate?: {
+  possibleDuplicates?: ReadonlyArray<{
     reason: "phone" | "name_dob";
     clientId: string;
     clientName: string;
     archived: boolean;
-  };
+  }>;
 };
 
 type Props = {
@@ -92,8 +92,8 @@ export function ClientForm({
 }: Props) {
   const [values, setValues] = useState<ClientFormValues>(initialValues);
   const [error, setError] = useState<string | null>(null);
-  const [possibleDuplicate, setPossibleDuplicate] =
-    useState<ClientFormActionResult["possibleDuplicate"]>(undefined);
+  const [possibleDuplicates, setPossibleDuplicates] =
+    useState<ClientFormActionResult["possibleDuplicates"]>(undefined);
   const [pending, startTransition] = useTransition();
 
   function update<K extends keyof ClientFormValues>(
@@ -102,22 +102,22 @@ export function ClientForm({
   ) {
     setValues((v) => ({ ...v, [key]: value }));
     // HON-58: an edit may change who this matches; ask again on the next save.
-    setPossibleDuplicate(undefined);
+    setPossibleDuplicates(undefined);
   }
 
-  function submit(confirmPossibleDuplicateId: string | null) {
+  function submit(confirmPossibleDuplicateIds: ReadonlyArray<string> | null) {
     setError(null);
     if (!values.name.trim()) {
       setError("Name is required.");
       return;
     }
-    const fd = buildClientFormData(values, hiddenFields, confirmPossibleDuplicateId);
+    const fd = buildClientFormData(values, hiddenFields, confirmPossibleDuplicateIds);
     startTransition(async () => {
       try {
         const result = await action(fd);
         if (result && result.ok === false) {
           setError(result.error);
-          setPossibleDuplicate(result.possibleDuplicate);
+          setPossibleDuplicates(result.possibleDuplicates);
         }
         // On success the action calls redirect() which throws a
         // NEXT_REDIRECT internally; the framework handles that
@@ -272,26 +272,29 @@ export function ClientForm({
         </div>
       </fieldset>
 
-      {error && !possibleDuplicate && (
+      {error && !possibleDuplicates?.length && (
         <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       )}
-      {error && possibleDuplicate && (
+      {error && possibleDuplicates && possibleDuplicates.length > 0 && (
         <div
           role="alert"
           className="flex flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
         >
           <p>{error}</p>
           <div className="flex flex-wrap items-center gap-3">
-            <Link
-              href={`/clients/${possibleDuplicate.clientId}`}
-              className="font-medium underline underline-offset-2"
-            >
-              Open {possibleDuplicate.clientName}
-            </Link>
+            {possibleDuplicates.map((d) => (
+              <Link
+                key={d.clientId}
+                href={`/clients/${d.clientId}`}
+                className="font-medium underline underline-offset-2"
+              >
+                Open {d.clientName}
+              </Link>
+            ))}
             <button
               type="button"
               disabled={pending}
-              onClick={() => submit(possibleDuplicate.clientId)}
+              onClick={() => submit(possibleDuplicates.map((d) => d.clientId))}
               className="rounded-md border border-amber-400 px-3 py-2 font-medium hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:hover:bg-amber-900"
             >
               Save as a new client anyway

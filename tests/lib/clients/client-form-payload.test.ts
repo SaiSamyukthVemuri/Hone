@@ -14,13 +14,14 @@ describe("ClientForm submit payload", () => {
     expect(fd.has("confirm_possible_duplicate")).toBe(false);
   });
 
-  it("'save anyway' confirms exactly the warned client", () => {
-    const fd = buildClientFormData({ name: "Jane" }, undefined, "client-jane");
-    expect(fd.getAll("confirm_possible_duplicate")).toEqual(["client-jane"]);
+  it("'save anyway' confirms exactly the warned clients, one value each (L1)", () => {
+    const fd = buildClientFormData({ name: "Jane" }, undefined, ["client-jane", "client-janet"]);
+    expect(fd.getAll("confirm_possible_duplicate")).toEqual(["client-jane", "client-janet"]);
   });
 
   it("an empty confirmation is never sent", () => {
-    expect(buildClientFormData({ name: "Jane" }, undefined, "").has("confirm_possible_duplicate")).toBe(false);
+    expect(buildClientFormData({ name: "Jane" }, undefined, [""]).has("confirm_possible_duplicate")).toBe(false);
+    expect(buildClientFormData({ name: "Jane" }, undefined, []).has("confirm_possible_duplicate")).toBe(false);
     expect(buildClientFormData({ name: "Jane" }, undefined, null).has("confirm_possible_duplicate")).toBe(false);
   });
 });
@@ -29,17 +30,18 @@ describe("ClientForm wiring (source pins)", () => {
   const form = readFileSync("components/client-form.tsx", "utf8");
 
   it("submits through the payload builder", () => {
-    expect(form).toContain("buildClientFormData(values, hiddenFields, confirmPossibleDuplicateId)");
+    expect(form).toContain("buildClientFormData(values, hiddenFields, confirmPossibleDuplicateIds)");
   });
 
-  it("the ordinary submit never confirms; only the warning's button does, for the warned client", () => {
+  it("the ordinary submit never confirms; only the warning's button does, for every warned client", () => {
     expect(form).toMatch(/function handleSubmit[\s\S]*?submit\(null\);/);
-    expect(form).toContain("onClick={() => submit(possibleDuplicate.clientId)}");
+    expect(form).toContain("onClick={() => submit(possibleDuplicates.map((d) => d.clientId))}");
+    expect(form).toContain("{possibleDuplicates.map((d) => (");
     expect(form).toContain("Save as a new client anyway");
   });
 
   it("any field edit withdraws the warning, so a changed form is checked again", () => {
     const update = form.slice(form.indexOf("function update<"), form.indexOf("function submit("));
-    expect(update).toContain("setPossibleDuplicate(undefined);");
+    expect(update).toContain("setPossibleDuplicates(undefined);");
   });
 });

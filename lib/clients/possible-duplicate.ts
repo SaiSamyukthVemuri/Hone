@@ -15,7 +15,9 @@ import { normalizePhoneForSms } from "@/lib/sms/phone";
 //     collapse spaces, lowercase) and an exact YYYY-MM-DD date.
 //
 // Same name alone stays a non-match, as it is only a weak warning in the
-// import. Archived clients are included, so a returning client is found.
+// import. EVERY match is returned, once per client (a client matching both
+// rules is reported once, as a phone match), so the form can show them all
+// and a confirmation can cover each one (Team review of #1084, L1). Archived clients are included, so a returning client is found.
 // Studio scope is on every read. Only id, name and archived_at are read: the
 // warning names the existing client, never their phone or date of birth.
 
@@ -30,7 +32,7 @@ export type PossibleDuplicate = {
 
 export type PossibleDuplicateCheck =
   | { kind: "none" }
-  | { kind: "match"; duplicate: PossibleDuplicate }
+  | { kind: "match"; duplicates: PossibleDuplicate[] }
   | { kind: "unavailable"; code: string | null };
 
 type Candidate = { id: string; name: string; archived_at: string | null };
@@ -50,6 +52,7 @@ export async function findPossibleDuplicateClient(
   studioId: string,
   input: { name: string; phone: string | null; dateOfBirth: string | null },
 ): Promise<PossibleDuplicateCheck> {
+  const found = new Map<string, PossibleDuplicate>();
   const smsPhone = normalizePhoneForSms(input.phone);
   if (smsPhone) {
     const { data, error } = await supabase
@@ -59,8 +62,9 @@ export async function findPossibleDuplicateClient(
       .eq("sms_phone", smsPhone)
       .limit(CANDIDATE_LIMIT);
     if (error) return { kind: "unavailable", code: error.code ?? null };
-    const hit = ((data ?? []) as Candidate[])[0];
-    if (hit) return { kind: "match", duplicate: asDuplicate("phone", hit) };
+    for (const c of (data ?? []) as Candidate[]) {
+      if (!found.has(c.id)) found.set(c.id, asDuplicate("phone", c));
+    }
   }
 
   const name = normalizeName(input.name);
@@ -73,9 +77,12 @@ export async function findPossibleDuplicateClient(
       .eq("date_of_birth", dob)
       .limit(CANDIDATE_LIMIT);
     if (error) return { kind: "unavailable", code: error.code ?? null };
-    const hit = ((data ?? []) as Candidate[]).find((c) => normalizeName(c.name) === name);
-    if (hit) return { kind: "match", duplicate: asDuplicate("name_dob", hit) };
+    for (const c of (data ?? []) as Candidate[]) {
+      if (normalizeName(c.name) === name && !found.has(c.id)) {
+        found.set(c.id, asDuplicate("name_dob", c));
+      }
+    }
   }
 
-  return { kind: "none" };
+  return found.size === 0 ? { kind: "none" } : { kind: "match", duplicates: [...found.values()] };
 }
