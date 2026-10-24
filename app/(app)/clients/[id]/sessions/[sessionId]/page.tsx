@@ -14,6 +14,7 @@ import {
 import { LogLaserEntryForm } from "@/components/log-laser-entry-form";
 import { LaserEntryRow } from "@/components/entry-row";
 import { SessionPerformerLine } from "@/components/session-performer-line";
+import { toPerformerOptions } from "@/lib/sessions/performer-options";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
 import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-eligibility";
 import { AftercareExplainedToggle } from "@/app/(app)/records/record-forms";
@@ -608,7 +609,8 @@ export default async function SessionDetailPage({
         <SessionPerformerLine
           sessionId={session.id}
           clientId={id}
-          practitioners={clientData.practitioners}
+          // DAT-001: a client component; pass only what the line renders.
+          practitioners={toPerformerOptions(clientData.practitioners)}
           initialPerformerId={
             session.performed_by_practitioner_id ?? session.practitioner_id
           }

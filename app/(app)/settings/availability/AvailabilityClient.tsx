@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import type {
   StudioAvailabilityDefault,
   StudioAvailabilityOverride,
@@ -166,11 +166,44 @@ function daysBetweenInclusive(starts: string, ends: string): number {
   return Math.max(1, Math.round((e - s) / 86_400_000) + 1);
 }
 
-type DayState = {
+export type DayState = {
   is_open: boolean;
   open_time: string;
   close_time: string;
 };
+
+// The weekly grid's state as loaded from studio_availability_defaults. The
+// database returns HH:MM:SS; the editor works in HH:MM, the same shape the
+// time input emits and upsertDayDefaultAction's TIME_RE accepts, so a
+// save-then-reload round trip is the identity on an unedited day.
+export function daysFromDefaults(
+  defaults: ReadonlyArray<
+    Pick<StudioAvailabilityDefault, "day_of_week" | "is_open" | "open_time" | "close_time">
+  >,
+): Map<number, DayState> {
+  const map = new Map<number, DayState>();
+  for (let i = 0; i < 7; i++) {
+    const row = defaults.find((d) => d.day_of_week === i);
+    map.set(i, {
+      is_open: row?.is_open ?? false,
+      open_time: trimTime(row?.open_time ?? null) || "",
+      close_time: trimTime(row?.close_time ?? null) || "",
+    });
+  }
+  return map;
+}
+
+// The FormData one day's Save sends to upsertDayDefaultAction.
+export function dayDefaultFormData(dow: number, draft: DayState): FormData {
+  const fd = new FormData();
+  fd.set("day_of_week", String(dow));
+  fd.set("is_open", String(draft.is_open));
+  if (draft.is_open) {
+    fd.set("open_time", draft.open_time);
+    fd.set("close_time", draft.close_time);
+  }
+  return fd;
+}
 
 type Props = {
   studioSlug: string;
@@ -187,18 +220,7 @@ export function AvailabilityClient({
   overrides,
   blockouts,
 }: Props) {
-  const initialDays = useMemo(() => {
-    const map = new Map<number, DayState>();
-    for (let i = 0; i < 7; i++) {
-      const row = defaults.find((d) => d.day_of_week === i);
-      map.set(i, {
-        is_open: row?.is_open ?? false,
-        open_time: trimTime(row?.open_time ?? null) || "",
-        close_time: trimTime(row?.close_time ?? null) || "",
-      });
-    }
-    return map;
-  }, [defaults]);
+  const initialDays = useMemo(() => daysFromDefaults(defaults), [defaults]);
 
   const [days, setDays] = useState<Map<number, DayState>>(() => initialDays);
   const [editingDow, setEditingDow] = useState<number | null>(null);
@@ -253,14 +275,7 @@ export function AvailabilityClient({
     }
     setSavingDow(editingDow);
     try {
-      const fd = new FormData();
-      fd.set("day_of_week", String(editingDow));
-      fd.set("is_open", String(draft.is_open));
-      if (draft.is_open) {
-        fd.set("open_time", draft.open_time);
-        fd.set("close_time", draft.close_time);
-      }
-      await upsertDayDefaultAction(fd);
+      await upsertDayDefaultAction(dayDefaultFormData(editingDow, draft));
       // Update local map so the grid refreshes instantly.
       setDays((m) => {
         const next = new Map(m);
@@ -638,7 +653,7 @@ function WeeklyGrid({
   );
 }
 
-function DayEditor({
+export function DayEditor({
   dow,
   draft,
   saving,
@@ -681,19 +696,27 @@ function DayEditor({
 
       {draft.is_open ? (
         <div className="flex flex-wrap items-end gap-3">
-          <div className="flex flex-col gap-1.5">
+          <label className="flex flex-col gap-1.5">
             <SectionLabel>
               Opens
             </SectionLabel>
-            <TimePicker value={draft.open_time} onChange={onChangeOpen} />
-          </div>
+            <TimeField
+              value={draft.open_time}
+              onChange={onChangeOpen}
+              label={`${DAY_NAMES_LONG[dow]} opens`}
+            />
+          </label>
           <span className="pb-2 text-neutral-400">to</span>
-          <div className="flex flex-col gap-1.5">
+          <label className="flex flex-col gap-1.5">
             <SectionLabel>
               Closes
             </SectionLabel>
-            <TimePicker value={draft.close_time} onChange={onChangeClose} />
-          </div>
+            <TimeField
+              value={draft.close_time}
+              onChange={onChangeClose}
+              label={`${DAY_NAMES_LONG[dow]} closes`}
+            />
+          </label>
           {openDaysForCopy.length > 0 && (
             <div className="flex flex-col gap-1.5">
               <SectionLabel>
@@ -757,73 +780,30 @@ function DayEditor({
   );
 }
 
-// Custom dropdown picker for HH:MM values in 15-min increments between
-// GRID_START_MIN and GRID_END_MIN. Falls back to typing if the user prefers.
-function TimePicker({
+// HON-62: a native time input, not a custom picker. The previous picker was a
+// button that opened a 15-minute list clamped to the 6am-10pm grid window: it
+// could not be typed into, opened scrolled to 6:00 AM inside a 256px nested
+// scroller, and could not show or choose a saved time outside the window.
+// The native control is typeable with the keyboard, uses the OS wheel picker
+// on touch devices, and carries any HH:MM the server accepts. No `step`, so
+// an existing off-grid time (09:07) stays valid rather than flagged.
+function TimeField({
   value,
   onChange,
+  label,
 }: {
   value: string;
   onChange: (v: string) => void;
+  label: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function handleClickOutside(e: MouseEvent) {
-      if (!ref.current) return;
-      if (ref.current.contains(e.target as Node)) return;
-      setOpen(false);
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [open]);
-
-  const options = useMemo(() => {
-    const out: string[] = [];
-    for (let m = GRID_START_MIN; m <= GRID_END_MIN; m += 15) {
-      out.push(minToTime(m));
-    }
-    return out;
-  }, []);
-
   return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="min-w-[110px] rounded-md border border-neutral-300 bg-white px-3 py-2 text-left text-sm tabular-nums hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950"
-      >
-        {value ? formatTimeLabel(value) : "Pick time"}
-      </button>
-      {open && (
-        <ul className="absolute z-20 mt-1 max-h-64 w-44 overflow-y-auto rounded-md border border-neutral-300 bg-white py-1 text-sm shadow-md dark:border-neutral-700 dark:bg-neutral-950">
-          {options.map((t) => {
-            const selected = t === value;
-            return (
-              <li key={t}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onChange(t);
-                    setOpen(false);
-                  }}
-                  className={
-                    "w-full px-3 py-1.5 text-left tabular-nums " +
-                    (selected
-                      ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                      : "hover:bg-neutral-100 dark:hover:bg-neutral-900")
-                  }
-                >
-                  {formatTimeLabel(t)}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
+    <input
+      type="time"
+      value={value}
+      aria-label={label}
+      onChange={(e) => onChange(e.target.value)}
+      className="min-w-[110px] rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm tabular-nums outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+    />
   );
 }
 
@@ -971,18 +951,26 @@ function AddOverrideForm({ onDone }: { onDone: () => void }) {
         </label>
         {isOpenToggle && (
           <>
-            <div className="flex flex-col gap-1.5">
+            <label className="flex flex-col gap-1.5">
               <SectionLabel>
                 Opens
               </SectionLabel>
-              <TimePicker value={openTime} onChange={setOpenTime} />
-            </div>
-            <div className="flex flex-col gap-1.5">
+              <TimeField
+                value={openTime}
+                onChange={setOpenTime}
+                label="Special hours opens"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
               <SectionLabel>
                 Closes
               </SectionLabel>
-              <TimePicker value={closeTime} onChange={setCloseTime} />
-            </div>
+              <TimeField
+                value={closeTime}
+                onChange={setCloseTime}
+                label="Special hours closes"
+              />
+            </label>
           </>
         )}
       </div>
