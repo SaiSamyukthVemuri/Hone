@@ -50,7 +50,14 @@ export default defineConfig({
           {
             name: "webkit-hon-62",
             testMatch: /availability-hours-editor\.spec\.ts$/,
-            use: { ...devices["Desktop Safari"] },
+            // The app CSP's upgrade-insecure-requests is applied by WebKit to
+            // http://localhost (Chromium exempts localhost), so every script,
+            // style and font was rewritten to https://localhost:3111 and failed
+            // the TLS handshake: no hydration, a permanently disabled login
+            // button (run 40077309473). Bypass the CSP in this test browser
+            // only; the app's CSP is unchanged and the chromium lanes keep
+            // exercising it.
+            use: { ...devices["Desktop Safari"], bypassCSP: true },
           },
         ]
       : []),

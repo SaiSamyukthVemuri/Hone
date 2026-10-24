@@ -1127,6 +1127,7 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     expect((code.match(/HONE_E2E_WEBKIT/g) ?? []).length).toBe(1);
     expect(NIGHTLY).not.toMatch(/HONE_E2E_WEBKIT/);
     expect(CONFIG).toContain('{ name: "chromium", use: { ...devices["Desktop Chrome"] } },');
+    expect(CONFIG).toContain('use: { ...devices["Desktop Safari"], bypassCSP: true },');
     expect(CONFIG).toMatch(/process\.env\.HONE_E2E_WEBKIT === "1"\s*\?\s*\[\s*\{\s*name: "webkit-hon-62",\s*testMatch: \/availability-hours-editor\\\.spec\\\.ts\$\/,/);
   });
 
