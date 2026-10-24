@@ -232,6 +232,17 @@ They are now route handlers (`app/ingest/[...path]/route.ts`, `app/monitoring/ro
 - **Tests:** pinned by `tests/lib/observability/egress-proxy.test.ts`. A real capture server records what reaches the upstream from `/clients/<uuid>` and `/calendar/<uuid>`. Its negative control sends the same request through Next's rewrite proxy, which forwards `Referer`, `Cookie` and `X-Forwarded-For`.
 - **Not covered:** Vercel's own platform request logs. Not a BAA.
 
+### Clinical-records export: what is audited, exactly (HON-46, #828 G-13)
+
+The owner-only export at `/clients/<id>/records/export` records its own use in `audit_logs`, stated precisely:
+- **A preview is always audited before any record is read.** `clinical_records_previewed` is written first, and if that write fails, nothing is shown (fail closed).
+- **The Print button's print is audited.** `clinical_records_printed` is written before the print dialog opens, and the print is bound to the preview on screen by a server-minted token.
+- **The browser's own print (Ctrl/Cmd+P) is gated, not audited.** The document is hidden in print media unless the audited Print button armed it. That gate is CLIENT-SIDE.
+
+It is never "every print is audited".
+
+Both events are written only through `record_clinical_records_audit` (migration `0233`, **pending, not applied**). The database derives the studio from the client and the actor from `auth.uid()` as the studio's active owner. It allow-lists and shape-checks the scope metadata: a session scope must name that client's own session, and a range must run forward and span at most 366 days. A print must cite that owner's own preview of that client. Direct member inserts of `clinical_records_*`, or of any other practitioner's actor id, are refused. No client telemetry starts on the export document, and it is served with `Referrer-Policy: no-referrer`.
+
 ## 3. Portal session model
 
 | Step | What happens |

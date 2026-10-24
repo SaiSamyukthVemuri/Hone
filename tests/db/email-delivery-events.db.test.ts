@@ -721,12 +721,50 @@ describe("PROVIDER FAILURE: answers are recorded for what they are", () => {
   it.each([
     ["email.failed", { failureReason: "reached_daily_quota" }, { status: "failed", provider_reason: "reached_daily_quota", bounce_type: null }],
     ["email.suppressed", { suppressionType: "on_account_suppression_list" }, { status: "suppressed", provider_reason: "on_account_suppression_list", bounce_type: null }],
-    ["email.bounced", { bounceType: "transient", bounceSubtype: "mailbox_full" }, { status: "bounced", provider_reason: "mailbox_full", bounce_type: "transient" }],
+    // A PERMANENT bounce records its reason slug. A transient bounce is not
+    // terminal since 0227 (Codex P2 4265450918): it is recorded as
+    // delivery_delayed -- the companion case below proves it can later deliver.
+    ["email.bounced", { bounceType: "permanent", bounceSubtype: "general" }, { status: "bounced", provider_reason: "general", bounce_type: "permanent" }],
   ] as const)("records %s with its reason slug", async (type, extra, expected) => {
     const m = await acceptedMessage();
     await deliver({ type: "email.delivery_delayed", emailId: m.emailId, tag: m.id });
     expect((await deliver({ type, emailId: m.emailId, tag: m.id, ...extra })).result).toBe("applied");
     expect(await ledger(m.id)).toMatchObject(expected);
+  });
+});
+
+describe("0227 transient bounce remains nonterminal", () => {
+  it("keeps a soft bounce delayed with no terminal metadata, then permits delivery", async () => {
+    const m = await acceptedMessage();
+    expect(await deliver({
+      type: "email.bounced", emailId: m.emailId, tag: m.id,
+      bounceType: "transient", bounceSubtype: "mailbox_full",
+      at: "2026-10-11T18:00:00.000Z",
+    })).toMatchObject({
+      result: "applied", message_id: m.id, message_studio_id: A.studioId,
+      message_status: "delivery_delayed",
+    });
+    expect(await ledger(m.id)).toMatchObject({
+      status: "delivery_delayed", bounce_type: null, provider_reason: null,
+    });
+
+    expect(await deliver({
+      type: "email.delivered", emailId: m.emailId, tag: m.id,
+      at: "2026-10-11T18:01:00.000Z",
+    })).toMatchObject({ result: "applied", message_status: "delivered" });
+    expect(await ledger(m.id)).toMatchObject({
+      status: "delivered", bounce_type: null, provider_reason: null,
+    });
+
+    // A late soft bounce must not downgrade an already delivered message.
+    expect(await deliver({
+      type: "email.bounced", emailId: m.emailId, tag: m.id,
+      bounceType: "transient", bounceSubtype: "mailbox_full",
+      at: "2026-10-11T18:02:00.000Z",
+    })).toMatchObject({ result: "stale", message_status: "delivered" });
+    expect(await ledger(m.id)).toMatchObject({
+      status: "delivered", bounce_type: null, provider_reason: null,
+    });
   });
 });
 

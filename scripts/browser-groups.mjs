@@ -317,6 +317,8 @@ export const BROWSER_GROUPS = {
       // reasons as UI-04 above: /clients/** has no PATH_TO_GROUP pattern, so a
       // photo diff already runs extended, and `sessions` carries a cost pin.
       "fett-photos-touch-floor.spec.ts",
+      // HON-46 owner records administration; preserve the sessions cost pin.
+      "hon-46-clinical-records-export.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",

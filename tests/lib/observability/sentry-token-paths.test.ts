@@ -74,7 +74,7 @@ describe("F-PRIV-001 A. request.url — every route family, every URL form", () 
     ];
     for (const url of forms) {
       it(`${prefix} :: request.url :: ${url.slice(0, 46)}`, () => {
-        const out = scrubErrorEvent(errorEvent({ request: { url } }));
+        const out = scrubErrorEvent(errorEvent({ request: { url } }))!;
         expectNoCanary(out, `request.url ${url}`);
         // Diagnostics are PRESERVED: the route family still identifies where.
         expect(String(out.request?.url)).toContain(prefix);
@@ -104,7 +104,7 @@ describe("F-PRIV-001 B. event.transaction — the surface with NO prior scrub", 
           type: "transaction",
           transaction,
           request: { url: `https://hone.care${prefix}/${token}` },
-        } as Event);
+        } as Event)!;
         expectNoCanary(txn, `txn transaction ${transaction}`);
         expect(String(txn.transaction)).toContain(prefix);
       });
@@ -114,7 +114,7 @@ describe("F-PRIV-001 B. event.transaction — the surface with NO prior scrub", 
   it("an HTTP method prefix is preserved — it is diagnostic, not secret", () => {
     const out = scrubErrorEvent(
       errorEvent({ transaction: `GET /intake/${CANARY["/intake"]}` }),
-    );
+    )!;
     expect(out.transaction).toBe(`GET /intake/${TOKEN_PLACEHOLDER}`);
   });
 
@@ -238,7 +238,7 @@ describe("F-PRIV-001 E. credential shapes — independence from token syntax", (
             request: { url: `https://hone.care${prefix}/${token}?q=1` },
             transaction: `GET ${prefix}/${token}`,
           }),
-        );
+        )!;
         expect(JSON.stringify(out), `${name} @ ${prefix}`).not.toContain(token);
         expect(String(out.request?.url)).toBe(
           `https://hone.care${prefix}/${TOKEN_PLACEHOLDER}`,
@@ -285,7 +285,7 @@ describe("F-PRIV-001 F. non-regression — diagnostics stay useful", () => {
           query_string: "q=secret",
         },
       }),
-    );
+    )!;
     expect(out.request?.cookies).toBeUndefined();
     expect(out.request?.headers).toBeUndefined();
     expect(out.request?.query_string).toBeUndefined();
@@ -310,7 +310,7 @@ describe("F-PRIV-001 G. idempotence", () => {
           extra: { url },
         });
       const once = scrubErrorEvent(build());
-      const twice = scrubErrorEvent(scrubErrorEvent(build()));
+      const twice = scrubErrorEvent(scrubErrorEvent(build())!);
       expect(JSON.stringify(twice)).toBe(JSON.stringify(once));
       expect(canonicalizeTokenPaths(canonicalizeTokenPaths(url))).toBe(
         canonicalizeTokenPaths(url),
@@ -350,7 +350,7 @@ describe("F-PRIV-001 H. generated-token matrix (deterministic)", () => {
         spans: [
           { description: `GET ${url}`, data: { "http.url": url } },
         ] as unknown as Event["spans"],
-      } as Event);
+      } as Event)!;
       const serialized = JSON.stringify(out);
       expect(serialized, `seed ${seed}`).not.toContain(token);
       if (token.length >= 10) {
