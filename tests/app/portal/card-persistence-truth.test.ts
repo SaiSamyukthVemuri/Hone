@@ -89,7 +89,9 @@ describe("Stripe acceptance is not Hone persistence — the client cannot claim 
     expect(ACTIONS).toMatch(/export async function confirmCardPersistedAction/);
     // The confirmation must be scoped to the caller's own portal session.
     const fn = ACTIONS.slice(ACTIONS.indexOf("export async function confirmCardPersistedAction"));
-    expect(fn).toMatch(/getCurrentPortalSession/);
+    // HON-47: resolved through the wrapper that also enforces the studio's
+    // client-portal flag (lib/portal/session.ts).
+    expect(fn).toMatch(/requirePortalSessionForAction/);
     expect(fn).toMatch(/session\.studioId/);
     expect(fn).toMatch(/session\.clientId/);
     expect(fn).toMatch(/\.eq\("status", "active"\)/);

@@ -60,6 +60,11 @@ import {
   newClientMayBook,
 } from "@/lib/booking/new-client-admission";
 import {
+  clientManagePageAllowed,
+  clientOnlineBookingDisabledMessage,
+  clientSelfServicePolicyFromStudio,
+} from "@/lib/booking/client-self-service-policy";
+import {
   NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
   NEW_CLIENT_WAITLIST_REFUSAL_CODE,
 } from "@/lib/booking/new-client-waitlist";
@@ -431,7 +436,9 @@ export type PublicBookResult =
   | {
       ok: true;
       appointmentId: string;
-      manageUrl: string;
+      // HON-47: null when the studio offers none of cancel, reschedule or the
+      // portal online, so the card never links into a refusal.
+      manageUrl: string | null;
       confirmationEmailStatus: ConfirmationEmailStatus;
     }
   | {
@@ -554,6 +561,16 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
 
   const studio = await getStudioBySlug(slug);
   if (!studio) return { ok: false, error: "Studio not found." };
+
+  // HON-47. RETURNING-CLIENT ONLINE BOOKING follows the studio's client portal
+  // flag. It is NOT new-client admission: new_client_admission_mode below stays
+  // the only authority for people who are not yet clients, and is not read
+  // here. Refused before any read or write, so nothing is mutated. The
+  // existing-email case under client_type=new is caught after the lookup below.
+  const clientSelfService = clientSelfServicePolicyFromStudio(studio);
+  if (clientType === "existing" && !clientSelfService.portal) {
+    return { ok: false, error: clientOnlineBookingDisabledMessage(studio.name) };
+  }
 
   // =====================================================================
   // P0 NEW-CLIENT WAITLIST ADMISSION GATE — SERVER AUTHORITY
@@ -828,6 +845,16 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       emailFingerprint: hashFingerprint(normalizedEmail),
     });
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+  }
+
+  // HON-47. A visitor who chose "new" but whose email matches an ACTIVE client
+  // would take the existing-client branch below and book as that client, so
+  // the returning-client rule applies here too. Placed BEFORE the invitation is
+  // consumed and before any write. The copy is the same neutral sentence used
+  // above, which does not say "returning client" and so does not confirm that
+  // the email is on file.
+  if (existingClient && !clientSelfService.portal) {
+    return { ok: false, error: clientOnlineBookingDisabledMessage(studio.name) };
   }
 
   // WAIT-03B B2 / P3-A. CONSUME THE INVITATION HERE -- before the client
@@ -1889,7 +1916,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   return {
     ok: true,
     appointmentId: createdId,
-    manageUrl,
+    manageUrl: clientManagePageAllowed(clientSelfService) ? manageUrl : null,
     confirmationEmailStatus,
   };
 }

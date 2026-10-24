@@ -19,6 +19,11 @@ import {
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { buildPortalMagicLinkEmail } from "@/lib/email/templates/portal-magic-link";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import {
+  clientPortalDisabledMessage,
+  clientSelfServicePolicyFromStudio,
+} from "@/lib/booking/client-self-service-policy";
+import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // PR #166. Magic-link TTL was 30 minutes in PR #129 and survived
@@ -162,6 +167,13 @@ export async function requestPortalMagicLinkAction(
       await waitUntilMinimumElapsed(startedAt);
       return { ok: true, message: GENERIC_SUCCESS };
     }
+    // HON-47. The studio is named in the public URL, so saying its portal is
+    // off reveals nothing about any client: it is answered before any email
+    // lookup, identically for every address.
+    if (!clientSelfServicePolicyFromStudio(studio).portal) {
+      await waitUntilMinimumElapsed(startedAt);
+      return { ok: false, error: clientPortalDisabledMessage(studio.name) };
+    }
     matches = await findActiveClientsForStudioPortalLogin(
       emailNormalized,
       studio.id,
@@ -211,6 +223,21 @@ export async function requestPortalMagicLinkAction(
   }
 
   const admin = createAdminClient();
+
+  // HON-47. The unscoped sign-in resolved a studio from the email itself, so a
+  // distinct refusal here WOULD reveal that the address belongs to a client of
+  // a studio with the portal off. No link is issued, and the visitor gets the
+  // same generic answer as every other branch. An unreadable policy is treated
+  // the same way: no link.
+  const portalPolicy = await loadClientSelfServicePolicy(admin, matches[0].studioId);
+  if (!portalPolicy.ok || !portalPolicy.policy.portal) {
+    logSanitized("portal_login_withheld_portal_disabled", {
+      emailHash: hashFingerprint(emailNormalized),
+      studioSlug,
+    });
+    await waitUntilMinimumElapsed(startedAt);
+    return { ok: true, message: GENERIC_SUCCESS };
+  }
 
   // Single-match branch. The matches.length === 1 invariant is
   // guaranteed by the early returns above; the for-loop shape is

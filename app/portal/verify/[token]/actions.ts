@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { hashToken } from "@/lib/portal/tokens";
 import { createPortalSession } from "@/lib/portal/session";
 import { logPortalAccessEvent } from "@/lib/portal/access-events";
+import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
 
 // Server action that actually consumes a portal magic-link token and
 // creates the portal session. Split out from the verify page so the
@@ -79,6 +80,14 @@ export async function verifyPortalMagicLinkAction(
     .eq("studio_id", link.studio_id)
     .maybeSingle();
   if (!clientRow || clientRow.archived_at != null) {
+    redirect(`/portal/verify/${token}`);
+  }
+
+  // HON-47. Refuse BEFORE consuming the link, so a studio whose client portal
+  // access is off neither burns the token nor mints a session. The verify page
+  // then renders the "online client access isn't available" surface.
+  const policy = await loadClientSelfServicePolicy(admin, link.studio_id);
+  if (!policy.ok || !policy.policy.portal) {
     redirect(`/portal/verify/${token}`);
   }
 

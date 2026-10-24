@@ -2,6 +2,8 @@ import "server-only";
 import { cookies } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { generateRawToken, hashToken } from "./tokens";
+import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
+import { clientPortalDisabledMessage } from "@/lib/booking/client-self-service-policy";
 
 // Server-side client portal session manager. Owns the
 // hone_portal_session httpOnly cookie and the client_portal_sessions
@@ -32,6 +34,62 @@ export type PortalSession = {
   expiresAt: string;
 };
 
+// HON-47. The portal session resolver is the one place every portal page and
+// action already passes through, so the studio's client-portal flag is enforced
+// HERE: a session whose studio has turned client portal access off is never
+// returned as usable. `disabled` carries the studio name so a caller can say
+// why, instead of claiming the session expired.
+export type PortalSessionState =
+  | { kind: "none" }
+  | { kind: "disabled"; studioName: string | null }
+  | { kind: "active"; session: PortalSession };
+
+export async function getCurrentPortalSessionState(): Promise<PortalSessionState> {
+  const session = await readCurrentPortalSession();
+  if (!session) return { kind: "none" };
+  const policy = await loadClientSelfServicePolicy(
+    createAdminClient(),
+    session.studioId,
+  );
+  // FAIL CLOSED: an unreadable policy is treated as no session at all, never
+  // as access.
+  if (!policy.ok) return { kind: "none" };
+  if (!policy.policy.portal) {
+    return { kind: "disabled", studioName: policy.studioName };
+  }
+  return { kind: "active", session };
+}
+
+// Every existing caller keeps this signature. It returns the session only when
+// the studio still allows client portal access (see above), so a caller that
+// predates HON-47, or one added later, cannot reach a disabled studio's data.
+export async function getCurrentPortalSession(): Promise<PortalSession | null> {
+  const state = await getCurrentPortalSessionState();
+  return state.kind === "active" ? state.session : null;
+}
+
+// For portal server actions: the session, or the refusal the action should
+// return. A disabled studio gets the HON-47 explanation rather than "your
+// session has expired", which would send the client round a sign-in loop that
+// can never succeed.
+export async function requirePortalSessionForAction(
+  expiredMessage: string,
+): Promise<
+  | { ok: true; session: PortalSession }
+  | { ok: false; code: "session_expired" | "portal_disabled"; error: string }
+> {
+  const state = await getCurrentPortalSessionState();
+  if (state.kind === "active") return { ok: true, session: state.session };
+  if (state.kind === "disabled") {
+    return {
+      ok: false,
+      code: "portal_disabled",
+      error: clientPortalDisabledMessage(state.studioName),
+    };
+  }
+  return { ok: false, code: "session_expired", error: expiredMessage };
+}
+
 // Read the cookie, hash its value, look the row up, and return the
 // resolved session. Returns null when:
 //   * no cookie is present (anonymous visitor)
@@ -40,7 +98,7 @@ export type PortalSession = {
 //
 // Refreshes last_seen_at as a best-effort metric; failure to write it
 // never blocks the session.
-export async function getCurrentPortalSession(): Promise<PortalSession | null> {
+async function readCurrentPortalSession(): Promise<PortalSession | null> {
   const jar = await cookies();
   const raw = jar.get(COOKIE_NAME)?.value;
   if (!raw || raw.length === 0) return null;
@@ -125,6 +183,13 @@ export async function createPortalSession(params: {
   studioId: string;
   clientId: string;
 }): Promise<void> {
+  // HON-47. Defence in depth behind the verify action's own check: no session
+  // is ever minted for a studio whose client portal access is off, or whose
+  // policy cannot be read.
+  const policy = await loadClientSelfServicePolicy(createAdminClient(), params.studioId);
+  if (!policy.ok || !policy.policy.portal) {
+    throw new Error("Portal session refused: client portal access is off");
+  }
   const raw = generateRawToken();
   const tokenHash = hashToken(raw);
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);

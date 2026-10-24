@@ -2,7 +2,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
-import { getCurrentPortalSession } from "@/lib/portal/session";
+import { requirePortalSessionForAction } from "@/lib/portal/session";
 import {
   createCardOnFileSetupIntent,
   getOrCreateStripeCustomerForCardOnFile,
@@ -76,8 +76,11 @@ const ERR_STUDIO_NOT_READY =
 const ERR_TRY_AGAIN = "Couldn't start the card setup. Please try again.";
 
 export async function createCardSetupIntentAction(): Promise<CreateCardSetupIntentResult> {
-  const session = await getCurrentPortalSession();
-  if (!session) return { ok: false, error: ERR_SESSION_EXPIRED };
+  // HON-47: refuses with the portal-disabled explanation when the studio has
+  // turned client portal access off.
+  const access = await requirePortalSessionForAction(ERR_SESSION_EXPIRED);
+  if (!access.ok) return { ok: false, error: access.error };
+  const session = access.session;
 
   const admin = createAdminClient();
 
@@ -297,8 +300,11 @@ export type ConfirmCardPersistedResult =
 export async function confirmCardPersistedAction(
   setupIntentId: string,
 ): Promise<ConfirmCardPersistedResult> {
-  const session = await getCurrentPortalSession();
-  if (!session) return { ok: false, error: ERR_SESSION_EXPIRED };
+  // HON-47: refuses with the portal-disabled explanation when the studio has
+  // turned client portal access off.
+  const access = await requirePortalSessionForAction(ERR_SESSION_EXPIRED);
+  if (!access.ok) return { ok: false, error: access.error };
+  const session = access.session;
   if (typeof setupIntentId !== "string" || !setupIntentId.startsWith("seti_")) {
     return { ok: false, error: ERR_TRY_AGAIN };
   }

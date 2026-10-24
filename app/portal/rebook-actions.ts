@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { getCurrentPortalSession } from "@/lib/portal/session";
+import { requirePortalSessionForAction } from "@/lib/portal/session";
 import {
   getPortalBookableServices,
   getPortalBookingReadiness,
@@ -205,8 +205,12 @@ type PortalBookingContext = {
 async function resolvePortalBookingContext(): Promise<
   { ok: true; ctx: PortalBookingContext } | Refusal
 > {
-  const session = await getCurrentPortalSession();
-  if (!session) return refuse("session_expired", PORTAL_REBOOK_SESSION_EXPIRED);
+  // HON-47: a studio with client portal access off answers portal_disabled,
+  // which the card shows in place, instead of session_expired, which would
+  // send the client to a sign-in that can never succeed.
+  const access = await requirePortalSessionForAction(PORTAL_REBOOK_SESSION_EXPIRED);
+  if (!access.ok) return refuse(access.code, access.error);
+  const session = access.session;
 
   // THE TWO VALUES THE WHOLE UNIT RESTS ON. Both come from the session, which
   // resolved them from a hashed cookie against a non-expired, non-revoked row.

@@ -2,6 +2,11 @@ import { safeLog } from "@/lib/logging/safe-log";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Client, Studio, SmsType } from "@/lib/types/database";
 import {
+  clientManagePageAllowed,
+  clientSelfServicePolicyFromStudio,
+  type ClientSelfServicePolicyColumns,
+} from "@/lib/booking/client-self-service-policy";
+import {
   buildBookingConfirmationSms,
   build24hReminderSms,
   build2hReminderSms,
@@ -351,6 +356,10 @@ type SendConfirmationInput = {
     | "send_confirmation_sms"
     | "send_24h_sms_reminders"
     | "send_2h_sms_reminders"
+    // HON-47. Optional on Studio; absent means today's behaviour.
+    | "client_cancellation_enabled"
+    | "client_reschedule_enabled"
+    | "client_portal_enabled"
   >;
   client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
   intakeUrl: string | null;
@@ -362,6 +371,19 @@ type SendConfirmationInput = {
   // the manage line entirely.
   manageUrl: string | null;
 };
+
+// HON-47. The SMS carries one link, /manage, which exists to reach cancel,
+// reschedule or the portal. When the studio offers none of them online the line
+// is dropped and the message still sends. Decided here, in the sender, so every
+// caller inherits it. Exported for its unit test.
+export function smsManageUrlFor(
+  studio: ClientSelfServicePolicyColumns,
+  manageUrl: string | null,
+): string | null {
+  return clientManagePageAllowed(clientSelfServicePolicyFromStudio(studio))
+    ? manageUrl
+    : null;
+}
 
 export async function sendBookingConfirmationSmsToClient(
   input: SendConfirmationInput,
@@ -380,7 +402,7 @@ export async function sendBookingConfirmationSmsToClient(
         startsAt: input.startsAt,
         timezone: input.timezone,
         intakeUrl: input.intakeUrl,
-        manageUrl: input.manageUrl,
+        manageUrl: smsManageUrlFor(input.studio, input.manageUrl),
       }),
     to: (normalizedPhone) => normalizedPhone,
   });
@@ -412,6 +434,9 @@ export type SendReminderInput = {
     | "send_confirmation_sms"
     | "send_24h_sms_reminders"
     | "send_2h_sms_reminders"
+    | "client_cancellation_enabled"
+    | "client_reschedule_enabled"
+    | "client_portal_enabled"
   >;
   client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
   /**
@@ -585,7 +610,7 @@ async function sendReminder(
       studioName: args.studio.name,
       startsAt,
       timezone: args.timezone,
-      manageUrl: args.manageUrlFor(startsAt),
+      manageUrl: smsManageUrlFor(args.studio, args.manageUrlFor(startsAt)),
       intakeUrl: args.intakeUrl ?? null,
     });
     // What this message carries, read from the message itself.

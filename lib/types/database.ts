@@ -81,6 +81,13 @@ export type Studio = {
   new_client_admission_mode?: string;
   new_client_admission_mode_set_at?: string | null;
   new_client_admission_mode_set_by?: string | null;
+  // HON-47. Client self-service controls: the first two from 0234, the third
+  // from the HON-47 draft migration. Default TRUE in the database; optional here
+  // for rows loaded before those apply, and read ONLY through
+  // clientSelfServicePolicyFromStudio, which maps an absent key to TRUE.
+  client_cancellation_enabled?: boolean;
+  client_reschedule_enabled?: boolean;
+  client_portal_enabled?: boolean;
   // Migration 0025: studio-level email toggles.
   send_confirmation_emails: boolean;
   send_24h_reminders: boolean;

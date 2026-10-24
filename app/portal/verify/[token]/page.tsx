@@ -6,6 +6,8 @@ import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { hashToken } from "@/lib/portal/tokens";
 import { ContinueToPortalForm } from "./ContinueForm";
+import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
+import { PortalAccessDisabled } from "../../PortalAccessDisabled";
 
 // PR #142. Token-bearing route. Robots noindex/nofollow keeps the
 // URL out of search indexes; the next.config.ts headers() block
@@ -99,6 +101,15 @@ export default async function PortalVerifyPage({
     .maybeSingle();
   if (!clientRow || clientRow.archived_at != null) {
     return <Unavailable />;
+  }
+
+  // HON-47. A studio that has turned client portal access off never shows the
+  // Continue button: the action would refuse, so the page says so up front.
+  // An unreadable policy shows the generic surface, never the form.
+  const policy = await loadClientSelfServicePolicy(admin, link.studio_id);
+  if (!policy.ok) return <Unavailable />;
+  if (!policy.policy.portal) {
+    return <PortalAccessDisabled studioName={policy.studioName} />;
   }
 
   // Valid token. Render the Continue form. The form submits to the
