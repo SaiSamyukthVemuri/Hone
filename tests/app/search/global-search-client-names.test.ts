@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { parseOrFilter } from "./helpers/postgrest-or";
 
 // HON-58 — global search finds the same client record by preferred name,
 // legal name or surname, without parentheses or the exact display string,
@@ -62,12 +63,11 @@ function builder(table: string) {
       return chain;
     },
     or(expr: string) {
-      const clauses = expr.split(",").map((c) => {
-        const [col, op, ...rest] = c.split(".");
-        if (op !== "ilike") throw new Error(`fake supabase: unsupported .or operator ${op}`);
-        return { col, pattern: rest.join(".") };
+      const clauses = parseOrFilter(expr).map((c) => {
+        if (c.op !== "ilike") throw new Error(`fake supabase: unsupported .or operator ${c.op}`);
+        return c;
       });
-      predicates.push((r) => clauses.some((c) => matchesIlike(r[c.col], c.pattern)));
+      predicates.push((r) => clauses.some((c) => matchesIlike(r[c.col], c.value)));
       return chain;
     },
     filter(col: string, op: string, value: string) {
@@ -283,5 +283,60 @@ describe("global search: every letter the matcher folds can be found", () => {
       const got = (await clientIdsFor(q)).filter((id) => id.startsWith("c-n"));
       expect(got.sort(), q).toEqual(expected.sort());
     }
+  });
+});
+
+// Codex P2 4367010228: the direct read swapped `,` `(` `)` `"` for the `_`
+// wildcard and its rows were merged unconfirmed, so near-misses could fill
+// the client cap. Every read now keeps the query's punctuation literal (each
+// `.or()` value is double-quoted, PostgREST's escaping) and every client row is
+// confirmed by the shared matcher before it counts.
+describe("global search: punctuation stays literal and direct rows are confirmed", () => {
+  const recordIdsFor = async (query: string) => {
+    const res = await globalSearchAction(query);
+    if (!res.ok) throw new Error("search failed");
+    return res.results.filter((r) => r.type === "record").map((r) => r.id);
+  };
+
+  it("five earlier wildcard near-misses do not crowd out the literal match", async () => {
+    tables.clients.push(
+      ...["A", "B", "C", "D", "E"].map((x) => client(`c-near-${x}`, `Jane${x}Smith${x}`)),
+      client("c-zoe-paren", "Zoe Jane(Smith)"),
+    );
+    const ids = await clientIdsFor("Jane(Smith)");
+    expect(ids).toContain("c-zoe-paren");
+    expect(ids.filter((id) => id.startsWith("c-near-"))).toEqual([]);
+  });
+
+  it("an unconfirmed direct row cannot take a slot from a genuine match", async () => {
+    // "--" is a raw substring of these five names, but no client-list rule
+    // accepts a name for a query with no letters or digits; the phone is a
+    // genuine raw match.
+    tables.clients.push(
+      ...["A", "B", "C", "D", "E"].map((x) => client(`c-dash-${x}`, `${x}nna--Lee`)),
+      client("c-dash-phone", "Zed Young", { phone: "555--0100" }),
+    );
+    expect(await clientIdsFor("--")).toEqual(["c-dash-phone"]);
+  });
+
+  it("a comma, quote or backslash in the query is matched literally, never as syntax", async () => {
+    tables.clients.push(
+      client("c-quote", 'Ann "Nan" Lee'),
+      client("c-slash", "Bo\\Ko Lee"),
+      client("c-comma2", "Lee, Ann"),
+    );
+    expect(await clientIdsFor('"Nan"')).toContain("c-quote");
+    expect(await clientIdsFor("Bo\\Ko")).toContain("c-slash");
+    expect(await clientIdsFor("Lee, Ann")).toContain("c-comma2");
+  });
+
+  it("the record reads match punctuation literally too", async () => {
+    tables.record_keeping_sterile_items = [
+      { id: "s-wild", studio_id: STUDIO_A, item_description: "Gauze aXb", lot_number: "L-1", date_purchased: "2026-01-02" },
+      { id: "s-real", studio_id: STUDIO_A, item_description: "Gauze a(b", lot_number: "L-2", date_purchased: "2026-01-01" },
+    ];
+    const ids = await recordIdsFor("a(b");
+    expect(ids).toContain("record:sterile:s-real");
+    expect(ids).not.toContain("record:sterile:s-wild");
   });
 });

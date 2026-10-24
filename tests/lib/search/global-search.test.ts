@@ -5,6 +5,8 @@ import {
   capResults,
   containsPattern,
   escapeIlike,
+  orFilterValue,
+  orIlike,
   sanitizeQuery,
   groupResults,
   statusForQuery,
@@ -40,12 +42,17 @@ describe("pure helpers", () => {
     expect(escapeIlike("50%_a\\b")).toBe("50\\%\\_a\\\\b");
   });
 
-  it("containsPattern keeps PostgREST .or() reserved characters out of the filter (HON-58)", () => {
+  it("containsPattern is the query literally: punctuation is never a wildcard (HON-58)", () => {
+    expect(containsPattern("Smith, Jane")).toBe("%Smith, Jane%");
+    expect(containsPattern('a(b)"c')).toBe('%a(b)"c%');
+    expect(containsPattern("50%_a\\b")).toBe("%50\\%\\_a\\\\b%");
+  });
+
+  it("orIlike double-quotes every .or() value, PostgREST's escaping (HON-58)", () => {
     // A typed "Smith, Jane" used to split the client .or() filter in two.
-    expect(containsPattern("Smith, Jane")).toBe("%Smith_ Jane%");
-    expect(containsPattern('a(b)"c')).toBe("%a_b__c%");
-    expect(containsPattern("50%_")).toBe("%50\\%\\_%");
-    expect(containsPattern("x,y")).not.toMatch(/[,()"]/);
+    expect(orIlike(["name", "email"], "%Smith, Jane%")).toBe('name.ilike."%Smith, Jane%",email.ilike."%Smith, Jane%"');
+    expect(orFilterValue('a"b\\c')).toBe('"a\\"b\\\\c"');
+    expect(orFilterValue("(x).y:z")).toBe('"(x).y:z"');
   });
 
   it("sanitizeQuery trims and caps length", () => {

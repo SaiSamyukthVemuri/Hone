@@ -97,13 +97,25 @@ export function escapeIlike(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
-// The `%query%` pattern every global-search read uses. The same string is
-// interpolated into PostgREST `.or()` filters, whose grammar reserves `,`, `(`,
-// `)` and `"`. A typed "Smith, Jane" split the client filter into a malformed
-// clause, so the read failed and returned no clients (HON-58). Each reserved
-// character becomes `_`, which ILIKE matches against that same character.
+// The `%query%` pattern every global-search read uses: the query LITERALLY,
+// with only ILIKE's own wildcards and escape escaped. Punctuation is never
+// widened to a wildcard (Codex P2 4367010228): "a(b" must not match "aXb".
 export function containsPattern(query: string): string {
-  return `%${escapeIlike(query).replace(/[,()"]/g, "_")}%`;
+  return `%${escapeIlike(query)}%`;
+}
+
+// One value inside a PostgREST `.or()` filter. The `.or()` grammar reserves
+// `,` `.` `:` `(` `)` and `"`, so an unquoted "Smith, Jane" split the client
+// filter into a malformed clause and the read returned nothing (HON-58).
+// PostgREST's own escaping is used instead: the value is always
+// double-quoted, and inside the quotes `\` and `"` are backslash-escaped.
+export function orFilterValue(value: string): string {
+  return `"${value.replace(/[\\"]/g, "\\$&")}"`;
+}
+
+/** `col.ilike."pattern"` for each column, joined for `.or()`. */
+export function orIlike(columns: readonly string[], pattern: string): string {
+  return columns.map((col) => `${col}.ilike.${orFilterValue(pattern)}`).join(",");
 }
 
 export function sanitizeQuery(raw: string): string {

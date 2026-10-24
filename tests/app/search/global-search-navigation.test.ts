@@ -1,3 +1,4 @@
+import { parseOrFilter } from "./helpers/postgrest-or";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   NAV_RESULT_CAP,
@@ -51,12 +52,9 @@ function builder(table: string) {
       return chain;
     },
     or(expr: string) {
-      const clauses = expr.split(",").map((c) => {
-        const [col, , pattern] = c.split(".");
-        return { col, pattern };
-      });
+      const clauses = parseOrFilter(expr);
       predicates.push((r) =>
-        clauses.some((c) => ilikeMatches(r[c.col], c.pattern)),
+        clauses.some((c) => ilikeMatches(r[c.col], c.value)),
       );
       return chain;
     },

@@ -9,6 +9,7 @@ import { blockAreasLabel } from "@/lib/sessions/block-areas";
 import {
   capResults,
   containsPattern,
+  orIlike,
   sanitizeQuery,
   statusForQuery,
   SEARCH_MIN_CHARS,
@@ -132,8 +133,9 @@ type ClientSearchRow = {
   phone: string | null;
 };
 
-// Clients (HON-58). The direct ILIKE is today's rule, kept as-is so nothing
-// it found is lost. The candidate reads add what ILIKE alone cannot see:
+// Clients (HON-58). The direct ILIKE is today's rule (a literal substring of
+// name, email or phone), so nothing it found is lost. The candidate reads add
+// what ILIKE alone cannot see:
 // word order ("smith jane"), a preferred name inside the stored string
 // ("Jane (Janie) Smith" by "janie smith"), punctuation ("obrien") and
 // diacritics ("jose", "Šimon"), and phone formatting. Together they admit
@@ -182,11 +184,9 @@ async function searchClientRows(
   const none = Promise.resolve([] as ClientSearchRow[]);
 
   const [direct, asciiNamed, otherNamed, phoned] = await Promise.all([
-    base()
-      .or(`name.ilike.${like},email.ilike.${like},phone.ilike.${like}`)
-      .order("name")
-      .limit(CLIENT_CAP)
-      .then((r) => (r.data ?? []) as ClientSearchRow[]),
+    // The direct read is confirmed and paged like every other client read
+    // (Codex P2 4367010228): no row reaches the cap unconfirmed.
+    confirmed(() => base().or(orIlike(["name", "email", "phone"], like))),
     namePatterns.length > 0
       ? confirmed(() => {
           let q = base();
@@ -267,7 +267,10 @@ export async function globalSearchAction(
       .is(SESSION_ACTIVE_FILTERS.deletedAt, null)
       .neq(SESSION_ACTIVE_FILTERS.recordStatus, VOID_RECORD_STATUS)
       .or(
-        `primary_area.ilike.${like},block_name.ilike.${like},caution_note.ilike.${like},reaction_notes.ilike.${like},probe_label.ilike.${like},probe_lot_number.ilike.${like}`,
+        orIlike(
+          ["primary_area", "block_name", "caution_note", "reaction_notes", "probe_label", "probe_lot_number"],
+          like,
+        ),
       )
       .order("created_at", { ascending: false })
       .limit(MEMORY_CAP)
@@ -307,7 +310,7 @@ export async function globalSearchAction(
       .from("record_keeping_sterile_items")
       .select("id, item_description, lot_number, date_purchased")
       .eq("studio_id", studioId)
-      .or(`lot_number.ilike.${like},item_description.ilike.${like}`)
+      .or(orIlike(["lot_number", "item_description"], like))
       .order("date_purchased", { ascending: false })
       .limit(RECORD_CAP)
       .then((r) => r.data ?? []),

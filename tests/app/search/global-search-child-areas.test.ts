@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { parseOrFilter } from "./helpers/postgrest-or";
 
 // Global Search — behavioural proof that a treatment is findable by ANY of its
 // structured treatment areas, not only by the legacy `primary_area`.
@@ -141,15 +142,15 @@ function builder(table: string, select: string) {
     },
     or(expr: string) {
       record.or.push(expr);
-      // "col.ilike.%x%,other.ilike.%x%" — the only .or shape the action builds.
-      const clauses = expr.split(",").map((c) => {
-        const [col, op, ...rest] = c.split(".");
-        if (op !== "ilike") {
-          throw new Error(`fake supabase: unsupported .or operator ${op}`);
+      // "col.ilike.\"%x%\",…" — the only .or shape the action builds, parsed
+      // the way PostgREST parses it (quoted values, backslash escapes).
+      const clauses = parseOrFilter(expr).map((c) => {
+        if (c.op !== "ilike") {
+          throw new Error(`fake supabase: unsupported .or operator ${c.op}`);
         }
-        return { col, pattern: rest.join(".") };
+        return c;
       });
-      predicates.push((r) => clauses.some((c) => matchesIlike(r[c.col], c.pattern)));
+      predicates.push((r) => clauses.some((c) => matchesIlike(r[c.col], c.value)));
       return chain;
     },
     in(col: string, values: readonly unknown[]) {
