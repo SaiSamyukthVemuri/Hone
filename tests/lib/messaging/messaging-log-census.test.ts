@@ -1,10 +1,12 @@
+import { describe, expect, it } from "vitest";
+
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
 
 import {
   analyzeSource,
   censusOf,
+  VERIFIED_FUNCTIONS,
   closedResultFunctions,
   CLOSED_RESULT_SOURCE,
   isSensitiveName,
@@ -46,6 +48,14 @@ import {
 // writer fails here until it is classified: add it to CENSUS, and if it writes
 // error text, to ERROR_TEXT with its kind. Moving code never fails; changing a
 // log line passes as long as it still satisfies rules 1-3.
+//
+// FAIL CLOSED (Codex P2 4368011462, P2 4368062287). Anything the analyzer does
+// not recognise is never clean: a constructor other than Date, a call whose
+// function is not in VERIFIED_FUNCTIONS, a value named only as a container
+// (payload, detail, data, result, ...) that cannot be followed, a caught value,
+// an operator outside the enumerated sets, a console method or stdout write it
+// did not know, a sink or helper used as a value. Each is either opaque (rule 3)
+// or listed in ERROR_TEXT with its kind.
 //
 // THE LIMIT, stated plainly. Rules 1-3 are proved from the source. Error text
 // is not: a database message, a thrown exception or a provider's error string
@@ -116,20 +126,37 @@ const CENSUS: Record<string, Record<string, number>> = {
 //            by the call site itself.
 //   closed   a closed vocabulary the analyzer cannot see: sendSmsSafely's error
 //            tags (lib/sms/twilio.ts), payment-receipt's sanitiseSafe output.
-type ErrorKind = "db" | "thrown" | "provider" | "closed";
+//   input    (fail closed) a request or form value written as given
+//            (formDataStr(...), formData.get(...), a slug): the browser decides it.
+//   db_result (fail closed) a field of a database or RPC reply (`row.result`,
+//            a destructured `data`): SQL decides it, the source cannot show it.
+type ErrorKind = "db" | "thrown" | "provider" | "closed" | "input" | "db_result";
 const ERROR_TEXT: ReadonlyArray<readonly [key: string, count: number, kind: ErrorKind]> = [
   ["app/(app)/calendar/actions.ts | console.error | practitioner_cancel_rpc_error", 1, "db"],
   ["app/(app)/calendar/actions.ts | console.error | client cancel notification email failed", 1, "provider"],
   ["app/(app)/calendar/actions.ts | console.error | mark_complete_rpc_error", 1, "db"],
   ["app/(app)/calendar/actions.ts | console.error | mark_no_show_rpc_error", 1, "db"],
   ["app/(app)/calendar/actions.ts | console.error | send_postcare_lookup_failed", 1, "db"],
+  ["app/(app)/calendar/actions.ts | console.error | send_postcare_email_failed", 1, "input"],
+  ["app/(app)/calendar/actions.ts | console.error | send_postcare_success_write_failed", 1, "input"],
+  ["app/(app)/calendar/actions.ts | logPostcare() | send_postcare_claim_command_failed", 1, "input"],
+  ["app/(app)/calendar/actions.ts | logPostcare() | send_postcare_claim_empty", 1, "input"],
+  ["app/(app)/calendar/actions.ts | logPostcare() | send_postcare_settle_failure_unpersisted", 1, "input"],
   ["app/(app)/calendar/postcare-auto-send.ts | console.error | postcare_auto_send_threw", 1, "thrown"],
+  ["app/(app)/clients/[id]/actions.ts | safeLog.error | client_update_failed", 1, "input"],
+  ["app/(app)/clients/[id]/actions.ts | safeLog.error | client_archive_audit_failed", 1, "input"],
+  ["app/(app)/clients/[id]/actions.ts | safeLog.error | client_unarchive_audit_failed", 1, "input"],
   ["app/(app)/clients/[id]/intake/actions.ts | safeLog.error | {code}", 1, "db"],
   ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_insert_failed", 1, "db"],
   ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_notification_stamp_failed", 1, "db"],
   ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_reply_mark_seen_failed", 1, "db"],
   ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_archive_failed", 1, "db"],
   ["app/(app)/settings/team/actions.ts | console.error | Failed to send invitation email:", 2, "provider"],
+  ["app/(app)/settings/team/actions.ts | console.error | team_action_db_error:remove_practitioner:", 1, "db_result"],
+  ["app/(app)/settings/waitlist/consent-actions.ts | logRefusal() | unknown", 1, "db_result"],
+  ["app/(app)/settings/waitlist/profile-actions.ts | logRefusal() | waitlist_availability_failed", 1, "db_result"],
+  ["app/(app)/settings/waitlist/profile-actions.ts | logRefusal() | waitlist_manual_entry_failed", 1, "db_result"],
+  ["app/(app)/settings/waitlist/profile-actions.ts | logRefusal() | waitlist_legacy_import_failed", 1, "db_result"],
   ["app/api/cron/calendar-reconcile/route.ts | console.error | reminder_scheduler_health_check_threw", 1, "thrown"],
   ["app/api/cron/calendar-sync/route.ts | console.error | reminder_scheduler_health_check_threw", 1, "thrown"],
   ["app/api/cron/materialize-recurring-breaks/route.ts | console.error | recurring_break_materialization_conflict", 1, "db"],
@@ -141,11 +168,20 @@ const ERROR_TEXT: ReadonlyArray<readonly [key: string, count: number, kind: Erro
   ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_prospect_optout_failed", 1, "db"],
   ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_audit_insert_failed", 1, "db"],
   ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_prospect_audit_insert_failed", 1, "db"],
+  ["app/api/twilio/message-status/route.ts | logEvent() | twilio_status_recorded", 1, "db_result"],
+  ["app/book/[slug]/actions.ts | console.error | booking_slot_rejected", 1, "db_result"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | public_booking_client_not_resolved", 1, "db_result"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | public_booking_command_refused", 1, "db_result"],
+  ["app/book/[slug]/actions.ts | invitationConsumedWithoutBooking() | created", 1, "db_result"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_command_refused", 1, "db_result"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_studio_lookup_failed", 1, "input"],
   ["app/intake/[token]/actions.ts | console.error | Failed to look up client for intake sync:", 1, "db"],
   ["app/intake/[token]/actions.ts | console.error | Failed to sync intake to client:", 1, "db"],
   ["app/intake/[token]/actions.ts | logInternalIntakeError() | intake_lookup_error", 2, "db"],
   ["app/intake/[token]/actions.ts | logInternalIntakeError() | intake_save_update_error", 1, "db"],
   ["app/intake/[token]/actions.ts | logInternalIntakeError() | intake_submit_update_error", 1, "db"],
+  ["app/portal/login/actions.ts | logSanitized() | portal_login_request_no_match", 1, "input"],
+  ["app/portal/login/actions.ts | logSanitized() | portal_login_multiple_matches_needs_review", 1, "input"],
   ["app/portal/login/actions.ts | logSanitized() | portal_login_magic_insert_failed", 1, "db"],
   ["app/portal/portal-message-actions.ts | console.error | portal_message_mark_reviewed_failed", 1, "db"],
   ["app/portal/portal-message-actions.ts | console.error | portal_reply_client_lookup_failed", 1, "db"],
@@ -153,9 +189,12 @@ const ERROR_TEXT: ReadonlyArray<readonly [key: string, count: number, kind: Erro
   ["app/portal/portal-message-actions.ts | console.error | portal_reply_insert_failed", 1, "db"],
   ["app/portal/portal-message-actions.ts | console.error | portal_reply_studio_lookup_failed", 1, "db"],
   ["app/portal/portal-message-actions.ts | console.error | portal_reply_notification_stamp_failed", 1, "db"],
+  ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_slot_rejected", 1, "db_result"],
+  ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_commit_refused", 1, "db_result"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_assert_lookup_failed", 1, "db"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_fetch_summary_failed", 1, "db"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_rpc_failed", 1, "db"],
+  ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_command_unmapped_code", 1, "db_result"],
   ["lib/billing/payment-receipt.ts | logInternal() | payment_receipt_pdf_failed", 1, "closed"],
   ["lib/billing/payment-receipt.ts | logInternal() | {args}", 1, "db"],
   ["lib/billing/payment-receipt.ts | logInternal() | payment_receipt_claim_failed", 1, "db"],
@@ -165,7 +204,10 @@ const ERROR_TEXT: ReadonlyArray<readonly [key: string, count: number, kind: Erro
   ["lib/portal-messages/queries.ts | console.error | portal_messages_for_practitioner_failed", 1, "db"],
   ["lib/portal-messages/replies-queries.ts | console.error | portal_message_replies_for_practitioner_failed", 1, "db"],
   ["lib/rate-limit/public.ts | console.error | ratelimit_backend_unavailable", 1, "thrown"],
+  ["lib/sms/delivery-ledger.ts | logLedger() | sms_ledger_settle_refused", 1, "db_result"],
+  ["lib/waitlist/delivery/join-ack-sms.ts | log() | not_claimed", 1, "db_result"],
   ["lib/waitlist/delivery/join-ack-sms.ts | log() | {outcome}", 1, "closed"],
+  ["lib/waitlist/delivery/sms.ts | log() | not_claimed", 1, "db_result"],
   ["lib/waitlist/delivery/sms.ts | log() | {outcome}", 1, "closed"],
 ];
 
@@ -284,6 +326,17 @@ describe("MSG-007 log census: no writer carries a destination, link or token", (
   it("every forwarding helper is file-local, so its callers are followed, or is listed in UNFOLLOWABLE", () => {
     const found = [...census].flatMap(([file, c]) => c.unfollowable.map((u) => `${file}: ${u}`)).sort();
     expect(found).toEqual(Object.keys(UNFOLLOWABLE).sort());
+  });
+});
+
+describe("MSG-007 log census: VERIFIED_FUNCTIONS are what they claim", () => {
+  it.each(Object.entries(VERIFIED_FUNCTIONS))("%s is declared in the file its entry names", (name, entry) => {
+    if (entry.file === "builtin") {
+      expect(name).toMatch(/^Math\.\w+$/);
+      return;
+    }
+    const source = readFileSync(path.join(process.cwd(), entry.file), "utf8");
+    expect(source).toMatch(new RegExp(`function ${name}\\(`));
   });
 });
 
@@ -407,6 +460,94 @@ describe("MSG-007 log census: the analyzer catches what it must", () => {
       }`);
     expect(ws[0].errorText).toEqual([]);
     expect(ws[1].errorText).toContain("err.message");
+  });
+
+  // --- FAIL CLOSED: one control per branch (Codex P2 4368062287) ---
+
+  it("a constructor other than Date is not trusted, and its arguments are read", () => {
+    const { writers: ws } = analyze(`
+      export function q() {
+        console.error(JSON.stringify({ event: "a", context: new URL("https://leak.example.test/manage/abcdef123456") }));
+        console.error(JSON.stringify({ event: "b", at: new Date() }));
+        console.error(JSON.stringify({ event: "c", failure: new Error("boom") }));
+      }`);
+    expect(ws[0].errorText).toEqual(["unresolved new URL"]);
+    expect(ws[0].literals.map(literalViolation).filter(Boolean)).toEqual(["a link"]);
+    expect(ws[1].errorText).toEqual([]);
+    expect(ws[2].errorText).toEqual(["new Error"]);
+  });
+
+  it("a call's result is unresolved unless its function is verified", () => {
+    const { writers: ws } = analyze(`
+      function currentEnvironment(): string { return "x"; }
+      export function r(a: string) {
+        console.error(JSON.stringify({ event: "a", line: buildLine(a) }));
+        console.error(JSON.stringify({ event: "b", environment: currentEnvironment() }));
+      }`);
+    expect(ws[0].errorText).toEqual(["unresolved call buildLine()"]);
+    expect(ws[1].errorText).toEqual([]);
+  });
+
+  it("a ForLog-shaped name is not trusted unless verified", () => {
+    const { writers: ws } = analyze(`
+      export function s(err: Error) { console.error(JSON.stringify({ event: "a", f: madeUpForLog(err.message) })); }`);
+    // Its input may be embedded in what it returns, and its result is not known.
+    expect(ws[0].errorText).toEqual(["err.message", "unresolved call madeUpForLog()"]);
+  });
+
+  it("a container-named value that cannot be followed is unresolved, a descriptive one is judged by name", () => {
+    const { writers: ws } = analyze(`
+      export async function t(db: any) {
+        let detail = await db.read();
+        const { data } = await db.rpc("x");
+        const { outcome } = await db.rpc("y");
+        console.error(JSON.stringify({ event: "a", detail, result: data, code: data.result, outcome }));
+      }`);
+    expect(ws[0].errorText).toEqual(["unresolved let detail", "unresolved binding data", "unresolved property data.result"]);
+  });
+
+  it("a caught value is error text whatever it is called", () => {
+    const { writers: ws } = analyze(`
+      export async function u(f: () => Promise<void>) { try { await f(); } catch (problem) { console.error(String(problem)); } }`);
+    expect(ws[0].errorText).toEqual(["problem"]);
+  });
+
+  it("the comma and assignment operators write their right side", () => {
+    const { writers: ws } = analyze(`
+      export function v(phone: string, n: number) {
+        let last = "";
+        console.error(JSON.stringify({ event: "a", x: (n++, phone), y: (last = phone) }));
+      }`);
+    expect(sensitive(ws[0])).toEqual(["phone", "phone"]);
+  });
+
+  it("every console method and process stdout/stderr writes are sinks", () => {
+    const { writers: ws } = analyze(`
+      export function w(phone: string) {
+        console.table({ phone });
+        process.stderr.write("see https://leak.example.test/x");
+      }`);
+    expect(ws.map((x) => x.via)).toEqual(["console.table", "process.stderr.write"]);
+    expect(sensitive(ws[0])).toEqual(["phone"]);
+    expect(ws[1].literals.map(literalViolation).filter(Boolean)).toEqual(["a link"]);
+  });
+
+  it("an aliased sink, or a helper passed as a value, is reported", () => {
+    const { unfollowable } = analyze(`
+      const out = console.log;
+      function logEvent(fields: object) { console.error(JSON.stringify(fields)); }
+      export function x(items: object[]) { items.forEach(logEvent); out("y"); }`);
+    expect(unfollowable).toEqual(["sink used as a value: console.log", "helper used as a value: items.forEach(logEvent)"]);
+  });
+
+  it("an OUTER function's parameter reaching the line through a closure is followed", () => {
+    const { writers: ws, unfollowable } = analyze(`
+      function logLater(detail: object) {
+        after(() => console.error(JSON.stringify(detail)));
+      }
+      export function y(phone: string) { logLater({ phone }); }`);
+    expect(unfollowable).toEqual([]);
+    expect(ws.filter((x) => x.via === "logLater()").flatMap(sensitive)).toEqual(["phone"]);
   });
 
   it("a closed sender's result.error is not raw text; any other result's is", () => {

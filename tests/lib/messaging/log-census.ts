@@ -55,27 +55,94 @@ export type FileCensus = {
 };
 
 const SINK_OBJECTS = new Set(["console", "safeLog"]);
-const SINK_METHODS = new Set(["log", "info", "warn", "error", "debug", "trace"]);
 
 // A property that carries raw error or provider text.
 const ERROR_PROPS = new Set(["message", "error", "stack", "details", "hint", "cause"]);
 // A bare identifier that names a caught error or a provider error object.
 const ERROR_NAME_RE = /^(?:e|err|error|\w*(?:Err|Error))$/;
-// A function whose result is a bounded log vocabulary, or a one-way digest:
-// its arguments are not written, only what it returns.
-const SANITIZER_RE = /ForLog$/;
-const DIGEST_RE = /^hash|Fingerprint$|Digest$|^sha\d/i;
-// Method calls whose result is safe whatever the receiver.
+// Functions whose RESULT may be written: a bounded vocabulary, a number, a
+// deployment label or a one-way digest. VERIFIED BY READING, not by pattern:
+// each entry names the file that declares it (a test checks the declaration is
+// there), and a function not listed has an unresolved result (fail closed).
+// `sanitizes: true` means the arguments are not written either: only the
+// bounded result is.
+export type VerifiedFunction = { file: string; returns: string; sanitizes?: true };
+export const VERIFIED_FUNCTIONS: Readonly<Record<string, VerifiedFunction>> = {
+  smsTypeForLog: { file: "lib/sms/send-appointment.ts", returns: "one of three SMS types, or \"unknown\"", sanitizes: true },
+  smsAttemptForLog: { file: "lib/sms/send-appointment.ts", returns: "an integer 1-3, or null", sanitizes: true },
+  smsFailureForLog: { file: "lib/sms/send-appointment.ts", returns: "a tag from SMS_LOG_FAILURES, twilio_http_NNN, or provider_or_transport", sanitizes: true },
+  emailTypeForLog: { file: "lib/email/send-appointment.ts", returns: "a type from EMAIL_LOG_TYPES, or \"unknown\"", sanitizes: true },
+  emailAttemptForLog: { file: "lib/email/send-appointment.ts", returns: "an integer 1-3, or null", sanitizes: true },
+  hashFingerprint: { file: "lib/portal/tokens.ts", returns: "a salted SHA-256 hex digest, or null", sanitizes: true },
+  hashId: { file: "lib/rate-limit/public.ts", returns: "a truncated SHA-256 hex digest", sanitizes: true },
+  currentEnvironment: { file: "lib/rate-limit/public.ts", returns: "VERCEL_ENV / NODE_ENV, or \"unknown\": operator configuration" },
+  environmentLabel: { file: "lib/ops/alert-email.ts", returns: "VERCEL_ENV / NODE_ENV, or \"unknown\": operator configuration" },
+  retryAfterSeconds: { file: "lib/rate-limit/public.ts", returns: "a number of seconds" },
+  errorCodeOf: { file: "app/api/twilio/message-status/route.ts", returns: "a positive integer of at most 8 digits, or null" },
+  normalizeTwilioMessageStatus: { file: "lib/sms/delivery-ledger.ts", returns: "a ProviderDeliveryStatus, or null" },
+  eligibilitySkip: { file: "lib/waitlist/delivery/sms.ts", returns: "\"opted_out\", \"no_consent\" or null (same function in join-ack-sms.ts)" },
+  missingSuccessFields: { file: "app/reschedule/[token]/actions.ts", returns: "names from the constant REQUIRED_SUCCESS_FIELDS" },
+  "Math.min": { file: "builtin", returns: "a number" },
+};
+// Array or string methods whose result, on a verified function's result, is
+// still made only of that result (missingSuccessFields(row).join(",")).
+const PRESERVING_METHODS = new Set(["join", "trim", "toString", "toLowerCase", "toUpperCase"]);
+// Method calls whose result is a timestamp or a number whatever the receiver.
 const SAFE_METHODS = new Set(["toISOString", "toFixed", "getTime"]);
+// Constructors whose result is safe to write: a Date serialises as a timestamp.
+const SAFE_CONSTRUCTORS = new Set(["Date"]);
+// Names that do not say what a value holds. One of these, written whole and not
+// resolved to what it holds, cannot be judged by the name rule, so it is
+// UNRESOLVED (fail closed) rather than clean.
+const CONTAINER_WORDS = new Set([
+  "payload", "detail", "data", "fields", "row", "rows", "result", "res", "response", "input",
+  "args", "params", "opts", "options", "context", "ctx", "meta", "metadata", "extra", "info",
+  "obj", "object", "value", "values", "item", "record", "raw", "props", "parsed", "json", "out",
+]);
+// Binary operators whose result is a boolean or a number, whatever the operands.
+const SCALAR_OPERATORS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.EqualsEqualsToken, ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.LessThanToken, ts.SyntaxKind.LessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanToken, ts.SyntaxKind.GreaterThanEqualsToken,
+  ts.SyntaxKind.InstanceOfKeyword, ts.SyntaxKind.InKeyword,
+  ts.SyntaxKind.MinusToken, ts.SyntaxKind.AsteriskToken, ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.PercentToken, ts.SyntaxKind.AsteriskAsteriskToken,
+  ts.SyntaxKind.LessThanLessThanToken, ts.SyntaxKind.GreaterThanGreaterThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+  ts.SyntaxKind.AmpersandToken, ts.SyntaxKind.BarToken, ts.SyntaxKind.CaretToken,
+]);
+// Operators that write an operand: the value is one side, or both joined.
+const PASS_OPERATORS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken,
+  ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.PlusToken,
+]);
+// Operators whose value is the right operand: x = y, x ??= y, (a, b).
+const RIGHT_OPERATORS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.EqualsToken, ts.SyntaxKind.QuestionQuestionEqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken, ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+  ts.SyntaxKind.CommaToken,
+]);
 
+// Every method of console and safeLog is a sink (console.dir and console.table
+// write too), and so is a direct write to process.stdout or process.stderr.
 export function isSink(node: ts.Node): node is ts.CallExpression {
-  return (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    ts.isIdentifier(node.expression.expression) &&
-    SINK_OBJECTS.has(node.expression.expression.text) &&
-    SINK_METHODS.has(node.expression.name.text)
-  );
+  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return false;
+  const target = node.expression.expression;
+  if (ts.isIdentifier(target) && SINK_OBJECTS.has(target.text)) return true;
+  return node.expression.name.text === "write" && /^process\.(stdout|stderr)$/.test(target.getText());
+}
+
+// A sink object used any other way (aliased, passed as a value, indexed) hides
+// its writes from the census, so it is reported, never ignored.
+function isSinkReference(node: ts.Node): boolean {
+  if (!ts.isIdentifier(node) || !SINK_OBJECTS.has(node.text)) return false;
+  const parent = node.parent;
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === node) {
+    return !(ts.isCallExpression(parent.parent) && parent.parent.expression === parent);
+  }
+  // A declaration or import of the name itself is not a use.
+  return !(ts.isImportSpecifier(parent) || ts.isVariableDeclaration(parent) || ts.isPropertyAccessExpression(parent));
 }
 
 type Fn = ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression | ts.MethodDeclaration;
@@ -100,20 +167,61 @@ function isExported(fn: Fn): boolean {
   return !!(ts.canHaveModifiers(holder) && ts.getModifiers(holder)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword));
 }
 
-function constInitializer(id: ts.Identifier): ts.Expression | undefined {
-  const scope: ts.Node = enclosingFunction(id) ?? id.getSourceFile();
-  let found: ts.Expression | undefined;
-  let count = 0;
-  const walk = (n: ts.Node): void => {
-    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === id.text) {
-      count += 1;
-      if (ts.isVariableDeclarationList(n.parent) && n.parent.flags & ts.NodeFlags.Const && n.initializer) found = n.initializer;
+type Declared =
+  | { kind: "const"; init: ts.Expression }
+  | { kind: "param" | "catch" | "binding" | "let" | "loop" | "import" | "function" | "ambiguous" | "none" };
+
+// What a bare identifier is bound to, searching outward from where it is used.
+function declarationOf(id: ts.Identifier): Declared {
+  for (let n: ts.Node | undefined = id.parent; n; n = n.parent) {
+    if (ts.isCatchClause(n) && n.variableDeclaration && n.variableDeclaration.name.getText() === id.text) return { kind: "catch" };
+    if (isFn(n) && n.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === id.text)) return { kind: "param" };
+    if (isFn(n) || ts.isSourceFile(n)) {
+      const found: Declared[] = [];
+      const walk = (m: ts.Node): void => {
+        if (m !== n && isFn(m)) {
+          if (ts.isFunctionDeclaration(m) && m.name?.text === id.text) found.push({ kind: "function" });
+          return;
+        }
+        if (ts.isVariableDeclaration(m) && ts.isIdentifier(m.name) && m.name.text === id.text) {
+          const list = m.parent;
+          const loop = ts.isVariableDeclarationList(list) && (ts.isForOfStatement(list.parent) || ts.isForInStatement(list.parent));
+          if (loop) found.push({ kind: "loop" });
+          else if (ts.isVariableDeclarationList(list) && list.flags & ts.NodeFlags.Const && m.initializer) found.push({ kind: "const", init: m.initializer });
+          else found.push({ kind: "let" });
+        }
+        if (ts.isBindingElement(m) && ts.isIdentifier(m.name) && m.name.text === id.text) found.push({ kind: "binding" });
+        if ((ts.isImportSpecifier(m) || ts.isImportClause(m) || ts.isNamespaceImport(m)) && m.name?.text === id.text) found.push({ kind: "import" });
+        ts.forEachChild(m, walk);
+      };
+      ts.forEachChild(n, walk);
+      if (found.length === 1) return found[0];
+      if (found.length > 1) return { kind: "ambiguous" };
     }
-    if (isFn(n)) return; // a nested function's locals are not this scope's
-    ts.forEachChild(n, walk);
-  };
-  ts.forEachChild(scope, walk);
-  return count === 1 ? found : undefined;
+  }
+  return { kind: "none" };
+}
+
+// The verified function a call's result comes from, if any: a listed function
+// called directly, or a preserving method on such a call's result.
+function verifiedCall(call: ts.CallExpression): VerifiedFunction | undefined {
+  const text = call.expression.getText();
+  if (Object.hasOwn(VERIFIED_FUNCTIONS, text)) return VERIFIED_FUNCTIONS[text];
+  const callee = call.expression;
+  if (ts.isPropertyAccessExpression(callee) && PRESERVING_METHODS.has(callee.name.text)) {
+    let receiver: ts.Expression = callee.expression;
+    while (ts.isParenthesizedExpression(receiver)) receiver = receiver.expression;
+    if (ts.isCallExpression(receiver)) {
+      const inner = verifiedCall(receiver);
+      if (inner) return { file: inner.file, returns: inner.returns };
+    }
+  }
+  return undefined;
+}
+
+function lastWordOf(name: string): string {
+  const words = wordsOf(name);
+  return words[words.length - 1] ?? "";
 }
 
 type Acc = Pick<Writer, "names" | "literals" | "errorText" | "opaque"> & {
@@ -133,7 +241,8 @@ function newAcc(closed: ReadonlySet<string> = new Set()): Acc {
 // return Promise<EmailSendResult> (see closedResultFunctions).
 function isClosedResult(root: ts.Expression, closed: ReadonlySet<string>): boolean {
   if (!ts.isIdentifier(root) || closed.size === 0) return false;
-  let init = constInitializer(root);
+  const declared = declarationOf(root);
+  let init: ts.Expression | undefined = declared.kind === "const" ? declared.init : undefined;
   while (init && (ts.isAwaitExpression(init) || ts.isParenthesizedExpression(init))) init = init.expression;
   return !!init && ts.isCallExpression(init) && ts.isIdentifier(init.expression) && closed.has(init.expression.text);
 }
@@ -211,14 +320,21 @@ function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, dep
       acc.errorText.push(expr.text);
       return;
     }
-    const init = whole ? constInitializer(expr) : undefined;
-    if (init) next(init);
+    if (!whole) return;
+    const declared = declarationOf(expr);
+    if (declared.kind === "const") return next(declared.init);
+    // A caught value is an error whatever it is called.
+    if (declared.kind === "catch") return void acc.errorText.push(expr.text);
+    // A name that says what it holds is judged by the name rule; one that does
+    // not (payload, detail, result, ...) and could not be followed is unresolved.
+    if (CONTAINER_WORDS.has(lastWordOf(expr.text))) acc.errorText.push(`unresolved ${declared.kind} ${expr.text}`);
     return;
   }
   if (ts.isPropertyAccessExpression(expr)) {
     acc.names.push(...segmentsOf(expr));
     const closedText = expr.name.text === "error" && isClosedResult(expr.expression, acc.closed);
     if (ERROR_PROPS.has(expr.name.text) && !closedText) acc.errorText.push(expr.getText());
+    else if (!closedText && whole && CONTAINER_WORDS.has(lastWordOf(expr.name.text))) acc.errorText.push(`unresolved property ${expr.getText()}`);
     return;
   }
   if (ts.isCallExpression(expr)) {
@@ -227,9 +343,13 @@ function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, dep
     if (ts.isPropertyAccessExpression(callee) && SAFE_METHODS.has(calleeName)) return;
     const writesArgs = calleeName === "stringify" || calleeName === "String";
     if (!writesArgs) acc.names.push(calleeName);
-    if (SANITIZER_RE.test(calleeName) || DIGEST_RE.test(calleeName)) return;
+    const verified = verifiedCall(expr);
+    if (verified?.sanitizes) return;
     if (ts.isPropertyAccessExpression(callee) && !writesArgs) next(callee.expression, false);
     expr.arguments.forEach((a) => next(a, whole && writesArgs));
+    // Any other call's RESULT is what is written, and the source does not show
+    // it: its name and inputs are checked above, its value is unresolved.
+    if (whole && !writesArgs && !verified) acc.errorText.push(`unresolved call ${callee.getText()}()`);
     return;
   }
   if (ts.isConditionalExpression(expr)) {
@@ -240,20 +360,28 @@ function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, dep
   }
   if (ts.isBinaryExpression(expr)) {
     const op = expr.operatorToken.kind;
-    if (
-      op === ts.SyntaxKind.QuestionQuestionToken ||
-      op === ts.SyntaxKind.BarBarToken ||
-      op === ts.SyntaxKind.AmpersandAmpersandToken ||
-      op === ts.SyntaxKind.PlusToken
-    ) {
+    if (PASS_OPERATORS.has(op)) {
       next(expr.left);
       next(expr.right);
+      return;
     }
-    // A comparison, instanceof or arithmetic writes a boolean or a number.
+    if (RIGHT_OPERATORS.has(op)) return next(expr.right);
+    // A comparison, instanceof, in or arithmetic writes a boolean or a number.
+    if (SCALAR_OPERATORS.has(op)) return;
+    if (whole) acc.opaque.push(expr.getText());
     return;
   }
-  if (ts.isPrefixUnaryExpression(expr) || ts.isTypeOfExpression(expr) || ts.isNewExpression(expr)) {
-    // !x, -x, typeof x, new Date(): a boolean, a number, a type word, a date.
+  if (ts.isPrefixUnaryExpression(expr) || ts.isTypeOfExpression(expr) || ts.isVoidExpression(expr)) {
+    // !x, -x, +x, ~x, typeof x, void x: a boolean, a number, a type word, undefined.
+    return;
+  }
+  if (ts.isNewExpression(expr)) {
+    const ctor = expr.expression.getText();
+    if (SAFE_CONSTRUCTORS.has(ctor)) return; // new Date(...) writes a timestamp
+    // Any other constructor can serialise what it was given (new URL(link)),
+    // so its arguments are read as written, and its result is not trusted.
+    for (const a of expr.arguments ?? []) next(a);
+    if (whole) acc.errorText.push(/Error$/.test(ctor) ? `new ${ctor}` : `unresolved new ${ctor}`);
     return;
   }
   if (whole) acc.opaque.push(expr.getText());
@@ -331,14 +459,20 @@ export function analyzeSource(file: string, source: string, closed: ReadonlySet<
 
   const visitSinks = (n: ts.Node): void => {
     if (isSink(n)) {
-      const fn = enclosingFunction(n);
-      const positions = fn ? containerParams(fn, n) : [];
-      // A forwarded parameter is judged at each call of a followable helper.
-      // An exported or anonymous one cannot be, so it is judged here by name.
-      const followable = !!fn && !!functionName(fn) && !isExported(fn);
-      writers.push(writerOf(file, n, n.expression.getText(), new Set(fn && followable ? paramNames(fn, positions) : []), closed));
-      if (fn && positions.length > 0) addForwarder(fn, positions);
+      // A parameter of ANY enclosing function can reach the line, not only the
+      // innermost one's (after(() => console.error(JSON.stringify(detail)))).
+      // A forwarded parameter is judged at each call of a followable helper; an
+      // exported or anonymous one cannot be, so it is judged here by name.
+      const skip = new Set<string>();
+      for (let fn = enclosingFunction(n); fn; fn = enclosingFunction(fn)) {
+        const positions = containerParams(fn, n).filter((i) => !skip.has(fn.parameters[i].name.getText()));
+        if (positions.length === 0) continue;
+        if (functionName(fn) && !isExported(fn)) for (const name of paramNames(fn, positions)) skip.add(name);
+        addForwarder(fn, positions);
+      }
+      writers.push(writerOf(file, n, n.expression.getText(), skip, closed));
     }
+    if (isSinkReference(n)) unfollowable.push(`sink used as a value: ${n.parent.getText().slice(0, 80)}`);
     ts.forEachChild(n, visitSinks);
   };
   visitSinks(src);
@@ -373,6 +507,21 @@ export function analyzeSource(file: string, source: string, closed: ReadonlySet<
       visitCalls(src);
     }
   }
+  // A forwarding helper used other than by a direct call (passed as a
+  // callback, aliased, called as a method) has calls the census cannot see.
+  const visitRefs = (n: ts.Node): void => {
+    if (ts.isIdentifier(n) && forwarders.has(n.text)) {
+      const parent = n.parent;
+      const directCall = ts.isCallExpression(parent) && parent.expression === n;
+      // console.log's `log` is a property name, not the helper; this.log is.
+      const otherProperty =
+        ts.isPropertyAccessExpression(parent) && parent.name === n && parent.expression.kind !== ts.SyntaxKind.ThisKeyword;
+      const ownName = (isFn(parent) || ts.isVariableDeclaration(parent)) && (parent as { name?: ts.Node }).name === n;
+      if (!directCall && !ownName && !otherProperty) unfollowable.push(`helper used as a value: ${parent.getText().slice(0, 80)}`);
+    }
+    ts.forEachChild(n, visitRefs);
+  };
+  visitRefs(src);
   return { writers, unfollowable };
 }
 
