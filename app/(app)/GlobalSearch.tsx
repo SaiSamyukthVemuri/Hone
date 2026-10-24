@@ -26,6 +26,9 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
+  // True when the last search could not be answered: shown as unavailable,
+  // never as "No results found." (DAT-002).
+  const [failed, setFailed] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -59,7 +62,8 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
       const response = await globalSearchAction(query).catch(() => null);
       if (cancelled) return;
       setLoading(false);
-      setResults(response && response.ok ? response.results : []);
+      setFailed(!response?.ok);
+      setResults(response?.ok ? response.results : []);
     }, 250);
     return () => {
       cancelled = true;
@@ -230,6 +234,11 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
       )}
       {loading && results.length === 0 ? (
         <p className="px-3 py-3 text-neutral-500">Searching…</p>
+      ) : failed ? (
+        <div role="alert" className="px-3 py-3 text-neutral-500">
+          <p>Search could not be loaded.</p>
+          <p className="mt-1 text-xs">Try again in a moment.</p>
+        </div>
       ) : groups.length === 0 ? (
         <div className="px-3 py-3 text-neutral-500">
           <p>No results found.</p>
