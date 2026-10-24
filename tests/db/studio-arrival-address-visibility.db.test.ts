@@ -77,10 +77,16 @@ describe("the CHECKs", () => {
     ).toBe("23502");
   });
 
-  it.each(["", "   ", "\n\t"])("refuses blank instructions %j (23514): NULL is the only 'none'", async (v) => {
+  // Any whitespace-only value, not only spaces: the CHECK requires one '\S'.
+  it.each(["", "   ", "\n\t", "\r\n", "\t\t", " \v\f "])("refuses blank instructions %j (23514): NULL is the only 'none'", async (v) => {
     expect(
       await pgCode(adminQuery(`update public.studios set arrival_instructions = $2 where id = $1`, [studio.studioId, v])),
     ).toBe("23514");
+  });
+
+  it("accepts a value with any non-whitespace character, surrounding whitespace included", async () => {
+    await adminQuery(`update public.studios set arrival_instructions = $2 where id = $1`, [studio.studioId, "\n Park at the back.\t"]);
+    expect((await location(studio.studioId)).arrival_instructions).toBe("\n Park at the back.\t");
   });
 
   it("accepts 1000 characters and refuses 1001 (23514)", async () => {

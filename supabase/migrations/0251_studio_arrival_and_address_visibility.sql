@@ -15,6 +15,13 @@
 --      intro and is not repurposed. NULL means "no section". The CHECK refuses a
 --      blank or whitespace-only value, so the database has one spelling of
 --      "none"; the app normalizes blank input to NULL before writing.
+--      "Whitespace-only" means no character outside [[:space:]] ('\S' must
+--      match once), so tabs, newlines and the Unicode spaces the database
+--      locale classifies are refused as well as spaces. (btrim() strips only
+--      spaces, which let a newline/tab-only value through: caught by the CI DB
+--      lane on #1104.) JavaScript's String.prototype.trim(), used by the app's
+--      normalization, removes a superset of that class, so the app never
+--      writes a value this CHECK refuses.
 --
 --   2. studios.address_visibility  text NOT NULL DEFAULT 'both'
 --      Where studios.address is shown: 'booking_page' | 'emails' | 'both'.
@@ -67,7 +74,7 @@ begin
       add constraint studios_arrival_instructions_check
       check (
         arrival_instructions is null
-        or (btrim(arrival_instructions) <> '' and char_length(arrival_instructions) <= 1000)
+        or (arrival_instructions ~ '\S' and char_length(arrival_instructions) <= 1000)
       );
   end if;
 end;

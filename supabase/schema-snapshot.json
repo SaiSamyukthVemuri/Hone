@@ -3,7 +3,7 @@
   "migrations": {
     "count": 212,
     "last": "0251_studio_arrival_and_address_visibility.sql",
-    "sha256": "f8d98fcb7cfcceb22d9ecf87558462ab6b26caea41d7cce8f313258c73ffa851"
+    "sha256": "9c5bf9d7de1189e600ad5006c69c28a7aefd4478bbaf345f266c4946e793af95"
   },
   "public": {
     "tables": [

@@ -102,6 +102,22 @@ describe("updateStudioBookingPrefsAction: location settings", () => {
     expect(updates[0]).toHaveProperty("arrival_instructions", null);
   });
 
+  // Agreement with 0251's CHECK (arrival_instructions ~ '\S'): every character
+  // the database can classify as [[:space:]] (the ASCII six, plus the Unicode
+  // spaces glibc's UTF-8 locales list) is removed by the app's trim, so a value
+  // the database would refuse as blank is always stored as NULL instead. The
+  // app's set is the larger one (it also trims U+00A0, U+2007, U+202F, U+FEFF).
+  const DB_SPACE_CHARS = [
+    " ", "\t", "\n", "\v", "\f", "\r",
+    "\u1680", "\u2000", "\u2001", "\u2002", "\u2003", "\u2004", "\u2005", "\u2006",
+    "\u2008", "\u2009", "\u200a", "\u2028", "\u2029", "\u205f", "\u3000",
+  ];
+  it("any value made only of characters the database calls whitespace is stored as null", async () => {
+    await save(form({ arrival_instructions: DB_SPACE_CHARS.join("") }));
+    expect(updates[0]).toHaveProperty("arrival_instructions", null);
+    for (const ch of DB_SPACE_CHARS) expect(ch.trim(), JSON.stringify(ch)).toBe("");
+  });
+
   it("refuses instructions over 1000 characters and writes nothing", async () => {
     const url = await save(form({ arrival_instructions: "x".repeat(1001) }));
     expect(decodeURIComponent(url)).toContain("1000 characters or fewer");

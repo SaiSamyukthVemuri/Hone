@@ -43,7 +43,7 @@ describe(`${VERSION} is allocated correctly in the migration sequence`, () => {
 describe(`${VERSION} is the reviewed draft`, () => {
   it("is byte-identical to willow/HON-50-SCHEMA-DRAFT.sql", () => {
     expect(createHash("sha256").update(SQL, "utf8").digest("hex")).toBe(
-      "2b628ba6e3428a24567a06c39f975ac78be4a4e8954471795d7726c95f147922",
+      "bf3b9ff9c54a4e694d8e719e6206fa8298cbc222d61521317fdc39840bad62d2",
     );
   });
 });
@@ -108,9 +108,12 @@ describe(`${VERSION} matches what the application enforces`, () => {
     expect(CODE).toContain(`check (address_visibility in (${set}))`);
   });
 
-  it("arrival_instructions is nullable, refuses blank, and caps at the application's limit", () => {
+  it("arrival_instructions is nullable, refuses ANY whitespace-only value, and caps at the application's limit", () => {
     expect(CODE).toMatch(/add column if not exists arrival_instructions text;/);
-    expect(CODE).toContain("btrim(arrival_instructions) <> ''");
+    // '\S' must match once: tabs and newlines count as blank, not only spaces.
+    // (btrim() strips spaces only; the CI DB lane caught '\n\t' getting in.)
+    expect(CODE).toContain("arrival_instructions ~ '\\S'");
+    expect(CODE).not.toMatch(/btrim\(arrival_instructions\)/);
     expect(CODE).toContain(`char_length(arrival_instructions) <= ${ARRIVAL_INSTRUCTIONS_MAX_LENGTH}`);
   });
 
