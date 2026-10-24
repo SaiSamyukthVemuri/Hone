@@ -38,6 +38,13 @@ export const SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH = 1000;
 // internal_note column and both must fit in it together.
 export const SESSION_PAYMENT_ADJUSTMENT_REASON_MAX_LENGTH = 200;
 
+// HON-45. The one blocking reason that means "this client has no card", shared
+// so the card can tell that fact apart from a fault. A failed card READ is a
+// different reason (ELIGIBILITY_READ_FAILED_REASON): Hone did not look, so it
+// must never be presented as "no card".
+export const NO_CARD_ON_FILE_REASON =
+  "Client must add a card on file before a session payment can be prepared.";
+
 // Summary shapes mirror lib/billing/manual-fee-types.ts so the UI
 // can render the same blocked / ready states without dragging a
 // second style.

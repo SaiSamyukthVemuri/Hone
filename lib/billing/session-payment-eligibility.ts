@@ -4,6 +4,7 @@ import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { accountCountryBlockingReason, accountCountryVerdict, JURISDICTION_UNVERIFIED_REASON } from "@/lib/billing/payment-jurisdiction";
+import { NO_CARD_ON_FILE_REASON } from "./session-payment-types";
 import type {
   SessionPaymentCardAuthorizationSummary,
   SessionPaymentCardSummary,
@@ -206,9 +207,7 @@ export async function getSessionPaymentEligibility(
       // this PR exists to remove.
       pushReadFailure(reasons);
     } else if (!cardRow) {
-      reasons.push(
-        "Client must add a card on file before a session payment can be prepared.",
-      );
+      reasons.push(NO_CARD_ON_FILE_REASON);
     } else {
       cardSummary = {
         id: cardRow.id as string,

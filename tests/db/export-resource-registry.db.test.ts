@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
 
 import {
   auditColumnCoverage,
@@ -13,6 +12,7 @@ import {
   STORAGE_RESOURCE_PREFIX,
 } from "@/lib/export/resource-registry";
 import { adminQuery, closePool } from "@/tests/db/helpers/harness";
+import SCHEMA_SNAPSHOT from "@/supabase/schema-snapshot.json";
 import {
   fkActionEdges,
   type FkConstraintRow,
@@ -50,64 +50,27 @@ import {
 
 
 // ---------------------------------------------------------------------------
-// Does APPLICATION code reference a symbol?
+// APPLICATION SOURCE IS NOT READ HERE (OPS ruling 20261023T1430Z, option b).
 //
-// Comments are stripped so prose describing a table does not count as using it,
-// and the registry itself is skipped: naming every table is its entire job.
+// Whether app/, lib/ and components/ still reference what the registry claims
+// is a UNIT test now, against the committed schema snapshot:
+// tests/lib/export/registry-app-references.test.ts. It runs on every
+// application change; walking those roots from this file meant the DB lane
+// either ran for every application PR or (as #1053 shipped) not at all for
+// them. What stays here is what only the live database can answer, including
+// whether that snapshot matches the live catalogue.
 // ---------------------------------------------------------------------------
-const APP_ROOTS = ["app", "lib", "components"] as const;
-const NOT_A_REFERENCE = new Set([
-  "lib/export/resource-registry.ts",
-  "lib/types/database.ts",
-]);
 
-function walkTs(dir: string): string[] {
-  const out: string[] = [];
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return out;
-  }
-  for (const name of entries) {
-    if (name === "node_modules" || name === ".next") continue;
-    const full = join(dir, name);
-    if (statSync(full).isDirectory()) out.push(...walkTs(full));
-    else if (/\.tsx?$/.test(name)) out.push(full);
-  }
-  return out;
-}
-
-let APP_SOURCES: Array<{ rel: string; code: string }> | null = null;
-
-function appSources(): Array<{ rel: string; code: string }> {
-  if (APP_SOURCES) return APP_SOURCES;
-  APP_SOURCES = [];
-  for (const root of APP_ROOTS) {
-    for (const rel of walkTs(root)) {
-      if (NOT_A_REFERENCE.has(rel)) continue;
-      const raw = readFileSync(rel, "utf8");
-      const code = raw
-        .replace(/\/\*[\s\S]*?\*\//g, "")
-        .split("\n")
-        .filter((line) => !/^\s*\/\//.test(line))
-        .join("\n");
-      APP_SOURCES.push({ rel, code });
-    }
-  }
-  return APP_SOURCES;
-}
-
-/** Files that use `symbol` as a real string literal, not as prose. */
-function referencedBy(symbol: string): string[] {
-  return appSources()
-    .filter(
-      ({ code }) =>
-        code.includes(`"${symbol}"`) ||
-        code.includes(`'${symbol}'`) ||
-        code.includes(`\`${symbol}\``),
-    )
-    .map(({ rel }) => rel);
+/**
+ * Public functions a registry reason names: the RPCs the registry tells owners
+ * the application calls. Database-native seeds for the live graph; the unit
+ * test proves the application really calls them.
+ */
+function registryCitedFunctions(liveFunctionNames: readonly string[]): string[] {
+  const text = Object.values(EXPORT_RESOURCE_REGISTRY)
+    .map((d) => (d.kind === "pending" || d.kind === "excluded" ? d.reason : ""))
+    .join("\n");
+  return liveFunctionNames.filter((n) => new RegExp(String.raw`\b${n}\b`).test(text)).sort();
 }
 
 let liveTables: string[] = [];
@@ -435,6 +398,25 @@ describe("what is excluded, and on what grounds", () => {
   // pg_class — never from migration text, and the closure lives in
   // tests/db/helpers/reachability.ts so the same algorithm can be driven by
   // fixtures for the shapes this schema happens not to contain.
+  /**
+   * Public functions the MIGRATIONS own: pg_proc in public minus extension
+   * members (pg_depend deptype 'e', e.g. btree_gist's support functions when it
+   * is installed into public). The extension set is read, never hard-coded.
+   */
+  async function liveOwnFunctionNames(): Promise<string[]> {
+    const res = await adminQuery(
+      `select distinct p.proname
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public'
+          and not exists (
+            select 1 from pg_depend d
+             where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e'
+          )
+        order by p.proname`,
+    );
+    return (res.rows as Array<{ proname: string }>).map((r) => r.proname);
+  }
+
   async function buildLiveGraph(): Promise<ReachabilityGraph> {
     const procs = await adminQuery(
       `select p.proname, p.prosrc
@@ -510,11 +492,15 @@ describe("what is excluded, and on what grounds", () => {
     // unreachable from application source any more, and no registry entry
     // depends on such a claim.
     //
-    // What remains is DATABASE-NATIVE and needs no application source: RPC
-    // names the application uses as string literals, function -> function,
-    // function -> table, table -> trigger function, and foreign-key mutation
-    // edges. Every one of those comes from pg_catalog.
-    const appFunctions = fnNames.filter((n) => referencedBy(n).length > 0);
+    // What remains is DATABASE-NATIVE and needs no application source:
+    // function -> function, function -> table, table -> trigger function, and
+    // foreign-key mutation edges, all from pg_catalog. The seeds are the RPCs
+    // the registry's reasons say the application calls (registryCitedFunctions);
+    // that the application really does is the unit lane's check
+    // (tests/lib/export/registry-app-references.test.ts), not this file's.
+    // Extension members are excluded so an extension function whose name
+    // happens to be a word in a reason never becomes a seed (Photos F6).
+    const appFunctions = registryCitedFunctions(await liveOwnFunctionNames());
 
     return {
       functionCalls,
@@ -531,13 +517,49 @@ describe("what is excluded, and on what grounds", () => {
     // graph with genuine edges, and the closure walks beyond its seeds. This
     // asserts the machinery works; it does NOT certify any resource dead.
     const graph = await buildLiveGraph();
-    expect(graph.appFunctions.length).toBeGreaterThan(50);
+    // Seeds are the registry-cited RPCs (7 today), no longer every RPC the
+    // application names; the unit lane now owns that count.
+    expect(graph.appFunctions.length).toBeGreaterThan(0);
     expect(Object.keys(graph.functionCalls).length).toBeGreaterThan(50);
     expect(Object.keys(graph.tableTriggers).length).toBeGreaterThan(10);
     expect(Object.keys(graph.tableFkActions).length).toBeGreaterThan(5);
     const reach = computeReachability(graph);
     expect(reach.functions.size).toBeGreaterThan(graph.appFunctions.length);
     expect(reach.tables.size).toBeGreaterThan(0);
+  });
+
+  it("every RPC a registry reason cites is live, and its live closure reaches the resource whose reason cites it", async () => {
+    // The reasons are published to owners ("NOT dead: reschedule_appointment_v2
+    // READS it"). The database half of that sentence is checked here; the
+    // application half ("invoked from app/...") in the unit lane.
+    const graph = await buildLiveGraph();
+    let checked = 0;
+    for (const [resource, d] of Object.entries(EXPORT_RESOURCE_REGISTRY)) {
+      if (d.kind !== "pending" && d.kind !== "excluded") continue;
+      for (const fn of graph.appFunctions) {
+        if (!new RegExp(String.raw`\b${fn}\b`).test(d.reason)) continue;
+        const reach = computeReachability({ ...graph, appFunctions: [fn], appTables: [] });
+        expect(reach.tables.has(resource), `${fn} (cited by ${resource}) does not reach it in the live catalogue`).toBe(true);
+        checked += 1;
+      }
+    }
+    expect(checked, "no registry reason cites a live RPC: the check above is vacuous").toBeGreaterThan(0);
+  });
+
+  it("the committed schema snapshot matches the live catalogue, in BOTH directions", async () => {
+    // The unit lane trusts supabase/schema-snapshot.json, which is parsed
+    // from migration text. This is where that parse meets the database.
+    // Functions are compared two-way too (Photos F2): a function the parser
+    // LOST (e.g. a DROP of one overload removing the name) would otherwise
+    // silently drop out of the unit lane's cited-RPC check.
+    const own = await liveOwnFunctionNames();
+    const snapshotFns = new Set(SCHEMA_SNAPSHOT.public.functions);
+    expect([...SCHEMA_SNAPSHOT.public.tables].sort()).toEqual([...liveTables].sort());
+    expect(SCHEMA_SNAPSHOT.public.functions.filter((f) => !own.includes(f)), "snapshot functions the database does not have").toEqual([]);
+    expect(own.filter((f) => !snapshotFns.has(f)), "live functions the snapshot lost").toEqual([]);
+    // Independent of the snapshot: every RPC a reason cites (found from the
+    // LIVE names) is in the snapshot, so the unit lane checks all of them.
+    expect(registryCitedFunctions(own).filter((f) => !snapshotFns.has(f)), "cited RPCs missing from the snapshot").toEqual([]);
   });
 
   it("the LIVE studios -> pending_booking_payment_sessions cascade is a pg_constraint fact", async () => {

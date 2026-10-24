@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Stripe from "stripe";
+import { readFileSync } from "node:fs";
 
 // ===========================================================================
 // PAY-CCY-01 (#824) — EVERY LEDGER WRITER CHECKS THE PROVIDER'S MONEY FIRST
@@ -192,6 +193,23 @@ vi.mock("@/lib/supabase/admin-server", () => ({
             refund_failure_message_safe: failed ? "Stripe did not complete this refund." : null };
           h.updates.push({ table: "payment_charge_attempts", payload }); Object.assign(row, payload);
           return { data: [{ result: failed ? "refund_failed" : "refund_pending" }], error: null };
+        }
+        // G3 rehearsal 3 (PAY-002 resolution rule): model 0240's FINAL single-
+        // refund branch for charge.refunded, pinned to its source below. Only
+        // a provider `succeeded` completes; pending/requires_action stay
+        // pending_stripe; failed/canceled fail; anything else is refused.
+        if (args.p_event_type === "charge.refunded") {
+          const st = object.refund_status;
+          if (!["pending", "requires_action", "succeeded", "failed", "canceled"].includes(String(st))) {
+            return { data: [{ result: "refund_evidence_refused" }], error: null };
+          }
+          if (st !== "succeeded") {
+            const failedRefund = st === "failed" || st === "canceled";
+            const payload = { refund_status: failedRefund ? "failed" : "pending_stripe", stripe_refund_status: st,
+              stripe_refund_id: object.refund_id, refunded_at: null };
+            h.updates.push({ table: "payment_charge_attempts", payload }); Object.assign(row, payload);
+            return { data: [{ result: failedRefund ? "refund_failed" : "refund_pending" }], error: null };
+          }
         }
         const statusBefore = row.status;
         const refund = args.p_event_type === "charge.refunded" || args.p_event_type === "refund.observed";
@@ -1026,6 +1044,63 @@ describe("charge.refunded webhook", () => {
   });
 });
 
+
+// ===========================================================================
+// PAY-002 on the GOVERNED path (G3 rehearsal 3; G3-RUNBOOK Block W).
+// #1081's app-level containment is deleted on refresh; these are the cases it
+// carried that must still hold once 0240 is the authority. The SQL decision is
+// 0240's; the fake above models exactly its single-refund branch, and the
+// first case pins that model to the migration source.
+// ===========================================================================
+describe("PAY-002 governed: charge.refunded never completes an unconfirmed refund", () => {
+  const succeededWrites = () => h.updates.filter((u) => u.payload.refund_status === "succeeded");
+  const heldRow = () => attemptRow("cad", { status: "succeeded", stripe_payment_intent_id: PI_ID,
+    stripe_charge_id: CHARGE_ID, refund_status: "pending_stripe", refund_amount_cents: AMOUNT });
+  const single = (status: string | undefined) => event("charge.refunded", {
+    object: "charge", id: CHARGE_ID, status: "succeeded", paid: true, captured: true,
+    amount_captured: AMOUNT, amount: AMOUNT, amount_refunded: AMOUNT, refunded: true,
+    livemode: false, currency: "cad", metadata: META,
+    refunds: { object: "list", has_more: false, data: [{ object: "refund", id: "re_1", amount: AMOUNT,
+      currency: "cad", charge: CHARGE_ID, payment_intent: PI_ID, ...(status ? { status } : {}) }] },
+  });
+
+  it("the fake's rule is 0240's: only succeeded maps to completion", () => {
+    const sql = readFileSync("supabase/migrations/0240_provider_refund_status.sql", "utf8");
+    expect(sql).toMatch(/refund_status=case when v_status='succeeded' then 'succeeded'\s+when v_status in \('failed','canceled'\) then 'failed' else 'pending_stripe' end/);
+    expect(sql).toMatch(/v_status not in \('pending','requires_action','succeeded','failed','canceled'\)/);
+  });
+
+  for (const status of ["pending", "requires_action"] as const) {
+    it(`a held refund is NOT completed by charge.refunded whose refund is ${status}; the status is passed verbatim`, async () => {
+      h.rows = { payment_charge_attempts: heldRow() };
+      await handleChargeRefunded(single(status), CTX);
+      expect(h.boundObjects[0]).toMatchObject({ refund_status: status, refund_id: "re_1" });
+      expect(succeededWrites()).toEqual([]);
+      expect((h.rows.payment_charge_attempts as Record<string, unknown>).refund_status).toBe("pending_stripe");
+    });
+    it(`an out-of-band charge.refunded whose refund is ${status} is NOT recorded as succeeded`, async () => {
+      h.rows = { payment_charge_attempts: attemptRow("cad", { status: "succeeded", stripe_payment_intent_id: PI_ID, stripe_charge_id: CHARGE_ID }) };
+      await handleChargeRefunded(single(status), CTX);
+      expect(succeededWrites()).toEqual([]);
+    });
+  }
+
+  it("the default payload with no refund object does NOT complete a held refund (refused before the command)", async () => {
+    h.rows = { payment_charge_attempts: heldRow() };
+    const ev = single(undefined);
+    delete ((ev.data.object as unknown) as Record<string, unknown>).refunds;
+    const out = await handleChargeRefunded(ev, CTX);
+    expect(out).toMatchObject({ cumulativeRefundEvidenceRefused: true });
+    expect(h.rpcCalls).not.toContain("reconcile_bound_payment_event");
+    expect(h.updates).toEqual([]);
+  });
+
+  it("control: a refund the provider reports succeeded is completed", async () => {
+    h.rows = { payment_charge_attempts: heldRow() };
+    await handleChargeRefunded(single("succeeded"), CTX);
+    expect(succeededWrites()).toHaveLength(1);
+  });
+});
 
 describe("PAY004 identical concurrent canceled failure", () => {
   function prepareRace(over: Record<string, unknown> = {}, readError = false) {

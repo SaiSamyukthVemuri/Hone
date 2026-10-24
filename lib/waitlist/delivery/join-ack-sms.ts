@@ -48,7 +48,8 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 // NOTHING ELSE. No entry state is read or written, the join's result and its
 // emails are unaffected by any outcome here, and this never throws.
 //
-// LOGGING. One structured line per join: ids, the outcome and a reason slug.
+// LOGGING. One structured line per join: the outcome and a reason slug. No
+// record id (MSG-007).
 // Never the phone number or the body. A refused or lost text also raises ONE
 // durable `sms_send_failed` warning, before the best-effort ledger settle.
 
@@ -78,6 +79,8 @@ function eligibilitySkip(target: {
   return "no_consent";
 }
 
+// MSG-007: no record id (#828 G-26). The ledger row claimed above is the
+// correlation an operator uses.
 function log(fields: Record<string, unknown>): void {
   console.log(
     JSON.stringify({ event: "waitlist_join_ack_sms", ...fields, timestamp: new Date().toISOString() }),
@@ -94,14 +97,13 @@ export async function sendWaitlistJoinAckSms(args: {
   /** The phone-wide STOP read. Defaults to the database lookup. */
   phoneSuppression?: (phone: string) => Promise<PhoneSuppressionAnswer>;
 }): Promise<WaitlistJoinAckSmsOutcome> {
-  const ids = { studioId: args.studio.id, entryId: args.entryId };
 
   const claim = await claimWaitlistJoinAckSms(args.admin, {
     studioId: args.studio.id,
     entryId: args.entryId,
   });
   if (claim.result !== "claimed") {
-    log({ ...ids, outcome: "not_claimed", reason: claim.result });
+    log({ outcome: "not_claimed", reason: claim.result });
     return { state: "not_claimed", reason: claim.result };
   }
 
@@ -110,7 +112,7 @@ export async function sendWaitlistJoinAckSms(args: {
     (normalizePhoneForSms(claim.target.phone) === null ? ("invalid_phone" as const) : null);
   if (skip) {
     await settleSmsMessage(args.admin, claim.messageId, { outcome: "skipped", skipReason: skip });
-    log({ ...ids, outcome: "skipped", reason: skip });
+    log({ outcome: "skipped", reason: skip });
     return { state: "skipped", reason: skip };
   }
 
@@ -130,7 +132,7 @@ export async function sendWaitlistJoinAckSms(args: {
       outcome: "skipped",
       skipReason: suppressionSkip,
     });
-    log({ ...ids, outcome: "skipped", reason: suppressionSkip });
+    log({ outcome: "skipped", reason: suppressionSkip });
     return { state: "skipped", reason: suppressionSkip };
   }
 
@@ -149,10 +151,10 @@ export async function sendWaitlistJoinAckSms(args: {
 
   const settle = settleOutcomeForSend(result);
   log({
-    ...ids,
     outcome: settle.outcome,
     ...(settle.outcome === "skipped" ? { reason: settle.skipReason } : {}),
-    ...(result.ok ? {} : { error: result.error }),
+    // The provider SID, as sms_sent carries it: correlates without a record id.
+    ...(result.ok ? { messageSid: result.messageSid } : { error: result.error }),
   });
   // The durable failure alert first; the ledger settle below is best-effort.
   if (settle.outcome === "refused" || settle.outcome === "unknown") {

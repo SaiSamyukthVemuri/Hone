@@ -710,10 +710,13 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
 
   it("only the browser matrix retains retry diagnostics after a completed successful job", () => {
     // A failed attempt followed by a passing retry still has useful traces.
-    // This exact matrix upload is the sole retention exception; other uploads
+    // This exact matrix upload is one of two retention exceptions; other uploads
     // remain failure-only, and diagnostic/cleanup steps retain always().
+    // The second is the refused-Sentry-envelope upload: React #418 surfaced in a
+    // run whose every test PASSED, so a failure-only upload could never capture it.
     const conds: string[] = [];
     let matrixUploads = 0;
+    let egressUploads = 0;
     let diagnostics = 0;
     let cleanups = 0;
     for (const [jobId, job] of jobs(CI_BODY)) {
@@ -727,6 +730,14 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
             expect(survivesFailure(s.if)).toBe(true);
             expect(s.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
             expect(s.with).toEqual({ name: "playwright-traces-shard-${{ matrix.shard }}", path: "test-results/", "retention-days": 7 });
+          } else if (jobId === "browser-e2e-shard" && s.with?.name === "sentry-egress-shard-${{ matrix.shard }}") {
+            egressUploads++;
+            expect(s.if).toBe("${{ !cancelled() }}");
+            expect(s.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
+            expect(s.with).toEqual({
+              name: "sentry-egress-shard-${{ matrix.shard }}", path: "/tmp/hone-e2e-sentry-egress/*.jsonl",
+              "if-no-files-found": "ignore", "retention-days": 7,
+            });
           } else {
             conds.push(s.if!.replace(/\s+/g, ""));
           }
@@ -739,6 +750,7 @@ describe("ci.yml: no verification step is hidden behind an earlier failure", () 
       }
     }
     expect(matrixUploads).toBe(1);
+    expect(egressUploads).toBe(1);
     expect(conds.length).toBeGreaterThan(0);
     for (const c of conds) expect(c).toContain("failure()");
     expect(diagnostics).toBeGreaterThan(0);

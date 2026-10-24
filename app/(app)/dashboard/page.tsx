@@ -350,7 +350,8 @@ export default async function DashboardPage({
     .lt("starts_at", endUtc.toISOString())
     .order("starts_at", { ascending: true });
   if (apptErr) {
-    throw new Error(`Failed to load today's appointments: ${apptErr.message}`);
+    // DAT-002 N2: a fixed message; PostgREST text can echo the statement.
+    throw new Error("Failed to load today's appointments");
   }
 
   // Supabase types joined relations as either a single row or an array.
@@ -479,23 +480,28 @@ export default async function DashboardPage({
     { sessionId: string; hasChartedArea: boolean }
   >();
   if (apptIds.length > 0) {
-    const { data: linkedSessions } = await supabase
+    const { data: linkedSessions, error: linkedError } = await supabase
       .from("sessions")
       .select("id, appointment_id")
       .eq("studio_id", studio.id)
       .in("appointment_id", apptIds)
       .is("deleted_at", null);
+    // DAT-002 (the #981 pattern): a failed read refuses the page through the
+    // route error boundary. Read as "no linked session" or "no charted area",
+    // it would tell the practitioner a charted visit still needs charting.
+    if (linkedError) throw new Error("Failed to load charting status");
     const sessions = (linkedSessions ?? []) as Array<{
       id: string;
       appointment_id: string;
     }>;
     if (sessions.length > 0) {
-      const { data: blockRows } = await supabase
+      const { data: blockRows, error: blocksError } = await supabase
         .from("session_blocks")
         .select("session_id")
         .eq("studio_id", studio.id)
         .in("session_id", sessions.map((s) => s.id))
         .is("deleted_at", null);
+      if (blocksError) throw new Error("Failed to load charting status");
       const sessionsWithAreas = new Set(
         ((blockRows ?? []) as Array<{ session_id: string }>).map(
           (b) => b.session_id,
@@ -1606,7 +1612,8 @@ async function loadIntakeStatusByClient(
     .is("deleted_at", null)
     .order("created_at", { ascending: false });
   if (error) {
-    throw new Error(`Failed to load intake status: ${error.message}`);
+    // DAT-002 N2: a fixed message; PostgREST text can echo the statement.
+    throw new Error("Failed to load intake status");
   }
   // Hone's canonical current-intake rule (newest non-deleted row by
   // created_at), applied in memory across the batch by the shared pure helper
@@ -1625,9 +1632,8 @@ async function countIntakesAwaitingReview(
     .eq("status", "submitted")
     .is("deleted_at", null);
   if (error) {
-    throw new Error(
-      `Failed to count intakes awaiting review: ${error.message}`,
-    );
+    // DAT-002 N2: a fixed message; PostgREST text can echo the statement.
+    throw new Error("Failed to count intakes awaiting review");
   }
   return count ?? 0;
 }

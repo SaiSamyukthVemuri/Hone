@@ -321,6 +321,9 @@ export const BROWSER_GROUPS = {
       "onboarding.spec.ts",
       "quick-import.spec.ts",
       "welcome-email-admin.spec.ts",
+      // HON-62: the weekly-hours editor's native time inputs (keyboard
+      // entry, touch tap, save/reload, untouched existing hours).
+      "availability-hours-editor.spec.ts",
       "practitioner-availability-compat.spec.ts",
       "practitioner-booking-studio-b.spec.ts",
       "practitioner-quick-book-studio-b.spec.ts",
@@ -399,7 +402,7 @@ const SHARED_PATTERNS = [
   // full_matrix_required=true while selecting NO browser group: the lane
   // would be skipped exactly when the most caution is warranted.
   /^\.github\/workflows\//,
-  /^scripts\/(classify-changes|browser-groups|ci-plan)\.mjs$/,
+  /^scripts\/(classify-changes|browser-groups|ci-plan|test-dependencies|docs-paths)\.mjs$/,
   /^e2e\/helpers\//,
   /^playwright\.config\./,
   /^lib\/supabase\//,

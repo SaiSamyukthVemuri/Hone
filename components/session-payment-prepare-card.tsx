@@ -12,6 +12,7 @@ import type {
 } from "@/lib/billing/session-payment-amount";
 import { decideSessionPaymentPresentation } from "@/lib/billing/ready-control-permission";
 import {
+  NO_CARD_ON_FILE_REASON,
   SESSION_PAYMENT_ADJUSTMENT_REASON_MAX_LENGTH,
   SESSION_PAYMENT_AMOUNT_CEILING_CENTS,
   SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH,
@@ -423,9 +424,31 @@ export function SessionPaymentPrepareCard({
         </div>
       )}
 
-      {!eligibility.eligible && !activeAttempt && !prepareJustSucceeded && (
-        <BlockedPanel reasons={eligibility.blockingReasons} />
-      )}
+      {/* HON-45. "No card on file" is a fact about the client, not a fault:
+          completing and charting a visit takes no payment, and the visit stays
+          outstanding. When it is the ONLY reason, say what is true, calmly.
+          Any other reason, alone or alongside it, keeps the amber list,
+          because those really are something to fix. */}
+      {!eligibility.eligible && !activeAttempt && !prepareJustSucceeded &&
+        (isNoCardOnly(eligibility.blockingReasons) ? (
+          <NoCardOnFilePanel
+            settlementOffered={Boolean(appointmentId && canRecordSettlement)}
+            settledMethod={settledMethod}
+            settledAmountCents={settledAmountCents}
+            quotedAmountCents={settlementQuotedAmountCents}
+            // Codex P2 4365600228. An authoritative $0 price is not a debt.
+            // Read from the presentation decision (the same field that renders
+            // "No payment required"; the card never interprets pricing), or
+            // from the appointment's settlement snapshot, which is 0 only for
+            // an authoritatively free service.
+            authoritativelyFree={
+              presentation.freeNoticeServiceName !== null ||
+              settlementQuotedAmountCents === 0
+            }
+          />
+        ) : (
+          <BlockedPanel reasons={eligibility.blockingReasons} />
+        ))}
 
       {/* Blocked pricing: a calm explanation instead of a blank editable box.
           Preparation is withdrawn entirely. There is no amount to confirm. */}
@@ -566,6 +589,72 @@ function PreviousTerminalCallout({
 // render them as-is so the practitioner sees the same wording as the
 // server-side blocking message.
 // ---------------------------------------------------------------------------
+function isNoCardOnly(reasons: string[]): boolean {
+  return reasons.length === 1 && reasons[0] === NO_CARD_ON_FILE_REASON;
+}
+
+// HON-45. The cardless state, stated as a fact. Neutral, never amber, and
+// never a promise of a charge: Hone can only charge a saved card, so clinical
+// completion goes ahead and the visit simply stays OUTSTANDING.
+//
+// OUTSTANDING IS THE DEFAULT, NOT A RECORD. With no recorded settlement (or a
+// recorded "still owes", which attests the same thing) the visit is unpaid, and
+// that is shown without writing anything. It stops being outstanding only when
+// a real settlement records money received or an owner waiver. Nothing here
+// marks a visit paid or settled.
+//
+// Which amount (Codex P2 4365600234): a recorded "still owes" names its own
+// debt, which the practitioner may have entered independently of the price,
+// so it is shown as recorded. The quote is only for a visit with no
+// settlement. An authoritatively free visit with no settlement owes nothing
+// (Codex P2 4365600228), so no balance is claimed; a recorded "still owes"
+// is a real record and is still shown.
+function NoCardOnFilePanel({
+  settlementOffered,
+  settledMethod,
+  settledAmountCents,
+  quotedAmountCents,
+  authoritativelyFree,
+}: {
+  settlementOffered: boolean;
+  settledMethod: SettlementMethod | null;
+  settledAmountCents: number | null;
+  quotedAmountCents: number | null;
+  authoritativelyFree: boolean;
+}) {
+  const outstanding =
+    settledMethod === "still_owes" ||
+    (settledMethod === null && !authoritativelyFree);
+  const balanceCents =
+    settledMethod === "still_owes" ? settledAmountCents : quotedAmountCents;
+  return (
+    <div
+      data-testid="session-payment-no-card"
+      className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+    >
+      <p className="font-medium">No card on file · Nothing has been charged.</p>
+      <p className="mt-1">
+        Hone can only charge a saved card, and this client has none. Completing
+        and charting this visit does not take a payment.
+      </p>
+      {outstanding && (
+        <p data-testid="session-payment-outstanding" className="mt-1 font-medium">
+          {typeof balanceCents === "number" && balanceCents > 0
+            ? `Balance outstanding: ${formatCadFromCents(balanceCents)}. No payment has been received.`
+            : "Balance outstanding. No payment has been received."}
+        </p>
+      )}
+      {outstanding && (
+        <p className="mt-1">
+          {settlementOffered
+            ? "It stays outstanding until payment is actually received. Record it below only then."
+            : "It stays outstanding until payment is actually received."}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function BlockedPanel({ reasons }: { reasons: string[] }) {
   return (
     <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">

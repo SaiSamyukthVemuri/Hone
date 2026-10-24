@@ -30,7 +30,19 @@
 // PRIVILEGE. Like `paginate`, this module holds no Supabase client. It only
 // observes a builder the caller already constructed.
 
-import { fetchAllRows, type PageFactory, type PageResult } from "./paginate";
+import {
+  fetchAllRows,
+  type FetchAllRowsOptions,
+  type PageFactory,
+  type PageResult,
+} from "./paginate";
+
+// OPS-DAT-EXPORT-01: every exported read is boundary-checked. Its key defaults
+// to `id`, which every exported resource selects and orders by last; a resource
+// keyed otherwise (client_budget_context: client_id) passes its own `rowKey`.
+function rowId<T>(row: T): string {
+  return (row as { id?: string }).id as string;
+}
 
 /**
  * Runtime brand. A plain object literal cannot carry it, so `provenanceOf`
@@ -82,7 +94,7 @@ function brand<T>(result: PageResult<T>, provenance: QueryProvenance): ExportRea
 export async function fetchExportRows<T>(
   resource: string,
   makePage: PageFactory<T>,
-  opts: { pageSize?: number; maxPages?: number } = {},
+  opts: FetchAllRowsOptions<T> = {},
 ): Promise<ExportRead<T>> {
   let observed: string | null = null;
   let disagreement: string | null = null;
@@ -101,7 +113,10 @@ export async function fetchExportRows<T>(
     return page;
   };
 
-  const result = await fetchAllRows<T>(observedPage, opts);
+  const result = await fetchAllRows<T>(observedPage, {
+    ...opts,
+    rowKey: opts.rowKey ?? rowId,
+  });
 
   if (unreadable || observed === null) {
     return brand(

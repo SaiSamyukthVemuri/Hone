@@ -52,6 +52,10 @@ jobs:
   full-matrix:
     name: full matrix (${{ matrix.lane }})
     runs-on: ubuntu-latest
+    # D7b: read-only package scope for the authenticated ghcr.io image pull only.
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
       # One lane failing must not hide the others: the nightly's job is to tell
@@ -151,6 +155,62 @@ jobs:
           node-version: "20"
           cache: "npm"
 
+      # Supabase is only started for lanes that need a database. The DB-less
+      # lane skips several minutes of container startup entirely.
+      - name: Start local Supabase
+        if: matrix.needs_supabase
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          # CI-HARDEN-01B. Pinned to a COMMIT, not to `v1`: `v1` is a BRANCH in
+          # supabase/setup-cli (refs/heads/v1), not a tag - that repository's
+          # tags run v1.7.1 -> v2.0.0 -> v3 - so every DB-touching job here
+          # executed whatever that branch pointed at. ab058987 == tag v1.7.1.
+          #
+          # NOT bumped to v3: v3 is a COMPOSITE action that installs the CLI
+          # from npm via Bun, with different `version` semantics. The 2.102.0
+          # pin below is a grants-parity DB-safety invariant; a major bump is a
+          # separate ticket with its own grants re-verification.
+          # Pinned deliberately: a newer CLI's `db reset` strips Data-API grants
+          # and every authenticated query then fails at the privilege layer,
+          # which looks exactly like an application bug. Bump only with a
+          # grants-parity re-verification.
+          version: 2.102.0
+
+      # D7b (Sam, 2026-10-22, option A). Anonymous pulls were throttled on BOTH
+      # ghcr.io ("toomanyrequests") and public.ecr.aws ("Data limit exceeded") for
+      # parallel Supabase stacks. Pull the CLI's default ghcr.io images
+      # AUTHENTICATED with the job's own read-only token: this job alone declares
+      # packages: read; nothing here can write. The ONE sanctioned credential use
+      # in these workflows, pinned by tests/ci/ci-config.test.ts.
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        if: matrix.needs_supabase
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bring up the database
+        id: sb_start
+        if: matrix.needs_supabase
+        # Direct pinned-CLI call while the ghcr.io credential is held: no
+        # checked-out script runs before the logout (Codex P2 4354172124).
+        # A failure falls through to the credential-free retry step below.
+        continue-on-error: true
+        shell: bash
+        run: supabase start 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+
+      # Codex P2 4353990804: drop the registry credential the moment the
+      # images are pulled, before ANY later step runs branch-controlled code.
+      # always(): a failed start must not leave the token behind either.
+      - name: Log out of ghcr.io (D7b)
+        if: always() && matrix.needs_supabase
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: matrix.needs_supabase && steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start
+
       - name: Install dependencies
         run: npm ci
 
@@ -173,36 +233,36 @@ jobs:
 
       - name: Install Playwright browsers (cache miss)
         if: matrix.needs_browsers && steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
-      - name: Install Playwright system deps only (cache hit)
-        if: matrix.needs_browsers && steps.pw-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+      # System packages: cached per runner image + Playwright version and
+      # bounded, exactly as in ci.yml's four Playwright jobs (CLAUDE.md section
+      # 4; 2026-10-23 apt stall). The save runs straight after the install, not
+      # in a post step that a failed or cancelled lane would skip.
+      - name: Resolve runner image
+        id: img
+        if: matrix.needs_browsers
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
 
-      # Supabase is only started for lanes that need a database. The DB-less
-      # lane skips several minutes of container startup entirely.
-      - name: Start local Supabase
-        if: matrix.needs_supabase
-        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        if: matrix.needs_browsers
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          # CI-HARDEN-01B. Pinned to a COMMIT, not to `v1`: `v1` is a BRANCH in
-          # supabase/setup-cli (refs/heads/v1), not a tag - that repository's
-          # tags run v1.7.1 -> v2.0.0 -> v3 - so every DB-touching job here
-          # executed whatever that branch pointed at. ab058987 == tag v1.7.1.
-          #
-          # NOT bumped to v3: v3 is a COMPOSITE action that installs the CLI
-          # from npm via Bun, with different `version` semantics. The 2.102.0
-          # pin below is a grants-parity DB-safety invariant; a major bump is a
-          # separate ticket with its own grants re-verification.
-          # Pinned deliberately: a newer CLI's `db reset` strips Data-API grants
-          # and every authenticated query then fails at the privilege layer,
-          # which looks exactly like an application bug. Bump only with a
-          # grants-parity re-verification.
-          version: 2.102.0
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
-      - name: Bring up the database
-        if: matrix.needs_supabase
-        run: bash scripts/ci/supabase-start-bind-retry.sh supabase start
+      - name: Install Playwright system packages (bounded, .deb cache)
+        if: matrix.needs_browsers
+        timeout-minutes: 6
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: matrix.needs_browsers && steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Run lane
         run: ${{ matrix.command }}

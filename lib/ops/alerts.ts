@@ -109,6 +109,19 @@ function structuredConsoleLog(payload: Record<string, unknown>): void {
 
 // Main entry point.
 export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
+  await recordOpsAlertDurably(input);
+}
+
+/**
+ * PAY-002 (#1081 review M1). The same alert, with the one fact a caller that
+ * depends on the alert needs: whether the durable ops_alerts row was written.
+ * It still NEVER throws, logs, redacts and emails exactly like recordOpsAlert;
+ * it returns true only when the insert reported no error. A caller whose
+ * refusal is otherwise silent (a webhook that returns 2xx) uses this to stay
+ * retryable when the record could not be kept.
+ */
+export async function recordOpsAlertDurably(input: OpsAlertInput): Promise<boolean> {
+  let persisted = false;
   // Sanitize first so the structured log uses the redacted detail
   // shape too. The redactor never throws.
   const redacted = redactSafeDetails(input.safeDetails);
@@ -156,6 +169,7 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
       route: input.route ?? null,
       safe_details: redacted,
     });
+    persisted = !error;
     if (error) {
       structuredConsoleLog({
         event: "ops_alert_insert_failed",
@@ -201,4 +215,5 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
       });
     }
   }
+  return persisted;
 }

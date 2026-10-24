@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { parseOrFilter } from "./helpers/postgrest-or";
 
 // Global Search — behavioural proof that a treatment is findable by ANY of its
 // structured treatment areas, not only by the legacy `primary_area`.
@@ -105,6 +106,7 @@ function builder(table: string, select: string) {
   };
   queries.push(record);
   const predicates: Array<(r: Row) => boolean> = [];
+  let rangeWindow: [number, number] | null = null;
 
   const chain = {
     eq(col: string, val: unknown) {
@@ -140,15 +142,15 @@ function builder(table: string, select: string) {
     },
     or(expr: string) {
       record.or.push(expr);
-      // "col.ilike.%x%,other.ilike.%x%" — the only .or shape the action builds.
-      const clauses = expr.split(",").map((c) => {
-        const [col, op, ...rest] = c.split(".");
-        if (op !== "ilike") {
-          throw new Error(`fake supabase: unsupported .or operator ${op}`);
+      // "col.ilike.\"%x%\",…" — the only .or shape the action builds, parsed
+      // the way PostgREST parses it (quoted values, backslash escapes).
+      const clauses = parseOrFilter(expr).map((c) => {
+        if (c.op !== "ilike") {
+          throw new Error(`fake supabase: unsupported .or operator ${c.op}`);
         }
-        return { col, pattern: rest.join(".") };
+        return c;
       });
-      predicates.push((r) => clauses.some((c) => matchesIlike(r[c.col], c.pattern)));
+      predicates.push((r) => clauses.some((c) => matchesIlike(r[c.col], c.value)));
       return chain;
     },
     in(col: string, values: readonly unknown[]) {
@@ -164,6 +166,17 @@ function builder(table: string, select: string) {
       record.limit = n;
       return chain;
     },
+    // HON-58: the client-name candidate reads (non-ASCII names; paged).
+    filter(col: string, op: string, value: string) {
+      if (op !== "match") throw new Error(`fake supabase: unsupported filter ${op}`);
+      const re = new RegExp(value, "u");
+      predicates.push((r) => typeof r[col] === "string" && re.test(r[col] as string));
+      return chain;
+    },
+    range(from: number, to: number) {
+      rangeWindow = [from, to];
+      return chain;
+    },
     then(resolve: (v: { data: Row[]; error: null }) => unknown) {
       let rows = (tables[table] ?? []).filter((r) => predicates.every((p) => p(r)));
       for (const [col, ascending] of [...record.order].reverse()) {
@@ -174,6 +187,7 @@ function builder(table: string, select: string) {
           return (av < bv ? -1 : 1) * (ascending ? 1 : -1);
         });
       }
+      if (rangeWindow) rows = rows.slice(rangeWindow[0], rangeWindow[1] + 1);
       if (record.limit != null) rows = rows.slice(0, record.limit);
       return Promise.resolve({ data: rows, error: null }).then(resolve as never);
     },

@@ -12,7 +12,8 @@
 // so clicks land on event cards first and only fall through to
 // the overlay on truly empty space.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { appointmentLanes, calendarCollisionGroups, timedBlockCollisionId, calendarGroupNeedsChooser } from "@/lib/calendar/appointment-lanes";
 import type { Service, StudioTimedBlock } from "@/lib/types/database";
 import type {
   AppointmentWithPractitionerColor,
@@ -24,7 +25,11 @@ import {
   formatClockLabel,
   type TimeFormat,
 } from "@/lib/booking/tz";
-import { appointmentDisplayStatus } from "./appointment-display-status";
+import {
+  NO_SHOW_CARD_CLASS,
+  appointmentDisplayStatus,
+  appointmentStatusTag,
+} from "./appointment-display-status";
 import {
   QuickBookDrawer,
   type QuickBookClient,
@@ -34,6 +39,13 @@ import { DragActionChooser } from "./DragActionChooser";
 import { TimedBlockEditDrawer } from "./TimedBlockEditDrawer";
 import { QuickBlockDrawer } from "./QuickBlockDrawer";
 import { AppointmentPreviewDrawer } from "./AppointmentPreviewDrawer";
+import { AppointmentOverlapChooser, OverlapAppointmentSummary } from "./AppointmentOverlapChooser";
+import { PractitionerTag } from "./PractitionerTag";
+import {
+  CARD_LINE_PX,
+  calendarPractitionerIdentity,
+  practitionerRowFits,
+} from "@/lib/calendar/practitioner-identity";
 // Grid constants live in a plain (non-"use client") module. The server
 // component calendar/page.tsx must import them from there, NOT from this
 // client module: a client-module value imported by a Server Component
@@ -63,13 +75,10 @@ import {
 // (TIMED_BLOCK_LABEL, displayRecurringBreakLabel) also live there now so the
 // server-rendered month view resolves the same labels this week view shows.
 
-// Appointment-card colors are now keyed off SERVICE, not
-// practitioner. See lib/calendar/service-colors.ts. The prior
-// per-practitioner SOFT_CARD_BY_TOKEN / softCardClasses helper was
-// removed here when this card stopped reading practitioner color;
-// future multi-practitioner UIs can either re-introduce a left-
-// accent border in practitioner color or read directly from
-// lib/practitioner-colors.ts.
+// Appointment-card FILL colors are keyed off SERVICE, not practitioner. See
+// lib/calendar/service-colors.ts. HON-48: on a team calendar (practitioner
+// capacity on) each card also names its practitioner beside a swatch in the
+// practitioner's configured color; see lib/calendar/practitioner-identity.ts.
 
 // "HH:MM:SS" (studio-local availability time) → minutes from midnight,
 // or null when unparseable. Visual-only: used to position the neutral
@@ -206,6 +215,36 @@ export function DayColumn({
   closedDay,
   returnTo = "",
 }: Props) {
+  const [overlapIds, setOverlapIds] = useState<string[] | null>(null);
+  const columnRef = useRef<HTMLDivElement>(null);
+  const [columnLayout, setColumnLayout] = useState<{
+    finePointer: boolean; anyCoarsePointer: boolean; columnWidth: number | null;
+  }>({ finePointer: false, anyCoarsePointer: false, columnWidth: null });
+  useEffect(() => {
+    const column = columnRef.current;
+    if (!column || typeof window.matchMedia !== "function"
+      || typeof ResizeObserver === "undefined") return;
+    const fine = window.matchMedia("(pointer: fine)");
+    const coarse = window.matchMedia("(any-pointer: coarse)");
+    if (typeof fine.addEventListener !== "function"
+      || typeof coarse.addEventListener !== "function") return;
+    const measure = () => {
+      const next = { finePointer: fine.matches, anyCoarsePointer: coarse.matches, columnWidth: column.clientWidth };
+      setColumnLayout(previous => previous.finePointer === next.finePointer
+        && previous.anyCoarsePointer === next.anyCoarsePointer
+        && previous.columnWidth === next.columnWidth ? previous : next);
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(column);
+    fine.addEventListener("change", measure);
+    coarse.addEventListener("change", measure);
+    measure();
+    return () => {
+      observer.disconnect();
+      fine.removeEventListener("change", measure);
+      coarse.removeEventListener("change", measure);
+    };
+  }, []);
   const [draft, setDraft] = useState<QuickBookDraft | null>(null);
   // PR C: the timed block whose edit/detail drawer is open (null = closed).
   const [editingBlock, setEditingBlock] = useState<StudioTimedBlock | null>(null);
@@ -432,6 +471,52 @@ export function DayColumn({
     };
   })();
 
+  // Horizontal layout uses the actual rendered rectangles, not booking
+  // availability or UTC intervals. Retain the original object and vertical
+  // geometry, including the existing short-card minimum height.
+  const positionedAppointments = appts.flatMap((a) => {
+    const start = new Date(a.starts_at);
+    const localTime = localTimeString(start, tz); // 24h, positioning only
+    const [h, m] = localTime.split(":").map(Number);
+    const startMinutesFromGridTop = (h - HOUR_START) * 60 + m;
+    if (startMinutesFromGridTop < 0 || startMinutesFromGridTop >= VISIBLE_MINUTES) return [];
+    const top = (startMinutesFromGridTop / ROW_MINUTES) * ROW_HEIGHT_PX;
+    const height = Math.max(
+      ROW_HEIGHT_PX - 2,
+      (a.duration_minutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
+    );
+    return [{ appointment: a, start, top, height }];
+  });
+  const lanes = appointmentLanes(positionedAppointments.map(({ appointment, top, height }) => ({
+    id: appointment.id, top, height,
+  })));
+
+  const timedBlockRectangles = timedBlocks.flatMap(block => {
+    const start = new Date(block.starts_at);
+    const end = new Date(block.ends_at);
+    const [h, m] = localTimeString(start, tz).split(":").map(Number);
+    const minutes = (h - HOUR_START) * 60 + m;
+    if (minutes < 0 || minutes >= VISIBLE_MINUTES) return [];
+    const duration = Math.max(5, Math.round((end.getTime() - start.getTime()) / 60_000));
+    return [{ id: block.id, top: (minutes / ROW_MINUTES) * ROW_HEIGHT_PX,
+      height: Math.max(ROW_HEIGHT_PX - 2, (duration / ROW_MINUTES) * ROW_HEIGHT_PX - 2) }];
+  });
+  const coarseGroups = calendarCollisionGroups(positionedAppointments.map(({ appointment, top, height }) => ({
+    id: appointment.id, top, height,
+  })), timedBlockRectangles);
+  const chooserGroups = coarseGroups.filter(group => calendarGroupNeedsChooser(group, columnLayout, lanes));
+  const chooserIds = new Set(chooserGroups.flatMap(group => group.ids));
+  const appointmentsById = new Map(appts.map((a) => [a.id, a]));
+  const blocksById = new Map(timedBlocks.map(block => [timedBlockCollisionId(block.id), block]));
+  const selectedBlocks = (overlapIds ?? []).flatMap(id => {
+    const block = blocksById.get(id);
+    return block ? [block] : [];
+  });
+  const selectedOverlaps = (overlapIds ?? []).flatMap((id) => {
+    const a = appointmentsById.get(id);
+    return a ? [a] : [];
+  });
+
   return (
     <div
       // Test hook for the Sunday-start invariant: binds this column's rendered
@@ -442,6 +527,7 @@ export function DayColumn({
       // header says "Sun".
       data-testid="week-day-column"
       data-date={date}
+      ref={columnRef}
       className="relative border-l border-neutral-300 dark:border-neutral-700"
       style={{ height: GRID_HEIGHT }}
     >
@@ -652,6 +738,7 @@ export function DayColumn({
       })}
 
       {timedBlocks.map((tb) => {
+        if (chooserIds.has(timedBlockCollisionId(tb.id))) return null;
         const start = new Date(tb.starts_at);
         const end = new Date(tb.ends_at);
         const localTime = localTimeString(start, tz); // 24h, positioning only
@@ -694,24 +781,22 @@ export function DayColumn({
         );
       })}
 
-      {appts.map((a) => {
-        const start = new Date(a.starts_at);
+      {positionedAppointments.map(({ appointment: a, start, top, height }) => {
+        if (chooserIds.has(a.id)) return null;
         const localTime = localTimeString(start, tz);
-        const [h, m] = localTime.split(":").map(Number);
-        const startMinutesFromGridTop = (h - HOUR_START) * 60 + m;
-        if (
-          startMinutesFromGridTop < 0 ||
-          startMinutesFromGridTop >= VISIBLE_MINUTES
-        ) {
-          return null;
-        }
-        const top = (startMinutesFromGridTop / ROW_MINUTES) * ROW_HEIGHT_PX;
-        const height = Math.max(
-          ROW_HEIGHT_PX - 2,
-          (a.duration_minutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
-        );
+        const lane = lanes.get(a.id)!;
         const clientName = a.client?.name?.trim() || "Client";
         const serviceName = a.service?.name?.trim() || null;
+        const practitionerIdentity = practitionerCapacityEnabled
+          ? calendarPractitionerIdentity(a.practitioner)
+          : null;
+        const titleParts = [
+          clientName,
+          practitionerIdentity?.name,
+          serviceName,
+          localTime,
+          `${a.duration_minutes}m`,
+        ].filter(Boolean);
         // Visible time RANGE ("9:00–10:00"), derived from the existing row
         // (starts_at + ends_at), display only, no positioning/logic change.
         const dispStart = formatTimeForStudio(start, tz, timeFormat);
@@ -720,6 +805,12 @@ export function DayColumn({
           : null;
         const timeRange = timeRangeLabel(dispStart, dispEnd);
         const twoLine = height >= TWO_LINE_THRESHOLD_PX;
+        const practitionerRow =
+          practitionerIdentity !== null &&
+          practitionerRowFits(height, {
+            bodyLinePx: CARD_LINE_PX.desktopBody,
+            serviceRow: serviceName !== null,
+          });
         // Display-derived status (DB row unchanged). A past confirmed
         // appointment reads as "Done" (muted), a DB-completed row as
         // "Completed", a no-show as "No-show". Upcoming confirmed stays
@@ -727,14 +818,10 @@ export function DayColumn({
         // Computed at render time; no timer.
         const ds = appointmentDisplayStatus(a.status, a.ends_at);
         const terminal = ds !== "upcoming";
-        const statusTag =
-          ds === "done"
-            ? "Done"
-            : ds === "completed"
-              ? "Completed"
-              : ds === "no_show"
-                ? "No-show"
-                : null;
+        const statusTag = appointmentStatusTag(ds);
+        const noShow = ds === "no_show";
+        // No-show leads the line instead (see NO_SHOW_CARD_CLASS).
+        const trailingTag = noShow ? null : statusTag;
         return (
           <button
             key={a.id}
@@ -745,30 +832,45 @@ export function DayColumn({
             // preview's "Open full details" link. z-10 keeps this above the
             // empty-slot booking overlay, so a card click never books.
             onClick={() => setPreview(a)}
-            style={{ top, height }}
-            title={
-              serviceName
-                ? `${clientName} · ${serviceName} · ${localTime} · ${a.duration_minutes}m`
-                : `${clientName} · ${localTime} · ${a.duration_minutes}m`
-            }
+            style={{
+              top, height,
+              "--appointment-lane-left": `calc(${100 * lane.column / lane.columns}% + 4px)`,
+              "--appointment-lane-right": `calc(${100 * (lane.columns - lane.column - 1) / lane.columns}% + 4px)`,
+            } as CSSProperties}
+            title={[...titleParts, statusTag].filter(Boolean).join(" · ")}
             // Card color is service-based (Chloe feedback: "I want
             // different colors on the calendar for different
             // services"). Deterministic on service.id with name
             // fallback; palette excludes rose to keep allergy/EpiPen
-            // red unique. softCardClasses still exists for any
-            // future practitioner-color surface but is not used on
-            // the per-appointment card any more.
-            className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg text-left border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""}`}
+            // red unique. Practitioner color is a separate swatch
+            // (PractitionerTag), never the card fill.
+            className={`hidden pointer-fine:block absolute left-1 right-1 pointer-fine:left-[var(--appointment-lane-left)] pointer-fine:right-[var(--appointment-lane-right)] z-10 overflow-hidden rounded-lg text-left border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""} ${noShow ? NO_SHOW_CARD_CLASS : ""}`}
           >
             {twoLine ? (
               // Hierarchy (Chloe / Fresha-readability): time range, then the
               // bold client name, then service/modality on its own line.
               <>
-                <div className="truncate text-[10px] font-semibold tabular-nums opacity-80">
-                  {timeRange}
-                  {statusTag ? ` · ${statusTag}` : ""}
+                <div className="flex min-w-0 items-center gap-1 text-[10px] font-semibold tabular-nums opacity-80">
+                  {noShow && <span className="shrink-0">No-show ·</span>}
+                  <span className="truncate">
+                    {timeRange}
+                    {trailingTag ? ` · ${trailingTag}` : ""}
+                  </span>
+                  {practitionerIdentity && !practitionerRow && (
+                    // Too short for its own row: the name rides the time row.
+                    <PractitionerTag
+                      identity={practitionerIdentity}
+                      className="font-medium"
+                    />
+                  )}
                 </div>
                 <div className="truncate font-semibold">{clientName}</div>
+                {practitionerIdentity && practitionerRow && (
+                  <PractitionerTag
+                    identity={practitionerIdentity}
+                    className="text-[10px] font-medium"
+                  />
+                )}
                 {serviceName && (
                   <div className="truncate text-[10px] opacity-70">
                     {serviceName}
@@ -776,18 +878,57 @@ export function DayColumn({
                 )}
               </>
             ) : (
-              // Short block: keep it to one dense line: bold name + range.
+              // Short block: keep it to one dense line: bold name + range. On a
+              // team calendar the practitioner swatch leads it; a one-line card
+              // has no room for the name, which the title and preview carry.
               <div className="truncate font-semibold">
+                {noShow && "No-show · "}
+                {practitionerIdentity && (
+                  <span
+                    aria-hidden="true"
+                    className={`mr-1 inline-block h-2 w-2 rounded-full ring-1 ring-white/70 dark:ring-neutral-900/70 ${practitionerIdentity.swatchClass}`}
+                  />
+                )}
                 {clientName}{" "}
                 <span className="font-normal tabular-nums opacity-70">
                   {timeRange}
-                  {statusTag ? ` · ${statusTag}` : ""}
+                  {trailingTag ? ` · ${trailingTag}` : ""}
                 </span>
               </div>
             )}
           </button>
         );
       })}
+
+      {chooserGroups.map((group) => {
+          if (group.ids.some(id => blocksById.has(id)) && group.ids.length > 1) return (
+            <button key={group.ids.join(":")} type="button" style={{ top: group.top, height: group.height }}
+              aria-label={`Choose from ${group.ids.length} calendar items`}
+              className="absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 border-neutral-500 bg-neutral-100 px-2 py-1 text-left text-sm text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"
+              onClick={(event) => { event.stopPropagation(); setOverlapIds(group.ids); }}>
+              <span className="block font-semibold">{group.ids.length} calendar items</span>
+            </button>
+          );
+
+        const members = group.ids.map((id) => appointmentsById.get(id)!);
+        const a = members[0];
+        return <button key={group.ids.join(":")} type="button"
+          style={{ top: group.top, height: group.height }}
+          className={`absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 px-2 py-1 text-left text-xs ${members.length === 1 ? appointmentCardClasses(a.service) : "border-neutral-500 bg-neutral-100 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) !== "upcoming" ? "opacity-60" : ""} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) === "no_show" ? NO_SHOW_CARD_CLASS : ""}`}
+          aria-label={members.length > 1 ? `Choose from ${members.length} appointments` : undefined}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (members.length === 1) setPreview(a);
+            else setOverlapIds(group.ids);
+          }}>
+          {members.length === 1 ? <OverlapAppointmentSummary appointment={a} tz={tz} timeFormat={timeFormat} /> : <>
+            <span className="block font-semibold">{members.length} appointments</span>
+            <span className="block tabular-nums">{formatTimeForStudio(new Date(a.starts_at), tz, timeFormat)}</span>
+          </>}
+        </button>;
+      })}
+      <AppointmentOverlapChooser timedBlocks={selectedBlocks} onSelectBlock={(block) => setEditingBlock(block)} appointments={selectedOverlaps} tz={tz} timeFormat={timeFormat} returnTo={returnTo}
+        onClose={() => setOverlapIds(null)} onSelect={(a) => setPreview(a)} />
 
       <QuickBookDrawer
         open={draft !== null}
@@ -938,7 +1079,7 @@ function BlockoutCard({
       className={
         "absolute inset-x-1 z-[5] overflow-hidden rounded-lg border border-[#C9C4B6] border-l-[3px] border-l-[#8C8579] px-2 py-1 text-[11px] leading-tight dark:border-stone-700 dark:border-l-stone-500 dark:bg-stone-800/80 dark:text-stone-200" +
         (onClick
-          ? " cursor-pointer hover:border-[#8C8579] focus:outline-none focus:ring-2 focus:ring-sky-500"
+          ? " min-h-[44px] min-w-[44px] cursor-pointer hover:border-[#8C8579] focus:outline-none focus:ring-2 focus:ring-sky-500"
           : "")
       }
     >

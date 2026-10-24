@@ -34,6 +34,7 @@ import {
   buildNewClientWaitlistStudioEmail,
 } from "@/lib/email/templates/new-client-waitlist";
 import { hashFingerprint } from "@/lib/portal/tokens";
+import { waitlistJoinReference } from "@/lib/email/waitlist-reference";
 import { sendWaitlistJoinAckSms } from "@/lib/waitlist/delivery/join-ack-sms";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import type { Studio } from "@/lib/types/database";
@@ -225,6 +226,7 @@ async function sendClientAcknowledgement(
     const clientEmail = buildNewClientWaitlistClientEmail({
       studioName: studio.name,
       name: submission.name,
+      joinReference: waitlistJoinReference(eventScope, submission),
     });
     const clientSend = await sendWaitlistEmailIdempotent({
       // CLIENT-facing: this goes to the visitor, who has never heard of Hone.
@@ -438,6 +440,7 @@ async function submitToDurableWaitlist(
           name: submission.name,
           email: submission.email,
           phone: submission.phone,
+          joinReference: waitlistJoinReference(entryId, submission),
         });
         const studioSend = await sendWaitlistEmailIdempotent({
           namespace: "studio",
@@ -542,6 +545,10 @@ async function submitViaStudioNotification(
     name: submission.name,
     email: submission.email,
     phone: submission.phone,
+    // Transitional path: no durable entry, so the reference is a salted digest
+    // of the whole submission: an identical retry keeps one subject (and one
+    // payload digest), a different accepted request gets its own.
+    joinReference: waitlistJoinReference(null, submission),
   });
   // LAST-MOMENT RE-RESOLVE, immediately before the provider commit.
   //

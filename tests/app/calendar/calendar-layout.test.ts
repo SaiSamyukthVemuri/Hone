@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { compile } from "tailwindcss";
+import { appointmentLanes, appointmentCollisionGroups, appointmentNeedsChooser, calendarCollisionGroups, calendarGroupNeedsChooser } from "@/lib/calendar/appointment-lanes";
 
 // PR B — calendar layout usability (layout-only; no booking logic). The calendar
 // body now scrolls INTERNALLY (fits the viewport) with a sticky day header and a
@@ -61,5 +63,177 @@ describe("layout-only: no booking/server logic in the calendar page change", () 
   it("the page change does not add booking/action/slot logic", () => {
     // page.tsx renders the grid; the layout change must not introduce booking calls
     expect(PAGE).not.toMatch(/bookAppointmentForClientAction|getAvailableSlots|allow_outside_availability|fetchSlotsForClientBookingAction/);
+  });
+});
+
+
+describe("fine-pointer appointment collision layout", () => {
+  it("gives five same-instant cards distinct nonoverlapping horizontal lanes", () => {
+    const cards = Array.from({ length: 5 }, (_, index) => ({ id: String(index), top: 840, height: 28 }));
+    const lanes = appointmentLanes(cards);
+    expect(lanes.size).toBe(5);
+    expect(new Set([...lanes.values()].map((lane) => lane.column)).size).toBe(5);
+    for (const lane of lanes.values()) {
+      expect(lane.columns).toBe(5);
+      expect(lane.column).toBeGreaterThanOrEqual(0);
+      expect(lane.column).toBeLessThan(lane.columns);
+    }
+  });
+  it("keeps disjoint and exactly adjacent rendered intervals full-width", () => {
+    const lanes = appointmentLanes([
+      { id: "a", top: 0, height: 28 },
+      { id: "b", top: 28, height: 28 },
+      { id: "c", top: 90, height: 28 },
+    ]);
+    expect([...lanes.values()]).toEqual(Array(3).fill({ column: 0, columns: 1 }));
+  });
+  it("shares a stable lane count across partial/bridge overlaps and reuses a free lane", () => {
+    const lanes = appointmentLanes([
+      { id: "a", top: 0, height: 30 },
+      { id: "b", top: 20, height: 30 },
+      { id: "c", top: 40, height: 30 },
+    ]);
+    expect(lanes.get("a")).toEqual({ column: 0, columns: 2 });
+    expect(lanes.get("b")).toEqual({ column: 1, columns: 2 });
+    expect(lanes.get("c")).toEqual({ column: 0, columns: 2 });
+  });
+  it("is deterministic under input permutation without mutating input", () => {
+    const cards = [{ id: "b", top: 0, height: 28 }, { id: "a", top: 0, height: 28 }];
+    const original = structuredClone(cards);
+    expect([...appointmentLanes(cards)]).toEqual([...appointmentLanes([...cards].reverse())]);
+    expect(cards).toEqual(original);
+    expect(appointmentLanes([]).size).toBe(0);
+  });
+  it("wires lanes to the original appointment preview without changing vertical or booking behavior", () => {
+    expect(DAYCOL).toContain("appointmentLanes(positionedAppointments.map");
+    expect(DAYCOL).toContain("{ appointment: a, start, top, height }");
+    expect(DAYCOL).toContain("onClick={() => setPreview(a)}");
+    expect(DAYCOL).toContain('"--appointment-lane-left"');
+    expect(DAYCOL).toContain('"--appointment-lane-right"');
+  });
+  it("compiles lane offsets ONLY under fine-pointer media; coarse keeps original four-pixel insets", async () => {
+    const classes = ["left-1", "right-1",
+      "pointer-fine:left-[var(--appointment-lane-left)]",
+      "pointer-fine:right-[var(--appointment-lane-right)]"];
+    for (const value of classes) expect(DAYCOL).toContain(value);
+    const compiler = await compile("@theme { --spacing: 0.25rem; } @tailwind utilities;");
+    const css = compiler.build(classes);
+    expect(css).toContain(".left-1 {\n  left: calc(var(--spacing) * 1);\n}");
+    expect(css).toContain(".right-1 {\n  right: calc(var(--spacing) * 1);\n}");
+    expect(css.match(/@media \(pointer: fine\)/g)).toHaveLength(2);
+    expect(css).toMatch(/@media \(pointer: fine\) \{\s+left: var\(--appointment-lane-left\);\s+\}/);
+    expect(css).toMatch(/@media \(pointer: fine\) \{\s+right: var\(--appointment-lane-right\);\s+\}/);
+  });
+});
+
+
+describe("coarse-pointer rendered collision ranges", () => {
+  it("groups five equal appointments into one full-height target with every original id", () => {
+    expect(appointmentCollisionGroups(Array.from({ length: 5 }, (_, i) => ({ id: String(i), top: 840, height: 28 })))).toEqual([
+      { ids: ["0", "1", "2", "3", "4"], top: 840, height: 44 },
+    ]);
+  });
+  it("groups adjacent short cards using actual44px targets and preserves the ENTIRE occupied span", () => {
+    expect(appointmentCollisionGroups([
+      { id: "a", top: 0, height: 28 }, { id: "b", top: 30, height: 28 }, { id: "c", top: 60, height: 28 },
+    ])).toEqual([{ ids: ["a", "b", "c"], top: 0, height: 104 }]);
+  });
+  it("keeps separated or exactly44px-adjacent singletons and long duration geometry", () => {
+    expect(appointmentCollisionGroups([
+      { id: "a", top: 0, height: 28 }, { id: "b", top: 44, height: 28 }, { id: "c", top: 100, height: 120 },
+    ])).toEqual([
+      { ids: ["a"], top: 0, height: 44 }, { ids: ["b"], top: 44, height: 44 }, { ids: ["c"], top: 100, height: 120 },
+    ]);
+  });
+  it("does not mutate appointments/rectangles and is deterministic under permutations", () => {
+    const rectangles = [{ id: "b", top: 0, height: 28 }, { id: "a", top: 0, height: 28 }];
+    const original = structuredClone(rectangles);
+    expect(appointmentCollisionGroups(rectangles)).toEqual(appointmentCollisionGroups([...rectangles].reverse()));
+    expect(rectangles).toEqual(original);
+    expect(appointmentCollisionGroups([])).toEqual([]);
+  });
+  it("only selected compact lanes render; the chooser is never CSS-hidden by a fine primary pointer", async () => {
+    expect(DAYCOL).toContain("hidden pointer-fine:block absolute");
+    expect(DAYCOL).not.toContain("pointer-fine:hidden absolute");
+    expect(DAYCOL).toContain('window.matchMedia("(pointer: fine)")');
+    expect(DAYCOL).toContain('window.matchMedia("(any-pointer: coarse)")');
+    expect(DAYCOL).toContain('coarse.addEventListener("change", measure)');
+    expect(DAYCOL).toContain('coarse.removeEventListener("change", measure)');
+    expect(DAYCOL).toContain("new ResizeObserver(measure)");
+    expect(DAYCOL).toContain("observer.observe(column)");
+    expect(DAYCOL).toContain("observer.disconnect()");
+    expect(DAYCOL).toContain("calendarGroupNeedsChooser(group, columnLayout, lanes)");
+    expect(DAYCOL).toContain("if (chooserIds.has(a.id)) return null");
+    expect(DAYCOL).toContain("chooserGroups.map");
+    const c = await compile("@tailwind utilities;");
+    const css = c.build(["hidden", "pointer-fine:block", "min-h-[44px]", "min-w-[44px]"]);
+    expect(css).toContain("min-height: 44px;");
+    expect(css).toContain("min-width: 44px;");
+    expect(css).toMatch(/\.hidden \{\s+display: none;/);
+    expect(css).toMatch(/@media \(pointer: fine\) \{\s+display: block;/);
+  });
+});
+
+describe("hybrid input and dense-lane chooser safety", () => {
+  const fine = { finePointer: true, anyCoarsePointer: false, columnWidth: 500, columns: 5 };
+  it("keeps the chooser available on a hybrid fine-primary touchscreen even when lanes are wide", () => {
+    expect(appointmentNeedsChooser(fine)).toBe(false);
+    expect(appointmentNeedsChooser({ ...fine, anyCoarsePointer: true })).toBe(true);
+  });
+  it("uses the chooser for coarse or unknown pointers without inventing compact capability", () => {
+    expect(appointmentNeedsChooser({ ...fine, finePointer: false, anyCoarsePointer: true })).toBe(true);
+    expect(appointmentNeedsChooser({ ...fine, finePointer: false })).toBe(true);
+    expect(appointmentNeedsChooser({ ...fine, columnWidth: null })).toBe(true);
+  });
+  it("falls back before dense seven-day lanes become tiny or collapse after the existing insets", () => {
+    expect(appointmentNeedsChooser({ ...fine, columnWidth: 128 })).toBe(true);
+    expect(appointmentNeedsChooser({ ...fine, columnWidth: 80, columns: 20 })).toBe(true);
+    expect(appointmentNeedsChooser({ ...fine, columnWidth: 259 })).toBe(true);
+    expect(appointmentNeedsChooser({ ...fine, columnWidth: 260 })).toBe(false);
+  });
+  it("keeps known usable fine lanes and singletons compact", () => {
+    expect(appointmentNeedsChooser(fine)).toBe(false);
+    expect(appointmentNeedsChooser({ ...fine, columnWidth: 52, columns: 1 })).toBe(false);
+  });
+  it.each([0, -1, NaN, Infinity])("does not trust unmeasured/invalid width %s", columnWidth => {
+    expect(appointmentNeedsChooser({ ...fine, columnWidth })).toBe(true);
+  });
+});
+
+
+describe("appointment and timed-block rendered hit collisions", () => {
+  const appointments = [{ id: "same-id", top: 120, height: 28 }];
+  const blocks = [{ id: "same-id", top: 150, height: 28 }];
+  it("groups the 44px rendered targets, not just disjoint clinical intervals or appointment IDs", () => {
+    const before = structuredClone({ appointments, blocks });
+    expect(calendarCollisionGroups(appointments, blocks)).toEqual([
+      { ids: ["same-id", "block:same-id"], top: 120, height: 74 },
+    ]);
+    expect({ appointments, blocks }).toEqual(before);
+    expect(calendarCollisionGroups([...appointments].reverse(), [...blocks].reverse())).toEqual(calendarCollisionGroups(appointments, blocks));
+  });
+  it.each([
+    { finePointer: false, anyCoarsePointer: true, columnWidth: 300 },
+    { finePointer: true, anyCoarsePointer: true, columnWidth: 500 },
+    { finePointer: true, anyCoarsePointer: false, columnWidth: 500 },
+    { finePointer: false, anyCoarsePointer: false, columnWidth: null },
+  ])("uses a mixed chooser for every capability including wide desktop %j", layout => {
+    const [group] = calendarCollisionGroups(appointments, blocks);
+    expect(calendarGroupNeedsChooser(group, layout, appointmentLanes(appointments))).toBe(true);
+  });
+  it("leaves a lone timed block on its original edit control and keeps disjoint items apart", () => {
+    const [block] = calendarCollisionGroups([], blocks);
+    expect(calendarGroupNeedsChooser(block, { finePointer: false, anyCoarsePointer: true, columnWidth: 300 }, new Map())).toBe(false);
+    expect(calendarCollisionGroups(appointments, [{ ...blocks[0], top: 164 }])).toHaveLength(2);
+    expect(calendarCollisionGroups([], [{ id: "one", top: 120, height: 28 }, { id: "two", top: 150, height: 28 }])).toEqual([
+      { ids: ["block:one", "block:two"], top: 120, height: 74 },
+    ]);
+  });
+  it("wires the same mixed geometry into desktop while retaining exact edit and preview paths", () => {
+    expect(DAYCOL).toContain("})), timedBlockRectangles)");
+    expect(DAYCOL).toContain("if (chooserIds.has(timedBlockCollisionId(tb.id))) return null");
+    expect(DAYCOL).toContain("onSelectBlock={(block) => setEditingBlock(block)}");
+    expect(DAYCOL).toContain("onClick={() => setEditingBlock(tb)}");
+    expect(DAYCOL).toContain("onClick={() => setPreview(a)}");
   });
 });

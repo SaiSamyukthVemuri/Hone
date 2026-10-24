@@ -244,6 +244,7 @@ export function CalendarMobileDayView({
           the timeline is full-width and days change via buttons/strip only. */}
       <div className="mt-2 max-h-[calc(100dvh-16rem)] overflow-y-auto overscroll-contain rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950">
         <MobileDayTimeline
+          key={day.date}
           date={day.date}
           appts={day.appts}
           timedBlocks={day.timedBlocks}
@@ -254,6 +255,7 @@ export function CalendarMobileDayView({
           tz={tz}
           timeFormat={timeFormat}
           returnTo={returnTo}
+          showPractitioner={practitionerCapacityEnabled}
           onBookAt={(localTime) =>
             setDraft({ localDate: day.date, localTime })
           }

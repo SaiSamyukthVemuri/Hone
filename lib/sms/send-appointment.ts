@@ -7,7 +7,6 @@ import {
   build2hReminderSms,
 } from "./templates";
 import {
-  maskedPhone,
   normalizePhoneForSms,
   outboundSmsFence,
   sendSmsSafely,
@@ -618,13 +617,13 @@ async function sendReminder(
   await settleLedgerRow(args.admin, attempt, args.ledgerBudget);
 
   if (result.ok) {
-    console.log(
+    // MSG-007: minimum necessary. No appointment id (#828 G-26) and no
+    // destination, masked or not: the delivery ledger row carries both.
+    safeLog.info(
       JSON.stringify({
         event: "sms_sent",
-        appointmentId: args.appointmentId,
         smsType,
         messageSid: result.messageSid,
-        toMasked: maskedPhone(gate.normalizedPhone),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -933,16 +932,16 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   // Only after the authoritative record: the best-effort ledger settle.
   if (attempt) await settleLedgerRow(args.admin, attempt);
 
-  // Light, log-only side effect so the operator sees masked phone +
-  // outcome side by side in production logs. No PII.
+  // Light, log-only side effect so the operator sees the outcome in
+  // production logs. MSG-007: minimum necessary. No appointment id (#828
+  // G-26) and no destination, masked or not ("+1***99" still discloses the
+  // last two digits): the delivery ledger row carries both.
   if (success && outcome.ok) {
-    console.log(
+    safeLog.info(
       JSON.stringify({
         event: "sms_sent",
-        appointmentId: args.appointmentId,
         smsType: args.smsType,
         messageSid: outcome.messageSid,
-        toMasked: maskedPhone(gate.normalizedPhone),
         timestamp: new Date().toISOString(),
       }),
     );

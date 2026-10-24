@@ -7,6 +7,12 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { safeLog } from "@/lib/logging/safe-log";
+import {
+  findPossibleDuplicateClient,
+  type PossibleDuplicate,
+} from "@/lib/clients/possible-duplicate";
+import { normalizeName } from "@/lib/import/quick-import";
+import { normalizePhoneForSms } from "@/lib/sms/phone";
 
 async function assertClientVisible(
   studioId: string,
@@ -83,7 +89,15 @@ function dollarsToCents(value: FormDataEntryValue | null): number | null {
 // form even when the failure is a clean duplicate-email rejection.
 // The ClientForm hostnow reads this return value to render the
 // error inline.
-export type ClientSaveResult = { ok: false; error: string };
+// HON-58 (I1): `possibleDuplicates` is set when an edit to the name, phone or
+// date of birth makes this client match others (same phone, or same name and
+// date of birth). Nothing was saved; ClientForm lists them and "Save as a new
+// client anyway" resubmits with one confirm_possible_duplicate per client.
+export type ClientSaveResult = {
+  ok: false;
+  error: string;
+  possibleDuplicates?: PossibleDuplicate[];
+};
 
 // Pre-flight duplicate-email check that scopes by studio (matching
 // the studio-scoped clients_studio_normalized_email_uniq partial
@@ -144,6 +158,18 @@ const ACTIVE_DUPLICATE_ERROR =
 const ARCHIVED_DUPLICATE_ERROR =
   "That email belongs to an archived client. Unarchive that client or use a different email.";
 const GENERIC_SAVE_ERROR = "Couldn't save the client. Please try again.";
+
+function editDuplicatesMessage(duplicates: PossibleDuplicate[]): string {
+  const describe = (d: PossibleDuplicate) =>
+    `${d.archived ? "an archived client, " : ""}${d.clientName} (${
+      d.reason === "phone" ? "same phone number" : "same name and date of birth"
+    })`;
+  const who =
+    duplicates.length === 1
+      ? describe(duplicates[0])
+      : `one of ${duplicates.length} existing clients: ${duplicates.map(describe).join("; ")}`;
+  return `With this change, this client may be the same person as ${who}. Nothing was saved.`;
+}
 
 // Translate the DuplicateCheck outcome into the action's return
 // shape. Pulled out so both the pre-flight and the DB unique-
@@ -209,15 +235,72 @@ export async function updateClientAction(
     return { ok: false, error: GENERIC_SAVE_ERROR };
   }
 
+  // HON-58 (Team review of #1084, I1): an edit can make this record a probable
+  // duplicate. Check only when the edit changes the name, phone or date of
+  // birth, so an unrelated edit is not re-warned about a duplicate that
+  // already existed; never count this client; save only when every match was
+  // confirmed by id. A failed read refuses rather than implying "none".
+  const phone = nullableString(formData.get("phone"));
+  const dateOfBirth = nullableString(formData.get("date_of_birth"));
+  const { data: stored, error: storedErr } = await supabase
+    .from("clients")
+    .select("name, phone, date_of_birth")
+    .eq("id", clientId)
+    .eq("studio_id", studio.id)
+    .maybeSingle();
+  if (storedErr) {
+    safeLog.error(
+      JSON.stringify({
+        event: "client_update_identity_read_failed",
+        code: storedErr.code,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: GENERIC_SAVE_ERROR };
+  }
+  if (!stored) return { ok: false, error: "Client not found." };
+  const identityChanged =
+    normalizeName(name) !== normalizeName(stored.name) ||
+    normalizePhoneForSms(phone) !== normalizePhoneForSms(stored.phone) ||
+    (dateOfBirth ?? "") !== (stored.date_of_birth ?? "");
+  if (identityChanged) {
+    const check = await findPossibleDuplicateClient(supabase, studio.id, {
+      name,
+      phone,
+      dateOfBirth,
+    });
+    if (check.kind === "unavailable") {
+      safeLog.error(
+        JSON.stringify({
+          event: "client_update_possible_duplicate_lookup_failed",
+          code: check.code,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return { ok: false, error: GENERIC_SAVE_ERROR };
+    }
+    if (check.kind === "match") {
+      const duplicates = check.duplicates.filter((d) => d.clientId !== clientId);
+      const confirmed = new Set(formData.getAll("confirm_possible_duplicate"));
+      if (duplicates.length > 0 && duplicates.some((d) => !confirmed.has(d.clientId))) {
+        return {
+          ok: false,
+          error: editDuplicatesMessage(duplicates),
+          possibleDuplicates: duplicates,
+        };
+      }
+    }
+  }
+
   const { error } = await supabase
     .from("clients")
     .update({
       name,
       pronouns: nullableString(formData.get("pronouns")),
-      phone: nullableString(formData.get("phone")),
+      phone,
       email,
       address: nullableString(formData.get("address")),
-      date_of_birth: nullableString(formData.get("date_of_birth")),
+      date_of_birth: dateOfBirth,
       fitzpatrick_type: nullableInt(formData.get("fitzpatrick_type")),
       // Chloe Session 1A: `clients.skin_notes` is RETIRED as a practitioner
       // editor. It is no longer submitted by the client form and is no longer
