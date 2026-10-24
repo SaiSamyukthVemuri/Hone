@@ -1,4 +1,4 @@
-import { test, expect, type Request } from "@playwright/test";
+import { test, expect, type Request, type Locator } from "@playwright/test";
 import { loginAsOwner } from "../e2e/helpers/flows";
 import {
   seedEligiblePaymentWithLogin,
@@ -21,6 +21,22 @@ import {
   countEffectsForAccount,
   cleanupFakeStripeLedger,
 } from "./helpers/fake-stripe-ledger-e2e";
+
+// CLN-006 "focus outside re-enters": put focus on a real, visible control
+// OUTSIDE the dialog (the state a stray click or script leaves behind), and
+// prove it left the dialog before the next key is pressed.
+async function focusOutsideDialog(dialog: Locator) {
+  const moved = await dialog.evaluate((dlg) => {
+    const outside = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).find((el) => !dlg.contains(el) && el.offsetParent !== null);
+    outside?.focus();
+    return outside !== undefined && document.activeElement === outside && !dlg.contains(document.activeElement);
+  });
+  expect(moved, "focus moved to a control outside the dialog").toBe(true);
+}
 
 // ===========================================================================
 // Quick-checkout payment — the iPad success journey (PR #419).
@@ -330,6 +346,13 @@ for (const status of ["pending_stripe", "succeeded"] as const) {
       await expect(historySummary.locator("..")).not.toHaveAttribute("open", "");
       await page.keyboard.press("Tab");
       await expect(close).toBeFocused();
+      await page.keyboard.press("Shift+Tab");
+      await expect(historySummary).toBeFocused();
+      // Focus outside re-enters: Tab to the first stop (close), Shift+Tab to the last.
+      await focusOutsideDialog(modal);
+      await page.keyboard.press("Tab");
+      await expect(close).toBeFocused();
+      await focusOutsideDialog(modal);
       await page.keyboard.press("Shift+Tab");
       await expect(historySummary).toBeFocused();
       await page.keyboard.press("Escape");
