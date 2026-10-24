@@ -410,18 +410,27 @@ export function sessionRecordedByName(
   return attributedName(session.practitioner_id, roster);
 }
 
-// Members read their whole studio roster under RLS (0001 "practitioners:
-// members read"), deactivated rows included, so history keeps its authors.
-export async function getPractitionerAttributionRoster(
-  studioId: string,
-): Promise<AttributionPractitioner[]> {
+// ONE roster read serves both lists, so the profile's per-tab query budget
+// (tests/db/client-profile-tab-queries.db.test.ts) is unchanged. Members read
+// their whole studio roster under RLS (0001 "practitioners: members read"),
+// deactivated rows included; the active list is filtered from it here, in the
+// same display_name order getPractitionersForStudio returns.
+async function getStudioRosters(studioId: string): Promise<{
+  practitioners: Practitioner[];
+  attributionRoster: AttributionPractitioner[];
+}> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("practitioners")
-    .select("id, display_name, email")
-    .eq("studio_id", studioId);
+    .select("*")
+    .eq("studio_id", studioId)
+    .order("display_name", { ascending: true });
   if (error) throw new Error(`Failed to load practitioners: ${error.message}`);
-  return (data ?? []) as AttributionPractitioner[];
+  const rows = (data ?? []) as Practitioner[];
+  return {
+    practitioners: rows.filter((p) => p.active === true),
+    attributionRoster: rows.map((p) => ({ id: p.id, display_name: p.display_name, email: p.email })),
+  };
 }
 
 // Migration 0114: a voided pass (deleted_at set) stays in the DB but must never
@@ -454,7 +463,7 @@ export async function getClientById(
   if (clientErr) throw new Error(`Failed to load client: ${clientErr.message}`);
   if (!client) return null;
 
-  const [pricingRes, sessionsRes, practitioners, attributionRoster] = await Promise.all([
+  const [pricingRes, sessionsRes, { practitioners, attributionRoster }] = await Promise.all([
     supabase
       .from("client_pricing")
       .select("*")
@@ -468,8 +477,7 @@ export async function getClientById(
       .eq("client_id", clientId)
       .is("deleted_at", null)
       .order("started_at", { ascending: false }),
-    getPractitionersForStudio(studioId),
-    getPractitionerAttributionRoster(studioId),
+    getStudioRosters(studioId),
   ]);
 
   if (pricingRes.error)

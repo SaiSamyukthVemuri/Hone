@@ -15,6 +15,7 @@ import type { ClinicalNoteWithAuthor } from "@/lib/types/database";
 const db = vi.hoisted(() => ({
   tables: {} as Record<string, unknown[]>,
   filters: [] as Array<{ table: string; column: string; value: unknown }>,
+  reads: [] as string[],
 }));
 
 // A PostgREST-shaped fake: every chain resolves to the table's rows, and each
@@ -22,6 +23,7 @@ const db = vi.hoisted(() => ({
 function fakeClient() {
   return {
     from(table: string) {
+      db.reads.push(table);
       const result = () => ({ data: db.tables[table] ?? [], error: null, count: (db.tables[table] ?? []).length });
       const query: Record<string, unknown> = new Proxy({}, {
         get(_t, prop) {
@@ -88,6 +90,7 @@ function session(id: string, creator: string, performer: string | null) {
 beforeEach(() => {
   db.tables = {};
   db.filters = [];
+  db.reads = [];
 });
 
 describe("clinical notes: original author, never the viewer", () => {
@@ -148,6 +151,10 @@ describe("sessions: original author and performer", () => {
     db.tables.practitioners = [AUTHOR_A, DEACTIVATED_C];
     const loaded = await getClientById(STUDIO, CLIENT);
     expect(loaded?.attributionRoster.map((p) => p.id).sort()).toEqual(["prac-a", "prac-c"]);
+    // The picker list stays active-only, and both come from ONE roster read,
+    // so the profile's per-tab query budget does not grow.
+    expect(loaded?.practitioners.map((p) => p.id)).toEqual(["prac-a"]);
+    expect(db.reads.filter((t) => t === "practitioners")).toHaveLength(1);
   });
 
   it("a deactivated performer is named from the attribution roster", () => {
