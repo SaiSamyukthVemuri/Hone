@@ -2,6 +2,7 @@ import { test, expect, type Page, type Route } from "@playwright/test";
 import { seedE2eStudio, getStudioWeeklyDefaults, type E2eSeed } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
+import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 
 // HON-62 — the weekly-hours "Opens"/"Closes" fields on Settings >
 // Availability (the onboarding "Configure availability" step lands here) were
@@ -86,10 +87,32 @@ test.beforeEach(async ({ context, browserName }) => {
   await context.route("**/*", withoutHttpsUpgrade);
 });
 
+// WebKit only (run 40084710495): a route handler runs only for the FIRST URL
+// of a redirect chain, so the /dashboard document that /auth/callback's 307
+// lands on reached WebKit unstripped, still carrying upgrade-insecure-requests.
+// Every localhost load was https from then on, even under the stripped
+// /settings/availability document that followed. (The /login page's ~20 http
+// responses carrying HSTS upgraded nothing, so HSTS was not the trigger.) So in
+// WebKit the magic link is followed by the context's request API: its
+// cookies land in the browser context and no redirect target is ever a
+// document. Chromium signs in exactly as before.
+async function signIn(page: Page, browserName: string) {
+  if (browserName !== "webkit") return loginAsOwner(page, seed);
+  await page.goto("/login");
+  await page.getByLabel("I am using my invited email address").check();
+  await page.locator("#login-email").fill(seed.ownerEmail);
+  const seen = await listMessageIds(seed.ownerEmail);
+  await page.getByRole("button", { name: /send magic link/i }).click();
+  const link = await waitForMagicLink(seed.ownerEmail, E2E_APP_ORIGIN, { excludeIds: seen });
+  const landed = await page.context().request.get(link);
+  expect(new URL(landed.url()).pathname, "the magic link signs in and lands on /dashboard").toBe("/dashboard");
+}
+
 test("an owner types Monday's hours with the keyboard, saves, and they survive a reload", async ({
   page,
+  browserName,
 }) => {
-  await loginAsOwner(page, seed);
+  await signIn(page, browserName);
   await page.goto("/settings/availability");
   await openDay(page, "Monday");
 
@@ -119,8 +142,9 @@ test("an owner types Monday's hours with the keyboard, saves, and they survive a
 
 test("re-saving an existing day without an edit leaves the stored week unchanged", async ({
   page,
+  browserName,
 }) => {
-  await loginAsOwner(page, seed);
+  await signIn(page, browserName);
   await page.goto("/settings/availability");
   await page.getByRole("button", { name: /Weekdays 10/ }).click();
   await page.getByRole("button", { name: /^Replace$/ }).click();
@@ -141,8 +165,8 @@ test("re-saving an existing day without an edit leaves the stored week unchanged
 test.describe("touch", () => {
   test.use({ hasTouch: true, viewport: { width: 834, height: 1194 } });
 
-  test("a tap reaches the hour field and focuses it; nothing overlays it", async ({ page }) => {
-    await loginAsOwner(page, seed);
+  test("a tap reaches the hour field and focuses it; nothing overlays it", async ({ page, browserName }) => {
+    await signIn(page, browserName);
     await page.goto("/settings/availability");
     await page.getByRole("button", { name: "Edit Wednesday" }).tap();
     const opens = page.getByLabel("Wednesday opens");

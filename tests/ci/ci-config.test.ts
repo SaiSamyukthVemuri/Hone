@@ -1158,6 +1158,14 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     expect(SPEC).toContain("route.fetch({ maxRedirects: 0 })");
     expect(SPEC).toContain("if (response.status() >= 300 && response.status() < 400) return route.continue();");
     expect(SPEC).not.toContain("route.fulfill({ response })");
+    // A route handler never sees a redirect TARGET, so in WebKit the magic
+    // link is followed by the context's request API, never navigated; Chromium
+    // keeps the shared helper, and every test signs in through signIn().
+    expect(SPEC).toContain('if (browserName !== "webkit") return loginAsOwner(page, seed);');
+    expect(SPEC).toContain("await page.context().request.get(link);");
+    expect(SPEC).not.toMatch(/page\.goto\(link\)/);
+    expect((SPEC.match(/await signIn\(page, browserName\);/g) ?? []).length).toBe(3);
+    expect((SPEC.match(/loginAsOwner\(/g) ?? []).length).toBe(1);
   });
 
   it("its hard timeout exceeds the ~10 min target plus the bounded 6 min install", () => {
