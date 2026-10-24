@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { INTAKE_STEPS } from "@/lib/intake/questions";
 import {
   INSURER_FIELD_GAPS,
   NAME_ON_RECORD_LABEL,
@@ -33,9 +34,18 @@ describe("insurer field gaps", () => {
 
   it("states a reason for every gap and never presents a value", () => {
     for (const gap of INSURER_FIELD_GAPS) {
-      expect(gap.reason).toMatch(/^Not recorded/);
+      expect(gap.reason).toMatch(/^Not (recorded|on the client profile)/);
       expect(Object.keys(gap).sort()).toEqual(["key", "label", "reason"]);
     }
+  });
+
+  // The intake form collects a legal name, so the disclosure may only say it is
+  // missing from the client profile and this packet, never from Hone.
+  it("scopes the legal-name gap to the client profile, not to all of Hone", () => {
+    const legal = INSURER_FIELD_GAPS.find((g) => g.key === "legal_identity");
+    expect(legal?.reason).toMatch(/^Not on the client profile/);
+    expect(legal?.reason).toMatch(/intake form is not included in this packet/);
+    expect(legal?.reason).not.toMatch(/Not recorded|Hone stores|in Hone/);
   });
 
   it("does not infer a diagnosis", () => {
@@ -93,6 +103,13 @@ describe("schema tether", () => {
     const columns = clientColumns();
     expect(columns).toContain("name");
     expect(columns).toContain("date_of_birth");
+  });
+
+  it("ties the legal-name wording to the intake form that collects it", () => {
+    // If intake stops asking for a legal name, the scoped wording in
+    // lib/clinical-records/insurer-field-gaps.ts should be revisited.
+    const keys = INTAKE_STEPS.flatMap((step) => step.questions.map((q) => q.key));
+    expect(keys).toContain("legal_name");
   });
 
   it("has no column for any field the disclosure calls missing", () => {

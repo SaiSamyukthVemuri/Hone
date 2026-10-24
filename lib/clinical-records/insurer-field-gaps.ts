@@ -4,9 +4,15 @@
 // ===========================================================================
 // An insurer-facing clinical packet is commonly expected to carry a legal
 // identity, a medical record number (MRN), diagnosis or problem codes, and the
-// insurer's member or policy identifier. Hone records none of these today. The
-// `clients` row has one free-text `name` and nothing else that identifies a
-// person to a payer (see `Client` in lib/types/database.ts).
+// insurer's member or policy identifier. Hone records none of the last three
+// today. The `clients` row has one free-text `name` and nothing else that
+// identifies a person to a payer (see `Client` in lib/types/database.ts).
+//
+// The legal name is the exception: the intake form asks for it
+// (`legal_name` in lib/intake/questions.ts) and keeps the answer in
+// `client_intake_forms.responses`. It is not on the client profile, and this
+// packet does not read intake answers, so that gap is scoped to the profile
+// and the packet. It must never claim that Hone holds no legal name.
 //
 // HON-46 requires the packet to flag missing information "rather than
 // fabricate" it. This module is the single statement of what is missing and
@@ -54,7 +60,7 @@ export const INSURER_FIELD_GAPS: readonly InsurerFieldGap[] = [
     key: "legal_identity",
     label: "Legal name",
     reason:
-      "Not recorded separately. Hone stores one name per client and does not record whether it is the legal name.",
+      "Not on the client profile, which stores one name and does not record whether it is the legal name. A legal name given on an intake form is not included in this packet.",
   },
   {
     key: "medical_record_number",
