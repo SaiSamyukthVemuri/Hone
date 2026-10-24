@@ -52,6 +52,12 @@ const TOKEN_PATH_RE =
 const PHONE_FRAGMENT_KEY_RE =
   /"[A-Za-z_]*(?:phone|masked|last\d*|digits|suffix|tail)[A-Za-z_]*"\s*:\s*"?(\d+)/gi;
 
+// An ISO-8601 instant ("2026-10-24T03:17:41.199Z"). Every log line stamps one
+// from the real clock, so its digit runs (a millisecond of 199, say) must not be
+// read as a phone suffix. Only the whole instant is removed; any other number
+// in the line is still scanned.
+const ISO_INSTANT_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g;
+
 // The secret parts of a link: its last path segment and its query values,
 // when they are long enough to be a token. Logged alone they still grant access.
 function tokenPartsOf(secret: string): string[] {
@@ -93,14 +99,15 @@ export function expectMinimumNecessary(
       if (part && text.includes(part)) throw new Error(`a link token reached the log: ${text}`);
     }
   }
-  const runs = text.split(/\D+/).filter(Boolean);
+  const scanned = text.replace(ISO_INSTANT_RE, " ");
+  const runs = scanned.split(/\D+/).filter(Boolean);
   for (const phone of opts.phones) {
     const digits = phone.replace(/\D/g, "");
     const last7 = digits.slice(-7);
     if (runs.some((run) => run.includes(last7) || (run.length >= 3 && digits.endsWith(run)))) {
       throw new Error(`phone digits reached the log: ${text}`);
     }
-    for (const m of text.matchAll(PHONE_FRAGMENT_KEY_RE)) {
+    for (const m of scanned.matchAll(PHONE_FRAGMENT_KEY_RE)) {
       if (m[1].length >= 2 && digits.endsWith(m[1])) {
         throw new Error(`phone digits reached the log under a phone-like key: ${text}`);
       }
