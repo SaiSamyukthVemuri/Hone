@@ -105,6 +105,7 @@ function builder(table: string, select: string) {
   };
   queries.push(record);
   const predicates: Array<(r: Row) => boolean> = [];
+  let rangeWindow: [number, number] | null = null;
 
   const chain = {
     eq(col: string, val: unknown) {
@@ -164,6 +165,17 @@ function builder(table: string, select: string) {
       record.limit = n;
       return chain;
     },
+    // HON-58: the client-name candidate reads (non-ASCII names; paged).
+    filter(col: string, op: string, value: string) {
+      if (op !== "match") throw new Error(`fake supabase: unsupported filter ${op}`);
+      const re = new RegExp(value, "u");
+      predicates.push((r) => typeof r[col] === "string" && re.test(r[col] as string));
+      return chain;
+    },
+    range(from: number, to: number) {
+      rangeWindow = [from, to];
+      return chain;
+    },
     then(resolve: (v: { data: Row[]; error: null }) => unknown) {
       let rows = (tables[table] ?? []).filter((r) => predicates.every((p) => p(r)));
       for (const [col, ascending] of [...record.order].reverse()) {
@@ -174,6 +186,7 @@ function builder(table: string, select: string) {
           return (av < bv ? -1 : 1) * (ascending ? 1 : -1);
         });
       }
+      if (rangeWindow) rows = rows.slice(rangeWindow[0], rangeWindow[1] + 1);
       if (record.limit != null) rows = rows.slice(0, record.limit);
       return Promise.resolve({ data: rows, error: null }).then(resolve as never);
     },

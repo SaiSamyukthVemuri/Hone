@@ -20,8 +20,10 @@ import {
 } from "@/lib/search/navigation-registry";
 import { mergeMemoryBlockRows } from "@/lib/search/treatment-memory-merge";
 import {
+  hasNameQuery,
   matchesClientSearch,
   nameCandidatePatterns,
+  NON_ASCII_NAME_REGEX,
   phoneCandidatePattern,
 } from "@/lib/clients/name-search";
 
@@ -48,9 +50,10 @@ import {
 
 const CLIENT_CAP = 5;
 
-// HON-58: name candidates fetched by the wide prefilter before
-// matchesClientSearch confirms them. Wide on purpose, bounded by studio.
-const CLIENT_CANDIDATE_CAP = 50;
+// HON-58: rows per page of a wide candidate read. Candidates are read page by
+// page until CLIENT_CAP of them are confirmed or none remain, never cut at a
+// fixed count before confirmation (Codex P2 4366960913).
+const CLIENT_CANDIDATE_PAGE = 1000;
 const APPOINTMENT_CAP = 4;
 const MEMORY_CAP = 4;
 const RECORD_CAP = 3;
@@ -133,9 +136,10 @@ type ClientSearchRow = {
 // it found is lost. The candidate reads add what ILIKE alone cannot see:
 // word order ("smith jane"), a preferred name inside the stored string
 // ("Jane (Janie) Smith" by "janie smith"), punctuation ("obrien") and
-// diacritics ("jose"), and phone formatting. Their patterns are built only
-// from folded letters and digits (lib/clients/name-search.ts), and every
-// candidate must pass the same matchesClientSearch the client-side lists use.
+// diacritics ("jose", "Šimon"), and phone formatting. Together they admit
+// every row the shared matcher can accept (lib/clients/name-search.ts), and
+// every candidate must pass the same matchesClientSearch the client-side
+// lists use before it counts toward the cap.
 async function searchClientRows(
   supabase: Awaited<ReturnType<typeof createClient>>,
   studioId: string,
@@ -149,30 +153,49 @@ async function searchClientRows(
       .eq("studio_id", studioId)
       .is("archived_at", null);
 
-  const namePatterns = nameCandidatePatterns(query);
-  let byName = base();
-  for (const pattern of namePatterns) byName = byName.ilike("name", pattern);
-  const phonePattern = phoneCandidatePattern(query);
+  // Name order, then id, so offset pages neither repeat nor skip a row.
+  const confirmed = async (
+    read: () => ReturnType<typeof base>,
+  ): Promise<ClientSearchRow[]> => {
+    const found: ClientSearchRow[] = [];
+    for (let offset = 0; ; ) {
+      const { data, error } = await read()
+        .order("name")
+        .order("id")
+        .range(offset, offset + CLIENT_CANDIDATE_PAGE - 1);
+      const page = (data ?? []) as ClientSearchRow[];
+      if (error || page.length === 0) return found;
+      for (const row of page) {
+        if (!matchesClientSearch(row, query)) continue;
+        found.push(row);
+        // The first CLIENT_CAP confirmed rows in name order are all the
+        // final, name-sorted and capped result can use from this read.
+        if (found.length >= CLIENT_CAP) return found;
+      }
+      // A server row cap can shorten a page, so advance by what arrived.
+      offset += page.length;
+    }
+  };
 
-  const [direct, named, phoned] = await Promise.all([
+  const namePatterns = nameCandidatePatterns(query);
+  const phonePattern = phoneCandidatePattern(query);
+  const none = Promise.resolve([] as ClientSearchRow[]);
+
+  const [direct, asciiNamed, otherNamed, phoned] = await Promise.all([
     base()
       .or(`name.ilike.${like},email.ilike.${like},phone.ilike.${like}`)
       .order("name")
       .limit(CLIENT_CAP)
       .then((r) => (r.data ?? []) as ClientSearchRow[]),
     namePatterns.length > 0
-      ? byName
-          .order("name")
-          .limit(CLIENT_CANDIDATE_CAP)
-          .then((r) => (r.data ?? []) as ClientSearchRow[])
-      : Promise.resolve([] as ClientSearchRow[]),
-    phonePattern
-      ? base()
-          .ilike("phone", phonePattern)
-          .order("name")
-          .limit(CLIENT_CANDIDATE_CAP)
-          .then((r) => (r.data ?? []) as ClientSearchRow[])
-      : Promise.resolve([] as ClientSearchRow[]),
+      ? confirmed(() => {
+          let q = base();
+          for (const pattern of namePatterns) q = q.ilike("name", pattern);
+          return q;
+        })
+      : none,
+    hasNameQuery(query) ? confirmed(() => base().filter("name", "match", NON_ASCII_NAME_REGEX)) : none,
+    phonePattern ? confirmed(() => base().ilike("phone", phonePattern)) : none,
   ]);
 
   const seen = new Set<string>();
@@ -182,8 +205,8 @@ async function searchClientRows(
     seen.add(row.id);
     rows.push(row);
   }
-  for (const row of [...named, ...phoned]) {
-    if (seen.has(row.id) || !matchesClientSearch(row, query)) continue;
+  for (const row of [...asciiNamed, ...otherNamed, ...phoned]) {
+    if (seen.has(row.id)) continue;
     seen.add(row.id);
     rows.push(row);
   }

@@ -6,13 +6,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //
 // The real server action runs against an in-memory fake that applies the
 // PostgREST filters it builds (.eq / .is / .neq / .ilike / .or / .in /
-// .order / .limit), so "found" means the query really admitted the row and
+// .filter(match) / .order / .limit / .range), so "found" means the query really admitted the row and
 // matchesClientSearch really confirmed it. Every name is SYNTHETIC.
 
 type Row = Record<string, unknown>;
 
 const tables: Record<string, Row[]> = {};
 const ilikeCalls: Array<{ table: string; col: string; pattern: string }> = [];
+// The most rows one response may carry (PostgREST db-max-rows). Tests lower it
+// to prove a short page does not end a read early.
+const server = { maxRows: 1000 };
 
 const RE_METACHARS = /[.*+?^${}()|[\]\\]/g;
 
@@ -37,8 +40,9 @@ function matchesIlike(value: unknown, pattern: string): boolean {
 
 function builder(table: string) {
   const predicates: Array<(r: Row) => boolean> = [];
-  let orderCol: string | null = null;
+  const orderCols: string[] = [];
   let limit: number | null = null;
+  let range: [number, number] | null = null;
   const chain = {
     eq(col: string, val: unknown) {
       predicates.push((r) => r[col] === val);
@@ -66,25 +70,42 @@ function builder(table: string) {
       predicates.push((r) => clauses.some((c) => matchesIlike(r[c.col], c.pattern)));
       return chain;
     },
+    filter(col: string, op: string, value: string) {
+      if (op !== "match") throw new Error(`fake supabase: unsupported filter operator ${op}`);
+      const re = new RegExp(value, "u");
+      predicates.push((r) => typeof r[col] === "string" && re.test(r[col] as string));
+      return chain;
+    },
     in(col: string, values: readonly unknown[]) {
       predicates.push((r) => values.includes(r[col]));
       return chain;
     },
     order(col: string) {
-      orderCol = col;
+      orderCols.push(col);
       return chain;
     },
     limit(n: number) {
       limit = n;
       return chain;
     },
+    range(from: number, to: number) {
+      range = [from, to];
+      return chain;
+    },
     then(resolve: (v: { data: Row[]; error: null }) => unknown) {
       let rows = (tables[table] ?? []).filter((r) => predicates.every((p) => p(r)));
-      if (orderCol) {
-        const col = orderCol;
-        rows = [...rows].sort((a, b) => String(a[col] ?? "").localeCompare(String(b[col] ?? "")));
+      if (orderCols.length > 0) {
+        rows = [...rows].sort((a, b) => {
+          for (const col of orderCols) {
+            const c = String(a[col] ?? "").localeCompare(String(b[col] ?? ""));
+            if (c !== 0) return c;
+          }
+          return 0;
+        });
       }
+      if (range) rows = rows.slice(range[0], range[1] + 1);
       if (limit != null) rows = rows.slice(0, limit);
+      rows = rows.slice(0, server.maxRows);
       return Promise.resolve({ data: rows, error: null }).then(resolve as never);
     },
   };
@@ -135,6 +156,7 @@ function client(id: string, name: string, extra: Partial<Row> = {}): Row {
 beforeEach(() => {
   for (const key of Object.keys(tables)) delete tables[key];
   ilikeCalls.length = 0;
+  server.maxRows = 1000;
   tables.clients = [
     client("c-janie", "Jane (Janie) Smith", { phone: "(555) 010-0001" }),
     client("c-obrien", "Saoirse O'Brien"),
@@ -206,6 +228,60 @@ describe("global search: one record, many ways in", () => {
     expect(nameCandidates.length).toBeGreaterThan(0);
     for (const { pattern } of nameCandidates) {
       expect(pattern).toMatch(/^%(?:[\p{L}\p{N}_]%)+$/u);
+    }
+  });
+});
+
+// Codex P2 4366960913: a candidate cap applied BEFORE confirmation dropped
+// genuine matches. Every row below passes the wide name prefilter for
+// "janie smith" ("Jan Ieva Smith" carries j-a-n-i-e and s-m-i-t-h in order)
+// but fails the shared matcher, and all of them sort before the real record.
+describe("global search: candidates are confirmed before any cap", () => {
+  const decoys = (n: number) =>
+    Array.from({ length: n }, (_, i) => client(`c-decoy-${i}`, `Jan Ieva Smith ${String(i).padStart(4, "0")}`));
+
+  it("finds the record behind 50 earlier unconfirmed candidates", async () => {
+    tables.clients.push(...decoys(50), client("c-zoe", "Zoe (Janie) Smith"));
+    expect(await clientIdsFor("janie smith")).toEqual(["c-janie", "c-zoe"]);
+  });
+
+  it("pages past a full page of unconfirmed candidates", async () => {
+    tables.clients.push(...decoys(1200), client("c-zoe", "Zoe (Janie) Smith"));
+    expect(await clientIdsFor("janie smith")).toEqual(["c-janie", "c-zoe"]);
+  });
+
+  it("a server row cap below the page size does not end the read early", async () => {
+    server.maxRows = 7;
+    tables.clients.push(...decoys(30), client("c-zoe", "Zoe (Janie) Smith"));
+    expect(await clientIdsFor("janie smith")).toEqual(["c-janie", "c-zoe"]);
+  });
+});
+
+// Codex P2 4366960916: the prefilter wildcarded only a, c, e, i, n, o, u and
+// y, so a name whose diacritic sits on any other letter could never be a
+// candidate, although the shared matcher (client list, booking drawer) finds it.
+describe("global search: every letter the matcher folds can be found", () => {
+  it.each([
+    ["simon", "Šimon Novák"],
+    ["novak", "Šimon Novák"],
+    ["zaneta", "Žaneta Dvořáková"],
+    ["dvorakova", "Žaneta Dvořáková"],
+    ["łodz", "Łucja Łódź"],
+    ["ozgur", "Özgür Şahin"],
+    ["sahin", "Özgür Şahin"],
+  ])("%j finds %j", async (query, name) => {
+    tables.clients.push(client("c-accented", name));
+    expect(await clientIdsFor(query)).toContain("c-accented");
+  });
+
+  it("agrees with the shared matcher for every stored name and query here", async () => {
+    const { matchesClientSearch } = await import("@/lib/clients/name-search");
+    const names = ["Šimon Novák", "Žaneta Dvořáková", "Ǆemal Ĳsselstein", "Ｊａｎｅ Ｓｍｉｔｈ", "José Álvarez", "Ana Ḃeth"];
+    tables.clients.push(...names.map((n, i) => client(`c-n${i}`, n)));
+    for (const q of ["simon", "zaneta", "dzemal", "ijsselstein", "jane smith", "jose", "beth", "smith jane"]) {
+      const expected = names.flatMap((n, i) => (matchesClientSearch({ name: n }, q) ? [`c-n${i}`] : []));
+      const got = (await clientIdsFor(q)).filter((id) => id.startsWith("c-n"));
+      expect(got.sort(), q).toEqual(expected.sort());
     }
   });
 });

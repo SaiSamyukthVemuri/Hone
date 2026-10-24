@@ -89,26 +89,45 @@ export function matchesClientSearch(client: SearchableClient, rawQuery: string):
 }
 
 // ---------------------------------------------------------------------------
-// Server prefilter. ILIKE cannot fold punctuation or reorder words, so the
-// global-search action asks the database for a deliberately WIDE candidate set
-// and then confirms each row with matchesClientSearch. The patterns are built
-// only from folded [\p{L}\p{N}] characters, so nothing the practitioner typed
-// can reach PostgREST as syntax (no comma, dot, parenthesis or backslash).
+// Server prefilter. ILIKE cannot fold punctuation, diacritics or word order, so
+// the global-search action asks the database for a deliberately WIDE candidate
+// set and then confirms each row with matchesClientSearch. The candidate set
+// must be a SUPERSET of what the matcher accepts, or global search disagrees
+// with the client list and the booking drawer (Codex P2 4366960916: wildcarding
+// a few "accentable" letters missed "Šimon" and "Žaneta"). It is two reads:
+//
+//   - an ALL-ASCII name folds character by character to ASCII (lowercase,
+//     apostrophes dropped, other punctuation a space), so every query word is
+//     an in-order, case-insensitive subsequence of the stored name: the ILIKE
+//     patterns below, built from literal letters and digits;
+//   - any other name is a candidate whatever it contains (NON_ASCII_NAME_REGEX),
+//     because one stored character can fold to a letter, to nothing ("´"), or
+//     to several letters ("Ǆ" -> "dz").
+//
+// Nothing the practitioner typed reaches PostgREST as syntax: the patterns
+// hold only folded [\p{L}\p{N}] characters, and the regex is a constant.
 // ---------------------------------------------------------------------------
 
-/** Letters that commonly carry a diacritic in a stored name: matched as `_`. */
-const ACCENTABLE = new Set(["a", "c", "e", "i", "n", "o", "u", "y"]);
+/** Matches a name with any character outside printable ASCII. A constant. */
+export const NON_ASCII_NAME_REGEX = "[^ -~]";
 
 /**
- * One ILIKE pattern per query word, to be AND-ed on `name`. Each word becomes
- * an in-order subsequence (`obrien` -> `%_%b%r%_%_%_%`), which admits
- * "O'Brien" and "O Brien". Accentable letters become `_` so "jose" admits
- * "José". Over-matching is expected: matchesClientSearch makes the decision.
+ * One ILIKE pattern per query word, to be AND-ed on `name`, admitting every
+ * all-ASCII name the matcher can accept: each word becomes an in-order
+ * subsequence (`obrien` -> `%o%b%r%i%e%n%`), which admits "O'Brien" and
+ * "O Brien". Returns [] when a query word holds a non-ASCII letter (no
+ * all-ASCII name can match it) or the query has no letters or digits.
+ * Over-matching is expected: matchesClientSearch makes the decision.
  */
 export function nameCandidatePatterns(rawQuery: string): string[] {
-  return searchTokens(rawQuery).map(
-    (token) => `%${[...token].map((ch) => (ACCENTABLE.has(ch) ? "_" : ch)).join("%")}%`,
-  );
+  const tokens = searchTokens(rawQuery);
+  if (tokens.some((token) => /[^a-z0-9]/.test(token))) return [];
+  return tokens.map((token) => `%${[...token].join("%")}%`);
+}
+
+/** True when the query has a word a name could match at all. */
+export function hasNameQuery(rawQuery: string): boolean {
+  return searchTokens(rawQuery).length > 0;
 }
 
 /** The ILIKE pattern on `phone` for a phone-shaped query, else null. */

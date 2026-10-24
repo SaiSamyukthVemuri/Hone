@@ -32,6 +32,7 @@ function ilikeMatches(value: unknown, pattern: string): boolean {
 function builder(table: string) {
   const predicates: Array<(r: Row) => boolean> = [];
   let cap: number | null = null;
+  let rangeWindow: [number, number] | null = null;
   const chain = {
     eq(col: string, value: unknown) {
       predicates.push((r) => r[col] === value);
@@ -63,6 +64,13 @@ function builder(table: string) {
       predicates.push((r) => values.includes(r[col]));
       return chain;
     },
+    // HON-58: the client-name candidate read for non-ASCII names.
+    filter(col: string, op: string, value: string) {
+      if (op !== "match") throw new Error(`fake supabase: unsupported filter ${op}`);
+      const re = new RegExp(value, "u");
+      predicates.push((r) => typeof r[col] === "string" && re.test(r[col] as string));
+      return chain;
+    },
     order() {
       return chain;
     },
@@ -70,10 +78,16 @@ function builder(table: string) {
       cap = n;
       return chain;
     },
+    // HON-58: candidate reads page with range(from, to).
+    range(from: number, to: number) {
+      rangeWindow = [from, to];
+      return chain;
+    },
     then(resolve: (v: { data: Row[]; error: null }) => unknown) {
       let rows = (tables[table] ?? []).filter((r) =>
         predicates.every((p) => p(r)),
       );
+      if (rangeWindow) rows = rows.slice(rangeWindow[0], rangeWindow[1] + 1);
       if (cap != null) rows = rows.slice(0, cap);
       return Promise.resolve({ data: rows, error: null }).then(resolve as never);
     },

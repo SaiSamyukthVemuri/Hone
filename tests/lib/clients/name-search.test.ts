@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   foldForSearch,
+  hasNameQuery,
   matchesClientSearch,
   nameCandidatePatterns,
   nameMatchesQuery,
+  NON_ASCII_NAME_REGEX,
   phoneCandidatePattern,
   searchTokens,
 } from "@/lib/clients/name-search";
@@ -101,9 +103,26 @@ describe("phone digits", () => {
 });
 
 describe("server prefilter patterns", () => {
-  it("is one AND-ed subsequence pattern per word, with accentable letters as _", () => {
-    expect(nameCandidatePatterns("Smith, Jane")).toEqual(["%s%m%_%t%h%", "%j%_%_%_%"]);
-    expect(nameCandidatePatterns("obrien")).toEqual(["%_%b%r%_%_%_%"]);
+  it("is one AND-ed subsequence pattern per word, from literal ASCII letters", () => {
+    expect(nameCandidatePatterns("Smith, Jane")).toEqual(["%s%m%i%t%h%", "%j%a%n%e%"]);
+    expect(nameCandidatePatterns("obrien")).toEqual(["%o%b%r%i%e%n%"]);
+    // A diacritic in the QUERY folds away, so "José" still reaches ASCII names.
+    expect(nameCandidatePatterns("José")).toEqual(["%j%o%s%e%"]);
+  });
+
+  it("has no ASCII pattern for a word no all-ASCII name can match", () => {
+    // "ł" does not fold to "l"; only the non-ASCII read can find "Łucja".
+    expect(nameCandidatePatterns("łucja")).toEqual([]);
+    expect(hasNameQuery("łucja")).toBe(true);
+    expect(hasNameQuery(" (),. ")).toBe(false);
+  });
+
+  it("the non-ASCII read admits every name whose fold is not character-for-character", () => {
+    const re = new RegExp(NON_ASCII_NAME_REGEX, "u");
+    for (const name of ["Šimon", "Žaneta", "Ǆemal", "Ｊａｎｅ", "O’Brien", "José"]) {
+      expect(re.test(name), name).toBe(true);
+    }
+    for (const name of ["Jane Smith", "O'Brien", "Mary-Kate"]) expect(re.test(name), name).toBe(false);
   });
 
   it("can never carry PostgREST syntax or an ILIKE escape from the query", () => {
