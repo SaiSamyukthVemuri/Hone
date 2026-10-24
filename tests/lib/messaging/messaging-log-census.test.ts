@@ -7,6 +7,7 @@ import {
   analyzeSource,
   censusOf,
   VERIFIED_FUNCTIONS,
+  ALLOWED_SHAPES,
   isSensitiveName,
   keyOf,
   literalViolation,
@@ -36,33 +37,35 @@ import {
 //      one, "emailFingerprint", "smsType", is not the thing itself);
 //   2. no literal that is a link, an email address, a token-bearing path, or a
 //      phone number, masked or not;
-//   3. nothing the analyzer cannot see into, and no forwarding helper whose
-//      callers it cannot follow (an exported one) unless UNFOLLOWABLE lists it.
-//      A helper parameter is followed whatever its type: a `string` can be a
-//      payload the caller serialised (Codex P2 4368011462);
-//   4. raw error or provider text only where ERROR_TEXT lists it (below).
+//   3. no forwarding helper whose callers it cannot follow (an exported one)
+//      unless UNFOLLOWABLE lists it. A helper parameter is followed whatever
+//      its type: a `string` can be a payload the caller serialised (Codex P2
+//      4368011462);
+//   4. DEFAULT-DENY: a written value is clean ONLY when it is one of
+//      ALLOWED_SHAPES (log-census.ts, pinned below): literals, templates and
+//      object/array literals made of allowed parts, Date, a const resolved to an
+//      allowed value, a parameter declared as a closed literal union, the
+//      result of a VERIFIED_FUNCTIONS entry, a count. EVERYTHING else (a local
+//      property read, an unresolved identifier, any other call, a computed
+//      member, a constructor) is UNPROVEN, and its writer is an UNPROVEN row.
 //
 // THE CENSUS is pinned: per file, the number of writers of each kind. Adding a
-// writer fails here until it is classified: add it to CENSUS, and if it writes
-// error text, to ERROR_TEXT with its kind. Moving code never fails; changing a
-// log line passes as long as it still satisfies rules 1-3.
+// writer fails here until it is classified: add it to CENSUS, and if any part
+// of it is unproven, to UNPROVEN with its kind. Moving code never fails.
 //
-// FAIL CLOSED (Codex P2 4368011462, P2 4368062287). Anything the analyzer does
-// not recognise is never clean: a constructor other than Date, a call whose
-// function is not in VERIFIED_FUNCTIONS, a value named only as a container
-// (payload, detail, data, result, ...) that cannot be followed, a caught value,
-// an operator outside the enumerated sets, a console method or stdout write it
-// did not know, a sink or helper used as a value. Each is either opaque (rule 3)
-// or listed in ERROR_TEXT with its kind.
+// WHY DEFAULT-DENY (Codex P2 4368011462, 4368062287, 4368117155). Three review
+// rounds each found one more value shape the analyzer accepted without proof
+// (a string payload, a constructor, a local property read). Patching shapes one
+// at a time does not converge, so the rule is inverted: nothing is clean unless
+// it is on the short, pinned list of shapes that are proved.
 //
-// THE LIMIT, stated plainly. Rules 1-3 are proved from the source. Error text
-// is not: a database message, a thrown exception or a provider's error string
-// is decided at run time. ERROR_TEXT is therefore not a proof of safety; it is
-// the complete, frozen list of writers where that text reaches the log, so the
-// set cannot grow without a reviewer seeing it. The "provider" rows are the
-// ones to fix first: lib/email/send-appointment.ts returns
-// `Invalid recipient: <to>` for a malformed address, and forwards the email
-// provider's own message, and those rows log that string.
+// THE LIMIT, stated plainly. Rules 1-3 and the allowed shapes are proved from
+// the source. UNPROVEN is therefore NOT a safety claim and not a list of leaks:
+// it is the complete, frozen INVENTORY of writers that write something the
+// source cannot prove (a record id, an error code, a database message, a form
+// value), so the set cannot grow without a reviewer seeing it. Its kinds say
+// what each row writes; "provider", "input" and "db_result" are the ones to
+// reduce first.
 // ===========================================================================
 
 const CENSUS: Record<string, Record<string, number>> = {
@@ -122,8 +125,14 @@ const CENSUS: Record<string, Record<string, number>> = {
 //            (formDataStr(...), formData.get(...), a slug): the browser decides it.
 //   db_result (fail closed) a field of a database or RPC reply (`row.result`,
 //            a destructured `data`): SQL decides it, the source cannot show it.
-type ErrorKind = "db" | "thrown" | "provider" | "closed" | "input" | "db_result";
-const ERROR_TEXT: ReadonlyArray<readonly [key: string, count: number, kind: ErrorKind]> = [
+//   value    (default-deny) a property, identifier or call result the source
+//            does not resolve to an allowed shape: most often a record id
+//            (studio.id), an error or status code (error.code), a flag
+//            (result.retryable) or a count. Not known to be unsafe; not proven.
+type UnprovenKind = "db" | "thrown" | "provider" | "closed" | "input" | "db_result" | "value";
+const UNPROVEN: ReadonlyArray<readonly [key: string, count: number, kind: UnprovenKind]> = [
+  ["app/(app)/calendar/actions.ts | console.error | booking_slot_collision", 1, "value"],
+  ["app/(app)/calendar/actions.ts | console.error | booking_action_post_commit_error:dispatch:", 1, "value"],
   ["app/(app)/calendar/actions.ts | console.error | practitioner_cancel_rpc_error", 1, "db"],
   ["app/(app)/calendar/actions.ts | console.error | client cancel notification email failed", 1, "provider"],
   ["app/(app)/calendar/actions.ts | console.error | mark_complete_rpc_error", 1, "db"],
@@ -131,15 +140,31 @@ const ERROR_TEXT: ReadonlyArray<readonly [key: string, count: number, kind: Erro
   ["app/(app)/calendar/actions.ts | console.error | send_postcare_lookup_failed", 1, "db"],
   ["app/(app)/calendar/actions.ts | console.error | send_postcare_email_failed", 1, "input"],
   ["app/(app)/calendar/actions.ts | console.error | send_postcare_success_write_failed", 1, "input"],
+  ["app/(app)/calendar/actions.ts | logBookingDbError() | book_appointment", 3, "value"],
+  ["app/(app)/calendar/actions.ts | logBookingDbError() | create_client", 1, "value"],
+  ["app/(app)/calendar/actions.ts | logBookingDbError() | last_service", 1, "value"],
   ["app/(app)/calendar/actions.ts | logPostcare() | send_postcare_claim_command_failed", 1, "input"],
   ["app/(app)/calendar/actions.ts | logPostcare() | send_postcare_claim_empty", 1, "input"],
   ["app/(app)/calendar/actions.ts | logPostcare() | send_postcare_settle_failure_unpersisted", 1, "input"],
+  ["app/(app)/calendar/move-appointment-actions.ts | console.error | move_appointment_rpc_error", 1, "value"],
   ["app/(app)/calendar/postcare-auto-send.ts | console.error | postcare_auto_send_threw", 1, "thrown"],
+  ["app/(app)/calendar/postcare-auto-send.ts | logOutcome() | load_error", 2, "value"],
+  ["app/(app)/calendar/postcare-auto-send.ts | logOutcome() | {appointmentId}", 1, "value"],
+  ["app/(app)/calendar/postcare-auto-send.ts | logOutcome() | not_claimed", 1, "value"],
+  ["app/(app)/calendar/postcare-auto-send.ts | logOutcome() | settle_failed", 2, "value"],
+  ["app/(app)/calendar/postcare-auto-send.ts | logOutcome() | failed", 1, "value"],
+  ["app/(app)/calendar/postcare-auto-send.ts | logOutcome() | sent", 1, "value"],
+  ["app/(app)/clients/[id]/actions.ts | safeLog.error | client_duplicate_email_lookup_failed", 1, "value"],
+  ["app/(app)/clients/[id]/actions.ts | safeLog.error | client_update_identity_read_failed", 1, "value"],
+  ["app/(app)/clients/[id]/actions.ts | safeLog.error | client_update_possible_duplicate_lookup_failed", 1, "value"],
   ["app/(app)/clients/[id]/actions.ts | safeLog.error | client_update_failed", 1, "input"],
   ["app/(app)/clients/[id]/actions.ts | safeLog.error | client_archive_audit_failed", 1, "input"],
   ["app/(app)/clients/[id]/actions.ts | safeLog.error | client_unarchive_audit_failed", 1, "input"],
   ["app/(app)/clients/[id]/intake/actions.ts | safeLog.error | {code}", 1, "db"],
   ["app/(app)/clients/[id]/intake/actions.ts | safeLog.error | intake_reissue_email_failed", 2, "provider"],
+  ["app/(app)/clients/[id]/page.tsx | logClinicalReadFailure() | client_profile_recent_blocks_read_failed", 2, "value"],
+  ["app/(app)/clients/[id]/page.tsx | logClinicalReadFailure() | client_profile_intelligence_blocks_read_failed", 2, "value"],
+  ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_client_lookup_failed", 1, "value"],
   ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_insert_failed", 1, "db"],
   ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_email_send_failed", 1, "provider"],
   ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_notification_stamp_failed", 1, "db"],
@@ -147,14 +172,27 @@ const ERROR_TEXT: ReadonlyArray<readonly [key: string, count: number, kind: Erro
   ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_archive_failed", 1, "db"],
   ["app/(app)/settings/team/actions.ts | console.error | Failed to send invitation email:", 2, "provider"],
   ["app/(app)/settings/team/actions.ts | console.error | team_action_db_error:remove_practitioner:", 1, "db_result"],
+  ["app/(app)/settings/waitlist/consent-actions.ts | logRefusal() | entry_read_failed", 1, "value"],
+  ["app/(app)/settings/waitlist/consent-actions.ts | logRefusal() | phone_not_textable", 1, "value"],
+  ["app/(app)/settings/waitlist/consent-actions.ts | logRefusal() | suppression_read_failed", 1, "value"],
+  ["app/(app)/settings/waitlist/consent-actions.ts | logRefusal() | phone_suppressed", 1, "value"],
   ["app/(app)/settings/waitlist/consent-actions.ts | logRefusal() | unknown", 1, "db_result"],
+  ["app/(app)/settings/waitlist/page.tsx | console.error | waitlist_capacity_impossible_shape", 1, "value"],
+  ["app/(app)/settings/waitlist/page.tsx | console.error | waitlist_queue_load_failed", 1, "value"],
+  ["app/(app)/settings/waitlist/page.tsx | console.error | waitlist_preferences_load_failed", 1, "value"],
+  ["app/(app)/settings/waitlist/page.tsx | console.error | waitlist_composer_services_read_failed", 1, "value"],
+  ["app/(app)/settings/waitlist/page.tsx | console.error | waitlist_invitation_window_read_failed", 1, "value"],
   ["app/(app)/settings/waitlist/profile-actions.ts | logRefusal() | waitlist_availability_failed", 1, "db_result"],
   ["app/(app)/settings/waitlist/profile-actions.ts | logRefusal() | waitlist_manual_entry_failed", 1, "db_result"],
-  ["app/(app)/settings/waitlist/profile-actions.ts | logRefusal() | waitlist_legacy_import_failed", 1, "db_result"],
+  ["app/(app)/settings/waitlist/profile-actions.ts | logRefusal() | waitlist_legacy_import_failed", 2, "db_result"],
+  ["app/admin/studios/new/actions.ts | console.error | new_studio_orphan_cleanup_failed", 1, "value"],
   ["app/api/cron/calendar-reconcile/route.ts | console.error | reminder_scheduler_health_check_threw", 1, "thrown"],
   ["app/api/cron/calendar-sync/route.ts | console.error | reminder_scheduler_health_check_threw", 1, "thrown"],
   ["app/api/cron/materialize-recurring-breaks/route.ts | console.error | recurring_break_materialization_conflict", 1, "db"],
   ["app/api/cron/materialize-recurring-breaks/route.ts | console.error | reminder_scheduler_health_check_threw", 1, "thrown"],
+  ["app/api/twilio/inbound-sms/route.ts | logEvent() | twilio_inbound_non_stop", 1, "value"],
+  ["app/api/twilio/inbound-sms/route.ts | logEvent() | twilio_inbound_stop_no_digits", 1, "value"],
+  ["app/api/twilio/inbound-sms/route.ts | logEvent() | twilio_inbound_stop_processed", 1, "value"],
   ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_body_read_failed", 1, "thrown"],
   ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_client_scan_failed", 1, "thrown"],
   ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_client_optout_failed", 1, "db"],
@@ -162,12 +200,43 @@ const ERROR_TEXT: ReadonlyArray<readonly [key: string, count: number, kind: Erro
   ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_prospect_optout_failed", 1, "db"],
   ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_audit_insert_failed", 1, "db"],
   ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_prospect_audit_insert_failed", 1, "db"],
+  ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_stop_partial_optout_failed", 1, "value"],
   ["app/api/twilio/message-status/route.ts | logEvent() | twilio_status_recorded", 1, "db_result"],
+  ["app/book/[slug]/actions.ts | console.error | waitlist_invitation_booking_outcome_indeterminate", 1, "value"],
+  ["app/book/[slug]/actions.ts | console.error | waitlist_invitation_consumed_without_booking", 1, "value"],
   ["app/book/[slug]/actions.ts | console.error | booking_slot_rejected", 1, "db_result"],
+  ["app/book/[slug]/actions.ts | console.error | booking_slot_collision", 1, "value"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | public_slots_service_lookup_failed", 1, "value"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | public_slots_availability_read_failed", 1, "value"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | public_next_available_service_lookup_failed", 1, "value"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | public_next_available_range_read_failed", 1, "value"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | public_booking_advisory_read_failed", 1, "value"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | public_booking_client_lookup_failed", 1, "value"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | public_booking_sms_consent_update_failed", 1, "value"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | public_booking_app_origin_unresolved", 1, "value"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | public_booking_archived_client_collision", 1, "value"],
   ["app/book/[slug]/actions.ts | logInternalBookingError() | public_booking_client_not_resolved", 1, "db_result"],
   ["app/book/[slug]/actions.ts | logInternalBookingError() | public_booking_command_refused", 1, "db_result"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | public_booking_insert_failed", 1, "value"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | unknown", 1, "value"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | public_booking_practitioner_lookup_failed", 1, "value"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | public_booking_marketing_consent_insert_failed", 1, "value"],
   ["app/book/[slug]/actions.ts | invitationConsumedWithoutBooking() | created", 1, "db_result"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_client_email_not_accepted", 1, "value"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_client_email_threw", 1, "value"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_join_ack_sms_threw", 1, "value"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_admin_client_unavailable", 1, "value"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_command_not_deployed", 1, "value"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_command_threw", 1, "value"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_duplicate_submission", 1, "value"],
   ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_command_refused", 1, "db_result"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_no_studio_recipient", 2, "value"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_studio_email_not_accepted", 1, "value"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_studio_email_threw", 1, "value"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_joined", 1, "value"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_admission_changed_before_send", 1, "value"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_studio_email_unconfirmed", 1, "value"],
+  ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_studio_email_rejected", 1, "value"],
   ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_studio_lookup_failed", 1, "input"],
   ["app/intake/[token]/actions.ts | console.error | Failed to look up client for intake sync:", 1, "db"],
   ["app/intake/[token]/actions.ts | console.error | Failed to sync intake to client:", 1, "db"],
@@ -178,6 +247,7 @@ const ERROR_TEXT: ReadonlyArray<readonly [key: string, count: number, kind: Erro
   ["app/portal/login/actions.ts | logSanitized() | portal_login_multiple_matches_needs_review", 1, "input"],
   ["app/portal/login/actions.ts | logSanitized() | portal_login_magic_insert_failed", 1, "db"],
   ["app/portal/login/actions.ts | logSanitized() | portal_login_email_send_failed", 1, "provider"],
+  ["app/portal/login/actions.ts | logSanitized() | portal_login_request_match", 1, "value"],
   ["app/portal/portal-message-actions.ts | console.error | portal_message_mark_reviewed_failed", 1, "db"],
   ["app/portal/portal-message-actions.ts | console.error | portal_reply_client_lookup_failed", 1, "db"],
   ["app/portal/portal-message-actions.ts | console.error | portal_reply_parent_lookup_failed", 1, "db"],
@@ -185,26 +255,63 @@ const ERROR_TEXT: ReadonlyArray<readonly [key: string, count: number, kind: Erro
   ["app/portal/portal-message-actions.ts | console.error | portal_reply_studio_lookup_failed", 1, "db"],
   ["app/portal/portal-message-actions.ts | console.error | portal_reply_email_send_failed", 1, "provider"],
   ["app/portal/portal-message-actions.ts | console.error | portal_reply_notification_stamp_failed", 1, "db"],
+  ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_client_lookup_failed", 1, "value"],
+  ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_studio_lookup_failed", 1, "value"],
+  ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_readiness_read_failed", 1, "value"],
+  ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_service_read_failed", 1, "value"],
+  ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_slot_read_failed", 1, "value"],
+  ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_next_available_read_failed", 1, "value"],
+  ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_advisory_read_failed", 1, "value"],
+  ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_app_origin_unresolved", 1, "value"],
   ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_slot_rejected", 1, "db_result"],
   ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_commit_refused", 1, "db_result"],
+  ["app/portal/rebook-actions.ts | logRebookError() | unknown", 1, "value"],
+  ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_practitioner_lookup_failed", 1, "value"],
+  ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_no_client_email_on_file", 1, "value"],
+  ["app/reschedule/[token]/actions.ts | console.error | booking_slot_collision", 1, "value"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_assert_lookup_failed", 1, "db"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_fetch_summary_failed", 1, "db"],
+  ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_slots_read_failed", 1, "value"],
+  ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_studio_lookup_failed", 1, "value"],
+  ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_client_metadata_unavailable", 1, "value"],
+  ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_app_origin_unresolved", 1, "value"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_rpc_failed", 1, "db"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_command_unmapped_code", 1, "db_result"],
+  ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_malformed_success_row", 1, "value"],
+  ["app/reschedule/[token]/actions.ts | logInternal() | unknown", 1, "value"],
+  ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_practitioner_lookup_failed", 1, "value"],
   ["lib/billing/payment-receipt.ts | logInternal() | payment_receipt_pdf_failed", 1, "closed"],
   ["lib/billing/payment-receipt.ts | logInternal() | {args}", 1, "db"],
   ["lib/billing/payment-receipt.ts | logInternal() | payment_receipt_claim_failed", 1, "db"],
   ["lib/billing/payment-receipt.ts | logInternal() | payment_receipt_sent_record_update_failed", 1, "db"],
+  ["lib/notifications/practitioner-notifications.ts | logSilently() | practitioner_notification_invalid_event_type", 1, "value"],
   ["lib/notifications/practitioner-notifications.ts | logSilently() | practitioner_notification_insert_failed", 1, "db"],
   ["lib/notifications/practitioner-notifications.ts | logSilently() | practitioner_notification_insert_threw", 1, "thrown"],
+  ["lib/ops/alert-email.ts | console.error | ops_alert_email_send_failed", 1, "value"],
+  ["lib/ops/alert-email.ts | console.error | ops_alert_email_threw", 1, "value"],
   ["lib/portal-messages/queries.ts | console.error | portal_messages_for_practitioner_failed", 1, "db"],
   ["lib/portal-messages/replies-queries.ts | console.error | portal_message_replies_for_practitioner_failed", 1, "db"],
+  ["lib/portal/magic-link.ts | safeLog.error | portal_magic_link_insert_failed", 1, "value"],
+  ["lib/portal/magic-link.ts | console.error | portal_magic_link_email_failed", 1, "value"],
+  ["lib/portal/magic-link.ts | safeLog.info | portal_magic_link_sent", 1, "value"],
   ["lib/rate-limit/public.ts | console.error | ratelimit_backend_unavailable", 1, "thrown"],
+  ["lib/rate-limit/public.ts | logBackendUnavailable() | {args}", 1, "value"],
+  ["lib/rate-limit/public.ts | logRateLimitExceeded() | public_book", 2, "value"],
+  ["lib/rate-limit/public.ts | logRateLimitExceeded() | {args}", 1, "value"],
+  ["lib/rate-limit/public.ts | logRateLimitExceeded() | ip", 1, "value"],
+  ["lib/rate-limit/public.ts | logRateLimitExceeded() | email", 1, "value"],
+  ["lib/rate-limit/public.ts | logRateLimitExceeded() | new_client_waitlist", 2, "value"],
+  ["lib/rate-limit/public.ts | logRateLimitExceeded() | portal_login", 2, "value"],
+  ["lib/rate-limit/public.ts | logRateLimitExceeded() | waitlist_proof", 2, "value"],
+  ["lib/sms/delivery-ledger.ts | logLedger() | sms_ledger_begin_failed", 2, "value"],
+  ["lib/sms/delivery-ledger.ts | logLedger() | sms_ledger_settle_failed", 3, "value"],
   ["lib/sms/delivery-ledger.ts | logLedger() | sms_ledger_settle_refused", 1, "db_result"],
+  ["lib/sms/send-appointment.ts | safeLog.info | sms_sent", 2, "value"],
   ["lib/waitlist/delivery/join-ack-sms.ts | log() | not_claimed", 1, "db_result"],
   ["lib/waitlist/delivery/join-ack-sms.ts | log() | {outcome}", 1, "closed"],
   ["lib/waitlist/delivery/sms.ts | log() | not_claimed", 1, "db_result"],
   ["lib/waitlist/delivery/sms.ts | log() | {outcome}", 1, "closed"],
+  ["lib/waitlist/operator-queue-presence.ts | console.error | waitlist_nav_presence_failed", 1, "value"],
 ];
 
 // Exported functions that write one of their own parameters whole, so their
@@ -278,22 +385,27 @@ describe("MSG-007 log census: every writer is classified", () => {
     expect(drift, `unclassified or removed log writers:\n${drift.join("\n")}`).toEqual([]);
   });
 
-  it("raw error text reaches the log only where ERROR_TEXT lists it", () => {
+  it("a writer with any unproven part is listed in UNPROVEN, and only those are", () => {
     const actual = new Map<string, number>();
-    for (const w of writers) if (w.errorText.length > 0) actual.set(keyOf(w), (actual.get(keyOf(w)) ?? 0) + 1);
-    const pinned = new Map(ERROR_TEXT.map(([key, count]) => [key, count]));
+    for (const w of writers) if (w.unproven.length > 0) actual.set(keyOf(w), (actual.get(keyOf(w)) ?? 0) + 1);
+    const pinned = new Map(UNPROVEN.map(([key, count]) => [key, count]));
     const drift: string[] = [];
     for (const key of new Set([...actual.keys(), ...pinned.keys()])) {
       if (actual.get(key) !== pinned.get(key)) {
-        const sites = writers.filter((w) => keyOf(w) === key).map((w) => `${where(w)}  [${w.errorText.join(", ")}]`);
+        const sites = writers.filter((w) => keyOf(w) === key).map((w) => `${where(w)}  [${w.unproven.join(", ")}]`);
         drift.push(`${key}: pinned ${pinned.get(key) ?? 0}, found ${actual.get(key) ?? 0}\n    ${sites.join("\n    ")}`);
       }
     }
-    expect(drift, `error text not in ERROR_TEXT (or a listed row is gone):\n${drift.join("\n")}`).toEqual([]);
+    expect(drift, `unproven writers not in UNPROVEN (or a listed row is gone):\n${drift.join("\n")}`).toEqual([]);
   });
 
-  it("ERROR_TEXT has no duplicate rows", () => {
-    const keys = ERROR_TEXT.map(([key]) => key);
+  it("every writer with raw error text is an UNPROVEN row", () => {
+    const missing = writers.filter((w) => w.errorText.length > 0 && w.unproven.length === 0).map(where);
+    expect(missing).toEqual([]);
+  });
+
+  it("UNPROVEN has no duplicate rows", () => {
+    const keys = UNPROVEN.map(([key]) => key);
     expect(new Set(keys).size).toBe(keys.length);
   });
 });
@@ -314,14 +426,41 @@ describe("MSG-007 log census: no writer carries a destination, link or token", (
     expect(bad).toEqual([]);
   });
 
-  it("no writer writes a value the census cannot see into", () => {
-    const bad = writers.flatMap((w) => w.opaque.map((o) => `${o} in ${where(w)}`));
-    expect(bad).toEqual([]);
-  });
-
   it("every forwarding helper is file-local, so its callers are followed, or is listed in UNFOLLOWABLE", () => {
     const found = [...census].flatMap(([file, c]) => c.unfollowable.map((u) => `${file}: ${u}`)).sort();
     expect(found).toEqual(Object.keys(UNFOLLOWABLE).sort());
+  });
+});
+
+describe("MSG-007 log census: the default-deny allowlist is pinned", () => {
+  it("ALLOWED_SHAPES is exactly this list: adding a shape is a deliberate change", () => {
+    expect(Object.keys(ALLOWED_SHAPES)).toEqual([
+      "string-literal",
+      "number-literal",
+      "boolean-literal",
+      "nullish",
+      "template",
+      "object-literal",
+      "array-literal",
+      "conditional",
+      "pass-operator",
+      "right-operator",
+      "scalar-operator",
+      "date",
+      "stringify",
+      "const-resolved",
+      "closed-type",
+      "verified-function",
+      "array-length",
+    ]);
+  });
+
+  it("VERIFIED_FUNCTIONS is exactly this list", () => {
+    expect(Object.keys(VERIFIED_FUNCTIONS).sort()).toEqual([
+      "Math.min", "currentEnvironment", "eligibilitySkip", "emailAttemptForLog", "emailTypeForLog",
+      "environmentLabel", "errorCodeOf", "hashFingerprint", "hashId", "missingSuccessFields",
+      "normalizeTwilioMessageStatus", "retryAfterSeconds", "smsAttemptForLog", "smsFailureForLog", "smsTypeForLog",
+    ]);
   });
 });
 
@@ -440,54 +579,80 @@ describe("MSG-007 log census: the analyzer catches what it must", () => {
     expect(ws[1].errorText).toContain("err.message");
   });
 
-  // --- FAIL CLOSED: one control per branch (Codex P2 4368062287) ---
+  // --- DEFAULT-DENY (Codex P2 4368062287, 4368117155) ---
 
-  it("a constructor other than Date is not trusted, and its arguments are read", () => {
+  it("a local property read is resolved to its initializer, or is unproven (Codex P2 4368117155)", () => {
+    const { writers: ws } = analyze(`
+      export function z(input: { reason: string }) {
+        const diagnostic = { reason: "https://leak.example.test/manage/abcdef123456" };
+        const fixed = { stage: "claim" };
+        console.error(JSON.stringify({ event: "a", reason: diagnostic.reason }));
+        console.error(JSON.stringify({ event: "b", stage: fixed.stage }));
+        console.error(JSON.stringify({ event: "c", reason: input.reason }));
+      }`);
+    // Resolved: the URL it holds is read as written and the literal rule catches it.
+    expect(ws[0].literals.map(literalViolation).filter(Boolean)).toEqual(["a link"]);
+    expect(ws[1].unproven).toEqual([]);
+    expect(ws[2].unproven).toEqual(["property input.reason"]);
+  });
+
+  it("a constructor other than Date is unproven, and its arguments are read", () => {
     const { writers: ws } = analyze(`
       export function q() {
         console.error(JSON.stringify({ event: "a", context: new URL("https://leak.example.test/manage/abcdef123456") }));
-        console.error(JSON.stringify({ event: "b", at: new Date() }));
+        console.error(JSON.stringify({ event: "b", at: new Date(), ts: new Date().toISOString() }));
         console.error(JSON.stringify({ event: "c", failure: new Error("boom") }));
       }`);
-    expect(ws[0].errorText).toEqual(["unresolved new URL"]);
+    expect(ws[0].unproven).toEqual(["new URL"]);
     expect(ws[0].literals.map(literalViolation).filter(Boolean)).toEqual(["a link"]);
-    expect(ws[1].errorText).toEqual([]);
+    expect(ws[1].unproven).toEqual([]);
+    expect(ws[2].unproven).toEqual(["new Error"]);
     expect(ws[2].errorText).toEqual(["new Error"]);
   });
 
-  it("a call's result is unresolved unless its function is verified", () => {
+  it("a call's result is unproven unless its function is verified", () => {
     const { writers: ws } = analyze(`
       function currentEnvironment(): string { return "x"; }
       export function r(a: string) {
         console.error(JSON.stringify({ event: "a", line: buildLine(a) }));
         console.error(JSON.stringify({ event: "b", environment: currentEnvironment() }));
       }`);
-    expect(ws[0].errorText).toEqual(["unresolved call buildLine()"]);
-    expect(ws[1].errorText).toEqual([]);
+    expect(ws[0].unproven).toEqual(["call buildLine()"]);
+    expect(ws[1].unproven).toEqual([]);
   });
 
   it("a ForLog-shaped name is not trusted unless verified", () => {
     const { writers: ws } = analyze(`
       export function s(err: Error) { console.error(JSON.stringify({ event: "a", f: madeUpForLog(err.message) })); }`);
     // Its input may be embedded in what it returns, and its result is not known.
-    expect(ws[0].errorText).toEqual(["err.message", "unresolved call madeUpForLog()"]);
+    expect(ws[0].errorText).toEqual(["err.message"]);
+    expect(ws[0].unproven).toEqual(["call madeUpForLog()"]);
   });
 
-  it("a container-named value that cannot be followed is unresolved, a descriptive one is judged by name", () => {
+  it("any identifier not resolved to an allowed shape is unproven, whatever its name", () => {
     const { writers: ws } = analyze(`
-      export async function t(db: any) {
+      export async function t(db: any, smsType: "confirmation" | "reminder_24h", studioId: string) {
         let detail = await db.read();
-        const { data } = await db.rpc("x");
         const { outcome } = await db.rpc("y");
-        console.error(JSON.stringify({ event: "a", detail, result: data, code: data.result, outcome }));
+        const code = "fixed_code";
+        console.error(JSON.stringify({ event: "a", detail, outcome, studioId, smsType, code }));
       }`);
-    expect(ws[0].errorText).toEqual(["unresolved let detail", "unresolved binding data", "unresolved property data.result"]);
+    expect(ws[0].unproven).toEqual(["let detail", "binding outcome", "param studioId"]);
   });
 
   it("a caught value is error text whatever it is called", () => {
     const { writers: ws } = analyze(`
       export async function u(f: () => Promise<void>) { try { await f(); } catch (problem) { console.error(String(problem)); } }`);
     expect(ws[0].errorText).toEqual(["problem"]);
+    expect(ws[0].unproven).toEqual(["caught problem"]);
+  });
+
+  it("an element access, a computed key and a spread of an unproven value are unproven", () => {
+    const { writers: ws } = analyze(`
+      export function k2(rows: string[], key: string, extra: object) {
+        console.error(JSON.stringify({ event: "a", first: rows[0], [key]: 1, ...extra }));
+      }`);
+    expect(ws[0].unproven).toEqual(["element rows[0]", "object member [key]: 1", "param extra"]);
   });
 
   it("the comma and assignment operators write their right side", () => {
