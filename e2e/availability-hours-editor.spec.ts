@@ -1,7 +1,8 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page, type Route } from "@playwright/test";
 import { seedE2eStudio, getStudioWeeklyDefaults, type E2eSeed } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
+import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 
 // HON-62 — the weekly-hours "Opens"/"Closes" fields on Settings >
 // Availability (the onboarding "Configure availability" step lands here) were
@@ -45,17 +46,71 @@ test.beforeAll(async () => {
   seed = await seedE2eStudio();
 });
 
-test("an owner types Monday's hours with the keyboard, saves, and they survive a reload", async ({
-  page,
-}) => {
-  await loginAsOwner(page, seed);
-  await page.goto("/settings/availability");
-  await openDay(page, "Monday");
+// WebKit only (#1094, runs 40077309473 and 40078281596): after the http
+// /login document, WebKit fetched every relative /_next/static chunk, CSS
+// file and font as https://localhost and failed the TLS handshake, so the
+// page never hydrated. That response carries both the app CSP's
+// upgrade-insecure-requests and Strict-Transport-Security, and bypassCSP did
+// not stop it, so the test browser strips both from document responses.
+// Chromium registers no route at all; the app's headers are unchanged
+// everywhere else.
+//
+// route.fetch() issues the request itself, so only requests that are safe to
+// send twice are fetched: GET documents on the app origin outside /auth/.
+// The magic-link hops (GoTrue's /auth/v1/verify and the app's /auth/callback)
+// carry single-use tokens and are never fetched (run 40083395180). A 3xx
+// cannot be fulfilled in WebKit, so it is continued unmodified instead.
+const APP_ORIGIN = new URL(E2E_APP_ORIGIN).origin;
 
-  const opens = page.getByLabel("Monday opens");
-  const closes = page.getByLabel("Monday closes");
-  await expect(opens).toHaveAttribute("type", "time");
+async function withoutHttpsUpgrade(route: Route) {
+  const request = route.request();
+  if (request.resourceType() !== "document" || request.method() !== "GET") return route.fallback();
+  const url = new URL(request.url());
+  if (url.origin !== APP_ORIGIN || url.pathname.startsWith("/auth/")) return route.fallback();
+  const response = await route.fetch({ maxRedirects: 0 });
+  if (response.status() >= 300 && response.status() < 400) return route.continue();
+  const headers = { ...response.headers() };
+  delete headers["strict-transport-security"];
+  const csp = headers["content-security-policy"];
+  if (csp !== undefined) {
+    headers["content-security-policy"] = csp
+      .split(";")
+      .map((d) => d.trim())
+      .filter((d) => d !== "" && d !== "upgrade-insecure-requests")
+      .join("; ");
+  }
+  return route.fulfill({ response, headers });
+}
 
+test.beforeEach(async ({ context, browserName }) => {
+  if (browserName !== "webkit") return;
+  await context.route("**/*", withoutHttpsUpgrade);
+});
+
+// WebKit only (run 40084710495): a route handler runs only for the FIRST URL
+// of a redirect chain, so the /dashboard document that /auth/callback's 307
+// lands on reached WebKit unstripped, still carrying upgrade-insecure-requests.
+// Every localhost load was https from then on, even under the stripped
+// /settings/availability document that followed. (The /login page's ~20 http
+// responses carrying HSTS upgraded nothing, so HSTS was not the trigger.) So in
+// WebKit the magic link is followed by the context's request API: its
+// cookies land in the browser context and no redirect target is ever a
+// document. Chromium signs in exactly as before.
+async function signIn(page: Page, browserName: string) {
+  if (browserName !== "webkit") return loginAsOwner(page, seed);
+  await page.goto("/login");
+  await page.getByLabel("I am using my invited email address").check();
+  await page.locator("#login-email").fill(seed.ownerEmail);
+  const seen = await listMessageIds(seed.ownerEmail);
+  await page.getByRole("button", { name: /send magic link/i }).click();
+  const link = await waitForMagicLink(seed.ownerEmail, E2E_APP_ORIGIN, { excludeIds: seen });
+  const landed = await page.context().request.get(link);
+  expect(new URL(landed.url()).pathname, "the magic link signs in and lands on /dashboard").toBe("/dashboard");
+}
+
+// The Chromium keystrokes, unchanged: Chromium moves to the next segment after
+// two digits.
+async function typeMondayChromium(page: Page, opens: Locator, closes: Locator) {
   // Keyboard only: focus the field and type into its segments (en-US hh mm
   // AM/PM in both Chromium and WebKit).
   await opens.focus();
@@ -64,6 +119,42 @@ test("an owner types Monday's hours with the keyboard, saves, and they survive a
   await page.keyboard.type("0445PM");
   await expect(opens).toHaveValue("08:30");
   await expect(closes).toHaveValue("16:45");
+}
+
+// WebKit (Safari and Linux GTK/WPE alike) does NOT advance after two digits: a
+// third digit restarts the same segment, and only ArrowRight moves on (WebKit
+// DateTimeNumericFieldElement + LayoutTests time-editable-components-keyboard-
+// events). The meridiem is never typed: 06:00 AM and 10:00 PM already carry the
+// right one, and this Linux build adds a seconds segment Safari does not show.
+// The 08:00 checkpoint separates "keys never reach the segment" from a wrong
+// sequence (HON-62-R6-CLASSIFY).
+async function typeMondayWebKit(page: Page, opens: Locator, closes: Locator) {
+  await opens.focus();
+  await page.keyboard.type("08");
+  await expect(opens, "key delivery checkpoint: the hour segment took '08'").toHaveValue("08:00");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.type("30");
+  await expect(opens).toHaveValue("08:30");
+  await closes.focus();
+  await page.keyboard.type("04");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.type("45");
+  await expect(closes).toHaveValue("16:45");
+}
+
+test("an owner types Monday's hours with the keyboard, saves, and they survive a reload", async ({
+  page,
+  browserName,
+}) => {
+  await signIn(page, browserName);
+  await page.goto("/settings/availability");
+  await openDay(page, "Monday");
+
+  const opens = page.getByLabel("Monday opens");
+  const closes = page.getByLabel("Monday closes");
+  await expect(opens).toHaveAttribute("type", "time");
+
+  await (browserName === "webkit" ? typeMondayWebKit : typeMondayChromium)(page, opens, closes);
 
   await page.getByRole("button", { name: /^Save$/ }).click();
   await expect
@@ -78,8 +169,9 @@ test("an owner types Monday's hours with the keyboard, saves, and they survive a
 
 test("re-saving an existing day without an edit leaves the stored week unchanged", async ({
   page,
+  browserName,
 }) => {
-  await loginAsOwner(page, seed);
+  await signIn(page, browserName);
   await page.goto("/settings/availability");
   await page.getByRole("button", { name: /Weekdays 10/ }).click();
   await page.getByRole("button", { name: /^Replace$/ }).click();
@@ -100,8 +192,8 @@ test("re-saving an existing day without an edit leaves the stored week unchanged
 test.describe("touch", () => {
   test.use({ hasTouch: true, viewport: { width: 834, height: 1194 } });
 
-  test("a tap reaches the hour field and focuses it; nothing overlays it", async ({ page }) => {
-    await loginAsOwner(page, seed);
+  test("a tap reaches the hour field and focuses it; nothing overlays it", async ({ page, browserName }) => {
+    await signIn(page, browserName);
     await page.goto("/settings/availability");
     await page.getByRole("button", { name: "Edit Wednesday" }).tap();
     const opens = page.getByLabel("Wednesday opens");
