@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Locator } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import {
   seedE2eStudio,
@@ -10,6 +10,22 @@ import {
   type E2eSeed,
 } from "./helpers/seed";
 import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
+
+// CLN-006 "focus outside re-enters": put focus on a real, visible control
+// OUTSIDE the dialog (the state a stray click or script leaves behind), and
+// prove it left the dialog before the next key is pressed.
+async function focusOutsideDialog(dialog: Locator) {
+  const moved = await dialog.evaluate((dlg) => {
+    const outside = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).find((el) => !dlg.contains(el) && el.offsetParent !== null);
+    outside?.focus();
+    return outside !== undefined && document.activeElement === outside && !dlg.contains(document.activeElement);
+  });
+  expect(moved, "focus moved to a control outside the dialog").toBe(true);
+}
 
 // FETT photos (#892, HON-43). Mounted proofs on the treatment-photo surface,
 // with SYNTHETIC rows only.
@@ -135,6 +151,13 @@ test.describe("FETT photos: touch floor, mounted at phone width", () => {
     await expect(lastPreviewControl).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(firstPreviewControl).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(lastPreviewControl).toBeFocused();
+    // Focus outside re-enters: Tab lands on the first control, Shift+Tab on the last.
+    await focusOutsideDialog(dialog);
+    await page.keyboard.press("Tab");
+    await expect(firstPreviewControl).toBeFocused();
+    await focusOutsideDialog(dialog);
     await page.keyboard.press("Shift+Tab");
     await expect(lastPreviewControl).toBeFocused();
     await page.keyboard.press("Escape");
