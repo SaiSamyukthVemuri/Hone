@@ -29,6 +29,9 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
   // True when the last search could not be answered: shown as unavailable,
   // never as "No results found." (DAT-002).
   const [failed, setFailed] = useState(false);
+  // True when the client scan stopped at its bound: the client results are the
+  // first matches, so the panel says so instead of presenting them as all.
+  const [clientsTruncated, setClientsTruncated] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -63,6 +66,7 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
       if (cancelled) return;
       setLoading(false);
       setFailed(!response?.ok);
+      setClientsTruncated(response?.ok === true && response.clientsTruncated === true);
       setResults(response?.ok ? response.results : []);
     }, 250);
     return () => {
@@ -239,7 +243,7 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
           <p>Search could not be loaded.</p>
           <p className="mt-1 text-xs">Try again in a moment.</p>
         </div>
-      ) : groups.length === 0 ? (
+      ) : groups.length === 0 && !clientsTruncated ? (
         <div className="px-3 py-3 text-neutral-500">
           <p>No results found.</p>
           <p className="mt-1 text-xs">
@@ -248,38 +252,45 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
           </p>
         </div>
       ) : (
-        groups.map((group) => (
-          <div key={group.label} className="mb-1">
-            <p className="px-3 pb-0.5 pt-1.5 text-[11px] font-medium uppercase tracking-wider text-neutral-500">
-              {group.label}
+        <>
+          {clientsTruncated && (
+            <p role="status" className="px-3 py-1.5 text-xs text-neutral-500">
+              Showing the first client matches. Refine your search to find more.
             </p>
-            {group.results.map((result) => (
-              <Link
-                key={result.id}
-                href={result.href}
-                onClick={(e) => navigate(e, result.href, result.title)}
-                className="flex min-h-[44px] flex-col justify-center rounded-md px-3 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-900"
-              >
-                <span className="flex items-baseline justify-between gap-2">
-                  <span className="truncate font-medium">{result.title}</span>
-                  <span className="flex shrink-0 items-center gap-1.5 text-xs text-neutral-500">
-                    {result.badge && (
-                      <span className="rounded-full bg-neutral-100 px-1.5 py-0.5 capitalize dark:bg-neutral-900">
-                        {result.badge.replace("_", " ")}
-                      </span>
-                    )}
-                    {result.date}
+          )}
+          {groups.map((group) => (
+            <div key={group.label} className="mb-1">
+              <p className="px-3 pb-0.5 pt-1.5 text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+                {group.label}
+              </p>
+              {group.results.map((result) => (
+                <Link
+                  key={result.id}
+                  href={result.href}
+                  onClick={(e) => navigate(e, result.href, result.title)}
+                  className="flex min-h-[44px] flex-col justify-center rounded-md px-3 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                >
+                  <span className="flex items-baseline justify-between gap-2">
+                    <span className="truncate font-medium">{result.title}</span>
+                    <span className="flex shrink-0 items-center gap-1.5 text-xs text-neutral-500">
+                      {result.badge && (
+                        <span className="rounded-full bg-neutral-100 px-1.5 py-0.5 capitalize dark:bg-neutral-900">
+                          {result.badge.replace("_", " ")}
+                        </span>
+                      )}
+                      {result.date}
+                    </span>
                   </span>
-                </span>
-                {result.subtitle && (
-                  <span className="truncate text-xs text-neutral-500">
-                    {result.subtitle}
-                  </span>
-                )}
-              </Link>
-            ))}
-          </div>
-        ))
+                  {result.subtitle && (
+                    <span className="truncate text-xs text-neutral-500">
+                      {result.subtitle}
+                    </span>
+                  )}
+                </Link>
+              ))}
+            </div>
+          ))}
+        </>
       )}
       {query.length > 0 && query.length < SEARCH_MIN_CHARS && (
         <p className="px-3 pb-1 text-xs text-neutral-400">
