@@ -1166,6 +1166,27 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     expect(SPEC).not.toMatch(/page\.goto\(link\)/);
     expect((SPEC.match(/await signIn\(page, browserName\);/g) ?? []).length).toBe(3);
     expect((SPEC.match(/loginAsOwner\(/g) ?? []).length).toBe(1);
+    // HON-62-R6-CLASSIFY: WebKit does not auto-advance time segments, so it
+    // gets its own keystrokes; the Chromium keystrokes are the original
+    // lines, byte for byte, and only browserName chooses between them.
+    expect(SPEC).toContain(
+      [
+        "async function typeMondayChromium(page: Page, opens: Locator, closes: Locator) {",
+        "  // Keyboard only: focus the field and type into its segments (en-US hh mm",
+        "  // AM/PM in both Chromium and WebKit).",
+        "  await opens.focus();",
+        '  await page.keyboard.type("0830AM");',
+        "  await closes.focus();",
+        '  await page.keyboard.type("0445PM");',
+        '  await expect(opens).toHaveValue("08:30");',
+        '  await expect(closes).toHaveValue("16:45");',
+        "}",
+      ].join("\n"),
+    );
+    expect(SPEC).toContain('await (browserName === "webkit" ? typeMondayWebKit : typeMondayChromium)(page, opens, closes);');
+    const webkitTyping = SPEC.slice(SPEC.indexOf("async function typeMondayWebKit("), SPEC.indexOf("\n}\n", SPEC.indexOf("async function typeMondayWebKit(")));
+    expect(webkitTyping).toMatch(/type\("08"\);\s*await expect\(opens, [^)]*\)\.toHaveValue\("08:00"\);\s*await page\.keyboard\.press\("ArrowRight"\);\s*await page\.keyboard\.type\("30"\);/);
+    expect(webkitTyping).not.toMatch(/AM|PM/);
   });
 
   it("its hard timeout exceeds the ~10 min target plus the bounded 6 min install", () => {

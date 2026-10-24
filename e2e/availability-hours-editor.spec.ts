@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Route } from "@playwright/test";
+import { test, expect, type Locator, type Page, type Route } from "@playwright/test";
 import { seedE2eStudio, getStudioWeeklyDefaults, type E2eSeed } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
@@ -108,6 +108,40 @@ async function signIn(page: Page, browserName: string) {
   expect(new URL(landed.url()).pathname, "the magic link signs in and lands on /dashboard").toBe("/dashboard");
 }
 
+// The Chromium keystrokes, unchanged: Chromium moves to the next segment after
+// two digits.
+async function typeMondayChromium(page: Page, opens: Locator, closes: Locator) {
+  // Keyboard only: focus the field and type into its segments (en-US hh mm
+  // AM/PM in both Chromium and WebKit).
+  await opens.focus();
+  await page.keyboard.type("0830AM");
+  await closes.focus();
+  await page.keyboard.type("0445PM");
+  await expect(opens).toHaveValue("08:30");
+  await expect(closes).toHaveValue("16:45");
+}
+
+// WebKit (Safari and Linux GTK/WPE alike) does NOT advance after two digits: a
+// third digit restarts the same segment, and only ArrowRight moves on (WebKit
+// DateTimeNumericFieldElement + LayoutTests time-editable-components-keyboard-
+// events). The meridiem is never typed: 06:00 AM and 10:00 PM already carry the
+// right one, and this Linux build adds a seconds segment Safari does not show.
+// The 08:00 checkpoint separates "keys never reach the segment" from a wrong
+// sequence (HON-62-R6-CLASSIFY).
+async function typeMondayWebKit(page: Page, opens: Locator, closes: Locator) {
+  await opens.focus();
+  await page.keyboard.type("08");
+  await expect(opens, "key delivery checkpoint: the hour segment took '08'").toHaveValue("08:00");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.type("30");
+  await expect(opens).toHaveValue("08:30");
+  await closes.focus();
+  await page.keyboard.type("04");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.type("45");
+  await expect(closes).toHaveValue("16:45");
+}
+
 test("an owner types Monday's hours with the keyboard, saves, and they survive a reload", async ({
   page,
   browserName,
@@ -120,14 +154,7 @@ test("an owner types Monday's hours with the keyboard, saves, and they survive a
   const closes = page.getByLabel("Monday closes");
   await expect(opens).toHaveAttribute("type", "time");
 
-  // Keyboard only: focus the field and type into its segments (en-US hh mm
-  // AM/PM in both Chromium and WebKit).
-  await opens.focus();
-  await page.keyboard.type("0830AM");
-  await closes.focus();
-  await page.keyboard.type("0445PM");
-  await expect(opens).toHaveValue("08:30");
-  await expect(closes).toHaveValue("16:45");
+  await (browserName === "webkit" ? typeMondayWebKit : typeMondayChromium)(page, opens, closes);
 
   await page.getByRole("button", { name: /^Save$/ }).click();
   await expect
