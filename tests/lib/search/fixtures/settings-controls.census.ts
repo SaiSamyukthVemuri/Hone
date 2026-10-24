@@ -264,6 +264,21 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
   },
   {
     page: "/settings/booking",
+    label: "Show the address on",
+    role: "owner",
+    decision: "searchable",
+    entryId: "settings-address-visibility",
+  },
+  {
+    page: "/settings/booking",
+    label: "Arrival and parking instructions",
+    helper: "not on your booking page",
+    role: "owner",
+    decision: "searchable",
+    entryId: "settings-arrival-instructions",
+  },
+  {
+    page: "/settings/booking",
     label: "Booking page intro",
     role: "owner",
     decision: "searchable",

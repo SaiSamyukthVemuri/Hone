@@ -9,6 +9,7 @@ import {
 } from "@/lib/email/templates/intake-reminder";
 import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 import { withReference } from "@/lib/email/subject-reference";
+import { arrivalSectionHtml, arrivalSectionText } from "@/lib/email/templates/arrival";
 
 function escapeHtml(s: string): string {
   return s
@@ -42,6 +43,9 @@ type ReminderProps = {
   clientName: string;
   studioName: string;
   studioAddress: string | null;
+  // HON-50. Studio arrival/parking instructions; blank or omitted renders
+  // no section (lib/email/templates/arrival.ts).
+  arrivalInstructions?: string | null;
   practitionerName: string | null;
   serviceName: string;
   durationMinutes: number;
@@ -112,7 +116,7 @@ function reminderHtml(opts: {
           <strong>${escapeHtml(dayStr)}</strong><br/>
           ${escapeHtml(timeStr)} (${escapeHtml(p.timezone)})<br/>
           Duration: ${p.durationMinutes} minutes
-          ${safeAddress ? `<br/><br/>${safeAddress}` : ""}
+          ${safeAddress ? `<br/><br/>${safeAddress}` : ""}${arrivalSectionHtml(p.arrivalInstructions)}
           ${p.treatmentTimeLine ? `<br/><br/><span style="font-family:Georgia, serif; font-style:italic; color:#6B6B6B;">${escapeHtml(p.treatmentTimeLine)}</span>` : ""}
         </td></tr>
         ${
@@ -211,7 +215,7 @@ ${p.serviceName}${p.practitionerName ? ` with ${p.practitionerName}` : ""} at ${
 ${dayStr}
 ${timeStr} (${p.timezone})
 Duration: ${p.durationMinutes} minutes
-${p.studioAddress ? `\n${p.studioAddress}\n` : ""}
+${p.studioAddress ? `\n${p.studioAddress}\n` : ""}${arrivalSectionText(p.arrivalInstructions)}
 ${p.treatmentTimeLine ? `\n${p.treatmentTimeLine}\n` : ""}
 ${intake && p.intakeUrl ? `\n${intake.heading}\n\n${intake.body}\n\n${INTAKE_CTA_LABEL}: ${p.intakeUrl}\n\n${INTAKE_IGNORE_LINE}\n` : ""}
 ${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\n` : ""}

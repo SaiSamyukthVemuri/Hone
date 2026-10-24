@@ -9,6 +9,10 @@ import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
 import { BookingLinkCard } from "./BookingLinkCard";
 import { SaveButton } from "./SaveButton";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import {
+  ARRIVAL_INSTRUCTIONS_MAX_LENGTH,
+  addressVisibilityOf,
+} from "@/lib/booking/studio-location";
 
 // Plain option labels for the buffer select. The "Recommended" hint
 // is no longer inlined here because that crowded the select control
@@ -70,6 +74,7 @@ export default async function BookingSettingsPage({
   const errorMessage = Array.isArray(errorParam) ? errorParam[0] : errorParam;
 
   const { practitioner, studio } = await requirePractitionerWithStudio();
+  const hasLocationSettings = "address_visibility" in studio;
   // The studio-owned mode, from the one authority that owns it. UNKNOWN is
   // rendered as its own state below rather than pre-selecting a choice the
   // owner did not make.
@@ -305,6 +310,56 @@ export default async function BookingSettingsPage({
             address after booking.
           </span>
         </label>
+
+        {/* HON-50. Offered only when the studio row carries the two columns
+            (their migration is applied). Before that the form posts neither
+            field, so the save action never writes a column that does not
+            exist yet. */}
+        {hasLocationSettings && (
+          <>
+            <label
+              id="address-visibility"
+              className="flex scroll-mt-24 flex-col gap-1.5"
+            >
+              <span className="text-sm font-medium">Show the address on</span>
+              <select
+                name="address_visibility"
+                defaultValue={addressVisibilityOf(studio)}
+                className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+              >
+                <option value="both">Booking page and appointment emails</option>
+                <option value="booking_page">Booking page only</option>
+                <option value="emails">Appointment emails only</option>
+              </select>
+              <span className="text-xs text-neutral-500">
+                Appointment emails only keeps the address off your public
+                booking page; clients see it once they have booked.
+              </span>
+            </label>
+
+            <label
+              id="arrival-instructions"
+              className="flex scroll-mt-24 flex-col gap-1.5"
+            >
+              <span className="text-sm font-medium">
+                Arrival and parking instructions
+              </span>
+              <textarea
+                name="arrival_instructions"
+                rows={3}
+                maxLength={ARRIVAL_INSTRUCTIONS_MAX_LENGTH}
+                defaultValue={studio.arrival_instructions ?? ""}
+                placeholder="For example: park on the street, ring the side door buzzer."
+                className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
+              />
+              <span className="text-xs text-neutral-500">
+                Shown in clients&rsquo; confirmation, reminder and
+                appointment-update emails, not on your booking page. Leave
+                blank for none.
+              </span>
+            </label>
+          </>
+        )}
 
         <label id="booking-intro" className="flex scroll-mt-24 flex-col gap-1.5">
           <span className="text-sm font-medium">Booking page intro</span>

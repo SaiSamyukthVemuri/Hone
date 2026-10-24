@@ -7,6 +7,13 @@ import { localLongDate, formatTimeForStudio } from "@/lib/booking/tz";
 import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 import { emailBookingReference } from "@/lib/email/booking-reference";
 import { withReference } from "@/lib/email/subject-reference";
+import { ARRIVAL_HEADING, arrivalSectionHtml } from "@/lib/email/templates/arrival";
+import { appointmentEmailAddress, arrivalInstructionsOf } from "@/lib/booking/studio-location";
+
+const MOVED_STUDIO_COLUMNS = "name, timezone, address, owner_email, postcare_contact_email";
+const MOVED_STUDIO_COLUMNS_WITH_LOCATION =
+  "name, timezone, address, address_visibility, arrival_instructions, owner_email, postcare_contact_email";
+const UNDEFINED_COLUMN = "42703";
 
 // Practitioner Move appointment: the NARROW client "appointment updated" notification.
 //
@@ -65,6 +72,8 @@ export function buildAppointmentMovedEmail(p: {
   // HON-50. The studio's public address, as the confirmation and reminders
   // show it. Omitted or null (a home-based studio) adds nothing.
   studioAddress?: string | null;
+  // HON-50. Arrival/parking instructions; blank or omitted adds nothing.
+  arrivalInstructions?: string | null;
   serviceName: string;
   startsAt: Date;
   timezone: string;
@@ -112,6 +121,12 @@ export function buildAppointmentMovedEmail(p: {
     bodyHtml += `<br/><br/>${esc(studioAddress)}`;
     bodyText += `\n\n${studioAddress}`;
   }
+  // HON-50: arrival/parking instructions after the address; blank adds nothing.
+  const arrival = p.arrivalInstructions?.trim() || null;
+  if (arrival) {
+    bodyHtml += arrivalSectionHtml(arrival);
+    bodyText += `\n\n${ARRIVAL_HEADING}:\n${arrival}`;
+  }
 
   // PREVIEW RULE (HIPAA-READY-01, #828): a client that strips the preheader
   // filler previews the first body text, so the body opens with a lead that
@@ -152,14 +167,22 @@ export async function notifyAppointmentMoved(
   },
 ): Promise<MoveNotificationStatus> {
   try {
-    const { data } = await admin
-      .from("appointments")
-      .select(
-        "id, starts_at, client:clients(name, email), service:services(name), studio:studios(name, timezone, address, owner_email, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
-      )
-      .eq("id", input.appointmentId)
-      .eq("studio_id", input.studioId)
-      .maybeSingle();
+    // HON-50. The location columns are read with the row. Before their
+    // migration is applied the embed refuses them (42703, undefined column);
+    // the read is then retried once without them, so the email still sends
+    // exactly as it did before (visibility 'both', no arrival section).
+    const load = (studioCols: string) =>
+      admin
+        .from("appointments")
+        .select(
+          `id, starts_at, client:clients(name, email), service:services(name), studio:studios(${studioCols}), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)`,
+        )
+        .eq("id", input.appointmentId)
+        .eq("studio_id", input.studioId)
+        .maybeSingle();
+    let read = await load(MOVED_STUDIO_COLUMNS_WITH_LOCATION);
+    if (read.error?.code === UNDEFINED_COLUMN) read = await load(MOVED_STUDIO_COLUMNS);
+    const { data } = read;
     if (!data) return "degraded"; // could not re-load the moved appointment
     const row = data as unknown as {
       id: string;
@@ -170,6 +193,8 @@ export async function notifyAppointmentMoved(
         name: string | null;
         timezone: string | null;
         address: string | null;
+        address_visibility?: "booking_page" | "emails" | "both";
+        arrival_instructions?: string | null;
         owner_email: string | null;
         postcare_contact_email: string | null;
       } | null;
@@ -195,7 +220,8 @@ export async function notifyAppointmentMoved(
     const { subject, html: htmlWithPreheader, text } = buildAppointmentMovedEmail({
       kind: input.resultKind ?? "moved",
       studioName,
-      studioAddress: row.studio?.address ?? null,
+      studioAddress: row.studio ? appointmentEmailAddress(row.studio) : null,
+      arrivalInstructions: row.studio ? arrivalInstructionsOf(row.studio) : null,
       serviceName,
       startsAt: start,
       timezone: tz,

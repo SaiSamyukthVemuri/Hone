@@ -6,6 +6,11 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { BUFFER_PRESET_MINUTES } from "@/lib/booking/buffer-presets";
 import { PUBLIC_BOOKING_HORIZON_MONTHS_VALUES } from "@/lib/booking/horizon";
+import {
+  ARRIVAL_INSTRUCTIONS_MAX_LENGTH,
+  isAddressVisibility,
+  type AddressVisibility,
+} from "@/lib/booking/studio-location";
 
 function trimmed(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
@@ -124,6 +129,29 @@ export async function updateStudioBookingPrefsAction(
     const slugRaw = trimmed(formData.get("slug")).toLowerCase();
     const address = nullable(formData.get("address"));
     const bookingDescription = nullable(formData.get("booking_description"));
+    // HON-50. Written only when the form offered them (the page shows the two
+    // controls once their columns exist), so a pre-migration save never names
+    // a column the database does not have.
+    const locationUpdate: {
+      address_visibility?: AddressVisibility;
+      arrival_instructions?: string | null;
+    } = {};
+    if (formData.has("address_visibility")) {
+      const visibility = trimmed(formData.get("address_visibility"));
+      if (!isAddressVisibility(visibility)) {
+        throw new Error("Choose where the address is shown.");
+      }
+      locationUpdate.address_visibility = visibility;
+    }
+    if (formData.has("arrival_instructions")) {
+      const arrival = nullable(formData.get("arrival_instructions"));
+      if (arrival !== null && arrival.length > ARRIVAL_INSTRUCTIONS_MAX_LENGTH) {
+        throw new Error(
+          `Arrival and parking instructions must be ${ARRIVAL_INSTRUCTIONS_MAX_LENGTH} characters or fewer.`,
+        );
+      }
+      locationUpdate.arrival_instructions = arrival;
+    }
 
     if (!SLUG_RE.test(slugRaw)) {
       throw new Error(
@@ -148,6 +176,7 @@ export async function updateStudioBookingPrefsAction(
         address,
         booking_description: bookingDescription,
         public_booking_horizon_months: publicBookingHorizonMonths,
+        ...locationUpdate,
       })
       .eq("id", studioId);
     if (error) {
