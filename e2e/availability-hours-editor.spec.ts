@@ -51,12 +51,23 @@ test.beforeAll(async () => {
 // page never hydrated. That response carries both the app CSP's
 // upgrade-insecure-requests and Strict-Transport-Security, and bypassCSP did
 // not stop it, so the test browser strips both from document responses.
-// Redirects pass through unmodified. Chromium registers no route at all; the
-// app's headers are unchanged everywhere else.
+// Chromium registers no route at all; the app's headers are unchanged
+// everywhere else.
+//
+// route.fetch() issues the request itself, so only requests that are safe to
+// send twice are fetched: GET documents on the app origin outside /auth/.
+// The magic-link hops (GoTrue's /auth/v1/verify and the app's /auth/callback)
+// carry single-use tokens and are never fetched (run 40083395180). A 3xx
+// cannot be fulfilled in WebKit, so it is continued unmodified instead.
+const APP_ORIGIN = new URL(E2E_APP_ORIGIN).origin;
+
 async function withoutHttpsUpgrade(route: Route) {
-  if (route.request().resourceType() !== "document") return route.fallback();
+  const request = route.request();
+  if (request.resourceType() !== "document" || request.method() !== "GET") return route.fallback();
+  const url = new URL(request.url());
+  if (url.origin !== APP_ORIGIN || url.pathname.startsWith("/auth/")) return route.fallback();
   const response = await route.fetch({ maxRedirects: 0 });
-  if (response.status() >= 300 && response.status() < 400) return route.fulfill({ response });
+  if (response.status() >= 300 && response.status() < 400) return route.continue();
   const headers = { ...response.headers() };
   delete headers["strict-transport-security"];
   const csp = headers["content-security-policy"];

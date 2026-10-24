@@ -1147,13 +1147,17 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     expect(job.steps.some((st) => st.with?.path === "~/.cache/ms-playwright")).toBe(false);
   });
 
-  it("the spec strips the https-upgrade headers in WebKit only, and passes redirects through", () => {
+  it("the spec strips the https-upgrade headers in WebKit only, never fetches auth hops, and continues redirects", () => {
     const SPEC = readFileSync("e2e/availability-hours-editor.spec.ts", "utf8");
     expect(SPEC).toMatch(/test\.beforeEach\(async \(\{ context, browserName \}\) => \{\s*if \(browserName !== "webkit"\) return;\s*await context\.route\("\*\*\/\*", withoutHttpsUpgrade\);/);
     expect((SPEC.match(/context\.route\(/g) ?? []).length).toBe(1);
-    expect(SPEC).toContain('if (route.request().resourceType() !== "document") return route.fallback();');
+    expect(SPEC).toContain('if (request.resourceType() !== "document" || request.method() !== "GET") return route.fallback();');
+    // Single-use magic-link hops are never fetched (route.fetch would spend
+    // the token), and a 3xx is continued, never fulfilled (WebKit refuses it).
+    expect(SPEC).toContain('if (url.origin !== APP_ORIGIN || url.pathname.startsWith("/auth/")) return route.fallback();');
     expect(SPEC).toContain("route.fetch({ maxRedirects: 0 })");
-    expect(SPEC).toContain("if (response.status() >= 300 && response.status() < 400) return route.fulfill({ response });");
+    expect(SPEC).toContain("if (response.status() >= 300 && response.status() < 400) return route.continue();");
+    expect(SPEC).not.toContain("route.fulfill({ response })");
   });
 
   it("its hard timeout exceeds the ~10 min target plus the bounded 6 min install", () => {
