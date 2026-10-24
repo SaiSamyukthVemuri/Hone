@@ -5,7 +5,7 @@ import {
   getClientsForStudio,
   requirePractitionerWithStudio,
 } from "@/lib/supabase/queries";
-import { ClientSearch } from "@/components/client-search";
+import { ClientSearch, type ClientSearchRow } from "@/components/client-search";
 import { ArchivedClientsList } from "./ArchivedClientsList";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 
@@ -50,6 +50,16 @@ export default async function ClientsPage({
       : [await getClientsForStudio(studio.id), []];
   domain.end();
 
+  // DAT-001: ClientSearch is a client component, so its props reach the
+  // browser. Hand it only the fields it renders, never whole directory rows.
+  const searchRows: ClientSearchRow[] = activeClients.map((c) => ({
+    id: c.id,
+    name: c.name,
+    pronouns: c.pronouns,
+    phone: c.phone,
+    email: c.email,
+  }));
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -78,7 +88,7 @@ export default async function ClientsPage({
       <ViewTabs current={view} />
 
       {view === "active" ? (
-        <ClientSearch clients={activeClients} emptyLabel="No clients yet." />
+        <ClientSearch clients={searchRows} emptyLabel="No clients yet." />
       ) : (
         <>
           <p className="text-xs text-neutral-500">
