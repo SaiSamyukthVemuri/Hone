@@ -153,7 +153,8 @@ export async function sendWaitlistJoinAckSms(args: {
   log({
     outcome: settle.outcome,
     ...(settle.outcome === "skipped" ? { reason: settle.skipReason } : {}),
-    ...(result.ok ? {} : { error: result.error }),
+    // The provider SID, as sms_sent carries it: correlates without a record id.
+    ...(result.ok ? { messageSid: result.messageSid } : { error: result.error }),
   });
   // The durable failure alert first; the ledger settle below is best-effort.
   if (settle.outcome === "refused" || settle.outcome === "unknown") {

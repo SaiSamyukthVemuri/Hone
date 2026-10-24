@@ -814,14 +814,26 @@ describe("MSG-007 SMS diagnostics carry only closed metadata", () => {
 describe("MSG-007 success-path log privacy", () => {
   const APPT = "7d3f1c2e-1b4a-4c5d-8e6f-0a1b2c3d4e5f";
   const PHONE = "604-555-0199";
+  const INTAKE_URL = "https://hone.care/intake/synthetic-intake-token-0001";
+  const MANAGE_URL = "https://hone.care/manage/synthetic-manage-token-0001";
+  // Each link as the text carries it, without the sentence's closing punctuation.
+  const linksIn = (body: string) =>
+    (body.match(/https?:\/\/\S+/g) ?? []).map((l) => l.replace(/[.,;:!?)]+$/, ""));
 
   it("a sent reminder logs sms_sent with no record id, phone fragment or body", async () => {
     const { captureConsole, expectMinimumNecessary } = await import("./helpers/log-capture");
     const logs = captureConsole();
-    const r = await send24hReminderSmsToClient(input({ appointmentId: APPT }));
+    const r = await send24hReminderSmsToClient(input({ appointmentId: APPT, intakeUrl: INTAKE_URL }));
     expect(r.ok).toBe(true);
     const body = sentForm().get("Body")!;
-    expectMinimumNecessary(logs.text(), { phones: [PHONE, "+16045550199"], bodies: [body] });
+    // Every link the text carried is a bearer credential; none may be logged.
+    const links = linksIn(body);
+    expect(links).toEqual(expect.arrayContaining([INTAKE_URL, expect.stringContaining("/manage/")]));
+    expectMinimumNecessary(logs.text(), {
+      phones: [PHONE, "+16045550199"],
+      bodies: [body],
+      secrets: links,
+    });
     // Operator-useful fixed facts survive.
     expect(logs.events()).toContainEqual(
       expect.objectContaining({ event: "sms_sent", smsType: "reminder_24h", messageSid: SID }),
@@ -844,12 +856,18 @@ describe("MSG-007 success-path log privacy", () => {
         send_2h_sms_reminders: true,
       },
       client: { phone: PHONE, sms_consent_at: "2026-09-01T00:00:00Z", sms_opted_out_at: null },
-      intakeUrl: null,
-      manageUrl: null,
+      intakeUrl: INTAKE_URL,
+      manageUrl: MANAGE_URL,
     });
     expect(r.ok).toBe(true);
     const body = sentForm().get("Body")!;
-    expectMinimumNecessary(logs.text(), { phones: [PHONE, "+16045550199"], bodies: [body] });
+    const links = linksIn(body);
+    expect(links).toEqual(expect.arrayContaining([INTAKE_URL, MANAGE_URL]));
+    expectMinimumNecessary(logs.text(), {
+      phones: [PHONE, "+16045550199"],
+      bodies: [body],
+      secrets: links,
+    });
     expect(logs.events()).toContainEqual(
       expect.objectContaining({ event: "sms_sent", smsType: "confirmation", messageSid: SID }),
     );

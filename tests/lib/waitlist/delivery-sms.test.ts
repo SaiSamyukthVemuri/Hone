@@ -447,9 +447,14 @@ describe("MSG-007 success-path log privacy", () => {
     });
     expect(r).toMatchObject({ state: "accepted" });
     const all = logs.join("\n");
-    expectMinimumNecessary(all, { phones: ["(604) 555-0199"], bodies: [form().get("Body")!, TOKEN] });
+    expectMinimumNecessary(all, {
+      phones: ["(604) 555-0199"],
+      bodies: [form().get("Body")!, TOKEN],
+      secrets: [URL_],
+    });
+    // The provider SID is the operator's correlation key for an accepted text.
     expect(logs.map((l) => JSON.parse(l) as Record<string, unknown>)).toContainEqual(
-      expect.objectContaining({ event: "waitlist_invitation_sms", outcome: "accepted" }),
+      expect.objectContaining({ event: "waitlist_invitation_sms", outcome: "accepted", messageSid: SID }),
     );
   });
 

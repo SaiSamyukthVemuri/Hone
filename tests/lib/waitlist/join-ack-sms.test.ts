@@ -357,7 +357,7 @@ describe("MSG-007 success-path log privacy", () => {
     const body = new URLSearchParams(String(vi.mocked(fetch).mock.calls[0]![1]!.body)).get("Body")!;
     expectMinimumNecessary(logs.text(), { phones: [phone], bodies: [body] });
     expect(logs.events()).toContainEqual(
-      expect.objectContaining({ event: "waitlist_join_ack_sms", outcome: "accepted" }),
+      expect.objectContaining({ event: "waitlist_join_ack_sms", outcome: "accepted", messageSid: SID }),
     );
   });
 });
