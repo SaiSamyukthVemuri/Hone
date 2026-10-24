@@ -231,6 +231,10 @@ export const BROWSER_GROUPS = {
       // runs extended) and `sessions` carries a cost pin. Needs REAL storage,
       // so it SELF-SKIPS in CI (no storage-api); its evidence is a local run.
       "fett-photos-thumbnail-recovery.spec.ts",
+      // ENG-002: Photos-tab upload accepts JPEG/PNG/WebP and refuses SVG/HEIF.
+      // Same placement and same self-skip as the spec above; both run for real
+      // in the non-required `storage photos` job, which has storage-api.
+      "treatment-image-upload-formats.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the

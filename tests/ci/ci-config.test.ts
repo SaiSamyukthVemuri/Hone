@@ -458,11 +458,11 @@ describe("PR CI — path-aware lane selection", () => {
     ]) {
       expect(jobs, `${job} must still exist`).toContain(job);
     }
-    // Seven gated lanes declare `needs: changes` + an `if:` on classifier output
+    // Eight gated lanes declare `needs: changes` + an `if:` on classifier output
     // (the seventh is canonical-record, the docs-only production-record lane,
-    // #825 6215529089).
-    expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(7);
-    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(7);
+    // #825 6215529089; the eighth is storage-photos, not required, E-GAPS).
+    expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(8);
+    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(8);
   });
 
   it("the required browser check is a STABLE aggregator, not a dynamic shard name", () => {
@@ -605,7 +605,8 @@ describe("PR CI — path-aware lane selection", () => {
     // all four PR browser jobs re-downloaded Chromium + FFmpeg + headless shell
     // on every run.
     const caches = CI.match(/path: ~\/\.cache\/ms-playwright/g) ?? [];
-    expect(caches.length, "all four browser jobs must cache").toBe(4);
+    // Five since the storage-photos job (E-GAPS, not required).
+    expect(caches.length, "all five browser jobs must cache").toBe(5);
     // CI-HARDEN-01B pinned every action to a commit SHA, so this counts the
     // ACTION rather than a version tag. The claim under test is "every browser
     // job caches", which a ref should never have been able to falsify.
@@ -620,10 +621,10 @@ describe("PR CI — path-aware lane selection", () => {
   });
 
   it("a cache HIT skips the browser download; the system packages are installed either way", () => {
-    expect((CI.match(/if: steps\.pw-cache\.outputs\.cache-hit != 'true'/g) ?? []).length).toBe(4);
-    expect((CI.match(/run: npx playwright install chromium$/gm) ?? []).length).toBe(4);
+    expect((CI.match(/if: steps\.pw-cache\.outputs\.cache-hit != 'true'/g) ?? []).length).toBe(5);
+    expect((CI.match(/run: npx playwright install chromium$/gm) ?? []).length).toBe(5);
     // Hit or miss, the OS packages come from the bounded, .deb-cached script.
-    expect((CI.match(/run: bash scripts\/ci\/playwright-system-deps\.sh$/gm) ?? []).length).toBe(4);
+    expect((CI.match(/run: bash scripts\/ci\/playwright-system-deps\.sh$/gm) ?? []).length).toBe(5);
   });
 
   it("no browser download runs unconditionally", () => {
@@ -795,7 +796,7 @@ describe("PR CI — path-aware lane selection", () => {
         }
       }
     }
-    expect(seen, "ci.yml x4 + nightly.yml x1").toBe(5);
+    expect(seen, "ci.yml x5 (incl. storage-photos) + nightly.yml x1").toBe(6);
     expect(offenders).toEqual([]);
   });
 
@@ -1091,6 +1092,83 @@ describe("D7b: Supabase-starting jobs pull ghcr.io images authenticated, read-on
     expect((body().match(/uses: docker\/login-action@/g) ?? []).length).toBe(setups.length);
     expect((body().match(/run: docker logout ghcr\.io/g) ?? []).length).toBe(setups.length);
     expect(body()).not.toMatch(/SUPABASE_INTERNAL_IMAGE_REGISTRY/);
+  });
+});
+
+describe("E-GAPS: the storage photo job is separate, storage-backed and never required", () => {
+  const STORAGE_SPECS = [
+    "e2e/fett-photos-thumbnail-recovery.spec.ts",
+    "e2e/treatment-image-upload-formats.spec.ts",
+  ];
+  const DB_FILE = "tests/db/treatment-image-signed-url-route.db.test.ts";
+  const start = CI.indexOf("\n  storage-photos:\n");
+  const rest = CI.slice(start + 1);
+  const next = rest.slice(1).search(/^ {2}[a-z0-9_-]+:$/m);
+  const JOB = next === -1 ? rest : rest.slice(0, next + 1);
+  const code = (text: string) => text.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+
+  it("exists, is named not required, and no job (the aggregator included) needs it", () => {
+    expect(start, "storage-photos job").toBeGreaterThan(-1);
+    expect(JOB).toContain("    name: storage photos (not required)\n");
+    expect(CI).not.toMatch(/needs:[^\n]*storage-photos/);
+    expect(CI).not.toMatch(/^ {6}- storage-photos$/m);
+    expect(code(CI.replace(JOB, ""))).not.toMatch(/storage-photos/);
+  });
+
+  it("starts Supabase WITH storage-api, and every other start still excludes it", () => {
+    const starts = code(CI).match(/supabase start -x [a-z,-]+/g) ?? [];
+    const own = code(JOB).match(/supabase start -x [a-z,-]+/g) ?? [];
+    expect(own).toEqual([
+      "supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector",
+      "supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector",
+    ]);
+    expect(starts.filter((x) => !x.endsWith(",storage-api"))).toHaveLength(own.length);
+  });
+
+  it("fails on a missing storage-api before the DB file or the specs could self-skip", () => {
+    const pre = JOB.indexOf("curl -fsS http://127.0.0.1:54321/storage/v1/version");
+    expect(pre).toBeGreaterThan(-1);
+    expect(pre).toBeLessThan(JOB.indexOf("npx vitest run"));
+    expect(pre).toBeLessThan(JOB.indexOf("npx playwright test"));
+  });
+
+  it("runs exactly the storage-dependent DB file and the two storage specs, each spec bypassing CSP in the test browser only", () => {
+    expect(code(JOB).match(/npx vitest run[^\n]*/g) ?? []).toEqual([
+      `npx vitest run --config vitest.db.config.ts ${DB_FILE}`,
+    ]);
+    expect(readFileSync(DB_FILE, "utf8")).toMatch(/describe\.skipIf\(!STORAGE_UP\)/);
+    const runs = code(JOB).match(/npx playwright test[^\n]*/g) ?? [];
+    expect(runs).toEqual([`npx playwright test ${STORAGE_SPECS.join(" ")} --project=chromium`]);
+    for (const spec of STORAGE_SPECS) {
+      expect(readFileSync(spec, "utf8"), spec).toMatch(/test\.use\(\{ bypassCSP: true\b/);
+    }
+  });
+
+  it("Playwright is fully prepared before the fallible DB step, and neither test step hides the other (Codex P2 4368722781)", () => {
+    const steps = JOB.split(/\n(?=      - )/);
+    const at = (needle: string) => steps.findIndex((s) => s.includes(needle));
+    const db = at("npx vitest run");
+    const e2e = at("npx playwright test");
+    for (const prep of [
+      "require('@playwright/test/package.json').version",
+      "path: ~/.cache/ms-playwright",
+      "run: npx playwright install chromium",
+      "run: bash scripts/ci/playwright-system-deps.sh",
+    ]) {
+      expect(at(prep), prep).toBeGreaterThan(-1);
+      expect(at(prep), `${prep} runs before the DB step`).toBeLessThan(db);
+    }
+    expect(steps[at("run: bash scripts/ci/playwright-system-deps.sh")]).toMatch(/^ {8}id: pw_sys$/m);
+    expect(db).toBeLessThan(e2e);
+    expect(steps[db]).toMatch(/^ {8}if: \$\{\{ !cancelled\(\) && steps\.storage_up\.outcome == 'success' \}\}$/m);
+    expect(steps[e2e]).toMatch(
+      /^ {8}if: \$\{\{ !cancelled\(\) && steps\.storage_up\.outcome == 'success' && steps\.pw_sys\.outcome == 'success' \}\}$/m,
+    );
+  });
+
+  it("its hard timeout exceeds the ~10 min target", () => {
+    const t = Number(/^ {4}timeout-minutes: (\d+)$/m.exec(JOB)?.[1]);
+    expect(t).toBeGreaterThan(10);
   });
 });
 
@@ -1584,7 +1662,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   const SETUP_CLI_SHA = "ab058987d8d6c725971f6cf9d0b5c98467e30bd1";
   const SETUP_CLI_TAG = "v1.7.1";
   const SETUP_CLI_VERSION = "2.102.0";
-  const SETUP_CLI_USES = 6; // 5 in ci.yml + 1 in nightly.yml
+  const SETUP_CLI_USES = 7; // 6 in ci.yml (incl. storage-photos) + 1 in nightly.yml
 
   const SETUP_CLI_ACTION = "supabase/setup-cli";
 
@@ -1716,8 +1794,8 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   it("the checkout count across the workflow directory is the reviewed one", () => {
     expect(
       checkoutCount(WORKFLOWS),
-      "8 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089) + 1 in nightly.yml",
-    ).toBe(9);
+      "9 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089; storage-photos by E-GAPS) + 1 in nightly.yml",
+    ).toBe(10);
   });
 
   // -------------------------------------------------------------------------
@@ -2209,7 +2287,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
     const violations = setupCliViolations([...WORKFLOWS, cased]).join("\n");
     // Recognised at all — the reviewed count moves, which it could not do while
     // the identifier was compared case-sensitively...
-    expect(violations).toMatch(/7 setup-cli uses, expected 6/);
+    expect(violations).toMatch(/8 setup-cli uses, expected 7/);
     // ...and, being recognised, it is subject to the grants-parity pin.
     expect(violations).toMatch(/cli\.yaml jobs\.scan\.steps\[0\]\.uses: CLI version 2\.103\.0 is not the grants-parity pin 2\.102\.0/);
   });
