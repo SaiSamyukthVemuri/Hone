@@ -7,6 +7,7 @@ import { localLongDate, formatTimeForStudio } from "@/lib/booking/tz";
 import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 import { emailBookingReference } from "@/lib/email/booking-reference";
 import { withReference } from "@/lib/email/subject-reference";
+import { appointmentEmailAddress } from "@/lib/booking/studio-location";
 
 // Practitioner Move appointment: the NARROW client "appointment updated" notification.
 //
@@ -195,7 +196,7 @@ export async function notifyAppointmentMoved(
     const { subject, html: htmlWithPreheader, text } = buildAppointmentMovedEmail({
       kind: input.resultKind ?? "moved",
       studioName,
-      studioAddress: row.studio?.address ?? null,
+      studioAddress: row.studio ? appointmentEmailAddress(row.studio) : null,
       serviceName,
       startsAt: start,
       timezone: tz,

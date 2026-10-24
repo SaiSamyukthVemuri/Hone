@@ -64,25 +64,28 @@ describe("Settings > Booking address copy names every surface", () => {
 });
 
 describe("each surface the copy names really reads studios.address", () => {
-  it("public booking page", () => {
+  it("public booking page (through the leak-safe view, lib/booking/studio-location.ts)", () => {
     const book = read("app/book/[slug]/page.tsx");
+    expect(book).toMatch(/const studio = forPublicBookingPage\(studioRow\)/);
     expect(book).toMatch(/\{studio\.address && \(/);
   });
 
   it("confirmation email (body) and its calendar invite (.ics LOCATION)", () => {
     const send = read("lib/email/send-appointment.ts");
+    expect(send).toMatch(/params = \{ \.\.\.params, studio: forAppointmentEmail\(params\.studio\) \};/);
     expect(send).toMatch(/studioAddress: params\.studio\.address/);
     expect(send).toMatch(/location: params\.studio\.address \?\? undefined/);
   });
 
   it("24h and 2h reminders", () => {
     const send = read("lib/email/send-appointment.ts");
+    expect(send.match(/p = \{ \.\.\.p, studio: forAppointmentEmail\(p\.studio\) \};/g)?.length).toBe(2);
     expect(send.match(/studioAddress: p\.studio\.address/g)?.length).toBe(2);
   });
 
   it("appointment-update email", () => {
     const moved = read("lib/email/notify-appointment-moved.ts");
     expect(moved).toMatch(/studio:studios\([^)]*\baddress\b/);
-    expect(moved).toMatch(/studioAddress: row\.studio\?\.address \?\? null/);
+    expect(moved).toMatch(/studioAddress: row\.studio \? appointmentEmailAddress\(row\.studio\) : null/);
   });
 });
