@@ -44,7 +44,9 @@ import {
 //      try to interpret it; v1 is opt-out only, not conversational.
 //
 // Logging discipline:
-//   * Never log full From or To numbers; use maskedPhone().
+//   * Never log From or To numbers, masked or not, in a log line (MSG-007:
+//     a masked number still discloses its last two digits). The audit rows
+//     below keep the masked form; they are first-party records, not logs.
 //   * Never log Body for non-STOP messages (could contain PII).
 //   * Never log Auth Token.
 
@@ -169,11 +171,7 @@ export async function POST(req: Request): Promise<Response> {
     // v1 is opt-out only: any other inbound message is acknowledged
     // with an empty TwiML and not persisted. We do not log the body
     // (could be PII); we log only the masked From for traceability.
-    logEvent("twilio_inbound_non_stop", {
-      fromMasked: maskedPhone(from),
-      toMasked: maskedPhone(to),
-      messageSid,
-    });
+    logEvent("twilio_inbound_non_stop", { messageSid });
     return twimlResponse(EMPTY_TWIML);
   }
 
@@ -182,10 +180,7 @@ export async function POST(req: Request): Promise<Response> {
     // No digits to match against; nothing to opt out. Still ack with
     // the STOP TwiML so the sender's phone confirms the carrier's
     // STOP filter rather than seeing a silent failure.
-    logEvent("twilio_inbound_stop_no_digits", {
-      fromMasked: maskedPhone(from),
-      messageSid,
-    });
+    logEvent("twilio_inbound_stop_no_digits", { messageSid });
     return twimlResponse(STOP_TWIML);
   }
 
@@ -475,7 +470,6 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   logEvent("twilio_inbound_stop_processed", {
-    fromMasked: maskedPhone(from),
     matchedCount: matchedClients.length,
     alreadyOptedOutCount,
     successfulCount: successfullyOptedOutClients.length,
