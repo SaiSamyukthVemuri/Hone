@@ -39,7 +39,7 @@ describe("payment-webhook-reconciliation: server boundary", () => {
 
   it("imports recordOpsAlert from the ops alerts helper", () => {
     expect(HELPER).toMatch(
-      /import \{ recordOpsAlert \} from "@\/lib\/ops\/alerts"/,
+      /import \{ recordOpsAlert(?:, recordOpsAlertDurably)? \} from "@\/lib\/ops\/alerts"/,
     );
   });
 });
