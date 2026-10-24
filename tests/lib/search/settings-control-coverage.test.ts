@@ -161,7 +161,7 @@ function rendersLabel(route: string, label: string): boolean {
 
 /**
  * JSX collapses whitespace, so a label written across several source lines
- * ("Public address (booking page and appointment emails)") renders as one string but is
+ * ("Arrival and parking instructions") renders as one string but is
  * stored with newlines and indentation. Compare on collapsed whitespace.
  */
 function collapse(value: string): string {

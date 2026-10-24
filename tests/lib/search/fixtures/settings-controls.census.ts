@@ -256,7 +256,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
   },
   {
     page: "/settings/booking",
-    label: "Public address (booking page and appointment emails)",
+    label: "Studio address",
     helper: "For home-based studios, leave this blank",
     role: "owner",
     decision: "searchable",
@@ -264,7 +264,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
   },
   {
     page: "/settings/booking",
-    label: "Show the address on",
+    label: "Who sees the address",
     role: "owner",
     decision: "searchable",
     entryId: "settings-address-visibility",
@@ -272,7 +272,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
   {
     page: "/settings/booking",
     label: "Arrival and parking instructions",
-    helper: "not on your booking page",
+    helper: "Leave blank for none",
     role: "owner",
     decision: "searchable",
     entryId: "settings-arrival-instructions",

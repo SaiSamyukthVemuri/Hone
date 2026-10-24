@@ -39,8 +39,8 @@ export default async function PublicBookingPage({
   const studioRow = await getStudioBySlug(slug);
   if (!studioRow) notFound();
   // HON-50. Everything below reads this view, never the raw row: its address
-  // is null when the owner chose emails-only (or it is blank), and it carries
-  // no arrival instructions (email-only content). So neither can reach this
+  // is null when the owner chose booked-client communications only (or it is
+  // blank), and it carries no arrival instructions (appointment-email content). So neither can reach this
   // public page's HTML or the props it hands its client form (RSC payload).
   const studio = forPublicBookingPage(studioRow);
 

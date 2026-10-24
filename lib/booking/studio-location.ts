@@ -1,22 +1,32 @@
 // HON-50. Where the studio's address is shown, and the arrival/parking
 // instructions that go with it. ONE place decides both, so the public booking
-// page and the appointment emails cannot disagree about an owner's choice.
+// page and the booked-client communications cannot disagree.
 //
 //   studios.address_visibility   'booking_page' | 'emails' | 'both'
 //   studios.arrival_instructions text, NULL = no section
 //
+// The stored values are internal names. What the owner is shown names every
+// destination (Sam, 24 Oct, decision B; Settings > Booking):
+//   'booking_page' -> "Public booking page only"
+//   'emails'       -> "Booked-client communications only": the confirmation,
+//                     reminder and appointment-update emails, the
+//                     confirmation's calendar invite, and the success screen
+//                     after the server verifies the booking
+//                     (lib/booking/booked-client-address.ts, decision C)
+//   'both'         -> both of the above (the default, today's behaviour)
+// Whatever the value, the team's calendar subscription feed carries the
+// address, as it does today, and the setting discloses that connected
+// calendar services can keep a copy.
+//
 // Both columns are optional at the type level: a row loaded with `select *`
 // before the migration is applied carries neither. An absent or unknown
-// visibility reads as 'both', which is exactly the behaviour before the column
-// existed (booking page AND emails), and absent instructions render nothing.
-// A blank address is shown nowhere, whatever the visibility says.
+// visibility reads as 'both', and absent instructions render nothing. A blank
+// address is shown nowhere, whatever the visibility says.
 //
 // The public booking page renders forPublicBookingPage(row), never the raw
-// row: an 'emails'-only address must never reach the page's HTML or the props
-// it hands to a client component (the RSC payload). Proved by
+// row, so a booked-client-only address never reaches its HTML or the props it
+// hands to a client component (the RSC payload). Proved by
 // tests/app/book/address-visibility-leak.test.ts.
-
-import type { Studio } from "@/lib/types/database";
 
 export const ADDRESS_VISIBILITY_VALUES = ["booking_page", "emails", "both"] as const;
 export type AddressVisibility = (typeof ADDRESS_VISIBILITY_VALUES)[number];
@@ -24,8 +34,12 @@ export type AddressVisibility = (typeof ADDRESS_VISIBILITY_VALUES)[number];
 // Matches the draft migration's CHECK (studios_arrival_instructions_check).
 export const ARRIVAL_INSTRUCTIONS_MAX_LENGTH = 1000;
 
-type LocationFields = Pick<Studio, "address"> &
-  Partial<Pick<Studio, "address_visibility" | "arrival_instructions">>;
+// Structural: any row carrying the address (a Studio, or a narrower embed).
+type LocationFields = {
+  address: string | null;
+  address_visibility?: unknown;
+  arrival_instructions?: unknown;
+};
 
 export function isAddressVisibility(value: unknown): value is AddressVisibility {
   return (
@@ -70,7 +84,8 @@ export function arrivalInstructionsOf(studio: LocationFields): string | null {
 
 /**
  * The studio row as the PUBLIC booking page may see it: the address replaced
- * by publicBookingAddress() and the email-only arrival instructions removed.
+ * by publicBookingAddress() and the arrival instructions (appointment-email
+ * content) removed.
  * Every other field is unchanged.
  */
 export function forPublicBookingPage<T extends LocationFields>(studio: T): T {

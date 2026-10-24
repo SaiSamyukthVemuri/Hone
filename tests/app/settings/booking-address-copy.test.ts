@@ -27,10 +27,8 @@ function control(): string {
 }
 
 describe("Settings > Booking address copy names every surface", () => {
-  it("the label names the booking page and appointment emails", () => {
-    expect(control()).toContain(
-      "Public address (booking page and appointment emails)",
-    );
+  it("the label is neutral (HON-50 decision B: the help names every destination)", () => {
+    expect(control()).toContain('<span className="text-sm font-medium">Studio address</span>');
   });
 
   it("the help text names each email kind and calendar invites, and keeps the home-studio advice", () => {
@@ -41,22 +39,26 @@ describe("Settings > Booking address copy names every surface", () => {
     expect(c).toContain("For home-based studios, leave this blank");
   });
 
+  it("both help variants disclose the team calendar feed and that connected calendar services can keep a copy", () => {
+    const c = control();
+    expect(c.match(/calendar\s+subscription feed/g)?.length).toBe(2);
+    expect(c.match(/can keep a copy/g)?.length).toBe(2);
+    expect(c).not.toMatch(/email only|emails only/i);
+  });
+
   it("the old booking-page-only label is gone", () => {
     expect(page).not.toContain("Public address (shown on your booking page)");
   });
 
-  it("the page intro says the address is shown in appointment emails too", () => {
-    expect(page).toContain(
-      "the address clients see there and in appointment emails",
-    );
+  it("the page intro mentions the address and where it is shown", () => {
+    expect(page).toContain("your studio address and where it is shown");
   });
 
   it("the search entry describes both surfaces and is findable by an email-oriented query", () => {
     const entry = NAV_ENTRIES.find((e) => e.id === "settings-public-address");
     expect(entry).toBeDefined();
-    expect(entry!.description).toBe(
-      "The address shown on your booking page and in appointment emails",
-    );
+    expect(entry!.title).toBe("Studio address");
+    expect(entry!.description).toBe("Your studio address, and where it is shown");
     expect(entry!.keywords).toEqual(
       expect.arrayContaining(["address in emails", "address in reminders"]),
     );

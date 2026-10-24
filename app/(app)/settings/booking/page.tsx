@@ -97,7 +97,7 @@ export default async function BookingSettingsPage({
         <p className="mt-1 text-sm text-neutral-500">
           How clients find and book you. Public URL, timezone, default
           appointment length, the description shown on your booking page, and
-          the address clients see there and in appointment emails.
+          your studio address and where it is shown.
         </p>
       </section>
 
@@ -294,21 +294,37 @@ export default async function BookingSettingsPage({
           id="public-address"
           className="flex scroll-mt-24 flex-col gap-1.5"
         >
-          <span className="text-sm font-medium">
-            Public address (booking page and appointment emails)
-          </span>
+          <span className="text-sm font-medium">Studio address</span>
           <input
             name="address"
             defaultValue={studio.address ?? ""}
             placeholder="123 Main St, City"
             className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
           />
-          <span className="text-xs text-neutral-500">
-            Shown on your public booking page, and in clients&rsquo;
-            confirmation, reminder and appointment-update emails and calendar
-            invites. For home-based studios, leave this blank and share the
-            address after booking.
-          </span>
+          {/* HON-50 (Sam, 24 Oct, decision B): every destination is named,
+              including the team calendar feed and what connected calendar
+              services can keep. */}
+          {hasLocationSettings ? (
+            <span className="text-xs text-neutral-500">
+              Choose who sees it under &ldquo;Who sees the address&rdquo;
+              below. It is always included in your team&rsquo;s calendar
+              subscription feed, and calendar services connected to that feed
+              (such as Google, Apple or Outlook Calendar) can keep a copy. For
+              home-based studios, choose &ldquo;Booked-client communications
+              only&rdquo;, or leave this blank and share the address after
+              booking.
+            </span>
+          ) : (
+            <span className="text-xs text-neutral-500">
+              Shown on your public booking page, and in clients&rsquo;
+              confirmation, reminder and appointment-update emails and calendar
+              invites. It is also included in your team&rsquo;s calendar
+              subscription feed, and calendar services connected to that feed
+              (such as Google, Apple or Outlook Calendar) can keep a copy. For
+              home-based studios, leave this blank and share the address after
+              booking.
+            </span>
+          )}
         </label>
 
         {/* HON-50. Offered only when the studio row carries the two columns
@@ -321,19 +337,31 @@ export default async function BookingSettingsPage({
               id="address-visibility"
               className="flex scroll-mt-24 flex-col gap-1.5"
             >
-              <span className="text-sm font-medium">Show the address on</span>
+              <span className="text-sm font-medium">Who sees the address</span>
               <select
                 name="address_visibility"
                 defaultValue={addressVisibilityOf(studio)}
                 className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
               >
-                <option value="both">Booking page and appointment emails</option>
-                <option value="booking_page">Booking page only</option>
-                <option value="emails">Appointment emails only</option>
+                <option value="both">
+                  Public booking page and booked-client communications
+                </option>
+                <option value="booking_page">Public booking page only</option>
+                <option value="emails">
+                  Booked-client communications only (not the public booking
+                  page)
+                </option>
               </select>
               <span className="text-xs text-neutral-500">
-                Appointment emails only keeps the address off your public
-                booking page; clients see it once they have booked.
+                Your public booking page can be seen by anyone. Booked-client
+                communications are the confirmation, reminder and
+                appointment-update emails sent to a client with a booking, the
+                calendar invite attached to the confirmation, and the
+                confirmation screen shown to that client right after they
+                book. Whichever you choose, the address is also included in
+                your team&rsquo;s calendar subscription feed, and calendar
+                services connected to that feed (such as Google, Apple or
+                Outlook Calendar) can keep a copy.
               </span>
             </label>
 
@@ -353,9 +381,10 @@ export default async function BookingSettingsPage({
                 className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
               />
               <span className="text-xs text-neutral-500">
-                Shown in clients&rsquo; confirmation, reminder and
-                appointment-update emails, not on your booking page. Leave
-                blank for none.
+                Shown only in the confirmation, reminder and
+                appointment-update emails sent to a client with a booking. Not
+                shown on your public booking page, the confirmation screen or
+                your team&rsquo;s calendar feed. Leave blank for none.
               </span>
             </label>
           </>
