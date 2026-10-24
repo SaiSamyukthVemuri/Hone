@@ -7,6 +7,7 @@ import {
   FITZPATRICK_TYPES,
 } from "@/lib/constants";
 import { appendComment } from "@/lib/comments";
+import { buildClientFormData } from "@/lib/clients/client-form-payload";
 
 export type ClientFormValues = {
   name: string;
@@ -38,7 +39,21 @@ export const EMPTY_CLIENT_FORM: ClientFormValues = {
 // { ok: false, error } when validation fails. Server actions in
 // Next.js production redact thrown errors to an opaque crash; this
 // return-shape lets the form render a clean error banner instead.
-export type ClientFormActionResult = { ok: false; error: string };
+//
+// HON-58: `possibleDuplicate` (staff create only) means nothing was saved
+// because the studio already has a client with the same phone, or the same
+// name and date of birth. The form names that client and offers to save a new
+// record anyway, confirming exactly that client.
+export type ClientFormActionResult = {
+  ok: false;
+  error: string;
+  possibleDuplicate?: {
+    reason: "phone" | "name_dob";
+    clientId: string;
+    clientName: string;
+    archived: boolean;
+  };
+};
 
 type Props = {
   initialValues?: ClientFormValues;
@@ -77,6 +92,8 @@ export function ClientForm({
 }: Props) {
   const [values, setValues] = useState<ClientFormValues>(initialValues);
   const [error, setError] = useState<string | null>(null);
+  const [possibleDuplicate, setPossibleDuplicate] =
+    useState<ClientFormActionResult["possibleDuplicate"]>(undefined);
   const [pending, startTransition] = useTransition();
 
   function update<K extends keyof ClientFormValues>(
@@ -84,29 +101,23 @@ export function ClientForm({
     value: ClientFormValues[K],
   ) {
     setValues((v) => ({ ...v, [key]: value }));
+    // HON-58: an edit may change who this matches; ask again on the next save.
+    setPossibleDuplicate(undefined);
   }
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  function submit(confirmPossibleDuplicateId: string | null) {
     setError(null);
     if (!values.name.trim()) {
       setError("Name is required.");
       return;
     }
-    const fd = new FormData();
-    for (const [k, v] of Object.entries(values)) {
-      fd.set(k, v);
-    }
-    if (hiddenFields) {
-      for (const [k, v] of Object.entries(hiddenFields)) {
-        fd.set(k, v);
-      }
-    }
+    const fd = buildClientFormData(values, hiddenFields, confirmPossibleDuplicateId);
     startTransition(async () => {
       try {
         const result = await action(fd);
         if (result && result.ok === false) {
           setError(result.error);
+          setPossibleDuplicate(result.possibleDuplicate);
         }
         // On success the action calls redirect() which throws a
         // NEXT_REDIRECT internally; the framework handles that
@@ -119,6 +130,11 @@ export function ClientForm({
         setError("Couldn't save the client. Please try again.");
       }
     });
+  }
+
+  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    submit(null);
   }
 
   return (
@@ -256,7 +272,33 @@ export function ClientForm({
         </div>
       </fieldset>
 
-      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+      {error && !possibleDuplicate && (
+        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+      )}
+      {error && possibleDuplicate && (
+        <div
+          role="alert"
+          className="flex flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+        >
+          <p>{error}</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              href={`/clients/${possibleDuplicate.clientId}`}
+              className="font-medium underline underline-offset-2"
+            >
+              Open {possibleDuplicate.clientName}
+            </Link>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => submit(possibleDuplicate.clientId)}
+              className="rounded-md border border-amber-400 px-3 py-2 font-medium hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:hover:bg-amber-900"
+            >
+              Save as a new client anyway
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="mt-2 flex items-center gap-3">
         <button

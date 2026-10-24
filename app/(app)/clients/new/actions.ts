@@ -5,6 +5,10 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { captureServerEvent } from "@/lib/analytics/server";
+import {
+  findPossibleDuplicateClient,
+  type PossibleDuplicate,
+} from "@/lib/clients/possible-duplicate";
 
 function nullableString(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") return null;
@@ -26,13 +30,29 @@ function nullableInt(value: FormDataEntryValue | null): number | null {
 // `void` half of the union covers that path for TypeScript. See the
 // matching update action in app/(app)/clients/[id]/actions.ts for
 // the explanation of why this isn't a throw.
-export type ClientSaveResult = { ok: false; error: string };
+//
+// HON-58: `possibleDuplicate` is set when the studio already has a client with
+// the same phone, or the same name and date of birth. Nothing was inserted;
+// the form offers "Save as a new client anyway", which resubmits with
+// confirm_possible_duplicate = that client's id.
+export type ClientSaveResult = {
+  ok: false;
+  error: string;
+  possibleDuplicate?: PossibleDuplicate;
+};
 
 const ACTIVE_DUPLICATE_ERROR =
   "That email is already used by another active client. Use a different email or archive the duplicate client first.";
 const ARCHIVED_DUPLICATE_ERROR =
   "That email belongs to an archived client. Unarchive that client or use a different email.";
 const GENERIC_SAVE_ERROR = "Couldn't save the client. Please try again.";
+
+function possibleDuplicateMessage(d: PossibleDuplicate): string {
+  const why = d.reason === "phone" ? "the same phone number" : "the same name and date of birth";
+  return d.archived
+    ? `An archived client, ${d.clientName}, has ${why}. This may be the same person.`
+    : `${d.clientName} already has ${why}. This may be the same person.`;
+}
 
 function isClientDuplicateEmailDbError(
   error: { code?: string | null; message?: string | null } | null | undefined,
@@ -97,16 +117,49 @@ export async function createClientAction(
     }
   }
 
+  // HON-58: probable-duplicate warning (same phone, or same name + date of
+  // birth). Advisory, so a confirmation for exactly the matched client
+  // proceeds; a confirmation for anyone else does not cover a new match.
+  // A failed read refuses the create rather than implying "no duplicate".
+  const phone = nullableString(formData.get("phone"));
+  const dateOfBirth = nullableString(formData.get("date_of_birth"));
+  const duplicateCheck = await findPossibleDuplicateClient(supabase, studio.id, {
+    name,
+    phone,
+    dateOfBirth,
+  });
+  if (duplicateCheck.kind === "unavailable") {
+    console.error(
+      JSON.stringify({
+        event: "client_create_possible_duplicate_lookup_failed",
+        code: duplicateCheck.code,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: GENERIC_SAVE_ERROR };
+  }
+  if (
+    duplicateCheck.kind === "match" &&
+    formData.get("confirm_possible_duplicate") !== duplicateCheck.duplicate.clientId
+  ) {
+    const d = duplicateCheck.duplicate;
+    return {
+      ok: false,
+      error: possibleDuplicateMessage(d),
+      possibleDuplicate: d,
+    };
+  }
+
   const { data, error } = await supabase
     .from("clients")
     .insert({
       studio_id: studio.id,
       name,
       pronouns: nullableString(formData.get("pronouns")),
-      phone: nullableString(formData.get("phone")),
+      phone,
       email,
       address: nullableString(formData.get("address")),
-      date_of_birth: nullableString(formData.get("date_of_birth")),
+      date_of_birth: dateOfBirth,
       fitzpatrick_type: nullableInt(formData.get("fitzpatrick_type")),
       // Chloe Session 1A: `clients.skin_notes` is RETIRED as a practitioner
       // editor. It is no longer submitted by the client form and is no longer
