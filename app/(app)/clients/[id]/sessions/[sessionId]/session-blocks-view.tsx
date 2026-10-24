@@ -31,6 +31,7 @@ import { RemoveAreaButton } from "@/components/remove-area-button";
 import { deleteElectrolysisEntryAction } from "./actions";
 import { removeSessionAreaAction } from "./block-actions";
 import { SectionLabel } from "@/components/ui/section-label";
+import { SessionTreatmentTime } from "@/components/session-treatment-time";
 
 // Area-first view of an electrolysis session (Session Logging Phase A).
 // Each session_blocks row renders as a "treatment area" section; the word
@@ -146,6 +147,9 @@ export function SessionBlocksView({
 
   return (
     <div className="flex flex-col gap-6">
+      {/* HON-59: summed area minutes, labelled as not visit length, not per
+          practitioner and not billable. Renders nothing with no areas. */}
+      <SessionTreatmentTime blocks={blocks} />
       {blocks.map((block) => (
         <BlockSection
           key={block.id}
