@@ -39,7 +39,22 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    // HON-62 WebKit proof. Present ONLY when HONE_E2E_WEBKIT=1, which only the
+    // non-required `webkit-hon-62` CI job sets, so every other run sees exactly
+    // the one chromium project. Scoped to the native time-input spec: WebKit is
+    // the engine behind iPad Safari, where the weekly-hours fields are used.
+    ...(process.env.HONE_E2E_WEBKIT === "1"
+      ? [
+          {
+            name: "webkit-hon-62",
+            testMatch: /availability-hours-editor\.spec\.ts$/,
+            use: { ...devices["Desktop Safari"] },
+          },
+        ]
+      : []),
+  ],
   webServer: {
     // PRODUCTION server, not `next dev`: the dev watcher recompiles
     // whenever Playwright writes artifacts, which Fast-Refreshes the

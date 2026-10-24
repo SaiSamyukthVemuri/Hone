@@ -458,11 +458,11 @@ describe("PR CI — path-aware lane selection", () => {
     ]) {
       expect(jobs, `${job} must still exist`).toContain(job);
     }
-    // Seven gated lanes declare `needs: changes` + an `if:` on classifier output
+    // Eight gated lanes declare `needs: changes` + an `if:` on classifier output
     // (the seventh is canonical-record, the docs-only production-record lane,
-    // #825 6215529089).
-    expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(7);
-    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(7);
+    // #825 6215529089; the eighth is the non-required webkit-hon-62 lane).
+    expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(8);
+    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(8);
   });
 
   it("the required browser check is a STABLE aggregator, not a dynamic shard name", () => {
@@ -773,7 +773,7 @@ describe("PR CI — path-aware lane selection", () => {
 
   it("the arithmetic is the script's: every bound it applies is one of the constants summed", () => {
     const script = readFileSync(DEPS_SCRIPT, "utf8");
-    expect(script).toMatch(/timeout --kill-after="\$KILL_AFTER" "\$1" npx playwright install-deps chromium/);
+    expect(script).toMatch(/timeout --kill-after="\$KILL_AFTER" "\$1" npx playwright install-deps "\$BROWSER"/);
     expect(script).toMatch(/sudo timeout --kill-after="\$KILL_AFTER" "\$REPAIR" dpkg --configure -a/);
     expect(script).toMatch(/while \[ -n "\$busy" \] && \[ "\$waited" -lt "\$SETTLE" \]/);
     // No other literal time bound hides in the script.
@@ -795,7 +795,7 @@ describe("PR CI — path-aware lane selection", () => {
         }
       }
     }
-    expect(seen, "ci.yml x4 + nightly.yml x1").toBe(5);
+    expect(seen, "ci.yml x5 (webkit-hon-62 is the fifth) + nightly.yml x1").toBe(6);
     expect(offenders).toEqual([]);
   });
 
@@ -894,7 +894,7 @@ describe("PR CI — path-aware lane selection", () => {
     const script = readFileSync("scripts/ci/playwright-system-deps.sh", "utf8");
     // The time limit is INSIDE sudo (Codex P1 r4362059036): an unprivileged
     // timeout kills npx but not root's apt-get, which keeps the dpkg/apt locks.
-    expect(script).toMatch(/sudo env "PATH=\$PATH" timeout --kill-after="\$KILL_AFTER" "\$1" npx playwright install-deps chromium/);
+    expect(script).toMatch(/sudo env "PATH=\$PATH" timeout --kill-after="\$KILL_AFTER" "\$1" npx playwright install-deps "\$BROWSER"/);
     expect(script).toMatch(/install_deps "\$FIRST"/);
     expect(script).toMatch(/install_deps "\$RETRY"/);
     const unprivileged = script.split("\n").filter((l) => /^\s*timeout\b.*playwright install-deps/.test(l));
@@ -1091,6 +1091,63 @@ describe("D7b: Supabase-starting jobs pull ghcr.io images authenticated, read-on
     expect((body().match(/uses: docker\/login-action@/g) ?? []).length).toBe(setups.length);
     expect((body().match(/run: docker logout ghcr\.io/g) ?? []).length).toBe(setups.length);
     expect(body()).not.toMatch(/SUPABASE_INTERNAL_IMAGE_REGISTRY/);
+  });
+});
+
+describe("HON-62: the WebKit time-input job is separate, scoped and never required", () => {
+  type Step = { name?: string; id?: string; if?: string; uses?: string; run?: string; with?: Record<string, string>; env?: Record<string, string>; "timeout-minutes"?: number };
+  type Job = { name?: string; needs?: string | string[]; if?: string; "timeout-minutes"?: number; steps: Step[] };
+  const jobs = (yaml.load(CI) as { jobs: Record<string, Job> }).jobs;
+  const job = jobs["webkit-hon-62"];
+  const CONFIG = readFileSync("playwright.config.ts", "utf8");
+
+  it("exists, and neither the aggregator nor any other job depends on it", () => {
+    expect(job, "webkit-hon-62 job").toBeDefined();
+    expect(job.name).toMatch(/not required/);
+    for (const [name, other] of Object.entries(jobs)) {
+      const needs = [other.needs ?? []].flat();
+      expect(needs, `${name} must not need webkit-hon-62`).not.toContain("webkit-hon-62");
+    }
+  });
+
+  it("runs when the HON-62 spec is selected, and on extended / full-matrix runs", () => {
+    expect(job.needs).toBe("changes");
+    expect(job.if).toContain("contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts')");
+    expect(job.if).toContain("needs.changes.outputs.browser_extended == 'true'");
+    expect(job.if).toContain("needs.changes.outputs.full_matrix_required == 'true'");
+  });
+
+  it("runs only the scoped WebKit project, which exists only under HONE_E2E_WEBKIT=1", () => {
+    const e2e = job.steps.filter((st) => /npx playwright test\b/.test(st.run ?? ""));
+    expect(e2e).toHaveLength(1);
+    expect(e2e[0].run).toBe("npx playwright test e2e/availability-hours-editor.spec.ts --project=webkit-hon-62");
+    expect(e2e[0].env?.HONE_E2E_WEBKIT).toBe("1");
+    // Nothing else in any workflow arms the WebKit project.
+    const code = CI.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+    expect((code.match(/HONE_E2E_WEBKIT/g) ?? []).length).toBe(1);
+    expect(NIGHTLY).not.toMatch(/HONE_E2E_WEBKIT/);
+    expect(CONFIG).toContain('{ name: "chromium", use: { ...devices["Desktop Chrome"] } },');
+    expect(CONFIG).toMatch(/process\.env\.HONE_E2E_WEBKIT === "1"\s*\?\s*\[\s*\{\s*name: "webkit-hon-62",\s*testMatch: \/availability-hours-editor\\\.spec\\\.ts\$\/,/);
+  });
+
+  it("installs WebKit's system packages through the bounded script, under its own .deb key", () => {
+    const deps = job.steps.filter((st) => (st.run ?? "").includes("scripts/ci/playwright-system-deps.sh"));
+    expect(deps).toHaveLength(1);
+    expect(deps[0].run).toBe("bash scripts/ci/playwright-system-deps.sh webkit");
+    expect(deps[0]["timeout-minutes"]).toBe(6);
+    expect(job.steps.some((st) => st.run === "npx playwright install webkit")).toBe(true);
+    const keys = job.steps.filter((st) => st.with?.path === "~/apt-debs").map((st) => st.with?.key);
+    expect(keys).toEqual([
+      "pw-webkit-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}",
+      "pw-webkit-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}",
+    ]);
+    // A WebKit-only browser cache under Chromium's key would be a false hit
+    // for the Chromium jobs.
+    expect(job.steps.some((st) => st.with?.path === "~/.cache/ms-playwright")).toBe(false);
+  });
+
+  it("its hard timeout exceeds the ~10 min target plus the bounded 6 min install", () => {
+    expect(job["timeout-minutes"]).toBeGreaterThan(10 + 6);
   });
 });
 
@@ -1584,7 +1641,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   const SETUP_CLI_SHA = "ab058987d8d6c725971f6cf9d0b5c98467e30bd1";
   const SETUP_CLI_TAG = "v1.7.1";
   const SETUP_CLI_VERSION = "2.102.0";
-  const SETUP_CLI_USES = 6; // 5 in ci.yml + 1 in nightly.yml
+  const SETUP_CLI_USES = 7; // 6 in ci.yml (webkit-hon-62 is the sixth) + 1 in nightly.yml
 
   const SETUP_CLI_ACTION = "supabase/setup-cli";
 
@@ -1716,8 +1773,8 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   it("the checkout count across the workflow directory is the reviewed one", () => {
     expect(
       checkoutCount(WORKFLOWS),
-      "8 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089) + 1 in nightly.yml",
-    ).toBe(9);
+      "9 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089; webkit-hon-62 by HON-62) + 1 in nightly.yml",
+    ).toBe(10);
   });
 
   // -------------------------------------------------------------------------
@@ -2209,7 +2266,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
     const violations = setupCliViolations([...WORKFLOWS, cased]).join("\n");
     // Recognised at all — the reviewed count moves, which it could not do while
     // the identifier was compared case-sensitively...
-    expect(violations).toMatch(/7 setup-cli uses, expected 6/);
+    expect(violations).toMatch(/8 setup-cli uses, expected 7/);
     // ...and, being recognised, it is subject to the grants-parity pin.
     expect(violations).toMatch(/cli\.yaml jobs\.scan\.steps\[0\]\.uses: CLI version 2\.103\.0 is not the grants-parity pin 2\.102\.0/);
   });
