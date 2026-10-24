@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { Practitioner } from "@/lib/types/database";
+import type { PerformerOption } from "@/lib/sessions/performer-options";
 
 type Props = {
   sessionId: string;
   clientId: string;
-  practitioners: Practitioner[];
+  practitioners: PerformerOption[];
   initialPerformerId: string | null;
   updatePerformerAction: (formData: FormData) => Promise<void>;
 };

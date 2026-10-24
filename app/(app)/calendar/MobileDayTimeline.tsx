@@ -21,7 +21,11 @@ import {
   calendarPractitionerIdentity,
   practitionerRowFits,
 } from "@/lib/calendar/practitioner-identity";
-import { appointmentDisplayStatus } from "./appointment-display-status";
+import {
+  NO_SHOW_CARD_CLASS,
+  appointmentDisplayStatus,
+  appointmentStatusTag,
+} from "./appointment-display-status";
 import { PractitionerTag } from "./PractitionerTag";
 import {
   GRID_HEIGHT,
@@ -352,25 +356,22 @@ export function MobileDayTimeline({
             });
           const ds = appointmentDisplayStatus(a.status, a.ends_at);
           const terminal = ds !== "upcoming";
-          const statusTag =
-            ds === "done"
-              ? "Done"
-              : ds === "completed"
-                ? "Completed"
-                : ds === "no_show"
-                  ? "No-show"
-                  : null;
+          const statusTag = appointmentStatusTag(ds);
+          const noShow = ds === "no_show";
+          // No-show leads the line instead (see NO_SHOW_CARD_CLASS).
+          const trailingTag = noShow ? null : statusTag;
           return (
             <Link
               key={a.id}
               href={`/calendar/${a.id}${returnTo}`}
               style={{ top, height }}
-              className={`absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[12px] leading-tight shadow-sm transition active:brightness-95 ${terminal ? "opacity-60" : ""}`}
+              className={`absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[12px] leading-tight shadow-sm transition active:brightness-95 ${terminal ? "opacity-60" : ""} ${noShow ? NO_SHOW_CARD_CLASS : ""}`}
             >
               <div className="flex min-w-0 items-center gap-1 text-[10px] font-semibold tabular-nums opacity-80">
+                {noShow && <span className="shrink-0">No-show ·</span>}
                 <span className="truncate">
                   {timeRange}
-                  {statusTag ? ` · ${statusTag}` : ""}
+                  {trailingTag ? ` · ${trailingTag}` : ""}
                 </span>
                 {practitionerIdentity && !practitionerRow && (
                   // Too short for its own row: the name rides the time row.

@@ -730,7 +730,7 @@ describe("refund callback completion wins before action persistence", () => {
     data: { object: {
       id: "ch_live_1", payment_intent: "pi_live_1", customer: "cus_1",
       amount: 6000, currency: "cad", refunded: true, amount_refunded: 6000,
-      refunds: { data: [{ id: "re_1" }] },
+      refunds: { data: [{ id: "re_1", status: "succeeded", amount: 6000 }] },
       metadata: { hone_payment_charge_attempt_id: ATTEMPT, hone_studio_id: STUDIO,
         hone_client_id: CLIENT, hone_charge_reason: "session_payment" },
     } },
