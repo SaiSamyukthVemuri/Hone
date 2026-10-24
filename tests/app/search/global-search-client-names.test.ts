@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { parseOrFilter } from "./helpers/postgrest-or";
 
@@ -16,7 +17,12 @@ const tables: Record<string, Row[]> = {};
 const ilikeCalls: Array<{ table: string; col: string; pattern: string }> = [];
 // The most rows one response may carry (PostgREST db-max-rows). Tests lower it
 // to prove a short page does not end a read early.
-const server = { maxRows: 1000 };
+// failClientsAt, when set, makes a clients read whose page starts at that
+// offset answer with an error instead of rows.
+const server: { maxRows: number; failClientsAt: ((offset: number) => boolean) | null } = {
+  maxRows: 1000,
+  failClientsAt: null,
+};
 
 const RE_METACHARS = /[.*+?^${}()|[\]\\]/g;
 
@@ -92,7 +98,12 @@ function builder(table: string) {
       range = [from, to];
       return chain;
     },
-    then(resolve: (v: { data: Row[]; error: null }) => unknown) {
+    then(resolve: (v: { data: Row[] | null; error: { message: string } | null }) => unknown) {
+      if (table === "clients" && server.failClientsAt?.(range?.[0] ?? 0)) {
+        return Promise.resolve({ data: null, error: { message: "fake read failure" } }).then(
+          resolve as never,
+        );
+      }
       let rows = (tables[table] ?? []).filter((r) => predicates.every((p) => p(r)));
       if (orderCols.length > 0) {
         rows = [...rows].sort((a, b) => {
@@ -157,6 +168,7 @@ beforeEach(() => {
   for (const key of Object.keys(tables)) delete tables[key];
   ilikeCalls.length = 0;
   server.maxRows = 1000;
+  server.failClientsAt = null;
   tables.clients = [
     client("c-janie", "Jane (Janie) Smith", { phone: "(555) 010-0001" }),
     client("c-obrien", "Saoirse O'Brien"),
@@ -338,5 +350,59 @@ describe("global search: punctuation stays literal and direct rows are confirmed
     const ids = await recordIdsFor("a(b");
     expect(ids).toContain("record:sterile:s-real");
     expect(ids).not.toContain("record:sterile:s-wild");
+  });
+});
+
+// SEARCH-HONEST-FAILURE (DAT-002 class): a client candidate page that fails
+// used to read as "no more rows", so the search silently showed partial or no
+// clients. A failed page now fails the whole search, which the panel shows as
+// unavailable rather than as "No results found."
+describe("global search: a failed client read is never shown as nothing", () => {
+  const decoys = (n: number) =>
+    Array.from({ length: n }, (_, i) => client(`c-decoy-${i}`, `Jan Ieva Smith ${String(i).padStart(4, "0")}`));
+
+  it("a failed first page fails the search instead of returning no clients", async () => {
+    server.failClientsAt = (offset) => offset === 0;
+    expect(await globalSearchAction("janie smith")).toEqual({ ok: false });
+  });
+
+  it("a failed later page fails the search instead of returning a partial list", async () => {
+    // Seven rows per page: "Aaron (Janie) Smith" is confirmed on page 1, the
+    // decoys fill the rest, and page 2 fails. Before the repair the search
+    // returned Aaron alone, as if the studio had no other match.
+    server.maxRows = 7;
+    tables.clients.push(
+      client("c-aaron", "Aaron (Janie) Smith"),
+      ...decoys(30),
+      client("c-zoe", "Zoe (Janie) Smith"),
+    );
+    server.failClientsAt = (offset) => offset > 0;
+    expect(await globalSearchAction("janie smith")).toEqual({ ok: false });
+  });
+
+  it("control: the same reads without a failure still succeed", async () => {
+    server.maxRows = 7;
+    tables.clients.push(...decoys(30), client("c-zoe", "Zoe (Janie) Smith"));
+    expect(await clientIdsFor("janie smith")).toEqual(["c-janie", "c-zoe"]);
+  });
+});
+
+describe("global search panel: an unanswered search is not an empty one", () => {
+  // No DOM test runner exists in this repo, so the panel's branch is pinned at
+  // the source: a failed response sets `failed`, and that branch renders
+  // before (so instead of) "No results found."
+  const panel = readFileSync("app/(app)/GlobalSearch.tsx", "utf8");
+
+  it("records a failed or rejected response as failed, not as zero results", () => {
+    expect(panel).toMatch(/\.catch\(\(\) => null\)/);
+    expect(panel).toMatch(/setFailed\(!response\?\.ok\)/);
+  });
+
+  it("renders the unavailable state ahead of the no-results state", () => {
+    const unavailable = panel.indexOf("<p>Search could not be loaded.</p>");
+    const empty = panel.indexOf("<p>No results found.</p>");
+    expect(unavailable).toBeGreaterThan(-1);
+    expect(panel.slice(panel.lastIndexOf(") : failed ? (", unavailable), unavailable)).toContain('role="alert"');
+    expect(unavailable).toBeLessThan(empty);
   });
 });

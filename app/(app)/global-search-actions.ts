@@ -142,12 +142,15 @@ type ClientSearchRow = {
 // every row the shared matcher can accept (lib/clients/name-search.ts), and
 // every candidate must pass the same matchesClientSearch the client-side
 // lists use before it counts toward the cap.
+//
+// Returns null when any page of any read fails (DAT-002): a failed page is not
+// "no more rows", and a partial list would look like a complete one.
 async function searchClientRows(
   supabase: Awaited<ReturnType<typeof createClient>>,
   studioId: string,
   query: string,
   like: string,
-): Promise<ClientSearchRow[]> {
+): Promise<ClientSearchRow[] | null> {
   const base = () =>
     supabase
       .from("clients")
@@ -158,15 +161,16 @@ async function searchClientRows(
   // Name order, then id, so offset pages neither repeat nor skip a row.
   const confirmed = async (
     read: () => ReturnType<typeof base>,
-  ): Promise<ClientSearchRow[]> => {
+  ): Promise<ClientSearchRow[] | null> => {
     const found: ClientSearchRow[] = [];
     for (let offset = 0; ; ) {
       const { data, error } = await read()
         .order("name")
         .order("id")
         .range(offset, offset + CLIENT_CANDIDATE_PAGE - 1);
+      if (error) return null;
       const page = (data ?? []) as ClientSearchRow[];
-      if (error || page.length === 0) return found;
+      if (page.length === 0) return found;
       for (const row of page) {
         if (!matchesClientSearch(row, query)) continue;
         found.push(row);
@@ -197,6 +201,7 @@ async function searchClientRows(
     hasNameQuery(query) ? confirmed(() => base().filter("name", "match", NON_ASCII_NAME_REGEX)) : none,
     phonePattern ? confirmed(() => base().ilike("phone", phonePattern)) : none,
   ]);
+  if (!direct || !asciiNamed || !otherNamed || !phoned) return null;
 
   const seen = new Set<string>();
   const rows: ClientSearchRow[] = [];
@@ -323,6 +328,10 @@ export async function globalSearchAction(
       .limit(2)
       .then((r) => r.data ?? []),
   ]);
+  // A failed client read fails the search: the panel says search is
+  // unavailable rather than showing no clients, or some of them, as if that
+  // were the answer.
+  if (clientRows === null) return { ok: false };
 
   // Appointments: by matched client, by service-name match, and by
   // status keyword. Bounded follow-up reads, deduped by id.
