@@ -24,20 +24,28 @@ import { PendingLink } from "@/components/pending-link";
 // The mark is absolutely positioned and the label only fades, so the
 // segmented control does not resize mid-tap, which is the promise
 // its two equal-width tabs are making.
+//
+// HON-48: a team studio (practitioner capacity on, more than one active
+// practitioner) also gets a Day tab, the team day view with one column per
+// practitioner. The caller passes `dayHref` only for such a studio; without it
+// the control is the unchanged two-tab Week | Month.
 export function CalendarViewToggle({
   currentView,
   weekHref,
   monthHref,
+  dayHref,
 }: {
-  currentView: "week" | "month";
+  currentView: "day" | "week" | "month";
   weekHref: string;
   monthHref: string;
+  dayHref?: string;
 }) {
   const tabs: ReadonlyArray<{
-    value: "week" | "month";
+    value: "day" | "week" | "month";
     label: string;
     href: string;
   }> = [
+    ...(dayHref ? [{ value: "day" as const, label: "Day", href: dayHref }] : []),
     { value: "week", label: "Week", href: weekHref },
     { value: "month", label: "Month", href: monthHref },
   ];

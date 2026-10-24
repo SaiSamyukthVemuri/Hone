@@ -98,6 +98,10 @@ type Props = {
   isOwner: boolean;
   currentPractitionerId: string;
   currentPractitionerName: string;
+  // HON-48 team day view: the column's practitioner. When the owner selector
+  // is shown, a new draft starts on this practitioner while they are eligible
+  // (the same preserve-if-eligible rule below); otherwise it is ignored.
+  preferredPractitionerId?: string;
   onClose: () => void;
 };
 
@@ -139,6 +143,7 @@ export function QuickBookDrawer({
   isOwner,
   currentPractitionerId,
   currentPractitionerName,
+  preferredPractitionerId,
   onClose,
 }: Props) {
   const router = useRouter();
@@ -154,7 +159,8 @@ export function QuickBookDrawer({
   const showSelector = practitionerCapacityEnabled && isOwner;
   const [eligible, setEligible] = useState<EligiblePractitioner[]>([]);
   const [eligibleError, setEligibleError] = useState<string | null>(null);
-  const [target, setTarget] = useState<string>(currentPractitionerId);
+  const initialTarget = (showSelector && preferredPractitionerId) || currentPractitionerId;
+  const [target, setTarget] = useState<string>(initialTarget);
   const [loadingPractitioners, startLoadingPractitioners] = useTransition();
   const eligibleReq = useRef(0);
   // Default-target rule (identical to BookAppointment): preserve a still-eligible
@@ -247,14 +253,14 @@ export function QuickBookDrawer({
       setError(null);
       setEligible([]);
       setEligibleError(null);
-      setTarget(currentPractitionerId);
+      setTarget(initialTarget);
       setOverrideEnabled(false);
       setOverrideConfirmed(false);
       setOverrideLocalTime("");
       setOverrideDurationMinutes("");
       autoOverrideRef.current = false;
     }
-  }, [open, firstServiceId, currentPractitionerId]);
+  }, [open, firstServiceId, initialTarget]);
 
   // When the drawer opens (or the draft time changes), seed the
   // override time field with the time the practitioner clicked on
