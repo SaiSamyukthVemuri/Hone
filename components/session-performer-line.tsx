@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { Practitioner } from "@/lib/types/database";
+import type { PerformerOption } from "@/lib/sessions/performer-options";
 
 type Props = {
   sessionId: string;
   clientId: string;
-  practitioners: Practitioner[];
+  practitioners: PerformerOption[];
   initialPerformerId: string | null;
   // Server-resolved from the attribution roster, so a deactivated performer
   // (absent from the active picker list) is still named (HON-44 (a)).
