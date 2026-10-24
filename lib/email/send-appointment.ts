@@ -1,6 +1,7 @@
 import { safeLog } from "@/lib/logging/safe-log";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FROM_ADDRESS, getResendTransport } from "@/lib/email/client";
+import { forAppointmentEmail } from "@/lib/booking/studio-location";
 import {
   buildFromHeader,
   resolveReplyTo,
@@ -436,6 +437,10 @@ export async function sendBookingConfirmationToClient(params: {
   if (!params.clientEmail) {
     return { ok: false, error: "No client email on file", retryable: false };
   }
+  // HON-50. Everything below (body and .ics LOCATION) reads the email view:
+  // its address is null when the owner chose booking-page-only.
+  params = { ...params, studio: forAppointmentEmail(params.studio) };
+
   const start = new Date(params.appointment.starts_at);
   const end = new Date(params.appointment.ends_at);
   const serviceName = params.service?.name ?? "Appointment";
@@ -603,6 +608,9 @@ export async function send24hReminderToClient(
   if (!p.clientEmail) {
     return { ok: false, error: "No client email on file", retryable: false };
   }
+  // HON-50. The email view of the studio: address per visibility.
+  p = { ...p, studio: forAppointmentEmail(p.studio) };
+
   const start = new Date(p.appointment.starts_at);
   const end = new Date(p.appointment.ends_at);
   const { subject, html, text } = build24hReminderEmail({
@@ -632,6 +640,9 @@ export async function send2hReminderToClient(
   if (!p.clientEmail) {
     return { ok: false, error: "No client email on file", retryable: false };
   }
+  // HON-50. The email view of the studio: address per visibility.
+  p = { ...p, studio: forAppointmentEmail(p.studio) };
+
   const start = new Date(p.appointment.starts_at);
   const end = new Date(p.appointment.ends_at);
   const { subject, html, text } = build2hReminderEmail({
