@@ -52,6 +52,9 @@ vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: CAPTURE_EVENT }))
 vi.mock("@/lib/billing/card-change-notification", () => ({ ensureCardChangeNotification: ENSURE_CARD_NOTIFICATION }));
 
 const ADMIN = { current: null as ReturnType<typeof makeAdmin> | null };
+// W-O1: an ops_alerts insert that FAILS, as PostgREST reports it (an error
+// result, not a throw). Null means the insert succeeds.
+const OPS_INSERT_ERROR = { current: null as null | { code: string; message: string } };
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ADMIN.current!.admin,
 }));
@@ -77,6 +80,7 @@ function makeAdmin(reads: Record<string, ReadResult[]>, rpcs: Record<string, Rea
         select: () => update ? Promise.resolve({ data: [{ id: "attempt-1" }], error: null }) : q,
         insert: async (payload: Record<string, unknown>) => {
           if (table !== "ops_alerts") throw new Error("Unexpected insert table");
+          if (OPS_INSERT_ERROR.current) return { error: OPS_INSERT_ERROR.current };
           opsRows.push(payload); return { error: null };
         },
         update: (payload: Record<string, unknown>) => {
@@ -192,6 +196,7 @@ async function callRoute(request = post()) {
 
 beforeEach(() => {
   vi.resetModules();
+  OPS_INSERT_ERROR.current = null;
   CONSTRUCT_EVENT.mockReset();
   RECORD_OPS_ALERT.mockClear();
   NOTIFY_CRITICAL_OPS_ALERT.mockClear();
@@ -1428,5 +1433,144 @@ describe("P1-B: the account arm records the Account's country", () => {
     });
     expect((await callRoute()).status).toBe(200);
     expect(names(ADMIN.current.rpcCalls)).toContain("mark_stripe_event_processed");
+  });
+});
+
+// ===========================================================================
+// W-O1: a governed-path refund REFUSAL is never both unrecorded and final.
+// Ports #1081's durable behaviour (review M1) onto 0240's governed path: the
+// refusal answers 200 only when its critical ops_alerts row was written; if the
+// insert fails, the route releases the claim, answers 500 and Stripe redelivers.
+// The REAL alert writer runs; only its insert result is scripted, because
+// recordOpsAlert never throws and a mocked throw would prove nothing.
+// ===========================================================================
+describe("W-O1 governed refund refusal through the route, real alert writer", () => {
+  function prepareCharge(refunds: unknown, refundStatus: string | null = "pending_stripe") {
+    const row = {
+      id: "attempt-1", studio_id: "studio-1", client_id: "client-1", charge_reason: "session_payment",
+      status: "succeeded", stripe_livemode: false, stripe_account_id: "acct_test_1",
+      stripe_customer_id: "cus_1", stripe_payment_intent_id: "pi_1", stripe_charge_id: "ch_1",
+      amount_cents: 5000, currency: "cad", charged_at: null, refund_status: refundStatus,
+      refund_amount_cents: refundStatus ? 5000 : null, refunded_at: null, stripe_refund_id: null,
+    };
+    const object = {
+      object: "charge", id: "ch_1", status: "succeeded", paid: true, captured: true, livemode: false,
+      payment_intent: "pi_1", customer: "cus_1", amount: 5000, amount_captured: 5000, currency: "cad",
+      refunded: true, amount_refunded: 5000, metadata: { hone_payment_charge_attempt_id: "attempt-1" },
+      ...(refunds === undefined ? {} : { refunds }),
+    };
+    CONSTRUCT_EVENT.mockReturnValue({ id: "evt_refund_refused", created: 1770000000, type: "charge.refunded",
+      account: "acct_test_1", livemode: false, data: { object } });
+    ADMIN.current = makeAdmin({
+      studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: row, error: null }],
+    }, { claim_stripe_event: CLAIM_OK });
+  }
+  const oneRefund = (status: string) => ({ object: "list", has_more: false, data: [{ object: "refund", id: "re_1",
+    amount: 5000, currency: "cad", charge: "ch_1", payment_intent: "pi_1", status }] });
+  const completionWrites = () =>
+    ADMIN.current!.updateCalls.filter((u) => u.payload.refund_status === "succeeded");
+  const failInsert = () => { OPS_INSERT_ERROR.current = { code: "XX000", message: "synthetic ops_alerts insert failure" }; };
+  const refusals = [
+    ["the default payload with no refund object (refused before the command)", undefined, "charge_refunded_cumulative_evidence_refused"],
+    ["a pending refund (refused by the bound command)", oneRefund("pending"), "stripe_webhook_bound_command_refused"],
+  ] as const;
+
+  it.each(refusals)("alert row written for %s: the refusal is final (200), nothing completed", async (_l, refunds, alert) => {
+    prepareCharge(refunds);
+    expect((await callRoute()).status).toBe(200);
+    expect(completionWrites()).toEqual([]);
+    expect(ADMIN.current!.opsRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: alert, severity: "critical" }),
+    ]));
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+  });
+
+  it.each(refusals)("alert insert FAILS for %s: the route answers 500, releases the claim, completes nothing", async (_l, refunds) => {
+    prepareCharge(refunds);
+    failInsert();
+    expect((await callRoute()).status).toBe(500);
+    expect(completionWrites()).toEqual([]);
+    expect(ADMIN.current!.opsRows).toEqual([]);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+  });
+
+  it("alert insert FAILS for a refused standalone refund.updated: 500 and the claim is released", async () => {
+    CONSTRUCT_EVENT.mockReturnValue({ id: "evt_refund_status_refused", created: 1770000000, type: "refund.updated",
+      account: "acct_test_1", livemode: false, data: { object: { id: "re_1", charge: "ch_1", payment_intent: "pi_1",
+        amount: 5000, currency: "cad", status: "succeeded", metadata: { hone_payment_charge_attempt_id: "attempt-1" } } } });
+    ADMIN.current = makeAdmin({
+      studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+      payment_charge_attempts: [{ data: { id: "attempt-1", studio_id: "studio-1", client_id: "client-1",
+        charge_reason: "session_payment", status: "succeeded", stripe_livemode: false, stripe_account_id: "acct_test_1",
+        stripe_customer_id: "cus_1", stripe_payment_intent_id: "pi_1", stripe_charge_id: "ch_1", amount_cents: 5000,
+        currency: "cad", refund_status: "pending_stripe", stripe_refund_id: "re_1" }, error: null }],
+    }, { claim_stripe_event: CLAIM_OK, reconcile_bound_payment_event: { data: [{ result: "refund_evidence_refused" }], error: null } });
+    failInsert();
+    expect((await callRoute()).status).toBe(500);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+  });
+
+  // Anti-vacuity: the same failing sink does not block a CONFIRMED refund, so
+  // the 500s above come from the refusal, not from the sink alone.
+  it("control: with the same failing alert insert, a confirmed refund still completes (200)", async () => {
+    prepareCharge(oneRefund("succeeded"));
+    failInsert();
+    expect((await callRoute()).status).toBe(200);
+    expect(completionWrites()).toHaveLength(1);
+    expect(names(ADMIN.current!.rpcCalls)).toContain("mark_stripe_event_processed");
+  });
+
+  // W-O2 is NOT in this change (Codex P2 4368957763 scope is W-O1 only). At this
+  // head an already-refunded row with the default payload still reaches the
+  // cumulative refusal, so with a failing sink it is retryable like any other
+  // refusal: never final without its alert, and it writes nothing.
+  it("already-refunded row, default payload, failing sink: retryable (500), nothing written", async () => {
+    prepareCharge(undefined, "succeeded");
+    failInsert();
+    expect((await callRoute()).status).toBe(500);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+  });
+
+  // Codex P2 4368957763, end to end across deliveries of ONE event id:
+  // (1) the alert insert fails -> 500, claim released with an error, not processed;
+  // (2) Stripe's redelivery with a healthy sink -> the alert persists, the event
+  //     is marked processed exactly once, 200;
+  // (3) a further duplicate after that success -> the claim reports
+  //     already_processed: no handler, no second alert, no second mark.
+  it.each(refusals)("redelivery sequence for %s: fail -> retry succeeds once -> duplicate is a no-op", async (_l, refunds, alert) => {
+    prepareCharge(refunds);
+    failInsert();
+    const first = await callRoute();
+    expect(first.status).toBe(500);
+    const release = ADMIN.current!.rpcCalls.find((c) => c.name === "release_stripe_event_claim_with_error");
+    expect(release?.args).toMatchObject({ p_event_id: "evt_refund_refused", p_error: "stripe_webhook_refund_refusal_unrecorded" });
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+    expect(ADMIN.current!.opsRows).toEqual([]);
+
+    prepareCharge(refunds);
+    OPS_INSERT_ERROR.current = null;
+    const second = await callRoute();
+    expect(second.status).toBe(200);
+    expect(ADMIN.current!.opsRows.filter((r) => r.event === alert)).toHaveLength(1);
+    const marks = ADMIN.current!.rpcCalls.filter((c) => c.name === "mark_stripe_event_processed");
+    expect(marks).toHaveLength(1);
+    expect(marks[0].args.p_event_id).toBe("evt_refund_refused");
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("release_stripe_event_claim_with_error");
+    expect(completionWrites()).toEqual([]);
+
+    prepareCharge(refunds);
+    ADMIN.current = makeAdmin({}, { claim_stripe_event: { data: [{ already_processed: true,
+      currently_processing_elsewhere: false, claimed_by_this_request: false, claim_token: null }], error: null } });
+    const third = await callRoute();
+    expect(third.status).toBe(200);
+    expect(await third.json()).toMatchObject({ ok: true, alreadyProcessed: true });
+    expect(names(ADMIN.current!.rpcCalls)).toEqual(["claim_stripe_event"]);
+    expect(ADMIN.current!.opsRows).toEqual([]);
+    expect(ADMIN.current!.updateCalls).toEqual([]);
   });
 });

@@ -79,16 +79,19 @@ vi.mock("@/lib/stripe/server", () => ({
 vi.mock("@/lib/stripe/session-payment-stripe", () => ({
   getSessionPaymentStripe: () => fakeStripe,
 }));
-vi.mock("@/lib/ops/alerts", () => ({
-  recordOpsAlert: async (a: {
+vi.mock("@/lib/ops/alerts", () => {
+  const record = async (a: {
     severity: string;
     event: string;
     safeDetails?: Record<string, unknown>;
   }) => {
     h.alerts.push({ severity: a.severity, event: a.event, details: a.safeDetails ?? {} });
     if (h.alertThrows) throw new Error("synthetic diagnostic sink failure");
-  },
-}));
+  };
+  // Codex P2 4368957763: the durable variant reports the row as written; the
+  // route-level suite drives the real writer's failure.
+  return { recordOpsAlert: record, recordOpsAlertDurably: async (a: Parameters<typeof record>[0]) => { await record(a); return true; } };
+});
 vi.mock("@/lib/billing/charge-description", () => ({
   buildChargeDescription: () => "desc",
 }));

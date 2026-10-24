@@ -2,7 +2,7 @@ import "server-only";
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
-import { recordOpsAlert } from "@/lib/ops/alerts";
+import { recordOpsAlert, recordOpsAlertDurably } from "@/lib/ops/alerts";
 import {
   compareProviderMoney,
   providerMoneyMismatchDetails,
@@ -390,6 +390,18 @@ async function verifyProviderMoneyAgainstRow(args: {
   return false;
 }
 
+// Codex P2 4368957763 (Team W-O1; ports #1081 review M1 onto the governed
+// path). A refund refusal answers 2xx only when its critical alert is DURABLY
+// recorded. If the ops_alerts row could not be written, this is thrown instead,
+// so the route releases the claim, answers 500 and Stripe redelivers: the
+// refusal is never both unrecorded and final. No payment row is touched.
+export class PaymentRefundRefusalUnrecordedError extends Error {
+  constructor() {
+    super("stripe_webhook_refund_refusal_unrecorded");
+    this.name = "PaymentRefundRefusalUnrecordedError";
+  }
+}
+
 // A normal create/confirm-to-persistence race, distinct from a genuine handler
 // failure. The route recognizes this exact server-only type, never message text.
 export class PaymentOriginalBindingPendingError extends Error {
@@ -560,12 +572,19 @@ async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt
   });
   const outcome = (Array.isArray(data) ? data[0] : data) as { result?: string } | null;
   if (!error && ["identity_mismatch", "refund_evidence_refused", "invalid_input", "terminal_refund_mismatch"].includes(outcome?.result ?? "")) {
-    await recordOpsAlert({
-      severity: "critical", event: "stripe_webhook_bound_command_refused",
+    const alert = {
+      severity: "critical" as const, event: "stripe_webhook_bound_command_refused",
       message: "The locked payment command refused the signed event evidence. No payment row was mutated.",
       studioId: ctx.studioId, stripeEventId: event.id, route: ROUTE,
       safeDetails: { attempt_id: attempt.id, result: outcome?.result, event_type: event.type },
-    });
+    };
+    // A refund event's refusal stays retryable until its alert is kept. Other
+    // event types keep the best-effort writer (#1081's scope, not widened).
+    if (isRefund || isStandaloneRefund) {
+      if ((await recordOpsAlertDurably(alert)) !== true) throw new PaymentRefundRefusalUnrecordedError();
+    } else {
+      await recordOpsAlert(alert);
+    }
   }
   return { data, error };
 }
@@ -1288,10 +1307,11 @@ export async function handleChargeRefunded(
 
   const cumulative = isCumulativeChargeRefund(charge);
   if (cumulative && !cumulativeChargeRefundEvidence(event, ctx, attempt)) {
-    await recordOpsAlert({ severity: "critical", event: "charge_refunded_cumulative_evidence_refused",
+    const recorded = await recordOpsAlertDurably({ severity: "critical", event: "charge_refunded_cumulative_evidence_refused",
       message: "Charge-level full refund lacks complete, distinct, bound successful refund evidence. No payment row was mutated.",
       studioId: attempt.studio_id, clientId: attempt.client_id, stripeEventId: event.id, route: ROUTE,
       safeDetails: { attempt_id: attempt.id, reason: "incomplete_or_conflicting_cumulative_evidence" } });
+    if (recorded !== true) throw new PaymentRefundRefusalUnrecordedError();
     return { eventType: event.type, attemptId: attempt.id, cumulativeRefundEvidenceRefused: true };
   }
 
