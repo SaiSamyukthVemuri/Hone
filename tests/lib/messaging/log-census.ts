@@ -100,18 +100,6 @@ function isExported(fn: Fn): boolean {
   return !!(ts.canHaveModifiers(holder) && ts.getModifiers(holder)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword));
 }
 
-function isPrimitiveType(type: ts.TypeNode | undefined): boolean {
-  if (!type) return false;
-  const leaf = (t: ts.TypeNode) =>
-    t.kind === ts.SyntaxKind.StringKeyword ||
-    t.kind === ts.SyntaxKind.NumberKeyword ||
-    t.kind === ts.SyntaxKind.BooleanKeyword ||
-    t.kind === ts.SyntaxKind.NullKeyword ||
-    t.kind === ts.SyntaxKind.UndefinedKeyword ||
-    ts.isLiteralTypeNode(t);
-  return leaf(type) || (ts.isUnionTypeNode(type) && type.types.every(leaf));
-}
-
 function constInitializer(id: ts.Identifier): ts.Expression | undefined {
   const scope: ts.Node = enclosingFunction(id) ?? id.getSourceFile();
   let found: ts.Expression | undefined;
@@ -257,9 +245,14 @@ function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, dep
   if (whole) acc.opaque.push(expr.getText());
 }
 
-function writerOf(file: string, node: ts.CallExpression, via: string, skip: ReadonlySet<string>): Writer {
+// `positions`: the arguments that reach the line. A sink writes all of them; a
+// helper call writes only the ones the helper forwards (postCommit(event,
+// undefined, () => ...) writes `event`, not its callback).
+function writerOf(file: string, node: ts.CallExpression, via: string, skip: ReadonlySet<string>, positions?: readonly number[]): Writer {
   const acc = newAcc();
-  for (const a of node.arguments) walkValue(a, acc, skip);
+  node.arguments.forEach((a, i) => {
+    if (!positions || positions.includes(i)) walkValue(a, acc, skip);
+  });
   const src = node.getSourceFile();
   return {
     file,
@@ -275,13 +268,18 @@ function writerOf(file: string, node: ts.CallExpression, via: string, skip: Read
   };
 }
 
-/** The parameters of `fn` that `call` writes whole, as an object (not a primitive). */
+/**
+ * The parameters of `fn` that `call` writes whole (not through a property).
+ * Their type does not matter: a `string` parameter can be a payload serialised
+ * by the caller (logEmailDiagnostic(JSON.stringify({...})), Codex P2
+ * 4368011462), so every caller is followed whatever the parameter is.
+ */
 function containerParams(fn: Fn, call: ts.CallExpression): number[] {
   const acc = newAcc();
   for (const a of call.arguments) walkValue(a, acc, new Set());
   const out: number[] = [];
   fn.parameters.forEach((p, i) => {
-    if (ts.isIdentifier(p.name) && acc.bare.includes(p.name.text) && !isPrimitiveType(p.type)) out.push(i);
+    if (ts.isIdentifier(p.name) && acc.bare.includes(p.name.text)) out.push(i);
   });
   return out;
 }
@@ -292,7 +290,7 @@ export function analyzeSource(file: string, source: string): FileCensus {
   const src = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind);
   const writers: Writer[] = [];
   const unfollowable: string[] = [];
-  // helper name -> the positions of the containers it forwards
+  // helper name -> the positions of the parameters it forwards
   const forwarders = new Map<string, { fn: Fn; positions: number[] }>();
 
   const paramNames = (fn: Fn, positions: readonly number[]) =>
@@ -301,7 +299,8 @@ export function analyzeSource(file: string, source: string): FileCensus {
   const addForwarder = (fn: Fn, positions: number[]) => {
     const name = functionName(fn);
     if (!name || isExported(fn)) {
-      unfollowable.push(`${name ?? "<anonymous>"}(${paramNames(fn, positions).join(", ")})`);
+      const entry = `${name ?? "<anonymous>"}(${paramNames(fn, positions).join(", ")})`;
+      if (!unfollowable.includes(entry)) unfollowable.push(entry);
       return;
     }
     const known = forwarders.get(name);
@@ -313,7 +312,10 @@ export function analyzeSource(file: string, source: string): FileCensus {
     if (isSink(n)) {
       const fn = enclosingFunction(n);
       const positions = fn ? containerParams(fn, n) : [];
-      writers.push(writerOf(file, n, n.expression.getText(), new Set(fn ? paramNames(fn, positions) : [])));
+      // A forwarded parameter is judged at each call of a followable helper.
+      // An exported or anonymous one cannot be, so it is judged here by name.
+      const followable = !!fn && !!functionName(fn) && !isExported(fn);
+      writers.push(writerOf(file, n, n.expression.getText(), new Set(fn && followable ? paramNames(fn, positions) : [])));
       if (fn && positions.length > 0) addForwarder(fn, positions);
     }
     ts.forEachChild(n, visitSinks);
@@ -332,16 +334,17 @@ export function analyzeSource(file: string, source: string): FileCensus {
       const visitCalls = (n: ts.Node): void => {
         if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === name) {
           const outer = enclosingFunction(n);
+          const outerFollowable = !!outer && !!functionName(outer) && !isExported(outer);
           const onward: number[] = [];
           if (outer && outer !== fn) {
             for (const pos of positions) {
               const arg = n.arguments[pos];
               if (!arg || !ts.isIdentifier(arg)) continue;
               const i = outer.parameters.findIndex((p) => ts.isIdentifier(p.name) && p.name.text === arg.text);
-              if (i >= 0 && !isPrimitiveType(outer.parameters[i].type)) onward.push(i);
+              if (i >= 0) onward.push(i);
             }
           }
-          writers.push(writerOf(file, n, `${name}()`, new Set(outer ? paramNames(outer, onward) : [])));
+          writers.push(writerOf(file, n, `${name}()`, new Set(outer && outerFollowable ? paramNames(outer, onward) : []), positions));
           if (outer && onward.length > 0) addForwarder(outer, onward);
         }
         ts.forEachChild(n, visitCalls);

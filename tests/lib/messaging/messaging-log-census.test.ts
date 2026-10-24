@@ -33,7 +33,9 @@ import {
 //   2. no literal that is a link, an email address, a token-bearing path, or a
 //      phone number, masked or not;
 //   3. nothing the analyzer cannot see into, and no forwarding helper whose
-//      callers it cannot follow (an exported one);
+//      callers it cannot follow (an exported one) unless UNFOLLOWABLE lists it.
+//      A helper parameter is followed whatever its type: a `string` can be a
+//      payload the caller serialised (Codex P2 4368011462);
 //   4. raw error or provider text only where ERROR_TEXT lists it (below).
 //
 // THE CENSUS is pinned: per file, the number of writers of each kind. Adding a
@@ -52,46 +54,46 @@ import {
 // ===========================================================================
 
 const CENSUS: Record<string, Record<string, number>> = {
-  "app/(app)/calendar/actions.ts": { "console.error": 12, "logPostcare()": 3 },
+  "app/(app)/calendar/actions.ts": { "console.error": 12, "logBookingDbError()": 5, "logPostcare()": 3 },
   "app/(app)/calendar/move-appointment-actions.ts": { "console.error": 3 },
   "app/(app)/calendar/postcare-auto-send.ts": { "console.error": 1, "console.log": 1, "logOutcome()": 8 },
   "app/(app)/clients/[id]/actions.ts": { "safeLog.error": 7 },
-  "app/(app)/clients/[id]/intake/actions.ts": { "safeLog.error": 3 },
+  "app/(app)/clients/[id]/intake/actions.ts": { "logIntakeActionFailure()": 19, "safeLog.error": 3 },
   "app/(app)/clients/[id]/page.tsx": { "console.error": 1, "logClinicalReadFailure()": 4 },
   "app/(app)/clients/[id]/portal-messages-actions.ts": { "safeLog.error": 6 },
   "app/(app)/settings/team/actions.ts": { "console.error": 3, "console.warn": 1 },
-  "app/(app)/settings/waitlist/consent-actions.ts": { "console.error": 1 },
+  "app/(app)/settings/waitlist/consent-actions.ts": { "console.error": 1, "logRefusal()": 5 },
   "app/(app)/settings/waitlist/page.tsx": { "console.error": 5 },
-  "app/(app)/settings/waitlist/profile-actions.ts": { "console.error": 1 },
+  "app/(app)/settings/waitlist/profile-actions.ts": { "console.error": 1, "logRefusal()": 4 },
   "app/admin/studios/new/actions.ts": { "console.error": 1 },
   "app/api/cron/calendar-reconcile/route.ts": { "console.error": 1 },
   "app/api/cron/calendar-sync/route.ts": { "console.error": 1 },
   "app/api/cron/materialize-recurring-breaks/route.ts": { "console.error": 2 },
   "app/api/twilio/inbound-sms/route.ts": { "console.error": 1, "console.log": 1, "logError()": 12, "logEvent()": 3 },
   "app/api/twilio/message-status/route.ts": { "console.error": 1, "console.log": 1, "logError()": 4, "logEvent()": 4 },
-  "app/book/[slug]/actions.ts": { "console.error": 6, "logInternalBookingError()": 15 },
+  "app/book/[slug]/actions.ts": { "console.error": 6, "invitationBookingIndeterminate()": 1, "invitationConsumedWithoutBooking()": 6, "logInternalBookingError()": 15, "postCommit()": 11 },
   "app/book/[slug]/waitlist-actions.ts": { "console.error": 1, "logWaitlistEvent()": 17 },
   "app/cancel/[token]/actions.ts": { "logInternal()": 4, "safeLog.error": 2 },
   "app/intake/[token]/actions.ts": { "console.error": 4, "logInternalIntakeError()": 4 },
   "app/portal/login/actions.ts": { "console.log": 2, "logSanitized()": 6 },
   "app/portal/portal-message-actions.ts": { "console.error": 7 },
-  "app/portal/rebook-actions.ts": { "console.error": 1, "logRebookError()": 13 },
-  "app/reschedule/[token]/actions.ts": { "console.error": 3, "logInternal()": 11 },
+  "app/portal/rebook-actions.ts": { "console.error": 1, "logRebookError()": 13, "postCommit()": 10 },
+  "app/reschedule/[token]/actions.ts": { "attempt()": 8, "console.error": 3, "logInternal()": 11 },
   "lib/billing/payment-receipt.ts": { "console.error": 2, "logInternal()": 4 },
   "lib/email/client.ts": { "console.warn": 1 },
-  "lib/email/send-appointment.ts": { "console.error": 1, "safeLog.error": 1 },
-  "lib/email/send-welcome.ts": { "console.error": 1 },
+  "lib/email/send-appointment.ts": { "console.error": 1, "logEmailDiagnostic()": 3, "safeLog.error": 1 },
+  "lib/email/send-welcome.ts": { "console.error": 1, "markError()": 5 },
   "lib/notifications/practitioner-notifications.ts": { "console.error": 1, "logSilently()": 3 },
   "lib/ops/alert-email.ts": { "console.error": 2, "console.warn": 2 },
   "lib/portal-messages/queries.ts": { "console.error": 1 },
   "lib/portal-messages/replies-queries.ts": { "console.error": 1 },
   "lib/portal/magic-link.ts": { "console.error": 1, "safeLog.error": 1, "safeLog.info": 1 },
-  "lib/rate-limit/public.ts": { "console.error": 3, "console.warn": 2 },
+  "lib/rate-limit/public.ts": { "console.error": 3, "console.warn": 2, "limitMarketingForm()": 2, "logBackendUnavailable()": 10, "logRateLimitExceeded()": 15 },
   "lib/sms/delivery-ledger.ts": { "console.error": 1, "logLedger()": 17 },
-  "lib/sms/send-appointment.ts": { "console.error": 2, "safeLog.error": 2, "safeLog.info": 2 },
+  "lib/sms/send-appointment.ts": { "boundedLedgerStep()": 2, "console.error": 2, "logSmsDiagnostic()": 3, "readUnsentReminderAttemptNumber()": 1, "safeLog.error": 2, "safeLog.info": 2, "sendReminder()": 2 },
   "lib/waitlist/delivery/join-ack-sms.ts": { "console.log": 1, "log()": 4 },
   "lib/waitlist/delivery/sms.ts": { "console.log": 1, "log()": 4 },
-  "lib/waitlist/invite-to-book-adapter.ts": { "console.error": 2 },
+  "lib/waitlist/invite-to-book-adapter.ts": { "console.error": 2, "recordFailed()": 2 },
   "lib/waitlist/operator-queue-presence.ts": { "console.error": 1 },
 };
 
@@ -112,7 +114,7 @@ const ERROR_TEXT: ReadonlyArray<readonly [key: string, count: number, kind: Erro
   ["app/(app)/calendar/actions.ts | console.error | mark_no_show_rpc_error", 1, "db"],
   ["app/(app)/calendar/actions.ts | console.error | send_postcare_lookup_failed", 1, "db"],
   ["app/(app)/calendar/postcare-auto-send.ts | console.error | postcare_auto_send_threw", 1, "thrown"],
-  ["app/(app)/clients/[id]/intake/actions.ts | safeLog.error | {event}", 1, "db"],
+  ["app/(app)/clients/[id]/intake/actions.ts | safeLog.error | {code}", 1, "db"],
   ["app/(app)/clients/[id]/intake/actions.ts | safeLog.error | intake_reissue_email_failed", 2, "provider"],
   ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_insert_failed", 1, "db"],
   ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_email_send_failed", 1, "provider"],
@@ -161,6 +163,18 @@ const ERROR_TEXT: ReadonlyArray<readonly [key: string, count: number, kind: Erro
   ["lib/waitlist/delivery/sms.ts | log() | {outcome}", 1, "closed"],
 ];
 
+// Exported functions that write one of their own parameters whole, so their
+// callers (in other files) are not followed. Each is a typed string record id
+// written under its own name, not a payload; the name rule still applies to it,
+// and a record id is #828 G-26's concern (safeLog), not a destination. Any
+// other exported forwarder fails until it is listed here with its reason.
+const UNFOLLOWABLE: Record<string, string> = {
+  "app/(app)/calendar/postcare-auto-send.ts: autoSendPostcareOnComplete(appointmentId)":
+    "appointmentId: string, written as the appointment reference in postcare_auto_send lines",
+  "lib/waitlist/operator-queue-presence.ts: hasActiveWaitlistEntries(studioId)":
+    "studioId: string, written as the studio reference in waitlist_nav_presence_failed",
+};
+
 const census = censusOf(surfaceFiles());
 const writers: Writer[] = [...census.values()].flatMap((c) => c.writers);
 const where = (w: Writer) => `${w.file}:${w.line} ${w.text}`;
@@ -179,6 +193,17 @@ describe("MSG-007 log census: the surface is the real one", () => {
       expect(census.has(file), file).toBe(true);
     }
     expect(writers.length).toBeGreaterThan(200);
+  });
+
+  it("follows string-payload helpers to their calls (lib/email and lib/sms diagnostics)", () => {
+    for (const [file, via] of [
+      ["lib/email/send-appointment.ts", "logEmailDiagnostic()"],
+      ["lib/sms/send-appointment.ts", "logSmsDiagnostic()"],
+    ] as const) {
+      const calls = writers.filter((w) => w.file === file && w.via === via);
+      expect(calls.length, `${file} ${via}`).toBeGreaterThan(0);
+      expect(calls.every((w) => w.label.length > 0 && !w.label.startsWith("{")), via).toBe(true);
+    }
   });
 
   it("follows forwarding helpers to their calls (the webhook's logError is judged per event)", () => {
@@ -250,9 +275,9 @@ describe("MSG-007 log census: no writer carries a destination, link or token", (
     expect(bad).toEqual([]);
   });
 
-  it("every forwarding helper is file-local, so its callers are followed", () => {
-    const bad = [...census].flatMap(([file, c]) => c.unfollowable.map((u) => `${file}: ${u}`));
-    expect(bad).toEqual([]);
+  it("every forwarding helper is file-local, so its callers are followed, or is listed in UNFOLLOWABLE", () => {
+    const found = [...census].flatMap(([file, c]) => c.unfollowable.map((u) => `${file}: ${u}`)).sort();
+    expect(found).toEqual(Object.keys(UNFOLLOWABLE).sort());
   });
 });
 
@@ -298,6 +323,29 @@ describe("MSG-007 log census: the analyzer catches what it must", () => {
       export function h(manageUrl: string) { mid({ manageUrl }); }`);
     expect(unfollowable).toEqual([]);
     expect(ws.filter((w) => w.via === "mid()").flatMap(sensitive)).toEqual(["manageUrl"]);
+  });
+
+  it("a helper that forwards a STRING payload is followed too (Codex P2 4368011462)", () => {
+    // The shape of logEmailDiagnostic / logSmsDiagnostic: the payload is typed
+    // `string`, so it is serialised before the helper sees it.
+    const { writers: ws, unfollowable } = analyze(`
+      function logDiag(payload: string): void {
+        try { safeLog.error(payload); } catch { /* best effort */ }
+      }
+      export function f(opts: { error: string }) {
+        logDiag(JSON.stringify({ event: "email_send_failed", to: opts.error, link: "https://leak.example.test/x" }));
+      }`);
+    expect(unfollowable).toEqual([]);
+    const call = ws.find((w) => w.via === "logDiag()");
+    expect(call?.label).toBe("email_send_failed");
+    expect(call && sensitive(call)).toEqual(["to", "link"]);
+    expect(call?.errorText).toEqual(["opts.error"]);
+    expect(call?.literals.map(literalViolation).filter(Boolean)).toEqual(["a link"]);
+  });
+
+  it("an exported helper forwarding any parameter, string or object, is reported", () => {
+    const { unfollowable } = analyze(`export function logLine(line: string) { console.error(line); }`);
+    expect(unfollowable).toEqual(["logLine(line)"]);
   });
 
   it("an exported forwarding helper cannot be followed, and is reported", () => {
