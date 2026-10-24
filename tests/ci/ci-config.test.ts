@@ -1144,6 +1144,28 @@ describe("E-GAPS: the storage photo job is separate, storage-backed and never re
     }
   });
 
+  it("Playwright is fully prepared before the fallible DB step, and neither test step hides the other (Codex P2 4368722781)", () => {
+    const steps = JOB.split(/\n(?=      - )/);
+    const at = (needle: string) => steps.findIndex((s) => s.includes(needle));
+    const db = at("npx vitest run");
+    const e2e = at("npx playwright test");
+    for (const prep of [
+      "require('@playwright/test/package.json').version",
+      "path: ~/.cache/ms-playwright",
+      "run: npx playwright install chromium",
+      "run: bash scripts/ci/playwright-system-deps.sh",
+    ]) {
+      expect(at(prep), prep).toBeGreaterThan(-1);
+      expect(at(prep), `${prep} runs before the DB step`).toBeLessThan(db);
+    }
+    expect(steps[at("run: bash scripts/ci/playwright-system-deps.sh")]).toMatch(/^ {8}id: pw_sys$/m);
+    expect(db).toBeLessThan(e2e);
+    expect(steps[db]).toMatch(/^ {8}if: \$\{\{ !cancelled\(\) && steps\.storage_up\.outcome == 'success' \}\}$/m);
+    expect(steps[e2e]).toMatch(
+      /^ {8}if: \$\{\{ !cancelled\(\) && steps\.storage_up\.outcome == 'success' && steps\.pw_sys\.outcome == 'success' \}\}$/m,
+    );
+  });
+
   it("its hard timeout exceeds the ~10 min target", () => {
     const t = Number(/^ {4}timeout-minutes: (\d+)$/m.exec(JOB)?.[1]);
     expect(t).toBeGreaterThan(10);

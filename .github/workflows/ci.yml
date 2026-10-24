@@ -1714,9 +1714,6 @@ jobs:
         id: storage_up
         run: curl -fsS http://127.0.0.1:54321/storage/v1/version
 
-      - name: Signed-URL route DB cases (storage-dependent)
-        run: npx vitest run --config vitest.db.config.ts tests/db/treatment-image-signed-url-route.db.test.ts
-
       - name: Resolve Playwright version
         id: pw
         run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
@@ -1748,6 +1745,7 @@ jobs:
           key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Install Playwright system packages (bounded, .deb cache)
+        id: pw_sys
         timeout-minutes: 6
         run: bash scripts/ci/playwright-system-deps.sh
 
@@ -1758,9 +1756,17 @@ jobs:
           path: ~/apt-debs
           key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
-      - name: Storage photo E2E (CLN-005 + ENG-002)
-        # A red DB step must not hide the browser result (the mirror rule).
+      # Playwright is fully prepared ABOVE, before the fallible DB step, so a red
+      # DB step cannot leave the browser step without a browser (Codex P2
+      # 4368722781). Each of the two test steps runs when the preflight passed,
+      # whatever the other one did (the mirror rule); the browser step also
+      # needs its system packages, whose success implies the earlier prep.
+      - name: Signed-URL route DB cases (storage-dependent)
         if: ${{ !cancelled() && steps.storage_up.outcome == 'success' }}
+        run: npx vitest run --config vitest.db.config.ts tests/db/treatment-image-signed-url-route.db.test.ts
+
+      - name: Storage photo E2E (CLN-005 + ENG-002)
+        if: ${{ !cancelled() && steps.storage_up.outcome == 'success' && steps.pw_sys.outcome == 'success' }}
         run: npx playwright test e2e/fett-photos-thumbnail-recovery.spec.ts e2e/treatment-image-upload-formats.spec.ts --project=chromium
         env:
           HONE_E2E_FAKE_RESEND: "1"
