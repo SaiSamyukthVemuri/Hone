@@ -151,6 +151,7 @@ vi.mock("@/lib/supabase/queries", () => ({
 }));
 
 import { globalSearchAction } from "@/app/(app)/global-search-actions";
+import { CLIENT_SCAN_CAP_PER_READ } from "@/lib/search/global-search";
 
 function client(id: string, name: string, extra: Partial<Row> = {}): Row {
   return {
@@ -404,5 +405,76 @@ describe("global search panel: an unanswered search is not an empty one", () => 
     expect(unavailable).toBeGreaterThan(-1);
     expect(panel.slice(panel.lastIndexOf(") : failed ? (", unavailable), unavailable)).toContain('role="alert"');
     expect(unavailable).toBeLessThan(empty);
+  });
+});
+
+// SEARCH-SCAN-BOUND: confirmed() could page through a studio's whole candidate
+// list on every keystroke. Each client read now scans at most
+// CLIENT_SCAN_CAP_PER_READ rows. A read that reaches the cap before it has
+// CLIENT_CAP matches reports it, and the action returns clientsTruncated, never
+// a short list presented as complete. "Jan Ieva Smith NNNN" decoys sort ahead of
+// "Jane (Janie) Smith" and are candidates of the name read that the shared
+// matcher rejects, so `n` decoys put c-janie at candidate index n.
+describe("global search: the client scan is bounded and says so", () => {
+  const CAP = 2000;
+  const decoys = (n: number) =>
+    Array.from({ length: n }, (_, i) => client(`c-decoy-${i}`, `Jan Ieva Smith ${String(i).padStart(4, "0")}`));
+
+  it("pins the stated bound", () => {
+    expect(CLIENT_SCAN_CAP_PER_READ).toBe(CAP);
+  });
+
+  it("a match at the last row inside the cap is found, with no truncation signal", async () => {
+    // "Janet Smithers" is also a name-read candidate (the matcher rejects it)
+    // and sorts after c-janie; removed so c-janie is the LAST candidate, at
+    // index CAP - 1, with nothing beyond it.
+    tables.clients = tables.clients.filter((r) => r.id !== "c-other");
+    tables.clients.push(...decoys(CAP - 1));
+    const res = await globalSearchAction("janie smith");
+    expect(res.ok && res.results.filter((r) => r.type === "client").map((r) => r.id)).toEqual(["client:c-janie"]);
+    expect(res.ok && res.clientsTruncated).toBeFalsy();
+  });
+
+  it("a match just past the cap is not scanned, and the search says it is incomplete", async () => {
+    tables.clients.push(...decoys(CAP));
+    const res = await globalSearchAction("janie smith");
+    expect(res).toEqual({ ok: true, results: [], clientsTruncated: true });
+  });
+
+  it("a match inside the cap with more candidates past it is shown AND flagged", async () => {
+    // c-janie at index CAP - 1; "Janet Smithers" and c-zoe lie past the cap.
+    tables.clients.push(...decoys(CAP - 1), client("c-zoe", "Zoe (Janie) Smith"));
+    const res = await globalSearchAction("janie smith");
+    expect(res.ok && res.results.filter((r) => r.type === "client").map((r) => r.id)).toEqual(["client:c-janie"]);
+    expect(res.ok && res.clientsTruncated).toBe(true);
+  });
+
+  it("no signal when CLIENT_CAP matches are confirmed before the cap", async () => {
+    tables.clients.push(
+      ...Array.from({ length: 5 }, (_, i) => client(`c-a${i}`, `Aaron (Janie) Smith ${i}`)),
+      ...decoys(CAP + 10),
+    );
+    const res = await globalSearchAction("janie smith");
+    expect(res.ok && res.results.filter((r) => r.type === "client")).toHaveLength(5);
+    expect(res.ok && res.clientsTruncated).toBeFalsy();
+  });
+
+  it("the bound holds under a server row cap smaller than the page", async () => {
+    server.maxRows = 700;
+    tables.clients.push(...decoys(CAP));
+    expect(await globalSearchAction("janie smith")).toEqual({ ok: true, results: [], clientsTruncated: true });
+  });
+});
+
+describe("global search panel: a bounded client scan is never shown as complete", () => {
+  const panel = readFileSync("app/(app)/GlobalSearch.tsx", "utf8");
+
+  it("keeps the truncation signal from the response", () => {
+    expect(panel).toMatch(/setClientsTruncated\(response\?\.ok === true && response\.clientsTruncated === true\)/);
+  });
+
+  it("says the client list is partial, and never says No results found. while it is", () => {
+    expect(panel).toContain("Showing the first client matches. Refine your search to find more.");
+    expect(panel).toMatch(/groups\.length === 0 && !clientsTruncated \? \(/);
   });
 });

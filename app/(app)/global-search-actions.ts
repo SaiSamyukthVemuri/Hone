@@ -8,6 +8,7 @@ import {
 import { blockAreasLabel } from "@/lib/sessions/block-areas";
 import {
   capResults,
+  CLIENT_SCAN_CAP_PER_READ,
   containsPattern,
   orIlike,
   sanitizeQuery,
@@ -52,8 +53,10 @@ import {
 const CLIENT_CAP = 5;
 
 // HON-58: rows per page of a wide candidate read. Candidates are read page by
-// page until CLIENT_CAP of them are confirmed or none remain, never cut at a
-// fixed count before confirmation (Codex P2 4366960913).
+// page until CLIENT_CAP of them are confirmed, none remain, or the read reaches
+// CLIENT_SCAN_CAP_PER_READ. They are never cut at a fixed count before
+// confirmation (Codex P2 4366960913), and a read that stops at the scan bound
+// says so rather than passing as complete.
 const CLIENT_CANDIDATE_PAGE = 1000;
 const APPOINTMENT_CAP = 4;
 const MEMORY_CAP = 4;
@@ -143,6 +146,10 @@ type ClientSearchRow = {
   phone: string | null;
 };
 
+// truncated: some read stopped at CLIENT_SCAN_CAP_PER_READ before it had
+// CLIENT_CAP matches, so a matching client may exist beyond what was scanned.
+type ClientSearch = { rows: ClientSearchRow[]; truncated: boolean };
+
 // Clients (HON-58). The direct ILIKE is today's rule (a literal substring of
 // name, email or phone), so nothing it found is lost. The candidate reads add
 // what ILIKE alone cannot see:
@@ -154,13 +161,14 @@ type ClientSearchRow = {
 // lists use before it counts toward the cap.
 //
 // Returns null when any page of any read fails (DAT-002): a failed page is not
-// "no more rows", and a partial list would look like a complete one.
+// "no more rows", and a partial list would look like a complete one. For the
+// same reason, a read cut short by the scan bound sets `truncated`.
 async function searchClientRows(
   supabase: Awaited<ReturnType<typeof createClient>>,
   studioId: string,
   query: string,
   like: string,
-): Promise<ClientSearchRow[] | null> {
+): Promise<ClientSearch | null> {
   const base = () =>
     supabase
       .from("clients")
@@ -171,22 +179,26 @@ async function searchClientRows(
   // Name order, then id, so offset pages neither repeat nor skip a row.
   const confirmed = async (
     read: () => ReturnType<typeof base>,
-  ): Promise<ClientSearchRow[] | null> => {
+  ): Promise<ClientSearch | null> => {
     const found: ClientSearchRow[] = [];
     for (let offset = 0; ; ) {
+      // The last request reaches one row PAST the bound (index
+      // CLIENT_SCAN_CAP_PER_READ), never scanned: it only tells "stopped at
+      // the bound" apart from "ran out of candidates".
       const { data, error } = await read()
         .order("name")
         .order("id")
-        .range(offset, offset + CLIENT_CANDIDATE_PAGE - 1);
+        .range(offset, Math.min(offset + CLIENT_CANDIDATE_PAGE - 1, CLIENT_SCAN_CAP_PER_READ));
       if (error) return null;
       const page = (data ?? []) as ClientSearchRow[];
-      if (page.length === 0) return found;
-      for (const row of page) {
+      if (page.length === 0) return { rows: found, truncated: false };
+      for (const [i, row] of page.entries()) {
+        if (offset + i >= CLIENT_SCAN_CAP_PER_READ) return { rows: found, truncated: true };
         if (!matchesClientSearch(row, query)) continue;
         found.push(row);
         // The first CLIENT_CAP confirmed rows in name order are all the
         // final, name-sorted and capped result can use from this read.
-        if (found.length >= CLIENT_CAP) return found;
+        if (found.length >= CLIENT_CAP) return { rows: found, truncated: false };
       }
       // A server row cap can shorten a page, so advance by what arrived.
       offset += page.length;
@@ -195,7 +207,7 @@ async function searchClientRows(
 
   const namePatterns = nameCandidatePatterns(query);
   const phonePattern = phoneCandidatePattern(query);
-  const none = Promise.resolve([] as ClientSearchRow[]);
+  const none = Promise.resolve<ClientSearch>({ rows: [], truncated: false });
 
   const [direct, asciiNamed, otherNamed, phoned] = await Promise.all([
     // The direct read is confirmed and paged like every other client read
@@ -215,22 +227,27 @@ async function searchClientRows(
 
   const seen = new Set<string>();
   const rows: ClientSearchRow[] = [];
-  for (const row of direct) {
+  for (const row of direct.rows) {
     if (seen.has(row.id)) continue;
     seen.add(row.id);
     rows.push(row);
   }
-  for (const row of [...asciiNamed, ...otherNamed, ...phoned]) {
+  for (const row of [...asciiNamed.rows, ...otherNamed.rows, ...phoned.rows]) {
     if (seen.has(row.id)) continue;
     seen.add(row.id);
     rows.push(row);
   }
-  return rows
-    .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))
-    .slice(0, CLIENT_CAP);
+  return {
+    rows: rows.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "")).slice(0, CLIENT_CAP),
+    truncated: [direct, asciiNamed, otherNamed, phoned].some((r) => r.truncated),
+  };
 }
 
-type GlobalSearchResponse = { ok: true; results: SearchResult[] } | { ok: false };
+// clientsTruncated: the client scan stopped at its bound, so the client results
+// are the first matches, not necessarily all of them (SEARCH-SCAN-BOUND).
+type GlobalSearchResponse =
+  | { ok: true; results: SearchResult[]; clientsTruncated?: true }
+  | { ok: false };
 
 export async function globalSearchAction(
   rawQuery: string,
@@ -274,7 +291,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
   const supabase = await createClient();
 
   const [
-    clientRows,
+    clientSearch,
     blockRows,
     childAreaRows,
     noteRows,
@@ -352,7 +369,8 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
   // A failed client read fails the search: the panel says search is
   // unavailable rather than showing no clients, or some of them, as if that
   // were the answer.
-  if (clientRows === null) return { ok: false };
+  if (clientSearch === null) return { ok: false };
+  const clientRows = clientSearch.rows;
 
   // Appointments: by matched client, by service-name match, and by
   // status keyword. Bounded follow-up reads, deduped by id.
@@ -565,7 +583,11 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
 
   results.push(...navResults(query, navContext));
 
-  return { ok: true, results: capResults(results) };
+  return {
+    ok: true,
+    results: capResults(results),
+    ...(clientSearch.truncated ? { clientsTruncated: true as const } : {}),
+  };
 }
 
 // Registry matches, projected onto the shared SearchResult shape. The registry
