@@ -57,8 +57,10 @@ import {
   firstOfPreviousMonthString,
   monthYearLabel,
 } from "@/lib/booking/month-grid";
-import { formatTimeForStudio, resolveTimeFormat, type TimeFormat } from "@/lib/booking/tz";
+import { formatClockLabel, formatTimeForStudio, resolveTimeFormat, type TimeFormat } from "@/lib/booking/tz";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
+import { redirect } from "next/navigation";
+import { buildTeamDay, type TeamDayColumn } from "@/lib/calendar/team-day";
 
 type Search = Promise<{
   week?: string;
@@ -69,8 +71,20 @@ type Search = Promise<{
   day?: string;
 }>;
 
-function parseView(raw: string | undefined): "week" | "month" {
-  return raw === "month" ? "month" : "week";
+function parseView(raw: string | undefined): "day" | "week" | "month" {
+  return raw === "month" ? "month" : raw === "day" ? "day" : "week";
+}
+
+const DATE_PARAM_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// HON-48: the team day view exists for a studio whose calendar is a team
+// calendar, practitioner capacity on with more than one active practitioner.
+// One rule for every studio; a single-practitioner studio keeps the week view.
+function isTeamCalendar(
+  capacityEnabled: boolean,
+  activePractitioners: ReadonlyArray<unknown>,
+): boolean {
+  return capacityEnabled && activePractitioners.length > 1;
 }
 
 export default async function CalendarPage({
@@ -92,6 +106,17 @@ export default async function CalendarPage({
   // ?week= is provided. The month view is gated on `view === "month"`
   // and uses its own ?month= anchor; the two states are independent
   // so a week-tab click never resets a month anchor and vice versa.
+  if (view === "day") {
+    return renderTeamDayView({
+      studio,
+      timeFormat,
+      today,
+      isOwner,
+      practitioner,
+      dayParam: params.day,
+    });
+  }
+
   if (view === "month") {
     return renderMonthView({
       studio,
@@ -260,6 +285,11 @@ export default async function CalendarPage({
         timezone={studio.timezone}
         weekHref={`/calendar?view=week&week=${weekStart}`}
         monthHref={`/calendar?view=month&month=${firstOfMonthString(weekStart)}&week=${weekStart}`}
+        dayHref={
+          isTeamCalendar(studio.practitioner_capacity_enabled === true, activePractitioners)
+            ? `/calendar?view=day&day=${initialSelectedDate}`
+            : undefined
+        }
         prevHref={`/calendar?week=${prevWeek}`}
         todayHref="/calendar"
         nextHref={`/calendar?week=${nextWeek}`}
@@ -547,6 +577,11 @@ async function renderMonthView(opts: {
         timezone={studio.timezone}
         weekHref={lastWeekHref}
         monthHref={`/calendar?view=month&month=${monthAnchor}`}
+        dayHref={
+          isTeamCalendar(studio.practitioner_capacity_enabled === true, activePractitioners)
+            ? `/calendar?view=day&day=${today >= monthAnchor && today < monthEnd ? today : monthAnchor}`
+            : undefined
+        }
         prevHref={`/calendar?view=month&month=${prevMonth}`}
         todayHref="/calendar?view=month"
         nextHref={`/calendar?view=month&month=${nextMonth}`}
@@ -572,6 +607,233 @@ async function renderMonthView(opts: {
         Click any day to open the week view for that date. The month
         view is for orientation; bookings are made from the week view.
       </p>
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------
+// Team day view path (HON-48).
+// -----------------------------------------------------------------
+// One column per working practitioner for one studio-local date, each under a
+// header bar in that practitioner's colour. It runs the SAME studio-scoped
+// reads as the week view over a one-day window, so it shows exactly the
+// schedules the week view already shows this viewer, no more. Each column is
+// the week grid's own DayColumn fed that practitioner's appointments, their
+// own and studio-wide blocks and breaks, and their own hours, so off-hours,
+// breaks and blocks grey in their own column and no-shows keep the styling
+// #1082/#1088 shipped. A studio that is not a team calendar is sent to the
+// week view for the same date.
+
+async function renderTeamDayView(opts: {
+  studio: { id: string; timezone: string; practitioner_capacity_enabled?: boolean };
+  timeFormat: TimeFormat;
+  today: string;
+  isOwner: boolean;
+  practitioner: { id: string; display_name: string };
+  dayParam: string | undefined;
+}) {
+  const { studio, timeFormat, today, isOwner, practitioner } = opts;
+  const date = opts.dayParam && DATE_PARAM_RE.test(opts.dayParam) ? opts.dayParam : today;
+  const capacityEnabled = studio.practitioner_capacity_enabled === true;
+  if (!capacityEnabled) redirect(`/calendar?day=${date}`);
+
+  const [y, m, d] = date.split("-").map(Number);
+  const dayOfWeek = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  const startUtc = utcInstantFromLocal(date, "00:00", studio.timezone);
+  const endUtc = utcInstantFromLocal(addDays(date, 1), "00:00", studio.timezone);
+
+  const domain = startPerfSpan("calendar.domain");
+  const [
+    appointments,
+    blockouts,
+    timedBlocks,
+    recurringOccurrences,
+    services,
+    clients,
+    availabilityDefaults,
+    availabilityOverrides,
+    activePractitioners,
+  ] = await Promise.all([
+    getAppointmentsForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
+    getBlockouts(studio.id),
+    getTimedBlocksForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
+    getRecurringBreakOccurrencesForRange(
+      studio.id,
+      startUtc.toISOString(),
+      endUtc.toISOString(),
+    ),
+    getActiveServices(studio.id),
+    getClientsForStudio(studio.id),
+    getAvailabilityDefaults(studio.id),
+    getOverridesForRange(studio.id, date, date),
+    getPractitionersForStudio(studio.id),
+  ]);
+  domain.end();
+
+  if (!isTeamCalendar(capacityEnabled, activePractitioners)) {
+    redirect(`/calendar?day=${date}`);
+  }
+
+  const { columns, notWorking } = buildTeamDay({
+    date,
+    dayOfWeek,
+    tz: studio.timezone,
+    practitioners: activePractitioners,
+    appointments,
+    timedBlocks,
+    recurringBreaks: recurringOccurrences,
+    defaults: availabilityDefaults,
+    overrides: availabilityOverrides,
+  });
+
+  const blockout = blockouts.find((b) => b.starts_on <= date && date <= b.ends_on) ?? null;
+  const drawerClients = clients.map((c) => ({
+    id: c.id,
+    name: c.name,
+    email: c.email,
+    phone: c.phone,
+    pronouns: c.pronouns,
+  }));
+  const returnTo = buildCalendarReturnParams({ view: "day", day: date });
+  const gridColumns = `60px repeat(${Math.max(1, columns.length)}, minmax(9rem, 1fr))`;
+
+  return (
+    <div className="flex flex-col gap-6">
+      <CalendarToolbar
+        view="day"
+        rangeLabel={`${weekdayLabel(dayOfWeek)}, ${monthDayLabel(date)}, ${y}`}
+        timezone={studio.timezone}
+        dayHref={`/calendar?view=day&day=${date}`}
+        weekHref={`/calendar?day=${date}`}
+        monthHref={`/calendar?view=month&month=${firstOfMonthString(date)}`}
+        prevHref={`/calendar?view=day&day=${addDays(date, -1)}`}
+        todayHref="/calendar?view=day"
+        nextHref={`/calendar?view=day&day=${addDays(date, 1)}`}
+        upcomingHref="/calendar/upcoming"
+        hideStepNavOnMobile={false}
+      />
+      {notWorking.length > 0 && (
+        <p data-testid="team-day-not-working" className="text-sm text-neutral-600 dark:text-neutral-400">
+          Not working today: {notWorking.map((p) => p.name).join(", ")}
+        </p>
+      )}
+
+      {/* One scroll box in both directions: practitioner columns keep a
+          readable minimum width, so on a phone the columns scroll sideways
+          inside the box (never the page) under a sticky header row and a
+          sticky time rail. Positioning is the week grid's 1px = 1min. */}
+      <div
+        data-testid="team-day-view"
+        data-date={date}
+        className="max-h-[calc(100dvh-13rem)] overflow-auto overscroll-contain rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        <div className="min-w-fit">
+          <div
+            className="sticky top-0 z-20 grid border-b border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900"
+            style={{ gridTemplateColumns: gridColumns }}
+          >
+            <div className="sticky left-0 z-30 border-r border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900" />
+            {columns.map((c) => (
+              <TeamDayColumnHeader key={c.practitionerId ?? "unassigned"} column={c} timeFormat={timeFormat} />
+            ))}
+          </div>
+          <div className="grid" style={{ gridTemplateColumns: gridColumns }}>
+            <div
+              className="sticky left-0 z-30 border-r border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950"
+              style={{ height: GRID_HEIGHT }}
+            >
+              {Array.from({ length: HOUR_END - HOUR_START }, (_, i) => HOUR_START + i).map(
+                (h) => (
+                  <div
+                    key={h}
+                    style={{
+                      top: (h - HOUR_START) * 2 * ROW_HEIGHT_PX,
+                      height: 2 * ROW_HEIGHT_PX,
+                    }}
+                    className="absolute inset-x-0 border-b border-neutral-200 px-2 pt-1 text-right text-[11px] font-semibold uppercase tracking-wider text-neutral-700 dark:border-neutral-800 dark:text-neutral-200"
+                  >
+                    {formatHourLabel(h)}
+                  </div>
+                ),
+              )}
+            </div>
+            {columns.map((c) => (
+              <div
+                key={c.practitionerId ?? "unassigned"}
+                data-testid="team-day-column"
+                data-practitioner-id={c.practitionerId ?? ""}
+                data-date={date}
+              >
+                <DayColumn
+                  date={date}
+                  appts={c.appts}
+                  timedBlocks={c.timedBlocks}
+                  recurringBreaks={c.recurringBreaks}
+                  blocked={blockout !== null}
+                  blockedReason={blockout?.reason ?? null}
+                  tz={studio.timezone}
+                  timeFormat={timeFormat}
+                  isOwner={isOwner}
+                  practitionerCapacityEnabled
+                  currentPractitionerId={practitioner.id}
+                  currentPractitionerName={practitioner.display_name}
+                  clients={drawerClients}
+                  services={services}
+                  isToday={date === today}
+                  availability={c.availability}
+                  closedDay={c.closedDay}
+                  returnTo={returnTo}
+                  teamColumn={{
+                    practitionerId: c.practitionerId,
+                    name: c.name,
+                    // Owners book anyone active; a member books only
+                    // themselves, so only their own column offers it.
+                    allowCreate: c.active && (isOwner || c.practitionerId === practitioner.id),
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <p className="hidden text-xs text-neutral-500 md:block">
+        Click an empty time in a practitioner&apos;s column to book them, or drag
+        to choose a duration. Click an appointment for details.
+      </p>
+    </div>
+  );
+}
+
+// The practitioner's colour lives on the header bar, with the name always
+// printed on it, so colour is never the only way to tell columns apart.
+function TeamDayColumnHeader({
+  column,
+  timeFormat,
+}: {
+  column: TeamDayColumn;
+  timeFormat: TimeFormat;
+}) {
+  const hours = !column.active
+    ? column.practitionerId === null
+      ? "No practitioner"
+      : "Not on the active team"
+    : column.availability === null
+      ? "Hours not set"
+      : !column.availability.isOpen
+        ? "Off today"
+        : column.availability.openTime && column.availability.closeTime
+          ? `${formatClockLabel(column.availability.openTime.slice(0, 5), timeFormat)} – ${formatClockLabel(column.availability.closeTime.slice(0, 5), timeFormat)}`
+          : "Open";
+  return (
+    <div
+      data-testid="team-day-column-header"
+      data-practitioner-id={column.practitionerId ?? ""}
+      data-color={column.colorLabel}
+      className={`min-w-0 border-l border-neutral-300 px-3 py-2 dark:border-neutral-700 ${column.headerBgClass} ${column.headerTextClass}`}
+    >
+      <div className="truncate text-sm font-semibold">{column.name}</div>
+      <div className="truncate text-[11px] font-medium opacity-90">{hours}</div>
     </div>
   );
 }
