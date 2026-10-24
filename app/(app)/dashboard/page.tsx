@@ -350,7 +350,8 @@ export default async function DashboardPage({
     .lt("starts_at", endUtc.toISOString())
     .order("starts_at", { ascending: true });
   if (apptErr) {
-    throw new Error(`Failed to load today's appointments: ${apptErr.message}`);
+    // DAT-002 N2: a fixed message; PostgREST text can echo the statement.
+    throw new Error("Failed to load today's appointments");
   }
 
   // Supabase types joined relations as either a single row or an array.
@@ -1611,7 +1612,8 @@ async function loadIntakeStatusByClient(
     .is("deleted_at", null)
     .order("created_at", { ascending: false });
   if (error) {
-    throw new Error(`Failed to load intake status: ${error.message}`);
+    // DAT-002 N2: a fixed message; PostgREST text can echo the statement.
+    throw new Error("Failed to load intake status");
   }
   // Hone's canonical current-intake rule (newest non-deleted row by
   // created_at), applied in memory across the batch by the shared pure helper
@@ -1630,9 +1632,8 @@ async function countIntakesAwaitingReview(
     .eq("status", "submitted")
     .is("deleted_at", null);
   if (error) {
-    throw new Error(
-      `Failed to count intakes awaiting review: ${error.message}`,
-    );
+    // DAT-002 N2: a fixed message; PostgREST text can echo the statement.
+    throw new Error("Failed to count intakes awaiting review");
   }
   return count ?? 0;
 }
