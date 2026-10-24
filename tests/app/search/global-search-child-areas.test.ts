@@ -37,6 +37,12 @@ type QueryRecord = {
 
 const tables: Record<string, Row[]> = {};
 const queries: QueryRecord[] = [];
+// When set, a read whose record it accepts answers with an error instead of
+// rows; `failed` counts the reads it actually failed.
+const fault: { when: ((q: QueryRecord) => boolean) | null; failed: number } = {
+  when: null,
+  failed: 0,
+};
 
 const RE_METACHARS = /[.*+?^${}()|[\]\\]/g;
 
@@ -177,7 +183,13 @@ function builder(table: string, select: string) {
       rangeWindow = [from, to];
       return chain;
     },
-    then(resolve: (v: { data: Row[]; error: null }) => unknown) {
+    then(resolve: (v: { data: Row[] | null; error: { message: string } | null }) => unknown) {
+      if (fault.when?.(record)) {
+        fault.failed++;
+        return Promise.resolve({ data: null, error: { message: "fake read failure" } }).then(
+          resolve as never,
+        );
+      }
       let rows = (tables[table] ?? []).filter((r) => predicates.every((p) => p(r)));
       for (const [col, ascending] of [...record.order].reverse()) {
         rows = [...rows].sort((a, b) => {
@@ -269,6 +281,8 @@ const AREAS_BY_BLOCK: Record<string, Array<{ area: string; laterality: string }>
 function seedDefault() {
   for (const key of Object.keys(tables)) delete tables[key];
   queries.length = 0;
+  fault.when = null;
+  fault.failed = 0;
 
   tables.session_blocks = [{ ...MULTI_AREA_BLOCK }];
   tables.session_block_areas = [
@@ -811,5 +825,81 @@ describe("sanitized result shape", () => {
     expect(serialized).not.toContain("do not repeat");
     expect(serialized).not.toContain("erythema");
     expect(serialized).not.toContain("studio_id");
+  });
+});
+
+// SEARCH-OTHER-CATEGORIES (DAT-002 class): every non-client read mapped a
+// failed read to [] via `r.data ?? []`, so a failure showed as no treatment,
+// note, record, service or appointment results. A failed read of any of them
+// now fails the search ({ ok: false }), which the panel (#1096) shows as
+// unavailable. Each case seeds a row that read WOULD return, fails exactly
+// that read, and checks the read really ran and failed.
+describe("a failed non-client read fails the search, never shows as nothing", () => {
+  const has = (q: QueryRecord, kind: "eq" | "in", col: string) =>
+    q[kind].some(([c]) => c === col);
+
+  function seedEveryCategory() {
+    tables.clients = [
+      { id: "client-1", studio_id: STUDIO_A, name: "Ada Lovelace", email: null, phone: null, archived_at: null },
+    ];
+    tables.sessions = [
+      {
+        id: "session-9",
+        studio_id: STUDIO_A,
+        client_id: "client-1",
+        started_at: "2026-05-02T00:00:00Z",
+        next_session_note: "Sideburn touch-up",
+        deleted_at: null,
+        record_status: "draft",
+        client: { name: "Ada Lovelace" },
+      },
+    ];
+    tables.record_keeping_sterile_items = [
+      { id: "sterile-1", studio_id: STUDIO_A, item_description: "Sideburn probe pack", lot_number: "L1", date_purchased: "2026-05-01" },
+    ];
+    tables.record_keeping_disinfectants = [
+      { id: "dis-1", studio_id: STUDIO_A, disinfectant_name: "Sideburn wipe", date_prepared: "2026-05-01" },
+    ];
+    tables.services = [{ id: "service-1", studio_id: STUDIO_A, name: "Sideburn cleanup" }];
+    tables.appointments = [
+      {
+        id: "appt-1",
+        studio_id: STUDIO_A,
+        client_id: "client-1",
+        service_id: "service-1",
+        status: "confirmed",
+        starts_at: "2026-05-03T00:00:00Z",
+        client: { name: "Ada Lovelace" },
+        service: { name: "Sideburn cleanup" },
+      },
+    ];
+  }
+
+  const cases: Array<[string, string, (q: QueryRecord) => boolean]> = [
+    ["session blocks (direct)", "Sideburn", (q) => q.table === "session_blocks" && !has(q, "in", "id")],
+    ["session block areas", "Sideburn", (q) => q.table === "session_block_areas"],
+    ["the child-area parent blocks", "Sideburn", (q) => q.table === "session_blocks" && has(q, "in", "id")],
+    ["session notes", "Sideburn", (q) => q.table === "sessions"],
+    ["sterile items", "Sideburn", (q) => q.table === "record_keeping_sterile_items"],
+    ["disinfectants", "Sideburn", (q) => q.table === "record_keeping_disinfectants"],
+    ["services", "Sideburn", (q) => q.table === "services"],
+    ["appointments by service", "Sideburn", (q) => q.table === "appointments" && has(q, "in", "service_id")],
+    ["appointments by client", "Ada", (q) => q.table === "appointments" && has(q, "in", "client_id")],
+    ["appointments by status", "confirmed", (q) => q.table === "appointments" && has(q, "eq", "status")],
+  ];
+
+  it.each(cases)("a failed %s read fails the search (%j)", async (_label, query, when) => {
+    seedEveryCategory();
+    fault.when = when;
+    expect(await globalSearchAction(query)).toEqual({ ok: false });
+    expect(fault.failed).toBe(1);
+  });
+
+  it.each(cases)("control: the %s read returns results when it does not fail (%j)", async (_label, query, when) => {
+    seedEveryCategory();
+    const res = await globalSearchAction(query);
+    expect(res.ok).toBe(true);
+    expect(queries.some(when)).toBe(true);
+    expect(res.ok && res.results.some((r) => r.type !== "page")).toBe(true);
   });
 });

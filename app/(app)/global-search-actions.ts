@@ -126,6 +126,16 @@ function fmtDate(iso: string | null | undefined): string | undefined {
   return d.toISOString().slice(0, 10);
 }
 
+// DAT-002: a failed read is not an empty one. Every non-client read ends in
+// rowsOrFail, so a failure aborts the search with { ok: false } (shown as
+// "Search could not be loaded.") instead of reading as "nothing matched".
+class SearchReadFailed extends Error {}
+
+function rowsOrFail<T>(r: { data: T[] | null; error: unknown }): T[] {
+  if (r.error) throw new SearchReadFailed();
+  return r.data ?? [];
+}
+
 type ClientSearchRow = {
   id: string;
   name: string | null;
@@ -220,9 +230,20 @@ async function searchClientRows(
     .slice(0, CLIENT_CAP);
 }
 
+type GlobalSearchResponse = { ok: true; results: SearchResult[] } | { ok: false };
+
 export async function globalSearchAction(
   rawQuery: string,
-): Promise<{ ok: true; results: SearchResult[] } | { ok: false }> {
+): Promise<GlobalSearchResponse> {
+  try {
+    return await runGlobalSearch(rawQuery);
+  } catch (e) {
+    if (e instanceof SearchReadFailed) return { ok: false };
+    throw e;
+  }
+}
+
+async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> {
   let studioId: string;
   // Navigation visibility is derived HERE, from the resolved session: the
   // same source that scopes every data query below. There is no code path
@@ -279,7 +300,7 @@ export async function globalSearchAction(
       )
       .order("created_at", { ascending: false })
       .limit(MEMORY_CAP)
-      .then((r) => r.data ?? []),
+      .then(rowsOrFail),
     // Structured treatment areas (migration 0128). The block columns above
     // only carry the LEGACY primary_area, so a block charted as
     // "Left Cheek · Right Sideburn" is stored with primary_area "Cheek" and
@@ -298,7 +319,7 @@ export async function globalSearchAction(
       .ilike("area", like)
       .order("created_at", { ascending: false })
       .limit(MEMORY_CHILD_CANDIDATE_CAP)
-      .then((r) => r.data ?? []),
+      .then(rowsOrFail),
     supabase
       .from("sessions")
       .select("id, client_id, started_at, next_session_note, client:clients(name)")
@@ -310,7 +331,7 @@ export async function globalSearchAction(
       .ilike("next_session_note", like)
       .order("started_at", { ascending: false })
       .limit(2)
-      .then((r) => r.data ?? []),
+      .then(rowsOrFail),
     supabase
       .from("record_keeping_sterile_items")
       .select("id, item_description, lot_number, date_purchased")
@@ -318,7 +339,7 @@ export async function globalSearchAction(
       .or(orIlike(["lot_number", "item_description"], like))
       .order("date_purchased", { ascending: false })
       .limit(RECORD_CAP)
-      .then((r) => r.data ?? []),
+      .then(rowsOrFail),
     supabase
       .from("record_keeping_disinfectants")
       .select("id, disinfectant_name, date_prepared")
@@ -326,7 +347,7 @@ export async function globalSearchAction(
       .ilike("disinfectant_name", like)
       .order("date_prepared", { ascending: false })
       .limit(2)
-      .then((r) => r.data ?? []),
+      .then(rowsOrFail),
   ]);
   // A failed client read fails the search: the panel says search is
   // unavailable rather than showing no clients, or some of them, as if that
@@ -357,7 +378,7 @@ export async function globalSearchAction(
       .eq("studio_id", studioId)
       .ilike("name", like)
       .limit(3)
-      .then((r) => r.data ?? []),
+      .then(rowsOrFail),
     clientIds.length > 0
       ? supabase
           .from("appointments")
@@ -368,7 +389,7 @@ export async function globalSearchAction(
           .in("client_id", clientIds)
           .order("starts_at", { ascending: false })
           .limit(APPOINTMENT_CAP)
-          .then((r) => r.data ?? [])
+          .then(rowsOrFail)
       : Promise.resolve([]),
     status
       ? supabase
@@ -380,7 +401,7 @@ export async function globalSearchAction(
           .eq("status", status)
           .order("starts_at", { ascending: false })
           .limit(3)
-          .then((r) => r.data ?? [])
+          .then(rowsOrFail)
       : Promise.resolve([]),
     childBlockIds.length > 0
       ? supabase
@@ -395,7 +416,7 @@ export async function globalSearchAction(
           .in("id", childBlockIds)
           .order("created_at", { ascending: false })
           .limit(MEMORY_CAP)
-          .then((r) => r.data ?? [])
+          .then(rowsOrFail)
       : Promise.resolve([]),
   ]);
   const apptByService =
@@ -409,7 +430,7 @@ export async function globalSearchAction(
           .in("service_id", serviceRows.map((s) => s.id as string))
           .order("starts_at", { ascending: false })
           .limit(3)
-          .then((r) => r.data ?? [])
+          .then(rowsOrFail)
       : [];
 
   const results: SearchResult[] = [];
