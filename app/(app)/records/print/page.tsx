@@ -27,6 +27,10 @@ import {
 import { todayInTz } from "@/lib/booking/tz";
 import type { RecordKeepingAuditEvent } from "@/lib/types/database";
 import { PrintButton } from "./print-button";
+import {
+  linkedPhotoLine,
+  loadLinkedPhotoCounts,
+} from "@/lib/images/linked-photo-counts";
 
 // PR #207: inspector-friendly print view for the Record Keeping
 // module. One protected route (inside the authenticated (app) layout,
@@ -468,6 +472,16 @@ async function ProceduresPrint({
         records.map((r) => r.sessionId),
       )
     : EMPTY_AUDIT_HISTORY;
+  // HON-46 (photos): on a per-client pull, say on SCREEN how many photos are
+  // linked to each visit. Never printed, never an image: whether photo consent
+  // covers an insurer packet is not decided (lib/images/linked-photo-counts.ts).
+  const photoCounts = filter.clientId
+    ? await loadLinkedPhotoCounts(
+        studioId,
+        filter.clientId,
+        records.map((r) => r.sessionId),
+      )
+    : null;
   if (records.length === 0)
     return (
       <p className="text-sm">
@@ -536,6 +550,22 @@ async function ProceduresPrint({
             events={audit.byRecord.get(r.sessionId)}
             unavailable={audit.unavailableRecordIds.has(r.sessionId)}
           />
+          {photoCounts && (
+            <p
+              data-testid="linked-photos-note"
+              className="mt-1 text-xs text-neutral-500 print:hidden"
+            >
+              {linkedPhotoLine(
+                photoCounts.ok ? photoCounts.bySession.get(r.sessionId) : undefined,
+              )}{" "}
+              <Link
+                href={`/clients/${r.clientId}/images`}
+                className="underline hover:text-neutral-900"
+              >
+                View photos
+              </Link>
+            </p>
+          )}
         </li>
       ))}
     </ul>
