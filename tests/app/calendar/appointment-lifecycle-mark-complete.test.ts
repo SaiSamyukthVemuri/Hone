@@ -139,8 +139,12 @@ describe("AppointmentLifecycleActions: confirmation dialog (replaces window.conf
 
   it("declares COMPLETE_CONFIRM_MESSAGE with the exact confirm copy", () => {
     expect(COMPONENT).toMatch(
-      /COMPLETE_CONFIRM_MESSAGE\s*=\s*[\s\S]{0,200}This marks the appointment completed and allows the session to be charged after charting\./,
+      /COMPLETE_CONFIRM_MESSAGE\s*=\s*[\s\S]{0,200}No payment is taken\. Afterwards you can charge a saved card or record how the visit was settled\./,
     );
+  });
+
+  it("HON-45: the confirm copy never claims completion enables a charge", () => {
+    expect(COMPONENT).not.toMatch(/allows the session to be charged/);
   });
 
   it("declares NO_SHOW_CONFIRM_MESSAGE with separate, truthful copy", () => {

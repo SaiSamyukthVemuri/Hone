@@ -91,9 +91,12 @@ describe("getSessionPaymentEligibility: card + authorization gates", () => {
   });
 
   it("the card-missing message tells the practitioner what to do", () => {
-    expect(HELPER).toMatch(
-      /Client must add a card on file before a session payment can be prepared/,
+    // HON-45: the literal moved to the shared types module so the card can
+    // recognise it; the helper must still push exactly that constant.
+    expect(TYPES).toMatch(
+      /NO_CARD_ON_FILE_REASON\s*=\s*"Client must add a card on file before a session payment can be prepared\."/,
     );
+    expect(HELPER).toMatch(/reasons\.push\(NO_CARD_ON_FILE_REASON\)/);
   });
 
   it("uses the PR #177 charge-ready helper (which wraps the PR #170 base)", () => {
