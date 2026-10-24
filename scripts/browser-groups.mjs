@@ -214,6 +214,10 @@ export const BROWSER_GROUPS = {
       // boundary drives the data range: a grid that starts Sunday while the
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
+      // HON-48 team day view: five synthetic practitioners in one-column-per-
+      // practitioner layout, Los Angeles date boundaries, same-practitioner
+      // conflict refusal, member create scope and the phone scroll box.
+      "team-day-view.spec.ts",
     ],
   },
   owner_admin: {

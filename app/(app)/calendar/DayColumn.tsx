@@ -182,6 +182,17 @@ type Props = {
   // appointment-detail link so the detail page's back link returns the
   // practitioner to this view/date. Always internal to /calendar; "" = none.
   returnTo?: string;
+  // HON-48 team day view: this column belongs to ONE practitioner. Its header
+  // names them, so cards drop the in-card practitioner tag; a new booking
+  // starts on this practitioner; and a drag books directly, because a quick
+  // block is studio-wide and would land in every column. `allowCreate` false
+  // (a member viewing a colleague's column) renders no create control: a
+  // member's booking is always their own, so it would land elsewhere.
+  teamColumn?: {
+    practitionerId: string | null;
+    name: string;
+    allowCreate: boolean;
+  };
 };
 
 // Drag-selection state. `pointerId` matches the in-flight pointer so a
@@ -214,6 +225,7 @@ export function DayColumn({
   availability,
   closedDay,
   returnTo = "",
+  teamColumn,
 }: Props) {
   const [overlapIds, setOverlapIds] = useState<string[] | null>(null);
   const columnRef = useRef<HTMLDivElement>(null);
@@ -359,6 +371,15 @@ export function DayColumn({
       if (duration > MAX_DRAG_DURATION_MINUTES) {
         duration = MAX_DRAG_DURATION_MINUTES;
       }
+      // HON-48: a team column books directly (see Props.teamColumn).
+      if (teamColumn) {
+        setDraft({
+          localDate: date,
+          localTime: minutesToHHMM(snappedStartTotal),
+          durationMinutes: duration,
+        });
+        return;
+      }
       // PR #139. Drag-created drafts open the chooser; the
       // practitioner then decides Book vs Block. Bare clicks
       // (openDraftAtY above) still bypass the chooser.
@@ -369,7 +390,7 @@ export function DayColumn({
         durationMinutes: duration,
       });
     },
-    [date, openDraftAtY],
+    [date, openDraftAtY, teamColumn],
   );
 
   function handlePointerDown(e: React.PointerEvent<HTMLButtonElement>) {
@@ -564,6 +585,7 @@ export function DayColumn({
         <div
           key={`tint-${i}`}
           aria-hidden
+          data-availability-tint=""
           style={{ top: r.top, height: r.height }}
           className="pointer-events-none absolute inset-x-0 z-0 border-y border-neutral-300/60 bg-neutral-200/70 dark:border-neutral-700/50 dark:bg-neutral-800/65"
         />
@@ -601,10 +623,11 @@ export function DayColumn({
           override path and pre-fills the time range. Keyboard users
           activate via Enter/Space (opens at the top of the visible
           range, same as the pre-drag fallback). */}
+      {(!teamColumn || teamColumn.allowCreate) && (<>
       <button
         ref={buttonRef}
         type="button"
-        aria-label={`Open quick-book draft for ${date}`}
+        aria-label={teamColumn ? `Open quick-book draft for ${teamColumn.name} on ${date}` : `Open quick-book draft for ${date}`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -634,12 +657,13 @@ export function DayColumn({
           is primary, so the desktop workflow is unchanged. */}
       <button
         type="button"
-        aria-label={`Book on ${date}`}
+        aria-label={teamColumn ? `Book ${teamColumn.name} on ${date}` : `Book on ${date}`}
         onClick={() => openDraftAtY(0)}
         className="absolute left-1 top-1 z-[7] hidden h-7 min-w-7 items-center justify-center rounded-md border border-neutral-300 bg-white/95 px-1.5 text-xs font-semibold text-neutral-700 shadow-sm [@media(pointer:coarse)]:flex dark:border-neutral-700 dark:bg-neutral-900/95 dark:text-neutral-200"
       >
         +
       </button>
+      </>)}
 
       {/* Live drag-selection overlay. Translucent block + time-range
           label that tracks the snapped start/end as the practitioner
@@ -787,7 +811,7 @@ export function DayColumn({
         const lane = lanes.get(a.id)!;
         const clientName = a.client?.name?.trim() || "Client";
         const serviceName = a.service?.name?.trim() || null;
-        const practitionerIdentity = practitionerCapacityEnabled
+        const practitionerIdentity = practitionerCapacityEnabled && !teamColumn
           ? calendarPractitionerIdentity(a.practitioner)
           : null;
         const titleParts = [
@@ -941,6 +965,7 @@ export function DayColumn({
         isOwner={isOwner}
         currentPractitionerId={currentPractitionerId}
         currentPractitionerName={currentPractitionerName}
+        preferredPractitionerId={teamColumn?.practitionerId ?? undefined}
         onClose={() => setDraft(null)}
       />
 

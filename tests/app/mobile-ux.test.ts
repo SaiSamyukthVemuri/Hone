@@ -441,7 +441,9 @@ describe("calendar touch safety", () => {
   });
 
   it("touch devices get an explicit, coarse-pointer-only create button", () => {
-    expect(DAY_COLUMN).toMatch(/aria-label=\{`Book on \$\{date\}`\}/);
+    // HON-48: a team day column names its practitioner; the week column keeps
+    // the plain label.
+    expect(DAY_COLUMN).toMatch(/aria-label=\{teamColumn \? `Book \$\{teamColumn\.name\} on \$\{date\}` : `Book on \$\{date\}`\}/);
     expect(DAY_COLUMN).toMatch(/\[@media\(pointer:coarse\)\]:flex/);
     expect(DAY_COLUMN).toMatch(/onClick=\{\(\) => openDraftAtY\(0\)\}/);
   });

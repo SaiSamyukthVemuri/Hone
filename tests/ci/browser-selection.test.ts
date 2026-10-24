@@ -139,7 +139,14 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // because it drives that journey. RECORDED AS A DECISION per the note above,
     // with the cost explicitly ZERO: the spec skips itself unless
     // HONE_PERF_TIMING=1, so the lane gains a selection entry and no runtime.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(39);
+    //
+    // Now 40: HON-48's team day view joined `calendar`, the group its
+    // /calendar paths already select. RECORDED AS A DECISION per the note
+    // above. Cost: SIX executed cases (six test() declarations, no loops): one
+    // SQL-only row check, four desktop page loads (one also steps to the next
+    // day) and one 390px touch page load, each a few seconds against the ~6 min
+    // target and 15 min ceiling.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(40);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
