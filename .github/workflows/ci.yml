@@ -472,8 +472,14 @@ jobs:
         # THROUGH env, never interpolated into the script, so no path can
         # become shell. An EMPTY list fails: docs_consistency=true with no
         # reader is a classifier defect, and running nothing must not pass.
+        # Freshness exactly as validate judges a code PR: enforced on push and
+        # on a production-record PR, measured otherwise. The canonical facts
+        # test reads every document, so it is in this list for any docs-only
+        # PR, and its own default (enforce) would fail an ordinary docs PR on
+        # a record lag it did not cause.
         env:
           DOCS_READER_TESTS: ${{ needs.changes.outputs.docs_reader_tests }}
+          CANONICAL_FRESHNESS: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.production_record == 'true') && 'enforce' || 'measure' }}
         run: |
           set -euo pipefail
           files=()

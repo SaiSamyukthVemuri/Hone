@@ -2365,6 +2365,10 @@ describe("browser timing diagnostic truthfulness", () => {
 type Step = { name?: string; if?: string; run?: string; env?: Record<string, string> };
 type Job = { name?: string; if?: string; outputs?: Record<string, string>; steps?: Step[] };
 
+/** validate's mode (canonical-production-facts.test.ts pins it there): enforce on push and on record PRs, else measure. */
+const VALIDATE_FRESHNESS =
+  "${{ (github.event_name != 'pull_request' || needs.changes.outputs.production_record == 'true') && 'enforce' || 'measure' }}";
+
 function docsConsistencyWiringFaults(doc: unknown): string[] {
   const faults: string[] = [];
   const jobs = (isRecord(doc) && isRecord(doc.jobs) ? doc.jobs : {}) as Record<string, Job>;
@@ -2372,6 +2376,9 @@ function docsConsistencyWiringFaults(doc: unknown): string[] {
   for (const k of ["docs_consistency", "docs_reader_tests"]) {
     if (changes?.outputs?.[k] !== `\${{ steps.classify.outputs.${k} }}`) faults.push(`changes job does not export ${k}`);
   }
+
+  const unit = (jobs.validate?.steps ?? []).find((s) => s.run?.trim() === "npm test");
+  if (unit?.env?.CANONICAL_FRESHNESS !== VALIDATE_FRESHNESS) faults.push("validate's freshness mode is not the one the reader step mirrors");
 
   const record = jobs["canonical-record"];
   if (!record) return [...faults, "canonical-record job is missing"];
@@ -2398,6 +2405,10 @@ function docsConsistencyWiringFaults(doc: unknown): string[] {
     const run = readers.run ?? "";
     if (run.includes("${{")) faults.push("reader step interpolates an expression into its script");
     if (!/npx vitest run "\$\{files\[@\]\}"/.test(run)) faults.push("reader step does not run the named tests");
+    // A docs-only PR is judged like a code PR: canonical-production-facts.test.ts is a reader of every document
+    // (it enumerates docs), and it defaults to enforce, so without validate's mode an ordinary docs PR would go red
+    // on production-record freshness it did not cause.
+    if (readers.env!.CANONICAL_FRESHNESS !== VALIDATE_FRESHNESS) faults.push("reader step does not use validate's freshness mode");
   }
 
   const aggregator = Object.values(jobs).find((j) => j.name === "browser e2e (local stack)");
@@ -2448,6 +2459,15 @@ describe("G4 — docs-only changes run the unit tests that read them", () => {
     ["the record step no longer gated", (j: Record<string, Job>) => {
       delete j["canonical-record"].steps!.find((x) => x.run?.trim() === "npx vitest run tests/docs")!.if;
     }, "tests/docs step is not gated on production_record"],
+    ["the reader step falls back to the test's enforce default", (j: Record<string, Job>) => {
+      delete j["canonical-record"].steps!.find((x) => x.env && "DOCS_READER_TESTS" in x.env)!.env!.CANONICAL_FRESHNESS;
+    }, "reader step does not use validate's freshness mode"],
+    ["the reader step enforces on every PR", (j: Record<string, Job>) => {
+      j["canonical-record"].steps!.find((x) => x.env && "DOCS_READER_TESTS" in x.env)!.env!.CANONICAL_FRESHNESS = "enforce";
+    }, "reader step does not use validate's freshness mode"],
+    ["validate's mode changes without the reader step", (j: Record<string, Job>) => {
+      j.validate.steps!.find((x) => x.run?.trim() === "npm test")!.env!.CANONICAL_FRESHNESS = "measure";
+    }, "validate's freshness mode is not the one the reader step mirrors"],
     ["the aggregator no longer requires it", (j: Record<string, Job>) => {
       const agg = Object.values(j).find((x) => x.name === "browser e2e (local stack)")!;
       delete agg.steps!.find((x) => x.env && "RECORD_RESULT" in x.env)!.env!.DOCS_CONSISTENCY;
