@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
+import { NO_CARD_ON_FILE_REASON } from "./session-payment-types";
 import type {
   SessionPaymentCardAuthorizationSummary,
   SessionPaymentCardSummary,
@@ -203,9 +204,7 @@ export async function getSessionPaymentEligibility(
       // this PR exists to remove.
       pushReadFailure(reasons);
     } else if (!cardRow) {
-      reasons.push(
-        "Client must add a card on file before a session payment can be prepared.",
-      );
+      reasons.push(NO_CARD_ON_FILE_REASON);
     } else {
       cardSummary = {
         id: cardRow.id as string,
