@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { Client } from "@/lib/types/database";
+import type { DirectoryClient } from "@/lib/supabase/queries";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PendingButton } from "@/components/pending-button";
 import { unarchiveClientAction } from "./[id]/actions";
@@ -21,7 +21,7 @@ import { unarchiveClientAction } from "./[id]/actions";
 //
 // Server component; the small <form> posts to the existing server
 // action with no client-side state.
-export function ArchivedClientsList({ clients }: { clients: Client[] }) {
+export function ArchivedClientsList({ clients }: { clients: DirectoryClient[] }) {
   if (clients.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-10 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
@@ -39,7 +39,7 @@ export function ArchivedClientsList({ clients }: { clients: Client[] }) {
   );
 }
 
-function ArchivedClientRow({ client }: { client: Client }) {
+function ArchivedClientRow({ client }: { client: DirectoryClient }) {
   const contactBits: string[] = [];
   if (client.email) contactBits.push(client.email);
   if (client.phone) contactBits.push(client.phone);

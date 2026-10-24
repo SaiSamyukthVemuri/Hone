@@ -118,7 +118,7 @@ describe("desktop week card and preview", () => {
     expect(DAYCOL).toContain("${appointmentCardClasses(a.service)}");
     // The one-line card's swatch has its name in the hover title.
     expect(DAYCOL).toMatch(/practitionerIdentity\?\.name,/);
-    expect(DAYCOL).toContain("title={titleParts.join(\" · \")}");
+    expect(DAYCOL).toContain("title={[...titleParts, statusTag].filter(Boolean).join(\" · \")}");
   });
   it("the preview names the practitioner with their swatch", () => {
     const html = renderToStaticMarkup(createElement(AppointmentPreviewDrawer, {
