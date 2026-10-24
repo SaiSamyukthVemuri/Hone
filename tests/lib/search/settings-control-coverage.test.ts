@@ -161,7 +161,7 @@ function rendersLabel(route: string, label: string): boolean {
 
 /**
  * JSX collapses whitespace, so a label written across several source lines
- * ("Public address (booking page and appointment emails)") renders as one string but is
+ * ("Arrival and parking instructions") renders as one string but is
  * stored with newlines and indentation. Compare on collapsed whitespace.
  */
 function collapse(value: string): string {
@@ -329,12 +329,13 @@ describe("anchors keep sibling controls distinct", () => {
     expect(pagesWithMultipleEntries).toBeGreaterThanOrEqual(5);
   });
 
-  it("all nine Booking controls resolve to nine distinct destinations", () => {
+  it("all eleven Booking controls resolve to eleven distinct destinations", () => {
     const booking = searchable.filter((c) => c.page === "/settings/booking");
-    // 9 since NEW-CLIENT-MODE-01 added the new-client admission control.
-    expect(booking).toHaveLength(9);
+    // 9 since NEW-CLIENT-MODE-01 added the new-client admission control; 11
+    // since HON-50 added address visibility and arrival instructions.
+    expect(booking).toHaveLength(11);
     const hrefs = booking.map((c) => ENTRY_BY_ID.get(c.entryId!)!.href);
-    expect(new Set(hrefs).size).toBe(9);
+    expect(new Set(hrefs).size).toBe(11);
     for (const href of hrefs) expect(href).toMatch(/^\/settings\/booking#/);
   });
 });

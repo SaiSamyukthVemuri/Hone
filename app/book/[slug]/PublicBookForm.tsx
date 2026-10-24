@@ -88,6 +88,8 @@ type Confirmation = {
   email: string;
   manageUrl: string;
   emailStatus: ConfirmationEmailStatus;
+  // HON-50 decision C: server-verified address for this booking, or null.
+  bookedClientAddress: string | null;
 };
 
 // Render a local YYYY-MM-DD as "Tuesday, May 26" (or, with year, "Tuesday, May 26, 2026"
@@ -469,6 +471,7 @@ export function PublicBookForm({
         email,
         manageUrl: r.manageUrl,
         emailStatus: r.confirmationEmailStatus,
+        bookedClientAddress: r.bookedClientAddress,
       });
     });
   }
@@ -1206,7 +1209,7 @@ function emphasiseEmail(step: string, email: string): React.ReactNode {
 // fetches, no side effects. The booking has already been created and
 // the confirmation email already dispatched by the server action by
 // the time this renders.
-function ConfirmationView({
+export function ConfirmationView({
   confirmation,
   studioName,
   studioAddress,
@@ -1221,6 +1224,9 @@ function ConfirmationView({
   const serviceName = confirmation.service?.name ?? null;
   const durationMinutes =
     confirmation.service?.default_duration_minutes ?? null;
+  // HON-50 decision C: the server-verified address for this booking when the
+  // owner keeps it off the public page; otherwise what the public page shows.
+  const shownAddress = confirmation.bookedClientAddress ?? studioAddress;
   // BOOK-01 Tranche 1. Copy is decided by the ACTUAL provider outcome, in a
   // pure function the unit lane can execute (this file is `.tsx` and the unit
   // lane is node-only, so a rule left inside JSX would only ever be provable
@@ -1269,10 +1275,10 @@ function ConfirmationView({
         </ConfirmationRow>
         <ConfirmationRow label="Where">
           <span className="font-medium">{studioName}</span>
-          {studioAddress && (
+          {shownAddress && (
             <>
               <br />
-              <span style={{ color: "#6B6B6B" }}>{studioAddress}</span>
+              <span style={{ color: "#6B6B6B" }}>{shownAddress}</span>
             </>
           )}
         </ConfirmationRow>

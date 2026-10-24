@@ -53,7 +53,7 @@ describe("acceptance matrix — Booking", () => {
       "/settings/booking#buffer",
     ],
     ["booking link", "Booking link", "/settings/booking#booking-link"],
-    ["public address", "Public address", "/settings/booking#public-address"],
+    ["public address", "Studio address", "/settings/booking#public-address"],
     [
       "booking page intro",
       "Booking page intro",

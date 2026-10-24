@@ -230,7 +230,17 @@ describe("the shipped column comments are what the catalog actually holds", () =
   // operator-visible surface. 0204 is applied and FROZEN, so both need a forward
   // migration with its own authorization and are raised separately. Pinning the
   // digest records the debt and stops it drifting further.
+  //
+  // HON-50 (0251) ADDS TWO, DELIBERATELY: `address_visibility` and
+  // `arrival_instructions` carry owner-facing column comments that state their
+  // meaning and default. Approved with 0251 (draft #1104, CI DB lane run
+  // 40108489041 named them); digests read from 0251's COMMENT text by the same
+  // method that reproduces every digest above.
   const COMMENT_INVENTORY: Readonly<Record<string, string>> = {
+    address_visibility:
+      "be77bcfdb40597b2b478659af90ed733366a5f9b82f7138f90d662ba33db6bd9",
+    arrival_instructions:
+      "0f2f587bc110266683d13635a04954cadf06789187a8483c6049f259931d93df",
     clinical_corrections_enabled:
       "3b8c4165432a7fd5927868371a95ecfa97371e7a72872ba00e82f8ff79156d93",
     clinical_finalization_enabled:
