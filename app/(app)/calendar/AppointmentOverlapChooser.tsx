@@ -8,6 +8,7 @@ import { formatTimeForStudio, type TimeFormat } from "@/lib/booking/tz";
 import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
 import { appointmentDisplayStatus, appointmentStatusTag } from "./appointment-display-status";
 import { timeRangeLabel } from "./calendar-format";
+import { calendarBlockScopeLabel, type BlockScopeNames } from "@/lib/calendar/block-scope";
 
 export function OverlapAppointmentSummary({ appointment: a, tz, timeFormat }: {
   appointment: AppointmentWithPractitionerColor; tz: string; timeFormat: TimeFormat;
@@ -35,9 +36,11 @@ type BlockChoices = { timedBlocks?: undefined; onSelectBlock?: undefined } | {
   timedBlocks: ReadonlyArray<StudioTimedBlock>;
   onSelectBlock: (block: StudioTimedBlock) => void;
 };
-export function AppointmentOverlapChooser({ appointments, timedBlocks = [], tz, timeFormat, returnTo, onClose, onSelect, onSelectBlock }: {
+export function AppointmentOverlapChooser({ appointments, timedBlocks = [], tz, timeFormat, returnTo, onClose, onSelect, onSelectBlock, blockScopeNames }: {
   appointments: ReadonlyArray<AppointmentWithPractitionerColor>;
   tz: string; timeFormat: TimeFormat; returnTo: string;
+  // BLOCK-SCOPE F3: present under practitioner capacity; names each block's scope.
+  blockScopeNames?: BlockScopeNames;
   onClose: () => void;
   onSelect?: (appointment: AppointmentWithPractitionerColor) => void;
 } & BlockChoices) {
@@ -73,6 +76,7 @@ export function AppointmentOverlapChooser({ appointments, timedBlocks = [], tz, 
               formatTimeForStudio(new Date(block.starts_at), tz, timeFormat),
               formatTimeForStudio(new Date(block.ends_at), tz, timeFormat),
             )}</span>
+            {blockScopeNames ? <span className="block text-xs" data-block-scope="">{calendarBlockScopeLabel(block.practitioner_id, blockScopeNames)}</span> : null}
           </button>
         ))}
       </div>

@@ -61,6 +61,7 @@ import {
   VISIBLE_MINUTES,
 } from "./calendar-constants";
 import { NowLine } from "./NowLine";
+import { calendarBlockScopeLabel, type BlockScopeNames } from "@/lib/calendar/block-scope";
 import { appointmentCardClasses } from "@/lib/calendar/service-colors";
 import {
   displayBlockoutLabel,
@@ -193,6 +194,10 @@ type Props = {
     name: string;
     allowCreate: boolean;
   };
+  // BLOCK-SCOPE F3: under practitioner capacity, active practitioner names so
+  // every block and break says whether it closes time for all practitioners or
+  // only one. Absent (capacity off, one studio timeline): no scope label.
+  blockScopeNames?: BlockScopeNames;
 };
 
 // Drag-selection state. `pointerId` matches the in-flight pointer so a
@@ -226,6 +231,7 @@ export function DayColumn({
   closedDay,
   returnTo = "",
   teamColumn,
+  blockScopeNames,
 }: Props) {
   const [overlapIds, setOverlapIds] = useState<string[] | null>(null);
   const columnRef = useRef<HTMLDivElement>(null);
@@ -747,11 +753,13 @@ export function DayColumn({
           (durationMinutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
         );
         const label = displayRecurringBreakLabel(occ.rule?.label);
+        const scope = blockScopeNames ? calendarBlockScopeLabel(occ.practitioner_id, blockScopeNames) : null;
         return (
           <BlockoutCard
             key={occ.id}
             label={label}
-            title={label}
+            scope={scope}
+            title={scope ? `${label} · ${scope}` : label}
             startLocal={dispStart}
             endLocal={dispEnd}
             durationMinutes={durationMinutes}
@@ -786,13 +794,16 @@ export function DayColumn({
           (durationMinutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
         );
         const label = TIMED_BLOCK_LABEL[tb.category] ?? "Unavailable";
-        const titleNote = tb.private_note
-          ? `${label}: ${tb.private_note}`
-          : label;
+        const scope = blockScopeNames ? calendarBlockScopeLabel(tb.practitioner_id, blockScopeNames) : null;
+        const titleNote = [
+          tb.private_note ? `${label}: ${tb.private_note}` : label,
+          scope,
+        ].filter(Boolean).join(" · ");
         return (
           <BlockoutCard
             key={tb.id}
             label={label}
+            scope={scope}
             title={titleNote}
             startLocal={dispStart}
             endLocal={dispEnd}
@@ -951,7 +962,7 @@ export function DayColumn({
           </>}
         </button>;
       })}
-      <AppointmentOverlapChooser timedBlocks={selectedBlocks} onSelectBlock={(block) => setEditingBlock(block)} appointments={selectedOverlaps} tz={tz} timeFormat={timeFormat} returnTo={returnTo}
+      <AppointmentOverlapChooser blockScopeNames={blockScopeNames} timedBlocks={selectedBlocks} onSelectBlock={(block) => setEditingBlock(block)} appointments={selectedOverlaps} tz={tz} timeFormat={timeFormat} returnTo={returnTo}
         onClose={() => setOverlapIds(null)} onSelect={(a) => setPreview(a)} />
 
       <QuickBookDrawer
@@ -1018,6 +1029,7 @@ export function DayColumn({
           read-only panel). Reuses the existing owner-gated Settings actions. */}
       <TimedBlockEditDrawer
         block={editingBlock}
+        blockScopeNames={blockScopeNames}
         isOwner={isOwner}
         studioTimezone={tz}
         timeFormat={timeFormat}
@@ -1044,6 +1056,7 @@ export function DayColumn({
 // internal piece from page.tsx.
 function BlockoutCard({
   label,
+  scope = null,
   title,
   startLocal,
   endLocal,
@@ -1053,6 +1066,8 @@ function BlockoutCard({
   onClick,
 }: {
   label: string;
+  // BLOCK-SCOPE F3: "All practitioners" / "Only <name>"; null = no label.
+  scope?: string | null;
   title: string;
   startLocal: string;
   endLocal: string;
@@ -1111,14 +1126,19 @@ function BlockoutCard({
       <div style={{ color: "#3F3F3F" }}>
         {twoLine ? (
           <>
-            <div className="truncate font-medium">{label}</div>
+            <div className="truncate font-medium">
+              {label}
+              {scope && <span data-block-scope="" className="font-normal"> · {scope}</span>}
+            </div>
             <div className="truncate text-[10px] opacity-80">
               {startLocal}–{endLocal} · {durationMinutes}m
             </div>
           </>
         ) : (
           <div className="truncate font-medium">
-            {label} <span className="opacity-70">· {startLocal}–{endLocal}</span>
+            {label}
+            {scope && <span data-block-scope="" className="font-normal"> · {scope}</span>}{" "}
+            <span className="opacity-70">· {startLocal}–{endLocal}</span>
           </div>
         )}
       </div>
