@@ -270,7 +270,7 @@ export async function getMissingRecordsAssistant(
   const supabase = await createClient();
 
   // 1) Recent sessions (newest first), capped.
-  const { data: sessRows } = await supabase
+  const { data: sessRows, error: sessError } = await supabase
     .from("sessions")
     .select(
       "id, client_id, started_at, aftercare_and_risks_explained_at, client:clients(id, name, archived_at)",
@@ -279,6 +279,10 @@ export async function getMissingRecordsAssistant(
     .is("deleted_at", null)
     .order("started_at", { ascending: false })
     .limit(SESSION_SCAN_CAP);
+  // DAT-002 (the #981 pattern): every read below refuses through the route
+  // error boundary on failure. Read as empty, a failure would say nothing is
+  // missing, and a failed charted read would flag charted visits as uncharted.
+  if (sessError) throw new Error("Failed to load missing records");
 
   const sessions = ((sessRows ?? []) as SessionScanRow[])
     .map((r) => ({ row: r, client: joinedClient(r.client) }))
@@ -287,7 +291,7 @@ export async function getMissingRecordsAssistant(
 
   // 2) Treatment areas (session_blocks) for those sessions: probe lot +
   //    area presence. Mirrors the before-today record-reminder rules.
-  const { data: blockRows } =
+  const { data: blockRows, error: blocksError } =
     sessionIds.length > 0
       ? await supabase
           .from("session_blocks")
@@ -297,7 +301,8 @@ export async function getMissingRecordsAssistant(
           .eq("studio_id", studioId)
           .in("session_id", sessionIds)
           .is("deleted_at", null)
-      : { data: [] as BlockScanRow[] };
+      : { data: [] as BlockScanRow[], error: null };
+  if (blocksError) throw new Error("Failed to load missing records");
   const blocksBySession = new Map<string, BlockScanRow[]>();
   for (const b of (blockRows ?? []) as BlockScanRow[]) {
     const list = blocksBySession.get(b.session_id) ?? [];
@@ -310,7 +315,7 @@ export async function getMissingRecordsAssistant(
   const windowStartIso = new Date(
     Date.parse(nowUtcIso) - COMPLETED_WINDOW_DAYS * 86_400_000,
   ).toISOString();
-  const { data: apptRows } = await supabase
+  const { data: apptRows, error: apptError } = await supabase
     .from("appointments")
     .select("id, client_id, starts_at, client:clients(id, name, archived_at)")
     .eq("studio_id", studioId)
@@ -319,6 +324,7 @@ export async function getMissingRecordsAssistant(
     .lte("starts_at", nowUtcIso)
     .order("starts_at", { ascending: false })
     .limit(COMPLETED_APPT_CAP);
+  if (apptError) throw new Error("Failed to load missing records");
   type CompletedApptRow = {
     id: string;
     client_id: string;
@@ -332,12 +338,13 @@ export async function getMissingRecordsAssistant(
 
   const chartedApptIds = new Set<string>();
   if (completedApptIds.length > 0) {
-    const { data: chartedRows } = await supabase
+    const { data: chartedRows, error: chartedError } = await supabase
       .from("sessions")
       .select("appointment_id, session_blocks!inner(session_id)")
       .eq("studio_id", studioId)
       .in("appointment_id", completedApptIds)
       .is("deleted_at", null);
+    if (chartedError) throw new Error("Failed to load missing records");
     for (const r of (chartedRows ?? []) as Array<{
       appointment_id: string | null;
     }>) {
@@ -365,13 +372,14 @@ export async function getMissingRecordsAssistant(
   const scanClientIds = [...new Set(sessions.map((s) => s.row.client_id))];
   const incompleteIntakeClientIds = new Set<string>();
   if (scanClientIds.length > 0) {
-    const { data: intakeRows } = await supabase
+    const { data: intakeRows, error: intakeError } = await supabase
       .from("client_intake_forms")
       .select("client_id, status, created_at")
       .eq("studio_id", studioId)
       .in("client_id", scanClientIds)
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
+    if (intakeError) throw new Error("Failed to load missing records");
     const latestByClient = new Map<string, string>();
     for (const r of (intakeRows ?? []) as Array<{
       client_id: string;
