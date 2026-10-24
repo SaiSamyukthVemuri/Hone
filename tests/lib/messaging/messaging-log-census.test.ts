@@ -1,8 +1,12 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
   analyzeSource,
   censusOf,
+  closedResultFunctions,
+  CLOSED_RESULT_SOURCE,
   isSensitiveName,
   keyOf,
   literalViolation,
@@ -47,10 +51,16 @@ import {
 // is not: a database message, a thrown exception or a provider's error string
 // is decided at run time. ERROR_TEXT is therefore not a proof of safety; it is
 // the complete, frozen list of writers where that text reaches the log, so the
-// set cannot grow without a reviewer seeing it. The "provider" rows are the
-// ones to fix first: lib/email/send-appointment.ts returns
-// `Invalid recipient: <to>` for a malformed address, and forwards the email
-// provider's own message, and those rows log that string.
+// set cannot grow without a reviewer seeing it.
+//
+// CLOSED RESULTS (MSG-LOG-RAW-ERROR). `result.error` is not raw text when
+// `result` holds what a lib/email sender returned: EmailSendResult's failure
+// `error` is the closed EmailSendFailure category (never the destination or the
+// provider's message), and the census reads that from the source (see
+// closedResultFunctions). The five portal, portal-login and intake-reissue rows
+// that logged the old free text left ERROR_TEXT that way. The remaining
+// "provider" rows log a raw provider error object or a thrown error themselves,
+// and are their owners' to fix.
 // ===========================================================================
 
 const CENSUS: Record<string, Record<string, number>> = {
@@ -102,8 +112,8 @@ const CENSUS: Record<string, Record<string, number>> = {
 //            not the row, but "invalid input syntax for type ...: <value>" echoes
 //            the value it refused.
 //   thrown   a caught exception's message or object.
-//   provider an email send result's error, or a raw email-provider error (see
-//            THE LIMIT above).
+//   provider a raw email-provider error object or a thrown send error, logged
+//            by the call site itself.
 //   closed   a closed vocabulary the analyzer cannot see: sendSmsSafely's error
 //            tags (lib/sms/twilio.ts), payment-receipt's sanitiseSafe output.
 type ErrorKind = "db" | "thrown" | "provider" | "closed";
@@ -115,9 +125,7 @@ const ERROR_TEXT: ReadonlyArray<readonly [key: string, count: number, kind: Erro
   ["app/(app)/calendar/actions.ts | console.error | send_postcare_lookup_failed", 1, "db"],
   ["app/(app)/calendar/postcare-auto-send.ts | console.error | postcare_auto_send_threw", 1, "thrown"],
   ["app/(app)/clients/[id]/intake/actions.ts | safeLog.error | {code}", 1, "db"],
-  ["app/(app)/clients/[id]/intake/actions.ts | safeLog.error | intake_reissue_email_failed", 2, "provider"],
   ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_insert_failed", 1, "db"],
-  ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_email_send_failed", 1, "provider"],
   ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_notification_stamp_failed", 1, "db"],
   ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_reply_mark_seen_failed", 1, "db"],
   ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_archive_failed", 1, "db"],
@@ -139,13 +147,11 @@ const ERROR_TEXT: ReadonlyArray<readonly [key: string, count: number, kind: Erro
   ["app/intake/[token]/actions.ts | logInternalIntakeError() | intake_save_update_error", 1, "db"],
   ["app/intake/[token]/actions.ts | logInternalIntakeError() | intake_submit_update_error", 1, "db"],
   ["app/portal/login/actions.ts | logSanitized() | portal_login_magic_insert_failed", 1, "db"],
-  ["app/portal/login/actions.ts | logSanitized() | portal_login_email_send_failed", 1, "provider"],
   ["app/portal/portal-message-actions.ts | console.error | portal_message_mark_reviewed_failed", 1, "db"],
   ["app/portal/portal-message-actions.ts | console.error | portal_reply_client_lookup_failed", 1, "db"],
   ["app/portal/portal-message-actions.ts | console.error | portal_reply_parent_lookup_failed", 1, "db"],
   ["app/portal/portal-message-actions.ts | console.error | portal_reply_insert_failed", 1, "db"],
   ["app/portal/portal-message-actions.ts | console.error | portal_reply_studio_lookup_failed", 1, "db"],
-  ["app/portal/portal-message-actions.ts | console.error | portal_reply_email_send_failed", 1, "provider"],
   ["app/portal/portal-message-actions.ts | console.error | portal_reply_notification_stamp_failed", 1, "db"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_assert_lookup_failed", 1, "db"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_fetch_summary_failed", 1, "db"],
@@ -281,6 +287,24 @@ describe("MSG-007 log census: no writer carries a destination, link or token", (
   });
 });
 
+describe("MSG-LOG-RAW-ERROR: lib/email send results are closed by type", () => {
+  const source = readFileSync(path.join(process.cwd(), CLOSED_RESULT_SOURCE), "utf8");
+
+  it("EmailSendResult's failure carries only the closed EmailSendFailure category", () => {
+    expect(source).toContain("| { ok: false; error: EmailSendFailure; retryable: boolean };");
+    expect(source).toMatch(/export type EmailSendFailure = \(typeof EMAIL_SEND_FAILURES\)\[number\];/);
+  });
+
+  it("the closed senders are derived from the source, and include the ones the portal and intake log", () => {
+    const closed = closedResultFunctions(source);
+    for (const fn of ["sendEmailSafely", "sendIntakeUpdateRequestToClient", "sendCancellationEmail"]) {
+      expect(closed.has(fn), fn).toBe(true);
+    }
+    // A sender that does not return EmailSendResult is not trusted.
+    expect(closed.has("logEmailFailure")).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The census itself, proved on synthetic sources: each rule must catch the
 // shape it exists for, or a green census would mean nothing.
@@ -383,6 +407,23 @@ describe("MSG-007 log census: the analyzer catches what it must", () => {
       }`);
     expect(ws[0].errorText).toEqual([]);
     expect(ws[1].errorText).toContain("err.message");
+  });
+
+  it("a closed sender's result.error is not raw text; any other result's is", () => {
+    const src = `
+      export async function p(send: any) {
+        const closedResult = await sendEmailSafely({ to: "x" });
+        if (!closedResult.ok) console.error(JSON.stringify({ event: "a", error: closedResult.error }));
+        const other = await sendSomethingElse();
+        if (!other.ok) console.error(JSON.stringify({ event: "b", error: other.error }));
+        let reassigned = await sendEmailSafely({ to: "x" });
+        reassigned = await sendSomethingElse();
+        console.error(JSON.stringify({ event: "c", error: reassigned.error }));
+      }`;
+    const ws = analyzeSource("app/synthetic.ts", src, new Set(["sendEmailSafely"])).writers;
+    expect(ws.map((w) => w.errorText)).toEqual([[], ["other.error"], ["reassigned.error"]]);
+    // Without the closed set, every one is raw.
+    expect(analyzeSource("app/synthetic.ts", src).writers.every((w) => w.errorText.length === 1)).toBe(true);
   });
 
   it("a digest or a closed log vocabulary is not its input", () => {

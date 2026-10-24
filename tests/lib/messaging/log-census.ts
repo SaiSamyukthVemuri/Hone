@@ -119,10 +119,23 @@ function constInitializer(id: ts.Identifier): ts.Expression | undefined {
 type Acc = Pick<Writer, "names" | "literals" | "errorText" | "opaque"> & {
   /** Identifiers written whole, not through a property. */
   bare: string[];
+  /** Functions whose result's `error` is a closed category by type. */
+  closed: ReadonlySet<string>;
 };
 
-function newAcc(): Acc {
-  return { names: [], literals: [], errorText: [], opaque: [], bare: [] };
+function newAcc(closed: ReadonlySet<string> = new Set()): Acc {
+  return { names: [], literals: [], errorText: [], opaque: [], bare: [], closed };
+}
+
+// MSG-LOG-RAW-ERROR. `x.error` is closed text, not raw, when `x` is a const
+// holding the (awaited) result of a sender whose result type makes `error` a
+// closed category: the exported senders of lib/email/send-appointment.ts that
+// return Promise<EmailSendResult> (see closedResultFunctions).
+function isClosedResult(root: ts.Expression, closed: ReadonlySet<string>): boolean {
+  if (!ts.isIdentifier(root) || closed.size === 0) return false;
+  let init = constInitializer(root);
+  while (init && (ts.isAwaitExpression(init) || ts.isParenthesizedExpression(init))) init = init.expression;
+  return !!init && ts.isCallExpression(init) && ts.isIdentifier(init.expression) && closed.has(init.expression.text);
 }
 
 const IDENT_RE = /^[A-Za-z_$][\w$]*$/;
@@ -204,7 +217,8 @@ function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, dep
   }
   if (ts.isPropertyAccessExpression(expr)) {
     acc.names.push(...segmentsOf(expr));
-    if (ERROR_PROPS.has(expr.name.text)) acc.errorText.push(expr.getText());
+    const closedText = expr.name.text === "error" && isClosedResult(expr.expression, acc.closed);
+    if (ERROR_PROPS.has(expr.name.text) && !closedText) acc.errorText.push(expr.getText());
     return;
   }
   if (ts.isCallExpression(expr)) {
@@ -248,8 +262,15 @@ function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, dep
 // `positions`: the arguments that reach the line. A sink writes all of them; a
 // helper call writes only the ones the helper forwards (postCommit(event,
 // undefined, () => ...) writes `event`, not its callback).
-function writerOf(file: string, node: ts.CallExpression, via: string, skip: ReadonlySet<string>, positions?: readonly number[]): Writer {
-  const acc = newAcc();
+function writerOf(
+  file: string,
+  node: ts.CallExpression,
+  via: string,
+  skip: ReadonlySet<string>,
+  closed: ReadonlySet<string>,
+  positions?: readonly number[],
+): Writer {
+  const acc = newAcc(closed);
   node.arguments.forEach((a, i) => {
     if (!positions || positions.includes(i)) walkValue(a, acc, skip);
   });
@@ -285,7 +306,7 @@ function containerParams(fn: Fn, call: ts.CallExpression): number[] {
 }
 
 /** Every log writer in one source file. */
-export function analyzeSource(file: string, source: string): FileCensus {
+export function analyzeSource(file: string, source: string, closed: ReadonlySet<string> = new Set()): FileCensus {
   const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   const src = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind);
   const writers: Writer[] = [];
@@ -315,7 +336,7 @@ export function analyzeSource(file: string, source: string): FileCensus {
       // A forwarded parameter is judged at each call of a followable helper.
       // An exported or anonymous one cannot be, so it is judged here by name.
       const followable = !!fn && !!functionName(fn) && !isExported(fn);
-      writers.push(writerOf(file, n, n.expression.getText(), new Set(fn && followable ? paramNames(fn, positions) : [])));
+      writers.push(writerOf(file, n, n.expression.getText(), new Set(fn && followable ? paramNames(fn, positions) : []), closed));
       if (fn && positions.length > 0) addForwarder(fn, positions);
     }
     ts.forEachChild(n, visitSinks);
@@ -344,7 +365,7 @@ export function analyzeSource(file: string, source: string): FileCensus {
               if (i >= 0) onward.push(i);
             }
           }
-          writers.push(writerOf(file, n, `${name}()`, new Set(outer && outerFollowable ? paramNames(outer, onward) : []), positions));
+          writers.push(writerOf(file, n, `${name}()`, new Set(outer && outerFollowable ? paramNames(outer, onward) : []), closed, positions));
           if (outer && onward.length > 0) addForwarder(outer, onward);
         }
         ts.forEachChild(n, visitCalls);
@@ -372,10 +393,33 @@ export function surfaceFiles(): string[] {
   return [...new Set([...inDirs, ...importers])].filter((f) => !/\.(test|spec)\.tsx?$/.test(f)).sort();
 }
 
-export function censusOf(files: readonly string[]): Map<string, FileCensus> {
+export const CLOSED_RESULT_SOURCE = "lib/email/send-appointment.ts";
+
+/**
+ * The exported functions of CLOSED_RESULT_SOURCE declared to return
+ * Promise<EmailSendResult>, read from the source. The compiler holds every one
+ * of their returns to that type, whose failure `error` is EmailSendFailure.
+ */
+export function closedResultFunctions(source = readFileSync(path.join(process.cwd(), CLOSED_RESULT_SOURCE), "utf8")): Set<string> {
+  const src = ts.createSourceFile(CLOSED_RESULT_SOURCE, source, ts.ScriptTarget.Latest, true);
+  const out = new Set<string>();
+  for (const st of src.statements) {
+    if (
+      ts.isFunctionDeclaration(st) &&
+      st.name &&
+      ts.getModifiers(st)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) &&
+      st.type?.getText().replace(/\s+/g, "") === "Promise<EmailSendResult>"
+    ) {
+      out.add(st.name.text);
+    }
+  }
+  return out;
+}
+
+export function censusOf(files: readonly string[], closed: ReadonlySet<string> = closedResultFunctions()): Map<string, FileCensus> {
   const out = new Map<string, FileCensus>();
   for (const file of files) {
-    const census = analyzeSource(file, readFileSync(path.join(process.cwd(), file), "utf8"));
+    const census = analyzeSource(file, readFileSync(path.join(process.cwd(), file), "utf8"), closed);
     if (census.writers.length > 0 || census.unfollowable.length > 0) out.set(file, census);
   }
   return out;
