@@ -22,6 +22,11 @@ const db = vi.hoisted(() => ({
   inserts: [] as Record<string, unknown>[],
   failSelect: false,
   selects: [] as string[],
+  // PostgREST's server-side row cap (db-max-rows); a page never returns more.
+  cap: 1000,
+  reads: 0,
+  // Fail every read from this 1-based read number on (Infinity = never).
+  failFrom: Infinity,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -38,17 +43,26 @@ vi.mock("@/lib/supabase/server", () => ({
       expect(table).toBe("clients");
       const filters: Array<[string, unknown]> = [];
       let limit = Infinity;
+      let after: string | null = null;
+      let ordered = false;
+      let from = 0;
+      let to = Infinity;
       const run = () => {
-        if (db.failSelect) return { data: null, error: { code: "57014", message: "synthetic" } };
-        const rows = db.rows
-          .filter((r) => filters.every(([k, v]) => (r as Record<string, unknown>)[k] === v))
-          .slice(0, limit)
-          .map((r) => ({ id: r.id, name: r.name, archived_at: r.archived_at }));
-        return { data: rows, error: null };
+        db.reads++;
+        if (db.failSelect || db.reads >= db.failFrom) return { data: null, error: { code: "57014", message: "synthetic" } };
+        // Unordered reads return rows in storage order, as PostgreSQL may.
+        let rows = db.rows.filter((r) => filters.every(([k, v]) => (r as Record<string, unknown>)[k] === v));
+        if (after !== null) rows = rows.filter((r) => r.id > (after as string));
+        if (ordered) rows = [...rows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        rows = rows.slice(from, Math.min(to + 1, from + db.cap)).slice(0, limit);
+        return { data: rows.map((r) => ({ id: r.id, name: r.name, archived_at: r.archived_at })), error: null };
       };
       const query = {
         select: (columns: string) => { db.selects.push(columns); return query; },
         eq: (k: string, v: unknown) => { filters.push([k, v]); return query; },
+        gt: (k: string, v: string) => { expect(k).toBe("id"); after = v; return query; },
+        order: (k: string, o: { ascending: boolean }) => { expect([k, o.ascending]).toEqual(["id", true]); ordered = true; return query; },
+        range: (a: number, b: number) => { from = a; to = b; return query; },
         limit: (n: number) => { limit = n; return query; },
         then: (resolve: (v: ReturnType<typeof run>) => unknown) => Promise.resolve(run()).then(resolve),
         insert: (row: Record<string, unknown>) => {
@@ -94,6 +108,9 @@ beforeEach(() => {
   db.inserts = [];
   db.failSelect = false;
   db.selects = [];
+  db.cap = 1000;
+  db.reads = 0;
+  db.failFrom = Infinity;
 });
 
 describe("HON-58 staff create warns about a probable duplicate before inserting", () => {
@@ -196,5 +213,42 @@ describe("HON-58 staff create warns about a probable duplicate before inserting"
   it("L1: one client matching by both phone and name+DOB is shown once", async () => {
     const { result } = await create({ name: "Jane Smith", phone: "604-555-0199", date_of_birth: "1990-01-02" });
     expect((result as { possibleDuplicates: unknown[] }).possibleDuplicates).toHaveLength(1);
+  });
+
+  // Codex P2 4365730664 / Team L2: the reads used to take at most 50 unordered
+  // rows, so a duplicate stored after 50 same-DOB (or same-phone) clients was
+  // never seen. Every candidate is now read, page by page.
+  const many = (n: number, over: Partial<Row>) =>
+    Array.from({ length: n }, (_, i): Row => ({
+      ...JANET, id: `client-${String(i).padStart(3, "0")}`, name: `Other Person ${i}`, ...over,
+    }));
+
+  it("P2: a name + DOB duplicate stored after 60 other same-DOB clients is found", async () => {
+    db.rows = [...many(60, { date_of_birth: "1990-01-02" }), { ...JANE, id: "client-zz-jane" }];
+    const { result } = await create({ name: "Jane Smith", date_of_birth: "1990-01-02" });
+    expect(result).toMatchObject({ possibleDuplicates: [{ reason: "name_dob", clientId: "client-zz-jane" }] });
+    expect(db.inserts).toHaveLength(0);
+  });
+
+  it("P2: every same-phone client is listed, not only the first 50", async () => {
+    db.rows = many(60, { phone: "604-555-0199", sms_phone: "+16045550199" });
+    const { result } = await create({ name: "Somebody", phone: "604.555.0199" });
+    expect((result as { possibleDuplicates: unknown[] }).possibleDuplicates).toHaveLength(60);
+  });
+
+  it("P2: a server row cap below the candidate count does not end the read early", async () => {
+    db.cap = 7;
+    db.rows = [...many(20, { date_of_birth: "1990-01-02" }), { ...JANE, id: "client-zz-jane" }];
+    const { result } = await create({ name: "Jane Smith", date_of_birth: "1990-01-02" });
+    expect(result).toMatchObject({ possibleDuplicates: [{ clientId: "client-zz-jane" }] });
+  });
+
+  it("P2: a failed later page refuses the create rather than ruling a duplicate out", async () => {
+    db.cap = 7;
+    db.rows = [...many(20, { date_of_birth: "1990-01-02" }), { ...JANE, id: "client-zz-jane" }];
+    db.failFrom = 2; // the first page succeeds, the second fails
+    const { result } = await create({ name: "Jane Smith", date_of_birth: "1990-01-02" });
+    expect(result).toEqual({ ok: false, error: "Couldn't save the client. Please try again." });
+    expect(db.inserts).toHaveLength(0);
   });
 });

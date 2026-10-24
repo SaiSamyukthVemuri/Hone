@@ -38,10 +38,44 @@ export type PossibleDuplicateCheck =
 type Candidate = { id: string; name: string; archived_at: string | null };
 
 const CANDIDATE_COLUMNS = "id, name, archived_at";
-// A studio rarely holds more than a handful of people sharing one date of
-// birth or one phone; this bounds the read, not the rule.
-const CANDIDATE_LIMIT = 50;
+// Codex P2 4365730664 / Team L2: EVERY candidate is read. A fixed cap (it was
+// 50 unordered rows) can leave the duplicate unseen behind other clients who
+// share the date of birth or phone. The name rule (normalizeName) is not
+// expressible as a SQL equality, so the read is paged instead: by immutable
+// id, ascending, until an empty page, so a server row cap below the page size
+// cannot end it early (the DAT-001 directory pattern). A failed page or a
+// repeated id refuses rather than rule a duplicate out.
+const CANDIDATE_PAGE = 1000;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+async function readAllCandidates(
+  supabase: SupabaseClient,
+  studioId: string,
+  column: "sms_phone" | "date_of_birth",
+  value: string,
+): Promise<{ ok: true; rows: Candidate[] } | { ok: false; code: string | null }> {
+  const rows: Candidate[] = [];
+  const seen = new Set<string>();
+  let afterId: string | null = null;
+  for (;;) {
+    let query = supabase
+      .from("clients")
+      .select(CANDIDATE_COLUMNS)
+      .eq("studio_id", studioId)
+      .eq(column, value);
+    if (afterId !== null) query = query.gt("id", afterId);
+    const { data, error } = await query.order("id", { ascending: true }).range(0, CANDIDATE_PAGE - 1);
+    if (error) return { ok: false, code: error.code ?? null };
+    const page = (data ?? []) as Candidate[];
+    if (page.length === 0) return { ok: true, rows };
+    for (const c of page) {
+      if (seen.has(c.id)) return { ok: false, code: null };
+      seen.add(c.id);
+      rows.push(c);
+    }
+    afterId = page[page.length - 1].id;
+  }
+}
 
 function asDuplicate(reason: PossibleDuplicateReason, c: Candidate): PossibleDuplicate {
   return { reason, clientId: c.id, clientName: c.name, archived: c.archived_at != null };
@@ -55,14 +89,9 @@ export async function findPossibleDuplicateClient(
   const found = new Map<string, PossibleDuplicate>();
   const smsPhone = normalizePhoneForSms(input.phone);
   if (smsPhone) {
-    const { data, error } = await supabase
-      .from("clients")
-      .select(CANDIDATE_COLUMNS)
-      .eq("studio_id", studioId)
-      .eq("sms_phone", smsPhone)
-      .limit(CANDIDATE_LIMIT);
-    if (error) return { kind: "unavailable", code: error.code ?? null };
-    for (const c of (data ?? []) as Candidate[]) {
+    const read = await readAllCandidates(supabase, studioId, "sms_phone", smsPhone);
+    if (!read.ok) return { kind: "unavailable", code: read.code };
+    for (const c of read.rows) {
       if (!found.has(c.id)) found.set(c.id, asDuplicate("phone", c));
     }
   }
@@ -70,14 +99,9 @@ export async function findPossibleDuplicateClient(
   const name = normalizeName(input.name);
   const dob = input.dateOfBirth?.trim() ?? "";
   if (name && ISO_DATE_RE.test(dob)) {
-    const { data, error } = await supabase
-      .from("clients")
-      .select(CANDIDATE_COLUMNS)
-      .eq("studio_id", studioId)
-      .eq("date_of_birth", dob)
-      .limit(CANDIDATE_LIMIT);
-    if (error) return { kind: "unavailable", code: error.code ?? null };
-    for (const c of (data ?? []) as Candidate[]) {
+    const read = await readAllCandidates(supabase, studioId, "date_of_birth", dob);
+    if (!read.ok) return { kind: "unavailable", code: read.code };
+    for (const c of read.rows) {
       if (normalizeName(c.name) === name && !found.has(c.id)) {
         found.set(c.id, asDuplicate("name_dob", c));
       }
