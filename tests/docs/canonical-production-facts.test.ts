@@ -4483,7 +4483,13 @@ describe("pending-release receipt controls (HON-18 39ad5aaf)", () => {
     const up = u.land(81, { "tests/ci/b.test.ts": "t\n", [file(81)]: receipt(81, false) }, { at: 1_900_000_000 + 71 * 3600 });
     const fresh = await coveredSince(u.g, ur, up, []);
     expect(coveredLag(u.g, (fresh as { covered: string[] }).covered, up)).toEqual({ ok: true });
-  });
+    // A CEILING, NOT A TARGET (CLAUDE.md section 4). The target is ~2.5 s: alone
+    // it measured 2.46-2.61 s on Node 20 and 24. It builds three throwaway repos
+    // and 13 merges with synchronous git, so it slows with the host. At load
+    // average 40-55 on 16 cores it completed in 6.7-8.6 s and failed vitest's
+    // 5 s default with zero assertion failures. 30 s clears that worst
+    // measurement 3.5 times over, and a genuine hang still fails this file.
+  }, 30_000);
 
   it("N8. moving app/x.ts INTO docs/production/pending-releases/ is neither record-only nor covered", async () => {
     const r = receiptRepo();
