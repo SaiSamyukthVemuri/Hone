@@ -53,6 +53,7 @@ import {
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import { recoverRecordsRead } from "@/lib/record-keeping/section-recovery";
+import { RefreshRetryButton } from "./refresh-retry-button";
 
 // PR #205 (migration 0085): Record Keeping. Hone's health-inspection
 // operational logbook, built from Chloe's BodySafe / health-inspection
@@ -195,7 +196,7 @@ function RowTools({
 }
 
 // RECORDS-SECTION-RECOVERY: fixed copy only, never the error's message.
-function SectionUnavailable({ retryHref }: { retryHref: string }) {
+function SectionUnavailable() {
   return (
     <section
       role="alert"
@@ -207,9 +208,7 @@ function SectionUnavailable({ retryHref }: { retryHref: string }) {
         Nothing is shown because the read failed, not because there are no
         records.
       </p>
-      <Link href={retryHref} className="font-medium underline">
-        Try again
-      </Link>
+      <RefreshRetryButton className="self-start font-medium underline" />
     </section>
   );
 }
@@ -326,9 +325,7 @@ export default async function RecordKeepingPage({
       {body.ok ? (
         body.value
       ) : (
-        <SectionUnavailable
-          retryHref={`/records?section=${section}${section === "procedures" ? procedureFilterQuery : ""}`}
-        />
+        <SectionUnavailable />
       )}
     </div>
   );

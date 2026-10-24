@@ -28,6 +28,7 @@ import { todayInTz } from "@/lib/booking/tz";
 import type { RecordKeepingAuditEvent } from "@/lib/types/database";
 import { PrintButton } from "./print-button";
 import { recoverRecordsRead } from "@/lib/record-keeping/section-recovery";
+import { RefreshRetryButton } from "../refresh-retry-button";
 import {
   linkedPhotoLine,
   loadLinkedPhotoCounts,
@@ -234,12 +235,7 @@ export default async function RecordKeepingPrintPage({
           This page is not a record. Nothing is listed because the read failed,
           not because there are no records.
         </p>
-        <Link
-          href={`/records/print?section=${section}${includeHistory ? "&history=1" : ""}${section === "procedures" ? procedureFilterQuery : ""}`}
-          className="text-sm font-medium underline print:hidden"
-        >
-          Try again
-        </Link>
+        <RefreshRetryButton className="self-start text-sm font-medium underline print:hidden" />
       </div>
     );
   }

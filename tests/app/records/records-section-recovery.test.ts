@@ -70,11 +70,16 @@ vi.mock("@/lib/supabase/queries", async (orig) => ({
 const { default: RecordsPage } = await import("@/app/(app)/records/page");
 const { default: RecordsPrintPage } = await import("@/app/(app)/records/print/page");
 const { PrintButton } = await import("@/app/(app)/records/print/print-button");
+// Codex P2 4367401278: the retry control. Loaded leniently so that, before the
+// fix, the cases below fail on their assertions rather than on a missing file.
+const RefreshRetryButton = await import("@/app/(app)/records/refresh-retry-button")
+  .then((m) => m.RefreshRetryButton as unknown)
+  .catch(() => null);
 
-type Scan = { text: string; testIds: Set<string>; types: Set<unknown> };
+type Scan = { text: string; testIds: Set<string>; types: Set<unknown>; hrefs: string[] };
 
 function scan(node: ReactNode): Scan {
-  const out: Scan = { text: "", testIds: new Set(), types: new Set() };
+  const out: Scan = { text: "", testIds: new Set(), types: new Set(), hrefs: [] };
   const seen = new Set<unknown>();
   const walk = (n: unknown) => {
     if (n === null || n === undefined || typeof n === "boolean") return;
@@ -94,6 +99,7 @@ function scan(node: ReactNode): Scan {
         return walk((n.type as (p: unknown) => ReactNode)(props));
       }
       if (typeof props["data-testid"] === "string") out.testIds.add(props["data-testid"]);
+      if (typeof props.href === "string") out.hrefs.push(props.href);
       walk(props.children);
     }
   };
@@ -184,4 +190,30 @@ describe("RECORDS-SECTION-RECOVERY /records/print: fails closed onto a non-recor
       expect(page.text).not.toContain("synthetic");
     });
   }
+});
+
+// Codex P2 4367401278. "Try again" pointed at the URL already on screen. A
+// client-side navigation to the same URL may reuse the Router Cache's failed
+// payload, so the read never re-runs and the retry cannot recover. The retry
+// must be a control that calls router.refresh(), as app/(app)/error.tsx does.
+describe("RECORDS-SECTION-RECOVERY retry re-requests the server render", () => {
+  it("/records: the section panel retries with a refresh control, not a same-URL link", async () => {
+    state.fail = "record_keeping_sterile_items#1";
+    const page = await renderRecords({ section: "sterile" });
+    expect(page.testIds.has("records-section-unavailable")).toBe(true);
+    expect(RefreshRetryButton).not.toBeNull();
+    expect(page.types.has(RefreshRetryButton)).toBe(true);
+    // The tab nav still links to every section, including this one, so the
+    // check is that the panel adds no second link to the displayed URL.
+    expect(page.hrefs.filter((h) => h === "/records?section=sterile")).toHaveLength(1);
+  });
+
+  it("/records/print: the not-a-record page retries with a refresh control", async () => {
+    state.fail = "record_keeping_sterile_items#1";
+    const page = await renderPrint({ section: "sterile", history: "1" });
+    expect(page.testIds.has("records-print-unavailable")).toBe(true);
+    expect(RefreshRetryButton).not.toBeNull();
+    expect(page.types.has(RefreshRetryButton)).toBe(true);
+    expect(page.hrefs.some((h) => h.startsWith("/records/print"))).toBe(false);
+  });
 });
