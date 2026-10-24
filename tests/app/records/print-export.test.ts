@@ -37,7 +37,9 @@ describe("disinfectants print: replace-by date + read-time status (PR #295)", ()
   it("is read-time/render-only: status uses the studio-timezone 'today', no write/new query", () => {
     // Same deterministic studio-local "today" the Records screen uses.
     expect(PRINT).toMatch(/todayInTz\(timezone\)/);
-    expect(PRINT).toMatch(/timezone=\{studio\.timezone\}/);
+    // RECORDS-SECTION-RECOVERY: sections are called directly so a failed read
+    // is caught on the page; the studio timezone is still what is passed.
+    expect(PRINT).toMatch(/timezone: studio\.timezone/);
     // The disinfectant section still reads via the existing query only — no
     // insert/update/upsert/delete was introduced anywhere in the print page.
     expect(PRINT).toMatch(/getDisinfectantRecords/);
