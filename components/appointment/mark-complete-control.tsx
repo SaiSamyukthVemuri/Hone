@@ -33,8 +33,11 @@ import { markAppointmentCompleteAction } from "@/app/(app)/calendar/actions";
 // PR #180. Less consequential than no-show (a completed appointment is the
 // normal happy path), but still an explicit confirm so a row is not terminated
 // by accident. The copy explains why it matters in the payment workflow.
+// HON-45: it says no payment is taken, because none is, and names both
+// truthful next steps. "Allows the session to be charged" was untrue for a
+// client with no card on file.
 export const COMPLETE_CONFIRM_MESSAGE =
-  "Mark this appointment completed? This marks the appointment completed and allows the session to be charged after charting.";
+  "Mark this appointment completed? No payment is taken. Afterwards you can charge a saved card or record how the visit was settled.";
 
 // Safe, fixed fallback. The server action already maps every RPC failure to a
 // curated, non-technical string (e.g. "This appointment hasn't started yet.");

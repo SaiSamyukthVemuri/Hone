@@ -1,0 +1,112 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { normalizeName } from "@/lib/import/quick-import";
+import { normalizePhoneForSms } from "@/lib/sms/phone";
+
+// HON-58: a probable-duplicate check for staff client create, on existing
+// fields only (no schema). It mirrors the CSV import's CONFIDENT duplicate
+// rules (lib/import/quick-import.ts matchExisting) apart from email, which
+// staff create already enforces through the unique index:
+//
+//   * same phone: compared as E.164 through public.clients.sms_phone, the
+//     stored SQL twin of normalizePhoneForSms (parity-proven in
+//     tests/db/sms-phone-parity.db.test.ts), so "604.555.0199" matches
+//     "(604) 555-0199";
+//   * same name and same date of birth: the import's normalizeName (trim,
+//     collapse spaces, lowercase) and an exact YYYY-MM-DD date.
+//
+// Same name alone stays a non-match, as it is only a weak warning in the
+// import. EVERY match is returned, once per client (a client matching both
+// rules is reported once, as a phone match), so the form can show them all
+// and a confirmation can cover each one (Team review of #1084, L1). Archived clients are included, so a returning client is found.
+// Studio scope is on every read. Only id, name and archived_at are read: the
+// warning names the existing client, never their phone or date of birth.
+
+export type PossibleDuplicateReason = "phone" | "name_dob";
+
+export type PossibleDuplicate = {
+  reason: PossibleDuplicateReason;
+  clientId: string;
+  clientName: string;
+  archived: boolean;
+};
+
+export type PossibleDuplicateCheck =
+  | { kind: "none" }
+  | { kind: "match"; duplicates: PossibleDuplicate[] }
+  | { kind: "unavailable"; code: string | null };
+
+type Candidate = { id: string; name: string; archived_at: string | null };
+
+const CANDIDATE_COLUMNS = "id, name, archived_at";
+// Codex P2 4365730664 / Team L2: EVERY candidate is read. A fixed cap (it was
+// 50 unordered rows) can leave the duplicate unseen behind other clients who
+// share the date of birth or phone. The name rule (normalizeName) is not
+// expressible as a SQL equality, so the read is paged instead: by immutable
+// id, ascending, until an empty page, so a server row cap below the page size
+// cannot end it early (the DAT-001 directory pattern). A failed page or a
+// repeated id refuses rather than rule a duplicate out.
+const CANDIDATE_PAGE = 1000;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+async function readAllCandidates(
+  supabase: SupabaseClient,
+  studioId: string,
+  column: "sms_phone" | "date_of_birth",
+  value: string,
+): Promise<{ ok: true; rows: Candidate[] } | { ok: false; code: string | null }> {
+  const rows: Candidate[] = [];
+  const seen = new Set<string>();
+  let afterId: string | null = null;
+  for (;;) {
+    let query = supabase
+      .from("clients")
+      .select(CANDIDATE_COLUMNS)
+      .eq("studio_id", studioId)
+      .eq(column, value);
+    if (afterId !== null) query = query.gt("id", afterId);
+    const { data, error } = await query.order("id", { ascending: true }).range(0, CANDIDATE_PAGE - 1);
+    if (error) return { ok: false, code: error.code ?? null };
+    const page = (data ?? []) as Candidate[];
+    if (page.length === 0) return { ok: true, rows };
+    for (const c of page) {
+      if (seen.has(c.id)) return { ok: false, code: null };
+      seen.add(c.id);
+      rows.push(c);
+    }
+    afterId = page[page.length - 1].id;
+  }
+}
+
+function asDuplicate(reason: PossibleDuplicateReason, c: Candidate): PossibleDuplicate {
+  return { reason, clientId: c.id, clientName: c.name, archived: c.archived_at != null };
+}
+
+export async function findPossibleDuplicateClient(
+  supabase: SupabaseClient,
+  studioId: string,
+  input: { name: string; phone: string | null; dateOfBirth: string | null },
+): Promise<PossibleDuplicateCheck> {
+  const found = new Map<string, PossibleDuplicate>();
+  const smsPhone = normalizePhoneForSms(input.phone);
+  if (smsPhone) {
+    const read = await readAllCandidates(supabase, studioId, "sms_phone", smsPhone);
+    if (!read.ok) return { kind: "unavailable", code: read.code };
+    for (const c of read.rows) {
+      if (!found.has(c.id)) found.set(c.id, asDuplicate("phone", c));
+    }
+  }
+
+  const name = normalizeName(input.name);
+  const dob = input.dateOfBirth?.trim() ?? "";
+  if (name && ISO_DATE_RE.test(dob)) {
+    const read = await readAllCandidates(supabase, studioId, "date_of_birth", dob);
+    if (!read.ok) return { kind: "unavailable", code: read.code };
+    for (const c of read.rows) {
+      if (normalizeName(c.name) === name && !found.has(c.id)) {
+        found.set(c.id, asDuplicate("name_dob", c));
+      }
+    }
+  }
+
+  return found.size === 0 ? { kind: "none" } : { kind: "match", duplicates: [...found.values()] };
+}

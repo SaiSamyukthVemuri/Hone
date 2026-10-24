@@ -95,6 +95,7 @@ export default async function AppointmentDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{
     view?: string | string[];
+    day?: string | string[];
     week?: string | string[];
     month?: string | string[];
   }>;
@@ -1437,7 +1438,8 @@ function NextStepCard({
           Appointment completed
         </p>
         <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">
-          Next step: chart the session and bill the client.
+          Next step: chart the session, then charge a saved card or record
+          how the visit was settled.
         </p>
       </div>
       <Link

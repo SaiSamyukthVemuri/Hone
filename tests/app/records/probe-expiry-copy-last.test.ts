@@ -151,7 +151,9 @@ describe("PR #317: print expiry marker + export note", () => {
   it("SterilePrint appends a studio-local, print-safe expiry marker to the date", () => {
     expect(PRINT).toMatch(/supplyExpiryPrintMarker\(r\.expiry_date, today\)/);
     expect(PRINT).toMatch(/const today = todayInTz\(timezone\)/);
-    expect(PRINT).toMatch(/<SterilePrint[\s\S]{0,120}timezone=\{studio\.timezone\}/);
+    // RECORDS-SECTION-RECOVERY: the print page calls the section directly so
+    // a failed read is caught there; the studio timezone is still passed.
+    expect(PRINT).toMatch(/SterilePrint\(\{[\s\S]{0,120}timezone: studio\.timezone/);
     // Marker only when an expiry date is recorded (no marker for null), and —
     // migration 0182 — only while the stock has NOT been recorded as discarded.
     // The action marker flags supplies needing attention; a box already thrown

@@ -109,6 +109,24 @@ describe("scrubErrorEvent", () => {
     expect(nested.harmless).toBe("keep-me");
   });
 
+  it("redacts legal-name keys in every spelling (HON-58)", () => {
+    const e = scrubErrorEvent({
+      type: undefined,
+      extra: {
+        legal_name: "Jane Doe",
+        legalName: "Jane Doe",
+        nested: { "legal-name": "Jane Doe", LEGAL_NAME: "Jane Doe", legal: "keep-me" },
+      },
+    } as unknown as ErrorEvent);
+    const extra = e.extra as Record<string, unknown>;
+    expect(extra.legal_name).toBe(REDACTED);
+    expect(extra.legalName).toBe(REDACTED);
+    const nested = extra.nested as Record<string, unknown>;
+    expect(nested["legal-name"]).toBe(REDACTED);
+    expect(nested.LEGAL_NAME).toBe(REDACTED);
+    expect(nested.legal).toBe("keep-me");
+  });
+
   it("scrubs tags by key and value pattern", () => {
     const e = scrubErrorEvent(baseEvent());
     const tags = e.tags as Record<string, unknown>;
@@ -164,6 +182,31 @@ describe("scrubErrorEvent", () => {
     expect(crumbs[0].data?.url).toBe(
       "https://ref.supabase.co/rest/v1/clients",
     );
+  });
+});
+
+describe("legal and preferred name keys (HON-58)", () => {
+  it("redacts legal-name keys in every spelling a legal-identity field would use", () => {
+    const e = scrubErrorEvent({
+      type: undefined,
+      extra: {
+        legal_name: "Synthetic Legal",
+        legalName: "Synthetic Legal",
+        "legal-name": "Synthetic Legal",
+        legal_given_name: "Synthetic",
+        legal_family_name: "Legal",
+        preferred_name: "Syn",
+        legal_status: "keep-me",
+      },
+    } as ErrorEvent);
+    const extra = e.extra as Record<string, unknown>;
+    expect(extra.legal_name).toBe(REDACTED);
+    expect(extra.legalName).toBe(REDACTED);
+    expect(extra["legal-name"]).toBe(REDACTED);
+    expect(extra.legal_given_name).toBe(REDACTED);
+    expect(extra.legal_family_name).toBe(REDACTED);
+    expect(extra.preferred_name).toBe(REDACTED);
+    expect(extra.legal_status).toBe("keep-me");
   });
 });
 

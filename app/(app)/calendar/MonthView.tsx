@@ -41,6 +41,15 @@ type MonthDayAppt = Pick<
 
 const MAX_CHIPS_PER_DAY = 3;
 
+// HON-48: the month chip shows a time and service only, and every terminal
+// state (done, completed, no-show) is dimmed the same way, so a no-show was
+// indistinguishable from a visit that happened. A no-show chip carries a cue
+// that is neither colour nor opacity: a dashed edge, and a "No-show" label
+// that LEADS the chip, where a narrow cell truncates last. Every terminal
+// status also reaches the hover title.
+const NO_SHOW_CHIP_CLASS = "border-dashed";
+const TERMINAL_TAG = { done: "Done", completed: "Completed", no_show: "No-show" } as const;
+
 export function MonthView({
   monthAnchor,
   appointmentsByDate,
@@ -176,6 +185,11 @@ export function MonthView({
                 {dayAppts.slice(0, MAX_CHIPS_PER_DAY).map((a) => {
                   const ds = appointmentDisplayStatus(a.status, a.ends_at);
                   const terminal = ds !== "upcoming";
+                  const noShow = ds === "no_show";
+                  const statusTag =
+                    ds === "done" || ds === "completed" || ds === "no_show"
+                      ? TERMINAL_TAG[ds]
+                      : null;
                   const serviceName = a.service?.name?.trim() || null;
                   // Pretty time label: drop the leading zero so "07:30"
                   // becomes "7:30" (more compact on a tight month cell).
@@ -183,15 +197,16 @@ export function MonthView({
                   return (
                     <span
                       key={a.id}
-                      title={
-                        serviceName
-                          ? `${cleanTime} · ${serviceName}`
-                          : cleanTime
-                      }
+                      title={[cleanTime, serviceName, statusTag]
+                        .filter(Boolean)
+                        .join(" · ")}
                       className={`truncate rounded-md border-l-[3px] px-1.5 py-0.5 text-[10px] leading-tight ${appointmentCardClasses(
                         a.service,
-                      )} ${terminal ? "opacity-60" : ""}`}
+                      )} ${terminal ? "opacity-60" : ""} ${noShow ? NO_SHOW_CHIP_CLASS : ""}`}
                     >
+                      {noShow ? (
+                        <span className="font-semibold">No-show · </span>
+                      ) : null}
                       <span className="font-medium tabular-nums">
                         {cleanTime}
                       </span>

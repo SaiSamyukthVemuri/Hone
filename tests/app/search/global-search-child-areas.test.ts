@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { parseOrFilter } from "./helpers/postgrest-or";
 
 // Global Search — behavioural proof that a treatment is findable by ANY of its
 // structured treatment areas, not only by the legacy `primary_area`.
@@ -36,6 +37,12 @@ type QueryRecord = {
 
 const tables: Record<string, Row[]> = {};
 const queries: QueryRecord[] = [];
+// When set, a read whose record it accepts answers with an error instead of
+// rows; `failed` counts the reads it actually failed.
+const fault: { when: ((q: QueryRecord) => boolean) | null; failed: number } = {
+  when: null,
+  failed: 0,
+};
 
 const RE_METACHARS = /[.*+?^${}()|[\]\\]/g;
 
@@ -105,6 +112,7 @@ function builder(table: string, select: string) {
   };
   queries.push(record);
   const predicates: Array<(r: Row) => boolean> = [];
+  let rangeWindow: [number, number] | null = null;
 
   const chain = {
     eq(col: string, val: unknown) {
@@ -140,15 +148,15 @@ function builder(table: string, select: string) {
     },
     or(expr: string) {
       record.or.push(expr);
-      // "col.ilike.%x%,other.ilike.%x%" — the only .or shape the action builds.
-      const clauses = expr.split(",").map((c) => {
-        const [col, op, ...rest] = c.split(".");
-        if (op !== "ilike") {
-          throw new Error(`fake supabase: unsupported .or operator ${op}`);
+      // "col.ilike.\"%x%\",…" — the only .or shape the action builds, parsed
+      // the way PostgREST parses it (quoted values, backslash escapes).
+      const clauses = parseOrFilter(expr).map((c) => {
+        if (c.op !== "ilike") {
+          throw new Error(`fake supabase: unsupported .or operator ${c.op}`);
         }
-        return { col, pattern: rest.join(".") };
+        return c;
       });
-      predicates.push((r) => clauses.some((c) => matchesIlike(r[c.col], c.pattern)));
+      predicates.push((r) => clauses.some((c) => matchesIlike(r[c.col], c.value)));
       return chain;
     },
     in(col: string, values: readonly unknown[]) {
@@ -164,7 +172,24 @@ function builder(table: string, select: string) {
       record.limit = n;
       return chain;
     },
-    then(resolve: (v: { data: Row[]; error: null }) => unknown) {
+    // HON-58: the client-name candidate reads (non-ASCII names; paged).
+    filter(col: string, op: string, value: string) {
+      if (op !== "match") throw new Error(`fake supabase: unsupported filter ${op}`);
+      const re = new RegExp(value, "u");
+      predicates.push((r) => typeof r[col] === "string" && re.test(r[col] as string));
+      return chain;
+    },
+    range(from: number, to: number) {
+      rangeWindow = [from, to];
+      return chain;
+    },
+    then(resolve: (v: { data: Row[] | null; error: { message: string } | null }) => unknown) {
+      if (fault.when?.(record)) {
+        fault.failed++;
+        return Promise.resolve({ data: null, error: { message: "fake read failure" } }).then(
+          resolve as never,
+        );
+      }
       let rows = (tables[table] ?? []).filter((r) => predicates.every((p) => p(r)));
       for (const [col, ascending] of [...record.order].reverse()) {
         rows = [...rows].sort((a, b) => {
@@ -174,6 +199,7 @@ function builder(table: string, select: string) {
           return (av < bv ? -1 : 1) * (ascending ? 1 : -1);
         });
       }
+      if (rangeWindow) rows = rows.slice(rangeWindow[0], rangeWindow[1] + 1);
       if (record.limit != null) rows = rows.slice(0, record.limit);
       return Promise.resolve({ data: rows, error: null }).then(resolve as never);
     },
@@ -255,6 +281,8 @@ const AREAS_BY_BLOCK: Record<string, Array<{ area: string; laterality: string }>
 function seedDefault() {
   for (const key of Object.keys(tables)) delete tables[key];
   queries.length = 0;
+  fault.when = null;
+  fault.failed = 0;
 
   tables.session_blocks = [{ ...MULTI_AREA_BLOCK }];
   tables.session_block_areas = [
@@ -797,5 +825,81 @@ describe("sanitized result shape", () => {
     expect(serialized).not.toContain("do not repeat");
     expect(serialized).not.toContain("erythema");
     expect(serialized).not.toContain("studio_id");
+  });
+});
+
+// SEARCH-OTHER-CATEGORIES (DAT-002 class): every non-client read mapped a
+// failed read to [] via `r.data ?? []`, so a failure showed as no treatment,
+// note, record, service or appointment results. A failed read of any of them
+// now fails the search ({ ok: false }), which the panel (#1096) shows as
+// unavailable. Each case seeds a row that read WOULD return, fails exactly
+// that read, and checks the read really ran and failed.
+describe("a failed non-client read fails the search, never shows as nothing", () => {
+  const has = (q: QueryRecord, kind: "eq" | "in", col: string) =>
+    q[kind].some(([c]) => c === col);
+
+  function seedEveryCategory() {
+    tables.clients = [
+      { id: "client-1", studio_id: STUDIO_A, name: "Ada Lovelace", email: null, phone: null, archived_at: null },
+    ];
+    tables.sessions = [
+      {
+        id: "session-9",
+        studio_id: STUDIO_A,
+        client_id: "client-1",
+        started_at: "2026-05-02T00:00:00Z",
+        next_session_note: "Sideburn touch-up",
+        deleted_at: null,
+        record_status: "draft",
+        client: { name: "Ada Lovelace" },
+      },
+    ];
+    tables.record_keeping_sterile_items = [
+      { id: "sterile-1", studio_id: STUDIO_A, item_description: "Sideburn probe pack", lot_number: "L1", date_purchased: "2026-05-01" },
+    ];
+    tables.record_keeping_disinfectants = [
+      { id: "dis-1", studio_id: STUDIO_A, disinfectant_name: "Sideburn wipe", date_prepared: "2026-05-01" },
+    ];
+    tables.services = [{ id: "service-1", studio_id: STUDIO_A, name: "Sideburn cleanup" }];
+    tables.appointments = [
+      {
+        id: "appt-1",
+        studio_id: STUDIO_A,
+        client_id: "client-1",
+        service_id: "service-1",
+        status: "confirmed",
+        starts_at: "2026-05-03T00:00:00Z",
+        client: { name: "Ada Lovelace" },
+        service: { name: "Sideburn cleanup" },
+      },
+    ];
+  }
+
+  const cases: Array<[string, string, (q: QueryRecord) => boolean]> = [
+    ["session blocks (direct)", "Sideburn", (q) => q.table === "session_blocks" && !has(q, "in", "id")],
+    ["session block areas", "Sideburn", (q) => q.table === "session_block_areas"],
+    ["the child-area parent blocks", "Sideburn", (q) => q.table === "session_blocks" && has(q, "in", "id")],
+    ["session notes", "Sideburn", (q) => q.table === "sessions"],
+    ["sterile items", "Sideburn", (q) => q.table === "record_keeping_sterile_items"],
+    ["disinfectants", "Sideburn", (q) => q.table === "record_keeping_disinfectants"],
+    ["services", "Sideburn", (q) => q.table === "services"],
+    ["appointments by service", "Sideburn", (q) => q.table === "appointments" && has(q, "in", "service_id")],
+    ["appointments by client", "Ada", (q) => q.table === "appointments" && has(q, "in", "client_id")],
+    ["appointments by status", "confirmed", (q) => q.table === "appointments" && has(q, "eq", "status")],
+  ];
+
+  it.each(cases)("a failed %s read fails the search (%j)", async (_label, query, when) => {
+    seedEveryCategory();
+    fault.when = when;
+    expect(await globalSearchAction(query)).toEqual({ ok: false });
+    expect(fault.failed).toBe(1);
+  });
+
+  it.each(cases)("control: the %s read returns results when it does not fail (%j)", async (_label, query, when) => {
+    seedEveryCategory();
+    const res = await globalSearchAction(query);
+    expect(res.ok).toBe(true);
+    expect(queries.some(when)).toBe(true);
+    expect(res.ok && res.results.some((r) => r.type !== "page")).toBe(true);
   });
 });

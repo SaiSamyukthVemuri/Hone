@@ -91,7 +91,8 @@ export default async function BookingSettingsPage({
         <h2 className="text-xl font-medium">Booking</h2>
         <p className="mt-1 text-sm text-neutral-500">
           How clients find and book you. Public URL, timezone, default
-          appointment length, and the description shown on your booking page.
+          appointment length, the description shown on your booking page, and
+          the address clients see there and in appointment emails.
         </p>
       </section>
 
@@ -289,7 +290,7 @@ export default async function BookingSettingsPage({
           className="flex scroll-mt-24 flex-col gap-1.5"
         >
           <span className="text-sm font-medium">
-            Public address (shown on your booking page)
+            Public address (booking page and appointment emails)
           </span>
           <input
             name="address"
@@ -298,8 +299,10 @@ export default async function BookingSettingsPage({
             className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
           />
           <span className="text-xs text-neutral-500">
-            For home-based studios, leave this blank and share the address
-            after booking.
+            Shown on your public booking page, and in clients&rsquo;
+            confirmation, reminder and appointment-update emails and calendar
+            invites. For home-based studios, leave this blank and share the
+            address after booking.
           </span>
         </label>
 

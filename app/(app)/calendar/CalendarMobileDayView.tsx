@@ -14,6 +14,7 @@ import { QuickBlockDrawer, type QuickBlockDraft } from "./QuickBlockDrawer";
 import { DragActionChooser, type DragRangeDraft } from "./DragActionChooser";
 import { TimedBlockEditDrawer } from "./TimedBlockEditDrawer";
 import { MobileDayTimeline } from "./MobileDayTimeline";
+import type { BlockScopeNames } from "@/lib/calendar/block-scope";
 import type { DayAvailability } from "./DayColumn";
 
 // Per-day slice of the week's data the calendar page already loaded. Passed as
@@ -46,6 +47,8 @@ type Props = {
   clients: QuickBookClient[];
   services: Service[];
   returnTo: string;
+  // BLOCK-SCOPE F3: forwarded to the timeline and the block drawer.
+  blockScopeNames?: BlockScopeNames;
 };
 
 // Current minute-of-day in the studio timezone (same technique as NowLine).
@@ -74,6 +77,7 @@ export function CalendarMobileDayView({
   clients,
   services,
   returnTo,
+  blockScopeNames,
 }: Props) {
   const router = useRouter();
   const [selectedDate, setSelectedDate] = useState(initialDate);
@@ -255,6 +259,8 @@ export function CalendarMobileDayView({
           tz={tz}
           timeFormat={timeFormat}
           returnTo={returnTo}
+          showPractitioner={practitionerCapacityEnabled}
+          blockScopeNames={blockScopeNames}
           onBookAt={(localTime) =>
             setDraft({ localDate: day.date, localTime })
           }
@@ -323,6 +329,7 @@ export function CalendarMobileDayView({
       />
       <TimedBlockEditDrawer
         block={editingBlock}
+        blockScopeNames={blockScopeNames}
         isOwner={isOwner}
         studioTimezone={tz}
         timeFormat={timeFormat}

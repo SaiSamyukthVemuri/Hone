@@ -9,6 +9,7 @@ import { localLongDate, formatTimeForStudio } from "@/lib/booking/tz";
 import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 import { emailBookingReference } from "@/lib/email/booking-reference";
 import { withReference } from "@/lib/email/subject-reference";
+import { appointmentEmailAddress } from "@/lib/booking/studio-location";
 
 // Practitioner Move appointment: the NARROW client "appointment updated" notification.
 //
@@ -64,6 +65,9 @@ export type MoveNotificationKind = "moved" | "reassigned" | "moved_and_reassigne
 export function buildAppointmentMovedEmail(p: {
   kind: MoveNotificationKind;
   studioName: string;
+  // HON-50. The studio's public address, as the confirmation and reminders
+  // show it. Omitted or null (a home-based studio) adds nothing.
+  studioAddress?: string | null;
   serviceName: string;
   startsAt: Date;
   timezone: string;
@@ -107,6 +111,12 @@ export function buildAppointmentMovedEmail(p: {
     bodyText = `Your ${serviceName} appointment at ${studioName} has been moved to ${dateStr} at ${timeStr}. Everything else stays the same.`;
   }
   subject = withReference(subject, p.bookingReference);
+  // HON-50: where the appointment is, under the details it belongs to.
+  const studioAddress = p.studioAddress?.trim() || null;
+  if (studioAddress) {
+    bodyHtml += `<br/><br/>${esc(studioAddress)}`;
+    bodyText += `\n\n${studioAddress}`;
+  }
 
   // PREVIEW RULE (HIPAA-READY-01, #828): a client that strips the preheader
   // filler previews the first body text, so the body opens with a lead that
@@ -162,7 +172,7 @@ export async function notifyAppointmentMoved(
     const { data } = await admin
       .from("appointments")
       .select(
-        "id, starts_at, client:clients(name, email), service:services(name), studio:studios(name, timezone, owner_email, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
+        "id, starts_at, client:clients(name, email), service:services(name), studio:studios(name, timezone, address, owner_email, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
       )
       .eq("id", input.appointmentId)
       .eq("studio_id", input.studioId)
@@ -176,6 +186,7 @@ export async function notifyAppointmentMoved(
       studio: {
         name: string | null;
         timezone: string | null;
+        address: string | null;
         owner_email: string | null;
         postcare_contact_email: string | null;
       } | null;
@@ -207,6 +218,7 @@ export async function notifyAppointmentMoved(
     const { subject, html: htmlWithPreheader, text } = buildAppointmentMovedEmail({
       kind: input.resultKind ?? "moved",
       studioName,
+      studioAddress: row.studio ? appointmentEmailAddress(row.studio) : null,
       serviceName,
       startsAt: start,
       timezone: tz,

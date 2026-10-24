@@ -14,7 +14,7 @@ import path from "node:path";
 // drive the real writer with synthetic insert/dispatcher adapters, proving
 // external log privacy while first-party payloads/order remain intact.
 
-import { recordOpsAlert, redactSafeDetails } from "@/lib/ops/alerts";
+import { recordOpsAlert, recordOpsAlertDurably, redactSafeDetails } from "@/lib/ops/alerts";
 
 describe("redactSafeDetails (PR #153)", () => {
   it("returns {} on undefined input", () => {
@@ -399,6 +399,17 @@ describe("MSG-007 real ops alert sink preserves first-party lineage and scrubs e
     expect(logs).toContain("sms_delivery_failed");
     if (mode === "error") expect(logs).toContain("XX000");
     for (const privateValue of [STUDIO, APPOINTMENT, CLIENT, "PRIVATE", "patient@example.invalid", "SECRET_TOKEN"]) expect(logs).not.toContain(privateValue);
+  });
+  // PAY-002 (#1081 review M1): the durable variant reports the INSERT outcome
+  // and nothing else: an email failure does not un-persist the row, and an
+  // insert error or throw is never reported as persisted. It never throws.
+  it.each([
+    ["ok", true], ["dispatch_throw", true],
+    ["error", false], ["error_bad_code", false], ["throw", false],
+  ] as const)("recordOpsAlertDurably reports %s as persisted=%s, without throwing", async (mode, persisted) => {
+    sink.mode = mode;
+    await expect(recordOpsAlertDurably(input())).resolves.toBe(persisted);
+    expect(sink.order).toEqual(["insert", "dispatch"]);
   });
   it("even a throwing console cannot fail persistence or critical dispatch", async () => {
     vi.mocked(console.error).mockImplementation(() => { throw new Error("PRIVATE console"); });

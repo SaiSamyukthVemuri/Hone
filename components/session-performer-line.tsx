@@ -1,13 +1,18 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { Practitioner } from "@/lib/types/database";
+import type { PerformerOption } from "@/lib/sessions/performer-options";
 
 type Props = {
   sessionId: string;
   clientId: string;
-  practitioners: Practitioner[];
+  practitioners: PerformerOption[];
   initialPerformerId: string | null;
+  // Server-resolved from the attribution roster, so a deactivated performer
+  // (absent from the active picker list) is still named (HON-44 (a)).
+  performerName?: string | null;
+  // The session's original author, when someone else performed it.
+  recordedByName?: string | null;
   updatePerformerAction: (formData: FormData) => Promise<void>;
 };
 
@@ -22,6 +27,8 @@ export function SessionPerformerLine({
   clientId,
   practitioners,
   initialPerformerId,
+  performerName: initialPerformerName = null,
+  recordedByName = null,
   updatePerformerAction,
 }: Props) {
   const [performerId, setPerformerId] = useState(initialPerformerId ?? "");
@@ -35,7 +42,9 @@ export function SessionPerformerLine({
   const current = practitioners.find((p) => p.id === performerId);
   const performerName = current
     ? current.display_name?.trim() || current.email
-    : null;
+    : performerId && performerId === initialPerformerId
+      ? initialPerformerName
+      : null;
 
   function handlePerformerChange(next: string) {
     setPerformerId(next);
@@ -68,6 +77,7 @@ export function SessionPerformerLine({
           <span className="text-neutral-700 dark:text-neutral-300">
             {performerName ?? "not set"}
           </span>
+          {recordedByName && ` · recorded by ${recordedByName}`}
         </span>
         <button
           type="button"

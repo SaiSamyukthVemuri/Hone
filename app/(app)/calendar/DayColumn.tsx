@@ -25,7 +25,11 @@ import {
   formatClockLabel,
   type TimeFormat,
 } from "@/lib/booking/tz";
-import { appointmentDisplayStatus } from "./appointment-display-status";
+import {
+  NO_SHOW_CARD_CLASS,
+  appointmentDisplayStatus,
+  appointmentStatusTag,
+} from "./appointment-display-status";
 import {
   QuickBookDrawer,
   type QuickBookClient,
@@ -36,6 +40,12 @@ import { TimedBlockEditDrawer } from "./TimedBlockEditDrawer";
 import { QuickBlockDrawer } from "./QuickBlockDrawer";
 import { AppointmentPreviewDrawer } from "./AppointmentPreviewDrawer";
 import { AppointmentOverlapChooser, OverlapAppointmentSummary } from "./AppointmentOverlapChooser";
+import { PractitionerTag } from "./PractitionerTag";
+import {
+  CARD_LINE_PX,
+  calendarPractitionerIdentity,
+  practitionerRowFits,
+} from "@/lib/calendar/practitioner-identity";
 // Grid constants live in a plain (non-"use client") module. The server
 // component calendar/page.tsx must import them from there, NOT from this
 // client module: a client-module value imported by a Server Component
@@ -51,6 +61,7 @@ import {
   VISIBLE_MINUTES,
 } from "./calendar-constants";
 import { NowLine } from "./NowLine";
+import { calendarBlockScopeLabel, type BlockScopeNames } from "@/lib/calendar/block-scope";
 import { appointmentCardClasses } from "@/lib/calendar/service-colors";
 import {
   displayBlockoutLabel,
@@ -65,13 +76,10 @@ import {
 // (TIMED_BLOCK_LABEL, displayRecurringBreakLabel) also live there now so the
 // server-rendered month view resolves the same labels this week view shows.
 
-// Appointment-card colors are now keyed off SERVICE, not
-// practitioner. See lib/calendar/service-colors.ts. The prior
-// per-practitioner SOFT_CARD_BY_TOKEN / softCardClasses helper was
-// removed here when this card stopped reading practitioner color;
-// future multi-practitioner UIs can either re-introduce a left-
-// accent border in practitioner color or read directly from
-// lib/practitioner-colors.ts.
+// Appointment-card FILL colors are keyed off SERVICE, not practitioner. See
+// lib/calendar/service-colors.ts. HON-48: on a team calendar (practitioner
+// capacity on) each card also names its practitioner beside a swatch in the
+// practitioner's configured color; see lib/calendar/practitioner-identity.ts.
 
 // "HH:MM:SS" (studio-local availability time) → minutes from midnight,
 // or null when unparseable. Visual-only: used to position the neutral
@@ -175,6 +183,21 @@ type Props = {
   // appointment-detail link so the detail page's back link returns the
   // practitioner to this view/date. Always internal to /calendar; "" = none.
   returnTo?: string;
+  // HON-48 team day view: this column belongs to ONE practitioner. Its header
+  // names them, so cards drop the in-card practitioner tag; a new booking
+  // starts on this practitioner; and a drag books directly, because a quick
+  // block is studio-wide and would land in every column. `allowCreate` false
+  // (a member viewing a colleague's column) renders no create control: a
+  // member's booking is always their own, so it would land elsewhere.
+  teamColumn?: {
+    practitionerId: string | null;
+    name: string;
+    allowCreate: boolean;
+  };
+  // BLOCK-SCOPE F3: under practitioner capacity, active practitioner names so
+  // every block and break says whether it closes time for all practitioners or
+  // only one. Absent (capacity off, one studio timeline): no scope label.
+  blockScopeNames?: BlockScopeNames;
 };
 
 // Drag-selection state. `pointerId` matches the in-flight pointer so a
@@ -207,6 +230,8 @@ export function DayColumn({
   availability,
   closedDay,
   returnTo = "",
+  teamColumn,
+  blockScopeNames,
 }: Props) {
   const [overlapIds, setOverlapIds] = useState<string[] | null>(null);
   const columnRef = useRef<HTMLDivElement>(null);
@@ -352,6 +377,15 @@ export function DayColumn({
       if (duration > MAX_DRAG_DURATION_MINUTES) {
         duration = MAX_DRAG_DURATION_MINUTES;
       }
+      // HON-48: a team column books directly (see Props.teamColumn).
+      if (teamColumn) {
+        setDraft({
+          localDate: date,
+          localTime: minutesToHHMM(snappedStartTotal),
+          durationMinutes: duration,
+        });
+        return;
+      }
       // PR #139. Drag-created drafts open the chooser; the
       // practitioner then decides Book vs Block. Bare clicks
       // (openDraftAtY above) still bypass the chooser.
@@ -362,7 +396,7 @@ export function DayColumn({
         durationMinutes: duration,
       });
     },
-    [date, openDraftAtY],
+    [date, openDraftAtY, teamColumn],
   );
 
   function handlePointerDown(e: React.PointerEvent<HTMLButtonElement>) {
@@ -557,6 +591,7 @@ export function DayColumn({
         <div
           key={`tint-${i}`}
           aria-hidden
+          data-availability-tint=""
           style={{ top: r.top, height: r.height }}
           className="pointer-events-none absolute inset-x-0 z-0 border-y border-neutral-300/60 bg-neutral-200/70 dark:border-neutral-700/50 dark:bg-neutral-800/65"
         />
@@ -594,10 +629,11 @@ export function DayColumn({
           override path and pre-fills the time range. Keyboard users
           activate via Enter/Space (opens at the top of the visible
           range, same as the pre-drag fallback). */}
+      {(!teamColumn || teamColumn.allowCreate) && (<>
       <button
         ref={buttonRef}
         type="button"
-        aria-label={`Open quick-book draft for ${date}`}
+        aria-label={teamColumn ? `Open quick-book draft for ${teamColumn.name} on ${date}` : `Open quick-book draft for ${date}`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -627,12 +663,13 @@ export function DayColumn({
           is primary, so the desktop workflow is unchanged. */}
       <button
         type="button"
-        aria-label={`Book on ${date}`}
+        aria-label={teamColumn ? `Book ${teamColumn.name} on ${date}` : `Book on ${date}`}
         onClick={() => openDraftAtY(0)}
         className="absolute left-1 top-1 z-[7] hidden h-7 min-w-7 items-center justify-center rounded-md border border-neutral-300 bg-white/95 px-1.5 text-xs font-semibold text-neutral-700 shadow-sm [@media(pointer:coarse)]:flex dark:border-neutral-700 dark:bg-neutral-900/95 dark:text-neutral-200"
       >
         +
       </button>
+      </>)}
 
       {/* Live drag-selection overlay. Translucent block + time-range
           label that tracks the snapped start/end as the practitioner
@@ -716,11 +753,13 @@ export function DayColumn({
           (durationMinutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
         );
         const label = displayRecurringBreakLabel(occ.rule?.label);
+        const scope = blockScopeNames ? calendarBlockScopeLabel(occ.practitioner_id, blockScopeNames) : null;
         return (
           <BlockoutCard
             key={occ.id}
             label={label}
-            title={label}
+            scope={scope}
+            title={scope ? `${label} · ${scope}` : label}
             startLocal={dispStart}
             endLocal={dispEnd}
             durationMinutes={durationMinutes}
@@ -755,13 +794,16 @@ export function DayColumn({
           (durationMinutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
         );
         const label = TIMED_BLOCK_LABEL[tb.category] ?? "Unavailable";
-        const titleNote = tb.private_note
-          ? `${label}: ${tb.private_note}`
-          : label;
+        const scope = blockScopeNames ? calendarBlockScopeLabel(tb.practitioner_id, blockScopeNames) : null;
+        const titleNote = [
+          tb.private_note ? `${label}: ${tb.private_note}` : label,
+          scope,
+        ].filter(Boolean).join(" · ");
         return (
           <BlockoutCard
             key={tb.id}
             label={label}
+            scope={scope}
             title={titleNote}
             startLocal={dispStart}
             endLocal={dispEnd}
@@ -780,6 +822,16 @@ export function DayColumn({
         const lane = lanes.get(a.id)!;
         const clientName = a.client?.name?.trim() || "Client";
         const serviceName = a.service?.name?.trim() || null;
+        const practitionerIdentity = practitionerCapacityEnabled && !teamColumn
+          ? calendarPractitionerIdentity(a.practitioner)
+          : null;
+        const titleParts = [
+          clientName,
+          practitionerIdentity?.name,
+          serviceName,
+          localTime,
+          `${a.duration_minutes}m`,
+        ].filter(Boolean);
         // Visible time RANGE ("9:00–10:00"), derived from the existing row
         // (starts_at + ends_at), display only, no positioning/logic change.
         const dispStart = formatTimeForStudio(start, tz, timeFormat);
@@ -788,6 +840,12 @@ export function DayColumn({
           : null;
         const timeRange = timeRangeLabel(dispStart, dispEnd);
         const twoLine = height >= TWO_LINE_THRESHOLD_PX;
+        const practitionerRow =
+          practitionerIdentity !== null &&
+          practitionerRowFits(height, {
+            bodyLinePx: CARD_LINE_PX.desktopBody,
+            serviceRow: serviceName !== null,
+          });
         // Display-derived status (DB row unchanged). A past confirmed
         // appointment reads as "Done" (muted), a DB-completed row as
         // "Completed", a no-show as "No-show". Upcoming confirmed stays
@@ -795,14 +853,10 @@ export function DayColumn({
         // Computed at render time; no timer.
         const ds = appointmentDisplayStatus(a.status, a.ends_at);
         const terminal = ds !== "upcoming";
-        const statusTag =
-          ds === "done"
-            ? "Done"
-            : ds === "completed"
-              ? "Completed"
-              : ds === "no_show"
-                ? "No-show"
-                : null;
+        const statusTag = appointmentStatusTag(ds);
+        const noShow = ds === "no_show";
+        // No-show leads the line instead (see NO_SHOW_CARD_CLASS).
+        const trailingTag = noShow ? null : statusTag;
         return (
           <button
             key={a.id}
@@ -818,29 +872,40 @@ export function DayColumn({
               "--appointment-lane-left": `calc(${100 * lane.column / lane.columns}% + 4px)`,
               "--appointment-lane-right": `calc(${100 * (lane.columns - lane.column - 1) / lane.columns}% + 4px)`,
             } as CSSProperties}
-            title={
-              serviceName
-                ? `${clientName} · ${serviceName} · ${localTime} · ${a.duration_minutes}m`
-                : `${clientName} · ${localTime} · ${a.duration_minutes}m`
-            }
+            title={[...titleParts, statusTag].filter(Boolean).join(" · ")}
             // Card color is service-based (Chloe feedback: "I want
             // different colors on the calendar for different
             // services"). Deterministic on service.id with name
             // fallback; palette excludes rose to keep allergy/EpiPen
-            // red unique. softCardClasses still exists for any
-            // future practitioner-color surface but is not used on
-            // the per-appointment card any more.
-            className={`hidden pointer-fine:block absolute left-1 right-1 pointer-fine:left-[var(--appointment-lane-left)] pointer-fine:right-[var(--appointment-lane-right)] z-10 overflow-hidden rounded-lg text-left border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""}`}
+            // red unique. Practitioner color is a separate swatch
+            // (PractitionerTag), never the card fill.
+            className={`hidden pointer-fine:block absolute left-1 right-1 pointer-fine:left-[var(--appointment-lane-left)] pointer-fine:right-[var(--appointment-lane-right)] z-10 overflow-hidden rounded-lg text-left border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[11px] leading-tight shadow-sm transition hover:brightness-[0.97] dark:hover:brightness-110 ${terminal ? "opacity-60" : ""} ${noShow ? NO_SHOW_CARD_CLASS : ""}`}
           >
             {twoLine ? (
               // Hierarchy (Chloe / Fresha-readability): time range, then the
               // bold client name, then service/modality on its own line.
               <>
-                <div className="truncate text-[10px] font-semibold tabular-nums opacity-80">
-                  {timeRange}
-                  {statusTag ? ` · ${statusTag}` : ""}
+                <div className="flex min-w-0 items-center gap-1 text-[10px] font-semibold tabular-nums opacity-80">
+                  {noShow && <span className="shrink-0">No-show ·</span>}
+                  <span className="truncate">
+                    {timeRange}
+                    {trailingTag ? ` · ${trailingTag}` : ""}
+                  </span>
+                  {practitionerIdentity && !practitionerRow && (
+                    // Too short for its own row: the name rides the time row.
+                    <PractitionerTag
+                      identity={practitionerIdentity}
+                      className="font-medium"
+                    />
+                  )}
                 </div>
                 <div className="truncate font-semibold">{clientName}</div>
+                {practitionerIdentity && practitionerRow && (
+                  <PractitionerTag
+                    identity={practitionerIdentity}
+                    className="text-[10px] font-medium"
+                  />
+                )}
                 {serviceName && (
                   <div className="truncate text-[10px] opacity-70">
                     {serviceName}
@@ -848,12 +913,21 @@ export function DayColumn({
                 )}
               </>
             ) : (
-              // Short block: keep it to one dense line: bold name + range.
+              // Short block: keep it to one dense line: bold name + range. On a
+              // team calendar the practitioner swatch leads it; a one-line card
+              // has no room for the name, which the title and preview carry.
               <div className="truncate font-semibold">
+                {noShow && "No-show · "}
+                {practitionerIdentity && (
+                  <span
+                    aria-hidden="true"
+                    className={`mr-1 inline-block h-2 w-2 rounded-full ring-1 ring-white/70 dark:ring-neutral-900/70 ${practitionerIdentity.swatchClass}`}
+                  />
+                )}
                 {clientName}{" "}
                 <span className="font-normal tabular-nums opacity-70">
                   {timeRange}
-                  {statusTag ? ` · ${statusTag}` : ""}
+                  {trailingTag ? ` · ${trailingTag}` : ""}
                 </span>
               </div>
             )}
@@ -875,7 +949,7 @@ export function DayColumn({
         const a = members[0];
         return <button key={group.ids.join(":")} type="button"
           style={{ top: group.top, height: group.height }}
-          className={`absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 px-2 py-1 text-left text-xs ${members.length === 1 ? appointmentCardClasses(a.service) : "border-neutral-500 bg-neutral-100 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) !== "upcoming" ? "opacity-60" : ""}`}
+          className={`absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 px-2 py-1 text-left text-xs ${members.length === 1 ? appointmentCardClasses(a.service) : "border-neutral-500 bg-neutral-100 text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) !== "upcoming" ? "opacity-60" : ""} ${members.length === 1 && appointmentDisplayStatus(a.status, a.ends_at) === "no_show" ? NO_SHOW_CARD_CLASS : ""}`}
           aria-label={members.length > 1 ? `Choose from ${members.length} appointments` : undefined}
           onClick={(event) => {
             event.stopPropagation();
@@ -888,7 +962,7 @@ export function DayColumn({
           </>}
         </button>;
       })}
-      <AppointmentOverlapChooser timedBlocks={selectedBlocks} onSelectBlock={(block) => setEditingBlock(block)} appointments={selectedOverlaps} tz={tz} timeFormat={timeFormat} returnTo={returnTo}
+      <AppointmentOverlapChooser blockScopeNames={blockScopeNames} timedBlocks={selectedBlocks} onSelectBlock={(block) => setEditingBlock(block)} appointments={selectedOverlaps} tz={tz} timeFormat={timeFormat} returnTo={returnTo}
         onClose={() => setOverlapIds(null)} onSelect={(a) => setPreview(a)} />
 
       <QuickBookDrawer
@@ -902,6 +976,7 @@ export function DayColumn({
         isOwner={isOwner}
         currentPractitionerId={currentPractitionerId}
         currentPractitionerName={currentPractitionerName}
+        preferredPractitionerId={teamColumn?.practitionerId ?? undefined}
         onClose={() => setDraft(null)}
       />
 
@@ -954,6 +1029,7 @@ export function DayColumn({
           read-only panel). Reuses the existing owner-gated Settings actions. */}
       <TimedBlockEditDrawer
         block={editingBlock}
+        blockScopeNames={blockScopeNames}
         isOwner={isOwner}
         studioTimezone={tz}
         timeFormat={timeFormat}
@@ -980,6 +1056,7 @@ export function DayColumn({
 // internal piece from page.tsx.
 function BlockoutCard({
   label,
+  scope = null,
   title,
   startLocal,
   endLocal,
@@ -989,6 +1066,8 @@ function BlockoutCard({
   onClick,
 }: {
   label: string;
+  // BLOCK-SCOPE F3: "All practitioners" / "Only <name>"; null = no label.
+  scope?: string | null;
   title: string;
   startLocal: string;
   endLocal: string;
@@ -1047,14 +1126,19 @@ function BlockoutCard({
       <div style={{ color: "#3F3F3F" }}>
         {twoLine ? (
           <>
-            <div className="truncate font-medium">{label}</div>
+            <div className="truncate font-medium">
+              {label}
+              {scope && <span data-block-scope="" className="font-normal"> · {scope}</span>}
+            </div>
             <div className="truncate text-[10px] opacity-80">
               {startLocal}–{endLocal} · {durationMinutes}m
             </div>
           </>
         ) : (
           <div className="truncate font-medium">
-            {label} <span className="opacity-70">· {startLocal}–{endLocal}</span>
+            {label}
+            {scope && <span data-block-scope="" className="font-normal"> · {scope}</span>}{" "}
+            <span className="opacity-70">· {startLocal}–{endLocal}</span>
           </div>
         )}
       </div>

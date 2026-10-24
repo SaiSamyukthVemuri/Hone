@@ -29,3 +29,21 @@ export function appointmentDisplayStatus(
   if (Number.isFinite(endsMs) && endsMs <= Date.now()) return "done";
   return "upcoming";
 }
+
+// HON-48: a no-show must stay distinguishable from a done or completed
+// appointment on the team calendar, where overlapping practitioners split a
+// column into narrow lanes. All three terminal states share the same dimmed
+// opacity, and a trailing "No-show" is the first text a narrow lane truncates.
+// So a no-show card carries a cue that is neither colour nor trailing text: a
+// dashed edge, plus its label LEADING the line, where truncation reaches it
+// last. Done/Completed keep their existing trailing tag.
+export const NO_SHOW_CARD_CLASS = "border-dashed";
+
+export function appointmentStatusTag(
+  status: AppointmentDisplayStatus,
+): string | null {
+  if (status === "done") return "Done";
+  if (status === "completed") return "Completed";
+  if (status === "no_show") return "No-show";
+  return null;
+}

@@ -214,6 +214,10 @@ export const BROWSER_GROUPS = {
       // boundary drives the data range: a grid that starts Sunday while the
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
+      // HON-48 team day view: five synthetic practitioners in one-column-per-
+      // practitioner layout, Los Angeles date boundaries, same-practitioner
+      // conflict refusal, member create scope and the phone scroll box.
+      "team-day-view.spec.ts",
     ],
   },
   owner_admin: {
@@ -321,6 +325,9 @@ export const BROWSER_GROUPS = {
       "onboarding.spec.ts",
       "quick-import.spec.ts",
       "welcome-email-admin.spec.ts",
+      // HON-62: the weekly-hours editor's native time inputs (keyboard
+      // entry, touch tap, save/reload, untouched existing hours).
+      "availability-hours-editor.spec.ts",
       "practitioner-availability-compat.spec.ts",
       "practitioner-booking-studio-b.spec.ts",
       "practitioner-quick-book-studio-b.spec.ts",
