@@ -5,7 +5,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { MobileDayTimeline } from "@/app/(app)/calendar/MobileDayTimeline";
 import { AppointmentPreviewDrawer } from "@/app/(app)/calendar/AppointmentPreviewDrawer";
-import { calendarPractitionerIdentity } from "@/lib/calendar/practitioner-identity";
+import {
+  CARD_LINE_PX,
+  calendarPractitionerIdentity,
+  practitionerRowFits,
+} from "@/lib/calendar/practitioner-identity";
 import { PRACTITIONER_COLORS } from "@/lib/practitioner-colors";
 import type { AppointmentWithPractitionerColor } from "@/lib/booking/queries";
 
@@ -125,5 +129,78 @@ describe("desktop week card and preview", () => {
     expect(html).toContain("Synthetic Practitioner C");
     expect(html).toContain(bg("emerald"));
     expect(html).toContain("No-show");
+  });
+});
+
+// Codex P2 on #1064: a separate practitioner row clipped short cards and pushed
+// the service row out of view. Short cards now carry the swatch + name on the
+// time row instead; the separate row appears only when every row fits.
+describe("short cards: the practitioner fits without displacing details", () => {
+  const desktop = (h: number, serviceRow: boolean) =>
+    practitionerRowFits(h, { bodyLinePx: CARD_LINE_PX.desktopBody, serviceRow });
+  const mobile = (h: number, serviceRow: boolean) =>
+    practitionerRowFits(h, { bodyLinePx: CARD_LINE_PX.mobileBody, serviceRow });
+
+  it("no separate row on a 45-minute desktop card (43px) or a 30-minute mobile card (44px)", () => {
+    expect(desktop(43, true)).toBe(false);
+    expect(desktop(43, false)).toBe(false);
+    expect(mobile(44, false)).toBe(false);
+  });
+  it("no separate row when it would push the service row out (60-minute card, 58px)", () => {
+    expect(desktop(58, true)).toBe(false);
+    expect(mobile(58, true)).toBe(false);
+  });
+  it("a separate row once time, client, practitioner and service all fit", () => {
+    expect(desktop(47, false)).toBe(true);
+    expect(desktop(60, true)).toBe(true);
+    expect(mobile(48, false)).toBe(true);
+    expect(mobile(61, true)).toBe(true);
+  });
+
+  const card = (minutes: number) => ({
+    id: `synthetic-short-${minutes}`,
+    starts_at: "2030-03-01T18:00:00Z",
+    ends_at: new Date(Date.parse("2030-03-01T18:00:00Z") + minutes * 60_000).toISOString(),
+    duration_minutes: minutes,
+    status: "confirmed",
+    client: { id: "synthetic-client-short", name: "Synthetic short client" },
+    service: { id: "synthetic-service", name: "Synthetic service" },
+    practitioner: { id: "synthetic-practitioner-short", color: "teal", display_name: "Synthetic Practitioner S" },
+  } as unknown as AppointmentWithPractitionerColor);
+  const renderOne = (minutes: number) => renderToStaticMarkup(createElement(MobileDayTimeline, {
+    date: "2030-03-01", appts: [card(minutes)], timedBlocks: [], recurringBreaks: [],
+    availability: null, closedDay: false, isToday: false, tz: TZ,
+    timeFormat: "12h", returnTo: "?view=day", onBookAt: () => {}, onEditBlock: () => {},
+    showPractitioner: true,
+  }));
+  const order = (html: string) => ({
+    tag: html.indexOf("data-practitioner-tag"),
+    client: html.indexOf("Synthetic short client"),
+    service: html.indexOf("Synthetic service"),
+  });
+
+  it("a 30-minute mobile card names the practitioner on the time row, before the client", () => {
+    const html = renderOne(30);
+    expect(html.match(/data-practitioner-tag=""/g)).toHaveLength(1);
+    expect(html).toContain("Synthetic Practitioner S");
+    expect(html).toContain(bg("teal"));
+    const o = order(html);
+    expect(o.tag).toBeGreaterThan(-1);
+    expect(o.tag).toBeLessThan(o.client);
+  });
+  it("a 60-minute mobile card keeps its service row and the practitioner on the time row", () => {
+    const o = order(renderOne(60));
+    expect(o.service).toBeGreaterThan(o.client);
+    expect(o.tag).toBeLessThan(o.client);
+  });
+  it("a 90-minute mobile card gives the practitioner its own row between client and service", () => {
+    const o = order(renderOne(90));
+    expect(o.tag).toBeGreaterThan(o.client);
+    expect(o.tag).toBeLessThan(o.service);
+  });
+  it("the desktop card uses the same fit rule with its own client line height", () => {
+    expect(DAYCOL).toMatch(/practitionerRowFits\(height, \{\s*bodyLinePx: CARD_LINE_PX\.desktopBody,\s*serviceRow: serviceName !== null,/);
+    expect(DAYCOL).toContain("practitionerIdentity && !practitionerRow &&");
+    expect(DAYCOL).toContain("practitionerIdentity && practitionerRow &&");
   });
 });

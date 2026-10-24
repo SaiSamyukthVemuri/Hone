@@ -16,7 +16,11 @@ import {
   type TimeFormat,
 } from "@/lib/booking/tz";
 import { appointmentCardClasses } from "@/lib/calendar/service-colors";
-import { calendarPractitionerIdentity } from "@/lib/calendar/practitioner-identity";
+import {
+  CARD_LINE_PX,
+  calendarPractitionerIdentity,
+  practitionerRowFits,
+} from "@/lib/calendar/practitioner-identity";
 import { appointmentDisplayStatus } from "./appointment-display-status";
 import { PractitionerTag } from "./PractitionerTag";
 import {
@@ -339,6 +343,13 @@ export function MobileDayTimeline({
             ? formatTimeForStudio(new Date(a.ends_at), tz, timeFormat)
             : null;
           const timeRange = timeRangeLabel(dispStart, dispEnd);
+          const showService = serviceName !== null && height >= 46;
+          const practitionerRow =
+            practitionerIdentity !== null &&
+            practitionerRowFits(height, {
+              bodyLinePx: CARD_LINE_PX.mobileBody,
+              serviceRow: showService,
+            });
           const ds = appointmentDisplayStatus(a.status, a.ends_at);
           const terminal = ds !== "upcoming";
           const statusTag =
@@ -356,18 +367,27 @@ export function MobileDayTimeline({
               style={{ top, height }}
               className={`absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[12px] leading-tight shadow-sm transition active:brightness-95 ${terminal ? "opacity-60" : ""}`}
             >
-              <div className="truncate text-[10px] font-semibold tabular-nums opacity-80">
-                {timeRange}
-                {statusTag ? ` · ${statusTag}` : ""}
+              <div className="flex min-w-0 items-center gap-1 text-[10px] font-semibold tabular-nums opacity-80">
+                <span className="truncate">
+                  {timeRange}
+                  {statusTag ? ` · ${statusTag}` : ""}
+                </span>
+                {practitionerIdentity && !practitionerRow && (
+                  // Too short for its own row: the name rides the time row.
+                  <PractitionerTag
+                    identity={practitionerIdentity}
+                    className="font-medium"
+                  />
+                )}
               </div>
               <div className="truncate font-semibold">{clientName}</div>
-              {practitionerIdentity && (
+              {practitionerIdentity && practitionerRow && (
                 <PractitionerTag
                   identity={practitionerIdentity}
                   className="text-[10px] font-medium"
                 />
               )}
-              {serviceName && height >= 46 && (
+              {showService && (
                 <div className="truncate text-[10px] opacity-70">
                   {serviceName}
                 </div>

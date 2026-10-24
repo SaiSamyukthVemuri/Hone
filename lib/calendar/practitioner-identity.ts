@@ -29,3 +29,29 @@ export function calendarPractitionerIdentity(
   const color = resolvePractitionerColor(practitioner?.color);
   return { name, swatchClass: color.bg, colorLabel: color.label };
 }
+
+// Short cards are overflow-hidden at a fixed height, so a separate practitioner
+// row that does not fit would clip itself and push the service row out of view.
+// The card gives the practitioner its own row only when EVERY row it renders
+// fits; otherwise the swatch and name move onto the time row, which already
+// exists, so no existing detail is displaced. Rendered line boxes are
+// leading-tight (1.25) of each row's font size; the card pads 4px top and bottom.
+export const CARD_LINE_PX = {
+  small: 12.5, // text-[10px]: time, practitioner and service rows
+  desktopBody: 13.75, // text-[11px]: the desktop client row
+  mobileBody: 15, // text-[12px]: the mobile client row
+} as const;
+const CARD_VERTICAL_PADDING_PX = 8;
+
+export function practitionerRowFits(
+  heightPx: number,
+  opts: { bodyLinePx: number; serviceRow: boolean },
+): boolean {
+  const needed =
+    CARD_VERTICAL_PADDING_PX +
+    CARD_LINE_PX.small + // time
+    opts.bodyLinePx + // client
+    CARD_LINE_PX.small + // practitioner
+    (opts.serviceRow ? CARD_LINE_PX.small : 0);
+  return heightPx >= needed;
+}

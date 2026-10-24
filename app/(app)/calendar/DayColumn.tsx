@@ -37,7 +37,11 @@ import { QuickBlockDrawer } from "./QuickBlockDrawer";
 import { AppointmentPreviewDrawer } from "./AppointmentPreviewDrawer";
 import { AppointmentOverlapChooser, OverlapAppointmentSummary } from "./AppointmentOverlapChooser";
 import { PractitionerTag } from "./PractitionerTag";
-import { calendarPractitionerIdentity } from "@/lib/calendar/practitioner-identity";
+import {
+  CARD_LINE_PX,
+  calendarPractitionerIdentity,
+  practitionerRowFits,
+} from "@/lib/calendar/practitioner-identity";
 // Grid constants live in a plain (non-"use client") module. The server
 // component calendar/page.tsx must import them from there, NOT from this
 // client module: a client-module value imported by a Server Component
@@ -797,6 +801,12 @@ export function DayColumn({
           : null;
         const timeRange = timeRangeLabel(dispStart, dispEnd);
         const twoLine = height >= TWO_LINE_THRESHOLD_PX;
+        const practitionerRow =
+          practitionerIdentity !== null &&
+          practitionerRowFits(height, {
+            bodyLinePx: CARD_LINE_PX.desktopBody,
+            serviceRow: serviceName !== null,
+          });
         // Display-derived status (DB row unchanged). A past confirmed
         // appointment reads as "Done" (muted), a DB-completed row as
         // "Completed", a no-show as "No-show". Upcoming confirmed stays
@@ -840,12 +850,21 @@ export function DayColumn({
               // Hierarchy (Chloe / Fresha-readability): time range, then the
               // bold client name, then service/modality on its own line.
               <>
-                <div className="truncate text-[10px] font-semibold tabular-nums opacity-80">
-                  {timeRange}
-                  {statusTag ? ` · ${statusTag}` : ""}
+                <div className="flex min-w-0 items-center gap-1 text-[10px] font-semibold tabular-nums opacity-80">
+                  <span className="truncate">
+                    {timeRange}
+                    {statusTag ? ` · ${statusTag}` : ""}
+                  </span>
+                  {practitionerIdentity && !practitionerRow && (
+                    // Too short for its own row: the name rides the time row.
+                    <PractitionerTag
+                      identity={practitionerIdentity}
+                      className="font-medium"
+                    />
+                  )}
                 </div>
                 <div className="truncate font-semibold">{clientName}</div>
-                {practitionerIdentity && (
+                {practitionerIdentity && practitionerRow && (
                   <PractitionerTag
                     identity={practitionerIdentity}
                     className="text-[10px] font-medium"
