@@ -255,6 +255,7 @@ export function CalendarMobileDayView({
           tz={tz}
           timeFormat={timeFormat}
           returnTo={returnTo}
+          showPractitioner={practitionerCapacityEnabled}
           onBookAt={(localTime) =>
             setDraft({ localDate: day.date, localTime })
           }
