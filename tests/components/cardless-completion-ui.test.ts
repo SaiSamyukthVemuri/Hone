@@ -70,17 +70,24 @@ function render(opts: {
   canRecordSettlement?: boolean;
   appointmentId?: string | null;
   settledMethod?: string | null;
+  settledAmountCents?: number | null;
   quotedAmountCents?: number | null;
+  amountResult?: unknown;
 }): string {
   return renderToStaticMarkup(
     createElement(SessionPaymentPrepareCard, {
       sessionId: "sess-1",
       clientId: "client-1",
       eligibility: ineligible(opts.reasons),
-      amountResult: REFERENCE as never,
+      amountResult: ("amountResult" in opts ? opts.amountResult : REFERENCE) as never,
       appointmentId: "appointmentId" in opts ? opts.appointmentId : "appt-1",
       settledMethod: opts.settledMethod ?? null,
-      settledAmountCents: opts.settledMethod ? 12_000 : null,
+      settledAmountCents:
+        "settledAmountCents" in opts
+          ? opts.settledAmountCents
+          : opts.settledMethod
+            ? 12_000
+            : null,
       settlementQuotedAmountCents:
         "quotedAmountCents" in opts ? opts.quotedAmountCents : 12_000,
       canRecordSettlement: opts.canRecordSettlement ?? true,
@@ -236,6 +243,58 @@ describe("HON-45: a completed visit for a client with no card on file", () => {
     });
     expect(html).not.toContain("session-payment-no-card");
     expect(text(html)).not.toContain("No card on file");
+  });
+});
+
+// Codex P2 4365600228 / 4365600234 on #1072.
+const FREE = {
+  kind: "free" as const,
+  serviceName: "Free consultation",
+  durationMinutes: 30,
+};
+
+describe("HON-45: the outstanding notice names the right balance, or none", () => {
+  it("an authoritatively free visit with no settlement is not presented as debt", () => {
+    const html = render({ reasons: [NO_CARD_ON_FILE_REASON], amountResult: FREE, quotedAmountCents: 0 });
+    expect(html).toContain("session-payment-no-card");
+    expect(html).not.toContain("session-payment-outstanding");
+    // The settlement controls' general rule ("leave the visit outstanding
+    // until it is paid") may still render; no BALANCE claim may.
+    expect(text(html)).not.toMatch(/Balance outstanding|It stays outstanding/);
+    expect(text(html)).toContain("Free consultation is free · No payment required.");
+    expect(text(html)).toContain("Nothing has been charged.");
+  });
+
+  it("a $0 appointment quote alone (pricing context unavailable) is not debt either", () => {
+    const html = render({ reasons: [NO_CARD_ON_FILE_REASON], amountResult: null, quotedAmountCents: 0 });
+    expect(html).not.toContain("session-payment-outstanding");
+  });
+
+  it("a recorded still-owes shows the RECORDED debt, not the quote", () => {
+    const html = render({
+      reasons: [NO_CARD_ON_FILE_REASON],
+      settledMethod: "still_owes",
+      settledAmountCents: 8_000,
+      quotedAmountCents: 12_000,
+    });
+    expect(text(html)).toContain("Balance outstanding: $80.00. No payment has been received.");
+    expect(text(html)).not.toContain("$120.00");
+  });
+
+  it("a recorded still-owes on a free visit is a real record and is still shown", () => {
+    const html = render({
+      reasons: [NO_CARD_ON_FILE_REASON],
+      amountResult: FREE,
+      quotedAmountCents: 0,
+      settledMethod: "still_owes",
+      settledAmountCents: 5_000,
+    });
+    expect(text(html)).toContain("Balance outstanding: $50.00. No payment has been received.");
+  });
+
+  it("an unsettled priced visit still shows the quote (control)", () => {
+    const html = render({ reasons: [NO_CARD_ON_FILE_REASON] });
+    expect(text(html)).toContain("Balance outstanding: $120.00. No payment has been received.");
   });
 });
 

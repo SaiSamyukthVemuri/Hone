@@ -434,7 +434,17 @@ export function SessionPaymentPrepareCard({
           <NoCardOnFilePanel
             settlementOffered={Boolean(appointmentId && canRecordSettlement)}
             settledMethod={settledMethod}
+            settledAmountCents={settledAmountCents}
             quotedAmountCents={settlementQuotedAmountCents}
+            // Codex P2 4365600228. An authoritative $0 price is not a debt.
+            // Read from the presentation decision (the same field that renders
+            // "No payment required"; the card never interprets pricing), or
+            // from the appointment's settlement snapshot, which is 0 only for
+            // an authoritatively free service.
+            authoritativelyFree={
+              presentation.freeNoticeServiceName !== null ||
+              settlementQuotedAmountCents === 0
+            }
           />
         ) : (
           <BlockedPanel reasons={eligibility.blockingReasons} />
@@ -592,16 +602,31 @@ function isNoCardOnly(reasons: string[]): boolean {
 // that is shown without writing anything. It stops being outstanding only when
 // a real settlement records money received or an owner waiver. Nothing here
 // marks a visit paid or settled.
+//
+// Which amount (Codex P2 4365600234): a recorded "still owes" names its own
+// debt, which the practitioner may have entered independently of the price,
+// so it is shown as recorded. The quote is only for a visit with no
+// settlement. An authoritatively free visit with no settlement owes nothing
+// (Codex P2 4365600228), so no balance is claimed; a recorded "still owes"
+// is a real record and is still shown.
 function NoCardOnFilePanel({
   settlementOffered,
   settledMethod,
+  settledAmountCents,
   quotedAmountCents,
+  authoritativelyFree,
 }: {
   settlementOffered: boolean;
   settledMethod: SettlementMethod | null;
+  settledAmountCents: number | null;
   quotedAmountCents: number | null;
+  authoritativelyFree: boolean;
 }) {
-  const outstanding = settledMethod === null || settledMethod === "still_owes";
+  const outstanding =
+    settledMethod === "still_owes" ||
+    (settledMethod === null && !authoritativelyFree);
+  const balanceCents =
+    settledMethod === "still_owes" ? settledAmountCents : quotedAmountCents;
   return (
     <div
       data-testid="session-payment-no-card"
@@ -614,8 +639,8 @@ function NoCardOnFilePanel({
       </p>
       {outstanding && (
         <p data-testid="session-payment-outstanding" className="mt-1 font-medium">
-          {typeof quotedAmountCents === "number" && quotedAmountCents > 0
-            ? `Balance outstanding: ${formatCadFromCents(quotedAmountCents)}. No payment has been received.`
+          {typeof balanceCents === "number" && balanceCents > 0
+            ? `Balance outstanding: ${formatCadFromCents(balanceCents)}. No payment has been received.`
             : "Balance outstanding. No payment has been received."}
         </p>
       )}
