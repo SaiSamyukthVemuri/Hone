@@ -16,7 +16,17 @@ import {
   type TimeFormat,
 } from "@/lib/booking/tz";
 import { appointmentCardClasses } from "@/lib/calendar/service-colors";
-import { appointmentDisplayStatus } from "./appointment-display-status";
+import {
+  CARD_LINE_PX,
+  calendarPractitionerIdentity,
+  practitionerRowFits,
+} from "@/lib/calendar/practitioner-identity";
+import {
+  NO_SHOW_CARD_CLASS,
+  appointmentDisplayStatus,
+  appointmentStatusTag,
+} from "./appointment-display-status";
+import { PractitionerTag } from "./PractitionerTag";
 import {
   GRID_HEIGHT,
   HOUR_END,
@@ -64,6 +74,8 @@ type Props = {
   tz: string;
   timeFormat: TimeFormat;
   returnTo: string;
+  // HON-48: team calendar (practitioner capacity on) → name + color swatch.
+  showPractitioner?: boolean;
   // Open the quick-book drawer at an exact 24h HH:MM on this day.
   onBookAt: (localTime: string) => void;
   // Open the timed-block edit drawer for a tapped block.
@@ -81,6 +93,7 @@ export function MobileDayTimeline({
   tz,
   timeFormat,
   returnTo,
+  showPractitioner = false,
   onBookAt,
   onEditBlock,
 }: Props) {
@@ -326,34 +339,56 @@ export function MobileDayTimeline({
           );
           const clientName = a.client?.name?.trim() || "Client";
           const serviceName = a.service?.name?.trim() || null;
+          const practitionerIdentity = showPractitioner
+            ? calendarPractitionerIdentity(a.practitioner)
+            : null;
           const dispStart = formatTimeForStudio(start, tz, timeFormat);
           const dispEnd = a.ends_at
             ? formatTimeForStudio(new Date(a.ends_at), tz, timeFormat)
             : null;
           const timeRange = timeRangeLabel(dispStart, dispEnd);
+          const showService = serviceName !== null && height >= 46;
+          const practitionerRow =
+            practitionerIdentity !== null &&
+            practitionerRowFits(height, {
+              bodyLinePx: CARD_LINE_PX.mobileBody,
+              serviceRow: showService,
+            });
           const ds = appointmentDisplayStatus(a.status, a.ends_at);
           const terminal = ds !== "upcoming";
-          const statusTag =
-            ds === "done"
-              ? "Done"
-              : ds === "completed"
-                ? "Completed"
-                : ds === "no_show"
-                  ? "No-show"
-                  : null;
+          const statusTag = appointmentStatusTag(ds);
+          const noShow = ds === "no_show";
+          // No-show leads the line instead (see NO_SHOW_CARD_CLASS).
+          const trailingTag = noShow ? null : statusTag;
           return (
             <Link
               key={a.id}
               href={`/calendar/${a.id}${returnTo}`}
               style={{ top, height }}
-              className={`absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[12px] leading-tight shadow-sm transition active:brightness-95 ${terminal ? "opacity-60" : ""}`}
+              className={`absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[12px] leading-tight shadow-sm transition active:brightness-95 ${terminal ? "opacity-60" : ""} ${noShow ? NO_SHOW_CARD_CLASS : ""}`}
             >
-              <div className="truncate text-[10px] font-semibold tabular-nums opacity-80">
-                {timeRange}
-                {statusTag ? ` · ${statusTag}` : ""}
+              <div className="flex min-w-0 items-center gap-1 text-[10px] font-semibold tabular-nums opacity-80">
+                {noShow && <span className="shrink-0">No-show ·</span>}
+                <span className="truncate">
+                  {timeRange}
+                  {trailingTag ? ` · ${trailingTag}` : ""}
+                </span>
+                {practitionerIdentity && !practitionerRow && (
+                  // Too short for its own row: the name rides the time row.
+                  <PractitionerTag
+                    identity={practitionerIdentity}
+                    className="font-medium"
+                  />
+                )}
               </div>
               <div className="truncate font-semibold">{clientName}</div>
-              {serviceName && height >= 46 && (
+              {practitionerIdentity && practitionerRow && (
+                <PractitionerTag
+                  identity={practitionerIdentity}
+                  className="text-[10px] font-medium"
+                />
+              )}
+              {showService && (
                 <div className="truncate text-[10px] opacity-70">
                   {serviceName}
                 </div>

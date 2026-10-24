@@ -73,7 +73,7 @@ export async function getExpiringSterileItems(
   const within = options.withinDays ?? SUPPLY_EXPIRING_WITHIN_DAYS;
   const supabase = await createClient();
   const horizon = supplyExpiryHorizon(todayIso, within);
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("record_keeping_sterile_items")
     .select("id, item_description, manufacturer_name, expiry_date")
     .eq("studio_id", studioId)
@@ -82,6 +82,9 @@ export async function getExpiringSterileItems(
     .lte("expiry_date", horizon)
     .order("expiry_date", { ascending: true })
     .limit(options.limit ?? 50);
+  // DAT-002 (the #981 pattern): refuse through the route error boundary.
+  // An empty list on a failed read would hide expiring sterile stock.
+  if (error) throw new Error("Failed to load expiring supplies");
   return (data ?? []) as Pick<
     RecordKeepingSterileItem,
     "id" | "item_description" | "manufacturer_name" | "expiry_date"

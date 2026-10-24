@@ -52,6 +52,7 @@ const SENSITIVE_KEY_RE = new RegExp(
     "^tel$",
     "telephone",
     "\\bfax\\b",
+    // HON-58: `legal` covers legal_name / legalName before such a field exists.
     "(client|patient|customer|first|last|full|preferred|display|given|family|middle|maiden|legal)[_-]?name",
     "^name$",
     "dob",

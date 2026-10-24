@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import type { ClinicalNoteWithAuthor } from "@/lib/types/database";
+import { authorLabel } from "@/lib/attribution";
 
 // Consultation + skin/hair notes, surfaced ON THE APPOINTMENT.
 //
@@ -63,7 +64,7 @@ function NoteBlock({
       </p>
       <p className="text-xs text-neutral-500">
         <FormattedDateTime iso={note.occurred_at} />
-        {note.author_name ? ` · ${note.author_name}` : ""}
+        {` · ${authorLabel(note.author_name)}`}
         {/* Says plainly that this is the CURRENT entry of several, so the card
             never reads as the whole record. Full history stays on the tab. */}
         {total > 1 ? ` · latest of ${total}` : ""}

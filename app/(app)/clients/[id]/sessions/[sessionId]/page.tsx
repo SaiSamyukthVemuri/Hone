@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import {
   getClientById,
+  sessionPerformerName,
+  sessionRecordedByName,
   requirePractitionerWithStudio,
   getLaserTreatmentCountsForClient,
   getPriorLaserSessionCount,
@@ -14,6 +16,7 @@ import {
 import { LogLaserEntryForm } from "@/components/log-laser-entry-form";
 import { LaserEntryRow } from "@/components/entry-row";
 import { SessionPerformerLine } from "@/components/session-performer-line";
+import { toPerformerOptions } from "@/lib/sessions/performer-options";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
 import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-eligibility";
 import { AftercareExplainedToggle } from "@/app/(app)/records/record-forms";
@@ -608,10 +611,13 @@ export default async function SessionDetailPage({
         <SessionPerformerLine
           sessionId={session.id}
           clientId={id}
-          practitioners={clientData.practitioners}
+          // DAT-001: a client component; pass only what the line renders.
+          practitioners={toPerformerOptions(clientData.practitioners)}
           initialPerformerId={
             session.performed_by_practitioner_id ?? session.practitioner_id
           }
+          performerName={sessionPerformerName(session, clientData.attributionRoster)}
+          recordedByName={sessionRecordedByName(session, clientData.attributionRoster)}
           updatePerformerAction={updateSessionPerformerAction}
         />
         {/* PR #194 (Chloe retest): when a treatment plan is attached,

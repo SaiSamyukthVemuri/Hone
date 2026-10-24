@@ -55,6 +55,7 @@ export default async function EditClientPage({
         pendingLabel="Saving…"
         cancelHref={`/clients/${id}`}
         hiddenFields={{ client_id: id }}
+        saveAnywayLabel="Save changes anyway"
       />
 
       {/* Archive / unarchive sits at the bottom of the edit page so a

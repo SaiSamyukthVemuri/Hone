@@ -94,8 +94,9 @@ describe("SCH-001 assigned notification context preserves booking actor", () => 
     expect(booking.practitionerEmail).toHaveBeenCalledWith(expect.objectContaining({ practitionerEmail: "b@example.test" }));
   });
 
-  it.each(["foreign", "inactive", "lookup error"])("never falls back to notifying the actor when assigned contact is %s", async (mode) => {
+  it.each(["foreign", "inactive", "lookup error", "blank email"])("never falls back to notifying the actor when assigned contact is %s", async (mode) => {
     if (mode === "foreign") booking.assigned.studio_id = "other-studio";
+    if (mode === "blank email") booking.assigned.email = "   ";
     if (mode === "inactive") booking.assigned.active = false;
     if (mode === "lookup error") booking.lookupError = true;
     const log = vi.spyOn(console, "error").mockImplementation(() => {});

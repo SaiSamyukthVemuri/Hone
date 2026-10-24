@@ -5,8 +5,13 @@ import { useMemo, useState } from "react";
 import type { Client } from "@/lib/types/database";
 import { matchesClientSearch } from "@/lib/clients/name-search";
 
+// DAT-001: exactly the fields this list renders and searches. Every prop of a
+// client component is serialized to the browser, so a caller projects to this
+// shape rather than passing whole client rows.
+export type ClientSearchRow = Pick<Client, "id" | "name" | "pronouns" | "phone" | "email">;
+
 type Props = {
-  clients: Client[];
+  clients: ClientSearchRow[];
   /** Hide these client IDs from results (used to skip clients already on today's roster). */
   excludeIds?: ReadonlyArray<string>;
   /** When true, render an empty state until the query meets minChars. Default false (shows every client). */
@@ -44,7 +49,7 @@ export function ClientSearch({
 
   // HON-58: the shared rule (folded name in any word order, email, phone
   // digits), so this list, the calendar drawer and global search agree.
-  function nameMatches(c: Client): boolean {
+  function nameMatches(c: ClientSearchRow): boolean {
     return matchesClientSearch(c, trimmedQuery);
   }
 
@@ -54,7 +59,7 @@ export function ClientSearch({
   // a hint so the user doesn't think the search is broken.
   const { visible, suppressedByExclude } = useMemo(() => {
     if (searchOnly && !minimumMet) {
-      return { visible: [] as Client[], suppressedByExclude: 0 };
+      return { visible: [] as ClientSearchRow[], suppressedByExclude: 0 };
     }
 
     if (!minimumMet) {
@@ -117,7 +122,7 @@ export function ClientSearch({
 
 // Renders one client row. Contact info is read strictly from the client's own
 // columns; never from any other record (studio, practitioner, etc.).
-function ClientResultRow({ client }: { client: Client }) {
+function ClientResultRow({ client }: { client: ClientSearchRow }) {
   const bits: string[] = [];
   if (client.pronouns) bits.push(client.pronouns);
   if (client.phone) bits.push(client.phone);

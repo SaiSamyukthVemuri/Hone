@@ -12,6 +12,7 @@ import type {
   ClinicalNoteKind,
   ClinicalNoteWithAuthor,
 } from "@/lib/types/database";
+import { authorLabel } from "@/lib/attribution";
 
 type KindSummary = { latest: ClinicalNoteWithAuthor | null; total: number };
 
@@ -67,7 +68,7 @@ export function ClinicalNotesSummary({
               {data.latest && (
                 <span className="text-[11px] text-neutral-500">
                   {formatDate(data.latest.occurred_at)}
-                  {data.latest.author_name ? ` · ${data.latest.author_name}` : ""}
+                  {` · ${authorLabel(data.latest.author_name)}`}
                 </span>
               )}
             </div>
