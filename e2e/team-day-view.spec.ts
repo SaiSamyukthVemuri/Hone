@@ -9,6 +9,7 @@ import {
   seedServiceEligibility,
   getE2eServiceId,
   getOwnerPractitionerId,
+  getSourceReservationKeys,
   setStudioTimezone,
   sql,
   type E2eSeed,
@@ -323,5 +324,83 @@ test.describe("phone", () => {
     const preview = page.getByRole("dialog", { name: /appointment preview/i });
     await expect(preview.getByRole("heading", { name: booking.get(ed.id)!.clientName, exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+});
+
+// HON-48 F1 (held for Sam's rule): who a NEW calendar quick block applies to
+// under practitioner capacity. The owner states it ("All practitioners" or
+// "Only <name>"); a member's block closes only their own time. Times avoid
+// every seeded row: Di 17:00-17:30 (Di works to 18:00), Bo 18:00-18:30.
+//
+// The MEMBER case needs the member insert policy widened to allow
+// practitioner_id = self (unnumbered artifact
+// machines/HON48-F1-member-scoped-block-insert-policy.UNNUMBERED.sql). Without
+// it the database refuses the row and the drawer shows "This block could not
+// be saved for you only. Ask the studio owner to add it." It ships together
+// with that migration or not at all.
+test.describe("F1: quick block scope", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  const blockDrawer = (page: Page) => page.getByRole("dialog", { name: "Block time" });
+  const blockAt = async (local: string) =>
+    sql<{ id: string; practitioner_id: string | null }>(
+      "select id, practitioner_id from public.studio_timed_blocks where studio_id=$1 and starts_at = ($2::date + $3::time) at time zone $4",
+      [seed.studioId, day, local, TZ],
+    );
+  async function openBlockDrawer(page: Page) {
+    await page.goto(`/calendar?day=${day}`);
+    await page.getByRole("button", { name: "Add appointment or block time" }).tap();
+    await page.getByRole("dialog", { name: "Choose action for selected time" }).getByRole("button", { name: "Block time" }).tap();
+    const drawer = blockDrawer(page);
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByText(day, { exact: true })).toBeVisible();
+    return drawer;
+  }
+
+  test("the owner must choose; Only Di closes Di's time alone", async ({ page }) => {
+    const di = byKey("di");
+    await loginAsOwner(page, seed);
+    const drawer = await openBlockDrawer(page);
+    await drawer.getByLabel("Start", { exact: true }).fill("17:00");
+    await drawer.getByLabel("End", { exact: true }).fill("17:30");
+    const appliesTo = drawer.getByLabel("Applies to");
+    await expect(appliesTo).toHaveValue("");
+    await expect(appliesTo.locator("option")).toHaveText(["Choose who this blocks", "All practitioners", ...roster.map((p) => `Only ${p.name}`)]);
+
+    await drawer.getByRole("button", { name: "Save block" }).tap();
+    await expect(drawer.getByRole("alert")).toHaveText("Choose who this block applies to.");
+    expect(await blockAt("17:00")).toHaveLength(0);
+
+    await appliesTo.selectOption({ label: `Only ${di.name}` });
+    await drawer.getByRole("button", { name: "Save block" }).tap();
+    await expect(drawer).toHaveCount(0);
+    await expect.poll(async () => (await blockAt("17:00")).map((r) => r.practitioner_id)).toEqual([di.id]);
+    const [row] = await blockAt("17:00");
+    expect(await getSourceReservationKeys("timed_block", row.id)).toEqual([di.id]);
+
+    await page.goto(`/calendar?view=day&day=${day}`);
+    for (const p of roster) {
+      await expect(column(page, p.id).getByTitle(`Unavailable · Only ${di.name}`, { exact: true })).toHaveCount(p.key === "di" ? 1 : 0);
+    }
+  });
+
+  test("a member's block closes only their own time; no studio-wide choice is offered", async ({ page }) => {
+    const bo = byKey("bo");
+    await loginByMagicLink(page, bo.email!);
+    const drawer = await openBlockDrawer(page);
+    await expect(drawer.getByLabel("Applies to")).toHaveCount(0);
+    await expect(drawer.getByText(`Blocks only your time (${bo.name}). Other practitioners stay bookable.`)).toBeVisible();
+    await drawer.getByLabel("Start", { exact: true }).fill("18:00");
+    await drawer.getByLabel("End", { exact: true }).fill("18:30");
+    await drawer.getByRole("button", { name: "Save block" }).tap();
+    await expect(drawer).toHaveCount(0);
+    await expect.poll(async () => (await blockAt("18:00")).map((r) => r.practitioner_id)).toEqual([bo.id]);
+    const [row] = await blockAt("18:00");
+    expect(await getSourceReservationKeys("timed_block", row.id)).toEqual([bo.id]);
+
+    await page.goto(`/calendar?view=day&day=${day}`);
+    for (const p of roster) {
+      await expect(column(page, p.id).getByTitle(`Unavailable · Only ${bo.name}`, { exact: true })).toHaveCount(p.key === "bo" ? 1 : 0);
+    }
   });
 });
