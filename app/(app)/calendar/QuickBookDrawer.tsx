@@ -26,6 +26,7 @@ import {
   groupServicesByModality,
 } from "@/lib/booking/format";
 import { utcInstantFromLocal, formatClockLabel, type TimeFormat } from "@/lib/booking/tz";
+import { matchesClientSearch } from "@/lib/clients/name-search";
 import {
   fetchSlotsForClientBookingAction,
   fetchEligiblePractitionersAction,
@@ -102,18 +103,13 @@ type Props = {
 
 const MAX_CLIENT_RESULTS = 12;
 
-// Local-only client search. Mirrors ClientSearch's matching rules
-// (name OR email OR phone, case-insensitive substring) but is a
-// selection control rather than a navigation control. ClientSearch
-// renders <Link> rows that would navigate away from /calendar and
-// destroy the drawer state, so it cannot be reused here.
+// Local-only client search. Uses ClientSearch's matching rule
+// (lib/clients/name-search.ts, HON-58) but is a selection control rather
+// than a navigation control. ClientSearch renders <Link> rows that would
+// navigate away from /calendar and destroy the drawer state, so it cannot
+// be reused here.
 function matchClient(c: QuickBookClient, queryLower: string): boolean {
-  if (queryLower.length === 0) return true;
-  return (
-    (c.name ?? "").toLowerCase().includes(queryLower) ||
-    (c.email ?? "").toLowerCase().includes(queryLower) ||
-    (c.phone ?? "").toLowerCase().includes(queryLower)
-  );
+  return matchesClientSearch(c, queryLower);
 }
 
 function formatLocalDate(localDate: string): string {

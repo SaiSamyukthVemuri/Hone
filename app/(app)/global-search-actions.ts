@@ -8,7 +8,8 @@ import {
 import { blockAreasLabel } from "@/lib/sessions/block-areas";
 import {
   capResults,
-  escapeIlike,
+  containsPattern,
+  orIlike,
   sanitizeQuery,
   statusForQuery,
   SEARCH_MIN_CHARS,
@@ -19,6 +20,13 @@ import {
   type NavSearchContext,
 } from "@/lib/search/navigation-registry";
 import { mergeMemoryBlockRows } from "@/lib/search/treatment-memory-merge";
+import {
+  hasNameQuery,
+  matchesClientSearch,
+  nameCandidatePatterns,
+  NON_ASCII_NAME_REGEX,
+  phoneCandidatePattern,
+} from "@/lib/clients/name-search";
 
 // Global Search server action (V1: PR #232 · V2-A: settings + navigation).
 //
@@ -42,6 +50,11 @@ import { mergeMemoryBlockRows } from "@/lib/search/treatment-memory-merge";
 // trigram indexes if a studio ever grows past that).
 
 const CLIENT_CAP = 5;
+
+// HON-58: rows per page of a wide candidate read. Candidates are read page by
+// page until CLIENT_CAP of them are confirmed or none remain, never cut at a
+// fixed count before confirmation (Codex P2 4366960913).
+const CLIENT_CANDIDATE_PAGE = 1000;
 const APPOINTMENT_CAP = 4;
 const MEMORY_CAP = 4;
 const RECORD_CAP = 3;
@@ -113,6 +126,95 @@ function fmtDate(iso: string | null | undefined): string | undefined {
   return d.toISOString().slice(0, 10);
 }
 
+type ClientSearchRow = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+};
+
+// Clients (HON-58). The direct ILIKE is today's rule (a literal substring of
+// name, email or phone), so nothing it found is lost. The candidate reads add
+// what ILIKE alone cannot see:
+// word order ("smith jane"), a preferred name inside the stored string
+// ("Jane (Janie) Smith" by "janie smith"), punctuation ("obrien") and
+// diacritics ("jose", "Šimon"), and phone formatting. Together they admit
+// every row the shared matcher can accept (lib/clients/name-search.ts), and
+// every candidate must pass the same matchesClientSearch the client-side
+// lists use before it counts toward the cap.
+async function searchClientRows(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  studioId: string,
+  query: string,
+  like: string,
+): Promise<ClientSearchRow[]> {
+  const base = () =>
+    supabase
+      .from("clients")
+      .select("id, name, email, phone")
+      .eq("studio_id", studioId)
+      .is("archived_at", null);
+
+  // Name order, then id, so offset pages neither repeat nor skip a row.
+  const confirmed = async (
+    read: () => ReturnType<typeof base>,
+  ): Promise<ClientSearchRow[]> => {
+    const found: ClientSearchRow[] = [];
+    for (let offset = 0; ; ) {
+      const { data, error } = await read()
+        .order("name")
+        .order("id")
+        .range(offset, offset + CLIENT_CANDIDATE_PAGE - 1);
+      const page = (data ?? []) as ClientSearchRow[];
+      if (error || page.length === 0) return found;
+      for (const row of page) {
+        if (!matchesClientSearch(row, query)) continue;
+        found.push(row);
+        // The first CLIENT_CAP confirmed rows in name order are all the
+        // final, name-sorted and capped result can use from this read.
+        if (found.length >= CLIENT_CAP) return found;
+      }
+      // A server row cap can shorten a page, so advance by what arrived.
+      offset += page.length;
+    }
+  };
+
+  const namePatterns = nameCandidatePatterns(query);
+  const phonePattern = phoneCandidatePattern(query);
+  const none = Promise.resolve([] as ClientSearchRow[]);
+
+  const [direct, asciiNamed, otherNamed, phoned] = await Promise.all([
+    // The direct read is confirmed and paged like every other client read
+    // (Codex P2 4367010228): no row reaches the cap unconfirmed.
+    confirmed(() => base().or(orIlike(["name", "email", "phone"], like))),
+    namePatterns.length > 0
+      ? confirmed(() => {
+          let q = base();
+          for (const pattern of namePatterns) q = q.ilike("name", pattern);
+          return q;
+        })
+      : none,
+    hasNameQuery(query) ? confirmed(() => base().filter("name", "match", NON_ASCII_NAME_REGEX)) : none,
+    phonePattern ? confirmed(() => base().ilike("phone", phonePattern)) : none,
+  ]);
+
+  const seen = new Set<string>();
+  const rows: ClientSearchRow[] = [];
+  for (const row of direct) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    rows.push(row);
+  }
+  for (const row of [...asciiNamed, ...otherNamed, ...phoned]) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    rows.push(row);
+  }
+  return rows
+    .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""))
+    .slice(0, CLIENT_CAP);
+}
+
 export async function globalSearchAction(
   rawQuery: string,
 ): Promise<{ ok: true; results: SearchResult[] } | { ok: false }> {
@@ -142,7 +244,7 @@ export async function globalSearchAction(
     // one definition of "how many results may leave this action".
     return { ok: true, results: capResults(navResults("", navContext)) };
   }
-  const like = `%${escapeIlike(query)}%`;
+  const like = containsPattern(query);
   const supabase = await createClient();
 
   const [
@@ -153,15 +255,7 @@ export async function globalSearchAction(
     sterileRows,
     disinfectantRows,
   ] = await Promise.all([
-    supabase
-      .from("clients")
-      .select("id, name, email, phone")
-      .eq("studio_id", studioId)
-      .is("archived_at", null)
-      .or(`name.ilike.${like},email.ilike.${like},phone.ilike.${like}`)
-      .order("name")
-      .limit(CLIENT_CAP)
-      .then((r) => r.data ?? []),
+    searchClientRows(supabase, studioId, query, like),
     supabase
       .from("session_blocks")
       .select(MEMORY_BLOCK_SELECT)
@@ -173,7 +267,10 @@ export async function globalSearchAction(
       .is(SESSION_ACTIVE_FILTERS.deletedAt, null)
       .neq(SESSION_ACTIVE_FILTERS.recordStatus, VOID_RECORD_STATUS)
       .or(
-        `primary_area.ilike.${like},block_name.ilike.${like},caution_note.ilike.${like},reaction_notes.ilike.${like},probe_label.ilike.${like},probe_lot_number.ilike.${like}`,
+        orIlike(
+          ["primary_area", "block_name", "caution_note", "reaction_notes", "probe_label", "probe_lot_number"],
+          like,
+        ),
       )
       .order("created_at", { ascending: false })
       .limit(MEMORY_CAP)
@@ -213,7 +310,7 @@ export async function globalSearchAction(
       .from("record_keeping_sterile_items")
       .select("id, item_description, lot_number, date_purchased")
       .eq("studio_id", studioId)
-      .or(`lot_number.ilike.${like},item_description.ilike.${like}`)
+      .or(orIlike(["lot_number", "item_description"], like))
       .order("date_purchased", { ascending: false })
       .limit(RECORD_CAP)
       .then((r) => r.data ?? []),
