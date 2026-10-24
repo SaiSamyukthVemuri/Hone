@@ -27,6 +27,7 @@ import {
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { localDateString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { safeLog } from "@/lib/logging/safe-log";
 
 export type BookResult =
   | { ok: true; appointmentId: string }
@@ -440,6 +441,23 @@ export async function bookAppointmentForClientAction(
   return { ok: true, appointmentId: created.id };
 }
 
+// A closed set of error names that are safe to log. Anything else, including a
+// custom name (which is free text), is "other"; a thrown non-Error is
+// "non_error".
+const LOGGABLE_ERROR_NAMES = new Set([
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "AbortError",
+  "TimeoutError",
+]);
+function boundedErrorName(err: unknown): string {
+  if (!(err instanceof Error)) return "non_error";
+  return LOGGABLE_ERROR_NAMES.has(err.name) ? err.name : "other";
+}
+
 export async function cancelAppointmentAction(formData: FormData): Promise<{
   ok: true;
 } | { ok: false; error: string }> {
@@ -545,7 +563,15 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
           rebookUrl: `${getRequiredAppOrigin()}/book/${studio.slug}`,
         });
       } catch (err) {
-        console.error("client cancel notification email failed", err);
+        // MSG-LOG-RAW-ERROR: a bounded value only. The thrown message (a
+        // provider or transport message can quote the destination) and the
+        // raw error object never reach the log.
+        safeLog.error(
+          JSON.stringify({
+            event: "client_cancel_notification_email_failed",
+            error_name: boundedErrorName(err),
+          }),
+        );
       }
     }
 
