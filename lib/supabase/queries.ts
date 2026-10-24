@@ -298,14 +298,27 @@ export async function getPractitionersForStudio(
 // snapshots for display only after traversal. This is not a DB-wide snapshot.
 // Continue to empty even with a lower server cap; errors/repeated rows refuse
 // the whole directory rather than return a partial list.
-async function loadStudioClientDirectory(studioId: string, archived: boolean): Promise<Client[]> {
+//
+// DAT-001 minimal returned fields: name the columns. This is the union of
+// what the directory's consumers read (/clients, the calendar quick-book
+// drawer, records' exposed-person selector, procedure filter and print).
+// Clinical, consent and emergency-contact columns never leave the database
+// for a list. A consumer that needs another column must add it here.
+export const CLIENT_DIRECTORY_COLUMNS =
+  "id, name, pronouns, email, phone, address, archived_at";
+export type DirectoryClient = Pick<
+  Client,
+  "id" | "name" | "pronouns" | "email" | "phone" | "address" | "archived_at"
+>;
+
+async function loadStudioClientDirectory(studioId: string, archived: boolean): Promise<DirectoryClient[]> {
   const supabase = await createClient();
-  const clients: Client[] = [];
+  const clients: DirectoryClient[] = [];
   const seen = new Set<string>();
   let afterId: string | null = null;
   const failure = archived ? "Failed to load archived clients" : "Failed to load clients";
   for (;;) {
-    let query = supabase.from("clients").select("*").eq("studio_id", studioId);
+    let query = supabase.from("clients").select(CLIENT_DIRECTORY_COLUMNS).eq("studio_id", studioId);
     query = archived ? query.not("archived_at", "is", null) : query.is("archived_at", null);
     if (afterId !== null) query = query.gt("id", afterId);
     const { data, error } = await query
@@ -313,7 +326,7 @@ async function loadStudioClientDirectory(studioId: string, archived: boolean): P
       .range(0, 999);
     // Database messages may contain client data; never expose them here.
     if (error) throw new Error(failure);
-    const rows = (data ?? []) as Client[];
+    const rows = (data ?? []) as DirectoryClient[];
     if (rows.length === 0) {
       return clients.sort((a, b) => (
         archived
@@ -330,7 +343,7 @@ async function loadStudioClientDirectory(studioId: string, archived: boolean): P
   }
 }
 
-export async function getClientsForStudio(studioId: string): Promise<Client[]> {
+export async function getClientsForStudio(studioId: string): Promise<DirectoryClient[]> {
   // PR Willow launch fixes (migration 0050): filter archived clients
   // out of the active list. Archived rows still exist (their
   // appointments, sessions, intake, treatment plans, and audit
@@ -356,7 +369,7 @@ export async function getClientsForStudio(studioId: string): Promise<Client[]> {
 // client list continue to hide them.
 export async function getArchivedClientsForStudio(
   studioId: string,
-): Promise<Client[]> {
+): Promise<DirectoryClient[]> {
   return loadStudioClientDirectory(studioId, true);
 }
 
