@@ -440,7 +440,7 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
         : { hone_payment_charge_attempt_id: "attempt-1" });
       const object = type === "charge.refunded"
         ? { id: "ch_1", payment_intent: "pi_1", customer: "cus_1", amount: 5000, currency: "cad",
-          refunded: true, amount_refunded: 5000, refunds: { data: [{ id: "re_1" }] }, metadata, ...options.object }
+          refunded: true, amount_refunded: 5000, refunds: { data: [{ id: "re_1", status: "succeeded", amount: 5000 }] }, metadata, ...options.object }
         : { id: "pi_1", customer: "cus_1", amount: 5000, currency: "cad", latest_charge: "ch_1",
           ...(type === "payment_intent.payment_failed" ? { status: "requires_payment_method", last_payment_error: { type: "card_error", code: "card_declined" } } : {}),
           metadata, ...options.object };
@@ -705,7 +705,7 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
         stripe_payment_intent_id: original, stripe_charge_id: "ch_1", amount_cents: 5000, currency: "cad" };
       const identity = { customer: "cus_1", amount: 5000, currency: "cad", metadata: { hone_payment_charge_attempt_id: "attempt-1", ...metadata } };
       const object = type === "charge.refunded"
-        ? { ...identity, id: "ch_1", payment_intent: "pi_1", refunded: true, amount_refunded: 5000, refunds: { data: [{ id: "re_1" }] } }
+        ? { ...identity, id: "ch_1", payment_intent: "pi_1", refunded: true, amount_refunded: 5000, refunds: { data: [{ id: "re_1", status: "succeeded", amount: 5000 }] } }
         : { ...identity, id: "pi_1", latest_charge: "ch_1", status: "requires_payment_method", last_payment_error: { type: "card_error", code: "card_declined" } };
       CONSTRUCT_EVENT.mockReturnValue({ id: "evt_metadata_order", created: 1770000000, type, account: "acct_test_1", livemode: false, data: { object } });
       ADMIN.current = makeAdmin({ studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
@@ -778,7 +778,7 @@ describe.each(["payment_intent.succeeded", "payment_intent.payment_failed", "cha
     const object = type.startsWith("refund.")
       ? { ...identity, id: "re_1", object: "refund", payment_intent: "pi_1", charge: "ch_1", status: "succeeded", ...objectOverride }
       : type === "charge.refunded"
-        ? { ...identity, id: "ch_1", payment_intent: "pi_1", refunded: true, amount_refunded: 5000, refunds: { data: [{ id: "re_1" }] }, ...objectOverride }
+        ? { ...identity, id: "ch_1", payment_intent: "pi_1", refunded: true, amount_refunded: 5000, refunds: { data: [{ id: "re_1", status: "succeeded", amount: 5000 }] }, ...objectOverride }
         : { ...identity, id: "pi_1", latest_charge: "ch_1", status: "requires_payment_method", last_payment_error: { type: "card_error", code: "card_declined" }, ...objectOverride };
     CONSTRUCT_EVENT.mockReturnValue({ id: "evt_money_order", created: 1770000000, type, account: "acct_test_1", livemode: false, data: { object } });
     ADMIN.current = makeAdmin({ studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],

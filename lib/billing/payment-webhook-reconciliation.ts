@@ -1084,6 +1084,41 @@ export async function handlePaymentIntentPaymentFailed(
 // truthfully represent partial state. A future PR may add a
 // refund_out_of_band_amount_cents column.
 // ---------------------------------------------------------------------------
+/**
+ * PAY-002 containment: does this charge.refunded payload itself PROVE that
+ * the full captured amount was refunded and the provider finished every
+ * refund? Pure; reads only the event payload, never Stripe.
+ */
+export function providerConfirmedFullRefund(
+  charge: Stripe.Charge,
+  amountCaptured: number,
+):
+  | { ok: true }
+  | {
+      ok: false;
+      reason:
+        | "provider_refunds_absent"
+        | "provider_refunds_incomplete"
+        | "provider_refund_not_succeeded"
+        | "provider_refunds_amount_mismatch";
+    } {
+  const list = charge.refunds;
+  const refunds = list?.data ?? [];
+  if (refunds.length === 0) return { ok: false, reason: "provider_refunds_absent" };
+  if (list?.has_more === true) return { ok: false, reason: "provider_refunds_incomplete" };
+  if (refunds.some((r) => r?.status !== "succeeded")) {
+    return { ok: false, reason: "provider_refund_not_succeeded" };
+  }
+  const total = refunds.reduce(
+    (sum, r) => sum + (typeof r.amount === "number" ? r.amount : Number.NaN),
+    0,
+  );
+  if (total !== amountCaptured) {
+    return { ok: false, reason: "provider_refunds_amount_mismatch" };
+  }
+  return { ok: true };
+}
+
 export async function handleChargeRefunded(
   event: Stripe.Event,
   ctx: WebhookCtx,
@@ -1256,6 +1291,45 @@ export async function handleChargeRefunded(
       eventType: event.type,
       attemptId: attempt.id,
       alreadyRefunded: true,
+    };
+  }
+
+  // PAY-002 CONTAINMENT. Everything below COMPLETES a refund. The charge's
+  // aggregates (refunded / amount_refunded) count refunds Stripe has not
+  // finished, so they are not completion evidence. Completion requires the
+  // refunds embedded in this event to be the whole set and every one of them
+  // `succeeded`, covering the captured amount. Anything else, including the
+  // default payload that embeds no refund at all, records nothing and raises
+  // the same unresolved-status alert the direct refund path raises. Interim:
+  // the governed provider-refund-status protocol (0240, #1035) replaces this.
+  const confirmed = providerConfirmedFullRefund(charge, amountCaptured);
+  if (!confirmed.ok) {
+    // Not swallowed: if the alert cannot be written the handler throws, the
+    // webhook answers non-2xx and Stripe redelivers, so the refusal is never
+    // silent. The row is untouched either way.
+    await recordOpsAlert({
+      severity: "critical",
+      event: "payment_refund_provider_status_unresolved",
+      message:
+        "Stripe charge.refunded did not carry a confirmed succeeded refund. Hone did not record completion; the row is unchanged. Manual reconciliation required.",
+      studioId: attempt.studio_id,
+      clientId: attempt.client_id,
+      stripeEventId: event.id,
+      route: ROUTE,
+      safeDetails: {
+        attempt_id: attempt.id,
+        charge_reason: attempt.charge_reason,
+        stripe_charge_id: charge.id,
+        target_event: "charge.refunded",
+        previous_refund_status: attempt.refund_status,
+        reason: confirmed.reason,
+      },
+    });
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      refundStatusUnresolved: true,
+      reason: confirmed.reason,
     };
   }
 
