@@ -16,7 +16,9 @@ import {
   type TimeFormat,
 } from "@/lib/booking/tz";
 import { appointmentCardClasses } from "@/lib/calendar/service-colors";
+import { calendarPractitionerIdentity } from "@/lib/calendar/practitioner-identity";
 import { appointmentDisplayStatus } from "./appointment-display-status";
+import { PractitionerTag } from "./PractitionerTag";
 import {
   GRID_HEIGHT,
   HOUR_END,
@@ -64,6 +66,8 @@ type Props = {
   tz: string;
   timeFormat: TimeFormat;
   returnTo: string;
+  // HON-48: team calendar (practitioner capacity on) → name + color swatch.
+  showPractitioner?: boolean;
   // Open the quick-book drawer at an exact 24h HH:MM on this day.
   onBookAt: (localTime: string) => void;
   // Open the timed-block edit drawer for a tapped block.
@@ -81,6 +85,7 @@ export function MobileDayTimeline({
   tz,
   timeFormat,
   returnTo,
+  showPractitioner = false,
   onBookAt,
   onEditBlock,
 }: Props) {
@@ -326,6 +331,9 @@ export function MobileDayTimeline({
           );
           const clientName = a.client?.name?.trim() || "Client";
           const serviceName = a.service?.name?.trim() || null;
+          const practitionerIdentity = showPractitioner
+            ? calendarPractitionerIdentity(a.practitioner)
+            : null;
           const dispStart = formatTimeForStudio(start, tz, timeFormat);
           const dispEnd = a.ends_at
             ? formatTimeForStudio(new Date(a.ends_at), tz, timeFormat)
@@ -353,6 +361,12 @@ export function MobileDayTimeline({
                 {statusTag ? ` · ${statusTag}` : ""}
               </div>
               <div className="truncate font-semibold">{clientName}</div>
+              {practitionerIdentity && (
+                <PractitionerTag
+                  identity={practitionerIdentity}
+                  className="text-[10px] font-medium"
+                />
+              )}
               {serviceName && height >= 46 && (
                 <div className="truncate text-[10px] opacity-70">
                   {serviceName}
