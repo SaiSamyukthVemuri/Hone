@@ -106,6 +106,10 @@ let neighbourIds = new Set<string>();
 let accessToken = "";
 
 beforeAll(async () => {
+  // lib/supabase/server.ts builds its client from these; the DB lane does not
+  // set them (owner-capacity.db.test.ts does the same).
+  process.env.NEXT_PUBLIC_SUPABASE_URL = E2E_SUPABASE_URL;
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = ANON;
   const seeded = await seedStudio(`dat001-${randomUUID().slice(0, 6)}`);
   studioId = seeded.studioId;
   await adminQuery(

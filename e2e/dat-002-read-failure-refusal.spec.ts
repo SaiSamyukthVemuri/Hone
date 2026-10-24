@@ -61,11 +61,16 @@ function searchInput(page: Page) {
 }
 
 let seed: E2eSeed;
+// seedE2eStudio carries a client NAME for booking flows but inserts no client
+// row, so the search case seeds its own synthetic client.
+let searchName = "";
 
 test.beforeAll(async () => {
   // A crash in an earlier attempt of this spec must not leave a revoke behind.
   for (const t of TABLES) if (!(await selectHeld(t))) await restore(t);
   seed = await seedE2eStudio();
+  searchName = `DAT002 Searchable ${seed.runId}`;
+  await sql("insert into public.clients (studio_id, name) values ($1, $2)", [seed.studioId, searchName]);
 });
 
 test.afterAll(async () => {
@@ -122,13 +127,13 @@ test.describe("DAT-002: a failed read is refused, never shown as 0 or empty", ()
     await expect(page.getByRole("heading", { name: "Record Keeping" })).toBeVisible({ timeout: 30_000 });
 
     // Control: the seeded client is found.
-    await searchInput(page).fill(seed.clientName);
-    await expect(page.getByText(seed.clientName).first()).toBeVisible({ timeout: 15_000 });
+    await searchInput(page).fill(searchName);
+    await expect(page.getByText(searchName).first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Search could not be loaded.")).toHaveCount(0);
     await searchInput(page).fill("");
 
     await withSelectRevoked("clients", async () => {
-      await searchInput(page).fill(seed.clientName);
+      await searchInput(page).fill(searchName);
       await expect(page.getByText("Search could not be loaded.")).toBeVisible({ timeout: 15_000 });
       await expect(page.getByText("No results found.")).toHaveCount(0);
       const text = await page.locator("body").innerText();
