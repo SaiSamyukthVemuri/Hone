@@ -117,8 +117,9 @@ jobs:
         run: |
           set -euo pipefail
           sha256sum tests/db/fixtures/0242-pause-guard.up.sql tests/db/fixtures/0242-pause-guard.down.sql tests/db/fixtures/0242-pause-export-guard.up.sql tests/db/fixtures/0242-pause-export-guard.down.sql
+          runsql() { docker cp "$1" "$DB:/tmp/step.sql" && docker exec -i "$DB" psql -U postgres -X -q -v ON_ERROR_STOP=1 -f /tmp/step.sql; }
           for f in 0242-pause-guard.up.sql 0242-pause-export-guard.up.sql; do
-            docker exec -i "$DB" psql -U postgres -X -q -v ON_ERROR_STOP=1 -c "$(cat "tests/db/fixtures/$f")"
+            runsql "tests/db/fixtures/$f"
             echo "installed $f"
           done
           n="$(docker exec -i "$DB" psql -U postgres -X -tAc "select count(*) from pg_trigger where tgname in ('clients_00_pause_archive_trg','audit_logs_00_pause_export_trg') and not tgisinternal")"
@@ -128,8 +129,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          runsql() { docker cp "$1" "$DB:/tmp/step.sql" && docker exec -i "$DB" psql -U postgres -X -q -v ON_ERROR_STOP=1 -f /tmp/step.sql; }
           for f in $(ls "$RUNNER_TEMP/held" | sort); do
-            docker exec -i "$DB" psql -U postgres -X -q -v ON_ERROR_STOP=1 -c "$(cat "$RUNNER_TEMP/held/$f")"
+            runsql "$RUNNER_TEMP/held/$f"
             n="$(docker exec -i "$DB" psql -U postgres -X -tAc "select count(*) from pg_trigger where tgname in ('clients_00_pause_archive_trg','audit_logs_00_pause_export_trg') and not tgisinternal")"
             [ "$n" = "2" ] || { echo "$f: a guard trigger is gone (found $n)"; exit 1; }
             echo "applied $f; guards present: $n"
@@ -149,10 +151,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          runsql() { docker cp "$1" "$DB:/tmp/step.sql" && docker exec -i "$DB" psql -U postgres -X -q -v ON_ERROR_STOP=1 -f /tmp/step.sql; }
           dump() { docker exec -i "$DB" pg_dump -U postgres --schema-only --no-owner --schema=public --schema=auth postgres | grep -vE '^\\(un)?restrict ' > "$1"; }
           dump "$RUNNER_TEMP/guards-up.sql"
           for f in 0242-pause-guard.down.sql 0242-pause-export-guard.down.sql; do
-            docker exec -i "$DB" psql -U postgres -X -q -v ON_ERROR_STOP=1 -c "$(cat "tests/db/fixtures/$f")"
+            runsql "tests/db/fixtures/$f"
           done
           n="$(docker exec -i "$DB" psql -U postgres -X -tAc "select count(*) from pg_trigger where tgname in ('clients_00_pause_archive_trg','audit_logs_00_pause_export_trg') and not tgisinternal")"
           [ "$n" = "0" ] || { echo "a guard trigger remains after DOWN"; exit 1; }
