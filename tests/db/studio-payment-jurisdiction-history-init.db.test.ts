@@ -793,10 +793,17 @@ describe("J9-I g09d prediction equals the command", () => {
   });
 
   type Predicted = Record<string, unknown> & { predicted_ca_cad: string; predicted_us_usd: string };
-  const writeNullCurrencyAudit = (s: SeededStudio) => adminQuery(
-    // the real 0032 writer (EXECUTE is revoked from every runtime role; the owner may call it)
-    `select public._append_stripe_payment_audit(null, null, $1::uuid, null, 'charge_attempted', null, null, null,
-       null, null, null, null, null, null, null, null, '{}'::jsonb, null, null)`, [s.studioId]);
+  // The card-setup cleanup path of 0032 (check_claimed_payment_method_cleanup_safety) appends exactly
+  // this row through _append_stripe_payment_audit: a session id, no appointment, NO currency. The
+  // writer's EXECUTE is revoked from every runtime role, so it is called as its owner, with FK
+  // enforcement off because the session it names is long gone by the time history is read.
+  const writeNullCurrencyAudit = (s: SeededStudio) => adminTx(async (q) => {
+    await q(`set local session_replication_role = replica`);
+    await q(
+      `select public._append_stripe_payment_audit(null, $2::uuid, $1::uuid, null, 'payment_method_cleanup_safety_checked',
+         null, null, null, null, null, null, null, null, null, null, null, '{"decision":"detach_authorized"}'::jsonb, null, null)`,
+      [s.studioId, randomUUID()]);
+  });
 
   type Case = { label: string; build: (s: SeededStudio) => Promise<void>; ca: string[]; us: string[] };
   const CASES: Case[] = [
