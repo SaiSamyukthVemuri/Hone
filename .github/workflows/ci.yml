@@ -1779,8 +1779,11 @@ jobs:
           path: test-results/
           retention-days: 7
 
-  # HON-62: the weekly-hours editor's native <input type="time"> in WebKit, the
-  # engine behind iPad Safari. NOT REQUIRED and NOT AGGREGATED: no branch
+  # HON-62 and CLN-006: the weekly-hours editor's native <input type="time"> and
+  # the mounted-keyboard/focus cases for the three modal dialogs (photo preview,
+  # DoneCharting warning, quick checkout) in WebKit, the engine behind iPad
+  # Safari. Playwright's Linux WebKit is not Safari: a case that hits an engine
+  # limit is annotated in its spec, never silently skipped. NOT REQUIRED and NOT AGGREGATED: no branch
   # protection rule names it and `browser-e2e` does not need it, so a WebKit
   # failure is evidence for the HON-62 owner, never a merge block. A separate
   # job rather than a step in the targeted shards, so the required lane's
@@ -1795,18 +1798,20 @@ jobs:
   # be restored by the Chromium jobs as a hit with no Chromium in it. The .debs
   # use their own key for the same reason.
   #
-  #   target <10 min; hard timeout 20 min = target + the 6 min bounded
-  #   system-package step + margin (CLAUDE.md section 4).
+  #   target ~15 min (setup, then TWO webServer builds: the ordinary config for
+  #   the HON-62 and CLN-006 specs, the payment config for quick checkout); hard
+  #   timeout 30 min = target + the 6 min bounded system-package step + margin
+  #   (CLAUDE.md section 4).
   webkit-hon-62:
     name: webkit time inputs (HON-62, not required)
     needs: changes
-    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') }}
+    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') }}
     runs-on: ubuntu-latest
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
       packages: read
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -1892,8 +1897,19 @@ jobs:
           path: ~/apt-debs
           key: pw-webkit-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
-      - name: WebKit E2E (HON-62 time inputs)
-        run: npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts --project=webkit-hon-62
+      - name: WebKit E2E (HON-62 time inputs, CLN-006 dialogs)
+        run: npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts e2e/finish-appointment-mobile.spec.ts e2e/fett-photos-touch-floor.spec.ts --project=webkit-hon-62 --project=webkit-cln-006
+        env:
+          HONE_E2E_WEBKIT: "1"
+          HONE_E2E_FAKE_RESEND: "1"
+
+      # Quick checkout lives in the payment lane's testDir and needs its fake-
+      # Stripe server (set by that config alone, never by this workflow). Its own
+      # --output keeps this run's traces from being cleaned by, or cleaning, the
+      # step above. Runs whatever the step above did (the mirror rule).
+      - name: WebKit E2E (CLN-006 quick checkout)
+        if: ${{ !cancelled() }}
+        run: npx playwright test --config playwright.payment.config.ts e2e-payment/quick-checkout-payment.spec.ts --project=webkit-cln-006-payment --output=test-results-payment
         env:
           HONE_E2E_WEBKIT: "1"
           HONE_E2E_FAKE_RESEND: "1"
@@ -1903,5 +1919,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-traces-webkit-hon-62
-          path: test-results/
+          path: |
+            test-results/
+            test-results-payment/
           retention-days: 7

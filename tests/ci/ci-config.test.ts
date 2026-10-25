@@ -1118,18 +1118,60 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     expect(job.if).toContain("needs.changes.outputs.full_matrix_required == 'true'");
   });
 
-  it("runs only the scoped WebKit project, which exists only under HONE_E2E_WEBKIT=1", () => {
+  it("runs only the scoped WebKit projects, which exist only under HONE_E2E_WEBKIT=1", () => {
     const e2e = job.steps.filter((st) => /npx playwright test\b/.test(st.run ?? ""));
-    expect(e2e).toHaveLength(1);
-    expect(e2e[0].run).toBe("npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts --project=webkit-hon-62");
-    expect(e2e[0].env?.HONE_E2E_WEBKIT).toBe("1");
-    // Nothing else in any workflow arms the WebKit project.
+    expect(e2e).toHaveLength(2);
+    expect(e2e[0].run).toBe("npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts e2e/finish-appointment-mobile.spec.ts e2e/fett-photos-touch-floor.spec.ts --project=webkit-hon-62 --project=webkit-cln-006");
+    expect(e2e[1].run).toBe("npx playwright test --config playwright.payment.config.ts e2e-payment/quick-checkout-payment.spec.ts --project=webkit-cln-006-payment --output=test-results-payment");
+    // The payment step reports whatever the first step did, and arms only the
+    // WebKit marker: the fake-Stripe markers come from the payment config alone.
+    expect(e2e[1].if).toBe("${{ !cancelled() }}");
+    for (const st of e2e) expect(st.env?.HONE_E2E_WEBKIT).toBe("1");
+    expect(JSON.stringify(e2e[1].env)).not.toMatch(/STRIPE|RUN_ID/);
+    // Nothing else in any workflow arms the WebKit projects.
     const code = CI.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
-    expect((code.match(/HONE_E2E_WEBKIT/g) ?? []).length).toBe(1);
+    expect((code.match(/HONE_E2E_WEBKIT/g) ?? []).length).toBe(2);
     expect(NIGHTLY).not.toMatch(/HONE_E2E_WEBKIT/);
     expect(CONFIG).toContain('{ name: "chromium", use: { ...devices["Desktop Chrome"] } },');
     expect(CONFIG).toContain('use: { ...devices["Desktop Safari"], bypassCSP: true },');
     expect(CONFIG).toMatch(/process\.env\.HONE_E2E_WEBKIT === "1"\s*\?\s*\[\s*\{\s*name: "webkit-hon-62",\s*testMatch: \/\(availability-hours-editor\|webkit-time-input-key-probe\)\\\.spec\\\.ts\$\/,/);
+    // CLN-006: scoped by file AND by title, so the rest of those specs (which
+    // Chromium runs in full) is not repeated here.
+    expect(CONFIG).toContain('name: "webkit-cln-006",');
+    expect(CONFIG).toContain("testMatch: /(finish-appointment-mobile|fett-photos-touch-floor)\\.spec\\.ts$/,");
+    expect(CONFIG).toContain("grep: /aftercare warning keyboard stays contained|every photo control measures at least 44px/,");
+    // The payment config gains a `projects` key ONLY under the marker, so the
+    // ordinary payment lane stays the single implicit project.
+    const PAY = readFileSync("playwright.payment.config.ts", "utf8");
+    expect(PAY).toMatch(/\.\.\.\(process\.env\.HONE_E2E_WEBKIT === "1"\s*\?\s*\{\s*projects: \[[\s\S]*?\]\s*,?\s*\}\s*:\s*\{\}\)/);
+    expect((PAY.match(/projects:/g) ?? []).length).toBe(1);
+    expect(PAY).toContain('name: "webkit-cln-006-payment",');
+    expect(PAY).toContain("grep: /keyboard reaches native details and wraps/,");
+  });
+
+  it("the shared WebKit helper is used only on the WebKit path, and its handler is the availability spec's, byte for byte", () => {
+    const HELPER = readFileSync("e2e/helpers/webkit-localhost.ts", "utf8");
+    const SPEC = readFileSync("e2e/availability-hours-editor.spec.ts", "utf8");
+    const fn = (text: string) => text.slice(text.indexOf("async function withoutHttpsUpgrade("), text.indexOf("\n}\n", text.indexOf("async function withoutHttpsUpgrade(")) + 3);
+    expect(fn(HELPER).length).toBeGreaterThan(300);
+    expect(fn(HELPER)).toBe(fn(SPEC));
+    const FLOWS = readFileSync("e2e/helpers/flows.ts", "utf8");
+    // Chromium reaches the original two lines through the else branch only.
+    expect(FLOWS).toContain("const webkit = isWebKit(page);\n  if (webkit) await installWebkitLocalhostFix(page.context());\n  await page.goto(\"/login\");");
+    expect(FLOWS).toContain("if (webkit) await followMagicLinkWebkit(page, link);\n  else await page.goto(link);");
+    expect(HELPER).toContain('page.context().browser()?.browserType().name() === "webkit"');
+    expect(HELPER).toContain("await page.context().request.get(link);");
+    expect(HELPER).not.toMatch(/page\.goto\(link\)/);
+  });
+
+  it("the CLN-006 cases the WebKit projects select exist on production and still carry the keyboard assertions", () => {
+    const finish = readFileSync("e2e/finish-appointment-mobile.spec.ts", "utf8");
+    const touch = readFileSync("e2e/fett-photos-touch-floor.spec.ts", "utf8");
+    const pay = readFileSync("e2e-payment/quick-checkout-payment.spec.ts", "utf8");
+    expect(finish).toContain("aftercare warning keyboard stays contained and Escape restores opener without side effects");
+    expect(touch).toContain("every photo control measures at least 44px, upload panel through preview");
+    expect(pay).toContain("keyboard reaches native details and wraps");
+    for (const src of [finish, touch, pay]) expect(src).toContain("focusOutsideDialog(");
   });
 
   it("installs WebKit's system packages through the bounded script, under its own .deb key", () => {
