@@ -492,7 +492,11 @@ export async function addClientPricingAction(formData: FormData): Promise<void> 
   const priceCents = dollarsToCents(formData.get("price"));
   if (priceCents == null) throw new Error("Price must be a non-negative number.");
 
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // HON-44 (Sam decision 12): client prices are owner-only. The role comes from
+  // the authenticated practitioner. APP half; client_pricing RLS admits any
+  // member until 0254.
+  if (practitioner.role !== "owner") throw new Error("Only the studio owner can change prices.");
   await assertClientVisible(studio.id, clientId);
 
   const supabase = await createClient();
@@ -515,7 +519,11 @@ export async function deleteClientPricingAction(formData: FormData): Promise<voi
   if (typeof clientId !== "string" || !clientId)
     throw new Error("Missing client id.");
 
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // HON-44 (Sam decision 12): client prices are owner-only. The role comes from
+  // the authenticated practitioner. APP half; client_pricing RLS admits any
+  // member until 0254.
+  if (practitioner.role !== "owner") throw new Error("Only the studio owner can change prices.");
   await assertClientVisible(studio.id, clientId);
 
   const supabase = await createClient();

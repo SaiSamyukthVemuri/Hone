@@ -158,6 +158,8 @@ export async function prepareSessionPaymentChargeAction(
   let actorIsOwner: boolean;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    // HON-44 (Sam decision 12): card charges and fee receipts are owner-only.
+    if (practitioner.role !== "owner") throw new Error("owner_only");
     practitionerId = practitioner.id;
     studioId = studio.id;
     studioTimezone = studio.timezone;
@@ -432,6 +434,8 @@ export async function executeSessionPaymentChargeAction(
   let studioTimezone: string;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    // HON-44 (Sam decision 12): card charges and fee receipts are owner-only.
+    if (practitioner.role !== "owner") throw new Error("owner_only");
     practitionerId = practitioner.id;
     studioId = studio.id;
     studioTimezone = studio.timezone;
@@ -647,6 +651,8 @@ export async function sendPaymentChargeReceiptAction(
   let studioTimezone: string;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    // HON-44 (Sam decision 12): card charges and fee receipts are owner-only.
+    if (practitioner.role !== "owner") throw new Error("owner_only");
     practitionerId = practitioner.id;
     studioId = studio.id;
     studioTimezone = studio.timezone;
