@@ -83,6 +83,23 @@ rules match, and the job fails unless both counters (IPv4, IPv6) read zero.
 Evidence (logs, Sentry guard records, egress counts) is uploaded as the
 `restore-drill-evidence` artifact.
 
+**Token isolation.** The sign-in token cannot be used against production, and
+the check never offers it there:
+- GoTrue on the drill's own stack mints it, signed with the Supabase CLI's
+  public demo JWT secret. A hosted project uses a different secret, so the
+  token would not verify there; the check also refuses any key whose issuer is
+  not `supabase-demo` or that carries a project ref.
+- The API must be exactly `http://127.0.0.1:56521`, parsed (so
+  `127.0.0.1.supabase.co`, `localhost`, userinfo tricks, another port, `https`
+  and any hosted URL are refused), and that check runs before the first network
+  call of every entry point. A hosted URL exits 2 with zero network attempts.
+- The session cookie goes only to the app on `127.0.0.1:3197`; the server's
+  environment is closed; and in CI the firewall rejects and counts every
+  non-loopback packet from the check.
+This is proved from configuration and code (tests in
+`tests/scripts/restore-drill-app-check.test.ts`); nothing is ever sent to a
+hosted project to test it.
+
 **Sign-in writes.** Signing in creates a session row in `auth.sessions` and
 updates the user's sign-in time. That happens after the drill's comparison, so
 it never affects the drill's verdict.

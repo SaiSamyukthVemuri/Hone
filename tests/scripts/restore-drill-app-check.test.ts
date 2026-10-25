@@ -1,12 +1,12 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { SEED, appEnv, clientListShowsClient, localDemoKeys, originalSha256, photoBytesMatch, providerFenceViolations, recordRendersFields, signIn, uncontainedSentryRecords } from "../../scripts/ops/restore-drill-app-check.mjs";
+import { SEED, appEnv, assertDrillOnly, clientListShowsClient, localDemoKeys, originalSha256, photoBytesMatch, providerFenceViolations, recordRendersFields, signIn, uncontainedSentryRecords } from "../../scripts/ops/restore-drill-app-check.mjs";
 
 // DR-01A. The application-readability check runs only in its own CI job
 // (.github/workflows/restore-drill.yml), against a real restored stack. These
@@ -226,6 +226,7 @@ describe("restore-drill.sh hook: PASS needs post-restore 0 and pre-restore exact
 });
 
 // A closed environment, so a stray variable from the shell cannot change an exit code.
+const SCRIPT_PATH = "scripts/ops/restore-drill-app-check.mjs";
 const CLEAN_ENV = Object.assign(Object.create(null), { PATH: process.env.PATH ?? "" }) as NodeJS.ProcessEnv;
 
 describe("the check never exits 1 for anything but a read MISS", () => {
@@ -285,5 +286,136 @@ describe("the check never exits 1 for anything but a read MISS", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TOKEN ISOLATION (Sam, decision 11). The restore-check sign-in token is minted
+// by the disposable stack's GoTrue with the CLI's PUBLIC demo JWT secret and is
+// confined to loopback. These cases prove that from configuration and code
+// alone: nothing here, and nothing in the job, ever sends it anywhere else.
+// ---------------------------------------------------------------------------
+describe("token isolation: the API must be exactly the drill's loopback stack", () => {
+  it("accepts only the drill's own origin", () => {
+    expect(() => assertDrillOnly("http://127.0.0.1:56521")).not.toThrow();
+    expect(() => assertDrillOnly("http://127.0.0.1:56521/")).not.toThrow();
+  });
+
+  it.each([
+    ["a hosted Supabase URL", "https://abcdefghij.supabase.co"],
+    ["a hosted pooler URL", "https://aws-0-us-east-1.pooler.supabase.com"],
+    ["localhost", "http://localhost:56521"],
+    ["another loopback port (a different local stack)", "http://127.0.0.1:54321"],
+    ["https on the drill port", "https://127.0.0.1:56521"],
+    ["a hosted name that starts like the IP", "http://127.0.0.1.supabase.co:56521"],
+    ["userinfo that makes the real host elsewhere", "http://127.0.0.1:56521@evil.example/"],
+    ["a path", "http://127.0.0.1:56521/auth/v1"],
+    ["a query", "http://127.0.0.1:56521/?x=1"],
+    ["an IPv6 loopback", "http://[::1]:56521"],
+    ["a non-URL", "not a url"],
+    ["empty", ""],
+    ["undefined", undefined],
+  ])("refuses %s", (_name, api) => {
+    expect(() => assertDrillOnly(api)).toThrow(/refusing/);
+  });
+
+  it("signIn refuses a hosted URL BEFORE any network call (nothing is minted or sent)", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: string | URL | Request) => {
+      calls.push(String(input instanceof Request ? input.url : input));
+      return new Response("{}", { status: 200 });
+    });
+    try {
+      await expect(signIn("https://abcdefghij.supabase.co", "anon", "service")).rejects.toThrow(/refusing/);
+      expect(calls).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("every entry point exits 2 for a hosted URL with ZERO network attempts (real child process, traps on fetch, net, tls, dns, http)", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "drill-trap-"));
+    try {
+      const trap = path.join(root, "trap.cjs");
+      const log = path.join(root, "attempts.log");
+      writeFileSync(
+        trap,
+        [
+          'const fs = require("node:fs");',
+          `const note = (w) => fs.appendFileSync(${JSON.stringify(log)}, w + "\\n");`,
+          'for (const m of ["net", "tls", "http", "https", "dns", "dgram", "http2"]) {',
+          '  const mod = require("node:" + m);',
+          '  for (const k of ["connect", "createConnection", "request", "get", "lookup", "resolve", "createSocket"]) {',
+          '    if (typeof mod[k] === "function") mod[k] = function () { note(m + "." + k); throw new Error("network trap"); };',
+          "  }",
+          "}",
+          'globalThis.fetch = function () { note("fetch"); throw new Error("network trap"); };',
+        ].join("\n"),
+      );
+      const bad = ["https://abcdefghij.supabase.co", "http://localhost:56521", "http://127.0.0.1:54321"];
+      for (const api of bad) {
+        for (const phase of ["build", "pre-restore", "post-restore"]) {
+          const r = spawnSync(process.execPath, ["--require", trap, SCRIPT_PATH, phase, api, root], { encoding: "utf8", env: CLEAN_ENV });
+          expect(r.status, `${phase} ${api}`).toBe(2);
+          expect(r.stderr, `${phase} ${api}`).toMatch(/HARNESS ERROR: uncaught: Error: refusing/);
+        }
+      }
+      expect(existsSync(log), "a network call was attempted").toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("token isolation: the credentials are the CLI's PUBLIC demo keys, never a project's", () => {
+  const jwt = (claims: object) => `${Buffer.from("{}").toString("base64url")}.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.sig`;
+  const source = (anon: object, service: object) =>
+    `const LOCAL_ANON_KEY =\n  "${jwt(anon)}";\nconst LOCAL_SERVICE_ROLE_KEY =\n  "${jwt(service)}";\n`;
+
+  it("the repository's keys are issued by supabase-demo with no project ref", () => {
+    expect(() => localDemoKeys()).not.toThrow();
+  });
+
+  it.each([
+    ["a hosted issuer", { iss: "supabase", ref: "abcdefghij", role: "service_role" }],
+    ["a project ref under the demo issuer", { iss: "supabase-demo", ref: "abcdefghij", role: "service_role" }],
+    ["no issuer", { role: "service_role" }],
+  ])("refuses %s", (_name, claims) => {
+    expect(() => localDemoKeys(source({ iss: "supabase-demo", role: "anon" }, claims))).toThrow(/not the CLI's public demo key/);
+    expect(() => localDemoKeys(source(claims, { iss: "supabase-demo", role: "service_role" }))).toThrow(/not the CLI's public demo key/);
+  });
+});
+
+describe("token isolation: the code can only send the token to loopback", () => {
+  const code = readFileSync(SCRIPT_PATH, "utf8").replace(/^\s*\/\/.*$/gm, "");
+
+  it("every fetch targets the drill API, the app on loopback, or a URL pre-checked to be on the drill API", () => {
+    const targets = [...code.matchAll(/\bfetch\(\s*([^,)]+)/g)].map((m) => m[1].trim());
+    expect(targets.sort()).toEqual(
+      ["`${APP_ORIGIN}${p}`", "`${APP_ORIGIN}/login`", "`${api}/auth/v1/admin/generate_link`", "signed.url"].sort(),
+    );
+    // signed.url is fetched only inside the branch that checked its prefix.
+    expect(code).toMatch(/signed\.url\.startsWith\(`\$\{DRILL_API\}\/`\)\) \{\s+const bytes = await fetch\(signed\.url\);/);
+  });
+
+  it("the session cookie is attached to exactly one request helper, which targets APP_ORIGIN", () => {
+    expect([...code.matchAll(/cookie/g)].length).toBeGreaterThan(0);
+    expect(code).toMatch(/const get = \(p\) => fetch\(`\$\{APP_ORIGIN\}\$\{p\}`, \{ headers, redirect: "manual" \}\);/);
+    // The cookie header object is built once, and `headers` is passed to fetch in that helper only.
+    expect(code.match(/\{ cookie: session\.cookie \}/g)?.length).toBe(1);
+    expect(code.match(/\bheaders\b(?!\s*=)(?=[^\n]*(fetch|redirect|\}))/g)?.filter((m) => m).length).toBeGreaterThan(0);
+    expect([...code.matchAll(/\{ headers[,\s}]/g)].length).toBe(1);
+  });
+
+  it("APP_ORIGIN and DRILL_API are loopback literals, and nothing else names a host", () => {
+    expect(code).toMatch(/const APP_ORIGIN = `http:\/\/127\.0\.0\.1:\$\{APP_PORT\}`;/);
+    expect(code).toMatch(/const DRILL_API = "http:\/\/127\.0\.0\.1:56521";/);
+    expect([...code.matchAll(/https?:\/\/[^\s"'`)]+/g)].map((m) => m[0]).filter((u) => !/^http:\/\/127\.0\.0\.1/.test(u))).toEqual([]);
+  });
+
+  it("the server environment cannot carry a hosted Supabase URL or a non-demo key (closed env)", () => {
+    const e = appEnv({ api: "http://127.0.0.1:56521", ...localDemoKeys(), egressLog: "/tmp/x", runId: "drill-abcdef123456" });
+    expect(providerFenceViolations(e)).toEqual([]);
+    expect(providerFenceViolations({ ...e, NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghij.supabase.co" }).join()).toMatch(/hosted Supabase/);
   });
 });

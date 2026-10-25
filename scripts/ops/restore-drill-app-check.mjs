@@ -60,6 +60,29 @@ export const MISS = 1;
 export const HARNESS = 2;
 
 /**
+ * TOKEN ISOLATION (Sam, decision 11). The sign-in token is minted by the drill
+ * stack's own GoTrue with the Supabase CLI's PUBLIC demo JWT secret, and is
+ * sent to that stack and to the app under test on 127.0.0.1 only. It cannot
+ * authenticate against production, whose JWT secret is different, and this
+ * gate means it is never even offered: the API must be EXACTLY the drill's
+ * loopback origin (parsed, not string-prefixed, so `127.0.0.1.supabase.co`,
+ * `localhost`, userinfo tricks and any hosted URL all fail), and it is checked
+ * before the first network call of every entry point, signIn included.
+ */
+export function assertDrillOnly(api) {
+  let url;
+  try {
+    url = new URL(String(api));
+  } catch {
+    throw new Error(`refusing: not a URL: ${String(api).slice(0, 80)}`);
+  }
+  const ok =
+    url.protocol === "http:" && url.hostname === "127.0.0.1" && url.port === "56521" &&
+    url.username === "" && url.password === "" && url.pathname === "/" && url.search === "" && url.hash === "";
+  if (!ok) throw new Error(`refusing: the API must be exactly the drill's ${DRILL_API}, not ${url.origin}`);
+}
+
+/**
  * The Supabase CLI's PUBLIC default anon and service-role keys, read from the
  * one place the repository records them (e2e/helpers/local-env.ts). They must
  * be these exact keys, not ones freshly signed with the same secret: Kong
@@ -70,6 +93,12 @@ export function localDemoKeys(source = readFileSync(path.join(REPO_ROOT, "e2e", 
   const anonKey = key("LOCAL_ANON_KEY");
   const serviceKey = key("LOCAL_SERVICE_ROLE_KEY");
   if (!anonKey || !serviceKey) throw new Error("the local demo keys were not found in e2e/helpers/local-env.ts");
+  // Only the CLI's public demo credentials may ever be used. A hosted project's
+  // keys carry its own issuer and project ref, never `supabase-demo`.
+  for (const [name, jwt] of [["anon", anonKey], ["service role", serviceKey]]) {
+    const claims = JSON.parse(Buffer.from(jwt.split(".")[1] ?? "", "base64url").toString("utf8") || "{}");
+    if (claims.iss !== "supabase-demo" || claims.ref !== undefined) throw new Error(`refusing: the ${name} key is not the CLI's public demo key`);
+  }
   return { anonKey, serviceKey };
 }
 
@@ -167,6 +196,7 @@ export function uncontainedSentryRecords(logText) {
 
 // --- sign-in ----------------------------------------------------------------
 export async function signIn(api, anonKey, serviceKey) {
+  assertDrillOnly(api); // before the first request: nothing is minted or sent otherwise
   const res = await fetch(`${api}/auth/v1/admin/generate_link`, {
     method: "POST",
     headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
@@ -222,7 +252,7 @@ function run(cmd, args, env, logFile) {
 }
 
 async function build(api) {
-  if (api !== DRILL_API) return fail(HARNESS, `refusing: the API must be the drill's ${DRILL_API}`);
+  assertDrillOnly(api);
   const stamp = { api, runId: `drill-${randomUUID().slice(0, 12)}` };
   const env = appEnv({ ...stamp, ...localDemoKeys(), egressLog: path.join(tmpdir(), `restore-drill-build-egress-${process.pid}.jsonl`) });
   const violations = providerFenceViolations(env);
@@ -235,7 +265,7 @@ async function build(api) {
 }
 
 async function check(phase, api, evidence) {
-  if (api !== DRILL_API) return fail(HARNESS, `refusing: the API must be the drill's ${DRILL_API}`);
+  assertDrillOnly(api);
   if (!existsSync(BUILD_STAMP)) return fail(HARNESS, "no build: run `restore-drill-app-check.mjs build` first");
   const stamp = JSON.parse(readFileSync(BUILD_STAMP, "utf8"));
   if (stamp.api !== api) return fail(HARNESS, `the build is for ${stamp.api}, not ${api}`);
