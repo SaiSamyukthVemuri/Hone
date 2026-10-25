@@ -25,10 +25,6 @@ import { useReturnFocus } from "@/components/use-return-focus";
 import { PortraitControl } from "./PortraitControl";
 import { canLabelPhotoAttachment } from "./photo-context";
 import { CaptureStageControl } from "./CaptureStageControl";
-import { createPhotoPreviewController, type PhotoPreviewState } from "@/lib/images/photo-preview-controller";
-import { Button, buttonClasses } from "@/components/ui/button";
-import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
-import { useReturnFocus } from "@/components/use-return-focus";
 import {
   validateTreatmentImageUpload,
 } from "@/lib/images/treatment-images";

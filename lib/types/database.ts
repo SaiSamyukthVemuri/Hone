@@ -1364,7 +1364,6 @@ export type TreatmentImage = {
   deleted_by: string | null;
 
   // Existing finite 0213–0246 schema fields; this DTO grants no write authority.
-  capture_stage: "before" | "after" | null;
 };
 
 export type InvitationStatus = "pending" | "accepted" | "revoked";
