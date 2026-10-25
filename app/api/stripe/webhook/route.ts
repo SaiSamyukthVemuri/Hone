@@ -84,7 +84,12 @@ import {
   shouldIgnoreLiveModeEvent,
 } from "@/lib/billing/payment-webhook-reconciliation";
 import { PaymentOriginalBindingPendingError } from "@/lib/billing/payment-webhook-reconciliation";
+import {
+  PaymentWebhookMaintenanceDeferral,
+  paymentWebhookMaintenanceOn,
+} from "@/lib/billing/payment-webhook-maintenance";
 import { ensureCardChangeNotification } from "@/lib/billing/card-change-notification";
+import { boundedErrorLabel, dbErrorCode, stripeErrorFields, thrownErrorClass } from "@/lib/logging/error-class";
 
 // Force Node runtime: Stripe SDK + raw body buffering need Node, not
 // the Edge runtime.
@@ -119,7 +124,7 @@ export async function POST(req: Request): Promise<Response> {
     rawBody = await req.text();
   } catch (err) {
     logInternal("stripe_webhook_body_read_failed", {
-      err: err instanceof Error ? err.message : String(err),
+      errorClass: thrownErrorClass(err),
     });
     return NextResponse.json({ error: GENERIC_BAD_SIGNATURE }, { status: 400 });
   }
@@ -188,8 +193,7 @@ export async function POST(req: Request): Promise<Response> {
       logInternal("stripe_webhook_studio_binding_read_failed", {
         eventId: event.id,
         eventType: event.type,
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
       });
       return NextResponse.json({ ok: false }, { status: 500 });
     }
@@ -215,8 +219,7 @@ export async function POST(req: Request): Promise<Response> {
     logInternal("stripe_webhook_claim_failed", {
       eventId: event.id,
       eventType: event.type,
-      code: claimErr.code,
-      message: claimErr.message,
+      code: dbErrorCode(claimErr),
     });
     // Return 500 so Stripe retries. The event is not yet recorded;
     // the next delivery will re-attempt.
@@ -262,8 +265,7 @@ export async function POST(req: Request): Promise<Response> {
     if (markErr) {
       logInternal("stripe_webhook_mark_processed_failed", {
         eventId: event.id,
-        code: markErr.code,
-        message: markErr.message,
+        code: dbErrorCode(markErr),
       });
       return NextResponse.json({ ok: false }, { status: 500 });
     }
@@ -272,11 +274,16 @@ export async function POST(req: Request): Promise<Response> {
     // Expected original-binding races still release the winning claim and
     // return 500 below, but must not page/email operators on every delivery.
     // Same-message ordinary errors remain genuine failures.
-    if (!(err instanceof PaymentOriginalBindingPendingError)) {
+    // The maintenance deferral is an operator-chosen 500, not a failure: one
+    // structural line, no page/email, then the same release and 500.
+    if (err instanceof PaymentWebhookMaintenanceDeferral) {
+      logInternal("stripe_webhook_maintenance_deferred", { eventType: err.eventType });
+    } else if (!(err instanceof PaymentOriginalBindingPendingError)) {
       logInternal("stripe_webhook_handler_failed", {
         eventId: event.id,
         eventType: event.type,
-        err: err instanceof Error ? err.message : String(err),
+        errorClass: thrownErrorClass(err),
+        ...stripeErrorFields(err),
       });
       // PR #153. Persistent webhook processing failure is a critical
       // ops alert. For setup_intent.succeeded specifically, the
@@ -307,14 +314,19 @@ export async function POST(req: Request): Promise<Response> {
         {
           p_event_id: event.id,
           p_claim_token: claimToken,
-          p_error: err instanceof Error ? err.message : "handler_failed",
+          // stored on stripe_events.error: a deliberate identifier or a class, never free text
+          p_error: boundedErrorLabel(err),
         },
       );
       if (releaseErr) {
-        logInternal("stripe_webhook_release_claim_failed", { releaseErr });
+        logInternal("stripe_webhook_release_claim_failed", {
+          code: dbErrorCode(releaseErr),
+        });
       }
     } catch (releaseErr) {
-      logInternal("stripe_webhook_release_claim_threw", { releaseErr });
+      logInternal("stripe_webhook_release_claim_threw", {
+        errorClass: thrownErrorClass(releaseErr),
+      });
     }
     return NextResponse.json({ ok: false }, { status: 500 });
   }
@@ -454,10 +466,14 @@ async function handleStripeEvent(
     case "payment_intent.succeeded": {
       return await handlePaymentIntentSucceeded(event, ctx);
     }
+    // PAYMENT-WEBHOOK-MAINTENANCE-FLAG: with the switch ON, these two direct
+    // writers are deferred to Stripe redelivery before any read or write.
     case "payment_intent.payment_failed": {
+      if (paymentWebhookMaintenanceOn()) throw new PaymentWebhookMaintenanceDeferral(event.type);
       return await handlePaymentIntentPaymentFailed(event, ctx);
     }
     case "charge.refunded": {
+      if (paymentWebhookMaintenanceOn()) throw new PaymentWebhookMaintenanceDeferral(event.type);
       return await handleChargeRefunded(event, ctx);
     }
     case "charge.dispute.created": {

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { BirthdayReminderColor } from "@/lib/types/database";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 function nullableString(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") return null;
@@ -142,8 +143,7 @@ export async function setStudioEmailSettingsAction(
     console.error(
       JSON.stringify({
         event: "studio_email_settings_update_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         studioId: studio.id,
         timestamp: new Date().toISOString(),
       }),

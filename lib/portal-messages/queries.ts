@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import type { ClientPortalMessage } from "@/lib/types/database";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Practitioner-side read of the secure portal messages for one
 // client. Always scoped by (studioId, clientId); callers must
@@ -46,8 +47,7 @@ export async function getPortalMessagesForPractitionerView(
     console.error(
       JSON.stringify({
         event: "portal_messages_for_practitioner_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );

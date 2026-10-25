@@ -2,6 +2,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { generateRawToken, hashToken } from "./tokens";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Server-side client portal session manager. Owns the
 // hone_portal_session httpOnly cookie and the client_portal_sessions
@@ -60,7 +61,7 @@ export async function getCurrentPortalSession(): Promise<PortalSession | null> {
     console.error(
       JSON.stringify({
         event: "portal_session_lookup_failed",
-        code: error.code,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -91,7 +92,7 @@ export async function getCurrentPortalSession(): Promise<PortalSession | null> {
           console.error(
             JSON.stringify({
               event: "portal_session_last_seen_update_failed",
-              code: touchError.code,
+              code: dbErrorCode(touchError),
               timestamp: new Date().toISOString(),
             }),
           );
@@ -172,7 +173,7 @@ export async function destroyPortalSession(): Promise<void> {
       console.error(
         JSON.stringify({
           event: "portal_session_revoke_failed",
-          code: error.code,
+          code: dbErrorCode(error),
           timestamp: new Date().toISOString(),
         }),
       );

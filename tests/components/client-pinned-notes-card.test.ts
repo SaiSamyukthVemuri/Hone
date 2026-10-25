@@ -7,6 +7,7 @@ import {
   ClientPinnedNotesCard,
   MAX_LENGTH,
   PinnedNoteField,
+  pinnedNotePermissions,
   toSingleLine,
 } from "@/components/client-pinned-notes-card";
 import { PinnedNotesReadonly } from "@/components/pinned-notes-readonly";
@@ -71,7 +72,7 @@ describe("toSingleLine: no newline is ever introduced (Enter still saves)", () =
 
 describe("ClientPinnedNotesCard: read and add surfaces", () => {
   const html = renderToStaticMarkup(
-    createElement(ClientPinnedNotesCard, { clientId: "client-1", notes: [note(LONG)], addAction: noop, editAction: noop, removeAction: noop }),
+    createElement(ClientPinnedNotesCard, { clientId: "client-1", viewer: { isOwner: true, practitionerId: "owner-1" }, notes: [note(LONG)], addAction: noop, editAction: noop, removeAction: noop }),
   );
 
   it("shows the full note text, wrapped, in the list", () => {
@@ -82,6 +83,50 @@ describe("ClientPinnedNotesCard: read and add surfaces", () => {
   it("the add box is the wrapping field too, not a single-line input", () => {
     expect(html).toContain('aria-label="New pinned note"');
     expect(html).not.toMatch(/<input[^>]*type="text"/);
+  });
+});
+
+describe("HON-44: the Edit and Remove controls follow the role and the author (the server and 0254 enforce the same rule)", () => {
+  const authored = (by: string | null): ClientPinnedNote =>
+    ({ id: "n", text: "Latex allergy", created_by_practitioner_id: by }) as unknown as ClientPinnedNote;
+  const render = (viewer: { isOwner: boolean; practitionerId: string }, n: ClientPinnedNote) =>
+    renderToStaticMarkup(
+      createElement(ClientPinnedNotesCard, { clientId: "c", viewer, notes: [n], addAction: noop, editAction: noop, removeAction: noop }),
+    );
+
+  it("pinnedNotePermissions: owner edits and removes any; a practitioner edits only their own and removes none", () => {
+    const owner = { isOwner: true, practitionerId: "o" };
+    const prac = { isOwner: false, practitionerId: "p" };
+    expect(pinnedNotePermissions(authored("p"), owner)).toEqual({ canEdit: true, canRemove: true });
+    expect(pinnedNotePermissions(authored("someone-else"), owner)).toEqual({ canEdit: true, canRemove: true });
+    expect(pinnedNotePermissions(authored(null), owner)).toEqual({ canEdit: true, canRemove: true });
+    expect(pinnedNotePermissions(authored("p"), prac)).toEqual({ canEdit: true, canRemove: false });
+    expect(pinnedNotePermissions(authored("someone-else"), prac)).toEqual({ canEdit: false, canRemove: false });
+    expect(pinnedNotePermissions(authored(null), prac)).toEqual({ canEdit: false, canRemove: false });
+  });
+
+  it("a practitioner sees Edit on their own caution and never Remove", () => {
+    const html = render({ isOwner: false, practitionerId: "p" }, authored("p"));
+    expect(html).toContain('aria-label="Edit pinned note"');
+    expect(html).not.toContain('aria-label="Remove pinned note"');
+  });
+
+  it("a practitioner sees neither control on a colleague's or a legacy caution, but can still read and add", () => {
+    for (const by of ["someone-else", null]) {
+      const html = render({ isOwner: false, practitionerId: "p" }, authored(by));
+      expect(html).toContain("Latex allergy");
+      expect(html).not.toContain('aria-label="Edit pinned note"');
+      expect(html).not.toContain('aria-label="Remove pinned note"');
+      expect(html).toContain('aria-label="New pinned note"');
+    }
+  });
+
+  it("the owner sees both controls on every caution", () => {
+    for (const by of ["p", "someone-else", null]) {
+      const html = render({ isOwner: true, practitionerId: "o" }, authored(by));
+      expect(html).toContain('aria-label="Edit pinned note"');
+      expect(html).toContain('aria-label="Remove pinned note"');
+    }
   });
 });
 

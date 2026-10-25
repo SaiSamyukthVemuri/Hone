@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# Install Playwright's Chromium system packages without letting a slow apt
+# Install Playwright's system packages for ONE browser (chromium by default;
+# `webkit` for the non-required HON-62 WebKit job) without letting a slow apt
 # mirror consume a job's time budget.
 #
 # On 2026-10-23 every ceiling cancellation (6 of 6) was this install crawling
@@ -41,6 +42,17 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
+# The browser whose packages to install. Allow-listed: anything else is a
+# typo in a workflow and fails before apt is touched.
+BROWSER="${1:-chromium}"
+case "$BROWSER" in
+  chromium | webkit) ;;
+  *)
+    echo "::error::playwright-system-deps: unknown browser '$BROWSER' (chromium | webkit)"
+    exit 2
+    ;;
+esac
+
 CACHE_DIR="${PW_DEB_CACHE_DIR:-$HOME/apt-debs}"
 ARCHIVES="${APT_ARCHIVES_DIR:-/var/cache/apt/archives}"
 MIRROR_FILES="${APT_MIRROR_FILES:-/etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources}"
@@ -54,7 +66,7 @@ LOCKS="${APT_LOCK_FILES:-/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib
 # The install, with its time limit inside sudo. PATH is passed explicitly
 # because sudo's secure_path would hide the setup-node npx.
 install_deps() {
-  sudo env "PATH=$PATH" timeout --kill-after="$KILL_AFTER" "$1" npx playwright install-deps chromium
+  sudo env "PATH=$PATH" timeout --kill-after="$KILL_AFTER" "$1" npx playwright install-deps "$BROWSER"
 }
 
 # Prints what still holds apt: a live apt-get/dpkg/apt-method process, or a

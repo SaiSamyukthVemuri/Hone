@@ -9,6 +9,7 @@ import {
   compareProviderMoney,
   providerMoneyMismatchDetails,
 } from "@/lib/billing/provider-money-facts";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // ---------------------------------------------------------------------------
 // PR #178. refundPaymentChargeAttempt.
@@ -224,8 +225,7 @@ export async function refundPaymentChargeAttempt(args: {
   if (loadErr) {
     logInternal("payment_refund_load_failed", {
       attemptId: args.attemptId,
-      code: loadErr.code,
-      message: loadErr.message,
+      code: dbErrorCode(loadErr),
     });
     return {
       ok: false,
@@ -273,7 +273,7 @@ export async function refundPaymentChargeAttempt(args: {
       attemptId: args.attemptId,
       studioId: args.studioId,
       practitionerId: args.practitionerId,
-      actorLoadError: actorErr ? actorErr.code : null,
+      actorLoadError: actorErr ? dbErrorCode(actorErr) : null,
     });
     return {
       ok: false,
@@ -414,8 +414,7 @@ export async function refundPaymentChargeAttempt(args: {
   if (claimErr) {
     logInternal("payment_refund_claim_failed", {
       attemptId: attempt.id,
-      code: claimErr.code,
-      message: claimErr.message,
+      code: dbErrorCode(claimErr),
     });
     return {
       ok: false,
@@ -509,8 +508,7 @@ export async function refundPaymentChargeAttempt(args: {
       if (writeFailedErr || failedWriteZeroRows) {
         logInternal("payment_refund_write_failed_outcome_failed", {
           attemptId: attempt.id,
-          code: writeFailedErr?.code ?? null,
-          message: writeFailedErr?.message ?? null,
+          code: dbErrorCode(writeFailedErr),
           zeroRows: failedWriteZeroRows,
         });
         await recordOpsAlert({
@@ -789,8 +787,7 @@ export async function refundPaymentChargeAttempt(args: {
     logInternal("payment_refund_succeeded_write_failed", {
       attemptId: attempt.id,
       stripeRefundId: refund.id,
-      code: writeOkErr?.code ?? null,
-      message: writeOkErr?.message ?? null,
+      code: dbErrorCode(writeOkErr),
       zeroRows: okWriteZeroRows,
     });
     await recordOpsAlert({
