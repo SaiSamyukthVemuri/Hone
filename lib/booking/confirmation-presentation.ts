@@ -48,8 +48,9 @@ export type BookingConfirmationCopy = {
 
 /**
  * HON-47. What the studio lets a client do online, as the confirmation must
- * describe it. Absent means everything on (today's copy, byte for byte). The
- * three fields mirror what is actually delivered: `cancellation` and
+ * describe it. REQUIRED of every caller, with no permissive default: a surface
+ * that does not know the studio's policy must say so at the call site rather
+ * than silently promise both actions (Codex P2 4370627031). The three fields mirror what is actually delivered: `cancellation` and
  * `reschedule` are the links the confirmation EMAIL carries
  * (lib/email/send-appointment.ts withdraws a link whose flag is off), and
  * `manageLink` is whether the card shows the "Manage booking" action at all
@@ -59,12 +60,6 @@ export type ConfirmationSelfService = {
   cancellation: boolean;
   reschedule: boolean;
   manageLink: boolean;
-};
-
-const ALL_SELF_SERVICE: ConfirmationSelfService = {
-  cancellation: true,
-  reschedule: true,
-  manageLink: true,
 };
 
 /** "cancel", "reschedule" or "cancel or reschedule"; null when neither is offered. */
@@ -87,10 +82,9 @@ function actionPhrase(s: ConfirmationSelfService): string | null {
 export function buildBookingConfirmationCopy(input: {
   emailStatus: ConfirmationEmailStatus;
   email: string;
-  selfService?: ConfirmationSelfService;
+  selfService: ConfirmationSelfService;
 }): BookingConfirmationCopy {
-  const { emailStatus, email } = input;
-  const selfService = input.selfService ?? ALL_SELF_SERVICE;
+  const { emailStatus, email, selfService } = input;
   const manageLabel = "Manage booking";
   const action = actionPhrase(selfService);
   const intake = "If your studio asks for a health intake, you’ll receive that link too.";

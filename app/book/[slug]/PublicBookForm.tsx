@@ -489,7 +489,7 @@ export function PublicBookForm({
         email,
         manageUrl: r.manageUrl,
         emailStatus: r.confirmationEmailStatus,
-        selfService: r.selfService ?? { cancellation: true, reschedule: true },
+        selfService: r.selfService,
       });
     });
   }

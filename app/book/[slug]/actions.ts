@@ -444,9 +444,9 @@ export type PublicBookResult =
       manageUrl: string | null;
       confirmationEmailStatus: ConfirmationEmailStatus;
       // HON-47. Which email links and card actions the studio offers, so the
-      // confirmation copy never promises one it withdrew. The action always
-      // sets it; absent (a test double) reads as everything on.
-      selfService?: { cancellation: boolean; reschedule: boolean };
+      // confirmation copy never promises one it withdrew. Required: no caller
+      // may leave the studio's policy to a permissive default.
+      selfService: { cancellation: boolean; reschedule: boolean };
     }
   | {
       ok: false;

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NEW_CLIENT_WAITLIST_SLUGS_ENV } from "@/lib/booking/new-client-waitlist";
 import { addDays, todayInTz } from "@/lib/booking/tz";
@@ -91,6 +93,8 @@ const scenario = {
   studioReadError: null as { code: string } | null,
   studioMissing: false,
   sendConfirmationEmails: true,
+  /** HON-47: the studio's persisted self-service flags; absent = today's row. */
+  policyFlags: {} as Record<string, boolean>,
   notifyPractitioner: true,
   serviceReadError: null as { code: string } | null,
   /** Makes the failure-aware range loader answer { ok: false }. */
@@ -171,6 +175,7 @@ function resolveRow(table: string, f: Record<string, unknown>) {
         buffer_minutes: 0,
         public_booking_horizon_months: scenario.horizonMonths,
         send_confirmation_emails: scenario.sendConfirmationEmails,
+        ...scenario.policyFlags,
         show_treatment_time_to_clients: false,
         notify_practitioner_on_new_booking: scenario.notifyPractitioner,
       },
@@ -480,6 +485,7 @@ beforeEach(() => {
     studioReadError: null,
     studioMissing: false,
     sendConfirmationEmails: true,
+    policyFlags: {},
     notifyPractitioner: true,
     serviceReadError: null,
     rangeReadFails: false,
@@ -969,6 +975,46 @@ describe("K. a WAIT-enabled studio still lets an authenticated returning client 
 // ---------------------------------------------------------------------------
 // The post-commit law, and the truth of the acknowledgement.
 // ---------------------------------------------------------------------------
+
+// Codex P2 4370627031. The portal confirmation must describe only the email links
+// the studio still offers: the result carries the studio's flags and the card
+// feeds them to the same builder the public confirmation uses.
+describe("the portal confirmation follows the studio's cancel/reschedule flags", () => {
+  const STATUSES = ["sent", "failed", "disabled"] as const;
+  for (const cancellation of [true, false]) {
+    for (const reschedule of [true, false]) {
+      for (const status of STATUSES) {
+        it(`cancel=${cancellation} reschedule=${reschedule} email=${status}: result flags and the copy shown`, async () => {
+          scenario.policyFlags = { client_cancellation_enabled: cancellation, client_reschedule_enabled: reschedule };
+          if (status === "failed") scenario.confirmationEmailOk = false;
+          if (status === "disabled") scenario.sendConfirmationEmails = false;
+          const out = await bookAnotherAppointmentAction(form());
+          expect(out.ok).toBe(true);
+          if (!out.ok) throw new Error("unreachable");
+          expect(out.confirmationEmailStatus).toBe(status);
+          expect(out.selfService).toEqual({ cancellation, reschedule });
+
+          // What PortalRebookCard shows: the builder fed the result, the button always present.
+          const { buildBookingConfirmationCopy } = await import("@/lib/booking/confirmation-presentation");
+          const copy = buildBookingConfirmationCopy({
+            emailStatus: out.confirmationEmailStatus,
+            email: out.confirmationEmail ?? "the address on file",
+            selfService: { ...out.selfService, manageLink: true },
+          });
+          const text = copy.steps.join(" ");
+          expect(/cancel/i.test(text), "cancel").toBe(cancellation);
+          expect(/reschedule/i.test(text), "reschedule").toBe(reschedule);
+        });
+      }
+    }
+  }
+
+  it("the card passes the action's flags to the builder, never a constant", () => {
+    const src = readFileSync(join(process.cwd(), "app/portal/PortalRebookCard.tsx"), "utf8");
+    expect(src).toContain("selfService: res.selfService,");
+    expect(src).toMatch(/selfService: \{ \.\.\.done\.selfService, manageLink: true \}/);
+  });
+});
 
 describe("a committed booking survives every downstream failure", () => {
   it("reports `sent` only when the provider accepted", async () => {

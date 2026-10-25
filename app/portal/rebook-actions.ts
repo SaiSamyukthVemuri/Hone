@@ -23,6 +23,7 @@ import {
   hashAppointmentToken,
 } from "@/lib/booking/appointment-token";
 import type { ConfirmationEmailStatus } from "@/lib/booking/confirmation-presentation";
+import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
@@ -152,6 +153,12 @@ export type PortalRebookResult =
        * ever reported as `sent`.
        */
       confirmationEmailStatus: ConfirmationEmailStatus;
+      /**
+       * HON-47. Which email links the studio offers, so the portal confirmation
+       * never promises a cancel or reschedule link the email withdrew. Read from
+       * the studio row this action already loaded, never from the browser.
+       */
+      selfService: { cancellation: boolean; reschedule: boolean };
     }
   | Refusal;
 
@@ -884,6 +891,7 @@ export async function bookAnotherAppointmentAction(
     revalidatePath("/calendar/upcoming");
   });
 
+  const selfServicePolicy = clientSelfServicePolicyFromStudio(studio);
   return {
     ok: true,
     appointmentId: createdId,
@@ -892,6 +900,10 @@ export async function bookAnotherAppointmentAction(
     serviceName: service.service.name,
     confirmationEmail: clientEmail,
     confirmationEmailStatus,
+    selfService: {
+      cancellation: selfServicePolicy.cancellation,
+      reschedule: selfServicePolicy.reschedule,
+    },
   };
 }
 
