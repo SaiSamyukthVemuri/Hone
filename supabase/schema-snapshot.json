@@ -3,7 +3,7 @@
   "migrations": {
     "count": 246,
     "last": "0255_lint_hardening_anon_surface.sql",
-    "sha256": "023921e27bb0c02d02b77cf9ae6f91fd50e22a0ef0f8d05f3327708aebb823b2"
+    "sha256": "6b35c5e7f4a92d44ec94a6a0bce33ab9ac262515605ad64a64bde01fd4981163"
   },
   "public": {
     "tables": [

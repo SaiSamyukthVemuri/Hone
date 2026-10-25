@@ -31,9 +31,17 @@
 --      INSERT-only for anon/authenticated (no SELECT, UPDATE, DELETE, TRUNCATE
 --      grant), the insert policy states what a form may write, and CHECK
 --      constraints bound field length and email format. The constraints are
---      NOT VALID: they bind every NEW insert and update, existing rows are not
---      scanned and cannot block the apply. Validate later, after a read-only
---      check of the longest existing values.
+--      NOT VALID: existing rows are not scanned, so legacy data cannot block the
+--      apply. A NOT VALID check still binds every later INSERT, COPY and UPDATE
+--      of a row, against ALL its columns, so a legacy row that violates one
+--      cannot be updated (the admin "mark contacted" UPDATE) and aborts a
+--      logical restore load. NOT VALID is therefore only a bridge. The S1
+--      preflight (supabase/preflight/0255-lint-hardening.preflight.sql) counts
+--      violating rows per constraint, read-only and counts only; when every
+--      count is zero the operator runs supabase/preflight/0255-lint-hardening.
+--      validate.sql, which validates only the constraints whose count is zero.
+--      A non-zero count needs an approved data step first; until then the
+--      restore plan drops and re-adds the constraint around the load.
 --
 -- NOT touched, on purpose: rls_auto_enable (platform-owned, backs the ensure_rls
 -- event trigger), btree_gist (extension_in_public), leaked-password protection
@@ -120,7 +128,7 @@ begin
   end if;
 
   for v_pol in
-    select pol.polname, pol.polrelid, pol.polroles, n.nspname, c.relname,
+    select pol.polname, pol.polrelid, pol.polroles, pol.polpermissive, n.nspname, c.relname,
            coalesce(pg_catalog.pg_get_expr(pol.polqual, pol.polrelid), '') || ' ' ||
            coalesce(pg_catalog.pg_get_expr(pol.polwithcheck, pol.polrelid), '') as expr
       from pg_catalog.pg_policy pol
@@ -133,6 +141,12 @@ begin
     if v_expr !~ v_pattern then continue; end if;
     if v_anon = any(v_pol.polroles) then
       raise exception '0255: policy % on %.% names anon and calls an RLS predicate; review before revoking',
+        v_pol.polname, v_pol.nspname, v_pol.relname;
+    end if;
+    -- Retargeting a RESTRICTIVE policy would LOOSEN anon (a restrictive policy
+    -- narrows what permissive ones allow). None exists today; fail closed.
+    if not v_pol.polpermissive then
+      raise exception '0255: restrictive policy % on %.% calls an RLS predicate and applies to anon; review before retargeting',
         v_pol.polname, v_pol.nspname, v_pol.relname;
     end if;
     execute pg_catalog.format('alter policy %I on %I.%I to authenticated',
@@ -186,12 +200,16 @@ create policy "demo_requests_anonymous_insert"
   with check (status = 'new' and name is not null and email is not null);
 
 alter table public.waitlist
+  drop constraint if exists waitlist_email_format_chk,
+  drop constraint if exists waitlist_field_length_chk,
   add constraint waitlist_email_format_chk
     check (char_length(email) between 3 and 254 and email ~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$') not valid,
   add constraint waitlist_field_length_chk
     check (char_length(practice_name) <= 300 and char_length(source) <= 40) not valid;
 
 alter table public.demo_requests
+  drop constraint if exists demo_requests_email_format_chk,
+  drop constraint if exists demo_requests_field_length_chk,
   add constraint demo_requests_email_format_chk
     check (char_length(email) between 3 and 254 and email ~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$') not valid,
   add constraint demo_requests_field_length_chk
@@ -257,6 +275,71 @@ begin
       raise exception '0255: service_role lost SELECT on % (admin console reads it)', v_table;
     end if;
   end loop;
+end;
+$$;
+
+-- Policy shape on the two forms, asserted by CATALOG, never by name alone: a
+-- differently named always-true copy that survived the replacement above would
+-- OR together with the new policy and make this hardening a silent no-op.
+do $$
+declare
+  v_table pg_catalog.text;
+  v_rel pg_catalog.regclass;
+  v_anon pg_catalog.oid;
+  v_auth pg_catalog.oid;
+  v_n pg_catalog.int4;
+begin
+  select r.oid into v_anon from pg_catalog.pg_roles r where r.rolname = 'anon';
+  select r.oid into v_auth from pg_catalog.pg_roles r where r.rolname = 'authenticated';
+  foreach v_table in array array['waitlist', 'demo_requests'] loop
+    v_rel := pg_catalog.to_regclass('public.' || v_table);
+    if v_rel is null then
+      raise exception '0255: public.% is missing', v_table;
+    end if;
+
+    select pg_catalog.count(*)::pg_catalog.int4 into v_n from pg_catalog.pg_policy pol
+     where pol.polrelid = v_rel and pol.polcmd in ('a', '*');
+    if v_n <> 1 then
+      raise exception '0255: public.% must have exactly one INSERT-capable policy, found %', v_table, v_n;
+    end if;
+
+    if exists (
+      select 1 from pg_catalog.pg_policy pol
+       where pol.polrelid = v_rel and pol.polcmd in ('a', '*') and pol.polpermissive
+         and coalesce(
+               pg_catalog.pg_get_expr(pol.polwithcheck, pol.polrelid),
+               pg_catalog.pg_get_expr(pol.polqual, pol.polrelid),
+               'true') = 'true'
+    ) then
+      raise exception '0255: public.% still has a permissive always-true INSERT policy', v_table;
+    end if;
+
+    if not exists (
+      select 1 from pg_catalog.pg_policy pol
+       where pol.polrelid = v_rel and pol.polname = v_table || '_anonymous_insert'
+         and pol.polcmd = 'a' and pol.polpermissive
+    ) then
+      raise exception '0255: public.% lacks its bounded INSERT policy', v_table;
+    end if;
+
+    -- INSERT-only: no policy of any other command may apply to PUBLIC, anon or
+    -- authenticated, so no anonymous (or signed-in) read, update or delete path
+    -- exists even if a grant is later restored.
+    if exists (
+      select 1 from pg_catalog.pg_policy pol
+       where pol.polrelid = v_rel and pol.polcmd in ('r', 'w', 'd', '*')
+         and (pol.polroles = array[0]::pg_catalog.oid[] or v_anon = any (pol.polroles) or v_auth = any (pol.polroles))
+    ) then
+      raise exception '0255: public.% has a read, update or delete policy applying to a browser role', v_table;
+    end if;
+  end loop;
+
+  select pg_catalog.count(*)::pg_catalog.int4 into v_n from pg_catalog.pg_constraint con
+   where con.conname in ('waitlist_email_format_chk', 'waitlist_field_length_chk',
+                         'demo_requests_email_format_chk', 'demo_requests_field_length_chk');
+  if v_n <> 4 then
+    raise exception '0255: expected 4 form CHECK constraints, found %', v_n;
+  end if;
 end;
 $$;
 

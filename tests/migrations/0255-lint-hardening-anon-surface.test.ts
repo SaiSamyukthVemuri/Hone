@@ -69,4 +69,74 @@ describe("0255 LINT hardening: shape and boundaries", () => {
     expect(actions).toMatch(/admin\s*\.from\("demo_requests"\)/);
     expect(actions).toContain("createAdminClient()");
   });
+
+  it("asserts the form policies by catalog at apply time, and refuses to retarget a restrictive policy (Privacy F1, F3)", () => {
+    expect(code).toContain("exactly one INSERT-capable policy");
+    expect(code).toContain("still has a permissive always-true INSERT policy");
+    expect(code).toContain("read, update or delete policy applying to a browser role");
+    expect(code).toContain("not v_pol.polpermissive");
+    expect(code).toContain("pol.polpermissive");
+  });
+
+  it("is re-runnable: constraints are dropped if present before they are added", () => {
+    expect([...code.matchAll(/drop constraint if exists/g)]).toHaveLength(4);
+  });
+});
+
+// Privacy PEER-1128 F2/F5: the operator preflight and validate scripts.
+const norm = (text: string) => text.replace(/\s+/g, " ").trim();
+const preflight = readFileSync("supabase/preflight/0255-lint-hardening.preflight.sql", "utf8");
+const validate = readFileSync("supabase/preflight/0255-lint-hardening.validate.sql", "utf8");
+const pre = preflight.replace(/^\s*--.*$/gm, "");
+const val = validate.replace(/^\s*--.*$/gm, "");
+
+describe("0255 S1 preflight and validate scripts", () => {
+  const constraints = [...code.matchAll(/add constraint (\w+)\s+check \(([\s\S]*?)\) not valid/g)].map((m) => [m[1], norm(m[2])]);
+
+  it("reads the same four constraint expressions the migration adds, so the two cannot drift", () => {
+    expect(constraints.map(([n]) => n).sort()).toEqual([
+      "demo_requests_email_format_chk",
+      "demo_requests_field_length_chk",
+      "waitlist_email_format_chk",
+      "waitlist_field_length_chk",
+    ]);
+    for (const [name, expression] of constraints) {
+      expect(norm(pre), `preflight ${name}`).toContain(`(${expression}) is false`);
+      expect(norm(val), `validate ${name}`).toContain(expression);
+    }
+  });
+
+  it("the preflight is read-only: SELECT statements only, and only counts from the two form tables", () => {
+    const statements = pre.split(";").map((x) => x.trim()).filter(Boolean);
+    expect(statements.length).toBeGreaterThanOrEqual(7);
+    for (const statement of statements) expect(statement).toMatch(/^select\b/i);
+    expect(pre).not.toMatch(/\b(insert|update|delete|alter|create|drop|grant|revoke|truncate|copy)\b/i);
+    for (const statement of statements.filter((x) => /from public\.(waitlist|demo_requests)\b/.test(x))) {
+      expect(statement).toMatch(/^select '\w+' as constraint_name, count\(\*\) as violating_rows\s+from public\.(waitlist|demo_requests)\s+where/);
+    }
+  });
+
+  it("the preflight lists all 21 functions, their owner, definer flag, config and ACL, and the BYPASSRLS flag of every grantee", () => {
+    const sigs = [...pre.matchAll(/'(public\.\w+\([a-z]*\))'/g)].map((m) => m[1]);
+    expect(new Set(sigs).size).toBe(21);
+    for (const field of ["proowner", "prosecdef", "proconfig", "proacl", "rolbypassrls"]) expect(pre).toContain(field);
+    for (const table of ["waitlist", "demo_requests", "studio_timed_blocks", "payment_charge_attempts"]) expect(pre).toContain(`'${table}'`);
+    expect(pre).toContain("pg_policy");
+  });
+
+  it("the preflight's function list is exactly the functions the migration alters or revokes", () => {
+    const alters = [...code.matchAll(/alter function (public\.\w+\(\)) set search_path/g)].map((m) => m[1]);
+    const revokes = [...code.matchAll(/revoke execute on function (public\.\w+\([a-z]*\)) from/g)].map((m) => m[1]);
+    const sigs = [...pre.matchAll(/'(public\.\w+\([a-z]*\))'/g)].map((m) => m[1]);
+    expect([...new Set([...alters, ...revokes])].sort()).toEqual([...sigs].sort());
+  });
+
+  it("the validate script validates only what has zero violations and never aborts or deletes", () => {
+    expect(val).toMatch(/begin;/);
+    expect(val).toContain("set local lock_timeout = '5s';");
+    expect(val).toMatch(/commit;\s*$/);
+    expect(val).toContain("is false");
+    expect(val).toMatch(/if v_n = 0 then[\s\S]*validate constraint[\s\S]*else[\s\S]*raise warning/);
+    expect(val).not.toMatch(/\b(delete|update|insert|drop|truncate)\b/i);
+  });
 });

@@ -1,4 +1,9 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { createClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "@/e2e/helpers/local-env";
 import {
   adminQuery,
   adminTx,
@@ -411,5 +416,222 @@ describe("5. what 0255 deliberately does not change", () => {
   it("btree_gist stays in public and rls_auto_enable is never referenced by the migration", async () => {
     const ext = await adminQuery(`select n.nspname from pg_extension e join pg_namespace n on n.oid = e.extnamespace where e.extname = 'btree_gist'`);
     expect(ext.rows[0].nspname).toBe("public");
+  });
+});
+
+// --- Privacy PEER-1128 F1-F4 -------------------------------------------------
+
+const MIGRATION = readFileSync(
+  path.resolve(__dirname, "../../supabase/migrations/0255_lint_hardening_anon_surface.sql"),
+  "utf8",
+)
+  .split("\n")
+  .filter((line) => !/^(begin|commit);$/.test(line.trim()))
+  .join("\n");
+
+describe("6. the migration asserts its own result at apply time (F1)", () => {
+  it("re-running the whole migration is a clean no-op (idempotent, and its assertions hold)", async () => {
+    await sandbox(async ({ q }) => {
+      await q(MIGRATION);
+      await q(MIGRATION);
+    });
+  });
+
+  it("aborts when a DIFFERENTLY NAMED always-true INSERT policy survives on a form table", async () => {
+    await sandbox(async ({ q }) => {
+      await q(`create policy "dashboard_open_insert" on public.waitlist for insert to anon with check (true)`);
+      const err = await failure(q, MIGRATION);
+      expect(err?.message).toMatch(/exactly one INSERT-capable policy, found 2/);
+    });
+  });
+
+  it("aborts when an anonymous or signed-in SELECT policy exists on a form table", async () => {
+    await sandbox(async ({ q }) => {
+      await q(`create policy "dashboard_read" on public.demo_requests for select to anon using (true)`);
+      const err = await failure(q, MIGRATION);
+      expect(err?.message).toMatch(/read, update or delete policy applying to a browser role/);
+    });
+  });
+
+  it("aborts when the replacement leaves a permissive always-true INSERT policy (name-independent)", async () => {
+    await sandbox(async ({ q }) => {
+      // Simulate hosted drift: the migration's policy name is absent and an open policy carries ANOTHER name.
+      // The migration recreates its own bounded policy beside it; only the catalog assertion can see the open one.
+      await q(`drop policy "waitlist_anonymous_insert" on public.waitlist`);
+      await q(`create policy "open_form" on public.waitlist for insert to anon, authenticated with check (true)`);
+      const err = await failure(q, `${MIGRATION}`);
+      expect(err?.message).toMatch(/exactly one INSERT-capable policy, found 2/);
+    });
+  });
+
+  it("aborts rather than retarget a RESTRICTIVE policy that calls a predicate (it would loosen anon)", async () => {
+    await sandbox(async ({ q }) => {
+      await q(
+        `create policy "restrict_read" on public.studio_availability_default as restrictive for select using (public.is_studio_member(studio_id))`,
+      );
+      const err = await failure(q, MIGRATION);
+      expect(err?.message).toMatch(/restrictive policy restrict_read/);
+    });
+  });
+});
+
+describe("7. NOT VALID hazard, and equivalence by differential (F2, F3)", () => {
+  it("a legacy violating row blocks the service_role status UPDATE (23514) while the constraint is NOT VALID", async () => {
+    await sandbox(async ({ q, as }) => {
+      // Reconstruct a legacy row: drop the check, insert a row it would refuse, re-add it NOT VALID.
+      await q(`alter table public.demo_requests drop constraint demo_requests_field_length_chk`);
+      await q(`insert into public.demo_requests (name, email) values ($1, 'legacy@example.test')`, ["x".repeat(201)]);
+      await q(
+        `alter table public.demo_requests add constraint demo_requests_field_length_chk check (
+           char_length(name) between 1 and 200 and char_length(practice_name) <= 300 and char_length(location) <= 300
+           and char_length(current_tool) <= 300 and char_length(notes) <= 5000 and char_length(status) <= 40) not valid`,
+      );
+      const blocked = await as("service_role", null, async (sq) =>
+        failure(sq, `update public.demo_requests set status = 'contacted' where email = 'legacy@example.test'`),
+      );
+      expect(blocked?.code).toBe("23514");
+      // The validate script leaves it NOT VALID and does not abort.
+      const validate = readFileSync(path.resolve(__dirname, "../../supabase/preflight/0255-lint-hardening.validate.sql"), "utf8")
+        .split("\n")
+        .filter((l) => !/^(begin|commit);$/.test(l.trim()))
+        .join("\n");
+      await q(validate);
+      const state = await q(`select convalidated from pg_constraint where conname = 'demo_requests_field_length_chk'`);
+      expect(state.rows[0].convalidated).toBe(false);
+    });
+  });
+
+  it("with no violating rows the validate script validates all four constraints", async () => {
+    await sandbox(async ({ q }) => {
+      const validate = readFileSync(path.resolve(__dirname, "../../supabase/preflight/0255-lint-hardening.validate.sql"), "utf8")
+        .split("\n")
+        .filter((l) => !/^(begin|commit);$/.test(l.trim()))
+        .join("\n");
+      await q(`delete from public.demo_requests where true`);
+      await q(`delete from public.waitlist where true`);
+      await q(validate);
+      const state = await q(
+        `select conname, convalidated from pg_constraint
+          where conname in ('waitlist_email_format_chk','waitlist_field_length_chk','demo_requests_email_format_chk','demo_requests_field_length_chk')
+          order by conname`,
+      );
+      expect(state.rows.map((r) => r.convalidated)).toEqual([true, true, true, true]);
+    });
+  });
+
+  it("differential: the retarget gives anon and authenticated the same row sets as the PUBLIC-default policy did", async () => {
+    await sandbox(async ({ q, as }) => {
+      const readSet = (role: "anon" | "authenticated", userId: string | null) =>
+        as(role, userId, async (uq) => {
+          await uq("savepoint probe");
+          try {
+            const { rows } = await uq(`select studio_id from public.studio_availability_default order by studio_id`);
+            await uq("release savepoint probe");
+            return { rows: rows.map((r) => r.studio_id as string) };
+          } catch (error) {
+            await uq("rollback to savepoint probe");
+            return { error: (error as { code?: string }).code ?? "no-code" };
+          }
+        });
+
+      // BEFORE: the pre-0255 world for this table (PUBLIC-default policy, anon may execute the predicates).
+      await q(`grant execute on function public.is_studio_member(uuid), public.is_studio_owner(uuid), public.session_is_visible(uuid) to anon`);
+      await q(`alter policy studio_availability_default_member_all on public.studio_availability_default to public`);
+      const rolesBefore = await q(
+        `select polroles::text r from pg_policy where polname = 'studio_availability_default_member_all'`,
+      );
+      expect(rolesBefore.rows[0].r).toBe("{0}");
+      const before = { anon: await readSet("anon", null), auth: await readSet("authenticated", a.userId) };
+      expect(before.auth).toEqual({ rows: [a.studioId] }); // non-vacuous: the owner sees exactly their own row
+
+      // Apply the migration.
+      await q(MIGRATION);
+
+      const rolesAfter = await q(
+        `select (select array_agg(r.rolname order by r.rolname) from unnest(pol.polroles) o join pg_roles r on r.oid = o) as roles
+           from pg_policy pol where pol.polname = 'studio_availability_default_member_all'`,
+      );
+      expect(rolesAfter.rows[0].roles).toEqual(["authenticated"]);
+      const after = { anon: await readSet("anon", null), auth: await readSet("authenticated", a.userId) };
+      expect(after).toEqual(before);
+    });
+  });
+});
+
+describe("8. the real PostgREST insert path with the anon key (F4)", () => {
+  const ANON = E2E_WEB_SERVER_ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const uniq = () => `postgrest-${randomUUID().slice(0, 8)}@example.test`;
+  const api = () => createClient(E2E_SUPABASE_URL, ANON, { auth: { persistSession: false, autoRefreshToken: false } });
+
+  afterAll(async () => {
+    await adminQuery(`delete from public.waitlist where email like 'postgrest-%@example.test'`);
+    await adminQuery(`delete from public.demo_requests where email like 'postgrest-%@example.test'`);
+  });
+
+  it("waitlist: a valid row is created exactly as the server action sends it (201, no RETURNING)", async () => {
+    const email = uniq();
+    const result = await api().from("waitlist").insert({ email, source: "landing" });
+    expect(result.error).toBeNull();
+    expect(result.status).toBe(201);
+    const stored = await adminQuery(`select source from public.waitlist where email = $1`, [email]);
+    expect(stored.rows).toEqual([{ source: "landing" }]);
+  });
+
+  it("waitlist: a duplicate is the unique violation (23505) the action treats as success", async () => {
+    const email = uniq();
+    expect((await api().from("waitlist").insert({ email, source: "landing" })).error).toBeNull();
+    expect((await api().from("waitlist").insert({ email, source: "landing" })).error?.code).toBe("23505");
+  });
+
+  it("waitlist: a malformed email is rejected by the CHECK (23514)", async () => {
+    const result = await api().from("waitlist").insert({ email: "not-an-email", source: "landing" });
+    expect(result.error?.code).toBe("23514");
+  });
+
+  it("waitlist: a foreign source is refused by the policy (42501, HTTP 401 for anon)", async () => {
+    const result = await api().from("waitlist").insert({ email: uniq(), source: "partner-import" });
+    expect(result.error?.code).toBe("42501");
+    expect([401, 403]).toContain(result.status);
+  });
+
+  it("demo_requests: the action's full payload is created (201)", async () => {
+    const email = uniq();
+    const result = await api().from("demo_requests").insert({
+      name: "Synthetic Person",
+      email,
+      practice_name: "Synthetic Practice",
+      location: "Toronto",
+      practice_type: "laser",
+      practitioner_count: "2-5",
+      current_tool: "paper",
+      notes: "hello",
+    });
+    expect(result.error).toBeNull();
+    expect(result.status).toBe(201);
+    const stored = await adminQuery(`select status from public.demo_requests where email = $1`, [email]);
+    expect(stored.rows).toEqual([{ status: "new" }]);
+  });
+
+  it("demo_requests: malformed email and oversized notes are rejected (23514); a forged status is refused (42501)", async () => {
+    expect((await api().from("demo_requests").insert({ name: "N", email: "nope" })).error?.code).toBe("23514");
+    expect((await api().from("demo_requests").insert({ name: "N", email: uniq(), notes: "n".repeat(5001) })).error?.code).toBe("23514");
+    expect((await api().from("demo_requests").insert({ name: "N", email: uniq(), status: "contacted" })).error?.code).toBe("42501");
+  });
+
+  it("anonymous reads and RETURNING are refused on both tables (42501, HTTP 401)", async () => {
+    for (const table of ["waitlist", "demo_requests"] as const) {
+      const read = await api().from(table).select("email");
+      expect(read.error?.code, `${table} select`).toBe("42501");
+      expect([401, 403]).toContain(read.status);
+      const returning = await api().from(table).insert(table === "waitlist" ? { email: uniq(), source: "landing" } : { name: "N", email: uniq() }).select();
+      expect(returning.error?.code, `${table} insert returning`).toBe("42501");
+    }
+  });
+
+  it("anonymous update and delete are refused", async () => {
+    for (const table of ["waitlist", "demo_requests"] as const) {
+      expect((await api().from(table).update({ email: uniq() }).eq("email", "x@example.test")).error?.code, `${table} update`).toBe("42501");
+      expect((await api().from(table).delete().eq("email", "x@example.test")).error?.code, `${table} delete`).toBe("42501");
+    }
   });
 });
