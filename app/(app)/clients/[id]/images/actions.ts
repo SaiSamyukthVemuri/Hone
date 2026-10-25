@@ -32,13 +32,17 @@ import { dbErrorCode } from "@/lib/logging/error-class";
 // client input, and a client-supplied storage path is NEVER signed.
 
 export type ImageActionResult = { ok: true } | { ok: false; error: string };
+// 0232: the upload result can also say the photo was stored but its
+// capture-stage label was not saved (the photo stays UNLABELLED, never
+// mislabelled; the practitioner sets it on the tile).
+export type UploadImageResult = { ok: true; labelNotSaved?: true } | { ok: false; error: string };
 export type SignedUrlResult =
   | { ok: true; url: string }
   | { ok: false; error: string };
 
 export async function uploadTreatmentImageAction(
   formData: FormData,
-): Promise<ImageActionResult> {
+): Promise<UploadImageResult> {
   // Auth first (may redirect/throw for non-practitioners); never wrapped so a
   // redirect propagates correctly.
   // `studio` is still needed for the storage path and the ops alerts; the
@@ -273,8 +277,27 @@ export async function uploadTreatmentImageAction(
       }
     }
 
+    // 0232: an optional capture-stage label chosen at upload, applied right
+    // after the photo is recorded (the accepted two-call shape). Only a photo
+    // linked to a visit can carry one, and only "before" / "after" are sent.
+    // A failed label NEVER fails the upload: the photo is stored and stays
+    // UNLABELLED, and the result says so honestly.
+    const rawStage = String(formData.get("captureStage") ?? "");
+    let labelNotSaved = false;
+    if (sessionId && (rawStage === "before" || rawStage === "after")) {
+      try {
+        const { data: labelled, error: labelErr } = await supabase.rpc(
+          "set_treatment_image_capture_stage",
+          { p_image_id: id, p_client_id: clientId, p_stage: rawStage },
+        );
+        labelNotSaved = Boolean(labelErr) || !labelled;
+      } catch {
+        labelNotSaved = true;
+      }
+    }
+
     revalidatePath(`/clients/${clientId}/images`);
-    return { ok: true };
+    return labelNotSaved ? { ok: true, labelNotSaved: true } : { ok: true };
   } catch {
     return { ok: false, error: "Could not upload the image." };
   }
@@ -416,5 +439,42 @@ export async function setClientPortraitAction(input: {
     return { ok: true };
   } catch {
     return { ok: false, error: "Could not update the ID photo." };
+  }
+}
+
+// FETT photos (HON-43), 0232: label a VISIT photo as taken before or after
+// treatment, or clear the label with stage=null. The command resolves the actor
+// from auth.uid() per studio and refuses a photo with no visit, so this action
+// only gates auth, rejects any value but the two stages, and maps the outcome.
+// A NULL return stays the generic "not found": it never reveals whether
+// another client's or studio's photo exists.
+export type TreatmentImageCaptureStage = "before" | "after";
+
+export async function setTreatmentImageCaptureStageAction(input: {
+  imageId: string;
+  clientId: string;
+  stage: TreatmentImageCaptureStage | null;
+}): Promise<ImageActionResult> {
+  await getCurrentPractitionerWithStudio();
+  if (input.stage !== null && input.stage !== "before" && input.stage !== "after") {
+    return { ok: false, error: "Choose before or after." };
+  }
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("set_treatment_image_capture_stage", {
+      p_image_id: input.imageId,
+      p_client_id: input.clientId,
+      p_stage: input.stage,
+    });
+    if (error) {
+      return { ok: false, error: "Could not update the photo label." };
+    }
+    if (!data) {
+      return { ok: false, error: "Treatment photo not found." };
+    }
+    revalidatePath(`/clients/${input.clientId}/images`);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not update the photo label." };
   }
 }
