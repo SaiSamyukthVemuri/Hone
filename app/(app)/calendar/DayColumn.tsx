@@ -61,7 +61,7 @@ import {
   VISIBLE_MINUTES,
 } from "./calendar-constants";
 import { NowLine } from "./NowLine";
-import { calendarBlockScopeLabel, type BlockScopeNames } from "@/lib/calendar/block-scope";
+import { calendarBlockScopeLabel, quickBlockScopeFor, type BlockScopeNames } from "@/lib/calendar/block-scope";
 import { appointmentCardClasses } from "@/lib/calendar/service-colors";
 import {
   displayBlockoutLabel,
@@ -1023,6 +1023,8 @@ export function DayColumn({
         draft={blockDraft}
         studioTimezone={tz}
         onClose={() => setBlockDraft(null)}
+
+        scope={quickBlockScopeFor({ names: blockScopeNames, isOwner, currentPractitionerId, currentPractitionerName })}
       />
 
       {/* PR C: edit/delete a one-off timed block (owner-only; non-owners see a

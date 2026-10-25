@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 251,
-    "last": "0252_client_portal_controls.sql",
-    "sha256": "a10e12b3146e8dcd9e94e39a93dc568aceedb212eeafa7a4d7c539df4e9bf24f"
+    "count": 252,
+    "last": "0253_member_scoped_block_authorship.sql",
+    "sha256": "8f253a692587e519a7bf61727539e09c67fa3e26c39da80a5e74c0730890ca88"
   },
   "public": {
     "tables": [
@@ -334,6 +334,7 @@
       "mark_stripe_event_processed",
       "mark_waitlist_mobile_verified",
       "materialize_recurring_break_rule",
+      "member_owns_scoped_timed_block",
       "mint_setup_group_keys",
       "move_appointment_core",
       "move_or_reassign_appointment",
