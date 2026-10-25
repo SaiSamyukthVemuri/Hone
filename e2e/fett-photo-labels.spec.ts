@@ -77,6 +77,8 @@ async function focusedButton(page: Page): Promise<string | null> {
   });
 }
 
+const AWAY_FROM_APP = /\/(front-desk|no-access)/;
+
 async function loginAsReceptionist(page: Page, email: string): Promise<void> {
   await page.goto("/login");
   await page.getByLabel("I am using my invited email address").check();
@@ -86,8 +88,11 @@ async function loginAsReceptionist(page: Page, email: string): Promise<void> {
   const link = await waitForMagicLink(email, E2E_APP_ORIGIN, { excludeIds: seen });
   await page.goto(link);
   // A receptionist has no practitioners row: the middleware sends every app
-  // route, /dashboard included, to the front desk.
-  await page.waitForURL(/\/front-desk/, { timeout: 30_000 });
+  // route, /dashboard included, away from the practitioner surface. With the
+  // front-desk routing that is /front-desk; on a build without it (the #1035
+  // candidate carries the 0216 membership migration but not that routing) it
+  // is the /no-access gate. Either way the receptionist is refused the photos.
+  await page.waitForURL(AWAY_FROM_APP, { timeout: 30_000 });
 }
 
 test("a practitioner labels a visit photo at upload, relabels and clears it by keyboard; a receptionist is refused", async ({
@@ -257,12 +262,12 @@ test("a practitioner labels a visit photo at upload, relabels and clears it by k
     const p = await desk.newPage();
     await loginAsReceptionist(p, deskEmail);
     await p.goto(`/clients/${clientId}/images`);
-    await expect(p).toHaveURL(/\/front-desk$/);
+    await expect(p).toHaveURL(/\/(front-desk|no-access)$/);
     await expect(p.getByTestId("capture-stage")).toHaveCount(0);
     const r = await p.request.get(`/api/clients/${clientId}/images/${imageId}/signed-url?variant=thumb`, { maxRedirects: 0 });
     expect(r.status()).toBe(307);
     const location = r.headers()["location"] ?? "";
-    expect(new URL(location, "http://x").pathname).toBe("/front-desk");
+    expect(["/front-desk", "/no-access"]).toContain(new URL(location, "http://x").pathname);
     for (const s of [await r.text(), location]) expect(s).not.toMatch(/\/storage\/v1\/object\/sign\/|token=/);
   } finally {
     await desk.close();
