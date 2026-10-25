@@ -1979,8 +1979,8 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   it("the checkout count across the workflow directory is the reviewed one", () => {
     expect(
       checkoutCount(WORKFLOWS),
-      "9 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089; storage-photos by E-GAPS; webkit-hon-62 by HON-62) + 1 in nightly.yml + 1 in restore-drill.yml (DR-01A)",
-    ).toBe(12);
+      "9 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089; storage-photos by E-GAPS; webkit-hon-62 by HON-62) + 1 in nightly.yml + 1 in restore-drill.yml (DR-01A) + 1 in push-image-pull-rehearsal.yml (PUSH-IMAGE-PULL, REHEARSAL - NEVER MERGE)",
+    ).toBe(13);
   });
 
   // -------------------------------------------------------------------------
