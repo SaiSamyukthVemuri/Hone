@@ -1,0 +1,85 @@
+# REHEARSAL - NEVER MERGE. Evidence only: what the OLD reminder cron's RPCs do on a database with and without 0247.
+# Calls claim_email_send and record_email_result as service_role (the role the cron uses) on synthetic ids; nothing is sent.
+name: rehearsal-followup-probe
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/rehearsal-followup-probe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cell:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "0246 only (before 0247)", set: "" }
+          - { name: "0246 + 0247", set: "0247" }
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Keep 0001-0246 plus only this cell's follow-up migrations
+        env:
+          SET: ${{ matrix.set }}
+        run: |
+          set -eu
+          cd supabase/migrations
+          for f in [0-9]*.sql; do
+            n="${f%%_*}"
+            keep=0
+            [ "$((10#$n))" -le 246 ] && keep=1
+            for s in $SET; do [ "$n" = "$s" ] && keep=1; done
+            [ "$keep" = 1 ] || rm "$f"
+          done
+          echo "last: $(ls | tail -1)"
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          version: 2.102.0
+
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start local Supabase (applies the directory to an empty database)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"; exit "${PIPESTATUS[0]}"
+
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Probe the legacy reminder RPCs as service_role
+        shell: bash
+        env:
+          CELL: ${{ matrix.name }}
+        run: |
+          c="$(docker ps --format '{{.Names}}' | grep '^supabase_db_' | head -1)"
+          q() { docker exec "$c" psql -U postgres -At -c "$1" 2>&1 | head -3 | tr '\n' ' '; }
+          echo "PROBE [$CELL]"
+          echo "  has_function_privilege(service_role, claim_email_send(uuid,text)) = $(q "select has_function_privilege('service_role','public.claim_email_send(uuid,text)','EXECUTE')")"
+          echo "  has_function_privilege(service_role, record_email_result(uuid,text,boolean)) = $(q "select has_function_privilege('service_role','public.record_email_result(uuid,text,boolean)','EXECUTE')")"
+          echo "  call claim_email_send as service_role for a synthetic id -> $(q "set role service_role; select public.claim_email_send(gen_random_uuid(),'reminder_24h')")"
+          echo "  call record_email_result as service_role for a synthetic id -> $(q "set role service_role; select public.record_email_result(gen_random_uuid(),'reminder_24h',true)")"
