@@ -17,6 +17,7 @@ import {
   getLotTraceability,
   normalizeLotSearch,
   getClientProcedureRecords,
+  getDisinfectantRecordForNotice,
   getDisinfectantRecords,
   getExposureIncidentRecords,
   getProcedureAuditEvents,
@@ -55,6 +56,7 @@ import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import { recoverRecordsRead } from "@/lib/record-keeping/section-recovery";
 import {
   disinfectantRecordAnchor,
+  placeFocusedRecord,
   resolveFocusedDisinfectantId,
 } from "@/lib/record-keeping/disinfectant-focus";
 import { RefreshRetryButton } from "./refresh-retry-button";
@@ -600,7 +602,18 @@ async function DisinfectantsSection({
   timezone: string;
 }) {
   const domain = startPerfSpan("records.domain");
-  const records = await getDisinfectantRecords(studioId);
+  const newest = await getDisinfectantRecords(studioId);
+  // The notice's record can be older than the newest 200 rows: fetch that ONE
+  // record (studio-scoped, RLS client) and place it first. Compare-only; an
+  // unknown or other-studio id changes nothing.
+  const records =
+    focusRecordId && !newest.some((r) => r.id === focusRecordId)
+      ? placeFocusedRecord(
+          newest,
+          focusRecordId,
+          await getDisinfectantRecordForNotice(studioId, focusRecordId),
+        )
+      : newest;
   const audit = await getAuditEventsByRecord(
     studioId,
     "disinfectant",
