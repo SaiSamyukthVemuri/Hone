@@ -166,13 +166,18 @@ describe("3E-4: authenticated-owner RLS CRUD for scoped timed blocks", () => {
     });
   });
 
-  it("a non-owner member is denied scoped INSERT but keeps studio-wide; anon denied", async () => {
-    const scoped = await asUser(member().userId, (q) => ownerIns(q, P(1)))
-      .then((r) => ({ rows: r.rowCount, err: null as string | null }))
-      .catch((e) => ({ rows: null, err: e.code as string }));
-    expect(scoped.rows === 0 || scoped.err != null).toBe(true);
-    const wide = await asUser(member().userId, (q) => ownerIns(q, null));
-    expect(wide.rowCount).toBe(1);
+  it("a non-owner member writes only their OWN scope (0253); a colleague's and studio-wide are denied with capacity ON; anon denied", async () => {
+    const attempt = (pid: string | null, starts: string, ends: string) =>
+      asUser(member().userId, (q) => ownerIns(q, pid, starts, ends))
+        .then((r) => ({ rows: r.rowCount, err: null as string | null }))
+        .catch((e) => ({ rows: null, err: e.code as string }));
+    expect(await attempt(P(2), "2031-05-10T10:00:00Z", "2031-05-10T11:00:00Z")).toEqual({ rows: null, err: "42501" });
+    expect(await attempt(null, "2031-05-10T12:00:00Z", "2031-05-10T13:00:00Z")).toEqual({ rows: null, err: "42501" });
+    expect(await attempt(P(1), "2031-05-10T14:00:00Z", "2031-05-10T15:00:00Z")).toMatchObject({ rows: 1, err: null });
+    // capacity OFF keeps the studio-wide drag-to-block for a member
+    await setCap(false);
+    expect(await attempt(null, "2031-05-10T16:00:00Z", "2031-05-10T17:00:00Z")).toMatchObject({ rows: 1, err: null });
+    await setCap(true);
     const anon = await asRole("anon", (q) => ownerIns(q, null))
       .then((r) => ({ rows: r.rowCount, err: null as string | null }))
       .catch((e) => ({ rows: null, err: e.code as string }));

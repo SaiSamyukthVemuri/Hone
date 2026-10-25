@@ -60,7 +60,9 @@ describe("capacity ON — a member blocks only their own schedule", () => {
   });
   it("a deactivated member may not insert anything", async () => {
     await adminQuery(`update public.practitioners set active = false where id = $1`, [bo().practitionerId]);
-    expect(await code(insertAs(bo().userId, B.studioId, bo().practitionerId))).toBe("42501");
+    // The BEFORE INSERT guard runs ahead of RLS and names an inactive target (23514);
+    // either way the row is refused.
+    expect(["23514", "42501"]).toContain(await code(insertAs(bo().userId, B.studioId, bo().practitionerId)));
     expect(await code(insertAs(bo().userId, B.studioId, null))).toBe("42501");
   });
   it("tenant isolation: a member of B cannot write into studio A, with their own id or A's", async () => {
