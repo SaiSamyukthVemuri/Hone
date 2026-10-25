@@ -121,6 +121,7 @@ type SessionRow = {
   next_session_note: string | null;
   aftercare_and_risks_explained_at: string | null;
   modality: string;
+  appointment_id: string | null;
   electrolysis_entries: Array<{
     hairs_treated: number | null;
     deleted_at: string | null;
@@ -205,9 +206,25 @@ async function readRows(
   }
 }
 
+// HON-10. The width of the sessions read, shared with the truncation check
+// below so the two can never drift apart.
+const SESSION_WINDOW = 400;
+
+// HON-10. One booking on today's roster. The preview is "before THIS visit":
+// it excludes the visit's own session and anything that starts at or after the
+// visit, exactly as the prep loader beside it (`before: starts_at`,
+// `excludeAppointmentId`) already does. Without it the line could quote a
+// visit's own note back as the one from last time.
+export type RosterVisit = {
+  clientId: string;
+  appointmentId: string;
+  startsAt: string;
+};
+
 export async function getBeforeTodayPreviews(
   studioId: string,
   clientIds: ReadonlyArray<string>,
+  visits: ReadonlyArray<RosterVisit> = [],
 ): Promise<Map<string, BeforeTodayPreview>> {
   const out = new Map<string, BeforeTodayPreview>();
   const ids = [...new Set(clientIds)].filter(Boolean);
@@ -222,13 +239,13 @@ export async function getBeforeTodayPreviews(
       supabase
         .from("sessions")
         .select(
-          "id, client_id, started_at, record_status, next_session_note, aftercare_and_risks_explained_at, modality, electrolysis_entries(hairs_treated, deleted_at), laser_entries(id, deleted_at)",
+          "id, client_id, started_at, record_status, next_session_note, aftercare_and_risks_explained_at, modality, appointment_id, electrolysis_entries(hairs_treated, deleted_at), laser_entries(id, deleted_at)",
         )
         .eq("studio_id", studioId)
         .in("client_id", ids)
         .is("deleted_at", null)
         .order("started_at", { ascending: false })
-        .limit(400),
+        .limit(SESSION_WINDOW),
   );
   const sessions = sessionsRead.rows as SessionRow[];
 
@@ -346,8 +363,38 @@ export async function getBeforeTodayPreviews(
     blocksBySession.set(b.session_id, list);
   }
 
+  // HON-10. Per client: the earliest of its bookings today is the boundary, and
+  // the sessions linked to any of its bookings are excluded outright (a session
+  // can start a few minutes before its booking's scheduled time).
+  const boundaryByClient = new Map<string, number>();
+  const ownAppointments = new Map<string, Set<string>>();
+  for (const v of visits) {
+    const at = new Date(v.startsAt).getTime();
+    if (Number.isFinite(at)) {
+      boundaryByClient.set(
+        v.clientId,
+        Math.min(boundaryByClient.get(v.clientId) ?? at, at),
+      );
+    }
+    const set = ownAppointments.get(v.clientId) ?? new Set<string>();
+    set.add(v.appointmentId);
+    ownAppointments.set(v.clientId, set);
+  }
+  // A full window means the read stopped at its cap, so the history of any
+  // client without a hit inside it is unproven rather than empty.
+  const windowFull = sessions.length >= SESSION_WINDOW;
+
   for (const clientId of ids) {
-    const clientSessions = (sessionsByClient.get(clientId) ?? []).map((s) => ({
+    const boundary = boundaryByClient.get(clientId);
+    const own = ownAppointments.get(clientId);
+    const clientSessions = (sessionsByClient.get(clientId) ?? [])
+      .filter(
+        (s) =>
+          !(s.appointment_id && own?.has(s.appointment_id)) &&
+          (boundary === undefined ||
+            new Date(s.started_at).getTime() < boundary),
+      )
+      .map((s) => ({
       ...s,
       // Migration 0114: voided passes never count in the dashboard preview.
       electrolysis_entries: (s.electrolysis_entries ?? []).filter(
@@ -426,7 +473,11 @@ export async function getBeforeTodayPreviews(
       // The two facts the builder needs to tell "nothing recorded" from
       // "nothing read". Batch-wide by construction: these reads are issued once
       // for the whole roster, so a failure is a failure for every row on it.
-      clinicalUnavailable,
+      // HON-10. A source found inside a full window is still the newest one
+      // (everything newer than it is also inside the window); only a MISS is
+      // unproven.
+      clinicalUnavailable:
+        clinicalUnavailable || (windowFull && !(lastTreatment && watchSource)),
       clientRecordUnavailable,
     });
     out.set(clientId, compactBeforeToday(briefing));

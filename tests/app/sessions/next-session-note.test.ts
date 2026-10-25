@@ -112,9 +112,12 @@ describe("capture surface: session detail page", () => {
 
 describe("surfacing: the latest previous note appears when charting", () => {
   it("session detail queries the most recent PREVIOUS session with a note", () => {
-    const CODE = codeOnly(SESSION_PAGE);
+    // HON-10: the query moved into the loader the page calls, and gained the
+    // id tie-break.
+    expect(codeOnly(SESSION_PAGE)).toMatch(/loadPreviousVisitNote\(\{[\s\S]*?before: session\.started_at/);
+    const CODE = codeOnly(readFileSync(path.join(process.cwd(), "lib/sessions/previous-visit-note.ts"), "utf8"));
     expect(CODE).toMatch(
-      /\.not\("next_session_note", "is", null\)\s*\n?\s*\.lt\("started_at", session\.started_at\)\s*\n?\s*\.order\("started_at", \{ ascending: false \}\)\s*\n?\s*\.limit\(1\)/,
+      /\.not\("next_session_note", "is", null\)\s*\n?\s*\.lt\("started_at", input\.before\)\s*\n?\s*\.order\("started_at", \{ ascending: false \}\)\s*\n?\s*\.order\("id", \{ ascending: false \}\)\s*\n?\s*\.limit\(1\)/,
     );
   });
 

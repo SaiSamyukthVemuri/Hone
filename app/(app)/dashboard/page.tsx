@@ -467,6 +467,11 @@ export default async function DashboardPage({
       ? getBeforeTodayPreviews(
           studio.id,
           visibleAppointments.map((a) => a.client_id),
+          visibleAppointments.map((a) => ({
+            clientId: a.client_id,
+            appointmentId: a.id,
+            startsAt: a.starts_at,
+          })),
         )
       : Promise.resolve(new Map<string, BeforeTodayPreview>()),
   );
