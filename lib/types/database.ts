@@ -87,6 +87,12 @@ export type Studio = {
   new_client_admission_mode?: string;
   new_client_admission_mode_set_at?: string | null;
   new_client_admission_mode_set_by?: string | null;
+  // HON-47 / 0252. The client-portal flag. The other two self-service flags
+  // (client_cancellation_enabled, client_reschedule_enabled, 0234) are declared
+  // below with the 0213-0246 fields. Default TRUE in the database; optional here
+  // for rows loaded before 0252 applies, and read ONLY through
+  // clientSelfServicePolicyFromStudio, which maps an absent key to TRUE.
+  client_portal_enabled?: boolean;
   // Migration 0025: studio-level email toggles.
   send_confirmation_emails: boolean;
   send_24h_reminders: boolean;

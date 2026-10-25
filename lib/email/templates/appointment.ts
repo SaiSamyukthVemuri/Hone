@@ -69,7 +69,9 @@ type ConfirmationToClient = {
   startsAt: Date;
   endsAt: Date;
   timezone: string;
-  cancellationUrl: string;
+  // HON-47. Null when the studio has turned client self-service cancellation
+  // off; the Cancel link is then withdrawn, never pointed at a refusal.
+  cancellationUrl: string | null;
   rescheduleUrl: string | null;
   intakeUrl: string | null;
   // Token-FREE studio portal login URL (/portal/login?studio=slug). NOT a
@@ -106,7 +108,13 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
   const safeService = escapeHtml(p.serviceName);
   const safePract = p.practitionerName ? escapeHtml(p.practitionerName) : null;
   const safeAddress = p.studioAddress ? escapeHtml(p.studioAddress) : null;
-  const lead = `Thank you for booking with ${p.studioName}. Your appointment details, and the links to manage your booking, are below.`;
+  // HON-47. With neither self-service link the email says how a change IS
+  // made, instead of promising links that are not there.
+  const hasManageLinks = Boolean(p.rescheduleUrl || p.cancellationUrl);
+  const lead = hasManageLinks
+    ? `Thank you for booking with ${p.studioName}. Your appointment details, and the links to manage your booking, are below.`
+    : `Thank you for booking with ${p.studioName}. Your appointment details are below.`;
+  const contactLine = `To change or cancel this appointment, please contact ${p.studioName} directly.`;
 
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" /><title>${escapeHtml(subject)}</title></head>
@@ -158,16 +166,26 @@ export function buildClientConfirmationEmail(p: ConfirmationToClient): {
               </td></tr>`
             : ""
         }
-        <tr><td style="padding-bottom:32px;">
+        ${
+          hasManageLinks
+            ? `<tr><td style="padding-bottom:32px;">
           ${
             p.rescheduleUrl
               ? `<a href="${p.rescheduleUrl}" style="display:inline-block; padding:12px 20px; margin-right:12px; background:#0A0A0A; color:#FFFFFF; font-family:-apple-system, system-ui, sans-serif; font-size:14px; font-weight:500; text-decoration:none; border-radius:6px;">Reschedule</a>`
               : ""
           }
-          <a href="${p.cancellationUrl}" style="font-family:-apple-system, system-ui, sans-serif; font-size:13px; color:#0A0A0A; letter-spacing:0.1em; text-transform:uppercase;">
+          ${
+            p.cancellationUrl
+              ? `<a href="${p.cancellationUrl}" style="font-family:-apple-system, system-ui, sans-serif; font-size:13px; color:#0A0A0A; letter-spacing:0.1em; text-transform:uppercase;">
             Cancel
-          </a>
-        </td></tr>
+          </a>`
+              : ""
+          }
+        </td></tr>`
+            : `<tr><td style="padding-bottom:32px; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.6;">
+          ${escapeHtml(contactLine)}
+        </td></tr>`
+        }
         ${
           p.portalLoginUrl
             ? `<tr><td style="padding:20px 0; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.6; color:#0A0A0A;">
@@ -200,8 +218,7 @@ ${p.treatmentTimeLine ? `${p.treatmentTimeLine}\n` : ""}
 ${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\n` : ""}
 ${p.intakeUrl ? `\nBefore your appointment, please complete your health intake form (about 7 to 10 minutes):\n${p.intakeUrl}\n` : ""}
 ${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}
-Need to cancel? ${p.cancellationUrl}
-${p.portalLoginUrl ? `\nView your forms, appointments, and care instructions in your secure client portal:\n${p.portalLoginUrl}\n` : ""}
+${p.cancellationUrl ? `Need to cancel? ${p.cancellationUrl}\n` : ""}${hasManageLinks ? "" : `${contactLine}\n`}${p.portalLoginUrl ? `\nView your forms, appointments, and care instructions in your secure client portal:\n${p.portalLoginUrl}\n` : ""}
 Booking reference: ${ref}
 
 Hone. Charting software for electrolysis and laser practitioners.

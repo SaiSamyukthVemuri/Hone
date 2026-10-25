@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { getCurrentPortalSession } from "@/lib/portal/session";
+import { requirePortalSessionForAction } from "@/lib/portal/session";
 import {
   getPortalBookableServices,
   getPortalBookingReadiness,
@@ -23,6 +23,7 @@ import {
   hashAppointmentToken,
 } from "@/lib/booking/appointment-token";
 import type { ConfirmationEmailStatus } from "@/lib/booking/confirmation-presentation";
+import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
@@ -152,6 +153,12 @@ export type PortalRebookResult =
        * ever reported as `sent`.
        */
       confirmationEmailStatus: ConfirmationEmailStatus;
+      /**
+       * HON-47. Which email links the studio offers, so the portal confirmation
+       * never promises a cancel or reschedule link the email withdrew. Read from
+       * the studio row this action already loaded, never from the browser.
+       */
+      selfService: { cancellation: boolean; reschedule: boolean };
     }
   | Refusal;
 
@@ -206,8 +213,12 @@ type PortalBookingContext = {
 async function resolvePortalBookingContext(): Promise<
   { ok: true; ctx: PortalBookingContext } | Refusal
 > {
-  const session = await getCurrentPortalSession();
-  if (!session) return refuse("session_expired", PORTAL_REBOOK_SESSION_EXPIRED);
+  // HON-47: a studio with client portal access off answers portal_disabled,
+  // which the card shows in place, instead of session_expired, which would
+  // send the client to a sign-in that can never succeed.
+  const access = await requirePortalSessionForAction(PORTAL_REBOOK_SESSION_EXPIRED);
+  if (!access.ok) return refuse(access.code, access.error);
+  const session = access.session;
 
   // THE TWO VALUES THE WHOLE UNIT RESTS ON. Both come from the session, which
   // resolved them from a hashed cookie against a non-expired, non-revoked row.
@@ -880,6 +891,7 @@ export async function bookAnotherAppointmentAction(
     revalidatePath("/calendar/upcoming");
   });
 
+  const selfServicePolicy = clientSelfServicePolicyFromStudio(studio);
   return {
     ok: true,
     appointmentId: createdId,
@@ -888,6 +900,10 @@ export async function bookAnotherAppointmentAction(
     serviceName: service.service.name,
     confirmationEmail: clientEmail,
     confirmationEmailStatus,
+    selfService: {
+      cancellation: selfServicePolicy.cancellation,
+      reschedule: selfServicePolicy.reschedule,
+    },
   };
 }
 

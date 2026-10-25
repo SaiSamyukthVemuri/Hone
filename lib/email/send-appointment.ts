@@ -27,6 +27,7 @@ import {
   type IntakeReminderKind,
 } from "@/lib/email/templates/intake-reminder";
 import { buildIcs } from "@/lib/booking/ical";
+import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import type { Appointment, Service, Studio } from "@/lib/types/database";
 
@@ -34,13 +35,44 @@ import type { Appointment, Service, Studio } from "@/lib/types/database";
 // transactional emails. Returns null when the studio has no slug so the CTA is
 // simply omitted. NOT a magic link: the client enters their email at this page
 // to receive a secure sign-in link.
-function portalLoginUrlForStudio(studio: Pick<Studio, "slug">): string | null {
+//
+// HON-47: also null when the studio has turned client portal access off, so no
+// email variant ever links a client to a portal that will refuse them.
+function portalLoginUrlForStudio(
+  studio: Pick<Studio, "slug" | "client_portal_enabled">,
+): string | null {
+  if (!clientSelfServicePolicyFromStudio(studio).portal) return null;
   const slug = studio.slug?.trim();
   if (!slug) return null;
   return `${getRequiredAppOrigin()}/portal/login?studio=${encodeURIComponent(slug)}`;
 }
 
 type AnyAppointment = Appointment;
+
+// HON-47. The ONE place the client email variants decide which self-service
+// links they carry. Applied here in the senders, not at the call sites, so every
+// caller (public booking, portal rebook, reschedule, staff booking, the reminder
+// cron) inherits it and a future caller cannot forget it. Default policy, all
+// TRUE, passes every URL through unchanged.
+function selfServiceLinksFor(
+  studio: Studio,
+  urls: { cancellationUrl: string; rescheduleUrl: string | null },
+): { cancellationUrl: string | null; rescheduleUrl: string | null } {
+  const policy = clientSelfServicePolicyFromStudio(studio);
+  return {
+    cancellationUrl: policy.cancellation ? urls.cancellationUrl : null,
+    rescheduleUrl: policy.reschedule ? urls.rescheduleUrl : null,
+  };
+}
+
+// HON-47. "Book another" links reach returning-client online booking, which the
+// portal flag governs.
+function rebookUrlFor<T extends string | null | undefined>(
+  studio: Studio,
+  rebookUrl: T,
+): T | undefined {
+  return clientSelfServicePolicyFromStudio(studio).portal ? rebookUrl : undefined;
+}
 
 // Typed delivery result so call sites can stamp DB columns conditionally.
 // Replaces the old safeSend() void return that silently swallowed Resend
@@ -462,6 +494,7 @@ export async function sendBookingConfirmationToClient(params: {
   const start = new Date(params.appointment.starts_at);
   const end = new Date(params.appointment.ends_at);
   const serviceName = params.service?.name ?? "Appointment";
+  const links = selfServiceLinksFor(params.studio, params);
   const { subject, html, text } = buildClientConfirmationEmail({
     clientName: params.clientName,
     studioName: params.studio.name,
@@ -474,8 +507,8 @@ export async function sendBookingConfirmationToClient(params: {
     startsAt: start,
     endsAt: end,
     timezone: params.studio.timezone,
-    cancellationUrl: params.cancellationUrl,
-    rescheduleUrl: params.rescheduleUrl,
+    cancellationUrl: links.cancellationUrl,
+    rescheduleUrl: links.rescheduleUrl,
     intakeUrl: params.intakeUrl,
     portalLoginUrl: portalLoginUrlForStudio(params.studio),
     preCareInstructions: params.service?.pre_care_instructions ?? null,
@@ -489,8 +522,9 @@ export async function sendBookingConfirmationToClient(params: {
     end,
     summary: `${serviceName} · ${params.studio.name}`,
     location: params.studio.address ?? undefined,
-    description:
-      `${serviceName} at ${params.studio.name}.\nCancel: ${params.cancellationUrl}`,
+    description: links.cancellationUrl
+      ? `${serviceName} at ${params.studio.name}.\nCancel: ${links.cancellationUrl}`
+      : `${serviceName} at ${params.studio.name}.`,
     organizerName: params.studio.name,
     organizerEmail: params.studio.owner_email,
     attendeeName: params.clientName,
@@ -582,7 +616,7 @@ export async function sendCancellationEmail(params: {
     actorRole: params.actorRole,
     reason: params.reason,
     isClient: params.isClient,
-    rebookUrl: params.rebookUrl,
+    rebookUrl: rebookUrlFor(params.studio, params.rebookUrl),
   });
   return sendEmailSafely({
     // ONE helper, TWO recipients. `isClient` decides who is reading:
@@ -644,8 +678,7 @@ export async function send24hReminderToClient(
     startsAt: start,
     endsAt: end,
     timezone: p.studio.timezone,
-    cancellationUrl: p.cancellationUrl,
-    rescheduleUrl: p.rescheduleUrl,
+    ...selfServiceLinksFor(p.studio, p),
     portalLoginUrl: portalLoginUrlForStudio(p.studio),
     preCareInstructions: p.service?.pre_care_instructions ?? null,
     treatmentTimeLine: p.treatmentTimeLine,
@@ -677,8 +710,7 @@ export async function send2hReminderToClient(
     startsAt: start,
     endsAt: end,
     timezone: p.studio.timezone,
-    cancellationUrl: p.cancellationUrl,
-    rescheduleUrl: p.rescheduleUrl,
+    ...selfServiceLinksFor(p.studio, p),
     portalLoginUrl: portalLoginUrlForStudio(p.studio),
     preCareInstructions: p.service?.pre_care_instructions ?? null,
     treatmentTimeLine: p.treatmentTimeLine,
@@ -735,7 +767,7 @@ export async function sendNoShowFollowupToClient(params: {
     bookingReference: emailBookingReference(params.appointmentId),
     clientName: params.clientName,
     studioName: params.studio.name,
-    rebookUrl: params.rebookUrl,
+    rebookUrl: rebookUrlFor(params.studio, params.rebookUrl) ?? null,
   });
   return sendEmailSafely({ studioIdentity: identityFor(params.studio), to: params.clientEmail, subject, html, text });
 }

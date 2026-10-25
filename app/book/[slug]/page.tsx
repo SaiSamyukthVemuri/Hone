@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getStudioBySlug } from "@/lib/booking/queries";
+import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
 import { todayInTz } from "@/lib/booking/tz";
 import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
@@ -181,6 +182,8 @@ export default async function PublicBookingPage({
                  booking server action re-derives it from the server-resolved
                  studio, so a stale tab or forged post cannot book around it. */
               newClientAdmission={admissionMode}
+              /* HON-47. Presentation only; the action re-derives it. */
+              clientPortalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
               studioAddress={studio.address ?? null}
               services={services}
               defaultDate={today}

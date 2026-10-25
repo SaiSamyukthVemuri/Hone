@@ -38,6 +38,18 @@ vi.mock("@/lib/portal/session", () => ({
     studioId: "11111111-1111-4111-8111-111111111111",
     clientId: "22222222-2222-4222-8222-222222222222",
   }),
+  // HON-47. Portal actions resolve the session through this wrapper, which
+  // answers portal_disabled for a studio with client portal access off. These
+  // tests exercise an ENABLED studio, so it delegates to the session above.
+  requirePortalSessionForAction: async (expired: string) => {
+    const s = await (async () => ({
+      studioId: "11111111-1111-4111-8111-111111111111",
+      clientId: "22222222-2222-4222-8222-222222222222",
+    }))();
+    return s
+      ? { ok: true as const, session: s }
+      : { ok: false as const, code: "session_expired" as const, error: expired };
+  },
 }));
 
 vi.mock("@/lib/stripe/server", () => ({ inferStripeLivemode: () => false }));
