@@ -68,7 +68,7 @@ describe("0212 sits correctly in the migration sequence", () => {
   it("is no longer the repository maximum — 0253 was authored above it", () => {
     // THE HAND-OFF HAPPENED (CLAUDE.md §2): only the CURRENT maximum's own test
     // carries the "nothing above me" tripwire. It now lives in
-    // tests/migrations/0253-member-scoped-timed-block-insert.test.ts.
+    // tests/migrations/0253-member-scoped-block-authorship.test.ts.
     expect(isRepoMax(VERSION)).toBe(false);
     expect(versionsAbove(VERSION)).toContain("0253");
   });

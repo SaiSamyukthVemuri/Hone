@@ -87,6 +87,14 @@ export async function createCalendarTimedBlockAction(
   }
 
   let practitionerId: string | null = null;
+  if (!studio.practitioner_capacity_enabled && practitioner.role !== "owner") {
+    // 0253 (decision 14): a studio-wide block is the owner's, at either capacity.
+    // The database refuses it anyway; say so before the write.
+    return {
+      ok: false,
+      error: "Only the studio owner can block time for the whole studio. Ask the owner to add this block.",
+    };
+  }
   if (studio.practitioner_capacity_enabled) {
     if (practitioner.role !== "owner") {
       practitionerId = practitioner.id;

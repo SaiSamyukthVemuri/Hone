@@ -2,8 +2,8 @@
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
     "count": 212,
-    "last": "0253_member_scoped_timed_block_insert.sql",
-    "sha256": "90a17631a3020ccbe95b737d88349ebbda7891f426fa2cc0f173f70343af5a9b"
+    "last": "0253_member_scoped_block_authorship.sql",
+    "sha256": "5f6471de243faa7a01546b08bd94ef52d181ac8b5b01529b23507dc982638f4f"
   },
   "public": {
     "tables": [
@@ -285,7 +285,7 @@
       "mark_stripe_event_processed",
       "mark_waitlist_mobile_verified",
       "materialize_recurring_break_rule",
-      "member_may_insert_timed_block",
+      "member_owns_scoped_timed_block",
       "move_or_reassign_appointment",
       "my_pending_invitation",
       "new_client_waitlist_entries_record_event",

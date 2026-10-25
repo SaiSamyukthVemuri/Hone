@@ -170,7 +170,7 @@ describe("3C: integrity (guard / RLS / FK)", () => {
     // 0253 (HON-48 F1): with capacity ON a non-owner MEMBER may write a block
     // scoped to THEMSELVES only: a colleague's id or a studio-wide row is
     // refused by RLS. The per-role matrix is in
-    // tests/db/member-scoped-timed-block-insert.db.test.ts.
+    // tests/db/member-scoped-block-authorship.db.test.ts.
     const colleague = B.practitioners.find((p) => p.role === "practitioner" && p.practitionerId !== member().practitionerId)!;
     const insertScoped = (target: string | null, from: string, to: string) =>
       asUser(member().userId, (q) =>
@@ -185,9 +185,11 @@ describe("3C: integrity (guard / RLS / FK)", () => {
     expect(await insertScoped(colleague.practitionerId, "2031-05-10T12:00:00Z", "2031-05-10T12:30:00Z")).toEqual({ rows: null, err: "42501" });
     expect(await insertScoped(null, "2031-05-10T18:00:00Z", "2031-05-10T18:30:00Z")).toEqual({ rows: null, err: "42501" });
     expect(await insertScoped(member().practitionerId, "2031-05-10T13:00:00Z", "2031-05-10T13:30:00Z")).toEqual({ rows: 1, err: null });
-    // ...and with capacity OFF the member keeps the studio-wide drag-to-block.
+    // ...and with capacity OFF the member can no longer close the whole studio
+    // either (decision 14: owners only; a behaviour change). Matrix in
+    // tests/db/member-scoped-block-authorship.db.test.ts.
     await setCap(false);
-    expect(await insertScoped(null, "2031-05-10T18:00:00Z", "2031-05-10T18:30:00Z")).toEqual({ rows: 1, err: null });
+    expect(await insertScoped(null, "2031-05-10T18:00:00Z", "2031-05-10T18:30:00Z")).toEqual({ rows: null, err: "42501" });
   });
   it("a practitioner with a scoped block cannot be hard-deleted (FK RESTRICT); studio delete still cascades", async () => {
     await insBlock(P(2));

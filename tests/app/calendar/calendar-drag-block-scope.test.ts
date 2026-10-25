@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // HON-48 F1 (held for Sam's rule). This file was BLOCK-SCOPE R1's pin of the
 // old write scope (every calendar drag-to-block inserted a studio-wide row).
 // It is inverted here on purpose:
-//   * capacity OFF: unchanged, no practitioner_id (the 0137/0138 guard refuses
-//     a scoped row there), even when a scope is submitted;
+//   * capacity OFF: the owner's insert is unchanged (no practitioner_id, the
+//     0137/0138 guard refuses a scoped row there); a non-owner is refused, since
+//     0253 makes a studio-wide block owner-only (decision 14);
 //   * capacity ON, non-owner: practitioner_id = the caller, server-derived; a
 //     submitted scope can neither widen it to the studio nor point it at a
 //     colleague;
@@ -73,18 +74,25 @@ beforeEach(() => {
   state.insertError = null;
 });
 
-describe("capacity OFF: unchanged studio-wide insert", () => {
-  for (const role of ["practitioner", "owner"] as const) {
-    for (const scope of [undefined, "all", "p-other"]) {
-      it(`${role}, scope ${scope ?? "absent"}: no practitioner_id`, async () => {
-        state.capacity = false;
-        state.role = role;
-        await expect(createCalendarTimedBlockAction(form(scope))).resolves.toEqual({ ok: true });
-        const row = inserted();
-        expect(row).not.toHaveProperty("practitioner_id");
-        expect(row).toEqual(BASE);
+describe("capacity OFF: the owner's unchanged studio-wide insert; a non-owner is refused (0253, decision 14)", () => {
+  for (const scope of [undefined, "all", "p-other"]) {
+    it(`owner, scope ${scope ?? "absent"}: no practitioner_id`, async () => {
+      state.capacity = false;
+      state.role = "owner";
+      await expect(createCalendarTimedBlockAction(form(scope))).resolves.toEqual({ ok: true });
+      const row = inserted();
+      expect(row).not.toHaveProperty("practitioner_id");
+      expect(row).toEqual(BASE);
+    });
+    it(`practitioner, scope ${scope ?? "absent"}: refused with the owner-only copy, nothing written`, async () => {
+      state.capacity = false;
+      state.role = "practitioner";
+      await expect(createCalendarTimedBlockAction(form(scope))).resolves.toEqual({
+        ok: false,
+        error: "Only the studio owner can block time for the whole studio. Ask the owner to add this block.",
       });
-    }
+      expect(state.insert).not.toHaveBeenCalled();
+    });
   }
 });
 

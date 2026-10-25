@@ -174,9 +174,9 @@ describe("3E-4: authenticated-owner RLS CRUD for scoped timed blocks", () => {
     expect(await attempt(P(2), "2031-05-10T10:00:00Z", "2031-05-10T11:00:00Z")).toEqual({ rows: null, err: "42501" });
     expect(await attempt(null, "2031-05-10T12:00:00Z", "2031-05-10T13:00:00Z")).toEqual({ rows: null, err: "42501" });
     expect(await attempt(P(1), "2031-05-10T14:00:00Z", "2031-05-10T15:00:00Z")).toMatchObject({ rows: 1, err: null });
-    // capacity OFF keeps the studio-wide drag-to-block for a member
+    // capacity OFF: a member can no longer close the whole studio either (decision 14)
     await setCap(false);
-    expect(await attempt(null, "2031-05-10T16:00:00Z", "2031-05-10T17:00:00Z")).toMatchObject({ rows: 1, err: null });
+    expect(await attempt(null, "2031-05-10T16:00:00Z", "2031-05-10T17:00:00Z")).toEqual({ rows: null, err: "42501" });
     await setCap(true);
     const anon = await asRole("anon", (q) => ownerIns(q, null))
       .then((r) => ({ rows: r.rowCount, err: null as string | null }))
