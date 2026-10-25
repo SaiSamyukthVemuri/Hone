@@ -1,41 +1,44 @@
-# PUSH-IMAGE-PULL. REHEARSAL - NEVER MERGE.
+# S1-VERIFIED-BINARY. REHEARSAL - NEVER MERGE.
 #
-# Why does `supabase@2.102.0 db push --db-url ...` pull the edge-runtime image at
-# the end of a push, does it do so for a non-loopback host, what happens when
-# the pull fails, and how is it avoided? Runs against a DISPOSABLE SYNTHETIC
-# local database built through production's migration prefix 0212 -- not a copy
-# of production. No hosted project, no provider, no customer data.
+# Runs the S1 procedure with a CLI binary that is VERIFIED (release archive +
+# sha256sum -c, or npm tarball + dist.integrity) before it is given a database
+# password, with SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false, against a
+# non-loopback address of a DISPOSABLE SYNTHETIC local database built through
+# production's migration prefix 0212 -- not a copy of production. No hosted
+# project, no provider, no customer data.
 #
 # Supply chain as the other workflows: actions pinned by SHA, contents: read,
 # persist-credentials: false. The one credential is the D7b read-only ghcr.io
-# login, held only across a direct pinned-CLI start, as in ci.yml.
+# login, held only across a direct pinned-CLI start, as in ci.yml. The stack
+# start uses the pinned npx shim (orchestration only); everything the
+# rehearsal asserts runs with the verified binary.
 
-name: push-image-pull-rehearsal
+name: s1-verified-binary-rehearsal
 
 on:
   pull_request:
     paths:
-      - "scripts/ci/push-image-pull-rehearsal.sh"
-      - ".github/workflows/push-image-pull-rehearsal.yml"
+      - "scripts/ci/s1-verified-binary-rehearsal.sh"
+      - ".github/workflows/s1-verified-binary-rehearsal.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: hone-push-image-pull-rehearsal-${{ github.event.pull_request.number || github.ref }}
+  group: hone-s1-verified-binary-rehearsal-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   apply-tool:
-    name: push image pull rehearsal (not required)
+    name: s1 verified binary rehearsal (not required)
     runs-on: ubuntu-latest
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
       packages: read
-    # Stack start, eleven database resets and pushes, one blackholed-registry run
-    # that may wait out the pull's retries (capped at 20 minutes inside the script).
+    # Stack start, a release download, an npm pack, four database resets and two pushes
+    # (the control push may wait out the image pull retries), well inside 60 minutes.
     timeout-minutes: 60
     env:
       EXCLUDE: studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta,supavisor
@@ -86,7 +89,7 @@ jobs:
         if: steps.sb_start.outcome == 'failure'
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x "$EXCLUDE"
 
-      - name: Rehearse the push image pull
+      - name: Rehearse the S1 procedure with a verified binary
         shell: bash
         env:
           REHEARSAL_OUT: ${{ runner.temp }}/apply-tool-out
@@ -94,12 +97,12 @@ jobs:
           set -u
           export DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
           echo "db container: $DB"
-          bash scripts/ci/push-image-pull-rehearsal.sh
+          bash scripts/ci/s1-verified-binary-rehearsal.sh
 
       - name: Upload rehearsal logs
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: push-image-pull-rehearsal-logs
+          name: s1-verified-binary-rehearsal-logs
           path: ${{ runner.temp }}/apply-tool-out/
           retention-days: 7
