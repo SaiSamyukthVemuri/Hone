@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { utcInstantFromLocal } from "@/lib/booking/tz";
 import { ALL_PRACTITIONERS_SCOPE_VALUE } from "@/lib/calendar/block-scope";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // PR #139. Calendar-drag block creation. Sits parallel to the
 // owner-gated createTimedBlockAction in
@@ -133,10 +134,16 @@ export async function createCalendarTimedBlockAction(
     }
     const scoped = scopedBlockErrorMessage(error.code, practitioner.role === "owner", practitionerId !== null);
     if (scoped) return { ok: false, error: scoped };
-    return {
-      ok: false,
-      error: `Failed to add block: ${error.message}`,
-    };
+    // Never the database's own text: it can quote a value, an address or a
+    // constraint name. The log carries the closed code only.
+    console.error(
+      JSON.stringify({
+        event: "calendar_timed_block_insert_failed",
+        code: dbErrorCode(error),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: classifiedBlockError(error.code) };
   }
 
   revalidatePath("/calendar");
@@ -145,6 +152,31 @@ export async function createCalendarTimedBlockAction(
 }
 
 // Codes only, never the database message.
+/** A fixed sentence per known database code, and a generic one for the rest. */
+function classifiedBlockError(code: string | undefined): string {
+  switch (code) {
+    case "42501":
+      return "You do not have permission to add this block.";
+    case "23503":
+      return "That practitioner or studio is no longer available. Refresh the calendar and try again.";
+    case "23514":
+      return "That block is not allowed for this studio. Refresh the calendar and try again.";
+    case "22007":
+    case "22008":
+    case "22P02":
+    case "22001":
+    case "23502":
+      return "That block could not be saved. Check the date, times and reason, then try again.";
+    case "55P03":
+    case "57014":
+    case "40001":
+    case "40P01":
+      return "The calendar is busy right now. Try again in a moment.";
+    default:
+      return "We could not add that block. Try again in a moment.";
+  }
+}
+
 function scopedBlockErrorMessage(
   code: string | undefined,
   isOwner: boolean,
