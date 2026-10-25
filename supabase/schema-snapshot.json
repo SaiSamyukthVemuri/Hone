@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 245,
-    "last": "0246_intake_questionnaire_snapshot.sql",
-    "sha256": "2f329cd91a92feef717fb2b7d49cb6ee4a7986881363dac460784fc6aae07cfd"
+    "count": 246,
+    "last": "0256_public_booking_refuses_active_client_adoption.sql",
+    "sha256": "4f8dca3e3be9783fcf5b5d28bd2dd430b6a6139a78aa75b2fca0b1d81891ff1b"
   },
   "public": {
     "tables": [
