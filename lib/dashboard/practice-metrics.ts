@@ -200,11 +200,25 @@ export type TestPaymentMetrics = {
   refunds: number;
 };
 
+export type AppointmentCounts = Omit<
+  AppointmentMetrics,
+  "bookedValueCents" | "completedValueCents"
+>;
+
+// HON-44: studio money is OWNER-ONLY. It travels in its own object so a
+// non-owner's metrics carry no money field at all, not a zero to hide.
+export type PracticeMoneyMetrics = {
+  bookedValueCents: number;
+  completedValueCents: number;
+  testPayments: TestPaymentMetrics;
+};
+
 export type PracticeDashboardMetrics = {
   period: ReportingPeriod;
   periodLabel: string;
-  appointments: AppointmentMetrics;
-  testPayments: TestPaymentMetrics;
+  appointments: AppointmentCounts;
+  // null for a non-owner: the price and payment reads were never issued.
+  money: PracticeMoneyMetrics | null;
   actions: ProcedureActionMetrics;
   chartedWithin24h: ChartedWithin24hMetrics;
 };
@@ -213,7 +227,12 @@ export async function getPracticeDashboardMetrics(
   studioId: string,
   timezone: string,
   period: ReportingPeriod,
+  // REQUIRED, so every caller states who is looking. Membership RLS lets any
+  // practitioner read service prices and payment_charge_attempts; HON-44
+  // restricts studio totals to the owner, so the gate is here, before the read.
+  viewer: { viewerIsOwner: boolean },
 ): Promise<PracticeDashboardMetrics> {
+  const includeMoney = viewer.viewerIsOwner;
   const todayLocal = todayInTz(timezone);
   const range = resolvePeriodRange(todayLocal, period);
   const startUtc = utcInstantFromLocal(range.startLocal, "00:00", timezone);
@@ -237,7 +256,9 @@ export async function getPracticeDashboardMetrics(
       supabase
         .from("appointments")
         .select(
-          "status, starts_at, cancellation_reason, service:services(price_cents)",
+          includeMoney
+            ? "status, starts_at, cancellation_reason, service:services(price_cents)"
+            : "status, starts_at, cancellation_reason",
         )
         .eq("studio_id", studioId)
         .gte("starts_at", startUtc.toISOString())
@@ -248,13 +269,15 @@ export async function getPracticeDashboardMetrics(
       // test AND one live attempt per slot: an unscoped count would mix
       // modes and could double-count a single real-world payment. The
       // card labels flip with the mode.)
-      supabase
-        .from("payment_charge_attempts")
-        .select("status, refund_status")
-        .eq("studio_id", studioId)
-        .eq("stripe_livemode", inferStripeLivemode())
-        .gte("created_at", startUtc.toISOString())
-        .lt("created_at", endUtc.toISOString()),
+      includeMoney
+        ? supabase
+            .from("payment_charge_attempts")
+            .select("status, refund_status")
+            .eq("studio_id", studioId)
+            .eq("stripe_livemode", inferStripeLivemode())
+            .gte("created_at", startUtc.toISOString())
+            .lt("created_at", endUtc.toISOString())
+        : Promise.resolve({ data: null, error: null }),
       // Same 100-session window as before; only the parameter shape
       // changed when PR #223 added the per-client filter option.
       getClientProcedureRecords(studioId, { limit: 100 }),
@@ -324,12 +347,14 @@ export async function getPracticeDashboardMetrics(
     })),
   );
 
-  const appointments = summarizeAppointments(
-    ((apptRows ?? []) as Array<{
+  const { bookedValueCents, completedValueCents, ...appointments } = summarizeAppointments(
+    // `unknown` first: the column list is chosen at runtime (owner vs not),
+    // which the client's select-string type parser cannot follow.
+    ((apptRows ?? []) as unknown as Array<{
       status: string;
       starts_at: string;
       cancellation_reason: string | null;
-      service: { price_cents: number | null } | { price_cents: number | null }[] | null;
+      service?: { price_cents: number | null } | { price_cents: number | null }[] | null;
     }>).map((r) => {
       const svc = Array.isArray(r.service) ? r.service[0] : r.service;
       return {
@@ -362,7 +387,9 @@ export async function getPracticeDashboardMetrics(
     period,
     periodLabel: range.label,
     appointments,
-    testPayments,
+    money: includeMoney
+      ? { bookedValueCents, completedValueCents, testPayments }
+      : null,
     actions: summarizeProcedureCompleteness(procedureRecords),
     chartedWithin24h,
   };
