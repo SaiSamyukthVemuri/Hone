@@ -458,11 +458,11 @@ describe("PR CI — path-aware lane selection", () => {
     ]) {
       expect(jobs, `${job} must still exist`).toContain(job);
     }
-    // Seven gated lanes declare `needs: changes` + an `if:` on classifier output
+    // Eight gated lanes declare `needs: changes` + an `if:` on classifier output
     // (the seventh is canonical-record, the docs-only production-record lane,
-    // #825 6215529089).
-    expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(7);
-    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(7);
+    // #825 6215529089; the eighth is storage-photos, not required, E-GAPS; the ninth is the non-required webkit-hon-62 lane).
+    expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(9);
+    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(9);
   });
 
   it("the required browser check is a STABLE aggregator, not a dynamic shard name", () => {
@@ -605,7 +605,8 @@ describe("PR CI — path-aware lane selection", () => {
     // all four PR browser jobs re-downloaded Chromium + FFmpeg + headless shell
     // on every run.
     const caches = CI.match(/path: ~\/\.cache\/ms-playwright/g) ?? [];
-    expect(caches.length, "all four browser jobs must cache").toBe(4);
+    // Five since the storage-photos job (E-GAPS, not required).
+    expect(caches.length, "all five browser jobs must cache").toBe(5);
     // CI-HARDEN-01B pinned every action to a commit SHA, so this counts the
     // ACTION rather than a version tag. The claim under test is "every browser
     // job caches", which a ref should never have been able to falsify.
@@ -620,10 +621,10 @@ describe("PR CI — path-aware lane selection", () => {
   });
 
   it("a cache HIT skips the browser download; the system packages are installed either way", () => {
-    expect((CI.match(/if: steps\.pw-cache\.outputs\.cache-hit != 'true'/g) ?? []).length).toBe(4);
-    expect((CI.match(/run: npx playwright install chromium$/gm) ?? []).length).toBe(4);
+    expect((CI.match(/if: steps\.pw-cache\.outputs\.cache-hit != 'true'/g) ?? []).length).toBe(5);
+    expect((CI.match(/run: npx playwright install chromium$/gm) ?? []).length).toBe(5);
     // Hit or miss, the OS packages come from the bounded, .deb-cached script.
-    expect((CI.match(/run: bash scripts\/ci\/playwright-system-deps\.sh$/gm) ?? []).length).toBe(4);
+    expect((CI.match(/run: bash scripts\/ci\/playwright-system-deps\.sh$/gm) ?? []).length).toBe(5);
   });
 
   it("no browser download runs unconditionally", () => {
@@ -773,7 +774,7 @@ describe("PR CI — path-aware lane selection", () => {
 
   it("the arithmetic is the script's: every bound it applies is one of the constants summed", () => {
     const script = readFileSync(DEPS_SCRIPT, "utf8");
-    expect(script).toMatch(/timeout --kill-after="\$KILL_AFTER" "\$1" npx playwright install-deps chromium/);
+    expect(script).toMatch(/timeout --kill-after="\$KILL_AFTER" "\$1" npx playwright install-deps "\$BROWSER"/);
     expect(script).toMatch(/sudo timeout --kill-after="\$KILL_AFTER" "\$REPAIR" dpkg --configure -a/);
     expect(script).toMatch(/while \[ -n "\$busy" \] && \[ "\$waited" -lt "\$SETTLE" \]/);
     // No other literal time bound hides in the script.
@@ -795,7 +796,7 @@ describe("PR CI — path-aware lane selection", () => {
         }
       }
     }
-    expect(seen, "ci.yml x4 + nightly.yml x1").toBe(5);
+    expect(seen, "ci.yml x6 (incl. storage-photos and webkit-hon-62) + nightly.yml x1").toBe(7);
     expect(offenders).toEqual([]);
   });
 
@@ -894,7 +895,7 @@ describe("PR CI — path-aware lane selection", () => {
     const script = readFileSync("scripts/ci/playwright-system-deps.sh", "utf8");
     // The time limit is INSIDE sudo (Codex P1 r4362059036): an unprivileged
     // timeout kills npx but not root's apt-get, which keeps the dpkg/apt locks.
-    expect(script).toMatch(/sudo env "PATH=\$PATH" timeout --kill-after="\$KILL_AFTER" "\$1" npx playwright install-deps chromium/);
+    expect(script).toMatch(/sudo env "PATH=\$PATH" timeout --kill-after="\$KILL_AFTER" "\$1" npx playwright install-deps "\$BROWSER"/);
     expect(script).toMatch(/install_deps "\$FIRST"/);
     expect(script).toMatch(/install_deps "\$RETRY"/);
     const unprivileged = script.split("\n").filter((l) => /^\s*timeout\b.*playwright install-deps/.test(l));
@@ -1091,6 +1092,210 @@ describe("D7b: Supabase-starting jobs pull ghcr.io images authenticated, read-on
     expect((body().match(/uses: docker\/login-action@/g) ?? []).length).toBe(setups.length);
     expect((body().match(/run: docker logout ghcr\.io/g) ?? []).length).toBe(setups.length);
     expect(body()).not.toMatch(/SUPABASE_INTERNAL_IMAGE_REGISTRY/);
+  });
+});
+
+describe("HON-62: the WebKit time-input job is separate, scoped and never required", () => {
+  type Step = { name?: string; id?: string; if?: string; uses?: string; run?: string; with?: Record<string, string>; env?: Record<string, string>; "timeout-minutes"?: number };
+  type Job = { name?: string; needs?: string | string[]; if?: string; "timeout-minutes"?: number; steps: Step[] };
+  const jobs = (yaml.load(CI) as { jobs: Record<string, Job> }).jobs;
+  const job = jobs["webkit-hon-62"];
+  const CONFIG = readFileSync("playwright.config.ts", "utf8");
+
+  it("exists, and neither the aggregator nor any other job depends on it", () => {
+    expect(job, "webkit-hon-62 job").toBeDefined();
+    expect(job.name).toMatch(/not required/);
+    for (const [name, other] of Object.entries(jobs)) {
+      const needs = [other.needs ?? []].flat();
+      expect(needs, `${name} must not need webkit-hon-62`).not.toContain("webkit-hon-62");
+    }
+  });
+
+  it("runs when the HON-62 spec is selected, and on extended / full-matrix runs", () => {
+    expect(job.needs).toBe("changes");
+    expect(job.if).toContain("contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts')");
+    expect(job.if).toContain("needs.changes.outputs.browser_extended == 'true'");
+    expect(job.if).toContain("needs.changes.outputs.full_matrix_required == 'true'");
+  });
+
+  it("runs only the scoped WebKit project, which exists only under HONE_E2E_WEBKIT=1", () => {
+    const e2e = job.steps.filter((st) => /npx playwright test\b/.test(st.run ?? ""));
+    expect(e2e).toHaveLength(1);
+    expect(e2e[0].run).toBe("npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts --project=webkit-hon-62");
+    expect(e2e[0].env?.HONE_E2E_WEBKIT).toBe("1");
+    // Nothing else in any workflow arms the WebKit project.
+    const code = CI.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+    expect((code.match(/HONE_E2E_WEBKIT/g) ?? []).length).toBe(1);
+    expect(NIGHTLY).not.toMatch(/HONE_E2E_WEBKIT/);
+    expect(CONFIG).toContain('{ name: "chromium", use: { ...devices["Desktop Chrome"] } },');
+    expect(CONFIG).toContain('use: { ...devices["Desktop Safari"], bypassCSP: true },');
+    expect(CONFIG).toMatch(/process\.env\.HONE_E2E_WEBKIT === "1"\s*\?\s*\[\s*\{\s*name: "webkit-hon-62",\s*testMatch: \/\(availability-hours-editor\|webkit-time-input-key-probe\)\\\.spec\\\.ts\$\/,/);
+  });
+
+  it("installs WebKit's system packages through the bounded script, under its own .deb key", () => {
+    const deps = job.steps.filter((st) => (st.run ?? "").includes("scripts/ci/playwright-system-deps.sh"));
+    expect(deps).toHaveLength(1);
+    expect(deps[0].run).toBe("bash scripts/ci/playwright-system-deps.sh webkit");
+    expect(deps[0]["timeout-minutes"]).toBe(6);
+    expect(job.steps.some((st) => st.run === "npx playwright install webkit")).toBe(true);
+    const keys = job.steps.filter((st) => st.with?.path === "~/apt-debs").map((st) => st.with?.key);
+    expect(keys).toEqual([
+      "pw-webkit-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}",
+      "pw-webkit-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}",
+    ]);
+    // A WebKit-only browser cache under Chromium's key would be a false hit
+    // for the Chromium jobs.
+    expect(job.steps.some((st) => st.with?.path === "~/.cache/ms-playwright")).toBe(false);
+  });
+
+  it("the spec strips the https-upgrade headers in WebKit only, never fetches auth hops, and continues redirects", () => {
+    const SPEC = readFileSync("e2e/availability-hours-editor.spec.ts", "utf8");
+    expect(SPEC).toMatch(/test\.beforeEach\(async \(\{ context, browserName \}\) => \{\s*if \(browserName !== "webkit"\) return;\s*await context\.route\("\*\*\/\*", withoutHttpsUpgrade\);/);
+    expect((SPEC.match(/context\.route\(/g) ?? []).length).toBe(1);
+    expect(SPEC).toContain('if (request.resourceType() !== "document" || request.method() !== "GET") return route.fallback();');
+    // Single-use magic-link hops are never fetched (route.fetch would spend
+    // the token), and a 3xx is continued, never fulfilled (WebKit refuses it).
+    expect(SPEC).toContain('if (url.origin !== APP_ORIGIN || url.pathname.startsWith("/auth/")) return route.fallback();');
+    expect(SPEC).toContain("route.fetch({ maxRedirects: 0 })");
+    expect(SPEC).toContain("if (response.status() >= 300 && response.status() < 400) return route.continue();");
+    expect(SPEC).not.toContain("route.fulfill({ response })");
+    // A route handler never sees a redirect TARGET, so in WebKit the magic
+    // link is followed by the context's request API, never navigated; Chromium
+    // keeps the shared helper, and every test signs in through signIn().
+    expect(SPEC).toContain('if (browserName !== "webkit") return loginAsOwner(page, seed);');
+    expect(SPEC).toContain("await page.context().request.get(link);");
+    expect(SPEC).not.toMatch(/page\.goto\(link\)/);
+    expect((SPEC.match(/await signIn\(page, browserName\);/g) ?? []).length).toBe(3);
+    expect((SPEC.match(/loginAsOwner\(/g) ?? []).length).toBe(1);
+    // HON-62-R6-CLASSIFY: WebKit does not auto-advance time segments, so it
+    // gets its own keystrokes; the Chromium keystrokes are the original
+    // lines, byte for byte, and only browserName chooses between them.
+    expect(SPEC).toContain(
+      [
+        "async function typeMondayChromium(page: Page, opens: Locator, closes: Locator) {",
+        "  // Keyboard only: focus the field and type into its segments (en-US hh mm",
+        "  // AM/PM in both Chromium and WebKit).",
+        "  await opens.focus();",
+        '  await page.keyboard.type("0830AM");',
+        "  await closes.focus();",
+        '  await page.keyboard.type("0445PM");',
+        '  await expect(opens).toHaveValue("08:30");',
+        '  await expect(closes).toHaveValue("16:45");',
+        "}",
+      ].join("\n"),
+    );
+    expect(SPEC).toContain('await (browserName === "webkit" ? enterMondayWebKit(opens, closes) : typeMondayChromium(page, opens, closes));');
+    // Only the typed-keystroke step is the expected engine limit (probe run
+    // 40147321228): no WebKit keystrokes, and the save/reload assertions after it
+    // are shared with Chromium, so a green WebKit job means the app is correct.
+    const webkitEntry = SPEC.slice(SPEC.indexOf("async function enterMondayWebKit("), SPEC.indexOf("\n}\n", SPEC.indexOf("async function enterMondayWebKit(")));
+    expect(webkitEntry).toContain('type: "engine-limit"');
+    expect(webkitEntry).toMatch(/opens\.fill\("08:30"\);[\s\S]*closes\.fill\("16:45"\);/);
+    expect(webkitEntry).not.toMatch(/keyboard\./);
+    expect(SPEC).not.toMatch(/test\.(fixme|skip)\(/);
+    expect(SPEC.slice(SPEC.indexOf("enterMondayWebKit(opens, closes) : typeMondayChromium"))).toContain('getByRole("button", { name: /^Save$/ })');
+  });
+
+  it("the key-delivery probe keeps running in the WebKit project, is WebKit-only and asserts delivery, never engine behaviour", () => {
+    const probe = readFileSync("e2e/webkit-time-input-key-probe.spec.ts", "utf8");
+    expect(probe).toMatch(/test\.skip\(\(\{ browserName \}\) => browserName !== "webkit"/);
+    expect(probe).not.toMatch(/toHaveValue|toBe\("0[78]:/);
+    expect(probe).toContain('console.log("HON62-PROBE "');
+    expect(CONFIG).toMatch(/testMatch: \/\(availability-hours-editor\|webkit-time-input-key-probe\)\\\.spec\\\.ts\$\//);
+  });
+
+  it("no required check is weakened or renamed: the aggregator's name and needs are exactly production's, and only webkit-hon-62 is a new job", () => {
+    const agg = jobs["browser-e2e"] as Job;
+    expect(agg.name).toBe("browser e2e (local stack)");
+    expect(agg.needs).toEqual(["changes", "browser-e2e-shard", "canonical-record"]);
+    expect(Object.keys(jobs).sort()).toEqual(
+      ["browser-e2e", "browser-e2e-shard", "canonical-record", "changes", "db-integration", "google-browser-e2e", "mobile-completion-e2e", "payment-browser-e2e", "storage-photos", "validate", "webkit-hon-62"].sort(),
+    );
+    for (const [name, def] of Object.entries(jobs)) {
+      const needs = ([] as string[]).concat((def as Job).needs ?? []);
+      expect(needs, `${name} must not need webkit-hon-62`).not.toContain("webkit-hon-62");
+    }
+  });
+
+  it("its hard timeout exceeds the ~10 min target plus the bounded 6 min install", () => {
+    expect(job["timeout-minutes"]).toBeGreaterThan(10 + 6);
+  });
+});
+
+describe("E-GAPS: the storage photo job is separate, storage-backed and never required", () => {
+  const STORAGE_SPECS = [
+    "e2e/fett-photos-thumbnail-recovery.spec.ts",
+    "e2e/treatment-image-upload-formats.spec.ts",
+  ];
+  const DB_FILE = "tests/db/treatment-image-signed-url-route.db.test.ts";
+  const start = CI.indexOf("\n  storage-photos:\n");
+  const rest = CI.slice(start + 1);
+  const next = rest.slice(1).search(/^ {2}[a-z0-9_-]+:$/m);
+  const JOB = next === -1 ? rest : rest.slice(0, next + 1);
+  const code = (text: string) => text.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+
+  it("exists, is named not required, and no job (the aggregator included) needs it", () => {
+    expect(start, "storage-photos job").toBeGreaterThan(-1);
+    expect(JOB).toContain("    name: storage photos (not required)\n");
+    expect(CI).not.toMatch(/needs:[^\n]*storage-photos/);
+    expect(CI).not.toMatch(/^ {6}- storage-photos$/m);
+    expect(code(CI.replace(JOB, ""))).not.toMatch(/storage-photos/);
+  });
+
+  it("starts Supabase WITH storage-api, and every other start still excludes it", () => {
+    const starts = code(CI).match(/supabase start -x [a-z,-]+/g) ?? [];
+    const own = code(JOB).match(/supabase start -x [a-z,-]+/g) ?? [];
+    expect(own).toEqual([
+      "supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector",
+      "supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector",
+    ]);
+    expect(starts.filter((x) => !x.endsWith(",storage-api"))).toHaveLength(own.length);
+  });
+
+  it("fails on a missing storage-api before the DB file or the specs could self-skip", () => {
+    const pre = JOB.indexOf("curl -fsS http://127.0.0.1:54321/storage/v1/version");
+    expect(pre).toBeGreaterThan(-1);
+    expect(pre).toBeLessThan(JOB.indexOf("npx vitest run"));
+    expect(pre).toBeLessThan(JOB.indexOf("npx playwright test"));
+  });
+
+  it("runs exactly the storage-dependent DB file and the two storage specs, each spec bypassing CSP in the test browser only", () => {
+    expect(code(JOB).match(/npx vitest run[^\n]*/g) ?? []).toEqual([
+      `npx vitest run --config vitest.db.config.ts ${DB_FILE}`,
+    ]);
+    expect(readFileSync(DB_FILE, "utf8")).toMatch(/describe\.skipIf\(!STORAGE_UP\)/);
+    const runs = code(JOB).match(/npx playwright test[^\n]*/g) ?? [];
+    expect(runs).toEqual([`npx playwright test ${STORAGE_SPECS.join(" ")} --project=chromium`]);
+    for (const spec of STORAGE_SPECS) {
+      expect(readFileSync(spec, "utf8"), spec).toMatch(/test\.use\(\{ bypassCSP: true\b/);
+    }
+  });
+
+  it("Playwright is fully prepared before the fallible DB step, and neither test step hides the other (Codex P2 4368722781)", () => {
+    const steps = JOB.split(/\n(?=      - )/);
+    const at = (needle: string) => steps.findIndex((s) => s.includes(needle));
+    const db = at("npx vitest run");
+    const e2e = at("npx playwright test");
+    for (const prep of [
+      "require('@playwright/test/package.json').version",
+      "path: ~/.cache/ms-playwright",
+      "run: npx playwright install chromium",
+      "run: bash scripts/ci/playwright-system-deps.sh",
+    ]) {
+      expect(at(prep), prep).toBeGreaterThan(-1);
+      expect(at(prep), `${prep} runs before the DB step`).toBeLessThan(db);
+    }
+    expect(steps[at("run: bash scripts/ci/playwright-system-deps.sh")]).toMatch(/^ {8}id: pw_sys$/m);
+    expect(db).toBeLessThan(e2e);
+    expect(steps[db]).toMatch(/^ {8}if: \$\{\{ !cancelled\(\) && steps\.storage_up\.outcome == 'success' \}\}$/m);
+    expect(steps[e2e]).toMatch(
+      /^ {8}if: \$\{\{ !cancelled\(\) && steps\.storage_up\.outcome == 'success' && steps\.pw_sys\.outcome == 'success' \}\}$/m,
+    );
+  });
+
+  it("its hard timeout exceeds the ~10 min target", () => {
+    const t = Number(/^ {4}timeout-minutes: (\d+)$/m.exec(JOB)?.[1]);
+    expect(t).toBeGreaterThan(10);
   });
 });
 
@@ -1584,7 +1789,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   const SETUP_CLI_SHA = "ab058987d8d6c725971f6cf9d0b5c98467e30bd1";
   const SETUP_CLI_TAG = "v1.7.1";
   const SETUP_CLI_VERSION = "2.102.0";
-  const SETUP_CLI_USES = 6; // 5 in ci.yml + 1 in nightly.yml
+  const SETUP_CLI_USES = 8; // 7 in ci.yml (incl. storage-photos and webkit-hon-62) + 1 in nightly.yml
 
   const SETUP_CLI_ACTION = "supabase/setup-cli";
 
@@ -1716,8 +1921,8 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   it("the checkout count across the workflow directory is the reviewed one", () => {
     expect(
       checkoutCount(WORKFLOWS),
-      "8 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089) + 1 in nightly.yml",
-    ).toBe(9);
+      "9 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089; storage-photos by E-GAPS; webkit-hon-62 by HON-62) + 1 in nightly.yml",
+    ).toBe(11);
   });
 
   // -------------------------------------------------------------------------
@@ -2209,7 +2414,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
     const violations = setupCliViolations([...WORKFLOWS, cased]).join("\n");
     // Recognised at all — the reviewed count moves, which it could not do while
     // the identifier was compared case-sensitively...
-    expect(violations).toMatch(/7 setup-cli uses, expected 6/);
+    expect(violations).toMatch(/9 setup-cli uses, expected 8/);
     // ...and, being recognised, it is subject to the grants-parity pin.
     expect(violations).toMatch(/cli\.yaml jobs\.scan\.steps\[0\]\.uses: CLI version 2\.103\.0 is not the grants-parity pin 2\.102\.0/);
   });

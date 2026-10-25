@@ -256,7 +256,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
   },
   {
     page: "/settings/booking",
-    label: "Public address (shown on your booking page)",
+    label: "Public address (booking page and appointment emails)",
     helper: "For home-based studios, leave this blank",
     role: "owner",
     decision: "searchable",

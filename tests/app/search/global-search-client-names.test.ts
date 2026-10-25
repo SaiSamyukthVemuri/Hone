@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { parseOrFilter } from "./helpers/postgrest-or";
 
@@ -16,7 +17,12 @@ const tables: Record<string, Row[]> = {};
 const ilikeCalls: Array<{ table: string; col: string; pattern: string }> = [];
 // The most rows one response may carry (PostgREST db-max-rows). Tests lower it
 // to prove a short page does not end a read early.
-const server = { maxRows: 1000 };
+// failClientsAt, when set, makes a clients read whose page starts at that
+// offset answer with an error instead of rows.
+const server: { maxRows: number; failClientsAt: ((offset: number) => boolean) | null } = {
+  maxRows: 1000,
+  failClientsAt: null,
+};
 
 const RE_METACHARS = /[.*+?^${}()|[\]\\]/g;
 
@@ -92,7 +98,12 @@ function builder(table: string) {
       range = [from, to];
       return chain;
     },
-    then(resolve: (v: { data: Row[]; error: null }) => unknown) {
+    then(resolve: (v: { data: Row[] | null; error: { message: string } | null }) => unknown) {
+      if (table === "clients" && server.failClientsAt?.(range?.[0] ?? 0)) {
+        return Promise.resolve({ data: null, error: { message: "fake read failure" } }).then(
+          resolve as never,
+        );
+      }
       let rows = (tables[table] ?? []).filter((r) => predicates.every((p) => p(r)));
       if (orderCols.length > 0) {
         rows = [...rows].sort((a, b) => {
@@ -140,6 +151,7 @@ vi.mock("@/lib/supabase/queries", () => ({
 }));
 
 import { globalSearchAction } from "@/app/(app)/global-search-actions";
+import { CLIENT_SCAN_CAP_PER_READ } from "@/lib/search/global-search";
 
 function client(id: string, name: string, extra: Partial<Row> = {}): Row {
   return {
@@ -157,6 +169,7 @@ beforeEach(() => {
   for (const key of Object.keys(tables)) delete tables[key];
   ilikeCalls.length = 0;
   server.maxRows = 1000;
+  server.failClientsAt = null;
   tables.clients = [
     client("c-janie", "Jane (Janie) Smith", { phone: "(555) 010-0001" }),
     client("c-obrien", "Saoirse O'Brien"),
@@ -338,5 +351,130 @@ describe("global search: punctuation stays literal and direct rows are confirmed
     const ids = await recordIdsFor("a(b");
     expect(ids).toContain("record:sterile:s-real");
     expect(ids).not.toContain("record:sterile:s-wild");
+  });
+});
+
+// SEARCH-HONEST-FAILURE (DAT-002 class): a client candidate page that fails
+// used to read as "no more rows", so the search silently showed partial or no
+// clients. A failed page now fails the whole search, which the panel shows as
+// unavailable rather than as "No results found."
+describe("global search: a failed client read is never shown as nothing", () => {
+  const decoys = (n: number) =>
+    Array.from({ length: n }, (_, i) => client(`c-decoy-${i}`, `Jan Ieva Smith ${String(i).padStart(4, "0")}`));
+
+  it("a failed first page fails the search instead of returning no clients", async () => {
+    server.failClientsAt = (offset) => offset === 0;
+    expect(await globalSearchAction("janie smith")).toEqual({ ok: false });
+  });
+
+  it("a failed later page fails the search instead of returning a partial list", async () => {
+    // Seven rows per page: "Aaron (Janie) Smith" is confirmed on page 1, the
+    // decoys fill the rest, and page 2 fails. Before the repair the search
+    // returned Aaron alone, as if the studio had no other match.
+    server.maxRows = 7;
+    tables.clients.push(
+      client("c-aaron", "Aaron (Janie) Smith"),
+      ...decoys(30),
+      client("c-zoe", "Zoe (Janie) Smith"),
+    );
+    server.failClientsAt = (offset) => offset > 0;
+    expect(await globalSearchAction("janie smith")).toEqual({ ok: false });
+  });
+
+  it("control: the same reads without a failure still succeed", async () => {
+    server.maxRows = 7;
+    tables.clients.push(...decoys(30), client("c-zoe", "Zoe (Janie) Smith"));
+    expect(await clientIdsFor("janie smith")).toEqual(["c-janie", "c-zoe"]);
+  });
+});
+
+describe("global search panel: an unanswered search is not an empty one", () => {
+  // No DOM test runner exists in this repo, so the panel's branch is pinned at
+  // the source: a failed response sets `failed`, and that branch renders
+  // before (so instead of) "No results found."
+  const panel = readFileSync("app/(app)/GlobalSearch.tsx", "utf8");
+
+  it("records a failed or rejected response as failed, not as zero results", () => {
+    expect(panel).toMatch(/\.catch\(\(\) => null\)/);
+    expect(panel).toMatch(/setFailed\(!response\?\.ok\)/);
+  });
+
+  it("renders the unavailable state ahead of the no-results state", () => {
+    const unavailable = panel.indexOf("<p>Search could not be loaded.</p>");
+    const empty = panel.indexOf("<p>No results found.</p>");
+    expect(unavailable).toBeGreaterThan(-1);
+    expect(panel.slice(panel.lastIndexOf(") : failed ? (", unavailable), unavailable)).toContain('role="alert"');
+    expect(unavailable).toBeLessThan(empty);
+  });
+});
+
+// SEARCH-SCAN-BOUND: confirmed() could page through a studio's whole candidate
+// list on every keystroke. Each client read now scans at most
+// CLIENT_SCAN_CAP_PER_READ rows. A read that reaches the cap before it has
+// CLIENT_CAP matches reports it, and the action returns clientsTruncated, never
+// a short list presented as complete. "Jan Ieva Smith NNNN" decoys sort ahead of
+// "Jane (Janie) Smith" and are candidates of the name read that the shared
+// matcher rejects, so `n` decoys put c-janie at candidate index n.
+describe("global search: the client scan is bounded and says so", () => {
+  const CAP = 2000;
+  const decoys = (n: number) =>
+    Array.from({ length: n }, (_, i) => client(`c-decoy-${i}`, `Jan Ieva Smith ${String(i).padStart(4, "0")}`));
+
+  it("pins the stated bound", () => {
+    expect(CLIENT_SCAN_CAP_PER_READ).toBe(CAP);
+  });
+
+  it("a match at the last row inside the cap is found, with no truncation signal", async () => {
+    // "Janet Smithers" is also a name-read candidate (the matcher rejects it)
+    // and sorts after c-janie; removed so c-janie is the LAST candidate, at
+    // index CAP - 1, with nothing beyond it.
+    tables.clients = tables.clients.filter((r) => r.id !== "c-other");
+    tables.clients.push(...decoys(CAP - 1));
+    const res = await globalSearchAction("janie smith");
+    expect(res.ok && res.results.filter((r) => r.type === "client").map((r) => r.id)).toEqual(["client:c-janie"]);
+    expect(res.ok && res.clientsTruncated).toBeFalsy();
+  });
+
+  it("a match just past the cap is not scanned, and the search says it is incomplete", async () => {
+    tables.clients.push(...decoys(CAP));
+    const res = await globalSearchAction("janie smith");
+    expect(res).toEqual({ ok: true, results: [], clientsTruncated: true });
+  });
+
+  it("a match inside the cap with more candidates past it is shown AND flagged", async () => {
+    // c-janie at index CAP - 1; "Janet Smithers" and c-zoe lie past the cap.
+    tables.clients.push(...decoys(CAP - 1), client("c-zoe", "Zoe (Janie) Smith"));
+    const res = await globalSearchAction("janie smith");
+    expect(res.ok && res.results.filter((r) => r.type === "client").map((r) => r.id)).toEqual(["client:c-janie"]);
+    expect(res.ok && res.clientsTruncated).toBe(true);
+  });
+
+  it("no signal when CLIENT_CAP matches are confirmed before the cap", async () => {
+    tables.clients.push(
+      ...Array.from({ length: 5 }, (_, i) => client(`c-a${i}`, `Aaron (Janie) Smith ${i}`)),
+      ...decoys(CAP + 10),
+    );
+    const res = await globalSearchAction("janie smith");
+    expect(res.ok && res.results.filter((r) => r.type === "client")).toHaveLength(5);
+    expect(res.ok && res.clientsTruncated).toBeFalsy();
+  });
+
+  it("the bound holds under a server row cap smaller than the page", async () => {
+    server.maxRows = 700;
+    tables.clients.push(...decoys(CAP));
+    expect(await globalSearchAction("janie smith")).toEqual({ ok: true, results: [], clientsTruncated: true });
+  });
+});
+
+describe("global search panel: a bounded client scan is never shown as complete", () => {
+  const panel = readFileSync("app/(app)/GlobalSearch.tsx", "utf8");
+
+  it("keeps the truncation signal from the response", () => {
+    expect(panel).toMatch(/setClientsTruncated\(response\?\.ok === true && response\.clientsTruncated === true\)/);
+  });
+
+  it("says the client list is partial, and never says No results found. while it is", () => {
+    expect(panel).toContain("Showing the first client matches. Refine your search to find more.");
+    expect(panel).toMatch(/groups\.length === 0 && !clientsTruncated \? \(/);
   });
 });
