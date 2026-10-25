@@ -1,12 +1,19 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { REPO_ROOT, classify, dependenciesFor, highestTier, isDocsPath } from "../../scripts/classify-changes.mjs";
+import {
+  selectBrowserGroups,
+  specsForGroups,
+  EXTENDED,
+  BROWSER_GROUPS,
+  PUBLIC_BOOKING_SPECS,
+  PUBLIC_BOOKING_PATTERNS,
 // @ts-expect-error - .mjs utility ships without type declarations
-import { selectBrowserGroups, EXTENDED } from "../../scripts/browser-groups.mjs";
+} from "../../scripts/browser-groups.mjs";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { scanTestDependencies } from "../../scripts/test-dependencies.mjs";
 
@@ -883,4 +890,85 @@ describe("the scanner's own CLI", () => {
     const map = JSON.parse(run.stdout) as Deps;
     expect(map).toEqual(scanned);
   }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// 1132-CLASSIFIER-GAP. A change to the public booking surface must select every
+// spec that books through the public form, not only the `booking` group's.
+// #1132 changed app/book/[slug]/actions.ts and ran 44 specs; three that book
+// through that form (two in `portal`, one in `responsive`) were never selected.
+// ---------------------------------------------------------------------------
+describe("classifier - the public booking surface selects every spec that books through it", () => {
+  const specsFor = (...files: string[]): string[] => {
+    const r = selectBrowserGroups(files) as { groups: string[]; extended: boolean };
+    expect(r.extended, "a targeted selection, so the proof is about groups, not 'everything'").toBe(false);
+    return specsForGroups(r.groups) as string[];
+  };
+
+  it("a change to the public booking ACTION selects all 20 audited public-booking specs", () => {
+    expect(PUBLIC_BOOKING_SPECS).toHaveLength(20);
+    const selected = new Set(specsFor("app/book/[slug]/actions.ts"));
+    const missing = PUBLIC_BOOKING_SPECS.filter((s: string) => !selected.has(s));
+    expect(missing, "public-booking specs not selected for a change to the action").toEqual([]);
+  });
+
+  it.each([
+    "app/book/[slug]/actions.ts",
+    "app/book/[slug]/PublicBookForm.tsx",
+    "lib/booking/slots.ts",
+    "lib/booking/new-client-admission.ts",
+  ])("%s selects the three specs the #1132 run missed", (file) => {
+    const selected = new Set(specsFor(file));
+    for (const s of ["appointment-token-hash.spec.ts", "public-cancel-policy-change.spec.ts", "mobile-ux.spec.ts"]) {
+      expect(selected.has(s), `${s} not selected for ${file}`).toBe(true);
+    }
+  });
+
+  it("the responsive group is selected, which is where mobile-ux lives", () => {
+    const r = selectBrowserGroups(["app/book/[slug]/actions.ts"]) as { groups: string[] };
+    expect(r.groups).toContain("responsive");
+    expect(r.groups).toContain("portal");
+  });
+
+  it("NEGATIVE CONTROL: a path outside the public booking surface does not pull the three in", () => {
+    const selected = new Set(specsFor("app/(app)/calendar/DayColumn.tsx"));
+    expect(selected.has("appointment-token-hash.spec.ts")).toBe(false);
+    expect(selected.has("mobile-ux.spec.ts")).toBe(false);
+  });
+
+  it("every listed spec exists and is filed in a group (so naming it selects something real)", () => {
+    const filed = new Set(
+      Object.values(BROWSER_GROUPS as Record<string, { specs: string[] }>).flatMap((g) => g.specs),
+    );
+    for (const s of PUBLIC_BOOKING_SPECS as string[]) {
+      expect(existsSync(path.join(REPO_ROOT, "e2e", s)), `${s} is not on disk`).toBe(true);
+      expect(filed.has(s), `${s} is in no browser group`).toBe(true);
+    }
+  });
+
+  it("DRIFT GUARD: every spec that books through the public form is listed", () => {
+    // The audit's detector, comment lines stripped: the booking helper, a goto to
+    // /book or /b/, or the public booking action and commands by name.
+    const code = (t: string) =>
+      t.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    const books =
+      /(bookAppointment\(|goto\([^)]*(\/book\/|\/b\/)|publicBookAppointmentAction|create_public_appointment|create_waitlist_public_appointment)/;
+    const found: string[] = [];
+    for (const dir of ["e2e", "e2e-payment"]) {
+      for (const f of readdirSync(path.join(REPO_ROOT, dir))) {
+        if (!f.endsWith(".spec.ts")) continue;
+        if (books.test(code(readFileSync(path.join(REPO_ROOT, dir, f), "utf8")))) found.push(f);
+      }
+    }
+    expect(found.length, "the detector found nothing: it is broken, not clean").toBeGreaterThan(10);
+    const listed = new Set(PUBLIC_BOOKING_SPECS as string[]);
+    expect(
+      found.filter((f) => !listed.has(f)),
+      "specs that book through the public form but are not in PUBLIC_BOOKING_SPECS",
+    ).toEqual([]);
+  });
+
+  it("the patterns are the action and the booking helpers, and nothing broader", () => {
+    expect((PUBLIC_BOOKING_PATTERNS as RegExp[]).map(String)).toEqual([String(/^app\/book\//), String(/^lib\/booking\//)]);
+  });
 });
