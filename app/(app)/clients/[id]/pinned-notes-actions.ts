@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { dbErrorCode } from "@/lib/logging/error-class";
 
@@ -73,38 +72,27 @@ export async function editClientPinnedNoteAction(
 
   // Authorization: an active practitioner of the CURRENT studio (throws /
   // redirects otherwise). The studio is derived from the session, NEVER the form.
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  const { studio } = await getCurrentPractitionerWithStudio();
 
-  // client_pinned_notes carries SELECT/INSERT/DELETE RLS policies but no UPDATE
-  // policy (0022), so the RLS-scoped user client cannot UPDATE and this PR does
-  // not add a migration. Use the service-role client and enforce tenant isolation
-  // EXPLICITLY: the update is scoped to (id, studio_id = the authed studio,
-  // client_id), plus an OPTIMISTIC-CONCURRENCY guard on the note's current text.
-  // A foreign-studio / foreign-client / deleted / concurrently-edited note (its
-  // text no longer equals originalText) matches ZERO rows and is rejected: the
-  // later save never silently overwrites the earlier one. `text` is the ONLY
-  // mutated column; id, pinned state (row existence), studio_id, client_id,
-  // created_by_practitioner_id, and created_at are all preserved.
-  //
-  // HON-44 (Sam decision 12): a practitioner edits only the cautions THEY added;
-  // the owner may edit any. A non-owner's update is additionally scoped to
-  // created_by_practitioner_id = themselves, so someone else's caution (or an
-  // author-less legacy one) matches zero rows and gets the same "changed or no
-  // longer available" refusal, revealing nothing about who wrote it.
-  const admin = createAdminClient();
-  let update = admin
-    .from("client_pinned_notes")
-    .update({ text })
-    .eq("id", noteId)
-    .eq("studio_id", studio.id)
-    .eq("client_id", clientId)
-    .eq("text", originalText);
-  if (practitioner.role !== "owner") {
-    update = update.eq("created_by_practitioner_id", practitioner.id);
-  }
-  const { data, error } = await update.select("id").maybeSingle();
+  // 0254 (HON-44, Sam decision 12): the edit is a database COMMAND, not a
+  // service-role UPDATE. No UPDATE policy exists on client_pinned_notes (0022), and
+  // a service-role write cannot be constrained by one, so the old path could not
+  // enforce "a practitioner edits only their own". edit_client_pinned_note derives
+  // the caller from auth.uid() and the NAMED studio, lets a practitioner touch only a
+  // caution they created and the owner any, keeps the optimistic-concurrency guard
+  // on the current text, mutates `text` alone, and writes the audit row. Every
+  // refusal (foreign studio, foreign client, deleted, stale, not yours) is the same
+  // `false`, so nothing about who wrote a caution is disclosed.
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("edit_client_pinned_note", {
+    p_studio_id: studio.id,
+    p_client_id: clientId,
+    p_note_id: noteId,
+    p_original_text: originalText,
+    p_text: text,
+  });
   if (error) throw new Error("Could not update the note. Please try again.");
-  if (!data) {
+  if (data !== true) {
     throw new Error(
       "That note changed or is no longer available. Refresh and try again.",
     );

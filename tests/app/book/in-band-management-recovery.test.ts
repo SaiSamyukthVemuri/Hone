@@ -202,6 +202,22 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => ({
   getNewClientAdmissionMode: vi.fn(async () => ({ ok: true, mode: "open", source: "persisted" })),
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => admin }));
+// HON-50 decision C: the success-screen address reveal is its own module,
+// proved in tests/lib/booking/booked-client-address.test.ts. Here only the
+// action's side of the contract is pinned: which token and slug it asks with,
+// and that it passes the verified answer through (and survives a failure).
+const reveal = vi.hoisted(() => ({
+  calls: [] as Array<{ slug: string; token: string }>,
+  answer: null as string | null,
+  throws: false,
+}));
+vi.mock("@/lib/booking/booked-client-address", () => ({
+  bookedClientAddressForToken: async (_admin: unknown, input: { slug: string; token: string }) => {
+    reveal.calls.push(input);
+    if (reveal.throws) throw new Error("synthetic reveal failure");
+    return reveal.answer;
+  },
+}));
 vi.mock("next/cache", () => ({
   revalidatePath: () => {
     if (scenario.revalidateThrows) throw boom("revalidatePath");
@@ -397,7 +413,7 @@ describe("BOOK-01 T1 — a committed booking returns an in-band management path"
     expect(r.ok, `action failed: ${r.ok ? "" : r.error}`).toBe(true);
     if (!r.ok) return;
     expect(r.appointmentId).toBe(APPT_ID);
-    expect(r.manageUrl.startsWith(`${ORIGIN}/manage/`)).toBe(true);
+    expect(String(r.manageUrl).startsWith(`${ORIGIN}/manage/`)).toBe(true);
     expect(r.confirmationEmailStatus).toBe("sent");
     expect(emailAttempts).toEqual([
       { appointmentId: APPT_ID, emailType: "confirmation", success: true },
@@ -409,7 +425,7 @@ describe("BOOK-01 T1 — a committed booking returns an in-band management path"
     const r = await book();
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.manageUrl.startsWith(`${ORIGIN}/manage/`)).toBe(true);
+    expect(String(r.manageUrl).startsWith(`${ORIGIN}/manage/`)).toBe(true);
     expect(r.confirmationEmailStatus).toBe("failed");
     // The truthful-bookkeeping contract is unchanged: the attempt is recorded
     // as a failure, so `confirmation_sent_at` is never stamped.
@@ -424,7 +440,7 @@ describe("BOOK-01 T1 — a committed booking returns an in-band management path"
     const r = await book();
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.manageUrl.startsWith(`${ORIGIN}/manage/`)).toBe(true);
+    expect(String(r.manageUrl).startsWith(`${ORIGIN}/manage/`)).toBe(true);
     expect(r.confirmationEmailStatus).toBe("disabled");
     // Nothing was attempted, so nothing may be recorded or reported.
     expect(confirmationEmails).toEqual([]);
@@ -471,7 +487,7 @@ describe("BOOK-01 T1 — the returned URL is a real, route-shaped capability", (
     expect(r.ok).toBe(true);
     if (!r.ok) return;
 
-    const raw = r.manageUrl.slice(`${ORIGIN}/manage/`.length);
+    const raw = String(r.manageUrl).slice(`${ORIGIN}/manage/`.length);
     // 24 random bytes, base64url — the shape /manage/[token] resolves by
     // hashing and matching appointments.cancellation_token_hash.
     expect(raw).toMatch(/^[A-Za-z0-9_-]{32}$/);
@@ -499,7 +515,7 @@ describe("BOOK-01 T1 — the secrecy wall", () => {
       const r = await book();
       expect(r.ok, `action failed: ${r.ok ? "" : r.error}`).toBe(true);
       if (!r.ok) return;
-      const raw = r.manageUrl.slice(`${ORIGIN}/manage/`.length);
+      const raw = String(r.manageUrl).slice(`${ORIGIN}/manage/`.length);
       const emitted = allEmittedPayloads();
 
       expect(emitted, "raw token leaked into an emitted payload").not.toContain(raw);
@@ -522,7 +538,7 @@ describe("BOOK-01 T1 — the secrecy wall", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const payload = JSON.stringify(practitionerNotifications);
-    expect(payload).not.toContain(r.manageUrl.slice(`${ORIGIN}/manage/`.length));
+    expect(payload).not.toContain(String(r.manageUrl).slice(`${ORIGIN}/manage/`.length));
     expect(payload).not.toContain("/manage/");
   });
 
@@ -530,7 +546,7 @@ describe("BOOK-01 T1 — the secrecy wall", () => {
     const r = await book();
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const raw = r.manageUrl.slice(`${ORIGIN}/manage/`.length);
+    const raw = String(r.manageUrl).slice(`${ORIGIN}/manage/`.length);
     // Positive control for the sweep above: prove the token really is present
     // somewhere, so a passing secrecy assertion cannot be vacuous.
     expect(JSON.stringify(confirmationEmails)).toContain(raw);
@@ -620,8 +636,8 @@ async function expectSettledSuccess(overrides?: Record<string, string>) {
   expect(r.ok, `committed booking reported failure: ${r.ok ? "" : r.error}`).toBe(true);
   if (!r.ok) throw new Error("unreachable");
   expect(r.appointmentId).toBe(APPT_ID);
-  expect(r.manageUrl.startsWith(`${ORIGIN}/manage/`)).toBe(true);
-  expect(manageToken(r.manageUrl)).toMatch(/^[A-Za-z0-9_-]{32}$/);
+  expect(String(r.manageUrl).startsWith(`${ORIGIN}/manage/`)).toBe(true);
+  expect(manageToken(String(r.manageUrl))).toMatch(/^[A-Za-z0-9_-]{32}$/);
   return r;
 }
 
@@ -766,7 +782,7 @@ describe("BOOK-01 P2-A — a committed booking survives every post-commit failur
       expect(consoleErrors.join(" "), `missing evidence: ${event}`).toContain(event);
     }
     // ...and none of it carried a secret, a message, or the management path.
-    const raw = manageToken(r.manageUrl);
+    const raw = manageToken(String(r.manageUrl));
     const logs = consoleErrors.join(" ");
     expect(logs).not.toContain(POISON);
     expect(logs).not.toContain(raw);
@@ -882,5 +898,50 @@ describe("SCH-002 public submit advisory availability failures", () => {
   it.each([new Error("unexpected programming error"), "availability_read_failed:blockouts"])("propagates unclassified/non-Error throws without command", async (failure) => {
     scenario.slotError = failure;
     await expect(book()).rejects.toBe(failure); expect(rpcCalls).toEqual([]);
+  });
+});
+
+describe("HON-50 decision C: the success-screen address is verified server-side", () => {
+  beforeEach(() => {
+    reveal.calls.length = 0;
+    reveal.answer = null;
+    reveal.throws = false;
+  });
+
+  it("asks with the booking's OWN freshly minted token (the one whose hash was committed) and the page slug", async () => {
+    const r = await book();
+    expect(r.ok).toBe(true);
+    expect(reveal.calls).toHaveLength(1);
+    const create = rpcCalls.find((c) => c.fn === COMMIT_FN);
+    expect(hashAppointmentToken(reveal.calls[0].token)).toBe(create!.args.p_cancellation_token_hash);
+    expect(reveal.calls[0].slug).toBe("test-studio");
+    // Never the appointment id.
+    expect(reveal.calls[0].token).not.toBe(APPT_ID);
+  });
+
+  it("returns exactly what the verification answered", async () => {
+    reveal.answer = "100 Synthetic Private Lane";
+    const r = await book();
+    expect(r.ok && r.bookedClientAddress).toBe("100 Synthetic Private Lane");
+  });
+
+  it("answers null when verification answers null", async () => {
+    const r = await book();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.bookedClientAddress).toBeNull();
+  });
+
+  it("a failing verification never fails the committed booking and reveals nothing", async () => {
+    reveal.throws = true;
+    const r = await book();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.bookedClientAddress).toBeNull();
+  });
+
+  it("a refused booking never asks", async () => {
+    scenario.commandRefuses = true;
+    const r = await book();
+    expect(r.ok).toBe(false);
+    expect(reveal.calls).toEqual([]);
   });
 });

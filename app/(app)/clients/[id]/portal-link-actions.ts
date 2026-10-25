@@ -5,6 +5,10 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { limitPractitionerClientEmail } from "@/lib/rate-limit/public";
 import { issuePortalMagicLink } from "@/lib/portal/magic-link";
 import { logPortalAccessEvent } from "@/lib/portal/access-events";
+import {
+  clientSelfServicePolicyFromStudio,
+  STAFF_PORTAL_DISABLED_MESSAGE,
+} from "@/lib/booking/client-self-service-policy";
 
 export type SendPortalLinkResult = { ok: true } | { ok: false; error: string };
 
@@ -24,6 +28,11 @@ export async function sendPortalLinkAction(
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot send portal links." };
+  }
+  // HON-47. No link to a portal the studio has turned off. Checked before the
+  // rate limiter so a refused attempt spends nothing.
+  if (!clientSelfServicePolicyFromStudio(studio).portal) {
+    return { ok: false, error: STAFF_PORTAL_DISABLED_MESSAGE };
   }
 
   const admin = createAdminClient();

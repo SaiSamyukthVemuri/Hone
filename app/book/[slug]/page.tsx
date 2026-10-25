@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getStudioBySlug } from "@/lib/booking/queries";
+import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
 import { todayInTz } from "@/lib/booking/tz";
 import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
@@ -40,8 +41,8 @@ export default async function PublicBookingPage({
   const studioRow = await getStudioBySlug(slug);
   if (!studioRow) notFound();
   // HON-50. Everything below reads this view, never the raw row: its address
-  // is null when the owner chose emails-only (or it is blank), and it carries
-  // no arrival instructions (email-only content). So neither can reach this
+  // is null when the owner chose booked-client communications only (or it is
+  // blank), and it carries no arrival instructions (appointment-email content). So neither can reach this
   // public page's HTML or the props it hands its client form (RSC payload).
   const studio = forPublicBookingPage(studioRow);
 
@@ -181,6 +182,8 @@ export default async function PublicBookingPage({
                  booking server action re-derives it from the server-resolved
                  studio, so a stale tab or forged post cannot book around it. */
               newClientAdmission={admissionMode}
+              /* HON-47. Presentation only; the action re-derives it. */
+              clientPortalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
               studioAddress={studio.address ?? null}
               services={services}
               defaultDate={today}

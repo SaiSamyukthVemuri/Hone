@@ -5,7 +5,8 @@ import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { MarkdownLiteBlock } from "@/app/_components/MarkdownLiteBlock";
-import { getCurrentPortalSession } from "@/lib/portal/session";
+import { getCurrentPortalSessionState } from "@/lib/portal/session";
+import { PortalAccessDisabled } from "./PortalAccessDisabled";
 import { PortalRebookCard } from "./PortalRebookCard";
 import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { todayInTz } from "@/lib/booking/tz";
@@ -59,10 +60,16 @@ import { PortalCardOnFileCard } from "./PortalCardOnFileCard";
 // columns or tables those surfaces would require.
 
 export default async function PortalHomePage() {
-  const session = await getCurrentPortalSession();
-  if (!session) {
+  // HON-47. A live session at a studio that has turned client portal access
+  // off renders the explanation, not the portal, and not a sign-in loop.
+  const sessionState = await getCurrentPortalSessionState();
+  if (sessionState.kind === "disabled") {
+    return <PortalAccessDisabled studioName={sessionState.studioName} />;
+  }
+  if (sessionState.kind !== "active") {
     redirect("/portal/login");
   }
+  const session = sessionState.session;
 
   const identity = await getPortalIdentity(session.studioId, session.clientId);
   if (!identity) {

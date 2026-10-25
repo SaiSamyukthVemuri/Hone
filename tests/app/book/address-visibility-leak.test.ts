@@ -4,8 +4,7 @@ import type { AddressInfo } from "node:net";
 import type { ReactNode } from "react";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-// HON-50. An address marked EMAILS-ONLY (the visibility column is drafted, not
-// yet applied; the harness serves rows that carry it, as they will) must not reach anything
+// HON-50 PR B. An address the owner marked EMAILS-ONLY must not reach anything
 // the public booking page sends to a visitor: its HTML, the props it hands to
 // the client form (the RSC payload), or its metadata. The real page function
 // runs against a loopback server playing PostgREST through the real
@@ -174,6 +173,7 @@ async function visit(slug = "willow"): Promise<Outcome> {
 }
 
 const ADDRESS = "100 Synthetic Hidden Lane, Toronto ON";
+const dir = "app/book/[slug]";
 
 function studioWith(fields: Record<string, unknown>) {
   answers.studio = OK([{ ...STUDIO, ...fields }]);
@@ -224,8 +224,48 @@ describe("an emails-only address never reaches the public booking page", () => {
   });
 });
 
+describe("HON-50 decisions B/C: no viewer of the public page gets a booked-client-only address", () => {
+  const PRIVATE = { address: ADDRESS, address_visibility: "emails" };
+
+  it("a forged status/token/appointment query string changes nothing (the page reads no search params)", async () => {
+    studioWith(PRIVATE);
+    const element = await PublicBookingPage({
+      params: Promise.resolve({ slug: "willow" }),
+      searchParams: Promise.resolve({
+        status: "confirmed",
+        booked: "1",
+        appointment: "00000000-0000-4000-8000-0000000000b1",
+        token: "SyntheticForgedToken_0123456789",
+      }),
+    } as never);
+    const html = renderToStaticMarkup(element);
+    expect(html).not.toContain("Synthetic Hidden Lane");
+    expect(JSON.stringify(formProps)).not.toContain("Synthetic Hidden Lane");
+  });
+
+  it.each(["waitlist", "closed"])("a %s-admission page (no booking possible) carries no private address", async (mode) => {
+    studioWith(PRIVATE);
+    answers.admission = OK([{ new_client_admission_mode: mode, new_client_admission_mode_set_at: "2026-09-01T00:00:00Z" }]);
+    const outcome = await visit();
+    expect(outcome.kind).toBe("rendered");
+    if (outcome.kind !== "rendered") return;
+    expect(outcome.html).not.toContain("Synthetic Hidden Lane");
+    expect(JSON.stringify(formProps)).not.toContain("Synthetic Hidden Lane");
+  });
+
+  it("the page module exports no metadata a crawler or unfurler could read", async () => {
+    const mod = (await import("@/app/book/[slug]/page")) as Record<string, unknown>;
+    expect(mod.metadata).toBeUndefined();
+    expect(mod.generateMetadata).toBeUndefined();
+  });
+
+  it("the page source reads no search params", () => {
+    const page = readFileSync(`${dir}/page.tsx`, "utf8");
+    expect(page).not.toMatch(/searchParams/);
+  });
+});
+
 describe("source guards for the public booking tree", () => {
-  const dir = "app/book/[slug]";
   const files = readdirSync(dir).filter((f: string) => /\.tsx?$/.test(f));
 
   it("the page renders only the forPublicBookingPage() view of the studio row", () => {

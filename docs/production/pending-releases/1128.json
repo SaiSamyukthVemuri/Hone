@@ -1,0 +1,8 @@
+{
+  "pr": 1128,
+  "runtime": true,
+  "migrations": [
+    "supabase/migrations/0255_lint_hardening_anon_surface.sql"
+  ],
+  "release_receipt": "01-ops/1128-release-receipt.json"
+}

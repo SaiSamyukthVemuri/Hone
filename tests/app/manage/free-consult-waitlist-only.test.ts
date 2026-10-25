@@ -100,6 +100,14 @@ function makeQuery(table: string) {
           error: null,
         };
       }
+      // HON-47: the studio policy read. No policy column, so the studio has
+      // today's defaults and every existing assertion keeps its meaning.
+      if (table === "studios") {
+        return {
+          data: { id: "22222222-2222-4222-8222-222222222222", name: "Test Studio" },
+          error: null,
+        };
+      }
       return { data: null, error: null };
     },
   };
