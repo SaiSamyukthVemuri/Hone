@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ACKNOWLEDGEMENTS_STEP_ID,
   ANSWER_ERROR_COPY,
@@ -314,5 +314,106 @@ describe("the practitioner-enterable / client-owned step split", () => {
         expect(q.type).not.toBe("checkbox");
       }
     }
+  });
+});
+
+
+import { intakeRevision } from "@/lib/intake/revision";
+import { writeIntakeRevision } from "@/lib/intake/write-revision";
+
+describe("0243 revision and governed write response boundary", () => {
+  it.each([undefined, null, "", "00", "-1", "1.5", "1e2", "9223372036854775808", -1, Number.MAX_SAFE_INTEGER + 1])(
+    "refuses missing or lossy revision %j", (value) => { expect(intakeRevision(value)).toBeNull(); },
+  );
+  it("round-trips legacy zero and full bigint strings without inventing missing zero", () => {
+    expect(intakeRevision(0)).toBe("0");
+    expect(intakeRevision("9223372036854775807")).toBe("9223372036854775807");
+  });
+  const input = { intakeId: "intake", studioId: "studio-A", clientId: "client-A", expectedRevision: "4", responses: { legal_name: "Synthetic" }, step: 1, operation: "save" as const };
+  it("passes only resolved scope, validated responses and explicit revision to the one governed command", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ outcome: "saved", new_revision: "5" }], error: null });
+    expect(await writeIntakeRevision({ rpc } as never, input)).toEqual({ ok: true, revision: "5", outcome: "saved" });
+    expect(rpc).toHaveBeenCalledWith("write_intake_revision", {
+      p_intake_id: "intake", p_studio_id: "studio-A", p_client_id: "client-A", p_expected_revision: "4",
+      p_responses: input.responses, p_step: 1, p_operation: "save", p_profile: {},
+    });
+  });
+  it.each(["conflict", "terminal"])("%s never claims the new payload was saved", async (outcome) => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ outcome, new_revision: null }], error: null });
+    const result = await writeIntakeRevision({ rpc } as never, input);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe(outcome);
+  });
+  it.each([null, [], [{ outcome: "saved", new_revision: "4" }], [{ outcome: "saved", new_revision: "garbage" }], [{ outcome: "submitted", new_revision: "5" }], [{ outcome: "not_available", new_revision: "private-revision" }]])(
+    "fails closed on an incomplete or wrong-operation response %j", async (data) => {
+      const rpc = vi.fn().mockResolvedValue({ data, error: null });
+      expect((await writeIntakeRevision({ rpc } as never, input)).ok).toBe(false);
+    },
+  );
+  it("refuses an invalid explicit counter without calling a writer", async () => {
+    const rpc = vi.fn();
+    expect((await writeIntakeRevision({ rpc } as never, { ...input, expectedRevision: "invalid" })).ok).toBe(false);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it("database errors and throws fail closed without returning database/private text", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: "PRIVATE" } });
+    expect(JSON.stringify(await writeIntakeRevision({ rpc } as never, input))).not.toContain("PRIVATE");
+    rpc.mockRejectedValue(new Error("PRIVATE"));
+    expect(JSON.stringify(await writeIntakeRevision({ rpc } as never, input))).not.toContain("PRIVATE");
+  });
+});
+
+// CLN-008: the shipped issue document is the authority for known rows, even
+// after the current catalogue is edited. Legacy NULL is deliberately different.
+describe("0246 issued questionnaire authority", () => {
+  it("pins the full TS catalogue, deterministic digest and exact migration literal", async () => {
+    const { ISSUED_QUESTIONNAIRE } = await import("@/lib/intake/questionnaire");
+    const { createHash } = await import("node:crypto");
+    const { readFileSync } = await import("node:fs");
+    const canonical = (v: unknown): string => {
+      if (v === null || typeof v !== "object") return JSON.stringify(v);
+      if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+      return `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(",")}}`;
+    };
+    expect(ISSUED_QUESTIONNAIRE.catalogue.steps).toEqual(INTAKE_STEPS);
+    expect(ISSUED_QUESTIONNAIRE.content_digest).toBe(createHash("sha256").update(canonical(ISSUED_QUESTIONNAIRE.catalogue)).digest("hex"));
+    expect(ISSUED_QUESTIONNAIRE.catalogue_version).toBe(`hone-intake-${ISSUED_QUESTIONNAIRE.content_digest}`);
+    const sql = readFileSync("supabase/migrations/0246_intake_questionnaire_snapshot.sql", "utf8");
+    expect(JSON.parse(sql.match(/\$catalogue\$([\s\S]*?)\$catalogue\$/)![1])).toEqual(ISSUED_QUESTIONNAIRE);
+  });
+
+  it("keeps issued labels, options, required and conditional rules when current wording/rules change", async () => {
+    const { ISSUED_QUESTIONNAIRE, questionnaireForRow } = await import("@/lib/intake/questionnaire");
+    const { findMissingRequiredAnswers } = await import("@/lib/intake/questions");
+    const original = JSON.parse(JSON.stringify(ISSUED_QUESTIONNAIRE));
+    const current = INTAKE_STEPS.flatMap(s => s.questions).find(q => q.key === "diabetes_type")!;
+    const before = { ...current };
+    try {
+      Object.assign(current, { label: "Different current wording", required: false, options: [{ value: "new", label: "New option" }], conditional: { whenKey: "new_parent", whenEquals: ["yes"] } });
+      const issued = questionnaireForRow(original);
+      expect(issued.kind).toBe("known");
+      const historic = issued.steps.flatMap(s => s.questions).find(q => q.key === "diabetes_type")!;
+      expect(historic).toEqual(before);
+      expect(findMissingRequiredAnswers({ medical_conditions: ["diabetes"] }, issued.steps)).toContain("diabetes_type");
+      expect(findMissingRequiredAnswers({ medical_conditions: ["diabetes"] })).not.toContain("diabetes_type");
+      expect(findInvalidChoiceAnswers({ medical_conditions: ["diabetes"], diabetes_type: "type_1" }, issued.steps)).not.toContain("diabetes_type");
+      expect(visibleQuestionsForStep(3, { medical_conditions: ["diabetes"] }, issued.steps).map(q => q.key)).toContain("diabetes_type");
+    } finally { Object.assign(current, before); }
+  });
+
+  it("distinguishes NULL legacy from missing, forged, recursive or unsupported known documents", async () => {
+    const { ISSUED_QUESTIONNAIRE, questionnaireForRow } = await import("@/lib/intake/questionnaire");
+    expect(questionnaireForRow(null).kind).toBe("legacy");
+    const changed = JSON.parse(JSON.stringify(ISSUED_QUESTIONNAIRE));
+    changed.catalogue.steps[0].questions[0].label = "Caller text";
+    const cycle: Record<string, unknown> = {}; cycle.catalogue = cycle;
+    for (const value of [undefined, {}, [], "legacy", cycle, changed,
+      { ...ISSUED_QUESTIONNAIRE, schema_version: 99 }, { ...ISSUED_QUESTIONNAIRE, content_digest: "forged" },
+      { ...ISSUED_QUESTIONNAIRE, catalogue_version: "forged" }, { ...ISSUED_QUESTIONNAIRE, extra: true }]) {
+      const decoded = questionnaireForRow(value);
+      expect(decoded.kind).toBe("invalid");
+      expect(decoded.steps).toEqual([]);
+    }
+    expect(Object.isFrozen(ISSUED_QUESTIONNAIRE.catalogue.steps[0].questions[0])).toBe(true);
   });
 });

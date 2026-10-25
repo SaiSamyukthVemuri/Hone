@@ -243,7 +243,7 @@ describe("preparation remains the pricing boundary; execution may only REFUSE", 
     expect(exec).toMatch(/if \(!permission\.allow\)/);
     expect(exec).toMatch(/outcome: "blocked"/);
     // and the session id comes from the ATTEMPT ROW, never the browser
-    expect(exec).toMatch(/\.select\("session_id"\)/);
+    expect(exec).toMatch(/\.select\("session_id, currency"\)/);
     expect(exec).toMatch(/\.eq\("studio_id", studioId\)/);
     // the permission module itself never yields an amount
     const PERM = read("lib/billing/execution-pricing-permission.ts");

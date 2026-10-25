@@ -79,7 +79,10 @@ describe("allowed wording is present", () => {
 describe("practitioner-only surface", () => {
   it("the review page mounts the derived flags card", () => {
     expect(PAGE).toMatch(/deriveIntakeReviewFlags/);
-    expect(PAGE).toMatch(/<IntakeReviewFlags responses=\{responses\} \/>/);
+    expect(PAGE).toContain("const catalogue = questionnaireForRow(intake.questionnaire_snapshot)");
+    expect(PAGE).toContain("const INTAKE_STEPS = catalogue.steps");
+    expect(PAGE).toMatch(/<IntakeReviewFlags responses=\{responses\} steps=\{INTAKE_STEPS\} \/>/);
+    expect(PAGE).toContain("deriveIntakeReviewFlags(responses, steps)");
   });
 
   it("the public client-facing intake route does NOT render review flags", () => {
