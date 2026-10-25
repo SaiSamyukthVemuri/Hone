@@ -450,3 +450,97 @@ describe("SEC-002 request level: the current platform admin (positive control)",
     },
   );
 });
+
+// E-GAP (SEC-002): ONE session, minted while its holder is a platform operator,
+// then revoked. The identities above are separate users, so none of them
+// proves that the SAME signed-in session (same user id, same cookies) loses
+// admin access on its next request. Revocation is removing the address from
+// ADMIN_EMAILS (lib/admin.ts reads it on every call), or ADMIN_EMAILS becoming
+// empty in production, which fails closed. Nothing about the session changes.
+describe("SEC-002 request level: a session minted while operator is refused after revocation", () => {
+  const SAME_SESSION_USER = { id: "user-revoked-operator-session", email: OPERATOR };
+
+  function mintOperatorSession(memberships: { studio_id: string }[]) {
+    h.user = SAME_SESSION_USER;
+    h.memberships = memberships;
+  }
+  function resetPrivilegedCounters() {
+    h.adminConstructions = 0;
+    h.tables = [];
+  }
+
+  const revocations: Array<[string, () => void]> = [
+    ["removed from ADMIN_EMAILS", () => vi.stubEnv("ADMIN_EMAILS", "second-operator@platform.test")],
+    ["ADMIN_EMAILS emptied in production", () => vi.stubEnv("ADMIN_EMAILS", "")],
+  ];
+
+  for (const [revocation, revoke] of revocations) {
+    for (const page of PAGES) {
+      for (const kind of KINDS) {
+        it(`no studio, ${revocation}: ${kind} ${page.path} is served before, refused after, by the middleware`, async () => {
+          mintOperatorSession([]);
+          const before = await serve(kind, page);
+          expect(before.status).toBe(200);
+          expect(h.adminConstructions).toBeGreaterThan(0);
+
+          revoke();
+          resetPrivilegedCounters();
+          expect(h.user).toBe(SAME_SESSION_USER);
+          const after = await serve(kind, page);
+          expect(after.stage).toBe("middleware");
+          expect(after.status).toBe(307);
+          expect(new URL(after.location!).pathname).toBe("/no-access");
+          expect(after.body).not.toContain(PRIVILEGED);
+          expect(h.adminConstructions).toBe(0);
+          expect(h.tables).toEqual([]);
+        });
+
+        it(`still a studio member, ${revocation}: ${kind} ${page.path} is served before, refused after, by layout and page`, async () => {
+          mintOperatorSession([{ studio_id: STUDIO_B }]);
+          const before = await serve(kind, page);
+          expect(before.status).toBe(200);
+          expect(h.adminConstructions).toBeGreaterThan(0);
+
+          revoke();
+          resetPrivilegedCounters();
+          expect(h.user).toBe(SAME_SESSION_USER);
+          const after = await serve(kind, page);
+          expect(after.stage).toBe("render");
+          if (kind === "document") {
+            expect(after.status).toBe(307);
+            expect(after.location).toBe("/dashboard");
+          } else if (page.refusal === "not-found") {
+            expect(after.status).toBe(404);
+          } else {
+            expect(after.status).toBe(307);
+            expect(after.location).toBe("/no-access");
+          }
+          expect(after.body).not.toContain(PRIVILEGED);
+          expect(h.adminConstructions).toBe(0);
+          expect(h.tables).toEqual([]);
+        });
+      }
+    }
+  }
+
+  it("covers EVERY admin page on disk, both request kinds, both revocations", async () => {
+    const { readdirSync } = await import("node:fs");
+    const { join, relative, resolve } = await import("node:path");
+    const root = resolve(__dirname, "../../app/admin");
+    const onDisk: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.isDirectory()) walk(join(dir, entry.name));
+        else if (entry.name === "page.tsx") onDisk.push(relative(root, dir) || ".");
+      }
+    };
+    walk(root);
+    const covered = PAGES.map((p) => {
+      const route = p.path.split("?")[0].replace(`/${STUDIO_B}`, "/[id]").replace(/^\/admin\/?/, "");
+      return route === "" ? "." : route;
+    });
+    expect([...new Set(covered)].sort()).toEqual(onDisk.sort());
+    expect(KINDS).toEqual(["document", "rsc"]);
+    expect(revocations).toHaveLength(2);
+  });
+});

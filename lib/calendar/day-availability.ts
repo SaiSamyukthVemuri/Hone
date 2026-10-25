@@ -28,14 +28,8 @@ export function resolveCalendarDayAvailability(args: {
 } {
   const { date, dayOfWeek, defaults, overrides, capacityEnabled } = args;
   // Missing practitioner_id is the pre-0135 studio-wide shape.
-  const studioDefaults = defaults.filter((row) => row.practitioner_id == null);
-  const studioOverrides = overrides.filter((row) => row.practitioner_id == null);
-  const effective = (practitionerId: string | null): Window => {
-    const personalDefaults = practitionerId ? defaults.filter((row) => row.practitioner_id === practitionerId) : null;
-    const personalOverrides = practitionerId ? overrides.filter((row) => row.practitioner_id === practitionerId) : null;
-    return computeEffectiveOverrides(studioOverrides, personalOverrides).find((row) => row.effective_date === date)
-      ?? computeEffectiveWeek(studioDefaults, personalDefaults)[dayOfWeek];
-  };
+  const effective = (practitionerId: string | null): Window =>
+    effectiveWindow(date, dayOfWeek, defaults, overrides, practitionerId);
   const ids = [...new Set(args.activePractitionerIds)];
   if (capacityEnabled && ids.length === 0) {
     return { availability: null, closedDay: false, hoursVary: false };
@@ -53,15 +47,68 @@ export function resolveCalendarDayAvailability(args: {
       if (!agrees) return { availability: null, closedDay: false, hoursVary: true };
     }
   }
-  const configured = studioDefaults.some((row) => row.day_of_week === dayOfWeek)
-    || studioOverrides.some((row) => row.effective_date === date)
-    || (commonId != null && (
-      defaults.some((row) => row.practitioner_id === commonId && row.day_of_week === dayOfWeek)
-      || overrides.some((row) => row.practitioner_id === commonId && row.effective_date === date)
-    ));
+  const configured = windowConfigured(date, dayOfWeek, defaults, overrides, commonId);
   return {
     availability: configured ? { isOpen: shared.is_open, openTime: shared.open_time, closeTime: shared.close_time } : null,
     closedDay: !shared.is_open,
     hoursVary: false,
+  };
+}
+
+// The same per-scope precedence as above, for ONE practitioner: a personal
+// date override, else a studio date override, else the personal weekday row,
+// else the studio weekday row.
+function effectiveWindow(
+  date: string,
+  dayOfWeek: number,
+  defaults: ReadonlyArray<ScopedDefault>,
+  overrides: ReadonlyArray<ScopedOverride>,
+  practitionerId: string | null,
+): Window {
+  const studioDefaults = defaults.filter((row) => row.practitioner_id == null);
+  const studioOverrides = overrides.filter((row) => row.practitioner_id == null);
+  const personalDefaults = practitionerId ? defaults.filter((row) => row.practitioner_id === practitionerId) : null;
+  const personalOverrides = practitionerId ? overrides.filter((row) => row.practitioner_id === practitionerId) : null;
+  return computeEffectiveOverrides(studioOverrides, personalOverrides).find((row) => row.effective_date === date)
+    ?? computeEffectiveWeek(studioDefaults, personalDefaults)[dayOfWeek];
+}
+
+function windowConfigured(
+  date: string,
+  dayOfWeek: number,
+  defaults: ReadonlyArray<ScopedDefault>,
+  overrides: ReadonlyArray<ScopedOverride>,
+  practitionerId: string | null,
+): boolean {
+  return defaults.some((row) => row.practitioner_id == null && row.day_of_week === dayOfWeek)
+    || overrides.some((row) => row.practitioner_id == null && row.effective_date === date)
+    || (practitionerId != null && (
+      defaults.some((row) => row.practitioner_id === practitionerId && row.day_of_week === dayOfWeek)
+      || overrides.some((row) => row.practitioner_id === practitionerId && row.effective_date === date)
+    ));
+}
+
+/**
+ * HON-48 team day view: ONE practitioner's own hours for one date, so each
+ * practitioner column can grey that person's off-hours. Display only, like
+ * the shared tint above; booking authority stays in the booking engine.
+ * `availability` is null when no row applies (no tint, never a guessed state).
+ */
+export function resolvePractitionerDayAvailability(args: {
+  date: string;
+  dayOfWeek: number;
+  defaults: ReadonlyArray<ScopedDefault>;
+  overrides: ReadonlyArray<ScopedOverride>;
+  practitionerId: string;
+}): {
+  availability: { isOpen: boolean; openTime: string | null; closeTime: string | null } | null;
+  closedDay: boolean;
+} {
+  const { date, dayOfWeek, defaults, overrides, practitionerId } = args;
+  const window = effectiveWindow(date, dayOfWeek, defaults, overrides, practitionerId);
+  const configured = windowConfigured(date, dayOfWeek, defaults, overrides, practitionerId);
+  return {
+    availability: configured ? { isOpen: window.is_open, openTime: window.open_time, closeTime: window.close_time } : null,
+    closedDay: !window.is_open,
   };
 }

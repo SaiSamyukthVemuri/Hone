@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { StudioTimedBlock } from "@/lib/types/database";
 import { TIMED_BLOCK_LABEL } from "./calendar-format";
+import { calendarBlockScopeLabel, type BlockScopeNames } from "@/lib/calendar/block-scope";
 import {
   formatClockLabel,
   isAllDayInterval,
@@ -53,12 +54,16 @@ export function TimedBlockEditDrawer({
   studioTimezone,
   timeFormat,
   onClose,
+  blockScopeNames,
 }: {
   block: StudioTimedBlock | null;
   isOwner: boolean;
   studioTimezone: string;
   timeFormat: TimeFormat;
   onClose: () => void;
+  // BLOCK-SCOPE F3: present under practitioner capacity. Shows who the block
+  // closes time for; editing still never changes scope (see the save below).
+  blockScopeNames?: BlockScopeNames;
 }) {
   const router = useRouter();
   const [date, setDate] = useState("");
@@ -169,6 +174,11 @@ export function TimedBlockEditDrawer({
           <p className="text-sm text-neutral-500">
             {label} · {rangeLabel}
           </p>
+          {blockScopeNames && (
+            <p className="text-sm text-neutral-500" data-block-scope="">
+              {calendarBlockScopeLabel(block.practitioner_id, blockScopeNames)}
+            </p>
+          )}
         </header>
 
         {!isOwner ? (
