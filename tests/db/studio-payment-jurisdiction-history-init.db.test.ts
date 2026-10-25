@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -775,8 +775,10 @@ describe("J9-H 0257 follow-up", () => {
 // I: G9d. The window read g09d-0214-currency-history.sql predicts, per studio
 // ordinal, what this command returns for each pair. Every case below builds
 // the studio twice (one per pair, because a successful call initializes the
-// studio), runs the EXACT g09d text once over all of them in one repeatable-read
-// transaction, then calls the real command and compares.
+// studio), runs the real command once for each, then runs the EXACT g09d text
+// over all of them in one repeatable-read transaction and compares. The SQL is
+// never changed here; every branch is proved by a MUTANT of the text that the
+// same comparison must catch.
 //
 // g09d is written for hosted 0212, where nothing has ever been observed, so
 // accounts are bound with a NULL observed country (bind(..., null)), the 0212
@@ -792,7 +794,9 @@ describe("J9-I g09d prediction equals the command", () => {
     expect(createHash("sha256").update(SQL).digest("hex")).toBe(G09D_SHA256);
   });
 
-  type Predicted = Record<string, unknown> & { predicted_ca_cad: string; predicted_us_usd: string };
+  type Row = Record<string, unknown> & { studio_ordinal: number; predicted_ca_cad: string; predicted_us_usd: string };
+  const ABBR = ["pca", "aps", "mfa", "sca", "srf", "sra", "sdp", "spa"] as const;
+
   // The card-setup cleanup path of 0032 (check_claimed_payment_method_cleanup_safety) appends exactly
   // this row through _append_stripe_payment_audit: a session id, no appointment, NO currency. The
   // writer's EXECUTE is revoked from every runtime role, so it is called as its owner, with FK
@@ -804,74 +808,108 @@ describe("J9-I g09d prediction equals the command", () => {
          null, null, null, null, null, null, null, null, null, null, null, '{"decision":"detach_authorized"}'::jsonb, null, null)`,
       [s.studioId, randomUUID()]);
   });
+  const pendingSession = (s: SeededStudio) => {
+    const starts = new Date(Date.now() + 86_400_000);
+    return raw("pending_booking_payment_sessions", { token_hash: `tok_${rid()}`, studio_id: s.studioId, service_id: randomUUID(),
+      client_id: s.clientId, requested_starts_at: starts.toISOString(),
+      requested_ends_at: new Date(starts.getTime() + 3_600_000).toISOString(), requested_duration_minutes: 60,
+      stripe_account_id: `acct_T${rid()}`, stripe_livemode: false, stripe_customer_id: `cus_${rid()}` });
+  };
+  /** One foreign- or right-currency row in `table`, naming a bound test account so only currency can refuse. */
+  const tableRow = (table: string, currency: string) => async (s: SeededStudio) => {
+    const t = await bind(s, false, null);
+    await name(table, s, t.acct, false, currency);
+  };
 
-  type Case = { label: string; build: (s: SeededStudio) => Promise<void>; ca: string[]; us: string[] };
+  type Case = { label: string; build: (s: SeededStudio) => Promise<void>; ca: string[]; us: string[]; nullAudit?: boolean };
+  const ACK = "refused_test_account_unobserved";
+  const CURRENCY = "refused_currency_history";
   const CASES: Case[] = [
     { label: "empty studio", build: async () => {}, ca: ["initialized"], us: ["initialized"] },
     { label: "cad history", build: async (s) => { await settlement(s, "cad"); await name("payment_charge_attempts", s, null, false, "cad"); },
-      ca: ["initialized"], us: ["refused_currency_history"] },
-    { label: "usd history", build: async (s) => { await settlement(s, "usd"); },
-      ca: ["refused_currency_history"], us: ["initialized"] },
+      ca: ["initialized"], us: [CURRENCY] },
+    { label: "usd history", build: async (s) => { await settlement(s, "usd"); }, ca: [CURRENCY], us: ["initialized"] },
     { label: "NULL-currency audit row from the real writer", build: async (s) => { await writeNullCurrencyAudit(s); },
-      ca: ["refused_currency_history"], us: ["refused_currency_history"] },
+      ca: [CURRENCY], us: [CURRENCY], nullAudit: true },
     { label: "NULL-currency row beside otherwise cad history", build: async (s) => { await settlement(s, "cad"); await writeNullCurrencyAudit(s); },
-      ca: ["refused_currency_history"], us: ["refused_currency_history"] },
+      ca: [CURRENCY], us: [CURRENCY], nullAudit: true },
     { label: "foreign currency in stripe_refunds", build: async (s) => { await name("stripe_refunds", s, `acct_T${rid()}`, false, "eur"); },
-      ca: ["refused_currency_history"], us: ["refused_currency_history"] },
+      ca: [CURRENCY], us: [CURRENCY] },
+    ...(["manual_fee_charge_attempts", "stripe_charge_attempts", "stripe_refund_attempts", "stripe_disputes"] as const).flatMap((t): Case[] => [
+      { label: `${t}: a usd row`, build: tableRow(t, "usd"), ca: [CURRENCY], us: [ACK] },
+      { label: `${t}: a cad row`, build: tableRow(t, "cad"), ca: [ACK], us: [CURRENCY] },
+    ]),
     { label: "appointment_payments row", build: async (s) => {
         await raw("appointment_payments", { appointment_id: randomUUID(), studio_id: s.studioId, client_id: s.clientId,
           pending_booking_payment_session_id: randomUUID(), payment_consent_id: randomUUID(),
           stripe_account_id: `acct_T${rid()}`, stripe_livemode: false, stripe_customer_id: `cus_${rid()}`,
           stripe_setup_intent_id: `seti_${rid()}`, stripe_payment_method_id: `pm_${rid()}` }); },
       ca: ["refused_unverifiable_history"], us: ["refused_unverifiable_history"] },
-    { label: "pending_booking_payment_sessions row", build: async (s) => {
-        const starts = new Date(Date.now() + 86_400_000);
-        await raw("pending_booking_payment_sessions", { token_hash: `tok_${rid()}`, studio_id: s.studioId, service_id: randomUUID(),
-          client_id: s.clientId, requested_starts_at: starts.toISOString(),
-          requested_ends_at: new Date(starts.getTime() + 3_600_000).toISOString(), requested_duration_minutes: 60,
-          stripe_account_id: `acct_T${rid()}`, stripe_livemode: false, stripe_customer_id: `cus_${rid()}` }); },
+    { label: "pending_booking_payment_sessions row", build: pendingSession,
       ca: ["refused_unverifiable_history"], us: ["refused_unverifiable_history"] },
-    { label: "unverifiable beats NULL currency (command order)", build: async (s) => {
-        await writeNullCurrencyAudit(s);
-        await raw("pending_booking_payment_sessions", { token_hash: `tok_${rid()}`, studio_id: s.studioId, service_id: randomUUID(),
-          client_id: s.clientId, requested_starts_at: new Date(Date.now() + 86_400_000).toISOString(),
-          requested_ends_at: new Date(Date.now() + 90_000_000).toISOString(), requested_duration_minutes: 60,
-          stripe_account_id: `acct_T${rid()}`, stripe_livemode: false, stripe_customer_id: `cus_${rid()}` }); },
-      ca: ["refused_unverifiable_history"], us: ["refused_unverifiable_history"] },
+    { label: "unverifiable beats NULL currency (command order)", build: async (s) => { await writeNullCurrencyAudit(s); await pendingSession(s); },
+      ca: ["refused_unverifiable_history"], us: ["refused_unverifiable_history"], nullAudit: true },
     { label: "live bound account, never observed (the 0212 shape)", build: async (s) => { await bind(s, true, null); },
       ca: ["refused_account_unverified"], us: ["refused_account_unverified"] },
+    // named-account branch 1: a live/unknown-mode row, whatever it names
     { label: "named live row with no bound account", build: async (s) => { await name("payment_charge_attempts", s, `acct_L${rid()}`, true, "cad"); },
-      ca: ["refused_account_unverified"], us: ["refused_currency_history"] },
-    { label: "test bound account, never observed", build: async (s) => { await bind(s, false, null); },
-      ca: ["refused_test_account_unobserved"], us: ["refused_test_account_unobserved"] },
+      ca: ["refused_account_unverified"], us: [CURRENCY] },
+    // named-account branch 2: a test-mode row whose account is not the studio's bound test account
+    { label: "named test row whose account is not the bound test account", build: async (s) => {
+        await bind(s, false, null);
+        await name("payment_charge_attempts", s, `acct_T${rid()}`, false, "cad"); },
+      ca: ["refused_account_unverified"], us: [CURRENCY] },
+    { label: "named test row matching the bound test account is only an acknowledgement", build: tableRow("payment_charge_attempts", "cad"),
+      ca: [ACK], us: [CURRENCY] },
+    // named-account branch 3: a non-attempt row with NO account never counts (the helper filters it out)
+    { label: "non-attempt row with a NULL account is not an account row", build: async (s) => {
+        await name("payment_charge_attempts", s, null, false, "cad");
+        await name("stripe_payment_audit", s, null, false, "cad"); },
+      ca: ["initialized"], us: [CURRENCY] },
+    { label: "test bound account, never observed", build: async (s) => { await bind(s, false, null); }, ca: [ACK], us: [ACK] },
     { label: "unbound test provisioning attempt", build: async (s) => { await name("stripe_account_provisioning_attempts", s, null, false); },
-      ca: ["refused_test_account_unobserved"], us: ["refused_test_account_unobserved"] },
+      ca: [ACK], us: [ACK] },
     { label: "configured prices", build: async (s) => { await adminQuery(`update public.studios set no_show_fee_cents=2500 where id=$1`, [s.studioId]); },
       ca: ["refused_priced_configuration"], us: ["refused_priced_configuration"] },
+    // ordering: account_unverified comes BEFORE the acknowledgement steps
+    { label: "unverified live account beats prices", build: async (s) => {
+        await bind(s, true, null);
+        await adminQuery(`update public.studios set no_show_fee_cents=2500 where id=$1`, [s.studioId]); },
+      ca: ["refused_account_unverified"], us: ["refused_account_unverified"] },
+    { label: "unverified named live row beats an unobserved test account", build: async (s) => {
+        await bind(s, false, null);
+        await name("payment_charge_attempts", s, `acct_L${rid()}`, true, "cad"); },
+      ca: ["refused_account_unverified"], us: [CURRENCY] },
   ];
 
   const MAP: Record<string, string[]> = {
     initializable: ["initialized"],
-    needs_ack: ["refused_priced_configuration", "refused_test_account_unobserved"],
+    needs_ack: ["refused_priced_configuration", ACK],
   };
   const allowed = (predicted: string) => MAP[predicted] ?? [predicted];
 
-  async function predictions(sql: string, ids: string[]): Promise<Map<string, Predicted>> {
-    const out = new Map<string, Predicted>();
+  type Built = { c: Case; a: SeededStudio; b: SeededStudio; actualCa: string; actualUs: string };
+  let built: Built[] = [];
+  const unlisted: SeededStudio[] = [];
+
+  /** g09d (or a mutant of it) over the given studios in one repeatable-read snapshot; `ddl` runs first and is rolled back. */
+  async function predictions(sql: string, ids: string[], ddl?: string, then?: (q: (t: string, p?: unknown[]) => Promise<{ rows: any[] }>) => Promise<void>): Promise<Map<string, Row>> {
+    const out = new Map<string, Row>();
     class Rollback extends Error {}
     try {
       await adminTx(async (q) => {
         await q("set transaction isolation level repeatable read");
         await q("delete from supabase_migrations.schema_migrations where version > '0212'");
-        const ord = await q(
-          `select id, row_number() over (order by created_at, id)::int as o from public.studios`);
+        if (ddl) await q(ddl);
+        const ord = await q(`select id, row_number() over (order by created_at, id)::int as o from public.studios`);
         const byOrdinal = new Map<number, string>();
         for (const r of ord.rows as { id: string; o: number }[]) if (ids.includes(r.id)) byOrdinal.set(r.o, r.id);
         const res = await q(sql);
-        for (const r of res.rows as (Predicted & { studio_ordinal: number })[]) {
+        for (const r of res.rows as Row[]) {
           const id = byOrdinal.get(Number(r.studio_ordinal));
           if (id) out.set(id, r);
         }
+        if (then) await then(q as never);
         throw new Rollback();
       });
     } catch (e) {
@@ -880,56 +918,118 @@ describe("J9-I g09d prediction equals the command", () => {
     return out;
   }
 
-  async function build() {
-    const built = [] as { c: Case; a: SeededStudio; b: SeededStudio }[];
+  beforeAll(async () => {
+    built = [];
     for (const [i, c] of CASES.entries()) {
       const a = await studio(`i${i}a`), b = await studio(`i${i}b`);
       await c.build(a);
       await c.build(b);
-      built.push({ c, a, b });
+      built.push({ c, a, b, actualCa: "", actualUs: "" });
     }
-    return built;
-  }
+    for (const x of built) {
+      x.actualCa = await init(x.a.studioId, { country: "CA", currency: "cad" });
+      x.actualUs = await init(x.b.studioId, { country: "US", currency: "usd" });
+    }
+    for (const l of ["clean", "null", "pending"]) unlisted.push(await studio(`iu-${l}`));
+    await writeNullCurrencyAudit(unlisted[1]);
+    await pendingSession(unlisted[2]);
+  }, 300_000);
 
-  /** Returns the mismatches between prediction and the command for every case and pair. */
-  async function compare(sql: string) {
-    const built = await build();
+  /** Mismatches between a g09d text and the real command results, over every case and pair. */
+  async function mismatches(sql: string): Promise<string[]> {
     const pred = await predictions(sql, built.flatMap((x) => [x.a.studioId, x.b.studioId]));
-    const mismatches: string[] = [];
-    for (const { c, a, b } of built) {
+    const out: string[] = [];
+    for (const { c, a, b, actualCa, actualUs } of built) {
       const pa = pred.get(a.studioId), pb = pred.get(b.studioId);
-      if (!pa || !pb) { mismatches.push(`${c.label}: no g09d row`); continue; }
-      const actualCa = await init(a.studioId, { country: "CA", currency: "cad" });
-      const actualUs = await init(b.studioId, { country: "US", currency: "usd" });
-      if (!c.ca.includes(actualCa)) mismatches.push(`${c.label}: fixture expectation CA ${actualCa}`);
-      if (!c.us.includes(actualUs)) mismatches.push(`${c.label}: fixture expectation US ${actualUs}`);
-      if (!allowed(pa.predicted_ca_cad).includes(actualCa)) mismatches.push(`${c.label}: CA predicted ${pa.predicted_ca_cad}, command ${actualCa}`);
-      if (!allowed(pb.predicted_us_usd).includes(actualUs)) mismatches.push(`${c.label}: US predicted ${pb.predicted_us_usd}, command ${actualUs}`);
+      if (!pa || !pb) { out.push(`${c.label}: no g09d row`); continue; }
+      if (!c.ca.includes(actualCa)) out.push(`${c.label}: fixture expectation CA ${actualCa}`);
+      if (!c.us.includes(actualUs)) out.push(`${c.label}: fixture expectation US ${actualUs}`);
+      if (!allowed(String(pa.predicted_ca_cad)).includes(actualCa)) out.push(`${c.label}: CA predicted ${pa.predicted_ca_cad}, command ${actualCa}`);
+      if (!allowed(String(pb.predicted_us_usd)).includes(actualUs)) out.push(`${c.label}: US predicted ${pb.predicted_us_usd}, command ${actualUs}`);
+      // the NULL-currency columns: exact, per table
+      for (const [who, p] of [["a", pa], ["b", pb]] as const) {
+        const wantAny = Boolean(c.nullAudit);
+        if (p.any_null_currency_row !== wantAny) out.push(`${c.label}(${who}): any_null_currency_row ${p.any_null_currency_row}, want ${wantAny}`);
+        for (const t of ABBR) {
+          const want = t === "spa" && c.nullAudit ? 1 : 0;
+          if (Number(p[`${t}_null`]) !== want) out.push(`${c.label}(${who}): ${t}_null ${p[`${t}_null`]}, want ${want}`);
+        }
+      }
     }
-    return mismatches;
+    return out;
   }
 
-  it("I1 for every case and both pairs the prediction equals the command's result", async () => {
-    expect(await compare(SQL)).toEqual([]);
+  /** The unlisted-table branch: scratch DDL inside the rolled-back transaction, command and prediction in the same snapshot. */
+  async function unlistedMismatches(sql: string): Promise<string[]> {
+    const out: string[] = [];
+    const actual: string[] = [];
+    const ids = unlisted.map((s) => s.studioId);
+    const pred = await predictions(sql, ids, `create table public.zz_j9i_scratch_${rid()} (id int, currency text)`, async (q) => {
+      for (const s of unlisted) {
+        const r = await q(INIT, initArgs(s.studioId, { country: "CA", currency: "cad" }));
+        actual.push(r.rows[0].out_result as string);
+      }
+    });
+    for (const [i, s] of unlisted.entries()) {
+      const p = pred.get(s.studioId);
+      if (!p) { out.push(`unlisted ${i}: no g09d row`); continue; }
+      if (actual[i] !== "refused_unlisted_money_table") out.push(`unlisted ${i}: command ${actual[i]}`);
+      if (p.predicted_ca_cad !== actual[i]) out.push(`unlisted ${i}: CA predicted ${p.predicted_ca_cad}, command ${actual[i]}`);
+      if (p.predicted_us_usd !== "refused_unlisted_money_table") out.push(`unlisted ${i}: US predicted ${p.predicted_us_usd}`);
+    }
+    return out;
+  }
+
+  it("I1 for every case and both pairs the prediction equals the command's result, and the NULL-currency columns are exact", async () => {
+    expect(await mismatches(SQL)).toEqual([]);
   }, 120_000);
 
-  it("I2 NEGATIVE CONTROL: a g09d with one predicate weakened is caught by the same comparison", async () => {
-    // US currency check made to see only NULLs: cad history would now read initializable for US.
-    const mutated = SQL.replace(/x\.currency is distinct from 'usd'/g, "x.currency is null");
-    expect(mutated).not.toBe(SQL);
-    const mismatches = await compare(mutated);
-    expect(mismatches.length).toBeGreaterThan(0);
-    expect(mismatches.join("|")).toMatch(/US predicted initializable, command refused_currency_history/);
+  it("I1b the unlisted-money-table branch: scratch DDL (rolled back) makes both the command and g09d refuse, ahead of history and currency", async () => {
+    expect(await unlistedMismatches(SQL)).toEqual([]);
+    // and the DDL really did roll back
+    const r = await adminQuery(`select count(*)::int n from pg_class where relname like 'zz\\_j9i\\_scratch\\_%'`);
+    expect(r.rows[0].n).toBe(0);
   }, 120_000);
 
-  it("I3 NEGATIVE CONTROL: dropping the NULL branch of the CA check is caught on the NULL-currency cases", async () => {
-    const mutated = SQL.replace(/x\.currency is distinct from 'cad'/g, "x.currency <> 'cad'");
-    expect(mutated).not.toBe(SQL);
-    const mismatches = await compare(mutated);
-    expect(mismatches.join("|")).toMatch(/NULL-currency[^|]*CA predicted initializable, command refused_currency_history/);
+  // ---- mutants: each one weakens one branch of the TEXT; the same comparison must catch it ----
+  const sub = (from: string | RegExp, to: string) => {
+    const m = SQL.replace(from, to);
+    expect(m, `mutation target not found: ${String(from)}`).not.toBe(SQL);
+    return m;
+  };
+  const colDef = (a: string, kind: "null" | "non_cad" | "non_usd") =>
+    new RegExp(`(\\(select count\\(\\*\\) from public\\.\\w+ x where x\\.studio_id = s\\.id[^)]*?)\\) as ${a}_${kind}\\b`);
+
+  type Mutant = { name: string; sql: () => string; catches: RegExp; unlisted?: boolean };
+  const MUTANTS: Mutant[] = [
+    { name: "US currency check sees only NULLs (every table)", sql: () => sub(/x\.currency is distinct from 'usd'/g, "x.currency is null"), catches: /US predicted initializable, command refused_currency_history/ },
+    { name: "CA currency check drops the NULL branch (every table)", sql: () => sub(/x\.currency is distinct from 'cad'/g, "x.currency <> 'cad'"), catches: /NULL-currency[^|]*CA predicted initializable, command refused_currency_history/ },
+    { name: "any_null_currency_row is never true", sql: () => sub(/\) > 0 as any_null_currency_row/, ") > 999999 as any_null_currency_row"), catches: /any_null_currency_row false, want true/ },
+    { name: "any_null_currency_row is always true", sql: () => sub(/\) > 0 as any_null_currency_row/, ") >= 0 as any_null_currency_row"), catches: /any_null_currency_row true, want false/ },
+    ...ABBR.map((a): Mutant => ({
+      name: `${a}_null counts every row`,
+      sql: () => sub(new RegExp(`x\\.currency is null\\) as ${a}_null\\b`), `true) as ${a}_null`),
+      catches: new RegExp(`${a}_null \\d+, want \\d+`),
+    })),
+    ...(["mfa", "sca", "sra", "sdp"] as const).flatMap((a): Mutant[] => [
+      { name: `${a}_non_cad is blind`, sql: () => sub(new RegExp(`x\\.currency is distinct from 'cad'\\) as ${a}_non_cad\\b`), `false) as ${a}_non_cad`), catches: /CA predicted \w+, command refused_currency_history/ },
+      { name: `${a}_non_usd is blind`, sql: () => sub(new RegExp(`x\\.currency is distinct from 'usd'\\) as ${a}_non_usd\\b`), `false) as ${a}_non_usd`), catches: /US predicted \w+, command refused_currency_history/ },
+    ]),
+    { name: "named-account branch 1 (live/unknown row) removed", sql: () => sub("where r.stripe_livemode is distinct from false\n", "where false\n"), catches: /named live row[^|]*CA predicted/ },
+    { name: "named-account branch 2 (unbound test row) removed", sql: () => sub(/and not exists \(select 1 from public\.studio_payment_settings p2/, "and exists (select 1 from public.studio_payment_settings p2"), catches: /named test row[^|]*CA predicted/ },
+    { name: "named-account branch 3 (a non-attempt row with no account) is armed by dropping the helper's account filter", sql: () => sub(/ and x\.stripe_account_id is not null/g, ""), catches: /non-attempt row with a NULL account[^|]*CA predicted refused_account_unverified, command initialized/ },
+    { name: "account_unverified is ranked after needs_ack", sql: () => sub(/when p\.account_unverified then 'refused_account_unverified'\n(\s+)when p\.ack_needed then 'needs_ack'/g, "when p.ack_needed then 'needs_ack'\n$1when p.account_unverified then 'refused_account_unverified'"), catches: /unverified live account beats prices: CA predicted needs_ack, command refused_account_unverified/ },
+    { name: "the unlisted-table flag is never set", unlisted: true, sql: () => sub(/select exists \(\n    select 1 from pg_catalog\.pg_class k/, "select false and exists (\n    select 1 from pg_catalog.pg_class k"), catches: /unlisted \d: CA predicted/ },
+    { name: "the unlisted-table verdict is ranked after unverifiable history", unlisted: true, sql: () => sub(/case when p\.unlisted_money_table_present then 'refused_unlisted_money_table'\n(\s+)when p\.unverifiable_history then 'refused_unverifiable_history'/g, "case when p.unverifiable_history then 'refused_unverifiable_history'\n$1when p.unlisted_money_table_present then 'refused_unlisted_money_table'"), catches: /unlisted 2: CA predicted refused_unverifiable_history/ },
+  ];
+
+  it.each(MUTANTS.map((m) => [m.name, m] as const))("I2 MUTANT is caught: %s", async (_n, m) => {
+    const found = m.unlisted ? await unlistedMismatches(m.sql()) : await mismatches(m.sql());
+    expect(found.length, "the mutant went unnoticed").toBeGreaterThan(0);
+    expect(found.join("|")).toMatch(m.catches);
   }, 120_000);
 
-  it("I4 the read-only runner would accept the file's text (one SELECT, no write keyword)", () => {
+  it("I3 the read-only runner would accept the file's text (one SELECT, no write keyword)", () => {
     const body = SQL.replace(/'[^']*'/g, "''").replace(/--.*$/gm, "").replace(/\s+/g, " ").toLowerCase();
     expect((body.match(/;/g) ?? []).length).toBeLessThanOrEqual(1);
     expect(body.trim()).toMatch(/^with /);
