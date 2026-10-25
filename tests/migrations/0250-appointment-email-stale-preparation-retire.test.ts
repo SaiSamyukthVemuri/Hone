@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { countVersion, fileForVersion, isRepoMax } from "./helpers/migration-state";
+import { countVersion, fileForVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
 
 const sql = readFileSync("supabase/migrations/0250_appointment_email_stale_preparation_retire.sql", "utf8");
 const predecessor = readFileSync("supabase/migrations/0247_appointment_email_operation_authority.sql", "utf8");
