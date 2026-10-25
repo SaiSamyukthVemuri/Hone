@@ -144,8 +144,9 @@ jobs:
         run: |
           set -euo pipefail
           npx vitest run --config vitest.db.config.ts tests/db/guards-order-proof.db.test.ts --maxWorkers=2 2>&1 | tee "$RUNNER_TEMP/proof.log"
-          ! grep -E "skipped" "$RUNNER_TEMP/proof.log" || { echo "the proof was skipped"; exit 1; }
-          grep -E "Tests +[0-9]+ passed" "$RUNNER_TEMP/proof.log"
+          sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/proof.log" > "$RUNNER_TEMP/proof.txt"
+          ! grep -E "skipped" "$RUNNER_TEMP/proof.txt" || { echo "the proof was skipped"; exit 1; }
+          grep -E "Tests +[1-9][0-9]* passed" "$RUNNER_TEMP/proof.txt"
 
       - name: Dump the catalog with the guards UP, then DOWN for both
         shell: bash
