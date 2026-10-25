@@ -85,9 +85,9 @@ touch "${archives}/libnss3_$n.deb"`,
     PW_DEPS_KILL_AFTER: "1",
     PW_DEPS_SETTLE_SECONDS: "2",
   };
-  const run = () => {
+  const run = (args: string[] = []) => {
     const started = Date.now();
-    const r = spawnSync("bash", [SCRIPT], { encoding: "utf8", timeout: 45_000, env });
+    const r = spawnSync("bash", [SCRIPT, ...args], { encoding: "utf8", timeout: 45_000, env });
     const calls = existsSync(trace) ? readFileSync(trace, "utf8").trim().split("\n") : [];
     const ls = (d: string) => (existsSync(d) ? readdirSync(d).sort() : []);
     // What is still alive from this test, and whether anything holds the lock.
@@ -150,6 +150,19 @@ describe("playwright-system-deps.sh: cached, bounded INSIDE sudo, retried once o
     expect(r.calls.filter((c) => c.startsWith("npx")), "no retry").toHaveLength(1);
     expect(r.calls, "no dpkg repair while apt is busy").not.toContain("dpkg --configure -a");
   }, 30_000);
+
+  it("`webkit` installs WebKit's packages through the same bounded path (HON-62)", () => {
+    const r = setup("ok").run(["webkit"]);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.calls).toEqual(["npx playwright install-deps webkit | root=1 | mirror=http://azure.archive.ubuntu.com/ubuntu/"]);
+  });
+
+  it("an unknown browser fails before apt is touched", () => {
+    const r = setup("ok").run(["firefox"]);
+    expect(r.status).toBe(2);
+    expect(r.stdout).toContain("unknown browser 'firefox'");
+    expect(r.calls).toEqual([]);
+  });
 
   it("a NON-timeout failure is returned as-is: no mirror switch, no retry", () => {
     const r = setup("fail").run();
