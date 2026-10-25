@@ -24,6 +24,10 @@ function codeOnly(src: string): string {
     .join("\n");
 }
 const CODE = codeOnly(ROUTE);
+// MSG-ARCH-01: the selection query lives in lib/cron/reminder-candidate-query.ts.
+const QUERY_CODE = codeOnly(
+  readFileSync(path.resolve(__dirname, "../../../../lib/cron/reminder-candidate-query.ts"), "utf8"),
+);
 
 // The appointment email pass is sendReminderPass only; scope assertions there
 // so the SMS pass (which has its own claim_sms_send slot) cannot satisfy them.
@@ -97,8 +101,8 @@ describe("email reminder pass: claim before send", () => {
 
 describe("email reminder pass: preserved behavior", () => {
   it("the selection query is unchanged (sent-is-null + attempts cap + window)", () => {
-    expect(CODE).toMatch(/\.is\(opts\.notSentColumn, null\)/);
-    expect(CODE).toMatch(/\.lt\(opts\.attemptsColumn, MAX_ATTEMPTS\)/);
+    expect(QUERY_CODE).toMatch(/\.is\(opts\.notSentColumn, null\)/);
+    expect(QUERY_CODE).toMatch(/\.lt\(opts\.attemptsColumn, MAX_ATTEMPTS\)/);
   });
 
   it("attempt numbering for failure logs is unchanged", () => {

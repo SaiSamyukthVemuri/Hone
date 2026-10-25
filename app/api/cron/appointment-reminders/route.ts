@@ -31,9 +31,8 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { createUpstashReminderScanCoordinator, runReminderScanBatch, ReminderScanReadFailure, type ReminderScanPass, type ReminderScanCursor } from "@/lib/cron/reminder-scan-coordinator";
 import { recordReminderRunSuccess } from "@/lib/cron/reminder-heartbeat";
+import { buildReminderCandidateQuery, MAX_ATTEMPTS, type SentColumn, type AttemptsColumn } from "@/lib/cron/reminder-candidate-query";
 
-const PER_RUN_LIMIT = 50;
-const MAX_ATTEMPTS = 3;
 
 type Joined = Appointment & {
   service: Pick<Service, "name" | "default_duration_minutes" | "pre_care_instructions"> | null;
@@ -51,20 +50,6 @@ function pickRel<T>(v: T | T[] | null): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
 }
 
-// Widened to accept SMS column names too. The same join shape works
-// for both email and SMS passes; the difference is purely which
-// _sent_at / _send_attempts columns we filter on.
-type SentColumn =
-  | "reminder_24h_sent_at"
-  | "reminder_2h_sent_at"
-  | "sms_reminder_24h_sent_at"
-  | "sms_reminder_2h_sent_at";
-type AttemptsColumn =
-  | "reminder_24h_send_attempts"
-  | "reminder_2h_send_attempts"
-  | "sms_reminder_24h_send_attempts"
-  | "sms_reminder_2h_send_attempts";
-
 async function loadAppointmentsForWindow(opts: {
   startIso: string;
   endIso: string;
@@ -75,32 +60,7 @@ async function loadAppointmentsForWindow(opts: {
   signal: AbortSignal;
 }): Promise<Joined[]> {
   const admin = createAdminClient();
-  let query = admin
-    .from("appointments")
-    .select(
-      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients!inner(name, email, phone, sms_consent_at, sms_opted_out_at, archived_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
-    )
-    .eq("status", "confirmed")
-    // MSG-ARCH-01: archived clients are filtered in the query (inner join), so
-    // their visits never consume the per-run candidate and query budget or get
-    // re-scanned every fire. The send-time re-reads below still cover a client
-    // archived AFTER discovery.
-    .is("client.archived_at", null)
-    .is(opts.notSentColumn, null)
-    .lt(opts.attemptsColumn, MAX_ATTEMPTS)
-    .gte("starts_at", opts.startIso)
-    .lte("starts_at", opts.endIso)
-    .order("starts_at", { ascending: true })
-    .order("id", { ascending: true })
-    .limit(Math.min(PER_RUN_LIMIT, opts.limit))
-    .abortSignal(opts.signal);
-  if (opts.after) {
-    // A total keyset order survives rows leaving the candidate set as this
-    // pass records results. OFFSET would skip unsent work after those writes.
-    const time = JSON.stringify(opts.after.startsAt);
-    const id = JSON.stringify(opts.after.id);
-    query = query.or(`starts_at.gt.${time},and(starts_at.eq.${time},id.gt.${id})`);
-  }
+  const query = buildReminderCandidateQuery(admin, opts);
   const { data, error } = await query;
   if (error) throw new ReminderScanReadFailure(error.code, opts.signal.aborted);
 
