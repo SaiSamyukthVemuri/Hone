@@ -1641,16 +1641,16 @@ jobs:
   storage-photos:
     name: storage photos (not required)
     needs: changes
-    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') }}
+    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') }}
     runs-on: ubuntu-latest
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
       packages: read
     # Target ~10 min: the mobile lane's setup (~6 min p90 incl. the bounded
-    # system-package install) plus storage-api, one DB file and two specs. The
+    # system-package install) plus storage-api, one DB file and the storage specs. The
     # hard timeout exceeds it (CLAUDE.md section 4).
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout repository
@@ -1767,7 +1767,7 @@ jobs:
 
       - name: Storage photo E2E (CLN-005 + ENG-002)
         if: ${{ !cancelled() && steps.storage_up.outcome == 'success' && steps.pw_sys.outcome == 'success' }}
-        run: npx playwright test e2e/fett-photos-thumbnail-recovery.spec.ts e2e/treatment-image-upload-formats.spec.ts --project=chromium
+        run: npx playwright test e2e/fett-photos-thumbnail-recovery.spec.ts e2e/treatment-image-upload-formats.spec.ts e2e/fett-client-portrait.spec.ts --project=chromium
         env:
           HONE_E2E_FAKE_RESEND: "1"
 
