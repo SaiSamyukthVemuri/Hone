@@ -97,8 +97,29 @@ export function PinnedNoteField({
   );
 }
 
+/**
+ * HON-44 (Sam decision 12): who may do what to a pinned caution. The owner edits
+ * and removes any; a practitioner edits only a caution they added and removes
+ * none. The server action and, since 0254, the database enforce the same rule;
+ * this only withdraws the controls that would always be refused.
+ */
+export function pinnedNotePermissions(
+  note: Pick<ClientPinnedNote, "created_by_practitioner_id">,
+  viewer: { isOwner: boolean; practitionerId: string },
+): { canEdit: boolean; canRemove: boolean } {
+  return {
+    canEdit:
+      viewer.isOwner ||
+      (note.created_by_practitioner_id !== null &&
+        note.created_by_practitioner_id === viewer.practitionerId),
+    canRemove: viewer.isOwner,
+  };
+}
+
 type Props = {
   clientId: string;
+  /** The signed-in viewer, derived on the server; it decides which controls show. */
+  viewer: { isOwner: boolean; practitionerId: string };
   notes: ClientPinnedNote[];
   addAction: (formData: FormData) => Promise<void>;
   editAction: (formData: FormData) => Promise<void>;
@@ -107,6 +128,7 @@ type Props = {
 
 export function ClientPinnedNotesCard({
   clientId,
+  viewer,
   notes,
   addAction,
   editAction,
@@ -260,24 +282,28 @@ export function ClientPinnedNotesCard({
                   {n.text}
                 </span>
                 <span className="flex shrink-0 gap-1">
-                  <button
-                    type="button"
-                    onClick={() => startEdit(n)}
-                    disabled={pending}
-                    aria-label="Edit pinned note"
-                    className="rounded-md border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => submitRemove(n.id)}
-                    disabled={pending}
-                    aria-label="Remove pinned note"
-                    className="rounded-md border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
-                  >
-                    ✕
-                  </button>
+                  {pinnedNotePermissions(n, viewer).canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => startEdit(n)}
+                      disabled={pending}
+                      aria-label="Edit pinned note"
+                      className="rounded-md border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
+                    >
+                      Edit
+                    </button>
+                  )}
+                  {pinnedNotePermissions(n, viewer).canRemove && (
+                    <button
+                      type="button"
+                      onClick={() => submitRemove(n.id)}
+                      disabled={pending}
+                      aria-label="Remove pinned note"
+                      className="rounded-md border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
+                    >
+                      ✕
+                    </button>
+                  )}
                 </span>
               </li>
             ),

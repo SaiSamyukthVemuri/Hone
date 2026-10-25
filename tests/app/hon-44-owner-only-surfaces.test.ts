@@ -38,7 +38,53 @@ describe("appointment detail page", () => {
 describe("session page", () => {
   const src = read("app/(app)/clients/[id]/sessions/[sessionId]/page.tsx");
   it("withdraws the whole payment card from a non-owner", () => {
-    expect(src).toMatch(/\{practitioner\.role === "owner" && \(\s*<div id="session-payment">/);
+    expect(src).toMatch(/\{isOwner && sessionPaymentEligibility && \(\s*<div id="session-payment">/);
+  });
+});
+
+describe("session page loaders (Privacy PEER-1140 L3): the payment reads run for the owner alone", () => {
+  const src = read("app/(app)/clients/[id]/sessions/[sessionId]/page.tsx");
+  it("eligibility, amount and settlement are each behind the owner check, resolving to null otherwise", () => {
+    expect(src).toMatch(/const isOwner = practitioner\.role === "owner";/);
+    expect(src).toMatch(/isOwner\s*\?\s*timed\("session-chart\.payment-eligibility"[\s\S]*?:\s*Promise\.resolve\(null\)/);
+    expect(src).toMatch(/isOwner\s*\?\s*timed\("session-chart\.payment-amount"[\s\S]*?:\s*Promise\.resolve\(null\)/);
+    expect(src).toMatch(/isOwner && linkedAppointmentId\s*\?\s*timed\("session-chart\.settlements"/);
+  });
+  it("the card renders only with the owner flag AND the loaded eligibility", () => {
+    expect(src).toMatch(/\{isOwner && sessionPaymentEligibility && \(\s*<div id="session-payment">/);
+  });
+});
+
+describe("appointment next step (Privacy PEER-1140 L2): a non-owner is not sent to billing", () => {
+  const src = read("app/(app)/calendar/[id]/page.tsx");
+  it("the billing deep link needs the owner; otherwise the CTA opens the session", () => {
+    expect(src).toMatch(/\} else if \(!sessionStarted \|\| !isOwner\) \{\s*ctaHref = `\/clients\/\$\{clientId\}\/sessions\/\$\{sessionId\}`;\s*ctaLabel = "Open session";/);
+    expect(src).toMatch(/<NextStepCard[^>]*isOwner=\{isOwner\}/s);
+    expect(src).toContain("The studio owner takes payment.");
+  });
+});
+
+describe("pinned cautions (Privacy PEER-1140 L1): the card gets the viewer and withdraws controls that would be refused", () => {
+  it("the client page passes the server-derived viewer", () => {
+    expect(read("app/(app)/clients/[id]/page.tsx")).toMatch(
+      /viewer=\{\{ isOwner: practitioner\.role === "owner", practitionerId: practitioner\.id \}\}/,
+    );
+  });
+  it("Edit and Remove are each behind pinnedNotePermissions", () => {
+    const card = read("components/client-pinned-notes-card.tsx");
+    expect(card).toMatch(/pinnedNotePermissions\(n, viewer\)\.canEdit && \(/);
+    expect(card).toMatch(/pinnedNotePermissions\(n, viewer\)\.canRemove && \(/);
+  });
+});
+
+describe("the unreachable non-owner branches inside the payment card are KEPT as a second render gate", () => {
+  it("the owner-only amount hint is the non-owner branch of the final-charge field", () => {
+    const card = read("components/session-payment-prepare-card.tsx");
+    expect(card).toContain('data-testid="owner-only-amount-hint"');
+    expect(card).toMatch(/isOwner = false,/); // the prop defaults CLOSED
+  });
+  it("TechnicalPaymentDetails renders nothing for a non-owner, whatever it is given", () => {
+    expect(read("components/payment/technical-payment-details.tsx")).toMatch(/if \(!isOwner\) return null;/);
   });
 });
 

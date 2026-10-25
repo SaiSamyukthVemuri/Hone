@@ -140,6 +140,7 @@ export default async function SessionDetailPage({
   // join the wave. It is `session.appointment_id ?? null` — a pure derivation,
   // no I/O, no behaviour.
   const linkedAppointmentId = session.appointment_id ?? null;
+  const isOwner = practitioner.role === "owner";
 
   const [
     sessionPhotos,
@@ -170,17 +171,24 @@ export default async function SessionDetailPage({
     timed("session-chart.clinical-notes", () =>
       buildClinicalNoteSections(id, { historyLimit: 10 }),
     ),
-    timed("session-chart.payment-eligibility", () =>
-      getSessionPaymentEligibility({ studioId: studio.id, sessionId: session.id }),
-    ),
-    timed("session-chart.payment-amount", () =>
-      getAuthoritativeSessionPaymentAmount({
-        studioId: studio.id,
-        sessionId: session.id,
-        studioTimezone: studio.timezone,
-      }),
-    ),
-    linkedAppointmentId
+    // HON-44 (Sam decision 12): the payment card is owner-only, so its three
+    // loaders run for the owner ALONE. A non-owner's request issues none of these
+    // reads, and nothing payment-shaped exists to be passed to a rendered element.
+    isOwner
+      ? timed("session-chart.payment-eligibility", () =>
+          getSessionPaymentEligibility({ studioId: studio.id, sessionId: session.id }),
+        )
+      : Promise.resolve(null),
+    isOwner
+      ? timed("session-chart.payment-amount", () =>
+          getAuthoritativeSessionPaymentAmount({
+            studioId: studio.id,
+            sessionId: session.id,
+            studioTimezone: studio.timezone,
+          }),
+        )
+      : Promise.resolve(null),
+    isOwner && linkedAppointmentId
       ? timed("session-chart.settlements", () =>
           getAppointmentSettlements(studio.id, [linkedAppointmentId]),
         )
@@ -195,7 +203,7 @@ export default async function SessionDetailPage({
   ]);
   const lastEntryNotFromThisSession =
     lastEntry && !sessionEntryIds.has(lastEntry.id) ? lastEntry : null;
-  const sessionPaymentAmount = pricedForPage.ok ? pricedForPage.result : null;
+  const sessionPaymentAmount = pricedForPage?.ok ? pricedForPage.result : null;
   // HON-11: the quoted price that prefills the cash/e-transfer amount when the
   // prepare form is hidden (no card on file). Quick checkout passes the same
   // fact; without it this page showed a blank box for the visit the dashboard
@@ -1060,7 +1068,7 @@ export default async function SessionDetailPage({
       {/* HON-44 (Sam decision 12): charging, recording payment and the amount are
           owner-only; the server actions refuse a non-owner, and the whole card is
           withdrawn for one. */}
-      {practitioner.role === "owner" && (
+      {isOwner && sessionPaymentEligibility && (
       <div id="session-payment">
         <SessionPaymentPrepareCard
           sessionId={session.id}

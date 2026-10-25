@@ -965,6 +965,7 @@ export default async function ClientCheatSheetPage({
               that could change how today's treatment is delivered. */}
           <ClientPinnedNotesCard
             clientId={client.id}
+            viewer={{ isOwner: practitioner.role === "owner", practitionerId: practitioner.id }}
             notes={pinnedNotes}
             addAction={addClientPinnedNoteAction}
             editAction={editClientPinnedNoteAction}
