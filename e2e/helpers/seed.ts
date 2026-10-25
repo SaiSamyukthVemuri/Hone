@@ -169,9 +169,13 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
 // non-owners. Returns the login email.
 export async function seedE2eMember(
   seed: E2eSeed,
+  // A fake-Resend mode prefix for the member's address (e.g. "success+"). The
+  // lane defaults the fake to `reject`, so a spec that needs the member's mail
+  // ACCEPTED asks for it here. Default: nothing, exactly as before.
+  options: { recipientModePrefix?: string } = {},
 ): Promise<{ email: string; displayName: string; practitionerId: string }> {
   const uniq = randomUUID().slice(0, 8);
-  const email = `e2e-member-${seed.runId}-${uniq}@harness.local`;
+  const email = `${options.recipientModePrefix ?? ""}e2e-member-${seed.runId}-${uniq}@harness.local`;
   const displayName = `E2E Member ${uniq}`;
   await sql(
     `insert into public.pending_invitations (studio_id, email, role, display_name)

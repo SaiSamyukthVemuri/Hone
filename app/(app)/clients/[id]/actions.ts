@@ -13,6 +13,7 @@ import {
 } from "@/lib/clients/possible-duplicate";
 import { normalizeName } from "@/lib/import/quick-import";
 import { normalizePhoneForSms } from "@/lib/sms/phone";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 async function assertClientVisible(
   studioId: string,
@@ -141,7 +142,7 @@ async function checkDuplicateEmail(
     safeLog.error(
       JSON.stringify({
         event: "client_duplicate_email_lookup_failed",
-        code: error.code,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -252,7 +253,7 @@ export async function updateClientAction(
     safeLog.error(
       JSON.stringify({
         event: "client_update_identity_read_failed",
-        code: storedErr.code,
+        code: dbErrorCode(storedErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -341,7 +342,7 @@ export async function updateClientAction(
       JSON.stringify({
         event: "client_update_failed",
         clientId,
-        code: error.code,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -400,7 +401,7 @@ export async function archiveClientAction(formData: FormData): Promise<void> {
       JSON.stringify({
         event: "client_archive_audit_failed",
         clientId,
-        code: auditErr.code,
+        code: dbErrorCode(auditErr, ["audit_write_unavailable"]),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -446,7 +447,7 @@ export async function unarchiveClientAction(formData: FormData): Promise<void> {
       JSON.stringify({
         event: "client_unarchive_audit_failed",
         clientId,
-        code: auditErr.code,
+        code: dbErrorCode(auditErr, ["audit_write_unavailable"]),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -468,7 +469,11 @@ export async function addClientPricingAction(formData: FormData): Promise<void> 
   const priceCents = dollarsToCents(formData.get("price"));
   if (priceCents == null) throw new Error("Price must be a non-negative number.");
 
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // HON-44 (Sam decision 12): client prices are owner-only. The role comes from
+  // the authenticated practitioner. APP half; client_pricing RLS admits any
+  // member until 0254.
+  if (practitioner.role !== "owner") throw new Error("Only the studio owner can change prices.");
   await assertClientVisible(studio.id, clientId);
 
   const supabase = await createClient();
@@ -491,7 +496,11 @@ export async function deleteClientPricingAction(formData: FormData): Promise<voi
   if (typeof clientId !== "string" || !clientId)
     throw new Error("Missing client id.");
 
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // HON-44 (Sam decision 12): client prices are owner-only. The role comes from
+  // the authenticated practitioner. APP half; client_pricing RLS admits any
+  // member until 0254.
+  if (practitioner.role !== "owner") throw new Error("Only the studio owner can change prices.");
   await assertClientVisible(studio.id, clientId);
 
   const supabase = await createClient();

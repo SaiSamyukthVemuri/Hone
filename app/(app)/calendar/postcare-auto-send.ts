@@ -1,6 +1,7 @@
 import { sendPostcareToClient } from "@/lib/email/send-appointment";
 import { timed } from "@/lib/observability/perf-timing";
 import type { Studio } from "@/lib/types/database";
+import { thrownErrorClass } from "@/lib/logging/error-class";
 
 // Postcare auto-send (migration 0110). When a studio opts into
 // postcare_delivery_mode = 'auto_on_complete', postcare is sent automatically
@@ -275,7 +276,7 @@ export async function autoSendPostcareOnComplete(
       JSON.stringify({
         event: "postcare_auto_send_threw",
         appointmentId,
-        message: err instanceof Error ? err.message : String(err),
+        errorClass: thrownErrorClass(err),
         timestamp: new Date().toISOString(),
       }),
     );

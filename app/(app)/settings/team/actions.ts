@@ -8,6 +8,7 @@ import type { PractitionerRole } from "@/lib/types/database";
 import { resend, FROM_ADDRESS } from "@/lib/email/client";
 import { buildInvitationEmail } from "@/lib/email/templates/invitation";
 import { safeLog } from "@/lib/logging/safe-log";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_ROLES: ReadonlyArray<PractitionerRole> = ["owner", "practitioner"];
@@ -247,7 +248,7 @@ export async function removePractitionerAction(formData: FormData): Promise<void
   });
   if (error || data !== "ok") {
     console.error(
-      `team_action_db_error:remove_practitioner:${error?.code ?? (typeof data === "string" ? data : "unknown")}`,
+      `team_action_db_error:remove_practitioner:${error ? dbErrorCode(error) : typeof data === "string" ? data : "unknown"}`,
     );
     if (data === "cannot_modify_owner")
       throw new Error("The studio owner cannot be removed.");

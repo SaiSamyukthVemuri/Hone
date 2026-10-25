@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // PR #135. Server-only reads for client_payment_methods. Every
 // function is scoped by explicit (studioId, clientId) that callers
@@ -47,8 +48,7 @@ export async function getActiveCardForStudioClient(
     console.error(
       JSON.stringify({
         event: "active_card_lookup_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
