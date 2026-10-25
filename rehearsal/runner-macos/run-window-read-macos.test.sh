@@ -3,7 +3,7 @@
 # Written for bash 3.2 (macOS /bin/bash) and GNU bash. Run: bash run-window-read-macos.test.sh
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VARIANT="$HERE/run-window-read-macos.sh"
+VARIANT_REAL="$HERE/run-window-read-macos.sh"
 ORIG="$HERE/run-window-read.sh"
 T="$(mktemp -d "${TMPDIR:-/tmp}/rwr-macos.XXXXXX")"
 T="$(cd "$T" && pwd -P)"
@@ -21,7 +21,8 @@ cat > "$T/bin/supabase" <<'STUB'
 #!/bin/sh
 echo "$*" >> "$STUB_LOG"
 case "$1" in --version) printf '%s\n' "${STUB_VERSION-2.102.0}"; exit 0 ;; esac
-echo '{"rows":[]}'
+echo "ENV T=${SUPABASE_TELEMETRY_DISABLED-unset} D=${DO_NOT_TRACK-unset} G=${GITHUB_TOKEN-unset} H=${GH_TOKEN-unset}" >> "$STUB_LOG.env"
+printf '%s\n' "${STUB_OUT-[]}"
 STUB
 cat > "$T/bin/npx" <<'STUB'
 #!/bin/sh
@@ -29,6 +30,11 @@ echo "npx $*" >> "$STUB_LOG"
 echo '{"rows":[]}'
 STUB
 chmod +x "$T/bin/supabase" "$T/bin/npx"
+# The variant gates HONE_SUPABASE_BIN by a sha256 CONSTANT. Tests use a copy of the variant in which ONLY that constant
+# is the stub's hash (never an environment override); the real variant's constant is checked separately below.
+STUB_SHA="$(sha_of "$T/bin/supabase")"
+mkdir -p "$T/variant-test"; VARIANT="$T/variant-test/run-window-read-macos.sh"
+sed "s/^SUPABASE_GO_SHA256=.*/SUPABASE_GO_SHA256=$STUB_SHA/" "$VARIANT_REAL" > "$VARIANT"
 # A sha256sum shim for the PINNED runner only (it needs one; stock macOS has none). Last on PATH, so GNU's wins where it exists.
 mkdir -p "$T/shim"; printf '#!/bin/sh\nexec shasum -a 256 "$@"\n' > "$T/shim/sha256sum"; chmod +x "$T/shim/sha256sum"
 
@@ -37,6 +43,7 @@ mkcwd() { # name [pooler-url-text]
   d="$T/cwd-$1"; mkdir -p "$d/supabase/.temp"
   printf '%s\n' "$REF" > "$d/supabase/.temp/project-ref"
   printf '%s\n' "${2-$POOLER}" > "$d/supabase/.temp/pooler-url"
+  printf 'v2.102.0\n' > "$d/supabase/.temp/cli-latest"
   echo "$d"
 }
 # A script directory: a copy of the script, one synthetic gate file, its manifest.
@@ -61,8 +68,10 @@ errtxt() { cat "$T/err"; }
 # ---- 1. happy path, GNU hash path ----
 D="$(mkdirs happy "$VARIANT" "$GOOD")"; C="$(mkcwd happy)"; : > "$LOG"
 check "BIN: a good gate file runs (exit 0)" "$(run "$D/run-window-read-macos.sh" "$C" gate.sql)" 0
-check "BIN: stdout is the CLI's JSON" "$(cat "$T/out")" '{"rows":[]}'
-check "BIN: the CLI call is exactly db query --linked -o json -f <file>" "$(grep -v '^--version' "$LOG")" "db query --linked -o json -f $D/gate.sql"
+check "BIN: stdout is the CLI's JSON array" "$(cat "$T/out")" '[]'
+check "BIN: the CLI call is exactly --agent no db query --linked -o json -f <file> (nothing else, no --version)" "$(cat "$LOG")" "--agent no db query --linked -o json -f $D/gate.sql"
+rm -f "$LOG.env"; ENVX="GITHUB_TOKEN=ghp_synthetic GH_TOKEN=ghp_synthetic2 SUPABASE_TELEMETRY_DISABLED=0 DO_NOT_TRACK=0" run "$D/run-window-read-macos.sh" "$C" gate.sql >/dev/null
+check "R4: the CLI ran exactly once, with telemetry off and no GitHub token, though the caller had set all four" "$(cat "$LOG.env")" "ENV T=1 D=1 G=unset H=unset"
 check "BIN: npx was not called" "$(grep -c '^npx' "$LOG")" 0
 if grep -E -q -- '--local|--db-url|psql' "$LOG"; then bad "BIN: no --local/--db-url/psql in any call"; else ok "BIN: no --local/--db-url/psql in any call"; fi
 
@@ -70,7 +79,7 @@ if grep -E -q -- '--local|--db-url|psql' "$LOG"; then bad "BIN: no --local/--db-
 RD="$T/res1"; mkdir -p "$RD"; : > "$LOG"
 ENVX="HONE_WINDOW_RESULT_DIR=$RD" check "capture: exit 0" "$(ENVX="HONE_WINDOW_RESULT_DIR=$RD" run "$D/run-window-read-macos.sh" "$C" gate.sql)" 0
 meta="$RD/gate.meta.json"
-check "capture: result file written" "$(cat "$RD/gate.json")" '{"rows":[]}'
+check "capture: result file written" "$(cat "$RD/gate.json")" '[]'
 want_runner="$(sha_of "$D/run-window-read-macos.sh")"
 grep -q "\"runner_sha256\":\"$want_runner\"" "$meta" && ok "capture: runner_sha256 is the variant file's own hash" || bad "capture: runner_sha256" "$(cat "$meta")"
 grep -q "\"manifest_sha256\":\"$(sha_of "$D/MANIFEST.sha256")\"" "$meta" && ok "capture: manifest_sha256 correct" || bad "capture: manifest_sha256"
@@ -110,10 +119,17 @@ refuse_case() { # label expected-substring [ENVX]
   errtxt | grep -q -- "$2" && ok "$1: says why" || bad "$1: says why" "$(errtxt)"
   if grep -q '^db query' "$LOG"; then bad "$1: the CLI never ran a query"; else ok "$1: the CLI never ran a query"; fi
 }
-refuse_case "BIN version 2.102.1" "exactly 2.102.0" "STUB_VERSION=2.102.1"
-refuse_case "BIN version with a suffix" "exactly 2.102.0" "STUB_VERSION=2.102.0-beta"
-refuse_case "BIN version with a prefix" "exactly 2.102.0" "STUB_VERSION=v2.102.0"
-refuse_case "BIN version empty" "exactly 2.102.0" "STUB_VERSION="
+# R5: the binary is gated by its SHA-256 and is never executed before that (the log stays empty, not even --version)
+cp "$T/bin/supabase" "$T/other-bin"; echo "# different bytes" >> "$T/other-bin"; chmod +x "$T/other-bin"
+: > "$LOG"; check "R5: a binary with other bytes: refused (exit 2)" "$(BIN="HONE_SUPABASE_BIN=$T/other-bin" run "$D/run-window-read-macos.sh" "$C" gate.sql)" 2
+errtxt | grep -q "does not hash to the pinned supabase-go" && ok "R5: says why" || bad "R5: says why" "$(errtxt)"
+check "R5: the refused binary was never executed" "$(wc -c < "$LOG" | tr -d '[:space:]')" 0
+printf '#!/bin/sh\necho 2.102.0\n' > "$T/liar"; chmod +x "$T/liar"; : > "$LOG"
+check "R5: a binary that merely prints 2.102.0 is refused" "$(BIN="HONE_SUPABASE_BIN=$T/liar" run "$D/run-window-read-macos.sh" "$C" gate.sql)" 2
+check "R5: the real variant's constant is the darwin_arm64 supabase-go sha256" "$(grep '^SUPABASE_GO_SHA256=' "$VARIANT_REAL")" "SUPABASE_GO_SHA256=dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b"
+check "R5: the test copy differs from the real variant in exactly that one line" "$(diff "$VARIANT_REAL" "$VARIANT" | grep -c '^>')" 1
+check "R5: the variant has no environment override of the constant" "$(grep -c 'SUPABASE_GO_SHA256:-\|HONE_SUPABASE_GO_SHA' "$VARIANT_REAL")" 0
+check "R4/R5: the variant never calls --version" "$(grep -v '^[[:space:]]*#' "$VARIANT_REAL" | grep -c -e '--version' || true)" 0
 cp "$T/bin/supabase" "$T/notexec"; chmod -x "$T/notexec"
 : > "$LOG"; check "BIN not executable: exit 2" "$(BIN="HONE_SUPABASE_BIN=$T/notexec" run "$D/run-window-read-macos.sh" "$C" gate.sql)" 2
 errtxt | grep -q "not an executable file" && ok "BIN not executable: says why" || bad "BIN not executable: says why"
@@ -165,6 +181,55 @@ c="$(mkcwd scheme2 "postgres://postgres.$REF@aws-1-us-east-1.pooler.supabase.com
 check "pooler with the postgres:// scheme is accepted" "$(run "$D/run-window-read-macos.sh" "$c" gate.sql)" 0
 c="$(mkcwd ws "  $POOLER  ")"
 check "pooler with surrounding whitespace is accepted (trimmed)" "$(run "$D/run-window-read-macos.sh" "$c" gate.sql)" 0
+# ---- R1: SUPABASE_* environment ----
+for v in SUPABASE_PROJECT_ID SUPABASE_PROFILE SUPABASE_WORKDIR SUPABASE_PROJECT_REF SUPABASE_URL SUPABASE_ANYTHING_ELSE; do
+  : > "$LOG"; check "R1 $v set: refused" "$(ENVX="$v=other" run "$D/run-window-read-macos.sh" "$C" gate.sql)" 2
+  errtxt | grep -q "$v is set" && ok "R1 $v: names it" || bad "R1 $v: names it" "$(errtxt)"
+  check "R1 $v: the CLI never ran" "$(wc -c < "$LOG" | tr -d '[:space:]')" 0
+done
+check "R1 SUPABASE_PROJECT_ID set but EMPTY: still refused" "$(ENVX="SUPABASE_PROJECT_ID=" run "$D/run-window-read-macos.sh" "$C" gate.sql)" 2
+check "R1 SUPABASE_PROJECT_ID equal to the right ref: still refused (no override at all)" "$(ENVX="SUPABASE_PROJECT_ID=$REF" run "$D/run-window-read-macos.sh" "$C" gate.sql)" 2
+check "R1 SUPABASE_ACCESS_TOKEN is allowed" "$(ENVX="SUPABASE_ACCESS_TOKEN=sbp_synthetic_token_value" run "$D/run-window-read-macos.sh" "$C" gate.sql)" 0
+if grep -q "sbp_synthetic_token_value" "$T/out" "$T/err"; then bad "R1 the access token value is never printed"; else ok "R1 the access token value is never printed"; fi
+
+# ---- R4: cli-latest must exist, say v2.102.0 and be fresh ----
+c="$(mkcwd cl1)"; rm "$c/supabase/.temp/cli-latest"
+check "R4 cli-latest missing: refused" "$(run "$D/run-window-read-macos.sh" "$c" gate.sql)" 2
+errtxt | grep -q "cli-latest is missing" && ok "R4 cli-latest missing: says why" || bad "R4 cli-latest missing: says why"
+c="$(mkcwd cl2)"; echo "v2.122.0" > "$c/supabase/.temp/cli-latest"
+check "R4 cli-latest names another version: refused" "$(run "$D/run-window-read-macos.sh" "$c" gate.sql)" 2
+c="$(mkcwd cl3)"; echo "" > "$c/supabase/.temp/cli-latest"
+check "R4 cli-latest empty: refused" "$(run "$D/run-window-read-macos.sh" "$c" gate.sql)" 2
+c="$(mkcwd cl4)"; touch -t 202001010000 "$c/supabase/.temp/cli-latest"
+check "R4 cli-latest older than 9 hours: refused" "$(run "$D/run-window-read-macos.sh" "$c" gate.sql)" 2
+errtxt | grep -q "older than 9 hours" && ok "R4 stale cli-latest: says why" || bad "R4 stale cli-latest: says why" "$(errtxt)"
+c="$(mkcwd cl5)"; touch -t "$(date -u -d '8 hours ago' +%Y%m%d%H%M 2>/dev/null || date -u -v-8H +%Y%m%d%H%M)" "$c/supabase/.temp/cli-latest"
+check "R4 cli-latest 8 hours old: accepted" "$(run "$D/run-window-read-macos.sh" "$c" gate.sql)" 0
+check "R4 the run did not rewrite cli-latest" "$(cat "$c/supabase/.temp/cli-latest")" "v2.102.0"
+
+# ---- R3: the result must be a JSON array of objects ----
+shape_case() { # label output expected-exit
+  : > "$LOG"; rc="$(ENVX="STUB_OUT=$2" run "$D/run-window-read-macos.sh" "$C" gate.sql)"
+  check "R3 [$1]: exit" "$rc" "$3"
+  if [ "$3" != 0 ]; then
+    errtxt | grep -q "not a JSON array of objects" && ok "R3 [$1]: says why" || bad "R3 [$1]: says why" "$(errtxt)"
+    check "R3 [$1]: nothing on stdout" "$(wc -c < "$T/out" | tr -d '[:space:]')" 0
+  fi
+}
+shape_case "empty array" '[]' 0
+shape_case "array of objects" '[{"a":1},{"b":"x"}]' 0
+shape_case "agent envelope object" '{"warning":"untrusted","rows":[{"a":1}]}' 3
+shape_case "object with rows" '{"rows":[]}' 3
+shape_case "error text" 'Error:failed_to_connect' 3
+shape_case "empty output" '' 3
+shape_case "array of numbers" '[1,2]' 3
+shape_case "array of arrays" '[[1],[2]]' 3
+shape_case "array then trailing text" '[{"a":1}]trailing' 3
+RD3="$T/res3"; mkdir -p "$RD3"
+ENVX="STUB_OUT={\"warning\":\"x\"} HONE_WINDOW_RESULT_DIR=$RD3" run "$D/run-window-read-macos.sh" "$C" gate.sql >/dev/null
+check "R3 capture: a non-array result is recorded with exit_code 3" "$(grep -o '"exit_code":[0-9]*' "$RD3/gate.meta.json")" '"exit_code":3'
+check "R3 capture: the result file is kept as evidence" "$(cat "$RD3/gate.json")" '{"warning":"x"}'
+
 # ---- 6. every existing refusal is kept (with BIN set) ----
 check "ref mismatch: refused" "$(PREF=zzzzzzzzzzzzzzzzzzzz run "$D/run-window-read-macos.sh" "$C" gate.sql)" 2
 errtxt | grep -q "does not match HONE_WINDOW_PROJECT_REF" && ok "ref mismatch: says why" || bad "ref mismatch: says why" "$(errtxt)"
@@ -212,9 +277,10 @@ lex "keyword upper case" "SELECT 1; DROP TABLE x" 2
 
 # ---- 7. the REAL gate files: the variant admits exactly what the pinned runner admits ----
 cc="$(mkcwd real)"; n=0; same=0
+RDIR="$T/realdir"; mkdir -p "$RDIR"; cp "$HERE"/*.sql "$HERE/MANIFEST.sha256" "$RDIR/"; cp "$VARIANT" "$RDIR/run-window-read-macos.sh"
 for f in $(awk '{print $2}' "$HERE/MANIFEST.sha256"); do
   n=$((n+1))
-  rv="$(run "$HERE/run-window-read-macos.sh" "$cc" "$f")"
+  rv="$(run "$RDIR/run-window-read-macos.sh" "$cc" "$f")"
   ro="$(BIN="" RUN_PATH="$T/bin:$PATH:$T/shim" run "$HERE/run-window-read.sh" "$cc" "$f")"
   [ "$rv" = 0 ] && [ "$ro" = 0 ] && same=$((same+1)) || bad "real gate file $f: variant $rv, pinned $ro" "$(errtxt)"
 done

@@ -92,9 +92,6 @@ jobs:
       - name: Negative cases (one expected-sha constant changed per copy, existing destination, tampered downloads)
         shell: /bin/zsh {0}
         run: /bin/bash rehearsal/runner-macos/installer-negatives.sh
-      - name: Variant runner against the REAL binary's version gate (stub for the query, no hosted call)
-        shell: /bin/zsh {0}
-        run: /bin/bash rehearsal/runner-macos/real-bin-gate.sh "$INSTALL_HOME/hone-s1/supabase-cli/supabase"
 
   installer-v2-signature:
     name: installer v2 (supabase-go only), signatures, vendor copies
@@ -149,6 +146,9 @@ jobs:
       - name: Negative cases for v2 (constants, existing destination, tampered downloads, codesign failure via a stub path in a copy)
         shell: /bin/zsh {0}
         run: INSTALLER="$PWD/rehearsal/runner-macos/hone-s1-install-v2.sh" EVIDENCE_SUFFIX=-v2 STUB_CODESIGN=1 /bin/bash rehearsal/runner-macos/installer-negatives.sh
-      - name: Variant runner (BIN mandatory) with HONE_SUPABASE_BIN = the installed supabase-go (stub for the query)
+      - name: R5 - variant sha256 gate against the REAL installed supabase-go (hashed, never executed)
         shell: /bin/zsh {0}
         run: /bin/bash rehearsal/runner-macos/real-bin-gate.sh "$INSTALL_HOME/hone-s1/supabase-cli/supabase-go"
+      - name: R4 - does supabase-go make a network call for --version? (refusing local proxy sink, no hosted call)
+        shell: /bin/zsh {0}
+        run: /bin/bash rehearsal/runner-macos/version-network-probe.sh "$INSTALL_HOME/hone-s1/supabase-cli/supabase-go"
