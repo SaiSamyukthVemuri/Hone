@@ -1,5 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { Pool, type PoolClient } from "pg";
 import {
   adminQuery,
@@ -15,11 +17,10 @@ import {
 // J9 — T-0214-1 (R-2(c1)): initialize_studio_payment_jurisdiction_from_history
 // ===========================================================================
 //
-// Validates draft v3 (v3.1 changes only its placement notes). The faithful
-// run is the assembled amended 0214
-// (general/T0214-1-AMENDED/0214_studio_payment_jurisdiction.sql) applied IN
-// CHAIN ORDER on a disposable stack; the repository 0214 is not amended (P-2
-// is unruled). Plan: general/F1-TESTMODE-DESIGN-NOTE.md groups A-F.
+// Validates draft v3 (v3.1 changes only its placement notes). On the U tree
+// (the UNAMENDED 0214) the command comes from 0257, applied in chain order; on
+// the A tree (the amended 0214) the same command comes from 0214 and 0257 is a
+// no-op over it (J9-H). Plan: general/F1-TESTMODE-DESIGN-NOTE.md groups A-F.
 // Synthetic data only.
 //
 // History has to exist BEFORE any jurisdiction row, which the live guards
@@ -687,5 +688,85 @@ describe("J9-G the money-table universe fails closed (F5)", () => {
       await adminQuery(`drop table public.${t}`);
     }
     expect(await init(s.studioId)).toBe("initialized");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// H: 0257 itself. The command is reused text; what is new is that it arrives in
+// its own migration, so prove it is idempotent, leaves history alone, and does
+// not disturb audit rows written before it.
+describe("J9-H 0257 follow-up", () => {
+  const SQL_0257 = readFileSync(
+    path.resolve(__dirname, "../../supabase/migrations/0257_payment_jurisdiction_history_init.sql"), "utf8");
+  const FNS = [
+    "public.initialize_studio_payment_jurisdiction_from_history(uuid,text,text,text,text,text,boolean,text[],uuid[])",
+    "public.studio_account_acceptable_for_jurisdiction(uuid,text,boolean,text,boolean)",
+    "public.studio_named_stripe_accounts(uuid)",
+  ];
+  async function catalogue(): Promise<string> {
+    const out: string[] = [];
+    for (const fn of FNS) {
+      const r = await adminQuery(
+        `select md5(pg_get_functiondef($1::regprocedure)) def, array_to_string(proacl, ',') acl,
+                prosecdef, array_to_string(proconfig, ',') cfg from pg_proc where oid = $1::regprocedure`, [fn]);
+      out.push(JSON.stringify(r.rows[0]));
+    }
+    const cols = await adminQuery(
+      `select column_name, data_type, is_nullable, column_default from information_schema.columns
+        where table_schema='public' and table_name='studio_payment_jurisdiction_changes'
+          and column_name in ('history_verified','unobserved_test_accounts_acknowledged','unbound_test_attempts_acknowledged')
+        order by column_name`);
+    out.push(JSON.stringify(cols.rows));
+    return createHash("sha256").update(out.join("\n")).digest("hex");
+  }
+
+  it("H1 a NULL-currency audit row is refused and left exactly as it was", async () => {
+    const s = await studio("h1");
+    await raw("stripe_payment_audit", { ...NAMING.stripe_payment_audit(s, null, false), currency: null });
+    const before = await adminQuery(
+      `select md5(string_agg(x::text, '|' order by x::text)) h, count(*)::int n from public.stripe_payment_audit x where studio_id=$1`, [s.studioId]);
+    expect(await init(s.studioId)).toBe("refused_currency_history");
+    expect(await init(s.studioId, { country: "US", currency: "usd" })).toBe("refused_currency_history");
+    const after = await adminQuery(
+      `select md5(string_agg(x::text, '|' order by x::text)) h, count(*)::int n from public.stripe_payment_audit x where studio_id=$1`, [s.studioId]);
+    expect(after.rows[0]).toEqual(before.rows[0]);
+    expect(after.rows[0].n).toBe(1);
+    const nul = await adminQuery(`select count(*)::int n from public.stripe_payment_audit where studio_id=$1 and currency is null`, [s.studioId]);
+    expect(nul.rows[0].n).toBe(1);
+    expect(await jurisdiction(s.studioId)).toBeUndefined();
+    expect(await audit(s.studioId)).toEqual([]);
+  });
+
+  it("H2 re-applying 0257 is a no-op: same definitions, ACLs, columns, and existing audit rows", async () => {
+    const { s } = await activeCa("h2");
+    expect(await init(s.studioId)).toBe("initialized");
+    const rows = await audit(s.studioId);
+    const before = await catalogue();
+    await adminQuery(SQL_0257);
+    await adminQuery(SQL_0257);
+    expect(await catalogue()).toBe(before);
+    expect(await audit(s.studioId)).toEqual(rows);
+    expect(await init(s.studioId)).toBe("unchanged");
+    expect(await audit(s.studioId)).toEqual(rows);
+  });
+
+  it("H3 an audit row written by the 0214 writer, before the command ran, reads history_verified=false", async () => {
+    const s = await studio("h3");
+    await adminQuery(
+      `select * from public.set_studio_payment_jurisdiction($1,'CA','cad','operator:test','plain init','fixture:evidence',false)`,
+      [s.studioId]);
+    expect(await audit(s.studioId)).toEqual([{
+      from_country: null, to_country: "CA", to_currency: "cad", history_verified: false,
+      unobserved_test_accounts_acknowledged: [], unbound_test_attempts_acknowledged: [],
+    }]);
+  });
+
+  it("H4 the three helpers' grants are the 0214 posture after 0257: command to service_role only, helpers to nobody", async () => {
+    for (const [i, fn] of FNS.entries()) {
+      const r = await adminQuery(
+        `select role_name, has_function_privilege(role_name, $1, 'EXECUTE') ok
+           from unnest(array['anon','authenticated','service_role']) role_name`, [fn]);
+      expect(r.rows.filter((x) => x.ok).map((x) => x.role_name), fn).toEqual(i === 0 ? ["service_role"] : []);
+    }
   });
 });

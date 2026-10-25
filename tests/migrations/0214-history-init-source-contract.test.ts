@@ -4,15 +4,15 @@ import { describe, expect, it } from "vitest";
 
 // T-0214-1 (R-2(c1)) source contract: initialize_studio_payment_jurisdiction_from_history.
 //
-// Reads 0214 by default. Until P-2 permits the 0214 edit, the validation run
-// points T0214_SQL_SOURCE at the assembled amended 0214
-// (general/T0214-1-AMENDED/0214_studio_payment_jurisdiction.sql) instead.
+// Reads 0257 by default: on the U tree (the UNAMENDED 0214) the T-0214-1 text
+// lives in 0257. T0214_SQL_SOURCE can still point at the assembled amended
+// 0214 to run the same contract over the A variant.
 // Plan: general/F1-TESTMODE-DESIGN-NOTE.md group G (and H5).
 
 const ROOT = path.resolve(__dirname, "../..");
 const MIGRATIONS = path.join(ROOT, "supabase/migrations");
 const SOURCE = process.env.T0214_SQL_SOURCE
-  ?? path.join(MIGRATIONS, "0214_studio_payment_jurisdiction.sql");
+  ?? path.join(MIGRATIONS, "0257_payment_jurisdiction_history_init.sql");
 const SQL = readFileSync(SOURCE, "utf8");
 const CODE = SQL.replace(/--[^\n]*/g, "");
 
@@ -47,22 +47,6 @@ describe("G1 privileges are revoked by name, then granted to service_role only",
     const grants = [...CODE.matchAll(/grant execute on function public\.(\w+)\(([^)]*)\) to (\w+);/g)]
       .filter((m) => [COMMAND, ...HELPERS].some((f) => f.startsWith(`${m[1]}(`)));
     expect(grants.map((m) => `${m[1]}(${m[2]}) to ${m[3]}`)).toEqual([`${COMMAND} to service_role`]);
-  });
-});
-
-describe("P1 placement inside 0214 (Willow F-1)", () => {
-  // studio_account_acceptable_for_jurisdiction is LANGUAGE sql: Postgres
-  // parse-analyses its body at CREATE time, so it must come after 4b adds the
-  // studio_payment_settings columns it reads, or the 0214 transaction aborts.
-  // Needs the whole 0214 (the amended file), not the bare draft fragment.
-  it("the SQL helper is created after 4b adds stripe_account_country and its conflict column", () => {
-    const helper = CODE.indexOf("create or replace function public.studio_account_acceptable_for_jurisdiction(");
-    expect(helper).toBeGreaterThanOrEqual(0);
-    for (const col of ["stripe_account_country text", "stripe_account_country_conflict text"]) {
-      const added = CODE.indexOf(`add column if not exists ${col}`);
-      expect(added, col).toBeGreaterThanOrEqual(0);
-      expect(helper, col).toBeGreaterThan(added);
-    }
   });
 });
 
