@@ -28,8 +28,6 @@ import { describe, expect, it } from "vitest";
 const ALLOWED: Record<string, string> = {
   "lib/logging/safe-log.ts":
     "builds the COPY safeLog logs, from scrubText(value.message): it is the redactor, not a thrower",
-  "app/(app)/settings/booking/actions.ts":
-    "the catch below it returns err.message to the person as the form's error and puts it in the redirect query, so the text is user-facing copy; a generic message there is a product wording decision (reported to OPS, not changed blindly)",
 };
 
 const ERROR_NAME_RE = /^(e|err|error|exception|ex|thrown|caught|\w+Err|\w+Error)$/;

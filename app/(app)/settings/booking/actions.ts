@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { dbErrorCode } from "@/lib/logging/error-class";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { BUFFER_PRESET_MINUTES } from "@/lib/booking/buffer-presets";
 import { PUBLIC_BOOKING_HORIZON_MONTHS_VALUES } from "@/lib/booking/horizon";
@@ -165,7 +166,17 @@ export async function updateStudioBookingPrefsAction(
           "Changing the timezone would push a blockout into a conflict with an existing calendar item. Reschedule or remove the affected appointment or block first.",
         );
       }
-      throw new Error(`Failed to update booking settings: ${error.message}`);
+      // The catch below shows this text to the person and puts it in the
+      // redirect query, so it is a fixed sentence; the database's text stays
+      // out of the banner and the URL, and the log carries the code only.
+      console.error(
+        JSON.stringify({
+          event: "booking_settings_update_failed",
+          code: dbErrorCode(error),
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      throw new Error("Could not save your booking settings.");
     }
     revalidatePath("/settings/booking");
     revalidatePath("/settings/availability");
