@@ -65,11 +65,12 @@ describe("0212 sits correctly in the migration sequence", () => {
     );
   });
 
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — see
-    // CLAUDE.md §2. It reached this file from 0210's test.
-    expect(isRepoMax(VERSION), "0212 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0212").toEqual([]);
+  it("is no longer the repository maximum — 0253 was authored above it", () => {
+    // THE HAND-OFF HAPPENED (CLAUDE.md §2): only the CURRENT maximum's own test
+    // carries the "nothing above me" tripwire. It now lives in
+    // tests/migrations/0253-member-scoped-timed-block-insert.test.ts.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toContain("0253");
   });
 
   it("is allocated exactly once", () => {

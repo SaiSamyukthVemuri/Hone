@@ -156,7 +156,7 @@ describe("3C: integrity (guard / RLS / FK)", () => {
       await dropSynthStudio(A);
     }
   });
-  it("operator/service-role writes a scoped block; a browser member is denied scoped but keeps studio-wide", async () => {
+  it("operator/service-role writes a scoped block; a browser member writes only their own (0253)", async () => {
     // Privileged path (service-role / admin client, which the owner server
     // action uses) writes a scoped block; the guard still runs.
     const ok = await asRole("service_role", (q) =>
@@ -167,27 +167,27 @@ describe("3C: integrity (guard / RLS / FK)", () => {
       ),
     );
     expect(ok.rowCount).toBe(1);
-    // A non-owner MEMBER cannot write a SCOPED block (member INSERT is now
-    // limited to studio-wide rows) — denied by RLS (throws or 0 rows).
-    const scoped = await asUser(member().userId, (q) =>
-      q(
-        `insert into public.studio_timed_blocks (id, studio_id, starts_at, ends_at, category, practitioner_id)
-         values ($1,$2,$3,$4,'break',$5)`,
-        [randomUUID(), B.studioId, "2031-05-10T12:00:00Z", "2031-05-10T12:30:00Z", P(1)],
-      ),
-    )
-      .then((r) => ({ rows: r.rowCount, err: null as string | null }))
-      .catch((e) => ({ rows: null, err: e.code as string }));
-    expect(scoped.rows === 0 || scoped.err != null).toBe(true);
-    // ...but a member CAN still create a STUDIO-WIDE block (existing drag-to-block).
-    const wide = await asUser(member().userId, (q) =>
-      q(
-        `insert into public.studio_timed_blocks (id, studio_id, starts_at, ends_at, category, practitioner_id)
-         values ($1,$2,$3,$4,'break',null)`,
-        [randomUUID(), B.studioId, "2031-05-10T18:00:00Z", "2031-05-10T18:30:00Z"],
-      ),
-    );
-    expect(wide.rowCount).toBe(1);
+    // 0253 (HON-48 F1): with capacity ON a non-owner MEMBER may write a block
+    // scoped to THEMSELVES only: a colleague's id or a studio-wide row is
+    // refused by RLS. The per-role matrix is in
+    // tests/db/member-scoped-timed-block-insert.db.test.ts.
+    const colleague = B.practitioners.find((p) => p.role === "practitioner" && p.practitionerId !== member().practitionerId)!;
+    const insertScoped = (target: string | null, from: string, to: string) =>
+      asUser(member().userId, (q) =>
+        q(
+          `insert into public.studio_timed_blocks (id, studio_id, starts_at, ends_at, category, practitioner_id)
+           values ($1,$2,$3,$4,'break',$5)`,
+          [randomUUID(), B.studioId, from, to, target],
+        ),
+      )
+        .then((r) => ({ rows: r.rowCount, err: null as string | null }))
+        .catch((e) => ({ rows: null, err: e.code as string }));
+    expect(await insertScoped(colleague.practitionerId, "2031-05-10T12:00:00Z", "2031-05-10T12:30:00Z")).toEqual({ rows: null, err: "42501" });
+    expect(await insertScoped(null, "2031-05-10T18:00:00Z", "2031-05-10T18:30:00Z")).toEqual({ rows: null, err: "42501" });
+    expect(await insertScoped(member().practitionerId, "2031-05-10T13:00:00Z", "2031-05-10T13:30:00Z")).toEqual({ rows: 1, err: null });
+    // ...and with capacity OFF the member keeps the studio-wide drag-to-block.
+    await setCap(false);
+    expect(await insertScoped(null, "2031-05-10T18:00:00Z", "2031-05-10T18:30:00Z")).toEqual({ rows: 1, err: null });
   });
   it("a practitioner with a scoped block cannot be hard-deleted (FK RESTRICT); studio delete still cascades", async () => {
     await insBlock(P(2));
