@@ -159,7 +159,7 @@ exec docker exec -i "$DB_CONTAINER" pg_dump -U postgres -d postgres "\$@" --excl
 NC
 chmod +x "$WORK/pgdump-no-clients.sh"
 expect_fail "V3 gate: public.clients removed from the dump" "COMPLETENESS GATE FAILED" \
-  env EXPORT_PG_DUMP_OVERRIDE="$WORK/pgdump-no-clients.sh" bash -c "$(declare -f rehearse); KEY='$KEY'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; rehearse bash '$OPS/logical-export.sh' --out '$WORK/nc-clients' --recipient '$RECIPIENT' --expect-ref '$PROJECT_ID'"
+  env EXPORT_PG_DUMP_OVERRIDE="$WORK/pgdump-no-clients.sh" bash -c "$(declare -f rehearse); KEY='$KEY'; PROJECT_ID='$PROJECT_ID'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; rehearse bash '$OPS/logical-export.sh' --out '$WORK/nc-clients' --recipient '$RECIPIENT' --expect-ref '$PROJECT_ID'"
 [ -z "$(find "$WORK/nc-clients" -type f 2>/dev/null)" ] && check "negative control: the failed export left no file behind" pass || check "negative control: the failed export left no file behind" fail
 
 cp -r "$LOGICAL" "$WORK/tampered-logical"
@@ -173,18 +173,18 @@ expect_fail "V1/V5: one flipped object byte" "V1" bash "$OPS/verify-export.sh" o
 expect_fail "the wrong key cannot verify" "FAIL" bash "$OPS/verify-export.sh" logical "$LOGICAL" --identity "$WORK/otherkey.txt"
 
 expect_fail "wrong project ref is refused" "does not name project ref" \
-  bash -c "$(declare -f rehearse); KEY='$KEY'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; rehearse bash '$OPS/logical-export.sh' --out '$WORK/nc-ref' --recipient '$RECIPIENT' --expect-ref 'some-other-project'"
+  bash -c "$(declare -f rehearse); KEY='$KEY'; PROJECT_ID='$PROJECT_ID'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; rehearse bash '$OPS/logical-export.sh' --out '$WORK/nc-ref' --recipient '$RECIPIENT' --expect-ref 'some-other-project'"
 
 # an object deleted BETWEEN the listing and the download must fail the object export
 HOOK="curl -fsS -X DELETE '$API/storage/v1/object/$BUCKET/$(urlencode_path "$PREFIX/synthetic-2.png")' -H 'Authorization: Bearer $KEY' -H 'apikey: $KEY' >/dev/null"
 expect_fail "T-1: an object deleted between listing and download" "could not be downloaded" \
-  bash -c "$(declare -f rehearse); KEY='$KEY'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; EXPORT_TEST_HOOK_AFTER_LIST=\"$HOOK\" rehearse bash '$OPS/object-export.sh' --out '$WORK/nc-obj' --recipient '$RECIPIENT' --expect-ref '$PROJECT_ID' --storage-url '$API' --bucket '$BUCKET'"
+  bash -c "$(declare -f rehearse); KEY='$KEY'; PROJECT_ID='$PROJECT_ID'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; EXPORT_TEST_HOOK_AFTER_LIST=\"$HOOK\" rehearse bash '$OPS/object-export.sh' --out '$WORK/nc-obj' --recipient '$RECIPIENT' --expect-ref '$PROJECT_ID' --storage-url '$API' --bucket '$BUCKET'"
 # put it back (same bytes) so the later restore compares the taken export, not the damaged world
 curl -fsS -X POST "$API/storage/v1/object/$BUCKET/$(urlencode_path "$PREFIX/synthetic-2.png")" -H "Authorization: Bearer $KEY" -H "apikey: $KEY" \
   -H "Content-Type: application/octet-stream" --data-binary "@$WORK/o2.bin" >/dev/null
 
 expect_fail "restore refuses a target equal to production" "equals the production ref" \
-  bash -c "$(declare -f rehearse); KEY='$KEY'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; rehearse bash '$OPS/export-restore.sh' logical '$LOGICAL' --identity '$WORK/key.txt' --target-ref '$PROJECT_ID' --production-ref '$PROJECT_ID'"
+  bash -c "$(declare -f rehearse); KEY='$KEY'; PROJECT_ID='$PROJECT_ID'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; rehearse bash '$OPS/export-restore.sh' logical '$LOGICAL' --identity '$WORK/key.txt' --target-ref '$PROJECT_ID' --production-ref '$PROJECT_ID'"
 
 # --- 5. disaster, then V4: restore into a NEW project built from the migrations --------------------
 log "destroying the rehearsal project (stop --no-backup)"
