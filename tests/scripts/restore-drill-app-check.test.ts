@@ -6,7 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 // prettier-ignore
 // @ts-expect-error - .mjs utility ships without type declarations
-import { SEED, appEnv, assertDrillOnly, clientListShowsClient, localDemoKeys, originalSha256, photoBytesMatch, providerFenceViolations, recordRendersFields, signIn, uncontainedSentryRecords } from "../../scripts/ops/restore-drill-app-check.mjs";
+import { SEED, answered, appEnv, assertDrillOnly, clientListShowsClient, controlVerdict, localDemoKeys, originalSha256, photoBytesMatch, providerFenceViolations, recordRendersFields, signIn, uncontainedSentryRecords } from "../../scripts/ops/restore-drill-app-check.mjs";
 
 // DR-01A. The application-readability check runs only in its own CI job
 // (.github/workflows/restore-drill.yml), against a real restored stack. These
@@ -170,7 +170,7 @@ describe("restore-drill.sh hook: PASS needs post-restore 0 and pre-restore exact
   const appCheck = script.match(/^app_check\(\) \{.*\}$/m)?.[0];
   const preCase = script.match(/^ {2}case "\$\(app_check pre-restore\)" in .*esac$/m)?.[0];
   const postCase = script.match(/^ {2}case "\$\(app_check post-restore\)" in .*esac$/m)?.[0];
-  const gate = script.match(/^ {2}if \[ "\$APP_NEGATIVE" = failed \] && ! grep -q .*; fi$/m)?.[0];
+  const gate = script.match(/^ {2}if \[ "\$APP_NEGATIVE" = failed \] && ! control_reasons_ok .*; then APP_NEGATIVE=error; fi$/m)?.[0];
 
   /** Run the drill's own hook lines against a fake check that prints `text` and exits `exitCode`. */
   function outcome(lines: Array<string | undefined>, exitCode: number, text = ""): string {
@@ -181,6 +181,7 @@ describe("restore-drill.sh hook: PASS needs post-restore 0 and pre-restore exact
       const body = [
         "set -euo pipefail",
         `APP_CHECK=${check}; API=x; EVIDENCE=${dir}`,
+        ". scripts/ops/restore-drill-lib.sh",
         appCheck,
         ...lines.map((l) => l!.replace(/APP_NEGATIVE|APP_READ/g, "OUT")),
         'echo "$OUT"',
@@ -211,8 +212,15 @@ describe("restore-drill.sh hook: PASS needs post-restore 0 and pre-restore exact
     expect(outcome([postCase], code)).toBe(expected);
   });
 
-  it("negative control: exit 1 WITH a MISS line is the only accepted outcome", () => {
-    expect(pre(1, "app check MISS: client list: GET /clients answered 307")).toBe("failed");
+  const ABSENT = "307 -> /no-access";
+  const miss = (a = ABSENT, b = ABSENT, c = ABSENT) =>
+    `app check MISS: client list: GET /clients answered ${a}; client record: GET /clients/<id> answered ${b}; photo bytes: the signed-URL route answered ${c}`;
+  const GOOD = ["[pre-restore] reads ok: 0/3; sign-in: ok", "app check CONTROL: signed in, data absent (3/3 reads)", miss()].join("\n");
+
+  it("negative control: exit 1 with 'signed in, data absent' and the three named reads is the only accepted outcome", () => {
+    expect(pre(1, GOOD)).toBe("failed");
+    // 404 is also a data-absent result, for any of the three reads
+    expect(pre(1, ["[pre-restore] reads ok: 0/3; sign-in: ok", "app check CONTROL: signed in, data absent (3/3 reads)", miss("404", ABSENT, "404")].join("\n"))).toBe("failed");
   });
 
   it.each([
@@ -222,6 +230,115 @@ describe("restore-drill.sh hook: PASS needs post-restore 0 and pre-restore exact
     ["exit 2 (a harness error)", 2, "app check HARNESS ERROR: no build"],
   ])("negative control: %s is an error, never a valid control", (_name, code, text) => {
     expect(pre(code, text)).toBe(code === 0 ? "passed" : "error");
+  });
+
+  it.each([
+    ["a sign-in failure recorded as a miss (the old shape)", ["[pre-restore] reads ok: 0/3; sign-in: failed", "app check MISS: sign-in: generate_link answered 502; client list: GET /clients answered 307 -> /login"].join("\n")],
+    ["the MISS line without the CONTROL line", ["[pre-restore] reads ok: 0/3; sign-in: ok", miss()].join("\n")],
+    ["a 500 on one read", ["[pre-restore] reads ok: 0/3; sign-in: ok", "app check CONTROL: signed in, data absent (3/3 reads)", miss(ABSENT, "500", ABSENT)].join("\n")],
+    ["a redirect to /login (signed OUT, not data-absent)", ["[pre-restore] reads ok: 0/3; sign-in: ok", "app check CONTROL: signed in, data absent (3/3 reads)", miss("307 -> /login")].join("\n")],
+    ["a bare 307 with no destination", ["[pre-restore] reads ok: 0/3; sign-in: ok", "app check CONTROL: signed in, data absent (3/3 reads)", miss("307")].join("\n")],
+    ["only two of the three reads named", ["[pre-restore] reads ok: 1/3; sign-in: ok", "app check CONTROL: signed in, data absent (3/3 reads)", "app check MISS: client list: GET /clients answered 307 -> /no-access; client record: GET /clients/<id> answered 307 -> /no-access"].join("\n")],
+    ["an extra miss reason", ["[pre-restore] reads ok: 0/3; sign-in: ok", "app check CONTROL: signed in, data absent (3/3 reads)", `${miss()}; sign-in: boom`].join("\n")],
+    ["no sign-in ok line", ["app check CONTROL: signed in, data absent (3/3 reads)", miss()].join("\n")],
+  ])("negative control: exit 1 with %s is an error", (_name, text) => {
+    expect(pre(1, text)).toBe("error");
+  });
+
+  it("the drill derives objects_compared from the hash file and compares the storage.objects projection", () => {
+    expect(script).toContain('. "$REPO_ROOT/scripts/ops/restore-drill-lib.sh"');
+    expect(script).not.toMatch(/objects_compared=3/);
+    expect(script).toMatch(/echo "objects_compared=\$OBJECTS_N"/);
+    expect(script).toMatch(/objects_projection >"\$EVIDENCE\/objects-meta-before\.txt"/);
+    expect(script).toMatch(/objects_projection >"\$EVIDENCE\/objects-meta-after\.txt"/);
+    expect(script).toMatch(/compare_objects_projection "\$EVIDENCE\/objects-meta-before\.txt" "\$EVIDENCE\/objects-meta-after\.txt" "\$OBJECTS_N"/);
+    // before the destroy, after the restore
+    expect(script.indexOf("objects-meta-before.txt")).toBeLessThan(script.indexOf("destroying the drill project"));
+    expect(script.indexOf("objects-meta-after.txt")).toBeGreaterThan(script.indexOf("starting a fresh project from migrations"));
+  });
+});
+
+describe("restore-drill-lib.sh: storage.objects projection and object count (F2)", () => {
+  const lib = (body: string, files: Record<string, string>) => {
+    const dir = mkdtempSync(path.join(tmpdir(), "drill-lib-"));
+    try {
+      for (const [name, text] of Object.entries(files)) writeFileSync(path.join(dir, name), text);
+      const r = spawnSync("bash", ["-c", `set -uo pipefail; . scripts/ops/restore-drill-lib.sh; cd ${dir}; ${body}`], { encoding: "utf8" });
+      return { code: r.status, out: `${r.stdout}${r.stderr}` };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const ROWS = "treatment-images|d0/c0/synthetic-1.png|4096|image/png\ntreatment-images|d0/c0/synthetic-2.png|8192|image/png\ntreatment-images|d0/c0/synthetic-3.png|12288|image/png\n";
+  const HASHES = `${"a".repeat(64)}  obj-1.bin\n${"b".repeat(64)}  obj-2.bin\n${"c".repeat(64)}  obj-3.bin\n`;
+
+  it("objects_hashed counts the hash file's lines, not a constant", () => {
+    expect(lib("objects_hashed h", { h: HASHES }).out.trim()).toBe("3");
+    expect(lib("objects_hashed h", { h: HASHES.split("\n").slice(0, 2).join("\n") + "\n" }).out.trim()).toBe("2");
+    expect(lib("objects_hashed h", { h: "" }).out.trim()).toBe("0");
+  });
+
+  it("identical projections of the expected size pass", () => {
+    expect(lib("compare_objects_projection b a 3", { b: ROWS, a: ROWS }).code).toBe(0);
+  });
+
+  it.each([
+    ["a changed size", ROWS.replace("|8192|", "|8191|"), /differs/],
+    ["a changed mimetype", ROWS.replace("image/png\ntreatment-images|d0/c0/synthetic-2", "image/jpeg\ntreatment-images|d0/c0/synthetic-2"), /differs/],
+    ["a renamed object", ROWS.replace("synthetic-3.png", "synthetic-9.png"), /differs/],
+    ["a changed bucket", ROWS.replace("treatment-images|d0/c0/synthetic-1", "other-bucket|d0/c0/synthetic-1"), /differs/],
+    ["a lost row", ROWS.split("\n").slice(0, 2).join("\n") + "\n", /row\(s\) after/],
+    ["an extra row", ROWS + "treatment-images|d0/c0/extra.png|1|image/png\n", /row\(s\) after/],
+  ])("%s fails the comparison", (_name, after, message) => {
+    const r = lib("compare_objects_projection b a 3", { b: ROWS, a: after });
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(message);
+  });
+
+  it("an empty projection, or one that disagrees with the hashed count, fails", () => {
+    expect(lib("compare_objects_projection b a 0", { b: "", a: "" }).code).toBe(1);
+    expect(lib("compare_objects_projection b a 4", { b: ROWS, a: ROWS }).out).toMatch(/3 row\(s\) before, but 4 object\(s\) were hashed/);
+  });
+});
+
+describe("the negative control's reasons (F3)", () => {
+  it("answered() names a redirect's destination path and nothing else", () => {
+    expect(answered(307, "http://127.0.0.1:3197/no-access")).toBe("307 -> /no-access");
+    expect(answered(307, "http://127.0.0.1:3197/login?next=%2Fclients")).toBe("307 -> /login");
+    expect(answered(404, null)).toBe("404");
+    expect(answered(200, "http://x/y")).toBe("200");
+    expect(answered(307, null)).toBe("307");
+  });
+
+  it("the read reasons carry the destination", () => {
+    expect(clientListShowsClient(307, "", "http://127.0.0.1:3197/no-access")).toBe("GET /clients answered 307 -> /no-access");
+    expect(recordRendersFields(404, "", null)).toBe("GET /clients/<id> answered 404");
+    expect(photoBytesMatch(307, undefined, 0, Buffer.alloc(0), null, "http://127.0.0.1:3197/no-access")).toBe("the signed-URL route answered 307 -> /no-access");
+  });
+
+  const ABSENT = "GET /clients answered 307 -> /no-access";
+  it("controlVerdict accepts only 'signed in, data absent' on all three reads", () => {
+    expect(controlVerdict(null, [ABSENT, "GET /clients/<id> answered 404", "the signed-URL route answered 307 -> /no-access"]).ok).toBe(true);
+  });
+
+  it.each([
+    ["a sign-in error", "generate_link answered 502", [ABSENT, ABSENT, ABSENT], /sign-in failed/],
+    ["a read that succeeded", null, [null, ABSENT, ABSENT], /client list unexpectedly succeeded/],
+    ["a 500", null, [ABSENT, "GET /clients/<id> answered 500", ABSENT], /not a data-absent result/],
+    ["a redirect to /login", null, ["GET /clients answered 307 -> /login", ABSENT, ABSENT], /not a data-absent result/],
+    ["a data mismatch on a 200", null, [ABSENT, ABSENT, "photo sha256 aa != original bb"], /not a data-absent result/],
+  ])("controlVerdict rejects %s", (_name, signIn, reasons, why) => {
+    const v = controlVerdict(signIn, reasons);
+    expect(v.ok).toBe(false);
+    expect(v.why).toMatch(why);
+  });
+
+  it("a sign-in failure is a HARNESS error in every phase, never a recorded read miss", () => {
+    const code = readFileSync(SCRIPT_PATH, "utf8");
+    expect(code).toMatch(/if \(session\.error\) return fail\(HARNESS, `sign-in failed: \$\{session\.error\}`\);/);
+    expect(code).not.toMatch(/misses\.push\(`sign-in/);
+    // the control prints its own line only through the verdict
+    expect(code).toMatch(/if \(!verdict\.ok\) return fail\(HARNESS, `the negative control is not valid: \$\{verdict\.why\}`\);/);
   });
 });
 
@@ -417,5 +534,49 @@ describe("token isolation: the code can only send the token to loopback", () => 
     const e = appEnv({ api: "http://127.0.0.1:56521", ...localDemoKeys(), egressLog: "/tmp/x", runId: "drill-abcdef123456" });
     expect(providerFenceViolations(e)).toEqual([]);
     expect(providerFenceViolations({ ...e, NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghij.supabase.co" }).join()).toMatch(/hosted Supabase/);
+  });
+});
+
+describe("the egress fence probes IPv6 through the same fenced process, or says it did not (F1)", () => {
+  const wf = readFileSync(".github/workflows/restore-drill.yml", "utf8");
+  const fence = wf.slice(wf.indexOf("- name: Fence the check's egress"), wf.indexOf("- name: Restore drill with the application check"));
+  const assertStep = wf.slice(wf.indexOf("- name: Assert zero real egress from the check"), wf.indexOf("- name: Upload drill evidence"));
+
+  it("both probes run through one fenced() helper (setpriv, the check's gid, no supplementary groups)", () => {
+    expect(fence).toMatch(/fenced\(\) \{ sudo -n setpriv --reuid="\$\(id -u\)" --regid="\$GID" --clear-groups -- "\$@"; \}/);
+    expect(fence).toMatch(/fenced curl -sS -m 5 -o \/dev\/null https:\/\/1\.1\.1\.1\//);
+    expect(fence).toMatch(/fenced curl -6 -sS -m 5 -o \/dev\/null "\$probe6"/);
+  });
+
+  it("the IPv6 probe has a route on any runner (a dummy interface) and leaves on a non-loopback interface", () => {
+    expect(fence).toMatch(/ip link add hone-probe0 type dummy/);
+    expect(fence).toMatch(/ip -6 addr add fd00:dead:beef::1\/64 dev hone-probe0/);
+    expect(fence).toMatch(/probe6="http:\/\/\[fd00:dead:beef::2\]:9\/"/);
+    expect(fence).toMatch(/ip link del hone-probe0/);
+  });
+
+  it("the ip6 LOG counter is read BEFORE ip6tables -Z, and the outcome is never silent", () => {
+    const read = fence.indexOf('p6="$(counter ip6tables)"');
+    const zero = fence.indexOf("sudo ip6tables -Z OUTPUT");
+    expect(read).toBeGreaterThan(0);
+    expect(zero).toBeGreaterThan(read);
+    expect(fence).toMatch(/if \[ "\$\{p6:-0\}" -gt 0 \]; then\s+v6_state="PROBED"/);
+    expect(fence).toMatch(/v6_state="UNPROBED"\s+echo "::warning::IPv6 fence UNPROBED:/);
+    expect(fence).toMatch(/ipv6 fence: \$\{v6_state\}/);
+    expect(fence).toMatch(/GITHUB_STEP_SUMMARY/);
+    // a probe that gets through is a hard failure
+    expect(fence).toMatch(/the fence let an IPv6 probe connection through"; exit 1/);
+  });
+
+  it("the final assertion repeats how much of the IPv6 zero is evidence", () => {
+    expect(assertStep).toMatch(/grep '\^ipv6 fence:' "\$RUNNER_TEMP\/drill-evidence\/egress\.txt"/);
+    expect(assertStep).toMatch(/\[ "\$v4" = 0 \] && \[ "\$v6" = 0 \]/);
+  });
+
+  it("the runbook states what the IPv6 half and the DNS path do and do not prove", () => {
+    const runbook = readFileSync("docs/runbooks/restore-drill.md", "utf8");
+    expect(runbook).toMatch(/IPv6 probe/);
+    expect(runbook).toMatch(/UNPROBED/);
+    expect(runbook).toMatch(/loopback (stub )?resolver/i);
   });
 });

@@ -11,6 +11,19 @@
 # The rebuild is a NEW project created from the repository migrations, into
 # which the exported rows and object bytes are loaded.
 #
+# WHAT IS COMPARED, EXACTLY (and what is not):
+#   * every public table, storage.buckets and every auth table except its own
+#     migration history: row count and an order-independent md5 of the row text;
+#   * storage.objects: NOT by that hash (the restore re-uploads each object with
+#     an upsert, which refreshes the row's timestamps, version and etag). It is
+#     compared as the stable projection bucket_id|name|size|mimetype, line for
+#     line, and its row count must equal the number of objects hashed;
+#   * object bytes: the sha256 of each uploaded original against the bytes read
+#     back after the restore. objects_compared in the summary is the number of
+#     lines in that hash file, not a constant;
+#   * NOT compared: storage.objects timestamps, version, etag and any metadata
+#     field beyond size and mimetype.
+#
 # LOCAL AND SYNTHETIC ONLY.
 #   * Runs its own Supabase stack (project id hone-restore-drill, ports
 #     5652x/8683) from a scratch copy of supabase/. It never touches another
@@ -28,10 +41,12 @@
 # (phase pre-restore, the negative control) and once after the comparison
 # (phase post-restore). The check exits 0 when every read succeeds, 1 when a
 # read misses, and anything else on a harness error. The drill PASSES only
-# when post-restore exits 0 and pre-restore exits exactly 1 AND its log carries
-# the check's own `app check MISS:` line (sudo, a bad import or any wrapper can
-# also exit 1), so a broken harness can never pass as a negative control. The
-# miss reason is copied into the drill log. Unset, the drill is unchanged.
+# when post-restore exits 0 and pre-restore exits exactly 1 AND its log proves
+# "signed in, data absent" (control_reasons_ok in restore-drill-lib.sh): a good
+# sign-in, and a MISS line naming exactly the three reads, each a 307 to
+# /no-access or a 404. Sudo, a bad import, a sign-in problem or a 5xx can also
+# exit 1, so none of them can pass as a negative control. The miss reasons are
+# copied into the drill log. Unset, the drill is unchanged.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -43,6 +58,8 @@ BUCKET="treatment-images"
 # Matches the synthetic studio/client in restore-drill-seed.sql.
 PREFIX="d0d0d0d0-0000-4000-8000-000000000001/d0d0d0d0-0000-4000-8000-000000000002"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=scripts/ops/restore-drill-lib.sh
+. "$REPO_ROOT/scripts/ops/restore-drill-lib.sh"
 EVIDENCE="${1:-$(mktemp -d -t hone-restore-drill-evidence-XXXX)}"
 WORK="$(mktemp -d -t hone-restore-drill-XXXX)"
 mkdir -p "$EVIDENCE"
@@ -123,6 +140,9 @@ select format('%s.%s rows=%s md5=%s', schemaname, relname, n, h) from (
 SQL
 }
 
+# The stable part of storage.objects (bucket, name, size, mimetype): see the lib.
+objects_projection() { psql_q -c "$OBJECTS_PROJECTION_SQL"; }
+
 # --- 1. build the "production" project and seed synthetic data -----------
 T0=$(date +%s)
 log "starting drill stack $PROJECT_ID from $(git -C "$REPO_ROOT" rev-parse --short HEAD) migrations"
@@ -142,6 +162,7 @@ for i in 1 2 3; do
 done
 (cd "$WORK" && sha256sum obj-*.bin) >"$EVIDENCE/objects-before.sha256"
 manifest >"$EVIDENCE/manifest-before.txt"
+objects_projection >"$EVIDENCE/objects-meta-before.txt"
 log "manifest before: $(wc -l <"$EVIDENCE/manifest-before.txt") tables"
 
 # --- 2. back up: rows (logical) and object bytes (separately) -------------
@@ -184,8 +205,10 @@ if [ -n "$APP_CHECK" ]; then
   TN=$(date +%s)
   log "negative control: application check against the rebuilt, not yet restored project"
   case "$(app_check pre-restore)" in 0) APP_NEGATIVE=passed;; 1) APP_NEGATIVE=failed;; *) APP_NEGATIVE=error;; esac
-  # Exit 1 counts as a read MISS only when the check itself said so.
-  if [ "$APP_NEGATIVE" = failed ] && ! grep -q '^app check MISS: ' "$EVIDENCE/app-check-pre-restore.log"; then APP_NEGATIVE=error; fi
+  # Exit 1 is a valid control only when the log proves "signed in, data absent":
+  # the three named reads, each a 307 to /no-access or a 404, and a good sign-in.
+  # Any other reason (a sign-in problem, a 5xx, a read that passed) is an error.
+  if [ "$APP_NEGATIVE" = failed ] && ! control_reasons_ok "$EVIDENCE/app-check-pre-restore.log"; then APP_NEGATIVE=error; fi
   log "negative control: $APP_NEGATIVE; $(grep -m1 '^app check ' "$EVIDENCE/app-check-pre-restore.log" | cut -c1-600 || true)"
   NEG_SECONDS=$(( $(date +%s) - TN ))
 fi
@@ -222,9 +245,12 @@ for i in 1 2 3; do
     || fail "read back synthetic-$i"
 done
 (cd "$WORK/verify" && sha256sum obj-*.bin) >"$EVIDENCE/objects-after.sha256"
-# storage.objects rows carry timestamps the upsert refreshes; compare metadata
-# rows from the export, and object bytes by hash.
+# storage.objects full rows carry timestamps, version and etag that the upsert
+# refreshes, so the row fingerprint skips that table. In its place the stable
+# projection (bucket_id, name, size, mimetype) is compared exactly, and the
+# object bytes are compared by hash.
 manifest >"$EVIDENCE/manifest-after.txt"
+objects_projection >"$EVIDENCE/objects-meta-after.txt"
 
 RESULT=PASS
 if ! diff -u "$EVIDENCE/objects-before.sha256" "$EVIDENCE/objects-after.sha256" >"$EVIDENCE/objects.diff"; then
@@ -234,6 +260,11 @@ grep -v '^storage.objects ' "$EVIDENCE/manifest-before.txt" >"$WORK/mb"
 grep -v '^storage.objects ' "$EVIDENCE/manifest-after.txt" >"$WORK/ma"
 if ! diff -u "$WORK/mb" "$WORK/ma" >"$EVIDENCE/manifest.diff"; then
   RESULT=FAIL; log "row fingerprints differ (manifest.diff)"
+fi
+OBJECTS_N="$(objects_hashed "$EVIDENCE/objects-before.sha256")"
+[ "$OBJECTS_N" = "$(objects_hashed "$EVIDENCE/objects-after.sha256")" ] || { RESULT=FAIL; log "hashed object count differs before and after"; }
+if ! compare_objects_projection "$EVIDENCE/objects-meta-before.txt" "$EVIDENCE/objects-meta-after.txt" "$OBJECTS_N" >"$EVIDENCE/objects-meta.diff" 2>&1; then
+  RESULT=FAIL; log "storage.objects projection differs (objects-meta.diff): $(tail -1 "$EVIDENCE/objects-meta.diff")"
 fi
 OBJ_BEFORE=$(grep '^storage.objects ' "$EVIDENCE/manifest-before.txt" | sed -E 's/ md5=.*//')
 OBJ_AFTER=$(grep '^storage.objects ' "$EVIDENCE/manifest-after.txt" | sed -E 's/ md5=.*//')
@@ -251,7 +282,8 @@ fi
   echo "result=$RESULT"
   echo "migrations_head=$(git -C "$REPO_ROOT" rev-parse HEAD)"
   echo "tables_compared=$(wc -l <"$WORK/mb")"
-  echo "objects_compared=3"
+  echo "objects_compared=$OBJECTS_N"
+  echo "objects_metadata_compared=bucket_id,name,size,mimetype"
   if [ -n "$APP_CHECK" ]; then
     echo "app_check_post_restore=$APP_READ"
     echo "app_check_pre_restore=$APP_NEGATIVE"

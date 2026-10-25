@@ -159,27 +159,61 @@ export function providerFenceViolations(env) {
 // --- the three reads, as pure checks over what the app returned -----------
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-export function clientListShowsClient(status, html) {
-  if (status !== 200) return `GET /clients answered ${status}`;
+/** "307 -> /no-access" for a redirect with a Location, else just the status. */
+export function answered(status, location) {
+  if (status >= 300 && status < 400 && typeof location === "string" && location) {
+    let target = location;
+    try {
+      target = new URL(location, "http://127.0.0.1").pathname;
+    } catch {
+      // keep the raw value
+    }
+    return `${status} -> ${target}`;
+  }
+  return String(status);
+}
+
+export function clientListShowsClient(status, html, location) {
+  if (status !== 200) return `GET /clients answered ${answered(status, location)}`;
   if (!html.includes(`href="/clients/${SEED.clientId}"`)) return "no link to the seeded client";
   if (!new RegExp(`>${escapeRe(SEED.clientName)}<`).test(html)) return "the seeded client's name is not rendered";
   return null;
 }
 
-export function recordRendersFields(status, html) {
-  if (status !== 200) return `GET /clients/<id> answered ${status}`;
+export function recordRendersFields(status, html, location) {
+  if (status !== 200) return `GET /clients/<id> answered ${answered(status, location)}`;
   if (!new RegExp(`<h1[^>]*>${escapeRe(SEED.clientName)}</h1>`).test(html)) return "the record heading is not the client's name";
   if (!new RegExp(`>${escapeRe(SEED.note)}<`).test(html)) return "the restored clinical note is not rendered";
   return null;
 }
 
-export function photoBytesMatch(signStatus, signedUrl, bytesStatus, bytes, expectedSha256) {
-  if (signStatus !== 200 || typeof signedUrl !== "string") return `the signed-URL route answered ${signStatus}`;
+export function photoBytesMatch(signStatus, signedUrl, bytesStatus, bytes, expectedSha256, location) {
+  if (signStatus !== 200 || typeof signedUrl !== "string") return `the signed-URL route answered ${answered(signStatus, location)}`;
   if (!signedUrl.startsWith(`${DRILL_API}/storage/v1/object/sign/`)) return "the signed URL is not the drill's storage";
   if (bytesStatus !== 200) return `the signed URL answered ${bytesStatus}`;
   const got = createHash("sha256").update(bytes).digest("hex");
   if (!expectedSha256 || got !== expectedSha256) return `photo sha256 ${got} != original ${expectedSha256 ?? "(unknown)"}`;
   return null;
+}
+
+/** What "the data is absent" looks like through the app: a 307 to /no-access, or a 404. */
+export const DATA_ABSENT = /answered (307 -> \/no-access|404)$/;
+
+/**
+ * The pre-restore negative control must prove "signed in, data absent": a good
+ * sign-in and ALL THREE reads missing with a data-absent result. Anything else
+ * (a read that passed, a 5xx, a redirect to /login, a sign-in problem) proves
+ * nothing about the data and is a HARNESS error, never a valid control.
+ * `reasons` is [list, record, photo], each a string (a miss) or null (ok).
+ */
+export function controlVerdict(signInError, reasons) {
+  if (signInError) return { ok: false, why: `sign-in failed: ${signInError}` };
+  const named = ["client list", "client record", "photo bytes"];
+  for (let i = 0; i < 3; i++) {
+    if (reasons[i] === null) return { ok: false, why: `${named[i]} unexpectedly succeeded` };
+    if (!DATA_ABSENT.test(reasons[i])) return { ok: false, why: `${named[i]}: "${reasons[i]}" is not a data-absent result` };
+  }
+  return { ok: true, why: "signed in, data absent (3/3 reads)" };
 }
 
 /** The original hash of the object the check reads, from the drill's evidence. */
@@ -297,14 +331,16 @@ async function check(phase, api, evidence) {
 
     const misses = [];
     const session = await signIn(api, anonKey, serviceKey);
-    if (session.error) misses.push(`sign-in: ${session.error}`);
+    // A sign-in that does not work is a problem with the harness or the stack, not
+    // a statement about the data: exit 2 in EVERY phase, never a "read miss".
+    if (session.error) return fail(HARNESS, `sign-in failed: ${session.error}`);
     const headers = session.cookie ? { cookie: session.cookie } : {};
     const get = (p) => fetch(`${APP_ORIGIN}${p}`, { headers, redirect: "manual" });
 
     const list = await get("/clients");
-    const r1 = clientListShowsClient(list.status, await list.text());
+    const r1 = clientListShowsClient(list.status, await list.text(), list.headers.get("location"));
     const record = await get(`/clients/${SEED.clientId}?tab=consultation`);
-    const r2 = recordRendersFields(record.status, await record.text());
+    const r2 = recordRendersFields(record.status, await record.text(), record.headers.get("location"));
     const sign = await get(`/api/clients/${SEED.clientId}/images/${SEED.imageId}/signed-url?variant=original`);
     const signed = sign.headers.get("content-type")?.includes("json") ? await sign.json() : {};
     let r3;
@@ -313,7 +349,7 @@ async function check(phase, api, evidence) {
       r3 = photoBytesMatch(sign.status, signed.url, bytes.status, Buffer.from(await bytes.arrayBuffer()),
         originalSha256(path.join(evidence, "objects-before.sha256")));
     } else {
-      r3 = photoBytesMatch(sign.status, signed.url, 0, Buffer.alloc(0), null);
+      r3 = photoBytesMatch(sign.status, signed.url, 0, Buffer.alloc(0), null, sign.headers.get("location"));
     }
     for (const [name, miss] of [["client list", r1], ["client record", r2], ["photo bytes", r3]]) {
       console.log(`[${phase}] ${name}: ${miss ? `MISS (${miss})` : "ok"}`);
@@ -325,7 +361,13 @@ async function check(phase, api, evidence) {
     console.log(`[${phase}] sentry guard: ${egress.split("\n").filter(Boolean).length} records, all contained: ${uncontained.length === 0}`);
     if (uncontained.length) return fail(HARNESS, `sentry guard recorded uncontained traffic: ${JSON.stringify(uncontained)}`);
 
-    console.log(`[${phase}] reads ok: ${[r1, r2, r3].filter((m) => m === null).length}/3; sign-in: ${session.error ? "failed" : "ok"}`);
+    console.log(`[${phase}] reads ok: ${[r1, r2, r3].filter((m) => m === null).length}/3; sign-in: ok`);
+    if (phase === "pre-restore") {
+      // The negative control: only "signed in, data absent" is a valid miss.
+      const verdict = controlVerdict(null, [r1, r2, r3]);
+      if (!verdict.ok) return fail(HARNESS, `the negative control is not valid: ${verdict.why}`);
+      console.log(`app check CONTROL: ${verdict.why}`);
+    }
     return misses.length ? fail(MISS, misses.join("; ")) : 0;
   } finally {
     server.kill("SIGTERM");

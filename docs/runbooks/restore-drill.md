@@ -23,11 +23,11 @@ alone brings back `treatment_images` rows that point at missing bytes.
 |---|---|
 | 1 | Starts its **own** stack (`hone-restore-drill`, ports `5652x`/`8683`) from a scratch copy of `supabase/`. Only Postgres, PostgREST, Storage, Kong and Auth run. |
 | 2 | Seeds synthetic rows (`scripts/ops/restore-drill-seed.sql`), including an auth user with a Google identity linked to the practitioner, and uploads three synthetic objects to `treatment-images` at paths that satisfy the table's path check. |
-| 3 | Fingerprints every `public` table, every `auth` table except its migration history, and `storage.buckets` / `storage.objects`: row count and an order-independent md5. Also hashes the object bytes. |
+| 3 | Fingerprints every `public` table, every `auth` table except its migration history, and `storage.buckets`: row count and an order-independent md5. `storage.objects` gets a stable projection instead (step 7). Also hashes the object bytes. |
 | 4 | Backs up the rows with `pg_dump --data-only` and the object bytes through the Storage API, separately. |
 | 5 | Destroys the project: `supabase stop --no-backup` deletes its volumes. |
 | 6 | Starts a **new** project from the repository migrations, truncates the rows the migrations seeded, loads the export with `session_replication_role = replica`, and re-uploads the object bytes. |
-| 7 | Compares fingerprints and object hashes. `storage.objects` is compared by count, because re-uploading refreshes its timestamps and version. Exits non-zero on any difference. |
+| 7 | Compares fingerprints and object hashes. `storage.objects` is NOT row-hashed (re-uploading refreshes its timestamps, version and etag); it is compared line for line as `bucket_id\|name\|size\|mimetype`, and that projection must hold exactly as many rows as there are object hashes. `objects_compared` in the summary is the number of lines in the hash file. Timestamps, version, etag and other metadata fields are not compared. Exits non-zero on any difference. |
 
 **Guards.**
 - It refuses to start if any `SUPABASE_`/`HONE_` variable names a hosted
@@ -48,7 +48,7 @@ through `RESTORE_DRILL_APP_CHECK`; unset, the drill behaves exactly as above.
 
 | Phase | When | Expected |
 |---|---|---|
-| `pre-restore` (negative control) | the rebuilt project, before any row is loaded | exit **1**: sign-in and all three reads miss |
+| `pre-restore` (negative control) | the rebuilt project, before any row is loaded | exit **1**, and only for "signed in, data absent": sign-in works and all three reads miss, each with a 307 to `/no-access` or a 404 |
 | `post-restore` | after the fingerprint comparison | exit **0**: sign-in and all three reads succeed |
 
 The check starts the Hone **production build** (`next build`, then `next start`,
@@ -65,8 +65,15 @@ because the drill runs no mail server. It then reads:
    uploaded (`objects-before.sha256`).
 
 Exit codes: `0` all reads succeeded, `1` a read missed, `2` a harness error.
-The drill **passes only on post-restore 0 and pre-restore exactly 1**, so a
-broken build or server can never pass as a negative control.
+A sign-in that fails is exit **2** in every phase, never a recorded miss. The
+drill **passes only on post-restore 0 and pre-restore exactly 1**, and the
+pre-restore log must also say so in the check's own words: a successful
+sign-in, the line `app check CONTROL: signed in, data absent (3/3 reads)`, and
+one `app check MISS:` line naming exactly `client list`, `client record` and
+`photo bytes`, each `answered 307 -> /no-access` or `answered 404`. A 5xx, a
+redirect to `/login`, a read that passed, a missing read or a sign-in problem
+is a harness error, so a broken build, server or sign-in can never pass as a
+negative control.
 
 **Providers.** The server gets a closed environment (only `PATH` and `HOME` are
 inherited): fake Resend, fake Stripe with a test key, the Sentry egress guard
@@ -78,8 +85,18 @@ that is not true.
 **Where it runs.** CI only: `.github/workflows/restore-drill.yml`, a job that is
 **not required**, on a disposable runner, when the drill's files change or on
 demand. There the check runs under the `hone-egress` group. Firewall rules log
-and reject every non-loopback packet from that group, a probe first shows the
-rules match, and the job fails unless both counters (IPv4, IPv6) read zero.
+and reject every non-loopback packet from that group. Before the drill, an
+IPv4 probe and an **IPv6 probe** (through the same fenced process) must each be
+refused and counted; the counters are then zeroed, and the job fails unless
+both read zero afterwards. The IPv6 probe uses a throwaway dummy interface with
+a unique-local prefix so that it leaves on a non-loopback interface on any
+runner, whether or not the runner has IPv6. If, even so, no packet reaches the
+ip6tables chain, the job output and step summary say **`ipv6 fence: UNPROBED`**
+with a warning, and the IPv6 zero is then an unprobed backstop, not evidence;
+that state is never silent. The counters see packets that leave the machine: a
+DNS lookup through a loopback resolver would not appear in them (nothing is
+sent anywhere with the token or key; they go only to the validated loopback
+API).
 Evidence (logs, Sentry guard records, egress counts) is uploaded as the
 `restore-drill-evidence` artifact.
 
