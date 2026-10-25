@@ -152,3 +152,24 @@ jobs:
       - name: R4 - does supabase-go make a network call for --version? (refusing local proxy sink, no hosted call)
         shell: /bin/zsh {0}
         run: /bin/bash rehearsal/runner-macos/version-network-probe.sh "$INSTALL_HOME/hone-s1/supabase-cli/supabase-go"
+
+  comparator-macos:
+    name: comparator and re-pin proof on macOS (Node version, 126 + proof)
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Node on this runner, and the pinned comparator hashes
+        shell: /bin/zsh {0}
+        run: |
+          echo "node: $(node --version) at $(command -v node)"; echo "uname: $(uname -sm)"
+          cd rehearsal/runner-macos/comparator
+          shasum -a 256 compare-preflight.mjs compare-preflight-lib.mjs compare-preflight.test.mjs run-window-read.sh MANIFEST.sha256 run-window-read-macos.sh | cut -c1-72
+      - name: The 126 comparator tests, unchanged
+        shell: /bin/zsh {0}
+        run: cd rehearsal/runner-macos/comparator && node --test compare-preflight.test.mjs 2>&1 | tail -12
+      - name: The re-pin proof, including the macOS-written sidecar parity test (bash 3.2)
+        shell: /bin/zsh {0}
+        run: cd rehearsal/runner-macos/comparator && node --test baseline-repin-proof.test.mjs 2>&1 | tail -12
