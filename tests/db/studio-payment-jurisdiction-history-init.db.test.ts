@@ -836,7 +836,8 @@ describe("J9-I g09d prediction equals the command", () => {
     { label: "foreign currency in stripe_refunds", build: async (s) => { await name("stripe_refunds", s, `acct_T${rid()}`, false, "eur"); },
       ca: [CURRENCY], us: [CURRENCY] },
     ...(["manual_fee_charge_attempts", "stripe_charge_attempts", "stripe_refund_attempts", "stripe_disputes"] as const).flatMap((t): Case[] => [
-      { label: `${t}: a usd row`, build: tableRow(t, "usd"), ca: [CURRENCY], us: [ACK] },
+      // manual_fee_charge_attempts CHECKs currency in ('cad') (0064), so a usd row cannot exist there
+      ...(t === "manual_fee_charge_attempts" ? [] : [{ label: `${t}: a usd row`, build: tableRow(t, "usd"), ca: [CURRENCY], us: [ACK] }]),
       { label: `${t}: a cad row`, build: tableRow(t, "cad"), ca: [ACK], us: [CURRENCY] },
     ]),
     { label: "appointment_payments row", build: async (s) => {
@@ -1012,7 +1013,8 @@ describe("J9-I g09d prediction equals the command", () => {
       catches: new RegExp(`${a}_null \\d+, want \\d+`),
     })),
     ...(["mfa", "sca", "sra", "sdp"] as const).flatMap((a): Mutant[] => [
-      { name: `${a}_non_cad is blind`, sql: () => sub(new RegExp(`x\\.currency is distinct from 'cad'\\) as ${a}_non_cad\\b`), `false) as ${a}_non_cad`), catches: /CA predicted \w+, command refused_currency_history/ },
+      // mfa_non_cad is unreachable (0064 CHECK currency in ('cad')): no data can tell its mutant from the original
+      ...(a === "mfa" ? [] : [{ name: `${a}_non_cad is blind`, sql: () => sub(new RegExp(`x\\.currency is distinct from 'cad'\\) as ${a}_non_cad\\b`), `false) as ${a}_non_cad`), catches: /CA predicted \w+, command refused_currency_history/ }]),
       { name: `${a}_non_usd is blind`, sql: () => sub(new RegExp(`x\\.currency is distinct from 'usd'\\) as ${a}_non_usd\\b`), `false) as ${a}_non_usd`), catches: /US predicted \w+, command refused_currency_history/ },
     ]),
     { name: "named-account branch 1 (live/unknown row) removed", sql: () => sub("where r.stripe_livemode is distinct from false\n", "where false\n"), catches: /named live row[^|]*CA predicted/ },
