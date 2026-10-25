@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 252,
-    "last": "0253_member_scoped_block_authorship.sql",
-    "sha256": "8f253a692587e519a7bf61727539e09c67fa3e26c39da80a5e74c0730890ca88"
+    "count": 253,
+    "last": "0254_perm_hon44_role_enforcement.sql",
+    "sha256": "9d4a1d8e0b697dd11f30605193209f18dd9a62166ba840822f18fc5286da5276"
   },
   "public": {
     "tables": [
@@ -171,6 +171,8 @@
       "assert_session_writable",
       "assert_setup_scope",
       "audit_actor_is_caller",
+      "audit_client_pricing_change",
+      "audit_pinned_note_delete",
       "authorize_appointment_email_operation",
       "begin_appointment_email_message",
       "begin_appointment_sms_message",
@@ -250,6 +252,7 @@
       "delete_recurring_break_rule",
       "delivery_concerns_identity_guard",
       "delivery_concerns_server_defaults",
+      "edit_client_pinned_note",
       "edit_session_started_at",
       "effective_new_client_admission",
       "email_delivery_health",
