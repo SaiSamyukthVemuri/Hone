@@ -244,6 +244,11 @@ export const BROWSER_GROUPS = {
       // Same placement and same self-skip as the spec above; both run for real
       // in the non-required `storage photos` job, which has storage-api.
       "treatment-image-upload-formats.spec.ts",
+      // ID photo set/replace/remove on the client profile/Photos surface:
+      // same group as thumbnail recovery, with the same real-storage
+      // requirement (self-skips in CI without storage-api). Does not add to
+      // the sessions targeted-lane cost pin.
+      "fett-client-portrait.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the
