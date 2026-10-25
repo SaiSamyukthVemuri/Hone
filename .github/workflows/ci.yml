@@ -1742,7 +1742,7 @@ jobs:
           key: pw-webkit-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: WebKit E2E (HON-62 time inputs)
-        run: npx playwright test e2e/availability-hours-editor.spec.ts --project=webkit-hon-62
+        run: npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts --project=webkit-hon-62
         env:
           HONE_E2E_WEBKIT: "1"
           HONE_E2E_FAKE_RESEND: "1"

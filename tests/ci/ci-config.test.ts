@@ -1120,7 +1120,7 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
   it("runs only the scoped WebKit project, which exists only under HONE_E2E_WEBKIT=1", () => {
     const e2e = job.steps.filter((st) => /npx playwright test\b/.test(st.run ?? ""));
     expect(e2e).toHaveLength(1);
-    expect(e2e[0].run).toBe("npx playwright test e2e/availability-hours-editor.spec.ts --project=webkit-hon-62");
+    expect(e2e[0].run).toBe("npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts --project=webkit-hon-62");
     expect(e2e[0].env?.HONE_E2E_WEBKIT).toBe("1");
     // Nothing else in any workflow arms the WebKit project.
     const code = CI.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
@@ -1128,7 +1128,14 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     expect(NIGHTLY).not.toMatch(/HONE_E2E_WEBKIT/);
     expect(CONFIG).toContain('{ name: "chromium", use: { ...devices["Desktop Chrome"] } },');
     expect(CONFIG).toContain('use: { ...devices["Desktop Safari"], bypassCSP: true },');
-    expect(CONFIG).toMatch(/process\.env\.HONE_E2E_WEBKIT === "1"\s*\?\s*\[\s*\{\s*name: "webkit-hon-62",\s*testMatch: \/availability-hours-editor\\\.spec\\\.ts\$\/,/);
+    expect(CONFIG).toMatch(/process\.env\.HONE_E2E_WEBKIT === "1"\s*\?\s*\[\s*\{\s*name: "webkit-hon-62",\s*testMatch: \/\(availability-hours-editor\|webkit-time-input-key-probe\)\\\.spec\\\.ts\$\/,/);
+  });
+
+  it("the key-delivery probe is WebKit-only and asserts delivery, never engine behaviour", () => {
+    const probe = readFileSync("e2e/webkit-time-input-key-probe.spec.ts", "utf8");
+    expect(probe).toMatch(/test\.skip\(\(\{ browserName \}\) => browserName !== "webkit"/);
+    expect(probe).not.toMatch(/toHaveValue|toBe\("0[78]:/);
+    expect(probe).toContain('console.log("HON62-PROBE "');
   });
 
   it("installs WebKit's system packages through the bounded script, under its own .deb key", () => {
