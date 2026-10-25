@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { dbErrorCode } from "@/lib/logging/error-class";
+import { BookingSettingsError, bookingSettingsErrorUrl, type BookingSettingsErrorCode } from "@/lib/booking/settings-error-codes";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { BUFFER_PRESET_MINUTES } from "@/lib/booking/buffer-presets";
 import { PUBLIC_BOOKING_HORIZON_MONTHS_VALUES } from "@/lib/booking/horizon";
@@ -33,9 +35,7 @@ const BUFFER_PRESET_STRINGS = BUFFER_PRESET_MINUTES.map(String);
 function parseBufferPreset(value: FormDataEntryValue | null): number {
   const raw = trimmed(value);
   if (!BUFFER_PRESET_STRINGS.includes(raw)) {
-    throw new Error(
-      `Buffer must be one of: ${BUFFER_PRESET_MINUTES.join(", ")} minutes.`,
-    );
+    throw new BookingSettingsError("buffer_invalid");
   }
   return Number(raw);
 }
@@ -49,9 +49,7 @@ function parsePublicBookingHorizonMonths(
 ): number {
   const raw = trimmed(value);
   if (!HORIZON_MONTH_STRINGS.includes(raw)) {
-    throw new Error(
-      `Booking horizon must be one of: ${PUBLIC_BOOKING_HORIZON_MONTHS_VALUES.join(", ")} months.`,
-    );
+    throw new BookingSettingsError("horizon_invalid");
   }
   return Number(raw);
 }
@@ -62,7 +60,7 @@ async function assertOwner(): Promise<{
 }> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    throw new Error("Only studio owners can change booking preferences.");
+    throw new BookingSettingsError("not_owner");
   }
   return {
     studioId: studio.id,
@@ -99,15 +97,16 @@ const RESERVED_SLUGS: ReadonlySet<string> = new Set([
 // rather than via Next's error.tsx boundary. The action redirects back
 // to /settings/booking with one of two query params:
 //   ?saved=1               on success
-//   ?error=<urlencoded>    on a validated failure
+//   ?error=<code>          on a failure (a code from
+//                          lib/booking/settings-error-codes.ts, never text)
 // The page reads these params and renders a calm green/red banner so
 // the practitioner sees feedback after every tap. The redirect signal
 // from next/navigation is itself thrown, so we collect the failure
-// message in a local string and only call redirect() once at the end.
+// code in a local and only call redirect() once at the end.
 export async function updateStudioBookingPrefsAction(
   formData: FormData,
 ): Promise<void> {
-  let failureMessage: string | null = null;
+  let failureCode: BookingSettingsErrorCode | null = null;
 
   try {
     const { studioId, currentSlug } = await assertOwner();
@@ -126,15 +125,13 @@ export async function updateStudioBookingPrefsAction(
     const bookingDescription = nullable(formData.get("booking_description"));
 
     if (!SLUG_RE.test(slugRaw)) {
-      throw new Error(
-        "Slug must be lowercase letters, numbers, and dashes (1-64 chars).",
-      );
+      throw new BookingSettingsError("slug_invalid");
     }
     if (slugRaw !== currentSlug && RESERVED_SLUGS.has(slugRaw)) {
-      throw new Error("That booking link is reserved. Please choose another.");
+      throw new BookingSettingsError("slug_reserved");
     }
     if (defaultDuration < 5 || defaultDuration > 480) {
-      throw new Error("Default duration must be between 5 and 480 minutes.");
+      throw new BookingSettingsError("duration_invalid");
     }
 
     const supabase = await createClient();
@@ -152,7 +149,7 @@ export async function updateStudioBookingPrefsAction(
       .eq("id", studioId);
     if (error) {
       if (error.code === "23505") {
-        throw new Error("That slug is already taken. Pick another.");
+        throw new BookingSettingsError("slug_taken");
       }
       // 23P01: the timezone-change trigger rebuilt this studio's
       // full_day_blockout reservation rows into UTC instants under the
@@ -161,11 +158,19 @@ export async function updateStudioBookingPrefsAction(
       // retroactive resync; existing appointments keep their migration
       // 0029 snapshot.
       if (error.code === "23P01") {
-        throw new Error(
-          "Changing the timezone would push a blockout into a conflict with an existing calendar item. Reschedule or remove the affected appointment or block first.",
-        );
+        throw new BookingSettingsError("timezone_conflict");
       }
-      throw new Error(`Failed to update booking settings: ${error.message}`);
+      // The catch below shows this text to the person and puts it in the
+      // redirect query, so it is a fixed sentence; the database's text stays
+      // out of the banner and the URL, and the log carries the code only.
+      console.error(
+        JSON.stringify({
+          event: "booking_settings_update_failed",
+          code: dbErrorCode(error),
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      throw new BookingSettingsError("save_failed");
     }
     revalidatePath("/settings/booking");
     revalidatePath("/settings/availability");
@@ -173,15 +178,10 @@ export async function updateStudioBookingPrefsAction(
     revalidatePath("/calendar");
     if (slugRaw) revalidatePath(`/book/${slugRaw}`);
   } catch (err) {
-    failureMessage =
-      err instanceof Error && err.message ? err.message : "Save failed.";
+    failureCode = err instanceof BookingSettingsError ? err.code : "save_failed";
   }
 
-  if (failureMessage) {
-    redirect(
-      `/settings/booking?error=${encodeURIComponent(failureMessage)}`,
-    );
-  }
+  if (failureCode) redirect(bookingSettingsErrorUrl(failureCode));
   redirect("/settings/booking?saved=1");
 }
 
@@ -200,7 +200,7 @@ export async function updateStudioBookingPrefsAction(
 export async function updateNewClientAdmissionModeAction(
   formData: FormData,
 ): Promise<void> {
-  let failureMessage: string | null = null;
+  let failureCode: BookingSettingsErrorCode | null = null;
   try {
     const { studioId } = await assertOwner();
     // INTENT ONLY. Not validated into a mode here beyond being a string - the
@@ -220,36 +220,29 @@ export async function updateNewClientAdmissionModeAction(
       { p_studio_id: studioId, p_mode: intent },
     );
     if (error) {
-      failureMessage = "Could not save that just now. Please try again.";
+      failureCode = "admission_save_failed";
     } else {
       const row = Array.isArray(data) ? data[0] : data;
       const outcome = (row as { outcome?: string } | null)?.outcome ?? "unknown";
       if (outcome === "not_authorized") {
-        failureMessage = "Only the studio owner can change this.";
+        failureCode = "admission_not_owner";
       } else if (outcome === "invalid_mode") {
-        failureMessage = "That is not a valid choice.";
+        failureCode = "admission_invalid_mode";
       } else if (outcome === "legacy_waitlist_cutover_required") {
         // TRUTHFUL, and it names the thing that has to happen first rather than
         // pretending the setting failed.
         // TRUTHFUL about what has to happen, and it names the one action that
         // does it. The rule is "not yet cut over", which is why the copy does
         // not promise this is only about email.
-        failureMessage =
-          "This studio hasn't completed its new-client admission setup yet. " +
-          "Choose Waitlist once to complete it, then Open and Closed become " +
-          "available.";
+        failureCode = "admission_cutover_required";
       } else if (outcome !== "ok") {
-        failureMessage = "Could not save that just now. Please try again.";
+        failureCode = "admission_save_failed";
       }
     }
   } catch {
-    failureMessage = "Could not save that just now. Please try again.";
+    failureCode = "admission_save_failed";
   }
 
   revalidatePath("/settings/booking");
-  redirect(
-    failureMessage
-      ? `/settings/booking?error=${encodeURIComponent(failureMessage)}`
-      : "/settings/booking?saved=1",
-  );
+  redirect(failureCode ? bookingSettingsErrorUrl(failureCode) : "/settings/booking?saved=1");
 }

@@ -385,7 +385,7 @@ async function handleStripeEvent(
       // releases the claim and answers 500, so the event stays retryable.
       if (existingSettingsErr) {
         throw new Error(
-          `studio_payment_settings preserve-first-completion read failed: ${existingSettingsErr.message}`,
+          `studio_payment_settings preserve-first-completion read failed: ${dbErrorCode(existingSettingsErr)}`,
         );
       }
       const onboardingCompletedAtForRpc =
@@ -404,7 +404,7 @@ async function handleStripeEvent(
       });
       if (syncErr) {
         throw new Error(
-          `sync_studio_account_status failed: ${syncErr.message}`,
+          `sync_studio_account_status failed: ${dbErrorCode(syncErr)}`,
         );
       }
 
@@ -667,7 +667,7 @@ async function handleSetupIntentSucceeded(
     .maybeSingle();
   if (customerLineageErr) {
     throw new Error(
-      `customer_lineage_lookup_failed:${customerLineageErr.code}:${customerLineageErr.message}`,
+      `customer_lineage_lookup_failed:${dbErrorCode(customerLineageErr)}`,
     );
   }
   if (!customerLineage) {
@@ -686,7 +686,7 @@ async function handleSetupIntentSucceeded(
     .maybeSingle();
   if (signatureErr) {
     throw new Error(
-      `signature_lookup_failed:${signatureErr.code}:${signatureErr.message}`,
+      `signature_lookup_failed:${dbErrorCode(signatureErr)}`,
     );
   }
   if (!signature) {
@@ -718,7 +718,7 @@ async function handleSetupIntentSucceeded(
     );
   } catch (err) {
     throw new Error(
-      `payment_method_retrieve_failed:${err instanceof Error ? err.message : String(err)}`,
+      `payment_method_retrieve_failed:${thrownErrorClass(err)}`,
     );
   }
   if (si.status !== "succeeded" || si.livemode !== ctx.livemode
@@ -780,7 +780,7 @@ async function handleSetupIntentSucceeded(
       );
     }
     throw new Error(
-      `save_client_card_on_file_failed:${saveErr.code}:${saveErr.message}`,
+      `save_client_card_on_file_failed:${dbErrorCode(saveErr)}`,
     );
   }
   const saved = Array.isArray(saveRows) ? saveRows[0] : saveRows;

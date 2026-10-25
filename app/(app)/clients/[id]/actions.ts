@@ -26,7 +26,7 @@ async function assertClientVisible(
     .eq("id", clientId)
     .eq("studio_id", studioId)
     .maybeSingle();
-  if (error) throw new Error(`Failed to load client: ${error.message}`);
+  if (error) throw new Error(`Failed to load client: ${dbErrorCode(error)}`);
   if (!data) throw new Error("Client not found.");
 }
 
@@ -390,7 +390,7 @@ export async function archiveClientAction(formData: FormData): Promise<void> {
     .eq("studio_id", studio.id)
     .is("archived_at", null);
   if (error) {
-    throw new Error(`Failed to archive client: ${error.message}`);
+    throw new Error(`Failed to archive client: ${dbErrorCode(error)}`);
   }
 
   const { error: auditErr } = await recordClientArchiveAudit({
@@ -436,7 +436,7 @@ export async function unarchiveClientAction(formData: FormData): Promise<void> {
     .eq("studio_id", studio.id)
     .not("archived_at", "is", null);
   if (error) {
-    throw new Error(`Failed to unarchive client: ${error.message}`);
+    throw new Error(`Failed to unarchive client: ${dbErrorCode(error)}`);
   }
 
   const { error: auditErr } = await recordClientArchiveAudit({
@@ -485,7 +485,7 @@ export async function addClientPricingAction(formData: FormData): Promise<void> 
     notes: nullableString(formData.get("notes")),
   });
 
-  if (error) throw new Error(`Failed to add pricing: ${error.message}`);
+  if (error) throw new Error(`Failed to add pricing: ${dbErrorCode(error)}`);
   revalidatePath(`/clients/${clientId}`);
 }
 
@@ -510,7 +510,7 @@ export async function deleteClientPricingAction(formData: FormData): Promise<voi
     .eq("id", id)
     .eq("studio_id", studio.id)
     .eq("client_id", clientId);
-  if (error) throw new Error(`Failed to delete pricing: ${error.message}`);
+  if (error) throw new Error(`Failed to delete pricing: ${dbErrorCode(error)}`);
   revalidatePath(`/clients/${clientId}`);
 }
 
@@ -533,7 +533,7 @@ export async function addClientTagAction(formData: FormData): Promise<void> {
     label,
     created_by: practitioner.id,
   });
-  if (error) throw new Error(`Failed to add tag: ${error.message}`);
+  if (error) throw new Error(`Failed to add tag: ${dbErrorCode(error)}`);
   revalidatePath(`/clients/${clientId}`);
 }
 
@@ -559,6 +559,6 @@ export async function removeClientTagAction(formData: FormData): Promise<void> {
     .eq("studio_id", studio.id)
     .eq("client_id", clientId)
     .is("deleted_at", null);
-  if (error) throw new Error(`Failed to remove tag: ${error.message}`);
+  if (error) throw new Error(`Failed to remove tag: ${dbErrorCode(error)}`);
   revalidatePath(`/clients/${clientId}`);
 }

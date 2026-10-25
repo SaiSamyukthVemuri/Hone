@@ -9,6 +9,7 @@ import {
 import { AdminModeBadge } from "@/app/admin/mode-badge";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { ResendWelcomeButton } from "./ResendWelcomeButton";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // PR #256: admin studio-detail privacy follow-up. Operator-only (the /admin
 // layout's isAdmin gate covers this page). Shows operational metadata +
@@ -91,8 +92,8 @@ async function loadStudioDetail(id: string): Promise<StudioDetail | null> {
       .maybeSingle(),
   ]);
 
-  if (studioRes.error) throw new Error(studioRes.error.message);
-  if (invitesRes.error) throw new Error(invitesRes.error.message);
+  if (studioRes.error) throw new Error(`db_error:${dbErrorCode(studioRes.error)}`);
+  if (invitesRes.error) throw new Error(`db_error:${dbErrorCode(invitesRes.error)}`);
   if (!studioRes.data) return null;
 
   type StudioRaw = {

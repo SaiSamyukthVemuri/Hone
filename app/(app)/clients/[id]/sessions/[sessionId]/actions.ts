@@ -103,7 +103,7 @@ async function assertSessionVisible(
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
     .maybeSingle();
-  if (error) throw new Error(`Failed to load session: ${error.message}`);
+  if (error) throw new Error(`Failed to load session: ${dbErrorCode(error)}`);
   if (!data) throw new Error("Session not found.");
 }
 
@@ -451,7 +451,7 @@ export async function addLaserEntryAction(formData: FormData): Promise<void> {
     p_observation_notes: nullableString(formData.get("observation_notes")),
   });
 
-  if (error) throw new Error(`Failed to add entry: ${error.message}`);
+  if (error) throw new Error(`Failed to add entry: ${dbErrorCode(error)}`);
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
   revalidatePath(`/clients/${clientId}`);
 }

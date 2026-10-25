@@ -4,6 +4,7 @@ import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { addDays, todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
 import type { Appointment, Client, Service } from "@/lib/types/database";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 type Row = Appointment & {
   client: Pick<Client, "id" | "name" | "email" | "phone"> | null;
@@ -27,7 +28,7 @@ export default async function UpcomingPage() {
     .gte("starts_at", startUtc.toISOString())
     .lt("starts_at", endUtc.toISOString())
     .order("starts_at");
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`db_error:${dbErrorCode(error)}`);
   const rows = (data ?? []) as Row[];
 
   return (

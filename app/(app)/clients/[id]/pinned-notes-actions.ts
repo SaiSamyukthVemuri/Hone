@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 const MAX_PINNED_NOTE_LENGTH = 200;
 
@@ -36,7 +37,7 @@ export async function addClientPinnedNoteAction(
     .eq("id", clientId)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (clientErr) throw new Error(`Failed to load client: ${clientErr.message}`);
+  if (clientErr) throw new Error(`Failed to load client: ${dbErrorCode(clientErr)}`);
   if (!client) throw new Error("Client not found.");
 
   const { error } = await supabase.from("client_pinned_notes").insert({
@@ -45,7 +46,7 @@ export async function addClientPinnedNoteAction(
     text,
     created_by_practitioner_id: practitioner.id,
   });
-  if (error) throw new Error(`Failed to pin note: ${error.message}`);
+  if (error) throw new Error(`Failed to pin note: ${dbErrorCode(error)}`);
 
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");
@@ -135,7 +136,7 @@ export async function removeClientPinnedNoteAction(
     .eq("id", noteId)
     .eq("studio_id", studio.id)
     .eq("client_id", clientId);
-  if (error) throw new Error(`Failed to remove note: ${error.message}`);
+  if (error) throw new Error(`Failed to remove note: ${dbErrorCode(error)}`);
 
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");

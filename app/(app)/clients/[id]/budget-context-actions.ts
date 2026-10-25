@@ -34,6 +34,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
   MAX_BUDGET_NOTE_LENGTH,
@@ -91,7 +92,9 @@ export async function updateClientBudgetContextAction(
     .eq("id", clientId)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (clientErr) return { ok: false, error: clientErr.message };
+  if (clientErr) {
+    return { ok: false, error: userFacingDbFailure("check the client", clientErr, "budget_context_client_lookup_failed") };
+  }
   if (!client) return { ok: false, error: "Client not found." };
 
   // Upsert keyed on the unique(client_id) constraint from migration 0183.
@@ -108,7 +111,7 @@ export async function updateClientBudgetContextAction(
     { onConflict: "client_id" },
   );
   if (error) {
-    return { ok: false, error: `Failed to save budget: ${error.message}` };
+    return { ok: false, error: userFacingDbFailure("save the budget", error, "budget_context_save_failed") };
   }
 
   revalidatePath(`/clients/${clientId}`);
