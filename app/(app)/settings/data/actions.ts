@@ -1025,25 +1025,25 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       table: "clients",
       fetched: (clientsRes.data ?? []).length,
       expected: clientsCount.error ? null : clientsCount.count,
-      error: clientsCount.error?.message,
+      error: clientsCount.error ? dbErrorCode(clientsCount.error) : undefined,
     },
     {
       table: "sessions",
       fetched: (sessionsRes.data ?? []).length,
       expected: sessionsCount.error ? null : sessionsCount.count,
-      error: sessionsCount.error?.message,
+      error: sessionsCount.error ? dbErrorCode(sessionsCount.error) : undefined,
     },
     {
       table: "appointments",
       fetched: (appointmentsRes.data ?? []).length,
       expected: appointmentsCount.error ? null : appointmentsCount.count,
-      error: appointmentsCount.error?.message,
+      error: appointmentsCount.error ? dbErrorCode(appointmentsCount.error) : undefined,
     },
     {
       table: "client_clinical_notes",
       fetched: (clinicalNotesRes.data ?? []).length,
       expected: notesCount.error ? null : notesCount.count,
-      error: notesCount.error?.message,
+      error: notesCount.error ? dbErrorCode(notesCount.error) : undefined,
     },
   ];
 

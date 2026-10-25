@@ -23,6 +23,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 
 export type BirthdayActionResult =
@@ -60,7 +61,9 @@ export async function updateClientBirthdayAction(
       .eq("id", clientId)
       .eq("studio_id", studio.id)
       .maybeSingle();
-    if (clientErr) return { ok: false, error: clientErr.message };
+    if (clientErr) {
+      return { ok: false, error: userFacingDbFailure("check the client", clientErr, "birthday_client_lookup_failed") };
+    }
     if (!client) return { ok: false, error: "Client not found." };
 
     const { error } = await supabase
@@ -69,7 +72,7 @@ export async function updateClientBirthdayAction(
       .eq("id", clientId)
       .eq("studio_id", studio.id);
     if (error) {
-      return { ok: false, error: `Failed to clear birthday: ${error.message}` };
+      return { ok: false, error: userFacingDbFailure("clear the birthday", error, "birthday_clear_failed") };
     }
     revalidatePath(`/clients/${clientId}`);
     revalidatePath("/dashboard");
@@ -116,7 +119,9 @@ export async function updateClientBirthdayAction(
     .eq("id", clientId)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (clientErr) return { ok: false, error: clientErr.message };
+  if (clientErr) {
+    return { ok: false, error: userFacingDbFailure("check the client", clientErr, "birthday_client_lookup_failed") };
+  }
   if (!client) return { ok: false, error: "Client not found." };
 
   let year = SENTINEL_YEAR;
@@ -151,7 +156,7 @@ export async function updateClientBirthdayAction(
     .eq("id", clientId)
     .eq("studio_id", studio.id);
   if (error) {
-    return { ok: false, error: `Failed to save birthday: ${error.message}` };
+    return { ok: false, error: userFacingDbFailure("save the birthday", error, "birthday_save_failed") };
   }
 
   revalidatePath(`/clients/${clientId}`);

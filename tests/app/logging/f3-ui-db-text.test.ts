@@ -114,7 +114,9 @@ describe("the classifier", () => {
   it("maps SQLSTATE classes to distinct fixed sentences and everything else to the generic one", () => {
     expect(classifyDbFailure("42501")).toBe("permission");
     for (const c of ["40001", "40P01", "55P03", "57014"]) expect(classifyDbFailure(c)).toBe("busy");
-    for (const c of ["23502", "23503", "23505", "23514", "23P01"]) expect(classifyDbFailure(c)).toBe("conflict");
+    for (const c of ["23503", "23505", "23P01"]) expect(classifyDbFailure(c)).toBe("conflict");
+    // PEER-1162 L1: a missing required value and a failed CHECK are not collisions with other records.
+    for (const c of ["23502", "23514"]) expect(classifyDbFailure(c)).toBe("invalid");
     for (const c of ["22P02", "XX000", "unknown", "42P01"]) expect(classifyDbFailure(c)).toBe("generic");
   });
 
@@ -128,6 +130,21 @@ describe("the classifier", () => {
     expect(sentences.size).toBe(4);
     expect([...sentences].join("|")).toContain("You do not have permission to add the stage.");
     expect(logs.events().map((e) => e.code)).toEqual(["42501", "40001", "23505", "22P02"]);
+  });
+
+  it("each reclassified code gets the 'check the values' sentence, not the conflict one (PEER-1162 L1)", () => {
+    const conflict = userFacingDbFailure("save the plan notes", hostile("23505"), "ev");
+    for (const code of ["23502", "23514"]) {
+      const s = userFacingDbFailure("save the plan notes", hostile(code), "ev");
+      expect(s, code).toBe("Could not save the plan notes because a value could not be accepted. Check the values and try again.");
+      expect(s, code).not.toContain("conflicts");
+      expect(s, code).not.toBe(conflict);
+      expectNoLeak({ s });
+    }
+    for (const code of ["23503", "23505", "23P01"]) {
+      expect(userFacingDbFailure("save the plan notes", hostile(code), "ev"), code).toBe(conflict);
+    }
+    expect(conflict).toBe("Could not save the plan notes because the change conflicts with existing records.");
   });
 
   it("an error with no usable code logs 'unknown' and gets the generic sentence", () => {
@@ -194,7 +211,7 @@ describe("treatment-plans-actions.ts: no database text reaches the returned resu
     failAt("treatment_plans", "update", hostile("23514"));
     const { updateTreatmentPlanNotesAction } = await plans();
     const r = await updateTreatmentPlanNotesAction(form({ plan_id: "plan1", client_id: "c1", practitioner_notes: "note" }));
-    expect(r).toMatchObject({ ok: false, error: expect.stringContaining("save the plan notes") });
+    expect(r).toMatchObject({ ok: false, error: expect.stringContaining("save the plan notes because a value could not be accepted") });
     expectNoLeak(r);
   });
 
