@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 253,
-    "last": "0254_perm_hon44_role_enforcement.sql",
-    "sha256": "9d4a1d8e0b697dd11f30605193209f18dd9a62166ba840822f18fc5286da5276"
+    "count": 254,
+    "last": "0255_lint_hardening_anon_surface.sql",
+    "sha256": "3b984f71ab5068c45752396b7e5dcb0f5f2e6f9bdeedec2ba9aee520384e7df8"
   },
   "public": {
     "tables": [

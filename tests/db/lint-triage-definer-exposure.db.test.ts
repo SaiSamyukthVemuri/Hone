@@ -16,13 +16,15 @@ import {
 // carries exactly what the anon key carries (role anon, no sub), so auth.uid()
 // is NULL. Synthetic data only.
 
-// The anon-executable SECURITY DEFINER set the migration chain produces (hosted
-// max 0212). The 2026-10-25 advisor export lists seven of these plus
-// rls_auto_enable (a platform event-trigger function with no migration) and
-// omits snapshot_appointment_buffer (production carries out-of-band changes to
-// it; see LINT-TRIAGE-END). A new entry here is a new unauthenticated surface:
-// revoke it from anon, or add it with its own proof below.
-const ANON_EXECUTABLE_DEFINERS = [
+// The SECURITY DEFINER functions the 2026-10-25 advisor export flagged as anon-
+// executable (seven of these plus rls_auto_enable, a platform event-trigger
+// function with no migration; production carries out-of-band changes to
+// snapshot_appointment_buffer, see LINT-TRIAGE-END). Migration 0255 removes
+// anon (and PUBLIC) EXECUTE from all eight, so the anon-executable set is now
+// EMPTY: a new entry is a new unauthenticated surface and fails the catalog
+// test. These names stay listed because every one still exists and still has a
+// proof below (the helpers refuse anon, the trigger functions cannot be called).
+const FORMERLY_ANON_EXECUTABLE_DEFINERS = [
   "enforce_appointment_buffer()",
   "guard_scoped_recurring_rule_capacity()",
   "handle_new_user()",
@@ -32,7 +34,7 @@ const ANON_EXECUTABLE_DEFINERS = [
   "snapshot_appointment_buffer()",
   "studios_admission_mode_guard()",
 ];
-const ANON_TRIGGERS = ANON_EXECUTABLE_DEFINERS.filter((f) => f.endsWith("()"));
+const ANON_TRIGGERS = FORMERLY_ANON_EXECUTABLE_DEFINERS.filter((f) => f.endsWith("()"));
 
 let a: SeededStudio;
 let b: SeededStudio;
@@ -65,7 +67,7 @@ async function sqlState(run: () => Promise<unknown>): Promise<string | null> {
 }
 
 describe("catalog: anon-executable SECURITY DEFINER functions in public", () => {
-  it("is exactly the chain's eight (platform functions excluded)", async () => {
+  it("is EMPTY after 0255 (platform functions excluded)", async () => {
     const { rows } = await adminQuery(
       `select p.proname || '(' || oidvectortypes(p.proargtypes) || ')' as sig
          from pg_proc p
@@ -77,7 +79,7 @@ describe("catalog: anon-executable SECURITY DEFINER functions in public", () => 
           and not exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')
         `,
     );
-    expect(rows.map((r) => r.sig as string).sort()).toEqual([...ANON_EXECUTABLE_DEFINERS].sort());
+    expect(rows.map((r) => r.sig as string).sort()).toEqual([]);
   });
 
   it("five are trigger functions; three are boolean SQL helpers keyed on auth.uid()", async () => {
@@ -90,7 +92,7 @@ describe("catalog: anon-executable SECURITY DEFINER functions in public", () => 
          join pg_language l on l.oid = p.prolang
         where n.nspname = 'public'
           and p.proname = any($1)`,
-      [ANON_EXECUTABLE_DEFINERS.map((f) => f.slice(0, f.indexOf("(")))],
+      [FORMERLY_ANON_EXECUTABLE_DEFINERS.map((f) => f.slice(0, f.indexOf("(")))],
     );
     const bySig = new Map(rows.map((r) => [r.sig, r]));
     for (const f of ANON_TRIGGERS) expect(bySig.get(f)?.ret, f).toBe("trigger");
@@ -101,19 +103,15 @@ describe("catalog: anon-executable SECURITY DEFINER functions in public", () => 
 });
 
 describe("anon: what an unauthenticated caller can learn or change", () => {
-  it("the three helpers answer false for every studio and session, including real ones", async () => {
-    const answers = await asAnon(async (q) => {
-      const out: boolean[] = [];
-      for (const s of [a, b]) {
-        out.push((await q(`select public.is_studio_member($1) as v`, [s.studioId])).rows[0].v);
-        out.push((await q(`select public.is_studio_owner($1) as v`, [s.studioId])).rows[0].v);
-      }
-      for (const id of [aSession, bSession]) {
-        out.push((await q(`select public.session_is_visible($1) as v`, [id])).rows[0].v);
-      }
-      return out;
-    });
-    expect(answers).toEqual([false, false, false, false, false, false]);
+  it("anon is REFUSED (42501) by each of the three helpers, for real studios and sessions alike", async () => {
+    for (const call of [
+      `select public.is_studio_member($1)`,
+      `select public.is_studio_owner($1)`,
+      `select public.session_is_visible($1)`,
+    ]) {
+      const id = call.includes("session_is_visible") ? aSession : a.studioId;
+      expect(await sqlState(() => asAnon((q) => q(call, [id]))), call).toBe("42501");
+    }
   });
 
   it("positive control: the same helpers answer true for A's owner on A only (non-vacuous)", async () => {
@@ -127,8 +125,9 @@ describe("anon: what an unauthenticated caller can learn or change", () => {
     expect(answers).toEqual([true, true, true, false, false]);
   });
 
-  it.each(ANON_TRIGGERS)("%s cannot be invoked directly (0A000), so it reads and writes nothing", async (f) => {
-    expect(await sqlState(() => asAnon((q) => q(`select public.${f}`)))).toBe("0A000");
+  it.each(ANON_TRIGGERS)("%s: anon holds no EXECUTE (42501), and even a role that does cannot call it directly (0A000)", async (f) => {
+    expect(await sqlState(() => asAnon((q) => q(`select public.${f}`)))).toBe("42501");
+    expect(await sqlState(() => asRole("service_role", (q) => q(`select public.${f}`)))).toBe("0A000");
   });
 });
 
