@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -44,6 +44,40 @@ import {
 //  * There is no distinct "insurance-pending" state in the schema at this head
 //    (HON-45 draft, unnumbered). The insurance-pending cell completes a visit
 //    and records the only existing disposition, still_owes.
+
+// THE REPO'S FAKE STRIPE RETURNS A REFUND WITH NO charge / payment_intent /
+// customer, and refundPaymentChargeAttempt's identity check requires them to
+// equal the attempt's, so against the bare fake EVERY refund ends in
+// needs_manual_review regardless of jurisdiction (measured in round 2/3 of this
+// rehearsal). This adapter fills those three fields from the attempt row so the
+// rest of the real refund path is exercised. It is a rehearsal-only test double.
+vi.mock("@/lib/stripe/session-payment-stripe", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("@/lib/stripe/session-payment-stripe")>();
+  return {
+    ...orig,
+    getSessionPaymentStripe: () => {
+      const fake = orig.getSessionPaymentStripe() as unknown as {
+        refunds: { create: (p: { charge?: string | null }, o?: unknown) => Promise<Record<string, unknown>> };
+      };
+      const create = fake.refunds.create.bind(fake.refunds);
+      fake.refunds.create = async (params, opts) => {
+        const r = await create(params, opts);
+        const { adminQuery: q } = await import("./helpers/harness");
+        const a = await q(
+          `select stripe_payment_intent_id, stripe_customer_id from public.payment_charge_attempts where stripe_charge_id=$1 limit 1`,
+          [params.charge],
+        );
+        return {
+          ...r,
+          charge: params.charge,
+          payment_intent: a.rows[0]?.stripe_payment_intent_id ?? null,
+          customer: a.rows[0]?.stripe_customer_id ?? null,
+        };
+      };
+      return fake as never;
+    },
+  };
+});
 
 type Outcome = "WORKS" | "FAILS" | "NOT_EXERCISED";
 class NotExercised extends Error {}
