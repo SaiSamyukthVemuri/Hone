@@ -6,10 +6,14 @@
 -- unarchive whose audit write 0242 will refuse (client UPDATE commits before
 -- the audit INSERT in the old action). It touches no other column, no other
 -- role (owner, service_role and migrations are unaffected) and no audit table.
+-- IDEMPOTENT: safe to run twice (create or replace function; drop trigger if
+-- exists). The NEW app's user-scoped archive/unarchive UPDATE is refused too
+-- while this exists, so the DOWN script must run right after S3 serves all
+-- traffic and BEFORE the S3 archive/unarchive smoke.
 begin;
 set local lock_timeout = '5s';
 
-create function public.pause_client_archive_guard()
+create or replace function public.pause_client_archive_guard()
 returns trigger
 language plpgsql
 set search_path = ''
@@ -27,6 +31,7 @@ $$;
 revoke all privileges on function public.pause_client_archive_guard()
   from public, anon, authenticated, service_role;
 
+drop trigger if exists clients_00_pause_archive_trg on public.clients;
 create trigger clients_00_pause_archive_trg
   before update of archived_at, archived_by on public.clients
   for each row execute function public.pause_client_archive_guard();

@@ -304,3 +304,162 @@ describe("C. NEW app (S3) writes against the 0246 schema: the governed commands"
     });
   });
 });
+
+// Privacy PEER-1124 F1-F3: idempotent UP/DOWN, catalog assertions, new-app ordering.
+const CATALOG = `
+  select
+    (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public') as funcs,
+    (select count(*)::int from pg_trigger t where t.tgrelid = 'public.clients'::regclass and not t.tgisinternal) as triggers,
+    (select coalesce(c.relacl::text, '') from pg_class c where c.oid = 'public.clients'::regclass) as clients_acl,
+    (select count(*)::int from pg_policy where polrelid = 'public.clients'::regclass) as policies,
+    (select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace) as relations,
+    (select count(*)::int from pg_constraint where conrelid = 'public.clients'::regclass) as constraints`;
+const GUARD_COUNTS = `
+  select
+    (select count(*)::int from pg_proc where proname = 'pause_client_archive_guard' and pronamespace = 'public'::regnamespace) as fn,
+    (select count(*)::int from pg_trigger where tgname = 'clients_00_pause_archive_trg' and not tgisinternal) as trg`;
+
+describe("D. the guard scripts are idempotent and change nothing else (PEER-1124 F1, F2)", () => {
+  it("UP twice, DOWN twice, UP again: each step succeeds and leaves exactly 0 or 1 of each object", async () => {
+    await sandbox(async ({ q }) => {
+      const counts = async () => (await q(GUARD_COUNTS)).rows[0];
+      expect(await counts()).toEqual({ fn: 0, trg: 0 });
+      await q(GUARD_UP);
+      expect(await counts()).toEqual({ fn: 1, trg: 1 });
+      await q(GUARD_UP);
+      expect(await counts()).toEqual({ fn: 1, trg: 1 });
+      await q(GUARD_DOWN);
+      expect(await counts()).toEqual({ fn: 0, trg: 0 });
+      await q(GUARD_DOWN);
+      expect(await counts()).toEqual({ fn: 0, trg: 0 });
+      await q(GUARD_UP);
+      expect(await counts()).toEqual({ fn: 1, trg: 1 });
+    });
+  });
+
+  it("after UP the function is INVOKER, search_path pinned, with no EXECUTE for PUBLIC, anon, authenticated or service_role", async () => {
+    await sandbox(async ({ q }) => {
+      await q(GUARD_UP);
+      const fn = await q(
+        `select p.prosecdef, p.proconfig, p.prorettype::regtype::text as ret, l.lanname,
+                has_function_privilege('anon', p.oid, 'EXECUTE') as anon,
+                has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated,
+                has_function_privilege('service_role', p.oid, 'EXECUTE') as service_role,
+                (select count(*)::int from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                  where a.privilege_type = 'EXECUTE' and a.grantee = 0) as public_grants,
+                (select count(*)::int from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                  where a.privilege_type = 'EXECUTE' and a.grantee <> p.proowner) as non_owner_grants
+           from pg_proc p join pg_language l on l.oid = p.prolang
+          where p.proname = 'pause_client_archive_guard' and p.pronamespace = 'public'::regnamespace`,
+      );
+      expect(fn.rows).toHaveLength(1);
+      expect(fn.rows[0]).toMatchObject({
+        prosecdef: false,
+        ret: "trigger",
+        lanname: "plpgsql",
+        anon: false,
+        authenticated: false,
+        service_role: false,
+        public_grants: 0,
+        non_owner_grants: 0,
+      });
+      expect(fn.rows[0].proconfig).toContain('search_path=""');
+    });
+  });
+
+  it("after UP there is exactly one such trigger: BEFORE UPDATE, FOR EACH ROW, on archived_at and archived_by only, enabled", async () => {
+    await sandbox(async ({ q }) => {
+      await q(GUARD_UP);
+      const t = await q(
+        `select t.tgname, t.tgenabled,
+                (t.tgtype & 1) = 1 as for_each_row,
+                (t.tgtype & 2) = 2 as before,
+                (t.tgtype & 16) = 16 as on_update,
+                (t.tgtype & (4 | 8 | 32 | 64)) = 0 as only_update,
+                (select array_agg(a.attname::text order by a.attname) from pg_attribute a
+                  where a.attrelid = t.tgrelid and a.attnum = any (t.tgattr::int2[])) as columns
+           from pg_trigger t
+          where t.tgrelid = 'public.clients'::regclass and not t.tgisinternal
+            and t.tgfoid = 'public.pause_client_archive_guard'::regproc`,
+      );
+      expect(t.rows).toEqual([
+        {
+          tgname: "clients_00_pause_archive_trg",
+          tgenabled: "O",
+          for_each_row: true,
+          before: true,
+          on_update: true,
+          only_update: true,
+          columns: ["archived_at", "archived_by"],
+        },
+      ]);
+    });
+  });
+
+  it("catalog identity: UP adds exactly one function and one trigger; UP then DOWN restores everything else", async () => {
+    await sandbox(async ({ q }) => {
+      const before = (await q(CATALOG)).rows[0];
+      await q(GUARD_UP);
+      const during = (await q(CATALOG)).rows[0];
+      expect(during).toEqual({ ...before, funcs: before.funcs + 1, triggers: before.triggers + 1 });
+      await q(GUARD_DOWN);
+      expect((await q(CATALOG)).rows[0]).toEqual(before);
+    });
+  });
+
+  it("an UPDATE that SETs archived_at or archived_by to the value it already has is not refused", async () => {
+    await sandbox(async ({ q, as }) => {
+      await q(GUARD_UP);
+      const same = await as("authenticated", a.userId, (uq) =>
+        uq("update public.clients set archived_at = archived_at, archived_by = archived_by where id = $1", [a.clientId]),
+      );
+      expect(same.rowCount).toBe(1);
+      await q("update public.clients set archived_at = now(), archived_by = $2 where id = $1", [a.clientId, a.practitionerId]);
+      const sameArchived = await as("authenticated", a.userId, (uq) =>
+        uq("update public.clients set archived_at = archived_at, archived_by = archived_by where id = $1", [a.clientId]),
+      );
+      expect(sameArchived.rowCount).toBe(1);
+    });
+  });
+});
+
+describe("E. ordering with the NEW app (PEER-1124 F3)", () => {
+  // The new app at bfd266d9 archives with the same user-scoped statement as the old one
+  // (app/(app)/clients/[id]/actions.ts), then records the audit through service_role.
+  it("while the guard is UP the new app's user-scoped archive and unarchive UPDATEs are refused too (55000)", async () => {
+    await sandbox(async ({ q, as }) => {
+      await q(GUARD_UP);
+      const archive = await as("authenticated", a.userId, async (uq) => {
+        await uq("savepoint s");
+        const c = await code(() => uq(OLD_ARCHIVE_UPDATE, [new Date().toISOString(), a.practitionerId, a.clientId, a.studioId]));
+        await uq("rollback to savepoint s");
+        return c;
+      });
+      expect(archive).toBe("55000");
+      await q("update public.clients set archived_at = now(), archived_by = $2 where id = $1", [a.clientId, a.practitionerId]);
+      const unarchive = await as("authenticated", a.userId, async (uq) => {
+        await uq("savepoint s");
+        const c = await code(() => uq(OLD_UNARCHIVE_UPDATE, [a.clientId, a.studioId]));
+        await uq("rollback to savepoint s");
+        return c;
+      });
+      expect(unarchive).toBe("55000");
+    });
+  });
+
+  it("after DOWN the new app's whole sequence works: user UPDATE, then exactly one governed audit row", async () => {
+    await sandbox(async ({ q, as }) => {
+      await q(GUARD_UP);
+      await q(GUARD_DOWN);
+      const before = await auditCount(q, a.studioId);
+      const ts = new Date().toISOString();
+      const updated = await as("authenticated", a.userId, (uq) => uq(OLD_ARCHIVE_UPDATE, [ts, a.practitionerId, a.clientId, a.studioId]));
+      expect(updated.rowCount).toBe(1);
+      const ok = await as("service_role", null, (sq) =>
+        sq("select public.record_client_archive_audit_governed($1,$2,$3,$4,true,$5) as ok", [a.practitionerId, a.userId, a.studioId, a.clientId, ts]),
+      );
+      expect(ok.rows[0].ok).toBe(true);
+      expect(await auditCount(q, a.studioId)).toBe(before + 1);
+    });
+  });
+});
