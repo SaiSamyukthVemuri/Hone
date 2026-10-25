@@ -50,6 +50,11 @@ sql() { "${PSQL_CMD[@]}" -qAtX -v ON_ERROR_STOP=1 "$@"; }
 case "$KIND" in
   logical)
     hash_verify "$DIR" || export_fail "V1: a ciphertext does not match hashes.sha256; not restoring"
+    # Prove the key opens EVERY part before the database is touched (a wrong
+    # identity must never reach the TRUNCATE below).
+    for part in public-data auth-data storage-meta manifest; do
+      dec "$DIR/$part.sql.age" >/dev/null 2>&1 || dec "$DIR/$part.age" >/dev/null 2>&1 || export_fail "the identity does not decrypt $part; not touching the database"
+    done
     TRUNC="$(sql <<'SQL'
 select 'truncate ' || string_agg(format('%I.%I', schemaname, relname), ', ') || ' cascade;'
 from pg_stat_user_tables
@@ -59,15 +64,19 @@ where schemaname = 'public'
 SQL
 )"
     export_log "loading rows in one transaction"
+    # COMMIT is sent only if every part decrypted to the end; any failure sends
+    # ROLLBACK, so a truncation can never be committed without its rows (Codex P1).
     {
       echo "begin;"
       echo "set session_replication_role = replica;"
       echo "$TRUNC"
-      dec "$DIR/public-data.sql.age"
-      dec "$DIR/auth-data.sql.age"
-      dec "$DIR/storage-meta.sql.age"
-      echo "commit;"
-    } | sql >/dev/null || export_fail "the row load failed (one transaction: nothing was loaded)"
+      if dec "$DIR/public-data.sql.age" && dec "$DIR/auth-data.sql.age" && dec "$DIR/storage-meta.sql.age"; then
+        echo "commit;"
+      else
+        echo "rollback;"
+        exit 1   # pipefail turns this into a failed load even though ROLLBACK itself succeeds
+      fi
+    } | sql >/dev/null || export_fail "the row load failed or was rolled back (one transaction: nothing was loaded)"
     export_log "V2: recompute the fingerprint and compare"
     AFTER="$(mktemp)"; BEFORE="$(mktemp)"; trap 'rm -f "$AFTER" "$BEFORE"' EXIT
     printf '%s\n' "$MANIFEST_SQL" | sql >"$AFTER"

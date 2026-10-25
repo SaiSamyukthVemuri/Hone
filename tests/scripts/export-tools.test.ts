@@ -71,6 +71,7 @@ esac
     path.join(bin, "psql"),
     `#!/usr/bin/env bash
 while IFS= read -r line; do
+  [ -n "\${SHIM_PSQL_LOG:-}" ] && printf '%s\\n' "$line" >>"$SHIM_PSQL_LOG"
   case "$line" in
     begin*) echo BEGIN;;
     *pg_export_snapshot*) echo "00000003-00000002-1";;
@@ -142,6 +143,8 @@ describe("export-lib: the pure checks", () => {
     expect(lib(`EXPORT_REHEARSAL=1; url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' ${REF}`).status).not.toBe(0);
     expect(lib(`EXPORT_REHEARSAL=1; EXPORT_REHEARSAL_REF=${REF}; url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' ${REF}`).status).toBe(0);
     expect(lib(`EXPORT_REHEARSAL=1; EXPORT_REHEARSAL_REF=${REF}; url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' wrongref`).status).not.toBe(0);
+    // A non-loopback host that does not name the ref is refused in rehearsal exactly as in production (Codex P2).
+    expect(lib(`EXPORT_REHEARSAL=1; EXPORT_REHEARSAL_REF=${REF}; url_matches_ref 'postgresql://u:p@db.other.example/x' ${REF}`).status).not.toBe(0);
     // A ref that only appears in the PATH or the password does not count.
     expect(lib(`url_matches_ref 'postgresql://u:${REF}@evil.example/${REF}' ${REF}`).status).not.toBe(0);
   });
@@ -392,6 +395,48 @@ describe("object-export.sh", () => {
     execFileSync("bash", ["-c", `cd ${out} && sha256sum -- manifest.age objects/*.age > hashes.sha256 && rm objects/000000.age`]);
     const missing = run("verify-export.sh", ["objects", out, "--identity", key]);
     expect(missing.status).not.toBe(0);
+  });
+});
+
+describe("export-restore.sh never commits a truncation without its rows (Codex P1)", () => {
+  it("NEGATIVE: a wrong identity stops BEFORE the database is touched; the session never sees a truncate or a commit", () => {
+    const d = fixtures("rs-key");
+    const out = path.join(scratch, "rs-key-out");
+    expect(run("logical-export.sh", LOGICAL_ARGS(out), { DB_URL, EXPORT_REHEARSAL: "1", SHIM_DUMP_DIR: d }).status).toBe(0);
+    const key = path.join(scratch, "key5.txt"); writeFileSync(key, "AGE-SECRET-KEY-SHIM");
+    const log = path.join(scratch, "rs-key-psql.log"); writeFileSync(log, "");
+    const r = run("export-restore.sh", ["logical", out, "--identity", key, "--target-ref", REF, "--production-ref", "prod"], {
+      DB_URL, EXPORT_REHEARSAL: "1", SHIM_DUMP_DIR: d, SHIM_AGE_WRONG_KEY: "1", SHIM_PSQL_LOG: log,
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("does not decrypt");
+    expect(readFileSync(log, "utf8")).not.toMatch(/truncate|commit/i);
+  });
+
+  it("NEGATIVE: a decryption that fails MID-LOAD sends ROLLBACK, never COMMIT", () => {
+    const d = fixtures("rs-mid");
+    const out = path.join(scratch, "rs-mid-out");
+    expect(run("logical-export.sh", LOGICAL_ARGS(out), { DB_URL, EXPORT_REHEARSAL: "1", SHIM_DUMP_DIR: d }).status).toBe(0);
+    const key = path.join(scratch, "key6.txt"); writeFileSync(key, "AGE-SECRET-KEY-SHIM");
+    // the shim age fails only for the auth part, and only after the pre-flight (a counter file)
+    const flaky = path.join(scratch, "flaky-bin"); mkdirSync(flaky, { recursive: true });
+    write(path.join(flaky, "age"), `#!/usr/bin/env bash
+file=""; while [ $# -gt 0 ]; do case "$1" in -d) shift;; -i) shift 2;; *) file="$1"; shift;; esac; done
+n=$(cat "${path.join(scratch, "flaky.count")}" 2>/dev/null || echo 0)
+case "$file" in *auth-data*) n=$((n + 1)); echo $n >"${path.join(scratch, "flaky.count")}"; if [ "$n" -ge 2 ]; then exit 1; fi;; esac
+cat "$file"
+`, 0o755);
+    writeFileSync(path.join(scratch, "flaky.count"), "0");
+    const log = path.join(scratch, "rs-mid-psql.log"); writeFileSync(log, "");
+    const r = spawnSync("bash", [path.join(OPS, "export-restore.sh"), "logical", out, "--identity", key, "--target-ref", REF, "--production-ref", "prod"], {
+      encoding: "utf8",
+      env: { PATH: `${flaky}:${bin}:${process.env.PATH}`, HOME: scratch, DB_URL, EXPORT_REHEARSAL: "1", SHIM_DUMP_DIR: d, SHIM_PSQL_LOG: log } as unknown as NodeJS.ProcessEnv,
+      timeout: 30_000,
+    });
+    const seen = readFileSync(log, "utf8");
+    expect(seen).toMatch(/rollback/i);
+    expect(seen).not.toMatch(/commit/i);
+    expect(r.status === 0 ? "restore unexpectedly passed" : "refused").toBe("refused");
   });
 });
 
