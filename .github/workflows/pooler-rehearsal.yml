@@ -1,4 +1,4 @@
-# ARCHIVES-AND-UPDATECHECK. REHEARSAL - NEVER MERGE.
+# POOLER-REHEARSAL. REHEARSAL - NEVER MERGE. S1 through the local Supavisor SESSION pooler (enabled in CI only).
 #
 # (1) Downloads and verifies all eight v2.102.0 release archives and looks for
 # every second source of the same bytes; (2) observes, through a local
@@ -13,25 +13,25 @@
 # login, held only across a direct pinned-CLI start, as in ci.yml. The proxy is
 # a pinned mitmproxy installed into a throwaway virtualenv on the runner.
 
-name: archives-updatecheck-rehearsal
+name: pooler-rehearsal
 
 on:
   pull_request:
     paths:
-      - "scripts/ci/archives-updatecheck-rehearsal.sh"
-      - ".github/workflows/archives-updatecheck-rehearsal.yml"
+      - "scripts/ci/pooler-rehearsal.sh"
+      - ".github/workflows/pooler-rehearsal.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: hone-archives-updatecheck-rehearsal-${{ github.event.pull_request.number || github.ref }}
+  group: hone-pooler-rehearsal-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   apply-tool:
-    name: archives and update check rehearsal (not required)
+    name: session pooler rehearsal (not required)
     runs-on: ubuntu-latest
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -41,7 +41,7 @@ jobs:
     # database resets and six proxied CLI runs: well inside 60 minutes.
     timeout-minutes: 60
     env:
-      EXCLUDE: studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta,supavisor
+      EXCLUDE: studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -69,6 +69,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Enable the local session pooler (CI workspace only, not committed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i '/^\[db.pooler\]/,/^\[/ { s/^enabled = false/enabled = true/; s/^pool_mode = .*/pool_mode = "session"/ }' supabase/config.toml
+          git diff -U0 supabase/config.toml
+
       - name: Start the local Supabase stack (with storage)
         id: sb_start
         continue-on-error: true
@@ -89,7 +96,7 @@ jobs:
         if: steps.sb_start.outcome == 'failure'
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x "$EXCLUDE"
 
-      - name: Rehearse archives and the update check
+      - name: Rehearse the S1 sequence through the session pooler
         shell: bash
         env:
           REHEARSAL_OUT: ${{ runner.temp }}/apply-tool-out
@@ -97,12 +104,12 @@ jobs:
           set -u
           export DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
           echo "db container: $DB"
-          bash scripts/ci/archives-updatecheck-rehearsal.sh
+          bash scripts/ci/pooler-rehearsal.sh
 
       - name: Upload rehearsal logs
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: archives-updatecheck-rehearsal-logs
+          name: pooler-rehearsal-logs
           path: ${{ runner.temp }}/apply-tool-out/
           retention-days: 7
