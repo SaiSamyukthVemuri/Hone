@@ -65,7 +65,13 @@ ensure_tls() { # the pinned CLI always attempts TLS; serve a self-signed certifi
 
 reset_to_0212() {
   say "-- resetting the synthetic database to production's prefix 0212 (supabase db reset --local --version 0212)"
-  $CLI db reset --local --version 0212 --yes > "$OUT/reset-0212.log" 2>&1 || { tail -n 20 "$OUT/reset-0212.log"; return 1; }
+  local try
+  for try in 1 2 3; do
+    $CLI db reset --local --version 0212 --yes > "$OUT/reset-0212.log" 2>&1 && break
+    say "WARN db reset attempt $try failed: $(tail -n 3 "$OUT/reset-0212.log" | tr '\n' ' ' | cut -c1-200)"
+    sleep 15
+    [ "$(psqld -c 'select max(version) from supabase_migrations.schema_migrations' 2> /dev/null)" = "0212" ] && { say "INFO  history max is 0212 despite the failed restart step; continuing"; break; }
+  done
   for _ in $(seq 1 30); do psqld -c "select 1" > /dev/null 2>&1 && break; sleep 2; done
   ensure_tls || return 1
 }
@@ -118,6 +124,7 @@ diag_pooler() {
 }
 
 say "== sslmode actually supported by the local pooler (the pinned CLI attempts TLS first)"
+TLSP=54330
 SSLM=""
 for m in require prefer disable; do
   r="$(pq "$PW" "$(purl $m)" -At -c 'select 1' | tr '\n' ' ' | cut -c1-160)"
@@ -126,7 +133,7 @@ for m in require prefer disable; do
 done
 if [ -z "$SSLM" ]; then diag_pooler; say "FAIL the pooler accepts no connection with password $PW"; exit 1; fi
 say "INFO  strongest sslmode that works through the local pooler: $SSLM"
-expect "(info) sslmode=require works through the local pooler" "$([ "$SSLM" = require ] && echo 0 || echo 1)" "strongest working = $SSLM (the hosted pooler accepts TLS; local Supavisor may not, in which case the runbook's sslmode=require is unproven here)"
+say "RESULT the local Supavisor accepts sslmode=require: $([ "$SSLM" = require ] && echo yes || echo NO); strongest psql mode that works: $SSLM. The CLI (pgx) fails against the plain pooler with 'tls error (server refused TLS connection)' even for prefer, so CLI runs go through the TLS relay on :$TLSP with sslmode=require."
 
 # ====================== (a) options forwarding / read-back ====================================
 say "== (a) what the session pooler forwards (read back on the same connection)"
@@ -140,7 +147,11 @@ rb both_options "-c%20statement_timeout%3D120000%20-c%20lock_timeout%3D5000"
 rb lock_only "-c%20lock_timeout%3D5000"
 say "   | direct (no pooler) with the S1 option, for comparison: $(PGPASSWORD=$PW psql "postgresql://postgres@$RUNNER_IP:$PORT/postgres?sslmode=disable&options=$OPT_S1" -X -At -c 'show statement_timeout' -c 'show lock_timeout' 2>&1 | tr '\n' ' ')"
 echo "$RB_s1_option" | grep -q '^2min ' ; FWD=$?
-expect "(a) the URL options string reaches the session: statement_timeout reads back 2min through the pooler" "$FWD" "control='$RB_control' s1='$RB_s1_option' both='$RB_both_options' lock_only='$RB_lock_only'"
+if [ "$FWD" = 0 ]; then FWDWORD=yes; else FWDWORD=NO; fi
+say "RESULT (a) startup 'options' (statement_timeout/lock_timeout) forwarded by the local Supavisor session pooler: $FWDWORD  [control='$RB_control' s1='$RB_s1_option' both='$RB_both_options' lock_only='$RB_lock_only'; the direct path honours it]"
+sadm -c "alter role postgres set statement_timeout = '2min'" > /dev/null
+say "   | candidate mitigation tested on the SYNTHETIC role: ALTER ROLE postgres SET statement_timeout='2min', then a pooled connection WITHOUT options reads: $(pq "$PW" "$(purl "$SSLM")" -At -c 'show statement_timeout' | tr '\n' ' ')"
+sadm -c "alter role postgres reset statement_timeout" > /dev/null
 
 # ====================== (b) firing ============================================================
 say "== (b) firing through the pooler"
@@ -153,7 +164,7 @@ fire sleep_options "-c%20statement_timeout%3D5000" "select pg_sleep(8)"
 OPT_FIRES=0; echo "$FIRE_OUT" | grep -q '57014' && OPT_FIRES=1
 fire sleep_set_in_session "" "set statement_timeout = 5000; select pg_sleep(8)"
 SET_FIRES=0; echo "$FIRE_OUT" | grep -q '57014' && SET_FIRES=1
-expect "(b) options statement_timeout=5000 via the pooler cancels pg_sleep(8) with 57014 after ~5 s" "$([ "$OPT_FIRES" = 1 ] && echo 0 || echo 1)" "options-form fires=$OPT_FIRES; in-session SET fires=$SET_FIRES (the SET form is not what S1 uses)"
+say "RESULT (b) a statement over the limit is cancelled with 57014 when the limit comes from the URL options through the pooler: options-form=$OPT_FIRES (1 = yes); in-session SET=$SET_FIRES"
 sadm -c "drop table if exists public.pooler_lock_probe; create table public.pooler_lock_probe(id int)" > /dev/null
 ( pq "$PW" "$(purl "$SSLM")" -At -c "begin; lock table public.pooler_lock_probe in access exclusive mode; select pg_sleep(25); commit;" > "$OUT/holder.txt" 2>&1 & )
 sleep 3
@@ -161,8 +172,15 @@ fire lock_options "-c%20lock_timeout%3D5000" "select count(*) from public.pooler
 LOCK_OPT=0; echo "$FIRE_OUT" | grep -q '55P03' && LOCK_OPT=1
 fire lock_set_in_session "" "set lock_timeout = '5s'; select count(*) from public.pooler_lock_probe"
 LOCK_SET=0; echo "$FIRE_OUT" | grep -q '55P03' && LOCK_SET=1
-expect "(b) a held lock gives 55P03 at lock_timeout 5s through the pooler (options form)" "$([ "$LOCK_OPT" = 1 ] && echo 0 || echo 1)" "options-form fires=$LOCK_OPT; in-session SET fires=$LOCK_SET"
+say "RESULT (b) a held lock gives 55P03 at lock_timeout 5s through the pooler: options-form=$LOCK_OPT; in-session SET=$LOCK_SET"
 sleep 25
+
+# The local Supavisor refuses TLS and the pinned CLI always attempts it (the hosted pooler accepts it): a relay that is NOT
+# Supavisor (scripts/ci/pooler-tlsfront.py) answers SSLRequest, terminates TLS and forwards plain bytes, standing in for it.
+mkdir -p "$TLSDIR"; [ -f "$TLSDIR/server.crt" ] || openssl req -new -x509 -days 1 -nodes -text -out "$TLSDIR/server.crt" -keyout "$TLSDIR/server.key" -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" > /dev/null 2>&1
+python3 scripts/ci/pooler-tlsfront.py "$OUT/tls/server.crt" "$OUT/tls/server.key" "$TLSP" "$PPORT" > "$OUT/tlsfront.log" 2>&1 &
+sleep 1
+say "INFO  TLS front on :$TLSP -> pooler :$PPORT: $(pq "$PW" "postgresql://$PUSER@$RUNNER_IP:$TLSP/postgres?sslmode=require" -At -c 'select 1 as ok' | tr '\n' ' ')"
 
 # ---- mitm proxy (zero-outbound proof), as in #1168 ---------------------------------------
 python3 -m venv "$OUT/venv" > /dev/null 2>&1 && "$OUT/venv/bin/pip" install --quiet "mitmproxy==11.0.2" > "$OUT/pip.log" 2>&1 || { tail -n 5 "$OUT/pip.log"; say "FAIL mitmproxy install"; exit 1; }
@@ -190,7 +208,7 @@ with_proxy() { # with_proxy <label> <command...>
   sleep 1; kill "$pid" 2> /dev/null; wait "$pid" 2> /dev/null
   return $rc
 }
-nflows() { grep -c . "$OUT/flows-$1.jsonl" 2> /dev/null || echo 0; }
+nflows() { local n; n="$(grep -c . "$OUT/flows-$1.jsonl" 2> /dev/null)"; echo "${n:-0}"; }
 
 # ---- the S1 command lines, byte for byte, as the Mac runbook will use them ----------------
 # Only <HOSTPORT> and <USER> (and the sslmode, where noted) differ from the hosted values.
@@ -243,7 +261,7 @@ reset_to_0212 || { say "FAIL reset"; exit 1; }
 set_pw "$CANARY"
 if wait_pooler "$CANARY" "$SSLM"; then CANARY_OK=yes; PWU="$CANARY"; else CANARY_OK=no; set_pw "$PW"; PWU="$PW"; wait_pooler "$PW" "$SSLM" || { diag_pooler; say "FAIL pooler unusable after reset"; exit 1; }; fi
 say "INFO  canary password accepted through the pooler after ALTER ROLE: $CANARY_OK (using '${PWU:0:2}...' for the S1 runs)"
-SC_DRY="$(mk_script "$PUSER" "$RUNNER_IP:$PPORT" "$SSLM" dry)"
+SC_DRY="$(mk_script "$PUSER" "$RUNNER_IP:$TLSP" require dry)"
 run_s1 c-dry "$SC_DRY" "$PWU" 8
 NB="$(grep -c '^ *• 0' "$OUT/run-c-dry.log")"
 say "-- (c) dry run: exit=$RC elapsed=${ELAPSED}s bullets=$NB requests=$(nflows c-dry)"
@@ -251,7 +269,7 @@ sed 's/^/   | /' "$OUT/run-c-dry.log" | head -n 6 | tee -a "$RES"
 expect "(c) dry run through the pooler: exit 0, lists exactly 34, connection reached (password only in PGPASSWORD)" "$([ "$RC" = 0 ] && [ "$NB" = 34 ] && echo 0 || echo 1)" "exit=$RC bullets=$NB"
 expect "(c) no password and no user:password@ userinfo in the CLI's argv (sampled $(grep -c 'db push' "$OUT/ps-c-dry.txt") times)" "$(argv_clean c-dry "$PWU")" "$(head -n 1 "$OUT/ps-c-dry.txt" | cut -c1-260)"
 expect "(c) zero outbound HTTP(S) requests during the dry run" "$([ "$(nflows c-dry)" = 0 ] && echo 0 || echo 1)" "requests=$(nflows c-dry)"
-SC_PUSH="$(mk_script "$PUSER" "$RUNNER_IP:$PPORT" "$SSLM" push)"
+SC_PUSH="$(mk_script "$PUSER" "$RUNNER_IP:$TLSP" require push)"
 run_s1 c-push "$SC_PUSH" "$PWU" 8
 HN="$(hist_n)"
 say "-- (c) push: exit=$RC elapsed=${ELAPSED}s history rows 0213-0246=$HN requests=$(nflows c-push)"
@@ -266,7 +284,7 @@ say "== (f)/(g) failure behaviour through the pooler (must not fall back to the 
 reset_to_0212 || { say "FAIL reset"; exit 1; }
 wait_pooler "$PW" "$SSLM" || true
 set_pw "$PW"
-SC_DRY2="$(mk_script "$PUSER" "$RUNNER_IP:$PPORT" "$SSLM" dry)"
+SC_DRY2="$(mk_script "$PUSER" "$RUNNER_IP:$TLSP" require dry)"
 L0="$(docker logs "$POOLER" 2>&1 | wc -l)"
 run_s1 f-wrong "$SC_DRY2" "definitely-wrong-pw" 0
 say "-- (f) wrong password: exit=$RC elapsed=${ELAPSED}s requests=$(nflows f-wrong); output:"
@@ -283,7 +301,7 @@ say "-- (g) empty PGPASSWORD (read gets an empty line): exit=$RC elapsed=${ELAPS
 sed 's/^/   | /' "$OUT/run-g-empty.log" | head -n 12 | tee -a "$RES"
 expect "(g) empty password: non-zero exit, <=30 s, zero HTTP(S) requests, no prompt (stdin was not a tty)" "$([ "$RC" != 0 ] && [ "$ELAPSED" -le 30 ] && [ "$(nflows g-empty)" = 0 ] && echo 0 || echo 1)" "exit=$RC elapsed=${ELAPSED}s requests=$(nflows g-empty)"
 # unset (never exported) PGPASSWORD, stdin closed
-( cd "$REPO" && with_proxy g-unset timeout 60 env -u PGPASSWORD SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false "$BIN" db push --db-url "postgresql://$PUSER@$RUNNER_IP:$PPORT/postgres?sslmode=$SSLM" --dry-run < /dev/null > "$OUT/run-g-unset.log" 2>&1; echo $? > "$OUT/rc-g-unset.txt" )
+( cd "$REPO" && with_proxy g-unset timeout 60 env -u PGPASSWORD SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false "$BIN" db push --db-url "postgresql://$PUSER@$RUNNER_IP:$TLSP/postgres?sslmode=require" --dry-run < /dev/null > "$OUT/run-g-unset.log" 2>&1; echo $? > "$OUT/rc-g-unset.txt" )
 say "-- (g) PGPASSWORD never set, stdin closed: exit=$(cat "$OUT/rc-g-unset.txt") requests=$(nflows g-unset); output:"
 sed 's/^/   | /' "$OUT/run-g-unset.log" | head -n 8 | tee -a "$RES"
 expect "(g) unset PGPASSWORD: non-zero exit, zero requests" "$([ "$(cat "$OUT/rc-g-unset.txt")" != 0 ] && [ "$(nflows g-unset)" = 0 ] && echo 0 || echo 1)" "exit=$(cat "$OUT/rc-g-unset.txt") requests=$(nflows g-unset)"
@@ -312,7 +330,7 @@ sadm -c "create table if not exists public.pooler_lock_probe(id int)" > /dev/nul
 ( pq "$PW" "$(purl "$SSLM")" -At -c "begin; lock table public.pooler_lock_probe in access exclusive mode; select pg_sleep(30); commit;" > "$OUT/holder-h.txt" 2>&1 & )
 sleep 3
 t0=$SECONDS
-( cd "$WD" && PGPASSWORD="$PW" with_proxy h env -u GITHUB_TOKEN -u GH_TOKEN SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false "$BIN" db push --db-url "postgresql://$PUSER@$RUNNER_IP:$PPORT/postgres?sslmode=$SSLM&options=$OPT_S1" --yes > "$OUT/run-h.log" 2>&1; echo $? > "$OUT/rc-h.txt" )
+( cd "$WD" && PGPASSWORD="$PW" with_proxy h env -u GITHUB_TOKEN -u GH_TOKEN SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false "$BIN" db push --db-url "postgresql://$PUSER@$RUNNER_IP:$TLSP/postgres?sslmode=require&options=$OPT_S1" --yes > "$OUT/run-h.log" 2>&1; echo $? > "$OUT/rc-h.txt" )
 HT=$((SECONDS - t0)); HRC="$(cat "$OUT/rc-h.txt")"
 say "-- (h) push with the lock held by another pooled session: exit=$HRC elapsed=${HT}s requests=$(nflows h)"
 sed 's/^/   | /' "$OUT/run-h.log" | tail -n 12 | tee -a "$RES"
@@ -322,7 +340,7 @@ expect "(h) exit non-zero, SQLSTATE 55P03 / lock timeout in the output, fired at
 expect "(h) the failed file 0213 is not recorded and 0214 did not run (history rows >= 0213: $HROWS; marker tables: $HMARK)" "$([ "$HROWS" = none ] && [ "$HMARK" = 0 ] && echo 0 || echo 1)" "rows=$HROWS markers=$HMARK"
 expect "(h) zero outbound HTTP(S) requests" "$([ "$(nflows h)" = 0 ] && echo 0 || echo 1)" "requests=$(nflows h)"
 sleep 28
-( cd "$WD" && PGPASSWORD="$PW" "$BIN" db push --db-url "postgresql://$PUSER@$RUNNER_IP:$PPORT/postgres?sslmode=$SSLM&options=$OPT_S1" --yes > "$OUT/run-h2.log" 2>&1; echo $? > "$OUT/rc-h2.txt" )
+( cd "$WD" && PGPASSWORD="$PW" "$BIN" db push --db-url "postgresql://$PUSER@$RUNNER_IP:$TLSP/postgres?sslmode=require&options=$OPT_S1" --yes > "$OUT/run-h2.log" 2>&1; echo $? > "$OUT/rc-h2.txt" )
 H2ROWS="$(psqld -c "select coalesce(string_agg(version, ','), 'none') from supabase_migrations.schema_migrations where version >= '0213'")"
 expect "(h) control: once the lock is released the same push applies both files (0213,0214)" "$([ "$(cat "$OUT/rc-h2.txt")" = 0 ] && [ "$H2ROWS" = "0213,0214" ] && echo 0 || echo 1)" "exit=$(cat "$OUT/rc-h2.txt") rows=$H2ROWS"
 

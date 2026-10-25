@@ -19,6 +19,7 @@ on:
   pull_request:
     paths:
       - "scripts/ci/pooler-rehearsal.sh"
+      - "scripts/ci/pooler-tlsfront.py"
       - ".github/workflows/pooler-rehearsal.yml"
   workflow_dispatch:
 
