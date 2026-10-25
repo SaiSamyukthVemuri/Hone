@@ -54,7 +54,7 @@ obs() { # obs <probe> <file>: record what THIS session sees
 
 push() { # push <probe> <PGOPTIONS or empty> [extra url query]; sets RC and ELAPSED
   local name="$1" opts="$2" extra="${3:-}" dir="$OUT/$1"
-  local url="postgresql://postgres:$PW@$HOST:$PORT/rh_$name?sslmode=disable$extra"
+  local url="postgresql://postgres:$PW@$HOST:$PORT/rh_$name?sslmode=require$extra"
   local t0 t1
   t0="$(now)"
   if [ -n "$opts" ]; then
