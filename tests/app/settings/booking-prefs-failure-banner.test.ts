@@ -57,10 +57,10 @@ async function run(): Promise<string> {
 }
 
 describe("the booking-settings failure banner", () => {
-  it("a database error carrying a value leaves the banner and the URL with the fixed sentence only", async () => {
+  it("a database error carrying a value leaves the banner and the URL with the code only", async () => {
     state.error = { code: "22P02", message: HOSTILE };
     const url = await run();
-    expect(decodeURIComponent(url)).toBe("/settings/booking?error=Could not save your booking settings.");
+    expect(url).toBe("/settings/booking?error=save_failed");
     expect(url).not.toContain("leak");
     expect(url).not.toContain("5550100199");
     expect(logs.text()).toContain("booking_settings_update_failed");
@@ -71,16 +71,16 @@ describe("the booking-settings failure banner", () => {
   it("an error with no usable code is logged as unknown", async () => {
     state.error = { code: HOSTILE, message: HOSTILE };
     const url = await run();
-    expect(decodeURIComponent(url)).toContain("Could not save your booking settings.");
+    expect(url).toBe("/settings/booking?error=save_failed");
     expect(logs.text()).toContain("unknown");
     expect(logs.text()).not.toContain("leak.probe");
   });
 
-  it("the deliberate sentences are unchanged (slug taken, timezone conflict)", async () => {
+  it("the deliberate sentences are unchanged (codes: slug taken, timezone conflict)", async () => {
     state.error = { code: "23505", message: HOSTILE };
-    expect(decodeURIComponent(await run())).toContain("That slug is already taken. Pick another.");
+    expect(await run()).toBe("/settings/booking?error=slug_taken");
     state.redirects.length = 0;
     state.error = { code: "23P01", message: HOSTILE };
-    expect(decodeURIComponent(await run())).toContain("Changing the timezone would push a blockout");
+    expect(await run()).toBe("/settings/booking?error=timezone_conflict");
   });
 });
