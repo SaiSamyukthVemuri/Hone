@@ -9,15 +9,21 @@ import { dbErrorCode } from "@/lib/logging/error-class";
 // SQLSTATE alone, and logs only the closed code. `what` is a fixed phrase
 // written at the call site ("add the stage"), never data.
 
-export type DbFailureClass = "permission" | "busy" | "conflict" | "generic";
+export type DbFailureClass = "permission" | "busy" | "conflict" | "invalid" | "generic";
 
 const BUSY = new Set(["40001", "40P01", "55P03", "57014"]);
-const CONFLICT = new Set(["23502", "23503", "23505", "23514", "23P01"]);
+// The change collides with something that already exists (a duplicate, a
+// referenced or referencing row, an exclusion overlap).
+const CONFLICT = new Set(["23503", "23505", "23P01"]);
+// The values themselves were refused (a missing required value, a failed CHECK):
+// not a collision with other records, so the sentence says to check the values.
+const INVALID = new Set(["23502", "23514"]);
 
 export function classifyDbFailure(code: string): DbFailureClass {
   if (code === "42501") return "permission";
   if (BUSY.has(code)) return "busy";
   if (CONFLICT.has(code)) return "conflict";
+  if (INVALID.has(code)) return "invalid";
   return "generic";
 }
 
@@ -31,6 +37,8 @@ export function userFacingDbFailure(what: string, error: unknown, event: string)
       return `Could not ${what} because the record is busy. Try again.`;
     case "conflict":
       return `Could not ${what} because the change conflicts with existing records.`;
+    case "invalid":
+      return `Could not ${what} because a value could not be accepted. Check the values and try again.`;
     default:
       return `Could not ${what}. Try again, and contact support if it keeps happening.`;
   }

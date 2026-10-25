@@ -126,7 +126,7 @@ describe("client actions: birthday, budget, personal notes, treatment goal", () 
     expectNoLeak(a);
     failAt("client_budget_context", "upsert", hostile("23514"));
     const b = await updateClientBudgetContextAction(form({ client_id: "c1", budget_notes: "n", budget_level: "" }));
-    expect(b).toMatchObject({ ok: false, error: expect.stringContaining("conflicts with existing records") });
+    expect(b).toMatchObject({ ok: false, error: expect.stringContaining("a value could not be accepted") });
     expectNoLeak(b);
   });
 
@@ -153,6 +153,23 @@ describe("client actions: birthday, budget, personal notes, treatment goal", () 
     const b = await upsertTreatmentGoalAction(form(fields));
     expect(b).toMatchObject({ ok: false, error: expect.stringContaining("save the goal") });
     expectNoLeak(b);
+  });
+});
+
+describe("PEER-1162 L1: reclassified codes at the new sites", () => {
+  it("23502 (not-null) and 23514 (check) say to check the values; 23505 still says conflict", async () => {
+    const { updateClientPersonalNotesAction } = await import("@/app/(app)/clients/[id]/personal-notes-actions");
+    const fields = { client_id: "c1", personal_notes: "x", private_warnings: "" };
+    for (const [code, expected] of [
+      ["23502", "a value could not be accepted"],
+      ["23514", "a value could not be accepted"],
+      ["23505", "conflicts with existing records"],
+    ] as const) {
+      failAt("client_personal_notes", "upsert", hostile(code));
+      const r = await updateClientPersonalNotesAction(form(fields));
+      expect(r, code).toMatchObject({ ok: false, error: expect.stringContaining(expected) });
+      expectNoLeak(r);
+    }
   });
 });
 
@@ -202,6 +219,15 @@ describe("area removal: only the function's own sentences are shown", () => {
     const r = await removeSessionAreaAction(input as never);
     expect(r).toEqual({ ok: false, error: "Couldn't remove the area right now. Please try again." });
     expectNoLeak(r);
+  });
+
+  it("consistent with the L1 classes: area removal never claims a conflict or 'check the values' for a 23514 it cannot vouch for", async () => {
+    for (const code of ["23514", "23502", "23505"]) {
+      world.script = (t) => (t === "rpc:soft_delete_session_area" ? { data: null, error: hostile(code) } : { data: null, error: null });
+      const { removeSessionAreaAction } = await import("@/app/(app)/clients/[id]/sessions/[sessionId]/block-actions");
+      const r = await removeSessionAreaAction(input as never);
+      expect(r, code).toEqual({ ok: false, error: "Couldn't remove the area right now. Please try again." });
+    }
   });
 
   it("the function's own sentence still reaches the person", async () => {
