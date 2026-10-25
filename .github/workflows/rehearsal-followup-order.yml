@@ -1,0 +1,121 @@
+# REHEARSAL - NEVER MERGE. Evidence only: which follow-up migrations (0247-0256) apply from scratch in which combinations.
+# Each cell builds a migration directory, starts the local Supabase stack (which applies it to an empty database) and prints
+# one RESULT line. No application code runs. No secrets beyond the sanctioned read-only ghcr.io pull (D7b shape).
+name: rehearsal-followup-order
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/rehearsal-followup-order.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cell:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        include:
+          - { name: "full 0001-0256", kind: full, base: "9999", set: "" }
+          - { name: "full minus 0247", kind: drop, base: "9999", set: "0247" }
+          - { name: "full minus 0248", kind: drop, base: "9999", set: "0248" }
+          - { name: "full minus 0249", kind: drop, base: "9999", set: "0249" }
+          - { name: "full minus 0250", kind: drop, base: "9999", set: "0250" }
+          - { name: "full minus 0251", kind: drop, base: "9999", set: "0251" }
+          - { name: "full minus 0252", kind: drop, base: "9999", set: "0252" }
+          - { name: "full minus 0253", kind: drop, base: "9999", set: "0253" }
+          - { name: "full minus 0254", kind: drop, base: "9999", set: "0254" }
+          - { name: "full minus 0255", kind: drop, base: "9999", set: "0255" }
+          - { name: "full minus 0256", kind: drop, base: "9999", set: "0256" }
+          - { name: "0246 + 0247 only", kind: only, base: "0246", set: "0247" }
+          - { name: "0246 + 0248 only", kind: only, base: "0246", set: "0248" }
+          - { name: "0246 + 0249 only", kind: only, base: "0246", set: "0249" }
+          - { name: "0246 + 0250 only", kind: only, base: "0246", set: "0250" }
+          - { name: "0246 + 0247,0250", kind: only, base: "0246", set: "0247 0250" }
+          - { name: "0246 + 0251 only", kind: only, base: "0246", set: "0251" }
+          - { name: "0246 + 0252 only", kind: only, base: "0246", set: "0252" }
+          - { name: "0246 + 0253 only", kind: only, base: "0246", set: "0253" }
+          - { name: "0246 + 0254 only", kind: only, base: "0246", set: "0254" }
+          - { name: "0246 + 0255 only", kind: only, base: "0246", set: "0255" }
+          - { name: "0246 + 0256 only", kind: only, base: "0246", set: "0256" }
+          - { name: "0212 + 0247,0250 (no 0213-0246)", kind: only, base: "0212", set: "0247 0250" }
+          - { name: "0212 + 0248 (no 0213-0246)", kind: only, base: "0212", set: "0248" }
+          - { name: "0212 + 0249 (no 0213-0246)", kind: only, base: "0212", set: "0249" }
+          - { name: "0212 + 0251 (no 0213-0246)", kind: only, base: "0212", set: "0251" }
+          - { name: "0212 + 0252 (no 0213-0246)", kind: only, base: "0212", set: "0252" }
+          - { name: "0212 + 0253 (no 0213-0246)", kind: only, base: "0212", set: "0253" }
+          - { name: "0212 + 0254 (no 0213-0246)", kind: only, base: "0212", set: "0254" }
+          - { name: "0212 + 0255 (no 0213-0246)", kind: only, base: "0212", set: "0255" }
+          - { name: "0212 + 0256 (no 0213-0246)", kind: only, base: "0212", set: "0256" }
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build this cell's migration directory
+        env:
+          KIND: ${{ matrix.kind }}
+          BASE: ${{ matrix.base }}
+          SET: ${{ matrix.set }}
+        run: |
+          set -eu
+          cd supabase/migrations
+          for f in [0-9]*.sql; do
+            n="${f%%_*}"
+            keep=0
+            case "$KIND" in
+              full) keep=1 ;;
+              drop) keep=1; for s in $SET; do [ "$n" = "$s" ] && keep=0; done ;;
+              only) if [ "$((10#$n))" -le "$((10#$BASE))" ]; then keep=1; fi; for s in $SET; do [ "$n" = "$s" ] && keep=1; done ;;
+            esac
+            [ "$keep" = 1 ] || rm "$f"
+          done
+          echo "files: $(ls | wc -l); last: $(ls | tail -1); 0247-0256 present: $(ls | grep -cE '^02(4[7-9]|5[0-6])_')"
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          version: 2.102.0
+
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start local Supabase (applies the directory to an empty database)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"; exit "${PIPESTATUS[0]}"
+
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Report
+        if: always()
+        shell: bash
+        env:
+          CELL: ${{ matrix.name }}
+          OUTCOME: ${{ steps.sb_start.outcome }}
+        run: |
+          log="$RUNNER_TEMP/supabase-start.log"
+          if [ "$OUTCOME" = success ]; then
+            c="$(docker ps --format '{{.Names}}' | grep '^supabase_db_' | head -1)"
+            v="$(docker exec "$c" psql -U postgres -At -c "select count(*) || ' migrations, max ' || max(version) from supabase_migrations.schema_migrations")"
+            echo "RESULT [$CELL] APPLIED: $v"
+          else
+            echo "RESULT [$CELL] FAILED TO APPLY"
+            grep -iE "ERROR|SQLSTATE|failed|At statement" "$log" | head -12 | sed 's/^/    /'
+          fi
