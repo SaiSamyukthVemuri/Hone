@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { isInitialCalendarEntry, isTeamCalendar } from "@/app/(app)/calendar/initial-view";
 
@@ -74,5 +74,43 @@ describe("the page applies the rule to the initial entry only", () => {
   it("permissions are not read here: no role or owner check decides the initial view", () => {
     const block = PAGE.slice(PAGE.indexOf("HON-48 (Sam decision 17)"), PAGE.indexOf("The week view continues"));
     expect(block).not.toMatch(/isOwner|role|practitioner\./);
+  });
+});
+
+// #1131 regression: practitioner-quick-book-studio-b did page.goto("/calendar") on a
+// capacity-ON studio with several practitioners and looked for the WEEK grid's
+// "Open quick-book draft for <date>" button; since #1131 that URL opens the team
+// Day view. The rule below keeps the next spec from repeating it: a spec that
+// turns capacity ON and seeds more practitioners (a team studio) must name its
+// view when it navigates to /calendar. team-day-view.spec.ts is the one spec whose
+// subject IS the bare entry.
+describe("e2e specs on a team studio never rely on the bare /calendar default", () => {
+  const BARE_CALENDAR = /(?:goto|waitForURL)\(\s*["'`]\/calendar["'`]\s*[,)]/;
+  const files = readdirSync("e2e").filter((f) => f.endsWith(".spec.ts"));
+
+  it("finds the specs it is meant to police", () => {
+    expect(files.length).toBeGreaterThan(90);
+    const team = files.filter((f) => {
+      const src = readFileSync(`e2e/${f}`, "utf8");
+      return /setStudioCapacityEnabled\([^)]*true/.test(src) && /seedE2eMember|seedFettStudio/.test(src);
+    });
+    expect(team).toEqual(expect.arrayContaining(["team-day-view.spec.ts", "practitioner-quick-book-studio-b.spec.ts"]));
+  });
+
+  it("a spec that enables capacity and seeds practitioners has no bare /calendar navigation, except team-day-view", () => {
+    const offenders: string[] = [];
+    for (const f of files) {
+      if (f === "team-day-view.spec.ts") continue;
+      const src = readFileSync(`e2e/${f}`, "utf8");
+      const team = /setStudioCapacityEnabled\([^)]*true/.test(src) && /seedE2eMember|seedFettStudio/.test(src);
+      if (team && BARE_CALENDAR.test(src)) offenders.push(f);
+    }
+    expect(offenders, "name the view: /calendar?view=week (or view=day)").toEqual([]);
+  });
+
+  it("the guard sees the pre-fix shape", () => {
+    expect(BARE_CALENDAR.test('  await page.goto("/calendar");')).toBe(true);
+    expect(BARE_CALENDAR.test('  await page.goto("/calendar?view=week");')).toBe(false);
+    expect(BARE_CALENDAR.test("await ipadPage.goto(`/calendar`);")).toBe(true);
   });
 });
