@@ -324,7 +324,7 @@ describe("team removal failure line (the one site whose fallback logic changed)"
   it("logs the database code when the call errored, else the RPC's own result string, else 'unknown'", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync("app/(app)/settings/team/actions.ts", "utf8");
-    expect(src).toContain('${error ? dbErrorCode(error) : typeof data === "string" ? data : "unknown"}');
+    expect(src).toContain('${error ? dbErrorCode(error) : failureCode(null, data)}');
     expect(src).not.toMatch(/dbErrorCode\(error\) \?\?/);
   });
 });

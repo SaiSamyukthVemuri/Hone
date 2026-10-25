@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import type { ClientTag } from "@/lib/types/database";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 export async function getClientTags(
   studioId: string,
@@ -13,6 +14,6 @@ export async function getClientTags(
     .eq("client_id", clientId)
     .is("deleted_at", null)
     .order("created_at", { ascending: true });
-  if (error) throw new Error(`Failed to load tags: ${error.message}`);
+  if (error) throw new Error(`Failed to load tags: ${dbErrorCode(error)}`);
   return (data ?? []) as ClientTag[];
 }

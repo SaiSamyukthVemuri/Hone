@@ -314,7 +314,7 @@ export async function recordAccountJurisdiction(
     p_default_currency: params.account.default_currency ?? null,
   });
   if (error) {
-    throw new Error(`record_stripe_account_jurisdiction failed: ${error.message}`);
+    throw new Error(`record_stripe_account_jurisdiction failed: ${dbErrorCode(error)}`);
   }
   const row = (Array.isArray(data) ? data[0] : data) as
     | { out_result?: unknown; out_matches?: unknown }

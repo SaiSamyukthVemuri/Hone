@@ -250,7 +250,7 @@ describe.each([...PAGES, ...LAYOUTS])("%s", (rel) => {
     state.membershipError = { message: "connection terminated" };
     expect(await render(rel)).toEqual({
       kind: "error",
-      message: "Failed to load practitioner: connection terminated",
+      message: "Failed to load practitioner: unknown",
     });
     onlyTheIdentityRead();
   });

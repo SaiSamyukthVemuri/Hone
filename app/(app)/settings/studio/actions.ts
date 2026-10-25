@@ -55,7 +55,7 @@ export async function updateStudioAction(formData: FormData): Promise<void> {
     .eq("id", studio.id);
 
   if (error) {
-    throw new Error(`Failed to update studio: ${error.message}`);
+    throw new Error(`Failed to update studio: ${dbErrorCode(error)}`);
   }
 
   // Time-format preference (migration 0109) is written SEPARATELY and
@@ -75,7 +75,7 @@ export async function updateStudioAction(formData: FormData): Promise<void> {
     tfError.code !== "PGRST204" &&
     tfError.code !== "42703"
   ) {
-    throw new Error(`Failed to update time format: ${tfError.message}`);
+    throw new Error(`Failed to update time format: ${dbErrorCode(tfError)}`);
   }
 
   revalidatePath("/dashboard");
@@ -223,7 +223,7 @@ export async function updateStudioPostcareAction(
     })
     .eq("id", studio.id);
   if (error) {
-    throw new Error(`Failed to update postcare settings: ${error.message}`);
+    throw new Error(`Failed to update postcare settings: ${dbErrorCode(error)}`);
   }
 
   // Migration 0110: postcare delivery mode (manual | auto_on_complete). Written
@@ -245,7 +245,7 @@ export async function updateStudioPostcareAction(
     modeError.code !== "PGRST204" &&
     modeError.code !== "42703"
   ) {
-    throw new Error(`Failed to update postcare delivery mode: ${modeError.message}`);
+    throw new Error(`Failed to update postcare delivery mode: ${dbErrorCode(modeError)}`);
   }
 
   revalidatePath("/settings/studio");
@@ -294,7 +294,7 @@ export async function updateStudioPolicyAction(
     .maybeSingle();
   if (readErr || !current) {
     throw new Error(
-      `Could not load studio for policy update: ${readErr?.message ?? "not found"}`,
+      `Could not load studio for policy update: ${readErr ? dbErrorCode(readErr) : "not_found"}`,
     );
   }
 
@@ -317,7 +317,7 @@ export async function updateStudioPolicyAction(
     .update(updates)
     .eq("id", studio.id);
   if (error) {
-    throw new Error(`Failed to update studio policy: ${error.message}`);
+    throw new Error(`Failed to update studio policy: ${dbErrorCode(error)}`);
   }
 
   revalidatePath("/settings/intake");
