@@ -3,7 +3,7 @@
   "migrations": {
     "count": 245,
     "last": "0246_intake_questionnaire_snapshot.sql",
-    "sha256": "2f329cd91a92feef717fb2b7d49cb6ee4a7986881363dac460784fc6aae07cfd"
+    "sha256": "3e5dea0f85b8e86ef74ab660fd4a50226663891e53127803d82873baabf0d15b"
   },
   "public": {
     "tables": [
@@ -302,7 +302,6 @@
       "handle_new_user",
       "import_legacy_waitlist_entry",
       "imported_treatment_memory_audit_row",
-      "initialize_studio_payment_jurisdiction_from_history",
       "invalidate_waitlist_invitation_proof",
       "is_studio_member",
       "is_studio_owner",
@@ -501,10 +500,8 @@
       "soft_delete_session_block",
       "start_session",
       "stripe_account_provisioning_payment_country",
-      "studio_account_acceptable_for_jurisdiction",
       "studio_capacity_enabled",
       "studio_membership_kind_lock",
-      "studio_named_stripe_accounts",
       "studio_price_write_jurisdiction_lock",
       "studio_receptionists_membership_guard",
       "studio_sms_lease_window",
