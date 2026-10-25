@@ -302,6 +302,31 @@ async function sendReminderPass(opts: {
     return;
   }
 
+  // HON-13: the studio's switches are read LIVE at the send decision too. The
+  // row was selected at the start of the run with the studio's settings as they
+  // were then; a studio that switched this reminder (or intake reminders) off
+  // while the batch was running must not have it sent anyway. The SMS pass
+  // already refreshes its switches before dispatch. A reminder the live switch
+  // forbids is released exactly like the CASE 4 -> 5 flip below: the claim is
+  // cleared, nothing is sent, and the next fire re-evaluates from a fresh read.
+  const { data: liveStudio, error: liveStudioError } = await admin
+    .from("studios")
+    .select(`${studioToggle}, send_intake_reminders`)
+    .eq("id", appt.studio.id)
+    .maybeSingle();
+  // An unavailable read is not evidence that the switch is still on.
+  if (liveStudioError || !liveStudio) {
+    throw new Error("reminder studio switches unavailable");
+  }
+  const liveSwitches = liveStudio as unknown as Record<string, boolean | null>;
+  const liveWantsReminder = liveSwitches[studioToggle] === true;
+  const liveIntakeEnabled = liveSwitches.send_intake_reminders !== false;
+  if (wantsReminder ? !liveWantsReminder : !liveIntakeEnabled) {
+    await recordEmailResult(admin, appt.id, emailType, false);
+    stats.skipped += 1;
+    return;
+  }
+
   // LIVE intake re-read, immediately before the send decision. Deliberately
   // a SECOND query, never the pre-claim probe reused: the probe answered
   // "should we claim", this answers "what do we send", and they are asked at

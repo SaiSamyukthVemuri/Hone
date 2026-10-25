@@ -291,6 +291,8 @@ vi.mock("@/lib/supabase/admin-server", () => ({
             if (!answer) throw new Error("Synthetic intake fixture exhausted");
             return answer;
           }
+          // HON-13: the email pass re-reads the studio's switches at send time.
+          if (table === "studios") return { data: row("00000000-0000-4000-8000-000000000001").studio, error: null };
           return ({
           data: race.freshMissing || (race.readError && !race.readErrorWithData) ? null : { ...row("00000000-0000-4000-8000-000000000001"), starts_at: race.freshStart },
           error: race.readError ? { message: "synthetic read failure" } : null,
