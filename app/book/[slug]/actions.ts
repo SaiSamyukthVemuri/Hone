@@ -9,6 +9,7 @@ import {
   RATE_LIMIT_MESSAGE,
 } from "@/lib/rate-limit/public";
 import { getStudioBySlug } from "@/lib/booking/queries";
+import { bookedClientAddressForToken } from "@/lib/booking/booked-client-address";
 import { loadPublicSlotsByDate } from "@/lib/booking/public-slot-range";
 import { throwIfSlotReadFaulted } from "@/lib/booking/e2e-slot-read-fault";
 import {
@@ -436,6 +437,11 @@ export type PublicBookResult =
       appointmentId: string;
       manageUrl: string;
       confirmationEmailStatus: ConfirmationEmailStatus;
+      // HON-50 decision C: the studio address for THIS booking's success
+      // screen, only after the server verified the booking's own token, its
+      // studio and its confirmed status (lib/booking/booked-client-address.ts).
+      // Null otherwise; the screen then shows only what the public page shows.
+      bookedClientAddress: string | null;
     }
   | {
       ok: false;
@@ -1921,6 +1927,13 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     }),
   );
 
+  // HON-50 decision C. Verified server-side from the token this request just
+  // minted; never throws, never fails the committed booking.
+  const bookedClientAddress = await bookedClientAddressForToken(admin, {
+    slug,
+    token: appointmentToken,
+  }).catch(() => null);
+
   // THE BOOKING IS COMMITTED, and the client leaves with a usable path to it
   // whatever the email did. `manageUrl` goes ONLY to this authorised browser,
   // it is never persisted, logged, alerted on or reported.
@@ -1929,6 +1942,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     appointmentId: createdId,
     manageUrl,
     confirmationEmailStatus,
+    bookedClientAddress,
   };
 }
 

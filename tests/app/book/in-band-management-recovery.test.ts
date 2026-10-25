@@ -202,6 +202,22 @@ vi.mock("@/lib/booking/new-client-admission", async (orig) => ({
   getNewClientAdmissionMode: vi.fn(async () => ({ ok: true, mode: "open", source: "persisted" })),
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => admin }));
+// HON-50 decision C: the success-screen address reveal is its own module,
+// proved in tests/lib/booking/booked-client-address.test.ts. Here only the
+// action's side of the contract is pinned: which token and slug it asks with,
+// and that it passes the verified answer through (and survives a failure).
+const reveal = vi.hoisted(() => ({
+  calls: [] as Array<{ slug: string; token: string }>,
+  answer: null as string | null,
+  throws: false,
+}));
+vi.mock("@/lib/booking/booked-client-address", () => ({
+  bookedClientAddressForToken: async (_admin: unknown, input: { slug: string; token: string }) => {
+    reveal.calls.push(input);
+    if (reveal.throws) throw new Error("synthetic reveal failure");
+    return reveal.answer;
+  },
+}));
 vi.mock("next/cache", () => ({
   revalidatePath: () => {
     if (scenario.revalidateThrows) throw boom("revalidatePath");
@@ -882,5 +898,50 @@ describe("SCH-002 public submit advisory availability failures", () => {
   it.each([new Error("unexpected programming error"), "availability_read_failed:blockouts"])("propagates unclassified/non-Error throws without command", async (failure) => {
     scenario.slotError = failure;
     await expect(book()).rejects.toBe(failure); expect(rpcCalls).toEqual([]);
+  });
+});
+
+describe("HON-50 decision C: the success-screen address is verified server-side", () => {
+  beforeEach(() => {
+    reveal.calls.length = 0;
+    reveal.answer = null;
+    reveal.throws = false;
+  });
+
+  it("asks with the booking's OWN freshly minted token (the one whose hash was committed) and the page slug", async () => {
+    const r = await book();
+    expect(r.ok).toBe(true);
+    expect(reveal.calls).toHaveLength(1);
+    const create = rpcCalls.find((c) => c.fn === "create_public_appointment");
+    expect(hashAppointmentToken(reveal.calls[0].token)).toBe(create!.args.p_cancellation_token_hash);
+    expect(reveal.calls[0].slug).toBe("test-studio");
+    // Never the appointment id.
+    expect(reveal.calls[0].token).not.toBe(APPT_ID);
+  });
+
+  it("returns exactly what the verification answered", async () => {
+    reveal.answer = "100 Synthetic Private Lane";
+    const r = await book();
+    expect(r.ok && r.bookedClientAddress).toBe("100 Synthetic Private Lane");
+  });
+
+  it("answers null when verification answers null", async () => {
+    const r = await book();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.bookedClientAddress).toBeNull();
+  });
+
+  it("a failing verification never fails the committed booking and reveals nothing", async () => {
+    reveal.throws = true;
+    const r = await book();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.bookedClientAddress).toBeNull();
+  });
+
+  it("a refused booking never asks", async () => {
+    scenario.commandRefuses = true;
+    const r = await book();
+    expect(r.ok).toBe(false);
+    expect(reveal.calls).toEqual([]);
   });
 });

@@ -1,7 +1,7 @@
 import { safeLog } from "@/lib/logging/safe-log";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FROM_ADDRESS, getResendTransport } from "@/lib/email/client";
-import { forAppointmentEmail } from "@/lib/booking/studio-location";
+import { arrivalInstructionsOf, forAppointmentEmail } from "@/lib/booking/studio-location";
 import {
   buildFromHeader,
   resolveReplyTo,
@@ -466,6 +466,7 @@ export async function sendBookingConfirmationToClient(params: {
     clientName: params.clientName,
     studioName: params.studio.name,
     studioAddress: params.studio.address,
+    arrivalInstructions: arrivalInstructionsOf(params.studio),
     studioEmail: params.studio.owner_email,
     practitionerName: params.practitionerDisplayName,
     serviceName,
@@ -636,6 +637,7 @@ export async function send24hReminderToClient(
     clientName: p.clientName,
     studioName: p.studio.name,
     studioAddress: p.studio.address,
+    arrivalInstructions: arrivalInstructionsOf(p.studio),
     practitionerName: p.practitionerDisplayName,
     serviceName: p.service?.name ?? "Appointment",
     durationMinutes: p.appointment.duration_minutes,
@@ -668,6 +670,7 @@ export async function send2hReminderToClient(
     clientName: p.clientName,
     studioName: p.studio.name,
     studioAddress: p.studio.address,
+    arrivalInstructions: arrivalInstructionsOf(p.studio),
     practitionerName: p.practitionerDisplayName,
     serviceName: p.service?.name ?? "Appointment",
     durationMinutes: p.appointment.duration_minutes,

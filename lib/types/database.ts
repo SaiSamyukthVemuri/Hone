@@ -32,6 +32,12 @@ export type Studio = {
   slug: string;
   address: string | null;
   booking_description: string | null;
+  // HON-50 (draft migration, number pending): where `address` is shown, and
+  // the arrival/parking instructions for appointment emails. Optional at the
+  // type level for rows loaded via `select *` before the migration is applied;
+  // read only through lib/booking/studio-location.ts.
+  address_visibility?: "booking_page" | "emails" | "both";
+  arrival_instructions?: string | null;
   // Migration 0119 (Clinical Record: Phase 1): studio-scoped feature flag for
   // the "Finalize & sign" clinical-record boundary. Default OFF; opt-in per
   // studio during supervised rollout. Optional at the type level for rows loaded

@@ -3,15 +3,14 @@ import {
   ADDRESS_VISIBILITY_VALUES,
   addressVisibilityOf,
   appointmentEmailAddress,
+  arrivalInstructionsOf,
   forAppointmentEmail,
   forPublicBookingPage,
   isAddressVisibility,
   publicBookingAddress,
 } from "@/lib/booking/studio-location";
 
-// HON-50. One place decides where studios.address is shown. The column does
-// not exist yet, so production rows carry no address_visibility and read as
-// 'both'; these cases also drive the values the column will hold. All values
+// HON-50 PR B. One place decides where studios.address is shown. All values
 // are synthetic.
 
 const ADDRESS = "100 Synthetic Avenue, Toronto ON";
@@ -58,6 +57,31 @@ describe("address visibility", () => {
     const padded = "  100 Synthetic Avenue  ";
     expect(publicBookingAddress({ address: padded })).toBe(padded);
     expect(appointmentEmailAddress({ address: padded })).toBe(padded);
+  });
+});
+
+describe("arrival instructions", () => {
+  it("absent, null, empty or whitespace-only is no section", () => {
+    expect(arrivalInstructionsOf({ address: null })).toBeNull();
+    for (const v of [null, "", "   ", "\n \t"]) {
+      expect(arrivalInstructionsOf({ address: null, arrival_instructions: v })).toBeNull();
+    }
+  });
+
+  it("a value is trimmed and kept", () => {
+    expect(
+      arrivalInstructionsOf({ address: null, arrival_instructions: "  Park on the street.\n" }),
+    ).toBe("Park on the street.");
+  });
+
+  it("does not depend on the address or its visibility", () => {
+    expect(
+      arrivalInstructionsOf({
+        address: null,
+        address_visibility: "booking_page",
+        arrival_instructions: "Side door.",
+      }),
+    ).toBe("Side door.");
   });
 });
 

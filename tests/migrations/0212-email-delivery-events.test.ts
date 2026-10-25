@@ -65,11 +65,20 @@ describe("0212 sits correctly in the migration sequence", () => {
     );
   });
 
-  it("keeps the later receipt repair in a forward migration", () => {
-    // 0212 is applied/frozen (raw hash above); 0227 supplies the reviewed
-    // receipt repair forward. Current-max coverage belongs to the derived guard.
-    expect(countVersion("0227")).toBe(1);
-    expect(versionsAbove(VERSION)).toContain("0227");
+  it("is no longer the repository maximum", () => {
+    // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
+    // `isRepoMax`, and that claim now lives in the current max's own test.
+    // It reached this file from 0210's test and left with HON-50's migration
+    // (tests/migrations/0251-studio-arrival-and-address-visibility.test.ts).
+    expect(isRepoMax(VERSION)).toBe(false);
+    // DERIVED, NOT PINNED: something sits above it, and everything above it is
+    // greater. A literal list would be the forbidden pin in other clothes.
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(
+      above.every((v) => Number(v) > Number(VERSION)),
+      "versionsAbove returned a version at or below its own",
+    ).toBe(true);
   });
 
   it("is allocated exactly once", () => {
