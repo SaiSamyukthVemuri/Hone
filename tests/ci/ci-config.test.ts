@@ -1285,6 +1285,7 @@ describe("E-GAPS: the storage photo job is separate, storage-backed and never re
     "e2e/fett-photos-thumbnail-recovery.spec.ts",
     "e2e/treatment-image-upload-formats.spec.ts",
     "e2e/fett-client-portrait.spec.ts",
+    "e2e/fett-photo-labels.spec.ts",
   ];
   const DB_FILE = "tests/db/treatment-image-signed-url-route.db.test.ts";
   const start = CI.indexOf("\n  storage-photos:\n");
