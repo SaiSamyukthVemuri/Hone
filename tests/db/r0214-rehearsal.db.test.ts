@@ -144,9 +144,13 @@ async function raw(table: string, row: Record<string, unknown>): Promise<void> {
   });
 }
 
+let apptCounter = 0;
 async function newAppt(sc: PaymentScenario, status: string, withSession: boolean, price = 22500) {
-  const starts = new Date(Date.now() - 90 * 60_000).toISOString();
-  const ends = new Date(Date.now() - 30 * 60_000).toISOString();
+  // A distinct hour per call: the scenario's own visit sits at now-90..now-30
+  // minutes and a practitioner cannot overlap themselves.
+  apptCounter += 1;
+  const starts = new Date(Date.now() - (300 + apptCounter * 90) * 60_000).toISOString();
+  const ends = new Date(Date.now() - (240 + apptCounter * 90) * 60_000).toISOString();
   const a = await adminQuery(
     `insert into public.appointments (studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, status)
      values ($1,$2,$3,$4,$5,60,$6) returning id`,
@@ -169,6 +173,25 @@ async function settleSeed(sc: PaymentScenario, method: string) {
   );
 }
 
+/**
+ * The seeded 'succeeded' card charge lacks the account/customer/method ids the
+ * real charge path writes onto the row; refund refuses without them. Add them
+ * (replica mode: a succeeded row is otherwise immutable).
+ */
+async function bindSucceededAttempt(sc: PaymentScenario) {
+  await adminTx(async (q) => {
+    await q(`set local session_replication_role = replica`);
+    await q(
+      `update public.payment_charge_attempts a set
+         stripe_account_id = (select stripe_account_id from public.studio_payment_settings where studio_id=a.studio_id limit 1),
+         stripe_customer_id = (select stripe_customer_id from public.client_stripe_customers where client_id=a.client_id limit 1),
+         stripe_payment_method_id = (select stripe_payment_method_id from public.client_payment_methods where client_id=a.client_id and studio_id=a.studio_id limit 1)
+       where a.studio_id=$1 and a.status='succeeded'`,
+      [sc.studioId],
+    );
+  });
+}
+
 const ELIGIBLE: SeedOptions = {
   appointmentStatus: "completed", withSession: true, sessionStarted: true,
   withCard: true, cardStatus: "active", withTemplate: true, withSignature: true,
@@ -189,6 +212,7 @@ const STATES: Record<StateKey, StateDef> = {
     hasCard: true,
     opts: { ...ELIGIBLE, attempt: "succeeded" },
     history: async (sc) => {
+      await bindSucceededAttempt(sc);
       await settleSeed(sc, "paid_cash");
       // Audit rows written before currency was recorded: NULL currency.
       for (let i = 0; i < 2; i++) {
@@ -218,7 +242,7 @@ const STATES: Record<StateKey, StateDef> = {
       for (const m of ["paid_cash", "paid_e_transfer", "paid_other_external"]) await settleSeed(sc, m);
     },
   },
-  h6: { hasCard: true, opts: { ...ELIGIBLE, attempt: "succeeded" }, history: async () => undefined },
+  h6: { hasCard: true, opts: { ...ELIGIBLE, attempt: "succeeded" }, history: bindSucceededAttempt },
 };
 
 // ---------------------------------------------------------------------------
@@ -237,7 +261,7 @@ function replayStatements(sql: string): string[] {
   const re = /alter table public\.[a-z_]+[\s\S]*?;/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(noComments))) {
-    if (/add constraint|add column/i.test(m[0])) out.push(m[0]);
+    if (/add constraint|add column|drop constraint/i.test(m[0])) out.push(m[0]);
   }
   return out;
 }
