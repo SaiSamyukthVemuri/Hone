@@ -252,6 +252,9 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // this hardcoded-to-127.0.0.1 lane. Set here rather than passed through from
   // the outer process because webServer.env REPLACES process.env.
   HONE_E2E_ROUTE_FAULT: "1",
+  // SCH-002. Fires only for a studio slug starting "e2e-slot-fault-"; the module
+  // refuses to run in any deployed runtime.
+  HONE_E2E_SLOT_READ_FAULT: "1",
   // SENTRY-E2E-NOISE-02. Nothing this lane's server sends may reach the
   // operational Sentry project: not the deliberate faults above, not a real
   // failure raised during a run, not the browser envelopes the /monitoring

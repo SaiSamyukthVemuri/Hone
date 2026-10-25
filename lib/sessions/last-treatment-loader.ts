@@ -16,6 +16,7 @@ import type {
   PrepNarrativeItem,
 } from "@/lib/sessions/appointment-prep-memory";
 import type { BlockArea } from "@/lib/sessions/block-areas";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // THE loader behind every "last treatment" surface changed by this PR.
 //
@@ -237,7 +238,7 @@ async function selectFromCandidates<T extends SessionWithLoadedEntries>(
       JSON.stringify({
         event: "last_charted_treatment_blocks_read_failed",
         // SQLSTATE, e.g. "42501" (insufficient privilege) or "PGRST200".
-        code: typeof error.code === "string" ? error.code : null,
+        code: typeof error.code === "string" ? dbErrorCode(error) : null,
         studio_id: studioId,
         candidate_count: candidates.length,
         at: new Date().toISOString(),
@@ -454,7 +455,7 @@ export async function loadLastChartedTreatmentForClient(input: {
     console.error(
       JSON.stringify({
         event: "appointment_prep_sessions_read_failed",
-        code: typeof error.code === "string" ? error.code : null,
+        code: typeof error.code === "string" ? dbErrorCode(error) : null,
         studio_id: input.studioId,
         candidate_count: 0,
         at: new Date().toISOString(),
@@ -611,7 +612,7 @@ export async function loadLastChartedTreatmentsForClients(input: {
     console.error(
       JSON.stringify({
         event: "appointment_prep_sessions_batch_read_failed",
-        code: typeof error.code === "string" ? error.code : null,
+        code: typeof error.code === "string" ? dbErrorCode(error) : null,
         studio_id: input.studioId,
         client_count: clientCount,
         at: new Date().toISOString(),
@@ -681,7 +682,7 @@ export async function loadLastChartedTreatmentsForClients(input: {
       console.error(
         JSON.stringify({
           event: "appointment_prep_blocks_batch_read_failed",
-          code: typeof blockError.code === "string" ? blockError.code : null,
+          code: typeof blockError.code === "string" ? dbErrorCode(blockError) : null,
           studio_id: input.studioId,
           candidate_count: allCandidateIds.length,
           at: new Date().toISOString(),

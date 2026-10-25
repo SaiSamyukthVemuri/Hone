@@ -374,7 +374,10 @@ describe("public booking — new-client waitlist admission gate", () => {
       result.ok === false && result.error,
       "an existing client must never see the waitlist refusal",
     ).not.toBe("New-client booking is currently by waitlist. Please join the waitlist.");
-    expect(rpcCalls.length, "existing-client booking must still run").toBeGreaterThan(0);
+    // SEC-004: an email match no longer attaches a public booking, so nothing
+    // runs; the refusal is the identity-unconfirmed copy, not an admission one.
+    expect(result.ok).toBe(false);
+    expect(rpcCalls, "a matched email must not reach any booking command").toEqual([]);
   });
 
   it("POSITIVE CONTROL: flag ON + existing client with NO match keeps the pre-existing refusal", async () => {
@@ -527,6 +530,8 @@ describe("NEW-CLIENT-MODE-01 — the four admission states are distinct", () => 
       result.ok === false && result.error,
       "an existing client must never see a new-client admission refusal",
     ).not.toBe(ADMISSION_REFUSAL_TEXT);
-    expect(rpcCalls.length, "existing-client booking must still run").toBeGreaterThan(0);
+    // SEC-004: refused as an unconfirmed identity, before any command.
+    expect(result.ok).toBe(false);
+    expect(rpcCalls, "a matched email must not reach any booking command").toEqual([]);
   });
 });

@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildConsentTemplateSnapshot } from "./template-snapshot";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // The ONE consent-signing ceremony.
 //
@@ -197,8 +198,7 @@ export async function recordConsentSignature(
     console.error(
       JSON.stringify({
         event: "consent_sign_client_lookup_failed",
-        code: clientErr.code,
-        message: clientErr.message,
+        code: dbErrorCode(clientErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -226,8 +226,7 @@ export async function recordConsentSignature(
     console.error(
       JSON.stringify({
         event: "consent_sign_template_lookup_failed",
-        code: templateErr.code,
-        message: templateErr.message,
+        code: dbErrorCode(templateErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -322,8 +321,7 @@ export async function recordConsentSignature(
     console.error(
       JSON.stringify({
         event: "consent_sign_insert_failed",
-        code: insertErr?.code,
-        message: insertErr?.message,
+        code: dbErrorCode(insertErr),
         templateId: template.id,
         timestamp: new Date().toISOString(),
       }),

@@ -10,6 +10,7 @@ import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { refreshAccountStatusFromStripe } from "@/lib/stripe/account";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { thrownErrorClass, stripeErrorFields } from "@/lib/logging/error-class";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +43,8 @@ export default async function StripeOnboardingReturnPage() {
       console.error(
         JSON.stringify({
           event: "stripe_return_sync_failed",
-          err: err instanceof Error ? err.message : String(err),
+          errorClass: thrownErrorClass(err),
+          ...stripeErrorFields(err),
           studioId: studio.id,
           timestamp: new Date().toISOString(),
         }),

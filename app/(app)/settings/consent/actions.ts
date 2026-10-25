@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { ConsentTemplateFormType } from "@/lib/types/database";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // PR #134. Practitioner-side CRUD for consent_form_templates. Every
 // action is gated by getCurrentPractitionerWithStudio() so the
@@ -86,8 +87,7 @@ export async function createConsentTemplateAction(
     console.error(
       JSON.stringify({
         event: "consent_template_create_failed",
-        code: error?.code,
-        message: error?.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -161,8 +161,7 @@ export async function updateConsentTemplateAction(
     console.error(
       JSON.stringify({
         event: "consent_template_update_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         templateId: id,
         timestamp: new Date().toISOString(),
       }),
@@ -219,8 +218,7 @@ export async function setConsentTemplateStatusAction(
     console.error(
       JSON.stringify({
         event: "consent_template_status_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         templateId: id,
         timestamp: new Date().toISOString(),
       }),
@@ -289,8 +287,7 @@ export async function setConsentTemplateLiveAction(
     console.error(
       JSON.stringify({
         event: "consent_template_live_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         templateId: id,
         next_is_live: nextIsLive,
         timestamp: new Date().toISOString(),

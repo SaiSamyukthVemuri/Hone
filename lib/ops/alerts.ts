@@ -6,6 +6,7 @@ import {
   redactOpsAlertMessage,
   redactOpsAlertDetails,
 } from "@/lib/ops/redact";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // ===========================================================================
 // recordOpsAlert (PR #153)
@@ -174,7 +175,7 @@ export async function recordOpsAlertDurably(input: OpsAlertInput): Promise<boole
       structuredConsoleLog({
         event: "ops_alert_insert_failed",
         origin_event: input.event,
-        code: typeof error.code === "string" && /^(?:[A-Z0-9]{5}|PGRST[0-9]{3})$/.test(error.code) ? error.code : "unknown",
+        code: typeof error.code === "string" && /^(?:[A-Z0-9]{5}|PGRST[0-9]{3})$/.test(error.code) ? dbErrorCode(error) : "unknown",
         timestamp: new Date().toISOString(),
       });
     }

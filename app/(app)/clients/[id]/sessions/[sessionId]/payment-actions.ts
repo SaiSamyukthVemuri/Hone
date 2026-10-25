@@ -39,6 +39,7 @@ import {
   refundPaymentChargeAttempt,
   type PaymentRefundResult,
 } from "@/lib/billing/payment-refund";
+import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
 // ---------------------------------------------------------------------------
 // prepareSessionPaymentChargeAction (PR #172).
@@ -165,7 +166,7 @@ export async function prepareSessionPaymentChargeAction(
     studioTimezone = studio.timezone;
     actorIsOwner = practitioner.role === "owner";
   } catch (err) {
-    logInternal("session_payment_prepare_auth_failed", { err: String(err) });
+    logInternal("session_payment_prepare_auth_failed", { errorClass: thrownErrorClass(err) });
     return { ok: false, error: NOT_AUTHORIZED_ERROR };
   }
 
@@ -360,8 +361,7 @@ export async function prepareSessionPaymentChargeAction(
       return { ok: false, error: DUPLICATE_ATTEMPT_ERROR };
     }
     logInternal("session_payment_prepare_insert_failed", {
-      code: insertErr.code,
-      message: insertErr.message,
+      code: dbErrorCode(insertErr),
       sessionId,
     });
     return { ok: false, error: GENERIC_PRACTITIONER_ERROR };
@@ -440,7 +440,7 @@ export async function executeSessionPaymentChargeAction(
     studioId = studio.id;
     studioTimezone = studio.timezone;
   } catch (err) {
-    logInternal("session_payment_execute_auth_failed", { err: String(err) });
+    logInternal("session_payment_execute_auth_failed", { errorClass: thrownErrorClass(err) });
     return {
       ok: false,
       outcome: "not_authorized",
@@ -657,7 +657,7 @@ export async function sendPaymentChargeReceiptAction(
     studioId = studio.id;
     studioTimezone = studio.timezone;
   } catch (err) {
-    logInternal("payment_receipt_action_auth_failed", { err: String(err) });
+    logInternal("payment_receipt_action_auth_failed", { errorClass: thrownErrorClass(err) });
     return {
       ok: false,
       outcome: "not_authorized",
@@ -784,7 +784,7 @@ export async function refundPaymentChargeAttemptAction(
     studioId = studio.id;
     studioTimezone = studio.timezone;
   } catch (err) {
-    logInternal("payment_refund_action_auth_failed", { err: String(err) });
+    logInternal("payment_refund_action_auth_failed", { errorClass: thrownErrorClass(err) });
     return {
       ok: false,
       outcome: "not_authorized",
