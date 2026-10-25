@@ -915,7 +915,7 @@ describe("J9-I g09d prediction equals the command", () => {
 
   it("I2 NEGATIVE CONTROL: a g09d with one predicate weakened is caught by the same comparison", async () => {
     // US currency check made to see only NULLs: cad history would now read initializable for US.
-    const mutated = SQL.replace("x.currency is distinct from 'usd'", "x.currency is null");
+    const mutated = SQL.replace(/x\.currency is distinct from 'usd'/g, "x.currency is null");
     expect(mutated).not.toBe(SQL);
     const mismatches = await compare(mutated);
     expect(mismatches.length).toBeGreaterThan(0);
