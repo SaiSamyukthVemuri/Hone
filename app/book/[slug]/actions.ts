@@ -1274,6 +1274,20 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       code: NEW_CLIENT_ADMISSION_REFUSAL_CODE,
     };
   }
+  // 0256 (SEC-004). The command refuses to adopt an ACTIVE client by email on
+  // the ordinary path - the window between this action's lookup and the commit.
+  // Answered with the archived-collision copy BYTE FOR BYTE, so active, archived
+  // and raced are one answer and the booker learns nothing about the record.
+  if (rawCommandResult === "existing_client_requires_confirmation") {
+    logInternalBookingError("public_booking_identity_unconfirmed", {
+      studioId: studio.id,
+      emailFingerprint: hashFingerprint(normalizedEmail),
+    });
+    if (consumedInvitationId) {
+      return invitationConsumedWithoutBooking("client_identity_collision");
+    }
+    return { ok: false, error: archivedClientCollisionError(studio.name) };
+  }
   if (rawCommandResult === "archived_client_collision") {
     logInternalBookingError("public_booking_archived_client_collision", {
       studioId: studio.id,
