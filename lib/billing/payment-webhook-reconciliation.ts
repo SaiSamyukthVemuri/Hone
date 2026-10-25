@@ -7,6 +7,7 @@ import {
   compareProviderMoney,
   providerMoneyMismatchDetails,
 } from "@/lib/billing/provider-money-facts";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // ---------------------------------------------------------------------------
 // PR #179. Stripe webhook reconciliation for payment_charge_attempts.
@@ -680,7 +681,7 @@ export async function handlePaymentIntentSucceeded(
   );
   if (rpcErr) {
     throw new Error(
-      `payment_intent_succeeded_update_failed:${rpcErr.code}:${rpcErr.message}`,
+      `payment_intent_succeeded_update_failed:${dbErrorCode(rpcErr)}`,
     );
   }
   const outcome = (Array.isArray(rpcRows) ? rpcRows[0] : rpcRows) as
@@ -1050,7 +1051,7 @@ export async function handlePaymentIntentPaymentFailed(
     .select("id");
   if (updateErr) {
     throw new Error(
-      `payment_intent_failed_update_failed:${updateErr.code}:${updateErr.message}`,
+      `payment_intent_failed_update_failed:${dbErrorCode(updateErr)}`,
     );
   }
   // PR #263: zero-row detection (see handlePaymentIntentSucceeded).
@@ -1370,7 +1371,7 @@ export async function handleChargeRefunded(
       .select("id");
     if (updateErr) {
       throw new Error(
-        `charge_refunded_pending_update_failed:${updateErr.code}:${updateErr.message}`,
+        `charge_refunded_pending_update_failed:${dbErrorCode(updateErr)}`,
       );
     }
     // PR #263: zero-row detection. refund_status left pending_stripe
@@ -1431,7 +1432,7 @@ export async function handleChargeRefunded(
     .select("id");
   if (updateErr) {
     throw new Error(
-      `charge_refunded_out_of_band_update_failed:${updateErr.code}:${updateErr.message}`,
+      `charge_refunded_out_of_band_update_failed:${dbErrorCode(updateErr)}`,
     );
   }
   // PR #263: zero-row detection. The conditional matched no row

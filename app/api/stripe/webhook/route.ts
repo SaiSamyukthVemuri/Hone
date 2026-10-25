@@ -89,6 +89,7 @@ import {
   paymentWebhookMaintenanceOn,
 } from "@/lib/billing/payment-webhook-maintenance";
 import { ensureCardChangeNotification } from "@/lib/billing/card-change-notification";
+import { boundedErrorLabel, dbErrorCode, stripeErrorFields, thrownErrorClass } from "@/lib/logging/error-class";
 
 // Force Node runtime: Stripe SDK + raw body buffering need Node, not
 // the Edge runtime.
@@ -123,7 +124,7 @@ export async function POST(req: Request): Promise<Response> {
     rawBody = await req.text();
   } catch (err) {
     logInternal("stripe_webhook_body_read_failed", {
-      err: err instanceof Error ? err.message : String(err),
+      errorClass: thrownErrorClass(err),
     });
     return NextResponse.json({ error: GENERIC_BAD_SIGNATURE }, { status: 400 });
   }
@@ -192,8 +193,7 @@ export async function POST(req: Request): Promise<Response> {
       logInternal("stripe_webhook_studio_binding_read_failed", {
         eventId: event.id,
         eventType: event.type,
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
       });
       return NextResponse.json({ ok: false }, { status: 500 });
     }
@@ -219,8 +219,7 @@ export async function POST(req: Request): Promise<Response> {
     logInternal("stripe_webhook_claim_failed", {
       eventId: event.id,
       eventType: event.type,
-      code: claimErr.code,
-      message: claimErr.message,
+      code: dbErrorCode(claimErr),
     });
     // Return 500 so Stripe retries. The event is not yet recorded;
     // the next delivery will re-attempt.
@@ -266,8 +265,7 @@ export async function POST(req: Request): Promise<Response> {
     if (markErr) {
       logInternal("stripe_webhook_mark_processed_failed", {
         eventId: event.id,
-        code: markErr.code,
-        message: markErr.message,
+        code: dbErrorCode(markErr),
       });
       return NextResponse.json({ ok: false }, { status: 500 });
     }
@@ -284,7 +282,8 @@ export async function POST(req: Request): Promise<Response> {
       logInternal("stripe_webhook_handler_failed", {
         eventId: event.id,
         eventType: event.type,
-        err: err instanceof Error ? err.message : String(err),
+        errorClass: thrownErrorClass(err),
+        ...stripeErrorFields(err),
       });
       // PR #153. Persistent webhook processing failure is a critical
       // ops alert. For setup_intent.succeeded specifically, the
@@ -315,14 +314,19 @@ export async function POST(req: Request): Promise<Response> {
         {
           p_event_id: event.id,
           p_claim_token: claimToken,
-          p_error: err instanceof Error ? err.message : "handler_failed",
+          // stored on stripe_events.error: a deliberate identifier or a class, never free text
+          p_error: boundedErrorLabel(err),
         },
       );
       if (releaseErr) {
-        logInternal("stripe_webhook_release_claim_failed", { releaseErr });
+        logInternal("stripe_webhook_release_claim_failed", {
+          code: dbErrorCode(releaseErr),
+        });
       }
     } catch (releaseErr) {
-      logInternal("stripe_webhook_release_claim_threw", { releaseErr });
+      logInternal("stripe_webhook_release_claim_threw", {
+        errorClass: thrownErrorClass(releaseErr),
+      });
     }
     return NextResponse.json({ ok: false }, { status: 500 });
   }
@@ -380,7 +384,7 @@ async function handleStripeEvent(
       // releases the claim and answers 500, so the event stays retryable.
       if (existingSettingsErr) {
         throw new Error(
-          `studio_payment_settings preserve-first-completion read failed: ${existingSettingsErr.message}`,
+          `studio_payment_settings preserve-first-completion read failed: ${dbErrorCode(existingSettingsErr)}`,
         );
       }
       const onboardingCompletedAtForRpc =
@@ -399,7 +403,7 @@ async function handleStripeEvent(
       });
       if (syncErr) {
         throw new Error(
-          `sync_studio_account_status failed: ${syncErr.message}`,
+          `sync_studio_account_status failed: ${dbErrorCode(syncErr)}`,
         );
       }
 
@@ -641,7 +645,7 @@ async function handleSetupIntentSucceeded(
     .maybeSingle();
   if (customerLineageErr) {
     throw new Error(
-      `customer_lineage_lookup_failed:${customerLineageErr.code}:${customerLineageErr.message}`,
+      `customer_lineage_lookup_failed:${dbErrorCode(customerLineageErr)}`,
     );
   }
   if (!customerLineage) {
@@ -660,7 +664,7 @@ async function handleSetupIntentSucceeded(
     .maybeSingle();
   if (signatureErr) {
     throw new Error(
-      `signature_lookup_failed:${signatureErr.code}:${signatureErr.message}`,
+      `signature_lookup_failed:${dbErrorCode(signatureErr)}`,
     );
   }
   if (!signature) {
@@ -696,7 +700,7 @@ async function handleSetupIntentSucceeded(
       .maybeSingle();
     if (existingErr) {
       throw new Error(
-        `idempotency_lookup_failed:${existingErr.code}:${existingErr.message}`,
+        `idempotency_lookup_failed:${dbErrorCode(existingErr)}`,
       );
     }
     if (existing) {
@@ -739,7 +743,7 @@ async function handleSetupIntentSucceeded(
     );
   } catch (err) {
     throw new Error(
-      `payment_method_retrieve_failed:${err instanceof Error ? err.message : String(err)}`,
+      `payment_method_retrieve_failed:${thrownErrorClass(err)}`,
     );
   }
   const card = pm.card;
@@ -793,7 +797,7 @@ async function handleSetupIntentSucceeded(
       );
     }
     throw new Error(
-      `save_client_card_on_file_failed:${saveErr.code}:${saveErr.message}`,
+      `save_client_card_on_file_failed:${dbErrorCode(saveErr)}`,
     );
   }
   const saved = Array.isArray(saveRows) ? saveRows[0] : saveRows;

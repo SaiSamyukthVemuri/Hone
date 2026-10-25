@@ -123,7 +123,7 @@ export function CalendarMobileDayView({
   function goToday() {
     const ti = days.findIndex((d) => d.date === today);
     if (ti >= 0) setSelectedDate(today);
-    else router.push("/calendar");
+    else router.push("/calendar?view=week");
   }
 
   // Floating "+" default time: on today within working hours, the next rounded

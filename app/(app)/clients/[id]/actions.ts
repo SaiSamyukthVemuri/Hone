@@ -11,6 +11,7 @@ import {
 } from "@/lib/clients/possible-duplicate";
 import { normalizeName } from "@/lib/import/quick-import";
 import { normalizePhoneForSms } from "@/lib/sms/phone";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 async function assertClientVisible(
   studioId: string,
@@ -23,7 +24,7 @@ async function assertClientVisible(
     .eq("id", clientId)
     .eq("studio_id", studioId)
     .maybeSingle();
-  if (error) throw new Error(`Failed to load client: ${error.message}`);
+  if (error) throw new Error(`Failed to load client: ${dbErrorCode(error)}`);
   if (!data) throw new Error("Client not found.");
 }
 
@@ -139,7 +140,7 @@ async function checkDuplicateEmail(
     safeLog.error(
       JSON.stringify({
         event: "client_duplicate_email_lookup_failed",
-        code: error.code,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -250,7 +251,7 @@ export async function updateClientAction(
     safeLog.error(
       JSON.stringify({
         event: "client_update_identity_read_failed",
-        code: storedErr.code,
+        code: dbErrorCode(storedErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -339,7 +340,7 @@ export async function updateClientAction(
       JSON.stringify({
         event: "client_update_failed",
         clientId,
-        code: error.code,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -387,7 +388,7 @@ export async function archiveClientAction(formData: FormData): Promise<void> {
     .eq("studio_id", studio.id)
     .is("archived_at", null);
   if (error) {
-    throw new Error(`Failed to archive client: ${error.message}`);
+    throw new Error(`Failed to archive client: ${dbErrorCode(error)}`);
   }
 
   // The client change already committed. Audit transport failures are
@@ -411,7 +412,7 @@ export async function archiveClientAction(formData: FormData): Promise<void> {
       JSON.stringify({
         event: "client_archive_audit_failed",
         clientId,
-        code: auditErr.code,
+        code: dbErrorCode(auditErr, ["audit_write_unavailable"]),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -446,7 +447,7 @@ export async function unarchiveClientAction(formData: FormData): Promise<void> {
     .eq("studio_id", studio.id)
     .not("archived_at", "is", null);
   if (error) {
-    throw new Error(`Failed to unarchive client: ${error.message}`);
+    throw new Error(`Failed to unarchive client: ${dbErrorCode(error)}`);
   }
 
   // The client change already committed. Audit transport failures are
@@ -470,7 +471,7 @@ export async function unarchiveClientAction(formData: FormData): Promise<void> {
       JSON.stringify({
         event: "client_unarchive_audit_failed",
         clientId,
-        code: auditErr.code,
+        code: dbErrorCode(auditErr, ["audit_write_unavailable"]),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -492,7 +493,11 @@ export async function addClientPricingAction(formData: FormData): Promise<void> 
   const priceCents = dollarsToCents(formData.get("price"));
   if (priceCents == null) throw new Error("Price must be a non-negative number.");
 
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // HON-44 (Sam decision 12): client prices are owner-only. The role comes from
+  // the authenticated practitioner. APP half; client_pricing RLS admits any
+  // member until 0254.
+  if (practitioner.role !== "owner") throw new Error("Only the studio owner can change prices.");
   await assertClientVisible(studio.id, clientId);
 
   const supabase = await createClient();
@@ -504,7 +509,7 @@ export async function addClientPricingAction(formData: FormData): Promise<void> 
     notes: nullableString(formData.get("notes")),
   });
 
-  if (error) throw new Error(`Failed to add pricing: ${error.message}`);
+  if (error) throw new Error(`Failed to add pricing: ${dbErrorCode(error)}`);
   revalidatePath(`/clients/${clientId}`);
 }
 
@@ -515,7 +520,11 @@ export async function deleteClientPricingAction(formData: FormData): Promise<voi
   if (typeof clientId !== "string" || !clientId)
     throw new Error("Missing client id.");
 
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // HON-44 (Sam decision 12): client prices are owner-only. The role comes from
+  // the authenticated practitioner. APP half; client_pricing RLS admits any
+  // member until 0254.
+  if (practitioner.role !== "owner") throw new Error("Only the studio owner can change prices.");
   await assertClientVisible(studio.id, clientId);
 
   const supabase = await createClient();
@@ -525,7 +534,7 @@ export async function deleteClientPricingAction(formData: FormData): Promise<voi
     .eq("id", id)
     .eq("studio_id", studio.id)
     .eq("client_id", clientId);
-  if (error) throw new Error(`Failed to delete pricing: ${error.message}`);
+  if (error) throw new Error(`Failed to delete pricing: ${dbErrorCode(error)}`);
   revalidatePath(`/clients/${clientId}`);
 }
 
@@ -548,7 +557,7 @@ export async function addClientTagAction(formData: FormData): Promise<void> {
     label,
     created_by: practitioner.id,
   });
-  if (error) throw new Error(`Failed to add tag: ${error.message}`);
+  if (error) throw new Error(`Failed to add tag: ${dbErrorCode(error)}`);
   revalidatePath(`/clients/${clientId}`);
 }
 
@@ -574,6 +583,6 @@ export async function removeClientTagAction(formData: FormData): Promise<void> {
     .eq("studio_id", studio.id)
     .eq("client_id", clientId)
     .is("deleted_at", null);
-  if (error) throw new Error(`Failed to remove tag: ${error.message}`);
+  if (error) throw new Error(`Failed to remove tag: ${dbErrorCode(error)}`);
   revalidatePath(`/clients/${clientId}`);
 }

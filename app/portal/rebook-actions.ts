@@ -46,6 +46,7 @@ import {
   type PortalRebookRefusalCode,
 } from "@/lib/portal/rebook-copy";
 import type { Studio } from "@/lib/types/database";
+import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 
 // ===========================================================================
 // EMERG-PORTAL-REBOOK-01 — a returning client can book again, from the portal.
@@ -226,7 +227,7 @@ async function resolvePortalBookingContext(): Promise<
     .maybeSingle();
   if (clientErr) {
     logRebookError("portal_rebook_client_lookup_failed", {
-      code: clientErr.code,
+      code: dbErrorCode(clientErr),
       studioId,
     });
     return refuse("unavailable", PORTAL_REBOOK_GENERIC_REFUSAL);
@@ -244,7 +245,7 @@ async function resolvePortalBookingContext(): Promise<
   // reported as "this studio has nothing available".
   if (studioErr || !studioRow) {
     logRebookError("portal_rebook_studio_lookup_failed", {
-      code: studioErr?.code ?? null,
+      code: studioErr ? dbErrorCode(studioErr) : null,
       studioId,
     });
     return refuse("unavailable", PORTAL_REBOOK_GENERIC_REFUSAL);
@@ -615,7 +616,7 @@ export async function bookAnotherAppointmentAction(
     if (collided || (commandResult != null && SLOT_CODES.has(commandResult))) {
       logRebookError("portal_rebook_slot_rejected", {
         studioId: studio.id,
-        code: rpcErr?.code ?? commandResult,
+        code: failureCode(rpcErr, commandResult),
       });
       return refuse("slot_taken", PORTAL_REBOOK_SLOT_TAKEN);
     }
@@ -631,7 +632,7 @@ export async function bookAnotherAppointmentAction(
     // command's vocabulary never becomes a probe.
     logRebookError("portal_rebook_commit_refused", {
       studioId: studio.id,
-      code: rpcErr?.code ?? commandResult ?? "no_result",
+      code: failureCode(rpcErr, commandResult, "no_result"),
     });
     return refuse("unavailable", PORTAL_REBOOK_GENERIC_REFUSAL);
   }
@@ -697,7 +698,7 @@ export async function bookAnotherAppointmentAction(
             .maybeSingle();
           if (prErr || !pr) {
             logRebookError("portal_rebook_practitioner_lookup_failed", {
-              code: prErr?.code ?? null,
+              code: prErr ? dbErrorCode(prErr) : null,
               studioId: studio.id,
             });
             return null;

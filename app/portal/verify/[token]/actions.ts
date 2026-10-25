@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { hashToken } from "@/lib/portal/tokens";
 import { createPortalSession } from "@/lib/portal/session";
 import { logPortalAccessEvent } from "@/lib/portal/access-events";
+import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
 // Server action that actually consumes a portal magic-link token and
 // creates the portal session. Split out from the verify page so the
@@ -59,8 +60,7 @@ export async function verifyPortalMagicLinkAction(
     console.error(
       JSON.stringify({
         event: "portal_verify_post_lookup_failed",
-        code: lookupErr.code,
-        message: lookupErr.message,
+        code: dbErrorCode(lookupErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -97,8 +97,7 @@ export async function verifyPortalMagicLinkAction(
     console.error(
       JSON.stringify({
         event: "portal_verify_post_consume_failed",
-        code: consumeErr.code,
-        message: consumeErr.message,
+        code: dbErrorCode(consumeErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -127,7 +126,7 @@ export async function verifyPortalMagicLinkAction(
     console.error(
       JSON.stringify({
         event: "portal_verify_post_session_create_failed",
-        message: err instanceof Error ? err.message : "unknown",
+        errorClass: thrownErrorClass(err),
         timestamp: new Date().toISOString(),
       }),
     );

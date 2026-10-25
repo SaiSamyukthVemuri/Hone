@@ -17,6 +17,7 @@ import {
   isPubliclyBookable,
   UNAVAILABLE_PUBLIC_BOOKING_MESSAGE,
 } from "@/lib/booking/readiness";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Public booking portal: deliberately renders WITHOUT the shared
 // MarketingHeader. A client landing here from the studio's own website
@@ -79,11 +80,11 @@ export default async function PublicBookingPage({
   // form, because the existing-client path depends on both reads in EVERY
   // admission mode; only the new-client waitlist journey could do without them.
   if (servicesRes.error) {
-    throw new Error(`Failed to load services: ${servicesRes.error.message}`);
+    throw new Error(`Failed to load services: ${dbErrorCode(servicesRes.error)}`);
   }
   if (availabilityRes.error) {
     throw new Error(
-      `Failed to load availability: ${availabilityRes.error.message}`,
+      `Failed to load availability: ${dbErrorCode(availabilityRes.error)}`,
     );
   }
   const services = (servicesRes.data ?? []) as Service[];

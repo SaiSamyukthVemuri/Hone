@@ -12,6 +12,7 @@ import {
   removePractitionerAction,
   revokeInvitationAction,
 } from "./actions";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -41,7 +42,7 @@ async function getPendingInvitations(
     .eq("status", "pending")
     .order("created_at", { ascending: false });
   if (error)
-    throw new Error(`Failed to load invitations: ${error.message}`);
+    throw new Error(`Failed to load invitations: ${dbErrorCode(error)}`);
   return (data ?? []) as PendingInvitation[];
 }
 

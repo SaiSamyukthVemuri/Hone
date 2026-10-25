@@ -103,7 +103,7 @@ describe("getStudioBySlug keeps 'absent' and 'unreadable' apart", () => {
       body: { code: "XX000", message: "upstream exploded", details: null, hint: null },
     };
     await expect(getStudioBySlug("willow")).rejects.toThrow(
-      "Failed to load studio: upstream exploded",
+      "Failed to load studio: XX000",
     );
   });
 
@@ -120,7 +120,7 @@ describe("getStudioBySlug keeps 'absent' and 'unreadable' apart", () => {
       if (outcome.resolved) return;
       expect(outcome.error).toBeInstanceOf(Error);
       expect((outcome.error as Error).message).toBe(
-        "Failed to load studio: TypeError: fetch failed",
+        "Failed to load studio: fetch_failed",
       );
       // The premise above: the client already made 1 + 3 attempts.
       expect(studioReads).toBe(4);

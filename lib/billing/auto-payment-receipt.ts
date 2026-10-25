@@ -5,6 +5,7 @@ import {
 } from "@/lib/billing/payment-receipt";
 import type { SessionPaymentChargeResult } from "@/lib/billing/session-payment-charge";
 import { recordOpsAlert, type OpsAlertInput } from "@/lib/ops/alerts";
+import { thrownErrorClass, type ThrownErrorClass } from "@/lib/logging/error-class";
 
 // ===========================================================================
 // PAY-RECEIPT-AUTO-01 — the receipt goes out on its own after a card charge
@@ -322,7 +323,7 @@ function tryRegister(
 /** A settlement of the single send, captured so neither observer can reject. */
 type Settled =
   | { kind: "result"; result: SendPaymentChargeReceiptResult }
-  | { kind: "threw"; message: string };
+  | { kind: "threw"; message: string; errorClass: ThrownErrorClass };
 
 const TIMEOUT = Symbol("auto-receipt-wait-exceeded");
 
@@ -454,7 +455,9 @@ export async function autoSendReceiptAfterCharge(args: {
       safeDetails: { attempt_id: args.attemptId, thrown: message },
     });
     if (!tryRegister(register, alert)) await alert;
-    logInternal("auto_payment_receipt_threw", { ...ctx, err: message });
+    // A class, not the text: the thrown error can come from a provider or the
+    // database and quote the recipient. (The alert above redacts its copy.)
+    logInternal("auto_payment_receipt_threw", { ...ctx, errorClass: thrownErrorClass(err) });
     return { attempted: true, threw: true, message };
   }
 
@@ -464,7 +467,7 @@ export async function autoSendReceiptAfterCharge(args: {
   // here as `kind: "threw"` rather than escaping into the runtime.
   const observed: Promise<Settled> = inFlight.then(
     (result) => ({ kind: "result", result }) as const,
-    (err) => ({ kind: "threw", message: safeStringify(err) }) as const,
+    (err) => ({ kind: "threw", message: safeStringify(err), errorClass: thrownErrorClass(err) }) as const,
   );
 
   // Resolved by this function once it knows whether it reported inline. Using
@@ -545,7 +548,7 @@ export async function autoSendReceiptAfterCharge(args: {
       // Out of band: a critical alert does a DB insert AND a Resend call, and
       // this response is a committed charge.
       if (!tryRegister(register, alert)) await alert;
-      logInternal("auto_payment_receipt_threw", { ...ctx, err: raced.message });
+      logInternal("auto_payment_receipt_threw", { ...ctx, errorClass: raced.errorClass });
       return { attempted: true, threw: true, message: raced.message };
     }
 
@@ -593,7 +596,7 @@ async function reportLateSettlement(
   if (late.kind === "threw") {
     logInternal("auto_payment_receipt_late_threw", {
       ...ctx,
-      err: late.message,
+      errorClass: late.errorClass,
     });
     await safeAlert({
       severity: "critical",

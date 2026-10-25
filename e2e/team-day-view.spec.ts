@@ -302,6 +302,63 @@ test.describe("desktop", () => {
   });
 });
 
+// HON-48 (Sam decision 17): Day is the INITIAL view for a team studio. Only an
+// entry with no calendar parameter is affected; every explicit link keeps its
+// meaning, which is how a user's remembered view survives. Permissions are
+// untouched, so a member lands on the same columns as the owner.
+test.describe("initial view", () => {
+  test.use({ viewport: { width: 1280, height: 1000 } });
+  const todayLA = () => new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(new Date());
+
+  test("a bare /calendar opens the team Day view for the owner and for a member", async ({ page }) => {
+    await loginAsOwner(page, seed);
+    await page.goto("/calendar");
+    await expect(page.getByTestId("team-day-view")).toHaveAttribute("data-date", todayLA());
+    await expect(page.getByTestId("calendar-view-day")).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("team-day-column")).toHaveCount(5);
+  });
+
+  test("a member's bare /calendar shows the same five columns as the owner", async ({ page }) => {
+    const bo = byKey("bo");
+    await loginByMagicLink(page, bo.email!);
+    await page.goto("/calendar");
+    await expect(page.getByTestId("team-day-view")).toBeVisible();
+    await expect(page.getByTestId("team-day-column")).toHaveCount(5);
+  });
+
+  test("explicit links keep their meaning: ?view=week, ?week=, ?day= and ?view=month are not sent to Day", async ({ page }) => {
+    await loginAsOwner(page, seed);
+    for (const url of ["/calendar?view=week", `/calendar?week=${day}`, `/calendar?day=${day}`, "/calendar?view=month"]) {
+      await page.goto(url);
+      await expect(page.getByTestId("calendar-view-day"), url).not.toHaveAttribute("aria-current", "page");
+      await expect(page.getByTestId("team-day-view"), url).toHaveCount(0);
+    }
+  });
+
+  test("Day, then Week, then Today stays on the week (Today does not re-enter the default)", async ({ page }) => {
+    await loginAsOwner(page, seed);
+    await page.goto("/calendar");
+    await expect(page.getByTestId("team-day-view")).toBeVisible();
+    await page.getByTestId("calendar-view-week").click();
+    await expect(page.getByTestId("calendar-view-week")).toHaveAttribute("aria-current", "page");
+    await page.getByTestId("calendar-today").click();
+    await expect(page.getByTestId("calendar-view-week")).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("team-day-view")).toHaveCount(0);
+  });
+
+  test("a studio that is not a team calendar keeps the week: capacity off, and capacity on with one practitioner", async ({ page }) => {
+    const solo = await seedE2eStudio();
+    await loginAsOwner(page, solo);
+    await page.goto("/calendar");
+    await expect(page.getByTestId("calendar-view-week")).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("calendar-view-day")).toHaveCount(0);
+    await setStudioCapacityEnabled(solo.studioId, true);
+    await page.goto("/calendar");
+    await expect(page.getByTestId("calendar-view-week")).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("team-day-view")).toHaveCount(0);
+  });
+});
+
 test.describe("phone", () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 

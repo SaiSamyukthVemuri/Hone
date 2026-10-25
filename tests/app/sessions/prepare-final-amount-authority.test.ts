@@ -212,14 +212,13 @@ describe("A · final equals the current reference", () => {
     });
   });
 
-  it("a non-owner may still prepare at the unchanged reference price", async () => {
+  it("a non-owner can no longer prepare a charge at all (HON-44, Sam decision 12: card charges are owner-only)", async () => {
     identity.practitioner = { id: "prac-2", role: "practitioner", active: true };
     const res = await prepareSessionPaymentChargeAction(
       form({ final: "120.00" }),
     );
-    expect(res.ok).toBe(true);
-    expect(inserted).toHaveLength(1);
-    expect(inserted[0].amount_cents).toBe(12_000);
+    expect(res.ok).toBe(false);
+    expect(inserted).toHaveLength(0);
   });
 });
 
