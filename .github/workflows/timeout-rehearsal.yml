@@ -1,0 +1,77 @@
+# REHEARSAL - NEVER MERGE. TIMEOUT-EXPORT item 1 (Sam's directions B, 4).
+#
+# Proves, on a throwaway Postgres container with the PINNED Supabase CLI, that
+# PGOPTIONS='-c statement_timeout=120000' reaches the session that runs the
+# migration files, that the timeout really fires, and that each file's own
+# `set local lock_timeout = '5s'` fires against a held lock. Synthetic only:
+# no hosted project, no Hone migration, no customer data, no provider.
+#
+# Supply chain: actions pinned by SHA, contents: read, persist-credentials: false,
+# no credential of any kind (no image registry login, no secret).
+
+name: timeout-rehearsal
+
+on:
+  pull_request:
+    paths:
+      - "scripts/ci/timeout-rehearsal.sh"
+      - ".github/workflows/timeout-rehearsal.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hone-timeout-rehearsal-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  timeout-rehearsal:
+    name: timeout mechanism rehearsal (never merge)
+    runs-on: ubuntu-latest
+    # Probes sleep 130 s + 140 s + a lock wait on top of CLI start-ups; the hard
+    # timeout clears them with room (CLAUDE.md section 4).
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+
+      # The pinned CLI always attempts TLS (run 40188867971: "server refused TLS
+      # connection" against a plain container), so the throwaway Postgres serves
+      # a self-signed certificate. Local to the runner; nothing is published.
+      - name: Start a throwaway Postgres 17 with TLS
+        run: |
+          d="$RUNNER_TEMP/pgtls"
+          mkdir -p "$d"
+          openssl req -new -x509 -days 1 -nodes -text -out "$d/server.crt" -keyout "$d/server.key" \
+            -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+          sudo chown 999:999 "$d/server.key" "$d/server.crt"
+          sudo chmod 600 "$d/server.key"
+          docker run -d --name pgtls -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:5432:5432 \
+            -v "$d":/certs:ro postgres:17 \
+            -c ssl=on -c ssl_cert_file=/certs/server.crt -c ssl_key_file=/certs/server.key
+          for _ in $(seq 1 60); do
+            docker exec pgtls pg_isready -U postgres -h 127.0.0.1 && break
+            sleep 2
+          done
+          docker exec pgtls psql -U postgres -h 127.0.0.1 -Atc "show ssl"
+
+      - name: Rehearse the timeout mechanism (pinned CLI, direct connection)
+        run: bash scripts/ci/timeout-rehearsal.sh
+        env:
+          REHEARSAL_OUT: ${{ runner.temp }}/timeout-rehearsal-out
+          SSL_CERT_FILE: ${{ runner.temp }}/pgtls/server.crt
+
+      - name: Upload rehearsal logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: timeout-rehearsal-logs
+          path: ${{ runner.temp }}/timeout-rehearsal-out/
+          retention-days: 7
