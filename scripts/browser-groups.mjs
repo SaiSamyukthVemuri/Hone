@@ -198,6 +198,10 @@ export const BROWSER_GROUPS = {
       // or stale Server Action and recovers. A diff to app/book/** selects this
       // group, which is the diff that can break it.
       "public-booking-error-containment.spec.ts",
+      // TWILIO-EGRESS-FAKE (MSG-006): a public booking with SMS consent reaches
+      // the confirmation SMS, and the lane's Twilio egress fake answers it
+      // in-process. The booking surface is what drives the send.
+      "twilio-egress-fake.spec.ts",
     ],
   },
   calendar: {
@@ -339,6 +343,9 @@ export const BROWSER_GROUPS = {
       // HON-62: the weekly-hours editor's native time inputs (keyboard
       // entry, touch tap, save/reload, untouched existing hours).
       "availability-hours-editor.spec.ts",
+      // HON-62 WebKit discriminator: bare time inputs, no app. It skips outside the
+      // non-required WebKit project, so it is a no-op wherever this group runs.
+      "webkit-time-input-key-probe.spec.ts",
       "practitioner-availability-compat.spec.ts",
       "practitioner-booking-studio-b.spec.ts",
       "practitioner-quick-book-studio-b.spec.ts",

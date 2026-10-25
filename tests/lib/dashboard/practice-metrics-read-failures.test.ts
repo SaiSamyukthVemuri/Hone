@@ -46,7 +46,7 @@ describe("DAT-002 metrics read failure is unknown, never zero activity", () => {
     "procedure_sessions", "procedure_blocks", "procedure_practitioners",
   ])("refuses a partial snapshot when %s fails", async (key) => {
     fixture.fail = key;
-    const result = await getPracticeDashboardMetrics("studio-A", "America/Toronto", "week").catch((error: unknown) => error);
+    const result = await getPracticeDashboardMetrics("studio-A", "America/Toronto", "week", { viewerIsOwner: true }).catch((error: unknown) => error);
     expect(result).toBeInstanceOf(Error);
     expect((result as Error).message).toMatch(/^Failed to load (practice metrics|procedure records)$/);
     expect(fixture.studios.every((id) => id === "studio-A")).toBe(true);
@@ -54,16 +54,16 @@ describe("DAT-002 metrics read failure is unknown, never zero activity", () => {
 
   it("returns genuine zero counts only after successful empty reads", async () => {
     fixture.empty = true;
-    const metrics = await getPracticeDashboardMetrics("studio-A", "America/Toronto", "week");
+    const metrics = await getPracticeDashboardMetrics("studio-A", "America/Toronto", "week", { viewerIsOwner: true });
     expect(metrics.appointments.total).toBe(0);
-    expect(metrics.testPayments).toEqual({ prepared: 0, charged: 0, refunds: 0 });
+    expect(metrics.money?.testPayments).toEqual({ prepared: 0, charged: 0, refunds: 0 });
     expect(metrics.chartedWithin24h).toEqual({ completedCount: 0, chartedWithin24hCount: 0 });
     expect(fixture.studios.length).toBeGreaterThan(0);
     expect(fixture.studios.every((id) => id === "studio-A")).toBe(true);
   });
 
   it("retains actual charting facts when every read succeeds", async () => {
-    const metrics = await getPracticeDashboardMetrics("studio-A", "America/Toronto", "week");
+    const metrics = await getPracticeDashboardMetrics("studio-A", "America/Toronto", "week", { viewerIsOwner: true });
     expect(metrics.chartedWithin24h).toEqual({ completedCount: 1, chartedWithin24hCount: 1 });
     expect(metrics.actions.reviewedSessions).toBe(1);
   });

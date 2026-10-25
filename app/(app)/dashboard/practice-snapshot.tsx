@@ -62,6 +62,9 @@ export function PracticeSnapshot({
   todayLocal: string;
 }) {
   const a = metrics.appointments;
+  // HON-44: null for a non-owner. The loader never read the prices or payment
+  // attempts, so there is nothing here to hide; the cards are simply absent.
+  const money = metrics.money;
   return (
     <section className="flex flex-col gap-4">
       {/* This section carries its own h2. Without one, its cards' h3s would
@@ -118,62 +121,66 @@ export function PracticeSnapshot({
           <Stat label="Late cancellations" value={a.lateCancellations} />
         </Card>
 
-        <Card title="Service value">
-          <Stat
-            label="Booked service value"
-            value={formatCad(a.bookedValueCents)}
-          />
-          <Stat
-            label="Completed service value"
-            value={formatCad(a.completedValueCents)}
-          />
-          {/* REQUIRED posture copy for the test-mode branch. */}
-          <p className="text-[11px] text-neutral-500">
-            Values are based on booked service prices, not collected live
-            payments.
-          </p>
-        </Card>
-
-        <Card title="Payments">
-          {/* Mode-aware card (the promised #323 copy fast-follow, done after
-              live billing was proven). The counts come from the CURRENT
-              deployment mode only (practice-metrics is scoped by
-              inferStripeLivemode()), so the labels flip with the mode,
-              live counts are never rendered under test-mode copy. The
-              test-only status lines below are hidden in live. */}
-          <Stat label="Live payments" value={livemode ? "On" : "Off"} />
-          {!livemode && <Stat label="Test payments" value="Available" />}
-          {!livemode && (
-            <Stat label="Collected revenue" value="Not enabled yet" />
-          )}
-          <div className="mt-1 border-t border-neutral-200 pt-2 dark:border-neutral-800">
-            <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
-              {livemode ? "Live payments" : "Test mode only"} (
-              {metrics.periodLabel})
-            </p>
-            {/* DASH-TRUTH-03: the prepared-payments row is removed. Preparing
-                a payment is internal plumbing on the way to charging one: it
-                is not an outcome a practitioner runs their practice on, and it
-                invited reading a prepared-but-uncharged payment as money taken.
-                The outcome-oriented rows below stay. The underlying
-                `testPayments.prepared` metric is deliberately left computed:
-                it is a truthful count with a plausible operational use, and
-                this tranche is about what the Dashboard SHOWS. */}
+        {money && (
+          <Card title="Service value">
             <Stat
-              label={livemode ? "Payments charged" : "Test payments charged"}
-              value={metrics.testPayments.charged}
+              label="Booked service value"
+              value={formatCad(money.bookedValueCents)}
             />
             <Stat
-              label={livemode ? "Refunds" : "Test refunds"}
-              value={metrics.testPayments.refunds}
+              label="Completed service value"
+              value={formatCad(money.completedValueCents)}
             />
-          </div>
-          {!livemode && (
+            {/* REQUIRED posture copy for the test-mode branch. */}
             <p className="text-[11px] text-neutral-500">
-              Collected revenue will appear after live payments are enabled.
+              Values are based on booked service prices, not collected live
+              payments.
             </p>
-          )}
-        </Card>
+          </Card>
+        )}
+
+        {money && (
+          <Card title="Payments">
+            {/* Mode-aware card (the promised #323 copy fast-follow, done after
+                live billing was proven). The counts come from the CURRENT
+                deployment mode only (practice-metrics is scoped by
+                inferStripeLivemode()), so the labels flip with the mode,
+                live counts are never rendered under test-mode copy. The
+                test-only status lines below are hidden in live. */}
+            <Stat label="Live payments" value={livemode ? "On" : "Off"} />
+            {!livemode && <Stat label="Test payments" value="Available" />}
+            {!livemode && (
+              <Stat label="Collected revenue" value="Not enabled yet" />
+            )}
+            <div className="mt-1 border-t border-neutral-200 pt-2 dark:border-neutral-800">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+                {livemode ? "Live payments" : "Test mode only"} (
+                {metrics.periodLabel})
+              </p>
+              {/* DASH-TRUTH-03: the prepared-payments row is removed. Preparing
+                  a payment is internal plumbing on the way to charging one: it
+                  is not an outcome a practitioner runs their practice on, and it
+                  invited reading a prepared-but-uncharged payment as money taken.
+                  The outcome-oriented rows below stay. The underlying
+                  `testPayments.prepared` metric is deliberately left computed:
+                  it is a truthful count with a plausible operational use, and
+                  this tranche is about what the Dashboard SHOWS. */}
+              <Stat
+                label={livemode ? "Payments charged" : "Test payments charged"}
+                value={money.testPayments.charged}
+              />
+              <Stat
+                label={livemode ? "Refunds" : "Test refunds"}
+                value={money.testPayments.refunds}
+              />
+            </div>
+            {!livemode && (
+              <p className="text-[11px] text-neutral-500">
+                Collected revenue will appear after live payments are enabled.
+              </p>
+            )}
+          </Card>
+        )}
 
         {/* PR #225: treatment-memory loop health. Studio-level only;
             never grouped or ranked by practitioner. */}
