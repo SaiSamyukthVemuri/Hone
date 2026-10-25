@@ -7,6 +7,7 @@ import { verifyIntakeToken } from "@/lib/intake/tokens";
 import { getIntakeConsentFormsForRender } from "@/lib/intake/consent-gate";
 import { IntakeWizard } from "./IntakeWizard";
 import type { RenderedConsentForm } from "./IntakeConsentForms";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // PR #142. Token-bearing route. See
 // app/portal/verify/[token]/page.tsx for the full rationale.
@@ -55,8 +56,7 @@ async function loadIntake(token: string): Promise<LoadResult> {
     console.error(
       JSON.stringify({
         event: "intake_load_header_error",
-        code: headerErr.code,
-        message: headerErr.message,
+        code: dbErrorCode(headerErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -94,8 +94,7 @@ async function loadIntake(token: string): Promise<LoadResult> {
       console.error(
         JSON.stringify({
           event: "intake_load_responses_error",
-          code: respErr.code,
-          message: respErr.message,
+          code: dbErrorCode(respErr),
           timestamp: new Date().toISOString(),
         }),
       );

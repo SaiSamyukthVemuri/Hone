@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
 // ===========================================================================
 // STUDIO LAUNCH READINESS — TREATMENT CONSENT
@@ -111,8 +112,7 @@ export async function getTreatmentConsentReadiness(
       console.error(
         JSON.stringify({
           event: "treatment_consent_readiness_failed",
-          code: error.code,
-          message: error.message,
+          code: dbErrorCode(error),
           timestamp: new Date().toISOString(),
         }),
       );
@@ -123,7 +123,7 @@ export async function getTreatmentConsentReadiness(
     console.error(
       JSON.stringify({
         event: "treatment_consent_readiness_unavailable",
-        message: thrown instanceof Error ? thrown.message : "unknown",
+        errorClass: thrownErrorClass(thrown),
         timestamp: new Date().toISOString(),
       }),
     );

@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { buildIcsFeed, type IcsEvent } from "@/lib/booking/ical";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { hashCalendarFeedToken } from "@/lib/calendar-feed/token";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Private read-only iCal subscription feed.
 //
@@ -89,7 +90,7 @@ export async function GET(
     console.error(
       JSON.stringify({
         event: "calendar_feed_practitioner_lookup_error",
-        code: pErr.code,
+        code: dbErrorCode(pErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -121,7 +122,7 @@ export async function GET(
     console.error(
       JSON.stringify({
         event: "calendar_feed_appointments_lookup_error",
-        code: aErr.code,
+        code: dbErrorCode(aErr),
         timestamp: new Date().toISOString(),
       }),
     );

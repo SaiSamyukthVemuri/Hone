@@ -14,6 +14,7 @@ import {
   getStripe,
   inferStripeLivemode,
 } from "./server";
+import { dbErrorCode, stripeErrorFields, thrownErrorClass } from "@/lib/logging/error-class";
 
 function logInternalStripeError(event: string, detail: unknown) {
   try {
@@ -56,8 +57,7 @@ export async function createOrLoadConnectedAccountForStudio(
   );
   if (claimErr) {
     logInternalStripeError("create_or_claim_provisioning_failed", {
-      code: claimErr.code,
-      message: claimErr.message,
+      code: dbErrorCode(claimErr),
       studioId,
     });
     throw new Error("Could not start Stripe onboarding. Please try again.");
@@ -135,10 +135,15 @@ export async function createOrLoadConnectedAccountForStudio(
         },
       );
       if (markErr) {
-        logInternalStripeError("mark_provisioning_failed_failed", { markErr });
+        logInternalStripeError("mark_provisioning_failed_failed", {
+          code: dbErrorCode(markErr),
+        });
       }
     } catch (markErr) {
-      logInternalStripeError("mark_provisioning_failed_threw", { markErr });
+      logInternalStripeError("mark_provisioning_failed_threw", {
+        errorClass: thrownErrorClass(markErr),
+        ...stripeErrorFields(markErr),
+      });
     }
     throw new Error("Stripe could not create the connected account.");
   }
@@ -154,8 +159,7 @@ export async function createOrLoadConnectedAccountForStudio(
   );
   if (completeErr) {
     logInternalStripeError("complete_provisioning_failed", {
-      code: completeErr.code,
-      message: completeErr.message,
+      code: dbErrorCode(completeErr),
       studioId,
       stripeAccountId: account.id,
     });
@@ -319,8 +323,7 @@ export async function refreshAccountStatusFromStripe(params: {
   // does for the two sibling throws in this function.
   if (existingSettingsErr) {
     logInternalStripeError("studio_payment_settings_preserve_read_failed", {
-      code: existingSettingsErr.code,
-      message: existingSettingsErr.message,
+      code: dbErrorCode(existingSettingsErr),
       studioId: params.studioId,
     });
     throw new Error(
@@ -343,8 +346,7 @@ export async function refreshAccountStatusFromStripe(params: {
   });
   if (syncErr) {
     logInternalStripeError("sync_studio_account_status_failed", {
-      code: syncErr.code,
-      message: syncErr.message,
+      code: dbErrorCode(syncErr),
       studioId: params.studioId,
     });
     throw new Error("Stripe status refresh succeeded but local sync failed.");

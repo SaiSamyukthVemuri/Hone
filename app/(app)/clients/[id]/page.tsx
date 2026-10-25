@@ -28,6 +28,7 @@ import { ClinicalUnavailableNotice } from "@/components/clinical-unavailable-not
 import { buildBeforeToday } from "@/lib/sessions/before-today";
 import { getImportedTreatmentMemoriesForClient } from "@/lib/imported-treatment-memory";
 import { attachStructuredAreas } from "@/lib/supabase/queries";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // PR #259: display cap for imported treatment memory in Before Today: show
 // the latest few so the briefing stays scannable; "Showing the latest N of M"
@@ -623,7 +624,7 @@ export default async function ClientCheatSheetPage({
           logClinicalReadFailure(
             "client_profile_recent_blocks_read_failed",
             studio.id,
-            recentBlocksError.code,
+            dbErrorCode(recentBlocksError),
             recentSessions.length,
           );
           clinicalHistoryUnavailable = true;
@@ -635,7 +636,7 @@ export default async function ClientCheatSheetPage({
       logClinicalReadFailure(
         "client_profile_recent_blocks_read_failed",
         studio.id,
-        (err as { code?: unknown } | null)?.code,
+        dbErrorCode(err),
         recentSessions.length,
       );
       clinicalHistoryUnavailable = true;
@@ -658,7 +659,7 @@ export default async function ClientCheatSheetPage({
           logClinicalReadFailure(
             "client_profile_intelligence_blocks_read_failed",
             studio.id,
-            intelBlocksError.code,
+            dbErrorCode(intelBlocksError),
             Math.min(sessions.length, 200),
           );
           intelligenceUnavailable = true;
@@ -670,7 +671,7 @@ export default async function ClientCheatSheetPage({
       logClinicalReadFailure(
         "client_profile_intelligence_blocks_read_failed",
         studio.id,
-        (err as { code?: unknown } | null)?.code,
+        dbErrorCode(err),
         Math.min(sessions.length, 200),
       );
       intelligenceUnavailable = true;
