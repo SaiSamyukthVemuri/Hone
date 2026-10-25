@@ -27,6 +27,7 @@
 import { resolveResources } from "../../scripts/worktree-resources.mjs";
 import os from "node:os";
 import path from "node:path";
+import { twilioEgressLogPath, withTwilioEgressFake } from "./twilio-egress-config";
 
 const LOCAL_SUPABASE_URL = "http://127.0.0.1:54321";
 const LOCAL_DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
@@ -254,8 +255,10 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // NEXT_PUBLIC_* input is involved. An inherited deployed-runtime signal
   // (AWS_REGION, VERCEL_ENV, ...) makes it refuse to start, failing the lane
   // before any spec runs rather than letting it send.
-  NODE_OPTIONS: withSentryEgressGuard(process.env.NODE_OPTIONS),
+  // TWILIO-EGRESS-FAKE (MSG-006): no SMS send reaches the real Twilio API.
+  NODE_OPTIONS: withTwilioEgressFake(withSentryEgressGuard(process.env.NODE_OPTIONS)),
   HONE_E2E_SENTRY_EGRESS_LOG: E2E_SENTRY_EGRESS_LOG,
+  HONE_E2E_TWILIO_EGRESS_LOG: twilioEgressLogPath(E2E_WORKTREE, E2E_APP_PORT),
   // `next start` reads PORT when no -p flag is given (commander `.env("PORT")`),
   // so the derived port reaches the server without any shell interpolation in
   // package.json - which also keeps the npm script portable.

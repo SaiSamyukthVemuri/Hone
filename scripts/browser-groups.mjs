@@ -198,6 +198,10 @@ export const BROWSER_GROUPS = {
       // or stale Server Action and recovers. A diff to app/book/** selects this
       // group, which is the diff that can break it.
       "public-booking-error-containment.spec.ts",
+      // TWILIO-EGRESS-FAKE (MSG-006): a public booking with SMS consent reaches
+      // the confirmation SMS, and the lane's Twilio egress fake answers it
+      // in-process. The booking surface is what drives the send.
+      "twilio-egress-fake.spec.ts",
     ],
   },
   calendar: {
