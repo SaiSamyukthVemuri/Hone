@@ -255,6 +255,7 @@ describe("the automatic receipt logs a class when the sender throws", () => {
       }) as never,
       register: ((p: Promise<unknown>) => void p) as never,
     });
+    expect(logs.text()).toContain("errorClass");
     expectClean(logs.text());
   });
 });
@@ -284,6 +285,9 @@ describe("examined and not reachable", () => {
   });
 
   it("recordOpsAlert: a message and details carrying a plain address and phone are redacted before the console line", async () => {
+    // The file-level mock of the alert writer is for the receipt cases above;
+    // THIS case drives the real one, or it would assert on an empty console.
+    vi.doUnmock("@/lib/ops/alerts");
     vi.resetModules();
     vi.doMock("@/lib/supabase/admin-server", () => ({
       createAdminClient: () => ({ from: () => ({ insert: async () => ({ error: null }) }) }),
@@ -296,6 +300,9 @@ describe("examined and not reachable", () => {
       message: HOSTILE,
       safeDetails: { thrown: HOSTILE },
     });
+    // Non-vacuous: a line WAS written, and it is the redacted one.
+    expect(logs.text()).toContain("synthetic_event");
+    expect(logs.text()).toContain("[redacted]");
     expectClean(logs.text());
   });
 
@@ -306,6 +313,7 @@ describe("examined and not reachable", () => {
       type: undefined,
       exception: { values: [{ type: "Error", value: HOSTILE }] },
     } as never);
+    expect(JSON.stringify(scrubbed)).toContain("[Redacted]");
     expectClean(JSON.stringify(scrubbed));
   });
 
