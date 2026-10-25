@@ -49,7 +49,7 @@ export default defineConfig({
       ? [
           {
             name: "webkit-hon-62",
-            testMatch: /availability-hours-editor\.spec\.ts$/,
+            testMatch: /(availability-hours-editor|webkit-time-input-key-probe)\.spec\.ts$/,
             // The app CSP's upgrade-insecure-requests is applied by WebKit to
             // http://localhost (Chromium exempts localhost), so every script,
             // style and font was rewritten to https://localhost:3111 and failed

@@ -121,24 +121,26 @@ async function typeMondayChromium(page: Page, opens: Locator, closes: Locator) {
   await expect(closes).toHaveValue("16:45");
 }
 
-// WebKit (Safari and Linux GTK/WPE alike) does NOT advance after two digits: a
-// third digit restarts the same segment, and only ArrowRight moves on (WebKit
-// DateTimeNumericFieldElement + LayoutTests time-editable-components-keyboard-
-// events). The meridiem is never typed: 06:00 AM and 10:00 PM already carry the
-// right one, and this Linux build adds a seconds segment Safari does not show.
-// The 08:00 checkpoint separates "keys never reach the segment" from a wrong
-// sequence (HON-62-R6-CLASSIFY).
-async function typeMondayWebKit(page: Page, opens: Locator, closes: Locator) {
-  await opens.focus();
-  await page.keyboard.type("08");
-  await expect(opens, "key delivery checkpoint: the hour segment took '08'").toHaveValue("08:00");
-  await page.keyboard.press("ArrowRight");
-  await page.keyboard.type("30");
+// ENGINE_LIMIT (HON-62; #1094 run 40087568090, probe run 40147321228). In
+// Playwright's Linux WebKit a typed digit or an arrow key reaches a time input
+// (keydown/keypress fire) but never edits a segment: no beforeinput/input/change,
+// the value stays put. A bare <input type="time"> with no app code and a
+// controlled-input mimic do exactly the same
+// (e2e/webkit-time-input-key-probe.spec.ts, which keeps running here so a
+// future WebKit fix is noticed). The typed-keystroke checkpoint is therefore an
+// expected engine limit, NOT an app result, and only that step is replaced: the
+// two values are set with fill(), which dispatches the input and change events
+// the controlled field listens to, and everything after it (save, DB poll,
+// reload, post-reload values) runs unchanged. Typed entry on a real Safari is
+// the open human check for HON-62.
+async function enterMondayWebKit(opens: Locator, closes: Locator) {
+  test.info().annotations.push({
+    type: "engine-limit",
+    description: "typed time segments are not editable in Playwright's Linux WebKit (probe run 40147321228); values set with fill()",
+  });
+  await opens.fill("08:30");
   await expect(opens).toHaveValue("08:30");
-  await closes.focus();
-  await page.keyboard.type("04");
-  await page.keyboard.press("ArrowRight");
-  await page.keyboard.type("45");
+  await closes.fill("16:45");
   await expect(closes).toHaveValue("16:45");
 }
 
@@ -154,7 +156,7 @@ test("an owner types Monday's hours with the keyboard, saves, and they survive a
   const closes = page.getByLabel("Monday closes");
   await expect(opens).toHaveAttribute("type", "time");
 
-  await (browserName === "webkit" ? typeMondayWebKit : typeMondayChromium)(page, opens, closes);
+  await (browserName === "webkit" ? enterMondayWebKit(opens, closes) : typeMondayChromium(page, opens, closes));
 
   await page.getByRole("button", { name: /^Save$/ }).click();
   await expect

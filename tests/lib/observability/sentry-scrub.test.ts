@@ -185,6 +185,31 @@ describe("scrubErrorEvent", () => {
   });
 });
 
+describe("legal and preferred name keys (HON-58)", () => {
+  it("redacts legal-name keys in every spelling a legal-identity field would use", () => {
+    const e = scrubErrorEvent({
+      type: undefined,
+      extra: {
+        legal_name: "Synthetic Legal",
+        legalName: "Synthetic Legal",
+        "legal-name": "Synthetic Legal",
+        legal_given_name: "Synthetic",
+        legal_family_name: "Legal",
+        preferred_name: "Syn",
+        legal_status: "keep-me",
+      },
+    } as ErrorEvent);
+    const extra = e.extra as Record<string, unknown>;
+    expect(extra.legal_name).toBe(REDACTED);
+    expect(extra.legalName).toBe(REDACTED);
+    expect(extra["legal-name"]).toBe(REDACTED);
+    expect(extra.legal_given_name).toBe(REDACTED);
+    expect(extra.legal_family_name).toBe(REDACTED);
+    expect(extra.preferred_name).toBe(REDACTED);
+    expect(extra.legal_status).toBe("keep-me");
+  });
+});
+
 describe("scrubBreadcrumb", () => {
   it("drops console breadcrumbs entirely", () => {
     const b: Breadcrumb = { category: "console", message: "leak client Jane" };

@@ -8,7 +8,9 @@ import {
 import { blockAreasLabel } from "@/lib/sessions/block-areas";
 import {
   capResults,
-  escapeIlike,
+  CLIENT_SCAN_CAP_PER_READ,
+  containsPattern,
+  orIlike,
   sanitizeQuery,
   statusForQuery,
   SEARCH_MIN_CHARS,
@@ -19,6 +21,13 @@ import {
   type NavSearchContext,
 } from "@/lib/search/navigation-registry";
 import { mergeMemoryBlockRows } from "@/lib/search/treatment-memory-merge";
+import {
+  hasNameQuery,
+  matchesClientSearch,
+  nameCandidatePatterns,
+  NON_ASCII_NAME_REGEX,
+  phoneCandidatePattern,
+} from "@/lib/clients/name-search";
 
 // Global Search server action (V1: PR #232 · V2-A: settings + navigation).
 //
@@ -42,6 +51,13 @@ import { mergeMemoryBlockRows } from "@/lib/search/treatment-memory-merge";
 // trigram indexes if a studio ever grows past that).
 
 const CLIENT_CAP = 5;
+
+// HON-58: rows per page of a wide candidate read. Candidates are read page by
+// page until CLIENT_CAP of them are confirmed, none remain, or the read reaches
+// CLIENT_SCAN_CAP_PER_READ. They are never cut at a fixed count before
+// confirmation (Codex P2 4366960913), and a read that stops at the scan bound
+// says so rather than passing as complete.
+const CLIENT_CANDIDATE_PAGE = 1000;
 const APPOINTMENT_CAP = 4;
 const MEMORY_CAP = 4;
 const RECORD_CAP = 3;
@@ -113,9 +129,138 @@ function fmtDate(iso: string | null | undefined): string | undefined {
   return d.toISOString().slice(0, 10);
 }
 
+// DAT-002: a failed read is not an empty one. Every non-client read ends in
+// rowsOrFail, so a failure aborts the search with { ok: false } (shown as
+// "Search could not be loaded.") instead of reading as "nothing matched".
+class SearchReadFailed extends Error {}
+
+function rowsOrFail<T>(r: { data: T[] | null; error: unknown }): T[] {
+  if (r.error) throw new SearchReadFailed();
+  return r.data ?? [];
+}
+
+type ClientSearchRow = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+};
+
+// truncated: some read stopped at CLIENT_SCAN_CAP_PER_READ before it had
+// CLIENT_CAP matches, so a matching client may exist beyond what was scanned.
+type ClientSearch = { rows: ClientSearchRow[]; truncated: boolean };
+
+// Clients (HON-58). The direct ILIKE is today's rule (a literal substring of
+// name, email or phone), so nothing it found is lost. The candidate reads add
+// what ILIKE alone cannot see:
+// word order ("smith jane"), a preferred name inside the stored string
+// ("Jane (Janie) Smith" by "janie smith"), punctuation ("obrien") and
+// diacritics ("jose", "Šimon"), and phone formatting. Together they admit
+// every row the shared matcher can accept (lib/clients/name-search.ts), and
+// every candidate must pass the same matchesClientSearch the client-side
+// lists use before it counts toward the cap.
+//
+// Returns null when any page of any read fails (DAT-002): a failed page is not
+// "no more rows", and a partial list would look like a complete one. For the
+// same reason, a read cut short by the scan bound sets `truncated`.
+async function searchClientRows(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  studioId: string,
+  query: string,
+  like: string,
+): Promise<ClientSearch | null> {
+  const base = () =>
+    supabase
+      .from("clients")
+      .select("id, name, email, phone")
+      .eq("studio_id", studioId)
+      .is("archived_at", null);
+
+  // Name order, then id, so offset pages neither repeat nor skip a row.
+  const confirmed = async (
+    read: () => ReturnType<typeof base>,
+  ): Promise<ClientSearch | null> => {
+    const found: ClientSearchRow[] = [];
+    for (let offset = 0; ; ) {
+      // The last request reaches one row PAST the bound (index
+      // CLIENT_SCAN_CAP_PER_READ), never scanned: it only tells "stopped at
+      // the bound" apart from "ran out of candidates".
+      const { data, error } = await read()
+        .order("name")
+        .order("id")
+        .range(offset, Math.min(offset + CLIENT_CANDIDATE_PAGE - 1, CLIENT_SCAN_CAP_PER_READ));
+      if (error) return null;
+      const page = (data ?? []) as ClientSearchRow[];
+      if (page.length === 0) return { rows: found, truncated: false };
+      for (const [i, row] of page.entries()) {
+        if (offset + i >= CLIENT_SCAN_CAP_PER_READ) return { rows: found, truncated: true };
+        if (!matchesClientSearch(row, query)) continue;
+        found.push(row);
+        // The first CLIENT_CAP confirmed rows in name order are all the
+        // final, name-sorted and capped result can use from this read.
+        if (found.length >= CLIENT_CAP) return { rows: found, truncated: false };
+      }
+      // A server row cap can shorten a page, so advance by what arrived.
+      offset += page.length;
+    }
+  };
+
+  const namePatterns = nameCandidatePatterns(query);
+  const phonePattern = phoneCandidatePattern(query);
+  const none = Promise.resolve<ClientSearch>({ rows: [], truncated: false });
+
+  const [direct, asciiNamed, otherNamed, phoned] = await Promise.all([
+    // The direct read is confirmed and paged like every other client read
+    // (Codex P2 4367010228): no row reaches the cap unconfirmed.
+    confirmed(() => base().or(orIlike(["name", "email", "phone"], like))),
+    namePatterns.length > 0
+      ? confirmed(() => {
+          let q = base();
+          for (const pattern of namePatterns) q = q.ilike("name", pattern);
+          return q;
+        })
+      : none,
+    hasNameQuery(query) ? confirmed(() => base().filter("name", "match", NON_ASCII_NAME_REGEX)) : none,
+    phonePattern ? confirmed(() => base().ilike("phone", phonePattern)) : none,
+  ]);
+  if (!direct || !asciiNamed || !otherNamed || !phoned) return null;
+
+  const seen = new Set<string>();
+  const rows: ClientSearchRow[] = [];
+  for (const row of direct.rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    rows.push(row);
+  }
+  for (const row of [...asciiNamed.rows, ...otherNamed.rows, ...phoned.rows]) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    rows.push(row);
+  }
+  return {
+    rows: rows.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "")).slice(0, CLIENT_CAP),
+    truncated: [direct, asciiNamed, otherNamed, phoned].some((r) => r.truncated),
+  };
+}
+
+// clientsTruncated: the client scan stopped at its bound, so the client results
+// are the first matches, not necessarily all of them (SEARCH-SCAN-BOUND).
+type GlobalSearchResponse =
+  | { ok: true; results: SearchResult[]; clientsTruncated?: true }
+  | { ok: false };
+
 export async function globalSearchAction(
   rawQuery: string,
-): Promise<{ ok: true; results: SearchResult[] } | { ok: false }> {
+): Promise<GlobalSearchResponse> {
+  try {
+    return await runGlobalSearch(rawQuery);
+  } catch (e) {
+    if (e instanceof SearchReadFailed) return { ok: false };
+    throw e;
+  }
+}
+
+async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> {
   let studioId: string;
   // Navigation visibility is derived HERE, from the resolved session: the
   // same source that scopes every data query below. There is no code path
@@ -142,26 +287,18 @@ export async function globalSearchAction(
     // one definition of "how many results may leave this action".
     return { ok: true, results: capResults(navResults("", navContext)) };
   }
-  const like = `%${escapeIlike(query)}%`;
+  const like = containsPattern(query);
   const supabase = await createClient();
 
   const [
-    clientRows,
+    clientSearch,
     blockRows,
     childAreaRows,
     noteRows,
     sterileRows,
     disinfectantRows,
   ] = await Promise.all([
-    supabase
-      .from("clients")
-      .select("id, name, email, phone")
-      .eq("studio_id", studioId)
-      .is("archived_at", null)
-      .or(`name.ilike.${like},email.ilike.${like},phone.ilike.${like}`)
-      .order("name")
-      .limit(CLIENT_CAP)
-      .then((r) => r.data ?? []),
+    searchClientRows(supabase, studioId, query, like),
     supabase
       .from("session_blocks")
       .select(MEMORY_BLOCK_SELECT)
@@ -173,11 +310,14 @@ export async function globalSearchAction(
       .is(SESSION_ACTIVE_FILTERS.deletedAt, null)
       .neq(SESSION_ACTIVE_FILTERS.recordStatus, VOID_RECORD_STATUS)
       .or(
-        `primary_area.ilike.${like},block_name.ilike.${like},caution_note.ilike.${like},reaction_notes.ilike.${like},probe_label.ilike.${like},probe_lot_number.ilike.${like}`,
+        orIlike(
+          ["primary_area", "block_name", "caution_note", "reaction_notes", "probe_label", "probe_lot_number"],
+          like,
+        ),
       )
       .order("created_at", { ascending: false })
       .limit(MEMORY_CAP)
-      .then((r) => r.data ?? []),
+      .then(rowsOrFail),
     // Structured treatment areas (migration 0128). The block columns above
     // only carry the LEGACY primary_area, so a block charted as
     // "Left Cheek · Right Sideburn" is stored with primary_area "Cheek" and
@@ -196,7 +336,7 @@ export async function globalSearchAction(
       .ilike("area", like)
       .order("created_at", { ascending: false })
       .limit(MEMORY_CHILD_CANDIDATE_CAP)
-      .then((r) => r.data ?? []),
+      .then(rowsOrFail),
     supabase
       .from("sessions")
       .select("id, client_id, started_at, next_session_note, client:clients(name)")
@@ -208,15 +348,15 @@ export async function globalSearchAction(
       .ilike("next_session_note", like)
       .order("started_at", { ascending: false })
       .limit(2)
-      .then((r) => r.data ?? []),
+      .then(rowsOrFail),
     supabase
       .from("record_keeping_sterile_items")
       .select("id, item_description, lot_number, date_purchased")
       .eq("studio_id", studioId)
-      .or(`lot_number.ilike.${like},item_description.ilike.${like}`)
+      .or(orIlike(["lot_number", "item_description"], like))
       .order("date_purchased", { ascending: false })
       .limit(RECORD_CAP)
-      .then((r) => r.data ?? []),
+      .then(rowsOrFail),
     supabase
       .from("record_keeping_disinfectants")
       .select("id, disinfectant_name, date_prepared")
@@ -224,8 +364,13 @@ export async function globalSearchAction(
       .ilike("disinfectant_name", like)
       .order("date_prepared", { ascending: false })
       .limit(2)
-      .then((r) => r.data ?? []),
+      .then(rowsOrFail),
   ]);
+  // A failed client read fails the search: the panel says search is
+  // unavailable rather than showing no clients, or some of them, as if that
+  // were the answer.
+  if (clientSearch === null) return { ok: false };
+  const clientRows = clientSearch.rows;
 
   // Appointments: by matched client, by service-name match, and by
   // status keyword. Bounded follow-up reads, deduped by id.
@@ -251,7 +396,7 @@ export async function globalSearchAction(
       .eq("studio_id", studioId)
       .ilike("name", like)
       .limit(3)
-      .then((r) => r.data ?? []),
+      .then(rowsOrFail),
     clientIds.length > 0
       ? supabase
           .from("appointments")
@@ -262,7 +407,7 @@ export async function globalSearchAction(
           .in("client_id", clientIds)
           .order("starts_at", { ascending: false })
           .limit(APPOINTMENT_CAP)
-          .then((r) => r.data ?? [])
+          .then(rowsOrFail)
       : Promise.resolve([]),
     status
       ? supabase
@@ -274,7 +419,7 @@ export async function globalSearchAction(
           .eq("status", status)
           .order("starts_at", { ascending: false })
           .limit(3)
-          .then((r) => r.data ?? [])
+          .then(rowsOrFail)
       : Promise.resolve([]),
     childBlockIds.length > 0
       ? supabase
@@ -289,7 +434,7 @@ export async function globalSearchAction(
           .in("id", childBlockIds)
           .order("created_at", { ascending: false })
           .limit(MEMORY_CAP)
-          .then((r) => r.data ?? [])
+          .then(rowsOrFail)
       : Promise.resolve([]),
   ]);
   const apptByService =
@@ -303,7 +448,7 @@ export async function globalSearchAction(
           .in("service_id", serviceRows.map((s) => s.id as string))
           .order("starts_at", { ascending: false })
           .limit(3)
-          .then((r) => r.data ?? [])
+          .then(rowsOrFail)
       : [];
 
   const results: SearchResult[] = [];
@@ -438,7 +583,11 @@ export async function globalSearchAction(
 
   results.push(...navResults(query, navContext));
 
-  return { ok: true, results: capResults(results) };
+  return {
+    ok: true,
+    results: capResults(results),
+    ...(clientSearch.truncated ? { clientsTruncated: true as const } : {}),
+  };
 }
 
 // Registry matches, projected onto the shared SearchResult shape. The registry

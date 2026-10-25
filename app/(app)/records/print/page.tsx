@@ -27,6 +27,8 @@ import {
 import { todayInTz } from "@/lib/booking/tz";
 import type { RecordKeepingAuditEvent } from "@/lib/types/database";
 import { PrintButton } from "./print-button";
+import { recoverRecordsRead } from "@/lib/record-keeping/section-recovery";
+import { RefreshRetryButton } from "../refresh-retry-button";
 import {
   linkedPhotoLine,
   loadLinkedPhotoCounts,
@@ -162,12 +164,82 @@ export default async function RecordKeepingPrintPage({
     procedureFilter.from ? `&from=${procedureFilter.from}` : "",
     procedureFilter.to ? `&to=${procedureFilter.to}` : "",
   ].join("");
-  const filteredClient =
-    section === "procedures" && procedureFilter.clientId
-      ? ((await getClientsForStudio(studio.id)).find(
-          (c) => c.id === procedureFilter.clientId,
-        ) ?? null)
-      : null;
+  // RECORDS-SECTION-RECOVERY: print KEEPS failing closed, but onto a page that
+  // cannot be mistaken for a log. Every read this document needs runs here,
+  // before anything is rendered; the section is called directly (not as
+  // <Section />) so its throw is caught on this page. On any failure the page
+  // has no document header, no studio name, no generated stamp and no Print
+  // button, so no empty printout can exist.
+  const loaded = await recoverRecordsRead("records_print", section, async () => {
+    const filteredClient =
+      section === "procedures" && procedureFilter.clientId
+        ? ((await getClientsForStudio(studio.id)).find(
+            (c) => c.id === procedureFilter.clientId,
+          ) ?? null)
+        : null;
+    let body: React.ReactNode;
+    switch (section) {
+      case "sterile":
+        body = await SterilePrint({
+          studioId: studio.id,
+          includeHistory,
+          timezone: studio.timezone,
+        });
+        break;
+      case "disinfectants":
+        body = await DisinfectantsPrint({
+          studioId: studio.id,
+          includeHistory,
+          timezone: studio.timezone,
+        });
+        break;
+      case "incidents":
+        body = isOwner ? (
+          await IncidentsPrint({ studioId: studio.id, includeHistory })
+        ) : (
+          <p className="text-sm">
+            Exposure incident history is owner-only and is not included in
+            this export.
+          </p>
+        );
+        break;
+      case "procedures":
+        body = await ProceduresPrint({
+          studioId: studio.id,
+          includeHistory,
+          timezone: studio.timezone,
+          filter: procedureFilter,
+        });
+        break;
+    }
+    return { filteredClient, body };
+  });
+
+  if (!loaded.ok) {
+    return (
+      <div
+        role="alert"
+        data-testid="records-print-unavailable"
+        className="flex flex-col gap-3 bg-white text-neutral-900"
+      >
+        <Link
+          href={`/records?section=${section}${section === "procedures" ? procedureFilterQuery : ""}`}
+          className="text-sm text-neutral-500 hover:text-neutral-900 print:hidden"
+        >
+          ← Record Keeping
+        </Link>
+        <p className="text-lg font-medium">
+          Could not load {SECTION_TITLES[section]}. No log was generated.
+        </p>
+        <p className="text-sm">
+          This page is not a record. Nothing is listed because the read failed,
+          not because there are no records.
+        </p>
+        <RefreshRetryButton className="self-start text-sm font-medium underline print:hidden" />
+      </div>
+    );
+  }
+  const { filteredClient, body } = loaded.value;
 
   return (
     <div className="flex flex-col gap-5 bg-white text-neutral-900">
@@ -215,40 +287,7 @@ export default async function RecordKeepingPrintPage({
         </p>
       </header>
 
-      {section === "sterile" && (
-        <SterilePrint
-          studioId={studio.id}
-          includeHistory={includeHistory}
-          timezone={studio.timezone}
-        />
-      )}
-      {section === "disinfectants" && (
-        <DisinfectantsPrint
-          studioId={studio.id}
-          includeHistory={includeHistory}
-          timezone={studio.timezone}
-        />
-      )}
-      {section === "incidents" &&
-        (isOwner ? (
-          <IncidentsPrint
-            studioId={studio.id}
-            includeHistory={includeHistory}
-          />
-        ) : (
-          <p className="text-sm">
-            Exposure incident history is owner-only and is not included in
-            this export.
-          </p>
-        ))}
-      {section === "procedures" && (
-        <ProceduresPrint
-          studioId={studio.id}
-          includeHistory={includeHistory}
-          timezone={studio.timezone}
-          filter={procedureFilter}
-        />
-      )}
+      {body}
     </div>
   );
 }

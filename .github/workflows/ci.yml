@@ -1628,6 +1628,157 @@ jobs:
           path: test-results/
           retention-days: 7
 
+  # Photo checks that need REAL storage (E-GAPS CLN-005 + ENG-002). Every other
+  # Supabase-starting job excludes storage-api, so the photo specs self-skip
+  # there (an upload 503s at Kong) and the signed-URL DB cases are skipped by
+  # the db lane. This job starts the same trimmed stack WITH storage-api
+  # (imgproxy stays out: photos sign plain objects, no transforms), fails on a
+  # storage preflight before anything could self-skip, then runs the
+  # storage-dependent DB file and the two storage photo specs. The specs set
+  # bypassCSP in the test browser because the local stack serves storage over
+  # http; the app CSP is not touched. Not required: no job needs it, the
+  # aggregator does not read it and branch protection does not name it.
+  storage-photos:
+    name: storage photos (not required)
+    needs: changes
+    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') }}
+    runs-on: ubuntu-latest
+    # D7b: read-only package scope for the authenticated ghcr.io image pull only.
+    permissions:
+      contents: read
+      packages: read
+    # Target ~10 min: the mobile lane's setup (~6 min p90 incl. the bounded
+    # system-package install) plus storage-api, one DB file and two specs. The
+    # hard timeout exceeds it (CLAUDE.md section 4).
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          # Same pin and rationale as the other browser lanes (grants parity, v1 branch).
+          version: 2.102.0
+
+      - name: Configure local auth for the E2E origin
+        run: |
+          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
+          test -f supabase/config.toml
+          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
+          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
+
+      # D7b (Sam, 2026-10-22, option A). Same sanctioned read-only ghcr.io
+      # login as the other Supabase-starting jobs, pinned by
+      # tests/ci/ci-config.test.ts.
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start local Supabase stack (db + auth + mail capture + storage)
+        id: sb_start
+        # storage-api is deliberately NOT in the -x list. Direct pinned-CLI
+        # call while the ghcr.io credential is held: no checked-out script runs
+        # before the logout (Codex P2 4354172124).
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply full migration chain from scratch
+        run: supabase db reset --local
+
+      - name: Storage preflight (the storage checks self-skip without it)
+        id: storage_up
+        run: curl -fsS http://127.0.0.1:54321/storage/v1/version
+
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-
+
+      - name: Install Playwright Chromium (cache miss)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium
+
+      # System packages: the same cached, BOUNDED install as the mobile lane
+      # (bounds live only in scripts/ci/playwright-system-deps.sh).
+      - name: Resolve runner image
+        id: img
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright system packages (bounded, .deb cache)
+        id: pw_sys
+        timeout-minutes: 6
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      # Playwright is fully prepared ABOVE, before the fallible DB step, so a red
+      # DB step cannot leave the browser step without a browser (Codex P2
+      # 4368722781). Each of the two test steps runs when the preflight passed,
+      # whatever the other one did (the mirror rule); the browser step also
+      # needs its system packages, whose success implies the earlier prep.
+      - name: Signed-URL route DB cases (storage-dependent)
+        if: ${{ !cancelled() && steps.storage_up.outcome == 'success' }}
+        run: npx vitest run --config vitest.db.config.ts tests/db/treatment-image-signed-url-route.db.test.ts
+
+      - name: Storage photo E2E (CLN-005 + ENG-002)
+        if: ${{ !cancelled() && steps.storage_up.outcome == 'success' && steps.pw_sys.outcome == 'success' }}
+        run: npx playwright test e2e/fett-photos-thumbnail-recovery.spec.ts e2e/treatment-image-upload-formats.spec.ts --project=chromium
+        env:
+          HONE_E2E_FAKE_RESEND: "1"
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: storage-photos-playwright-traces
+          path: test-results/
+          retention-days: 7
+
   # HON-62: the weekly-hours editor's native <input type="time"> in WebKit, the
   # engine behind iPad Safari. NOT REQUIRED and NOT AGGREGATED: no branch
   # protection rule names it and `browser-e2e` does not need it, so a WebKit
@@ -1742,7 +1893,7 @@ jobs:
           key: pw-webkit-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: WebKit E2E (HON-62 time inputs)
-        run: npx playwright test e2e/availability-hours-editor.spec.ts --project=webkit-hon-62
+        run: npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts --project=webkit-hon-62
         env:
           HONE_E2E_WEBKIT: "1"
           HONE_E2E_FAKE_RESEND: "1"

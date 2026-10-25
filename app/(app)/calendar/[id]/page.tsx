@@ -95,6 +95,7 @@ export default async function AppointmentDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{
     view?: string | string[];
+    day?: string | string[];
     week?: string | string[];
     month?: string | string[];
   }>;
