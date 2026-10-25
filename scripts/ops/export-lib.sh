@@ -199,7 +199,8 @@ snap_open() {
   printf '%s\n' "select pg_export_snapshot();" >&"$SNAP_IN"
   local line
   SNAPSHOT_ID=""
-  while IFS= read -r -u "$SNAP_OUT_FD" line; do
+  # Bounded: a session that never answers must not hang the tool (-t 120 ends the loop).
+  while IFS= read -r -t 120 -u "$SNAP_OUT_FD" line; do
     case "$line" in [0-9A-F]*-[0-9A-F]*) SNAPSHOT_ID="$line"; break;; esac
   done
   [ -n "$SNAPSHOT_ID" ] || export_fail "no snapshot id from the database session"
@@ -373,4 +374,25 @@ manifest_field() {
   local rest="$1" n="$2" i
   for ((i = 1; i < n; i++)); do rest="${rest#*"$US"}"; done
   if [ "$n" -lt 5 ]; then printf '%s' "${rest%%"$US"*}"; else printf '%s' "$rest"; fi
+}
+
+# pick_sample N K LARGEST SEED: K distinct indices of 0..N-1, chosen WITHOUT
+# replacement across the WHOLE range (a seeded partial Fisher-Yates in awk), then
+# LARGEST once if it is not already among them. K is capped at N, so the output has
+# at most K+1 lines and the work is bounded by N. One index per line.
+# It deliberately does not use $RANDOM: that is 0..32767, so `% N` never reaches an
+# index above 32767 and a loop that waits for K distinct values never ends when K
+# exceeds that (Codex P2 4371357978).
+pick_sample() {
+  awk -v n="$1" -v k="$2" -v largest="$3" -v seed="$4" 'BEGIN {
+    if (k > n) k = n
+    srand(seed)
+    for (i = 0; i < n; i++) a[i] = i
+    for (i = 0; i < k; i++) {
+      j = i + int(rand() * (n - i))
+      t = a[i]; a[i] = a[j]; a[j] = t
+      print a[i]; seen[a[i]] = 1
+    }
+    if (largest >= 0 && largest < n && !(largest in seen)) print largest
+  }'
 }

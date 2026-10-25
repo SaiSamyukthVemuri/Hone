@@ -138,17 +138,19 @@ DONE="$(find "$OUT/objects" -name '*.age' | wc -l | tr -d ' ')"
 object_manifest_check <(printf '%s\n' "${MANIFEST[@]}") "$N" || export_fail "object manifest check failed"
 
 # --- 3. re-download a random sample plus the largest, compare hashes (PLAN section 5) ----
-declare -A PICK=()
-PICK[$LARGEST_I]=1
-k="$SAMPLE"; [ "$k" -gt "$N" ] && k="$N"
-while [ "${#PICK[@]}" -lt "$((k + 1))" ] && [ "${#PICK[@]}" -lt "$N" ]; do PICK[$((RANDOM % N))]=1; done
-for i in "${!PICK[@]}"; do
+# SAMPLE distinct indices drawn WITHOUT replacement from the whole 0..N-1 range (capped at N),
+# plus the largest object once. Bounded by N; no $RANDOM (Codex P2 4371357978).
+SEED="$(od -An -N4 -tu4 /dev/urandom | tr -d '[:space:]')"
+picks="$(pick_sample "$N" "$SAMPLE" "$LARGEST_I" "$SEED")" || export_fail "could not choose the verification sample"
+mapfile -t PICK <<<"$picks"
+[ "${#PICK[@]}" -ge 1 ] && [ "${#PICK[@]}" -le "$N" ] || export_fail "the verification sample has ${#PICK[@]} object(s) out of $N"
+for i in "${PICK[@]}"; do
   path="${LIST[$i]%%"$US"*}"; idx="$(printf '%06d' "$i")"
   want="$(manifest_field "${MANIFEST[$i]}" 4)"
   have="$(get "$path" | sha256sum | cut -d' ' -f1)" || export_fail "re-download of object $idx failed"
   [ "$have" = "$want" ] || export_fail "object $idx hashes differently on re-download"
 done
-export_log "sample re-download: ${#PICK[@]} object(s) (random plus the largest) matched"
+export_log "sample re-download: ${#PICK[@]} object(s) (a random sample plus the largest, without replacement) matched"
 
 # --- 4. manifest (encrypted), totals, hashes -------------------------------------------
 { printf 'manifest-version=%s\n' "$MANIFEST_VERSION"; printf '%s\n' "${MANIFEST[@]}"; printf 'count=%s total_bytes=%s\n' "$N" "$TOTAL"; } | age -r "$RECIPIENT" -o "$OUT/manifest.age"

@@ -870,6 +870,104 @@ echo survived`;
   });
 });
 
+describe("Codex P2 4371357978: the verification sample is drawn from the whole index range, without replacement", () => {
+  const sample = (n: number, k: number, largest: number, seed: number) => {
+    const r = spawnSync("bash", ["-c", `. ${path.join(OPS, "export-lib.sh")}; pick_sample ${n} ${k} ${largest} ${seed}`], { encoding: "utf8", timeout: 30_000 });
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout.split("\n").filter(Boolean).map(Number);
+  };
+
+  it("N=40000 with k=40000 terminates and samples every index exactly once", () => {
+    const got = sample(40000, 40000, 123, 1);
+    expect(got).toHaveLength(40000);
+    expect(new Set(got).size).toBe(40000);
+    expect(Math.min(...got)).toBe(0);
+    expect(Math.max(...got)).toBe(39999);
+  });
+
+  it("N=40000 with k=10 can pick an index above 32767 (the $RANDOM ceiling); the same seed gives the same sample", () => {
+    const high = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((seed) => sample(40000, 10, -1, seed)).filter((g) => g.some((i) => i > 32767));
+    expect(high.length).toBeGreaterThan(0);
+    expect(sample(40000, 10, -1, 7)).toEqual(sample(40000, 10, -1, 7));
+    expect(sample(40000, 10, -1, 7)).not.toEqual(sample(40000, 10, -1, 8));
+    // every pick is distinct and in range
+    const g = sample(40000, 10, -1, 3);
+    expect(new Set(g).size).toBe(10);
+    expect(g.every((i) => i >= 0 && i < 40000)).toBe(true);
+  });
+
+  it("k above N is capped at N; k=0 samples nothing but the largest; the largest is never counted twice", () => {
+    const capped = sample(5, 100, 2, 9);
+    expect(capped.sort()).toEqual([0, 1, 2, 3, 4]);
+    expect(sample(100, 0, 42, 5)).toEqual([42]);
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const g = sample(20, 10, 7, seed);
+      expect(g.filter((i) => i === 7)).toHaveLength(1);
+      expect(g.length).toBeGreaterThanOrEqual(10);
+      expect(g.length).toBeLessThanOrEqual(11);
+      expect(new Set(g).size).toBe(g.length);
+    }
+    expect(sample(1, 5, 0, 1)).toEqual([0]);
+  });
+
+  it("the object export asks for its sample from pick_sample, and a --sample far above N still finishes and writes its receipt", () => {
+    const enc = (p: string) => Buffer.byteLength(`https://${REF}.supabase.co/storage/v1/object/treatment-images/${p}`);
+    const d = fixtures("rnd-e2e");
+    const paths = ["s/c/a.png", "s/c/b.png", "s/c/c.png"];
+    writeFileSync(path.join(d, "list.txt"), paths.map((p) => `${p}${US}${enc(p)}${US}image/png`).join("\n") + "\n");
+    writeFileSync(path.join(d, "coverage.txt"), "rows_total=3 rows_without_object=0 objects_total=3 objects_without_row=0\n");
+    const out = path.join(scratch, "rnd-e2e-out");
+    const r = run("object-export.sh", ["--out", out, "--recipient", "age1x", "--expect-ref", REF, "--storage-url", `https://${REF}.supabase.co`, "--sample", "100000"], { DB_URL, SERVICE_KEY: "k", EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toContain("sample re-download: 3 object(s)");
+    expect(existsSync(path.join(out, "receipt.txt"))).toBe(true);
+  });
+
+  // The old selection was `RANDOM % N` inside a loop waiting for K distinct values.
+  function badRandomOrLoop(source: string): string[] {
+    const out: string[] = [];
+    source.split("\n").forEach((raw, i) => {
+      const line = raw.replace(/^\s*#.*$/, "");
+      if (/\bS?RANDOM\b/.test(line)) out.push(`line ${i + 1}: $RANDOM/$SRANDOM (${raw.trim().slice(0, 70)})`);
+      const m = /^\s*(while|until)\b(.*)$/.exec(line);
+      if (m) {
+        const cond = m[2];
+        const allowed =
+          /^\s*\[ \$# -gt 0 \]( && \[\[ "\$1" == \[A-Z_\]\*=\* \]\])?; do/.test(cond) ||   // option parsing: every branch shifts or fails
+          /^\s*IFS= read -r( -t 120)?( -u "\$SNAP_OUT_FD")? line; do/.test(cond) ||                 // reads until EOF (the session read is also timed)
+          /^\s*IFS= read -r line; do/.test(cond);
+        if (!allowed) out.push(`line ${i + 1}: an unreviewed ${m[1]} loop (${raw.trim().slice(0, 70)})`);
+      }
+    });
+    return out;
+  }
+
+  it("RED control: the old $RANDOM loop and an unbounded retry loop are detected; GREEN: the reviewed loops are not", () => {
+    for (const bad of [
+      'while [ "${#PICK[@]}" -lt "$((k + 1))" ]; do PICK[$((RANDOM % N))]=1; done',
+      'x=$((RANDOM % 10))',
+      'while true; do curl -fsS "$u" && break; done',
+      'until curl -fsS "$u"; do sleep 1; done',
+      'while ! wait_marker "$f"; do :; done',
+    ]) expect(badRandomOrLoop(bad), bad).not.toEqual([]);
+    for (const good of [
+      'while [ $# -gt 0 ]; do',
+      '  while [ $# -gt 0 ] && [[ "$1" == [A-Z_]*=* ]]; do vars+=("$1"); shift; done',
+      '  while IFS= read -r -t 120 -u "$SNAP_OUT_FD" line; do',
+      '  while IFS= read -r -u "$SNAP_OUT_FD" line; do',
+      '  while IFS= read -r line; do',
+      'for ((i = 0; i < n * 10; i++)); do',
+    ]) expect(badRandomOrLoop(good), good).toEqual([]);
+  });
+
+  it("no tool uses $RANDOM for anything, and every while/until loop in the six tools is a reviewed, bounded one", () => {
+    const names = ["export-lib.sh", "logical-export.sh", "object-export.sh", "verify-export.sh", "export-restore.sh", "export-rehearsal.sh"];
+    for (const n of names) expect(badRandomOrLoop(readFileSync(path.join(OPS, n), "utf8")), n).toEqual([]);
+    // and the sample is taken from pick_sample
+    expect(readFileSync(path.join(OPS, "object-export.sh"), "utf8")).toMatch(/pick_sample "\$N" "\$SAMPLE" "\$LARGEST_I" "\$SEED"/);
+  });
+});
+
 describe("source contract: what the tools must never do", () => {
   const files = ["export-lib.sh", "logical-export.sh", "object-export.sh", "verify-export.sh", "export-restore.sh", "export-rehearsal.sh"];
   const src = Object.fromEntries(files.map((f) => [f, readFileSync(path.join(OPS, f), "utf8")]));
