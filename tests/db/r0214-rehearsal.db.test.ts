@@ -277,6 +277,7 @@ const AREAS = [
   "onboard_claim_db", "onboard_app_stubbed_stripe",
 ] as const;
 
+const ran = new Map<string, string>();
 let slot = 0;
 const nextStart = () => {
   slot += 1;
@@ -404,10 +405,14 @@ async function probes(state: StateKey, phase: "pre_s2" | "post_s2", sc: PaymentS
     const row = await adminQuery(
       `insert into public.payment_charge_attempts
          (studio_id, charge_reason, client_id, session_id, appointment_id, created_by_practitioner_id,
-          amount_cents, currency, status, stripe_livemode, client_payment_method_id, card_authorization_signature_id)
+          amount_cents, currency, status, stripe_livemode, client_payment_method_id, card_authorization_signature_id,
+          stripe_account_id, stripe_customer_id, stripe_payment_method_id)
        values ($1,'session_payment',$2,$3,$4,$5,22500,'cad','ready',false,
          (select id from public.client_payment_methods where client_id=$2 and studio_id=$1 limit 1),
-         (select id from public.client_consent_signatures where client_id=$2 and studio_id=$1 order by template_version desc limit 1))
+         (select id from public.client_consent_signatures where client_id=$2 and studio_id=$1 order by template_version desc limit 1),
+         (select stripe_account_id from public.studio_payment_settings where studio_id=$1 limit 1),
+         (select stripe_customer_id from public.client_stripe_customers where client_id=$2 limit 1),
+         (select stripe_payment_method_id from public.client_payment_methods where client_id=$2 and studio_id=$1 limit 1))
        returning id`,
       [sc.studioId, sc.clientId, a.sessionId, a.appointmentId, sc.practitionerId],
     );
@@ -422,18 +427,31 @@ async function probes(state: StateKey, phase: "pre_s2" | "post_s2", sc: PaymentS
 
   await cell(state, phase, "card_run_app", async () => {
     if (!hasCard) throw new NotExercised("state has no saved card or authorization");
-    const id = await prep("ready attempt", readyAttempt);
+    let id: string;
+    try {
+      id = await readyAttempt();
+    } catch (e) {
+      const m = (e as Error).message;
+      if (/payment_jurisdiction_missing/.test(m)) throw new Refused(`charge attempt could not be created: ${m}`);
+      throw new NotExercised(`setup failed (ready attempt): ${m}`);
+    }
     const { runSessionPaymentCharge } = await import("@/lib/billing/session-payment-charge");
     const r = (await runSessionPaymentCharge({ attemptId: id, studioId: sc.studioId, practitionerId: sc.practitionerId })) as unknown as Record<string, unknown>;
-    if (r.ok === true) return `runSessionPaymentCharge -> ${String(r.outcome)} (fake Stripe)`;
+    if (r.ok === true) {
+      ran.set(`${state}|${phase}`, id);
+      return `runSessionPaymentCharge -> ${String(r.outcome)} (fake Stripe)`;
+    }
     throw new Refused(`runSessionPaymentCharge -> ${String(r.outcome ?? "")} ${String(r.message ?? r.failureCode ?? "")}`);
   });
 
   await cell(state, phase, "card_refund_app", async () => {
-    const att = await adminQuery(
-      `select id from public.payment_charge_attempts where studio_id=$1 and status='succeeded' and (refund_status is null or refund_status='none') order by created_at limit 1`,
-      [sc.studioId],
-    );
+    const made = ran.get(`${state}|${phase}`);
+    const att = made
+      ? { rows: [{ id: made }] }
+      : await adminQuery(
+          `select id from public.payment_charge_attempts where studio_id=$1 and status='succeeded' and (refund_status is null or refund_status='none') order by created_at limit 1`,
+          [sc.studioId],
+        );
     if (att.rows.length === 0) throw new NotExercised("no refund-eligible succeeded card charge in this state (or already refunded by an earlier phase)");
     const { refundPaymentChargeAttempt } = await import("@/lib/billing/payment-refund");
     const r = (await refundPaymentChargeAttempt({ attemptId: att.rows[0].id, studioId: sc.studioId, practitionerId: sc.practitionerId })) as unknown as Record<string, unknown>;
@@ -493,13 +511,16 @@ async function s2(state: StateKey, sc: PaymentScenario) {
       if (!ok(second)) throw new Refused(`first call ${first}; with every acknowledgement ${second}`);
       return `initializer: first call ${first}; with acknowledgements ${second}`;
     }
-    const r = await adminQuery(
-      `select * from public.set_studio_payment_jurisdiction($1,'CA','cad','operator:rehearsal','rehearsal over synthetic history',false,'fixture:r0214')`,
-      [sc.studioId],
-    );
-    const res = resultOf(r.rows);
-    if (res !== "initialized" && res !== "changed") throw new Refused(`plain setter result ${res}`);
-    return `plain setter -> ${res}`;
+    const setter = (ack: boolean) =>
+      adminQuery(
+        `select * from public.set_studio_payment_jurisdiction($1,'CA','cad','operator:rehearsal','rehearsal over synthetic history',$2,'fixture:r0214')`,
+        [sc.studioId, ack],
+      );
+    const first = resultOf((await setter(false)).rows);
+    if (first === "initialized" || first === "changed") return `plain setter -> ${first}`;
+    const second = first === "refused_priced_configuration" ? resultOf((await setter(true)).rows) : first;
+    if (second !== "initialized" && second !== "changed") throw new Refused(`plain setter: first call ${first}; with price acknowledgement ${second}`);
+    return `plain setter: first call ${first}; with price acknowledgement ${second}`;
   });
 }
 
