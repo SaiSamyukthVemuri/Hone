@@ -5,7 +5,7 @@ set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REAL="${1:?path to the installed supabase binary}"
 T="$(mktemp -d "${RUNNER_TEMP:-/tmp}/realgate.XXXXXX")"
-echo "real binary: $REAL"; echo "real --version: $("$REAL" --version)"
+echo "real binary: $REAL"; echo "real --version (exact, bracketed): [$("$REAL" --version)]"
 # (a) the variant's own gate expression, verbatim, on the real binary
 v="$("$REAL" --version 2>/dev/null || true)"; [ "$v" = "2.102.0" ] && echo "gate expression: PASS ($v)" || { echo "gate expression: FAIL ($v)"; exit 1; }
 # (b) the variant itself, BIN = a wrapper that execs the real binary for --version only

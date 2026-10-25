@@ -5,8 +5,8 @@
 # downloaded binary (the sh -x trace never shows the --version call and the CLI's own output is absent).
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-INST="$HERE/hone-s1-install.sh"
-EV="${RUNNER_TEMP:-/tmp}/installer-evidence"; mkdir -p "$EV"
+INST="${INSTALLER:-$HERE/hone-s1-install.sh}"
+EV="${RUNNER_TEMP:-/tmp}/installer-evidence${EVIDENCE_SUFFIX:-}"; mkdir -p "$EV"
 fails=0
 note() { echo "$*"; }
 bad() { fails=$((fails+1)); echo "FAIL: $*"; }
@@ -65,5 +65,17 @@ chmod +x "$EV/shim/curl"
 for tamper in supabase_2.102.0_darwin_arm64.tar.gz checksums.txt; do
   PATH="$EV/shim:$PATH" TAMPER="$tamper" runcase "tampered-download-$tamper" "$INST"
 done
+if [ "${STUB_CODESIGN:-}" = 1 ]; then
+  # v2 codesign-failure case WITHOUT re-signing or touching the system: a COPY of the installer whose two
+  # /usr/bin/codesign references point at a stub that exits 1. Only the path in the copy changes.
+  mkdir -p "$EV/stub"
+  printf '#!/bin/sh\necho "stub codesign: invalid signature (simulated)" >&2\nexit 1\n' > "$EV/stub/codesign"; chmod +x "$EV/stub/codesign"
+  cp "$INST" "$EV/install-codesign-stub.sh"
+  n="$(grep -c '/usr/bin/codesign' "$EV/install-codesign-stub.sh")"
+  sed "s#/usr/bin/codesign#$EV/stub/codesign#g" "$EV/install-codesign-stub.sh" > "$EV/install-codesign-stub.sh.tmp" && mv "$EV/install-codesign-stub.sh.tmp" "$EV/install-codesign-stub.sh"
+  note "codesign-stub copy: $n lines changed (path only)"
+  runcase codesign-failure "$EV/install-codesign-stub.sh"
+  grep -q '^STOP: codesign rejects supabase-go; not running it' "$EV/codesign-failure.trace" && note "STOP text is the codesign refusal" || bad "codesign-failure: wrong STOP text"
+fi
 echo "negative failures: $fails"
 [ "$fails" -eq 0 ]
