@@ -46,7 +46,7 @@ import {
 //    and records the only existing disposition, still_owes.
 
 // THE REPO'S FAKE STRIPE RETURNS A REFUND WITH NO charge / payment_intent /
-// customer, and refundPaymentChargeAttempt's identity check requires them to
+// customer (and knows no currency for a charge it did not create), and refundPaymentChargeAttempt's identity check requires them to
 // equal the attempt's, so against the bare fake EVERY refund ends in
 // needs_manual_review regardless of jurisdiction (measured in round 2/3 of this
 // rehearsal). This adapter fills those three fields from the attempt row so the
@@ -57,14 +57,14 @@ vi.mock("@/lib/stripe/session-payment-stripe", async (importOriginal) => {
     ...orig,
     getSessionPaymentStripe: () => {
       const fake = orig.getSessionPaymentStripe() as unknown as {
-        refunds: { create: (p: { charge?: string | null }, o?: unknown) => Promise<Record<string, unknown>> };
+        refunds: { create: (p: { charge?: string | null; amount?: number | null }, o?: unknown) => Promise<Record<string, unknown>> };
       };
       const create = fake.refunds.create.bind(fake.refunds);
       fake.refunds.create = async (params, opts) => {
         const r = await create(params, opts);
         const { adminQuery: q } = await import("./helpers/harness");
         const a = await q(
-          `select stripe_payment_intent_id, stripe_customer_id from public.payment_charge_attempts where stripe_charge_id=$1 limit 1`,
+          `select stripe_payment_intent_id, stripe_customer_id, currency from public.payment_charge_attempts where stripe_charge_id=$1 limit 1`,
           [params.charge],
         );
         return {
@@ -72,6 +72,11 @@ vi.mock("@/lib/stripe/session-payment-stripe", async (importOriginal) => {
           charge: params.charge,
           payment_intent: a.rows[0]?.stripe_payment_intent_id ?? null,
           customer: a.rows[0]?.stripe_customer_id ?? null,
+          // A real Stripe refund carries the CHARGE's currency. The fake only
+          // knows charges it created itself, so a charge seeded as history has
+          // none; state it from the attempt row.
+          currency: a.rows[0]?.currency ?? r.currency,
+          amount: (params as { amount?: number | null }).amount ?? r.amount,
         };
       };
       return fake as never;
