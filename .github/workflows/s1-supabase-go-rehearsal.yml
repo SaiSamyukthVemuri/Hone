@@ -1,4 +1,4 @@
-# POOLER-REHEARSAL. REHEARSAL - NEVER MERGE. S1 through the local Supavisor SESSION pooler (enabled in CI only).
+# S1-SUPABASE-GO. REHEARSAL - NEVER MERGE. S1 through the local Supavisor SESSION pooler (enabled in CI only).
 #
 # (1) Downloads and verifies all eight v2.102.0 release archives and looks for
 # every second source of the same bytes; (2) observes, through a local
@@ -13,26 +13,26 @@
 # login, held only across a direct pinned-CLI start, as in ci.yml. The proxy is
 # a pinned mitmproxy installed into a throwaway virtualenv on the runner.
 
-name: pooler-rehearsal
+name: s1-supabase-go-rehearsal
 
 on:
   pull_request:
     paths:
-      - "scripts/ci/pooler-rehearsal.sh"
+      - "scripts/ci/s1-supabase-go-rehearsal.sh"
       - "scripts/ci/pooler-tlsfront.py"
-      - ".github/workflows/pooler-rehearsal.yml"
+      - ".github/workflows/s1-supabase-go-rehearsal.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: hone-pooler-rehearsal-${{ github.event.pull_request.number || github.ref }}
+  group: hone-s1-supabase-go-rehearsal-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   apply-tool:
-    name: session pooler rehearsal (not required)
+    name: S1 supabase-go rehearsal (not required)
     runs-on: ubuntu-latest
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -97,7 +97,7 @@ jobs:
         if: steps.sb_start.outcome == 'failure'
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x "$EXCLUDE"
 
-      - name: Rehearse the S1 sequence through the session pooler
+      - name: Rehearse S1 with supabase-go (pooler + direct)
         shell: bash
         env:
           REHEARSAL_OUT: ${{ runner.temp }}/apply-tool-out
@@ -105,12 +105,12 @@ jobs:
           set -u
           export DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
           echo "db container: $DB"
-          bash scripts/ci/pooler-rehearsal.sh
+          bash scripts/ci/s1-supabase-go-rehearsal.sh
 
       - name: Upload rehearsal logs
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pooler-rehearsal-logs
+          name: s1-supabase-go-rehearsal-logs
           path: ${{ runner.temp }}/apply-tool-out/
           retention-days: 7
