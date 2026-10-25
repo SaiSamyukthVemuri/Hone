@@ -221,6 +221,8 @@ export type RosterVisit = {
   startsAt: string;
 };
 
+// Keyed by APPOINTMENT id for every client that has a visit in `visits`, and by
+// client id for any other id in `clientIds`.
 export async function getBeforeTodayPreviews(
   studioId: string,
   clientIds: ReadonlyArray<string>,
@@ -363,35 +365,36 @@ export async function getBeforeTodayPreviews(
     blocksBySession.set(b.session_id, list);
   }
 
-  // HON-10. Per client: the earliest of its bookings today is the boundary, and
-  // the sessions linked to any of its bookings are excluded outright (a session
-  // can start a few minutes before its booking's scheduled time).
-  const boundaryByClient = new Map<string, number>();
-  const ownAppointments = new Map<string, Set<string>>();
+  // HON-10. The preview is "before THIS visit", so it is built PER VISIT and
+  // keyed by appointment id: a visit excludes the session linked to itself (a
+  // session can start a few minutes before its booking's scheduled time) and
+  // anything starting at or after its own start. A client booked twice today
+  // gets two answers; the second sees the first visit's session as history,
+  // which is exactly what it is. A client with no visit passed keeps one
+  // unbounded answer keyed by client id.
+  type Target = { key: string; clientId: string; visit: RosterVisit | null };
+  const targets: Target[] = [];
+  const clientsWithVisits = new Set(visits.map((v) => v.clientId));
   for (const v of visits) {
-    const at = new Date(v.startsAt).getTime();
-    if (Number.isFinite(at)) {
-      boundaryByClient.set(
-        v.clientId,
-        Math.min(boundaryByClient.get(v.clientId) ?? at, at),
-      );
+    targets.push({ key: v.appointmentId, clientId: v.clientId, visit: v });
+  }
+  for (const clientId of ids) {
+    if (!clientsWithVisits.has(clientId)) {
+      targets.push({ key: clientId, clientId, visit: null });
     }
-    const set = ownAppointments.get(v.clientId) ?? new Set<string>();
-    set.add(v.appointmentId);
-    ownAppointments.set(v.clientId, set);
   }
   // A full window means the read stopped at its cap, so the history of any
   // client without a hit inside it is unproven rather than empty.
   const windowFull = sessions.length >= SESSION_WINDOW;
 
-  for (const clientId of ids) {
-    const boundary = boundaryByClient.get(clientId);
-    const own = ownAppointments.get(clientId);
+  for (const { key, clientId, visit } of targets) {
+    const boundary = visit ? new Date(visit.startsAt).getTime() : undefined;
     const clientSessions = (sessionsByClient.get(clientId) ?? [])
       .filter(
         (s) =>
-          !(s.appointment_id && own?.has(s.appointment_id)) &&
+          !(visit && s.appointment_id === visit.appointmentId) &&
           (boundary === undefined ||
+            !Number.isFinite(boundary) ||
             new Date(s.started_at).getTime() < boundary),
       )
       .map((s) => ({
@@ -480,7 +483,7 @@ export async function getBeforeTodayPreviews(
         clinicalUnavailable || (windowFull && !(lastTreatment && watchSource)),
       clientRecordUnavailable,
     });
-    out.set(clientId, compactBeforeToday(briefing));
+    out.set(key, compactBeforeToday(briefing));
   }
   return out;
 }

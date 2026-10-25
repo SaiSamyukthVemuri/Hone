@@ -631,7 +631,7 @@ export default async function DashboardPage({
     viewingToday ? visibleAppointments : []
   ).map(
     (appt) => {
-      const preview = beforeTodayPreviews.get(appt.client_id) ?? null;
+      const preview = beforeTodayPreviews.get(appt.id) ?? null;
       const linked = sessionByAppointment.get(appt.id) ?? null;
       const charting: TodayCharting = linked
         ? linked.hasChartedArea

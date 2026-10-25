@@ -151,7 +151,7 @@ describe("1 — the dashboard preview is the note BEFORE this visit", () => {
       ],
       session_blocks: [block("b-own", "own", "THIS VISIT caution"), block("b-prior", "prior", "PRIOR caution")],
     });
-    const p = (await previewFor([VISIT])).get(CLIENT);
+    const p = (await previewFor([VISIT])).get(APPT);
     expect(JSON.stringify(p)).not.toMatch(/THIS VISIT/);
     expect(p?.nextVisitNote).toBe("PRIOR plan");
     expect(p?.cautionNote).toMatch(/PRIOR caution/);
@@ -165,7 +165,7 @@ describe("1 — the dashboard preview is the note BEFORE this visit", () => {
       ],
       session_blocks: [block("b-prior", "prior", "PRIOR caution")],
     });
-    const p = (await previewFor([VISIT])).get(CLIENT);
+    const p = (await previewFor([VISIT])).get(APPT);
     expect(JSON.stringify(p)).not.toMatch(/LATER/);
     expect(p?.nextVisitNote).toBe("PRIOR plan");
   });
@@ -178,11 +178,11 @@ describe("1 — the dashboard preview is the note BEFORE this visit", () => {
       ],
       session_blocks: [block("b-et", "earlier-today", null), block("b-prior", "prior", null)],
     });
-    const p = (await previewFor([VISIT])).get(CLIENT);
+    const p = (await previewFor([VISIT])).get(APPT);
     expect(p?.nextVisitNote).toBe("EARLIER TODAY plan");
   });
 
-  it("two bookings the same day: the boundary is the EARLIEST, and both own sessions are excluded", async () => {
+  it("two bookings the same day: each visit is answered on its own, and the second sees the first visit as history", async () => {
     use({
       sessions: [
         session("own-2", CLIENT, "2026-10-20T18:00:00.000Z", {
@@ -197,11 +197,13 @@ describe("1 — the dashboard preview is the note BEFORE this visit", () => {
       ],
       session_blocks: [block("b-prior", "prior", null)],
     });
-    const p = (
-      await previewFor([VISIT, { clientId: CLIENT, appointmentId: APPT_2, startsAt: "2026-10-20T18:00:00.000Z" }])
-    ).get(CLIENT);
-    expect(JSON.stringify(p)).not.toMatch(/VISIT plan/);
-    expect(p?.nextVisitNote).toBe("PRIOR plan");
+    const m = await previewFor([VISIT, { clientId: CLIENT, appointmentId: APPT_2, startsAt: "2026-10-20T18:00:00.000Z" }]);
+    // The first visit never sees itself or the later visit.
+    expect(JSON.stringify(m.get(APPT))).not.toMatch(/FIRST VISIT|SECOND VISIT/);
+    expect(m.get(APPT)?.nextVisitNote).toBe("PRIOR plan");
+    // The second visit sees the first visit's note (core-memory-loop), never its own.
+    expect(m.get(APPT_2)?.nextVisitNote).toBe("FIRST VISIT plan");
+    expect(JSON.stringify(m.get(APPT_2))).not.toMatch(/SECOND VISIT/);
   });
 
   it("another client's visit never bounds this client's history", async () => {
@@ -210,8 +212,8 @@ describe("1 — the dashboard preview is the note BEFORE this visit", () => {
       session_blocks: [block("b-prior", "prior", null)],
     });
     const p = (
-      await previewFor([{ clientId: OTHER, appointmentId: APPT, startsAt: "2026-10-01T00:00:00.000Z" }, VISIT])
-    ).get(CLIENT);
+      await previewFor([{ clientId: OTHER, appointmentId: APPT_2, startsAt: "2026-10-01T00:00:00.000Z" }, VISIT])
+    ).get(APPT);
     expect(p?.nextVisitNote).toBe("PRIOR plan");
   });
 });
@@ -226,14 +228,14 @@ describe("2 — a full 400-row window is not proof that a client has no history"
   it("a client whose only history was cut off by the cap is unavailable, not 'no history'", async () => {
     // 400 newer rows fill the cap; CLIENT's one real session is row 401.
     use({ sessions: [...filler(400), oldNote], session_blocks: [block("b-old", "old", "OLD caution")] });
-    const p = (await previewFor([VISIT])).get(CLIENT);
+    const p = (await previewFor([VISIT])).get(APPT);
     expect(p?.unavailable).toBe(true);
     expect(p?.hasHistory).toBe(false);
   });
 
   it("control: one row under the cap, the same client genuinely has no history in the window", async () => {
     use({ sessions: filler(399), session_blocks: [] });
-    const p = (await previewFor([VISIT])).get(CLIENT);
+    const p = (await previewFor([VISIT])).get(APPT);
     expect(p?.unavailable).toBe(false);
     expect(p?.hasHistory).toBe(false);
   });
@@ -243,7 +245,7 @@ describe("2 — a full 400-row window is not proof that a client has no history"
       sessions: [session("recent", CLIENT, YESTERDAY, { next_session_note: "RECENT plan" }), ...filler(399)],
       session_blocks: [block("b-recent", "recent", "RECENT caution")],
     });
-    const p = (await previewFor([VISIT])).get(CLIENT);
+    const p = (await previewFor([VISIT])).get(APPT);
     expect(p?.unavailable).toBe(false);
     expect(p?.nextVisitNote).toBe("RECENT plan");
   });

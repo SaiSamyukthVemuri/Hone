@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // HON-10. The chart page's "From last visit" note: the newest earlier,
 // non-void session of THIS client in THIS studio that carries a next-visit
@@ -49,7 +50,7 @@ export async function loadPreviousVisitNote(input: {
       .order("id", { ascending: false })
       .limit(NOTE_WINDOW);
     if (error) {
-      logFailure(input.studioId, error.code);
+      logFailure(input.studioId, dbErrorCode(error));
       return { note: null, unavailable: true };
     }
     const rows = (Array.isArray(data) ? data : []) as Array<{
@@ -66,11 +67,11 @@ export async function loadPreviousVisitNote(input: {
   }
 }
 
-function logFailure(studioId: string, code: unknown): void {
+function logFailure(studioId: string, code: string | null): void {
   console.error(
     JSON.stringify({
       event: "previous_visit_note_read_failed",
-      code: typeof code === "string" ? code : null,
+      code,
       studio_id: studioId,
       at: new Date().toISOString(),
     }),
