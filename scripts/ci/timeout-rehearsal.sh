@@ -16,6 +16,7 @@ PORT="${REHEARSAL_PGPORT:-5432}"
 PW="${REHEARSAL_PGPASSWORD:-postgres}"
 OUT="${REHEARSAL_OUT:-$PWD/timeout-rehearsal-out}"
 S1_OPTS='-c statement_timeout=120000'
+URL_OPTS='&options=-c%20statement_timeout%3D120000'
 FAILS=0
 
 mkdir -p "$OUT"
@@ -86,47 +87,66 @@ push a_baseline ""
 sv="$(val a_baseline statement_timeout f2)"
 expect "(a) no PGOPTIONS: migration session sees the default, not 120s" "$([ "$sv" = "0" ] && echo 0 || echo 1)" "f2 statement_timeout=$sv; $(seen a_baseline)"
 
-# (b) THE EXACT S1 INVOCATION: PGOPTIONS reaches the session that runs BOTH files.
+# (b) FINDING from run 40189312019: PGOPTIONS in the environment does NOT reach the
+# migration session (value 0). Kept as a regression guard on that finding.
 newprobe b_pgoptions
 mig b_pgoptions 20990101000001 "$OBS_TABLE
 $(obs b_pgoptions f1)"
 mig b_pgoptions 20990101000002 "$(obs b_pgoptions f2)"
 push b_pgoptions "$S1_OPTS"
 s1="$(val b_pgoptions statement_timeout f1)"; s2="$(val b_pgoptions statement_timeout f2)"
-l1="$(val b_pgoptions lock_timeout f1)"; l2="$(val b_pgoptions lock_timeout f2)"
-p1="$(val b_pgoptions pid f1)"; p2="$(val b_pgoptions pid f2)"
-ok=1; case "$s1:$s2" in 2min:2min | 120s:120s) ok=0 ;; esac
-expect "(b) PGOPTIONS statement_timeout=120000 reaches every migration session" "$ok" "f1=$s1 f2=$s2; $(seen b_pgoptions)"
-expect "(b) each file's own set local lock_timeout = 5s holds under it" "$([ "$l1:$l2" = "5s:5s" ] && echo 0 || echo 1)" "f1=$l1 f2=$l2"
-say "INFO  (b) backend pids across files: f1=$p1 f2=$p2 ($([ "$p1" = "$p2" ] && echo 'ONE session runs all files' || echo 'a NEW session per file'))"
+expect "(b) PGOPTIONS env is IGNORED by db push (both files still see the default)" "$([ "$s1:$s2" = "0:0" ] && echo 0 || echo 1)" "f1=$s1 f2=$s2"
 
-# (c) FIRING: a 130 s statement must be cancelled at about 120 s (SQLSTATE 57014).
+# (g) THE S1 SHAPE: the connection string carries options AND each file runs its own
+# set local lock_timeout. Both must hold in the SAME session, across several files.
+newprobe g_s1shape
+mig g_s1shape 20990101000001 "$OBS_TABLE
+$(obs g_s1shape f1)"
+mig g_s1shape 20990101000002 "$(obs g_s1shape f2)"
+mig g_s1shape 20990101000003 "$(obs g_s1shape f3)"
+push g_s1shape "" "$URL_OPTS"
+okv=0
+for f in f1 f2 f3; do
+  sv="$(val g_s1shape statement_timeout $f)"; lv="$(val g_s1shape lock_timeout $f)"
+  case "$sv" in 2min | 120s) ;; *) okv=1 ;; esac
+  [ "$lv" = "5s" ] || okv=1
+done
+expect "(g) S1 shape: URL options statement_timeout=120s AND each file's lock_timeout=5s, in every file" "$okv" "$(seen g_s1shape)"
+np="$(admin rh_g_s1shape "select count(distinct pid) from public.rehearsal_obs")"
+say "INFO  (g) distinct backend pids across the three files: $np (1 = one session runs all files)"
+
+# (c) FIRING through the working mechanism: a 130 s statement is cancelled at ~120 s (57014),
+# in a file that ALSO runs its own set local lock_timeout.
 newprobe c_fire
 mig c_fire 20990101000001 "$OBS_TABLE
 $(obs c_fire f1)"
 mig c_fire 20990101000002 "select pg_sleep(130);"
-push c_fire "$S1_OPTS"
+mig c_fire 20990101000003 "create table public.rh_after (i int);"
+push c_fire "" "$URL_OPTS"
 hit=1; grep -qiE '57014|statement timeout' "$OUT/c_fire/push.log" && hit=0
-expect "(c) a 130 s statement is cancelled by statement_timeout (57014)" "$((hit + (RC == 0 ? 1 : 0)))" "exit=$RC elapsed=${ELAPSED}s"
+expect "(c) a 130 s statement is cancelled by the URL-option statement_timeout (57014)" "$((hit + (RC == 0 ? 1 : 0)))" "exit=$RC elapsed=${ELAPSED}s"
 tw=1; within "$ELAPSED" 115 140 && tw=0
 expect "(c) it fired at about 120 s, not 130 s" "$tw" "elapsed=${ELAPSED}s"
-nf="$(admin rh_c_fire "select count(*) from supabase_migrations.schema_migrations")"
-say "INFO  (c) versions recorded after the cancelled file: $nf (1 = f1 only; the cancelled file is not recorded)"
+vers="$(admin rh_c_fire "select string_agg(version, ',' order by version) from supabase_migrations.schema_migrations")"
+aft="$(admin rh_c_fire "select count(*) from information_schema.tables where table_name = 'rh_after'")"
+expect "(c) the CLI STOPPED at the cancelled file (only f1 recorded, next file not run)" "$([ "$vers" = "20990101000001" ] && [ "$aft" = "0" ] && echo 0 || echo 1)" "recorded=$vers next_file_table=$aft"
 
-# (d) PER STATEMENT OR PER FILE: two 70 s statements in one file (140 s in total).
+# (d) PER STATEMENT OR PER FILE, with the timeout really in force: two 70 s statements in one file.
 newprobe d_perfile
 mig d_perfile 20990101000001 "$OBS_TABLE
 select pg_sleep(70);
 select pg_sleep(70);
 $(obs d_perfile f1)"
-push d_perfile "$S1_OPTS"
+push d_perfile "" "$URL_OPTS"
 if [ "$RC" = "0" ]; then
   say "RESULT (d) statement_timeout=120s applies PER STATEMENT: a 140 s file with two 70 s statements COMPLETED (elapsed ${ELAPSED}s)"
+elif grep -qiE '57014|statement timeout' "$OUT/d_perfile/push.log"; then
+  say "RESULT (d) statement_timeout=120s is a WHOLE-FILE budget through this CLI: the 140 s file was CANCELLED (57014, elapsed ${ELAPSED}s)"
 else
-  say "RESULT (d) statement_timeout=120s is a WHOLE-FILE budget through this CLI: the 140 s file was CANCELLED (elapsed ${ELAPSED}s)"
+  say "FAIL  (d) the file failed for a reason other than statement timeout (exit=$RC, elapsed ${ELAPSED}s)"; FAILS=$((FAILS + 1))
 fi
 
-# (e) LOCK: a held ACCESS EXCLUSIVE lock; the file's 5 s lock_timeout must fire, not the 120 s.
+# (e) LOCK under an ACTIVE statement_timeout: the 5 s lock_timeout must still fire first (55P03).
 newprobe e_lock
 admin rh_e_lock "create table public.rh_locked (i int)" > /dev/null
 mig e_lock 20990101000001 "$OBS_TABLE
@@ -142,27 +162,21 @@ for _ in $(seq 1 40); do
   sleep 0.5
 done
 expect "(e) the ACCESS EXCLUSIVE lock is granted before the push starts" "$held" "granted=$g"
-push e_lock "$S1_OPTS"
+push e_lock "" "$URL_OPTS"
 lk=1; grep -qiE '55P03|lock timeout' "$OUT/e_lock/push.log" && lk=0
-expect "(e) a blocked ALTER fails on lock timeout (55P03)" "$((lk + (RC == 0 ? 1 : 0)))" "exit=$RC"
+expect "(e) with statement_timeout=120s ACTIVE, a blocked ALTER still fails on lock timeout (55P03)" "$((lk + (RC == 0 ? 1 : 0)))" "exit=$RC"
 fast=1; within "$ELAPSED" 3 40 && fast=0
-expect "(e) it fired at about 5 s, far below the 120 s statement_timeout" "$fast" "elapsed=${ELAPSED}s"
+expect "(e) it fired at about 5 s, far below 120 s" "$fast" "elapsed=${ELAPSED}s"
+sv="$(val e_lock statement_timeout f1)"
+case "$sv" in 2min | 120s) sok=0 ;; *) sok=1 ;; esac
+expect "(e) the session that hit the lock had statement_timeout=120s in force" "$sok" "f1=$sv"
 vers="$(admin rh_e_lock "select string_agg(version, ',' order by version) from supabase_migrations.schema_migrations")"
 col="$(admin rh_e_lock "select count(*) from information_schema.columns where table_name = 'rh_locked' and column_name = 'x'")"
 aft="$(admin rh_e_lock "select count(*) from information_schema.tables where table_name = 'rh_after'")"
-expect "(e) the blocked file rolled back and the CLI STOPPED (f2 not recorded, column absent, f3 not run)" \
+expect "(e) the blocked file rolled back and the CLI STOPPED" \
   "$([ "$vers" = "20990101000001" ] && [ "$col" = "0" ] && [ "$aft" = "0" ] && echo 0 || echo 1)" "recorded=$vers column_x=$col f3_table=$aft"
 kill "$HOLDER" 2> /dev/null
 wait "$HOLDER" 2> /dev/null
-
-# (f) FALLBACK, same push: the connection-string `options` parameter.
-newprobe f_urloptions
-mig f_urloptions 20990101000001 "$OBS_TABLE
-$(obs f_urloptions f1)"
-push f_urloptions "" "&options=-c%20statement_timeout%3D120000"
-sf="$(val f_urloptions statement_timeout f1)"
-ok=1; case "$sf" in 2min | 120s) ok=0 ;; esac
-expect "(f) FALLBACK: db-url options=-c statement_timeout reaches the migration session" "$ok" "f1=$sf"
 
 say "# verdict: $([ "$FAILS" = 0 ] && echo 'ALL EXPECTATIONS MET' || echo "$FAILS EXPECTATION(S) FAILED")"
 say "# residual: proven on a DIRECT connection only; pooler (Supavisor) forwarding of startup options is UNVERIFIED"
