@@ -1,0 +1,41 @@
+# REHEARSAL - NEVER MERGE. RUNNER-MACOS: runs the macOS window-read runner variant's
+# shell tests on a stock macOS arm64 runner (/bin/bash 3.2, BSD tools, no sha256sum),
+# against a stub CLI. No hosted call, no database, no secrets, no Supabase.
+name: rehearsal-runner-macos
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/runner-macos/**"
+      - ".github/workflows/rehearsal-runner-macos.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  macos-runner:
+    name: runner variant on macOS (bash 3.2)
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts
+        run: |
+          uname -sm
+          /bin/bash --version | head -1
+          if command -v sha256sum >/dev/null 2>&1; then echo "sha256sum: present"; else echo "sha256sum: absent"; fi
+          command -v shasum
+          command -v zsh
+      - name: Variant tests under /bin/bash (3.2)
+        run: /bin/bash rehearsal/runner-macos/run-window-read-macos.test.sh
+      - name: Variant tests under zsh invoking the script by its shebang
+        shell: /bin/zsh {0}
+        run: |
+          set -e
+          bash_version="$(/bin/bash -c 'echo $BASH_VERSION')"
+          case "$bash_version" in 3.2*) ;; *) echo "expected bash 3.2, got $bash_version"; exit 1 ;; esac
+          chmod +x rehearsal/runner-macos/run-window-read-macos.test.sh
+          rehearsal/runner-macos/run-window-read-macos.test.sh
