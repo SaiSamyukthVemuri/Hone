@@ -111,7 +111,7 @@ PWU="$CANARY"
 for _ in $(seq 1 45); do pq "$PWU" "$(purl "$SSLM")" -At -c 'select 1' | grep -qx 1 && break; sleep 2; done
 S1ENV=(SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false)
 # the slow condition is EXTERNAL: the frozen file reads a knob table that is created here, outside any migration
-psqld -c "create table public.d3_knob (k text primary key, value double precision not null); insert into public.d3_knob values ('sleep', 0)" > /dev/null
+psqld -c "create table public.d3_knob (k text primary key, value double precision not null); insert into public.d3_knob values ('sleep', 0); create table public.d3_decoy (id int)" > /dev/null
 echo "v$VER" > "$OUT/cli-latest"
 
 # ---- the synthetic migration files (scratch workdir only; never any worktree's supabase/migrations) ----
@@ -155,7 +155,7 @@ clean_probe() {
 }
 catalog() { psqld -c "
 select 'ns|' || nspname from pg_namespace where nspname !~ '^pg_' and nspname <> 'information_schema'
-union all select 'class|' || n.nspname || '.' || c.relname || '|' || c.relkind from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname in ('public', 'supabase_migrations')
+union all select 'class|' || n.nspname || '.' || c.relname || '|' || c.relkind::text from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname in ('public', 'supabase_migrations')
 union all select 'proc|' || n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'
 union all select 'type|' || n.nspname || '.' || t.typname from pg_type t join pg_namespace n on n.oid = t.typnamespace where n.nspname = 'public'
 union all select 'constraint|' || conrelid::regclass::text || '|' || conname from pg_constraint where connamespace = 'public'::regnamespace
@@ -200,7 +200,7 @@ say "RESULT   stderr: $(head -c 200 "$OUT/shape-ok.err" | tr '\n' ' ')"
 FQ "select * from no_such_table_d3" > "$OUT/shape-err.json" 2> "$OUT/shape-err.err"; RCER=$?
 say "RESULT db query -o json, SQL error: exit=$RCER; stdout: $(head -c 300 "$OUT/shape-err.json" | tr '\n' ' ') stderr: $(head -c 300 "$OUT/shape-err.err" | tr '\n' ' ')"
 say "RESULT backend reuse across three consecutive db query sessions (pid, backend_start, application_name):"
-for i in 1 2 3; do FQ "select pg_backend_pid() as pid, backend_start::text as bs, application_name as app from pg_stat_activity where pid = pg_backend_pid()" | tr -d '\n ' | sed 's/^/   | /' | tee -a "$RES"; echo | tee -a "$RES" > /dev/null; sleep 1; done
+for i in 1 2 3; do say "   | $(FQ "select pg_backend_pid() as pid, backend_start::text as bs, application_name as app from pg_stat_activity where pid = pg_backend_pid()" 2> /dev/null | tr -d '\n ')"; sleep 1; done
 expect "db query -o json succeeds and an SQL error exits non-zero" "$([ "$RCOK" = 0 ] && [ "$RCER" != 0 ] && echo 0 || echo 1)" "ok=$RCOK err=$RCER"
 
 # ---------------- baseline for the rollback checks ---------------------------------------------
@@ -278,6 +278,9 @@ reconcile_case() { # reconcile_case <label> <limit> <every> <knob seconds> <min 
   mkwd "$wdir"; write_probe "$wdir" 1
   s1_start "pre-$label" "$wdir"; s1_wait "pre-$label"
   catalog > "$OUT/catalog-pre-$label.txt"
+  local pre_total; pre_total="$(hist_total)"
+  say "INFO  $label: catalog lines pre-file: $(wc -l < "$OUT/catalog-pre-$label.txt"); history total/distinct before the cancelled push: $pre_total"
+  [ "$(wc -l < "$OUT/catalog-pre-$label.txt")" -gt 20 ] || say "WARN  the pre-file catalog is suspiciously small: the rollback comparison would be vacuous"
   write_probe "$wdir" 4                                  # 0214-0216 appear; the slow file's bytes never change afterwards
   local sum_before; sum_before="$(sha256sum "$wdir/supabase/migrations/0214_d3_slow.sql" | cut -c1-16)"
   psqld -c "update public.d3_knob set value = $knob" > /dev/null
@@ -299,7 +302,7 @@ reconcile_case() { # reconcile_case <label> <limit> <every> <knob seconds> <min 
   local sum_after; sum_after="$(sha256sum "$wdir/supabase/migrations/0214_d3_slow.sql" | cut -c1-16)"
   s1_start "second-$label" "$wdir"; s1_wait "second-$label"
   local ver_ge; ver_ge="$(hist_n)"
-  expect "(B/$label 4b) after the slow condition is removed a second push applies exactly those: exit 0, history == 0213,0214,0215,0216, no duplicate or skipped version, count(version >= first) = 4, file bytes unchanged" "$([ "$S1RC" = 0 ] && [ "$(hist_list)" = "0213,0214,0215,0216" ] && [ "$ver_ge" = 4 ] && [ "$(hist_total)" = "$(echo "$EXPECT_TOTAL_BEFORE" | awk -F/ '{print ($1+4) "/" ($2+4)}')" ] && [ "$sum_before" = "$sum_after" ] && grep -q '^Finished supabase db push\.' "$OUT/run-second-$label.log" && echo 0 || echo 1)" "exit=$S1RC history=$(hist_list) total/distinct=$(hist_total) count>=0213=$ver_ge file sha $sum_before=$sum_after"
+  expect "(B/$label 4b) after the slow condition is removed a second push applies exactly those: exit 0, history == 0213,0214,0215,0216, no duplicate or skipped version, count(version >= first) = 4, file bytes unchanged" "$([ "$S1RC" = 0 ] && [ "$(hist_list)" = "0213,0214,0215,0216" ] && [ "$ver_ge" = 4 ] && [ "$(hist_total)" = "$(echo "$pre_total" | awk -F/ '{print ($1+3) "/" ($2+3)}')" ] && [ "$sum_before" = "$sum_after" ] && grep -q '^Finished supabase db push\.' "$OUT/run-second-$label.log" && echo 0 || echo 1)" "exit=$S1RC history=$(hist_list) total/distinct=$(hist_total) count>=0213=$ver_ge file sha $sum_before=$sum_after"
   catalog > "$OUT/catalog-final-$label.txt"
   expect "(B/$label 4c) final catalog = pre-file catalog plus exactly the objects of 0214-0216" "$([ "$(diff "$OUT/catalog-pre-$label.txt" "$OUT/catalog-final-$label.txt" | grep -c '^>')" -ge 8 ] && ! diff "$OUT/catalog-pre-$label.txt" "$OUT/catalog-final-$label.txt" | grep -q '^<' && echo 0 || echo 1)" "added lines $(diff "$OUT/catalog-pre-$label.txt" "$OUT/catalog-final-$label.txt" | grep -c '^>'), removed $(diff "$OUT/catalog-pre-$label.txt" "$OUT/catalog-final-$label.txt" | grep -c '^<')"
 }
@@ -313,18 +316,22 @@ clean_probe; QD="$OUT/wdir-quiet"; mkwd "$QD"; write_probe "$QD" 4
 psqld -c "update public.d3_knob set value = 8" > /dev/null
 wd_start quiet 20 3; sleep 5
 s1_start quiet "$QD"; s1_wait quiet; QRC=$S1RC
-sleep 7; wd_stop
+sleep 16; wd_stop
 sed 's/^/   | /' "$OUT/wd-quiet.log" | tee -a "$RES"
 expect "(C) under the threshold nothing is cancelled: exit 0, all four files applied, no CANCELLED line, the loop stopped on its own" "$([ "$QRC" = 0 ] && [ "$(hist_list)" = "0213,0214,0215,0216" ] && ! grep -q 'CANCELLED' "$OUT/wd-quiet.log" && grep -q 'Stopping\.' "$OUT/wd-quiet.log" && echo 0 || echo 1)" "exit=$QRC history=$(hist_list) polls=$(grep -c -E 'watching|pid=' "$OUT/wd-quiet.log") cancelled=$(grep -c CANCELLED "$OUT/wd-quiet.log")"
 
 # ---------------- D. identification weak points: a second NEW postgres-role session -------------------
 say "== D. a second NEW postgres-role session, (i) active BEFORE the push session appears, (ii) starting together with it"
-d_case() { # d_case <label> <decoy-first: 1|0>
-  local label="$1" first="$2"
+d_case() { # d_case <label> <decoy-first: 1|0> <ro|w>  (ro = a long read-only SELECT; w = a long WRITER: insert, then sleep inside the transaction)
+  local label="$1" first="$2" kind="$3"
   clean_probe; local dd="$OUT/wdir-$label"; mkwd "$dd"; write_probe "$dd" 4
   psqld -c "update public.d3_knob set value = 45" > /dev/null
   wd_start "$label" 15 3; sleep 5
-  { pq "$PWU" "$(purl "$SSLM")" -At -c "set statement_timeout = 0" -c "/*D3-$label*/ select pg_sleep(60)" -c "select 'done-$label'" > "$OUT/decoy-$label.log"; } &
+  if [ "$kind" = ro ]; then
+    { pq "$PWU" "$(purl "$SSLM")" -At -c "set statement_timeout = 0" -c "/*D3-$label*/ select pg_sleep(60)" -c "select 'done-$label'" > "$OUT/decoy-$label.log"; } &
+  else
+    { pq "$PWU" "$(purl "$SSLM")" -At -c "set statement_timeout = 0" -c "begin" -c "insert into public.d3_decoy values (1)" -c "/*D3-$label*/ select pg_sleep(60)" -c "commit" -c "select 'done-$label'" > "$OUT/decoy-$label.log"; } &
+  fi
   local dbg=$!
   if [ "$first" = 1 ]; then wait_for 20 'PINNED|AMBIGUOUS' "$OUT/wd-$label.log"; fi
   s1_start "$label" "$dd"
@@ -333,7 +340,7 @@ d_case() { # d_case <label> <decoy-first: 1|0>
   local still=no; [ -s "$OUT/rc-$label.txt" ] || still=yes
   say "RESULT D/$label: watchdog said: $(grep -E 'PINNED|AMBIGUOUS' "$OUT/wd-$label.log" | head -2 | cut -c1-150 | tr '\n' '|')  CANCELLED lines=$(grep -c CANCELLED "$OUT/wd-$label.log"); push still running after 22 s: $still"
   local pid; pid="$(psqld -c "select pid from pg_stat_activity where usename = 'postgres' and backend_type = 'client backend' and query ilike '%d3_knob%' and pid <> pg_backend_pid() limit 1")"
-  if [ -n "$pid" ] && [ "$still" = yes ]; then
+  if [ -n "$pid" ] && [ "$still" = yes ] && [ "$(grep -c CANCELLED "$OUT/wd-$label.log")" = 0 ]; then
     one="$(env -u GITHUB_TOKEN -u GH_TOKEN "${S1ENV[@]}" PGPASSWORD="$PWU" "$GOBIN" --agent no db query --db-url "$TLSURL" -o json "select pg_cancel_backend($pid)" 2>&1 | tr -d '\n ' | cut -c1-100)"
     say "RESULT D/$label: operator one-shot select pg_cancel_backend($pid) -> $one"
   fi
@@ -344,14 +351,18 @@ d_case() { # d_case <label> <decoy-first: 1|0>
   DCASE_AMB=$(grep -c AMBIGUOUS "$OUT/wd-$label.log"); DCASE_RC=$rc; DCASE_DECOY=$(survived "$label" "$label" && echo alive || echo cancelled)
   clean_probe
 }
-d_case dfirst 1
-say "RESULT (i) decoy active first: a decoy that is the only new active session when the watchdog polls IS pinned in its place (see the log above)"
-d_case dtogether 0
+d_case rofirst 1 ro
+d_case rotogether 0 ro
+expect "(D i) a long READ-ONLY postgres session that is active before the push session appears (the case that fooled the first design) is NOT pinned and NOT cancelled; the push session is pinned and cancelled (57014)" "$([ "$(grep -c CANCELLED "$OUT/wd-rofirst.log")" = 1 ] && [ "$(grep -c CANCELLED "$OUT/wd-rotogether.log")" = 1 ] && survived rofirst rofirst && survived rotogether rotogether && grep -q 57014 "$OUT/run-rofirst.log" && grep -q 57014 "$OUT/run-rotogether.log" && echo 0 || echo 1)" "rofirst: cancelled-lines=$(grep -c CANCELLED "$OUT/wd-rofirst.log") decoy=$(survived rofirst rofirst && echo alive || echo cancelled); rotogether: cancelled-lines=$(grep -c CANCELLED "$OUT/wd-rotogether.log") decoy=$(survived rotogether rotogether && echo alive || echo cancelled)"
+d_case wfirst 1 w
+say "RESULT (D ii, RESIDUAL) a long WRITER session that becomes active before the push session is pinned in its place: pinned=$(grep -c PINNED "$OUT/wd-wfirst.log") cancelled-lines=$(grep -c CANCELLED "$OUT/wd-wfirst.log") decoy=$(survived wfirst wfirst && echo alive || echo cancelled); the PINNED line prints the pinned statement so the operator can see it is not the push."
+d_case wtogether 0 w
 if [ "$DCASE_AMB" -gt 0 ]; then
-  expect "(D ii) both new sessions seen at once: the watchdog refused to pin and cancelled nothing automatically; the one-shot by pid stopped the push (non-zero, 57014) and the decoy was left alone" "$([ "$DCASE_RC" != 0 ] && grep -q 57014 "$OUT/run-dtogether.log" && [ "$DCASE_DECOY" = alive ] && ! grep -q CANCELLED "$OUT/wd-dtogether.log" && echo 0 || echo 1)" "amb=$DCASE_AMB rc=$DCASE_RC decoy=$DCASE_DECOY"
+  expect "(D iii) a long WRITER session and the push session seen at once: the watchdog refused to pin and cancelled nothing automatically; the one-shot by pid stopped the push (non-zero, 57014) and the writer decoy was left alone" "$([ "$DCASE_RC" != 0 ] && grep -q 57014 "$OUT/run-wtogether.log" && [ "$DCASE_DECOY" = alive ] && ! grep -q CANCELLED "$OUT/wd-wtogether.log" && echo 0 || echo 1)" "amb=$DCASE_AMB rc=$DCASE_RC decoy=$DCASE_DECOY"
 else
-  say "RESULT (D ii) the watchdog polled between the two starts, so this timing was not ambiguous (see the log above)"
+  say "RESULT (D iii) the watchdog polled between the two starts, so this timing was not ambiguous (see the log above): pinned=$(grep -c PINNED "$OUT/wd-wtogether.log") cancelled-lines=$(grep -c CANCELLED "$OUT/wd-wtogether.log")"
 fi
+psqld -c "delete from public.d3_decoy" > /dev/null 2>&1
 
 # ---------------- D2. pg_cron: does a cron job look like a postgres-role client backend? ---------------
 say "== D2. pg_cron beside the watchdog"
@@ -385,6 +396,21 @@ for t in 2 8 20 40; do
 done
 wait "$S1BG" 2> /dev/null
 say "RESULT   after the dust settled: history>=0213 = $(hist_list); d3_t1 exists = $(psqld -c "select count(*) from pg_tables where tablename = 'd3_t1'") (a committed file would show 0213,0214.. )"
+clean_probe
+say "== E2. SIGINT (what Ctrl-C sends) to the CLI mid-statement"
+mkwd "$EDIR"; write_probe "$EDIR" 4
+psqld -c "update public.d3_knob set value = 40" > /dev/null
+s1_start killint "$EDIR"
+sleep 9
+CLIPID="$(pgrep -f "supabase-go db push" | head -1)"
+kill -INT "$CLIPID" 2> /dev/null
+say "RESULT SIGINT sent to the CLI (pid ${CLIPID:-none}) 9 s into a 40 s statement"
+for t in 2 8 20 40; do
+  sleep $([ "$t" = 2 ] && echo 2 || echo $((t == 8 ? 6 : t == 20 ? 12 : 20)))
+  say "RESULT   +${t}s after SIGINT: upstream backend still running the statement: $(psqld -c "select count(*) from pg_stat_activity where usename = 'postgres' and query ilike '%d3_knob%' and state = 'active' and pid <> pg_backend_pid()"); CLI process alive: $(kill -0 "$CLIPID" 2> /dev/null && echo yes || echo no)"
+done
+wait "$S1BG" 2> /dev/null
+say "RESULT   after the dust settled: CLI exit=$(cat "$OUT/rc-killint.txt" 2> /dev/null); history>=0213 = $(hist_list); d3_t1 exists = $(psqld -c "select count(*) from pg_tables where tablename = 'd3_t1'")"
 clean_probe
 
 # ---------------- G. read-back command forms, under zsh, behind the proxy -----------------------------
