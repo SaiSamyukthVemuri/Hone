@@ -10,6 +10,7 @@ import {
 } from "@/lib/rate-limit/public";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { loadPublicSlotsByDate } from "@/lib/booking/public-slot-range";
+import { throwIfSlotReadFaulted } from "@/lib/booking/e2e-slot-read-fault";
 import {
   filterFutureSlots,
   getAvailableSlots,
@@ -212,6 +213,7 @@ export async function fetchPublicSlotsAction(params: {
 
   // Discovery has a structured retryable refusal, never fabricated availability.
   try {
+    throwIfSlotReadFaulted(params.slug);
     const slots = await getAvailableSlots(
       admin,
       {
