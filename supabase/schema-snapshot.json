@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 211,
-    "last": "0212_email_delivery_events.sql",
-    "sha256": "8d5e2dde080baa4cb29a628782b21684103c8b1a6ec11d4d4c17a03cad3bf327"
+    "count": 212,
+    "last": "0252_client_portal_controls.sql",
+    "sha256": "5627d26307075c0d463e3c970cb09cda1272502ebbeaae37e84c14fac76fe99d"
   },
   "public": {
     "tables": [
@@ -180,6 +180,7 @@
       "client_clinical_notes_before_insert",
       "client_clinical_notes_no_update",
       "client_personal_notes_set_studio_id",
+      "client_portal_access_guard",
       "clients_sms_permission_guard",
       "close_new_client_waitlist_admission_round",
       "close_unbooked_new_client_waitlist_invitation",
