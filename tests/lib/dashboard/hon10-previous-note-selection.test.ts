@@ -254,13 +254,15 @@ describe("3a — the loader behind the chart page 'From last visit'", () => {
   function stub(result: { data: unknown; error: { code?: string } | null } | "throw") {
     const calls: Call[] = [];
     const b: Record<string, unknown> = {};
-    for (const m of ["from", "select", "eq", "is", "neq", "not", "lt", "order", "limit"]) {
+    for (const m of ["from", "select", "eq", "is", "neq", "not", "lt", "order"]) {
       b[m] = (...a: unknown[]) => {
         calls.push([m, ...a]);
         return b;
       };
     }
-    b.maybeSingle = async () => {
+    // The read ends at `.limit(n)` and is awaited: a few rows, not one.
+    b.limit = async (...a: unknown[]) => {
+      calls.push(["limit", ...a]);
       if (result === "throw") throw new Error("socket closed");
       return result;
     };
@@ -290,15 +292,15 @@ describe("3a — the loader behind the chart page 'From last visit'", () => {
 
   it("no earlier note is an answer, not a failure; the note is trimmed", async () => {
     const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
-    stub({ data: null, error: null });
+    stub({ data: [], error: null });
     expect(await loadPreviousVisitNote(input)).toEqual({ note: null, unavailable: false });
-    stub({ data: { id: "s", started_at: YESTERDAY, next_session_note: "  PRIOR plan \n" }, error: null });
+    stub({ data: [{ id: "s", started_at: YESTERDAY, next_session_note: "  PRIOR plan \n" }], error: null });
     expect(await loadPreviousVisitNote(input)).toEqual({ note: "PRIOR plan", unavailable: false });
   });
 
   it("is scoped to this studio and client, live and non-void, strictly earlier, ordered started_at then id", async () => {
     const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
-    const calls = stub({ data: null, error: null });
+    const calls = stub({ data: [], error: null });
     await loadPreviousVisitNote(input);
     expect(calls).toContainEqual(["eq", "studio_id", STUDIO]);
     expect(calls).toContainEqual(["eq", "client_id", CLIENT]);
@@ -310,6 +312,59 @@ describe("3a — the loader behind the chart page 'From last visit'", () => {
       ["order", "started_at", { ascending: false }],
       ["order", "id", { ascending: false }],
     ]);
+  });
+});
+
+describe("3b — HON-10 F4: a blank amended note does not hide the real one before it", () => {
+  // 0120's amendment RPC stores `p->>'next_session_note'` untrimmed, so an
+  // amended note can be "" or whitespace-only. The old read took the newest
+  // NON-NULL note, trimmed it, and rendered nothing, hiding an older real note.
+  const row = (id: string, at: string, note: string | null) => ({ id, started_at: at, next_session_note: note });
+  const input = { studioId: STUDIO, clientId: CLIENT, before: STARTS_AT };
+  function stubRows(rows: unknown[]) {
+    const b: Record<string, unknown> = {};
+    for (const m of ["from", "select", "eq", "is", "neq", "not", "lt", "order"]) b[m] = () => b;
+    b.limit = async () => ({ data: rows, error: null });
+    vi.mocked(createClient).mockResolvedValue(b as unknown as Awaited<ReturnType<typeof createClient>>);
+  }
+
+  it("a whitespace-only newest note is skipped; the older real note is shown", async () => {
+    stubRows([row("new", YESTERDAY, "   \n "), row("old", "2026-10-10T10:00:00.000Z", "REAL plan")]);
+    const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
+    expect(await loadPreviousVisitNote(input)).toEqual({ note: "REAL plan", unavailable: false });
+  });
+  it("an empty-string newest note is skipped too", async () => {
+    stubRows([row("new", YESTERDAY, ""), row("old", "2026-10-10T10:00:00.000Z", "REAL plan")]);
+    const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
+    expect((await loadPreviousVisitNote(input)).note).toBe("REAL plan");
+  });
+  it("control: the newest real note still wins over an older one", async () => {
+    stubRows([row("new", YESTERDAY, "NEWEST plan"), row("old", "2026-10-10T10:00:00.000Z", "OLDER plan")]);
+    const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
+    expect((await loadPreviousVisitNote(input)).note).toBe("NEWEST plan");
+  });
+  it("only blank notes, fewer than the window: genuinely no note", async () => {
+    stubRows([row("a", YESTERDAY, " "), row("b", "2026-10-10T10:00:00.000Z", "")]);
+    const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
+    expect(await loadPreviousVisitNote(input)).toEqual({ note: null, unavailable: false });
+  });
+  it("a full window of blank notes proves nothing about older ones: unavailable", async () => {
+    stubRows(Array.from({ length: 10 }, (_, i) => row(`b${i}`, `2026-10-${String(19 - i).padStart(2, "0")}T10:00:00.000Z`, "  ")));
+    const { loadPreviousVisitNote } = await import("@/lib/sessions/previous-visit-note");
+    expect(await loadPreviousVisitNote(input)).toEqual({ note: null, unavailable: true });
+  });
+});
+
+describe("3c — HON-10 F3: the visits argument cannot be dropped", () => {
+  it("the dashboard call passes the roster's visits as the third argument", () => {
+    expect(read("app/(app)/dashboard/page.tsx")).toMatch(
+      /getBeforeTodayPreviews\(\s*studio\.id,\s*visibleAppointments\.map\(\(a\) => a\.client_id\),\s*visibleAppointments\.map\(\(a\) => \(\{\s*clientId: a\.client_id,\s*appointmentId: a\.id,\s*startsAt: a\.starts_at,/,
+    );
+  });
+  it("the parameter is required, so a two-argument call does not type-check", () => {
+    expect(read("lib/dashboard/before-today-previews.ts")).toMatch(
+      /visits: ReadonlyArray<RosterVisit>,\n\): Promise<Map<string, BeforeTodayPreview>>/,
+    );
   });
 });
 

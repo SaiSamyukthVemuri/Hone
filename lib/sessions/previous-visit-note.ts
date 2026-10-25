@@ -17,7 +17,15 @@ import { createClient } from "@/lib/supabase/server";
 //
 // Classification only in the log: the SQLSTATE and the studio id. Never the
 // message, a client id or a session id.
+//
+// HON-10 F4. A BLANK NOTE IS NOT A NOTE. The amendment RPC (0120) stores the
+// note untrimmed, so an amended session can carry "" or whitespace. The read
+// takes the few newest non-null notes and the first with text wins; a window of
+// nothing but blanks proves nothing about the older history, so it is
+// `unavailable`, never "no note".
 export type PreviousVisitNote = { note: string | null; unavailable: boolean };
+
+const NOTE_WINDOW = 10;
 
 export async function loadPreviousVisitNote(input: {
   studioId: string;
@@ -39,18 +47,19 @@ export async function loadPreviousVisitNote(input: {
       .lt("started_at", input.before)
       .order("started_at", { ascending: false })
       .order("id", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(NOTE_WINDOW);
     if (error) {
       logFailure(input.studioId, error.code);
       return { note: null, unavailable: true };
     }
-    return {
-      note:
-        (data as { next_session_note?: string | null } | null)?.next_session_note?.trim() ||
-        null,
-      unavailable: false,
-    };
+    const rows = (Array.isArray(data) ? data : []) as Array<{
+      next_session_note?: string | null;
+    }>;
+    for (const r of rows) {
+      const text = r.next_session_note?.trim();
+      if (text) return { note: text, unavailable: false };
+    }
+    return { note: null, unavailable: rows.length >= NOTE_WINDOW };
   } catch {
     logFailure(input.studioId, null);
     return { note: null, unavailable: true };

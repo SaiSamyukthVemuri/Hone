@@ -224,7 +224,7 @@ export type RosterVisit = {
 export async function getBeforeTodayPreviews(
   studioId: string,
   clientIds: ReadonlyArray<string>,
-  visits: ReadonlyArray<RosterVisit> = [],
+  visits: ReadonlyArray<RosterVisit>,
 ): Promise<Map<string, BeforeTodayPreview>> {
   const out = new Map<string, BeforeTodayPreview>();
   const ids = [...new Set(clientIds)].filter(Boolean);
