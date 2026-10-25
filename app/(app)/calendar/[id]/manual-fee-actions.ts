@@ -10,6 +10,7 @@ import {
   type ManualFeeChargeType,
 } from "@/lib/billing/manual-fee-eligibility";
 import { isManualFeeChargeReason } from "@/lib/billing/manual-fee-types";
+import { checkDisplayedCurrency } from "@/lib/billing/payment-jurisdiction";
 import { runSessionPaymentCharge } from "@/lib/billing/session-payment-charge";
 import {
   autoSendReceiptAfterCharge,
@@ -80,6 +81,11 @@ function logInternal(event: string, detail: unknown) {
   }
 }
 
+const FEE_CURRENCY_CHANGED_ERROR =
+  "The currency shown for this fee no longer matches the studio's verified currency. Refresh the page, check the amount and currency, and try again.";
+const FEE_CURRENCY_UNVERIFIED_ERROR =
+  "The currency of this fee could not be verified, so it was not run. Refresh the page and try again.";
+
 function strOrEmpty(v: FormDataEntryValue | null): string {
   return typeof v === "string" ? v.trim() : "";
 }
@@ -138,6 +144,18 @@ export async function prepareManualFeeChargeAction(
         "This appointment is not eligible for a fee charge right now.",
       blockingReasons: eligibility.blockingReasons,
     };
+  }
+
+  // The fee card printed the studio's verified currency and posted it back:
+  // refuse (never prepare) when it differs from the currency the server holds
+  // now (Codex P1 #4369182087). The posted value is never used as a currency.
+  if (
+    checkDisplayedCurrency(
+      eligibility.currency,
+      strOrEmpty(formData.get("expected_currency")),
+    ) !== "ok"
+  ) {
+    return { ok: false, error: FEE_CURRENCY_CHANGED_ERROR };
   }
 
   // Resolve client_id from the eligibility summary. The helper already
@@ -324,7 +342,7 @@ export async function chargeManualFeeAttemptAction(
   const admin = createAdminClient();
   const { data: attemptRow, error: attemptRowError } = await admin
     .from("payment_charge_attempts")
-    .select("charge_reason")
+    .select("charge_reason, currency")
     .eq("id", attemptId)
     .eq("studio_id", studioId)
     .maybeSingle();
@@ -334,6 +352,21 @@ export async function chargeManualFeeAttemptAction(
       outcome: "not_found",
       error: GENERIC_PRACTITIONER_ERROR,
     };
+  }
+  // The PERSISTED attempt currency is what the runner sends to Stripe; refuse
+  // when it is unreadable or differs from what the card printed.
+  {
+    const verdict = checkDisplayedCurrency(
+      (attemptRow as { currency?: unknown }).currency,
+      strOrEmpty(formData.get("expected_currency")),
+    );
+    if (verdict !== "ok") {
+      return {
+        ok: false,
+        outcome: "blocked",
+        error: verdict === "unverified" ? FEE_CURRENCY_UNVERIFIED_ERROR : FEE_CURRENCY_CHANGED_ERROR,
+      };
+    }
   }
   if (!isManualFeeChargeReason(attemptRow.charge_reason)) {
     return {
@@ -560,6 +593,26 @@ export async function refundFeeAttemptAction(
   const appointmentId = strOrEmpty(formData.get("appointment_id"));
   if (!attemptId || !appointmentId) {
     return { ok: false, error: GENERIC_PRACTITIONER_ERROR };
+  }
+  {
+    const { data: refundRow } = await createAdminClient()
+      .from("payment_charge_attempts")
+      .select("currency")
+      .eq("id", attemptId)
+      .eq("studio_id", studioId)
+      .maybeSingle();
+    if (refundRow) {
+      const verdict = checkDisplayedCurrency(
+        (refundRow as { currency?: unknown }).currency,
+        strOrEmpty(formData.get("expected_currency")),
+      );
+      if (verdict !== "ok") {
+        return {
+          ok: false,
+          error: verdict === "unverified" ? FEE_CURRENCY_UNVERIFIED_ERROR : FEE_CURRENCY_CHANGED_ERROR,
+        };
+      }
+    }
   }
   const result = await refundPaymentChargeAttempt({
     attemptId,

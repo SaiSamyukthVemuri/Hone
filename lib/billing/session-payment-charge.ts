@@ -8,7 +8,7 @@ import { isDefinitiveStripeRefusal } from "@/lib/billing/stripe-error-outcome";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
 import { buildChargeDescription } from "@/lib/billing/charge-description";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
-import { accountCountryChargeable, accountCountryVerdict } from "@/lib/billing/payment-jurisdiction";
+import { accountCountryChargeable, accountCountryVerdict, parsePaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 import {
   compareProviderMoney,
   providerMoneyMismatchDetails,
@@ -1359,6 +1359,17 @@ export async function runSessionPaymentCharge(args: {
       ok: false,
       outcome: "blocked",
       message: "This attempt has an unsupported charge reason.",
+    };
+  }
+  // Codex P1 #4369182087 (#1035). The currency sent to Stripe is the attempt's
+  // PERSISTED currency, and only cad or usd are currencies Hone charges in: an
+  // unreadable or unsupported stored value is refused here, before any Stripe
+  // call, never defaulted.
+  if (parsePaymentCurrency(attemptRow.currency) === null) {
+    return {
+      ok: false,
+      outcome: "blocked",
+      message: "The currency of this charge could not be verified, so it was not run.",
     };
   }
   // Row-level mode-consistency guard: the attempt row's mode must match the
