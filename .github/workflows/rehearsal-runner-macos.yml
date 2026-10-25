@@ -39,3 +39,59 @@ jobs:
           case "$bash_version" in 3.2*) ;; *) echo "expected bash 3.2, got $bash_version"; exit 1 ;; esac
           chmod +x rehearsal/runner-macos/run-window-read-macos.test.sh
           rehearsal/runner-macos/run-window-read-macos.test.sh
+
+  installer-macos:
+    name: installer and real binary on macOS arm64
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Installer sha256 must be the OPS-recorded one (the file is a byte-for-byte copy)
+        shell: /bin/zsh {0}
+        run: |
+          set -e
+          got="$(shasum -a 256 rehearsal/runner-macos/hone-s1-install.sh | cut -d' ' -f1)"
+          echo "installer sha256: $got"
+          [ "$got" = "c5e15ed01e71ce424e3261ac7ed3e5e364f0de952be56fb06497d772ca3702a1" ] || { echo "installer sha256 differs from the recorded one"; exit 1; }
+          echo "INSTALLER SHA OK"
+      - name: Positive run, exactly as the operator runs it (zsh, /bin/sh, fresh HOME)
+        shell: /bin/zsh {0}
+        run: |
+          set -e
+          export HOME="$(mktemp -d "$RUNNER_TEMP/fresh-home.XXXXXX")"
+          echo "HOME=$HOME"
+          echo "login shell for this step: $ZSH_VERSION (zsh)"
+          cd rehearsal/runner-macos
+          set +e
+          /bin/sh hone-s1-install.sh > "$RUNNER_TEMP/install.out" 2>&1
+          rc=$?
+          set -e
+          echo "----- full installer output"; cat "$RUNNER_TEMP/install.out"; echo "----- end output"
+          echo "installer exit: $rc"
+          echo "final line: $(tail -1 "$RUNNER_TEMP/install.out")"
+          echo "INSTALL_HOME=$HOME" >> "$GITHUB_ENV"
+          [ "$rc" = 0 ] || exit 1
+          tail -1 "$RUNNER_TEMP/install.out" | grep -q '^OK: ' || { echo "no OK line"; exit 1; }
+      - name: Installed binary - file, xattr, codesign, Gatekeeper
+        shell: /bin/zsh {0}
+        run: |
+          B="$INSTALL_HOME/hone-s1/supabase-cli/supabase"
+          echo "--- ls -l@"; ls -l@ "$INSTALL_HOME/hone-s1/supabase-cli/"
+          echo "--- file"; file "$B" "$INSTALL_HOME/hone-s1/supabase-cli/supabase-go"
+          echo "--- xattr -l (supabase)"; xattr -l "$B"; echo "(xattr exit $?; empty output above means no attributes, in particular no com.apple.quarantine)"
+          echo "--- xattr -l (supabase-go)"; xattr -l "$INSTALL_HOME/hone-s1/supabase-cli/supabase-go"
+          echo "--- quarantine attribute present?"; if xattr -p com.apple.quarantine "$B" >/dev/null 2>&1; then echo yes; else echo no; fi
+          echo "--- codesign -dv"; codesign -dv --verbose=2 "$B" 2>&1 || true
+          echo "--- codesign --verify"; codesign --verify --verbose=2 "$B" 2>&1; echo "(exit $?)"
+          echo "--- spctl --assess --type execute -vv (informational: Gatekeeper assesses quarantined launches, not a plain exec)"; spctl --assess --type execute -vv "$B" 2>&1; echo "(spctl exit $?)"
+          echo "--- direct run (no hosted call: --version only)"; "$B" --version; echo "(exit $?)"
+          echo "GATEKEEPER: the install and the --version run completed with no prompt or kill (exit above)"
+      - name: Negative cases (one expected-sha constant changed per copy, existing destination, tampered downloads)
+        shell: /bin/zsh {0}
+        run: /bin/bash rehearsal/runner-macos/installer-negatives.sh
+      - name: Variant runner against the REAL binary's version gate (stub for the query, no hosted call)
+        shell: /bin/zsh {0}
+        run: /bin/bash rehearsal/runner-macos/real-bin-gate.sh "$INSTALL_HOME/hone-s1/supabase-cli/supabase"

@@ -119,9 +119,14 @@ cp "$T/bin/supabase" "$T/notexec"; chmod -x "$T/notexec"
 errtxt | grep -q "not an executable file" && ok "BIN not executable: says why" || bad "BIN not executable: says why"
 check "BIN missing path: exit 2" "$(BIN="HONE_SUPABASE_BIN=$T/nope" run "$D/run-window-read-macos.sh" "$C" gate.sql)" 2
 check "BIN is a directory: exit 2" "$(BIN="HONE_SUPABASE_BIN=$T/bin" run "$D/run-window-read-macos.sh" "$C" gate.sql)" 2
-# unset BIN: the pinned npx line is used (fallback behaviour)
-: > "$LOG"; check "no BIN: falls back to npx (exit 0)" "$(BIN="" RUN_PATH="$T/bin:$PATH" run "$D/run-window-read-macos.sh" "$C" gate.sql)" 0
-grep -q '^npx --yes supabase@2.102.0 db query --linked -o json -f' "$LOG" && ok "no BIN: the call is the pinned npx line" || bad "no BIN: the call is the pinned npx line" "$(cat "$LOG")"
+# BIN is mandatory: unset or empty is refused, with no CLI call of any kind
+for mode in unset empty; do
+  : > "$LOG"
+  if [ "$mode" = unset ]; then rc="$(BIN="" run "$D/run-window-read-macos.sh" "$C" gate.sql)"; else rc="$(BIN="HONE_SUPABASE_BIN=" run "$D/run-window-read-macos.sh" "$C" gate.sql)"; fi
+  check "BIN $mode: refused (exit 2)" "$rc" 2
+  errtxt | grep -q "HONE_SUPABASE_BIN is not set (it is mandatory; there is no npx fallback)" && ok "BIN $mode: says why" || bad "BIN $mode: says why" "$(errtxt)"
+  check "BIN $mode: no CLI call and no npx" "$(wc -c < "$LOG" | tr -d '[:space:]')" 0
+done
 
 # ---- 5. addendum guards: password presence and the pooler URL ----
 check "password unset: exit 2" "$(PW="" run "$D/run-window-read-macos.sh" "$C" gate.sql)" 2
@@ -160,11 +165,6 @@ c="$(mkcwd scheme2 "postgres://postgres.$REF@aws-1-us-east-1.pooler.supabase.com
 check "pooler with the postgres:// scheme is accepted" "$(run "$D/run-window-read-macos.sh" "$c" gate.sql)" 0
 c="$(mkcwd ws "  $POOLER  ")"
 check "pooler with surrounding whitespace is accepted (trimmed)" "$(run "$D/run-window-read-macos.sh" "$c" gate.sql)" 0
-# the guards apply on the npx path as well
-check "no BIN, password unset: still refused" "$(BIN="" PW="" RUN_PATH="$T/bin:$PATH" run "$D/run-window-read-macos.sh" "$C" gate.sql)" 2
-c="$(mkcwd p6543b "postgresql://postgres.$REF@aws-1-us-east-1.pooler.supabase.com:6543/postgres")"
-check "no BIN, bad pooler: still refused" "$(BIN="" RUN_PATH="$T/bin:$PATH" run "$D/run-window-read-macos.sh" "$c" gate.sql)" 2
-
 # ---- 6. every existing refusal is kept (with BIN set) ----
 check "ref mismatch: refused" "$(PREF=zzzzzzzzzzzzzzzzzzzz run "$D/run-window-read-macos.sh" "$C" gate.sql)" 2
 errtxt | grep -q "does not match HONE_WINDOW_PROJECT_REF" && ok "ref mismatch: says why" || bad "ref mismatch: says why" "$(errtxt)"
@@ -236,6 +236,7 @@ audit "no associative arrays" 'declare +-A'
 audit "no case-conversion expansions" '\$\{[a-zA-Z_]+(,,|\^\^)'
 audit "no &>> or |&" '(&>>|\|&)'
 audit "no namerefs" 'local +-n|declare +-n'
+audit "no npx invocation in the variant's code" 'npx +(--|supabase)'
 audit "no stat -c / cp --" '(stat +-c|cp +--|mv +--)'
 audit "no md5sum/realpath/timeout/seq/xargs -r" '(md5sum|realpath|timeout |seq |xargs +-r)'
 if grep -v '^[[:space:]]*#' "$VARIANT" | grep 'sha256sum' | grep -v -e 'command -v sha256sum' -e 'neither sha256sum nor shasum' -e 'then sha256sum "\$1"' | grep -q .; then bad "audit: sha256sum only inside the helper"; else ok "audit: sha256sum only inside the helper"; fi

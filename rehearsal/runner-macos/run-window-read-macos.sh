@@ -4,9 +4,9 @@
 # runner and replaces nothing: same manifest, same gate files, same refusals, same lexical
 # check. Differences (each proved by run-window-read-macos.test.sh):
 #   - hashing: sha256sum when present, otherwise `shasum -a 256`; identical parsing;
-#   - HONE_SUPABASE_BIN: when set, the CLI is "$HONE_SUPABASE_BIN" db query --linked -o json -f
-#     <file> (no npx, no Node), and the run is REFUSED unless that binary's --version prints
-#     exactly 2.102.0. Unset, it falls back to the pinned npx line, as before;
+#   - HONE_SUPABASE_BIN is MANDATORY: the CLI is "$HONE_SUPABASE_BIN" db query --linked -o json -f
+#     <file> (no npx, no Node, no fallback), and the run is REFUSED unless that variable is set and
+#     that binary's --version prints exactly 2.102.0;
 #   - hosted-write guards: SUPABASE_DB_PASSWORD must be set and non-empty, and ./supabase/.temp/pooler-url
 #     must be exactly the aws-1-us-east-1 session pooler on 5432 for postgres.<project-ref>, no password;
 #   - bash 3.2 and BSD tools: no ${!v}, no \b in grep, no GNU-only flags, wc -c padding stripped,
@@ -27,7 +27,7 @@
 #     (the ref itself is never printed);
 #   - no other database target is set in the environment.
 # Then it runs exactly:
-#   npx --yes supabase@2.102.0 db query --linked -o json -f <file>
+#   "$HONE_SUPABASE_BIN" db query --linked -o json -f <file>
 # and nothing else: never --local, never --db-url, never psql.
 # With HONE_WINDOW_RESULT_DIR set, the result and a capture sidecar (<name>.meta.json:
 # sql/result/runner/manifest sha256, start and capture time, exit code) are written there.
@@ -98,18 +98,14 @@ for v in SUPABASE_DB_URL DATABASE_URL PGHOST PGHOSTADDR PGDATABASE PGSERVICE E2E
   [ -z "$(printenv "$v" 2>/dev/null || true)" ] || refuse "$v is set; unset every other database target first"
 done
 
-# The CLI. HONE_SUPABASE_BIN names a verified binary (no npx, no Node); it must report exactly
-# 2.102.0. Otherwise the pinned npx line is used, as in the pinned runner.
-if [ -n "${HONE_SUPABASE_BIN:-}" ]; then
-  [ -f "$HONE_SUPABASE_BIN" ] && [ -x "$HONE_SUPABASE_BIN" ] || refuse "HONE_SUPABASE_BIN is not an executable file"
-  bin_version="$("$HONE_SUPABASE_BIN" --version 2>/dev/null || true)"
-  [ "$bin_version" = "2.102.0" ] || refuse "HONE_SUPABASE_BIN --version must print exactly 2.102.0"
-  cli_desc="the verified binary"
-  run_cli() { "$HONE_SUPABASE_BIN" db query --linked -o json -f "$1"; }
-else
-  cli_desc="npx supabase@2.102.0"
-  run_cli() { npx --yes supabase@2.102.0 db query --linked -o json -f "$1"; }
-fi
+# The CLI. HONE_SUPABASE_BIN is mandatory and names a verified binary (no npx, no Node, no fallback);
+# it must report exactly 2.102.0.
+[ -n "${HONE_SUPABASE_BIN:-}" ] || refuse "HONE_SUPABASE_BIN is not set (it is mandatory; there is no npx fallback)"
+[ -f "$HONE_SUPABASE_BIN" ] && [ -x "$HONE_SUPABASE_BIN" ] || refuse "HONE_SUPABASE_BIN is not an executable file"
+bin_version="$("$HONE_SUPABASE_BIN" --version 2>/dev/null || true)"
+[ "$bin_version" = "2.102.0" ] || refuse "HONE_SUPABASE_BIN --version must print exactly 2.102.0"
+cli_desc="the verified binary"
+run_cli() { "$HONE_SUPABASE_BIN" db query --linked -o json -f "$1"; }
 
 # ---------------------------------------------------------------------------
 # CAPTURE (compare-preflight binds results to THIS window through it).
