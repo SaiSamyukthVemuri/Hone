@@ -197,7 +197,7 @@ describe("0256: THE RACE - a client that appears while the command is mid-insert
     await booking.connect();
     const pid = (await booking.query("select pg_backend_pid() as pid")).rows[0].pid as number;
     const racing = booking.query(BOOK, [f.studioId, email, f.serviceId, slot, hash64(), null]);
-    expect(await waitUntilBlocked(pid)).toBe(true);
+    expect(await waitUntilBlocked(pid)).toBeTruthy();
 
     await staff.query("commit");
     const r = (await racing).rows[0];
