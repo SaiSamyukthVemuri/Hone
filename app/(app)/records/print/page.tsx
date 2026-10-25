@@ -4,6 +4,7 @@ import {
   requirePractitionerWithStudio,
 } from "@/lib/supabase/queries";
 import {
+  EMPTY_AUDIT_HISTORY,
   getAuditEventsByRecord,
   getClientProcedureRecords,
   getDisinfectantRecords,
@@ -26,6 +27,12 @@ import {
 import { todayInTz } from "@/lib/booking/tz";
 import type { RecordKeepingAuditEvent } from "@/lib/types/database";
 import { PrintButton } from "./print-button";
+import { recoverRecordsRead } from "@/lib/record-keeping/section-recovery";
+import { RefreshRetryButton } from "../refresh-retry-button";
+import {
+  linkedPhotoLine,
+  loadLinkedPhotoCounts,
+} from "@/lib/images/linked-photo-counts";
 
 // PR #207: inspector-friendly print view for the Record Keeping
 // module. One protected route (inside the authenticated (app) layout,
@@ -80,11 +87,25 @@ const AUDIT_ACTION_LABELS: Record<RecordKeepingAuditEvent["action"], string> = {
   probe_lot_updated: "Probe lot number updated",
 };
 
+// On a PRINTED inspection document, silence is the same lie as "no history" —
+// an inspector cannot tell an omitted History block from a record that never
+// had one. So an unreadable history prints a line saying so, and only a history
+// that was actually read and is actually empty prints nothing.
 function HistoryLines({
   events,
+  unavailable = false,
 }: {
   events: RecordKeepingAuditEvent[] | undefined;
+  unavailable?: boolean;
 }) {
+  if (unavailable) {
+    return (
+      <div className="mt-1 border-t border-neutral-200 pt-1 text-[11px] text-neutral-600">
+        <p className="font-medium">History</p>
+        <p>History could not be loaded for this record.</p>
+      </div>
+    );
+  }
   if (!events || events.length === 0) return null;
   return (
     <div className="mt-1 border-t border-neutral-200 pt-1 text-[11px] text-neutral-600">
@@ -143,12 +164,82 @@ export default async function RecordKeepingPrintPage({
     procedureFilter.from ? `&from=${procedureFilter.from}` : "",
     procedureFilter.to ? `&to=${procedureFilter.to}` : "",
   ].join("");
-  const filteredClient =
-    section === "procedures" && procedureFilter.clientId
-      ? ((await getClientsForStudio(studio.id)).find(
-          (c) => c.id === procedureFilter.clientId,
-        ) ?? null)
-      : null;
+  // RECORDS-SECTION-RECOVERY: print KEEPS failing closed, but onto a page that
+  // cannot be mistaken for a log. Every read this document needs runs here,
+  // before anything is rendered; the section is called directly (not as
+  // <Section />) so its throw is caught on this page. On any failure the page
+  // has no document header, no studio name, no generated stamp and no Print
+  // button, so no empty printout can exist.
+  const loaded = await recoverRecordsRead("records_print", section, async () => {
+    const filteredClient =
+      section === "procedures" && procedureFilter.clientId
+        ? ((await getClientsForStudio(studio.id)).find(
+            (c) => c.id === procedureFilter.clientId,
+          ) ?? null)
+        : null;
+    let body: React.ReactNode;
+    switch (section) {
+      case "sterile":
+        body = await SterilePrint({
+          studioId: studio.id,
+          includeHistory,
+          timezone: studio.timezone,
+        });
+        break;
+      case "disinfectants":
+        body = await DisinfectantsPrint({
+          studioId: studio.id,
+          includeHistory,
+          timezone: studio.timezone,
+        });
+        break;
+      case "incidents":
+        body = isOwner ? (
+          await IncidentsPrint({ studioId: studio.id, includeHistory })
+        ) : (
+          <p className="text-sm">
+            Exposure incident history is owner-only and is not included in
+            this export.
+          </p>
+        );
+        break;
+      case "procedures":
+        body = await ProceduresPrint({
+          studioId: studio.id,
+          includeHistory,
+          timezone: studio.timezone,
+          filter: procedureFilter,
+        });
+        break;
+    }
+    return { filteredClient, body };
+  });
+
+  if (!loaded.ok) {
+    return (
+      <div
+        role="alert"
+        data-testid="records-print-unavailable"
+        className="flex flex-col gap-3 bg-white text-neutral-900"
+      >
+        <Link
+          href={`/records?section=${section}${section === "procedures" ? procedureFilterQuery : ""}`}
+          className="text-sm text-neutral-500 hover:text-neutral-900 print:hidden"
+        >
+          ← Record Keeping
+        </Link>
+        <p className="text-lg font-medium">
+          Could not load {SECTION_TITLES[section]}. No log was generated.
+        </p>
+        <p className="text-sm">
+          This page is not a record. Nothing is listed because the read failed,
+          not because there are no records.
+        </p>
+        <RefreshRetryButton className="self-start text-sm font-medium underline print:hidden" />
+      </div>
+    );
+  }
+  const { filteredClient, body } = loaded.value;
 
   return (
     <div className="flex flex-col gap-5 bg-white text-neutral-900">
@@ -196,40 +287,7 @@ export default async function RecordKeepingPrintPage({
         </p>
       </header>
 
-      {section === "sterile" && (
-        <SterilePrint
-          studioId={studio.id}
-          includeHistory={includeHistory}
-          timezone={studio.timezone}
-        />
-      )}
-      {section === "disinfectants" && (
-        <DisinfectantsPrint
-          studioId={studio.id}
-          includeHistory={includeHistory}
-          timezone={studio.timezone}
-        />
-      )}
-      {section === "incidents" &&
-        (isOwner ? (
-          <IncidentsPrint
-            studioId={studio.id}
-            includeHistory={includeHistory}
-          />
-        ) : (
-          <p className="text-sm">
-            Exposure incident history is owner-only and is not included in
-            this export.
-          </p>
-        ))}
-      {section === "procedures" && (
-        <ProceduresPrint
-          studioId={studio.id}
-          includeHistory={includeHistory}
-          timezone={studio.timezone}
-          filter={procedureFilter}
-        />
-      )}
+      {body}
     </div>
   );
 }
@@ -252,7 +310,7 @@ async function SterilePrint({
         "sterile_item",
         records.map((r) => r.id),
       )
-    : new Map();
+    : EMPTY_AUDIT_HISTORY;
   if (records.length === 0)
     return <p className="text-sm">No sterile item records.</p>;
   return (
@@ -295,7 +353,10 @@ async function SterilePrint({
             {r.updated_at !== r.created_at &&
               ` · Last updated ${utcStamp(new Date(r.updated_at))}`}
           </p>
-          <HistoryLines events={audit.get(r.id)} />
+          <HistoryLines
+            events={audit.byRecord.get(r.id)}
+            unavailable={audit.unavailableRecordIds.has(r.id)}
+          />
         </li>
       ))}
     </ul>
@@ -318,7 +379,7 @@ async function DisinfectantsPrint({
         "disinfectant",
         records.map((r) => r.id),
       )
-    : new Map();
+    : EMPTY_AUDIT_HISTORY;
   if (records.length === 0)
     return <p className="text-sm">No disinfectant records.</p>;
   // PR #295: read-time discard / replace-by status, computed against the
@@ -356,7 +417,10 @@ async function DisinfectantsPrint({
               {r.updated_at !== r.created_at &&
                 ` · Last updated ${utcStamp(new Date(r.updated_at))}`}
             </p>
-            <HistoryLines events={audit.get(r.id)} />
+            <HistoryLines
+            events={audit.byRecord.get(r.id)}
+            unavailable={audit.unavailableRecordIds.has(r.id)}
+          />
           </li>
         );
       })}
@@ -378,7 +442,7 @@ async function IncidentsPrint({
         "exposure_incident",
         records.map((r) => r.id),
       )
-    : new Map();
+    : EMPTY_AUDIT_HISTORY;
   if (records.length === 0)
     return <p className="text-sm">No exposure incidents recorded.</p>;
   return (
@@ -410,7 +474,10 @@ async function IncidentsPrint({
             {r.updated_at !== r.created_at &&
               ` · Last updated ${utcStamp(new Date(r.updated_at))}`}
           </p>
-          <HistoryLines events={audit.get(r.id)} />
+          <HistoryLines
+            events={audit.byRecord.get(r.id)}
+            unavailable={audit.unavailableRecordIds.has(r.id)}
+          />
         </li>
       ))}
     </ul>
@@ -443,7 +510,17 @@ async function ProceduresPrint({
         studioId,
         records.map((r) => r.sessionId),
       )
-    : new Map();
+    : EMPTY_AUDIT_HISTORY;
+  // HON-46 (photos): on a per-client pull, say on SCREEN how many photos are
+  // linked to each visit. Never printed, never an image: whether photo consent
+  // covers an insurer packet is not decided (lib/images/linked-photo-counts.ts).
+  const photoCounts = filter.clientId
+    ? await loadLinkedPhotoCounts(
+        studioId,
+        filter.clientId,
+        records.map((r) => r.sessionId),
+      )
+    : null;
   if (records.length === 0)
     return (
       <p className="text-sm">
@@ -508,7 +585,26 @@ async function ProceduresPrint({
                 : "Not recorded"
             }
           />
-          <HistoryLines events={audit.get(r.sessionId)} />
+          <HistoryLines
+            events={audit.byRecord.get(r.sessionId)}
+            unavailable={audit.unavailableRecordIds.has(r.sessionId)}
+          />
+          {photoCounts && (
+            <p
+              data-testid="linked-photos-note"
+              className="mt-1 text-xs text-neutral-500 print:hidden"
+            >
+              {linkedPhotoLine(
+                photoCounts.ok ? photoCounts.bySession.get(r.sessionId) : undefined,
+              )}{" "}
+              <Link
+                href={`/clients/${r.clientId}/images`}
+                className="underline hover:text-neutral-900"
+              >
+                View photos
+              </Link>
+            </p>
+          )}
         </li>
       ))}
     </ul>

@@ -282,7 +282,7 @@ export async function getClientsNeedingAttention(
   studioId: string,
 ): Promise<ClientsNeedingAttention> {
   const supabase = await createClient();
-  const { data: sessionRows } = await supabase
+  const { data: sessionRows, error: sessionsError } = await supabase
     .from("sessions")
     .select(
       "id, client_id, started_at, next_session_note, client:clients(id, name, archived_at)",
@@ -291,6 +291,10 @@ export async function getClientsNeedingAttention(
     .is("deleted_at", null)
     .order("started_at", { ascending: false })
     .limit(SCAN_CAP);
+  // DAT-002 (the #981 pattern): a failed read refuses through the route error
+  // boundary with a fixed message. Returning the empty list would claim there
+  // is nothing to follow up.
+  if (sessionsError) throw new Error("Failed to load clients needing attention");
   type Raw = {
     id: string;
     client_id: string;
@@ -316,7 +320,7 @@ export async function getClientsNeedingAttention(
     })
     .filter((r): r is AttentionSessionInput => r !== null);
 
-  const { data: blockRows } =
+  const { data: blockRows, error: blocksError } =
     sessions.length > 0
       ? await supabase
           .from("session_blocks")
@@ -332,7 +336,8 @@ export async function getClientsNeedingAttention(
             sessions.map((s) => s.id),
           )
           .is("deleted_at", null)
-      : { data: [] };
+      : { data: [], error: null };
+  if (blocksError) throw new Error("Failed to load clients needing attention");
 
   type RawBlock = {
     session_id: string;

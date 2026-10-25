@@ -149,6 +149,18 @@ check("migration state is derivable and consistent", () => {
   }
 });
 
+// 6. The committed schema snapshot must match the migrations. A new or edited
+// migration needs `npm run schema:snapshot -- --write`; the unit lane fails on
+// a stale snapshot too, so catch it before the push rather than in CI.
+check("schema snapshot matches supabase/migrations", () => {
+  try {
+    execFileSync("node", ["scripts/schema-snapshot.mjs"], { encoding: "utf8", stdio: "pipe" });
+    return null;
+  } catch (err) {
+    return `${(err.stderr || err.message).toString().trim()}\n(on a merge conflict in supabase/schema-snapshot.json, re-run the command; never hand-merge it)`;
+  }
+});
+
 console.log("");
 for (const n of notes) console.log(`${DIM}note: ${n}${RESET}`);
 

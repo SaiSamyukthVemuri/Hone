@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   capResults,
+  containsPattern,
   escapeIlike,
+  orFilterValue,
+  orIlike,
   sanitizeQuery,
   groupResults,
   statusForQuery,
@@ -37,6 +40,19 @@ function result(type: SearchResult["type"], n: number): SearchResult {
 describe("pure helpers", () => {
   it("escapeIlike makes %, _, and backslash literal", () => {
     expect(escapeIlike("50%_a\\b")).toBe("50\\%\\_a\\\\b");
+  });
+
+  it("containsPattern is the query literally: punctuation is never a wildcard (HON-58)", () => {
+    expect(containsPattern("Smith, Jane")).toBe("%Smith, Jane%");
+    expect(containsPattern('a(b)"c')).toBe('%a(b)"c%');
+    expect(containsPattern("50%_a\\b")).toBe("%50\\%\\_a\\\\b%");
+  });
+
+  it("orIlike double-quotes every .or() value, PostgREST's escaping (HON-58)", () => {
+    // A typed "Smith, Jane" used to split the client .or() filter in two.
+    expect(orIlike(["name", "email"], "%Smith, Jane%")).toBe('name.ilike."%Smith, Jane%",email.ilike."%Smith, Jane%"');
+    expect(orFilterValue('a"b\\c')).toBe('"a\\"b\\\\c"');
+    expect(orFilterValue("(x).y:z")).toBe('"(x).y:z"');
   });
 
   it("sanitizeQuery trims and caps length", () => {

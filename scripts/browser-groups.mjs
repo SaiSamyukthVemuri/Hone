@@ -214,6 +214,10 @@ export const BROWSER_GROUPS = {
       // boundary drives the data range: a grid that starts Sunday while the
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
+      // HON-48 team day view: five synthetic practitioners in one-column-per-
+      // practitioner layout, Los Angeles date boundaries, same-practitioner
+      // conflict refusal, member create scope and the phone scroll box.
+      "team-day-view.spec.ts",
     ],
   },
   owner_admin: {
@@ -221,6 +225,16 @@ export const BROWSER_GROUPS = {
     specs: [
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
+      // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
+      // the 60 s signed-URL expiry. Here and not in `sessions` for UI-04's two
+      // reasons: /clients/** has no PATH_TO_GROUP pattern (a photo diff already
+      // runs extended) and `sessions` carries a cost pin. Needs REAL storage,
+      // so it SELF-SKIPS in CI (no storage-api); its evidence is a local run.
+      "fett-photos-thumbnail-recovery.spec.ts",
+      // ENG-002: Photos-tab upload accepts JPEG/PNG/WebP and refuses SVG/HEIF.
+      // Same placement and same self-skip as the spec above; both run for real
+      // in the non-required `storage photos` job, which has storage-api.
+      "treatment-image-upload-formats.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the
@@ -306,10 +320,18 @@ export const BROWSER_GROUPS = {
       // extended to one group, and that is a coverage decision for every client
       // diff in the repository, not a presentation slice's to take in passing.
       "ui04-unarchive-pending.spec.ts",
+      // FETT photos (#892): the photo surface's mounted 44px floor at phone width
+      // and the deactivated-practitioner denial. Filed here for the same two
+      // reasons as UI-04 above: /clients/** has no PATH_TO_GROUP pattern, so a
+      // photo diff already runs extended, and `sessions` carries a cost pin.
+      "fett-photos-touch-floor.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",
       "welcome-email-admin.spec.ts",
+      // HON-62: the weekly-hours editor's native time inputs (keyboard
+      // entry, touch tap, save/reload, untouched existing hours).
+      "availability-hours-editor.spec.ts",
       "practitioner-availability-compat.spec.ts",
       "practitioner-booking-studio-b.spec.ts",
       "practitioner-quick-book-studio-b.spec.ts",
@@ -388,7 +410,7 @@ const SHARED_PATTERNS = [
   // full_matrix_required=true while selecting NO browser group: the lane
   // would be skipped exactly when the most caution is warranted.
   /^\.github\/workflows\//,
-  /^scripts\/(classify-changes|browser-groups|ci-plan)\.mjs$/,
+  /^scripts\/(classify-changes|browser-groups|ci-plan|test-dependencies|docs-paths)\.mjs$/,
   /^e2e\/helpers\//,
   /^playwright\.config\./,
   /^lib\/supabase\//,

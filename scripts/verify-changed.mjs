@@ -39,6 +39,12 @@ const addSuggested = (label, cmd, why) => suggested.push({ label, cmd, why });
 if (c.docs_only) {
   addAuto("documentation consistency", "npx vitest run tests/docs/", "docs-only diff");
   addAuto("migration state derives", "node scripts/migration-state.mjs", "docs may quote migration state");
+  // CI's canonical-record job runs these too (docs_reader_tests); without them a doc edit that breaks a reader
+  // passes here and fails there. Each path is single-quoted: it reaches a shell.
+  if (c.docs_consistency) {
+    const quoted = c.docs_reader_tests.map((t) => `'${t.replaceAll("'", "'\\''")}'`).join(" ");
+    addAuto("unit tests that read the changed docs", `npx vitest run ${quoted}`, "a changed doc is test input");
+  }
 } else {
   if (c.database) {
     addAuto("migration source contracts", "npx vitest run tests/migrations/", "migration paths changed");
@@ -59,7 +65,14 @@ if (c.docs_only) {
     addAuto("typecheck", "npx tsc --noEmit", "TypeScript changed");
   }
   if (c.payment) {
-    addAuto("payment unit + safety gates", "npx vitest run tests/app/ --silent=false -t payment || npm run check:stripe-gates", "payment paths changed");
+    // Both checks are required. A passing gate must never mask a failed unit
+    // run, and a passing unit run must not skip the gate. File filters include
+    // billing/refund/checkout cases regardless of their describe/test wording.
+    addAuto("payment unit regressions", "npx vitest run payment stripe checkout manual-fee refund tests/lib/billing/", "payment paths changed");
+    // Preserve the earlier title-selected action coverage too: receipt-ui.test
+    // contains SessionPayment suites but none of the file-name keywords above.
+    addAuto("payment-title action regressions", "npx vitest run tests/app/ --silent=false -t payment", "payment paths changed");
+    addAuto("payment safety gates", "npm run check:stripe-gates", "payment paths changed");
     addSuggested("payment browser E2E", "npm run test:e2e:payment", "payment paths changed");
   }
   if (c.google_calendar) {
@@ -127,7 +140,7 @@ for (const a of auto) {
   } catch (err) {
     failed += 1;
     console.log(`${RED}FAILED${RESET}`);
-    const out = `${err.stdout ?? ""}${err.stderr ?? ""}`.trim().split("\n").slice(-15);
+    const out = `${err.stdout ?? ""}${err.stderr ?? ""}`.trim().split("\n");
     for (const l of out) console.log(`    ${l}`);
   }
 }

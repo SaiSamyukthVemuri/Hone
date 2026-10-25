@@ -2,6 +2,7 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "./server";
 import { readSelectedStudioId } from "./selected-studio";
+import { authorLabel } from "@/lib/attribution";
 import type { BlockArea } from "@/lib/sessions/block-areas";
 import type {
   ApilusModality,
@@ -291,7 +292,59 @@ export async function getPractitionersForStudio(
   return (data ?? []) as Practitioner[];
 }
 
-export async function getClientsForStudio(studioId: string): Promise<Client[]> {
+// DAT-001: a directory must not silently stop at PostgREST's row ceiling.
+// Keep user/studio/archive scope on EVERY page. Traverse by immutable id, not
+// an offset into mutable membership/name/archive order: a previous-page edit
+// must not shift an unread client behind the next page. Sort the collected
+// snapshots for display only after traversal. This is not a DB-wide snapshot.
+// Continue to empty even with a lower server cap; errors/repeated rows refuse
+// the whole directory rather than return a partial list.
+//
+// DAT-001 minimal returned fields: name the columns. This is the union of
+// what the directory's consumers read (/clients, the calendar quick-book
+// drawer, records' exposed-person selector, procedure filter and print).
+// Clinical, consent and emergency-contact columns never leave the database
+// for a list. A consumer that needs another column must add it here.
+export const CLIENT_DIRECTORY_COLUMNS =
+  "id, name, pronouns, email, phone, address, archived_at";
+export type DirectoryClient = Pick<
+  Client,
+  "id" | "name" | "pronouns" | "email" | "phone" | "address" | "archived_at"
+>;
+
+async function loadStudioClientDirectory(studioId: string, archived: boolean): Promise<DirectoryClient[]> {
+  const supabase = await createClient();
+  const clients: DirectoryClient[] = [];
+  const seen = new Set<string>();
+  let afterId: string | null = null;
+  const failure = archived ? "Failed to load archived clients" : "Failed to load clients";
+  for (;;) {
+    let query = supabase.from("clients").select(CLIENT_DIRECTORY_COLUMNS).eq("studio_id", studioId);
+    query = archived ? query.not("archived_at", "is", null) : query.is("archived_at", null);
+    if (afterId !== null) query = query.gt("id", afterId);
+    const { data, error } = await query
+      .order("id", { ascending: true })
+      .range(0, 999);
+    // Database messages may contain client data; never expose them here.
+    if (error) throw new Error(failure);
+    const rows = (data ?? []) as DirectoryClient[];
+    if (rows.length === 0) {
+      return clients.sort((a, b) => (
+        archived
+          ? Date.parse(b.archived_at!) - Date.parse(a.archived_at!)
+          : a.name.localeCompare(b.name, "en")
+      ) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    }
+    for (const row of rows) {
+      if (seen.has(row.id)) throw new Error(failure);
+      seen.add(row.id);
+      clients.push(row);
+    }
+    afterId = rows[rows.length - 1].id;
+  }
+}
+
+export async function getClientsForStudio(studioId: string): Promise<DirectoryClient[]> {
   // PR Willow launch fixes (migration 0050): filter archived clients
   // out of the active list. Archived rows still exist (their
   // appointments, sessions, intake, treatment plans, and audit
@@ -304,16 +357,7 @@ export async function getClientsForStudio(studioId: string): Promise<Client[]> {
   //
   // The dedicated archived view in /clients?view=archived uses the
   // sibling helper getArchivedClientsForStudio below.
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("clients")
-    .select("*")
-    .eq("studio_id", studioId)
-    .is("archived_at", null)
-    .order("name", { ascending: true });
-
-  if (error) throw new Error(`Failed to load clients: ${error.message}`);
-  return (data ?? []) as Client[];
+  return loadStudioClientDirectory(studioId, false);
 }
 
 // Archived clients for the studio's "Archived clients" view. Mirrors
@@ -326,19 +370,8 @@ export async function getClientsForStudio(studioId: string): Promise<Client[]> {
 // client list continue to hide them.
 export async function getArchivedClientsForStudio(
   studioId: string,
-): Promise<Client[]> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("clients")
-    .select("*")
-    .eq("studio_id", studioId)
-    .not("archived_at", "is", null)
-    .order("archived_at", { ascending: false });
-
-  if (error) {
-    throw new Error(`Failed to load archived clients: ${error.message}`);
-  }
-  return (data ?? []) as Client[];
+): Promise<DirectoryClient[]> {
+  return loadStudioClientDirectory(studioId, true);
 }
 
 export type SessionWithEntries = Session & {
@@ -351,19 +384,66 @@ export type ClientCheatSheet = {
   pricing: ClientPricing[];
   sessions: SessionWithEntries[];
   practitioners: Practitioner[];
+  // HON-44 (a): every member of the studio INCLUDING deactivated ones, for
+  // naming who recorded or performed a historical session. `practitioners`
+  // stays active-only because it feeds pickers.
+  attributionRoster: AttributionPractitioner[];
 };
+
+export type AttributionPractitioner = Pick<Practitioner, "id" | "display_name" | "email">;
+
+function attributedName(
+  id: string | null,
+  roster: ReadonlyArray<AttributionPractitioner>,
+): string | null {
+  if (!id) return null;
+  const match = roster.find((p) => p.id === id);
+  return authorLabel(match ? match.display_name?.trim() || match.email : null);
+}
 
 // Resolves the human-readable name of who performed a session,
 // preferring performed_by_practitioner_id but falling back to the creator.
+// Pass the attribution roster (deactivated members included); an id that
+// still cannot be resolved reads "Unknown author" rather than disappearing.
 export function sessionPerformerName(
   session: Pick<Session, "performed_by_practitioner_id" | "practitioner_id">,
-  practitioners: Practitioner[],
+  roster: ReadonlyArray<AttributionPractitioner>,
 ): string | null {
-  const id = session.performed_by_practitioner_id ?? session.practitioner_id;
-  if (!id) return null;
-  const match = practitioners.find((p) => p.id === id);
-  if (!match) return null;
-  return match.display_name?.trim() ? match.display_name : match.email;
+  return attributedName(session.performed_by_practitioner_id ?? session.practitioner_id, roster);
+}
+
+// The session's ORIGINAL author (its creator), named only when someone else
+// is recorded as the performer; otherwise the performer line already says it.
+export function sessionRecordedByName(
+  session: Pick<Session, "performed_by_practitioner_id" | "practitioner_id">,
+  roster: ReadonlyArray<AttributionPractitioner>,
+): string | null {
+  const performer = session.performed_by_practitioner_id;
+  if (!performer || performer === session.practitioner_id) return null;
+  return attributedName(session.practitioner_id, roster);
+}
+
+// ONE roster read serves both lists, so the profile's per-tab query budget
+// (tests/db/client-profile-tab-queries.db.test.ts) is unchanged. Members read
+// their whole studio roster under RLS (0001 "practitioners: members read"),
+// deactivated rows included; the active list is filtered from it here, in the
+// same display_name order getPractitionersForStudio returns.
+async function getStudioRosters(studioId: string): Promise<{
+  practitioners: Practitioner[];
+  attributionRoster: AttributionPractitioner[];
+}> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("practitioners")
+    .select("*")
+    .eq("studio_id", studioId)
+    .order("display_name", { ascending: true });
+  if (error) throw new Error(`Failed to load practitioners: ${error.message}`);
+  const rows = (data ?? []) as Practitioner[];
+  return {
+    practitioners: rows.filter((p) => p.active === true),
+    attributionRoster: rows.map((p) => ({ id: p.id, display_name: p.display_name, email: p.email })),
+  };
 }
 
 // Migration 0114: a voided pass (deleted_at set) stays in the DB but must never
@@ -396,7 +476,7 @@ export async function getClientById(
   if (clientErr) throw new Error(`Failed to load client: ${clientErr.message}`);
   if (!client) return null;
 
-  const [pricingRes, sessionsRes, practitioners] = await Promise.all([
+  const [pricingRes, sessionsRes, { practitioners, attributionRoster }] = await Promise.all([
     supabase
       .from("client_pricing")
       .select("*")
@@ -410,7 +490,7 @@ export async function getClientById(
       .eq("client_id", clientId)
       .is("deleted_at", null)
       .order("started_at", { ascending: false }),
-    getPractitionersForStudio(studioId),
+    getStudioRosters(studioId),
   ]);
 
   if (pricingRes.error)
@@ -425,6 +505,7 @@ export async function getClientById(
       stripDeletedEntries,
     ),
     practitioners,
+    attributionRoster,
   };
 }
 

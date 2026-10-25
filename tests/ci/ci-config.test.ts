@@ -424,6 +424,8 @@ describe("PR CI — path-aware lane selection", () => {
       "mobile",
       "ci_workflows",
       "full_matrix_required",
+      "docs_consistency",
+      "docs_reader_tests",
     ]) {
       expect(CI, `${k} must be a job output`).toMatch(
         new RegExp(`${k}: \\$\\{\\{ steps\\.classify\\.outputs\\.${k} \\}\\}`),
@@ -456,11 +458,11 @@ describe("PR CI — path-aware lane selection", () => {
     ]) {
       expect(jobs, `${job} must still exist`).toContain(job);
     }
-    // Seven gated lanes declare `needs: changes` + an `if:` on classifier output
+    // Eight gated lanes declare `needs: changes` + an `if:` on classifier output
     // (the seventh is canonical-record, the docs-only production-record lane,
-    // #825 6215529089).
-    expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(7);
-    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(7);
+    // #825 6215529089; the eighth is storage-photos, not required, E-GAPS).
+    expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(8);
+    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(8);
   });
 
   it("the required browser check is a STABLE aggregator, not a dynamic shard name", () => {
@@ -549,10 +551,11 @@ describe("PR CI — path-aware lane selection", () => {
     // 30767725631 (extended) and later run 30814919019 (targeted) were both
     // misreported as test failures.
     const b = shardTimeoutBudgets();
-    expect(b.targeted, "targeted hard timeout").toBe(15);
-    expect(b.extended, "extended hard timeout").toBe(18);
-    expect(CI).toMatch(/hard timeout 15 min/i);
-    expect(CI).toMatch(/hard timeout 18 min/i);
+    // 15 -> 19 (2026-10-23): + the bounded 6 min Playwright install step.
+    expect(b.targeted, "targeted hard timeout").toBe(19);
+    expect(b.extended, "measured cold-setup hard timeout").toBe(25);
+    expect(CI).toMatch(/hard timeout 19 min/i);
+    expect(CI).toMatch(/hard timeout 25 min/i);
     expect(CI).toMatch(/target <10 min per shard/i);
     expect(CI).toMatch(/FAILURE CEILING, not a performance target/i);
   });
@@ -602,7 +605,8 @@ describe("PR CI — path-aware lane selection", () => {
     // all four PR browser jobs re-downloaded Chromium + FFmpeg + headless shell
     // on every run.
     const caches = CI.match(/path: ~\/\.cache\/ms-playwright/g) ?? [];
-    expect(caches.length, "all four browser jobs must cache").toBe(4);
+    // Five since the storage-photos job (E-GAPS, not required).
+    expect(caches.length, "all five browser jobs must cache").toBe(5);
     // CI-HARDEN-01B pinned every action to a commit SHA, so this counts the
     // ACTION rather than a version tag. The claim under test is "every browser
     // job caches", which a ref should never have been able to falsify.
@@ -616,22 +620,299 @@ describe("PR CI — path-aware lane selection", () => {
     expect(CI).toMatch(/require\('@playwright\/test\/package\.json'\)\.version/);
   });
 
-  it("a cache HIT skips the browser download and installs only system deps", () => {
-    expect((CI.match(/if: steps\.pw-cache\.outputs\.cache-hit != 'true'/g) ?? []).length).toBe(4);
-    expect((CI.match(/if: steps\.pw-cache\.outputs\.cache-hit == 'true'/g) ?? []).length).toBe(4);
-    expect((CI.match(/playwright install-deps chromium/g) ?? []).length).toBe(4);
+  it("a cache HIT skips the browser download; the system packages are installed either way", () => {
+    expect((CI.match(/if: steps\.pw-cache\.outputs\.cache-hit != 'true'/g) ?? []).length).toBe(5);
+    expect((CI.match(/run: npx playwright install chromium$/gm) ?? []).length).toBe(5);
+    // Hit or miss, the OS packages come from the bounded, .deb-cached script.
+    expect((CI.match(/run: bash scripts\/ci\/playwright-system-deps\.sh$/gm) ?? []).length).toBe(5);
   });
 
   it("no browser download runs unconditionally", () => {
     const lines = CI.split("\n");
     const unguarded: number[] = [];
     lines.forEach((l, i) => {
-      if (l.includes("playwright install --with-deps chromium")) {
+      if (l.includes("npx playwright install chromium")) {
         const ctx = lines.slice(Math.max(0, i - 4), i).join("\n");
         if (!ctx.includes("cache-hit != 'true'")) unguarded.push(i + 1);
       }
     });
     expect(unguarded, "every browser download must be behind a cache-miss guard").toEqual([]);
+  });
+
+  // -------------------------------------------------------------------------
+  // SYSTEM PACKAGES: CACHED AND BOUNDED (2026-10-23 apt stall).
+  // Every ceiling cancellation on 2026-10-23 (6 of 6) was the Playwright
+  // system-deps step crawling at ~45 kB/s from the runner's Ubuntu mirror
+  // (up to 11.3 min) while the tests themselves passed
+  // (machines/SETUP-TIME-MEASURE-END.json). The .debs are cached per runner
+  // image + Playwright version, and an install that stalls is cut off and
+  // retried once on another mirror by scripts/ci/playwright-system-deps.sh.
+  // -------------------------------------------------------------------------
+  const PLAYWRIGHT_JOBS = ["browser-e2e-shard", "payment-browser-e2e", "mobile-completion-e2e", "google-browser-e2e"];
+  type PwStep = { name?: string; id?: string; if?: string; uses?: string; run?: string; with?: Record<string, string>; "timeout-minutes"?: number };
+  const pwSteps = (job: string): PwStep[] =>
+    ((yaml.load(CI) as { jobs: Record<string, { steps: PwStep[] }> }).jobs[job]?.steps ?? []);
+  const DEB_KEY = "pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}";
+
+  it.each(PLAYWRIGHT_JOBS)("%s: Playwright system .debs are restored and saved, keyed on runner image + Playwright version", (job) => {
+    const steps = pwSteps(job);
+    const at = (pred: (s: PwStep) => boolean) => steps.findIndex(pred);
+    const img = at((s) => s.id === "img");
+    const restore = at((s) => s.id === "deb-cache");
+    const deps = at((s) => (s.run ?? "").includes("scripts/ci/playwright-system-deps.sh"));
+    const save = at((s) => (s.uses ?? "").startsWith("actions/cache/save@"));
+    expect([img, restore, deps, save].every((i) => i >= 0), `${job}: image id, restore, install and save steps`).toBe(true);
+    expect(img < restore && restore < deps && deps < save, `${job}: resolve image -> restore -> install -> save`).toBe(true);
+    expect(steps[img].run).toContain("ImageOS");
+    expect(steps[img].run).toContain("ImageVersion");
+    // SHA-pinned (the parsed value drops the YAML comment, so the version
+    // comment is checked on the raw text below).
+    expect(steps[restore].uses).toMatch(/^actions\/cache\/restore@[0-9a-f]{40}$/);
+    expect(steps[save].uses).toMatch(/^actions\/cache\/save@[0-9a-f]{40}$/);
+    for (const ref of [steps[restore].uses, steps[save].uses]) {
+      expect(CI, `${ref} carries its # vX.Y.Z comment`).toMatch(new RegExp(`uses: ${ref!.replace(/[/.]/g, "\\$&")} # v\\d+\\.\\d+\\.\\d+\\n`));
+    }
+    expect(steps[restore].with).toMatchObject({ path: "~/apt-debs", key: DEB_KEY });
+    expect(steps[save].with).toMatchObject({ path: "~/apt-debs", key: DEB_KEY });
+    // Saved only on a miss, and straight after the install: a post-job save
+    // would be lost whenever the tests fail or the job is cancelled.
+    expect(steps[save].if).toBe("steps.deb-cache.outputs.cache-hit != 'true'");
+    expect(save).toBe(deps + 1);
+  });
+
+  it.each(PLAYWRIGHT_JOBS)("%s: the system-deps install always runs, bounded, through the script", (job) => {
+    const steps = pwSteps(job);
+    const deps = steps.filter((s) => (s.run ?? "").includes("scripts/ci/playwright-system-deps.sh"));
+    expect(deps).toHaveLength(1);
+    // Unconditional: a browser-cache MISS needs the system packages too, and
+    // the miss path no longer installs them itself (no --with-deps).
+    expect(deps[0].if).toBeUndefined();
+    // Exact: the worst-case guard below derives the floor; this pins the value
+    // the job budgets were computed against.
+    expect(deps[0]["timeout-minutes"], "the install step's ceiling").toBe(6);
+    const miss = steps.find((s) => s.if === "steps.pw-cache.outputs.cache-hit != 'true'");
+    expect(miss?.run).toBe("npx playwright install chromium");
+  });
+
+  it("no unbounded apt install remains in ci.yml", () => {
+    expect(CI).not.toMatch(/playwright install --with-deps/);
+    expect(CI).not.toMatch(/npx playwright install-deps/);
+  });
+
+  // EVERY workflow, not just ci.yml (Codex P2 4361861942, #1059): CLAUDE.md
+  // section 4 says every Playwright job's apt phase is cached and bounded, and
+  // nightly.yml still ran the raw installs. Enrolled by existing in the
+  // directory, like the supply-chain guards above.
+  function unboundedPlaywrightInstalls(workflows: readonly Workflow[]): string[] {
+    const faults: string[] = [];
+    for (const [file, body] of workflows) {
+      const code = body.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+      if (/playwright install --with-deps/.test(code)) faults.push(`${file}: an unbounded \`playwright install --with-deps\``);
+      if (/playwright install-deps/.test(code)) faults.push(`${file}: an unbounded \`playwright install-deps\``);
+      if (/npx playwright install(?![-\w])/.test(code) && !code.includes("bash scripts/ci/playwright-system-deps.sh")) {
+        faults.push(`${file}: installs a Playwright browser but never runs the bounded system-deps script`);
+      }
+    }
+    return faults;
+  }
+
+  it("NO workflow runs an unbounded Playwright apt install", () => {
+    expect(unboundedPlaywrightInstalls(readWorkflowDir())).toEqual([]);
+  });
+
+  it("the all-workflows guard is not vacuous (fixture controls)", () => {
+    expect(unboundedPlaywrightInstalls([["x.yml", "      - run: npx playwright install-deps chromium\n"]])).toEqual([
+      "x.yml: an unbounded `playwright install-deps`",
+    ]);
+    expect(unboundedPlaywrightInstalls([["y.yaml", "      - run: npx playwright install --with-deps chromium\n"]])).toEqual([
+      "y.yaml: an unbounded `playwright install --with-deps`",
+      "y.yaml: installs a Playwright browser but never runs the bounded system-deps script",
+    ]);
+    expect(unboundedPlaywrightInstalls([["z.yml", "      # npx playwright install-deps chromium (prose)\n"]])).toEqual([]);
+  });
+
+  it("nightly.yml: browser lanes restore -> bounded install -> save, gated on matrix.needs_browsers", () => {
+    type Step = PwStep;
+    const doc = yaml.load(NIGHTLY) as { jobs: Record<string, { steps?: Step[] }> };
+    const job = Object.values(doc.jobs).find((j) => (j.steps ?? []).some((s) => s.id === "pw-cache"));
+    expect(job, "the nightly job that drives browsers").toBeDefined();
+    const steps = job!.steps!;
+    const at = (pred: (s: Step) => boolean) => steps.findIndex(pred);
+    const img = at((s) => s.id === "img");
+    const restore = at((s) => s.id === "deb-cache");
+    const deps = at((s) => (s.run ?? "").includes("scripts/ci/playwright-system-deps.sh"));
+    const save = at((s) => (s.uses ?? "").startsWith("actions/cache/save@"));
+    expect([img, restore, deps, save].every((i) => i >= 0)).toBe(true);
+    expect(img < restore && restore < deps && save === deps + 1).toBe(true);
+    for (const i of [img, restore, deps]) expect(steps[i].if, steps[i].name).toBe("matrix.needs_browsers");
+    expect(steps[save].if).toBe("matrix.needs_browsers && steps.deb-cache.outputs.cache-hit != 'true'");
+    expect(steps[restore].with).toMatchObject({ path: "~/apt-debs", key: DEB_KEY });
+    expect(steps[save].with).toMatchObject({ path: "~/apt-debs", key: DEB_KEY });
+    expect(steps[deps]["timeout-minutes"]).toBe(6);
+    const miss = steps.find((s) => s.id !== "pw-cache" && (s.if ?? "").includes("steps.pw-cache.outputs.cache-hit != 'true'"));
+    expect(miss?.run).toBe("npx playwright install chromium");
+  });
+
+  // THE STEP CEILING MUST EXCEED THE SCRIPT'S OWN WORST CASE (Codex P2
+  // 4362256407, #1059). A step cut by GitHub signals only the unprivileged
+  // shell, so a privileged cleanup or fallback still in flight would be
+  // abandoned. The worst case is DERIVED from the script's defaults, never
+  // restated here: attempt (FIRST + KILL_AFTER) + settle + dpkg repair
+  // (REPAIR + KILL_AFTER) + retry (RETRY + KILL_AFTER), plus 30 s for the
+  // .deb restore/save copies and the mirror edit.
+  const DEPS_SCRIPT = "scripts/ci/playwright-system-deps.sh";
+  function scriptWorstCaseSeconds(script: string): number {
+    const def = (name: string) => {
+      const m = new RegExp(`^${name}="\\$\\{[A-Z_]+:-(\\d+)\\}"$`, "m").exec(script);
+      expect(m, `${DEPS_SCRIPT} defines ${name} with a numeric default`).not.toBeNull();
+      return Number(m![1]);
+    };
+    const [first, retry, kill, settle, repair] = ["FIRST", "RETRY", "KILL_AFTER", "SETTLE", "REPAIR"].map(def);
+    return first + kill + settle + repair + kill + retry + kill;
+  }
+  const SCRIPT_OVERHEAD_S = 30;
+
+  it("the arithmetic is the script's: every bound it applies is one of the constants summed", () => {
+    const script = readFileSync(DEPS_SCRIPT, "utf8");
+    expect(script).toMatch(/timeout --kill-after="\$KILL_AFTER" "\$1" npx playwright install-deps chromium/);
+    expect(script).toMatch(/sudo timeout --kill-after="\$KILL_AFTER" "\$REPAIR" dpkg --configure -a/);
+    expect(script).toMatch(/while \[ -n "\$busy" \] && \[ "\$waited" -lt "\$SETTLE" \]/);
+    // No other literal time bound hides in the script.
+    expect(script.match(/timeout --kill-after=/g)).toHaveLength(2);
+  });
+
+  it("EVERY workflow step running the script has timeout-minutes above its worst case", () => {
+    const worst = scriptWorstCaseSeconds(readFileSync(DEPS_SCRIPT, "utf8")) + SCRIPT_OVERHEAD_S;
+    const offenders: string[] = [];
+    let seen = 0;
+    for (const [file, body] of readWorkflowDir()) {
+      const doc = yaml.load(body) as { jobs?: Record<string, { steps?: PwStep[] }> };
+      for (const [job, def] of Object.entries(doc.jobs ?? {})) {
+        for (const step of def.steps ?? []) {
+          if (!(step.run ?? "").includes(DEPS_SCRIPT)) continue;
+          seen += 1;
+          const t = step["timeout-minutes"];
+          if (typeof t !== "number" || t * 60 <= worst) offenders.push(`${file} ${job}: timeout-minutes ${t} (${(t ?? 0) * 60}s) <= ${worst}s`);
+        }
+      }
+    }
+    expect(seen, "ci.yml x5 (incl. storage-photos) + nightly.yml x1").toBe(6);
+    expect(offenders).toEqual([]);
+  });
+
+  it("each Playwright job's hard timeout clears measured no-stall time + the install step's ceiling + 1 min", () => {
+    // No-stall p90 totals measured 2026-10-23 (machines/SETUP-TIME-MEASURE-END.json,
+    // apt step < 1 min): the install step's ceiling is the worst it can add.
+    const P90 = { targeted: 11.2, extended: 14.5, payment: 10.3, mobile: 5.8, google: 6.7 };
+    const stepCeiling = (job: string) => pwSteps(job).find((s) => (s.run ?? "").includes(DEPS_SCRIPT))!["timeout-minutes"]!;
+    const need = (p90: number, job: string) => p90 + stepCeiling(job) + 1;
+    const b = shardTimeoutBudgets();
+    const jobBudget = (job: string) => Number(new RegExp(`  ${job}:\\n(?:.*\\n)*?    timeout-minutes: (\\d+)`).exec(CI)![1]);
+    expect(b.targeted, "targeted").toBeGreaterThanOrEqual(need(P90.targeted, "browser-e2e-shard"));
+    expect(b.extended, "extended").toBeGreaterThanOrEqual(need(P90.extended, "browser-e2e-shard"));
+    expect(jobBudget("payment-browser-e2e")).toBeGreaterThanOrEqual(need(P90.payment, "payment-browser-e2e"));
+    expect(jobBudget("mobile-completion-e2e")).toBeGreaterThanOrEqual(need(P90.mobile, "mobile-completion-e2e"));
+    expect(jobBudget("google-browser-e2e")).toBeGreaterThanOrEqual(need(P90.google, "google-browser-e2e"));
+  });
+
+  // COMMENTS MAY NOT RESTATE THE BOUNDS WRONGLY (Codex P3 4362454294, #1059):
+  // the four ci.yml blocks still said 180 s / 300 s after the script moved to
+  // 90 / 150. A comment block about the install (workflows, and CLAUDE.md's
+  // section 4 paragraph) may state a seconds figure only if it IS one of the
+  // script's constants or its derived worst case, and may not state the bound
+  // as minute arithmetic ("3 + 5 min"); the ci.yml blocks name the constants.
+  function installCommentDrift(sources: ReadonlyArray<readonly [string, string]>, script: string): string[] {
+    const def = (name: string) => Number(new RegExp(`^${name}="\\$\\{[A-Z_]+:-(\\d+)\\}"$`, "m").exec(script)?.[1]);
+    const allowed = new Set([...["FIRST", "RETRY", "KILL_AFTER", "SETTLE", "REPAIR"].map(def), scriptWorstCaseSeconds(script)]);
+    const ABOUT_INSTALL = /archive\.ubuntu\.com|playwright-system-deps|system[- ]packages?|bounded install|apt stall/i;
+    const faults: string[] = [];
+    for (const [file, body] of sources) {
+      const isMarkdown = file.endsWith(".md");
+      // Blocks: runs of comment lines (YAML), or paragraphs (Markdown).
+      const blocks: { text: string; line: number }[] = [];
+      let cur: string[] = [];
+      let start = 0;
+      body.split("\n").forEach((l, i) => {
+        const inBlock = isMarkdown ? l.trim() !== "" : /^\s*#/.test(l);
+        if (inBlock) {
+          if (cur.length === 0) start = i + 1;
+          cur.push(l);
+        } else if (cur.length) {
+          blocks.push({ text: cur.join("\n"), line: start });
+          cur = [];
+        }
+      });
+      if (cur.length) blocks.push({ text: cur.join("\n"), line: start });
+      for (const { text, line } of blocks) {
+        if (!ABOUT_INSTALL.test(text)) continue;
+        // Judged per SENTENCE, and only sentences about the install's bounds:
+        // a block can also record unrelated runner measurements (266s, 508s).
+        const flat = text.replace(/^\s*#\s?/gm, "").replace(/\s+/g, " ");
+        for (const sentence of flat.split(/(?<=[.;])\s+/)) {
+          if (!/(install|apt|archive\.ubuntu\.com|system-deps)/i.test(sentence)) continue;
+          if (!/(stall|cut|retr|bound|attempt|worst case|limit)/i.test(sentence)) continue;
+          for (const m of sentence.matchAll(/(?<![\d.])(\d+)\s*s\b/g)) {
+            if (!allowed.has(Number(m[1]))) faults.push(`${file}:${line}: states ${m[1]} s, which is not one of the script's bounds (${[...allowed].join(", ")})`);
+          }
+          for (const m of sentence.matchAll(/\d+\s*\+\s*\d+\s*min/g)) faults.push(`${file}:${line}: states the bound as "${m[0]}"; name the script's constants instead`);
+        }
+      }
+    }
+    return faults;
+  }
+
+  it("no workflow comment or CLAUDE.md paragraph states install bounds that differ from the script's constants", () => {
+    const script = readFileSync(DEPS_SCRIPT, "utf8");
+    const sources = [...readWorkflowDir(), ["CLAUDE.md", readFileSync("CLAUDE.md", "utf8")] as const];
+    expect(installCommentDrift(sources, script)).toEqual([]);
+  });
+
+  it("the ci.yml install blocks name the script's bounds instead of restating them", () => {
+    const blocks = CI.split("      # System packages: CACHED").slice(1).map((b) => b.split("      - name:")[0]);
+    expect(blocks).toHaveLength(4);
+    for (const b of blocks) {
+      expect(b).toMatch(/\bFIRST\b/);
+      expect(b).toMatch(/\bRETRY\b/);
+      expect(b).toContain("scripts/ci/playwright-system-deps.sh");
+    }
+  });
+
+  it("the comment-drift guard is not vacuous (fixture controls)", () => {
+    const script = readFileSync(DEPS_SCRIPT, "utf8");
+    const yml = (c: string) => [["x.yml", `jobs:\n${c}\n      - name: y\n`]] as const;
+    expect(installCommentDrift(yml("      # cuts a stalled install off at 180 s and retries on archive.ubuntu.com (300 s)"), script)).toEqual([
+      "x.yml:2: states 180 s, which is not one of the script's bounds (90, 150, 10, 45, 325)",
+      "x.yml:2: states 300 s, which is not one of the script's bounds (90, 150, 10, 45, 325)",
+    ]);
+    expect(installCommentDrift(yml("      # the bounded install (3 + 5 min worst case)"), script)).toEqual([
+      'x.yml:2: states the bound as "3 + 5 min"; name the script\'s constants instead',
+    ]);
+    expect(installCommentDrift(yml("      # cuts a stalled install off at 90 s and retries on archive.ubuntu.com (150 s)"), script)).toEqual([]);
+    expect(installCommentDrift(yml("      # npm ci took 300 s on a slow runner"), script), "unrelated blocks are not judged").toEqual([]);
+  });
+
+  it("the script bounds the install, retries once on another mirror, and round-trips the .deb cache", () => {
+    const script = readFileSync("scripts/ci/playwright-system-deps.sh", "utf8");
+    // The time limit is INSIDE sudo (Codex P1 r4362059036): an unprivileged
+    // timeout kills npx but not root's apt-get, which keeps the dpkg/apt locks.
+    expect(script).toMatch(/sudo env "PATH=\$PATH" timeout --kill-after="\$KILL_AFTER" "\$1" npx playwright install-deps chromium/);
+    expect(script).toMatch(/install_deps "\$FIRST"/);
+    expect(script).toMatch(/install_deps "\$RETRY"/);
+    const unprivileged = script.split("\n").filter((l) => /^\s*timeout\b.*playwright install-deps/.test(l));
+    expect(unprivileged, "no install-deps under a timeout that runs outside sudo").toEqual([]);
+    // Before the retry: apt quiet (processes + lock holders), else fail loudly; dpkg repaired.
+    for (const lock of ["/var/lib/dpkg/lock-frontend", "/var/lib/apt/lists/lock", "/var/cache/apt/archives/lock"]) expect(script).toContain(lock);
+    expect(script).toMatch(/sudo fuser "\$lock"/);
+    expect(script).toMatch(/pgrep -a -x apt-get/);
+    expect(script).toMatch(/pgrep -a -x dpkg/);
+    expect(script).toMatch(/::error::apt is still busy/);
+    const repair = script.indexOf('sudo timeout --kill-after="$KILL_AFTER" "$REPAIR" dpkg --configure -a');
+    expect(repair, "dpkg is repaired as root, under its own bound").toBeGreaterThan(script.indexOf("::error::apt is still busy"));
+    expect(repair).toBeLessThan(script.indexOf('install_deps "$RETRY"'));
+    // 90 s: 3x the healthiest-slow install measured (26 s); the worst-case
+    // guard above derives every step ceiling from these defaults.
+    expect(script).toMatch(/FIRST="\$\{PW_DEPS_FIRST_TIMEOUT:-90\}"/);
+    expect(script).toMatch(/azure\\\.archive\\\.ubuntu\\\.com\|archive\.ubuntu\.com/);
   });
 
   it("emits timing diagnostics including a timeout hint", () => {
@@ -716,8 +997,11 @@ describe("PR CI — path-aware lane selection", () => {
     // full runner allocation.
     expect(budget("google-browser-e2e")).toBeGreaterThan(10);
     expect(budget("google-browser-e2e")).toBeLessThanOrEqual(15);
-    expect(budget("mobile-completion-e2e")).toBeLessThanOrEqual(10);
-    // Targeted hard timeout 15, extended shard hard timeout 18 — both above
+    expect(budget("mobile-completion-e2e")).toBeGreaterThan(10);
+    // 12 -> 15 (2026-10-23): ~5.8 min measured p90 + the bounded install step
+    // (6 min ceiling) + margin must fit. TARGET stays ~6 min (CLAUDE.md section 4).
+    expect(budget("mobile-completion-e2e")).toBe(15);
+    // Targeted hard timeout 15, measured extended hard timeout 25 — both above
     // their <10 min targets. Parsed, not line-matched, so reformatting the
     // workflow cannot silently break this guard.
     //
@@ -732,13 +1016,14 @@ describe("PR CI — path-aware lane selection", () => {
     //
     // The upper bounds here are a brake on ceilings drifting upward instead of
     // slow lanes being investigated, so they stay tight enough to notice: a
-    // shard that needs more than 18 minutes is a problem to fix, not a number
-    // to raise again.
+    // run39713000378 cold setup took12–12.6min before150–158tests.
+    // 25 clears the measured~22min projection with finite headroom; the
+    // <10min performance target stays, and slow dependency installs need investigation.
     const b = shardTimeoutBudgets();
     expect(b.targeted).toBeGreaterThan(10);
     expect(b.extended).toBeGreaterThan(10);
-    expect(b.targeted).toBeLessThanOrEqual(15);
-    expect(b.extended).toBeLessThanOrEqual(18);
+    expect(b.targeted).toBeLessThanOrEqual(19);
+    expect(b.extended).toBe(25);
   });
 
   it("every job declares an explicit timeout", () => {
@@ -751,6 +1036,139 @@ describe("PR CI — path-aware lane selection", () => {
     for (const k of ["browser_run", "browser_extended", "browser_specs", "browser_shards", "browser_reason"]) {
       expect(CI, `${k} must be a job output`).toMatch(new RegExp(`${k}: \\$\\{\\{ steps\\.browser\\.outputs\\.${k} \\}\\}`));
     }
+  });
+});
+
+describe("D7b: Supabase-starting jobs pull ghcr.io images authenticated, read-only", () => {
+  // Anonymous pulls were throttled on ghcr.io and public.ecr.aws on 2026-10-22.
+  it.each([["ci.yml", () => CI], ["nightly.yml", () => NIGHTLY]])("%s holds the ghcr.io login ONLY across a direct Supabase CLI start", (_n, body) => {
+    const steps = body().split(/\n(?=      - )/);
+    const setups = steps.map((s, i) => [s, i] as const).filter(([s]) => /uses: supabase\/setup-cli@/.test(s));
+    const isLogin = (s: string) => /uses: docker\/login-action@/.test(s);
+    expect(setups.length).toBeGreaterThan(0);
+    for (const [setup, i] of setups) {
+      const at = steps.findIndex((s, j) => j > i && isLogin(s));
+      expect(at, "every setup-cli is followed by its login").toBeGreaterThan(i);
+      const login = steps[at];
+      expect(login).toMatch(/uses: docker\/login-action@dbcb813823bdd20940b903addbd779551569679f # v4\.6\.0\n\s+with:\n\s+registry: ghcr\.io/);
+      // Codex P2 4354428027: nothing branch-controlled may have RUN in this job
+      // before the login (an npm lifecycle hook could leave a process waiting
+      // for ~/.docker/config.json). So every earlier step of the job is either a
+      // pinned action or an inline command that invokes no package manager,
+      // node or repository script; `npm ci` and friends come after the logout.
+      let first = at - 1;
+      while (first >= 0 && !/^    steps:\s*$/m.test(steps[first])) first -= 1;
+      const runsRepoCode = (s: string) => {
+        const code = s.replace(/^\s*#.*$/gm, "");
+        const run = code.match(/\n        run: ?([\s\S]*)$/);
+        return run !== null && /\b(npm|npx|node|yarn|pnpm)\b|scripts\//.test(run[1]);
+      };
+      const before = steps.slice(first + 1, at);
+      expect(before.length, "the job's pre-login steps were found").toBeGreaterThan(0);
+      expect(before.filter(runsRepoCode).map((s) => s.match(/- name: ([^\n]+)/)?.[1]), "steps running repo code before the login").toEqual([]);
+      // Codex P2 4353164800: the login must run whenever its setup-cli runs,
+      // or that lane silently falls back to anonymous pulls. So its `if:` is
+      // pinned EXACTLY: none in ci.yml, and nightly's must equal its
+      // setup-cli's own condition (matrix.needs_supabase).
+      const conds = (s: string) => s.match(/^\s+if:.*$/gm) ?? [];
+      expect(conds(login)).toEqual(conds(setup));
+      expect(conds(login)).toEqual(_n === "ci.yml" ? [] : ["        if: matrix.needs_supabase"]);
+      // Codex P2 4353990804: the credential lives in ~/.docker/config.json, so
+      // the ONLY step between login and logout is the Supabase start, and the
+      // logout runs even when that start fails.
+      // Codex P2 4354172124: that start is a DIRECT pinned-CLI call, never a
+      // checked-out script; its failure falls through to ONE retry step that
+      // runs the repo's wrapper only AFTER the logout.
+      const start = steps[at + 1];
+      expect(start).toMatch(/^      - name: (Start local Supabase|Bring up the database)/);
+      expect(start).toMatch(/\n        id: sb_start\n/);
+      expect(start).toMatch(/\n        continue-on-error: true\n        shell: bash\n        run: supabase start\b[^\n]* 2>&1 \| tee "\$RUNNER_TEMP\/supabase-start\.log"\n/);
+      expect(start.replace(/^\s*#.*$/gm, "")).not.toMatch(/scripts\/|\bbash scripts|\bnpm |\bnode |\.sh\b/);
+      const cond = _n === "ci.yml" ? "always()" : "always() && matrix.needs_supabase";
+      expect(steps[at + 2]).toMatch(new RegExp(`^      - name: Log out of ghcr\\.io \\(D7b\\)\\n        if: ${cond.replace(/[()&.]/g, "\\$&")}\\n        run: docker logout ghcr\\.io\\n`));
+      const retryIf = _n === "ci.yml" ? "steps.sb_start.outcome == 'failure'" : "matrix.needs_supabase && steps.sb_start.outcome == 'failure'";
+      expect(steps[at + 3]).toContain(`      - name: Retry Supabase start once on a port-bind collision (no credential)\n        if: ${retryIf}\n        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start`);
+    }
+    expect((body().match(/uses: docker\/login-action@/g) ?? []).length).toBe(setups.length);
+    expect((body().match(/run: docker logout ghcr\.io/g) ?? []).length).toBe(setups.length);
+    expect(body()).not.toMatch(/SUPABASE_INTERNAL_IMAGE_REGISTRY/);
+  });
+});
+
+describe("E-GAPS: the storage photo job is separate, storage-backed and never required", () => {
+  const STORAGE_SPECS = [
+    "e2e/fett-photos-thumbnail-recovery.spec.ts",
+    "e2e/treatment-image-upload-formats.spec.ts",
+  ];
+  const DB_FILE = "tests/db/treatment-image-signed-url-route.db.test.ts";
+  const start = CI.indexOf("\n  storage-photos:\n");
+  const rest = CI.slice(start + 1);
+  const next = rest.slice(1).search(/^ {2}[a-z0-9_-]+:$/m);
+  const JOB = next === -1 ? rest : rest.slice(0, next + 1);
+  const code = (text: string) => text.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+
+  it("exists, is named not required, and no job (the aggregator included) needs it", () => {
+    expect(start, "storage-photos job").toBeGreaterThan(-1);
+    expect(JOB).toContain("    name: storage photos (not required)\n");
+    expect(CI).not.toMatch(/needs:[^\n]*storage-photos/);
+    expect(CI).not.toMatch(/^ {6}- storage-photos$/m);
+    expect(code(CI.replace(JOB, ""))).not.toMatch(/storage-photos/);
+  });
+
+  it("starts Supabase WITH storage-api, and every other start still excludes it", () => {
+    const starts = code(CI).match(/supabase start -x [a-z,-]+/g) ?? [];
+    const own = code(JOB).match(/supabase start -x [a-z,-]+/g) ?? [];
+    expect(own).toEqual([
+      "supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector",
+      "supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector",
+    ]);
+    expect(starts.filter((x) => !x.endsWith(",storage-api"))).toHaveLength(own.length);
+  });
+
+  it("fails on a missing storage-api before the DB file or the specs could self-skip", () => {
+    const pre = JOB.indexOf("curl -fsS http://127.0.0.1:54321/storage/v1/version");
+    expect(pre).toBeGreaterThan(-1);
+    expect(pre).toBeLessThan(JOB.indexOf("npx vitest run"));
+    expect(pre).toBeLessThan(JOB.indexOf("npx playwright test"));
+  });
+
+  it("runs exactly the storage-dependent DB file and the two storage specs, each spec bypassing CSP in the test browser only", () => {
+    expect(code(JOB).match(/npx vitest run[^\n]*/g) ?? []).toEqual([
+      `npx vitest run --config vitest.db.config.ts ${DB_FILE}`,
+    ]);
+    expect(readFileSync(DB_FILE, "utf8")).toMatch(/describe\.skipIf\(!STORAGE_UP\)/);
+    const runs = code(JOB).match(/npx playwright test[^\n]*/g) ?? [];
+    expect(runs).toEqual([`npx playwright test ${STORAGE_SPECS.join(" ")} --project=chromium`]);
+    for (const spec of STORAGE_SPECS) {
+      expect(readFileSync(spec, "utf8"), spec).toMatch(/test\.use\(\{ bypassCSP: true\b/);
+    }
+  });
+
+  it("Playwright is fully prepared before the fallible DB step, and neither test step hides the other (Codex P2 4368722781)", () => {
+    const steps = JOB.split(/\n(?=      - )/);
+    const at = (needle: string) => steps.findIndex((s) => s.includes(needle));
+    const db = at("npx vitest run");
+    const e2e = at("npx playwright test");
+    for (const prep of [
+      "require('@playwright/test/package.json').version",
+      "path: ~/.cache/ms-playwright",
+      "run: npx playwright install chromium",
+      "run: bash scripts/ci/playwright-system-deps.sh",
+    ]) {
+      expect(at(prep), prep).toBeGreaterThan(-1);
+      expect(at(prep), `${prep} runs before the DB step`).toBeLessThan(db);
+    }
+    expect(steps[at("run: bash scripts/ci/playwright-system-deps.sh")]).toMatch(/^ {8}id: pw_sys$/m);
+    expect(db).toBeLessThan(e2e);
+    expect(steps[db]).toMatch(/^ {8}if: \$\{\{ !cancelled\(\) && steps\.storage_up\.outcome == 'success' \}\}$/m);
+    expect(steps[e2e]).toMatch(
+      /^ {8}if: \$\{\{ !cancelled\(\) && steps\.storage_up\.outcome == 'success' && steps\.pw_sys\.outcome == 'success' \}\}$/m,
+    );
+  });
+
+  it("its hard timeout exceeds the ~10 min target", () => {
+    const t = Number(/^ {4}timeout-minutes: (\d+)$/m.exec(JOB)?.[1]);
+    expect(t).toBeGreaterThan(10);
   });
 });
 
@@ -1102,9 +1520,44 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   //    third-party action handed a PAT writes through the API just the same,
   //    while `permissions: contents: read` and the absence of `git push` and
   //    `gh` all still read clean.
+  // D7b (Sam, 2026-10-22, option A): the ONE sanctioned credential. Anonymous
+  // image pulls were throttled on both ghcr.io and public.ecr.aws, so the
+  // Supabase-starting jobs pull ghcr.io images AUTHENTICATED with their own
+  // token. Exempt only this exact step, in a job whose permissions are exactly
+  // { contents: read, packages: read }; any other spelling, scope, action,
+  // registry or credential is still refused below.
+  const SANCTIONED_LOGIN = "docker/login-action@dbcb813823bdd20940b903addbd779551569679f";
+  function isSanctionedGhcrLogin(job: unknown, step: unknown): boolean {
+    if (!isRecord(job) || !isRecord(step) || !isRecord(step.with)) return false;
+    const perms = job.permissions;
+    if (!isRecord(perms) || Object.keys(perms).sort().join(",") !== "contents,packages") return false;
+    if (perms.contents !== "read" || perms.packages !== "read") return false;
+    if (step.uses !== SANCTIONED_LOGIN) return false;
+    if (Object.keys(step).some((k) => !["name", "if", "uses", "with"].includes(k))) return false;
+    const w = step.with;
+    return Object.keys(w).sort().join(",") === "password,registry,username" &&
+      w.registry === "ghcr.io" && w.username === "${{ github.actor }}" && w.password === "${{ secrets.GITHUB_TOKEN }}";
+  }
+  function withoutSanctionedLogins(doc: unknown): unknown {
+    if (!isRecord(doc) || !isRecord(doc.jobs)) return doc;
+    const jobs: Record<string, unknown> = {};
+    for (const [k, job] of Object.entries(doc.jobs)) {
+      // Blank ONLY the sanctioned password value; every other field of the
+      // step (name, if, uses, with) is still scanned, so a secret smuggled
+      // into an `if:` or `name:` on this very step is still refused.
+      jobs[k] = isRecord(job) && Array.isArray(job.steps)
+        ? { ...job, steps: job.steps.map((s) => isSanctionedGhcrLogin(job, s) && isRecord(s) && isRecord(s.with)
+            ? { ...s, with: { ...s.with, password: "<sanctioned ghcr.io token>" } }
+            : s) }
+        : job;
+    }
+    return { ...doc, jobs };
+  }
+
   function writeCredentialViolations(sources: readonly Workflow[]): string[] {
     const bad: string[] = [];
-    for (const { file, doc } of parseAll(sources)) {
+    for (const { file, doc: parsed } of parseAll(sources)) {
+      const doc = withoutSanctionedLogins(parsed);
       const strings = taggedStrings(doc);
       const text = strings.map((s) => s.value).join("\n");
       if (/GITHUB_TOKEN/.test(text)) bad.push(`${file}: uses GITHUB_TOKEN`);
@@ -1155,6 +1608,37 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
     expect(writeCredentialViolations(WORKFLOWS)).toEqual([]);
   });
 
+  it("D7b: the sanctioned ghcr.io login is exempt only in its exact shape", () => {
+    const LOGIN = [
+      "      - name: login",
+      `        uses: ${SANCTIONED_LOGIN} # v4.6.0`,
+      "        with:",
+      "          registry: ghcr.io",
+      "          username: ${{ github.actor }}",
+      "          password: ${{ secrets.GITHUB_TOKEN }}",
+    ];
+    const wf = (perms: string[], login: string[]): Workflow => [
+      "probe.yml",
+      ["permissions:", "  contents: read", "jobs:", "  j:", "    runs-on: ubuntu-latest", ...perms,
+        "    steps:", ...login].join("\n"),
+    ];
+    const READ_PKGS = ["    permissions:", "      contents: read", "      packages: read"];
+    expect(JSON.stringify(parseAll([wf(READ_PKGS, LOGIN)])[0].doc)).toContain("secrets.GITHUB_TOKEN");
+    expect(writeCredentialViolations([wf(READ_PKGS, LOGIN)])).toEqual([]);
+    // Each departure is refused again.
+    expect(writeCredentialViolations([wf([], LOGIN)]).length).toBeGreaterThan(0);
+    expect(writeCredentialViolations([wf([...READ_PKGS, "      pull-requests: read"], LOGIN)]).length).toBeGreaterThan(0);
+    expect(writeCredentialViolations([wf(READ_PKGS, LOGIN.map((l) => l.replace("secrets.GITHUB_TOKEN", "secrets.DEPLOY_PAT")))]).length).toBeGreaterThan(0);
+    expect(writeCredentialViolations([wf(READ_PKGS, LOGIN.map((l) => l.replace("registry: ghcr.io", "registry: docker.io")))]).length).toBeGreaterThan(0);
+    expect(writeCredentialViolations([wf(READ_PKGS, LOGIN.map((l) => l.replace(SANCTIONED_LOGIN, "docker/login-action@0000000000000000000000000000000000000000")))]).length).toBeGreaterThan(0);
+    expect(writeCredentialViolations([wf(READ_PKGS, [...LOGIN, "        env:", "          X: ${{ secrets.GITHUB_TOKEN }}"])]).length).toBeGreaterThan(0);
+    // Codex 4353055752: a secret in the sanctioned step's own if/name is still refused.
+    const withIf = [LOGIN[0], "        if: secrets.DEPLOY_PAT != ''", ...LOGIN.slice(1)];
+    expect(writeCredentialViolations([wf(READ_PKGS, withIf)]).join("\n")).toMatch(/DEPLOY_PAT/);
+    const withName = [LOGIN[0].replace("login", "login ${{ secrets.DEPLOY_PAT }}"), ...LOGIN.slice(1)];
+    expect(writeCredentialViolations([wf(READ_PKGS, withName)]).join("\n")).toMatch(/DEPLOY_PAT/);
+  });
+
   // 6. The Supabase CLI pin is a DB-SAFETY invariant, not a preference: a newer
   //    CLI's `db reset` strips Data-API grants and every authenticated query
   //    then fails at the privilege layer, which looks exactly like an
@@ -1178,7 +1662,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   const SETUP_CLI_SHA = "ab058987d8d6c725971f6cf9d0b5c98467e30bd1";
   const SETUP_CLI_TAG = "v1.7.1";
   const SETUP_CLI_VERSION = "2.102.0";
-  const SETUP_CLI_USES = 6; // 5 in ci.yml + 1 in nightly.yml
+  const SETUP_CLI_USES = 7; // 6 in ci.yml (incl. storage-photos) + 1 in nightly.yml
 
   const SETUP_CLI_ACTION = "supabase/setup-cli";
 
@@ -1310,8 +1794,8 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   it("the checkout count across the workflow directory is the reviewed one", () => {
     expect(
       checkoutCount(WORKFLOWS),
-      "8 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089) + 1 in nightly.yml",
-    ).toBe(9);
+      "9 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089; storage-photos by E-GAPS) + 1 in nightly.yml",
+    ).toBe(10);
   });
 
   // -------------------------------------------------------------------------
@@ -1803,7 +2287,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
     const violations = setupCliViolations([...WORKFLOWS, cased]).join("\n");
     // Recognised at all — the reviewed count moves, which it could not do while
     // the identifier was compared case-sensitively...
-    expect(violations).toMatch(/7 setup-cli uses, expected 6/);
+    expect(violations).toMatch(/8 setup-cli uses, expected 7/);
     // ...and, being recognised, it is subject to the grants-parity pin.
     expect(violations).toMatch(/cli\.yaml jobs\.scan\.steps\[0\]\.uses: CLI version 2\.103\.0 is not the grants-parity pin 2\.102\.0/);
   });
@@ -1898,5 +2382,193 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
     expect(onDisk.length, "the workflow directory is empty").toBeGreaterThan(0);
     expect(WORKFLOWS.map(([name]) => name)).toEqual(onDisk);
     expect(onDisk).toEqual(expect.arrayContaining(["ci.yml", "nightly.yml"]));
+  });
+});
+
+
+describe("browser timing diagnostic truthfulness", () => {
+  function diagnostic() {
+    const doc = yaml.load(CI) as { jobs: Record<string, { steps: Array<{ name?: string; if?: string; run?: string; env?: Record<string, string> }> }> };
+    const step = doc.jobs["browser-e2e-shard"].steps.find(s => s.name === "Timing diagnostics");
+    expect(step).toBeDefined();
+    return step!;
+  }
+  it("keeps job status separate and binds timestamp/outcome as environment data", () => {
+    const step = diagnostic();
+    expect(step.if).toBe("always()");
+    expect(step.env).toEqual({
+      SETUP_END: "${{ steps.setup_done.outputs.at }}",
+      E2E_OUTCOME: "${{ steps.e2e.outcome }}",
+      JOB_STATUS: "${{ job.status }}",
+    });
+  });
+  function runTiming(timestamp: string, outcome: string, status: string) {
+    // Execute the actual workflow shell, not a duplicate implementation. Other
+    // trusted Actions display expressions get inert synthetic fixture text.
+    const script = diagnostic().run!.replace(/\$\{\{[\s\S]*?\}\}/g, "synthetic-fixture");
+    return execFileSync("bash", ["-euo", "pipefail", "-c", 'date() { printf "1700000000\\n"; };\n' + script], {
+      encoding: "utf8", env: { ...process.env, SETUP_END: timestamp, E2E_OUTCOME: outcome, JOB_STATUS: status },
+    });
+  }
+  it.each(["", "not-a-number", "0", "-1", "0123", "1700000001", "999999999999999999999999", "1+1", "$(exit 9)"])("does not invent elapsed seconds for invalid setup timestamp %j", timestamp => {
+    const output = runTiming(timestamp, "skipped", "failure");
+    expect(output).toContain("test duration (s)  : unavailable");
+    expect(output).not.toMatch(/test duration \(s\)  : \d/);
+    expect(output).toContain("job status at timing: failure");
+    expect(output).toContain("browser step outcome: skipped");
+  });
+  it.each(["success", "failure", "cancelled"])("retains numeric elapsed time for an executed %s browser step", outcome => {
+    const output = runTiming("1699999970", outcome, outcome);
+    expect(output).toContain("test duration (s)  : 30");
+    expect(output).toContain(`job status at timing: ${outcome}`);
+    expect(output).toContain(`browser step outcome: ${outcome}`);
+    expect(output.includes("exceeded its timeout budget")).toBe(outcome === "cancelled");
+  });
+  it("does not report test duration when a valid setup timestamp precedes an unrun browser step", () => {
+    expect(runTiming("1699999970", "skipped", "failure")).toContain("test duration (s)  : unavailable");
+  });
+  it.each(["", "malformed", "1700000001", "999999999999999999999999"])("rejects invalid timestamp %j even when a browser outcome exists", timestamp => {
+    expect(runTiming(timestamp, "failure", "failure")).toContain("test duration (s)  : unavailable");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G4 — documents read by unit tests (RECORD-BATCHING-PROPOSAL.md part 2).
+//
+// The classifier emits docs_consistency and docs_reader_tests. An output
+// nothing consumes is a selection that silently never happens, so the wiring
+// is checked as a whole by ONE function, and that function is proved to red
+// when any link is cut.
+// ---------------------------------------------------------------------------
+type Step = { name?: string; if?: string; run?: string; env?: Record<string, string> };
+type Job = { name?: string; if?: string; outputs?: Record<string, string>; steps?: Step[] };
+
+/** validate's mode (canonical-production-facts.test.ts pins it there): enforce on push and on record PRs, else measure. */
+const VALIDATE_FRESHNESS =
+  "${{ (github.event_name != 'pull_request' || needs.changes.outputs.production_record == 'true') && 'enforce' || 'measure' }}";
+
+function docsConsistencyWiringFaults(doc: unknown): string[] {
+  const faults: string[] = [];
+  const jobs = (isRecord(doc) && isRecord(doc.jobs) ? doc.jobs : {}) as Record<string, Job>;
+  const changes = jobs.changes;
+  for (const k of ["docs_consistency", "docs_reader_tests"]) {
+    if (changes?.outputs?.[k] !== `\${{ steps.classify.outputs.${k} }}`) faults.push(`changes job does not export ${k}`);
+  }
+
+  const unit = (jobs.validate?.steps ?? []).find((s) => s.run?.trim() === "npm test");
+  if (unit?.env?.CANONICAL_FRESHNESS !== VALIDATE_FRESHNESS) faults.push("validate's freshness mode is not the one the reader step mirrors");
+
+  const record = jobs["canonical-record"];
+  if (!record) return [...faults, "canonical-record job is missing"];
+  // Branch protection, the aggregator and ENG-LOOP tables pin these.
+  if (record.name !== "canonical production record (docs-only)") faults.push("canonical-record display name changed");
+  const cond = record.if ?? "";
+  for (const k of ["docs_only", "production_record", "docs_consistency"]) {
+    if (!cond.includes(`needs.changes.outputs.${k}`)) faults.push(`canonical-record if: does not read ${k}`);
+  }
+
+  const steps = record.steps ?? [];
+  const docs = steps.find((s) => s.run?.trim() === "npx vitest run tests/docs");
+  if (!docs) faults.push("the enforced tests/docs step is missing");
+  else {
+    if (docs.env?.CANONICAL_FRESHNESS !== "enforce") faults.push("tests/docs step is no longer enforced");
+    if (!(docs.if ?? "").includes("needs.changes.outputs.production_record")) faults.push("tests/docs step is not gated on production_record");
+  }
+
+  const readers = steps.find((s) => s.env && "DOCS_READER_TESTS" in s.env);
+  if (!readers) faults.push("no step receives DOCS_READER_TESTS");
+  else {
+    if (readers.env!.DOCS_READER_TESTS !== "${{ needs.changes.outputs.docs_reader_tests }}") faults.push("DOCS_READER_TESTS is not the classifier output");
+    if (!(readers.if ?? "").includes("needs.changes.outputs.docs_consistency")) faults.push("reader step is not gated on docs_consistency");
+    const run = readers.run ?? "";
+    if (run.includes("${{")) faults.push("reader step interpolates an expression into its script");
+    if (!/npx vitest run "\$\{files\[@\]\}"/.test(run)) faults.push("reader step does not run the named tests");
+    // A docs-only PR is judged like a code PR: canonical-production-facts.test.ts is a reader of every document
+    // (it enumerates docs), and it defaults to enforce, so without validate's mode an ordinary docs PR would go red
+    // on production-record freshness it did not cause.
+    if (readers.env!.CANONICAL_FRESHNESS !== VALIDATE_FRESHNESS) faults.push("reader step does not use validate's freshness mode");
+  }
+
+  const aggregator = Object.values(jobs).find((j) => j.name === "browser e2e (local stack)");
+  const aggEnv = (aggregator?.steps ?? []).find((s) => s.env && "RECORD_RESULT" in s.env)?.env ?? {};
+  if (aggEnv.DOCS_CONSISTENCY !== "${{ needs.changes.outputs.docs_consistency }}") faults.push("the aggregator cannot require the reader run");
+  return faults;
+}
+
+describe("G4 — docs-only changes run the unit tests that read them", () => {
+  const doc = yaml.load(CI);
+
+  it("ci.yml consumes docs_consistency end to end", () => {
+    expect(docsConsistencyWiringFaults(doc)).toEqual([]);
+  });
+
+  it("the classifier really emits what ci.yml consumes", async () => {
+    // @ts-expect-error - .mjs utility ships without type declarations
+    const { classify, dependenciesFor } = await import("../../scripts/classify-changes.mjs");
+    // A document taken FROM the live scan, never named here: a literal path in
+    // this file would make it look like a reader of that document.
+    const deps = dependenciesFor() as { docReaders: Record<string, string[]> };
+    const doc = Object.keys(deps.docReaders).sort()[0];
+    expect(doc, "the scan names no document reader at all").toBeDefined();
+    const r = classify([doc]) as Record<string, unknown>;
+    expect(r.docs_consistency).toBe(true);
+    expect(Array.isArray(r.docs_reader_tests) && (r.docs_reader_tests as string[]).length > 0).toBe(true);
+  });
+
+  // NEGATIVE CONTROLS. Each cuts one link in a copy of the real workflow; the
+  // guard must name it. Without these, a guard that returned [] for anything
+  // would pass the case above.
+  const cut = (mutate: (jobs: Record<string, Job>) => void) => {
+    const copy = structuredClone(doc) as { jobs: Record<string, Job> };
+    mutate(copy.jobs);
+    return docsConsistencyWiringFaults(copy);
+  };
+
+  it.each([
+    ["the output dropped from the changes job", (j: Record<string, Job>) => delete j.changes.outputs!.docs_consistency, "changes job does not export docs_consistency"],
+    ["the reader list dropped from the changes job", (j: Record<string, Job>) => delete j.changes.outputs!.docs_reader_tests, "changes job does not export docs_reader_tests"],
+    ["the job no longer runs for docs_consistency", (j: Record<string, Job>) => {
+      j["canonical-record"].if = "${{ needs.changes.outputs.docs_only == 'true' && needs.changes.outputs.production_record == 'true' }}";
+    }, "canonical-record if: does not read docs_consistency"],
+    ["the list interpolated into the script", (j: Record<string, Job>) => {
+      const s = j["canonical-record"].steps!.find((x) => x.env && "DOCS_READER_TESTS" in x.env)!;
+      s.run = 'npx vitest run ${{ needs.changes.outputs.docs_reader_tests }} "${files[@]}"';
+    }, "reader step interpolates an expression into its script"],
+    ["the record step no longer gated", (j: Record<string, Job>) => {
+      delete j["canonical-record"].steps!.find((x) => x.run?.trim() === "npx vitest run tests/docs")!.if;
+    }, "tests/docs step is not gated on production_record"],
+    ["the reader step falls back to the test's enforce default", (j: Record<string, Job>) => {
+      delete j["canonical-record"].steps!.find((x) => x.env && "DOCS_READER_TESTS" in x.env)!.env!.CANONICAL_FRESHNESS;
+    }, "reader step does not use validate's freshness mode"],
+    ["the reader step enforces on every PR", (j: Record<string, Job>) => {
+      j["canonical-record"].steps!.find((x) => x.env && "DOCS_READER_TESTS" in x.env)!.env!.CANONICAL_FRESHNESS = "enforce";
+    }, "reader step does not use validate's freshness mode"],
+    ["validate's mode changes without the reader step", (j: Record<string, Job>) => {
+      j.validate.steps!.find((x) => x.run?.trim() === "npm test")!.env!.CANONICAL_FRESHNESS = "measure";
+    }, "validate's freshness mode is not the one the reader step mirrors"],
+    ["the aggregator no longer requires it", (j: Record<string, Job>) => {
+      const agg = Object.values(j).find((x) => x.name === "browser e2e (local stack)")!;
+      delete agg.steps!.find((x) => x.env && "RECORD_RESULT" in x.env)!.env!.DOCS_CONSISTENCY;
+    }, "the aggregator cannot require the reader run"],
+  ] as const)("reds when %s", (_label, mutate, fault) => {
+    expect(cut(mutate)).toContain(fault);
+  });
+
+  it("the reader step runs exactly the named tests and fails on an empty list", () => {
+    // Executed, not pattern-matched: `npx vitest run` is swapped for a printer
+    // so the real shell logic is what is judged.
+    const jobs = (doc as { jobs: Record<string, Job> }).jobs;
+    const run = jobs["canonical-record"].steps!.find((x) => x.env && "DOCS_READER_TESTS" in x.env)!.run!;
+    const script = run.replace("npx vitest run", "printf '[%s]\\n'");
+    const exec = (list: string) => {
+      try {
+        return { code: 0, out: execFileSync("bash", ["-c", script], { env: { ...process.env, DOCS_READER_TESTS: list }, encoding: "utf8", stdio: "pipe" }) };
+      } catch (e) {
+        return { code: (e as { status: number }).status, out: "" };
+      }
+    };
+    expect(exec("tests/a.test.ts; tests/b.test.ts")).toEqual({ code: 0, out: "[tests/a.test.ts]\n[tests/b.test.ts]\n" });
+    expect(exec("").code).not.toBe(0);
+    expect(exec(" ; ").code).not.toBe(0);
   });
 });

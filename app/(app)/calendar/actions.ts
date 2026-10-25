@@ -27,6 +27,7 @@ import {
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { localDateString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { safeLog } from "@/lib/logging/safe-log";
 
 export type BookResult =
   | { ok: true; appointmentId: string }
@@ -249,7 +250,8 @@ export async function bookAppointmentForClientAction(
     durationOverride ?? service.default_duration_minutes;
   const end = new Date(start.getTime() + effectiveDurationMinutes * 60_000);
 
-  // Re-verify the slot is still available (race-safe). Use the
+  // Check membership before submission; this app check also enforces legacy
+  // studio hours that the internal SQL validator does not enforce. Use the
   // studio's local date, not the UTC date, so a late-evening booking
   // does not look up the next day's slots.
   //
@@ -266,31 +268,42 @@ export async function bookAppointmentForClientAction(
     // capacity is ON, getAvailableSlots reads that practitioner's own hours +
     // resource_key reservations, so A's calendar never advertises/consumes B's
     // slots. Legacy (flag off) ignores the practitioner id → studio-wide, as today.
-    const slots = await getAvailableSlots(
-      supabase,
-      {
-        id: studio.id,
-        timezone: studio.timezone,
-        default_appointment_duration_minutes:
-          studio.default_appointment_duration_minutes,
-        buffer_minutes: studio.buffer_minutes,
-        practitioner_capacity_enabled: studio.practitioner_capacity_enabled,
-      },
-      dateStr,
-      service.default_duration_minutes,
-      undefined,
-      targetPractitionerId,
-      INTERNAL_SLOT_PACKING,
-    );
-    const isFree = slots.some(
-      (s) => new Date(s.start).getTime() === start.getTime(),
-    );
-    if (!isFree) {
-      return {
-        ok: false,
-        error:
-          "That time is no longer available. Please choose another time.",
-      };
+    // Refuse failed reads in BOTH modes. Effective 0174 calls validator
+    // 0152, which does not check studio hours when capacity is OFF. An ON app
+    // pre-read can also flip OFF before the locked command; it cannot justify
+    // treating an unread window as permission. Public booking uses a different
+    // validator (0170) that enforces its window in both modes.
+    try {
+      const slots = await getAvailableSlots(
+        supabase,
+        {
+          id: studio.id,
+          timezone: studio.timezone,
+          default_appointment_duration_minutes:
+            studio.default_appointment_duration_minutes,
+          buffer_minutes: studio.buffer_minutes,
+          practitioner_capacity_enabled: studio.practitioner_capacity_enabled,
+        },
+        dateStr,
+        service.default_duration_minutes,
+        undefined,
+        targetPractitionerId,
+        INTERNAL_SLOT_PACKING,
+      );
+      const isFree = slots.some(
+        (s) => new Date(s.start).getTime() === start.getTime(),
+      );
+      if (!isFree) {
+        return {
+          ok: false,
+          error:
+            "That time is no longer available. Please choose another time.",
+        };
+      }
+    } catch (err) {
+      if (!(err instanceof Error) || !err.message.startsWith("availability_read_failed:")) throw err;
+      console.error("booking_action_availability_read_failed");
+      return { ok: false, error: "Could not create the appointment. Please try again." };
     }
   }
 
@@ -364,6 +377,28 @@ export async function bookAppointmentForClientAction(
     return { ok: true, appointmentId: createdId };
   }
 
+  // SCH-001: the booking actor remains the authorization/audit identity above.
+  // Notification identity comes only from the COMMITTED assignment, never the
+  // actor or a submitted target. A missing/unread contact must not notify A in
+  // B's place; resolve inside the existing post-commit failure boundary below.
+  const assignedNotificationContact = async () => {
+    if (!created.practitioner_id) throw new Error("assigned_practitioner_unavailable");
+    const { data: assigned, error: assignedError } = await supabase
+      .from("practitioners")
+      .select("display_name, email")
+      .eq("id", created.practitioner_id)
+      .eq("studio_id", studio.id)
+      .eq("active", true)
+      .maybeSingle();
+    if (assignedError || !assigned?.email?.trim()) {
+      throw new Error("assigned_practitioner_unavailable");
+    }
+    return {
+      practitionerName: assigned.display_name?.trim() || assigned.email,
+      practitionerEmail: assigned.email,
+    };
+  };
+
   // The appointment is COMMITTED (create_internal_appointment_v2 returned). The
   // post-commit notification dispatch is best-effort/fail-open: a throwing helper
   // (e.g. a transient read inside the email context) must NEVER turn a committed
@@ -374,8 +409,7 @@ export async function bookAppointmentForClientAction(
       appointment: created,
       service,
       studio,
-      practitionerName: practitioner.display_name?.trim() || practitioner.email,
-      practitionerEmail: practitioner.email,
+      ...(await assignedNotificationContact()),
       clientName: client.name,
       clientEmail: client.email,
       clientPhone: client.phone,
@@ -405,6 +439,23 @@ export async function bookAppointmentForClientAction(
   });
 
   return { ok: true, appointmentId: created.id };
+}
+
+// A closed set of error names that are safe to log. Anything else, including a
+// custom name (which is free text), is "other"; a thrown non-Error is
+// "non_error".
+const LOGGABLE_ERROR_NAMES = new Set([
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "AbortError",
+  "TimeoutError",
+]);
+function boundedErrorName(err: unknown): string {
+  if (!(err instanceof Error)) return "non_error";
+  return LOGGABLE_ERROR_NAMES.has(err.name) ? err.name : "other";
 }
 
 export async function cancelAppointmentAction(formData: FormData): Promise<{
@@ -493,6 +544,7 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
     if (client?.email) {
       try {
         await sendCancellationEmail({
+          appointmentId,
           to: client.email,
           recipientName: client.name,
           clientName: client.name,
@@ -511,7 +563,15 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
           rebookUrl: `${getRequiredAppOrigin()}/book/${studio.slug}`,
         });
       } catch (err) {
-        console.error("client cancel notification email failed", err);
+        // MSG-LOG-RAW-ERROR: a bounded value only. The thrown message (a
+        // provider or transport message can quote the destination) and the
+        // raw error object never reach the log.
+        safeLog.error(
+          JSON.stringify({
+            event: "client_cancel_notification_email_failed",
+            error_name: boundedErrorName(err),
+          }),
+        );
       }
     }
 
@@ -1203,6 +1263,7 @@ export async function sendPostcareEmailAction(
 
   const startsAt = appt.starts_at ? new Date(appt.starts_at) : null;
   const result = await sendPostcareToClient({
+    appointmentId,
     clientName: client.name ?? "",
     clientEmail: client.email,
     studio: studioRow as unknown as import("@/lib/types/database").Studio,

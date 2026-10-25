@@ -29,8 +29,9 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 // a malformed SID) is acknowledged with 200: it is not something a retry can
 // fix. A ledger failure answers 500 so the provider's debugger shows it.
 //
-// Logging discipline: never To, From or Body. Only the row id, the normalised
-// status, Twilio's numeric error code and the command's result word.
+// Logging discipline: never To, From or Body, and (MSG-007, #828 G-26) never
+// the ledger row id. Only the normalised status, Twilio's numeric error code
+// and the command's result word.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -102,13 +103,13 @@ export async function POST(req: Request): Promise<Response> {
 
   const sid = formParams.MessageSid;
   if (!isProviderMessageSid(sid)) {
-    logEvent("twilio_status_malformed_sid", { messageId });
+    logEvent("twilio_status_malformed_sid", {});
     return acknowledged();
   }
 
   const status = normalizeTwilioMessageStatus(formParams.MessageStatus);
   if (!status) {
-    logEvent("twilio_status_ignored", { messageId });
+    logEvent("twilio_status_ignored", {});
     return acknowledged();
   }
 
@@ -124,7 +125,6 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   logEvent("twilio_status_recorded", {
-    messageId,
     status,
     result: recorded.result,
     providerErrorCode,

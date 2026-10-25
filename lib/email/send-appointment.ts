@@ -1,5 +1,7 @@
+import { safeLog } from "@/lib/logging/safe-log";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FROM_ADDRESS, getResendTransport } from "@/lib/email/client";
+import { forAppointmentEmail } from "@/lib/booking/studio-location";
 import {
   buildFromHeader,
   resolveReplyTo,
@@ -19,6 +21,7 @@ import {
 } from "@/lib/email/templates/reminders";
 import { buildPostcareEmail } from "@/lib/email/templates/postcare";
 import { buildIntakeRequestEmail } from "@/lib/email/templates/intake-request";
+import { emailBookingReference, emailIntakeReference } from "@/lib/email/booking-reference";
 import {
   buildIntakeReminderEmail,
   type IntakeReminderKind,
@@ -42,9 +45,26 @@ type AnyAppointment = Appointment;
 // Typed delivery result so call sites can stamp DB columns conditionally.
 // Replaces the old safeSend() void return that silently swallowed Resend
 // errors. Callers MUST inspect `ok` before treating a send as delivered.
+//
+// MSG-LOG-RAW-ERROR: `error` is a CLOSED category, never free text. Callers log
+// it and store it (portal notification_email_error, the receipt failure row,
+// ops-alert details), so it must never carry the destination (the old
+// "Invalid recipient: <to>" did) or the provider's own message, which can echo
+// a recipient or account address. The provider detail is dropped here.
+export const EMAIL_SEND_FAILURES = [
+  "not_configured",
+  "no_recipient",
+  "invalid_recipient",
+  "provider_rejected",
+  "provider_unavailable",
+  "timeout",
+  "unknown",
+] as const;
+export type EmailSendFailure = (typeof EMAIL_SEND_FAILURES)[number];
+
 export type EmailSendResult =
   | { ok: true; messageId?: string }
-  | { ok: false; error: string; retryable: boolean };
+  | { ok: false; error: EmailSendFailure; retryable: boolean };
 
 const RESEND_TIMEOUT_MS = 15_000;
 
@@ -62,17 +82,17 @@ type RawResendError = {
 
 // Inspect Resend's error envelope and decide whether to retry. Default
 // to retryable=true when the shape is unfamiliar so we don't give up on
-// transient network blips.
+// transient network blips. Only the status code and the error NAME are read:
+// the message is never returned (see EmailSendResult).
 function classifyResendError(err: RawResendError): {
-  message: string;
+  error: EmailSendFailure;
   retryable: boolean;
 } {
-  const message = err.message ?? err.name ?? "Unknown Resend error";
   const status = err.statusCode;
   if (typeof status === "number") {
-    if (status === 429) return { message, retryable: true };
-    if (status >= 500) return { message, retryable: true };
-    if (status >= 400) return { message, retryable: false };
+    if (status === 429) return { error: "provider_unavailable", retryable: true };
+    if (status >= 500) return { error: "provider_unavailable", retryable: true };
+    if (status >= 400) return { error: "provider_rejected", retryable: false };
   }
   // Specific Resend error names that we know are non-retryable.
   if (
@@ -80,9 +100,9 @@ function classifyResendError(err: RawResendError): {
     err.name === "invalid_to_address" ||
     err.name === "missing_required_field"
   ) {
-    return { message, retryable: false };
+    return { error: "provider_rejected", retryable: false };
   }
-  return { message, retryable: true };
+  return { error: "unknown", retryable: true };
 }
 
 export async function sendEmailSafely(opts: {
@@ -119,7 +139,7 @@ export async function sendEmailSafely(opts: {
   if (!transport) {
     return {
       ok: false,
-      error: "Resend not configured (RESEND_API_KEY missing)",
+      error: "not_configured",
       retryable: false,
     };
   }
@@ -127,7 +147,8 @@ export async function sendEmailSafely(opts: {
   if (!opts.to || !opts.to.includes("@")) {
     return {
       ok: false,
-      error: `Invalid recipient: ${opts.to || "(empty)"}`,
+      // Never the address itself: a malformed one may be a phone number.
+      error: opts.to ? "invalid_recipient" : "no_recipient",
       retryable: false,
     };
   }
@@ -186,11 +207,11 @@ export async function sendEmailSafely(opts: {
     clearTimeout(timeout);
 
     if (!result) {
-      return { ok: false, error: "Empty response from Resend", retryable: true };
+      return { ok: false, error: "unknown", retryable: true };
     }
     if (result.error) {
       const c = classifyResendError(result.error);
-      return { ok: false, error: c.message, retryable: c.retryable };
+      return { ok: false, error: c.error, retryable: c.retryable };
     }
     return { ok: true, messageId: result.data?.id };
   } catch (err) {
@@ -198,15 +219,34 @@ export async function sendEmailSafely(opts: {
     if (err instanceof Error && err.message === "__timeout__") {
       return {
         ok: false,
-        error: `Resend timeout after ${RESEND_TIMEOUT_MS}ms`,
+        error: "timeout",
         retryable: true,
       };
     }
-    const message = err instanceof Error ? err.message : "Unknown send error";
     // Network errors throw synchronously / asynchronously and rarely
-    // carry structured shape; treat as retryable.
-    return { ok: false, error: message, retryable: true };
+    // carry structured shape; treat as retryable. The thrown message is not
+    // returned: a transport error can quote the request it failed on.
+    return { ok: false, error: "unknown", retryable: true };
   }
+}
+
+// Messaging diagnostics are a closed vocabulary. safeLog removes record IDs,
+// but intentionally does not sanitize arbitrary provider text; never pass it.
+const EMAIL_LOG_TYPES = new Set([
+  "confirmation", "reminder_24h", "reminder_2h", "no_show",
+  "intake_reminder_7d", "intake_reminder_3d",
+]);
+function emailTypeForLog(value: unknown): string {
+  return typeof value === "string" && EMAIL_LOG_TYPES.has(value) ? value : "unknown";
+}
+function emailAttemptForLog(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 3 ? value : null;
+}
+
+// A failed diagnostic must not replace settlement or suppress the existing
+// final-attempt event. Raw provider/RPC errors never enter this helper.
+function logEmailDiagnostic(payload: string): void {
+  try { safeLog.error(payload); } catch { /* Best-effort logging only. */ }
 }
 
 export type EmailType =
@@ -236,13 +276,11 @@ export async function recordEmailAttempt(
     p_success: success,
   });
   if (error) {
-    console.error(
+    logEmailDiagnostic(
       JSON.stringify({
         event: "record_email_attempt_failed",
-        appointmentId,
-        emailType,
-        success,
-        error: String(error),
+        emailType: emailTypeForLog(emailType),
+        success: success === true,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -268,28 +306,32 @@ export type ClaimableEmailType =
 // statement, so two overlapping cron runs can never both send.
 // Errors are treated as "claim not won" so an RPC outage cannot
 // cause a duplicate send.
+/** Preserve the legacy fail-closed boolean contract for other email callers. */
 export async function claimEmailSend(
   admin: SupabaseClient,
   appointmentId: string,
   emailType: ClaimableEmailType,
 ): Promise<boolean> {
-  const { data, error } = await admin.rpc("claim_email_send", {
-    p_appointment_id: appointmentId,
-    p_email_type: emailType,
-  });
-  if (error) {
-    console.error(
-      JSON.stringify({
-        event: "claim_email_send_failed",
-        appointmentId,
-        emailType,
-        error: String(error),
-        timestamp: new Date().toISOString(),
-      }),
-    );
-    return false;
-  }
-  return data === true;
+  return (await claimEmailSendOutcome(admin, appointmentId, emailType)) === "claimed";
+}
+
+/** A definite DB false may advance the scan; failure to learn claim authority
+ * must not. No retry, counter refund or provider action occurs in this seam. */
+export async function claimEmailSendOutcome(
+  admin: SupabaseClient,
+  appointmentId: string,
+  emailType: ClaimableEmailType,
+): Promise<"claimed" | "not_claimed" | "unavailable"> {
+  try {
+    const { data, error } = await admin.rpc("claim_email_send", {
+      p_appointment_id: appointmentId,
+      p_email_type: emailType,
+    });
+    if (error === null && typeof data === "boolean") return data ? "claimed" : "not_claimed";
+  } catch { /* A lost/throwing reply is not a proven collision. */ }
+  // Fixed diagnostic only; no RPC error text, identifiers or hostile getters.
+  try { console.error(JSON.stringify({ event: "claim_email_send_failed", timestamp: new Date().toISOString() })); } catch { /* Best effort cannot grant permission. */ }
+  return "unavailable";
 }
 
 // Record the outcome of a CLAIMED send (record_email_result,
@@ -312,13 +354,11 @@ export async function recordEmailResult(
     // 5-minute staleness window in claim_email_send bounds how long
     // the row stays blocked, and _sent_at remaining null means the
     // next pass may retry under the attempts cap.
-    console.error(
+    logEmailDiagnostic(
       JSON.stringify({
         event: "record_email_result_failed",
-        appointmentId,
-        emailType,
-        success,
-        error: String(error),
+        emailType: emailTypeForLog(emailType),
+        success: success === true,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -348,14 +388,14 @@ export function logEmailFailure(opts: {
   // alert row.
   studioId?: string | null;
 }): void {
-  console.error(
+  const emailType = emailTypeForLog(opts.emailType);
+  const attemptNumber = emailAttemptForLog(opts.attemptNumber);
+  logEmailDiagnostic(
     JSON.stringify({
       event: "email_send_failed",
-      appointmentId: opts.appointmentId,
-      emailType: opts.emailType,
-      error: opts.error,
-      retryable: opts.retryable,
-      attemptNumber: opts.attemptNumber,
+      emailType,
+      retryable: opts.retryable === true,
+      attemptNumber,
       timestamp: new Date().toISOString(),
     }),
   );
@@ -377,15 +417,15 @@ export function logEmailFailure(opts: {
       await recordOpsAlert({
         severity: "warning",
         event: "email_send_gave_up",
-        message: `Email ${opts.emailType} gave up after ${opts.attemptNumber ?? "?"} attempts.`,
+        message: `Email ${emailType} gave up after ${attemptNumber ?? "?"} attempts.`,
         studioId: opts.studioId ?? null,
         appointmentId: opts.appointmentId,
         route: "lib/email/send-appointment",
         safeDetails: {
-          email_type: opts.emailType,
-          attempt_number: opts.attemptNumber ?? null,
-          retryable: opts.retryable,
-          provider_error: opts.error,
+          email_type: emailType,
+          attempt_number: attemptNumber,
+          retryable: opts.retryable === true,
+          failure_class: "provider_or_transport",
         },
       });
     } catch {
@@ -413,8 +453,12 @@ export async function sendBookingConfirmationToClient(params: {
   appBaseUrl: string;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "no_recipient", retryable: false };
   }
+  // HON-50. Everything below (body and .ics LOCATION) reads the email view:
+  // its address is null when the owner chose booking-page-only.
+  params = { ...params, studio: forAppointmentEmail(params.studio) };
+
   const start = new Date(params.appointment.starts_at);
   const end = new Date(params.appointment.ends_at);
   const serviceName = params.service?.name ?? "Appointment";
@@ -435,6 +479,7 @@ export async function sendBookingConfirmationToClient(params: {
     portalLoginUrl: portalLoginUrlForStudio(params.studio),
     preCareInstructions: params.service?.pre_care_instructions ?? null,
     treatmentTimeLine: params.treatmentTimeLine,
+    bookingReference: emailBookingReference(params.appointment.id),
   });
 
   const ics = buildIcs({
@@ -494,6 +539,7 @@ export async function sendBookingNotificationToPractitioner(params: {
     notes: params.notes,
     appointmentUrl: params.appointmentUrl,
     referralSourceLabel: params.referralSourceLabel,
+    bookingReference: emailBookingReference(params.appointment.id),
   });
   await sendEmailSafely({
     to: params.practitionerEmail,
@@ -518,9 +564,12 @@ export async function sendCancellationEmail(params: {
   reason: string | null;
   isClient: boolean;
   rebookUrl?: string;
-}) {
-  if (!params.to) return;
+  // Per-event subject reference (tests/lib/email/email-subject-sweep.test.ts).
+  appointmentId: string;
+}): Promise<EmailSendResult> {
+  if (!params.to) return { ok: false, error: "no_recipient", retryable: false };
   const { subject, html, text } = buildCancellationEmail({
+    bookingReference: emailBookingReference(params.appointmentId),
     recipientName: params.recipientName,
     clientName: params.clientName,
     studioName: params.studio.name,
@@ -534,7 +583,7 @@ export async function sendCancellationEmail(params: {
     isClient: params.isClient,
     rebookUrl: params.rebookUrl,
   });
-  await sendEmailSafely({
+  return sendEmailSafely({
     // ONE helper, TWO recipients. `isClient` decides who is reading:
     //   true  -> the CLIENT: brand as the studio, reply to the studio.
     //   false -> the STUDIO OWNER: stay Hone. Branding this would make the
@@ -575,11 +624,15 @@ export async function send24hReminderToClient(
   p: ReminderInput,
 ): Promise<EmailSendResult> {
   if (!p.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "no_recipient", retryable: false };
   }
+  // HON-50. The email view of the studio: address per visibility.
+  p = { ...p, studio: forAppointmentEmail(p.studio) };
+
   const start = new Date(p.appointment.starts_at);
   const end = new Date(p.appointment.ends_at);
   const { subject, html, text } = build24hReminderEmail({
+    bookingReference: emailBookingReference(p.appointment.id),
     clientName: p.clientName,
     studioName: p.studio.name,
     studioAddress: p.studio.address,
@@ -603,11 +656,15 @@ export async function send2hReminderToClient(
   p: ReminderInput,
 ): Promise<EmailSendResult> {
   if (!p.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "no_recipient", retryable: false };
   }
+  // HON-50. The email view of the studio: address per visibility.
+  p = { ...p, studio: forAppointmentEmail(p.studio) };
+
   const start = new Date(p.appointment.starts_at);
   const end = new Date(p.appointment.ends_at);
   const { subject, html, text } = build2hReminderEmail({
+    bookingReference: emailBookingReference(p.appointment.id),
     clientName: p.clientName,
     studioName: p.studio.name,
     studioAddress: p.studio.address,
@@ -643,11 +700,14 @@ export async function sendIntakeReminderToClient(p: {
   startsAt: Date;
   timezone: string;
   intakeUrl: string;
+  // Per-event subject reference (tests/lib/email/email-subject-sweep.test.ts).
+  appointmentId: string;
 }): Promise<EmailSendResult> {
   if (!p.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "no_recipient", retryable: false };
   }
   const { subject, html, text } = buildIntakeReminderEmail({
+    bookingReference: emailBookingReference(p.appointmentId),
     kind: p.kind,
     studioName: p.studioName,
     intakeUrl: p.intakeUrl,
@@ -662,11 +722,14 @@ export async function sendNoShowFollowupToClient(params: {
   clientEmail: string;
   studio: Studio;
   rebookUrl: string | null;
+  // Per-event subject reference (tests/lib/email/email-subject-sweep.test.ts).
+  appointmentId: string;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "no_recipient", retryable: false };
   }
   const { subject, html, text } = buildNoShowFollowupEmail({
+    bookingReference: emailBookingReference(params.appointmentId),
     clientName: params.clientName,
     studioName: params.studio.name,
     rebookUrl: params.rebookUrl,
@@ -701,9 +764,11 @@ export async function sendPostcareToClient(params: {
   productRecommendationsText: string | null;
   reviewUrl: string | null;
   reviewPromptText: string | null;
+  // Per-event subject reference (tests/lib/email/email-subject-sweep.test.ts).
+  appointmentId: string;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "no_recipient", retryable: false };
   }
   // Contact-line priority: studios.postcare_contact_email overrides
   // studios.owner_email when set. Never the client's email; if
@@ -712,6 +777,7 @@ export async function sendPostcareToClient(params: {
   // surfaces the same fallback to the practitioner.
   const studioContactEmail = postcareContactEmail(params.studio);
   const { subject, html, text } = buildPostcareEmail({
+    bookingReference: emailBookingReference(params.appointmentId),
     clientName: params.clientName,
     studioName: params.studio.name,
     studioEmail: studioContactEmail,
@@ -765,11 +831,14 @@ export async function sendIntakeUpdateRequestToClient(params: {
   clientEmail: string;
   studioName: string;
   intakeUrl: string;
+  // Per-event subject reference (tests/lib/email/email-subject-sweep.test.ts).
+  intakeId: string;
 }): Promise<EmailSendResult> {
   if (!params.clientEmail) {
-    return { ok: false, error: "No client email on file", retryable: false };
+    return { ok: false, error: "no_recipient", retryable: false };
   }
   const { subject, html, text } = buildIntakeRequestEmail({
+    intakeReference: emailIntakeReference(params.intakeId),
     studioName: params.studioName,
     intakeUrl: params.intakeUrl,
   });

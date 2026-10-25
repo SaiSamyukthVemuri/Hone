@@ -83,6 +83,11 @@ import {
   handleChargeDisputeCreated,
   shouldIgnoreLiveModeEvent,
 } from "@/lib/billing/payment-webhook-reconciliation";
+import { PaymentOriginalBindingPendingError } from "@/lib/billing/payment-webhook-reconciliation";
+import {
+  PaymentWebhookMaintenanceDeferral,
+  paymentWebhookMaintenanceOn,
+} from "@/lib/billing/payment-webhook-maintenance";
 import { ensureCardChangeNotification } from "@/lib/billing/card-change-notification";
 
 // Force Node runtime: Stripe SDK + raw body buffering need Node, not
@@ -268,33 +273,42 @@ export async function POST(req: Request): Promise<Response> {
     }
     return NextResponse.json({ ok: true });
   } catch (err) {
-    logInternal("stripe_webhook_handler_failed", {
-      eventId: event.id,
-      eventType: event.type,
-      err: err instanceof Error ? err.message : String(err),
-    });
-    // PR #153. Persistent webhook processing failure is a critical
-    // ops alert. For setup_intent.succeeded specifically, the
-    // failure means the client may believe their card was saved
-    // while Hone has no record; surface as a more specific event so
-    // the operator's runbook can branch.
-    await recordOpsAlert({
-      severity: "critical",
-      event:
-        event.type === "setup_intent.succeeded"
-          ? "card_on_file_setup_failed"
-          : "stripe_webhook_processing_failed",
-      message: err instanceof Error ? err.message : String(err),
-      studioId,
-      stripeEventId: event.id,
-      route: "app/api/stripe/webhook",
-      safeDetails: {
-        event_type: event.type,
-        stripe_account_id: stripeAccountId,
-        livemode,
-        handler: event.type,
-      },
-    });
+    // Expected original-binding races still release the winning claim and
+    // return 500 below, but must not page/email operators on every delivery.
+    // Same-message ordinary errors remain genuine failures.
+    // The maintenance deferral is an operator-chosen 500, not a failure: one
+    // structural line, no page/email, then the same release and 500.
+    if (err instanceof PaymentWebhookMaintenanceDeferral) {
+      logInternal("stripe_webhook_maintenance_deferred", { eventType: err.eventType });
+    } else if (!(err instanceof PaymentOriginalBindingPendingError)) {
+      logInternal("stripe_webhook_handler_failed", {
+        eventId: event.id,
+        eventType: event.type,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      // PR #153. Persistent webhook processing failure is a critical
+      // ops alert. For setup_intent.succeeded specifically, the
+      // failure means the client may believe their card was saved
+      // while Hone has no record; surface as a more specific event so
+      // the operator's runbook can branch.
+      await recordOpsAlert({
+        severity: "critical",
+        event:
+          event.type === "setup_intent.succeeded"
+            ? "card_on_file_setup_failed"
+            : "stripe_webhook_processing_failed",
+        message: err instanceof Error ? err.message : String(err),
+        studioId,
+        stripeEventId: event.id,
+        route: "app/api/stripe/webhook",
+        safeDetails: {
+          event_type: event.type,
+          stripe_account_id: stripeAccountId,
+          livemode,
+          handler: event.type,
+        },
+      });
+    }
     try {
       const { error: releaseErr } = await admin.rpc(
         "release_stripe_event_claim_with_error",
@@ -448,10 +462,14 @@ async function handleStripeEvent(
     case "payment_intent.succeeded": {
       return await handlePaymentIntentSucceeded(event, ctx);
     }
+    // PAYMENT-WEBHOOK-MAINTENANCE-FLAG: with the switch ON, these two direct
+    // writers are deferred to Stripe redelivery before any read or write.
     case "payment_intent.payment_failed": {
+      if (paymentWebhookMaintenanceOn()) throw new PaymentWebhookMaintenanceDeferral(event.type);
       return await handlePaymentIntentPaymentFailed(event, ctx);
     }
     case "charge.refunded": {
+      if (paymentWebhookMaintenanceOn()) throw new PaymentWebhookMaintenanceDeferral(event.type);
       return await handleChargeRefunded(event, ctx);
     }
     case "charge.dispute.created": {
@@ -834,12 +852,19 @@ async function resolveAccountFromEvent(
   // capability.updated: refresh via accounts.retrieve.
   try {
     const stripe = getStripe();
-    return await stripe.accounts.retrieve(stripeAccountId);
-  } catch (err) {
+    const account = await stripe.accounts.retrieve(stripeAccountId);
+    // A successful fetch is not proof that this is the bound account. Never
+    // synchronize another account's readiness or acknowledge an unverified read.
+    if (account?.id !== stripeAccountId) {
+      throw new Error("capability_updated_account_identity_unverified");
+    }
+    return account;
+  } catch {
     logInternal("capability_updated_account_retrieve_failed", {
       stripeAccountId,
-      err: err instanceof Error ? err.message : String(err),
     });
-    return null;
+    // Stripe must retry this event: acknowledging it would permanently lose a
+    // capability change while Hone still holds an outdated readiness snapshot.
+    throw new Error("capability_updated_account_retrieve_failed");
   }
 }

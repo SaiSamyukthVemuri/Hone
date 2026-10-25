@@ -1,3 +1,4 @@
+import { safeLog } from "@/lib/logging/safe-log";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Client, Studio, SmsType } from "@/lib/types/database";
 import {
@@ -6,7 +7,6 @@ import {
   build2hReminderSms,
 } from "./templates";
 import {
-  maskedPhone,
   normalizePhoneForSms,
   outboundSmsFence,
   sendSmsSafely,
@@ -91,6 +91,34 @@ export type ReminderSmsResult =
 // Re-export for callers that import alongside the send helpers.
 export type { SmsType };
 
+// Closed diagnostic fields only: provider text, recipient details and provider
+// identifiers never enter the third-party console. RPC/result authority is unchanged.
+function smsTypeForLog(value: unknown): string {
+  return value === "confirmation" || value === "reminder_24h" || value === "reminder_2h" ? value : "unknown";
+}
+function smsAttemptForLog(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 3 ? value : null;
+}
+const SMS_LOG_FAILURES = new Set([
+  "twilio_timeout", "twilio_network", "twilio_unreachable", "twilio_unreadable_success",
+  "twilio_not_configured", "twilio_missing_sender", "twilio_invalid_sender",
+  "sms_fenced_non_production", "sms_render_failed", "reminder_claim_unavailable",
+  "sms_send_unknown", "sms_send_exception",
+]);
+function smsFailureForLog(value: unknown): string {
+  if (typeof value !== "string") return "provider_or_transport";
+  if (value.startsWith("exception:")) return "sms_send_exception";
+  const ambiguous = value.endsWith(":outcome_unknown");
+  const tag = ambiguous ? value.slice(0, -":outcome_unknown".length) : value;
+  return SMS_LOG_FAILURES.has(tag) || /^twilio_http_[1-5][0-9]{2}$/.test(tag)
+    ? `${tag}${ambiguous ? ":outcome_unknown" : ""}` : "provider_or_transport";
+}
+
+// Best-effort diagnostics must not replace RPC outcomes or suppress alerts.
+function logSmsDiagnostic(payload: string): void {
+  try { safeLog.error(payload); } catch { /* Best-effort logging only. */ }
+}
+
 // ---------------------------------------------------------------------------
 // Low-level claim/record wrappers
 // ---------------------------------------------------------------------------
@@ -105,12 +133,10 @@ export async function claimSmsSend(
     p_sms_type: smsType,
   });
   if (error) {
-    console.error(
+    logSmsDiagnostic(
       JSON.stringify({
         event: "claim_sms_send_failed",
-        appointmentId,
-        smsType,
-        error: String(error),
+        smsType: smsTypeForLog(smsType),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -137,13 +163,11 @@ export async function recordSmsResult(
     // and the next cron pass could attempt a duplicate. The 5-minute
     // claim window provides a partial backstop; this log is the
     // operator's signal that something is wrong with Postgres.
-    console.error(
+    logSmsDiagnostic(
       JSON.stringify({
         event: "record_sms_result_failed",
-        appointmentId,
-        smsType,
-        success,
-        error: String(error),
+        smsType: smsTypeForLog(smsType),
+        success: success === true,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -158,6 +182,55 @@ export async function recordSmsResult(
 // hit a cap. Lower-numbered retryable attempts stay log-only.
 const SMS_GIVE_UP_ATTEMPT_THRESHOLD = 3;
 
+/** Observation only: never reserves, releases, authorizes or retries a send. */
+async function readUnsentReminderAttemptNumber(
+  admin: SupabaseClient,
+  studioId: string,
+  appointmentId: string,
+  smsType: "reminder_24h" | "reminder_2h",
+): Promise<number | undefined> {
+  const attemptsColumn = `sms_${smsType}_send_attempts`;
+  const sentColumn = `sms_${smsType}_sent_at`;
+  const claimedColumn = `sms_${smsType}_claimed_at`;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("reminder accounting unavailable")), 1_000);
+    });
+    // Run after authoritative result recording and ledger settlement. A
+    // current sent marker or active claim cannot be called exhausted. Abort
+    // is best effort; the race also bounds a read that ignores cancellation.
+    const { data, error } = await Promise.race([
+      admin.from("appointments")
+        .select(`${attemptsColumn}, ${sentColumn}, ${claimedColumn}`)
+        .eq("id", appointmentId)
+        .eq("studio_id", studioId)
+        .abortSignal(AbortSignal.timeout(1_000))
+        .maybeSingle(),
+      timeout,
+    ]);
+    if (error) throw new Error("reminder accounting unavailable");
+    const row: unknown = data;
+    if (!row || typeof row !== "object" || Array.isArray(row)) return undefined;
+    const accounting = row as Record<string, unknown>;
+    const attempts = accounting[attemptsColumn];
+    return accounting[sentColumn] === null && accounting[claimedColumn] === null &&
+      typeof attempts === "number" && Number.isSafeInteger(attempts) && attempts >= 0
+      ? attempts : undefined;
+  } catch {
+    try {
+      safeLog.error(JSON.stringify({
+        event: "sms_reminder_attempt_read_failed", smsType,
+        timestamp: new Date().toISOString(),
+      }));
+    } catch { /* Preserve the send result even when its observer diagnostic fails. */ }
+    return undefined;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+
 export function logSmsFailure(opts: {
   appointmentId: string;
   smsType: SmsType;
@@ -167,14 +240,13 @@ export function logSmsFailure(opts: {
   // PR #153. Optional studio id surfaces on the ops alert.
   studioId?: string | null;
 }): void {
-  console.error(
+  logSmsDiagnostic(
     JSON.stringify({
       event: "sms_send_failed",
-      appointmentId: opts.appointmentId,
-      smsType: opts.smsType,
-      error: opts.error,
-      retryable: opts.retryable,
-      attemptNumber: opts.attemptNumber,
+      smsType: smsTypeForLog(opts.smsType),
+      error: smsFailureForLog(opts.error),
+      retryable: opts.retryable === true,
+      attemptNumber: smsAttemptForLog(opts.attemptNumber),
       timestamp: new Date().toISOString(),
     }),
   );
@@ -190,15 +262,15 @@ export function logSmsFailure(opts: {
       await recordOpsAlert({
         severity: "warning",
         event: "sms_send_failed",
-        message: `SMS ${opts.smsType} gave up after ${opts.attemptNumber ?? "?"} attempts.`,
+        message: `SMS ${smsTypeForLog(opts.smsType)} gave up after ${smsAttemptForLog(opts.attemptNumber) ?? "?"} attempts.`,
         studioId: opts.studioId ?? null,
         appointmentId: opts.appointmentId,
         route: "lib/sms/send-appointment",
         safeDetails: {
-          sms_type: opts.smsType,
-          attempt_number: opts.attemptNumber ?? null,
-          retryable: opts.retryable,
-          provider_error: opts.error,
+          sms_type: smsTypeForLog(opts.smsType),
+          attempt_number: smsAttemptForLog(opts.attemptNumber),
+          retryable: opts.retryable === true,
+          provider_error: smsFailureForLog(opts.error),
         },
       });
     } catch {
@@ -545,13 +617,13 @@ async function sendReminder(
   await settleLedgerRow(args.admin, attempt, args.ledgerBudget);
 
   if (result.ok) {
-    console.log(
+    // MSG-007: minimum necessary. No appointment id (#828 G-26) and no
+    // destination, masked or not: the delivery ledger row carries both.
+    safeLog.info(
       JSON.stringify({
         event: "sms_sent",
-        appointmentId: args.appointmentId,
         smsType,
         messageSid: result.messageSid,
-        toMasked: maskedPhone(gate.normalizedPhone),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -559,12 +631,16 @@ async function sendReminder(
   }
 
   const ambiguous = result.attempt === "ambiguous";
+  const attemptNumber = !ambiguous && result.retryable
+    ? await readUnsentReminderAttemptNumber(args.admin, args.studio.id, args.appointmentId, smsType)
+    : undefined;
   logSmsFailure({
     appointmentId: args.appointmentId,
     smsType,
     error: ambiguous ? `${result.error}:outcome_unknown` : result.error,
     // An ambiguous attempt is never retried automatically, so it is final.
     retryable: ambiguous ? false : result.retryable,
+    attemptNumber,
     studioId: args.studio.id,
   });
   if (ambiguous) {
@@ -856,16 +932,16 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   // Only after the authoritative record: the best-effort ledger settle.
   if (attempt) await settleLedgerRow(args.admin, attempt);
 
-  // Light, log-only side effect so the operator sees masked phone +
-  // outcome side by side in production logs. No PII.
+  // Light, log-only side effect so the operator sees the outcome in
+  // production logs. MSG-007: minimum necessary. No appointment id (#828
+  // G-26) and no destination, masked or not ("+1***99" still discloses the
+  // last two digits): the delivery ledger row carries both.
   if (success && outcome.ok) {
-    console.log(
+    safeLog.info(
       JSON.stringify({
         event: "sms_sent",
-        appointmentId: args.appointmentId,
         smsType: args.smsType,
         messageSid: outcome.messageSid,
-        toMasked: maskedPhone(gate.normalizedPhone),
         timestamp: new Date().toISOString(),
       }),
     );

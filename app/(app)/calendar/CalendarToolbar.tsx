@@ -21,11 +21,13 @@ import { CalendarViewToggle } from "./ViewToggle";
 // every href below is the one that was already there.
 
 type Props = {
-  view: "week" | "month";
+  view: "day" | "week" | "month";
   rangeLabel: string;
   timezone: string;
   weekHref: string;
   monthHref: string;
+  // HON-48: present only for a team studio; adds the Day tab.
+  dayHref?: string;
   prevHref: string;
   todayHref: string;
   nextHref: string;
@@ -42,6 +44,7 @@ export function CalendarToolbar({
   timezone,
   weekHref,
   monthHref,
+  dayHref,
   prevHref,
   todayHref,
   nextHref,
@@ -61,6 +64,7 @@ export function CalendarToolbar({
           currentView={view}
           weekHref={weekHref}
           monthHref={monthHref}
+          dayHref={dayHref}
         />
 
         {/* Today + prev/next grouped, like a calendar app. */}

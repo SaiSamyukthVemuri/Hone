@@ -110,6 +110,15 @@ Vercel Analytics + Speed Insights are removed from the root layout. Safe trees o
 
 Each React-tree token page also exports `metadata.robots = { index: false, follow: false }` as a redundant meta-tag signal. The route handler `/calendar-feed/[token]/route.ts` relies on the header alone (no HTML head).
 
+### Server logs carry no record ids (#828 G-26, slice 1)
+
+Server console output goes to Vercel runtime logs, a third party. `safeLog.error / warn / info` (`lib/logging/safe-log.ts`) replace every record id (a dashed UUID, including ids joined to letters or `_` and percent-encoded forms) with `[id]`. It covers strings, `Error` messages and stacks, and object keys and values. Nothing else changes, so event slugs and Postgres error codes stay greppable.
+- **Encoding guarantee:** no string or key, after ASCII percent-decoding to a fixed point, contains a UUID. A token is decoded at most 4 rounds; one still changing after that is replaced with `[Redacted]`. Decoding is for detection only: each match replaces its original range, and all other text, including other escapes, is written back unchanged. Out of scope: non-URL encodings (HTML entities, `\u` escapes, base64).
+- **Converted in slice 1:** the client, intake, session, clinical-note, portal-message, booking and manual-fee actions under `app/(app)`.
+- **Guard:** `tests/lib/logging/safe-log-call-sites.test.ts` fails if any converted file regains a raw `console` call, including bracket access or an alias.
+- **Still open:** the remaining directories, which later slices convert one at a time.
+- **Not a Vercel BAA (G-04).**
+
 ### Token paths are canonicalized before Sentry transmission (F-PRIV-001)
 
 **Status: IMPLEMENTED — PENDING MERGE AND PRODUCTION VERIFICATION.**
@@ -141,6 +150,26 @@ Six protected families: `/portal/verify`, `/cancel`, `/reschedule`, `/manage`, `
 
 This change affects telemetry emitted **from now on**. No historical Sentry event was deleted, no provider-side deletion was performed, and no live token was rotated or revoked. Pinned by `tests/lib/observability/sentry-token-paths.test.ts` (138 cases incl. a deterministic 120-credential generated matrix) and `tests/lib/security/token-route-parity.test.ts`.
 
+### Record ids are removed before Sentry transmission (#828 G-25)
+
+Clients, sessions, appointments, intake forms and studios are addressed by UUID, and a UUID beside appointment or clinical context is a linkable record id. Until this change, the scrubber kept them: `/clients/<uuid>` reached Sentry in `request.url`, the transaction name (the grouping key), exception messages, breadcrumbs, and span descriptions and attributes.
+
+- **The guarantee is a final whole-event sweep.** After every other pass, `sweepRecordIds` in `lib/observability/sentry-scrub.ts` walks the entire error event, transaction event or breadcrumb. In every string and every key, at any depth Sentry serializes, it replaces each dashed UUID with `[id]`.
+  - It does not depend on a field list, so a field nobody enumerated is covered too, including one Sentry adds later.
+  - It touches only record ids. Stack-frame chunk file names keep their digits, so source maps still resolve. Sentry's own `event_id`, `trace_id` and `span_id` are dashless hex and stay.
+  - Anything deeper than its depth bound is replaced with `[Redacted]`, never sent unscrubbed.
+  - `debug_meta.images[].debug_id` is restored after the sweep. It is the SDK's source-map link, a build-artifact id rather than a record, and without it production stack traces lose symbolication.
+  - **Encoding guarantee:** no string or key, after ASCII percent-decoding to a fixed point, contains a UUID. A token is decoded at most 4 rounds; one still changing after that is replaced with `[Redacted]`. Out of scope: non-URL encodings (HTML entities, `\u` escapes, base64).
+  - `sdkProcessingMetadata`, the SDK's internal processing state, is not walked; captured scopes and request metadata are kept by reference. The one part of it that IS transmitted, the dynamic sampling context (copied into the envelope's `trace` header), is swept.
+- **Defense in depth, not the guarantee:** the per-field passes. `redactString` also replaces UUIDs in each field it scrubs, **after** token-route canonicalization, so token routes still read `[Redacted]` and `/clients/<uuid>` becomes `/clients/[id]`, Next's route-template form, so events still group by route. Those passes also:
+  - match compound identifiers (`hone_booking_<uuid>`, or glued to hex letters as in `abc<uuid>`: the pattern has no boundary, and its dashes are what make it a UUID) and percent-encoded forms (decoded, per the encoding guarantee above);
+  - scrub object keys, so `{ [clientId]: "failed" }` becomes `{ "[id]": "failed" }`, with `#2` and `#3` on collisions so no value is dropped (own keys only);
+  - deep-scrub `logentry` and custom `fingerprint` strings;
+  - apply an id-only scrub to structured exception payloads and threads.
+- Pinned by `tests/lib/observability/sentry-record-ids.test.ts`, a canary sweep with synthetic ids. **Negative controls:** each review round's case fails on the head before its fix, and with only the final sweep disabled, the any-field case fails.
+
+**Scope.** This covers what Hone sends to Sentry from now on. It is not a Sentry BAA. Other record-id channels (Vercel logs, Stripe, Meta, Twilio callbacks, Upstash keys, email tokens) remain #828 G-26 work. No historical Sentry event was deleted.
+
 ### Ops alert observability (PR #153)
 
 A new `ops_alerts` table (migration 0067) records durable, append-only rows for operator-facing silent-failure states: manual fee charge needs_manual_review, Stripe webhook processing failures, card-on-file setup failures, email/SMS give-up, cron route failures. The `lib/ops/alerts.ts:recordOpsAlert` helper is the single entry point.
@@ -164,7 +193,7 @@ RLS posture for `ops_alerts`:
 - No INSERT/UPDATE policy is granted to anon/authenticated; the helper writes via the service-role admin client only.
 - No DELETE policy; resolve via `resolved_at` + `resolution_note`.
 
-Operator notification channel (updated PR #219; originally SQL-only when 0067 shipped): durable `ops_alerts` rows are the source of truth, surfaced in the `/admin/ops-alerts` dashboard (PR #193) and via the SQL recipes in [docs/11_RUNBOOK.md](./11_RUNBOOK.md). Since PR #193, CRITICAL alerts additionally send a best-effort operator email through the standalone `lib/ops/alert-email.ts` helper. That helper imports only the bare Resend client and deliberately does NOT import `lib/email/send-appointment.ts` (no dependency cycle with the email subsystem the alerts observe), and it never calls `recordOpsAlert`, so alert-email failures cannot recurse. `OPS_ALERT_EMAILS` (comma-separated recipient list) IS read by that helper. It is **optional outside production** but **REQUIRED in production (PR #291)**: the production env gate (`scripts/check-production-env-gates.mjs`) fails the production build if it does not parse to ≥1 recipient (whitespace-only / comma-only counts as none), so a deploy cannot silently ship with critical-alert delivery disabled. At runtime, when unset or empty, a once-per-instance warning is logged and the email is skipped; the durable row and the dashboard are unaffected either way. Email content carries only the already-redacted message plus safe ids.
+Operator notification channel (updated PR #219; originally SQL-only when 0067 shipped): durable `ops_alerts` rows are the source of truth, surfaced in the `/admin/ops-alerts` dashboard (PR #193) and via the SQL recipes in [docs/11_RUNBOOK.md](./11_RUNBOOK.md). Since PR #193, CRITICAL alerts additionally send a best-effort operator email through the standalone `lib/ops/alert-email.ts` helper. **That email carries no record identifiers (#828 G-24):** no studio, appointment or client UUID, no Stripe event or PaymentIntent id, and no route. Any UUID or Stripe object id embedded in the message is replaced with `[id]` or `[stripe-id]`. **Encoding guarantee:** no string or key, after ASCII percent-decoding to a fixed point, contains a UUID. A token is decoded at most 4 rounds; one still changing after that is replaced with `[Redacted]`. Decoding is for detection only: each match replaces its original range, and all other text, including other escapes, is written back unchanged. Stripe ids are detected the same way, so `pi%5F…` is removed. Out of scope: non-URL encodings (HTML entities, `\u` escapes, base64). It keeps the event slug (subject and first line), the created time, the environment and the `/admin/ops-alerts` link, and the details stay on the `ops_alerts` row. Resend cannot sign a BAA (G-05), so the email is notification only. That helper imports only the bare Resend client and the pure `lib/ops/redact.ts`, and deliberately does NOT import `lib/email/send-appointment.ts` (no dependency cycle with the email subsystem the alerts observe), and it never calls `recordOpsAlert`, so alert-email failures cannot recurse. `OPS_ALERT_EMAILS` (comma-separated recipient list) IS read by that helper. It is **optional outside production** but **REQUIRED in production (PR #291)**: the production env gate (`scripts/check-production-env-gates.mjs`) fails the production build if it does not parse to ≥1 recipient (whitespace-only / comma-only counts as none), so a deploy cannot silently ship with critical-alert delivery disabled. At runtime, when unset or empty, a once-per-instance warning is logged and the email is skipped; the durable row and the dashboard are unaffected either way. Email content is only the event slug, the already-redacted message with every embedded record and Stripe id replaced, the created time, the environment and the admin link. It carries no ids (Codex P2 4301706587).
 
 ### Token routes collapse error states
 
@@ -188,6 +217,20 @@ What this baseline is **not**:
 - Not a nonce-based CSP. A future PR may convert `'unsafe-inline'` to per-request nonces.
 - Not a report-only path. A future PR may add `Content-Security-Policy-Report-Only` with a report endpoint before tightening further.
 - **CSP + Sentry (updated 2026-07-27):** Sentry HAS since shipped, so "they will be added in the Sentry-install PR if that ships" is superseded. Sentry is configured to use the same-origin `/monitoring` **tunnel** specifically so no third-party Sentry ingest domain needs to be added to the CSP. **Verify the deployed CSP against the tunnel configuration before assuming either way** — this was not re-verified in the 2026-07-27 documentation reconciliation.
+
+### Analytics and error-tracking proxies forward only allowlisted headers (#828 G-07/G-26)
+
+`/ingest` (PostHog) and `/monitoring` (Sentry's tunnel) stay same-origin, so `connect-src 'self'` still covers them. They used to be bare rewrites (`next.config.ts` rewrites and `withSentryConfig`'s `tunnelRoute`), and a rewrite to an external origin forwards every browser header. That included the page URL as `Referer` (same-origin requests carry the full path and query, so `/clients/<uuid>…`), `Origin`, the Supabase auth `Cookie`, `Authorization` and the client IP. PostHog's proxy guide states the default: "the proxy forwards all headers including cookies to PostHog".
+
+They are now route handlers (`app/ingest/[...path]/route.ts`, `app/monitoring/route.ts`) built on `lib/observability/egress-proxy.ts`:
+- **Request headers:** only `content-type`, `content-encoding` and `accept` are forwarded. No `Referer`, `Origin`, `Cookie`, `Authorization`, `X-Forwarded-For`/`X-Real-IP`, `User-Agent` or `sec-fetch-*`.
+- **Response headers:** only `content-type`, `cache-control` and Sentry's back-off headers (`x-sentry-rate-limits`, `retry-after`, which the SDK reads to stop sending) come back. Never `Set-Cookie`.
+- **PostHog paths:** only the SDK's own prefixes are proxied (`e`, `i`, `flags`, `decide`, `static`, `array`); anything else is a 404, so the route is not a general proxy. Methods are GET, HEAD and POST.
+- **Sentry:** forwards only the envelope body, and only when the envelope's DSN names Hone's own host and project (Sentry's documented tunnel pattern). The browser SDK uses `tunnel: "/monitoring"`.
+- **Limits:** 1 MB body cap, 10 s upstream timeout, and bare 4xx/502 answers with no detail.
+- **Minimization:** dropping the client IP removes PostHog GeoIP, and the upstreams see the server's IP instead.
+- **Tests:** pinned by `tests/lib/observability/egress-proxy.test.ts`. A real capture server records what reaches the upstream from `/clients/<uuid>` and `/calendar/<uuid>`. Its negative control sends the same request through Next's rewrite proxy, which forwards `Referer`, `Cookie` and `X-Forwarded-For`.
+- **Not covered:** Vercel's own platform request logs. Not a BAA.
 
 ## 3. Portal session model
 
@@ -230,7 +273,27 @@ Token storage: the DB only ever holds `hashToken(rawToken)`. A DB compromise doe
 - A new `app/_components/SafeAnalytics.tsx` wrapper mounts both together.
 - Safe routes opt in: `app/(app)/layout.tsx`, `app/admin/layout.tsx`, `app/book/layout.tsx`, `app/_components/PolicyLayout.tsx` (covers privacy + terms), inline on `app/page.tsx`, `app/pricing/page.tsx`, `app/demo/page.tsx`.
 - Token subtrees never opt in. The compiled production bundles confirm: the token-route page chunks (`/cancel/[token]`, `/reschedule/[token]`, `/manage/[token]`, `/intake/[token]`, `/portal/verify/[token]`) have zero matches for `vercel-scripts.com`, `vitals.vercel-insights`, `_vercel/insights`, or `_vercel/speed-insights`. The safe-only chunks (`/_next/static/chunks/3494-*.js`, `(app)/layout-*.js`, `book/layout-*.js`) each carry the analytics URL.
+- **URL redaction (HIPAA-READY-01 G-07, issue #828).** The opted-in trees include the authenticated app, `/admin` and `/book`, whose URLs carry record ids and the studio a patient is booking with. Both components therefore receive `beforeSend={redactVercelEvent}` (`lib/analytics/vercel-url-redaction.ts`):
+  - the query string and fragment are dropped; canonical marketing pages keep only the reviewed attribution params;
+  - UUID, all-digit and long opaque segments become `[id]` / `[token]`;
+  - `/book/<slug>` becomes `/book/[studio]`;
+  - token routes and unparsable URLs drop the event.
+
+  `tests/lib/analytics/vercel-url-redaction.test.ts` walks every dynamic page under the opted-in trees with synthetic ids, so a new route is covered automatically. Vercel's own `route` field is already a template and is left untouched.
 - **PostHog token-path redaction follows the canonical registry (#828).** `TOKEN_PATH_PREFIXES` in `lib/analytics/client-boundary.ts` is derived from `TOKEN_ROUTE_PREFIXES` (`lib/security/token-routes.ts`). The hand-written copy lacked `/invitation`, so an invitation token in a marketing pageview's `$prev_pageview_pathname` or `$referrer` passed unredacted. No client-side link from `/invitation` to a marketing page was found, so this is defence in depth against drift. Pinned by Scenario 12 in `tests/lib/analytics/client-boundary.test.ts`.
+- **Server-side PostHog events are checked by key AND value (#828 G-26 row 18).** `captureServerEvent` (`lib/analytics/server.ts`) already allowed only six property keys. Each now also has a value shape:
+  - `studio_id` must be a UUID;
+  - `modality`, `source` and `provider` must come from closed enums;
+  - `is_new_session` and `livemode` must be booleans;
+  - the event name must belong to the closed set of supported server event constants.
+
+  A mismatch drops the whole event, fail closed, and only the property name is logged. `distinctId` identity (raw practitioner UUID or `studio:<uuid>`) is unchanged; that is an identity decision for Sam. `tests/lib/analytics/server-property-shapes.test.ts` checks what the real posthog-node client puts on the wire, with zero network.
+- **PostHog URL properties lose record ids, and `/flags` is off (#828 G-07/G-26).** Browser events leave only from canonical marketing pages, but their URL-valued properties can name app pages.
+  - **Where app URLs appear:** a `$referrer` of `/clients/<uuid>/sessions/<uuid>` after a practitioner follows a link to a marketing page, plus `$initial_*`, `$session_entry_*`, and `$set` / `$set_once`.
+  - **The fix:** `guardBrowserEvent` treats every named URL key, and any key ending in `_url`, `_referrer` or `_pathname`, as a URL. It applies the same segment rules as Vercel Analytics (`lib/analytics/path-ids.ts`): `[id]` and `[token]`, percent-decoded first. It does the same in `properties`, `$set` and `$set_once`. PostHog's own ids (`$session_id`, `distinct_id`) are kept.
+  - **`/flags`:** posthog-js 1.404.1 sends the person properties, including the first page that browser loaded, in every `/flags` request body. `before_send` never sees that request. Hone uses no feature flags, so `advanced_disable_flags: true` stops the request entirely.
+  - **Tests:** `tests/lib/analytics/posthog-url-ids.test.ts` pins both, including the SDK's own gate on that option name.
+  - **Not a BAA.**
 - **Why a pathname denylist is not enough:** the analytics script can already have loaded on a previous safe page in the same SPA navigation. By the time a runtime denylist runs, the script is already in the document and ready to observe the new URL.
 
 ## 7. Production config fail-closed (PR #143)
@@ -247,7 +310,7 @@ This is the honest list. Do not hide gaps.
 |---|---|
 | Email reminder outbox / claim discipline | **Resolved (PR #189, migration 0080).** The 24h / 2h reminder cron claims each row atomically via `claim_email_send` before sending (mirror of the SMS claim from 0049: conditional UPDATE on sent-is-null + attempts cap + 5-minute stale-claim window). Overlapping cron runs can no longer double-send. |
 | Hashed `calendar_feed_token` storage | **Partially resolved (PR #182, phase 1).** Migration 0079 added `practitioners.calendar_feed_token_hash` (SHA-256 hex, backfilled); the feed route looks up by hash only and no longer SELECTs the raw column. The raw column is kept for rollout compatibility until phase 2 (settings UI shows the URL only at rotation time, then the raw value is nulled). Phase 2 is not started; do not proceed until real Google/Apple calendar subscriptions are confirmed still polling cleanly after phase 1. |
-| Comprehensive automated coverage | **Substantial.** Vitest suite (~1,990 tests as of PR #225) plus the GitHub Actions CI job (PR #154) run typecheck, lint, build, `npm test`, `git diff --check`, and `npm run check:stripe-gates` on every PR; the separate `db-integration` job (PR #220/#221) applies the full migration chain to a local Supabase Postgres and runs real RLS/trigger/claim-RPC behavior tests plus the generated types drift check (Supabase CLI pinned to 2.102.0 for grants parity; bumps require re-verification). **CORRECTION (2026-07-27): browser E2E is NOT deferred** — `playwright.config.ts` plus 95 specs under `e2e/` exist at the production SHA and run as the `browser-e2e` CI job. Manual smoke (docs/12) remains a complement for real provider sends, real Stripe Elements and real webhook delivery, not the only browser check. |
+| Comprehensive automated coverage | **Substantial.** Vitest suite (~1,990 tests as of PR #225) plus the GitHub Actions CI job (PR #154) run typecheck, lint, build, `npm test`, `git diff --check`, and `npm run check:stripe-gates` on every PR; the separate `db-integration` job (PR #220/#221) applies the full migration chain to a local Supabase Postgres and runs real RLS/trigger/claim-RPC behavior tests plus the generated types drift check (Supabase CLI pinned to 2.102.0 for grants parity; bumps require re-verification). **CORRECTION (2026-07-27): browser E2E is NOT deferred** — `playwright.config.ts` plus 100 specs under `e2e/` exist in this tree (the count tracks this branch, not deployed production coverage) and run as the `browser-e2e` CI job. Manual smoke (docs/12) remains a complement for real provider sends, real Stripe Elements and real webhook delivery, not the only browser check. |
 | Real legal review of consent / cancellation / card-authorization wording | **Required before live payment.** Drafts exist in code (`docs/05_CONSENT_AND_FORMS.md`). Enforceability under Ontario law depends on lawyer-reviewed wording. |
 | Stripe metadata search for stale pending recovery | **Test mode acceptable today.** PR #146 reconciles within a 60-minute window with the deterministic idempotency key; older pending attempts surface "needs manual review." A live-mode PR must add `paymentIntents.search` by metadata before any blind retry. |
 | Receipts / charge notice email | **Built in test mode (PR #175)** for session payments on `payment_charge_attempts`: a receipt email is sent on a successful test charge. Still open for live: content/legal review of the template and a charge notice for the legacy manual-fee path. |

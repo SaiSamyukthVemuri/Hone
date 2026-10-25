@@ -176,3 +176,210 @@ describe("page size matches the server cap", () => {
     expect(EXPORT_PAGE_SIZE).toBeLessThanOrEqual(Number(m![1]));
   });
 });
+
+// OPS-DAT-EXPORT-01. Offset pages over a table that changes between requests.
+//
+// Soft-delete (or insert) a row BEFORE the next offset between two page
+// requests and every later row shifts by one: on delete one SURVIVING row is
+// never returned, on insert one is returned twice, and the short final page
+// still reads as "complete". With a `rowKey`, each page after the first
+// re-reads the previous page's last row; a different key at that position
+// means the table moved, so the read restarts (bounded) or refuses.
+
+/**
+ * A server-clamped page source whose table can change between calls. `mutate`
+ * runs before a page is served and receives the call index, so the fixture
+ * chooses exactly when the table moves. `ranges` records every request.
+ */
+function shiftingSource(
+  initial: Row[],
+  mutate: (rows: Row[], call: number, from: number) => void,
+  pageSize = EXPORT_PAGE_SIZE,
+) {
+  const rows = [...initial];
+  const ranges: Array<[number, number]> = [];
+  const factory = (from: number, to: number): PromiseLike<PageResult<Row>> => {
+    mutate(rows, ranges.length, from);
+    ranges.push([from, to]);
+    const end = Math.min(to, from + pageSize - 1);
+    return Promise.resolve({ data: rows.slice(from, end + 1), error: null });
+  };
+  return { factory, ranges, current: () => [...rows] };
+}
+
+const byId = { rowKey: (r: Row) => r.id };
+
+describe("E6 — a table that shifts between pages is never returned as complete", () => {
+  it("a row deleted before the next offset: every surviving row is returned once", async () => {
+    const initial = makeRows(2500);
+    const deleted = initial[10].id;
+    const survivor = initial[1000].id; // the row the shift used to skip
+    const src = shiftingSource(initial, (rows, call) => {
+      if (call === 1) rows.splice(10, 1); // once, between page 0 and page 1
+    });
+    const { data, error } = await fetchAllRows(src.factory, byId);
+    expect(error).toBeNull();
+    const ids = data!.map((r) => r.id);
+    expect(ids).toContain(survivor);
+    expect(ids).not.toContain(deleted);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toEqual(src.current().map((r) => r.id));
+  });
+
+  it("a row inserted before the next offset: no row is returned twice", async () => {
+    const initial = makeRows(2500);
+    const src = shiftingSource(initial, (rows, call) => {
+      if (call === 1) rows.splice(0, 0, { id: "id-000000-new", name: "new" });
+    });
+    const { data, error } = await fetchAllRows(src.factory, byId);
+    expect(error).toBeNull();
+    const ids = data!.map((r) => r.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const r of initial) expect(ids).toContain(r.id);
+    expect(ids).toEqual(src.current().map((r) => r.id));
+  });
+
+  it("a table that keeps moving is refused after the bounded restarts", async () => {
+    let n = 0;
+    const src = shiftingSource(makeRows(2500), (rows, _call, from) => {
+      if (from > 0) rows.splice(0, 0, { id: `id-000000-new-${n++}`, name: "new" });
+    });
+    const { data, error } = await fetchAllRows(src.factory, byId);
+    expect(data).toBeNull();
+    expect(error?.message).toMatch(/changed while it was being read/);
+    expect(error?.message).toMatch(/refusing to return a partial table/);
+    // Bounded: three attempts, each stopped at its first shifted boundary.
+    expect(src.ranges.filter(([from]) => from === 0)).toHaveLength(3);
+  });
+
+  it("a boundary row without a key is refused, not compared as undefined", async () => {
+    const src = shiftingSource(makeRows(1500), () => {});
+    const { data, error } = await fetchAllRows(src.factory, {
+      rowKey: () => undefined as unknown as string,
+    });
+    expect(data).toBeNull();
+    expect(error?.message).toMatch(/no row key/);
+  });
+
+  it("CONTROL — an unchanged table returns exactly its rows, one overlapping row per page", async () => {
+    const initial = makeRows(2500);
+    const src = shiftingSource(initial, () => {});
+    const { data, error } = await fetchAllRows(src.factory, byId);
+    expect(error).toBeNull();
+    expect(data!.map((r) => r.id)).toEqual(initial.map((r) => r.id));
+    expect(src.ranges).toEqual([
+      [0, 999],
+      [999, 1998],
+      [1998, 2997],
+    ]);
+  });
+
+  it("CONTROL — without a rowKey the read is unchanged: disjoint ranges, no boundary check", async () => {
+    // public-slot-range and client pinned notes pass no rowKey. Their requests
+    // and results must be exactly what they were before OPS-DAT-EXPORT-01,
+    // including (documented, not endorsed) the silent skip this fix closes
+    // for opted-in export reads.
+    const initial = makeRows(2500);
+    const skipped = initial[1000].id;
+    const src = shiftingSource(initial, (rows, call) => {
+      if (call === 1) rows.splice(10, 1);
+    });
+    const { data, error } = await fetchAllRows(src.factory);
+    expect(error).toBeNull();
+    expect(src.ranges).toEqual([
+      [0, 999],
+      [1000, 1999],
+      [2000, 2999],
+    ]);
+    expect(data).toHaveLength(2499);
+    expect(data!.map((r) => r.id)).not.toContain(skipped);
+  });
+});
+
+describe("E7 — every exported read is boundary-checked by default", () => {
+  /** postgrest-shaped: thenable with the request URL fetchExportRows audits. */
+  function exportSource(initial: Row[], mutate: (rows: Row[], call: number) => void) {
+    const rows = [...initial];
+    let call = 0;
+    const factory = (from: number, to: number) => {
+      mutate(rows, call++);
+      const url = new URL("http://stub/clients");
+      url.searchParams.set("select", "id, name");
+      const end = Math.min(to, from + EXPORT_PAGE_SIZE - 1);
+      return Object.assign(
+        Promise.resolve({ data: rows.slice(from, end + 1), error: null }),
+        { url },
+      );
+    };
+    return { factory, current: () => [...rows] };
+  }
+
+  it("fetchExportRows keys on id without being asked: a mid-read delete loses no survivor", async () => {
+    const { fetchExportRows } = await import("@/lib/export/provenance");
+    const initial = makeRows(2500);
+    const src = exportSource(initial, (rows, call) => {
+      if (call === 1) rows.splice(10, 1);
+    });
+    const { data, error } = await fetchExportRows("clients", src.factory);
+    expect(error).toBeNull();
+    expect(data!.map((r) => r.id)).toEqual(src.current().map((r) => r.id));
+    expect(data!.map((r) => r.id)).toContain(initial[1000].id);
+  });
+
+  it("a resource without an id column must name its own key, or the read is refused", async () => {
+    const { fetchExportRows } = await import("@/lib/export/provenance");
+    const keyless = makeRows(1500).map(({ name }, i) => ({ client_id: `c-${String(i).padStart(6, "0")}`, name }));
+    const factory = (from: number, to: number) => {
+      const url = new URL("http://stub/client_budget_context");
+      url.searchParams.set("select", "client_id, name");
+      return Object.assign(
+        Promise.resolve({ data: keyless.slice(from, Math.min(to, from + EXPORT_PAGE_SIZE - 1) + 1), error: null }),
+        { url },
+      );
+    };
+    const refused = await fetchExportRows("client_budget_context", factory);
+    expect(refused.data).toBeNull();
+    expect(refused.error?.message).toMatch(/no row key/);
+
+    const keyed = await fetchExportRows("client_budget_context", factory, {
+      rowKey: (r) => r.client_id,
+    });
+    expect(keyed.error).toBeNull();
+    expect(keyed.data).toHaveLength(1500);
+  });
+});
+
+describe("E8 — a keyed read keeps the documented row capacity (Codex P2 4351023375)", () => {
+  // Capacity is maxPages x pageSize ROWS. The overlap makes every keyed page
+  // after the first add pageSize - 1 new rows, so counting PAGES refused tables
+  // the unkeyed read accepts (499,501..499,999 rows at the real sizes). Small
+  // sizes make the same boundary cheap: capacity 3 x 10 = 30.
+  const small = { pageSize: 10, maxPages: 3 };
+
+  it("29 rows (capacity - 1) are returned, as the unkeyed read returns them", async () => {
+    const rows = makeRows(29);
+    const unkeyed = await fetchAllRows(pageSource(rows, 10).factory, small);
+    expect(unkeyed.data).toHaveLength(29);
+    const keyed = await fetchAllRows(pageSource(rows, 10).factory, { ...small, ...byId });
+    expect(keyed.error).toBeNull();
+    expect(keyed.data!.map((r) => r.id)).toEqual(rows.map((r) => r.id));
+  });
+
+  it("30 rows (capacity) are refused, as the unkeyed read refuses them", async () => {
+    const rows = makeRows(30);
+    const unkeyed = await fetchAllRows(pageSource(rows, 10).factory, small);
+    expect(unkeyed.data).toBeNull();
+    const keyed = await fetchAllRows(pageSource(rows, 10).factory, { ...small, ...byId });
+    expect(keyed.data).toBeNull();
+    expect(keyed.error?.message).toMatch(/refusing to return a partial table/);
+  });
+
+  it("a keyed read with pageSize 1 is refused before any request: the overlap would never advance", async () => {
+    const { factory, callCount } = pageSource(makeRows(5), 1);
+    const { data, error } = await fetchAllRows(factory, { pageSize: 1, maxPages: 10, ...byId });
+    expect(data).toBeNull();
+    expect(error?.message).toMatch(/page size of at least 2/);
+    expect(error?.message).toMatch(/refusing to return a partial table/);
+    expect(callCount()).toBe(0);
+  });
+});

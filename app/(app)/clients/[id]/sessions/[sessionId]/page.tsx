@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import {
   getClientById,
+  sessionPerformerName,
+  sessionRecordedByName,
   requirePractitionerWithStudio,
   getLaserTreatmentCountsForClient,
   getPriorLaserSessionCount,
@@ -14,6 +16,7 @@ import {
 import { LogLaserEntryForm } from "@/components/log-laser-entry-form";
 import { LaserEntryRow } from "@/components/entry-row";
 import { SessionPerformerLine } from "@/components/session-performer-line";
+import { toPerformerOptions } from "@/lib/sessions/performer-options";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
 import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-eligibility";
 import { AftercareExplainedToggle } from "@/app/(app)/records/record-forms";
@@ -82,6 +85,8 @@ import {
   resolveAutoEditBlockId,
 } from "@/lib/sessions/fast-chart-start";
 import { SectionLabel } from "@/components/ui/section-label";
+import { SessionPhotos } from "./SessionPhotos";
+import { signedSessionPhotos } from "./session-photos";
 
 export default async function SessionDetailPage({
   params,
@@ -137,6 +142,7 @@ export default async function SessionDetailPage({
   const linkedAppointmentId = session.appointment_id ?? null;
 
   const [
+    sessionPhotos,
     lastEntry,
     treatmentCounts,
     audit,
@@ -146,6 +152,11 @@ export default async function SessionDetailPage({
     pricedForPage,
     settlementLoad,
   ] = await Promise.all([
+    // FETT photos: this visit's photos, signed for 60 s under the Photos tab's
+    // trust boundary. Depends only on (studio, client, session).
+    timed("session-chart.photos", () =>
+      signedSessionPhotos({ studioId: studio.id, clientId: id, sessionId: session.id }),
+    ),
     timed("session-chart.recent-entry", () =>
       getRecentEntryForClient(studio.id, id, session.modality),
     ),
@@ -185,6 +196,17 @@ export default async function SessionDetailPage({
   const lastEntryNotFromThisSession =
     lastEntry && !sessionEntryIds.has(lastEntry.id) ? lastEntry : null;
   const sessionPaymentAmount = pricedForPage.ok ? pricedForPage.result : null;
+  // HON-11: the quoted price that prefills the cash/e-transfer amount when the
+  // prepare form is hidden (no card on file). Quick checkout passes the same
+  // fact; without it this page showed a blank box for the visit the dashboard
+  // prefilled. Same resolver, through this session's linked appointment, and no
+  // extra read. Null when unresolvable: a zero would be a manufactured price.
+  const settlementQuotedAmountCents =
+    sessionPaymentAmount?.kind === "resolved"
+      ? sessionPaymentAmount.amountCents
+      : sessionPaymentAmount?.kind === "free"
+        ? 0
+        : null;
   // Populated from the SAME widened appointment read below; feeds the Finish
   // appointment workflow without a second read of the same row.
   let apptContext: {
@@ -434,6 +456,9 @@ export default async function SessionDetailPage({
     .eq("studio_id", studio.id)
     .eq("client_id", id)
     .is("deleted_at", null)
+    // HON-10 row 1: a void session's note is never "From last visit".
+    // record_status is NOT NULL (0119), so `neq` drops nothing else.
+    .neq("record_status", "void")
     .not("next_session_note", "is", null)
     .lt("started_at", session.started_at)
     .order("started_at", { ascending: false })
@@ -586,10 +611,13 @@ export default async function SessionDetailPage({
         <SessionPerformerLine
           sessionId={session.id}
           clientId={id}
-          practitioners={clientData.practitioners}
+          // DAT-001: a client component; pass only what the line renders.
+          practitioners={toPerformerOptions(clientData.practitioners)}
           initialPerformerId={
             session.performed_by_practitioner_id ?? session.practitioner_id
           }
+          performerName={sessionPerformerName(session, clientData.attributionRoster)}
+          recordedByName={sessionRecordedByName(session, clientData.attributionRoster)}
           updatePerformerAction={updateSessionPerformerAction}
         />
         {/* PR #194 (Chloe retest): when a treatment plan is attached,
@@ -792,6 +820,8 @@ export default async function SessionDetailPage({
           </section>
         </>
       )}
+
+      <SessionPhotos clientId={id} photos={sessionPhotos} />
 
       {/* PR #190 (clinical memory): plan for the NEXT visit. Saved on
           sessions.next_session_note and shown as "From last visit"
@@ -1041,6 +1071,7 @@ export default async function SessionDetailPage({
           appointmentId={linkedAppointmentId}
           settledMethod={liveSettlement?.method ?? null}
           settledAmountCents={liveSettlement?.amountCents ?? null}
+          settlementQuotedAmountCents={settlementQuotedAmountCents}
           // The UI's copy of the database's own rule: only a COMPLETED
           // appointment can carry a disposition (0187 answers anything else
           // with `not_completed`). Offering the controls on a visit that has

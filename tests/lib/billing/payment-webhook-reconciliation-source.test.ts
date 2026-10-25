@@ -39,7 +39,7 @@ describe("payment-webhook-reconciliation: server boundary", () => {
 
   it("imports recordOpsAlert from the ops alerts helper", () => {
     expect(HELPER).toMatch(
-      /import \{ recordOpsAlert \} from "@\/lib\/ops\/alerts"/,
+      /import \{ recordOpsAlert(?:, recordOpsAlertDurably)? \} from "@\/lib\/ops\/alerts"/,
     );
   });
 });
@@ -330,9 +330,12 @@ describe("payment_intent.payment_failed: status-conditional reconciliation", () 
     );
   });
 
-  it("sanitises the Stripe last_payment_error code + message", () => {
+  it("sanitises the failure code and uses fixed copy instead of provider error prose", () => {
     expect(HELPER).toMatch(/sanitizeFailureCode\(lastError\?\.code/);
-    expect(HELPER).toMatch(/sanitizeFailureMessage\(lastError\?\.message/);
+    expect(HELPER).toContain('const safeMessage = "Stripe could not charge the saved card.";');
+    expect(HELPER).toMatch(/failure_message_safe:\s*safeMessage/);
+    expect(HELPER).not.toMatch(/lastError\s*(?:\?\.|\.)\s*message/);
+    expect(HELPER).not.toMatch(/pi\.last_payment_error\s*(?:\?\.|\.)\s*message/);
   });
 });
 

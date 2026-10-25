@@ -2,7 +2,7 @@ import "server-only";
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
-import { recordOpsAlert } from "@/lib/ops/alerts";
+import { recordOpsAlert, recordOpsAlertDurably } from "@/lib/ops/alerts";
 import {
   compareProviderMoney,
   providerMoneyMismatchDetails,
@@ -58,7 +58,6 @@ import {
 //   * No manual_fee_charge_attempts touch.
 //   * No live-mode CHECK relaxation.
 
-const FAILURE_MESSAGE_MAX = 1000;
 const FAILURE_CODE_MAX = 100;
 const ROUTE = "app/api/stripe/webhook";
 
@@ -75,6 +74,8 @@ type AttemptRow = {
   charge_reason: string;
   status: string;
   stripe_livemode: boolean;
+  stripe_account_id: string | null;
+  stripe_customer_id: string | null;
   stripe_payment_intent_id: string | null;
   stripe_charge_id: string | null;
   amount_cents: number;
@@ -87,7 +88,7 @@ type AttemptRow = {
 };
 
 const ATTEMPT_COLUMNS =
-  "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id";
+  "id, studio_id, client_id, charge_reason, status, stripe_livemode, stripe_account_id, stripe_customer_id, stripe_payment_intent_id, stripe_charge_id, amount_cents, currency, charged_at, refund_status, refund_amount_cents, refunded_at, stripe_refund_id";
 
 // ---------------------------------------------------------------------------
 // Sanitisers (mirror lib/billing/session-payment-charge.ts +
@@ -97,13 +98,6 @@ const ATTEMPT_COLUMNS =
 function sanitizeFailureCode(raw: string | null | undefined): string | null {
   if (!raw) return null;
   return raw.slice(0, FAILURE_CODE_MAX);
-}
-
-function sanitizeFailureMessage(
-  raw: string | null | undefined,
-): string | null {
-  if (!raw) return null;
-  return raw.replace(/\s+/g, " ").trim().slice(0, FAILURE_MESSAGE_MAX);
 }
 
 // ---------------------------------------------------------------------------
@@ -171,10 +165,12 @@ type Resolution =
   | { ok: false; reason: "not_found" | "database_error"; detail?: string };
 
 async function resolveAttemptByMetadataOrId(args: {
+  ctx: WebhookCtx;
   metadata: Record<string, string> | undefined | null;
   fallbackByPaymentIntentId?: string | null;
   fallbackByChargeId?: string | null;
 }): Promise<Resolution> {
+  if (!args.ctx.studioId || !args.ctx.stripeAccountId) return { ok: false, reason: "not_found" };
   const admin = createAdminClient();
   const meta = args.metadata ?? {};
   const canonicalId = (meta["hone_payment_charge_attempt_id"] ?? "").trim();
@@ -187,6 +183,9 @@ async function resolveAttemptByMetadataOrId(args: {
       .from("payment_charge_attempts")
       .select(ATTEMPT_COLUMNS)
       .eq("id", canonicalId)
+      .eq("studio_id", args.ctx.studioId)
+      .eq("stripe_account_id", args.ctx.stripeAccountId)
+      .eq("stripe_livemode", args.ctx.livemode)
       .maybeSingle();
     if (error) {
       return {
@@ -206,6 +205,9 @@ async function resolveAttemptByMetadataOrId(args: {
       .from("payment_charge_attempts")
       .select(ATTEMPT_COLUMNS)
       .eq("id", legacyId)
+      .eq("studio_id", args.ctx.studioId)
+      .eq("stripe_account_id", args.ctx.stripeAccountId)
+      .eq("stripe_livemode", args.ctx.livemode)
       .maybeSingle();
     if (error) {
       return {
@@ -225,6 +227,9 @@ async function resolveAttemptByMetadataOrId(args: {
       .from("payment_charge_attempts")
       .select(ATTEMPT_COLUMNS)
       .eq("stripe_payment_intent_id", args.fallbackByPaymentIntentId)
+      .eq("studio_id", args.ctx.studioId)
+      .eq("stripe_account_id", args.ctx.stripeAccountId)
+      .eq("stripe_livemode", args.ctx.livemode)
       .maybeSingle();
     if (error) {
       return {
@@ -242,6 +247,9 @@ async function resolveAttemptByMetadataOrId(args: {
       .from("payment_charge_attempts")
       .select(ATTEMPT_COLUMNS)
       .eq("stripe_charge_id", args.fallbackByChargeId)
+      .eq("studio_id", args.ctx.studioId)
+      .eq("stripe_account_id", args.ctx.stripeAccountId)
+      .eq("stripe_livemode", args.ctx.livemode)
       .maybeSingle();
     if (error) {
       return {
@@ -382,6 +390,100 @@ async function verifyProviderMoneyAgainstRow(args: {
   return false;
 }
 
+// PAY-002 (#1081 review M1). The unconfirmed-refund refusal returns 2xx only
+// when its critical alert is DURABLY recorded. If the ops_alerts row could not
+// be written, this is thrown instead, so the route releases the claim, answers
+// 500 and Stripe redelivers: the refusal is never both unrecorded and final.
+export class PaymentRefundRefusalUnrecordedError extends Error {
+  constructor() {
+    super("stripe_webhook_refund_refusal_unrecorded");
+    this.name = "PaymentRefundRefusalUnrecordedError";
+  }
+}
+
+// A normal create/confirm-to-persistence race, distinct from a genuine handler
+// failure. The route recognizes this exact server-only type, never message text.
+export class PaymentOriginalBindingPendingError extends Error {
+  constructor() {
+    super("stripe_webhook_payment_original_binding_pending");
+    this.name = "PaymentOriginalBindingPendingError";
+  }
+}
+
+// The signature proves the event came from Stripe. It does not let metadata
+// replace the account/customer/provider object stamped on this durable attempt.
+async function verifyPaymentEventIdentity(args: {
+  attempt: AttemptRow;
+  event: Stripe.Event;
+  ctx: WebhookCtx;
+  paymentIntentId: string | null;
+  chargeId: string | null;
+  customerId: string | null;
+  metadata: Record<string, string>;
+  requireCharge: boolean;
+}): Promise<boolean> {
+  const { attempt, event, ctx } = args;
+  const mismatches: string[] = [];
+  if (!ctx.studioId || ctx.studioId !== attempt.studio_id) mismatches.push("studio");
+  if (!ctx.stripeAccountId || event.account !== ctx.stripeAccountId || ctx.stripeAccountId !== attempt.stripe_account_id) mismatches.push("account");
+  if (event.livemode !== ctx.livemode || event.livemode !== attempt.stripe_livemode) mismatches.push("mode");
+  if (!attempt.stripe_customer_id || args.customerId !== attempt.stripe_customer_id) mismatches.push("customer");
+  if (!attempt.stripe_payment_intent_id || args.paymentIntentId !== attempt.stripe_payment_intent_id) mismatches.push("payment_intent");
+  if ((args.requireCharge && !attempt.stripe_charge_id) || (attempt.stripe_charge_id && args.chargeId !== attempt.stripe_charge_id)) mismatches.push("charge");
+  for (const key of ["hone_payment_charge_attempt_id", "hone_session_payment_charge_attempt_id"]) {
+    const id = args.metadata[key]?.trim();
+    if (id && id !== attempt.id) mismatches.push(key);
+  }
+  if (mismatches.length === 0) return true;
+
+  // create(confirm:true) can deliver this event before the charge request has
+  // persisted its returned PI/charge. Missing pending originals are not a
+  // contradictory identity: preserve delivery through the route's existing
+  // release-claim/500 path. Never bind IDs from the event or invoke Stripe here.
+  // Any known contradictory account/customer/mode/object/metadata still refuses.
+  const awaitingOriginalBinding = attempt.status === "pending_stripe"
+    && !!args.paymentIntentId
+    && mismatches.every((mismatch) =>
+      (mismatch === "payment_intent" && !attempt.stripe_payment_intent_id)
+      || (mismatch === "charge" && args.requireCharge
+        && !attempt.stripe_charge_id && !!args.chargeId));
+  if (awaitingOriginalBinding) {
+    // A missing original is expected only when the existing optional metadata
+    // contract also agrees. Preserve its critical refusal before suppressing
+    // handler-failure alerts for a normal binding race.
+    if (!(await verifyMetadataAgainstRow({
+      attempt,
+      metadata: args.metadata,
+      stripeEventId: event.id,
+      targetEvent: event.type,
+    }))) return false;
+    // Expected binding retries must agree with the existing money contract too.
+    // Reuse each event object's actual amount/currency, never a row default.
+    const provider = event.data.object as Stripe.PaymentIntent | Stripe.Charge | Stripe.Refund;
+    if (!(await verifyProviderMoneyAgainstRow({
+      attempt,
+      provider: { amount: provider.amount, currency: provider.currency },
+      stripeEventId: event.id,
+      targetEvent: event.type,
+      stripePaymentIntentId: event.type.startsWith("payment_intent.") ? args.paymentIntentId : undefined,
+      stripeChargeId: event.type === "charge.refunded" ? args.chargeId : undefined,
+    }))) return false;
+    throw new PaymentOriginalBindingPendingError();
+  }
+
+  await recordOpsAlert({
+    severity: "critical",
+    event: "stripe_webhook_payment_identity_mismatch",
+    message: "Signed payment event does not match the durable attempt identity. No payment row was mutated.",
+    studioId: attempt.studio_id,
+    clientId: attempt.client_id,
+    stripeEventId: event.id,
+    route: ROUTE,
+    safeDetails: { attempt_id: attempt.id, event_type: event.type, mismatches },
+  });
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // payment_intent.succeeded
 // ---------------------------------------------------------------------------
@@ -400,6 +502,7 @@ export async function handlePaymentIntentSucceeded(
   const metadata = (pi.metadata ?? {}) as Record<string, string>;
 
   const resolution = await resolveAttemptByMetadataOrId({
+    ctx,
     metadata,
     fallbackByPaymentIntentId: pi.id,
   });
@@ -429,6 +532,16 @@ export async function handlePaymentIntentSucceeded(
     };
   }
   const attempt = resolution.attempt;
+
+  if (!(await verifyPaymentEventIdentity({
+    attempt, event, ctx, metadata,
+    paymentIntentId: pi.id,
+    chargeId: typeof pi.latest_charge === "string" ? pi.latest_charge : pi.latest_charge?.id ?? null,
+    customerId: typeof pi.customer === "string" ? pi.customer : pi.customer?.id ?? null,
+    requireCharge: false,
+  }))) {
+    return { eventType: event.type, attemptId: attempt.id, identityMismatch: true };
+  }
 
   if (
     !(await verifyMetadataAgainstRow({
@@ -721,6 +834,7 @@ export async function handlePaymentIntentPaymentFailed(
   const metadata = (pi.metadata ?? {}) as Record<string, string>;
 
   const resolution = await resolveAttemptByMetadataOrId({
+    ctx,
     metadata,
     fallbackByPaymentIntentId: pi.id,
   });
@@ -751,24 +865,11 @@ export async function handlePaymentIntentPaymentFailed(
   }
   const attempt = resolution.attempt;
 
-  if (
-    !(await verifyMetadataAgainstRow({
-      attempt,
-      metadata,
-      stripeEventId: event.id,
-      targetEvent: "payment_intent.payment_failed",
-    }))
-  ) {
-    return {
-      eventType: event.type,
-      attemptId: attempt.id,
-      metadataMismatch: true,
-    };
-  }
-
+  // Preserve the existing mode-specific refusal before general identity checks.
   // Resolved-row mode guard (mirrors payment_intent.succeeded + charge.refunded).
   // The event-mode guard above only checks event.livemode; the resolver + the
-  // metadata guard do NOT check the row's stripe_livemode. Post-0105 a session
+  // metadata guard historically did not check the row's mode. The bound identity
+  // guard now does too; retain this independent mode refusal. Post-0105 a session
   // can hold both a test and a live attempt with the same studio/client/reason,
   // so a mode-matching failed event could resolve the OTHER mode's row: refuse
   // to mutate it and alert, exactly as the two other mutating handlers do.
@@ -791,6 +892,31 @@ export async function handlePaymentIntentPaymentFailed(
       eventType: event.type,
       attemptId: attempt.id,
       livemodeRowMismatch: true,
+    };
+  }
+
+  if (!(await verifyPaymentEventIdentity({
+    attempt, event, ctx, metadata,
+    paymentIntentId: pi.id,
+    chargeId: typeof pi.latest_charge === "string" ? pi.latest_charge : pi.latest_charge?.id ?? null,
+    customerId: typeof pi.customer === "string" ? pi.customer : pi.customer?.id ?? null,
+    requireCharge: false,
+  }))) {
+    return { eventType: event.type, attemptId: attempt.id, identityMismatch: true };
+  }
+
+  if (
+    !(await verifyMetadataAgainstRow({
+      attempt,
+      metadata,
+      stripeEventId: event.id,
+      targetEvent: "payment_intent.payment_failed",
+    }))
+  ) {
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      metadataMismatch: true,
     };
   }
 
@@ -871,12 +997,41 @@ export async function handlePaymentIntentPaymentFailed(
     };
   }
 
+  // A verified card decline may finish this ATTEMPT with an intent awaiting
+  // a new payment method; it is not autonomous completion of an existing
+  // payment. PR320 separately keeps requires_action/in-progress/unknown
+  // outcomes unresolved. This observer never confirms or cancels the provider.
+  const knownOriginalIntent = typeof attempt.stripe_payment_intent_id === "string" &&
+    attempt.stripe_payment_intent_id.length > 0 && attempt.stripe_payment_intent_id === pi.id;
+  const observedCardDecline = pi.status === "requires_payment_method" &&
+    pi.last_payment_error?.type === "card_error";
+  if (!knownOriginalIntent || (pi.status !== "canceled" && !observedCardDecline)) {
+    await recordOpsAlert({
+      severity: "critical",
+      event: "session_payment_needs_manual_review",
+      message:
+        "Stripe reported an active or unresolved original intent rather than a verified card decline or cancellation. Hone retained the original payment claim; no terminal failure was recorded. Manual reconciliation required.",
+      studioId: attempt.studio_id,
+      clientId: attempt.client_id,
+      stripeEventId: event.id,
+      stripePaymentIntentId: pi.id,
+      route: ROUTE,
+      safeDetails: {
+        attempt_id: attempt.id,
+        reason: "payment_intent_failed_unverified_or_unresolved",
+      },
+    });
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      providerOutcomeUnresolved: true,
+    };
+  }
+
   // ready / pending_stripe: reconcile to failed.
   const lastError = pi.last_payment_error;
   const code = sanitizeFailureCode(lastError?.code ?? lastError?.type ?? null);
-  const safeMessage =
-    sanitizeFailureMessage(lastError?.message ?? null) ??
-    "Stripe payment_intent.payment_failed (no message)";
+  const safeMessage = "Stripe could not charge the saved card.";
   const admin = createAdminClient();
   const updates: Record<string, unknown> = {
     status: "failed",
@@ -940,6 +1095,41 @@ export async function handlePaymentIntentPaymentFailed(
 // truthfully represent partial state. A future PR may add a
 // refund_out_of_band_amount_cents column.
 // ---------------------------------------------------------------------------
+/**
+ * PAY-002 containment: does this charge.refunded payload itself PROVE that
+ * the full captured amount was refunded and the provider finished every
+ * refund? Pure; reads only the event payload, never Stripe.
+ */
+export function providerConfirmedFullRefund(
+  charge: Stripe.Charge,
+  amountCaptured: number,
+):
+  | { ok: true }
+  | {
+      ok: false;
+      reason:
+        | "provider_refunds_absent"
+        | "provider_refunds_incomplete"
+        | "provider_refund_not_succeeded"
+        | "provider_refunds_amount_mismatch";
+    } {
+  const list = charge.refunds;
+  const refunds = list?.data ?? [];
+  if (refunds.length === 0) return { ok: false, reason: "provider_refunds_absent" };
+  if (list?.has_more === true) return { ok: false, reason: "provider_refunds_incomplete" };
+  if (refunds.some((r) => r?.status !== "succeeded")) {
+    return { ok: false, reason: "provider_refund_not_succeeded" };
+  }
+  const total = refunds.reduce(
+    (sum, r) => sum + (typeof r.amount === "number" ? r.amount : Number.NaN),
+    0,
+  );
+  if (total !== amountCaptured) {
+    return { ok: false, reason: "provider_refunds_amount_mismatch" };
+  }
+  return { ok: true };
+}
+
 export async function handleChargeRefunded(
   event: Stripe.Event,
   ctx: WebhookCtx,
@@ -955,6 +1145,7 @@ export async function handleChargeRefunded(
   const metadata = (charge.metadata ?? {}) as Record<string, string>;
 
   const resolution = await resolveAttemptByMetadataOrId({
+    ctx,
     metadata,
     fallbackByChargeId: charge.id,
   });
@@ -985,6 +1176,16 @@ export async function handleChargeRefunded(
     };
   }
   const attempt = resolution.attempt;
+
+  if (!(await verifyPaymentEventIdentity({
+    attempt, event, ctx, metadata,
+    paymentIntentId: typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id ?? null,
+    chargeId: charge.id,
+    customerId: typeof charge.customer === "string" ? charge.customer : charge.customer?.id ?? null,
+    requireCharge: true,
+  }))) {
+    return { eventType: event.type, attemptId: attempt.id, identityMismatch: true };
+  }
 
   if (
     !(await verifyMetadataAgainstRow({
@@ -1101,6 +1302,46 @@ export async function handleChargeRefunded(
       eventType: event.type,
       attemptId: attempt.id,
       alreadyRefunded: true,
+    };
+  }
+
+  // PAY-002 CONTAINMENT. Everything below COMPLETES a refund. The charge's
+  // aggregates (refunded / amount_refunded) count refunds Stripe has not
+  // finished, so they are not completion evidence. Completion requires the
+  // refunds embedded in this event to be the whole set and every one of them
+  // `succeeded`, covering the captured amount. Anything else, including the
+  // default payload that embeds no refund at all, records nothing and raises
+  // the same unresolved-status alert the direct refund path raises. Interim:
+  // the governed provider-refund-status protocol (0240, #1035) replaces this.
+  const confirmed = providerConfirmedFullRefund(charge, amountCaptured);
+  if (!confirmed.ok) {
+    // recordOpsAlert never throws, so its outcome is checked instead: unless
+    // the durable alert row was written, throw a retryable error (route ->
+    // release claim -> 500 -> Stripe redelivers). The row is untouched either way.
+    const recorded = await recordOpsAlertDurably({
+      severity: "critical",
+      event: "payment_refund_provider_status_unresolved",
+      message:
+        "Stripe charge.refunded did not carry a confirmed succeeded refund. Hone did not record completion; the row is unchanged. Manual reconciliation required.",
+      studioId: attempt.studio_id,
+      clientId: attempt.client_id,
+      stripeEventId: event.id,
+      route: ROUTE,
+      safeDetails: {
+        attempt_id: attempt.id,
+        charge_reason: attempt.charge_reason,
+        stripe_charge_id: charge.id,
+        target_event: "charge.refunded",
+        previous_refund_status: attempt.refund_status,
+        reason: confirmed.reason,
+      },
+    });
+    if (recorded !== true) throw new PaymentRefundRefusalUnrecordedError();
+    return {
+      eventType: event.type,
+      attemptId: attempt.id,
+      refundStatusUnresolved: true,
+      reason: confirmed.reason,
     };
   }
 

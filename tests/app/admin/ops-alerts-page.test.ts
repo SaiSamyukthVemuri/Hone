@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -150,5 +150,81 @@ describe("PR #193 boundaries", () => {
   it("no public access: route lives under the guarded /admin tree", () => {
     expect(PAGE).not.toMatch(/export const runtime/);
     expect(ACTIONS).toMatch(/"use server"/);
+  });
+});
+
+// SEC-002: these loaders must refuse before constructing a privileged client,
+// even when React starts their work without waiting for the parent layout.
+const authState = vi.hoisted(() => ({
+  user: null as { id: string; email: string } | null,
+  error: null as { message: string } | null,
+  allowed: true,
+}));
+const privilegedReads = vi.hoisted(() => ({ clients: 0 }));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  createAdminClient: () => {
+    privilegedReads.clients += 1;
+    throw new Error("PRIVILEGED_CLIENT_CONSTRUCTED");
+  },
+}));
+vi.mock("next/navigation", () => ({
+  notFound: () => { throw new Error("NEXT_NOT_FOUND"); },
+}));
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: async () => ({ auth: { getUser: async () => ({
+    data: { user: authState.user }, error: authState.error,
+  }) } }),
+}));
+vi.mock("@/lib/admin", () => ({
+  isAdmin: (email: string) => authState.allowed && email === "operator@hone.example",
+}));
+import { requirePlatformAdmin } from "@/lib/auth/require-platform-admin";
+
+describe("SEC-002 independently authorized privileged loaders", () => {
+  beforeEach(() => {
+    authState.user = null; authState.error = null; authState.allowed = true;
+    privilegedReads.clients = 0;
+  });
+
+  it.each(["ordinary-studio-A", "ordinary-studio-B", "deactivated-member"])(
+    "refuses %s without trusting studio role or layout", async (id) => {
+      authState.user = { id, email: "member@hone.example" };
+      await expect(requirePlatformAdmin()).rejects.toThrow("NEXT_NOT_FOUND");
+    },
+  );
+  it("refuses no session, revoked allowlist and auth error even with stale user data", async () => {
+    await expect(requirePlatformAdmin()).rejects.toThrow("NEXT_NOT_FOUND");
+    authState.user = { id: "operator", email: "operator@hone.example" };
+    authState.allowed = false;
+    await expect(requirePlatformAdmin()).rejects.toThrow("NEXT_NOT_FOUND");
+    authState.allowed = true;
+    authState.error = { message: "session no longer valid" };
+    await expect(requirePlatformAdmin()).rejects.toThrow("NEXT_NOT_FOUND");
+  });
+  it("permits the currently authenticated platform operator without a studio membership", async () => {
+    authState.user = { id: "operator", email: "operator@hone.example" };
+    await expect(requirePlatformAdmin()).resolves.toBe(authState.user);
+  });
+  it.each(["ordinary-studio-A", "ordinary-studio-B", "deactivated-member", "former-platform-admin"])(
+    "the actual ops loader refuses %s before constructing its privileged client", async (id) => {
+      authState.user = { id, email: id === "former-platform-admin" ? "operator@hone.example" : "member@hone.example" };
+      authState.allowed = id !== "former-platform-admin";
+      const { default: Page } = await import("@/app/admin/ops-alerts/page");
+      await expect(Page()).rejects.toThrow("NEXT_NOT_FOUND");
+      expect(privilegedReads.clients).toBe(0);
+    },
+  );
+  it("the actual current-operator loader reaches the privileged-client detector", async () => {
+    authState.user = { id: "operator", email: "operator@hone.example" };
+    const { default: Page } = await import("@/app/admin/ops-alerts/page");
+    await expect(Page()).rejects.toThrow("PRIVILEGED_CLIENT_CONSTRUCTED");
+    expect(privilegedReads.clients).toBe(1);
+  });
+  it.each([
+    "app/admin/page.tsx", "app/admin/studios/[id]/page.tsx",
+    "app/admin/studios/new/page.tsx", "app/admin/ops-alerts/page.tsx",
+  ])("%s guards the loader before service-role construction", (file) => {
+    const source = codeOnly(readFileSync(path.join(ROOT, file), "utf8"));
+    expect(source).toMatch(/await requirePlatformAdmin\(\);\s*const admin = createAdminClient\(\);/);
   });
 });

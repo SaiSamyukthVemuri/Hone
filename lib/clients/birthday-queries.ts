@@ -37,7 +37,8 @@ export async function getClientBirthdaysForMonth(
     .not("date_of_birth", "is", null)
     .order("name");
   if (error) {
-    throw new Error(`Failed to load birthdays: ${error.message}`);
+    // DAT-002 N2: a fixed message; PostgREST text can echo the statement.
+    throw new Error("Failed to load birthdays");
   }
 
   const out: ClientBirthdayRow[] = [];

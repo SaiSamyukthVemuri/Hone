@@ -801,15 +801,25 @@ describe("notification idempotency is scoped to the join", () => {
     expect(sends.map((s) => s.eventScope)).toEqual(["entry-2", "entry-2"]);
   });
 
-  it("the MESSAGE is unchanged between the two joins — only the scope differs", async () => {
+  it("the MESSAGE is unchanged between the two joins except the per-join subject reference", async () => {
+    // The email subject sweep gives each join its own subject reference, so two
+    // joins no longer thread together. Everything else is still byte-identical,
+    // and the idempotency scope (asserted above) still separates the two sends
+    // whatever the bytes are.
+    const REF = / · Ref [2-9A-HJKMNP-Z]{6}$/;
     await submitNewClientBookingWaitlistAction(form());
     await flushPostResponse();
-    const first = sends.map((s) => ({ to: s.to, subject: s.subject, text: s.text }));
+    const first = sends.map((s) => ({ to: s.to, subject: s.subject.replace(REF, ""), text: s.text }));
+    const firstSubjects = sends.map((s) => s.subject);
     reset();
     scenario.entryId = "entry-2";
     await submitNewClientBookingWaitlistAction(form());
     await flushPostResponse();
-    expect(sends.map((s) => ({ to: s.to, subject: s.subject, text: s.text }))).toEqual(first);
+    expect(sends.map((s) => ({ to: s.to, subject: s.subject.replace(REF, ""), text: s.text }))).toEqual(first);
+    for (const [i, s] of sends.entries()) {
+      expect(s.subject).toMatch(REF);
+      expect(s.subject).not.toBe(firstSubjects[i]);
+    }
   });
 
   it("no entry id means NO scope, never a wrong one", async () => {

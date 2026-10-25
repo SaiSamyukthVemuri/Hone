@@ -214,7 +214,7 @@ export async function getRecurringBreakOccurrencesForRange(
 // row was already accessible to this studio's session via the
 // underlying appointments query.
 export type AppointmentWithPractitionerColor = Appointment & {
-  practitioner: { id: string; color: string } | null;
+  practitioner: { id: string; color: string; display_name?: string | null } | null;
   client: { id: string; name: string } | null;
   service: {
     id: string;
@@ -231,34 +231,54 @@ export async function getAppointmentsForRange(
 ): Promise<AppointmentWithPractitionerColor[]> {
   const supabase = await createClient();
   const BASE =
-    "*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color), client:clients(id, name), ";
-  const runSelect = (serviceEmbed: string) =>
-    supabase
+    "*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color, display_name), client:clients(id, name), ";
+  const runSelect = (serviceEmbed: string, afterId: string | null) => {
+    let query = supabase
       .from("appointments")
       .select(`${BASE}${serviceEmbed}`)
       .eq("studio_id", studioId)
       .gte("starts_at", startIso)
-      .lt("starts_at", endIso)
-      .order("starts_at");
+      .lt("starts_at", endIso);
+    if (afterId !== null) query = query.gt("id", afterId);
+    return query.order("id").range(0, 999);
+  };
 
   // Prefer the persisted calendar_color; if that column does not exist YET (app
   // deployed before 0153), retry the legacy embed and normalize calendar_color to
   // null. Any OTHER database error is re-thrown, never swallowed.
-  let { data, error } = await runSelect(
-    "service:services(id, name, modality, calendar_color)",
-  );
-  if (error && isMissingColumnError(error, "calendar_color")) {
-    ({ data, error } = await runSelect("service:services(id, name, modality)"));
+  // SCH-005: page by immutable id, not an offset into mutable times/membership.
+  // A prior-page move must not shift an unread appointment behind the cursor.
+  // Keep scope on every page and continue to empty even with a lower server cap;
+  // read errors/repeated rows refuse the whole load. These are captured rows,
+  // not a transaction-wide snapshot. Restore date/id display order below.
+  const appointments: unknown[] = [];
+  const seen = new Set<string>();
+  let afterId: string | null = null;
+  let serviceEmbed = "service:services(id, name, modality, calendar_color)";
+  for (;;) {
+    let { data, error } = await runSelect(serviceEmbed, afterId);
+    if (error && isMissingColumnError(error, "calendar_color")) {
+      serviceEmbed = "service:services(id, name, modality)";
+      ({ data, error } = await runSelect(serviceEmbed, afterId));
+    }
+    if (error) throw new Error("Failed to load appointments");
+    const rows = (data ?? []) as unknown as Array<{ id: string }>;
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      if (seen.has(row.id)) throw new Error("Failed to load appointments");
+      seen.add(row.id);
+      appointments.push(row);
+    }
+    afterId = rows[rows.length - 1].id;
   }
-  if (error) throw new Error(`Failed to load appointments: ${error.message}`);
 
   // Supabase types joined relations as either a single row or an array.
   // Normalize so callers can use `a.practitioner?.color` without
   // branching (same idiom for client and service).
   type Raw = Appointment & {
     practitioner:
-      | { id: string; color: string }
-      | { id: string; color: string }[]
+      | { id: string; color: string; display_name?: string | null }
+      | { id: string; color: string; display_name?: string | null }[]
       | null;
     client:
       | { id: string; name: string }
@@ -269,7 +289,10 @@ export async function getAppointmentsForRange(
       | { id: string; name: string; modality: string | null; calendar_color?: string | null }[]
       | null;
   };
-  return ((data ?? []) as unknown as Raw[]).map((row) => {
+  return (appointments as Raw[]).sort((a, b) =>
+    Date.parse(a.starts_at) - Date.parse(b.starts_at)
+    || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  ).map((row) => {
     const p = Array.isArray(row.practitioner)
       ? row.practitioner[0] ?? null
       : row.practitioner;

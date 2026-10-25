@@ -4,6 +4,9 @@ import {
   LEDGER_RUN_BUDGET_MS,
   LEDGER_STEP_BOUND_MS,
   createLedgerBudget,
+  claimSmsSend,
+  recordSmsResult,
+  logSmsFailure,
   sendBookingConfirmationSmsToClient,
   send24hReminderSmsToClient,
   send2hReminderSmsToClient,
@@ -45,11 +48,18 @@ const h: {
   begin: { data: unknown; error: unknown } | "hang" | { afterMs: number };
   /** "hang": settle_sms_message never answers (a stalled or killed request). */
   settle: "ok" | "hang";
+  attemptNumber: unknown;
+  sentAt: string | null;
+  laterClaim: string | null;
+  recordError: boolean;
+  readMode: "row" | "error" | "hang";
+  attemptReads: Array<{ columns: string; filters: Array<[string, string]>; signal?: AbortSignal; rpcsBefore: string[] }>;
   rpcs: Array<{ fn: string; args: Record<string, unknown> }>;
 } = {
   claim: { result: "claimed", starts_at: START },
   begin: { data: LEDGER_ROW, error: null },
   settle: "ok",
+  attemptNumber: 1, sentAt: null, laterClaim: null, recordError: false, readMode: "row", attemptReads: [],
   rpcs: [],
 };
 
@@ -64,6 +74,7 @@ function admin(): SupabaseClient {
             : { data: [h.claim], error: null },
         );
       }
+      if (fn === "record_sms_result" && h.recordError) return Promise.resolve({ data: null, error: { message: "synthetic record failure" } });
       // The confirmation path's plain claim (0049).
       if (fn === "claim_sms_send") return Promise.resolve({ data: true, error: null });
       if (fn === "begin_appointment_sms_message") {
@@ -81,8 +92,27 @@ function admin(): SupabaseClient {
       }
       return Promise.resolve({ data: null, error: null });
     },
-    from() {
-      throw new Error("the reminder path must not read the appointment outside its claim");
+    from(table: string) {
+      if (table !== "appointments") throw new Error("unexpected observer table");
+      return { select(columns: string) {
+        const match = columns.match(/^(sms_reminder_(?:24h|2h))_send_attempts, \1_sent_at, \1_claimed_at$/);
+        if (!match) throw new Error("appointment timing/status must remain inside the atomic claim");
+        const read = { columns, filters: [] as Array<[string, string]>, signal: undefined as AbortSignal | undefined, rpcsBefore: h.rpcs.map(call => call.fn) };
+        h.attemptReads.push(read);
+        const query = {
+          eq: (column: string, value: string) => { read.filters.push([column, value]); return query; },
+          abortSignal: (signal: AbortSignal) => { read.signal = signal; return query; },
+          maybeSingle: async () => {
+            if (h.readMode === "hang") return new Promise<never>(() => undefined); // ignores abort deliberately
+            return { data: h.readMode === "error" ? null : {
+              [`${match[1]}_send_attempts`]: h.attemptNumber,
+              [`${match[1]}_sent_at`]: h.sentAt,
+              [`${match[1]}_claimed_at`]: h.laterClaim,
+            }, error: h.readMode === "error" ? { message: "SYNTHETIC_PRIVATE observer read" } : null };
+          },
+        };
+        return query;
+      } };
     },
   } as unknown as SupabaseClient;
 }
@@ -133,7 +163,7 @@ beforeEach(() => {
   h.claim = { result: "claimed", starts_at: START };
   h.begin = { data: LEDGER_ROW, error: null };
   h.settle = "ok";
-  h.rpcs = [];
+  h.rpcs = []; h.attemptNumber = 1; h.sentAt = null; h.laterClaim = null; h.recordError = false; h.readMode = "row"; h.attemptReads = [];
   alerts.length = 0;
   manageFor.length = 0;
   fetchMock = vi.fn(() => twilioAnswer(201, { sid: SID }));
@@ -321,7 +351,7 @@ describe("cancellation and moves before the send", () => {
     expect(alerts, "a retryable miss raises no alert").toEqual([]);
   });
 
-  it("the appointment is never read outside the claim (the mock throws if it is)", async () => {
+  it("appointment timing/status is never read outside the atomic claim", async () => {
     expect((await send24hReminderSmsToClient(input())).ok).toBe(true);
   });
 });
@@ -637,5 +667,209 @@ describe("one ledger budget per cron run", () => {
       "record_sms_result",
       "settle_sms_message",
     ]);
+  });
+});
+
+
+describe("MSG006 production final-failure observer", () => {
+  function definiteNonSend() {
+    fetchMock.mockImplementationOnce(() => Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })));
+  }
+  it.each([["reminder_24h", send24hReminderSmsToClient], ["reminder_2h", send2hReminderSmsToClient]] as const)("%s third definite failure uses scoped settled accounting and existing alert", async (smsType, send) => {
+    h.attemptNumber = 3; definiteNonSend();
+    expect(await send(input())).toEqual({ ok: false, error: "twilio_unreachable", retryable: true });
+    await flush();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ event: "sms_send_failed", severity: "warning", safeDetails: { sms_type: smsType, attempt_number: 3, retryable: true } });
+    expect(h.attemptReads).toHaveLength(1);
+    const read = h.attemptReads[0];
+    expect(read.columns).toBe(`sms_${smsType}_send_attempts, sms_${smsType}_sent_at, sms_${smsType}_claimed_at`);
+    expect(read.filters).toEqual([["id", "appt-1"], ["studio_id", "studio-1"]]);
+    expect(read.signal).toBeInstanceOf(AbortSignal);
+    expect(read.rpcsBefore).toEqual(["claim_reminder_sms_send", "begin_appointment_sms_message", "record_sms_result", "settle_sms_message"]);
+    expect(recorded()).toEqual([false]); expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it.each([0, 1, 2])("attempt %s remains below the existing alert threshold", async (count) => {
+    h.attemptNumber = count; definiteNonSend();
+    expect((await send24hReminderSmsToClient(input())).ok).toBe(false); await flush();
+    expect(h.attemptReads).toHaveLength(1); expect(alerts).toEqual([]); expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it.each([null, "3", -1, 1.5])("malformed accounting %s cannot manufacture exhaustion", async (count) => {
+    h.attemptNumber = count; definiteNonSend();
+    expect((await send24hReminderSmsToClient(input())).ok).toBe(false); await flush();
+    expect(h.attemptReads).toHaveLength(1); expect(alerts).toEqual([]); expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it.each(["sent", "later claim", "read error"] as const)("%s cannot manufacture exhaustion", async (state) => {
+    h.attemptNumber = 3;
+    if (state === "sent") h.sentAt = START;
+    if (state === "later claim") h.laterClaim = START;
+    if (state === "read error") h.readMode = "error";
+    definiteNonSend();
+    expect((await send24hReminderSmsToClient(input())).ok).toBe(false); await flush();
+    expect(h.attemptReads).toHaveLength(1); expect(alerts).toEqual([]); expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it.each(["accepted", "ambiguous", "terminal refusal"] as const)("%s does not start the accounting observer", async (state) => {
+    if (state === "ambiguous") fetchMock.mockImplementationOnce(() => twilioAnswer(201, {}));
+    if (state === "terminal refusal") fetchMock.mockImplementationOnce(() => twilioAnswer(400, { code: 21211 }));
+    const result = await send24hReminderSmsToClient(input());
+    expect(result.ok).toBe(state === "accepted"); expect(h.attemptReads).toEqual([]); expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(recorded()).toEqual([state !== "terminal refusal"]);
+  });
+  it("a throwing observer diagnostic preserves the definite failure without private payloads or retry", async () => {
+    h.readMode = "error"; definiteNonSend();
+    vi.mocked(console.error).mockImplementation((value) => {
+      if (String(value).includes("sms_reminder_attempt_read_failed")) throw new Error("SYNTHETIC_PRIVATE sink failure");
+    });
+    expect(await send24hReminderSmsToClient(input())).toEqual({ ok: false, error: "twilio_unreachable", retryable: true });
+    const observer = vi.mocked(console.error).mock.calls.filter(call => String(call[0]).includes("sms_reminder_attempt_read_failed"));
+    expect(observer).toHaveLength(1);
+    expect(JSON.parse(String(observer[0][0]))).toEqual({ event: "sms_reminder_attempt_read_failed", smsType: "reminder_24h", timestamp: expect.any(String) });
+    expect(JSON.stringify(observer)).not.toMatch(/SYNTHETIC_PRIVATE|appt-1|studio-1|555/);
+    expect(h.attemptReads).toHaveLength(1); expect(fetchMock).toHaveBeenCalledTimes(1); expect(recorded()).toEqual([false]);
+  });
+  it("an observer that ignores abort still returns within1000ms without extra sends", async () => {
+    vi.useFakeTimers(); h.readMode = "hang"; definiteNonSend(); let finished = false;
+    const pending = send24hReminderSmsToClient(input()).then(result => { finished = true; return result; });
+    await vi.advanceTimersByTimeAsync(999); expect(finished).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await pending).toEqual({ ok: false, error: "twilio_unreachable", retryable: true });
+    expect(h.attemptReads).toHaveLength(1); expect(fetchMock).toHaveBeenCalledTimes(1); expect(recorded()).toEqual([false]);
+  });
+  it("failed result recording with an active claim remains unknown accounting", async () => {
+    h.recordError = true; h.laterClaim = START; h.attemptNumber = 3; definiteNonSend();
+    expect((await send24hReminderSmsToClient(input())).ok).toBe(false); await flush();
+    expect(h.attemptReads).toHaveLength(1); expect(alerts).toEqual([]); expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("MSG-007 SMS diagnostics carry only closed metadata", () => {
+  const APPOINTMENT_ID = "11111111-1111-4111-8111-111111111111";
+  const PRIVATE = "PRIVATE patient@example.invalid +16045550199 https://example.invalid/manage/SECRET_TOKEN clinical note";
+  const output = () => JSON.stringify([vi.mocked(console.error).mock.calls, vi.mocked(console.log).mock.calls]);
+  it.each(["claim", "record"] as const)("%s RPC failure never exports raw error/record content", async (operation) => {
+    const rpc = vi.fn(async () => ({ data: null, error: new Error(PRIVATE) }));
+    const a = { rpc } as unknown as SupabaseClient;
+    const result = operation === "claim" ? await claimSmsSend(a, APPOINTMENT_ID, "reminder_24h") : await recordSmsResult(a, APPOINTMENT_ID, "reminder_24h", false);
+    expect(result).toBe(operation === "claim" ? false : undefined);
+    expect(rpc).toHaveBeenCalledWith(operation === "claim" ? "claim_sms_send" : "record_sms_result", {
+      p_appointment_id: APPOINTMENT_ID, p_sms_type: "reminder_24h", ...(operation === "claim" ? {} : { p_success: false }),
+    });
+    expect(output()).toContain("reminder_24h");
+    for (const value of [APPOINTMENT_ID, "PRIVATE", "patient@example.invalid", "SECRET_TOKEN", "clinical note"]) expect(output()).not.toContain(value);
+  });
+  it("failure alert keeps first-party lineage but excludes arbitrary provider content", async () => {
+    logSmsFailure({ appointmentId: APPOINTMENT_ID, smsType: "reminder_24h", error: PRIVATE, retryable: false, attemptNumber: 3 });
+    await flush();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ appointmentId: APPOINTMENT_ID, event: "sms_send_failed", safeDetails: { sms_type: "reminder_24h", attempt_number: 3 } });
+    expect(output()).not.toContain(APPOINTMENT_ID);
+    expect(JSON.stringify([output(), alerts[0]?.safeDetails, alerts[0]?.message])).not.toMatch(/PRIVATE|patient@example|SECRET_TOKEN|clinical note/);
+  });
+  it("unexpected runtime diagnostic types/counts cannot carry private fields", async () => {
+    logSmsFailure({ appointmentId: APPOINTMENT_ID, smsType: PRIVATE as "reminder_24h", error: PRIVATE, retryable: false, attemptNumber: 16045550199 });
+    await flush();
+    expect(alerts).toHaveLength(1);
+    expect(JSON.stringify([output(), alerts[0]?.safeDetails, alerts[0]?.message])).not.toMatch(/PRIVATE|patient@example|SECRET_TOKEN|16045550199/);
+    expect(alerts[0]).toMatchObject({ safeDetails: { sms_type: "unknown", attempt_number: null } });
+  });
+  it.each(["claim", "record"] as const)("throwing diagnostic sink cannot change %s RPC failure semantics", async (operation) => {
+    const a = { rpc: vi.fn(async () => ({ data: null, error: new Error(PRIVATE) })) } as unknown as SupabaseClient;
+    vi.mocked(console.error).mockImplementation(() => { throw new Error("SYNTHETIC_PRIVATE sink"); });
+    const result = operation === "claim" ? await claimSmsSend(a, APPOINTMENT_ID, "reminder_24h") : await recordSmsResult(a, APPOINTMENT_ID, "reminder_24h", false);
+    expect(result).toBe(operation === "claim" ? false : undefined);
+  });
+  it("throwing diagnostic sink cannot suppress an existing final-attempt alert", async () => {
+    vi.mocked(console.error).mockImplementation(() => { throw new Error("SYNTHETIC_PRIVATE sink"); });
+    expect(() => logSmsFailure({ appointmentId: APPOINTMENT_ID, smsType: "reminder_24h", error: PRIVATE, retryable: false, attemptNumber: 3 })).not.toThrow();
+    await vi.waitFor(() => expect(alerts).toHaveLength(1));
+    expect(alerts[0]).toMatchObject({ event: "sms_send_failed", appointmentId: APPOINTMENT_ID });
+    expect(JSON.stringify([alerts[0]?.message, alerts[0]?.safeDetails])).not.toContain("PRIVATE");
+  });
+  it.each(["claim", "record"] as const)("successful %s RPC keeps its return and emits no diagnostic", async (operation) => {
+    const a = { rpc: vi.fn(async () => ({ data: true, error: null })) } as unknown as SupabaseClient;
+    const result = operation === "claim" ? await claimSmsSend(a, APPOINTMENT_ID, "reminder_24h") : await recordSmsResult(a, APPOINTMENT_ID, "reminder_24h", true);
+    expect(result).toBe(operation === "claim" ? true : undefined);
+    expect(output()).toBe("[[],[]]");
+  });
+  it("lower retryable attempt stays log-only with its existing predicate", async () => {
+    logSmsFailure({ appointmentId: APPOINTMENT_ID, smsType: "reminder_24h", error: "twilio_http_503", retryable: true, attemptNumber: 1 });
+    await flush();
+    expect(alerts).toHaveLength(0);
+    expect(output()).toContain("sms_send_failed");
+  });
+
+});
+
+// ===========================================================================
+// MSG-007 — the SUCCESS path logs the minimum necessary.
+// ===========================================================================
+//
+// The failure path was bounded in #1016/#1038 (fixed reasons, no ids). The
+// success line `sms_sent` went out through raw console.log with the
+// appointment's record id and a masked destination ("+1***99" still discloses
+// the last two digits). It now carries the event, the SMS type and the
+// provider message SID only. The appointment and destination stay in the
+// delivery ledger, which is where an operator correlates them.
+describe("MSG-007 success-path log privacy", () => {
+  const APPT = "7d3f1c2e-1b4a-4c5d-8e6f-0a1b2c3d4e5f";
+  const PHONE = "604-555-0199";
+  const INTAKE_URL = "https://hone.care/intake/synthetic-intake-token-0001";
+  const MANAGE_URL = "https://hone.care/manage/synthetic-manage-token-0001";
+  // Each link as the text carries it, without the sentence's closing punctuation.
+  const linksIn = (body: string) =>
+    (body.match(/https?:\/\/\S+/g) ?? []).map((l) => l.replace(/[.,;:!?)]+$/, ""));
+
+  it("a sent reminder logs sms_sent with no record id, phone fragment or body", async () => {
+    const { captureConsole, expectMinimumNecessary } = await import("./helpers/log-capture");
+    const logs = captureConsole();
+    const r = await send24hReminderSmsToClient(input({ appointmentId: APPT, intakeUrl: INTAKE_URL }));
+    expect(r.ok).toBe(true);
+    const body = sentForm().get("Body")!;
+    // Every link the text carried is a bearer credential; none may be logged.
+    const links = linksIn(body);
+    expect(links).toEqual(expect.arrayContaining([INTAKE_URL, expect.stringContaining("/manage/")]));
+    expectMinimumNecessary(logs.text(), {
+      phones: [PHONE, "+16045550199"],
+      bodies: [body],
+      secrets: links,
+    });
+    // Operator-useful fixed facts survive.
+    expect(logs.events()).toContainEqual(
+      expect.objectContaining({ event: "sms_sent", smsType: "reminder_24h", messageSid: SID }),
+    );
+  });
+
+  it("a sent booking confirmation logs sms_sent with no record id, phone fragment or body", async () => {
+    const { captureConsole, expectMinimumNecessary } = await import("./helpers/log-capture");
+    const logs = captureConsole();
+    const r = await sendBookingConfirmationSmsToClient({
+      admin: admin(),
+      appointmentId: APPT,
+      startsAt: new Date(START),
+      timezone: "America/Vancouver",
+      studio: {
+        id: "5e1d2c3b-4a59-4687-9a8b-7c6d5e4f3a2b",
+        name: "Synthetic Studio",
+        send_confirmation_sms: true,
+        send_24h_sms_reminders: true,
+        send_2h_sms_reminders: true,
+      },
+      client: { phone: PHONE, sms_consent_at: "2026-09-01T00:00:00Z", sms_opted_out_at: null },
+      intakeUrl: INTAKE_URL,
+      manageUrl: MANAGE_URL,
+    });
+    expect(r.ok).toBe(true);
+    const body = sentForm().get("Body")!;
+    const links = linksIn(body);
+    expect(links).toEqual(expect.arrayContaining([INTAKE_URL, MANAGE_URL]));
+    expectMinimumNecessary(logs.text(), {
+      phones: [PHONE, "+16045550199"],
+      bodies: [body],
+      secrets: links,
+    });
+    expect(logs.events()).toContainEqual(
+      expect.objectContaining({ event: "sms_sent", smsType: "confirmation", messageSid: SID }),
+    );
   });
 });

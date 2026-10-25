@@ -26,6 +26,7 @@
     "ci": "npm run typecheck && npm run lint && npm run build && npm test && npm run check:stripe-gates && npm run check:migration-extensions",
     "verify:prepush": "node scripts/verify-prepush.mjs",
     "migration:state": "node scripts/migration-state.mjs",
+    "schema:snapshot": "node scripts/schema-snapshot.mjs",
     "ci:classify": "node scripts/classify-changes.mjs",
     "ci:plan": "node scripts/ci-plan.mjs",
     "verify:changed": "node scripts/verify-changed.mjs",
@@ -44,7 +45,7 @@
     "@vercel/analytics": "^2.0.1",
     "@vercel/speed-insights": "^2.0.0",
     "jszip": "^3.10.1",
-    "next": "15.5.22",
+    "next": "15.5.28",
     "pdf-lib": "1.17.1",
     "posthog-js": "^1.404.1",
     "posthog-node": "^5.45.2",
@@ -52,7 +53,7 @@
     "react-dom": "^19.0.0",
     "resend": "^6.12.3",
     "server-only": "^0.0.1",
-    "sharp": "0.35.3",
+    "sharp": "0.35.5",
     "stripe": "^22.1.1"
   },
   "devDependencies": {
@@ -64,11 +65,14 @@
     "@types/react-dom": "^19.0.3",
     "@vitest/coverage-v8": "^4.1.8",
     "eslint": "^9.18.0",
-    "eslint-config-next": "15.5.22",
+    "eslint-config-next": "15.5.28",
     "pdfjs-dist": "^4.10.38",
     "pg": "^8.21.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.3",
     "vitest": "^4.1.8"
+  },
+  "overrides": {
+    "sharp": "$sharp"
   }
 }

@@ -266,3 +266,36 @@ describe("logging discipline", () => {
     expect(src).not.toMatch(/formParams\.(To|From|Body)\b/);
   });
 });
+
+// ===========================================================================
+// MSG-007 — the SUCCESS-path lines carry no record id.
+// ===========================================================================
+//
+// `messageId` is the delivery-ledger row's UUID, written through raw
+// console.log. #828 G-26: a record id beside messaging context is linkable,
+// so it must not reach the runtime log drain. The fixed facts stay: the event,
+// the normalised status, the command's result word, Twilio's error code.
+describe("MSG-007 success-path log privacy", () => {
+  async function minimum() {
+    const { expectMinimumNecessary } = await import("@/tests/lib/sms/helpers/log-capture");
+    return (text: string) => expectMinimumNecessary(text, { phones: ["+15550001111", "+16475550123"] });
+  }
+
+  it("a recorded delivery logs status and result, never the ledger row id", async () => {
+    const check = await minimum();
+    const res = await callback(twilio("delivered"));
+    expect(res.status).toBe(200);
+    check(logs.join("\n"));
+    const line = logs.map((l) => JSON.parse(l) as Record<string, unknown>).find((e) => e.event === "twilio_status_recorded");
+    expect(line).toMatchObject({ status: "delivered", result: "updated" });
+  });
+
+  it("an ignored status and a malformed SID log the reason, never the ledger row id", async () => {
+    const check = await minimum();
+    await callback(twilio("not-a-status"));
+    await callback(twilio("delivered", { MessageSid: "not-a-sid" }));
+    check(logs.join("\n"));
+    const events = logs.map((l) => (JSON.parse(l) as Record<string, unknown>).event);
+    expect(events).toEqual(expect.arrayContaining(["twilio_status_ignored", "twilio_status_malformed_sid"]));
+  });
+});

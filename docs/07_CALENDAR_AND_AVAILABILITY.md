@@ -30,6 +30,10 @@ Same drag interaction, but the chooser routes to `QuickBlockDrawer`. Submit crea
 
 PR #140 / migration 0061 added an RLS policy that lets any **active** practitioner INSERT into `studio_timed_blocks` for their own studio (previously the policy was owner-only ALL, which broke the action). Owners can still UPDATE/DELETE.
 
+**Scope (BLOCK-SCOPE).** Drag-to-block writes no `practitioner_id`, so the row is **studio-wide**. Under practitioner capacity, that closes the time for every practitioner, because 0137 gives a NULL row one reservation per practitioner. `tests/app/calendar/calendar-drag-block-scope.test.ts` pins this current write scope. Whether a practitioner's own drag-block should be scoped to them under capacity (F1) waits for a product rule.
+
+To keep the scope visible, every calendar surface under capacity labels each timed block and recurring break: week, mobile day, month, team day columns, the overlap chooser and the block drawer. A NULL row reads **All practitioners**; a scoped row reads **Only <name>**, using the same words as Settings. In the team day view, a studio-wide block greys every column and a scoped one greys only its own column. A studio with capacity off runs one timeline, so its labels are unchanged.
+
 ### Quick-Book
 
 Bare click on an empty slot opens `QuickBookDrawer`:

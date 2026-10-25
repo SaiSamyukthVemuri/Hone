@@ -31,6 +31,7 @@ import type {
   ClientClinicalNote,
   ClinicalNoteKind,
 } from "@/lib/types/database";
+import { safeLog } from "@/lib/logging/safe-log";
 
 const MAX_BODY_LENGTH = 20000;
 const MAX_AREAS = 40;
@@ -40,12 +41,19 @@ const VALID_KINDS: ReadonlyArray<ClinicalNoteKind> = [
   "skin_hair_analysis",
 ];
 
+// The verified row's author is the signed-in practitioner (practitioner_id is
+// forced above), so the client can label a just-saved note with its real
+// author instead of a null that used to render as "You" (HON-44 (a)).
+function authorNameOf(practitioner: { display_name: string | null }): string | null {
+  return practitioner.display_name?.trim() || null;
+}
+
 // Unique-violation on the supersedes partial-unique index (a concurrent
 // revision of the same note already won).
 const UNIQUE_VIOLATION = "23505";
 
 export type ClinicalNoteActionResult =
-  | { ok: true; note: ClientClinicalNote }
+  | { ok: true; note: ClientClinicalNote; author_name: string | null }
   | { ok: false; code: "invalid" | "not_found" | "stale_revision" | "error"; error: string };
 
 function readKind(value: FormDataEntryValue | null): ClinicalNoteKind | null {
@@ -129,11 +137,11 @@ function logNoteFailure(
   },
 ): void {
   try {
-    console.error(
+    safeLog.error(
       JSON.stringify({ event, ...detail, timestamp: new Date().toISOString() }),
     );
   } catch {
-    console.error(event, detail.code ?? "unknown");
+    safeLog.error(event, detail.code ?? "unknown");
   }
 }
 
@@ -262,7 +270,7 @@ async function insertClinicalNote(params: {
   }
 
   revalidatePath(`/clients/${clientId}`);
-  return { ok: true, note: row };
+  return { ok: true, note: row, author_name: authorNameOf(practitioner) };
 }
 
 export async function addClinicalNoteAction(

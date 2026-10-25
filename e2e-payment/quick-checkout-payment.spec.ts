@@ -1,4 +1,4 @@
-import { test, expect, type Request } from "@playwright/test";
+import { test, expect, type Request, type Locator } from "@playwright/test";
 import { loginAsOwner } from "../e2e/helpers/flows";
 import {
   seedEligiblePaymentWithLogin,
@@ -21,6 +21,22 @@ import {
   countEffectsForAccount,
   cleanupFakeStripeLedger,
 } from "./helpers/fake-stripe-ledger-e2e";
+
+// CLN-006 "focus outside re-enters": put focus on a real, visible control
+// OUTSIDE the dialog (the state a stray click or script leaves behind), and
+// prove it left the dialog before the next key is pressed.
+async function focusOutsideDialog(dialog: Locator) {
+  const moved = await dialog.evaluate((dlg) => {
+    const outside = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).find((el) => !dlg.contains(el) && el.offsetParent !== null);
+    outside?.focus();
+    return outside !== undefined && document.activeElement === outside && !dlg.contains(document.activeElement);
+  });
+  expect(moved, "focus moved to a control outside the dialog").toBe(true);
+}
 
 // ===========================================================================
 // Quick-checkout payment — the iPad success journey (PR #419).
@@ -253,3 +269,101 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   ).rows[0] as { finalized_at: string | null };
   expect(finalizedCheck.finalized_at).toBeNull();
 });
+
+
+// CLN-006: native summary controls must remain reachable inside the shared
+// modal trap. Existing synthetic fixture/real context loader only; no charge,
+// receipt or refund action is invoked by either keyboard-only case.
+for (const status of ["pending_stripe", "succeeded"] as const) {
+  test(`quick checkout ${status}: keyboard reaches native details and wraps`, async ({ page }) => {
+    const keyboardSeed = await seedEligiblePaymentWithLogin({
+      label: `keyboard-${status}`,
+      attempt: "ready",
+      bookedService: { name: "Keyboard Checkout", priceCents: 22500 },
+    });
+    try {
+      const before = await readClinicalIntegritySnapshot(keyboardSeed.sessionId);
+      const [attempt] = await getSessionPaymentAttemptRows(keyboardSeed.sessionId);
+      expect(attempt.status).toBe("ready");
+      // An earlier failed attempt exposes the existing native history summary.
+      await adminQuery(
+        `insert into public.payment_charge_attempts
+          (studio_id, charge_reason, client_id, session_id, appointment_id,
+           created_by_practitioner_id, amount_cents, currency, status,
+           stripe_livemode, client_payment_method_id, card_authorization_signature_id, created_at)
+         select studio_id, charge_reason, client_id, session_id, appointment_id,
+           created_by_practitioner_id, amount_cents, currency, 'failed',
+           false, client_payment_method_id, card_authorization_signature_id, created_at - interval '1 day'
+         from public.payment_charge_attempts where id = $1`,
+        [attempt.id],
+      );
+      await loginAsOwner(page, keyboardSeed);
+      await page.goto("/dashboard");
+      const opener = page.getByTestId("checkout-button");
+      await expect(opener).toBeVisible();
+      // The existing dashboard still offers Checkout; the modal must read the
+      // CURRENT pending/succeeded facts, not the older page's ready snapshot.
+      await adminQuery(
+        `update public.payment_charge_attempts set status = $2,
+           stripe_payment_intent_id = $3,
+           stripe_charge_id = case when $2 = 'succeeded' then $4 else null end,
+           charged_at = case when $2 = 'succeeded' then now() else null end
+         where id = $1`,
+        [attempt.id, status, `pi_test_e2e_${keyboardSeed.scenario.runId}`,
+          `ch_test_e2e_${keyboardSeed.scenario.runId}`],
+      );
+      const attemptsBefore = await getSessionPaymentAttemptRows(keyboardSeed.sessionId);
+      await opener.click();
+      const modal = page.getByTestId("quick-checkout-modal");
+      const close = modal.getByTestId("quick-checkout-close");
+      const technical = modal.getByTestId("technical-payment-details");
+      const technicalSummary = technical.locator("summary");
+      const historySummary = modal.locator("summary").filter({ hasText: /^Earlier attempts/ });
+      await expect(modal.getByTestId(status === "pending_stripe"
+        ? "payment-summary-processing" : "payment-summary-paid")).toBeVisible();
+      await expect(technicalSummary).toBeVisible();
+      await expect(historySummary).toHaveText("Earlier attempts (2)");
+      await expect(close).toBeFocused();
+      // Drive native Tab order, never focus() or click() the disclosures. The
+      // pre-fix trap wraps before summaries and fails these reachability checks.
+      for (let i = 0; i < 12 && !(await technicalSummary.evaluate((el) => el === document.activeElement)); i += 1) {
+        await page.keyboard.press("Tab");
+        expect(await modal.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+      }
+      await expect(technicalSummary).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(technical).toHaveAttribute("open", "");
+      await page.keyboard.press("Enter");
+      await expect(technical).not.toHaveAttribute("open", "");
+      for (let i = 0; i < 12 && !(await historySummary.evaluate((el) => el === document.activeElement)); i += 1) {
+        await page.keyboard.press("Tab");
+        expect(await modal.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+      }
+      await expect(historySummary).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(historySummary.locator("..")).toHaveAttribute("open", "");
+      await page.keyboard.press("Enter");
+      await expect(historySummary.locator("..")).not.toHaveAttribute("open", "");
+      await page.keyboard.press("Tab");
+      await expect(close).toBeFocused();
+      await page.keyboard.press("Shift+Tab");
+      await expect(historySummary).toBeFocused();
+      // Focus outside re-enters: Tab to the first stop (close), Shift+Tab to the last.
+      await focusOutsideDialog(modal);
+      await page.keyboard.press("Tab");
+      await expect(close).toBeFocused();
+      await focusOutsideDialog(modal);
+      await page.keyboard.press("Shift+Tab");
+      await expect(historySummary).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(modal).toHaveCount(0);
+      await expect(opener).toBeFocused();
+      expect(await getSessionPaymentAttemptRows(keyboardSeed.sessionId)).toEqual(attemptsBefore);
+      expect(await readClinicalIntegritySnapshot(keyboardSeed.sessionId)).toEqual(before);
+      expect(countInvocationsForAccount(keyboardSeed.connectedAccountId)).toBe(0);
+      expect(countEffectsForAccount(keyboardSeed.connectedAccountId)).toBe(0);
+    } finally {
+      await cleanupPaymentScenario(keyboardSeed.studioId);
+    }
+  });
+}

@@ -161,6 +161,18 @@ export function AppointmentSettlementControls({
         This records what you say happened. It does not take a payment and Hone
         does not verify it.
       </p>
+      {/* HON-45. When a paid method is TRUE. A claim sent to an insurer is not
+          money received, so it is never "paid another way", and it is not the
+          client's debt either. Until money arrives the visit simply stays
+          outstanding; nothing needs recording. */}
+      <p
+        data-testid="settlement-received-rule"
+        className="mt-1 text-xs text-neutral-500 dark:text-neutral-400"
+      >
+        Choose a paid method only once the money has actually been received. An
+        insurance claim that has been sent is not a payment: leave the visit
+        outstanding until it is paid.
+      </p>
 
       <div className="mt-2 flex flex-wrap gap-2">
         {methods.map((m) => (

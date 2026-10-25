@@ -102,6 +102,11 @@ It derives from `supabase/migrations/*.sql`:
 - next free migration number (skipping permanently-skipped slots)
 - total migrations, duplicate detection, malformed-prefix rejection
 
+**After adding or editing a migration, regenerate the schema snapshot:**
+`npm run schema:snapshot -- --write`, and commit `supabase/schema-snapshot.json`
+with the migration. `verify:prepush` and the unit lane fail while it is stale.
+On a merge conflict in that file, re-run the command; never hand-merge it.
+
 **Do not add a `toBe(0166)` or a `/^01(6[7-9]|[7-9]\d)_/` "trip on the next one"
 regex to a test.** Those pins previously lived in **18 files** across
 `tests/migrations/`, `tests/docs/` and `tests/scripts/`, so every migration meant
@@ -306,11 +311,25 @@ before assuming the diff broke something.**
 | changed-path detection | 2 min |
 | validate (typecheck/lint/build/unit) | 8 min |
 | db integration | 8 min |
-| targeted browser shard (×3) | target ~6 min · **hard timeout 15 min** |
-| extended browser shard (×4) | target <10 min · **hard timeout 18 min** |
-| nightly browser shard (×4) | hard timeout 15 min |
+| targeted browser shard (×3) | target ~6 min · **hard timeout 19 min** |
+| extended browser shard (×4) | target <10 min · **hard timeout 25 min** |
+| nightly browser shard (×4) | hard timeout 25 min (same quarter-suite as extended) |
+| nightly payment / Google · mobile | hard timeout 18 min · 15 min |
 | payment browser e2e (fake stripe) | target ~10 min · **hard timeout 18 min** |
-| Google / mobile | 10 min each |
+| Google browser e2e (fake google) | hard timeout 15 min |
+| mobile completion e2e | target ~6 min · **hard timeout 15 min** |
+
+**Setup includes an apt download you do not control.** On 2026-10-23 all six
+ceiling cancellations were the Playwright system-package install crawling at
+~45 kB/s from the runner's Ubuntu mirror (up to 11.3 min) while the tests
+passed. Every Playwright job now restores those `.deb`s from a cache keyed on
+runner image + Playwright version, and `scripts/ci/playwright-system-deps.sh`
+cuts a stalled install off at 90 s and retries once on `archive.ubuntu.com`
+(150 s), with the time limit inside `sudo` so the apt tree really dies. Its
+worst case (325 s) sits under the install step's 6 min ceiling, and every
+Playwright job's hard timeout clears its measured time plus that ceiling
+(targeted 15 -> 19 for this reason); `tests/ci/ci-config.test.ts` derives both
+from the script's constants.
 
 ---
 
@@ -366,6 +385,21 @@ never a blanket reset or email-domain deletion.
   checkout sets `persist-credentials: false`. No workflow holds write
   credentials. A new workflow that genuinely needs one declares **job-level**
   `permissions:` rather than widening the top-level block.
+- **One sanctioned credential (D7b, Sam, 2026-10-22).** Anonymous image pulls
+  were throttled on both `ghcr.io` and `public.ecr.aws`, so each
+  Supabase-starting job logs in to `ghcr.io` with its own token through the
+  SHA-pinned `docker/login-action`, and only those jobs declare job-level
+  `permissions: { contents: read, packages: read }`. That exact shape is the
+  only credential use `tests/ci/ci-config.test.ts` exempts; any other token,
+  scope, registry or secret is still refused. The login is held across ONE
+  step only: a direct pinned-CLI `supabase start` (no checked-out script), then
+  an `if: always()` `docker logout ghcr.io`. A failed start falls through to a
+  single credential-free retry step, where `supabase-start-bind-retry.sh
+  --after-failed-start` retries once only on the port-bind signature in the
+  first start's log. No step that runs a package manager, node or a
+  repository script (`npm ci` included) may precede the login in its job, so no
+  PR-controlled process exists while the credential does (Codex P2 4353990804,
+  4354172124, 4354428027).
 - Codex exact-head review (`npm run eng -- status <pr>`) is **operator-side**. Do
   not wire it into a workflow: it needs a GitHub API credential, which is exactly
   what the posture above removes.

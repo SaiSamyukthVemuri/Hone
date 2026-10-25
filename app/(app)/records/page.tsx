@@ -52,6 +52,8 @@ import {
 } from "./record-forms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
+import { recoverRecordsRead } from "@/lib/record-keeping/section-recovery";
+import { RefreshRetryButton } from "./refresh-retry-button";
 
 // PR #205 (migration 0085): Record Keeping. Hone's health-inspection
 // operational logbook, built from Chloe's BodySafe / health-inspection
@@ -108,11 +110,27 @@ const AUDIT_ACTION_LABELS: Record<RecordKeepingAuditEvent["action"], string> = {
   probe_lot_updated: "Probe lot number updated",
 };
 
+// The audit trail is append-only and written exclusively by database triggers,
+// so "No history recorded yet." is a CLINICAL CLAIM: it states that nothing was
+// ever done to this record. It may therefore only be printed when the read that
+// would have found events actually ran. `unavailable` is checked FIRST and wins
+// over the empty branch for exactly that reason — see AuditHistoryByRecord in
+// lib/record-keeping/queries.ts.
 function AuditHistoryList({
   events,
+  unavailable = false,
 }: {
   events: RecordKeepingAuditEvent[] | undefined;
+  unavailable?: boolean;
 }) {
+  if (unavailable) {
+    return (
+      <p className="text-xs text-amber-700 dark:text-amber-500">
+        History could not be loaded. Refresh to try again; this does not mean no
+        history was recorded.
+      </p>
+    );
+  }
   if (!events || events.length === 0) {
     return <p className="text-xs text-neutral-500">No history recorded yet.</p>;
   }
@@ -149,9 +167,11 @@ function AuditHistoryList({
 function RowTools({
   editForm,
   events,
+  historyUnavailable = false,
 }: {
   editForm: React.ReactNode;
   events: RecordKeepingAuditEvent[] | undefined;
+  historyUnavailable?: boolean;
 }) {
   return (
     <div className="mt-1 flex flex-col gap-1">
@@ -168,13 +188,30 @@ function RowTools({
           History
         </summary>
         <div className="mt-2">
-          <AuditHistoryList events={events} />
+          <AuditHistoryList events={events} unavailable={historyUnavailable} />
         </div>
       </details>
     </div>
   );
 }
 
+// RECORDS-SECTION-RECOVERY: fixed copy only, never the error's message.
+function SectionUnavailable() {
+  return (
+    <section
+      role="alert"
+      data-testid="records-section-unavailable"
+      className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-amber-50 p-5 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+    >
+      <p className="font-medium">This section could not be loaded.</p>
+      <p>
+        Nothing is shown because the read failed, not because there are no
+        records.
+      </p>
+      <RefreshRetryButton className="self-start font-medium underline" />
+    </section>
+  );
+}
 
 export default async function RecordKeepingPage({
   searchParams,
@@ -211,6 +248,36 @@ export default async function RecordKeepingPage({
     procedureFilter.from ? `&from=${procedureFilter.from}` : "",
     procedureFilter.to ? `&to=${procedureFilter.to}` : "",
   ].join("");
+
+  // RECORDS-SECTION-RECOVERY: the active section is rendered HERE, inside a
+  // catch, so a failed read costs that section only. The title and the tab
+  // nav still render, and the panel below says the read failed. It is never
+  // an empty table. Calling the section directly (not as <Section />) is what
+  // lets its throw be caught on this page.
+  const body = await recoverRecordsRead("records", section, async () => {
+    switch (section) {
+      case "sterile":
+        return SterileItemsSection({
+          studioId: studio.id,
+          lotSearch,
+          timezone: studio.timezone,
+        });
+      case "disinfectants":
+        return DisinfectantsSection({
+          studioId: studio.id,
+          currentPractitionerId: practitioner.id,
+          timezone: studio.timezone,
+        });
+      case "incidents":
+        return ExposureIncidentsSection({ studioId: studio.id, isOwner });
+      case "procedures":
+        return ClientProcedureRecordsSection({
+          studioId: studio.id,
+          timezone: studio.timezone,
+          filter: procedureFilter,
+        });
+    }
+  });
 
   return (
     <div className="flex flex-col gap-6">
@@ -255,29 +322,10 @@ export default async function RecordKeepingPage({
         </Link>
       </nav>
 
-      {section === "sterile" && (
-        <SterileItemsSection
-          studioId={studio.id}
-          lotSearch={lotSearch}
-          timezone={studio.timezone}
-        />
-      )}
-      {section === "disinfectants" && (
-        <DisinfectantsSection
-          studioId={studio.id}
-          currentPractitionerId={practitioner.id}
-          timezone={studio.timezone}
-        />
-      )}
-      {section === "incidents" && (
-        <ExposureIncidentsSection studioId={studio.id} isOwner={isOwner} />
-      )}
-      {section === "procedures" && (
-        <ClientProcedureRecordsSection
-          studioId={studio.id}
-          timezone={studio.timezone}
-          filter={procedureFilter}
-        />
+      {body.ok ? (
+        body.value
+      ) : (
+        <SectionUnavailable />
       )}
     </div>
   );
@@ -302,8 +350,13 @@ async function SterileItemsSection({
   const today = todayInTz(timezone);
   const expirySummary = summarizeSupplyExpiry(records, today);
   // PR #213: traceability for the searched/selected lot.
+  // RECORDS-SECTION-RECOVERY: the lot search is optional, so its failure is
+  // its own panel. The sterile records above were read separately and still
+  // render; if THAT read fails, the whole section shows the page's panel.
   const trace = lotSearch
-    ? await getLotTraceability(studioId, lotSearch)
+    ? await recoverRecordsRead("records", "sterile_lot_search", () =>
+        getLotTraceability(studioId, lotSearch),
+      )
     : null;
   const audit = await getAuditEventsByRecord(
     studioId,
@@ -342,13 +395,22 @@ async function SterileItemsSection({
             Trace usage
           </button>
         </form>
-        {!trace ? (
+        {!trace || (trace.ok && !trace.value) ? (
           <p className="text-xs text-neutral-500">
             Search a lot number or choose a Sterile Item record to see where
             it was used.
           </p>
+        ) : trace.ok && trace.value ? (
+          <LotTraceabilityPanel trace={trace.value} />
         ) : (
-          <LotTraceabilityPanel trace={trace} />
+          <p
+            role="alert"
+            data-testid="records-lot-search-unavailable"
+            className="text-xs text-amber-700 dark:text-amber-500"
+          >
+            Lot search unavailable. The usage of this lot could not be read;
+            this does not mean the lot was never used. Search again to retry.
+          </p>
         )}
       </section>
 
@@ -503,7 +565,8 @@ async function SterileItemsSection({
                       action={updateSterileItemRecordAction}
                     />
                   }
-                  events={audit.get(r.id)}
+                  events={audit.byRecord.get(r.id)}
+                  historyUnavailable={audit.unavailableRecordIds.has(r.id)}
                 />
               </li>
               );
@@ -633,7 +696,8 @@ async function DisinfectantsSection({
                       currentPractitionerId={currentPractitionerId}
                     />
                   }
-                  events={audit.get(r.id)}
+                  events={audit.byRecord.get(r.id)}
+                  historyUnavailable={audit.unavailableRecordIds.has(r.id)}
                 />
               </li>
               );
@@ -757,7 +821,8 @@ async function ExposureIncidentsSection({
                       staff={staff}
                     />
                   }
-                  events={audit.get(r.id)}
+                  events={audit.byRecord.get(r.id)}
+                  historyUnavailable={audit.unavailableRecordIds.has(r.id)}
                 />
               </li>
             ))}
@@ -988,13 +1053,21 @@ async function ClientProcedureRecordsSection({
                   </ul>
                 )}
               </div>
-              {(audit.get(r.sessionId)?.length ?? 0) > 0 && (
+              {/* The disclosure is shown when there is history to show OR when
+                  we could not find out. Hiding it on an unreadable history
+                  would be the same clinical lie as printing "no history", told
+                  by omission instead of in words. */}
+              {((audit.byRecord.get(r.sessionId)?.length ?? 0) > 0 ||
+                audit.unavailableRecordIds.has(r.sessionId)) && (
                 <details>
                   <summary className="cursor-pointer text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
                     History
                   </summary>
                   <div className="mt-2">
-                    <AuditHistoryList events={audit.get(r.sessionId)} />
+                    <AuditHistoryList
+                      events={audit.byRecord.get(r.sessionId)}
+                      unavailable={audit.unavailableRecordIds.has(r.sessionId)}
+                    />
                   </div>
                 </details>
               )}
