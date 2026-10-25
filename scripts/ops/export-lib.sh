@@ -23,12 +23,14 @@ host_of() {
 is_loopback_host() { case "$1" in 127.0.0.1|localhost|::1|'[::1]') return 0;; *) return 1;; esac; }
 
 # The operator typed a project ref; every URL the tool will touch must name it.
-# Loopback is accepted only in rehearsal mode (EXPORT_REHEARSAL=1). Returns 0/1.
+# Loopback is accepted only in rehearsal mode (EXPORT_REHEARSAL=1) AND only for
+# the one ref the rehearsal declares (EXPORT_REHEARSAL_REF), so a wrong typed ref
+# is refused in rehearsal exactly as it is in production. Returns 0/1.
 url_matches_ref() {
   local url="$1" ref="$2" host
   [ -n "$ref" ] || return 1
   host="$(host_of "$url")"
-  if [ "${EXPORT_REHEARSAL:-}" = 1 ] && is_loopback_host "$host"; then return 0; fi
+  if [ "${EXPORT_REHEARSAL:-}" = 1 ] && is_loopback_host "$host" && [ "$ref" = "${EXPORT_REHEARSAL_REF:-}" ]; then return 0; fi
   case "$host" in *"$ref"*) return 0;; *) return 1;; esac
 }
 

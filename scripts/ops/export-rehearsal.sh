@@ -94,7 +94,7 @@ upload() { # upload NAME FILE
 
 # The environment every tool run sees (rehearsal mode, loopback, a container for pg_dump/psql).
 rehearse() { # rehearse TOOL ARGS...   (runs with the rehearsal environment; stdout/stderr to caller)
-  EXPORT_REHEARSAL=1 DB_URL="$DBURL" SERVICE_KEY="$KEY" \
+  EXPORT_REHEARSAL=1 EXPORT_REHEARSAL_REF="$PROJECT_ID" DB_URL="$DBURL" SERVICE_KEY="$KEY" \
   EXPORT_PG_DUMP="${EXPORT_PG_DUMP_OVERRIDE:-docker exec -i $DB_CONTAINER pg_dump -U postgres -d postgres}" \
   EXPORT_PSQL="docker exec -i $DB_CONTAINER psql -U postgres -d postgres" \
   "$@"

@@ -138,7 +138,10 @@ describe("export-lib: the pure checks", () => {
     expect(lib(`url_matches_ref '${DB_URL}' otherref`).status).not.toBe(0);
     expect(lib(`url_matches_ref '${DB_URL}' ''`).status).not.toBe(0);
     expect(lib(`url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' ${REF}`).status).not.toBe(0);
-    expect(lib(`EXPORT_REHEARSAL=1; url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' ${REF}`).status).toBe(0);
+    // Rehearsal accepts loopback only for the ONE ref it declares: any other typed ref is refused.
+    expect(lib(`EXPORT_REHEARSAL=1; url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' ${REF}`).status).not.toBe(0);
+    expect(lib(`EXPORT_REHEARSAL=1; EXPORT_REHEARSAL_REF=${REF}; url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' ${REF}`).status).toBe(0);
+    expect(lib(`EXPORT_REHEARSAL=1; EXPORT_REHEARSAL_REF=${REF}; url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' wrongref`).status).not.toBe(0);
     // A ref that only appears in the PATH or the password does not count.
     expect(lib(`url_matches_ref 'postgresql://u:${REF}@evil.example/${REF}' ${REF}`).status).not.toBe(0);
   });
@@ -434,7 +437,7 @@ describe("source contract: what the tools must never do", () => {
   it("the rehearsal-only switches are all guarded by EXPORT_REHEARSAL=1", () => {
     expect(src["export-lib.sh"]).toMatch(/EXPORT_PG_DUMP:-\}\$\{EXPORT_PSQL:-\}" \] && \[ "\$\{EXPORT_REHEARSAL:-\}" != 1 \]/);
     expect(src["object-export.sh"]).toMatch(/\[ "\$\{EXPORT_REHEARSAL:-\}" = 1 \] && \[ -n "\$\{EXPORT_TEST_HOOK_AFTER_LIST:-\}" \]/);
-    expect(src["export-lib.sh"]).toMatch(/EXPORT_REHEARSAL:-\}" = 1 \] && is_loopback_host/);
+    expect(src["export-lib.sh"]).toMatch(/EXPORT_REHEARSAL:-\}" = 1 \] && is_loopback_host "\$host" && \[ "\$ref" = "\$\{EXPORT_REHEARSAL_REF:-\}" \]/);
   });
 
   it("the three dump parts are separate pg_dump calls (--table overrides --schema) and use one snapshot", () => {
