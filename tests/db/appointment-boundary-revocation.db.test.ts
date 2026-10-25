@@ -872,6 +872,10 @@ describe("0172 — no trigger or function drift", () => {
         order by g.tgname`,
     );
     expect(apptTriggers.rows.map((x) => x.tgname as string)).toEqual([
+      // 0247: own-row BEFORE trigger bumping email_operation_revision when a
+      // reminder-relevant field changes. Writes no audit row and takes no
+      // parent lock (0247 revise_authority).
+      "appointment_email_revision",
       "appointments_enforce_buffer_trg",
       // B6 / 0175: refuses illegal lifecycle edges. Writes no audit row.
       "appointments_enforce_transition_trg",
@@ -884,7 +888,7 @@ describe("0172 — no trigger or function drift", () => {
       "appointments_zzz_outbound_enqueue_delete_trg",
       "appointments_zzz_outbound_enqueue_trg",
     ]);
-    expect(byTable.appointments, "appointments non-internal triggers").toBe(9);
+    expect(byTable.appointments, "appointments non-internal triggers").toBe(10);
     // B5/0174 added EXACTLY TWO triggers to appointment_audit, and they are
     // named here rather than counted loosely so a third one cannot arrive
     // unnoticed. Neither writes an audit EVENT — one derives trusted FIELDS at

@@ -108,7 +108,7 @@ describe("0101: claim_session_payment_charge_attempt can CLAIM live rows", () =>
       livemode: true,
       accountId: "acct_live_claim",
     });
-    const key = `hone:session_payment:${id}:v1`;
+    const key = `hone:session_payment:${id}:v2:create`;
     const res = await adminQuery(
       "select result from public.claim_session_payment_charge_attempt($1,$2,$3)",
       [id, s.practitionerId, key],
@@ -128,7 +128,7 @@ describe("0101: claim_session_payment_charge_attempt can CLAIM live rows", () =>
       livemode: false,
       accountId: "acct_test_claim",
     });
-    const key = `hone:session_payment:${id}:v1`;
+    const key = `hone:session_payment:${id}:v2:create`;
     const res = await adminQuery(
       "select result from public.claim_session_payment_charge_attempt($1,$2,$3)",
       [id, s.practitionerId, key],
@@ -149,7 +149,7 @@ describe("0101: claim_session_payment_charge_attempt can CLAIM live rows", () =>
     });
     const res = await adminQuery(
       "select result from public.claim_session_payment_charge_attempt($1,$2,$3)",
-      [id, s.practitionerId, `hone:session_payment:${id}:v1`],
+      [id, s.practitionerId, `hone:session_payment:${id}:v2:create`],
     );
     expect(res.rows[0].result).toBe("not_ready");
   });
