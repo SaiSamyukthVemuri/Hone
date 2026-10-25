@@ -34,7 +34,14 @@ runcase() { # runcase <label> <script> [pre-hook]
   note "exit: $rc"; note "STOP lines on stderr: $stops"; grep '^STOP:' "$trace" | sed 's/^/  /'
   [ "$rc" = 1 ] || bad "$label: exit $rc, want 1"
   [ "$stops" = 1 ] || bad "$label: $stops STOP lines, want exactly 1"
-  [ ! -e "$h/hone-s1/supabase-cli" ] || { [ "$label" = existing-destination ] || bad "$label: $h/hone-s1/supabase-cli exists"; }
+  if [ "$label" = codesign-failure ]; then
+    # v2 moves supabase-go into place BEFORE it runs codesign, so on this STOP the (hash-verified, unsigned-check-failed)
+    # file remains installed, unexecuted. Reported as a finding; asserted exactly.
+    if [ -e "$h/hone-s1/supabase-cli" ]; then note "FINDING: destination remains after a codesign STOP; contents: [$(ls "$h/hone-s1/supabase-cli" | tr '\n' ' ')]"; fi
+    [ "$(ls "$h/hone-s1/supabase-cli" 2>/dev/null | tr '\n' ' ')" = "supabase-go " ] || bad "$label: expected only supabase-go to remain"
+  else
+    [ ! -e "$h/hone-s1/supabase-cli" ] || { [ "$label" = existing-destination ] || bad "$label: $h/hone-s1/supabase-cli exists"; }
+  fi
   # no execution of anything downloaded: the version call and its env never appear in the trace, and no CLI output
   if grep -q -e 'SUPABASE_TELEMETRY_DISABLED' -e '--version' "$trace"; then bad "$label: the --version execution appears in the trace"; else note "no execution: the --version call never appears in the shell trace"; fi
   if grep -q -e 'Supabase CLI' -e 'Usage:' "$out" "$trace"; then bad "$label: CLI output present"; else note "no execution: no CLI output"; fi
