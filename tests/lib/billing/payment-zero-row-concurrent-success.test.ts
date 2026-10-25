@@ -309,6 +309,8 @@ beforeEach(() => {
       stripe_account_id: HEALTHY_ATTEMPT.stripe_account_id,
       stripe_livemode: false,
     },
+    // Explicit verified synthetic configuration; no runtime country default.
+    studio_payment_jurisdictions: { payment_country: "CA", payment_currency: "cad" },
     client_stripe_customers: {
       stripe_customer_id: HEALTHY_ATTEMPT.stripe_customer_id,
     },

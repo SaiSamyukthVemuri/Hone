@@ -1,3 +1,4 @@
+import { ISSUED_QUESTIONNAIRE } from "@/lib/intake/questionnaire";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   adminQuery,
@@ -318,5 +319,36 @@ describe("0163 — no INSERT privilege or INSERT policy remains", () => {
         where oid = 'public.client_intake_forms'::regclass`,
     );
     expect(res.rows[0].relrowsecurity).toBe(true);
+  });
+});
+
+describe("0246 immutable issue-time questionnaire", () => {
+  it("creates known and legacy rows without adopting NULL on ordinary updates", async () => {
+    for (const snapshot of [null, ISSUED_QUESTIONNAIRE]) {
+      const row = await adminQuery(`insert into public.client_intake_forms (studio_id, client_id, questionnaire_snapshot) values ($1,$2,$3::jsonb) returning id, questionnaire_snapshot`, [A.studioId,A.clientId,snapshot === null ? null : JSON.stringify(snapshot)]);
+      expect(row.rows[0].questionnaire_snapshot).toEqual(snapshot);
+      await userQuery(A.userId, `update public.client_intake_forms set practitioner_notes = 'Synthetic note' where id=$1`, [row.rows[0].id]);
+      const reread = await adminQuery(`select questionnaire_snapshot from public.client_intake_forms where id=$1`, [row.rows[0].id]);
+      expect(reread.rows[0].questionnaire_snapshot).toEqual(snapshot);
+    }
+  });
+  it("refuses caller-authored issue wording and versions even from service_role", async () => {
+    for (const snapshot of [{...ISSUED_QUESTIONNAIRE, catalogue_version:'forged'}, {...ISSUED_QUESTIONNAIRE, catalogue:{}}]) {
+      await expect(asRole("service_role", q => q(`insert into public.client_intake_forms (studio_id,client_id,questionnaire_snapshot) values ($1,$2,$3::jsonb)`, [A.studioId,A.clientId,JSON.stringify(snapshot)]))).rejects.toMatchObject({code:"23514"});
+    }
+  });
+  it.each(["authenticated", "service_role", "postgres"])("%s cannot adopt, erase, or replace a row snapshot", async role => {
+    for (const original of [null, ISSUED_QUESTIONNAIRE]) {
+      const row = await adminQuery(`insert into public.client_intake_forms (studio_id,client_id,questionnaire_snapshot) values ($1,$2,$3::jsonb) returning id`, [A.studioId,A.clientId,original === null ? null : JSON.stringify(original)]);
+      const replacements = original === null ? [ISSUED_QUESTIONNAIRE] : [null,{...ISSUED_QUESTIONNAIRE,catalogue:{}}];
+      for (const replacement of replacements) {
+        const params=[replacement === null ? null : JSON.stringify(replacement),row.rows[0].id];
+        const sql=`update public.client_intake_forms set questionnaire_snapshot=$1::jsonb where id=$2`;
+        const run=()=> role === "authenticated" ? userQuery(A.userId,sql,params) : role === "service_role" ? asRole("service_role",q=>q(sql,params)) : adminQuery(sql,params);
+        await expect(run()).rejects.toMatchObject({code:"23514"});
+      }
+      const actual=await adminQuery(`select questionnaire_snapshot from public.client_intake_forms where id=$1`,[row.rows[0].id]);
+      expect(actual.rows[0].questionnaire_snapshot).toEqual(original);
+    }
   });
 });

@@ -17,8 +17,7 @@ const ROUTE = readFileSync(
 // Isolate the setup_intent.succeeded handler body.
 const HANDLER_START = ROUTE.indexOf("async function handleSetupIntentSucceeded");
 const HANDLER = ROUTE.slice(HANDLER_START);
-// The FIRST notify is the step-5 idempotency branch (card already persisted by
-// a prior delivery of this event). The LAST notify is the fresh-insert path.
+// Both inserted and current-active duplicates pass the same ordered gate.
 const FIRST_NOTIFY = HANDLER.indexOf("ensureCardChangeNotification(admin,");
 const LAST_NOTIFY = HANDLER.lastIndexOf("ensureCardChangeNotification(admin,");
 const BEFORE_FIRST_NOTIFY = HANDLER.slice(0, FIRST_NOTIFY);
@@ -34,14 +33,11 @@ describe("card-change notification webhook wiring", () => {
     expect(ROUTE).not.toMatch(/recordPractitionerNotification/);
   });
 
-  it("is called (awaited) in exactly the two card-persisted branches", () => {
-    // Was three. 0180 folded the separate 23505 "concurrent insert already
-    // happened" branch into the command, which now reports that case as
-    // outcome='idempotent' through the SAME return path as a fresh insert.
-    // Two notify sites remain: the step-5 re-delivery short circuit, and the
-    // post-persist path. Every card that persists still notifies exactly once.
+  it("is called (awaited) in the single ordered-admission branch", () => {
+    // 0245 removes the early duplicate bypass: removed/stale history must
+    // pass ordered adjudication before any saved-card side effect.
     const calls = HANDLER.match(/await ensureCardChangeNotification\(admin,/g) ?? [];
-    expect(calls.length).toBe(2);
+    expect(calls.length).toBe(1);
   });
 
   it("the live-mode dormancy guard + cross-studio/forged rejections return BEFORE ANY notification (Tests 6 & 7)", () => {
@@ -89,7 +85,7 @@ describe("card-change notification webhook wiring", () => {
     // Neither raw write may come back.
     expect(HANDLER).not.toMatch(/\.update\(\{ status: "removed"/);
     expect(HANDLER).not.toMatch(/\.from\("client_payment_methods"\)\s*\n\s*\.insert\(\{/);
-    expect(HANDLER).toMatch(/admin\.rpc\(\s*\n?\s*"save_client_card_on_file"/);
+    expect(HANDLER).toMatch(/admin\.rpc\(\s*\n?\s*"save_client_card_on_file_ordered"/);
     // The card_on_file_saved analytics event still fires, and BEFORE the
     // fresh-path notification (so a notification failure cannot suppress it).
     const analyticsIdx = HANDLER.indexOf('event: "card_on_file_saved"');
@@ -98,6 +94,13 @@ describe("card-change notification webhook wiring", () => {
     expect(analyticsIdx).toBeLessThan(freshNotifyIdx);
   });
 
+  it("notification content is read only from the still-active saved card", () => {
+    const helper = readFileSync(join(process.cwd(), "lib/billing/card-change-notification.ts"), "utf8");
+    expect(helper).toContain('.eq("status", "active")');
+    expect(BEFORE_FIRST_NOTIFY).toContain('saved?.outcome === "unknown_event_order"');
+    expect(BEFORE_FIRST_NOTIFY).toContain('saved?.outcome === "stale_event"');
+    expect(BEFORE_FIRST_NOTIFY).not.toContain('if (existing)');
+  });
   it("does not wire card notifications into the money / account handlers", () => {
     // account.updated / capability.updated / payment_intent / charge arms must
     // not emit a card-change notification.
