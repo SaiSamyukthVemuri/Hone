@@ -587,7 +587,8 @@ async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt
       await recordOpsAlert(alert);
     }
   }
-  return { data, error };
+  // Callers only test the error and log its code, so only the code leaves.
+  return { data, error: error ? { code: dbErrorCode(error) } : null };
 }
 
 // ---------------------------------------------------------------------------
