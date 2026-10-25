@@ -55,6 +55,22 @@ ensure_tls() { # the pinned CLI always attempts TLS; serve a self-signed certifi
   local s
   s="$(psqld -c 'show ssl')"
   say "INFO  tls: show ssl = $s"
+  if [ "$s" != "on" ]; then
+    say "DIAG  pg_settings for ssl*:"
+    "${sa[@]}" -c "select name || ' = ' || coalesce(setting, '') || ' | source=' || source || ' | file=' || coalesce(sourcefile, '') || ':' || coalesce(sourceline::text, '') || ' | pending_restart=' || pending_restart from pg_settings where name like 'ssl%' order by name" 2>&1 | sed 's/^/   | /' | tee -a "$RES"
+    say "DIAG  server process command line:"
+    docker exec "$DB" sh -c "ps -eo args | grep '[p]ostgres' | head -3" 2>&1 | sed 's/^/   | /' | tee -a "$RES"
+    say "DIAG  container log tail:"
+    docker logs --tail 25 "$DB" 2>&1 | sed 's/^/   | /' | tee -a "$RES"
+    say "DIAG  key/cert files:"
+    docker exec -u root "$DB" ls -l /etc/hone-tls 2>&1 | sed 's/^/   | /' | tee -a "$RES"
+    say "DIAG  restarting the db container once so the settings are read at startup"
+    docker restart "$DB" > /dev/null
+    for _ in $(seq 1 40); do psqld -c "select 1" > /dev/null 2>&1 && break; sleep 2; done
+    s="$(psqld -c 'show ssl')"
+    say "INFO  tls after restart: show ssl = $s"
+    if [ "$s" != "on" ]; then docker logs --tail 25 "$DB" 2>&1 | sed 's/^/   | /' | tee -a "$RES"; fi
+  fi
   [ "$s" = "on" ]
 }
 
