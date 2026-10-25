@@ -4,6 +4,7 @@ import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { recordReminderSchedulerHealthAlert } from "@/lib/cron/reminder-heartbeat";
 import { maxPublicBookingHorizonDays } from "@/lib/booking/horizon";
+import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
 // Daily rolling-horizon refresh for recurring break occurrences.
 // For every active studio_recurring_break_rules row, materialize
@@ -119,8 +120,7 @@ export async function GET(req: Request) {
             event,
             rule_id: r.id,
             studio_id: r.studio_id,
-            code: rpcErr.code ?? null,
-            error: rpcErr.message,
+            code: dbErrorCode(rpcErr),
             timestamp: new Date().toISOString(),
           }),
         );
@@ -211,8 +211,7 @@ export async function GET(req: Request) {
         JSON.stringify({
           event: "reminder_scheduler_health_check_threw",
           route: "/api/cron/materialize-recurring-breaks",
-          err_message:
-            healthErr instanceof Error ? healthErr.message : String(healthErr),
+          err_class: thrownErrorClass(healthErr),
           timestamp: new Date().toISOString(),
         }),
       );

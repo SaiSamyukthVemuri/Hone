@@ -87,6 +87,7 @@ import {
 import { SectionLabel } from "@/components/ui/section-label";
 import { SessionPhotos } from "./SessionPhotos";
 import { signedSessionPhotos } from "./session-photos";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 export default async function SessionDetailPage({
   params,
@@ -277,8 +278,7 @@ export default async function SessionDetailPage({
         JSON.stringify({
           event: "session_payment_default_amount_read_failed",
           appointment_id: linkedAppointmentId,
-          code: apptErr.code ?? null,
-          message: apptErr.message ?? null,
+          code: dbErrorCode(apptErr),
         }),
       );
     }

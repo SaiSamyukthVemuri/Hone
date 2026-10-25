@@ -119,6 +119,7 @@ import type {
   Service,
 } from "@/lib/types/database";
 import { DashboardGreeting } from "./DashboardGreeting";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // ---------------------------------------------------------------------------
 // Color convention (Chloe P0 feedback). Kept here as the canonical note
@@ -1675,8 +1676,7 @@ async function loadPaymentStatus(
     console.error(
       JSON.stringify({
         event: "dashboard_payment_status_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         studioId,
         timestamp: new Date().toISOString(),
       }),

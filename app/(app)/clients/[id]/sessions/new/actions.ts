@@ -11,6 +11,7 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { Modality } from "@/lib/types/database";
 import { captureServerEvent } from "@/lib/analytics/server";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
+import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
 // PR #180. Loaded from a separate scope so the RPC call can use the
 // service role (the mark_appointment_complete RPC is SECURITY DEFINER
@@ -57,8 +58,7 @@ async function maybeMarkAppointmentCompletedOnSessionStart(args: {
         JSON.stringify({
           event: "session_start_auto_mark_complete_rpc_error",
           appointmentId: args.appointmentId,
-          code: rpcErr.code,
-          message: rpcErr.message,
+          code: dbErrorCode(rpcErr),
           timestamp: new Date().toISOString(),
         }),
       );
@@ -76,7 +76,7 @@ async function maybeMarkAppointmentCompletedOnSessionStart(args: {
       JSON.stringify({
         event: "session_start_auto_mark_complete_threw",
         appointmentId: args.appointmentId,
-        message: err instanceof Error ? err.message : String(err),
+        errorClass: thrownErrorClass(err),
         timestamp: new Date().toISOString(),
       }),
     );

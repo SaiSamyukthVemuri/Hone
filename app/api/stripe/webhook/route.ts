@@ -89,6 +89,7 @@ import {
   paymentWebhookMaintenanceOn,
 } from "@/lib/billing/payment-webhook-maintenance";
 import { ensureCardChangeNotification } from "@/lib/billing/card-change-notification";
+import { dbErrorCode, thrownErrorClass, stripeErrorFields } from "@/lib/logging/error-class";
 
 // Force Node runtime: Stripe SDK + raw body buffering need Node, not
 // the Edge runtime.
@@ -123,7 +124,7 @@ export async function POST(req: Request): Promise<Response> {
     rawBody = await req.text();
   } catch (err) {
     logInternal("stripe_webhook_body_read_failed", {
-      err: err instanceof Error ? err.message : String(err),
+      errorClass: thrownErrorClass(err),
     });
     return NextResponse.json({ error: GENERIC_BAD_SIGNATURE }, { status: 400 });
   }
@@ -192,8 +193,7 @@ export async function POST(req: Request): Promise<Response> {
       logInternal("stripe_webhook_studio_binding_read_failed", {
         eventId: event.id,
         eventType: event.type,
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
       });
       return NextResponse.json({ ok: false }, { status: 500 });
     }
@@ -219,8 +219,7 @@ export async function POST(req: Request): Promise<Response> {
     logInternal("stripe_webhook_claim_failed", {
       eventId: event.id,
       eventType: event.type,
-      code: claimErr.code,
-      message: claimErr.message,
+      code: dbErrorCode(claimErr),
     });
     // Return 500 so Stripe retries. The event is not yet recorded;
     // the next delivery will re-attempt.
@@ -266,8 +265,7 @@ export async function POST(req: Request): Promise<Response> {
     if (markErr) {
       logInternal("stripe_webhook_mark_processed_failed", {
         eventId: event.id,
-        code: markErr.code,
-        message: markErr.message,
+        code: dbErrorCode(markErr),
       });
       return NextResponse.json({ ok: false }, { status: 500 });
     }
@@ -284,7 +282,8 @@ export async function POST(req: Request): Promise<Response> {
       logInternal("stripe_webhook_handler_failed", {
         eventId: event.id,
         eventType: event.type,
-        err: err instanceof Error ? err.message : String(err),
+        errorClass: thrownErrorClass(err),
+        ...stripeErrorFields(err),
       });
       // PR #153. Persistent webhook processing failure is a critical
       // ops alert. For setup_intent.succeeded specifically, the
@@ -319,10 +318,14 @@ export async function POST(req: Request): Promise<Response> {
         },
       );
       if (releaseErr) {
-        logInternal("stripe_webhook_release_claim_failed", { releaseErr });
+        logInternal("stripe_webhook_release_claim_failed", {
+          code: dbErrorCode(releaseErr),
+        });
       }
     } catch (releaseErr) {
-      logInternal("stripe_webhook_release_claim_threw", { releaseErr });
+      logInternal("stripe_webhook_release_claim_threw", {
+        errorClass: thrownErrorClass(releaseErr),
+      });
     }
     return NextResponse.json({ ok: false }, { status: 500 });
   }

@@ -16,6 +16,7 @@ import {
   type AutoReceiptOutcome,
 } from "@/lib/billing/auto-payment-receipt";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
+import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
 // ---------------------------------------------------------------------------
 // prepareManualFeeChargeAction (PR #145).
@@ -203,8 +204,7 @@ export async function prepareManualFeeChargeAction(
       return { ok: false, error: DUPLICATE_ATTEMPT_ERROR };
     }
     logInternal("manual_fee_prepare_insert_failed", {
-      code: insertErr.code,
-      message: insertErr.message,
+      code: dbErrorCode(insertErr),
       appointmentId,
     });
     return { ok: false, error: GENERIC_PRACTITIONER_ERROR };
@@ -276,7 +276,7 @@ export async function chargeManualFeeAttemptAction(
     practitionerId = practitioner.id;
     studioId = studio.id;
   } catch (err) {
-    logInternal("manual_fee_charge_auth_failed", { err: String(err) });
+    logInternal("manual_fee_charge_auth_failed", { errorClass: thrownErrorClass(err) });
     return {
       ok: false,
       outcome: "not_authorized",
@@ -436,7 +436,7 @@ export async function cancelManualFeeChargeAttemptAction(
     practitionerId = practitioner.id;
     studioId = studio.id;
   } catch (err) {
-    logInternal("manual_fee_cancel_auth_failed", { err: String(err) });
+    logInternal("manual_fee_cancel_auth_failed", { errorClass: thrownErrorClass(err) });
     return { ok: false, error: NOT_AUTHORIZED_ERROR };
   }
 
@@ -478,8 +478,7 @@ export async function cancelManualFeeChargeAttemptAction(
     .maybeSingle();
   if (error) {
     logInternal("manual_fee_cancel_update_failed", {
-      code: error.code,
-      message: error.message,
+      code: dbErrorCode(error),
       attemptId,
     });
     return { ok: false, error: GENERIC_PRACTITIONER_ERROR };

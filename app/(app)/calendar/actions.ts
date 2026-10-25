@@ -28,6 +28,7 @@ import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { localDateString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { safeLog } from "@/lib/logging/safe-log";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 export type BookResult =
   | { ok: true; appointmentId: string }
@@ -493,8 +494,7 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
     console.error(
       JSON.stringify({
         event: "practitioner_cancel_rpc_error",
-        code: rpcErr.code,
-        message: rpcErr.message,
+        code: dbErrorCode(rpcErr),
         appointmentId,
         timestamp: new Date().toISOString(),
       }),
@@ -623,8 +623,7 @@ export async function markAppointmentCompleteAction(
     console.error(
       JSON.stringify({
         event: "mark_complete_rpc_error",
-        code: rpcErr.code,
-        message: rpcErr.message,
+        code: dbErrorCode(rpcErr),
         appointmentId,
         timestamp: new Date().toISOString(),
       }),
@@ -693,8 +692,7 @@ export async function markAppointmentNoShowAction(
     console.error(
       JSON.stringify({
         event: "mark_no_show_rpc_error",
-        code: rpcErr.code,
-        message: rpcErr.message,
+        code: dbErrorCode(rpcErr),
         appointmentId,
         timestamp: new Date().toISOString(),
       }),
@@ -1152,8 +1150,7 @@ export async function sendPostcareEmailAction(
     console.error(
       JSON.stringify({
         event: "send_postcare_lookup_failed",
-        code: lookupErr.code,
-        message: lookupErr.message,
+        code: dbErrorCode(lookupErr),
         appointmentId,
         timestamp: new Date().toISOString(),
       }),
@@ -1364,7 +1361,7 @@ export async function sendPostcareEmailAction(
         // The email DID reach the provider but the settlement did not persist.
         // Bounded metadata only, and deliberately NO repair: we under-claim
         // ("still sending" -> reclaimable) rather than fabricate a sent state.
-        code: successWriteErr.code,
+        code: dbErrorCode(successWriteErr),
         appointmentId,
         timestamp: new Date().toISOString(),
       }),
