@@ -47,29 +47,78 @@ export type BookingConfirmationCopy = {
 };
 
 /**
+ * HON-47. What the studio lets a client do online, as the confirmation must
+ * describe it. Absent means everything on (today's copy, byte for byte). The
+ * three fields mirror what is actually delivered: `cancellation` and
+ * `reschedule` are the links the confirmation EMAIL carries
+ * (lib/email/send-appointment.ts withdraws a link whose flag is off), and
+ * `manageLink` is whether the card shows the "Manage booking" action at all
+ * (clientManagePageAllowed: any of cancel, reschedule or portal).
+ */
+export type ConfirmationSelfService = {
+  cancellation: boolean;
+  reschedule: boolean;
+  manageLink: boolean;
+};
+
+const ALL_SELF_SERVICE: ConfirmationSelfService = {
+  cancellation: true,
+  reschedule: true,
+  manageLink: true,
+};
+
+/** "cancel", "reschedule" or "cancel or reschedule"; null when neither is offered. */
+function actionPhrase(s: ConfirmationSelfService): string | null {
+  if (s.cancellation && s.reschedule) return "cancel or reschedule";
+  if (s.cancellation) return "cancel";
+  if (s.reschedule) return "reschedule";
+  return null;
+}
+
+/**
  * Build the confirmation copy for a COMMITTED public booking.
  *
- * The management link is unconditional: it is the client's guaranteed path to
- * the appointment and depends on no provider. Only the surrounding narrative
- * varies, and it varies strictly with what the provider actually did.
+ * The management link is unconditional unless the studio withdrew all online
+ * self-service: it is the client's guaranteed path to the appointment and
+ * depends on no provider. Only the surrounding narrative varies, and it varies
+ * strictly with what the provider actually did and with what the studio
+ * offers: no line promises a link, a button or an action that is not there.
  */
 export function buildBookingConfirmationCopy(input: {
   emailStatus: ConfirmationEmailStatus;
   email: string;
+  selfService?: ConfirmationSelfService;
 }): BookingConfirmationCopy {
   const { emailStatus, email } = input;
+  const selfService = input.selfService ?? ALL_SELF_SERVICE;
   const manageLabel = "Manage booking";
+  const action = actionPhrase(selfService);
+  const intake = "If your studio asks for a health intake, you’ll receive that link too.";
+  const intakeFollowUp = "If your studio asks for a health intake, they’ll follow up with you about it.";
+  // The email carries a link only for an action the studio offers.
+  const emailLinksLine =
+    action === null
+      ? null
+      : `The email includes ${
+          selfService.cancellation && selfService.reschedule ? "links" : "a link"
+        } to ${action} if your plans change.`;
+  // The card's own button, in the two states where the email cannot be relied on.
+  const manageLine = !selfService.manageLink
+    ? null
+    : action === null
+      ? "Use Manage booking below to see your options. Save or bookmark that link."
+      : `Use Manage booking below to ${action}. Save or bookmark that link.`;
 
   if (emailStatus === "sent") {
     return {
       steps: [
         `We sent a confirmation to ${email}, with a calendar invite.`,
-        "The email includes links to cancel or reschedule if your plans change.",
-        "If your studio asks for a health intake, you’ll receive that link too.",
+        ...(emailLinksLine ? [emailLinksLine] : []),
+        intake,
       ],
       manageLabel,
       claimsEmailDelivered: true,
-      claimsEmailCarriesManagementLinks: true,
+      claimsEmailCarriesManagementLinks: action !== null,
       urgesSavingLink: false,
     };
   }
@@ -82,13 +131,13 @@ export function buildBookingConfirmationCopy(input: {
     return {
       steps: [
         `We couldn’t confirm that our confirmation email to ${email} went through.`,
-        "Use Manage booking below to cancel or reschedule. Save or bookmark that link.",
-        "If your studio asks for a health intake, they’ll follow up with you about it.",
+        ...(manageLine ? [manageLine] : []),
+        intakeFollowUp,
       ],
       manageLabel,
       claimsEmailDelivered: false,
       claimsEmailCarriesManagementLinks: false,
-      urgesSavingLink: true,
+      urgesSavingLink: selfService.manageLink,
     };
   }
 
@@ -96,13 +145,10 @@ export function buildBookingConfirmationCopy(input: {
   // configuration, not a failure, so there is nothing to apologise for and
   // no email to mention at all.
   return {
-    steps: [
-      "Use Manage booking below to cancel or reschedule. Save or bookmark that link.",
-      "If your studio asks for a health intake, they’ll follow up with you about it.",
-    ],
+    steps: [...(manageLine ? [manageLine] : []), intakeFollowUp],
     manageLabel,
     claimsEmailDelivered: false,
     claimsEmailCarriesManagementLinks: false,
-    urgesSavingLink: true,
+    urgesSavingLink: selfService.manageLink,
   };
 }

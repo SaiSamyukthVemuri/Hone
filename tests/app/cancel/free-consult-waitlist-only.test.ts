@@ -233,6 +233,7 @@ function renderNudge(
       createElement(CancellationNudge, {
         reason,
         freeConsultationWaitlistOnly,
+        rescheduleEnabled: true,
         rescheduleHref: `/reschedule/${TOKEN}`,
       }),
     ),

@@ -97,6 +97,8 @@ type Confirmation = {
   // HON-47: null when the studio offers no online self-service at all.
   manageUrl: string | null;
   emailStatus: ConfirmationEmailStatus;
+  // HON-47. What the studio offers online; the copy never promises more.
+  selfService: { cancellation: boolean; reschedule: boolean };
 };
 
 // Render a local YYYY-MM-DD as "Tuesday, May 26" (or, with year, "Tuesday, May 26, 2026"
@@ -487,6 +489,7 @@ export function PublicBookForm({
         email,
         manageUrl: r.manageUrl,
         emailStatus: r.confirmationEmailStatus,
+        selfService: r.selfService ?? { cancellation: true, reschedule: true },
       });
     });
   }
@@ -1300,6 +1303,10 @@ function ConfirmationView({
   const copy = buildBookingConfirmationCopy({
     emailStatus: confirmation.emailStatus,
     email: confirmation.email,
+    selfService: {
+      ...confirmation.selfService,
+      manageLink: confirmation.manageUrl !== null,
+    },
   });
   return (
     <div className="flex flex-col gap-8">

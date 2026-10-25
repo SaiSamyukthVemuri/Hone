@@ -239,12 +239,14 @@ async function renderCancelPage(): Promise<string> {
 function renderNudge(
   reason: string,
   freeConsultationWaitlistOnly: boolean,
+  rescheduleEnabled = true,
 ): string {
   return decode(
     renderToStaticMarkup(
       createElement(CancellationNudge, {
         reason,
         freeConsultationWaitlistOnly,
+        rescheduleEnabled,
         rescheduleHref: `/reschedule/${TOKEN}`,
       }),
     ),
@@ -398,6 +400,48 @@ describe("an unreadable studio policy fails CLOSED", () => {
     } finally {
       admin.from = originalFrom;
       silence.mockRestore();
+    }
+  });
+});
+
+
+// Codex P2 4370339945. With cancellation ON and rescheduling OFF, the cancel form
+// must not tell the client they can reschedule, nor link to a route that refuses.
+describe("client_reschedule_enabled drives the cancel form's reschedule nudge", () => {
+  it.each([true, false])("the fetch summary carries rescheduleEnabled=%s", async (on) => {
+    scenario.flags = on ? {} : { client_reschedule_enabled: false };
+    const r = await fetchAppointmentForCancelAction(TOKEN);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.summary.rescheduleEnabled).toBe(on);
+  });
+
+  it("the page hands the summary's flag to the form (not a constant)", () => {
+    const page = readFileSync(join(process.cwd(), "app/cancel/[token]/page.tsx"), "utf8");
+    expect(page).toMatch(/rescheduleEnabled=\{result\.summary\.rescheduleEnabled\}/);
+  });
+
+  it("each scheduling reason x rescheduling on/off: the text and the link are shown only when it is on", () => {
+    for (const reason of SCHEDULING_REASONS) {
+      const on = renderNudge(reason, false, true);
+      expect(on, `${reason} on`).toContain("You can reschedule this appointment instead of cancelling.");
+      expect(on, `${reason} on`).toContain(`href="/reschedule/${TOKEN}"`);
+      const off = renderNudge(reason, false, false);
+      expect(off, `${reason} off`).toBe("");
+    }
+  });
+
+  it("a reason that never nudged still shows nothing, on or off", () => {
+    for (const reason of NON_SCHEDULING_REASONS) {
+      expect(renderNudge(reason, false, true)).toBe("");
+      expect(renderNudge(reason, false, false)).toBe("");
+    }
+  });
+
+  it("the free-consultation explanation is unaffected by the flag (it is about the consultation, not the studio)", () => {
+    for (const on of [true, false]) {
+      const html = renderNudge("schedule_changed", true, on);
+      expect(html).toContain("Free consultations can’t be rescheduled");
+      expect(html).not.toContain("/reschedule/");
     }
   });
 });

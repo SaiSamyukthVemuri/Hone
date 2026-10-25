@@ -540,6 +540,11 @@ export type AppointmentSummary = {
   // a closed studio into the waitlist experience. Null otherwise, so this
   // never becomes a general studio-slug disclosure on a public token route.
   waitlistBookingSlug: string | null;
+  // HON-47. SERVER-DERIVED, presentation only: whether the studio offers online
+  // rescheduling. The form's "reschedule instead" nudge is withdrawn when false,
+  // because /reschedule refuses. Cancellation is already known to be enabled
+  // here (a disabled studio never reaches this summary).
+  rescheduleEnabled: boolean;
 };
 
 export async function fetchAppointmentForCancelAction(
@@ -663,6 +668,7 @@ export async function fetchAppointmentForCancelAction(
       waitlistBookingSlug: freeConsultationWaitlistOnly
         ? (studio?.slug ?? null)
         : null,
+      rescheduleEnabled: policyRead.policy.reschedule,
     },
   };
 }

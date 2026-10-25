@@ -1,5 +1,6 @@
 import "server-only";
 
+import { dbErrorCode } from "@/lib/logging/error-class";
 import {
   clientSelfServicePolicyFromStudio,
   type ClientSelfServicePolicy,
@@ -51,7 +52,7 @@ export async function loadClientSelfServicePolicy(
     console.error(
       JSON.stringify({
         event: "client_self_service_policy_read_failed",
-        code: error?.code ?? (data ? null : "not_found"),
+        code: error ? dbErrorCode(error) : "not_found",
         timestamp: new Date().toISOString(),
       }),
     );

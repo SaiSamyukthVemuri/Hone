@@ -166,6 +166,7 @@ export default async function CancelAppointmentPage({
                   result.summary.freeConsultationWaitlistOnly
                 }
                 waitlistBookingSlug={result.summary.waitlistBookingSlug}
+                rescheduleEnabled={result.summary.rescheduleEnabled}
               />
             </>
           ) : result.code === "cancellation_disabled" ? (

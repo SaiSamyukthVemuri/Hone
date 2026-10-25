@@ -92,7 +92,10 @@ const scenario = {
   // HON-47. The studio's persisted self-service flags; absent = today's row.
   flags: {} as Record<string, boolean>,
   // A "new" booking must name a consultation, so the new-client cases set this.
-  serviceModality: "electrolysis" as string,
+  serviceModality: "consultation" as string,
+  // SEC-004. A public submission never attaches to a client on file, so the
+  // default is NO match (a plain new client). The matched cases set this.
+  clientOnFile: false,
 };
 
 /** Any real error message could carry a token or address; none may be logged. */
@@ -162,6 +165,7 @@ function makeChain(table: string) {
         };
       }
       if (table === "clients") {
+        if (!scenario.clientOnFile) return { data: null, error: null };
         return {
           data: {
             id: CLIENT_ID,
@@ -194,7 +198,7 @@ const admin = {
   },
   async rpc(fn: string, args: Record<string, unknown>) {
     rpcCalls.push({ fn, args });
-    if (fn === "create_public_appointment") {
+    if (fn === "create_public_appointment" || fn === "create_public_appointment_for_new_client") {
       if (scenario.commandError) return { data: null, error: scenario.commandError };
       if (scenario.commandRefuses) {
         return { data: [{ result: "time_unavailable" }], error: null };
@@ -203,6 +207,7 @@ const admin = {
         data: [
           {
             result: "created",
+            client_id: CLIENT_ID,
             appointment_id: APPT_ID,
             created_at: new Date().toISOString(),
             starts_at: START_ISO,
@@ -338,7 +343,7 @@ function form(overrides: Record<string, string> = {}): FormData {
   // Required for every public submission (actions.ts:433). The existing-client
   // path deliberately never writes it back onto the stored row.
   fd.set("phone", "+15555550123");
-  fd.set("client_type", "existing");
+  fd.set("client_type", "new");
   fd.set("referral_source", "");
   for (const [k, v] of Object.entries(overrides)) fd.set(k, v);
   return fd;
@@ -396,7 +401,8 @@ beforeEach(() => {
   scenario.commandRefuses = false;
   scenario.slotError = null; scenario.emptySlots = false; scenario.commandError = null;
   scenario.flags = {};
-  scenario.serviceModality = "electrolysis";
+  scenario.serviceModality = "consultation";
+  scenario.clientOnFile = false;
   errSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
     consoleErrors.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
   });
@@ -432,21 +438,28 @@ const PORTAL_OFF = { client_portal_enabled: false };
 const NEUTRAL = "This booking can't be completed online. Please contact Test Studio directly to book.";
 
 describe("DEFAULT: no policy columns (today's rows) books a returning client exactly as before", () => {
-  it("existing client books, and the card gets the management link", async () => {
+  it("a plain new client books, and the card gets the management link", async () => {
     const r = await book();
     expect(r.ok, r.ok ? "" : r.error).toBe(true);
     if (r.ok) expect(String(r.manageUrl).startsWith(`${ORIGIN}/manage/`)).toBe(true);
-    expect(rpcCalls.map((c) => c.fn)).toContain("create_public_appointment");
+    expect(rpcCalls.map((c) => c.fn)).toContain("create_public_appointment_for_new_client");
   });
 
-  it("a 'new' booking whose email matches an active client passes the HON-47 gate (portal on)", async () => {
-    // Control for the refusal below: with the portal on, the same submission
-    // gets past the gate and reaches the appointment command. (What the
-    // command then answers is this harness's business, not HON-47's.)
-    scenario.serviceModality = "consultation";
-    const r = await book({ client_type: "new" });
-    expect(r).not.toEqual({ ok: false, error: NEUTRAL });
-    expect(rpcCalls.length).toBeGreaterThan(0);
+  it("a booking whose email matches an active client is refused (SEC-004), whatever the portal flag, and writes nothing", async () => {
+    // SEC-004 answers a matched email before HON-47's portal rule is reached, so
+    // portal on and portal off give the SAME answer: the booker cannot tell a
+    // matched email from the studio's settings.
+    scenario.clientOnFile = true;
+    const on = await book({ client_type: "new" });
+    expect(on.ok).toBe(false);
+    if (!on.ok) expect(on.error).not.toBe(NEUTRAL);
+    expect(rpcCalls).toEqual([]);
+    expect(clientUpdates).toEqual([]);
+
+    scenario.flags = PORTAL_OFF;
+    const off = await book({ client_type: "new" });
+    expect(off).toEqual(on);
+    expect(rpcCalls).toEqual([]);
   });
 
   it("cancel and reschedule off do not stop booking, and /manage is still offered (portal on)", async () => {
@@ -457,25 +470,33 @@ describe("DEFAULT: no policy columns (today's rows) books a returning client exa
   });
 });
 
+// Codex P2 4370339942. The result carries the studio's cancel/reschedule flags so
+// the confirmation copy never promises a link the email no longer carries.
+describe("the booking result carries the studio's self-service flags", () => {
+  it.each([
+    [{}, { cancellation: true, reschedule: true }],
+    [{ client_cancellation_enabled: false }, { cancellation: false, reschedule: true }],
+    [{ client_reschedule_enabled: false }, { cancellation: true, reschedule: false }],
+    [{ client_cancellation_enabled: false, client_reschedule_enabled: false }, { cancellation: false, reschedule: false }],
+  ])("flags %j -> %j", async (flags, expected) => {
+    scenario.flags = flags;
+    const r = await book();
+    expect(r.ok, r.ok ? "" : r.error).toBe(true);
+    if (r.ok) expect(r.selfService).toEqual(expected);
+  });
+});
+
 describe("client_portal_enabled = false", () => {
   beforeEach(() => {
     scenario.flags = PORTAL_OFF;
   });
 
   it("an 'existing client' booking refuses before ANY read or write", async () => {
-    const r = await book();
+    const r = await book({ client_type: "existing" });
     expect(r).toEqual({ ok: false, error: NEUTRAL });
     expect(rpcCalls).toEqual([]);
     expect(clientUpdates).toEqual([]);
     expect(confirmationEmails).toEqual([]);
-  });
-
-  it("a 'new' booking whose email matches an active client refuses with the SAME neutral sentence, before any write", async () => {
-    scenario.serviceModality = "consultation";
-    const r = await book({ client_type: "new" });
-    expect(r).toEqual({ ok: false, error: NEUTRAL });
-    expect(rpcCalls).toEqual([]);
-    expect(clientUpdates).toEqual([]);
   });
 
   it("the refusal never says 'returning', 'existing' or 'on file'", () => {

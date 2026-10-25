@@ -443,6 +443,10 @@ export type PublicBookResult =
       // portal online, so the card never links into a refusal.
       manageUrl: string | null;
       confirmationEmailStatus: ConfirmationEmailStatus;
+      // HON-47. Which email links and card actions the studio offers, so the
+      // confirmation copy never promises one it withdrew. The action always
+      // sets it; absent (a test double) reads as everything on.
+      selfService?: { cancellation: boolean; reschedule: boolean };
     }
   | {
       ok: false;
@@ -1957,6 +1961,10 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     appointmentId: createdId,
     manageUrl: clientManagePageAllowed(clientSelfService) ? manageUrl : null,
     confirmationEmailStatus,
+    selfService: {
+      cancellation: clientSelfService.cancellation,
+      reschedule: clientSelfService.reschedule,
+    },
   };
 }
 
