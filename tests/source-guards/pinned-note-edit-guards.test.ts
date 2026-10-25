@@ -4,9 +4,10 @@ import path from "node:path";
 
 // Source guards for editing a mutable pinned client note (client_pinned_notes —
 // an operational reminder, NOT the append-only immutable client_clinical_notes).
-// These pin the safety contract the DB test can't see: the edit is an in-place
-// UPDATE (never delete+recreate), authorized from the session, tenant-scoped, and
-// mutates ONLY the text.
+// These pin the safety contract the DB test can't see. Since 0254 the edit is the
+// database command edit_client_pinned_note (author-or-owner, tenant-scoped,
+// optimistic-concurrency, audited, mutates ONLY the text); the action is a thin
+// caller that derives the studio from the session.
 
 const ROOT = path.resolve(__dirname, "../..");
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
@@ -34,32 +35,41 @@ describe("pinned-note edit — server action contract", () => {
   });
 
   it("authorizes from the SESSION (getCurrentPractitionerWithStudio), never the form studio", () => {
-    expect(editBody()).toMatch(/const \{ practitioner, studio \} = await getCurrentPractitionerWithStudio\(\)/);
+    expect(editBody()).toMatch(/const \{ studio \} = await getCurrentPractitionerWithStudio\(\)/);
   });
 
-  it("HON-44: a non-owner's update is additionally scoped to cautions they created; the owner's is not", () => {
+  it("HON-44 / 0254: the edit is the database command, on the USER session client; no service-role write, no table UPDATE", () => {
     const b = editBody();
-    expect(b).toMatch(/practitioner\.role !== "owner"[\s\S]*\.eq\("created_by_practitioner_id", practitioner\.id\)/);
-    // The author column is a FILTER, never a mutated column.
-    expect(b).not.toMatch(/\.update\(\{[^}]*created_by/);
-  });
-
-  it("is an in-place UPDATE scoped to id + the authed studio + client (tenant isolation, no delete+recreate)", () => {
-    const b = editBody();
-    expect(b).toMatch(/\.update\(\{\s*text\s*\}\)/);
-    expect(b).toMatch(/\.eq\("id", noteId\)/);
-    expect(b).toMatch(/\.eq\("studio_id", studio\.id\)/);
-    expect(b).toMatch(/\.eq\("client_id", clientId\)/);
-    // never inserts or deletes on the edit path → no duplicates, pinned state kept
+    expect(b).toMatch(/await supabase\.rpc\("edit_client_pinned_note"/);
+    expect(b).toMatch(/p_studio_id: studio\.id/);
+    expect(b).toMatch(/p_client_id: clientId/);
+    expect(b).toMatch(/p_note_id: noteId/);
+    expect(b).toMatch(/p_original_text: originalText/);
+    expect(b).toMatch(/p_text: text/);
+    // never the service role, never a direct UPDATE, never insert/delete: no
+    // duplicates, pinned state kept, and the author rule lives in the database.
+    expect(code(ACTIONS)).not.toMatch(/createAdminClient/);
+    expect(b).not.toMatch(/\.update\(/);
     expect(b).not.toMatch(/\.insert\(/);
     expect(b).not.toMatch(/\.delete\(/);
+    expect(b).not.toMatch(/created_by/); // authorship is decided by the command, not the caller
   });
 
-  it("mutates ONLY text — never id / created_by / created_at / studio_id / client_id", () => {
+  it("optimistic concurrency: validates original_text and sends it to the command, which guards on the note's current text", () => {
     const b = editBody();
-    for (const forbidden of ["created_", "studio_id", "client_id", "\\bid\\b"]) {
-      expect(b).not.toMatch(new RegExp(`\\.update\\(\\{[^}]*${forbidden}`));
-    }
+    expect(b).toMatch(/const originalText = trimmedString\(formData\.get\("original_text"\)\)/);
+    expect(b).toMatch(/if \(!originalText\) throw/);
+    expect(b).toMatch(/p_original_text: originalText/);
+  });
+
+  it("rejects a raced / stale / deleted / foreign / not-yours note with ONE fixed safe message (no raw DB leak)", () => {
+    const b = editBody();
+    expect(b).toMatch(/data !== true/);
+    expect(b).toMatch(
+      /That note changed or is no longer available\. Refresh and try again\./,
+    );
+    expect(b).toMatch(/if \(error\) throw new Error\("Could not update the note\. Please try again\."\)/);
+    expect(b).not.toMatch(/error\.message/); // edit path never surfaces raw DB text
   });
 
   it("rejects empty text and over-length before touching the DB", () => {
@@ -68,21 +78,6 @@ describe("pinned-note edit — server action contract", () => {
     expect(b).toMatch(/MAX_PINNED_NOTE_LENGTH/);
   });
 
-  it("optimistic concurrency: validates original_text and guards the UPDATE on the note's current text", () => {
-    const b = editBody();
-    expect(b).toMatch(/const originalText = trimmedString\(formData\.get\("original_text"\)\)/);
-    expect(b).toMatch(/if \(!originalText\) throw/);
-    expect(b).toMatch(/\.eq\("text", originalText\)/); // CAS: only lands if unchanged
-  });
-
-  it("rejects a raced / stale / deleted / foreign note with ONE fixed safe message (no raw DB leak)", () => {
-    const b = editBody();
-    expect(b).toMatch(
-      /That note changed or is no longer available\. Refresh and try again\./,
-    );
-    expect(b).toMatch(/if \(error\) throw new Error\("Could not update the note\. Please try again\."\)/);
-    expect(b).not.toMatch(/error\.message/); // edit path never surfaces raw DB text
-  });
 });
 
 describe("pinned-note edit — UI wiring", () => {
