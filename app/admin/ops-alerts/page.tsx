@@ -4,6 +4,7 @@ import {
   resolveOpsAlertAction,
   sendTestCriticalAlertAction,
 } from "./actions";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // PR #193. Operator dashboard for ops_alerts: the human-visible
 // surface the live-payments audit (docs/18 §6) flagged as a P0
@@ -92,7 +93,7 @@ export default async function OpsAlertsPage() {
       .limit(25),
   ]);
   if (unresolvedRes.error) {
-    throw new Error(`Failed to load alerts: ${unresolvedRes.error.message}`);
+    throw new Error(`Failed to load alerts: ${dbErrorCode(unresolvedRes.error)}`);
   }
 
   // Critical first, then warning, then info; newest first within a

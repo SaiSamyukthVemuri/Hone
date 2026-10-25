@@ -226,7 +226,7 @@ describe.each([
     const update = setup();
     update.is.mockResolvedValue({ error: { message: "synthetic update refusal" } });
     update.not.mockResolvedValue({ error: { message: "synthetic update refusal" } });
-    await expect(action(form())).rejects.toThrow(`Failed to ${name} client: synthetic update refusal`);
+    await expect(action(form())).rejects.toThrow(`Failed to ${name} client: unknown`);
     expect(h.committedPatch).toBeNull();
     expect(h.audit).not.toHaveBeenCalled(); expect(h.revalidate).not.toHaveBeenCalled(); expect(h.redirect).not.toHaveBeenCalled();
   });
