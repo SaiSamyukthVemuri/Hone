@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# REHEARSAL of the encrypted export tools (EXPORT-PROCEDURE-GAPS.md GAP-2, GAP-3).
+# CI ONLY, SYNTHETIC ONLY. It exercises logical-export.sh, object-export.sh,
+# verify-export.sh and export-restore.sh against a throwaway local stack, with
+# the checks of RECOVERY-LAYERS-PLAN.md section 4:
+#
+#   V1  ciphertext hashes (and a flipped byte is caught)
+#   V2  row-count/md5 fingerprint taken in the export's snapshot, recomputed
+#       after the restore, identical (storage.objects by count)
+#   V3  completeness gate (negative control: public.clients removed -> FAIL and
+#       the output is discarded); decrypting reproduces the markers
+#   V4  restore into a NEW project built from the repository migrations
+#   V5  object manifest: every object re-hashed; negative controls (an object
+#       deleted between listing and download -> FAIL; a flipped ciphertext byte)
+#   V6  NOT RUN here. It is a manual read of real data in a disposable project by
+#       Sam; the DR-01A check (restore-drill-app-check.mjs) is the synthetic
+#       counterpart and is exercised by the restore-drill workflow.
+#   V7  a receipt with hashes, counts, durations and the stack deletion time
+#
+# Also refused on purpose: a wrong project ref; a target equal to production.
+#
+# NO hosted project, key or data. The age key is generated in the job, lives in a
+# temp dir, and is destroyed at exit. Nothing encrypted leaves the job: only the
+# receipt, the summary and the logs are written to the evidence directory.
+#
+# Usage:  scripts/ops/export-rehearsal.sh [evidence-dir]
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+CLI="npx --yes supabase@2.102.0" # pinned: see CLAUDE.md section 3 (grants parity)
+PROJECT_ID="hone-export-rehearsal"
+DB_CONTAINER="supabase_db_${PROJECT_ID}"
+API="http://127.0.0.1:56621"
+DBURL="postgresql://postgres:postgres@127.0.0.1:56622/postgres"
+BUCKET="treatment-images"
+PREFIX="d0d0d0d0-0000-4000-8000-000000000001/d0d0d0d0-0000-4000-8000-000000000002"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+OPS="$REPO_ROOT/scripts/ops"
+# shellcheck source=scripts/ops/export-lib.sh
+. "$OPS/export-lib.sh"
+EVIDENCE="${1:-$(mktemp -d -t hone-export-rehearsal-evidence-XXXX)}"
+WORK="$(mktemp -d -t hone-export-rehearsal-XXXX)"
+mkdir -p "$EVIDENCE"
+chmod 700 "$WORK"
+
+log() { printf '[rehearsal %s] %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "$EVIDENCE/rehearsal.log"; }
+fail() { log "FAIL: $*"; exit 1; }
+
+for v in $(compgen -e | grep -E '^(SUPABASE_|NEXT_PUBLIC_SUPABASE_|HONE_)' || true); do
+  case "${!v}" in *supabase.co*|*supabase.com*) fail "$v points at a hosted Supabase URL; refusing";; esac
+done
+for p in 56620 56621 56622 56623 56624 56627 56629 8783; do
+  if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then fail "port $p is already in use"; fi
+done
+command -v age >/dev/null && command -v age-keygen >/dev/null || fail "age and age-keygen are required"
+
+STOPPED_AT=""
+cleanup() {
+  log "stopping and deleting the rehearsal stack (volumes included)"
+  $CLI stop --workdir "$WORK/stack" --no-backup >/dev/null 2>&1 || true
+  STOPPED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "stack_deleted_utc=$STOPPED_AT" >>"$EVIDENCE/receipt-v7.txt" || true
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+
+# --- scratch stack: own project id and ports, never another lane's -------------------
+mkdir -p "$WORK/stack/supabase"
+cp "$REPO_ROOT/supabase/config.toml" "$WORK/stack/supabase/config.toml"
+cp -r "$REPO_ROOT/supabase/migrations" "$WORK/stack/supabase/migrations"
+sed -i -E \
+  -e "s/^project_id = .*/project_id = \"${PROJECT_ID}\"/" \
+  -e 's/\b5432([0-9])\b/5662\1/g' \
+  -e 's/\b8083\b/8783/g' \
+  "$WORK/stack/supabase/config.toml"
+EXCLUDE="studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta,supavisor"
+start_stack() { $CLI start --workdir "$WORK/stack" -x "$EXCLUDE" >"$EVIDENCE/start-$1.log" 2>&1 || { tail -20 "$EVIDENCE/start-$1.log"; fail "stack start ($1)"; }; }
+psql_q() { docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -At "$@"; }
+service_key() {
+  node -e '
+const c = require("crypto");
+const b = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+const h = b({ alg: "HS256", typ: "JWT" });
+const p = b({ iss: "supabase-demo", role: "service_role", exp: Math.floor(Date.now() / 1000) + 3600 });
+const s = c.createHmac("sha256", "super-secret-jwt-token-with-at-least-32-characters-long").update(h + "." + p).digest("base64url");
+console.log(h + "." + p + "." + s);'
+}
+upload() { # upload NAME FILE
+  curl -fsS -X POST "$API/storage/v1/object/$BUCKET/$(urlencode_path "$PREFIX/$1")" \
+    -H "Authorization: Bearer $KEY" -H "apikey: $KEY" -H "Content-Type: application/octet-stream" \
+    --data-binary "@$2" >/dev/null || fail "upload $1"
+}
+
+# The environment every tool run sees (rehearsal mode, loopback, a container for pg_dump/psql).
+rehearse() { # rehearse TOOL ARGS...   (runs with the rehearsal environment; stdout/stderr to caller)
+  EXPORT_REHEARSAL=1 DB_URL="$DBURL" SERVICE_KEY="$KEY" \
+  EXPORT_PG_DUMP="${EXPORT_PG_DUMP_OVERRIDE:-docker exec -i $DB_CONTAINER pg_dump -U postgres -d postgres}" \
+  EXPORT_PSQL="docker exec -i $DB_CONTAINER psql -U postgres -d postgres" \
+  "$@"
+}
+
+RESULT=PASS
+check() { # check LABEL "pass|fail"
+  if [ "$2" = pass ]; then log "ok   $1"; else RESULT=FAIL; log "FAIL $1"; fi
+}
+expect_fail() { # expect_fail LABEL EXPECTED_TEXT CMD...   the command must fail AND say the expected thing
+  local label="$1" text="$2"; shift 2
+  local out; out="$("$@" 2>&1)" && { check "negative control: $label (it PASSED, it must fail)" fail; return; }
+  if printf '%s' "$out" | grep -q "$text"; then check "negative control: $label" pass
+  else check "negative control: $label (failed, but not for the expected reason: $(printf '%s' "$out" | tail -2 | tr '\n' ' ' | cut -c1-200))" fail; fi
+}
+
+# --- 1. build the "production" stack and seed SYNTHETIC rows and objects ------------------
+T0=$(date +%s)
+log "starting rehearsal stack $PROJECT_ID from $(git -C "$REPO_ROOT" rev-parse --short HEAD) migrations"
+start_stack before
+KEY="$(service_key)"; [ -n "$KEY" ] || fail "no service-role key from the stack"
+psql_q -f - <"$OPS/restore-drill-seed.sql" >"$EVIDENCE/seed.log"
+for i in 1 2 3; do head -c $((4096 * i)) /dev/urandom >"$WORK/o$i.bin"; upload "synthetic-$i.png" "$WORK/o$i.bin"; done
+head -c 2048 /dev/urandom >"$WORK/thumb.bin"; upload "synthetic-1.thumb.webp" "$WORK/thumb.bin"
+head -c 1500 /dev/urandom >"$WORK/spaced.bin"; upload "synthetic 4+plus.png" "$WORK/spaced.bin"   # a path that needs URL encoding
+
+age-keygen -o "$WORK/key.txt" >/dev/null 2>&1
+RECIPIENT="$(age-keygen -y "$WORK/key.txt")"
+age-keygen -o "$WORK/otherkey.txt" >/dev/null 2>&1
+log "age key generated in the job (destroyed at exit)"
+
+# --- 2. take both exports ------------------------------------------------------------------
+LOGICAL="$WORK/export-logical"; OBJECTS="$WORK/export-objects"
+rehearse bash "$OPS/logical-export.sh" --out "$LOGICAL" --recipient "$RECIPIENT" --expect-ref "$PROJECT_ID" 2>&1 | tee -a "$EVIDENCE/rehearsal.log" \
+  || fail "logical export"
+rehearse bash "$OPS/object-export.sh" --out "$OBJECTS" --recipient "$RECIPIENT" --expect-ref "$PROJECT_ID" --storage-url "$API" --bucket "$BUCKET" 2>&1 | tee -a "$EVIDENCE/rehearsal.log" \
+  || fail "object export"
+check "logical export taken, V1 hashes and V3 gate passed" pass
+check "object export taken, sample re-download matched" pass
+
+# the coverage line must say exactly what was seeded: 3 rows, all with objects; 5 objects, 1 (the spaced one) with no row
+grep -q '^rows_total=3 rows_without_object=0 objects_total=5 objects_without_row=1$' "$OBJECTS/coverage.txt" \
+  && check "coverage counts equal what was seeded" pass || check "coverage counts equal what was seeded ($(cat "$OBJECTS/coverage.txt"))" fail
+# no plaintext anywhere
+if find "$LOGICAL" "$OBJECTS" -type f ! -name '*.age' ! -name '*.sha256' ! -name '*.count' ! -name '*.tables' ! -name 'receipt.txt' ! -name 'coverage.txt' | grep -q .; then
+  check "no unexpected plaintext file in either export" fail
+else check "no unexpected plaintext file in either export" pass; fi
+if grep -rqs 'synthetic-1.png\|Synthetic Client' "$LOGICAL" "$OBJECTS" --include='*.age' --include='*.tables' --include='*.count' --include='receipt.txt' --include='coverage.txt'; then
+  check "no path or row text leaks outside the encrypted files" fail
+else check "no path or row text leaks outside the encrypted files" pass; fi
+
+# --- 3. verify with the key ----------------------------------------------------------------
+bash "$OPS/verify-export.sh" logical "$LOGICAL" --identity "$WORK/key.txt" 2>&1 | tee -a "$EVIDENCE/rehearsal.log" | tail -1 | grep -q 'VERIFY PASS' \
+  && check "V3 verify logical (decrypt reproduces the markers)" pass || check "V3 verify logical" fail
+bash "$OPS/verify-export.sh" objects "$OBJECTS" --identity "$WORK/key.txt" 2>&1 | tee -a "$EVIDENCE/rehearsal.log" | tail -1 | grep -q 'VERIFY PASS' \
+  && check "V5 verify objects (every object re-hashed)" pass || check "V5 verify objects" fail
+
+# --- 4. negative controls: each MUST fail, for its own reason -----------------------------------
+cat >"$WORK/pgdump-no-clients.sh" <<NC
+#!/usr/bin/env bash
+exec docker exec -i "$DB_CONTAINER" pg_dump -U postgres -d postgres "\$@" --exclude-table=public.clients
+NC
+chmod +x "$WORK/pgdump-no-clients.sh"
+expect_fail "V3 gate: public.clients removed from the dump" "COMPLETENESS GATE FAILED" \
+  env EXPORT_PG_DUMP_OVERRIDE="$WORK/pgdump-no-clients.sh" bash -c "$(declare -f rehearse); KEY='$KEY'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; rehearse bash '$OPS/logical-export.sh' --out '$WORK/nc-clients' --recipient '$RECIPIENT' --expect-ref '$PROJECT_ID'"
+[ -z "$(find "$WORK/nc-clients" -type f 2>/dev/null)" ] && check "negative control: the failed export left no file behind" pass || check "negative control: the failed export left no file behind" fail
+
+cp -r "$LOGICAL" "$WORK/tampered-logical"
+printf '\x00' | dd of="$WORK/tampered-logical/public-data.sql.age" bs=1 seek=40 count=1 conv=notrunc 2>/dev/null
+expect_fail "V1: one flipped ciphertext byte" "V1" bash "$OPS/verify-export.sh" logical "$WORK/tampered-logical" --identity "$WORK/key.txt"
+
+cp -r "$OBJECTS" "$WORK/tampered-objects"
+printf '\x00' | dd of="$WORK/tampered-objects/objects/000001.age" bs=1 seek=40 count=1 conv=notrunc 2>/dev/null
+expect_fail "V1/V5: one flipped object byte" "V1" bash "$OPS/verify-export.sh" objects "$WORK/tampered-objects" --identity "$WORK/key.txt"
+
+expect_fail "the wrong key cannot verify" "FAIL" bash "$OPS/verify-export.sh" logical "$LOGICAL" --identity "$WORK/otherkey.txt"
+
+expect_fail "wrong project ref is refused" "does not name project ref" \
+  bash -c "$(declare -f rehearse); KEY='$KEY'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; rehearse bash '$OPS/logical-export.sh' --out '$WORK/nc-ref' --recipient '$RECIPIENT' --expect-ref 'some-other-project'"
+
+# an object deleted BETWEEN the listing and the download must fail the object export
+HOOK="curl -fsS -X DELETE '$API/storage/v1/object/$BUCKET/$(urlencode_path "$PREFIX/synthetic-2.png")' -H 'Authorization: Bearer $KEY' -H 'apikey: $KEY' >/dev/null"
+expect_fail "T-1: an object deleted between listing and download" "could not be downloaded" \
+  bash -c "$(declare -f rehearse); KEY='$KEY'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; EXPORT_TEST_HOOK_AFTER_LIST=\"$HOOK\" rehearse bash '$OPS/object-export.sh' --out '$WORK/nc-obj' --recipient '$RECIPIENT' --expect-ref '$PROJECT_ID' --storage-url '$API' --bucket '$BUCKET'"
+# put it back (same bytes) so the later restore compares the taken export, not the damaged world
+curl -fsS -X POST "$API/storage/v1/object/$BUCKET/$(urlencode_path "$PREFIX/synthetic-2.png")" -H "Authorization: Bearer $KEY" -H "apikey: $KEY" \
+  -H "Content-Type: application/octet-stream" --data-binary "@$WORK/o2.bin" >/dev/null
+
+expect_fail "restore refuses a target equal to production" "equals the production ref" \
+  bash -c "$(declare -f rehearse); KEY='$KEY'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; rehearse bash '$OPS/export-restore.sh' logical '$LOGICAL' --identity '$WORK/key.txt' --target-ref '$PROJECT_ID' --production-ref '$PROJECT_ID'"
+
+# --- 5. disaster, then V4: restore into a NEW project built from the migrations --------------------
+log "destroying the rehearsal project (stop --no-backup)"
+$CLI stop --workdir "$WORK/stack" --no-backup >/dev/null 2>&1
+TR=$(date +%s)
+log "starting a fresh project from migrations"
+start_stack after
+KEY="$(service_key)"; [ -n "$KEY" ] || fail "no service-role key after rebuild"
+rehearse bash "$OPS/export-restore.sh" logical "$LOGICAL" --identity "$WORK/key.txt" --target-ref "$PROJECT_ID" --production-ref "a-production-ref-that-is-not-this" 2>&1 | tee -a "$EVIDENCE/rehearsal.log" | tail -1 | grep -q 'RESTORE PASS (logical)' \
+  && check "V4/V2: rows restored into a NEW project, fingerprints identical" pass || check "V4/V2: logical restore" fail
+rehearse bash "$OPS/export-restore.sh" objects "$OBJECTS" --identity "$WORK/key.txt" --target-ref "$PROJECT_ID" --production-ref "a-production-ref-that-is-not-this" --storage-url "$API" --bucket "$BUCKET" 2>&1 | tee -a "$EVIDENCE/rehearsal.log" | tail -1 | grep -q 'RESTORE PASS (objects)' \
+  && check "V4/V5: every object re-uploaded and re-hashed" pass || check "V4/V5: objects restore" fail
+RESTORE_SECONDS=$(( $(date +%s) - TR ))
+
+# --- 6. V7: the receipt (hashes, counts, durations; no names, ids, paths or rows) ----------------------
+{
+  echo "receipt=export-rehearsal (SYNTHETIC; nothing real was read or exported)"
+  echo "repo_head=$(git -C "$REPO_ROOT" rev-parse HEAD)"
+  echo "result=$RESULT"
+  echo "V1=checked on both exports, and a flipped byte was caught"
+  echo "V2=fingerprint identical after restore (storage.objects by count)"
+  echo "V3=completeness gate passed; removing public.clients failed it and discarded the output"
+  echo "V4=restored into a NEW project built from the repository migrations"
+  echo "V5=every object re-hashed; a missing object failed the export"
+  echo "V6=NOT RUN in CI (manual look at real data in a disposable project, by Sam)"
+  echo "V7=this receipt"
+  echo "total_seconds=$(( $(date +%s) - T0 )) restore_seconds=$RESTORE_SECONDS"
+  echo "--- logical export receipt"; cat "$LOGICAL/receipt.txt"
+  echo "--- object export receipt"; cat "$OBJECTS/receipt.txt"
+} >"$EVIDENCE/receipt-v7.txt"
+
+cat "$EVIDENCE/receipt-v7.txt" | sed -n '1,12p'
+log "RESULT: $RESULT"
+[ "$RESULT" = PASS ]
