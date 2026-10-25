@@ -66,6 +66,7 @@ import {
   type WaitlistEntryStatus,
 } from "@/lib/waitlist/admission-model";
 import { OPERATOR_QUEUE_STATUSES } from "@/lib/waitlist/operator-queue-presence";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // ===========================================================================
 // NEW-CLIENT WAITLIST — OPERATOR QUEUE (WAIT-02)
@@ -616,7 +617,7 @@ export default async function WaitlistSettingsPage({
       JSON.stringify({
         event: "waitlist_composer_services_read_failed",
         studioId: studio.id,
-        code: servicesError.code ?? "unknown",
+        code: dbErrorCode(servicesError),
         timestamp: new Date().toISOString(),
       }),
     );

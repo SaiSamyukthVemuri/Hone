@@ -28,6 +28,7 @@ import { intakeRevision, INTAKE_CONFLICT, INTAKE_TERMINAL } from "@/lib/intake/r
 import { writeIntakeRevision } from "@/lib/intake/write-revision";
 
 export type SaveResult = { ok: true; revision: string } | { ok: false; error: string; code?: "conflict" | "terminal" | "unavailable" };
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 
 const INTAKE_GENERIC_ERROR =
@@ -128,7 +129,7 @@ export async function saveIntakeStepAction(payload: {
     .is("deleted_at", null)
     .maybeSingle();
   if (lookupErr) {
-    logInternalIntakeError("intake_lookup_error", { code: lookupErr.code, message: lookupErr.message });
+    logInternalIntakeError("intake_lookup_error", { code: dbErrorCode(lookupErr) });
     return { ok: false, error: INTAKE_GENERIC_ERROR };
   }
   if (!existing) return { ok: false, error: "Intake not found." };
@@ -228,7 +229,7 @@ export async function submitIntakeAction(payload: {
     .is("deleted_at", null)
     .maybeSingle();
   if (lookupErr) {
-    logInternalIntakeError("intake_lookup_error", { code: lookupErr.code, message: lookupErr.message });
+    logInternalIntakeError("intake_lookup_error", { code: dbErrorCode(lookupErr) });
     return { ok: false, error: INTAKE_GENERIC_ERROR };
   }
   if (!existing) return { ok: false, error: "Intake not found." };

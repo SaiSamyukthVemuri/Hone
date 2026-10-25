@@ -3,6 +3,7 @@ import { buildPortalMagicLinkEmail } from "@/lib/email/templates/portal-magic-li
 import { sendEmailSafely } from "@/lib/email/send-appointment";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { safeLog } from "@/lib/logging/safe-log";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Shared client-portal magic-link issuance. Used by the new practitioner
 // "Send portal link" action; mirrors the public self-request issuance
@@ -60,7 +61,7 @@ export async function issuePortalMagicLink(
     safeLog.error(
       JSON.stringify({
         event: "portal_magic_link_insert_failed",
-        code: insertErr.code,
+        code: dbErrorCode(insertErr),
         timestamp: new Date().toISOString(),
       }),
     );

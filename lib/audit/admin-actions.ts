@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { redactOpsAlertDetails } from "@/lib/ops/redact";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Admin/operator action audit log (migration 0113). This is the ONLY writer of
 // admin_action_events and the ONLY reader for the /admin audit view. Both go
@@ -88,7 +89,7 @@ export async function logAdminAction(input: LogAdminActionInput): Promise<void> 
           event: "admin_action_audit_log_failed",
           action: input.action,
           outcome: input.outcome,
-          code: error.code,
+          code: dbErrorCode(error),
           timestamp: new Date().toISOString(),
         }),
       );

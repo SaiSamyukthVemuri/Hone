@@ -1,5 +1,6 @@
 "use server";
 
+import { dbErrorCode } from "@/lib/logging/error-class";
 import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
@@ -55,17 +56,30 @@ export type SettlementActionResult =
 type SettlementAction = "record" | "waive" | "supersede";
 
 /** Map a command ERROR. Only the 0214 jurisdiction refusal is told apart. */
+function classifyRpcError(error: { code?: string; message?: string }): {
+  dbCode: string;
+  jurisdictionMissing: boolean;
+} {
+  return {
+    dbCode: dbErrorCode(error),
+    jurisdictionMissing:
+      typeof error.message === "string" &&
+      error.message.startsWith("payment_jurisdiction_missing:"),
+  };
+}
+
 function rpcFailure(
   action: SettlementAction,
-  error: { code?: string; message?: string },
+  failed: { dbCode: string; jurisdictionMissing: boolean },
 ): SettlementActionResult {
-  if (typeof error.message === "string" && error.message.startsWith("payment_jurisdiction_missing:")) {
-    // The message names the studio; only the slug, action and code are logged.
+  if (failed.jurisdictionMissing) {
+    // The message names the studio; only the action and a validated code are
+    // logged, never the message.
     safeLog.error(
       JSON.stringify({
         event: "settlement_payment_jurisdiction_missing",
         action,
-        dbCode: error.code ?? null,
+        dbCode: failed.dbCode,
       }),
     );
     return { ok: false, code: "payment_jurisdiction_missing", message: JURISDICTION_MISSING };
@@ -165,7 +179,7 @@ export async function recordAppointmentSettlementAction(
     // whatever this says.
     p_livemode: inferStripeLivemode(),
   });
-  if (error) return rpcFailure("record", error);
+  if (error) return rpcFailure("record", classifyRpcError(error));
 
   const code = readCode(data);
   if (!code) return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };
@@ -220,7 +234,7 @@ export async function waiveAppointmentFeeAction(
     p_note: note,
     p_livemode: inferStripeLivemode(),
   });
-  if (error) return rpcFailure("waive", error);
+  if (error) return rpcFailure("waive", classifyRpcError(error));
 
   const code = readCode(data);
   if (!code) return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };
@@ -282,7 +296,7 @@ export async function supersedeAppointmentSettlementAction(
     p_note: note,
     p_livemode: inferStripeLivemode(),
   });
-  if (error) return rpcFailure("supersede", error);
+  if (error) return rpcFailure("supersede", classifyRpcError(error));
 
   const code = readCode(data);
   if (!code) return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };

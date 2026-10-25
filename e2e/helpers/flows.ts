@@ -2,6 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import type { E2eSeed } from "./seed";
 import { listMessageIds, waitForMagicLink } from "./mail";
 import { E2E_APP_ORIGIN } from "./local-env";
+import { followMagicLinkWebkit, installWebkitLocalhostFix, isWebKit } from "./webkit-localhost";
 
 // Shared UI flows for the E2E specs (PR #227/#228). Extracted from
 // the core-memory-loop spec so the mobile spec reuses the exact same
@@ -46,6 +47,10 @@ export async function bookAppointment(page: Page, s: E2eSeed): Promise<void> {
 
 // Real magic-link login for any seeded studio member (owner or practitioner).
 export async function loginByMagicLink(page: Page, email: string): Promise<void> {
+  // WebKit only (non-required WebKit job): strip the https-upgrade headers
+  // before the first document and follow the link by request. Chromium skips both.
+  const webkit = isWebKit(page);
+  if (webkit) await installWebkitLocalhostFix(page.context());
   await page.goto("/login");
   await page.getByLabel("I am using my invited email address").check();
   await page.locator("#login-email").fill(email);
@@ -54,7 +59,8 @@ export async function loginByMagicLink(page: Page, email: string): Promise<void>
   const seen = await listMessageIds(email);
   await page.getByRole("button", { name: /send magic link/i }).click();
   const link = await waitForMagicLink(email, E2E_APP_ORIGIN, { excludeIds: seen });
-  await page.goto(link);
+  if (webkit) await followMagicLinkWebkit(page, link);
+  else await page.goto(link);
   await page.waitForURL(/dashboard/, { timeout: 30_000 });
 }
 

@@ -1,5 +1,6 @@
 import type { createClient } from "@/lib/supabase/server";
 import type { WaitlistEntryStatus } from "./admission-model";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // ===========================================================================
 // NEW-CLIENT WAITLIST — DOES THIS STUDIO HAVE A LIVE OPERATOR QUEUE?
@@ -56,7 +57,7 @@ export async function hasActiveWaitlistEntries(
       JSON.stringify({
         event: "waitlist_nav_presence_failed",
         studioId,
-        code: error.code ?? "unknown",
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );

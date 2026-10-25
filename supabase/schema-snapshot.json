@@ -3,7 +3,7 @@
   "migrations": {
     "count": 246,
     "last": "0254_perm_hon44_role_enforcement.sql",
-    "sha256": "09a9557ada8763d4153835fa280b9c76bf35cca75cc1da20634185e2afeb0c81"
+    "sha256": "e7849a41183fa223436f720a2bda3f67ef703de9a03e228dbfd880b59c93a45d"
   },
   "public": {
     "tables": [
@@ -305,6 +305,7 @@
       "handle_new_user",
       "import_legacy_waitlist_entry",
       "imported_treatment_memory_audit_row",
+      "initialize_studio_payment_jurisdiction_from_history",
       "invalidate_waitlist_invitation_proof",
       "is_studio_member",
       "is_studio_owner",
@@ -503,8 +504,10 @@
       "soft_delete_session_block",
       "start_session",
       "stripe_account_provisioning_payment_country",
+      "studio_account_acceptable_for_jurisdiction",
       "studio_capacity_enabled",
       "studio_membership_kind_lock",
+      "studio_named_stripe_accounts",
       "studio_price_write_jurisdiction_lock",
       "studio_receptionists_membership_guard",
       "studio_sms_lease_window",

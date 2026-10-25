@@ -33,6 +33,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import type { PractitionerNotificationEventType } from "@/lib/types/database";
+import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
 // v1 event allowlist. The DB does not carry a CHECK constraint so
 // the helper is the single authority on what event types may land
@@ -137,8 +138,7 @@ export function recordPractitionerNotification(
       if (error) {
         logSilently({
           event: "practitioner_notification_insert_failed",
-          code: error.code,
-          err_message: error.message,
+          code: dbErrorCode(error),
           event_type: input.eventType,
           studio_id: input.studioId,
           appointment_id: input.appointmentId,
@@ -162,7 +162,7 @@ export function recordPractitionerNotification(
       // caller's mutation already committed; we only log.
       logSilently({
         event: "practitioner_notification_insert_threw",
-        err_message: err instanceof Error ? err.message : String(err),
+        err_class: thrownErrorClass(err),
         event_type: input.eventType,
         studio_id: input.studioId,
         appointment_id: input.appointmentId,

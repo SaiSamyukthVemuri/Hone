@@ -200,14 +200,20 @@ test("receipt success: the charge sends one receipt automatically, and exactly o
   await expectOneSucceededAttempt(success);
 });
 
-test("receipt success, non-owner view: masked receipt line, no technical details, full address not rendered", async ({
+test("receipt success, non-owner view: NO Session payment region at all, and no receipt address or processor id reaches the browser", async ({
   page,
 }) => {
-  // Its OWN paid session (Codex P2 4301359797): charged here by the owner, so
-  // this test runs alone and survives a retry in a fresh worker. Then seen by
-  // an active practitioner who is NOT the owner. TechnicalPaymentDetails
-  // returns null for a non-owner (a render gate, not CSS), so the full address
-  // must not be rendered for them.
+  // HON-44 (Sam decision 12): card charges, and therefore the payment card and its
+  // receipt panel, are owner-only. This used to prove the masked-receipt branch for
+  // a practitioner who could SEE the card; now she cannot, which is a stronger
+  // statement: nothing about the payment is rendered, and (closing the gap this test
+  // used to flag) nothing about it is serialized into her page either.
+  //
+  // Its OWN paid session: charged here by the owner so this test runs alone and
+  // survives a retry in a fresh worker. Then seen by an active practitioner who is
+  // NOT the owner. The masked-receipt and Technical-details branches inside the card
+  // stay as a second render gate; they have no browser path now (the guard is a
+  // source pin in tests/app/hon-44-owner-only-surfaces.test.ts).
   const email = await setClientEmail(nonOwner, "success");
   const attemptId = await chargeOnce(page, nonOwner);
   await settledReceiptStatus(nonOwner.sessionId, "sent");
@@ -215,15 +221,26 @@ test("receipt success, non-owner view: masked receipt line, no technical details
   await page.context().clearCookies();
   const member = await seedE2eMember(nonOwner);
   await loginByMagicLink(page, member.email);
-  const view = await openSessionPayment(page, nonOwner);
-  await expect(view.getByText(/^Receipt sent to /)).toBeVisible();
-  await expect(view.getByTestId("technical-payment-details")).toHaveCount(0);
-  // RENDERED text only. Known gap, flagged on the PR as an open privacy
-  // question: the session page's RSC payload still serializes the full attempt
-  // summary (receiptEmailTo, processor ids) to every practitioner, so the
-  // address reaches a non-owner's browser even though it is never rendered.
-  // This assertion pins what the render gate does guarantee today.
+  await page.goto(`/clients/${nonOwner.clientId}/sessions/${nonOwner.sessionId}`);
+  // The chart page itself rendered for her, so an absent payment area is not a blank page.
+  await expect(page.getByText(/done, back to client|back to sessions/i).first()).toBeVisible({
+    timeout: 20_000,
+  });
+
+  await expect(page.getByLabel("Session payment")).toHaveCount(0);
+  await expect(page.getByText(/^Receipt sent to /)).toHaveCount(0);
+  await expect(page.getByTestId("technical-payment-details")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^send receipt$/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /refund/i })).toHaveCount(0);
+
+  // RENDERED text: the receipt address is not on the page.
   expect(await page.evaluate(() => document.body.innerText)).not.toContain(email);
+  // SERIALIZED payload: the document carries the RSC flight data. The payment card
+  // is not rendered for her and its loaders do not run, so the processor identifiers
+  // the attempt summary used to carry to every practitioner are not in it either.
+  const wire = await page.content();
+  expect(wire).not.toMatch(/acct_test_e2e_|pm_test_e2e_|cus_test_e2e_|seti_test_e2e_|pi_test_e2e_/);
+
   // Viewing is not charging.
   expectExactlyOneCharge(nonOwner, attemptId);
   await expectOneSucceededAttempt(nonOwner);

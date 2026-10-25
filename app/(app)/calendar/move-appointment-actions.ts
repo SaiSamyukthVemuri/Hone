@@ -11,6 +11,7 @@ import {
 import { utcInstantFromLocal, localTimeString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { notifyAppointmentMoved, type MoveNotificationStatus } from "@/lib/email/notify-appointment-moved";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Practitioner Move appointment: the ONE shared backend workflow used by mobile,
 // tablet and desktop. Two typed server actions:
@@ -409,7 +410,7 @@ export async function moveAppointmentAction(input: {
       return { ok: false, code: "conflict", error: "That time is no longer available. Choose another time." };
     }
     // Never surface raw Postgres/Supabase/RPC detail; log a PHI-free structured line.
-    console.error(JSON.stringify({ event: "move_appointment_rpc_error", code: (error as { code?: string }).code ?? null }));
+    console.error(JSON.stringify({ event: "move_appointment_rpc_error", code: dbErrorCode(error) }));
     return { ok: false, error: "We couldn't move the appointment. Please try again." };
   }
 

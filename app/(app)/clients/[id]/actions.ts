@@ -13,6 +13,7 @@ import {
 } from "@/lib/clients/possible-duplicate";
 import { normalizeName } from "@/lib/import/quick-import";
 import { normalizePhoneForSms } from "@/lib/sms/phone";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 async function assertClientVisible(
   studioId: string,
@@ -141,7 +142,7 @@ async function checkDuplicateEmail(
     safeLog.error(
       JSON.stringify({
         event: "client_duplicate_email_lookup_failed",
-        code: error.code,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -252,7 +253,7 @@ export async function updateClientAction(
     safeLog.error(
       JSON.stringify({
         event: "client_update_identity_read_failed",
-        code: storedErr.code,
+        code: dbErrorCode(storedErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -341,7 +342,7 @@ export async function updateClientAction(
       JSON.stringify({
         event: "client_update_failed",
         clientId,
-        code: error.code,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -400,7 +401,7 @@ export async function archiveClientAction(formData: FormData): Promise<void> {
       JSON.stringify({
         event: "client_archive_audit_failed",
         clientId,
-        code: auditErr.code,
+        code: dbErrorCode(auditErr, ["audit_write_unavailable"]),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -446,7 +447,7 @@ export async function unarchiveClientAction(formData: FormData): Promise<void> {
       JSON.stringify({
         event: "client_unarchive_audit_failed",
         clientId,
-        code: auditErr.code,
+        code: dbErrorCode(auditErr, ["audit_write_unavailable"]),
         timestamp: new Date().toISOString(),
       }),
     );

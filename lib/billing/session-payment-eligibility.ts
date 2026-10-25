@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getChargeReadyCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
-import { accountCountryBlockingReason, accountCountryVerdict, JURISDICTION_UNVERIFIED_REASON } from "@/lib/billing/payment-jurisdiction";
+import { accountCountryBlockingReason, accountCountryVerdict, JURISDICTION_UNVERIFIED_REASON, parsePaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 import { NO_CARD_ON_FILE_REASON } from "./session-payment-types";
 import type {
   SessionPaymentCardAuthorizationSummary,
@@ -388,7 +388,7 @@ export async function getSessionPaymentEligibility(
     const { data: attemptRows, error: attemptsErr } = await admin
       .from("payment_charge_attempts")
       .select(
-        "id, status, amount_cents, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message_safe, receipt_status, receipt_sent_at, receipt_email_to, receipt_failure_code, receipt_failure_message_safe, refund_status, refund_amount_cents, refunded_at, stripe_refund_id, refund_failure_code, refund_failure_message_safe",
+        "id, status, amount_cents, currency, created_at, stripe_payment_intent_id, stripe_charge_id, charged_at, failed_at, failure_code, failure_message_safe, receipt_status, receipt_sent_at, receipt_email_to, receipt_failure_code, receipt_failure_message_safe, refund_status, refund_amount_cents, refunded_at, stripe_refund_id, refund_failure_code, refund_failure_message_safe",
       )
       .eq("studio_id", args.studioId)
       .eq("session_id", sessionSummary.id)
@@ -408,6 +408,8 @@ export async function getSessionPaymentEligibility(
       id: row.id as string,
       status: row.status as string,
       amountCents: row.amount_cents as number,
+      // The persisted currency, parsed; anything else is unknown (never CAD).
+      currency: parsePaymentCurrency(row.currency),
       createdAt: row.created_at as string,
       stripePaymentIntentId:
         (row.stripe_payment_intent_id as string | null) ?? null,

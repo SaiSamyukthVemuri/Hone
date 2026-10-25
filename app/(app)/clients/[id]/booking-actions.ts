@@ -8,6 +8,7 @@ import {
   type Slot,
 } from "@/lib/booking/slots";
 import { safeLog } from "@/lib/logging/safe-log";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 function logBookingSlotError(stage: string, code: string | undefined): void {
   // Bounded PHI-free marker only, never the raw DB/PostgREST message.
@@ -43,7 +44,7 @@ export async function fetchSlotsForClientBookingAction(params: {
     .eq("studio_id", studio.id)
     .maybeSingle();
   if (serviceErr) {
-    logBookingSlotError("service_lookup", serviceErr.code);
+    logBookingSlotError("service_lookup", dbErrorCode(serviceErr));
     return { ok: false, error: "Could not load times. Please try again.", code: "could_not_load_times" };
   }
   if (!service) return { ok: false, error: "Service not found.", code: "service_not_found" };
@@ -63,7 +64,7 @@ export async function fetchSlotsForClientBookingAction(params: {
       .eq("active", true)
       .maybeSingle();
     if (tErr) {
-      logBookingSlotError("target_lookup", tErr.code);
+      logBookingSlotError("target_lookup", dbErrorCode(tErr));
       return { ok: false, error: "Could not load times. Please try again.", code: "could_not_load_times" };
     }
     // Fixed copy, never reveals whether a FOREIGN id exists.
@@ -77,7 +78,7 @@ export async function fetchSlotsForClientBookingAction(params: {
       .eq("studio_id", studio.id)
       .maybeSingle();
     if (eligErr) {
-      logBookingSlotError("target_eligibility", eligErr.code);
+      logBookingSlotError("target_eligibility", dbErrorCode(eligErr));
       return { ok: false, error: "Could not load times. Please try again.", code: "could_not_load_times" };
     }
     if (!elig) {
@@ -137,7 +138,7 @@ export async function fetchEligiblePractitionersAction(
     .eq("service_id", serviceId)
     .eq("studio_id", studio.id);
   if (eligErr) {
-    logBookingSlotError("eligibility_lookup", eligErr.code);
+    logBookingSlotError("eligibility_lookup", dbErrorCode(eligErr));
     return { ok: false, error: "Could not load practitioners. Please try again." };
   }
   const ids = (elig ?? []).map((r) => r.practitioner_id as string);
@@ -150,7 +151,7 @@ export async function fetchEligiblePractitionersAction(
     .eq("active", true)
     .in("id", ids);
   if (pracErr) {
-    logBookingSlotError("practitioner_lookup", pracErr.code);
+    logBookingSlotError("practitioner_lookup", dbErrorCode(pracErr));
     return { ok: false, error: "Could not load practitioners. Please try again." };
   }
   const practitioners = (pracs ?? [])

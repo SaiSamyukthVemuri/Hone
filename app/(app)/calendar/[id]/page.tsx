@@ -598,6 +598,7 @@ export default async function AppointmentDetailPage({
           clientId={data.client?.id ?? null}
           appointmentId={id}
           linkedSession={linkedSession}
+          isOwner={isOwner}
         />
       )}
 
@@ -1404,10 +1405,14 @@ function NextStepCard({
   clientId,
   appointmentId,
   linkedSession,
+  isOwner,
 }: {
   clientId: string | null;
   appointmentId: string;
   linkedSession: Pick<Session, "id" | "started_at" | "modality"> | null;
+  // HON-44: billing is owner-only, so a non-owner is never sent to the (withdrawn)
+  // payment card and is not told to charge.
+  isOwner: boolean;
 }) {
   if (!clientId) {
     return (
@@ -1427,7 +1432,7 @@ function NextStepCard({
   if (!linkedSession) {
     ctaHref = `/clients/${clientId}/sessions/new?appointment_id=${encodeURIComponent(appointmentId)}`;
     ctaLabel = "Start session";
-  } else if (!sessionStarted) {
+  } else if (!sessionStarted || !isOwner) {
     ctaHref = `/clients/${clientId}/sessions/${sessionId}`;
     ctaLabel = "Open session";
   } else {
@@ -1442,8 +1447,9 @@ function NextStepCard({
           Appointment completed
         </p>
         <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">
-          Next step: chart the session, then charge a saved card or record
-          how the visit was settled.
+          {isOwner
+            ? "Next step: chart the session, then charge a saved card or record how the visit was settled."
+            : "Next step: chart the session. The studio owner takes payment."}
         </p>
       </div>
       <Link

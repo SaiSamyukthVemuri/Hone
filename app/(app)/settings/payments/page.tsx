@@ -13,6 +13,9 @@ import {
 } from "@/lib/payments/payment-status-presenter";
 import { PaymentsSettings, type StripeStatusView } from "./PaymentsSettings";
 import { FeeAmountsCard } from "./FeeAmountsCard";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
+import { currencyLabel } from "@/lib/billing/payment-jurisdiction";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 export const dynamic = "force-dynamic";
 
@@ -44,8 +47,7 @@ export default async function PaymentsSettingsPage() {
     console.error(
       JSON.stringify({
         event: "get_studio_payment_settings_display_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         studioId: studio.id,
         timestamp: new Date().toISOString(),
       }),
@@ -120,6 +122,13 @@ export default async function PaymentsSettingsPage() {
       });
   const banner = connectBannerCopy(runtimeMode, connect);
 
+  // The fee currency is the studio's VERIFIED jurisdiction currency, never a
+  // constant; an unknown or unreadable jurisdiction prints "not confirmed".
+  const feeJurisdiction = await getStudioPaymentJurisdiction(studio.id);
+  const feeCurrencyLabel = feeJurisdiction.ok
+    ? currencyLabel(feeJurisdiction.jurisdiction.currency)
+    : null;
+
   return (
     <section className="flex flex-col gap-8">
       <div>
@@ -145,6 +154,7 @@ export default async function PaymentsSettingsPage() {
       <FeeAmountsCard
         initialLateCancelCents={studio.late_cancel_fee_cents}
         initialNoShowCents={studio.no_show_fee_cents}
+        currencyLabel={feeCurrencyLabel}
       />
     </section>
   );

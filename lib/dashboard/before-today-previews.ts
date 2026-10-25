@@ -11,6 +11,7 @@ import {
   type BeforeToday,
 } from "@/lib/sessions/before-today";
 import type { SessionBlockArea } from "@/lib/types/database";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // PR #212: compact "Before today" previews for the Dashboard Today
 // roster. The preview is a RENDERING of the exact same PR #211
@@ -192,7 +193,7 @@ async function readRows(
   try {
     const { data, error } = await run();
     if (error) {
-      logReadFailure(event, studioId, error.code, scopeCount);
+      logReadFailure(event, studioId, dbErrorCode(error), scopeCount);
       return { rows: [], failed: true };
     }
     return { rows: Array.isArray(data) ? data : [], failed: false };
