@@ -62,6 +62,7 @@ import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import { redirect } from "next/navigation";
 import { buildTeamDay, type TeamDayColumn } from "@/lib/calendar/team-day";
 import { blockScopeNamesFor } from "@/lib/calendar/block-scope";
+import { isInitialCalendarEntry, isTeamCalendar } from "./initial-view";
 
 type Search = Promise<{
   week?: string;
@@ -78,16 +79,6 @@ function parseView(raw: string | undefined): "day" | "week" | "month" {
 
 const DATE_PARAM_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-// HON-48: the team day view exists for a studio whose calendar is a team
-// calendar, practitioner capacity on with more than one active practitioner.
-// One rule for every studio; a single-practitioner studio keeps the week view.
-function isTeamCalendar(
-  capacityEnabled: boolean,
-  activePractitioners: ReadonlyArray<unknown>,
-): boolean {
-  return capacityEnabled && activePractitioners.length > 1;
-}
-
 export default async function CalendarPage({
   searchParams,
 }: {
@@ -101,7 +92,15 @@ export default async function CalendarPage({
   const isOwner = practitioner.role === "owner"; // PR C: owner-only block editing
   const params = await searchParams;
   const today = todayInTz(studio.timezone);
-  const view = parseView(params.view);
+  let view = parseView(params.view);
+
+  // HON-48 (Sam decision 17): a team studio opens on the Day view; the rule and
+  // its reasons are in ./initial-view.ts. Only an entry with no calendar
+  // parameter is affected, so every explicit link keeps its meaning.
+  if (isInitialCalendarEntry(params) && studio.practitioner_capacity_enabled === true) {
+    const active = await getPractitionersForStudio(studio.id);
+    if (isTeamCalendar(true, active)) view = "day";
+  }
 
   // The week view continues to default to the current week unless a
   // ?week= is provided. The month view is gated on `view === "month"`
@@ -295,7 +294,7 @@ export default async function CalendarPage({
             : undefined
         }
         prevHref={`/calendar?week=${prevWeek}`}
-        todayHref="/calendar"
+        todayHref="/calendar?view=week"
         nextHref={`/calendar?week=${nextWeek}`}
         upcomingHref="/calendar/upcoming"
         hideStepNavOnMobile
