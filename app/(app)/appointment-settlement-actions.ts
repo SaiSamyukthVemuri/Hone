@@ -92,16 +92,22 @@ export async function recordAppointmentSettlementAction(
   formData: FormData,
 ): Promise<SettlementActionResult> {
   let studioId: string;
+  let isOwner: boolean;
   try {
-    const { studio } = await getCurrentPractitionerWithStudio();
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     studioId = studio.id;
+    isOwner = practitioner.role === "owner";
   } catch {
     return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };
   }
+  // HON-44 (Sam decision 12): recording what a client paid is a financial act and
+  // is owner-only. The role is derived above, never read from the form. This is
+  // the APP half; the database command still admits any member until 0254.
+  if (!isOwner) return failure("not_owner");
 
   const appointmentId = String(formData.get("appointment_id") ?? "");
   const method = String(formData.get("method") ?? "");
-  // The four a practitioner may record. `waived` reaching this action means a
+  // The four methods the owner may record. `waived` reaching this action means a
   // hand-built POST; the command refuses it too, and returns owner_only.
   if (!appointmentId || !isPractitionerMethod(method)) {
     return failure(method === "waived" ? "owner_only" : "invalid_input");

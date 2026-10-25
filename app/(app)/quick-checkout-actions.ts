@@ -23,6 +23,18 @@ export async function getQuickCheckoutContextAction(
   appointmentId: string,
 ): Promise<QuickCheckoutContextResult> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // HON-44 (Sam decision 12): checkout money context (service price, settled and
+  // quoted amounts, card state) is owner-only. A non-owner gets a closed refusal
+  // and no resolver call is made, so no money is read for them at all.
+  if (practitioner.role !== "owner") {
+    return {
+      ok: false,
+      reason: "Only the studio owner can take payment.",
+      clientId: null,
+      settlement: null,
+      isOwner: false,
+    };
+  }
   const ctx = await resolveQuickCheckoutContext({
     studioId: studio.id,
     studioTimezone: studio.timezone,

@@ -594,7 +594,11 @@ export async function updateSessionPriceAction(formData: FormData): Promise<void
     priceCents = Math.round(n * 100);
   }
 
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // HON-44 (Sam decision 12): price changes are owner-only. The role comes from
+  // the authenticated practitioner. This is the APP half; the database command
+  // set_session_price still admits any member until 0254.
+  if (practitioner.role !== "owner") throw new Error("Only the studio owner can change prices.");
   await assertSessionVisible(studio.id, clientId, sessionId);
 
   const supabase = await createClient();
