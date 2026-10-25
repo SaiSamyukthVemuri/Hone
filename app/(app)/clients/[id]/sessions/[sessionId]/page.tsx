@@ -1057,6 +1057,10 @@ export default async function SessionDetailPage({
           NextStepCard's "Go to billing" link deep-scrolls into the
           payment card. The wrapper is a noop visually; the anchor
           is the entire surface the practitioner is looking for. */}
+      {/* HON-44 (Sam decision 12): charging, recording payment and the amount are
+          owner-only; the server actions refuse a non-owner, and the whole card is
+          withdrawn for one. */}
+      {practitioner.role === "owner" && (
       <div id="session-payment">
         <SessionPaymentPrepareCard
           sessionId={session.id}
@@ -1087,6 +1091,7 @@ export default async function SessionDetailPage({
           refundAction={refundPaymentChargeAttemptAction}
         />
       </div>
+      )}
 
       {/* An archived (legacy finalized) record cannot be soft-deleted, the DB
           guard from 0119 still enforces that, so the destructive control is

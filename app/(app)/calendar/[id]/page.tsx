@@ -176,8 +176,10 @@ export default async function AppointmentDetailPage({
   // round-trip. The helper itself is read-only and runs through
   // service-role; no Stripe call, no row write. The future Stripe-
   // charge PR will reuse the same helper before any PaymentIntent.
+  // HON-44 (Sam decision 12): card charges are owner-only, so the fee card and its
+  // two eligibility reads exist for the owner alone.
   const showManualFeeCard =
-    data.status === "cancelled" || data.status === "no_show";
+    isOwner && (data.status === "cancelled" || data.status === "no_show");
   const manualFeeLateCancel = showManualFeeCard
     ? await getManualFeeChargeEligibility({
         studioId: studio.id,
@@ -204,8 +206,10 @@ export default async function AppointmentDetailPage({
   // Quick checkout: the appointment's coarse payment state, so the Payment
   // section shows Paid/Processing/Refunded or the Checkout entry: the SAME
   // bounded loader + cell the dashboard uses (one flow, not two).
+  // Owner-only (HON-44): a non-owner never queries payment state and sees no
+  // payment section.
   const checkoutPaymentState =
-    typedStatus === "completed"
+    isOwner && typedStatus === "completed"
       ? (await getAppointmentPaymentStates(studio.id, [id], studio.timezone)).get(id) ??
         // A missing entry means the loader could not speak for this
         // appointment; that is not the same as "no session".
@@ -523,7 +527,7 @@ export default async function AppointmentDetailPage({
       {/* Quick checkout (Chloe): take payment for a completed appointment right
           here, without navigating into charting. The modal reuses the existing
           session-payment card + actions; charting is independent. */}
-      {typedStatus === "completed" && (
+      {isOwner && typedStatus === "completed" && (
         <section className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-5 text-sm dark:border-neutral-800">
           <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
             Payment

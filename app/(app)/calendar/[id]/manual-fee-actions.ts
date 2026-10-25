@@ -101,6 +101,8 @@ export async function prepareManualFeeChargeAction(
   let studioId: string;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    // HON-44 (Sam decision 12): card charges and fee receipts are owner-only.
+    if (practitioner.role !== "owner") throw new Error("owner_only");
     practitionerId = practitioner.id;
     studioId = studio.id;
   } catch {
@@ -273,6 +275,8 @@ export async function chargeManualFeeAttemptAction(
   let studioId: string;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    // HON-44 (Sam decision 12): card charges and fee receipts are owner-only.
+    if (practitioner.role !== "owner") throw new Error("owner_only");
     practitionerId = practitioner.id;
     studioId = studio.id;
   } catch (err) {
@@ -433,6 +437,8 @@ export async function cancelManualFeeChargeAttemptAction(
   let studioId: string;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    // HON-44 (Sam decision 12): card charges and fee receipts are owner-only.
+    if (practitioner.role !== "owner") throw new Error("owner_only");
     practitionerId = practitioner.id;
     studioId = studio.id;
   } catch (err) {
@@ -512,6 +518,8 @@ export async function sendFeeReceiptAction(
   let practitionerId: string, studioId: string;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    // HON-44 (Sam decision 12): card charges and fee receipts are owner-only.
+    if (practitioner.role !== "owner") throw new Error("owner_only");
     practitionerId = practitioner.id;
     studioId = studio.id;
   } catch {
