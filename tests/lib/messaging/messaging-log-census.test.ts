@@ -24,6 +24,16 @@ import {
 // This file does: it enumerates every log writer on the messaging surface and
 // holds each one to the #1076 rules.
 //
+// RELATION TO #1138 (MSG-LOG-RAW-ERROR-2, tests/lib/logging/raw-error-log-contract.test.ts).
+// The two contracts are different questions and both must hold:
+//   #1138 = no raw ERROR TEXT anywhere in app/ and lib/ (an empty allow-list);
+//   #1106 = no DESTINATION, CREDENTIAL or CONTENT in a MESSAGING log, and a
+//           frozen inventory of what the source cannot prove.
+// This census does not re-implement #1138: its classifiers (dbErrorCode,
+// safeDbCode, thrownErrorClass, stripeErrorFields, failureCode,
+// boundedErrorLabel) are VERIFIED_FUNCTIONS here, so a caught error handed to
+// one is clean and ERROR_TEXT_SITES below is what is left of "error text".
+//
 // THE SURFACE (derived by git, see log-census.ts): every file under the SMS,
 // email, waitlist, notification and portal-message modules, the Twilio webhook
 // and cron routes, plus every application file that imports one of those
@@ -69,14 +79,14 @@ import {
 // ===========================================================================
 
 const CENSUS: Record<string, Record<string, number>> = {
-  "app/(app)/calendar/actions.ts": { "console.error": 12, "logBookingDbError()": 5, "logPostcare()": 3 },
+  "app/(app)/calendar/actions.ts": { "console.error": 11, "logBookingDbError()": 5, "logPostcare()": 3, "safeLog.error": 1 },
   "app/(app)/calendar/move-appointment-actions.ts": { "console.error": 3 },
   "app/(app)/calendar/postcare-auto-send.ts": { "console.error": 1, "console.log": 1, "logOutcome()": 8 },
   "app/(app)/clients/[id]/actions.ts": { "safeLog.error": 7 },
   "app/(app)/clients/[id]/intake/actions.ts": { "logIntakeActionFailure()": 19, "safeLog.error": 3 },
   "app/(app)/clients/[id]/page.tsx": { "console.error": 1, "logClinicalReadFailure()": 4 },
   "app/(app)/clients/[id]/portal-messages-actions.ts": { "safeLog.error": 6 },
-  "app/(app)/settings/team/actions.ts": { "console.error": 3, "console.warn": 1 },
+  "app/(app)/settings/team/actions.ts": { "console.error": 1, "console.warn": 1, "safeLog.error": 2 },
   "app/(app)/settings/waitlist/consent-actions.ts": { "console.error": 1, "logRefusal()": 5 },
   "app/(app)/settings/waitlist/page.tsx": { "console.error": 5 },
   "app/(app)/settings/waitlist/profile-actions.ts": { "console.error": 1, "logRefusal()": 4 },
@@ -86,7 +96,7 @@ const CENSUS: Record<string, Record<string, number>> = {
   "app/api/cron/materialize-recurring-breaks/route.ts": { "console.error": 2 },
   "app/api/twilio/inbound-sms/route.ts": { "console.error": 1, "console.log": 1, "logError()": 12, "logEvent()": 3 },
   "app/api/twilio/message-status/route.ts": { "console.error": 1, "console.log": 1, "logError()": 4, "logEvent()": 4 },
-  "app/book/[slug]/actions.ts": { "console.error": 6, "invitationBookingIndeterminate()": 1, "invitationConsumedWithoutBooking()": 6, "logInternalBookingError()": 15, "postCommit()": 11 },
+  "app/book/[slug]/actions.ts": { "console.error": 6, "invitationBookingIndeterminate()": 1, "invitationConsumedWithoutBooking()": 6, "logInternalBookingError()": 16, "postCommit()": 11 },
   "app/book/[slug]/waitlist-actions.ts": { "console.error": 1, "logWaitlistEvent()": 17 },
   "app/cancel/[token]/actions.ts": { "logInternal()": 4, "safeLog.error": 2 },
   "app/intake/[token]/actions.ts": { "console.error": 4, "logInternalIntakeError()": 4 },
@@ -113,14 +123,12 @@ const CENSUS: Record<string, Record<string, number>> = {
 };
 
 // Kinds:
-//   db       a Supabase/PostgREST error's message. Postgres names the constraint,
-//            not the row, but "invalid input syntax for type ...: <value>" echoes
-//            the value it refused.
-//   thrown   a caught exception's message or object.
-//   provider an email send result's error, or a raw email-provider error (see
-//            THE LIMIT above).
-//   closed   a closed vocabulary the analyzer cannot see: sendSmsSafely's error
-//            tags (lib/sms/twilio.ts), payment-receipt's sanitiseSafe output.
+//   provider the `.error` of an EMAIL or SMS send result. By type it is a closed
+//            tag (EmailSendFailure; sendSmsSafely's twilio_* tags), but the
+//            analyzer reads an `.error` property as error-like, so these rows
+//            are the ERROR_TEXT_SITES pinned below and nothing else is.
+//   closed   a closed vocabulary the analyzer cannot see (the same send-result
+//            tags, written next to a settle outcome).
 //   input    (fail closed) a request or form value written as given
 //            (formDataStr(...), formData.get(...), a slug): the browser decides it.
 //   db_result (fail closed) a field of a database or RPC reply (`row.result`,
@@ -129,48 +137,40 @@ const CENSUS: Record<string, Record<string, number>> = {
 //            does not resolve to an allowed shape: most often a record id
 //            (studio.id), an error or status code (error.code), a flag
 //            (result.retryable) or a count. Not known to be unsafe; not proven.
-type UnprovenKind = "db" | "thrown" | "provider" | "closed" | "input" | "db_result" | "value";
+// There is no "db" or "thrown" kind any more: since #1138 a database error or a
+// caught exception reaches a log line only as dbErrorCode() / thrownErrorClass(),
+// both in VERIFIED_FUNCTIONS, and a test below fails if one is written whole.
+type UnprovenKind = "provider" | "closed" | "input" | "db_result" | "value";
 const UNPROVEN: ReadonlyArray<readonly [key: string, count: number, kind: UnprovenKind]> = [
   ["app/(app)/calendar/actions.ts | console.error | booking_slot_collision", 1, "value"],
   ["app/(app)/calendar/actions.ts | console.error | booking_action_post_commit_error:dispatch:", 1, "value"],
-  ["app/(app)/calendar/actions.ts | console.error | practitioner_cancel_rpc_error", 1, "db"],
-  ["app/(app)/calendar/actions.ts | console.error | client cancel notification email failed", 1, "provider"],
-  ["app/(app)/calendar/actions.ts | console.error | mark_complete_rpc_error", 1, "db"],
-  ["app/(app)/calendar/actions.ts | console.error | mark_no_show_rpc_error", 1, "db"],
-  ["app/(app)/calendar/actions.ts | console.error | send_postcare_lookup_failed", 1, "db"],
+  ["app/(app)/calendar/actions.ts | console.error | practitioner_cancel_rpc_error", 1, "value"],
+  ["app/(app)/calendar/actions.ts | console.error | mark_complete_rpc_error", 1, "value"],
+  ["app/(app)/calendar/actions.ts | console.error | mark_no_show_rpc_error", 1, "value"],
+  ["app/(app)/calendar/actions.ts | console.error | send_postcare_lookup_failed", 1, "value"],
   ["app/(app)/calendar/actions.ts | console.error | send_postcare_email_failed", 1, "input"],
   ["app/(app)/calendar/actions.ts | console.error | send_postcare_success_write_failed", 1, "input"],
-  ["app/(app)/calendar/actions.ts | logBookingDbError() | book_appointment", 3, "value"],
-  ["app/(app)/calendar/actions.ts | logBookingDbError() | create_client", 1, "value"],
-  ["app/(app)/calendar/actions.ts | logBookingDbError() | last_service", 1, "value"],
   ["app/(app)/calendar/actions.ts | logPostcare() | send_postcare_claim_command_failed", 1, "input"],
   ["app/(app)/calendar/actions.ts | logPostcare() | send_postcare_claim_empty", 1, "input"],
   ["app/(app)/calendar/actions.ts | logPostcare() | send_postcare_settle_failure_unpersisted", 1, "input"],
-  ["app/(app)/calendar/move-appointment-actions.ts | console.error | move_appointment_rpc_error", 1, "value"],
-  ["app/(app)/calendar/postcare-auto-send.ts | console.error | postcare_auto_send_threw", 1, "thrown"],
+  ["app/(app)/calendar/postcare-auto-send.ts | console.error | postcare_auto_send_threw", 1, "value"],
   ["app/(app)/calendar/postcare-auto-send.ts | logOutcome() | load_error", 2, "value"],
   ["app/(app)/calendar/postcare-auto-send.ts | logOutcome() | {appointmentId}", 1, "value"],
   ["app/(app)/calendar/postcare-auto-send.ts | logOutcome() | not_claimed", 1, "value"],
   ["app/(app)/calendar/postcare-auto-send.ts | logOutcome() | settle_failed", 2, "value"],
   ["app/(app)/calendar/postcare-auto-send.ts | logOutcome() | failed", 1, "value"],
   ["app/(app)/calendar/postcare-auto-send.ts | logOutcome() | sent", 1, "value"],
-  ["app/(app)/clients/[id]/actions.ts | safeLog.error | client_duplicate_email_lookup_failed", 1, "value"],
-  ["app/(app)/clients/[id]/actions.ts | safeLog.error | client_update_identity_read_failed", 1, "value"],
   ["app/(app)/clients/[id]/actions.ts | safeLog.error | client_update_possible_duplicate_lookup_failed", 1, "value"],
   ["app/(app)/clients/[id]/actions.ts | safeLog.error | client_update_failed", 1, "input"],
   ["app/(app)/clients/[id]/actions.ts | safeLog.error | client_archive_audit_failed", 1, "input"],
   ["app/(app)/clients/[id]/actions.ts | safeLog.error | client_unarchive_audit_failed", 1, "input"],
-  ["app/(app)/clients/[id]/intake/actions.ts | safeLog.error | {code}", 1, "db"],
+  ["app/(app)/clients/[id]/intake/actions.ts | safeLog.error | {code}", 1, "value"],
   ["app/(app)/clients/[id]/intake/actions.ts | safeLog.error | intake_reissue_email_failed", 2, "provider"],
   ["app/(app)/clients/[id]/page.tsx | logClinicalReadFailure() | client_profile_recent_blocks_read_failed", 2, "value"],
   ["app/(app)/clients/[id]/page.tsx | logClinicalReadFailure() | client_profile_intelligence_blocks_read_failed", 2, "value"],
-  ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_client_lookup_failed", 1, "value"],
-  ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_insert_failed", 1, "db"],
   ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_email_send_failed", 1, "provider"],
-  ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_notification_stamp_failed", 1, "db"],
-  ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_reply_mark_seen_failed", 1, "db"],
-  ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_archive_failed", 1, "db"],
-  ["app/(app)/settings/team/actions.ts | console.error | Failed to send invitation email:", 2, "provider"],
+  ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_notification_stamp_failed", 1, "value"],
+  ["app/(app)/clients/[id]/portal-messages-actions.ts | safeLog.error | portal_message_archive_failed", 1, "value"],
   ["app/(app)/settings/team/actions.ts | console.error | team_action_db_error:remove_practitioner:", 1, "db_result"],
   ["app/(app)/settings/waitlist/consent-actions.ts | logRefusal() | entry_read_failed", 1, "value"],
   ["app/(app)/settings/waitlist/consent-actions.ts | logRefusal() | phone_not_textable", 1, "value"],
@@ -186,20 +186,16 @@ const UNPROVEN: ReadonlyArray<readonly [key: string, count: number, kind: Unprov
   ["app/(app)/settings/waitlist/profile-actions.ts | logRefusal() | waitlist_manual_entry_failed", 1, "db_result"],
   ["app/(app)/settings/waitlist/profile-actions.ts | logRefusal() | waitlist_legacy_import_failed", 2, "db_result"],
   ["app/admin/studios/new/actions.ts | console.error | new_studio_orphan_cleanup_failed", 1, "value"],
-  ["app/api/cron/calendar-reconcile/route.ts | console.error | reminder_scheduler_health_check_threw", 1, "thrown"],
-  ["app/api/cron/calendar-sync/route.ts | console.error | reminder_scheduler_health_check_threw", 1, "thrown"],
-  ["app/api/cron/materialize-recurring-breaks/route.ts | console.error | recurring_break_materialization_conflict", 1, "db"],
-  ["app/api/cron/materialize-recurring-breaks/route.ts | console.error | reminder_scheduler_health_check_threw", 1, "thrown"],
+  ["app/api/cron/materialize-recurring-breaks/route.ts | console.error | recurring_break_materialization_conflict", 1, "value"],
   ["app/api/twilio/inbound-sms/route.ts | logEvent() | twilio_inbound_non_stop", 1, "value"],
   ["app/api/twilio/inbound-sms/route.ts | logEvent() | twilio_inbound_stop_no_digits", 1, "value"],
   ["app/api/twilio/inbound-sms/route.ts | logEvent() | twilio_inbound_stop_processed", 1, "value"],
-  ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_body_read_failed", 1, "thrown"],
-  ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_client_scan_failed", 1, "thrown"],
-  ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_client_optout_failed", 1, "db"],
-  ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_prospect_scan_failed", 1, "thrown"],
-  ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_prospect_optout_failed", 1, "db"],
-  ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_audit_insert_failed", 1, "db"],
-  ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_prospect_audit_insert_failed", 1, "db"],
+  ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_client_scan_failed", 1, "value"],
+  ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_client_optout_failed", 1, "value"],
+  ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_prospect_scan_failed", 1, "value"],
+  ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_prospect_optout_failed", 1, "value"],
+  ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_audit_insert_failed", 1, "value"],
+  ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_prospect_audit_insert_failed", 1, "value"],
   ["app/api/twilio/inbound-sms/route.ts | logError() | twilio_inbound_stop_partial_optout_failed", 1, "value"],
   ["app/api/twilio/message-status/route.ts | logEvent() | twilio_status_recorded", 1, "db_result"],
   ["app/book/[slug]/actions.ts | console.error | waitlist_invitation_booking_outcome_indeterminate", 1, "value"],
@@ -222,6 +218,7 @@ const UNPROVEN: ReadonlyArray<readonly [key: string, count: number, kind: Unprov
   ["app/book/[slug]/actions.ts | logInternalBookingError() | public_booking_practitioner_lookup_failed", 1, "value"],
   ["app/book/[slug]/actions.ts | logInternalBookingError() | public_booking_marketing_consent_insert_failed", 1, "value"],
   ["app/book/[slug]/actions.ts | invitationConsumedWithoutBooking() | created", 1, "db_result"],
+  ["app/book/[slug]/actions.ts | logInternalBookingError() | public_booking_identity_unconfirmed", 1, "value"],
   ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_client_email_not_accepted", 1, "value"],
   ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_client_email_threw", 1, "value"],
   ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_join_ack_sms_threw", 1, "value"],
@@ -238,23 +235,12 @@ const UNPROVEN: ReadonlyArray<readonly [key: string, count: number, kind: Unprov
   ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_studio_email_unconfirmed", 1, "value"],
   ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_studio_email_rejected", 1, "value"],
   ["app/book/[slug]/waitlist-actions.ts | logWaitlistEvent() | new_client_waitlist_studio_lookup_failed", 1, "input"],
-  ["app/intake/[token]/actions.ts | console.error | Failed to look up client for intake sync:", 1, "db"],
-  ["app/intake/[token]/actions.ts | console.error | Failed to sync intake to client:", 1, "db"],
-  ["app/intake/[token]/actions.ts | logInternalIntakeError() | intake_lookup_error", 2, "db"],
-  ["app/intake/[token]/actions.ts | logInternalIntakeError() | intake_save_update_error", 1, "db"],
-  ["app/intake/[token]/actions.ts | logInternalIntakeError() | intake_submit_update_error", 1, "db"],
   ["app/portal/login/actions.ts | logSanitized() | portal_login_request_no_match", 1, "input"],
   ["app/portal/login/actions.ts | logSanitized() | portal_login_multiple_matches_needs_review", 1, "input"],
-  ["app/portal/login/actions.ts | logSanitized() | portal_login_magic_insert_failed", 1, "db"],
   ["app/portal/login/actions.ts | logSanitized() | portal_login_email_send_failed", 1, "provider"],
   ["app/portal/login/actions.ts | logSanitized() | portal_login_request_match", 1, "value"],
-  ["app/portal/portal-message-actions.ts | console.error | portal_message_mark_reviewed_failed", 1, "db"],
-  ["app/portal/portal-message-actions.ts | console.error | portal_reply_client_lookup_failed", 1, "db"],
-  ["app/portal/portal-message-actions.ts | console.error | portal_reply_parent_lookup_failed", 1, "db"],
-  ["app/portal/portal-message-actions.ts | console.error | portal_reply_insert_failed", 1, "db"],
-  ["app/portal/portal-message-actions.ts | console.error | portal_reply_studio_lookup_failed", 1, "db"],
   ["app/portal/portal-message-actions.ts | console.error | portal_reply_email_send_failed", 1, "provider"],
-  ["app/portal/portal-message-actions.ts | console.error | portal_reply_notification_stamp_failed", 1, "db"],
+  ["app/portal/portal-message-actions.ts | console.error | portal_reply_notification_stamp_failed", 1, "value"],
   ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_client_lookup_failed", 1, "value"],
   ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_studio_lookup_failed", 1, "value"],
   ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_readiness_read_failed", 1, "value"],
@@ -269,32 +255,28 @@ const UNPROVEN: ReadonlyArray<readonly [key: string, count: number, kind: Unprov
   ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_practitioner_lookup_failed", 1, "value"],
   ["app/portal/rebook-actions.ts | logRebookError() | portal_rebook_no_client_email_on_file", 1, "value"],
   ["app/reschedule/[token]/actions.ts | console.error | booking_slot_collision", 1, "value"],
-  ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_assert_lookup_failed", 1, "db"],
-  ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_fetch_summary_failed", 1, "db"],
+  ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_assert_lookup_failed", 1, "value"],
+  ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_fetch_summary_failed", 1, "value"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_slots_read_failed", 1, "value"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_studio_lookup_failed", 1, "value"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_client_metadata_unavailable", 1, "value"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_app_origin_unresolved", 1, "value"],
-  ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_rpc_failed", 1, "db"],
+  ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_rpc_failed", 1, "value"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_command_unmapped_code", 1, "db_result"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_malformed_success_row", 1, "value"],
   ["app/reschedule/[token]/actions.ts | logInternal() | unknown", 1, "value"],
   ["app/reschedule/[token]/actions.ts | logInternal() | public_reschedule_practitioner_lookup_failed", 1, "value"],
   ["lib/billing/payment-receipt.ts | logInternal() | payment_receipt_pdf_failed", 1, "closed"],
-  ["lib/billing/payment-receipt.ts | logInternal() | {args}", 1, "db"],
-  ["lib/billing/payment-receipt.ts | logInternal() | payment_receipt_claim_failed", 1, "db"],
-  ["lib/billing/payment-receipt.ts | logInternal() | payment_receipt_sent_record_update_failed", 1, "db"],
+  ["lib/billing/payment-receipt.ts | logInternal() | {args}", 1, "value"],
+  ["lib/billing/payment-receipt.ts | logInternal() | payment_receipt_claim_failed", 1, "value"],
+  ["lib/billing/payment-receipt.ts | logInternal() | payment_receipt_sent_record_update_failed", 1, "value"],
   ["lib/notifications/practitioner-notifications.ts | logSilently() | practitioner_notification_invalid_event_type", 1, "value"],
-  ["lib/notifications/practitioner-notifications.ts | logSilently() | practitioner_notification_insert_failed", 1, "db"],
-  ["lib/notifications/practitioner-notifications.ts | logSilently() | practitioner_notification_insert_threw", 1, "thrown"],
+  ["lib/notifications/practitioner-notifications.ts | logSilently() | practitioner_notification_insert_failed", 1, "value"],
+  ["lib/notifications/practitioner-notifications.ts | logSilently() | practitioner_notification_insert_threw", 1, "value"],
   ["lib/ops/alert-email.ts | console.error | ops_alert_email_send_failed", 1, "value"],
   ["lib/ops/alert-email.ts | console.error | ops_alert_email_threw", 1, "value"],
-  ["lib/portal-messages/queries.ts | console.error | portal_messages_for_practitioner_failed", 1, "db"],
-  ["lib/portal-messages/replies-queries.ts | console.error | portal_message_replies_for_practitioner_failed", 1, "db"],
-  ["lib/portal/magic-link.ts | safeLog.error | portal_magic_link_insert_failed", 1, "value"],
   ["lib/portal/magic-link.ts | console.error | portal_magic_link_email_failed", 1, "value"],
   ["lib/portal/magic-link.ts | safeLog.info | portal_magic_link_sent", 1, "value"],
-  ["lib/rate-limit/public.ts | console.error | ratelimit_backend_unavailable", 1, "thrown"],
   ["lib/rate-limit/public.ts | logBackendUnavailable() | {args}", 1, "value"],
   ["lib/rate-limit/public.ts | logRateLimitExceeded() | public_book", 2, "value"],
   ["lib/rate-limit/public.ts | logRateLimitExceeded() | {args}", 1, "value"],
@@ -313,6 +295,21 @@ const UNPROVEN: ReadonlyArray<readonly [key: string, count: number, kind: Unprov
   ["lib/waitlist/delivery/sms.ts | log() | {outcome}", 1, "closed"],
   ["lib/waitlist/operator-queue-presence.ts | console.error | waitlist_nav_presence_failed", 1, "value"],
 ];
+
+// The only error-like values still on the line, per file: the `.error` of an
+// EMAIL or SMS send result. By type it is a closed tag (EmailSendFailure in
+// lib/email/send-appointment.ts; the twilio_* tags of sendSmsSafely), not a
+// caught error, so #1138 rightly leaves it. The analyzer reads any `.error`
+// property as error-like, so the sites are pinned: a new one fails here until a
+// reviewer has seen that it is a send result and not a database error.
+const ERROR_TEXT_SITES: Record<string, string[]> = {
+  "app/(app)/clients/[id]/intake/actions.ts": ["result.error", "result.error"],
+  "app/(app)/clients/[id]/portal-messages-actions.ts": ["sendResult.error"],
+  "app/portal/login/actions.ts": ["sendResult.error"],
+  "app/portal/portal-message-actions.ts": ["sendResult.error"],
+  "lib/waitlist/delivery/join-ack-sms.ts": ["result.error"],
+  "lib/waitlist/delivery/sms.ts": ["result.error"],
+};
 
 // Exported functions that write one of their own parameters whole, so their
 // callers (in other files) are not followed. Each is a typed string record id
@@ -404,6 +401,21 @@ describe("MSG-007 log census: every writer is classified", () => {
     expect(missing).toEqual([]);
   });
 
+  it("ERROR_TEXT_SITES is exactly the error-like values still written, and every one is a send result's closed tag", () => {
+    const actual: Record<string, string[]> = {};
+    for (const w of writers) for (const e of w.errorText) (actual[w.file] ??= []).push(e);
+    expect(Object.fromEntries(Object.entries(actual).map(([f, es]) => [f, es.sort()]))).toEqual(ERROR_TEXT_SITES);
+    // Not a database error and not a caught value: only `<send result>.error`.
+    for (const es of Object.values(actual)) for (const e of es) expect(e, e).toMatch(/^(result|sendResult)\.error$/);
+  });
+
+  it("no writer writes a database error, a caught value or a message whole (the #1138 classifiers are the only way in)", () => {
+    const raw = writers.flatMap((w) =>
+      w.errorText.filter((e) => !/^(result|sendResult)\.error$/.test(e)).map((e) => `${e} in ${where(w)}`),
+    );
+    expect(raw).toEqual([]);
+  });
+
   it("UNPROVEN has no duplicate rows", () => {
     const keys = UNPROVEN.map(([key]) => key);
     expect(new Set(keys).size).toBe(keys.length);
@@ -457,9 +469,10 @@ describe("MSG-007 log census: the default-deny allowlist is pinned", () => {
 
   it("VERIFIED_FUNCTIONS is exactly this list", () => {
     expect(Object.keys(VERIFIED_FUNCTIONS).sort()).toEqual([
-      "Math.min", "currentEnvironment", "eligibilitySkip", "emailAttemptForLog", "emailTypeForLog",
-      "environmentLabel", "errorCodeOf", "hashFingerprint", "hashId", "missingSuccessFields",
-      "normalizeTwilioMessageStatus", "retryAfterSeconds", "smsAttemptForLog", "smsFailureForLog", "smsTypeForLog",
+      "Math.min", "boundedErrorLabel", "boundedErrorName", "currentEnvironment", "dbErrorCode", "eligibilitySkip",
+      "emailAttemptForLog", "emailTypeForLog", "environmentLabel", "errorCodeOf", "failureCode", "hashFingerprint",
+      "hashId", "invitationEmailFailure", "missingSuccessFields", "normalizeTwilioMessageStatus", "retryAfterSeconds",
+      "safeDbCode", "smsAttemptForLog", "smsFailureForLog", "smsTypeForLog", "stripeErrorFields", "thrownErrorClass",
     ]);
   });
 });
@@ -645,6 +658,27 @@ describe("MSG-007 log census: the analyzer catches what it must", () => {
       export async function u(f: () => Promise<void>) { try { await f(); } catch (problem) { console.error(String(problem)); } }`);
     expect(ws[0].errorText).toEqual(["problem"]);
     expect(ws[0].unproven).toEqual(["caught problem"]);
+  });
+
+  it("a #1138 classifier makes a caught value clean, and its own name is not read as a destination (a bare one still is not)", () => {
+    const { writers: ws } = analyze(`
+      declare function dbErrorCode(e: unknown): string;
+      declare function thrownErrorClass(e: unknown): string;
+      declare function invitationEmailFailure(kind: string, e: unknown): string;
+      export async function c(f: () => Promise<void>, rpcErr: unknown) {
+        try { await f(); } catch (problem) {
+          console.error(JSON.stringify({ event: "x", code: dbErrorCode(rpcErr), cls: thrownErrorClass(problem) }));
+          console.error(invitationEmailFailure("transport_threw", problem));
+          console.error(JSON.stringify({ event: "y", raw: problem }));
+        }
+      }`);
+    expect(ws).toHaveLength(3);
+    for (const w of ws.slice(0, 2)) {
+      expect(w.errorText, where(w)).toEqual([]);
+      expect(w.unproven, where(w)).toEqual([]);
+      expect(sensitive(w), where(w)).toEqual([]);
+    }
+    expect(ws[2].errorText).toEqual(["problem"]);
   });
 
   it("an element access, a computed key and a spread of an unproven value are unproven", () => {

@@ -88,6 +88,16 @@ export const VERIFIED_FUNCTIONS: Readonly<Record<string, VerifiedFunction>> = {
   normalizeTwilioMessageStatus: { file: "lib/sms/delivery-ledger.ts", returns: "a ProviderDeliveryStatus, or null" },
   eligibilitySkip: { file: "lib/waitlist/delivery/sms.ts", returns: "\"opted_out\", \"no_consent\" or null (same function in join-ack-sms.ts)" },
   missingSuccessFields: { file: "app/reschedule/[token]/actions.ts", returns: "names from the constant REQUIRED_SUCCESS_FIELDS" },
+  // #1138 (MSG-LOG-RAW-ERROR-2) owns "no raw error text anywhere"; these are its
+  // classifiers, proved closed by tests/lib/logging/error-class.test.ts.
+  dbErrorCode: { file: "lib/logging/error-class.ts", returns: "a SQLSTATE / PostgREST code, a caller-listed synthetic code, or \"unknown\"", sanitizes: true },
+  safeDbCode: { file: "lib/logging/error-class.ts", returns: "a SQLSTATE / PostgREST code, or \"unknown\"", sanitizes: true },
+  thrownErrorClass: { file: "lib/logging/error-class.ts", returns: "one of THROWN_ERROR_CLASSES", sanitizes: true },
+  stripeErrorFields: { file: "lib/logging/error-class.ts", returns: "{ stripeType, stripeCode } from a closed type list and a snake_case code shape", sanitizes: true },
+  failureCode: { file: "lib/logging/error-class.ts", returns: "a SQLSTATE / PostgREST code, a bounded result code, or the fallback", sanitizes: true },
+  boundedErrorLabel: { file: "lib/logging/error-class.ts", returns: "a snake_case machine label, or <fallback>:<thrown class>", sanitizes: true },
+  boundedErrorName: { file: "app/(app)/calendar/actions.ts", returns: "a name from LOGGABLE_ERROR_NAMES, \"other\" or \"non_error\"", sanitizes: true },
+  invitationEmailFailure: { file: "app/(app)/settings/team/actions.ts", returns: "team_invitation_email_failed:<kind>:<identifier-shaped name>:retryable=<boolean>", sanitizes: true },
   "Math.min": { file: "builtin", returns: "a number" },
 };
 // Array or string methods whose result, on a verified function's result, is
@@ -462,8 +472,10 @@ function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, dep
       e.arguments.forEach((a) => next(a));
       return allow("stringify");
     }
-    acc.names.push(calleeName);
     const verified = verifiedCall(e);
+    // A sanitizer's own name says nothing about its result (invitationEmailFailure
+    // returns a closed label, not an address): only other callees are read as names.
+    if (!verified?.sanitizes) acc.names.push(calleeName);
     if (verified) {
       // A sanitizer's input is not written; any other verified function's
       // inputs are read for names only, never as written values.
