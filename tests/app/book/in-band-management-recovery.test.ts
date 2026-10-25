@@ -912,7 +912,7 @@ describe("HON-50 decision C: the success-screen address is verified server-side"
     const r = await book();
     expect(r.ok).toBe(true);
     expect(reveal.calls).toHaveLength(1);
-    const create = rpcCalls.find((c) => c.fn === "create_public_appointment");
+    const create = rpcCalls.find((c) => c.fn === COMMIT_FN);
     expect(hashAppointmentToken(reveal.calls[0].token)).toBe(create!.args.p_cancellation_token_hash);
     expect(reveal.calls[0].slug).toBe("test-studio");
     // Never the appointment id.

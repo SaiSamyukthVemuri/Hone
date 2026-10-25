@@ -87,8 +87,7 @@ describe("updateStudioBookingPrefsAction: location settings", () => {
 
   it("refuses a visibility outside the closed set and writes nothing", async () => {
     const url = await save(form({ address_visibility: "everyone" }));
-    expect(url).toMatch(/^\/settings\/booking\?error=/);
-    expect(decodeURIComponent(url)).toContain("Choose where the address is shown.");
+    expect(url).toBe("/settings/booking?error=visibility_invalid");
     expect(updates).toHaveLength(0);
   });
 
@@ -120,7 +119,7 @@ describe("updateStudioBookingPrefsAction: location settings", () => {
 
   it("refuses instructions over 1000 characters and writes nothing", async () => {
     const url = await save(form({ arrival_instructions: "x".repeat(1001) }));
-    expect(decodeURIComponent(url)).toContain("1000 characters or fewer");
+    expect(url).toBe("/settings/booking?error=arrival_too_long");
     expect(updates).toHaveLength(0);
     await save(form({ arrival_instructions: "x".repeat(1000) }));
     expect(updates[0].arrival_instructions).toHaveLength(1000);
@@ -135,7 +134,7 @@ describe("updateStudioBookingPrefsAction: location settings", () => {
   it("a non-owner cannot save", async () => {
     role.value = "practitioner";
     const url = await save(form({ address_visibility: "emails" }));
-    expect(decodeURIComponent(url)).toContain("Only studio owners");
+    expect(url).toBe("/settings/booking?error=not_owner");
     expect(updates).toHaveLength(0);
   });
 });

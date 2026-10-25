@@ -15,8 +15,9 @@ const prior = prepareOf(predecessor);
 const code = withoutComments(sql);
 
 describe("0250 retires a stale, expired, provably unattempted 0247 preparation", () => {
-  it("owns the actual maximum and exactly one allocated SQL file", () => {
-    expect(isRepoMax("0250")).toBe(true);
+  it("is allocated exactly once, and is no longer the maximum (derived)", () => {
+    expect(isRepoMax("0250")).toBe(false);
+    expect(versionsAbove("0250").length).toBeGreaterThan(0);
     expect(countVersion("0250")).toBe(1);
     expect(fileForVersion("0250")).toBe("0250_appointment_email_stale_preparation_retire.sql");
     expect(code.trim()).toMatch(/^begin;/);

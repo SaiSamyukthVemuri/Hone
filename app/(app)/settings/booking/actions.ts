@@ -138,16 +138,14 @@ export async function updateStudioBookingPrefsAction(
     if (formData.has("address_visibility")) {
       const visibility = trimmed(formData.get("address_visibility"));
       if (!isAddressVisibility(visibility)) {
-        throw new Error("Choose where the address is shown.");
+        throw new BookingSettingsError("visibility_invalid");
       }
       locationUpdate.address_visibility = visibility;
     }
     if (formData.has("arrival_instructions")) {
       const arrival = nullable(formData.get("arrival_instructions"));
       if (arrival !== null && arrival.length > ARRIVAL_INSTRUCTIONS_MAX_LENGTH) {
-        throw new Error(
-          `Arrival and parking instructions must be ${ARRIVAL_INSTRUCTIONS_MAX_LENGTH} characters or fewer.`,
-        );
+        throw new BookingSettingsError("arrival_too_long");
       }
       locationUpdate.arrival_instructions = arrival;
     }

@@ -33,9 +33,13 @@ describe(`${VERSION} is allocated correctly in the migration sequence`, () => {
     expect(countVersion(VERSION)).toBe(1);
   });
 
-  it("is the repository maximum, and nothing sits above it", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum (derived)", () => {
+    // HANDED OFF (CLAUDE.md §2) in the follow-up composition: only the CURRENT
+    // maximum's own test asserts isRepoMax (0256's). DERIVED, not pinned.
+    expect(isRepoMax(VERSION)).toBe(false);
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(above.every((v) => Number(v) > Number(VERSION)), "versionsAbove returned a version at or below its own").toBe(true);
   });
 });
 

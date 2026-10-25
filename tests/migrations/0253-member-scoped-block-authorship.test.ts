@@ -24,10 +24,13 @@ const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
 const FN = "public.member_owns_scoped_timed_block(uuid, uuid)";
 
 describe("0253 — migration state", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — CLAUDE.md §2.
-    expect(isRepoMax(VERSION), "0253 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0253").toEqual([]);
+  it("is no longer the repository maximum (derived)", () => {
+    // HANDED OFF (CLAUDE.md §2) in the follow-up composition: only the CURRENT
+    // maximum's own test asserts isRepoMax (0256's). DERIVED, not pinned.
+    expect(isRepoMax(VERSION)).toBe(false);
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
+    expect(above.every((v) => Number(v) > Number(VERSION)), "versionsAbove returned a version at or below its own").toBe(true);
   });
   it("is allocated exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);
