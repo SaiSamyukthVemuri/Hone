@@ -770,3 +770,162 @@ describe("J9-H 0257 follow-up", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// I: G9d. The window read g09d-0214-currency-history.sql predicts, per studio
+// ordinal, what this command returns for each pair. Every case below builds
+// the studio twice (one per pair, because a successful call initializes the
+// studio), runs the EXACT g09d text once over all of them in one repeatable-read
+// transaction, then calls the real command and compares.
+//
+// g09d is written for hosted 0212, where nothing has ever been observed, so
+// accounts are bound with a NULL observed country (bind(..., null)), the 0212
+// shape. Its chain guard reads supabase_migrations.schema_migrations; inside
+// the rolled-back transaction the rows above 0212 are deleted so the guard
+// passes without touching the committed history.
+describe("J9-I g09d prediction equals the command", () => {
+  const FIXTURE = path.resolve(__dirname, "fixtures/g09d-0214-currency-history.sql");
+  const G09D_SHA256 = "0eff4a70bfdafb9938880a7907556f9b307ef35e6b9cbe4394ee278065465f4d";
+  const SQL = readFileSync(FIXTURE, "utf8");
+
+  it("the fixture is byte-identical to the file in the window-read manifest", () => {
+    expect(createHash("sha256").update(SQL).digest("hex")).toBe(G09D_SHA256);
+  });
+
+  type Predicted = Record<string, unknown> & { predicted_ca_cad: string; predicted_us_usd: string };
+  const writeNullCurrencyAudit = (s: SeededStudio) => adminQuery(
+    // the real 0032 writer (EXECUTE is revoked from every runtime role; the owner may call it)
+    `select public._append_stripe_payment_audit(null, null, $1::uuid, null, 'charge_attempted', null, null, null,
+       null, null, null, null, null, null, null, null, '{}'::jsonb, null, null)`, [s.studioId]);
+
+  type Case = { label: string; build: (s: SeededStudio) => Promise<void>; ca: string[]; us: string[] };
+  const CASES: Case[] = [
+    { label: "empty studio", build: async () => {}, ca: ["initialized"], us: ["initialized"] },
+    { label: "cad history", build: async (s) => { await settlement(s, "cad"); await name("payment_charge_attempts", s, null, false, "cad"); },
+      ca: ["initialized"], us: ["refused_currency_history"] },
+    { label: "usd history", build: async (s) => { await settlement(s, "usd"); },
+      ca: ["refused_currency_history"], us: ["initialized"] },
+    { label: "NULL-currency audit row from the real writer", build: async (s) => { await writeNullCurrencyAudit(s); },
+      ca: ["refused_currency_history"], us: ["refused_currency_history"] },
+    { label: "NULL-currency row beside otherwise cad history", build: async (s) => { await settlement(s, "cad"); await writeNullCurrencyAudit(s); },
+      ca: ["refused_currency_history"], us: ["refused_currency_history"] },
+    { label: "foreign currency in stripe_refunds", build: async (s) => { await name("stripe_refunds", s, null, false, "eur"); },
+      ca: ["refused_currency_history"], us: ["refused_currency_history"] },
+    { label: "appointment_payments row", build: async (s) => {
+        await raw("appointment_payments", { appointment_id: randomUUID(), studio_id: s.studioId, client_id: s.clientId,
+          pending_booking_payment_session_id: randomUUID(), payment_consent_id: randomUUID(),
+          stripe_account_id: `acct_T${rid()}`, stripe_livemode: false, stripe_customer_id: `cus_${rid()}`,
+          stripe_setup_intent_id: `seti_${rid()}`, stripe_payment_method_id: `pm_${rid()}` }); },
+      ca: ["refused_unverifiable_history"], us: ["refused_unverifiable_history"] },
+    { label: "pending_booking_payment_sessions row", build: async (s) => {
+        const starts = new Date(Date.now() + 86_400_000);
+        await raw("pending_booking_payment_sessions", { token_hash: `tok_${rid()}`, studio_id: s.studioId, service_id: randomUUID(),
+          client_id: s.clientId, requested_starts_at: starts.toISOString(),
+          requested_ends_at: new Date(starts.getTime() + 3_600_000).toISOString(), requested_duration_minutes: 60,
+          stripe_account_id: `acct_T${rid()}`, stripe_livemode: false, stripe_customer_id: `cus_${rid()}` }); },
+      ca: ["refused_unverifiable_history"], us: ["refused_unverifiable_history"] },
+    { label: "unverifiable beats NULL currency (command order)", build: async (s) => {
+        await writeNullCurrencyAudit(s);
+        await raw("pending_booking_payment_sessions", { token_hash: `tok_${rid()}`, studio_id: s.studioId, service_id: randomUUID(),
+          client_id: s.clientId, requested_starts_at: new Date(Date.now() + 86_400_000).toISOString(),
+          requested_ends_at: new Date(Date.now() + 90_000_000).toISOString(), requested_duration_minutes: 60,
+          stripe_account_id: `acct_T${rid()}`, stripe_livemode: false, stripe_customer_id: `cus_${rid()}` }); },
+      ca: ["refused_unverifiable_history"], us: ["refused_unverifiable_history"] },
+    { label: "live bound account, never observed (the 0212 shape)", build: async (s) => { await bind(s, true, null); },
+      ca: ["refused_account_unverified"], us: ["refused_account_unverified"] },
+    { label: "named live row with no bound account", build: async (s) => { await name("payment_charge_attempts", s, `acct_L${rid()}`, true, "cad"); },
+      ca: ["refused_account_unverified"], us: ["refused_currency_history"] },
+    { label: "test bound account, never observed", build: async (s) => { await bind(s, false, null); },
+      ca: ["refused_test_account_unobserved"], us: ["refused_test_account_unobserved"] },
+    { label: "unbound test provisioning attempt", build: async (s) => { await name("stripe_account_provisioning_attempts", s, null, false); },
+      ca: ["refused_test_account_unobserved"], us: ["refused_test_account_unobserved"] },
+    { label: "configured prices", build: async (s) => { await adminQuery(`update public.studios set no_show_fee_cents=2500 where id=$1`, [s.studioId]); },
+      ca: ["refused_priced_configuration"], us: ["refused_priced_configuration"] },
+  ];
+
+  const MAP: Record<string, string[]> = {
+    initializable: ["initialized"],
+    needs_ack: ["refused_priced_configuration", "refused_test_account_unobserved"],
+  };
+  const allowed = (predicted: string) => MAP[predicted] ?? [predicted];
+
+  async function predictions(sql: string, ids: string[]): Promise<Map<string, Predicted>> {
+    const out = new Map<string, Predicted>();
+    class Rollback extends Error {}
+    try {
+      await adminTx(async (q) => {
+        await q("set transaction isolation level repeatable read");
+        await q("delete from supabase_migrations.schema_migrations where version > '0212'");
+        const ord = await q(
+          `select id, row_number() over (order by created_at, id)::int as o from public.studios`);
+        const byOrdinal = new Map<number, string>();
+        for (const r of ord.rows as { id: string; o: number }[]) if (ids.includes(r.id)) byOrdinal.set(r.o, r.id);
+        const res = await q(sql);
+        for (const r of res.rows as (Predicted & { studio_ordinal: number })[]) {
+          const id = byOrdinal.get(Number(r.studio_ordinal));
+          if (id) out.set(id, r);
+        }
+        throw new Rollback();
+      });
+    } catch (e) {
+      if (!(e instanceof Rollback)) throw e;
+    }
+    return out;
+  }
+
+  async function build() {
+    const built = [] as { c: Case; a: SeededStudio; b: SeededStudio }[];
+    for (const [i, c] of CASES.entries()) {
+      const a = await studio(`i${i}a`), b = await studio(`i${i}b`);
+      await c.build(a);
+      await c.build(b);
+      built.push({ c, a, b });
+    }
+    return built;
+  }
+
+  /** Returns the mismatches between prediction and the command for every case and pair. */
+  async function compare(sql: string) {
+    const built = await build();
+    const pred = await predictions(sql, built.flatMap((x) => [x.a.studioId, x.b.studioId]));
+    const mismatches: string[] = [];
+    for (const { c, a, b } of built) {
+      const pa = pred.get(a.studioId), pb = pred.get(b.studioId);
+      if (!pa || !pb) { mismatches.push(`${c.label}: no g09d row`); continue; }
+      const actualCa = await init(a.studioId, { country: "CA", currency: "cad" });
+      const actualUs = await init(b.studioId, { country: "US", currency: "usd" });
+      if (!c.ca.includes(actualCa)) mismatches.push(`${c.label}: fixture expectation CA ${actualCa}`);
+      if (!c.us.includes(actualUs)) mismatches.push(`${c.label}: fixture expectation US ${actualUs}`);
+      if (!allowed(pa.predicted_ca_cad).includes(actualCa)) mismatches.push(`${c.label}: CA predicted ${pa.predicted_ca_cad}, command ${actualCa}`);
+      if (!allowed(pb.predicted_us_usd).includes(actualUs)) mismatches.push(`${c.label}: US predicted ${pb.predicted_us_usd}, command ${actualUs}`);
+    }
+    return mismatches;
+  }
+
+  it("I1 for every case and both pairs the prediction equals the command's result", async () => {
+    expect(await compare(SQL)).toEqual([]);
+  }, 120_000);
+
+  it("I2 NEGATIVE CONTROL: a g09d with one predicate weakened is caught by the same comparison", async () => {
+    // US currency check made to see only NULLs: cad history would now read initializable for US.
+    const mutated = SQL.replace("x.currency is distinct from 'usd'", "x.currency is null");
+    expect(mutated).not.toBe(SQL);
+    const mismatches = await compare(mutated);
+    expect(mismatches.length).toBeGreaterThan(0);
+    expect(mismatches.join("|")).toMatch(/US predicted initializable, command refused_currency_history/);
+  }, 120_000);
+
+  it("I3 NEGATIVE CONTROL: dropping the NULL branch of the CA check is caught on the NULL-currency cases", async () => {
+    const mutated = SQL.replace(/x\.currency is distinct from 'cad'/g, "x.currency <> 'cad'");
+    expect(mutated).not.toBe(SQL);
+    const mismatches = await compare(mutated);
+    expect(mismatches.join("|")).toMatch(/NULL-currency[^|]*CA predicted initializable, command refused_currency_history/);
+  }, 120_000);
+
+  it("I4 the read-only runner would accept the file's text (one SELECT, no write keyword)", () => {
+    const body = SQL.replace(/'[^']*'/g, "''").replace(/--.*$/gm, "").replace(/\s+/g, " ").toLowerCase();
+    expect((body.match(/;/g) ?? []).length).toBeLessThanOrEqual(1);
+    expect(body.trim()).toMatch(/^with /);
+    expect(body).not.toMatch(/\b(insert|update|delete|merge|truncate|alter|create|drop|grant|revoke|copy|call|do|execute|prepare|set|reset|begin|start|commit|rollback|savepoint|release|vacuum|analyze|cluster|reindex|refresh|lock|listen|notify|unlisten|discard|load|security|comment|import|into)\b/);
+  });
+});
