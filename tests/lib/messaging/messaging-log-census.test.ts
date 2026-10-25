@@ -625,7 +625,7 @@ describe("MSG-007 log census: the analyzer catches what it must", () => {
 
   it("a call's result is unproven unless its function is verified", () => {
     const { writers: ws } = analyze(`
-      function currentEnvironment(): string { return "x"; }
+      import { currentEnvironment } from "@/lib/rate-limit/public";
       export function r(a: string) {
         console.error(JSON.stringify({ event: "a", line: buildLine(a) }));
         console.error(JSON.stringify({ event: "b", environment: currentEnvironment() }));
@@ -661,10 +661,9 @@ describe("MSG-007 log census: the analyzer catches what it must", () => {
   });
 
   it("a #1138 classifier makes a caught value clean, and its own name is not read as a destination (a bare one still is not)", () => {
-    const { writers: ws } = analyze(`
-      declare function dbErrorCode(e: unknown): string;
-      declare function thrownErrorClass(e: unknown): string;
-      declare function invitationEmailFailure(kind: string, e: unknown): string;
+    const { writers: ws } = analyzeSource("app/(app)/settings/team/actions.ts", `
+      import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
+      function invitationEmailFailure(kind: string, e: unknown): string { return kind + String(e); }
       export async function c(f: () => Promise<void>, rpcErr: unknown) {
         try { await f(); } catch (problem) {
           console.error(JSON.stringify({ event: "x", code: dbErrorCode(rpcErr), cls: thrownErrorClass(problem) }));
@@ -683,11 +682,9 @@ describe("MSG-007 log census: the analyzer catches what it must", () => {
 
   it("a sanitizer's pass-through argument is judged: a fallback that is a link, or not provable, is caught (Codex P2 4370118061)", () => {
     const decl = `
-      declare function failureCode(e: unknown, r: unknown, fallback?: string): string;
-      declare function dbErrorCode(e: unknown, internal?: readonly string[]): string;
-      declare function boundedErrorLabel(e: unknown, fallback?: string): string;
-      declare function invitationEmailFailure(kind: string, e: unknown): string;`;
-    const { writers: ws } = analyze(`${decl}
+      import { failureCode, dbErrorCode, boundedErrorLabel } from "@/lib/logging/error-class";
+      function invitationEmailFailure(kind: string, e: unknown): string { return kind + String(e); }`;
+    const { writers: ws } = analyzeSource("app/(app)/settings/team/actions.ts", `${decl}
       export function p(err: unknown, res: unknown, fb: string) {
         console.error(JSON.stringify({ a: failureCode(err, res) }));
         console.error(JSON.stringify({ a: failureCode(err, res, "settle_unpersisted") }));
@@ -720,6 +717,131 @@ describe("MSG-007 log census: the analyzer catches what it must", () => {
     expect(ws[2].unproven).toEqual(["call diagnostic.stringify()"]);
     expect(ws[3].unproven).toEqual(["call diagnostic.stringify()"]);
     expect(ws[4].unproven).toEqual(["call util.String()"]);
+  });
+
+  it("logical assignment yields the left OR the right, so both are judged (Codex P2 4370163184)", () => {
+    const { writers: ws } = analyze(`
+      export function la(maybe: string | undefined) {
+        let held = "https://example.test/manage/abcdef123";
+        console.error(JSON.stringify({ a: (held ??= "unknown") }));
+        console.error(JSON.stringify({ b: (held ||= "unknown") }));
+        console.error(JSON.stringify({ c: (held &&= "unknown") }));
+        console.error(JSON.stringify({ d: (maybe ??= "fixed") }));
+        console.error(JSON.stringify({ e: (held = "fixed") }));
+      }`);
+    expect(ws).toHaveLength(5);
+    // `held` is a let: its value is not shown, so each of the first three is unproven.
+    for (const i of [0, 1, 2]) expect(ws[i].unproven, `writer ${i}`).toEqual(["let held"]);
+    expect(ws[3].unproven).toEqual(["param maybe"]);
+    expect(ws[4].unproven).toEqual([]);
+    const lit = analyze(`export function lb(u: string) { console.error(JSON.stringify({ a: (u ??= "https://example.test/x") })); }`).writers[0];
+    expect(lit.literals.map(literalViolation)).toEqual(["a link"]);
+    expect(lit.unproven).toEqual(["param u"]);
+  });
+
+  it("a verified name must resolve to the verified declaration: a same-named local, a shadow or a foreign import stays unproven (Codex P2 4370163186)", () => {
+    const cases: Array<[label: string, file: string, source: string, unproven: string[]]> = [
+      ["the genuine import", "lib/email/x.ts",
+        `import { currentEnvironment } from "@/lib/rate-limit/public";
+         export function f() { console.error(currentEnvironment()); }`, []],
+      ["a relative import of the same module", "lib/rate-limit/x.ts",
+        `import { currentEnvironment } from "./public";
+         export function f() { console.error(currentEnvironment()); }`, []],
+      ["a same-named local in another file", "lib/email/x.ts",
+        `function currentEnvironment() { return "https://example.test/manage/abcdef123"; }
+         export function f() { console.error(currentEnvironment()); }`, ["call currentEnvironment()"]],
+      ["a same-named nested function in the right file", "lib/rate-limit/public.ts",
+        `export function currentEnvironment() { return "x"; }
+         export function f() { function currentEnvironment() { return "https://example.test/y"; } console.error(currentEnvironment()); }`, ["call currentEnvironment()"]],
+      ["the right file, top level", "lib/rate-limit/public.ts",
+        `export function currentEnvironment() { return "x"; }
+         export function f() { console.error(currentEnvironment()); }`, []],
+      ["a shadowing parameter", "lib/rate-limit/public.ts",
+        `export function currentEnvironment() { return "x"; }
+         export function f(currentEnvironment: () => string) { console.error(currentEnvironment()); }`, ["call currentEnvironment()"]],
+      ["an import from another module", "lib/email/x.ts",
+        `import { currentEnvironment } from "@/lib/elsewhere";
+         export function f() { console.error(currentEnvironment()); }`, ["call currentEnvironment()"]],
+      ["an aliased import of another function", "lib/email/x.ts",
+        `import { somethingElse as currentEnvironment } from "@/lib/rate-limit/public";
+         export function f() { console.error(currentEnvironment()); }`, ["call currentEnvironment()"]],
+      ["a namespace member", "lib/email/x.ts",
+        `import * as rl from "@/lib/rate-limit/public";
+         export function f() { console.error(rl.currentEnvironment()); }`, ["call rl.currentEnvironment()"]],
+      ["Math.min, the builtin", "lib/email/x.ts",
+        `export function f(a: number, b: number) { console.error(Math.min(a, b)); }`, []],
+      ["a shadowed Math", "lib/email/x.ts",
+        `const Math = { min: () => "https://example.test/z" };
+         export function f(a: number) { console.error(Math.min(a)); }`, ["call Math.min()"]],
+    ];
+    for (const [label, file, source, unproven] of cases) {
+      const w = analyzeSource(file, source).writers;
+      expect(w, label).toHaveLength(1);
+      expect(w[0].unproven, label).toEqual(unproven);
+    }
+  });
+
+  it("the builtins JSON.stringify and String must be the globals", () => {
+    const { writers: ws } = analyze(`
+      const String = (v: unknown) => "https://example.test/manage/abcdef123" + v;
+      export function g(v: unknown) { console.error(String(v)); }`);
+    expect(ws[0].unproven).toEqual(["call String()"]);
+  });
+
+  it("SWEEP: every expression kind that can carry a value is judged on every operand it can return", () => {
+    const hot = "https://example.test/manage/abcdef123";
+    const src = (expr: string) =>
+      analyze(`export async function w(c: boolean, p: string, o: { a?: string }, list: string[], f: () => Promise<string>) {
+        let held = "x";
+        console.error(${expr});
+      }`).writers[0];
+    const cases: Array<[kind: string, expr: string, sees: "link" | "unproven"]> = [
+      ["conditional, true arm", `c ? "${hot}" : "ok"`, "link"],
+      ["conditional, false arm", `c ? "ok" : "${hot}"`, "link"],
+      ["nullish, left", `"${hot}" ?? "ok"`, "link"],
+      ["nullish, right", `p ?? "${hot}"`, "link"],
+      ["or / and", `(p || "${hot}") && "ok"`, "link"],
+      ["comma", `(p, "${hot}")`, "link"],
+      ["comma left is discarded, right is judged", `("${hot}", p)`, "unproven"],
+      ["template", `\`id=\${p} ${hot}\``, "link"],
+      ["template span", `\`id=\${"${hot}"}\``, "link"],
+      ["object spread", `JSON.stringify({ ...{ a: "${hot}" } })`, "link"],
+      ["object spread of an unproven value", `JSON.stringify({ ...o })`, "unproven"],
+      ["array element", `JSON.stringify(["${hot}"])`, "link"],
+      ["array spread", `JSON.stringify([...list])`, "unproven"],
+      ["await", `await "${hot}"`, "link"],
+      ["await of a call", `await f()`, "unproven"],
+      ["optional chain", `o?.a`, "unproven"],
+      ["optional call", `f?.()`, "unproven"],
+      ["optional element", `o?.["a"]`, "unproven"],
+      ["as / non-null", `(p as string)!`, "unproven"],
+      ["satisfies", `("${hot}" satisfies string)`, "link"],
+      ["plus", `p + "${hot}"`, "link"],
+      ["tagged template", `tag\`\${p}\``, "unproven"],
+      ["postfix increment", `held++`, "unproven"],
+      ["a quoted key", `JSON.stringify({ "${hot}": 1 })`, "link"],
+      ["a phone number as a number", `JSON.stringify({ a: 15550100123 })`, "link"],
+    ];
+    for (const [kind, expr, sees] of cases) {
+      const w = src(expr);
+      const links = w.literals.map(literalViolation).filter(Boolean);
+      if (sees === "link") expect(links.length, kind).toBeGreaterThan(0);
+      else expect(w.unproven.length, kind).toBeGreaterThan(0);
+    }
+  });
+
+  it("a const object is its initializer only while nothing writes to it or hands it on", () => {
+    const run = (body: string) =>
+      analyze(`export function k() {
+        const cfg = { reason: "fixed" };
+        ${body}
+        console.error(JSON.stringify({ a: cfg.reason }));
+      }`).writers[0];
+    expect(run("").unproven).toEqual([]);
+    expect(run(`cfg.reason = "https://example.test/x";`).unproven.length).toBeGreaterThan(0);
+    expect(run(`Object.assign(cfg, JSON.parse("{}"));`).unproven.length).toBeGreaterThan(0);
+    expect(run(`const alias = cfg; alias.reason = "https://example.test/x";`).unproven.length).toBeGreaterThan(0);
+    expect(run(`delete cfg.reason;`).unproven.length).toBeGreaterThan(0);
   });
 
   it("an element access, a computed key and a spread of an unproven value are unproven", () => {
@@ -770,6 +892,8 @@ describe("MSG-007 log census: the analyzer catches what it must", () => {
 
   it("a digest or a closed log vocabulary is not its input", () => {
     const { writers: ws } = analyze(`
+      import { hashFingerprint } from "@/lib/portal/tokens";
+      import { smsFailureForLog } from "@/lib/sms/send-appointment";
       export function n(email: string, raw: unknown) {
         console.error(JSON.stringify({ event: "v", emailFingerprint: hashFingerprint(email), failure: smsFailureForLog(raw) }));
       }`);

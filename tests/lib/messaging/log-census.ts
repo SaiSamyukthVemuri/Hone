@@ -75,7 +75,8 @@ const ERROR_NAME_RE = /^(?:e|err|error|\w*(?:Err|Error))$/;
 // `passes`: for a sanitizer, the argument positions whose value is RETURNED
 // unchanged (a fallback, a caller-listed code). Those are judged like any
 // written value; only the other arguments are dropped (Codex P2 4370118061).
-export type VerifiedFunction = { file: string; returns: string; sanitizes?: true; passes?: readonly number[] };
+// `alsoIn`: other files that declare their own copy of the same function.
+export type VerifiedFunction = { file: string; returns: string; sanitizes?: true; passes?: readonly number[]; alsoIn?: readonly string[] };
 export const VERIFIED_FUNCTIONS: Readonly<Record<string, VerifiedFunction>> = {
   smsTypeForLog: { file: "lib/sms/send-appointment.ts", returns: "one of three SMS types, or \"unknown\"", sanitizes: true },
   smsAttemptForLog: { file: "lib/sms/send-appointment.ts", returns: "an integer 1-3, or null", sanitizes: true },
@@ -89,7 +90,7 @@ export const VERIFIED_FUNCTIONS: Readonly<Record<string, VerifiedFunction>> = {
   retryAfterSeconds: { file: "lib/rate-limit/public.ts", returns: "a number of seconds" },
   errorCodeOf: { file: "app/api/twilio/message-status/route.ts", returns: "a positive integer of at most 8 digits, or null" },
   normalizeTwilioMessageStatus: { file: "lib/sms/delivery-ledger.ts", returns: "a ProviderDeliveryStatus, or null" },
-  eligibilitySkip: { file: "lib/waitlist/delivery/sms.ts", returns: "\"opted_out\", \"no_consent\" or null (same function in join-ack-sms.ts)" },
+  eligibilitySkip: { file: "lib/waitlist/delivery/sms.ts", returns: "\"opted_out\", \"no_consent\" or null (same function in join-ack-sms.ts)", alsoIn: ["lib/waitlist/delivery/join-ack-sms.ts"] },
   missingSuccessFields: { file: "app/reschedule/[token]/actions.ts", returns: "names from the constant REQUIRED_SUCCESS_FIELDS" },
   // #1138 (MSG-LOG-RAW-ERROR-2) owns "no raw error text anywhere"; these are its
   // classifiers, proved closed by tests/lib/logging/error-class.test.ts.
@@ -124,8 +125,8 @@ export const ALLOWED_SHAPES = {
   "object-literal": "an object literal with plain (non-computed) keys whose every value is allowed",
   "array-literal": "an array literal whose every element is allowed",
   conditional: "a ? b : c whose both branches are allowed (the condition is never written)",
-  "pass-operator": "a ?? b, a || b, a && b, a + b whose both operands are allowed",
-  "right-operator": "a = b, a ??= b, a ||= b, a &&= b, (a, b) whose right operand is allowed",
+  "pass-operator": "a ?? b, a || b, a && b, a + b, a ??= b, a ||= b, a &&= b whose both operands are allowed",
+  "right-operator": "a = b, (a, b) whose right operand is allowed",
   "scalar-operator": "a comparison, instanceof, in, arithmetic or bitwise operator, !x, -x, +x, ~x, typeof x, void x: the result is a boolean, a number, a type word or undefined",
   date: "new Date(...), or .toISOString() / .getTime() on a value proven to be such a Date",
   stringify: "JSON.stringify(x) or String(x) whose argument is allowed",
@@ -153,13 +154,12 @@ const SCALAR_OPERATORS = new Set<ts.SyntaxKind>([
 const PASS_OPERATORS = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken,
   ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.PlusToken,
+  // x ??= y, x ||= y, x &&= y: the result is the existing x OR y (Codex P2 4370163184).
+  ts.SyntaxKind.QuestionQuestionEqualsToken, ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
 ]);
-// Operators whose value is the right operand: x = y, x ??= y, (a, b).
-const RIGHT_OPERATORS = new Set<ts.SyntaxKind>([
-  ts.SyntaxKind.EqualsToken, ts.SyntaxKind.QuestionQuestionEqualsToken,
-  ts.SyntaxKind.BarBarEqualsToken, ts.SyntaxKind.AmpersandAmpersandEqualsToken,
-  ts.SyntaxKind.CommaToken,
-]);
+// Operators whose value is the right operand: x = y, (a, b).
+const RIGHT_OPERATORS = new Set<ts.SyntaxKind>([ts.SyntaxKind.EqualsToken, ts.SyntaxKind.CommaToken]);
 
 // Every method of console and safeLog is a sink (console.dir and console.table
 // write too), and so is a direct write to process.stdout or process.stderr.
@@ -206,7 +206,7 @@ function isExported(fn: Fn): boolean {
 
 type Declared =
   | { kind: "const"; init: ts.Expression }
-  | { kind: "param" | "catch" | "binding" | "let" | "loop" | "import" | "function" | "ambiguous" | "none" };
+  | { kind: "param" | "catch" | "binding" | "let" | "loop" | "import" | "function" | "ambiguous" | "none"; top?: boolean };
 
 // What a bare identifier is bound to, searching outward from where it is used.
 function declarationOf(id: ts.Identifier): Declared {
@@ -232,18 +232,47 @@ function declarationOf(id: ts.Identifier): Declared {
         ts.forEachChild(m, walk);
       };
       ts.forEachChild(n, walk);
-      if (found.length === 1) return found[0];
+      if (found.length === 1) return found[0].kind === "function" || found[0].kind === "import" ? { kind: found[0].kind, top: ts.isSourceFile(n) } : found[0];
       if (found.length > 1) return { kind: "ambiguous" };
     }
   }
   return { kind: "none" };
 }
 
+// Is this callee the function the entry verified, and not a same-named local, a
+// shadowing parameter or an import from somewhere else (Codex P2 4370163186)?
+// A builtin (Math.min) must have an unbound root; any other entry must be a
+// top-level function declared in a file it names, or imported from one.
+function resolvesToEntry(callee: ts.Expression, entry: VerifiedFunction): boolean {
+  if (entry.file === "builtin") {
+    let root: ts.Expression = callee;
+    while (ts.isPropertyAccessExpression(root)) root = root.expression;
+    return ts.isIdentifier(root) && declarationOf(root).kind === "none";
+  }
+  if (!ts.isIdentifier(callee)) return false;
+  const declared = declarationOf(callee);
+  const here = callee.getSourceFile().fileName;
+  if (declared.kind === "function") return declared.top === true && [entry.file, ...(entry.alsoIn ?? [])].includes(here);
+  if (declared.kind !== "import" || declared.top !== true) return false;
+  for (const stmt of callee.getSourceFile().statements) {
+    if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+    const named = stmt.importClause?.namedBindings;
+    if (!named || !ts.isNamedImports(named)) continue;
+    for (const el of named.elements) {
+      if (el.name.text !== callee.text || (el.propertyName ?? el.name).text !== callee.text) continue;
+      const spec = stmt.moduleSpecifier.text;
+      const resolved = spec.startsWith("@/") ? spec.slice(2) : spec.startsWith(".") ? path.posix.normalize(path.posix.join(path.posix.dirname(here), spec)) : spec;
+      return resolved === entry.file.replace(/\.tsx?$/, "");
+    }
+  }
+  return false;
+}
+
 // The verified function a call's result comes from, if any: a listed function
 // called directly, or a preserving method on such a call's result.
 function verifiedCall(call: ts.CallExpression): VerifiedFunction | undefined {
   const text = call.expression.getText();
-  if (Object.hasOwn(VERIFIED_FUNCTIONS, text)) return VERIFIED_FUNCTIONS[text];
+  if (Object.hasOwn(VERIFIED_FUNCTIONS, text) && resolvesToEntry(call.expression, VERIFIED_FUNCTIONS[text])) return VERIFIED_FUNCTIONS[text];
   const callee = call.expression;
   if (ts.isPropertyAccessExpression(callee) && PRESERVING_METHODS.has(callee.name.text)) {
     let receiver: ts.Expression = callee.expression;
@@ -307,11 +336,45 @@ function isProvenDate(expr: ts.Expression, depth = 0): boolean {
   return !!init && isProvenDate(init, depth + 1);
 }
 
+// Is this name used in the file in any way other than a plain property READ
+// (`name.prop`)? A write (`name.prop = x`, `delete`, `++`), a call on it, an
+// alias (`const y = name`), an argument (`Object.assign(name, ...)`) or a spread
+// all mean the initializer no longer shows what a property holds. By name
+// across the whole file: a shadowing name only makes this stricter.
+function isMutatedOrEscaping(id: ts.Identifier): boolean {
+  let bad = false;
+  const visit = (n: ts.Node): void => {
+    if (bad) return;
+    if (ts.isIdentifier(n) && n.text === id.text && n !== id) {
+      const parent = n.parent;
+      if (ts.isVariableDeclaration(parent) && parent.name === n) return;
+      if (ts.isPropertyAssignment(parent) && parent.name === n) return;
+      if (ts.isPropertyAccessExpression(parent) && parent.name === n) return;
+      if (!(ts.isPropertyAccessExpression(parent) && parent.expression === n)) { bad = true; return; }
+      const outer = parent.parent;
+      const writes =
+        (ts.isBinaryExpression(outer) && outer.left === parent && outer.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && outer.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+        ts.isDeleteExpression(outer) ||
+        ((ts.isPrefixUnaryExpression(outer) || ts.isPostfixUnaryExpression(outer)) && (outer.operator === ts.SyntaxKind.PlusPlusToken || outer.operator === ts.SyntaxKind.MinusMinusToken)) ||
+        (ts.isCallExpression(outer) && outer.expression === parent) ||
+        (ts.isPropertyAccessExpression(outer) && ts.isCallExpression(outer.parent)) ||
+        ts.isElementAccessExpression(outer);
+      if (writes) bad = true;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(id.getSourceFile());
+  return bad;
+}
+
 // The initializer of `obj.prop` when obj is (a const bound to) an object
 // literal with a plain `prop` key; undefined when the source does not show it.
 function propertyInitializer(access: ts.PropertyAccessExpression, depth = 0): ts.Expression | undefined {
   if (depth > 8) return undefined;
   let obj = unwrap(access.expression);
+  // A const object is only its initializer if nothing writes to it or hands it on.
+  if (ts.isIdentifier(obj) && isMutatedOrEscaping(obj)) return undefined;
   const init = constValue(obj);
   if (init) obj = unwrap(init);
   if (ts.isPropertyAccessExpression(obj)) {
@@ -368,7 +431,10 @@ function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, dep
     acc.literals.push(e.text);
     return allow("string-literal");
   }
-  if (ts.isNumericLiteral(e)) return allow("number-literal");
+  if (ts.isNumericLiteral(e)) {
+    acc.literals.push(e.text); // 15550100123 is a phone number whatever its type
+    return allow("number-literal");
+  }
   if (e.kind === ts.SyntaxKind.TrueKeyword || e.kind === ts.SyntaxKind.FalseKeyword) return allow("boolean-literal");
   if (e.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(e) && e.text === "undefined")) return allow("nullish");
   if (ts.isTemplateExpression(e)) {
@@ -383,6 +449,7 @@ function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, dep
     for (const prop of e.properties) {
       if (ts.isPropertyAssignment(prop) && !ts.isComputedPropertyName(prop.name)) {
         acc.names.push(prop.name.getText().replace(/^["']|["']$/g, ""));
+        if (ts.isStringLiteral(prop.name)) acc.literals.push(prop.name.text);
         next(prop.initializer);
       } else if (ts.isShorthandPropertyAssignment(prop)) {
         next(prop.name);
@@ -474,7 +541,7 @@ function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, dep
     // Only the built-ins: `diagnostic.stringify()` is a call like any other
     // (Codex P2 4370118063).
     const calleeText = callee.getText();
-    if (calleeText === "JSON.stringify" || calleeText === "String") {
+    if ((calleeText === "JSON.stringify" || calleeText === "String") && resolvesToEntry(callee, { file: "builtin", returns: "" })) {
       e.arguments.forEach((a) => next(a));
       return allow("stringify");
     }
@@ -486,7 +553,11 @@ function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, dep
       // A sanitizer's input is not written; any other verified function's
       // inputs are read for names only, never as written values.
       if (!verified.sanitizes) e.arguments.forEach((a) => next(a, false));
-      else e.arguments.forEach((a, i) => { if (verified.passes?.includes(i)) next(a); });
+      else {
+        // A spread can shift every position: then every argument is judged.
+        const spread = e.arguments.some(ts.isSpreadElement);
+        e.arguments.forEach((a, i) => { if (spread || verified.passes?.includes(i)) next(ts.isSpreadElement(a) ? a.expression : a); });
+      }
       return allow("verified-function");
     }
     if (ts.isPropertyAccessExpression(callee)) next(callee.expression, false);
