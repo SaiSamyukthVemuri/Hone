@@ -7,6 +7,7 @@ import { sendEmailSafely } from "@/lib/email/send-appointment";
 import { postcareContactEmail } from "@/lib/email/send-appointment";
 import { buildPortalReplyNotificationEmail } from "@/lib/email/templates/portal-reply-notification";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 const REPLY_BODY_MIN = 1;
 const REPLY_BODY_MAX = 5000;
@@ -71,8 +72,7 @@ export async function markPortalMessageReviewedAction(
     console.error(
       JSON.stringify({
         event: "portal_message_mark_reviewed_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -153,8 +153,7 @@ export async function createPortalMessageReplyAction(
     console.error(
       JSON.stringify({
         event: "portal_reply_client_lookup_failed",
-        code: clientErr.code,
-        message: clientErr.message,
+        code: dbErrorCode(clientErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -187,8 +186,7 @@ export async function createPortalMessageReplyAction(
     console.error(
       JSON.stringify({
         event: "portal_reply_parent_lookup_failed",
-        code: parentErr.code,
-        message: parentErr.message,
+        code: dbErrorCode(parentErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -219,8 +217,7 @@ export async function createPortalMessageReplyAction(
     console.error(
       JSON.stringify({
         event: "portal_reply_insert_failed",
-        code: insertErr?.code,
-        message: insertErr?.message,
+        code: dbErrorCode(insertErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -252,8 +249,7 @@ export async function createPortalMessageReplyAction(
     console.error(
       JSON.stringify({
         event: "portal_reply_studio_lookup_failed",
-        code: studioErr?.code,
-        message: studioErr?.message,
+        code: dbErrorCode(studioErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -343,8 +339,7 @@ export async function createPortalMessageReplyAction(
       JSON.stringify({
         event: "portal_reply_notification_stamp_failed",
         replyId: created.id,
-        code: stampErr.code,
-        message: stampErr.message,
+        code: dbErrorCode(stampErr),
         timestamp: new Date().toISOString(),
       }),
     );

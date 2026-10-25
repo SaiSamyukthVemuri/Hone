@@ -11,6 +11,7 @@ import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 // "Reschedule appointment" to someone /reschedule will then refuse is the same
 // dead end, one screen earlier. Same decision, same server-resolved inputs.
 import { isFreeConsultWaitlistOnlyReschedule } from "@/lib/booking/free-consult-reschedule-policy";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Generic public-facing message for the /manage surface. Returned for
 // any non-success outcome so the existence of a real appointment row
@@ -123,8 +124,7 @@ export async function fetchAppointmentForManageAction(
     .maybeSingle();
   if (error) {
     logInternal("public_manage_fetch_error", {
-      code: error.code,
-      message: error.message,
+      code: dbErrorCode(error),
     });
     return { ok: false, error: PUBLIC_MANAGE_GENERIC_ERROR };
   }

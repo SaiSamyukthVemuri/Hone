@@ -9,6 +9,7 @@ import {
   findPossibleDuplicateClient,
   type PossibleDuplicate,
 } from "@/lib/clients/possible-duplicate";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 function nullableString(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") return null;
@@ -104,8 +105,7 @@ export async function createClientAction(
         console.error(
           JSON.stringify({
             event: "client_create_duplicate_lookup_failed",
-            code: lookupErr.code,
-            message: lookupErr.message,
+            code: dbErrorCode(lookupErr),
             timestamp: new Date().toISOString(),
           }),
         );
@@ -211,8 +211,7 @@ export async function createClientAction(
     console.error(
       JSON.stringify({
         event: "client_create_failed",
-        code: error?.code,
-        message: error?.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );

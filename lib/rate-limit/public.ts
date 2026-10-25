@@ -5,6 +5,7 @@ import {
   MOBILE_VERIFICATION_LIMITS,
   PROOF_REQUEST_LIMITS,
 } from "@/lib/waitlist/delivery/policy";
+import { thrownErrorClass } from "@/lib/logging/error-class";
 
 // Rate limiter for unauthenticated public surfaces. Covers:
 //   * public booking: fetchPublicSlotsAction + publicBookAppointmentAction
@@ -173,7 +174,7 @@ function logBackendUnavailable(routeClass: string, err: unknown): void {
         event: "ratelimit_backend_unavailable",
         routeClass,
         environment: currentEnvironment(),
-        error: err instanceof Error ? err.message : "unknown",
+        errorClass: thrownErrorClass(err),
         timestamp: new Date().toISOString(),
       }),
     );
