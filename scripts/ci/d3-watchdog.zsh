@@ -9,7 +9,8 @@
 #      (it holds a transaction id, or a lock stronger than a plain read: the push applies DDL/DML; a plain long SELECT, or a
 #      pg_cron sleep, does not). If exactly one appears it is pinned (pid + backend_start). If two or more appear at once
 #      it refuses to pin, says so loudly, and never cancels.
-#   3. CHECK: every WD_EVERY seconds it asks about the pinned backend only (pid AND backend_start AND usename). Over the
+#   3. CHECK: every WD_EVERY seconds it asks about the pinned backend only (pid AND backend_start AND usename; the
+#      pooler REUSES backends, so once the push is over the pin may be the backend this very poll runs on, which counts as 'gone'). Over the
 #      limit: pg_cancel_backend(pid) for that pid. Nothing else is ever cancelled.
 # It stops when: the pinned backend has not been active for 3 polls in a row (the push finished or stopped), the pinned
 # backend is gone, WD_MAX seconds have passed, or you press Ctrl-C. Residual risks are written in D3-WATCHDOG-NOTES.
@@ -52,7 +53,7 @@ d3_watchdog() {
         print -r -- "$(date +%T) *** WATCHDOG BLIND: the poll failed ($fails in a row). The push is NOT protected while this lasts."
       fi
     else
-      q="select count(*) as present, coalesce(max(case when state = 'active' then 1 else 0 end), 0) as active, coalesce(max(extract(epoch from now() - query_start)::int), 0) as run, coalesce(bool_or(case when state = 'active' and now() - query_start > interval '${WD_LIMIT} seconds' then pg_cancel_backend(pid) end), false) as cancelled from pg_stat_activity where pid = ${pin} and backend_start = '${bstart}'::timestamptz and usename = 'postgres' and backend_type = 'client backend'"
+      q="select count(*) as present, coalesce(max(case when state = 'active' then 1 else 0 end), 0) as active, coalesce(max(extract(epoch from now() - query_start)::int), 0) as run, coalesce(bool_or(case when state = 'active' and now() - query_start > interval '${WD_LIMIT} seconds' then pg_cancel_backend(pid) end), false) as cancelled from pg_stat_activity where pid = ${pin} and pid <> pg_backend_pid() and backend_start = '${bstart}'::timestamptz and usename = 'postgres' and backend_type = 'client backend'"
       if out=$(d3_wdq "$q"); then
         fails=0
         n=$(print -r -- "$out" | d3_wdget present)
