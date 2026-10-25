@@ -45,10 +45,12 @@ ensure_tls() { # the pinned CLI always attempts TLS; serve a self-signed certifi
   docker cp "$TLSDIR/server.key" "$DB:/etc/hone-tls/server.key" > /dev/null
   docker exec -u root "$DB" chown postgres:postgres /etc/hone-tls/server.crt /etc/hone-tls/server.key
   docker exec -u root "$DB" chmod 600 /etc/hone-tls/server.key
-  psqld -c "alter system set ssl_cert_file = '/etc/hone-tls/server.crt'"
-  psqld -c "alter system set ssl_key_file = '/etc/hone-tls/server.key'"
-  psqld -c "alter system set ssl = 'on'"
-  psqld -c "select pg_reload_conf()" > /dev/null
+  # ALTER SYSTEM needs a superuser; the stack's `postgres` role is not one.
+  local sa=(docker exec -i "$DB" psql -U supabase_admin -X -q -A -t -v ON_ERROR_STOP=1)
+  "${sa[@]}" -c "alter system set ssl_cert_file = '/etc/hone-tls/server.crt'"
+  "${sa[@]}" -c "alter system set ssl_key_file = '/etc/hone-tls/server.key'"
+  "${sa[@]}" -c "alter system set ssl = 'on'"
+  "${sa[@]}" -c "select pg_reload_conf()" > /dev/null
   sleep 3
   local s
   s="$(psqld -c 'show ssl')"
