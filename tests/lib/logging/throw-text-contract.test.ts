@@ -44,6 +44,17 @@ const ERROR_NAME_RE = /^(e|err|error|exception|ex|thrown|caught|\w+Err|\w+Error)
 const ERROR_PROP_RE = /^(e|err|error|exception|thrown|caught)$/;
 const TEXT_PROPS = new Set(["message", "details", "hint", "stack"]);
 const CLOSED = /^(dbErrorCode|dbFailureCode|thrownErrorClass|failureCode|safeDbCode)$/;
+// A closed helper is closed only for the arguments it validates. These return
+// an argument UNCHANGED in some case, so that argument is still scanned:
+//   dbErrorCode(error, internal)        returns a code found in `internal`;
+//   failureCode(error, result, fallback) returns `fallback` when neither the
+//                                        error nor a valid result is present.
+// Every other helper in lib/logging/error-class.ts was read: dbFailureCode and
+// safeDbCode return a fixed label or a shape-validated code; thrownErrorClass
+// returns a member of a closed enum; stripeErrorFields returns validated
+// fields (and is not a string); boundedErrorLabel is not in CLOSED at all, so a
+// `.message` inside it is flagged like any other.
+const PASS_THROUGH: Record<string, readonly number[]> = { dbErrorCode: [1], failureCode: [2] };
 const ERROR_CTORS = new Set(["Error", "TypeError", "RangeError", "SyntaxError", "EvalError", "URIError"]);
 
 function bindingNames(name: ts.BindingName, out: Set<string>): void {
@@ -97,7 +108,11 @@ export function throwTextViolations(file: string, source: string): string[] {
     }
     if (ts.isCallExpression(node)) {
       const callee = node.expression.getText(sf);
-      if (CLOSED.test(callee)) return; // the way out
+      if (CLOSED.test(callee)) {
+        // the way out, for its closed arguments only
+        for (const i of PASS_THROUGH[callee] ?? []) if (node.arguments[i]) scan(node.arguments[i], true, found, true);
+        return;
+      }
       if (callee === "String" || callee === "JSON.stringify" || /(^|\.)inspect$/.test(callee)) {
         for (const a of node.arguments) scan(a, true, found);
         return;
@@ -227,6 +242,14 @@ describe("the analyzer: RED on every way another error's text enters a thrown me
     ["new SyntaxError", "throw new SyntaxError(`x: ${e.message}`);"],
     ["TypeError without new", "throw TypeError(err.message);"],
     ["new EvalError", "throw new EvalError(err.message);"],
+    // ---- a closed helper's pass-through argument (Codex P2 on #1161) ----
+    ["failureCode fallback is a message", "throw new Error(failureCode(null, null, err.message));"],
+    ["failureCode fallback inside a template", "throw new Error(`x: ${failureCode(error, result, error.message)}`);"],
+    ["failureCode fallback is a laundered local", "const raw = e.message; throw new Error(failureCode(null, null, raw));"],
+    ["failureCode fallback is a bare error", "throw new Error(failureCode(null, null, err));"],
+    ["failureCode fallback is String(err)", "throw new Error(failureCode(null, null, String(err)));"],
+    ["dbErrorCode internal list carries a message", "throw new Error(dbErrorCode(error, [err.message]));"],
+    ["nested: the closed helper's fallback is another helper's fallback", "throw new Error(failureCode(null, null, failureCode(null, null, e.message)));"],
   ];
   for (const [name, code] of RED) {
     it(`flags ${name}`, () => expect(throwTextViolations("t.ts", code)).toHaveLength(1));
@@ -254,6 +277,13 @@ describe("the analyzer: RED on every way another error's text enters a thrown me
     ["an error name used as a code", "throw new Error(`x: ${error.code}:${error.name}`);"],
     ["an error's code via String", "throw new Error(`x: ${String(error.code)}`);"],
     ["a call with no arguments", "throw new Error();"],
+    ["failureCode with a literal fallback", 'throw new Error(failureCode(error, result, "none"));'],
+    ["failureCode with the default fallback", "throw new Error(failureCode(error, result));"],
+    ["failureCode of a result string", "throw new Error(`x: ${failureCode(null, row.result)}`);"],
+    ["dbErrorCode with a literal internal list", 'throw new Error(dbErrorCode(error, ["audit_write_unavailable"]));'],
+    ["dbErrorCode with a constant list", "throw new Error(dbErrorCode(error, INTERNAL_CODES));"],
+    ["thrownErrorClass of anything", "throw new Error(`x: ${thrownErrorClass(err)}`);"],
+    ["safeDbCode of a code", "throw new Error(`x: ${safeDbCode(error.code)}`);"],
   ];
   for (const [name, code] of GREEN) {
     it(`passes ${name}`, () => expect(throwTextViolations("t.ts", code)).toEqual([]));
