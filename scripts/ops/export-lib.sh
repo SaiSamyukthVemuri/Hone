@@ -30,8 +30,8 @@ is_loopback_host() { case "$1" in 127.0.0.1|localhost|::1|'[::1]') return 0;; *)
 is_rehearsal() { [ "${EXPORT_REHEARSAL:-}" = 1 ] && [ "${GITHUB_ACTIONS:-}" = true ]; }
 
 export_guard_rehearsal() {
-  if [ -n "${EXPORT_REHEARSAL:-}${EXPORT_REHEARSAL_REF:-}${EXPORT_PG_DUMP:-}${EXPORT_PSQL:-}${EXPORT_TEST_HOOK_AFTER_LIST:-}" ] && ! is_rehearsal; then
-    export_fail "the EXPORT_REHEARSAL* / EXPORT_PG_DUMP / EXPORT_PSQL / EXPORT_TEST_HOOK_AFTER_LIST variables exist only for the CI rehearsal (EXPORT_REHEARSAL=1 and GITHUB_ACTIONS=true); refusing"
+  if [ -n "${EXPORT_REHEARSAL:-}${EXPORT_REHEARSAL_REF:-}${EXPORT_PG_DUMP:-}${EXPORT_PSQL:-}${EXPORT_TEST_HOOK_AFTER_LIST:-}${EXPORT_TEST_HOOK_AFTER_UPLOAD:-}" ] && ! is_rehearsal; then
+    export_fail "the EXPORT_REHEARSAL* / EXPORT_PG_DUMP / EXPORT_PSQL / EXPORT_TEST_HOOK_* variables exist only for the CI rehearsal (EXPORT_REHEARSAL=1 and GITHUB_ACTIONS=true); refusing"
   fi
 }
 
@@ -155,16 +155,25 @@ compare_manifests() {
 }
 
 # --- object manifest (section 5) -----------------------------------------------
-# One line per object: index<US>path<US>size<US>sha256.
+# MANIFEST_VERSION 2. The decrypted manifest is:
+#   manifest-version=2
+#   index<US>path<US>size<US>sha256<US>content-type     (one line per object)
+#   count=N total_bytes=T
+# The content type is the object's original storage.objects metadata.mimetype: a
+# restore uploads with it and verifies the restored metadata equals it (Codex P2
+# 4371272761). A version-1 manifest (no version line, four fields) is refused by name.
+MANIFEST_VERSION=2
+
 # object_manifest_check FILE EXPECTED_COUNT: the line count equals the listed
-# object count, every hash is 64 hex, and no index repeats. Returns 0/1.
+# object count, every line has five fields, every hash is 64 hex, every content
+# type is type/subtype, and no index repeats. Returns 0/1.
 object_manifest_check() {
   local content n
   content="$(cat "$1")"   # read ONCE: the caller may pass a process substitution
   local expected="$2"
   n="$(printf '%s\n' "$content" | grep -c . || true)"
   [ "$n" = "$expected" ] || { echo "manifest has $n line(s), $expected object(s) were listed"; return 1; }
-  if printf '%s\n' "$content" | awk -F "$US" 'NF != 4 || $4 !~ /^[0-9a-f]{64}$/ || $3 !~ /^[0-9]+$/ { bad = 1 } END { exit bad }'; then :; else
+  if printf '%s\n' "$content" | awk -F "$US" 'NF != 5 || $4 !~ /^[0-9a-f]{64}$/ || $3 !~ /^[0-9]+$/ || $5 !~ /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/ { bad = 1 } END { exit bad }'; then :; else
     echo "manifest has a malformed line"; return 1
   fi
   [ "$(printf '%s\n' "$content" | cut -d "$US" -f1 | sort -u | wc -l | tr -d ' ')" = "$n" ] || { echo "manifest repeats an index"; return 1; }
@@ -178,12 +187,19 @@ object_manifest_check() {
 # must outlive every dump, so snap_close is the LAST step.
 snap_open() {
   coproc SNAP { with_pgpass "${PSQL_CMD[@]}" -qAtX -F "$US" -v ON_ERROR_STOP=1; }
+  # Bash UNSETS $SNAP_PID and the $SNAP array the moment the coprocess exits, and under
+  # `set -u` any later expansion of them aborts the tool (Codex P2 4371272758). Keep the
+  # PID and both descriptors in plain variables, taken before anything else runs.
+  SNAP_WAIT_PID="${SNAP_PID:-}"
+  SNAP_IN="${SNAP[1]:-}"
+  SNAP_OUT_FD="${SNAP[0]:-}"
   SNAP_IS_OPEN=1
-  printf '%s\n' "begin isolation level repeatable read read only;" >&"${SNAP[1]}"
-  printf '%s\n' "select pg_export_snapshot();" >&"${SNAP[1]}"
+  [ -n "$SNAP_IN" ] && [ -n "$SNAP_OUT_FD" ] || export_fail "the database session did not start"
+  printf '%s\n' "begin isolation level repeatable read read only;" >&"$SNAP_IN"
+  printf '%s\n' "select pg_export_snapshot();" >&"$SNAP_IN"
   local line
   SNAPSHOT_ID=""
-  while IFS= read -r -u "${SNAP[0]}" line; do
+  while IFS= read -r -u "$SNAP_OUT_FD" line; do
     case "$line" in [0-9A-F]*-[0-9A-F]*) SNAPSHOT_ID="$line"; break;; esac
   done
   [ -n "$SNAPSHOT_ID" ] || export_fail "no snapshot id from the database session"
@@ -196,9 +212,9 @@ snap_open() {
 snap_query() {
   local line
   SNAP_OUT=()
-  printf '%s\n' "$1" >&"${SNAP[1]}"
-  printf '%s\n' "select 'EXPORT-EOF';" >&"${SNAP[1]}"
-  while IFS= read -r -u "${SNAP[0]}" line; do
+  printf '%s\n' "$1" >&"$SNAP_IN"
+  printf '%s\n' "select 'EXPORT-EOF';" >&"$SNAP_IN"
+  while IFS= read -r -u "$SNAP_OUT_FD" line; do
     [ "$line" = "EXPORT-EOF" ] && return 0
     SNAP_OUT+=("$line")
   done
@@ -208,9 +224,9 @@ snap_query() {
 snap_close() {
   [ "${SNAP_IS_OPEN:-}" = 1 ] || return 0
   SNAP_IS_OPEN=0
-  printf '%s\n' "commit;" >&"${SNAP[1]}" 2>/dev/null || true
-  eval "exec ${SNAP[1]}>&-" 2>/dev/null || true
-  wait "$SNAP_PID" 2>/dev/null || true
+  printf '%s\n' "commit;" >&"$SNAP_IN" 2>/dev/null || true
+  eval "exec ${SNAP_IN}>&-" 2>/dev/null || true
+  [ -z "$SNAP_WAIT_PID" ] || wait "$SNAP_WAIT_PID" 2>/dev/null || true
 }
 
 # The V2 fingerprint query: per table, count(*) and an order-independent md5 of
@@ -332,14 +348,29 @@ read_object_manifest() {
   local dir="$1" id="$2" raw
   MANIFEST=(); MANIFEST_DECLARED=""; MANIFEST_REASON=""
   raw="$(age -d -i "$id" "$dir/manifest.age" 2>/dev/null)" || { MANIFEST_REASON="the identity does not decrypt manifest.age"; return 1; }
+  local first
+  first="$(printf '%s\n' "$raw" | head -n 1)"
+  case "$first" in
+    "manifest-version=$MANIFEST_VERSION") ;;
+    manifest-version=*) MANIFEST_REASON="unsupported manifest version '${first#manifest-version=}' (this tool reads version $MANIFEST_VERSION)"; return 1;;
+    *) MANIFEST_REASON="old-format manifest: no manifest-version line (version 1 recorded no content types); re-export with the current object-export.sh"; return 1;;
+  esac
   MANIFEST_DECLARED="$(printf '%s\n' "$raw" | sed -n 's/^count=\([0-9]*\) .*/\1/p')"
   [ -n "$MANIFEST_DECLARED" ] || { MANIFEST_REASON="the manifest declares no object count"; return 1; }
   [ "$MANIFEST_DECLARED" -ge 1 ] || { MANIFEST_REASON="the manifest declares $MANIFEST_DECLARED objects: not a valid object export"; return 1; }
   local line
   while IFS= read -r line; do
-    case "$line" in count=*|'') ;; *) MANIFEST+=("$line");; esac
+    case "$line" in count=*|manifest-version=*|'') ;; *) MANIFEST+=("$line");; esac
   done <<<"$raw"
   [ "${#MANIFEST[@]}" = "$MANIFEST_DECLARED" ] || { MANIFEST_REASON="the manifest lists ${#MANIFEST[@]} object(s) but declares $MANIFEST_DECLARED"; return 1; }
   local why
   why="$(object_manifest_check <(printf '%s\n' "${MANIFEST[@]}") "$MANIFEST_DECLARED")" || { MANIFEST_REASON="$why"; return 1; }
+}
+
+# manifest_field LINE N: field N (1 index, 2 path, 3 size, 4 sha256, 5 content type)
+# of a manifest line. Pure parameter expansion; no subprocess sees the line.
+manifest_field() {
+  local rest="$1" n="$2" i
+  for ((i = 1; i < n; i++)); do rest="${rest#*"$US"}"; done
+  if [ "$n" -lt 5 ]; then printf '%s' "${rest%%"$US"*}"; else printf '%s' "$rest"; fi
 }

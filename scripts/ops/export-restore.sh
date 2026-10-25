@@ -40,10 +40,13 @@ while [ $# -gt 0 ]; do
     *) export_fail "unknown argument: $1";;
   esac
 done
+case "$BUCKET" in *[!a-z0-9_-]*|'') export_fail "bucket name must be [a-z0-9_-]+";; esac
 [ -n "$KIND" ] && [ -d "$DIR" ] && [ -f "$ID" ] && [ -n "$TREF" ] && [ -n "$PREF" ] || export_fail "usage: (logical|objects) DIR --identity KEY --target-ref R --production-ref P"
 [ "$TREF" != "$PREF" ] || export_fail "the target ref equals the production ref; refusing"
 command -v age >/dev/null || export_fail "age is not installed"
 export_guard_rehearsal   # rehearsal switches exist only in the CI rehearsal
+# shellcheck source=scripts/ops/restore-drill-lib.sh
+. "$HERE/restore-drill-lib.sh"   # compare_objects_projection: the drill's own metadata check
 trap 'rm -f "${AFTER:-}" "${BEFORE:-}"; export_cleanup_secrets' EXIT
 
 # The production ref the operator typed must be the project this checkout is
@@ -110,21 +113,36 @@ SQL
     read_object_manifest "$DIR" "$ID" || export_fail "$MANIFEST_REASON; not touching the target"
     # Every object must also decrypt and hash as the manifest says BEFORE the first upload.
     for line in "${MANIFEST[@]}"; do
-      idx="${line%%"$US"*}"; want="${line##*"$US"}"
+      idx="${line%%"$US"*}"; want="$(manifest_field "$line" 4)"
       pre="$(dec "$DIR/objects/$idx.age" | sha256sum | cut -d' ' -f1)" || export_fail "object $idx does not decrypt; not touching the target"
       [ "$pre" = "$want" ] || export_fail "object $idx does not hash as its manifest line says; not touching the target"
     done
     bad=0 uploaded=0
     for line in "${MANIFEST[@]}"; do
-      idx="${line%%"$US"*}"; rest="${line#*"$US"}"; path="${rest%%"$US"*}"; want="${line##*"$US"}"
+      idx="${line%%"$US"*}"; path="$(manifest_field "$line" 2)"; want="$(manifest_field "$line" 4)"; mime="$(manifest_field "$line" 5)"
       url="$STORAGE_URL/storage/v1/object/$BUCKET/$(urlencode_path "$path")"
       dec "$DIR/objects/$idx.age" | curl -fsS -X PUT "$url" -H @"$AUTH_HDR_FILE" \
-        -H "x-upsert: true" -H "Content-Type: application/octet-stream" --data-binary @- >/dev/null || { echo "upload of object $idx failed"; bad=1; continue; }
+        -H "x-upsert: true" -H "Content-Type: $mime" --data-binary @- >/dev/null || { echo "upload of object $idx failed"; bad=1; continue; }
       have="$(curl -fsS "$url" -H @"$AUTH_HDR_FILE" | sha256sum | cut -d' ' -f1)" || { echo "read-back of object $idx failed"; bad=1; continue; }
       [ "$have" = "$want" ] || { echo "object $idx re-hashes differently after the restore"; bad=1; continue; }
       uploaded=$((uploaded + 1))
     done
     [ "$bad" = 0 ] || export_fail "object restore failed"
+    # Rehearsal only: change the target between the uploads and the verification, so a
+    # control can prove a wrong content type is caught (CI-only, like the other hook).
+    if is_rehearsal && [ -n "${EXPORT_TEST_HOOK_AFTER_UPLOAD:-}" ]; then bash -c "$EXPORT_TEST_HOOK_AFTER_UPLOAD" >/dev/null 2>&1; fi
+    # The restored objects must carry the ORIGINAL type and size: compare the target's
+    # storage.objects projection (bucket|name|size|mimetype) with what the manifest says,
+    # with the restore drill's own comparison (restore-drill-lib.sh).
+    EXPECTED_PROJ="$(mktemp)"; ACTUAL_PROJ="$(mktemp)"; trap 'rm -f "${AFTER:-}" "${BEFORE:-}" "$EXPECTED_PROJ" "$ACTUAL_PROJ"; export_cleanup_secrets' EXIT
+    for line in "${MANIFEST[@]}"; do
+      printf '%s|%s|%s|%s\n' "$BUCKET" "$(manifest_field "$line" 2)" "$(manifest_field "$line" 3)" "$(manifest_field "$line" 5)"
+    done | LC_ALL=C sort >"$EXPECTED_PROJ"
+    printf '%s\n' "select bucket_id || '|' || name || '|' || coalesce(metadata->>'size', '') || '|' || coalesce(metadata->>'mimetype', '') from storage.objects where bucket_id = '$BUCKET';" | sql | LC_ALL=C sort >"$ACTUAL_PROJ" \
+      || export_fail "could not read the restored objects' metadata from the target"
+    # The drill's comparison prints a diff, which would name object paths: its output is discarded.
+    compare_objects_projection "$EXPECTED_PROJ" "$ACTUAL_PROJ" "$MANIFEST_DECLARED" >/dev/null 2>&1 \
+      || export_fail "a restored object's content type or size differs from the original, or the target holds a different set of objects; not a PASS"
     [ "$uploaded" = "$MANIFEST_DECLARED" ] || export_fail "uploaded $uploaded object(s) but the manifest declares $MANIFEST_DECLARED; not a PASS"
     export_log "RESTORE PASS (objects): $uploaded of $MANIFEST_DECLARED declared object(s) re-uploaded and re-hashed"
     ;;

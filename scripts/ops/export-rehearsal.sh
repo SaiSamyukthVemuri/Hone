@@ -88,9 +88,9 @@ const p = b({ iss: "supabase-demo", role: "service_role", exp: Math.floor(Date.n
 const s = c.createHmac("sha256", "super-secret-jwt-token-with-at-least-32-characters-long").update(h + "." + p).digest("base64url");
 console.log(h + "." + p + "." + s);'
 }
-upload() { # upload NAME FILE
+upload() { # upload NAME FILE CONTENT-TYPE
   curl -fsS -X POST "$API/storage/v1/object/$BUCKET/$(urlencode_path "$PREFIX/$1")" \
-    -H @"$AUTH_HDR_FILE" -H "Content-Type: application/octet-stream" \
+    -H @"$AUTH_HDR_FILE" -H "Content-Type: $3" \
     --data-binary "@$2" >/dev/null || fail "upload $1"
 }
 
@@ -132,9 +132,14 @@ start_stack before
 KEY="$(service_key)"; [ -n "$KEY" ] || fail "no service-role key from the stack"
 SERVICE_KEY="$KEY"; make_auth_header_file   # the key goes through a private 0600 header file, never argv
 psql_q -f - <"$OPS/restore-drill-seed.sql" >"$EVIDENCE/seed.log"
-for i in 1 2 3; do head -c $((4096 * i)) /dev/urandom >"$WORK/o$i.bin"; upload "synthetic-$i.png" "$WORK/o$i.bin"; done
-head -c 2048 /dev/urandom >"$WORK/thumb.bin"; upload "synthetic-1.thumb.webp" "$WORK/thumb.bin"
-head -c 1500 /dev/urandom >"$WORK/spaced.bin"; upload "synthetic 4+plus.png" "$WORK/spaced.bin"   # a path that needs URL encoding
+# THREE content types, so a restore that defaulted every object to one type would be caught (Codex P2 4371272761).
+for i in 1 2 3; do
+  head -c $((4096 * i)) /dev/urandom >"$WORK/o$i.bin"
+  case "$i" in 2) T=image/jpeg;; *) T=image/png;; esac
+  upload "synthetic-$i.png" "$WORK/o$i.bin" "$T"
+done
+head -c 2048 /dev/urandom >"$WORK/thumb.bin"; upload "synthetic-1.thumb.webp" "$WORK/thumb.bin" image/webp
+head -c 1500 /dev/urandom >"$WORK/spaced.bin"; upload "synthetic 4+plus.png" "$WORK/spaced.bin" image/jpeg   # a path that needs URL encoding
 
 age-keygen -o "$WORK/key.txt" >/dev/null 2>&1
 RECIPIENT="$(age-keygen -y "$WORK/key.txt")"
@@ -149,6 +154,11 @@ rehearse bash "$OPS/object-export.sh" --out "$OBJECTS" --recipient "$RECIPIENT" 
   || fail "object export"
 check "logical export taken, V1 hashes and V3 gate passed" pass
 check "object export taken, sample re-download matched" pass
+
+# manifest version 2 records each object's OWN content type: three different ones were seeded
+TYPES="$(age -d -i "$WORK/key.txt" "$OBJECTS/manifest.age" | awk -F "$US" 'NF == 5 {print $5}' | sort -u | tr '\n' ' ')"
+[ "$TYPES" = "image/jpeg image/png image/webp " ] && check "manifest v2 records three different content types (jpeg, png, webp)" pass || check "manifest v2 records three different content types (got: $TYPES)" fail
+age -d -i "$WORK/key.txt" "$OBJECTS/manifest.age" | head -n 1 | grep -qx 'manifest-version=2' && check "manifest carries manifest-version=2" pass || check "manifest carries manifest-version=2" fail
 
 # the coverage line must say exactly what was seeded: 3 rows, all with objects; 5 objects, 1 (the spaced one) with no row
 grep -q '^rows_total=3 rows_without_object=0 objects_total=5 objects_without_row=1$' "$OBJECTS/coverage.txt" \
@@ -207,7 +217,7 @@ expect_fail "T-1: an object deleted between listing and download" "could not be 
 [ ! -e "$WORK/nc-obj" ] && check "negative control (L3): the failed object export left NO output directory behind" pass || check "negative control (L3): the failed object export left NO output directory behind" fail
 # put it back (same bytes) so the later restore compares the taken export, not the damaged world
 curl -fsS -X POST "$API/storage/v1/object/$BUCKET/$(urlencode_path "$PREFIX/synthetic-2.png")" -H @"$AUTH_HDR_FILE" \
-  -H "Content-Type: application/octet-stream" --data-binary "@$WORK/o2.bin" >/dev/null
+  -H "Content-Type: image/jpeg" --data-binary "@$WORK/o2.bin" >/dev/null
 
 expect_fail "restore refuses a target equal to production" "equals the production ref" \
   rehearse bash "$OPS/export-restore.sh" logical "$LOGICAL" --identity "$WORK/key.txt" --target-ref "$PROJECT_ID" --production-ref "$PROJECT_ID"
@@ -236,6 +246,14 @@ rehearse bash "$OPS/export-restore.sh" logical "$LOGICAL" --identity "$WORK/key.
   && check "V4/V2: rows restored into a NEW project, fingerprints identical" pass || check "V4/V2: logical restore" fail
 rehearse bash "$OPS/export-restore.sh" objects "$OBJECTS" --identity "$WORK/key.txt" --target-ref "$PROJECT_ID" --production-ref "a-production-ref-that-is-not-this" --storage-url "$API" --bucket "$BUCKET" 2>&1 | tee -a "$EVIDENCE/rehearsal.log" | tail -1 | grep -q 'RESTORE PASS (objects)' \
   && check "V4/V5: every object re-uploaded and re-hashed" pass || check "V4/V5: objects restore" fail
+# Codex P2 4371272761: a content type that differs after the restore must FAIL the verification.
+# The hook changes one restored object's mimetype in the target between the uploads and the check.
+read -r -d '' HOOK_UP <<HOOK || true
+docker exec -i $DB_CONTAINER psql -U postgres -d postgres -c "update storage.objects set metadata = jsonb_set(metadata, '{mimetype}', '\"image/gif\"') where name like '%synthetic-2.png'"
+HOOK
+expect_fail "wrong content type after the restore fails verification (no PASS)" "content type or size differs from the original" \
+  env_rehearse EXPORT_TEST_HOOK_AFTER_UPLOAD="$HOOK_UP" \
+  bash "$OPS/export-restore.sh" objects "$OBJECTS" --identity "$WORK/key.txt" --target-ref "$PROJECT_ID" --production-ref "a-production-ref-that-is-not-this" --storage-url "$API" --bucket "$BUCKET"
 RESTORE_SECONDS=$(( $(date +%s) - TR ))
 
 # --- 6. V7: the receipt (hashes, counts, durations; no names, ids, paths or rows) ----------------------
@@ -247,7 +265,7 @@ RESTORE_SECONDS=$(( $(date +%s) - TR ))
   echo "V2=fingerprint identical after restore (storage.objects by count)"
   echo "V3=completeness gate passed; removing public.clients failed it and discarded the output"
   echo "V4=restored into a NEW project built from the repository migrations"
-  echo "V5=every object re-hashed; a missing object failed the export"
+  echo "V5=every object re-hashed; a missing object failed the export; each object restored with its own content type (jpeg, png, webp) and the restored metadata verified; a wrong type fails"
   echo "V6=NOT RUN in CI (manual look at real data in a disposable project, by Sam)"
   echo "V7=this receipt"
   echo "total_seconds=$(( $(date +%s) - T0 )) restore_seconds=$RESTORE_SECONDS"

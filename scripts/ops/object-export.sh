@@ -6,7 +6,8 @@
 # In --out DIR, and never a plaintext file:
 #   objects/NNNNNN.age   one encrypted object each (named by INDEX, not by path:
 #                        a path carries a studio and client id)
-#   manifest.age         index, path, size, sha256 per object, plus the totals (held in memory
+#   manifest.age         manifest-version=2, then index, path, size, sha256 and CONTENT TYPE
+#                        per object, plus the totals (held in memory
 #                        until encrypted; no plaintext manifest file ever exists)
 #   coverage.txt         COUNTS only (rows without an object, objects without a row)
 #   hashes.sha256        V1: sha256 of every ciphertext
@@ -84,7 +85,7 @@ export_log "target hosts: $(host_of "$DB_URL") and $(host_of "$STORAGE_URL") (re
 snap_open
 
 # --- 1. the list, from storage.objects, in memory only ---------------------------
-snap_query "select name || E'\\x1f' || coalesce((metadata->>'size'), '0') from storage.objects where bucket_id = '$BUCKET' order by name;"
+snap_query "select name || E'\\x1f' || coalesce((metadata->>'size'), '0') || E'\\x1f' || coalesce(metadata->>'mimetype', '') from storage.objects where bucket_id = '$BUCKET' order by name;"
 LIST=("${SNAP_OUT[@]}")
 N="${#LIST[@]}"
 export_log "listed $N object(s) in bucket $BUCKET"
@@ -111,8 +112,12 @@ get() { # get PATH  -> object bytes on stdout; fails on any non-2xx
 MANIFEST=()   # in memory only: it holds PATHS (a studio and client id each), never a plaintext file
 TOTAL=0 LARGEST_I=0 LARGEST_SIZE=-1
 for i in "${!LIST[@]}"; do
-  path="${LIST[$i]%%"$US"*}"; size="${LIST[$i]#*"$US"}"
+  path="${LIST[$i]%%"$US"*}"; rest="${LIST[$i]#*"$US"}"; size="${rest%%"$US"*}"; mime="${rest#*"$US"}"
   idx="$(printf '%06d' "$i")"
+  # A missing content type is a refusal, not a silent default: the restore must put the
+  # object back with the type it had (Codex P2 4371272761). The path is not printed.
+  [ -n "$mime" ] || export_fail "object $idx has no content type in storage.objects metadata; refusing (no default is invented)"
+  [[ "$mime" =~ ^[a-z0-9][a-z0-9\!\#\$\&\^_.+-]*/[a-z0-9][a-z0-9\!\#\$\&\^_.+-]*$ ]] || export_fail "object $idx has an unsupported content type '$mime' (expected lowercase type/subtype); refusing"
   rm -f "$TMP/h.$idx" "$TMP/c.$idx"
   get "$path" \
     | tee >(sha256sum | cut -d' ' -f1 >"$TMP/h.$idx.tmp" && mv "$TMP/h.$idx.tmp" "$TMP/h.$idx") \
@@ -123,7 +128,7 @@ for i in "${!LIST[@]}"; do
   wait_marker "$TMP/c.$idx" || export_fail "byte count of object $idx never completed"
   got="$(tr -d '[:space:]' <"$TMP/c.$idx")"
   [ "$got" = "$size" ] || export_fail "object $idx downloaded $got byte(s), the list says $size"
-  MANIFEST+=("$idx$US$path$US$size$US$(cat "$TMP/h.$idx")")
+  MANIFEST+=("$idx$US$path$US$size$US$(cat "$TMP/h.$idx")$US$mime")
   TOTAL=$((TOTAL + size))
   if [ "$size" -gt "$LARGEST_SIZE" ]; then LARGEST_SIZE="$size"; LARGEST_I="$i"; fi
 done
@@ -139,14 +144,14 @@ k="$SAMPLE"; [ "$k" -gt "$N" ] && k="$N"
 while [ "${#PICK[@]}" -lt "$((k + 1))" ] && [ "${#PICK[@]}" -lt "$N" ]; do PICK[$((RANDOM % N))]=1; done
 for i in "${!PICK[@]}"; do
   path="${LIST[$i]%%"$US"*}"; idx="$(printf '%06d' "$i")"
-  want="${MANIFEST[$i]##*"$US"}"
+  want="$(manifest_field "${MANIFEST[$i]}" 4)"
   have="$(get "$path" | sha256sum | cut -d' ' -f1)" || export_fail "re-download of object $idx failed"
   [ "$have" = "$want" ] || export_fail "object $idx hashes differently on re-download"
 done
 export_log "sample re-download: ${#PICK[@]} object(s) (random plus the largest) matched"
 
 # --- 4. manifest (encrypted), totals, hashes -------------------------------------------
-{ printf '%s\n' "${MANIFEST[@]}"; printf 'count=%s total_bytes=%s\n' "$N" "$TOTAL"; } | age -r "$RECIPIENT" -o "$OUT/manifest.age"
+{ printf 'manifest-version=%s\n' "$MANIFEST_VERSION"; printf '%s\n' "${MANIFEST[@]}"; printf 'count=%s total_bytes=%s\n' "$N" "$TOTAL"; } | age -r "$RECIPIENT" -o "$OUT/manifest.age"
 rm -rf "$TMP"
 (cd "$OUT" && sha256sum -- manifest.age objects/*.age >hashes.sha256)
 {

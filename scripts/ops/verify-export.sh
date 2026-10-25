@@ -59,7 +59,7 @@ case "$KIND" in
     files="$(find "$DIR/objects" -name '*.age' | wc -l | tr -d ' ')"
     [ "$files" = "${MANIFEST_DECLARED:-0}" ] || note "V5: $files object file(s), ${MANIFEST_DECLARED:-0} declared in the manifest"
     for line in "${MANIFEST[@]}"; do
-      idx="${line%%"$US"*}"; want="${line##*"$US"}"
+      idx="${line%%"$US"*}"; want="$(manifest_field "$line" 4)"
       have="$(dec "$DIR/objects/$idx.age" | sha256sum | cut -d' ' -f1)" || { note "V5: object $idx does not decrypt"; continue; }
       [ "$have" = "$want" ] || note "V5: object $idx re-hashes differently"
     done

@@ -26,6 +26,8 @@ const OPS = path.join(ROOT, "scripts/ops");
 const REF = "testref";
 const DB_URL = `postgresql://u:p@db.${REF}.supabase.co:5432/postgres`;
 const US = "\x1f";
+/** The content type the fixtures give each object: three types, so a restore that defaulted would be caught. */
+const MIME_OF = (p: string) => (p.endsWith(".webp") ? "image/webp" : p.endsWith("b.png") ? "image/jpeg" : "image/png");
 
 let scratch: string;
 let bin: string;
@@ -72,13 +74,15 @@ esac
     path.join(bin, "psql"),
     `#!/usr/bin/env bash
 if [ -n "\${SHIM_ARGV_LOG:-}" ]; then { printf 'psql argv:'; printf ' [%s]' "$@"; printf '\\nPGPASSWORD=%s\\n' "\${PGPASSWORD:-}"; } >>"$SHIM_ARGV_LOG"; fi
+eofs=0
 while IFS= read -r line; do
   [ -n "\${SHIM_PSQL_LOG:-}" ] && printf '%s\\n' "$line" >>"$SHIM_PSQL_LOG"
   case "$line" in
     begin*) echo BEGIN;;
     *pg_export_snapshot*) echo "00000003-00000002-1";;
-    *EXPORT-EOF*) echo EXPORT-EOF;;
+    *EXPORT-EOF*) echo EXPORT-EOF; eofs=$((eofs + 1)); [ -n "\${SHIM_PSQL_EXIT_AFTER_EOF:-}" ] && [ "$eofs" -ge "$SHIM_PSQL_EXIT_AFTER_EOF" ] && exit 0;;
     *pg_stat_user_tables*) cat "$SHIM_DUMP_DIR/manifest.txt";;
+    *"bucket_id || '|'"*) cat "\${SHIM_PROJECTION:-/dev/null}";;
     *rows_total=*) cat "$SHIM_DUMP_DIR/coverage.txt";;
     *"from storage.objects where bucket_id"*) cat "$SHIM_DUMP_DIR/list.txt";;
     commit*) echo COMMIT;;
@@ -92,6 +96,7 @@ done
     path.join(bin, "curl"),
     `#!/usr/bin/env bash
 url=""; for a in "$@"; do case "$a" in http*) url="$a";; esac; done
+case " $* " in *" --data-binary @- "*) cat >/dev/null;; esac   # drain the body like the real curl, or the writer gets SIGPIPE
 if [ -n "\${SHIM_ARGV_LOG:-}" ]; then
   { printf 'curl argv:'; printf ' [%s]' "$@"; printf '\\n'; } >>"$SHIM_ARGV_LOG"
   for a in "$@"; do case "$a" in @*) printf 'header-file=%s\\n' "\${a#@}" >>"$SHIM_ARGV_LOG"; [ -f "\${a#@}" ] && { printf 'header-file-mode=%s\\n' "$(stat -c %a "\${a#@}")" >>"$SHIM_ARGV_LOG"; cat "\${a#@}" >>"$SHIM_ARGV_LOG"; };; esac; done
@@ -197,7 +202,7 @@ describe("export-lib: the pure checks", () => {
 
   it("object_manifest_check: count, hash shape and index uniqueness", () => {
     const h = "a".repeat(64);
-    const line = (i: number, hash = h, size = "10") => `00000${i}${US}p${i}${US}${size}${US}${hash}`;
+    const line = (i: number, hash = h, size = "10", mime = "image/png") => `00000${i}${US}p${i}${US}${size}${US}${hash}${US}${mime}`;
     const f = path.join(scratch, "om");
     writeFileSync(f, `${line(0)}\n${line(1)}\n`);
     expect(lib(`object_manifest_check ${f} 2`).status).toBe(0);
@@ -206,6 +211,15 @@ describe("export-lib: the pure checks", () => {
     expect(lib(`object_manifest_check ${f} 2`).stdout).toContain("malformed");
     writeFileSync(f, `${line(0)}\n${line(0)}\n`);
     expect(lib(`object_manifest_check ${f} 2`).stdout).toContain("repeats an index");
+    // five fields with a real type/subtype; a missing, empty or malformed content type is malformed
+    writeFileSync(f, `${line(0)}\n${line(1, h, "10", "image/webp")}\n`);
+    expect(lib(`object_manifest_check ${f} 2`).status).toBe(0);
+    for (const bad of ["", "png", "image/", "Image/PNG", "image/png; charset=x"]) {
+      writeFileSync(f, `${line(0)}\n${line(1, h, "10", bad)}\n`);
+      expect(lib(`object_manifest_check ${f} 2`).stdout, bad).toContain("malformed");
+    }
+    writeFileSync(f, `0000000${US}p${US}10${US}${h}\n0000001${US}p${US}10${US}${h}\n`);   // the old four-field line
+    expect(lib(`object_manifest_check ${f} 2`).stdout).toContain("malformed");
   });
 });
 
@@ -306,7 +320,7 @@ describe("logical-export.sh", () => {
 describe("object-export.sh", () => {
   const sizeOf = (p: string) =>
     Buffer.byteLength(`https://${REF}.supabase.co/storage/v1/object/treatment-images/${p.split("/").map(encodeURIComponent).join("/")}`);
-  const list = (paths: string[]) => paths.map((p) => `${p}${US}${sizeOf(p)}`).join("\n") + "\n";
+  const list = (paths: string[]) => paths.map((p) => `${p}${US}${sizeOf(p)}${US}${MIME_OF(p)}`).join("\n") + "\n";
   const OBJ_ARGS = (out: string) => ["--out", out, "--recipient", "age1testrecipient", "--expect-ref", REF, "--storage-url", `https://${REF}.supabase.co`, "--sample", "2"];
   const env = (d: string, extra: Record<string, string> = {}) => ({ DB_URL, SERVICE_KEY: "shim-service-key", EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d, ...extra });
   const prep = (name: string, paths: string[]) => {
@@ -538,7 +552,7 @@ describe("Privacy PEER-1155: rehearsal is CI-only, no secret in argv, ref checks
     const paths = ["s/c/a.png", "s/c/b.png"];
     const d = fixtures("m2-key");
     const enc = (p: string) => Buffer.byteLength(`https://${REF}.supabase.co/storage/v1/object/treatment-images/${p}`);
-    writeFileSync(path.join(d, "list.txt"), paths.map((p) => `${p}${US}${enc(p)}`).join("\n") + "\n");
+    writeFileSync(path.join(d, "list.txt"), paths.map((p) => `${p}${US}${enc(p)}${US}${MIME_OF(p)}`).join("\n") + "\n");
     writeFileSync(path.join(d, "coverage.txt"), "rows_total=2 rows_without_object=0 objects_total=2 objects_without_row=0\n");
     const log = path.join(scratch, "m2-key-argv.log"); writeFileSync(log, "");
     const KEYV = "service-key-ABCDEF-0123456789";
@@ -600,7 +614,7 @@ describe("Privacy PEER-1155: rehearsal is CI-only, no secret in argv, ref checks
     // the object export: a vanished object leaves no directory
     const d2 = fixtures("l3-obj");
     const enc = (p: string) => Buffer.byteLength(`https://${REF}.supabase.co/storage/v1/object/treatment-images/${p}`);
-    writeFileSync(path.join(d2, "list.txt"), ["s/c/a.png", "s/c/b.png"].map((p) => `${p}${US}${enc(p)}`).join("\n") + "\n");
+    writeFileSync(path.join(d2, "list.txt"), ["s/c/a.png", "s/c/b.png"].map((p) => `${p}${US}${enc(p)}${US}${MIME_OF(p)}`).join("\n") + "\n");
     writeFileSync(path.join(d2, "coverage.txt"), "rows_total=2 rows_without_object=0 objects_total=2 objects_without_row=0\n");
     const objOut = path.join(scratch, "l3-objout");
     const r = run("object-export.sh", ["--out", objOut, "--recipient", "age1x", "--expect-ref", REF, "--storage-url", `https://${REF}.supabase.co`], ciEnv(d2, { SERVICE_KEY: "k", SHIM_CURL_FAIL_MATCH: "b.png" }));
@@ -621,7 +635,7 @@ describe("Codex P2 4371111142: a failed manifest decryption never reads as an em
   /** A real object export (shims) and a key file; returns the export dir and the env pieces. */
   function exported(name: string) {
     const d = fixtures(name);
-    writeFileSync(path.join(d, "list.txt"), PATHS.map((p) => `${p}${US}${enc(p)}`).join("\n") + "\n");
+    writeFileSync(path.join(d, "list.txt"), PATHS.map((p) => `${p}${US}${enc(p)}${US}${MIME_OF(p)}`).join("\n") + "\n");
     writeFileSync(path.join(d, "coverage.txt"), "rows_total=3 rows_without_object=0 objects_total=3 objects_without_row=0\n");
     const out = path.join(scratch, `${name}-out`);
     const r = run("object-export.sh", ["--out", out, "--recipient", "age1x", "--expect-ref", REF, "--storage-url", `https://${REF}.supabase.co`], ciEnv(d));
@@ -629,6 +643,12 @@ describe("Codex P2 4371111142: a failed manifest decryption never reads as an em
     const key = path.join(scratch, `${name}-key.txt`); writeFileSync(key, "AGE-SECRET-KEY-SHIM");
     return { d, out, key };
   }
+  /** The target's storage.objects projection the restore reads back (bucket|name|size|mimetype), as a file for the shim. */
+  const projection = (name: string, mime: (p: string) => string = MIME_OF) => {
+    const file = path.join(scratch, `${name}-projection.txt`);
+    writeFileSync(file, PATHS.map((p) => `treatment-images|${p}|${enc(p)}|${mime(p)}`).join("\n") + "\n");
+    return file;
+  };
   const restoreArgs = (out: string, key: string) => ["objects", out, "--identity", key, "--target-ref", REF, "--production-ref", "prod", "--storage-url", `https://${REF}.supabase.co`];
   const rehash = (out: string) => execFileSync("bash", ["-c", `cd ${out} && sha256sum -- manifest.age objects/*.age > hashes.sha256`]);
   const putCalls = (log: string) => (readFileSync(log, "utf8").match(/\[-X\] \[PUT\]/g) ?? []).length;
@@ -646,7 +666,7 @@ describe("Codex P2 4371111142: a failed manifest decryption never reads as an em
   it("POSITIVE control: the same export restores with the right identity, and the PASS names uploaded of declared", () => {
     const { d, out, key } = exported("p2b-ok");
     const log = path.join(scratch, "p2b-ok.log"); writeFileSync(log, "");
-    const r = run("export-restore.sh", restoreArgs(out, key), ciEnv(d, { SHIM_ARGV_LOG: log }));
+    const r = run("export-restore.sh", restoreArgs(out, key), ciEnv(d, { SHIM_ARGV_LOG: log, SHIM_PROJECTION: projection("p2b-ok") }));
     expect(r.status, r.stderr).toBe(0);
     expect(r.stderr).toContain("RESTORE PASS (objects): 3 of 3 declared object(s)");
     expect(putCalls(log)).toBe(3);
@@ -654,14 +674,14 @@ describe("Codex P2 4371111142: a failed manifest decryption never reads as an em
 
   it("NEGATIVE: a manifest that declares zero objects, or fewer lines than it declares, is refused before any upload", () => {
     for (const [label, manifest, want] of [
-      ["zero", "count=0 total_bytes=0\n", "declares 0"],
+      ["zero", "manifest-version=2\ncount=0 total_bytes=0\n", "declares 0"],
       ["short", null, "lists 2 object(s) but declares 3"],
-      ["nocount", "", "declares no object count"],
+      ["nocount", "manifest-version=2\n", "declares no object count"],
     ] as const) {
       const { d, out, key } = exported(`p2b-${label}`);
       const m = path.join(out, "manifest.age");
       const lines = readFileSync(m, "utf8").split("\n").filter(Boolean);
-      writeFileSync(m, manifest === null ? lines.filter((_, i) => i !== 0).join("\n") + "\n" : manifest);
+      writeFileSync(m, manifest === null ? lines.filter((_, i) => i !== 1).join("\n") + "\n" : manifest);
       rehash(out);   // the hashes match the tampered files: only the manifest check can catch it
       const log = path.join(scratch, `p2b-${label}.log`); writeFileSync(log, "");
       const r = run("export-restore.sh", restoreArgs(out, key), ciEnv(d, { SHIM_ARGV_LOG: log }));
@@ -699,6 +719,154 @@ describe("Codex P2 4371111142: a failed manifest decryption never reads as an em
     expect(lib(`tables_equal ${empty} ${path.join(scratch, "p2b-missing")}`).status).not.toBe(0);
     expect(lib(`compare_manifests ${empty} ${empty}`).status).not.toBe(0);
     expect(lib(`compare_manifests ${path.join(scratch, "p2b-missing")} ${empty}`).status).not.toBe(0);
+  });
+});
+
+describe("Codex P2 4371272761: the restore keeps each object's content type, and verifies it", () => {
+  const ciEnv = (d: string, extra: Record<string, string> = {}) => ({ DB_URL, SERVICE_KEY: "k", EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d, ...extra });
+  const enc = (p: string) => Buffer.byteLength(`https://${REF}.supabase.co/storage/v1/object/treatment-images/${p}`);
+  const PATHS = ["s/c/a.png", "s/c/b.png", "s/c/c.thumb.webp"];   // image/png, image/jpeg, image/webp
+  const listWith = (mime: (p: string) => string) => PATHS.map((p) => `${p}${US}${enc(p)}${US}${mime(p)}`).join("\n") + "\n";
+  function exported(name: string, mime: (p: string) => string = MIME_OF) {
+    const d = fixtures(name);
+    writeFileSync(path.join(d, "list.txt"), listWith(mime));
+    writeFileSync(path.join(d, "coverage.txt"), "rows_total=3 rows_without_object=0 objects_total=3 objects_without_row=0\n");
+    const out = path.join(scratch, `${name}-out`);
+    const r = run("object-export.sh", ["--out", out, "--recipient", "age1x", "--expect-ref", REF, "--storage-url", `https://${REF}.supabase.co`], ciEnv(d));
+    const key = path.join(scratch, `${name}-key.txt`); writeFileSync(key, "AGE-SECRET-KEY-SHIM");
+    return { d, out, key, r };
+  }
+  const restoreArgs = (out: string, key: string) => ["objects", out, "--identity", key, "--target-ref", REF, "--production-ref", "prod", "--storage-url", `https://${REF}.supabase.co`];
+  const proj = (name: string, mime: (p: string) => string) => {
+    const file = path.join(scratch, `${name}-proj.txt`);
+    writeFileSync(file, PATHS.map((p) => `treatment-images|${p}|${enc(p)}|${mime(p)}`).join("\n") + "\n");
+    return file;
+  };
+  const rehash = (out: string) => execFileSync("bash", ["-c", `cd ${out} && sha256sum -- manifest.age objects/*.age > hashes.sha256`]);
+
+  it("the export records manifest-version=2 and each object's own content type", () => {
+    const { out, r } = exported("ct-manifest");
+    expect(r.status, r.stderr).toBe(0);
+    const lines = readFileSync(path.join(out, "manifest.age"), "utf8").split("\n").filter(Boolean);
+    expect(lines[0]).toBe("manifest-version=2");
+    const rows = lines.filter((l) => l.includes(US)).map((l) => l.split(US));
+    expect(rows.map((c) => c.length)).toEqual([5, 5, 5]);
+    expect(rows.map((c) => c[4])).toEqual(["image/png", "image/jpeg", "image/webp"]);
+    expect(lines[lines.length - 1]).toMatch(/^count=3 total_bytes=\d+$/);
+  });
+
+  it("NEGATIVE: an object with no content type is a refusal, not a silent default, and no output is left", () => {
+    const { out, r } = exported("ct-missing", (p) => (p.endsWith("b.png") ? "" : MIME_OF(p)));
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("has no content type");
+    expect(r.stderr).not.toContain("s/c/b.png");
+    expect(existsSync(out)).toBe(false);
+    const odd = exported("ct-odd", (p) => (p.endsWith("b.png") ? "Image/PNG" : MIME_OF(p)));
+    expect(odd.r.status).not.toBe(0);
+    expect(odd.r.stderr).toContain("unsupported content type");
+    expect(existsSync(odd.out)).toBe(false);
+  });
+
+  it("the restore uploads each object with ITS content type, never a default", () => {
+    const { d, out, key, r } = exported("ct-restore");
+    expect(r.status, r.stderr).toBe(0);
+    const log = path.join(scratch, "ct-restore.log"); writeFileSync(log, "");
+    const rr = run("export-restore.sh", restoreArgs(out, key), ciEnv(d, { SHIM_ARGV_LOG: log, SHIM_PROJECTION: proj("ct-restore", MIME_OF) }));
+    expect(rr.status, rr.stderr).toBe(0);
+    const puts = readFileSync(log, "utf8").split("\n").filter((l) => l.startsWith("curl argv:") && l.includes("[-X] [PUT]"));
+    expect(puts).toHaveLength(3);
+    expect(puts.map((l) => /\[Content-Type: ([^\]]+)\]/.exec(l)?.[1])).toEqual(["image/png", "image/jpeg", "image/webp"]);
+    expect(puts.join("\n")).not.toContain("application/octet-stream");
+  });
+
+  it("NEGATIVE: a restored object whose type differs from the original fails verification (no PASS)", () => {
+    const { d, out, key } = exported("ct-wrong");
+    const wrong = proj("ct-wrong", (p) => (p.endsWith("b.png") ? "image/gif" : MIME_OF(p)));   // the target ended with another type
+    const r = run("export-restore.sh", restoreArgs(out, key), ciEnv(d, { SHIM_PROJECTION: wrong }));
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("content type or size differs from the original");
+    expect(r.stdout + r.stderr).not.toContain("RESTORE PASS");
+    expect(r.stdout + r.stderr).not.toContain("s/c/b.png");   // the diff (which names paths) is never printed
+    // the size too, and an extra object on the target
+    const size = path.join(scratch, "ct-size-proj.txt");
+    writeFileSync(size, PATHS.map((p) => `treatment-images|${p}|${enc(p) + 1}|${MIME_OF(p)}`).join("\n") + "\n");
+    expect(run("export-restore.sh", restoreArgs(out, key), ciEnv(d, { SHIM_PROJECTION: size })).status).not.toBe(0);
+    const extra = proj("ct-extra", MIME_OF);
+    writeFileSync(extra, readFileSync(extra, "utf8") + `treatment-images|other|1|image/png\n`);
+    expect(run("export-restore.sh", restoreArgs(out, key), ciEnv(d, { SHIM_PROJECTION: extra })).status).not.toBe(0);
+    // an empty projection (the objects are not there at all) is not a pass either
+    const none = path.join(scratch, "ct-none-proj.txt"); writeFileSync(none, "");
+    expect(run("export-restore.sh", restoreArgs(out, key), ciEnv(d, { SHIM_PROJECTION: none })).status).not.toBe(0);
+  });
+
+  it("NEGATIVE: an old-format (version 1) manifest and an unknown version are refused by name, by the restore AND by verify", () => {
+    for (const [label, rewrite, want] of [
+      ["v1", (lines: string[]) => lines.filter((l) => !l.startsWith("manifest-version=")).map((l) => (l.includes(US) ? l.split(US).slice(0, 4).join(US) : l)), "old-format manifest"],
+      ["v3", (lines: string[]) => lines.map((l) => l.replace("manifest-version=2", "manifest-version=3")), "unsupported manifest version '3'"],
+    ] as const) {
+      const { d, out, key } = exported(`ct-${label}`);
+      const m = path.join(out, "manifest.age");
+      writeFileSync(m, rewrite(readFileSync(m, "utf8").split("\n").filter(Boolean)).join("\n") + "\n");
+      rehash(out);   // hashes match the rewritten file: only the version check can refuse it
+      const log = path.join(scratch, `ct-${label}.log`); writeFileSync(log, "");
+      const rr = run("export-restore.sh", restoreArgs(out, key), ciEnv(d, { SHIM_ARGV_LOG: log, SHIM_PROJECTION: proj(`ct-${label}`, MIME_OF) }));
+      expect(rr.status, label).not.toBe(0);
+      expect(rr.stderr, label).toContain(want);
+      expect((readFileSync(log, "utf8").match(/\[-X\] \[PUT\]/g) ?? []).length, label).toBe(0);
+      const v = run("verify-export.sh", ["objects", out, "--identity", key]);
+      expect(v.status, label).not.toBe(0);
+      expect(v.stdout, label).toContain(want);
+      expect(v.stdout, label).not.toContain("VERIFY PASS");
+    }
+  });
+});
+
+describe("Codex P2 4371272758: the snapshot coprocess may exit before it is closed", () => {
+  const ciEnv = (d: string, extra: Record<string, string> = {}) => ({ DB_URL, SERVICE_KEY: "k", EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d, ...extra });
+
+  it("RED control: closing a coprocess that already exited, the OLD way, aborts under set -u", () => {
+    const script = `set -euo pipefail
+coproc P { while IFS= read -r l; do echo "$l"; [ "$l" = go ] && exit 0; done; }
+printf 'go\\n' >&"\${P[1]}"
+IFS= read -r -u "\${P[0]}" x
+sleep 0.3
+printf 'commit\\n' >&"\${P[1]}" 2>/dev/null || true
+eval "exec \${P[1]}>&-" 2>/dev/null || true
+wait "$P_PID" 2>/dev/null || true
+echo survived`;
+    const r = spawnSync("bash", ["-c", script], { encoding: "utf8" });
+    expect(r.stdout).not.toContain("survived");
+    expect(r.stderr).toMatch(/unbound variable/);
+    expect(r.status).not.toBe(0);
+  });
+
+  it("GREEN: the logical export completes and writes its receipt when psql exits right after the fingerprint", () => {
+    const d = fixtures("snap-fast-l");
+    const out = path.join(scratch, "snap-fast-l-out");
+    const r = run("logical-export.sh", LOGICAL_ARGS(out), ciEnv(d, { SHIM_PSQL_EXIT_AFTER_EOF: "1" }));
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).not.toMatch(/unbound variable/);
+    expect(existsSync(path.join(out, "receipt.txt"))).toBe(true);
+  });
+
+  it("GREEN: the object export completes and writes its receipt when psql exits right after the coverage query", () => {
+    const d = fixtures("snap-fast-o");
+    const enc = (p: string) => Buffer.byteLength(`https://${REF}.supabase.co/storage/v1/object/treatment-images/${p}`);
+    writeFileSync(path.join(d, "list.txt"), ["s/c/a.png"].map((p) => `${p}${US}${enc(p)}${US}image/png`).join("\n") + "\n");
+    writeFileSync(path.join(d, "coverage.txt"), "rows_total=1 rows_without_object=0 objects_total=1 objects_without_row=0\n");
+    const out = path.join(scratch, "snap-fast-o-out");
+    const r = run("object-export.sh", ["--out", out, "--recipient", "age1x", "--expect-ref", REF, "--storage-url", `https://${REF}.supabase.co`], ciEnv(d, { SHIM_PSQL_EXIT_AFTER_EOF: "2" }));
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).not.toMatch(/unbound variable/);
+    expect(existsSync(path.join(out, "receipt.txt"))).toBe(true);
+  });
+
+  it("the lib keeps the PID and both descriptors in plain variables and never re-reads $SNAP / $SNAP_PID after the open", () => {
+    const lib = readFileSync(path.join(OPS, "export-lib.sh"), "utf8");
+    expect(lib).toContain('SNAP_WAIT_PID="${SNAP_PID:-}"');
+    expect(lib).toContain('SNAP_IN="${SNAP[1]:-}"');
+    const afterOpen = lib.slice(lib.indexOf("SNAP_IS_OPEN=1"));
+    expect(afterOpen.replace(/^\s*#.*$/gm, "")).not.toMatch(/\$\{?SNAP(\[|_PID)/);
   });
 });
 
