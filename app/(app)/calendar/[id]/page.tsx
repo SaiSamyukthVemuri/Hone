@@ -60,6 +60,7 @@ import type {
   Session,
   TreatmentPlan,
 } from "@/lib/types/database";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 type ClientBriefing = Pick<
   Client,
@@ -116,7 +117,7 @@ export default async function AppointmentDetailPage({
     .eq("id", id)
     .eq("studio_id", studio.id)
     .maybeSingle<Joined>();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`db_error:${dbErrorCode(error)}`);
   if (!data) notFound();
 
   const isCancelled = data.status === "cancelled";
@@ -370,7 +371,7 @@ export default async function AppointmentDetailPage({
     treatmentPlans = plansRes;
     if (linkedSessionRes.error) {
       throw new Error(
-        `Failed to load linked session: ${linkedSessionRes.error.message}`,
+        `Failed to load linked session: ${dbErrorCode(linkedSessionRes.error)}`,
       );
     }
     linkedSession = (linkedSessionRes.data ?? null) as

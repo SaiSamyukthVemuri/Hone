@@ -8,6 +8,7 @@ import type {
   SessionRunningTotal,
   TotalTreatmentTime,
 } from "./format";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Treatment time tracking is electrolysis-only. Laser sessions don't go
 // through the block model with minutes_performed, so they're excluded
@@ -78,7 +79,7 @@ async function loadElectrolysisRows(
     .is("deleted_at", null)
     .order("started_at", { ascending: false });
   if (error) {
-    throw new Error(`Failed to load sessions for treatment time: ${error.message}`);
+    throw new Error(`Failed to load sessions for treatment time: ${dbErrorCode(error)}`);
   }
   return ((data ?? []) as unknown as Row[]).map((r) => ({
     ...r,
@@ -135,7 +136,7 @@ export async function getTreatmentGoal(
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
     .maybeSingle();
-  if (error) throw new Error(`Failed to load treatment goal: ${error.message}`);
+  if (error) throw new Error(`Failed to load treatment goal: ${dbErrorCode(error)}`);
   return (data ?? null) as TreatmentGoal | null;
 }
 
@@ -210,7 +211,7 @@ export async function getActualMinutesForPlans(
     .is("deleted_at", null);
   if (error) {
     throw new Error(
-      `Failed to load actual minutes for plans: ${error.message}`,
+      `Failed to load actual minutes for plans: ${dbErrorCode(error)}`,
     );
   }
 
@@ -254,7 +255,7 @@ export async function getTreatmentTimeContextForEmail(
     .eq("modality", "electrolysis")
     .is("deleted_at", null);
   if (error) {
-    throw new Error(`Failed to load treatment time context: ${error.message}`);
+    throw new Error(`Failed to load treatment time context: ${dbErrorCode(error)}`);
   }
   let totalMinutes = 0;
   const rows = (data ?? []) as unknown as Array<{

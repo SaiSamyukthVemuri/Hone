@@ -12,6 +12,7 @@ import {
   type ReminderSchedulerStatus,
 } from "@/lib/cron/reminder-heartbeat";
 import { markDemoContactedAction } from "./actions";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // PR #265: the reminder-scheduler status is read from the Upstash heartbeat
 // (not Supabase), so it is computed outside loadConsole's Promise.all.
@@ -130,12 +131,12 @@ async function loadConsole(): Promise<{
       .limit(20),
   ]);
 
-  if (studiosRes.error) throw new Error(studiosRes.error.message);
-  if (invitesRes.error) throw new Error(invitesRes.error.message);
-  if (practitionersRes.error) throw new Error(practitionersRes.error.message);
-  if (waitlistRes.error) throw new Error(waitlistRes.error.message);
-  if (waitlistCountRes.error) throw new Error(waitlistCountRes.error.message);
-  if (demoRes.error) throw new Error(demoRes.error.message);
+  if (studiosRes.error) throw new Error(`db_error:${dbErrorCode(studiosRes.error)}`);
+  if (invitesRes.error) throw new Error(`db_error:${dbErrorCode(invitesRes.error)}`);
+  if (practitionersRes.error) throw new Error(`db_error:${dbErrorCode(practitionersRes.error)}`);
+  if (waitlistRes.error) throw new Error(`db_error:${dbErrorCode(waitlistRes.error)}`);
+  if (waitlistCountRes.error) throw new Error(`db_error:${dbErrorCode(waitlistCountRes.error)}`);
+  if (demoRes.error) throw new Error(`db_error:${dbErrorCode(demoRes.error)}`);
 
   type InviteRaw = { studio_id: string; status: string };
   const invites = (invitesRes.data ?? []) as InviteRaw[];

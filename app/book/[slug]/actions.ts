@@ -84,7 +84,7 @@ import { captureServerEvent } from "@/lib/analytics/server";
 // magic-link logs already use (app/portal/login/actions.ts), so the
 // same email yields the same fingerprint across surfaces.
 import { hashFingerprint } from "@/lib/portal/tokens";
-import { dbErrorCode } from "@/lib/logging/error-class";
+import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -1261,7 +1261,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     logInternalBookingError("public_booking_client_not_resolved", {
       studioId: studio.id,
       emailFingerprint: hashFingerprint(normalizedEmail),
-      code: rawCommandResult ?? undefined,
+      code: failureCode(null, rawCommandResult, "none"),
     });
     if (consumedInvitationId) {
       return invitationConsumedWithoutBooking("client_not_created");
@@ -1406,7 +1406,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // studio_not_found are all operator-visible states, never the visitor's
     // fault to fix, and must not distinguish "wrong studio" from "no such row".
     logInternalBookingError("public_booking_command_refused", {
-      code: commandResult,
+      code: failureCode(null, commandResult),
       studioId: studio.id,
       emailFingerprint: hashFingerprint(normalizedEmail),
     });

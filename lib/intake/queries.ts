@@ -41,7 +41,7 @@ export async function getLatestIntakeForClient(
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (error) throw new Error(`Failed to load intake: ${error.message}`);
+  if (error) throw new Error(`Failed to load intake: ${dbErrorCode(error)}`);
   return (data ?? null) as ClientIntakeForm | null;
 }
 
@@ -68,7 +68,7 @@ export async function getLatestSubmittedOrReviewedIntakeForClient(
     .maybeSingle();
   if (error) {
     throw new Error(
-      `Failed to load submitted intake: ${error.message}`,
+      `Failed to load submitted intake: ${dbErrorCode(error)}`,
     );
   }
   return (data ?? null) as ClientIntakeForm | null;
@@ -86,7 +86,7 @@ export async function getIntakeById(
     .eq("id", intakeId)
     .is("deleted_at", null)
     .maybeSingle();
-  if (error) throw new Error(`Failed to load intake: ${error.message}`);
+  if (error) throw new Error(`Failed to load intake: ${dbErrorCode(error)}`);
   return (data ?? null) as ClientIntakeForm | null;
 }
 
@@ -102,7 +102,7 @@ export async function getIntakeByIdAdmin(
     .eq("id", intakeId)
     .is("deleted_at", null)
     .maybeSingle();
-  if (error) throw new Error(`Failed to load intake: ${error.message}`);
+  if (error) throw new Error(`Failed to load intake: ${dbErrorCode(error)}`);
   return (data ?? null) as ClientIntakeForm | null;
 }
 
@@ -218,7 +218,7 @@ export async function getIntakeHistoryForClient(
     .eq("client_id", clientId)
     .is("deleted_at", null)
     .order("created_at", { ascending: false });
-  if (error) throw new Error(`Failed to load intake history: ${error.message}`);
+  if (error) throw new Error(`Failed to load intake history: ${dbErrorCode(error)}`);
   return (data ?? []) as ClientIntakeForm[];
 }
 

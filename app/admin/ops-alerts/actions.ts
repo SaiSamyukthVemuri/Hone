@@ -135,7 +135,7 @@ export async function resolveOpsAlertAction(
       outcome: "failed",
       metadata: { has_resolution_note: note != null },
     });
-    throw new Error(`Failed to resolve the alert: ${error.message}`);
+    throw new Error(`Failed to resolve the alert: ${dbErrorCode(error)}`);
   }
 
   await logAdminAction({
