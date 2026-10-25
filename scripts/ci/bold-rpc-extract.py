@@ -61,3 +61,25 @@ for root in ROOTS:
                             "args": sorted(set(keys)), "args_known": known})
 json.dump(out, open(sys.argv[1], "w"), indent=1)
 print(f"{len(out)} rpc call sites, {len({o['rpc'] for o in out})} distinct commands")
+
+# Direct table writes: <client>.from("table").insert|update|upsert|delete(
+write = re.compile(r'(\w+)\s*\.from\(\s*"([a-z0-9_]+)"\s*\)\s*\.(insert|update|upsert|delete)\(', re.S)
+tw = []
+for root in ROOTS:
+    for d, _, files in os.walk(root):
+        for f in files:
+            if not f.endswith((".ts", ".tsx")):
+                continue
+            p = os.path.join(d, f)
+            s = open(p, encoding="utf-8").read()
+            for m in write.finditer(s):
+                var = m.group(1)
+                defs = re.findall(r'(?:const|let)\s+%s\s*=\s*(?:await\s+)?(\w+)\(' % re.escape(var), s)
+                kind = "unknown"
+                if defs:
+                    kind = {"createClient": "authenticated", "createAdminClient": "service_role"}.get(defs[0], "unknown")
+                elif var == "admin":
+                    kind = "service_role"
+                tw.append({"file": p, "table": m.group(2), "op": m.group(3), "client_var": var, "client": kind})
+json.dump(tw, open(sys.argv[1].replace("sites.json", "table-writes.json"), "w"), indent=1)
+print(f"{len(tw)} direct table-write sites, {len({t['table'] for t in tw})} distinct tables")
