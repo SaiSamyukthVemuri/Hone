@@ -1,44 +1,44 @@
-# S1-VERIFIED-BINARY. REHEARSAL - NEVER MERGE.
+# ARCHIVES-AND-UPDATECHECK. REHEARSAL - NEVER MERGE.
 #
-# Runs the S1 procedure with a CLI binary that is VERIFIED (release archive +
-# sha256sum -c, or npm tarball + dist.integrity) before it is given a database
-# password, with SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false, against a
-# non-loopback address of a DISPOSABLE SYNTHETIC local database built through
-# production's migration prefix 0212 -- not a copy of production. No hosted
-# project, no provider, no customer data.
+# (1) Downloads and verifies all eight v2.102.0 release archives and looks for
+# every second source of the same bytes; (2) observes, through a local
+# TLS-intercepting proxy, everything the verified CLI binary sends when it runs
+# the S1 dry run and push against a non-loopback address of a DISPOSABLE
+# SYNTHETIC local database through production's prefix 0212 (not a copy of
+# production). Canary credentials only. No hosted project, no provider, no
+# customer data.
 #
 # Supply chain as the other workflows: actions pinned by SHA, contents: read,
 # persist-credentials: false. The one credential is the D7b read-only ghcr.io
-# login, held only across a direct pinned-CLI start, as in ci.yml. The stack
-# start uses the pinned npx shim (orchestration only); everything the
-# rehearsal asserts runs with the verified binary.
+# login, held only across a direct pinned-CLI start, as in ci.yml. The proxy is
+# a pinned mitmproxy installed into a throwaway virtualenv on the runner.
 
-name: s1-verified-binary-rehearsal
+name: archives-updatecheck-rehearsal
 
 on:
   pull_request:
     paths:
-      - "scripts/ci/s1-verified-binary-rehearsal.sh"
-      - ".github/workflows/s1-verified-binary-rehearsal.yml"
+      - "scripts/ci/archives-updatecheck-rehearsal.sh"
+      - ".github/workflows/archives-updatecheck-rehearsal.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: hone-s1-verified-binary-rehearsal-${{ github.event.pull_request.number || github.ref }}
+  group: hone-archives-updatecheck-rehearsal-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   apply-tool:
-    name: s1 verified binary rehearsal (not required)
+    name: archives and update check rehearsal (not required)
     runs-on: ubuntu-latest
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
       packages: read
-    # Stack start, a release download, an npm pack, four database resets and two pushes
-    # (the control push may wait out the image pull retries), well inside 60 minutes.
+    # Stack start, eight release downloads, up to eight npm packs, a pip install, three
+    # database resets and six proxied CLI runs: well inside 60 minutes.
     timeout-minutes: 60
     env:
       EXCLUDE: studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta,supavisor
@@ -89,7 +89,7 @@ jobs:
         if: steps.sb_start.outcome == 'failure'
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x "$EXCLUDE"
 
-      - name: Rehearse the S1 procedure with a verified binary
+      - name: Rehearse archives and the update check
         shell: bash
         env:
           REHEARSAL_OUT: ${{ runner.temp }}/apply-tool-out
@@ -97,12 +97,12 @@ jobs:
           set -u
           export DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
           echo "db container: $DB"
-          bash scripts/ci/s1-verified-binary-rehearsal.sh
+          bash scripts/ci/archives-updatecheck-rehearsal.sh
 
       - name: Upload rehearsal logs
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: s1-verified-binary-rehearsal-logs
+          name: archives-updatecheck-rehearsal-logs
           path: ${{ runner.temp }}/apply-tool-out/
           retention-days: 7
