@@ -24,6 +24,7 @@ jobs:
         include:
           - { name: "0246 only (before 0247)", set: "" }
           - { name: "0246 + 0247", set: "0247" }
+          - { name: "0246 + 0256 (apply check)", set: "0256" }
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,7 +76,9 @@ jobs:
         shell: bash
         env:
           CELL: ${{ matrix.name }}
+          OUTCOME: ${{ steps.sb_start.outcome }}
         run: |
+          echo "START [$CELL] outcome=$OUTCOME"
           c="$(docker ps --format '{{.Names}}' | grep '^supabase_db_' | head -1)"
           q() { docker exec "$c" psql -U postgres -At -c "$1" 2>&1 | head -3 | tr '\n' ' '; }
           echo "PROBE [$CELL]"
