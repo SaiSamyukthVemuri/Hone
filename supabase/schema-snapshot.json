@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 245,
-    "last": "0246_intake_questionnaire_snapshot.sql",
-    "sha256": "2f329cd91a92feef717fb2b7d49cb6ee4a7986881363dac460784fc6aae07cfd"
+    "count": 254,
+    "last": "0256_public_booking_refuses_active_client_adoption.sql",
+    "sha256": "29fe9eaddf7ded3864d65e9a81c992a5f9379369dcc0b2f923da016e33c76c29"
   },
   "public": {
     "tables": [
@@ -171,6 +171,9 @@
       "assert_session_writable",
       "assert_setup_scope",
       "audit_actor_is_caller",
+      "audit_client_pricing_change",
+      "audit_pinned_note_delete",
+      "authorize_appointment_email_operation",
       "begin_appointment_email_message",
       "begin_appointment_sms_message",
       "begin_waitlist_invitation_proof",
@@ -208,6 +211,7 @@
       "client_clinical_notes_before_insert",
       "client_clinical_notes_no_update",
       "client_personal_notes_set_studio_id",
+      "client_portal_access_guard",
       "clients_portrait_integrity",
       "clients_sms_permission_guard",
       "close_delivery_concern",
@@ -248,6 +252,7 @@
       "delete_recurring_break_rule",
       "delivery_concerns_identity_guard",
       "delivery_concerns_server_defaults",
+      "edit_client_pinned_note",
       "edit_session_started_at",
       "effective_new_client_admission",
       "email_delivery_health",
@@ -303,6 +308,7 @@
       "import_legacy_waitlist_entry",
       "imported_treatment_memory_audit_row",
       "initialize_studio_payment_jurisdiction_from_history",
+      "inspect_appointment_email_operation",
       "invalidate_waitlist_invitation_proof",
       "is_studio_member",
       "is_studio_owner",
@@ -331,6 +337,7 @@
       "mark_stripe_event_processed",
       "mark_waitlist_mobile_verified",
       "materialize_recurring_break_rule",
+      "member_owns_scoped_timed_block",
       "mint_setup_group_keys",
       "move_appointment_core",
       "move_or_reassign_appointment",
@@ -343,6 +350,7 @@
       "new_client_waitlist_invitations_no_delete",
       "new_client_waitlist_invitations_server_timestamps",
       "new_client_waitlist_resolve_owner",
+      "observe_appointment_email_operation",
       "on_practitioner_change_refan",
       "on_studio_capacity_flag_change",
       "open_new_client_waitlist_admission_round",
@@ -356,6 +364,7 @@
       "practitioner_cancel_appointment",
       "practitioner_capacity_retirement_blockers",
       "practitioners_receptionist_membership_guard",
+      "prepare_appointment_email_operation",
       "process_email_provider_event",
       "public_booking_local_to_utc",
       "public_booking_practitioner_options",
@@ -449,6 +458,7 @@
       "retire_practitioner_capacity",
       "retire_ready_card_attempts",
       "retire_studio_machine",
+      "retire_unattempted_appointment_email_operation",
       "revert_appointment_outcome",
       "revoke_waitlist_preference_grant",
       "save_client_card_on_file",

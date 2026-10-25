@@ -110,7 +110,9 @@ export default async function ManageAppointmentPage({
                   the CTA is withdrawn rather than pointed at a refusal, and
                   the reason is stated once from the shared string. Cancel
                   stays exactly where it was, for every studio. */}
-              {result.summary.freeConsultationWaitlistOnly && (
+              {result.summary.freeConsultationWaitlistOnly &&
+                result.summary.rescheduleEnabled &&
+                result.summary.cancellationEnabled && (
                 <p className="text-[15px] leading-relaxed text-[#0A0A0A]">
                   {FREE_CONSULT_WAITLIST_ONLY_HEADLINE}. You can cancel this
                   appointment below, then join the waitlist for the next
@@ -118,8 +120,24 @@ export default async function ManageAppointmentPage({
                 </p>
               )}
 
+              {/* HON-47. A path the studio does not offer online is withdrawn,
+                  never pointed at a refusal, and the page says how to reach
+                  the studio instead. */}
+              {(!result.summary.rescheduleEnabled ||
+                !result.summary.cancellationEnabled) && (
+                <p className="text-[15px] leading-relaxed text-[#0A0A0A]">
+                  {!result.summary.rescheduleEnabled &&
+                  !result.summary.cancellationEnabled
+                    ? `To change or cancel this appointment, please contact ${result.summary.studioName} directly.`
+                    : !result.summary.rescheduleEnabled
+                      ? `To change the time of this appointment, please contact ${result.summary.studioName} directly.`
+                      : `To cancel this appointment, please contact ${result.summary.studioName} directly.`}
+                </p>
+              )}
+
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                {!result.summary.freeConsultationWaitlistOnly && (
+                {result.summary.rescheduleEnabled &&
+                  !result.summary.freeConsultationWaitlistOnly && (
                   <Link
                     href={`/reschedule/${token}`}
                     className="px-8 py-4 text-center text-[14px] font-medium uppercase"
@@ -132,17 +150,19 @@ export default async function ManageAppointmentPage({
                     Reschedule appointment
                   </Link>
                 )}
-                <Link
-                  href={`/cancel/${token}`}
-                  className="px-8 py-4 text-center text-[14px] font-medium uppercase"
-                  style={{
-                    border: "1px solid #0A0A0A",
-                    color: "#0A0A0A",
-                    letterSpacing: "0.1em",
-                  }}
-                >
-                  Cancel appointment
-                </Link>
+                {result.summary.cancellationEnabled && (
+                  <Link
+                    href={`/cancel/${token}`}
+                    className="px-8 py-4 text-center text-[14px] font-medium uppercase"
+                    style={{
+                      border: "1px solid #0A0A0A",
+                      color: "#0A0A0A",
+                      letterSpacing: "0.1em",
+                    }}
+                  >
+                    Cancel appointment
+                  </Link>
+                )}
               </div>
 
               {/* Back-to-portal escape hatch (PR #127). When the
@@ -156,6 +176,7 @@ export default async function ManageAppointmentPage({
                   client is already signed in. The manage token is
                   not touched by this link, so cancel/reschedule
                   behaviour is unchanged. */}
+              {result.summary.portalEnabled && (
               <div className="pt-2">
                 <Link
                   href="/portal"
@@ -170,7 +191,16 @@ export default async function ManageAppointmentPage({
                   &larr; Back to client portal
                 </Link>
               </div>
+              )}
             </>
+          ) : result.code === "manage_disabled" ? (
+            // HON-47. The studio manages appointments directly. Reached only
+            // for a future confirmed appointment, so not a token-state signal.
+            <UnavailableMessage
+              eyebrow="Manage appointment"
+              headline="Appointments are managed by the studio."
+              body={result.error}
+            />
           ) : (
             // Generic collapsed surface for every non-manageable
             // case: unknown token, expired token, already-used

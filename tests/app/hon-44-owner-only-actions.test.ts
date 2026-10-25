@@ -234,49 +234,54 @@ describe("positive control: the owner passes the gate and reaches the database",
   });
 });
 
-describe("pinned cautions: edit own only, owner edits any", () => {
+describe("pinned cautions: the edit is the database command (author-or-owner is decided there)", () => {
   function editForm() {
     return form({ note_id: ID_A, client_id: ID_B, text: "new text", original_text: "old text" });
   }
 
-  // A scripted service-role builder that records every .eq(column, value).
-  async function withAdminBuilder<T>(run: () => Promise<T>): Promise<T> {
-    const builder: Record<string, unknown> = {};
-    const chain = () => builder;
-    builder.update = chain;
-    builder.select = chain;
-    builder.eq = (column: string, value: unknown) => {
-      state.eqs.push([column, value]);
-      return builder;
-    };
-    builder.maybeSingle = async () => ({ data: null, error: null });
-    const admin = await import("@/lib/supabase/admin-server");
-    vi.spyOn(admin, "createAdminClient").mockReturnValue({ from: () => builder } as never);
+  // A scripted USER-session client whose rpc() records its call and returns `reply`.
+  async function withRpc<T>(reply: { data: unknown; error: unknown }, run: () => Promise<T>): Promise<{ calls: Array<[string, unknown]>; result: T }> {
+    const calls: Array<[string, unknown]> = [];
+    const server = await import("@/lib/supabase/server");
+    vi.spyOn(server, "createClient").mockResolvedValue({
+      rpc: async (name: string, args: unknown) => {
+        calls.push([name, args]);
+        return reply;
+      },
+    } as never);
     try {
-      return await run();
+      return { calls, result: await run() };
     } finally {
       vi.restoreAllMocks();
     }
   }
 
-  it("a practitioner's update is scoped to cautions THEY created", async () => {
-    state.role = "practitioner";
-    const outcome = await withAdminBuilder(() => settled(() => editClientPinnedNoteAction(editForm())));
-    expect(outcome.error).toMatch(/changed or is no longer available/);
-    expect(state.eqs).toContainEqual(["created_by_practitioner_id", "prac-2"]);
-    expect(state.eqs).toContainEqual(["studio_id", "studio-1"]);
+  it("sends the SESSION studio and the form's ids to edit_client_pinned_note, for a practitioner and an owner alike", async () => {
+    for (const role of ["practitioner", "owner"]) {
+      state.role = role;
+      state.touched = [];
+      const { calls } = await withRpc({ data: true, error: null }, () => settled(() => editClientPinnedNoteAction(editForm())));
+      expect(calls).toEqual([
+        [
+          "edit_client_pinned_note",
+          { p_studio_id: "studio-1", p_client_id: ID_B, p_note_id: ID_A, p_original_text: "old text", p_text: "new text" },
+        ],
+      ]);
+      expect(state.touched, `${role}: the service-role client is never used`).not.toContain("createAdminClient");
+    }
   });
 
-  it("the owner's update is NOT narrowed by author", async () => {
-    state.role = "owner";
-    await withAdminBuilder(() => settled(() => editClientPinnedNoteAction(editForm())));
-    expect(state.eqs.map(([c]) => c)).not.toContain("created_by_practitioner_id");
-    expect(state.eqs).toContainEqual(["studio_id", "studio-1"]);
+  it("a false answer (stale, foreign, deleted or not yours) is ONE fixed refusal", async () => {
+    state.role = "practitioner";
+    const { result } = await withRpc({ data: false, error: null }, () => settled(() => editClientPinnedNoteAction(editForm())));
+    expect(result.error).toBe("That note changed or is no longer available. Refresh and try again.");
   });
 
-  it("a foreign or author-less caution gives a non-owner the same refusal as a missing one (no author disclosure)", async () => {
+  it("a database error surfaces a fixed safe message, never the raw text", async () => {
     state.role = "practitioner";
-    const outcome = await withAdminBuilder(() => settled(() => editClientPinnedNoteAction(editForm())));
-    expect(outcome.error).toBe("That note changed or is no longer available. Refresh and try again.");
+    const { result } = await withRpc({ data: null, error: { message: "SECRET internal detail", code: "XX000" } }, () =>
+      settled(() => editClientPinnedNoteAction(editForm())),
+    );
+    expect(result.error).toBe("Could not update the note. Please try again.");
   });
 });

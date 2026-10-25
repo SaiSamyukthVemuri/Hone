@@ -46,6 +46,12 @@ import {
   isFreeConsultWaitlistOnlyReschedule,
   type FreeConsultWaitlistOnlyCode,
 } from "@/lib/booking/free-consult-reschedule-policy";
+import {
+  CLIENT_RESCHEDULE_DISABLED_CODE,
+  clientRescheduleDisabledMessage,
+  type ClientRescheduleDisabledCode,
+} from "@/lib/booking/client-self-service-policy";
+import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
 import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 
 const POLICY_ACK_REQUIRED_ERROR =
@@ -230,7 +236,7 @@ type ReschedulableOriginal = {
 export type RescheduleRefusal = {
   ok: false;
   error: string;
-  code?: FreeConsultWaitlistOnlyCode;
+  code?: FreeConsultWaitlistOnlyCode | ClientRescheduleDisabledCode;
 };
 
 // The joined shape the policy needs. PostgREST types an embedded relation as
@@ -289,6 +295,25 @@ async function assertReschedulableOriginal(
   }
   if (new Date(data.starts_at).getTime() <= Date.now()) {
     return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
+
+  // HON-47. The studio may have turned client self-service rescheduling off.
+  // Same ordering contract as EMERG-01 below: only a real token on a confirmed,
+  // future appointment reaches this, so the coded refusal discloses nothing a
+  // token holder does not already hold. Checked before EMERG-01 because it is
+  // the broader rule. Every one of the four entry points calls this helper, so
+  // the page, both slot reads and the submit all refuse together. An unreadable
+  // policy collapses to the generic refusal; it never allows.
+  const selfService = await loadClientSelfServicePolicy(admin, data.studio_id);
+  if (!selfService.ok) {
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
+  if (!selfService.policy.reschedule) {
+    return {
+      ok: false,
+      error: clientRescheduleDisabledMessage(selfService.studioName),
+      code: CLIENT_RESCHEDULE_DISABLED_CODE,
+    };
   }
 
   // EMERG-01. Only now — a real token, a confirmed appointment, a future start
@@ -708,7 +733,11 @@ export type RescheduleResult =
   // EMERG-01 adds one more bounded code. A refusal carrying it means the
   // command was NEVER called: no cancellation of the original, no successor, no
   // reservation change, no token rotation.
-  | { ok: false; error: string; code?: "slot_taken" | FreeConsultWaitlistOnlyCode };
+  | {
+      ok: false;
+      error: string;
+      code?: "slot_taken" | FreeConsultWaitlistOnlyCode | ClientRescheduleDisabledCode;
+    };
 
 export async function rescheduleAppointmentViaTokenAction(formData: FormData): Promise<
   RescheduleResult
@@ -943,6 +972,14 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
         };
       case "payment_state_requires_studio":
         return { ok: false, error: PAYMENT_STATE_ERROR };
+      // HON-47 / 0234. The command's own refusal for a flag flipped after the
+      // check in assertReschedulableOriginal. Nothing was mutated.
+      case "reschedule_disabled":
+        return {
+          ok: false,
+          error: clientRescheduleDisabledMessage(null),
+          code: CLIENT_RESCHEDULE_DISABLED_CODE,
+        };
       case "practitioner_unavailable":
         return { ok: false, error: PRACTITIONER_UNAVAILABLE_ERROR };
       default:

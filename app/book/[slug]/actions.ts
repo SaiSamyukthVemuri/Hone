@@ -9,6 +9,7 @@ import {
   RATE_LIMIT_MESSAGE,
 } from "@/lib/rate-limit/public";
 import { getStudioBySlug } from "@/lib/booking/queries";
+import { bookedClientAddressForToken } from "@/lib/booking/booked-client-address";
 import { loadPublicSlotsByDate } from "@/lib/booking/public-slot-range";
 import { throwIfSlotReadFaulted } from "@/lib/booking/e2e-slot-read-fault";
 import {
@@ -60,6 +61,11 @@ import {
   newClientAdmissionRefusesOutright,
   newClientMayBook,
 } from "@/lib/booking/new-client-admission";
+import {
+  clientManagePageAllowed,
+  clientOnlineBookingDisabledMessage,
+  clientSelfServicePolicyFromStudio,
+} from "@/lib/booking/client-self-service-policy";
 import {
   NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
   NEW_CLIENT_WAITLIST_REFUSAL_CODE,
@@ -434,8 +440,19 @@ export type PublicBookResult =
   | {
       ok: true;
       appointmentId: string;
-      manageUrl: string;
+      // HON-47: null when the studio offers none of cancel, reschedule or the
+      // portal online, so the card never links into a refusal.
+      manageUrl: string | null;
       confirmationEmailStatus: ConfirmationEmailStatus;
+      // HON-50 decision C: the studio address for THIS booking's success
+      // screen, only after the server verified the booking's own token, its
+      // studio and its confirmed status (lib/booking/booked-client-address.ts).
+      // Null otherwise; the screen then shows only what the public page shows.
+      bookedClientAddress: string | null;
+      // HON-47. Which email links and card actions the studio offers, so the
+      // confirmation copy never promises one it withdrew. Required: no caller
+      // may leave the studio's policy to a permissive default.
+      selfService: { cancellation: boolean; reschedule: boolean };
     }
   | {
       ok: false;
@@ -557,6 +574,16 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
 
   const studio = await getStudioBySlug(slug);
   if (!studio) return { ok: false, error: "Studio not found." };
+
+  // HON-47. RETURNING-CLIENT ONLINE BOOKING follows the studio's client portal
+  // flag. It is NOT new-client admission: new_client_admission_mode below stays
+  // the only authority for people who are not yet clients, and is not read
+  // here. Refused before any read or write, so nothing is mutated. The
+  // existing-email case under client_type=new is caught after the lookup below.
+  const clientSelfService = clientSelfServicePolicyFromStudio(studio);
+  if (clientType === "existing" && !clientSelfService.portal) {
+    return { ok: false, error: clientOnlineBookingDisabledMessage(studio.name) };
+  }
 
   // =====================================================================
   // P0 NEW-CLIENT WAITLIST ADMISSION GATE — SERVER AUTHORITY
@@ -866,6 +893,17 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       emailFingerprint: hashFingerprint(normalizedEmail),
     });
     return { ok: false, error: archivedClientCollisionError(studio.name) };
+  }
+
+  // HON-47. After the SEC-004 gate above, only an AUTHORIZED invitation reaches
+  // here with a matched email. A visitor who chose "new" but whose email matches an ACTIVE client
+  // would take the existing-client branch below and book as that client, so
+  // the returning-client rule applies here too. Placed BEFORE the invitation is
+  // consumed and before any write. The copy is the same neutral sentence used
+  // above, which does not say "returning client" and so does not confirm that
+  // the email is on file.
+  if (existingClient && !clientSelfService.portal) {
+    return { ok: false, error: clientOnlineBookingDisabledMessage(studio.name) };
   }
 
   // WAIT-03B B2 / P3-A. CONSUME THE INVITATION HERE -- before the client
@@ -1235,6 +1273,20 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       error: NEW_CLIENT_ADMISSION_CLOSED_REFUSAL,
       code: NEW_CLIENT_ADMISSION_REFUSAL_CODE,
     };
+  }
+  // 0256 (SEC-004). The command refuses to adopt an ACTIVE client by email on
+  // the ordinary path - the window between this action's lookup and the commit.
+  // Answered with the archived-collision copy BYTE FOR BYTE, so active, archived
+  // and raced are one answer and the booker learns nothing about the record.
+  if (rawCommandResult === "existing_client_requires_confirmation") {
+    logInternalBookingError("public_booking_identity_unconfirmed", {
+      studioId: studio.id,
+      emailFingerprint: hashFingerprint(normalizedEmail),
+    });
+    if (consumedInvitationId) {
+      return invitationConsumedWithoutBooking("client_identity_collision");
+    }
+    return { ok: false, error: archivedClientCollisionError(studio.name) };
   }
   if (rawCommandResult === "archived_client_collision") {
     logInternalBookingError("public_booking_archived_client_collision", {
@@ -1921,14 +1973,26 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     }),
   );
 
+  // HON-50 decision C. Verified server-side from the token this request just
+  // minted; never throws, never fails the committed booking.
+  const bookedClientAddress = await bookedClientAddressForToken(admin, {
+    slug,
+    token: appointmentToken,
+  }).catch(() => null);
+
   // THE BOOKING IS COMMITTED, and the client leaves with a usable path to it
   // whatever the email did. `manageUrl` goes ONLY to this authorised browser,
   // it is never persisted, logged, alerted on or reported.
   return {
     ok: true,
     appointmentId: createdId,
-    manageUrl,
+    manageUrl: clientManagePageAllowed(clientSelfService) ? manageUrl : null,
     confirmationEmailStatus,
+    bookedClientAddress,
+    selfService: {
+      cancellation: clientSelfService.cancellation,
+      reschedule: clientSelfService.reschedule,
+    },
   };
 }
 

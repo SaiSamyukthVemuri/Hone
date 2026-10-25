@@ -1,0 +1,6 @@
+{
+  "pr": 1104,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0251_studio_arrival_and_address_visibility.sql"],
+  "release_receipt": "01-ops/1104-release-receipt.json"
+}

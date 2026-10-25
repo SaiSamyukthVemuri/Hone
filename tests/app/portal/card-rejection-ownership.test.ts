@@ -92,7 +92,18 @@ const { createAdminClient, getCurrentPortalSession } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient }));
-vi.mock("@/lib/portal/session", () => ({ getCurrentPortalSession }));
+vi.mock("@/lib/portal/session", () => ({
+  getCurrentPortalSession,
+  // HON-47. Portal actions resolve the session through this wrapper, which
+  // answers portal_disabled for a studio with client portal access off. These
+  // tests exercise an ENABLED studio, so it delegates to the session above.
+  requirePortalSessionForAction: async (expired: string) => {
+    const s = await (getCurrentPortalSession)();
+    return s
+      ? { ok: true as const, session: s }
+      : { ok: false as const, code: "session_expired" as const, error: expired };
+  },
+}));
 // Imported by the module under test for other actions; never reached here.
 vi.mock("@/lib/stripe/server", () => ({ inferStripeLivemode: vi.fn() }));
 vi.mock("@/lib/stripe/setup-intent", () => ({

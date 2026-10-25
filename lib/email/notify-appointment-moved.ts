@@ -3,11 +3,19 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmailSafely } from "./send-appointment";
 import { resolveReplyTo, studioClientContactEmail } from "@/lib/email/studio-identity";
 import { generateCancellationToken } from "@/lib/booking/tokens";
+import { clientManagePageAllowed } from "@/lib/booking/client-self-service-policy";
+import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
 import { localLongDate, formatTimeForStudio } from "@/lib/booking/tz";
 import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 import { emailBookingReference } from "@/lib/email/booking-reference";
 import { withReference } from "@/lib/email/subject-reference";
-import { appointmentEmailAddress } from "@/lib/booking/studio-location";
+import { ARRIVAL_HEADING, arrivalSectionHtml } from "@/lib/email/templates/arrival";
+import { appointmentEmailAddress, arrivalInstructionsOf } from "@/lib/booking/studio-location";
+
+const MOVED_STUDIO_COLUMNS = "name, timezone, address, owner_email, postcare_contact_email";
+const MOVED_STUDIO_COLUMNS_WITH_LOCATION =
+  "name, timezone, address, address_visibility, arrival_instructions, owner_email, postcare_contact_email";
+const UNDEFINED_COLUMN = "42703";
 
 // Practitioner Move appointment: the NARROW client "appointment updated" notification.
 //
@@ -66,12 +74,16 @@ export function buildAppointmentMovedEmail(p: {
   // HON-50. The studio's public address, as the confirmation and reminders
   // show it. Omitted or null (a home-based studio) adds nothing.
   studioAddress?: string | null;
+  // HON-50. Arrival/parking instructions; blank or omitted adds nothing.
+  arrivalInstructions?: string | null;
   serviceName: string;
   startsAt: Date;
   timezone: string;
   practitionerName: string | null;
-  manageUrl: string;
-  rescheduleUrl: string;
+  // HON-47. Null when the studio does not offer that path online; the line
+  // then names only what IS offered, or how to reach the studio.
+  manageUrl: string | null;
+  rescheduleUrl: string | null;
   bookingReference: string;
 }): { subject: string; html: string; text: string } {
   const { kind, studioName, serviceName, practitionerName, manageUrl, rescheduleUrl } = p;
@@ -113,12 +125,30 @@ export function buildAppointmentMovedEmail(p: {
     bodyHtml += `<br/><br/>${esc(studioAddress)}`;
     bodyText += `\n\n${studioAddress}`;
   }
+  // HON-50: arrival/parking instructions after the address; blank adds nothing.
+  const arrival = p.arrivalInstructions?.trim() || null;
+  if (arrival) {
+    bodyHtml += arrivalSectionHtml(arrival);
+    bodyText += `\n\n${ARRIVAL_HEADING}:\n${arrival}`;
+  }
 
   // PREVIEW RULE (HIPAA-READY-01, #828): a client that strips the preheader
   // filler previews the first body text, so the body opens with a lead that
   // names only the studio. The client's name is not repeated; the service and
   // the new time follow the lead.
   const lead = `${studioName} has updated your appointment. The details are below.`;
+  const changeHtml =
+    manageUrl && rescheduleUrl
+      ? `Need to make a change? <a href="${esc(rescheduleUrl)}">Reschedule</a> or <a href="${esc(manageUrl)}">manage your appointment</a>.`
+      : manageUrl
+        ? `Need to make a change? <a href="${esc(manageUrl)}">Manage your appointment</a>.`
+        : `Need to make a change? Please contact ${esc(studioName)} directly.`;
+  const changeText =
+    manageUrl && rescheduleUrl
+      ? `Manage or reschedule: ${manageUrl}`
+      : manageUrl
+        ? `Manage your appointment: ${manageUrl}`
+        : `Need to make a change? Please contact ${studioName} directly.`;
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8" /><title>${esc(subject)}</title></head>
 <body style="margin:0;padding:0;background:#FAFAF7;color:#0A0A0A;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FAFAF7;padding:40px 20px;"><tr><td align="center">
@@ -129,7 +159,7 @@ export function buildAppointmentMovedEmail(p: {
     <tr><td style="padding-bottom:24px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">
       ${bodyHtml}</td></tr>
     <tr><td style="padding-bottom:16px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">
-      Need to make a change? <a href="${esc(rescheduleUrl)}">Reschedule</a> or <a href="${esc(manageUrl)}">manage your appointment</a>.</td></tr>
+      ${changeHtml}</td></tr>
   </table>
   </td></tr></table>
 </body></html>`;
@@ -137,7 +167,7 @@ export function buildAppointmentMovedEmail(p: {
     subject,
     html: withPreheader(html, clientPreheader(studioName)),
     text: withTextPreheader(
-      `${lead}\n\n${bodyText}\n\nBooking reference: ${p.bookingReference.trim()}\nManage or reschedule: ${manageUrl}\n`,
+      `${lead}\n\n${bodyText}\n\nBooking reference: ${p.bookingReference.trim()}\n${changeText}\n`,
       clientPreheader(studioName),
     ),
   };
@@ -153,14 +183,22 @@ export async function notifyAppointmentMoved(
   },
 ): Promise<MoveNotificationStatus> {
   try {
-    const { data } = await admin
-      .from("appointments")
-      .select(
-        "id, starts_at, client:clients(name, email), service:services(name), studio:studios(name, timezone, address, owner_email, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
-      )
-      .eq("id", input.appointmentId)
-      .eq("studio_id", input.studioId)
-      .maybeSingle();
+    // HON-50. The location columns are read with the row. Before their
+    // migration is applied the embed refuses them (42703, undefined column);
+    // the read is then retried once without them, so the email still sends
+    // exactly as it did before (visibility 'both', no arrival section).
+    const load = (studioCols: string) =>
+      admin
+        .from("appointments")
+        .select(
+          `id, starts_at, client:clients(name, email), service:services(name), studio:studios(${studioCols}), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)`,
+        )
+        .eq("id", input.appointmentId)
+        .eq("studio_id", input.studioId)
+        .maybeSingle();
+    let read = await load(MOVED_STUDIO_COLUMNS_WITH_LOCATION);
+    if (read.error?.code === UNDEFINED_COLUMN) read = await load(MOVED_STUDIO_COLUMNS);
+    const { data } = read;
     if (!data) return "degraded"; // could not re-load the moved appointment
     const row = data as unknown as {
       id: string;
@@ -171,6 +209,8 @@ export async function notifyAppointmentMoved(
         name: string | null;
         timezone: string | null;
         address: string | null;
+        address_visibility?: "booking_page" | "emails" | "both";
+        arrival_instructions?: string | null;
         owner_email: string | null;
         postcare_contact_email: string | null;
       } | null;
@@ -190,13 +230,20 @@ export async function notifyAppointmentMoved(
 
     // Stateless HMAC token (no stored raw token) → the neutral manage + reschedule links.
     const token = generateCancellationToken(row.id, start);
-    const manageUrl = `${input.appOrigin}/manage/${token}`;
-    const rescheduleUrl = `${input.appOrigin}/reschedule/${token}`;
+    // HON-47. The studio's client self-service policy decides which links this
+    // email may carry. An unreadable policy withdraws them all: the email still
+    // delivers, with the contact line, rather than linking into a refusal.
+    const policyRead = await loadClientSelfServicePolicy(admin, input.studioId);
+    const policy = policyRead.ok ? policyRead.policy : null;
+    const manageUrl =
+      policy && clientManagePageAllowed(policy) ? `${input.appOrigin}/manage/${token}` : null;
+    const rescheduleUrl = policy?.reschedule ? `${input.appOrigin}/reschedule/${token}` : null;
 
     const { subject, html: htmlWithPreheader, text } = buildAppointmentMovedEmail({
       kind: input.resultKind ?? "moved",
       studioName,
       studioAddress: row.studio ? appointmentEmailAddress(row.studio) : null,
+      arrivalInstructions: row.studio ? arrivalInstructionsOf(row.studio) : null,
       serviceName,
       startsAt: start,
       timezone: tz,

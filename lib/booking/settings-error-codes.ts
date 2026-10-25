@@ -1,5 +1,6 @@
 import { BUFFER_PRESET_MINUTES } from "@/lib/booking/buffer-presets";
 import { PUBLIC_BOOKING_HORIZON_MONTHS_VALUES } from "@/lib/booking/horizon";
+import { ARRIVAL_INSTRUCTIONS_MAX_LENGTH } from "@/lib/booking/studio-location";
 
 // /settings/booking failure banner. The save actions redirect with a CODE
 // (`?error=slug_taken`), never text, and the page maps a recognised code to one
@@ -19,6 +20,8 @@ export const BOOKING_SETTINGS_ERROR_SENTENCES = {
   slug_taken: "That slug is already taken. Pick another.",
   timezone_conflict:
     "Changing the timezone would push a blockout into a conflict with an existing calendar item. Reschedule or remove the affected appointment or block first.",
+  visibility_invalid: "Choose where the address is shown.",
+  arrival_too_long: `Arrival and parking instructions must be ${ARRIVAL_INSTRUCTIONS_MAX_LENGTH} characters or fewer.`,
   save_failed: "Could not save your booking settings.",
   admission_save_failed: "Could not save that just now. Please try again.",
   admission_not_owner: "Only the studio owner can change this.",

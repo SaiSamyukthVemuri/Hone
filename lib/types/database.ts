@@ -32,6 +32,12 @@ export type Studio = {
   slug: string;
   address: string | null;
   booking_description: string | null;
+  // HON-50 (draft migration, number pending): where `address` is shown, and
+  // the arrival/parking instructions for appointment emails. Optional at the
+  // type level for rows loaded via `select *` before the migration is applied;
+  // read only through lib/booking/studio-location.ts.
+  address_visibility?: "booking_page" | "emails" | "both";
+  arrival_instructions?: string | null;
   // Migration 0119 (Clinical Record: Phase 1): studio-scoped feature flag for
   // the "Finalize & sign" clinical-record boundary. Default OFF; opt-in per
   // studio during supervised rollout. Optional at the type level for rows loaded
@@ -81,6 +87,12 @@ export type Studio = {
   new_client_admission_mode?: string;
   new_client_admission_mode_set_at?: string | null;
   new_client_admission_mode_set_by?: string | null;
+  // HON-47 / 0252. The client-portal flag. The other two self-service flags
+  // (client_cancellation_enabled, client_reschedule_enabled, 0234) are declared
+  // below with the 0213-0246 fields. Default TRUE in the database; optional here
+  // for rows loaded before 0252 applies, and read ONLY through
+  // clientSelfServicePolicyFromStudio, which maps an absent key to TRUE.
+  client_portal_enabled?: boolean;
   // Migration 0025: studio-level email toggles.
   send_confirmation_emails: boolean;
   send_24h_reminders: boolean;
@@ -174,6 +186,9 @@ export type Studio = {
   // Existing finite 0213–0246 schema fields; this DTO grants no write authority.
   client_cancellation_enabled: boolean;
   client_reschedule_enabled: boolean;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 // Migration 0140: per-studio resumable onboarding-v2 (owner first-run) state.
@@ -540,6 +555,9 @@ export type Appointment = {
   // Existing finite 0213–0246 schema fields; this DTO grants no write authority.
   created_by_receptionist_id?: string | null;
   cancelled_by_receptionist_id?: string | null;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 // Migration 0049: SMS types accepted by claim_sms_send and
@@ -794,6 +812,9 @@ export type Practitioner = {
   default_machine_id: string | null;
   default_machine_mode: string | null;
   last_public_assignment_at: string | null;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 export type Client = {
@@ -850,6 +871,9 @@ export type Client = {
 
   // Existing finite 0213–0246 schema fields; this DTO grants no write authority.
   portrait_image_id: string | null;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 // Migration 0126 (Willow PR A): dedicated dated CONSULTATION notes + SKIN/HAIR

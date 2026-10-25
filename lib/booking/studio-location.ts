@@ -1,26 +1,40 @@
-// HON-50. Where the studio's address is shown. ONE place decides it, so the
-// public booking page and the appointment emails cannot disagree.
+// HON-50. Where the studio's address is shown, and the arrival/parking
+// instructions that go with it. ONE place decides both, so the public booking
+// page and the booked-client communications cannot disagree.
 //
 //   studios.address_visibility   'booking_page' | 'emails' | 'both'
+//   studios.arrival_instructions text, NULL = no section
 //
-// THE COLUMN DOES NOT EXIST YET. Its migration is drafted and waits for a
-// number (willow/HON-50-SCHEMA-DRAFT.sql). Until it is applied every row reads
-// as 'both', which is exactly today's behaviour: the booking page AND the
-// appointment emails show the address. This module is the leak-safe routing
-// that the column will plug into, so turning the setting on later changes no
-// render path. A blank or whitespace-only address is shown nowhere.
+// The stored values are internal names. What the owner is shown names every
+// destination (Sam, 24 Oct, decision B; Settings > Booking):
+//   'booking_page' -> "Public booking page only"
+//   'emails'       -> "Booked-client communications only": the confirmation,
+//                     reminder and appointment-update emails, the
+//                     confirmation's calendar invite, and the success screen
+//                     after the server verifies the booking
+//                     (lib/booking/booked-client-address.ts, decision C)
+//   'both'         -> both of the above (the default, today's behaviour)
+// Whatever the value, the team's calendar subscription feed carries the
+// address, as it does today, and the setting discloses that connected
+// calendar services can keep a copy.
+//
+// Both columns are optional at the type level: a row loaded with `select *`
+// before the migration is applied carries neither. An absent or unknown
+// visibility reads as 'both', and absent instructions render nothing. A blank
+// address is shown nowhere, whatever the visibility says.
 //
 // The public booking page renders forPublicBookingPage(row), never the raw
-// row; the client appointment emails render forAppointmentEmail(row). Proved
-// by tests/app/book/address-visibility-leak.test.ts and
-// tests/lib/email/address-visibility-routing.test.ts.
+// row, so a booked-client-only address never reaches its HTML or the props it
+// hands to a client component (the RSC payload). Proved by
+// tests/app/book/address-visibility-leak.test.ts.
 
 export const ADDRESS_VISIBILITY_VALUES = ["booking_page", "emails", "both"] as const;
 export type AddressVisibility = (typeof ADDRESS_VISIBILITY_VALUES)[number];
 
-// Structural on purpose: the Studio type gains `address_visibility` (and the
-// arrival-instructions field) only in the PR that adds the columns, because the
-// curated db-types check refuses an app type column the database lacks.
+// Matches the draft migration's CHECK (studios_arrival_instructions_check).
+export const ARRIVAL_INSTRUCTIONS_MAX_LENGTH = 1000;
+
+// Structural: any row carrying the address (a Studio, or a narrower embed).
 type LocationFields = {
   address: string | null;
   address_visibility?: unknown;
@@ -62,21 +76,26 @@ export function appointmentEmailAddress(studio: LocationFields): string | null {
   return addressVisibilityOf(studio) === "booking_page" ? null : nonBlankAddress(studio);
 }
 
+/** Arrival/parking instructions for appointment emails, or null for none. */
+export function arrivalInstructionsOf(studio: LocationFields): string | null {
+  const raw = studio.arrival_instructions;
+  return typeof raw === "string" ? raw.trim() || null : null;
+}
+
 /**
  * The studio row as the PUBLIC booking page may see it: the address replaced
- * by publicBookingAddress(), and any email-only arrival instructions removed.
+ * by publicBookingAddress() and the arrival instructions (appointment-email
+ * content) removed.
  * Every other field is unchanged.
  */
 export function forPublicBookingPage<T extends LocationFields>(studio: T): T {
-  const view: T = { ...studio, address: publicBookingAddress(studio) };
-  if ("arrival_instructions" in view) view.arrival_instructions = null;
-  return view;
+  return { ...studio, address: publicBookingAddress(studio), arrival_instructions: null };
 }
 
 /**
  * The studio row as a client APPOINTMENT EMAIL may see it (body and calendar
  * invite): the address replaced by appointmentEmailAddress(). Every other
- * field is unchanged.
+ * field, including the arrival instructions, is unchanged.
  */
 export function forAppointmentEmail<T extends LocationFields>(studio: T): T {
   return { ...studio, address: appointmentEmailAddress(studio) };

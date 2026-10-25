@@ -5,6 +5,8 @@ import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { getCurrentPortalSession } from "@/lib/portal/session";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { PortalLoginForm } from "./LoginForm";
+import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
+import { PortalAccessDisabled } from "../PortalAccessDisabled";
 
 // Public client portal login page. Renders the email form that
 // requests a magic link. If the visitor already has a live portal
@@ -43,6 +45,15 @@ export default async function PortalLoginPage({
   // a slug when one was actually in the URL so the unscoped login
   // path (no slug in URL) keeps using the global lookup.
   const studioSlugForForm = slug.length > 0 ? slug : null;
+
+  // HON-47. A studio-scoped sign-in page for a studio that has turned client
+  // portal access off explains that, instead of collecting an email for a link
+  // that would never be sent. The slug is already public, so this reveals
+  // nothing about any client. The unscoped page is unchanged: the action
+  // silently withholds links to disabled studios there (see actions.ts).
+  if (studio && !clientSelfServicePolicyFromStudio(studio).portal) {
+    return <PortalAccessDisabled studioName={studioName} />;
+  }
 
   const heading = studioName
     ? `Sign in to your ${studioName} portal`

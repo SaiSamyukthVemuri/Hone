@@ -6,6 +6,7 @@ import {
   formatServiceLabel,
   groupServicesByModality,
 } from "@/lib/booking/format";
+import { clientOnlineBookingDisabledMessage } from "@/lib/booking/client-self-service-policy";
 import { UNAVAILABLE_PUBLIC_BOOKING_MESSAGE } from "@/lib/booking/readiness";
 // The CLIENT-SAFE module: new-client-admission.ts is `server-only`, and this
 // is a "use client" component. Same function, same canonical decision.
@@ -75,6 +76,13 @@ type Props = {
    * the EXISTING-client branch keeps the answer it always gave.
    */
   structurallyBookable?: boolean;
+  /**
+   * HON-47. PRESENTATION ONLY: whether the studio offers its clients the portal
+   * and returning-client online booking. Defaults TRUE so every existing call
+   * site renders exactly as before. The server action re-derives the policy
+   * from the studio row before any booking.
+   */
+  clientPortalEnabled?: boolean;
 };
 
 // BOOK-01 Tranche 1. The success state carries the appointment's MANAGEMENT URL
@@ -86,8 +94,13 @@ type Confirmation = {
   dateLocal: string;
   service: Service | null;
   email: string;
-  manageUrl: string;
+  // HON-47: null when the studio offers no online self-service at all.
+  manageUrl: string | null;
   emailStatus: ConfirmationEmailStatus;
+  // HON-50 decision C: server-verified address for this booking, or null.
+  bookedClientAddress: string | null;
+  // HON-47. What the studio offers online; the copy never promises more.
+  selfService: { cancellation: boolean; reschedule: boolean };
 };
 
 // Render a local YYYY-MM-DD as "Tuesday, May 26" (or, with year, "Tuesday, May 26, 2026"
@@ -151,6 +164,7 @@ export function PublicBookForm({
   maxDate,
   newClientAdmission = "open",
   structurallyBookable = true,
+  clientPortalEnabled = true,
 }: Props) {
   // Pre-compute the service buckets each path needs. Done once at
   // mount and re-runs only if `services` actually changes (which
@@ -477,6 +491,8 @@ export function PublicBookForm({
         email,
         manageUrl: r.manageUrl,
         emailStatus: r.confirmationEmailStatus,
+        bookedClientAddress: r.bookedClientAddress,
+        selfService: r.selfService,
       });
     });
   }
@@ -488,6 +504,7 @@ export function PublicBookForm({
         studioName={studioName}
         studioAddress={studioAddress}
         studioSlug={slug}
+        clientPortalEnabled={clientPortalEnabled}
       />
     );
   }
@@ -554,6 +571,38 @@ export function PublicBookForm({
       <p className="text-sm text-neutral-700">
         {UNAVAILABLE_PUBLIC_BOOKING_MESSAGE}
       </p>
+    );
+  }
+
+  // HON-47. The existing-client surface IS the portal sign-in. With client
+  // portal access off it says how returning clients book instead.
+  if (surface === "existing_portal" && !clientPortalEnabled) {
+    return (
+      <div className="flex flex-col gap-6">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="text-[13px]" style={{ color: "#6B6B6B" }}>
+            Booking as an{" "}
+            <strong className="font-medium text-[#0A0A0A]">
+              existing client
+            </strong>
+            .
+          </p>
+          <button
+            type="button"
+            onClick={() => setClientType(null)}
+            className="text-[13px] underline"
+            style={{ color: "#6B6B6B" }}
+          >
+            Change
+          </button>
+        </div>
+        <p
+          className="text-[15px] leading-relaxed text-[#0A0A0A]"
+          data-testid="returning-client-booking-disabled"
+        >
+          {clientOnlineBookingDisabledMessage(studioName)}
+        </p>
+      </div>
     );
   }
 
@@ -1233,21 +1282,26 @@ function emphasiseEmail(step: string, email: string): React.ReactNode {
 // fetches, no side effects. The booking has already been created and
 // the confirmation email already dispatched by the server action by
 // the time this renders.
-function ConfirmationView({
+export function ConfirmationView({
   confirmation,
   studioName,
   studioAddress,
   studioSlug,
+  clientPortalEnabled,
 }: {
   confirmation: Confirmation;
   studioName: string;
   studioAddress: string | null;
   studioSlug: string;
+  clientPortalEnabled: boolean;
 }) {
   const formattedDate = formatLocalDate(confirmation.dateLocal);
   const serviceName = confirmation.service?.name ?? null;
   const durationMinutes =
     confirmation.service?.default_duration_minutes ?? null;
+  // HON-50 decision C: the server-verified address for this booking when the
+  // owner keeps it off the public page; otherwise what the public page shows.
+  const shownAddress = confirmation.bookedClientAddress ?? studioAddress;
   // BOOK-01 Tranche 1. Copy is decided by the ACTUAL provider outcome, in a
   // pure function the unit lane can execute (this file is `.tsx` and the unit
   // lane is node-only, so a rule left inside JSX would only ever be provable
@@ -1255,6 +1309,10 @@ function ConfirmationView({
   const copy = buildBookingConfirmationCopy({
     emailStatus: confirmation.emailStatus,
     email: confirmation.email,
+    selfService: {
+      ...confirmation.selfService,
+      manageLink: confirmation.manageUrl !== null,
+    },
   });
   return (
     <div className="flex flex-col gap-8">
@@ -1296,10 +1354,10 @@ function ConfirmationView({
         </ConfirmationRow>
         <ConfirmationRow label="Where">
           <span className="font-medium">{studioName}</span>
-          {studioAddress && (
+          {shownAddress && (
             <>
               <br />
-              <span style={{ color: "#6B6B6B" }}>{studioAddress}</span>
+              <span style={{ color: "#6B6B6B" }}>{shownAddress}</span>
             </>
           )}
         </ConfirmationRow>
@@ -1326,6 +1384,7 @@ function ConfirmationView({
           it carries the raw token this request minted, of which only the
           SHA-256 was ever stored. /manage surfaces reschedule and cancel
           behind the studio's policies, so one link covers every action. */}
+      {confirmation.manageUrl ? (
       <div className="flex flex-col gap-3">
         <a
           href={confirmation.manageUrl}
@@ -1347,6 +1406,14 @@ function ConfirmationView({
           </p>
         )}
       </div>
+      ) : (
+        // HON-47. The studio offers no online self-service, so the card says
+        // how a change is made instead of offering a link that would refuse.
+        <p className="text-[15px] leading-relaxed text-[#0A0A0A]">
+          To change or cancel this appointment, please contact {studioName}{" "}
+          directly.
+        </p>
+      )}
 
       {/* SECONDARY, durable fallback. Existing route, unchanged: the portal
           login page reads ?studio=<slug> to scope the sign-in to THIS studio
@@ -1354,6 +1421,7 @@ function ConfirmationView({
           management token per upcoming appointment. Deliberately quiet and
           deliberately not required: the in-band link above is primary, and
           nothing here asks the client to sign in to manage this booking. */}
+      {clientPortalEnabled && (
       <div className="flex flex-col gap-2">
         <a
           href={`/portal/login?studio=${encodeURIComponent(studioSlug)}`}
@@ -1367,6 +1435,7 @@ function ConfirmationView({
           there.
         </p>
       </div>
+      )}
 
       {/* Subtle payment reassurance. Phase 1 booking does not collect
           cards; making this explicit prevents the "did I miss a step?"
