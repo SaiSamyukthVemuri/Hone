@@ -174,13 +174,14 @@ dry_list() { # dry_list <workdir> -> the file names a dry run lists
 # the operator watchdog, with the placeholders filled for the pooler, runs under ZSH exactly as written
 render_wd() { sed -e "s#<USER>#$PUSER#" -e "s#<HOSTPORT>#$RUNNER_IP:$TLSP#" -e "s#<SSLMODE>#require#" scripts/ci/d3-watchdog.zsh > "$OUT/d3-watchdog.rendered.zsh"; }
 render_wd
+WDHOME="$OUT/wdhome"; rm -rf "$WDHOME"; mkdir -p "$WDHOME"; ln -s "$REPO/supabase-cli" "$WDHOME/supabase-cli"
 zsh -n "$OUT/d3-watchdog.rendered.zsh"; expect "the operator watchdog parses under zsh (zsh -n)" "$?" "$(wc -l < scripts/ci/d3-watchdog.zsh) lines"
 wd_start() { # wd_start <label> <limit> <every> [proxy-label]
   local label="$1"
   if [ -n "${4:-}" ]; then
-    ( printf '%s\n' "$PWU" | WD_LIMIT="$2" WD_EVERY="$3" with_proxy "$4" env -u GITHUB_TOKEN -u GH_TOKEN zsh -f "$OUT/d3-watchdog.rendered.zsh" > "$OUT/wd-$label.log" 2>&1; echo $? > "$OUT/wdrc-$label.txt" ) &
+    ( cd "$WDHOME" && printf '%s\n' "$PWU" | WD_LIMIT="$2" WD_EVERY="$3" with_proxy "$4" env -u GITHUB_TOKEN -u GH_TOKEN zsh -f "$OUT/d3-watchdog.rendered.zsh" > "$OUT/wd-$label.log" 2>&1; echo $? > "$OUT/wdrc-$label.txt" ) &
   else
-    ( printf '%s\n' "$PWU" | WD_LIMIT="$2" WD_EVERY="$3" zsh -f "$OUT/d3-watchdog.rendered.zsh" > "$OUT/wd-$label.log" 2>&1; echo $? > "$OUT/wdrc-$label.txt" ) &
+    ( cd "$WDHOME" && printf '%s\n' "$PWU" | WD_LIMIT="$2" WD_EVERY="$3" zsh -f "$OUT/d3-watchdog.rendered.zsh" > "$OUT/wd-$label.log" 2>&1; echo $? > "$OUT/wdrc-$label.txt" ) &
   fi
   WDBG=$!
 }
@@ -270,6 +271,25 @@ say "RESULT decoys were genuinely long and uncancelled-by-role-timeouts: stateme
 say "RESULT backend types present (autovacuum etc. are excluded by backend_type = 'client backend'): $(psqld -c "select string_agg(distinct backend_type, ', ') from pg_stat_activity")"
 say "RESULT autovacuum worker past the threshold: NOT reproduced (no way to hold one that long here); excluded by the predicate's backend_type filter only. The watchdog's own poll backend is excluded by pid <> pg_backend_pid() and lives milliseconds; the log shows no self-cancel."
 
+# ---------------- A2. C1: TWO writer sessions already active at arm (the armed list must keep both) ---
+say "== A2. two postgres-role WRITER sessions already active when the watchdog arms (armed list must hold both pids)"
+clean_probe; AD="$OUT/wdir-armed2"; mkwd "$AD"; write_probe "$AD" 4
+psqld -c "update public.d3_knob set value = 50" > /dev/null
+for w in W1 W2; do
+  { pq "$PWU" "$(purl "$SSLM")" -At -c "set statement_timeout = 0" -c "begin" -c "insert into public.d3_decoy values (1)" -c "/*D3-$w*/ select pg_sleep(80)" -c "commit" -c "select 'done-$w'" > "$OUT/decoy-$w.log"; } &
+  eval "${w}BG=$!"
+done
+sleep 5
+wd_start armed2 15 3; sleep 6
+s1_start armed2 "$AD"; s1_wait armed2; A2RC=$S1RC
+sleep 3; wd_stop; wait "$W1BG" "$W2BG" 2> /dev/null
+sed 's/^/   | /' "$OUT/wd-armed2.log" | head -n 12 | tee -a "$RES"
+ARMED_N="$(sed -n 's/.*Ignoring already-active postgres-role backends: \[\([^]]*\)\].*/\1/p' "$OUT/wd-armed2.log" | head -1 | wc -w)"
+expect "(A2/C1) with two writers active at arm the armed list holds BOTH pids; neither is pinned, ambiguous or cancelled; the push session is pinned and cancelled (57014)" "$([ "$ARMED_N" -ge 2 ] && ! grep -q AMBIGUOUS "$OUT/wd-armed2.log" && [ "$(grep -c CANCELLED "$OUT/wd-armed2.log")" = 1 ] && [ "$A2RC" != 0 ] && grep -q 57014 "$OUT/run-armed2.log" && survived W1 W1 && survived W2 W2 && echo 0 || echo 1)" "armed pids=$ARMED_N ambiguous=$(grep -c AMBIGUOUS "$OUT/wd-armed2.log") cancelled-lines=$(grep -c CANCELLED "$OUT/wd-armed2.log") push exit=$A2RC W1=$(tr '\n' ' ' < "$OUT/decoy-W1.log" | cut -c1-40) W2=$(tr '\n' ' ' < "$OUT/decoy-W2.log" | cut -c1-40)"
+psqld -c "delete from public.d3_decoy" > /dev/null 2>&1
+clean_probe
+expect "(C3) the watchdog seeds and requires supabase/.temp/cli-latest = v2.102.0 in its own directory (fresh directory, it created it)" "$([ "$(cat "$WDHOME/supabase/.temp/cli-latest" 2> /dev/null)" = "v2.102.0" ] && echo 0 || echo 1)" "$(cat "$WDHOME/supabase/.temp/cli-latest" 2> /dev/null)"
+
 # ---------------- B. cancel + rollback + reconcile (scaled, then the REAL 120 s) ----------------
 reconcile_case() { # reconcile_case <label> <limit> <every> <knob seconds> <min elapsed> <max elapsed> [proxy label]
   local label="$1" limit="$2" every="$3" knob="$4" lo="$5" hi="$6" px="${7:-}"
@@ -318,7 +338,7 @@ wd_start quiet 20 3; sleep 5
 s1_start quiet "$QD"; s1_wait quiet; QRC=$S1RC
 sleep 16; wd_stop
 sed 's/^/   | /' "$OUT/wd-quiet.log" | tee -a "$RES"
-expect "(C) under the threshold nothing is cancelled: exit 0, all four files applied, no CANCELLED line, the loop stopped on its own" "$([ "$QRC" = 0 ] && [ "$(hist_list)" = "0213,0214,0215,0216" ] && ! grep -q 'CANCELLED' "$OUT/wd-quiet.log" && grep -q 'Stopping\.' "$OUT/wd-quiet.log" && echo 0 || echo 1)" "exit=$QRC history=$(hist_list) polls=$(grep -c -E 'watching|pid=' "$OUT/wd-quiet.log") cancelled=$(grep -c CANCELLED "$OUT/wd-quiet.log")"
+expect "(C) under the threshold nothing is cancelled: exit 0, all four files applied, no CANCELLED line, the loop stopped on its own" "$([ "$QRC" = 0 ] && [ "$(hist_list)" = "0213,0214,0215,0216" ] && ! grep -q 'CANCELLED' "$OUT/wd-quiet.log" && grep -q 'WATCHDOG STOPPED' "$OUT/wd-quiet.log" && grep -q 'CONFIRM Terminal 1 printed Finished' "$OUT/wd-quiet.log" && grep -q 'Close this Terminal' "$OUT/wd-quiet.log" && echo 0 || echo 1)" "exit=$QRC history=$(hist_list) polls=$(grep -c -E 'watching|pid=' "$OUT/wd-quiet.log") cancelled=$(grep -c CANCELLED "$OUT/wd-quiet.log")"
 
 # ---------------- D. identification weak points: a second NEW postgres-role session -------------------
 say "== D. a second NEW postgres-role session, (i) active BEFORE the push session appears, (ii) starting together with it"
