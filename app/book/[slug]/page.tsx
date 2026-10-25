@@ -12,6 +12,7 @@ import {
   publicNewClientSurface,
 } from "@/lib/booking/new-client-admission";
 import type { Service } from "@/lib/types/database";
+import { forPublicBookingPage } from "@/lib/booking/studio-location";
 import {
   isPubliclyBookable,
   UNAVAILABLE_PUBLIC_BOOKING_MESSAGE,
@@ -35,8 +36,13 @@ export default async function PublicBookingPage({
   // null means the read SUCCEEDED and found no studio: a 404. A read that
   // FAILED throws instead and lands in ./error.tsx as a retryable 500, so an
   // unreadable studio is never reported as one that does not exist.
-  const studio = await getStudioBySlug(slug);
-  if (!studio) notFound();
+  const studioRow = await getStudioBySlug(slug);
+  if (!studioRow) notFound();
+  // HON-50. Everything below reads this view, never the raw row: its address
+  // is null when the owner chose emails-only (or it is blank), and it carries
+  // no arrival instructions (email-only content). So neither can reach this
+  // public page's HTML or the props it hands its client form (RSC payload).
+  const studio = forPublicBookingPage(studioRow);
 
   // Service-role read since this is public.
   const admin = createAdminClient();

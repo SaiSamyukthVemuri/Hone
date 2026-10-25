@@ -112,7 +112,9 @@ describe("mobile team day: five practitioners, each named in their color", () =>
 describe("desktop week card and preview", () => {
   it("the week card gates identity on the team calendar and keeps the service fill", () => {
     expect(DAYCOL).toMatch(
-      /practitionerCapacityEnabled\s*\?\s*calendarPractitionerIdentity\(a\.practitioner\)\s*:\s*null/,
+      // HON-48: a team day column names its practitioner in the header bar,
+      // so its cards drop the in-card tag; the week card keeps it.
+      /practitionerCapacityEnabled\s*&&\s*!teamColumn\s*\?\s*calendarPractitionerIdentity\(a\.practitioner\)\s*:\s*null/,
     );
     expect(DAYCOL).toMatch(/<PractitionerTag\s+identity=\{practitionerIdentity\}/);
     expect(DAYCOL).toContain("${appointmentCardClasses(a.service)}");

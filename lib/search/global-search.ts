@@ -40,6 +40,18 @@ export type SearchGroup = {
 };
 
 export const SEARCH_MIN_CHARS = 2;
+
+// The most candidate rows ONE client read in global search may scan per
+// search (SEARCH-SCAN-BOUND). The search runs on every debounced keystroke and
+// has four client reads, so a search scans at most 4 x 2000 = 8000 rows. 2000
+// is two pages of the read's 1000-row page (PostgREST's default max-rows): at
+// most three sequential requests per read (two pages and a one-row probe)
+// instead of one per thousand candidates. The rows are already prefiltered
+// candidates, so a read that reaches 2000 means the query is too unselective,
+// and "refine your search" is the honest answer. A read that stops at this
+// bound reports it, and the panel says the client list is partial. The real
+// scan-cost fix is an index (HON-58 Q4), deliberately not made here.
+export const CLIENT_SCAN_CAP_PER_READ = 2000;
 export const SEARCH_MAX_QUERY_LENGTH = 80;
 
 /**

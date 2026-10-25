@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "@/e2e/helpers/local-env";
 import {
@@ -519,40 +518,69 @@ describe("7. NOT VALID hazard, and equivalence by differential (F2, F3)", () => 
     });
   });
 
-  it("differential: the retarget gives anon and authenticated the same row sets as the PUBLIC-default policy did", async () => {
+  it("differential: retargeting every predicate-calling policy leaves anon and authenticated row sets unchanged", async () => {
+    const TABLES = [
+      "manual_fee_charge_attempts", "ops_alerts", "payment_charge_attempts", "service_practitioners",
+      "studio_availability_default", "studio_availability_overrides", "studio_blockouts",
+      "studio_calendar_reservations", "studio_recurring_break_occurrences", "studio_recurring_break_rules", "studio_timed_blocks",
+    ];
     await sandbox(async ({ q, as }) => {
-      const readSet = (role: "anon" | "authenticated", userId: string | null) =>
+      const countOf = (role: "anon" | "authenticated", userId: string | null, table: string) =>
         as(role, userId, async (uq) => {
           await uq("savepoint probe");
           try {
-            const { rows } = await uq(`select studio_id from public.studio_availability_default order by studio_id`);
+            const { rows } = await uq(`select count(*)::int n from public.${table}`);
             await uq("release savepoint probe");
-            return { rows: rows.map((r) => r.studio_id as string) };
+            return { n: rows[0].n as number };
           } catch (error) {
             await uq("rollback to savepoint probe");
             return { error: (error as { code?: string }).code ?? "no-code" };
           }
         });
+      const snapshot = async () => {
+        const out: Record<string, unknown> = {};
+        for (const t of TABLES) {
+          out[`anon:${t}`] = await countOf("anon", null, t);
+          out[`auth:${t}`] = await countOf("authenticated", a.userId, t);
+        }
+        return out;
+      };
 
-      // BEFORE: the pre-0255 world for this table (PUBLIC-default policy, anon may execute the predicates).
-      await q(`grant execute on function public.is_studio_member(uuid), public.is_studio_owner(uuid), public.session_is_visible(uuid) to anon`);
-      await q(`alter policy studio_availability_default_member_all on public.studio_availability_default to public`);
-      const rolesBefore = await q(
-        `select polroles::text r from pg_policy where polname = 'studio_availability_default_member_all'`,
+      // BEFORE: rebuild the pre-0255 world. Every policy in public that calls a predicate is made
+      // PUBLIC-default again, and anon may execute the predicates, exactly as production was.
+      const predicatePolicies = await q(
+        `select pol.polname, c.relname
+           from pg_policy pol join pg_class c on c.oid = pol.polrelid
+          where c.relnamespace = 'public'::regnamespace
+            and lower(coalesce(pg_get_expr(pol.polqual, pol.polrelid), '') || ' ' || coalesce(pg_get_expr(pol.polwithcheck, pol.polrelid), ''))
+                ~ '(^|[^a-z_])(is_studio_member|is_studio_owner|session_is_visible)\\('`,
       );
-      expect(rolesBefore.rows[0].r).toBe("{0}");
-      const before = { anon: await readSet("anon", null), auth: await readSet("authenticated", a.userId) };
-      expect(before.auth).toEqual({ rows: [a.studioId] }); // non-vacuous: the owner sees exactly their own row
+      expect(predicatePolicies.rows.length, "no predicate-calling policy exists to retarget").toBeGreaterThan(5);
+      await q(`grant execute on function public.is_studio_member(uuid), public.is_studio_owner(uuid), public.session_is_visible(uuid) to anon`);
+      for (const r of predicatePolicies.rows) {
+        await q(`alter policy "${r.polname}" on public."${r.relname}" to public`);
+      }
+      const publicBefore = await q(
+        `select count(*)::int n from pg_policy pol join pg_class c on c.oid = pol.polrelid
+          where c.relnamespace = 'public'::regnamespace and pol.polroles = array[0]::oid[]
+            and lower(coalesce(pg_get_expr(pol.polqual, pol.polrelid), '')) ~ '(is_studio_member|is_studio_owner|session_is_visible)\\('`,
+      );
+      expect(publicBefore.rows[0].n, "the before-state must contain PUBLIC policies calling a predicate").toBeGreaterThan(0);
+      const before = await snapshot();
+      expect(before["auth:studio_availability_default"]).toEqual({ n: 1 }); // non-vacuous: the owner sees their own row
 
       // Apply the migration.
       await q(MIGRATION);
 
-      const rolesAfter = await q(
-        `select (select array_agg(r.rolname order by r.rolname) from unnest(pol.polroles) o join pg_roles r on r.oid = o) as roles
-           from pg_policy pol where pol.polname = 'studio_availability_default_member_all'`,
+      const publicAfter = await q(
+        `select count(*)::int n from pg_policy pol join pg_class c on c.oid = pol.polrelid
+          where c.relnamespace = 'public'::regnamespace
+            and (pol.polroles = array[0]::oid[] or (select oid from pg_roles where rolname = 'anon') = any(pol.polroles))
+            and lower(coalesce(pg_get_expr(pol.polqual, pol.polrelid), '') || ' ' || coalesce(pg_get_expr(pol.polwithcheck, pol.polrelid), ''))
+                ~ '(^|[^a-z_])(is_studio_member|is_studio_owner|session_is_visible)\\('`,
       );
-      expect(rolesAfter.rows[0].roles).toEqual(["authenticated"]);
-      const after = { anon: await readSet("anon", null), auth: await readSet("authenticated", a.userId) };
+      expect(publicAfter.rows[0].n).toBe(0);
+      const after = await snapshot();
       expect(after).toEqual(before);
     });
   });
@@ -561,42 +589,68 @@ describe("7. NOT VALID hazard, and equivalence by differential (F2, F3)", () => 
 describe("8. the real PostgREST insert path with the anon key (F4)", () => {
   const ANON = E2E_WEB_SERVER_ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const uniq = () => `postgrest-${randomUUID().slice(0, 8)}@example.test`;
-  const api = () => createClient(E2E_SUPABASE_URL, ANON, { auth: { persistSession: false, autoRefreshToken: false } });
+
+  // supabase-js needs a WebSocket on Node 20 (its realtime client), so this speaks the same HTTP: an insert
+  // without .select() sends `Prefer: return=minimal`, one with .select() sends `return=representation`.
+  async function call(
+    method: "POST" | "GET" | "PATCH" | "DELETE",
+    table: string,
+    options: { body?: unknown; query?: string; prefer?: string } = {},
+  ): Promise<{ status: number; code: string | null }> {
+    const response = await fetch(`${E2E_SUPABASE_URL}/rest/v1/${table}${options.query ?? ""}`, {
+      method,
+      headers: {
+        apikey: ANON,
+        Authorization: `Bearer ${ANON}`,
+        "Content-Type": "application/json",
+        ...(options.prefer ? { Prefer: options.prefer } : {}),
+      },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
+    const text = await response.text();
+    let code: string | null = null;
+    try {
+      code = (JSON.parse(text) as { code?: string }).code ?? null;
+    } catch {
+      code = null;
+    }
+    return { status: response.status, code };
+  }
+  const insert = (table: string, body: unknown) => call("POST", table, { body, prefer: "return=minimal" });
 
   afterAll(async () => {
     await adminQuery(`delete from public.waitlist where email like 'postgrest-%@example.test'`);
     await adminQuery(`delete from public.demo_requests where email like 'postgrest-%@example.test'`);
   });
 
-  it("waitlist: a valid row is created exactly as the server action sends it (201, no RETURNING)", async () => {
+  it("waitlist: a valid row is created exactly as the server action sends it (201, return=minimal)", async () => {
     const email = uniq();
-    const result = await api().from("waitlist").insert({ email, source: "landing" });
-    expect(result.error).toBeNull();
-    expect(result.status).toBe(201);
+    expect(await insert("waitlist", { email, source: "landing" })).toEqual({ status: 201, code: null });
     const stored = await adminQuery(`select source from public.waitlist where email = $1`, [email]);
     expect(stored.rows).toEqual([{ source: "landing" }]);
   });
 
   it("waitlist: a duplicate is the unique violation (23505) the action treats as success", async () => {
     const email = uniq();
-    expect((await api().from("waitlist").insert({ email, source: "landing" })).error).toBeNull();
-    expect((await api().from("waitlist").insert({ email, source: "landing" })).error?.code).toBe("23505");
+    expect((await insert("waitlist", { email, source: "landing" })).status).toBe(201);
+    const second = await insert("waitlist", { email, source: "landing" });
+    expect(second.code).toBe("23505");
+    expect(second.status).toBe(409);
   });
 
   it("waitlist: a malformed email is rejected by the CHECK (23514)", async () => {
-    const result = await api().from("waitlist").insert({ email: "not-an-email", source: "landing" });
-    expect(result.error?.code).toBe("23514");
+    expect((await insert("waitlist", { email: "not-an-email", source: "landing" })).code).toBe("23514");
   });
 
   it("waitlist: a foreign source is refused by the policy (42501, HTTP 401 for anon)", async () => {
-    const result = await api().from("waitlist").insert({ email: uniq(), source: "partner-import" });
-    expect(result.error?.code).toBe("42501");
+    const result = await insert("waitlist", { email: uniq(), source: "partner-import" });
+    expect(result.code).toBe("42501");
     expect([401, 403]).toContain(result.status);
   });
 
   it("demo_requests: the action's full payload is created (201)", async () => {
     const email = uniq();
-    const result = await api().from("demo_requests").insert({
+    const result = await insert("demo_requests", {
       name: "Synthetic Person",
       email,
       practice_name: "Synthetic Practice",
@@ -606,32 +660,32 @@ describe("8. the real PostgREST insert path with the anon key (F4)", () => {
       current_tool: "paper",
       notes: "hello",
     });
-    expect(result.error).toBeNull();
-    expect(result.status).toBe(201);
+    expect(result).toEqual({ status: 201, code: null });
     const stored = await adminQuery(`select status from public.demo_requests where email = $1`, [email]);
     expect(stored.rows).toEqual([{ status: "new" }]);
   });
 
   it("demo_requests: malformed email and oversized notes are rejected (23514); a forged status is refused (42501)", async () => {
-    expect((await api().from("demo_requests").insert({ name: "N", email: "nope" })).error?.code).toBe("23514");
-    expect((await api().from("demo_requests").insert({ name: "N", email: uniq(), notes: "n".repeat(5001) })).error?.code).toBe("23514");
-    expect((await api().from("demo_requests").insert({ name: "N", email: uniq(), status: "contacted" })).error?.code).toBe("42501");
+    expect((await insert("demo_requests", { name: "N", email: "nope" })).code).toBe("23514");
+    expect((await insert("demo_requests", { name: "N", email: uniq(), notes: "n".repeat(5001) })).code).toBe("23514");
+    expect((await insert("demo_requests", { name: "N", email: uniq(), status: "contacted" })).code).toBe("42501");
   });
 
   it("anonymous reads and RETURNING are refused on both tables (42501, HTTP 401)", async () => {
     for (const table of ["waitlist", "demo_requests"] as const) {
-      const read = await api().from(table).select("email");
-      expect(read.error?.code, `${table} select`).toBe("42501");
+      const read = await call("GET", table, { query: "?select=email" });
+      expect(read.code, `${table} select`).toBe("42501");
       expect([401, 403]).toContain(read.status);
-      const returning = await api().from(table).insert(table === "waitlist" ? { email: uniq(), source: "landing" } : { name: "N", email: uniq() }).select();
-      expect(returning.error?.code, `${table} insert returning`).toBe("42501");
+      const body = table === "waitlist" ? { email: uniq(), source: "landing" } : { name: "N", email: uniq() };
+      const returning = await call("POST", table, { body, prefer: "return=representation" });
+      expect(returning.code, `${table} insert returning`).toBe("42501");
     }
   });
 
   it("anonymous update and delete are refused", async () => {
     for (const table of ["waitlist", "demo_requests"] as const) {
-      expect((await api().from(table).update({ email: uniq() }).eq("email", "x@example.test")).error?.code, `${table} update`).toBe("42501");
-      expect((await api().from(table).delete().eq("email", "x@example.test")).error?.code, `${table} delete`).toBe("42501");
+      expect((await call("PATCH", table, { query: "?email=eq.x%40example.test", body: { email: uniq() } })).code, `${table} update`).toBe("42501");
+      expect((await call("DELETE", table, { query: "?email=eq.x%40example.test" })).code, `${table} delete`).toBe("42501");
     }
   });
 });

@@ -42,6 +42,7 @@ import {
   timeRangeLabel,
 } from "./calendar-format";
 import { NowLine } from "./NowLine";
+import { calendarBlockScopeLabel, type BlockScopeNames } from "@/lib/calendar/block-scope";
 import type { DayAvailability } from "./DayColumn";
 
 // Single-day mobile timeline (PR: mobile calendar redesign). Renders ONE
@@ -76,6 +77,9 @@ type Props = {
   returnTo: string;
   // HON-48: team calendar (practitioner capacity on) → name + color swatch.
   showPractitioner?: boolean;
+  // BLOCK-SCOPE F3: under practitioner capacity, names each block's scope
+  // ("All practitioners" / "Only <name>"). Absent: no scope label.
+  blockScopeNames?: BlockScopeNames;
   // Open the quick-book drawer at an exact 24h HH:MM on this day.
   onBookAt: (localTime: string) => void;
   // Open the timed-block edit drawer for a tapped block.
@@ -94,6 +98,7 @@ export function MobileDayTimeline({
   timeFormat,
   returnTo,
   showPractitioner = false,
+  blockScopeNames,
   onBookAt,
   onEditBlock,
 }: Props) {
@@ -255,14 +260,18 @@ export function MobileDayTimeline({
               (durationMinutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
             );
             const label = displayRecurringBreakLabel(occ.rule?.label);
+            const scope = blockScopeNames ? calendarBlockScopeLabel(occ.practitioner_id, blockScopeNames) : null;
             return (
               <div
                 key={occ.id}
                 style={{ top, height }}
                 className="absolute inset-x-1 z-10 overflow-hidden rounded-md border border-dashed border-neutral-400 bg-neutral-100/90 px-2 py-1 text-[11px] leading-tight text-neutral-600 dark:border-neutral-600 dark:bg-neutral-900/80 dark:text-neutral-300"
-                title={label}
+                title={scope ? `${label} · ${scope}` : label}
               >
-                <div className="truncate font-medium">{label}</div>
+                <div className="truncate font-medium">
+                  {label}
+                  {scope && <span data-block-scope="" className="font-normal"> · {scope}</span>}
+                </div>
                 <div className="truncate text-[10px] tabular-nums opacity-70">
                   {timeRangeLabel(
                     formatTimeForStudio(start, tz, timeFormat),
@@ -291,6 +300,7 @@ export function MobileDayTimeline({
             (durationMinutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
           );
           const label = TIMED_BLOCK_LABEL[tb.category] ?? "Unavailable";
+          const scope = blockScopeNames ? calendarBlockScopeLabel(tb.practitioner_id, blockScopeNames) : null;
           return (
             <button
               key={tb.id}
@@ -298,9 +308,12 @@ export function MobileDayTimeline({
               onClick={() => onEditBlock(tb)}
               style={{ top, height }}
               className="absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] flex flex-col items-start overflow-hidden rounded-md border border-neutral-400 bg-neutral-200/95 px-2 py-1 text-left text-[11px] leading-tight text-neutral-700 shadow-sm dark:border-neutral-600 dark:bg-neutral-800/95 dark:text-neutral-200"
-              title={tb.private_note ? `${label}: ${tb.private_note}` : label}
+              title={[tb.private_note ? `${label}: ${tb.private_note}` : label, scope].filter(Boolean).join(" · ")}
             >
-              <span className="truncate font-medium">{label}</span>
+              <span className="truncate font-medium">
+                {label}
+                {scope && <span data-block-scope="" className="font-normal"> · {scope}</span>}
+              </span>
               <span className="truncate text-[10px] tabular-nums opacity-70">
                 {timeRangeLabel(
                   formatTimeForStudio(start, tz, timeFormat),
@@ -397,7 +410,7 @@ export function MobileDayTimeline({
           );
         })}
       </div>
-      <AppointmentOverlapChooser timedBlocks={selectedBlocks} onSelectBlock={onEditBlock} appointments={selectedOverlaps} tz={tz} timeFormat={timeFormat} returnTo={returnTo}
+      <AppointmentOverlapChooser blockScopeNames={blockScopeNames} timedBlocks={selectedBlocks} onSelectBlock={onEditBlock} appointments={selectedOverlaps} tz={tz} timeFormat={timeFormat} returnTo={returnTo}
         onClose={() => setOverlapIds(null)} />
     </div>
   );
