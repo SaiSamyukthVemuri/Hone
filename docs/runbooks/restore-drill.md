@@ -40,6 +40,53 @@ alone brings back `treatment_images` rows that point at missing bytes.
 scripts/ops/restore-drill.sh /path/to/evidence-dir
 ```
 
+## Application readability (DR-01A)
+
+Identical hashes say the data came back; they do not say Hone can read it.
+`scripts/ops/restore-drill-app-check.mjs` closes that gap. The drill calls it
+through `RESTORE_DRILL_APP_CHECK`; unset, the drill behaves exactly as above.
+
+| Phase | When | Expected |
+|---|---|---|
+| `pre-restore` (negative control) | the rebuilt project, before any row is loaded | exit **1**: sign-in and all three reads miss |
+| `post-restore` | after the fingerprint comparison | exit **0**: sign-in and all three reads succeed |
+
+The check starts the Hone **production build** (`next build`, then `next start`,
+as the e2e harness does) against the drill's project and signs in as the seeded
+synthetic practitioner. GoTrue's admin API issues the magic-link token and
+`verifyOtp` exchanges it for the session cookie; only the mail hop is skipped,
+because the drill runs no mail server. It then reads:
+
+1. `/clients`: the seeded client's link and rendered name;
+2. `/clients/<id>?tab=consultation`: the record heading and the restored
+   clinical note;
+3. `/api/clients/<id>/images/<image>/signed-url`: the app signs one restored
+   photo, and the bytes behind that URL must hash equal to the bytes the drill
+   uploaded (`objects-before.sha256`).
+
+Exit codes: `0` all reads succeeded, `1` a read missed, `2` a harness error.
+The drill **passes only on post-restore 0 and pre-restore exactly 1**, so a
+broken build or server can never pass as a negative control.
+
+**Providers.** The server gets a closed environment (only `PATH` and `HOME` are
+inherited): fake Resend, fake Stripe with a test key, the Sentry egress guard
+(`e2e/helpers/sentry-egress-guard.cjs`), and no Twilio or Google values. Twilio
+is unset rather than faked because the Twilio egress fake (#1117) is not on
+this branch, so no SMS path is reachable. The check refuses to start if any of
+that is not true.
+
+**Where it runs.** CI only: `.github/workflows/restore-drill.yml`, a job that is
+**not required**, on a disposable runner, when the drill's files change or on
+demand. There the check runs under the `hone-egress` group. Firewall rules log
+and reject every non-loopback packet from that group, a probe first shows the
+rules match, and the job fails unless both counters (IPv4, IPv6) read zero.
+Evidence (logs, Sentry guard records, egress counts) is uploaded as the
+`restore-drill-evidence` artifact.
+
+**Sign-in writes.** Signing in creates a session row in `auth.sessions` and
+updates the user's sign-in time. That happens after the drill's comparison, so
+it never affects the drill's verdict.
+
 ## Recovery objectives (proposal: Sam to decide)
 
 | Objective | Proposal | Basis |

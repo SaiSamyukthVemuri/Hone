@@ -21,6 +21,15 @@
 #
 # Usage:  scripts/ops/restore-drill.sh [evidence-dir]
 # Output: a manifest before, a manifest after, timings, and PASS or FAIL.
+#
+# DR-01A application readability (optional). When RESTORE_DRILL_APP_CHECK
+# names an executable, the drill calls it twice, as `<check> <phase> <api>
+# <evidence-dir>`: once against the rebuilt project BEFORE the rows are loaded
+# (phase pre-restore, the negative control) and once after the comparison
+# (phase post-restore). The check exits 0 when every read succeeds, 1 when a
+# read misses, and anything else on a harness error. The drill PASSES only
+# when post-restore exits 0 and pre-restore exits exactly 1, so a broken
+# harness can never pass as a negative control. Unset, the drill is unchanged.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -53,6 +62,10 @@ cleanup() {
   rm -rf "$WORK"
 }
 trap cleanup EXIT
+
+APP_CHECK="${RESTORE_DRILL_APP_CHECK:-}"
+if [ -n "$APP_CHECK" ] && [ ! -x "$APP_CHECK" ]; then fail "RESTORE_DRILL_APP_CHECK is not executable: $APP_CHECK"; fi
+app_check() { "$APP_CHECK" "$1" "$API" "$EVIDENCE" >"$EVIDENCE/app-check-$1.log" 2>&1 && echo 0 || echo $?; }
 
 # --- scratch copy of supabase/ with drill-only ports and project id --------
 mkdir -p "$WORK/supabase"
@@ -164,6 +177,13 @@ TR=$(date +%s)
 log "starting a fresh project from migrations"
 start_stack after
 KEY="$(service_key)"; [ -n "$KEY" ] || fail "no service-role key after rebuild"
+APP_NEGATIVE=not-run; NEG_SECONDS=0
+if [ -n "$APP_CHECK" ]; then
+  TN=$(date +%s)
+  log "negative control: application check against the rebuilt, not yet restored project"
+  case "$(app_check pre-restore)" in 0) APP_NEGATIVE=passed;; 1) APP_NEGATIVE=failed;; *) APP_NEGATIVE=error;; esac
+  NEG_SECONDS=$(( $(date +%s) - TN ))
+fi
 log "loading rows"
 {
   echo "begin;"
@@ -187,7 +207,7 @@ for i in 1 2 3; do
     -H "Content-Type: image/png" --data-binary "@$WORK/objects/synthetic-$i.bin" >/dev/null \
     || fail "restore synthetic-$i"
 done
-RESTORE_SECONDS=$(( $(date +%s) - TR ))
+RESTORE_SECONDS=$(( $(date +%s) - TR - NEG_SECONDS ))
 
 # --- 5. verify -------------------------------------------------------------
 mkdir -p "$WORK/verify"
@@ -214,11 +234,23 @@ OBJ_BEFORE=$(grep '^storage.objects ' "$EVIDENCE/manifest-before.txt" | sed -E '
 OBJ_AFTER=$(grep '^storage.objects ' "$EVIDENCE/manifest-after.txt" | sed -E 's/ md5=.*//')
 [ "$OBJ_BEFORE" = "$OBJ_AFTER" ] || { RESULT=FAIL; log "storage.objects count differs: $OBJ_BEFORE vs $OBJ_AFTER"; }
 
+APP_READ=not-run
+if [ -n "$APP_CHECK" ]; then
+  log "application check against the restored project"
+  case "$(app_check post-restore)" in 0) APP_READ=passed;; 1) APP_READ=failed;; *) APP_READ=error;; esac
+  [ "$APP_READ" = passed ] || { RESULT=FAIL; log "application check: $APP_READ (app-check-post-restore.log)"; }
+  [ "$APP_NEGATIVE" = failed ] || { RESULT=FAIL; log "negative control: $APP_NEGATIVE, expected failed (app-check-pre-restore.log)"; }
+fi
+
 {
   echo "result=$RESULT"
   echo "migrations_head=$(git -C "$REPO_ROOT" rev-parse HEAD)"
   echo "tables_compared=$(wc -l <"$WORK/mb")"
   echo "objects_compared=3"
+  if [ -n "$APP_CHECK" ]; then
+    echo "app_check_post_restore=$APP_READ"
+    echo "app_check_pre_restore=$APP_NEGATIVE"
+  fi
   echo "backup_seconds=$BACKUP_SECONDS"
   echo "restore_seconds=$RESTORE_SECONDS"
   echo "total_seconds=$(( $(date +%s) - T0 ))"
