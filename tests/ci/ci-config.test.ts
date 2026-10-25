@@ -1284,6 +1284,7 @@ describe("E-GAPS: the storage photo job is separate, storage-backed and never re
   const STORAGE_SPECS = [
     "e2e/fett-photos-thumbnail-recovery.spec.ts",
     "e2e/treatment-image-upload-formats.spec.ts",
+    "e2e/fett-client-portrait.spec.ts",
   ];
   const DB_FILE = "tests/db/treatment-image-signed-url-route.db.test.ts";
   const start = CI.indexOf("\n  storage-photos:\n");
@@ -1317,7 +1318,7 @@ describe("E-GAPS: the storage photo job is separate, storage-backed and never re
     expect(pre).toBeLessThan(JOB.indexOf("npx playwright test"));
   });
 
-  it("runs exactly the storage-dependent DB file and the two storage specs, each spec bypassing CSP in the test browser only", () => {
+  it("runs exactly the storage-dependent DB file and the storage specs, each spec bypassing CSP in the test browser only", () => {
     expect(code(JOB).match(/npx vitest run[^\n]*/g) ?? []).toEqual([
       `npx vitest run --config vitest.db.config.ts ${DB_FILE}`,
     ]);
