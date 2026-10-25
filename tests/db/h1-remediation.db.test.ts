@@ -113,10 +113,10 @@ async function fkLessAudit(studioId: string, action: string, over: Record<string
 }
 
 /** A studio with a test-mode Connect account + customer (the FK targets of a card session). */
-async function accountStudio() {
+async function accountStudio(live = false) {
   const sc = await seedQuickCheckoutScenario({
     label: `h1r${rid()}`, appointmentStatus: "confirmed", withSession: false,
-    connect: "enabled", connectLivemode: false, withCard: false, attempt: "none",
+    connect: "enabled", connectLivemode: live, cardLivemode: live, withCard: false, attempt: "none",
   });
   await adminTx(async (q) => {
     await q(`set local session_replication_role = replica`);
@@ -225,7 +225,15 @@ describe("(2)/(3) the rule and its negative controls", () => {
 
   it("NEGATIVE CONTROL: every OTHER action with NULL currency and NULL amount still refuses", async () => {
     const others = ALL_ACTIONS.filter((a) => !(CLEANUP as readonly string[]).includes(a));
-    expect(others.length).toBe(20);
+    // The list above must equal the audit table's own CHECK, so a new action
+    // added later cannot slip past this control unnoticed.
+    const def = (await adminQuery(
+      `select pg_get_constraintdef(c.oid) d from pg_constraint c
+        where c.conrelid='public.stripe_payment_audit'::regclass and c.contype='c' and pg_get_constraintdef(c.oid) like '%charge_attempted%'`,
+    )).rows[0].d as string;
+    const inDb = [...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]).sort();
+    expect(inDb).toEqual([...ALL_ACTIONS].sort());
+    console.log(`H1R|action-universe|total=${inDb.length}|excluded=${CLEANUP.length}|controlled=${others.length}`);
     const bad: string[] = [];
     for (const action of others) {
       const s = await bareStudio();
@@ -303,10 +311,10 @@ describe("(2)/(3) the rule and its negative controls", () => {
     await offer("R2-no-account-ack", a.sc.studioId, { accounts: null });
     expect(lines["R2-no-account-ack"].r12).toBe("refused_test_account_unobserved");
     // Same studio shape, but the bound account is LIVE and unobserved.
-    const l = await accountStudio();
-    await adminQuery(`update public.studio_payment_settings set stripe_livemode=true where studio_id=$1`, [l.sc.studioId]).catch(() => undefined);
+    const l = await accountStudio(true);
+    expect(l.live).toBe(true);
+    await sessionWithCleanupAudit(l, "cleaned", ["payment_method_cleanup_succeeded"]);
     await offer("N-live-account-unobserved", l.sc.studioId, { accounts: [l.acct] });
-    expect(["refused_account_unverified", "refused_test_acknowledgement_stale", "refused_test_account_unobserved"]).toContain(lines["N-live-account-unobserved"].r12);
-    expect(lines["N-live-account-unobserved"].r12).not.toBe("initialized");
+    expect(lines["N-live-account-unobserved"]).toMatchObject({ base: "refused_unverifiable_history", r12: "refused_account_unverified" });
   });
 });
