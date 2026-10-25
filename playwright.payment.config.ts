@@ -52,6 +52,26 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
+  // CLN-006 in WebKit. Present ONLY when HONE_E2E_WEBKIT=1, which only the
+  // non-required `webkit-hon-62` CI job sets; unset, there is no `projects`
+  // key at all and this lane is exactly the single implicit project above.
+  // Scoped to the two quick-checkout keyboard cases (native summary controls,
+  // Tab/Shift+Tab wrap, "focus outside re-enters", Escape and opener focus).
+  // They seed attempt rows directly, so the fake-Stripe server env this config
+  // already pins is all they need; no charge, receipt or refund is invoked.
+  // bypassCSP for the same reason as the main config's WebKit projects.
+  ...(process.env.HONE_E2E_WEBKIT === "1"
+    ? {
+        projects: [
+          {
+            name: "webkit-cln-006-payment",
+            testMatch: /quick-checkout-payment\.spec\.ts$/,
+            grep: /keyboard reaches native details and wraps/,
+            use: { ...devices["Desktop Safari"], bypassCSP: true, viewport: { width: 1080, height: 810 }, hasTouch: true },
+          },
+        ],
+      }
+    : {}),
   webServer: {
     command: "npm run e2e:payment-server",
     url: PAYMENT_E2E_APP_ORIGIN,

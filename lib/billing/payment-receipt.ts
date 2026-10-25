@@ -15,6 +15,7 @@ import {
   toReceiptFacts,
   chargeReasonLabel,
 } from "@/lib/email/templates/payment-receipt";
+import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
 // ---------------------------------------------------------------------------
 // sendPaymentChargeReceipt (PR #175).
@@ -329,7 +330,7 @@ async function releaseAfterPdfFailure(args: {
 
   logInternal("payment_receipt_pdf_failed", {
     attemptId: args.attempt.id,
-    err: safeError,
+    errorClass: thrownErrorClass(args.error),
   });
   await recordOpsAlert({
     severity: "warning",
@@ -376,8 +377,7 @@ async function reportSettlementFailure(args: {
     | "send_ambiguous_state_not_recorded";
 }): Promise<SendPaymentChargeReceiptResult> {
   logInternal(args.event, {
-    code: args.dbError.code ?? null,
-    message: args.dbError.message ?? null,
+    code: dbErrorCode(args.dbError),
     attemptId: args.attempt.id,
   });
   await recordOpsAlert({
@@ -668,8 +668,7 @@ export async function sendPaymentChargeReceipt(args: {
   ).select("id");
   if (claimErr) {
     logInternal("payment_receipt_claim_failed", {
-      code: claimErr.code,
-      message: claimErr.message,
+      code: dbErrorCode(claimErr),
       attemptId: attempt.id,
     });
     return {
@@ -856,8 +855,7 @@ export async function sendPaymentChargeReceipt(args: {
       // distinct non-clean outcome and force the operator to
       // reconcile by hand before any further action.
       logInternal("payment_receipt_sent_record_update_failed", {
-        code: writeErr.code,
-        message: writeErr.message,
+        code: dbErrorCode(writeErr),
         attemptId: attempt.id,
       });
       await recordOpsAlert({

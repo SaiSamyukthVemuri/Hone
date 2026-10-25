@@ -22,6 +22,7 @@ import {
 } from "@/lib/intake/consent-gate";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import { recordPractitionerNotification } from "@/lib/notifications/practitioner-notifications";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 export type SaveResult = { ok: true } | { ok: false; error: string };
 
@@ -121,7 +122,7 @@ export async function saveIntakeStepAction(payload: {
     .is("deleted_at", null)
     .maybeSingle();
   if (lookupErr) {
-    logInternalIntakeError("intake_lookup_error", { code: lookupErr.code, message: lookupErr.message });
+    logInternalIntakeError("intake_lookup_error", { code: dbErrorCode(lookupErr) });
     return { ok: false, error: INTAKE_GENERIC_ERROR };
   }
   if (!existing) return { ok: false, error: "Intake not found." };
@@ -187,7 +188,7 @@ export async function saveIntakeStepAction(payload: {
     .is("deleted_at", null)
     .select("id");
   if (updateErr) {
-    logInternalIntakeError("intake_save_update_error", { code: updateErr.code, message: updateErr.message });
+    logInternalIntakeError("intake_save_update_error", { code: dbErrorCode(updateErr) });
     return { ok: false, error: INTAKE_GENERIC_ERROR };
   }
   if (!updated || updated.length === 0) {
@@ -227,7 +228,7 @@ export async function submitIntakeAction(payload: {
     .is("deleted_at", null)
     .maybeSingle();
   if (lookupErr) {
-    logInternalIntakeError("intake_lookup_error", { code: lookupErr.code, message: lookupErr.message });
+    logInternalIntakeError("intake_lookup_error", { code: dbErrorCode(lookupErr) });
     return { ok: false, error: INTAKE_GENERIC_ERROR };
   }
   if (!existing) return { ok: false, error: "Intake not found." };
@@ -354,7 +355,7 @@ export async function submitIntakeAction(payload: {
     .is("deleted_at", null)
     .select("id");
   if (updateErr) {
-    logInternalIntakeError("intake_submit_update_error", { code: updateErr.code, message: updateErr.message });
+    logInternalIntakeError("intake_submit_update_error", { code: dbErrorCode(updateErr) });
     return { ok: false, error: INTAKE_GENERIC_ERROR };
   }
   if (!updated || updated.length === 0) {
@@ -460,7 +461,7 @@ async function syncIntakeToClient(
     if (lookupErr) {
       console.error(
         "Failed to look up client for intake sync:",
-        lookupErr.message,
+        dbErrorCode(lookupErr),
       );
     }
     return;
@@ -504,7 +505,7 @@ async function syncIntakeToClient(
     .update(patch)
     .eq("id", clientId);
   if (updateErr) {
-    console.error("Failed to sync intake to client:", updateErr.message);
+    console.error("Failed to sync intake to client:", dbErrorCode(updateErr));
   }
 }
 

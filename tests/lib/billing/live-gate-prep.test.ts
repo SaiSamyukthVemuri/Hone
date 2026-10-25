@@ -211,12 +211,23 @@ describe("refund permission: owner-only across all charge reasons", () => {
     expect(FEE_ACTIONS).toMatch(/Only the studio owner can issue a refund\./);
   });
 
-  it("charging and receipts are NOT owner-gated (no silent permission expansion or contraction)", () => {
-    const prepare = SESSION_ACTIONS.slice(
-      SESSION_ACTIONS.indexOf("export async function prepareSessionPaymentChargeAction"),
-      SESSION_ACTIONS.indexOf("export async function refundPaymentChargeAttemptAction"),
-    );
-    expect(prepare).not.toMatch(/role !== "owner"/);
+  it("charging and receipts ARE owner-gated, in every session and fee action (HON-44, Sam decision 12)", () => {
+    // This pin used to say the opposite ("NOT owner-gated: no silent permission
+    // expansion or contraction"). Sam decided on 2026-10-25 that card charges are
+    // owner-only; the change is deliberate and tested behaviourally in
+    // tests/app/hon-44-owner-only-actions.test.ts.
+    for (const [source, fns] of [
+      [SESSION_ACTIONS, ["prepareSessionPaymentChargeAction", "executeSessionPaymentChargeAction", "sendPaymentChargeReceiptAction"]],
+      [FEE_ACTIONS, ["prepareManualFeeChargeAction", "chargeManualFeeAttemptAction", "cancelManualFeeChargeAttemptAction", "sendFeeReceiptAction"]],
+    ] as const) {
+      for (const fn of fns) {
+        const start = source.indexOf(`export async function ${fn}(`);
+        expect(start, fn).toBeGreaterThan(-1);
+        const next = source.indexOf("export async function ", start + 10);
+        const body = source.slice(start, next === -1 ? undefined : next);
+        expect(body, fn).toMatch(/practitioner\.role !== "owner"/);
+      }
+    }
   });
 });
 

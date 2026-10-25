@@ -8,6 +8,7 @@ import { hashToken } from "@/lib/portal/tokens";
 import { ContinueToPortalForm } from "./ContinueForm";
 import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
 import { PortalAccessDisabled } from "../../PortalAccessDisabled";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // PR #142. Token-bearing route. Robots noindex/nofollow keeps the
 // URL out of search indexes; the next.config.ts headers() block
@@ -74,8 +75,7 @@ export default async function PortalVerifyPage({
     console.error(
       JSON.stringify({
         event: "portal_verify_get_lookup_failed",
-        code: lookupErr.code,
-        message: lookupErr.message,
+        code: dbErrorCode(lookupErr),
         timestamp: new Date().toISOString(),
       }),
     );

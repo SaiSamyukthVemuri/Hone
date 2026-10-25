@@ -1,0 +1,189 @@
+# DR-01A. The isolated, synthetic restore drill (#848, scripts/ops/restore-drill.sh)
+# plus its application-readability check (scripts/ops/restore-drill-app-check.mjs):
+# after the rows and object bytes are restored, the Hone production build signs
+# in as the seeded synthetic practitioner and reads the client list, the
+# client's record and one restored photo through the app.
+#
+# NOT REQUIRED. Branch protection never names this job. It runs only when the
+# drill's own files change, or on demand (workflow_dispatch), on a disposable
+# GitHub runner: the drill creates and destroys two Supabase projects, which is
+# too heavy for a shared host.
+#
+# Synthetic only. No hosted project, no production data, no live provider:
+#   * the drill refuses any hosted Supabase URL and runs on its own ports;
+#   * the server under test gets a closed environment: fake Resend, fake Stripe
+#     with a test key, the Sentry egress guard, no Twilio and no Google values;
+#   * the check runs under the hone-egress group, whose every non-loopback packet
+#     is logged and rejected by the firewall; the job fails unless the counters
+#     read zero, after a probe has shown the rules match.
+#
+# Supply chain: actions pinned by SHA (tests/ci/ci-config.test.ts enrols this
+# file by existing), contents: read, persist-credentials: false. The one
+# credential is the D7b read-only ghcr.io login, held only across a direct
+# pinned-CLI start, exactly as in ci.yml.
+
+name: restore-drill
+
+on:
+  pull_request:
+    paths:
+      - "scripts/ops/restore-drill*"
+      - "scripts/ci/restore-drill-app-check-fenced.sh"
+      - ".github/workflows/restore-drill.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hone-restore-drill-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  restore-drill:
+    name: restore drill + app readability (not required)
+    runs-on: ubuntu-latest
+    # D7b: read-only package scope for the authenticated ghcr.io image pull only.
+    permissions:
+      contents: read
+      packages: read
+    # Target ~25 min: an image pre-pull start, one production build, then the
+    # drill's two project builds from the migration chain (~5 min each, measured
+    # locally) and two app starts. The hard timeout exceeds it (CLAUDE.md section 4).
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          # Same pin as every other lane, and as the drill's own npx call (grants parity).
+          version: 2.102.0
+
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pulls the images the drill uses, authenticated, so the drill's own
+      # starts (run later, by a repository script, with no credential) find
+      # them cached. Same service set as the drill's EXCLUDE list.
+      - name: Start local Supabase stack (pre-pull the drill's images)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta,supavisor 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta,supavisor
+
+      - name: Stop the pre-pull stack (its images stay cached)
+        run: supabase stop --no-backup
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Hone for the drill's project
+        run: node scripts/ops/restore-drill-app-check.mjs build http://127.0.0.1:56521
+
+      - name: Fence the check's egress (log and reject non-loopback packets)
+        run: |
+          set -euo pipefail
+          EVID="$RUNNER_TEMP/drill-evidence"; mkdir -p "$EVID"
+          sudo groupadd --force hone-egress
+          GID="$(getent group hone-egress | cut -d: -f3)"
+          fenced() { sudo -n setpriv --reuid="$(id -u)" --regid="$GID" --clear-groups -- "$@"; }
+          counter() { sudo "$1" -L OUTPUT -v -n -x | awk '/LOG/ && /hone-egress/ {print $1}'; }
+          for t in iptables ip6tables; do
+            sudo "$t" -I OUTPUT 1 -m owner --gid-owner hone-egress ! -o lo -j REJECT
+            sudo "$t" -I OUTPUT 1 -m owner --gid-owner hone-egress ! -o lo -j LOG --log-prefix "hone-egress: "
+          done
+
+          # IPv4 probe: the rules must match a fenced process, or a zero count
+          # below would prove nothing. The connection is refused on this host.
+          if fenced curl -sS -m 5 -o /dev/null https://1.1.1.1/; then
+            echo "the fence let an IPv4 probe connection through"; exit 1
+          fi
+          p4="$(counter iptables)"
+          echo "ipv4 probe packets counted: ${p4:-0}"
+          [ "${p4:-0}" -gt 0 ] || { echo "the IPv4 fence did not count the probe"; exit 1; }
+
+          # IPv6 probe through the SAME fenced setpriv. A runner may have no IPv6
+          # route, and a connect with no route fails before the OUTPUT chain, so a
+          # real address would prove nothing there. A throwaway dummy interface
+          # with a unique-local prefix gives every runner a route that leaves on a
+          # NON-loopback interface; the packet is then LOGged and REJECTed by the
+          # ip6tables rules exactly as a real one would be, and goes nowhere.
+          v6_route="global-address"
+          probe6="https://[2606:4700:4700::1111]/"
+          if sudo ip link add hone-probe0 type dummy 2>/dev/null; then
+            sudo ip link set hone-probe0 up
+            sudo ip -6 addr add fd00:dead:beef::1/64 dev hone-probe0 nodad
+            v6_route="dummy-interface"
+            probe6="http://[fd00:dead:beef::2]:9/"
+          fi
+          if fenced curl -6 -sS -m 5 -o /dev/null "$probe6"; then
+            echo "the fence let an IPv6 probe connection through"; exit 1
+          fi
+          sudo ip link del hone-probe0 2>/dev/null || true
+          p6="$(counter ip6tables)"
+          if [ "${p6:-0}" -gt 0 ]; then
+            v6_state="PROBED"
+            echo "ipv6 probe packets counted: $p6 (via $v6_route)"
+          else
+            v6_state="UNPROBED"
+            echo "::warning::IPv6 fence UNPROBED: the probe was refused but no packet reached the ip6tables OUTPUT chain (no IPv6 route and no dummy interface on this runner). The ip6 rule is an unprobed backstop; the egress proof below is IPv4-only evidence."
+          fi
+          {
+            echo "ipv4 fence: PROBED (${p4} packet(s) counted before reset)"
+            echo "ipv6 fence: ${v6_state} (${p6:-0} packet(s) counted before reset, route: ${v6_route})"
+          } | tee -a "$EVID/egress.txt"
+          {
+            echo "### Restore drill egress fence"
+            echo "- IPv4: probed (${p4} counted)"
+            echo "- IPv6: **${v6_state}** (${p6:-0} counted, route: ${v6_route})"
+          } >> "$GITHUB_STEP_SUMMARY"
+          sudo iptables -Z OUTPUT
+          sudo ip6tables -Z OUTPUT
+
+      - name: Restore drill with the application check
+        env:
+          RESTORE_DRILL_APP_CHECK: scripts/ci/restore-drill-app-check-fenced.sh
+        run: bash scripts/ops/restore-drill.sh "$RUNNER_TEMP/drill-evidence"
+
+      - name: Assert zero real egress from the check
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/drill-evidence"
+          v4=$(sudo iptables -L OUTPUT -v -n -x | awk '/LOG/ && /hone-egress/ {print $1}')
+          v6=$(sudo ip6tables -L OUTPUT -v -n -x | awk '/LOG/ && /hone-egress/ {print $1}')
+          echo "non-loopback packets from the fenced check: ipv4=${v4:-missing} ipv6=${v6:-missing}" | tee -a "$RUNNER_TEMP/drill-evidence/egress.txt"
+          # Say, in the job output, how much of the IPv6 reading is evidence.
+          grep '^ipv6 fence:' "$RUNNER_TEMP/drill-evidence/egress.txt" || echo "ipv6 fence: NO PROBE RECORD (the fence step did not finish)"
+          sudo dmesg | grep 'hone-egress: ' | tail -20 || true
+          [ "$v4" = 0 ] && [ "$v6" = 0 ]
+
+      - name: Upload drill evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: restore-drill-evidence
+          path: ${{ runner.temp }}/drill-evidence/
+          retention-days: 7

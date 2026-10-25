@@ -29,6 +29,7 @@ import {
   recordAssistedHandoff,
 } from "@/lib/intake/entry-provenance";
 import { safeLog } from "@/lib/logging/safe-log";
+import { dbErrorCode, safeDbCode } from "@/lib/logging/error-class";
 
 export type ReviewResult = { ok: true } | { ok: false; error: string };
 
@@ -125,13 +126,14 @@ const ASSISTED_INVALID_CHOICE =
 // message is logged server-side ONLY; it is never returned to the browser.
 function logIntakeActionFailure(
   event: string,
-  detail: { code?: string; message?: string },
+  detail: { code?: string; note?: string },
 ): void {
   safeLog.error(
     JSON.stringify({
       event,
-      code: detail.code ?? null,
-      message: detail.message ?? null,
+      code: safeDbCode(detail.code),
+      // Only ever a fixed literal chosen at the call site (never an error's text).
+      message: detail.note ?? null,
       timestamp: new Date().toISOString(),
     }),
   );
@@ -200,7 +202,7 @@ export async function markIntakeReviewedAction(formData: FormData): Promise<Revi
 
   if (error) {
     logIntakeActionFailure("intake_review_update_failed", {
-      code: (error as { code?: string }).code,
+      code: dbErrorCode(error),
     });
     return { ok: false, error: REVIEW_DB_FAILURE };
   }
@@ -213,7 +215,7 @@ export async function markIntakeReviewedAction(formData: FormData): Promise<Revi
   if (rows.length !== 1) {
     if (rows.length > 1) {
       logIntakeActionFailure("intake_review_multi_row", {
-        message: `expected 1 affected row, got ${rows.length}`,
+        note: `expected 1 affected row, got ${rows.length}`,
       });
     }
     return { ok: false, error: REVIEW_NOT_PERMITTED };
@@ -229,7 +231,7 @@ export async function markIntakeReviewedAction(formData: FormData): Promise<Revi
     // as a defensive invariant so a future edit that drops it fails closed
     // instead of silently revalidating a foreign route.
     logIntakeActionFailure("intake_review_client_mismatch", {
-      message: "affected row client_id did not match the constrained route",
+      note: "affected row client_id did not match the constrained route",
     });
     return { ok: false, error: REVIEW_NOT_PERMITTED };
   }
@@ -276,7 +278,7 @@ export async function saveIntakeNotesAction(formData: FormData): Promise<ReviewR
 
   if (error) {
     logIntakeActionFailure("intake_notes_update_failed", {
-      code: (error as { code?: string }).code,
+      code: dbErrorCode(error),
     });
     return { ok: false, error: NOTES_DB_FAILURE };
   }
@@ -285,7 +287,7 @@ export async function saveIntakeNotesAction(formData: FormData): Promise<ReviewR
   if (rows.length !== 1) {
     if (rows.length > 1) {
       logIntakeActionFailure("intake_notes_multi_row", {
-        message: `expected 1 affected row, got ${rows.length}`,
+        note: `expected 1 affected row, got ${rows.length}`,
       });
     }
     return { ok: false, error: NOTES_NOT_PERMITTED };
@@ -294,7 +296,7 @@ export async function saveIntakeNotesAction(formData: FormData): Promise<ReviewR
   const notedClientId = rows[0].client_id;
   if (notedClientId !== clientId) {
     logIntakeActionFailure("intake_notes_client_mismatch", {
-      message: "affected row client_id did not match the constrained route",
+      note: "affected row client_id did not match the constrained route",
     });
     return { ok: false, error: NOTES_NOT_PERMITTED };
   }
@@ -359,8 +361,7 @@ async function loadAuthorisedClient(
     // cross-studio / absent client collapse to ONE message so the response
     // cannot be used to probe which clients exist in other studios.
     logIntakeActionFailure("intake_client_lookup_failed", {
-      code: (clientErr as { code?: string }).code,
-      message: clientErr.message,
+      code: dbErrorCode(clientErr),
     });
     return { ok: false, error: CLIENT_NOT_AVAILABLE };
   }
@@ -390,8 +391,7 @@ async function loadStudioForReissue(studioId: string): Promise<
     .maybeSingle();
   if (error) {
     logIntakeActionFailure("intake_studio_lookup_failed", {
-      code: (error as { code?: string }).code,
-      message: error.message,
+      code: dbErrorCode(error),
     });
     return { ok: false, error: STUDIO_NOT_AVAILABLE };
   }
@@ -513,8 +513,7 @@ export async function getIntakeLinkAction(
     .maybeSingle();
   if (intakeErr) {
     logIntakeActionFailure("intake_link_lookup_failed", {
-      code: (intakeErr as { code?: string }).code,
-      message: intakeErr.message,
+      code: dbErrorCode(intakeErr),
     });
     return { ok: false, error: INTAKE_NOT_AVAILABLE };
   }
@@ -587,8 +586,7 @@ export async function resendIntakeEmailAction(
     .maybeSingle();
   if (intakeErr) {
     logIntakeActionFailure("intake_link_lookup_failed", {
-      code: (intakeErr as { code?: string }).code,
-      message: intakeErr.message,
+      code: dbErrorCode(intakeErr),
     });
     return { ok: false, error: INTAKE_NOT_AVAILABLE };
   }
@@ -713,8 +711,7 @@ async function loadAssistedIntake(
     .maybeSingle();
   if (intakeErr) {
     logIntakeActionFailure("assisted_intake_lookup_failed", {
-      code: (intakeErr as { code?: string }).code,
-      message: intakeErr.message,
+      code: dbErrorCode(intakeErr),
     });
     return { ok: false, error: ASSISTED_DB_FAILURE };
   }
@@ -783,7 +780,7 @@ export async function saveAssistedIntakeStepAction(payload: {
   const forbidden = assistedKeysChanged(payload.responses, loaded.responses);
   if (forbidden.length > 0) {
     logIntakeActionFailure("assisted_client_owned_key_rejected", {
-      message: `rejected ${forbidden.length} client-owned key change(s)`,
+      note: `rejected ${forbidden.length} client-owned key change(s)`,
     });
     return { ok: false, error: ASSISTED_CLIENT_OWNED };
   }
@@ -809,7 +806,7 @@ export async function saveAssistedIntakeStepAction(payload: {
   );
   if (invalidChoices.length > 0) {
     logIntakeActionFailure("assisted_invalid_choice_rejected", {
-      message: `rejected ${invalidChoices.length} out-of-range choice answer(s)`,
+      note: `rejected ${invalidChoices.length} out-of-range choice answer(s)`,
     });
     return { ok: false, error: ASSISTED_INVALID_CHOICE };
   }
@@ -838,8 +835,7 @@ export async function saveAssistedIntakeStepAction(payload: {
 
   if (error) {
     logIntakeActionFailure("assisted_intake_save_failed", {
-      code: (error as { code?: string }).code,
-      message: error.message,
+      code: dbErrorCode(error),
     });
     return { ok: false, error: ASSISTED_DB_FAILURE };
   }
@@ -848,7 +844,7 @@ export async function saveAssistedIntakeStepAction(payload: {
   if (rows.length !== 1) {
     if (rows.length > 1) {
       logIntakeActionFailure("assisted_intake_multi_row", {
-        message: `expected 1 affected row, got ${rows.length}`,
+        note: `expected 1 affected row, got ${rows.length}`,
       });
       return { ok: false, error: ASSISTED_NOT_PERMITTED };
     }
@@ -862,7 +858,7 @@ export async function saveAssistedIntakeStepAction(payload: {
     // so a future edit that drops it fails closed rather than silently
     // writing to a foreign route.
     logIntakeActionFailure("assisted_intake_client_mismatch", {
-      message: "affected row client_id did not match the constrained route",
+      note: "affected row client_id did not match the constrained route",
     });
     return { ok: false, error: ASSISTED_NOT_PERMITTED };
   }
@@ -932,8 +928,7 @@ export async function handOffAssistedIntakeAction(
 
   if (error) {
     logIntakeActionFailure("assisted_intake_handoff_failed", {
-      code: (error as { code?: string }).code,
-      message: error.message,
+      code: dbErrorCode(error),
     });
     return { ok: false, error: ASSISTED_DB_FAILURE };
   }
@@ -1038,8 +1033,7 @@ export async function startAssistedIntakeAction(
     .maybeSingle();
   if (existingErr) {
     logIntakeActionFailure("start_assisted_intake_lookup_failed", {
-      code: (existingErr as { code?: string }).code,
-      message: existingErr.message,
+      code: dbErrorCode(existingErr),
     });
     return { ok: false, error: START_DB_FAILURE };
   }
@@ -1057,7 +1051,7 @@ export async function startAssistedIntakeAction(
   const created = await requestIntakeUpdateAction(fd);
   if (!created.ok) {
     logIntakeActionFailure("start_assisted_intake_create_failed", {
-      message: "delegated intake creation refused",
+      note: "delegated intake creation refused",
     });
     return { ok: false, error: START_DB_FAILURE };
   }

@@ -5,6 +5,7 @@ import type { ClientPortalMessage } from "@/lib/types/database";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { isPubliclyBookable } from "@/lib/booking/readiness";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Server-side queries that back the authenticated /portal home. Every
 // function on this file expects the caller to have already resolved a
@@ -175,8 +176,7 @@ export async function getPortalUpcomingAppointments(
     console.error(
       JSON.stringify({
         event: "portal_upcoming_appointments_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -242,8 +242,7 @@ export async function getPortalUpcomingPreCare(
     console.error(
       JSON.stringify({
         event: "portal_pre_care_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -300,8 +299,7 @@ export async function getPortalIntakeStatus(
     console.error(
       JSON.stringify({
         event: "portal_intake_status_failed",
-        code: latestErr.code,
-        message: latestErr.message,
+        code: dbErrorCode(latestErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -373,8 +371,7 @@ export async function getPortalMessagesForClient(
     console.error(
       JSON.stringify({
         event: "portal_messages_for_client_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -408,8 +405,7 @@ export async function getPortalRepliesForClient(
     console.error(
       JSON.stringify({
         event: "portal_replies_for_client_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -448,8 +444,7 @@ export async function findActiveClientsForStudioPortalLogin(
     console.error(
       JSON.stringify({
         event: "portal_login_studio_scoped_lookup_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -483,8 +478,7 @@ export async function findActiveClientsForPortalLogin(
     console.error(
       JSON.stringify({
         event: "portal_login_lookup_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -632,7 +626,7 @@ export async function getPortalBookableServices(
     console.error(
       JSON.stringify({
         event: "portal_bookable_services_failed",
-        code: error.code,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -688,7 +682,7 @@ export async function getPortalBookingWindow(
     console.error(
       JSON.stringify({
         event: "portal_booking_window_failed",
-        code: error?.code ?? null,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -751,7 +745,7 @@ export async function getPortalBookingReadiness(
     console.error(
       JSON.stringify({
         event: "portal_booking_readiness_failed",
-        code: services.error?.code ?? days.error?.code ?? null,
+        code: services.error ? dbErrorCode(services.error) : dbErrorCode(days.error),
         timestamp: new Date().toISOString(),
       }),
     );

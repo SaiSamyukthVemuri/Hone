@@ -8,6 +8,7 @@ import {
   getOrCreateStripeCustomerForCardOnFile,
 } from "@/lib/stripe/setup-intent";
 import { getCardAuthorizationStatus } from "@/lib/consent/current-card-authorization";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // PR #135. Portal-side server action that produces a Stripe
 // SetupIntent client_secret for the Add card form. The action
@@ -96,8 +97,7 @@ export async function createCardSetupIntentAction(): Promise<CreateCardSetupInte
     console.error(
       JSON.stringify({
         event: "card_setup_client_lookup_failed",
-        code: clientErr.code,
-        message: clientErr.message,
+        code: dbErrorCode(clientErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -190,8 +190,7 @@ export async function createCardSetupIntentAction(): Promise<CreateCardSetupInte
     console.error(
       JSON.stringify({
         event: "card_setup_settings_lookup_failed",
-        code: settingsErr.code,
-        message: settingsErr.message,
+        code: dbErrorCode(settingsErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -324,8 +323,7 @@ export async function confirmCardPersistedAction(
     console.error(
       JSON.stringify({
         event: "card_persist_confirm_lookup_failed",
-        code: cardErr.code,
-        message: cardErr.message,
+        code: dbErrorCode(cardErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -387,8 +385,7 @@ export async function confirmCardPersistedAction(
     console.error(
       JSON.stringify({
         event: "card_persist_rejection_lookup_failed",
-        code: rejectionErr.code,
-        message: rejectionErr.message,
+        code: dbErrorCode(rejectionErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -424,7 +421,7 @@ export async function confirmCardPersistedAction(
       console.error(
         JSON.stringify({
           event: "card_persist_rejection_binding_failed",
-          code: ownerErr.code,
+          code: dbErrorCode(ownerErr),
           timestamp: new Date().toISOString(),
         }),
       );

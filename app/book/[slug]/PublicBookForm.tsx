@@ -221,6 +221,11 @@ export function PublicBookForm({
   const [serviceId, setServiceId] = useState(firstServiceId);
   const [date, setDate] = useState(defaultDate);
   const [slots, setSlots] = useState<Slot[]>([]);
+  // SCH-002: a slot READ that failed or was refused is not an empty day. Kept
+  // apart from `slots` so the panel can say "could not load" instead of "No
+  // availability", and bumped by Try again to re-run the fetch effect.
+  const [slotsFailed, setSlotsFailed] = useState(false);
+  const [slotsRetry, setSlotsRetry] = useState(0);
   const [picked, setPicked] = useState<Slot | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -305,12 +310,14 @@ export function PublicBookForm({
       setSlots([]);
       setPicked(null);
       setError(null);
+      setSlotsFailed(false);
       setNextSearched(false);
       setNoneInHorizon(false);
       return;
     }
     let cancelled = false;
     setError(null);
+    setSlotsFailed(false);
     setPicked(null);
     // Reset next-available state when the underlying query changes.
     // A previous "no availability in horizon" verdict was specific to the
@@ -323,6 +330,7 @@ export function PublicBookForm({
       if (!r.ok) {
         setError(r.error);
         setSlots([]);
+        setSlotsFailed(true);
         return;
       }
       setSlots(r.slots);
@@ -330,7 +338,7 @@ export function PublicBookForm({
     return () => {
       cancelled = true;
     };
-  }, [slug, serviceId, date, clientType, newClientBlocked]);
+  }, [slug, serviceId, date, clientType, newClientBlocked, slotsRetry]);
 
   // Availability is service-specific, so a prior service's "next available"
   // history is meaningless after a service switch: reset it. (Runs on mount
@@ -816,6 +824,25 @@ export function PublicBookForm({
         </span>
         {loadingSlots ? (
           <p className="text-sm text-[#6B6B6B]">Loading slots…</p>
+        ) : slotsFailed ? (
+          <div className="flex flex-col gap-3" role="alert" data-testid="slots-load-failed">
+            <p className="text-sm text-[#6B6B6B]">
+              {`Times for ${formatLocalDate(date)} could not be loaded. This is not the same as no availability.`}
+            </p>
+            <button
+              type="button"
+              onClick={() => setSlotsRetry((n) => n + 1)}
+              className="self-start px-3 py-1.5 text-xs font-medium uppercase"
+              style={{
+                border: "1px solid #0A0A0A",
+                backgroundColor: "transparent",
+                color: "#0A0A0A",
+                letterSpacing: "0.1em",
+              }}
+            >
+              Try again
+            </button>
+          </div>
         ) : slots.length === 0 ? (
           <div className="flex flex-col gap-3">
             <p className="text-sm text-[#6B6B6B]">

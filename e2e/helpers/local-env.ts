@@ -27,6 +27,7 @@
 import { resolveResources } from "../../scripts/worktree-resources.mjs";
 import os from "node:os";
 import path from "node:path";
+import { resendLedgerPath } from "./resend-ledger-config";
 import { twilioEgressLogPath, withTwilioEgressFake } from "./twilio-egress-config";
 
 const LOCAL_SUPABASE_URL = "http://127.0.0.1:54321";
@@ -229,6 +230,10 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // needs ACCEPTANCE opts in with a `success+` recipient. New coverage is
   // explicit; existing coverage is untouched.
   HONE_E2E_FAKE_RESEND_DEFAULT_MODE: "reject",
+  // SCH-001: the fake transport appends {to, subject, mode} for every send it
+  // receives to this file (outside the repo, under the OS temp dir). A spec
+  // reads it through e2e/helpers/resend-ledger.ts to prove who was emailed.
+  HONE_E2E_FAKE_RESEND_LEDGER: resendLedgerPath(E2E_WORKTREE, E2E_APP_PORT),
   // A global MODE override, when the outer process sets one, forces every
   // recipient. Specs do NOT rely on it (it would apply to the whole server);
   // it exists for a deliberate whole-run refusal sweep.
@@ -247,6 +252,9 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // this hardcoded-to-127.0.0.1 lane. Set here rather than passed through from
   // the outer process because webServer.env REPLACES process.env.
   HONE_E2E_ROUTE_FAULT: "1",
+  // SCH-002. Fires only for a studio slug starting "e2e-slot-fault-"; the module
+  // refuses to run in any deployed runtime.
+  HONE_E2E_SLOT_READ_FAULT: "1",
   // SENTRY-E2E-NOISE-02. Nothing this lane's server sends may reach the
   // operational Sentry project: not the deliberate faults above, not a real
   // failure raised during a run, not the browser envelopes the /monitoring

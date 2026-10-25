@@ -176,8 +176,10 @@ export default async function AppointmentDetailPage({
   // round-trip. The helper itself is read-only and runs through
   // service-role; no Stripe call, no row write. The future Stripe-
   // charge PR will reuse the same helper before any PaymentIntent.
+  // HON-44 (Sam decision 12): card charges are owner-only, so the fee card and its
+  // two eligibility reads exist for the owner alone.
   const showManualFeeCard =
-    data.status === "cancelled" || data.status === "no_show";
+    isOwner && (data.status === "cancelled" || data.status === "no_show");
   const manualFeeLateCancel = showManualFeeCard
     ? await getManualFeeChargeEligibility({
         studioId: studio.id,
@@ -204,8 +206,10 @@ export default async function AppointmentDetailPage({
   // Quick checkout: the appointment's coarse payment state, so the Payment
   // section shows Paid/Processing/Refunded or the Checkout entry: the SAME
   // bounded loader + cell the dashboard uses (one flow, not two).
+  // Owner-only (HON-44): a non-owner never queries payment state and sees no
+  // payment section.
   const checkoutPaymentState =
-    typedStatus === "completed"
+    isOwner && typedStatus === "completed"
       ? (await getAppointmentPaymentStates(studio.id, [id], studio.timezone)).get(id) ??
         // A missing entry means the loader could not speak for this
         // appointment; that is not the same as "no session".
@@ -523,7 +527,7 @@ export default async function AppointmentDetailPage({
       {/* Quick checkout (Chloe): take payment for a completed appointment right
           here, without navigating into charting. The modal reuses the existing
           session-payment card + actions; charting is independent. */}
-      {typedStatus === "completed" && (
+      {isOwner && typedStatus === "completed" && (
         <section className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-5 text-sm dark:border-neutral-800">
           <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
             Payment
@@ -594,6 +598,7 @@ export default async function AppointmentDetailPage({
           clientId={data.client?.id ?? null}
           appointmentId={id}
           linkedSession={linkedSession}
+          isOwner={isOwner}
         />
       )}
 
@@ -1400,10 +1405,14 @@ function NextStepCard({
   clientId,
   appointmentId,
   linkedSession,
+  isOwner,
 }: {
   clientId: string | null;
   appointmentId: string;
   linkedSession: Pick<Session, "id" | "started_at" | "modality"> | null;
+  // HON-44: billing is owner-only, so a non-owner is never sent to the (withdrawn)
+  // payment card and is not told to charge.
+  isOwner: boolean;
 }) {
   if (!clientId) {
     return (
@@ -1423,7 +1432,7 @@ function NextStepCard({
   if (!linkedSession) {
     ctaHref = `/clients/${clientId}/sessions/new?appointment_id=${encodeURIComponent(appointmentId)}`;
     ctaLabel = "Start session";
-  } else if (!sessionStarted) {
+  } else if (!sessionStarted || !isOwner) {
     ctaHref = `/clients/${clientId}/sessions/${sessionId}`;
     ctaLabel = "Open session";
   } else {
@@ -1438,8 +1447,9 @@ function NextStepCard({
           Appointment completed
         </p>
         <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">
-          Next step: chart the session, then charge a saved card or record
-          how the visit was settled.
+          {isOwner
+            ? "Next step: chart the session, then charge a saved card or record how the visit was settled."
+            : "Next step: chart the session. The studio owner takes payment."}
         </p>
       </div>
       <Link

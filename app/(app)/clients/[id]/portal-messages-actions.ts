@@ -16,6 +16,7 @@ import {
 import { buildPortalMessageNotificationEmail } from "@/lib/email/templates/portal-message-notification";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { safeLog } from "@/lib/logging/safe-log";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 const SUBJECT_MIN = 1;
 const SUBJECT_MAX = 160;
@@ -122,7 +123,7 @@ export async function createPortalMessageAction(
     safeLog.error(
       JSON.stringify({
         event: "portal_message_client_lookup_failed",
-        code: clientErr.code,
+        code: dbErrorCode(clientErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -152,8 +153,7 @@ export async function createPortalMessageAction(
     safeLog.error(
       JSON.stringify({
         event: "portal_message_insert_failed",
-        code: insertErr?.code,
-        message: insertErr?.message,
+        code: dbErrorCode(insertErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -238,8 +238,7 @@ export async function createPortalMessageAction(
       JSON.stringify({
         event: "portal_message_notification_stamp_failed",
         messageId: created.id,
-        code: stampErr.code,
-        message: stampErr.message,
+        code: dbErrorCode(stampErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -285,8 +284,7 @@ export async function markPortalReplySeenAction(
     safeLog.error(
       JSON.stringify({
         event: "portal_reply_mark_seen_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -335,8 +333,7 @@ export async function archivePortalMessageAction(
       JSON.stringify({
         event: "portal_message_archive_failed",
         messageId,
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );

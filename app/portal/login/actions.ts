@@ -24,6 +24,7 @@ import {
   clientSelfServicePolicyFromStudio,
 } from "@/lib/booking/client-self-service-policy";
 import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // PR #166. Magic-link TTL was 30 minutes in PR #129 and survived
@@ -261,8 +262,7 @@ export async function requestPortalMagicLinkAction(
       });
     if (insertErr) {
       logSanitized("portal_login_magic_insert_failed", {
-        code: insertErr.code,
-        message: insertErr.message,
+        code: dbErrorCode(insertErr),
       });
       continue;
     }

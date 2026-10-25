@@ -52,6 +52,7 @@ import {
   type ClientRescheduleDisabledCode,
 } from "@/lib/booking/client-self-service-policy";
 import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 const POLICY_ACK_REQUIRED_ERROR =
   "Please review and acknowledge the appointment policies before rescheduling.";
@@ -281,8 +282,7 @@ async function assertReschedulableOriginal(
     .maybeSingle();
   if (error) {
     logInternal("public_reschedule_assert_lookup_failed", {
-      code: error.code,
-      message: error.message,
+      code: dbErrorCode(error),
       appointmentId: resolved.appointment_id,
     });
     return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
@@ -484,8 +484,7 @@ export async function fetchAppointmentForRescheduleAction(
   if (error) {
     // PR #149: never surface raw DB error text to the public client.
     logInternal("public_reschedule_fetch_summary_failed", {
-      code: error.code,
-      message: error.message,
+      code: dbErrorCode(error),
       appointmentId: asserted.original.appointment_id,
     });
     return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
@@ -808,7 +807,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     .maybeSingle();
   if (studioErr || !studioRow) {
     logInternal("public_reschedule_studio_lookup_failed", {
-      code: studioErr?.code,
+      code: dbErrorCode(studioErr),
       studioId: asserted.original.studio_id,
       appointmentId: asserted.original.appointment_id,
     });
@@ -850,7 +849,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     // Safe operator signal only: no name, no email, no phone, no token, no raw
     // Postgres message (which can echo row values on a public surface).
     logInternal("public_reschedule_client_metadata_unavailable", {
-      code: clientErr?.code,
+      code: dbErrorCode(clientErr),
       studioId: asserted.original.studio_id,
       appointmentId: asserted.original.appointment_id,
       reason: clientErr ? "lookup_failed" : !clientRow ? "missing_row" : "missing_email",
@@ -930,8 +929,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     // generic so a token-bearing public route cannot reveal
     // internal function names or Postgres error strings.
     logInternal("public_reschedule_rpc_failed", {
-      code: rpcErr.code,
-      message: rpcErr.message,
+      code: dbErrorCode(rpcErr),
       studioId: asserted.original.studio_id,
       appointmentId: asserted.original.appointment_id,
     });
@@ -1108,7 +1106,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
             .maybeSingle();
           if (prErr || !pr) {
             logInternal("public_reschedule_practitioner_lookup_failed", {
-              code: prErr?.code,
+              code: dbErrorCode(prErr),
               studioId: asserted.original.studio_id,
             });
             return null;

@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { createClient } from "@/lib/supabase/server";
 import { generateIntakeToken } from "./tokens";
 import type { ClientIntakeForm } from "@/lib/types/database";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // P0-4: intake link lifetime. Reduced from 60 days to 14 days so a
 // stale link (e.g. one forwarded to a personal email and never
@@ -127,7 +128,7 @@ export async function ensureIntakeForClient(params: {
     .limit(1)
     .maybeSingle();
   if (lookupErr) {
-    console.error("Failed to look up intake for client:", lookupErr.message);
+    console.error("Failed to look up intake for client:", dbErrorCode(lookupErr));
     return null;
   }
   if (existing && (existing.status === "submitted" || existing.status === "reviewed")) {
@@ -147,7 +148,7 @@ export async function ensureIntakeForClient(params: {
       .select("id")
       .single();
     if (insertErr || !created) {
-      console.error("Failed to create intake:", insertErr?.message);
+      console.error("Failed to create intake:", dbErrorCode(insertErr));
       return null;
     }
     intakeId = created.id;
@@ -194,7 +195,7 @@ export async function createIntakeRequestForClient(params: {
   if (insertErr || !created) {
     console.error(
       "Failed to create intake reissue row:",
-      insertErr?.message,
+      dbErrorCode(insertErr),
     );
     return null;
   }
@@ -279,6 +280,6 @@ export async function stampIntakeLinkIssued(
     .update(patch)
     .eq("id", intakeId);
   if (error) {
-    console.error("Failed to stamp intake link metadata:", error.message);
+    console.error("Failed to stamp intake link metadata:", dbErrorCode(error));
   }
 }

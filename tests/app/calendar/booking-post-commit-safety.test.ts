@@ -132,9 +132,9 @@ describe("booking action — post-commit + safe-error hardening (Item 8)", () =>
   });
 
   it("the new-client + last-service helpers log a bounded SQLSTATE and return fixed copy", () => {
-    expect(ACTIONS).toMatch(/logBookingDbError\("create_client", "insert", error\?\.code\)/);
+    expect(ACTIONS).toMatch(/logBookingDbError\("create_client", "insert", dbErrorCode\(error\)\)/);
     expect(ACTIONS).toMatch(/Could not create the client\. Please try again\./);
-    expect(ACTIONS).toMatch(/logBookingDbError\("last_service", "query", error\.code\)/);
+    expect(ACTIONS).toMatch(/logBookingDbError\("last_service", "query", dbErrorCode\(error\)\)/);
     expect(ACTIONS).toMatch(/Could not load the last service\. Please try again\./);
   });
 });

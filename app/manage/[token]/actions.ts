@@ -16,6 +16,7 @@ import {
   clientManagePageAllowed,
 } from "@/lib/booking/client-self-service-policy";
 import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Generic public-facing message for the /manage surface. Returned for
 // any non-success outcome so the existence of a real appointment row
@@ -136,8 +137,7 @@ export async function fetchAppointmentForManageAction(
     .maybeSingle();
   if (error) {
     logInternal("public_manage_fetch_error", {
-      code: error.code,
-      message: error.message,
+      code: dbErrorCode(error),
     });
     return { ok: false, error: PUBLIC_MANAGE_GENERIC_ERROR };
   }
