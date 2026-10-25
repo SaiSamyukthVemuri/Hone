@@ -126,8 +126,9 @@ gate_sizes() {
 }
 
 # tables_equal A B: two sorted-unique table-name files are identical. Prints the
-# difference (names only) on mismatch.
+# difference (names only) on mismatch. A missing file is a mismatch, never "empty".
 tables_equal() {
+  [ -f "$1" ] && [ -f "$2" ] || { echo "  a table list is missing"; return 1; }
   if ! diff <(sort -u "$1") <(sort -u "$2") >/dev/null; then
     diff <(sort -u "$1") <(sort -u "$2") | sed -n 's/^[<>] /  /p'
     return 1
@@ -144,6 +145,7 @@ hash_verify() { (cd "$1" && sha256sum --check --quiet hashes.sha256); }
 # version and etag; the drill does the same). Returns 0 when identical.
 compare_manifests() {
   local before="$1" after="$2" cb ca
+  [ -s "$before" ] && [ -s "$after" ] || { echo "a manifest is missing or empty"; return 1; }
   if ! diff -u <(grep -v '^storage\.objects ' "$before") <(grep -v '^storage\.objects ' "$after"); then
     echo "row fingerprints differ"; return 1
   fi
@@ -317,4 +319,27 @@ secret_input() {
   fi
   [ -z "${!name:-}" ] || export_fail "$name is set in the environment; secrets are typed at a prompt (unset it)"
   read_secret "$name" "$2"
+}
+
+# read_object_manifest DIR IDENTITY: decrypt manifest.age with its exit status
+# CHECKED (a <(...) process substitution would swallow a failed decryption and
+# leave an empty list), then validate it BEFORE anything is uploaded or called
+# good: the declared count line is present, equals the number of lines, is at
+# least 1 (an export of zero objects is not an object export), and every line is
+# well formed. Sets MANIFEST (array) and MANIFEST_DECLARED. On any problem it
+# prints the reason on stdout and returns 1 (the caller decides how to stop).
+read_object_manifest() {
+  local dir="$1" id="$2" raw
+  MANIFEST=(); MANIFEST_DECLARED=""; MANIFEST_REASON=""
+  raw="$(age -d -i "$id" "$dir/manifest.age" 2>/dev/null)" || { MANIFEST_REASON="the identity does not decrypt manifest.age"; return 1; }
+  MANIFEST_DECLARED="$(printf '%s\n' "$raw" | sed -n 's/^count=\([0-9]*\) .*/\1/p')"
+  [ -n "$MANIFEST_DECLARED" ] || { MANIFEST_REASON="the manifest declares no object count"; return 1; }
+  [ "$MANIFEST_DECLARED" -ge 1 ] || { MANIFEST_REASON="the manifest declares $MANIFEST_DECLARED objects: not a valid object export"; return 1; }
+  local line
+  while IFS= read -r line; do
+    case "$line" in count=*|'') ;; *) MANIFEST+=("$line");; esac
+  done <<<"$raw"
+  [ "${#MANIFEST[@]}" = "$MANIFEST_DECLARED" ] || { MANIFEST_REASON="the manifest lists ${#MANIFEST[@]} object(s) but declares $MANIFEST_DECLARED"; return 1; }
+  local why
+  why="$(object_manifest_check <(printf '%s\n' "${MANIFEST[@]}") "$MANIFEST_DECLARED")" || { MANIFEST_REASON="$why"; return 1; }
 }

@@ -94,8 +94,8 @@ SQL
     } | sql >/dev/null || export_fail "the row load failed or was rolled back (one transaction: nothing was loaded)"
     export_log "V2: recompute the fingerprint and compare"
     AFTER="$(mktemp)"; BEFORE="$(mktemp)"
-    printf '%s\n' "$MANIFEST_SQL" | sql >"$AFTER"
-    dec "$DIR/manifest.age" >"$BEFORE"
+    printf '%s\n' "$MANIFEST_SQL" | sql >"$AFTER" || export_fail "the fingerprint query failed on the target"
+    dec "$DIR/manifest.age" >"$BEFORE" || export_fail "the identity does not decrypt manifest.age"
     compare_manifests "$BEFORE" "$AFTER" || export_fail "V2: the restored fingerprint differs from the export's"
     export_log "RESTORE PASS (logical): fingerprints identical for $(wc -l <"$AFTER" | tr -d ' ') table(s); storage.objects by count"
     ;;
@@ -105,19 +105,28 @@ SQL
     secret_input SERVICE_KEY "TARGET service-role key (input hidden): "
     make_auth_header_file   # the key reaches curl through a private 0600 file, never argv
     hash_verify "$DIR" || export_fail "V1: a ciphertext does not match hashes.sha256; not restoring"
-    MANIFEST=()
-    while IFS= read -r line; do MANIFEST+=("$line"); done < <(dec "$DIR/manifest.age" | grep -v '^count=')
-    bad=0
+    # The manifest is decrypted with its status CHECKED and validated BEFORE any upload
+    # (Codex P2 4371111142): a wrong identity must never end in an empty "PASS".
+    read_object_manifest "$DIR" "$ID" || export_fail "$MANIFEST_REASON; not touching the target"
+    # Every object must also decrypt and hash as the manifest says BEFORE the first upload.
+    for line in "${MANIFEST[@]}"; do
+      idx="${line%%"$US"*}"; want="${line##*"$US"}"
+      pre="$(dec "$DIR/objects/$idx.age" | sha256sum | cut -d' ' -f1)" || export_fail "object $idx does not decrypt; not touching the target"
+      [ "$pre" = "$want" ] || export_fail "object $idx does not hash as its manifest line says; not touching the target"
+    done
+    bad=0 uploaded=0
     for line in "${MANIFEST[@]}"; do
       idx="${line%%"$US"*}"; rest="${line#*"$US"}"; path="${rest%%"$US"*}"; want="${line##*"$US"}"
       url="$STORAGE_URL/storage/v1/object/$BUCKET/$(urlencode_path "$path")"
       dec "$DIR/objects/$idx.age" | curl -fsS -X PUT "$url" -H @"$AUTH_HDR_FILE" \
         -H "x-upsert: true" -H "Content-Type: application/octet-stream" --data-binary @- >/dev/null || { echo "upload of object $idx failed"; bad=1; continue; }
       have="$(curl -fsS "$url" -H @"$AUTH_HDR_FILE" | sha256sum | cut -d' ' -f1)" || { echo "read-back of object $idx failed"; bad=1; continue; }
-      [ "$have" = "$want" ] || { echo "object $idx re-hashes differently after the restore"; bad=1; }
+      [ "$have" = "$want" ] || { echo "object $idx re-hashes differently after the restore"; bad=1; continue; }
+      uploaded=$((uploaded + 1))
     done
     [ "$bad" = 0 ] || export_fail "object restore failed"
-    export_log "RESTORE PASS (objects): ${#MANIFEST[@]} object(s) re-uploaded and re-hashed"
+    [ "$uploaded" = "$MANIFEST_DECLARED" ] || export_fail "uploaded $uploaded object(s) but the manifest declares $MANIFEST_DECLARED; not a PASS"
+    export_log "RESTORE PASS (objects): $uploaded of $MANIFEST_DECLARED declared object(s) re-uploaded and re-hashed"
     ;;
   *) export_fail "kind must be logical or objects";;
 esac

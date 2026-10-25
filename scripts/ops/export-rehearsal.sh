@@ -218,6 +218,12 @@ expect_fail "L1: --production-ref that differs from the linked project ref is re
   env_rehearse EXPORT_PROJECT_REF_FILE="$WORK/project-ref" \
   bash "$OPS/export-restore.sh" logical "$LOGICAL" --identity "$WORK/key.txt" --target-ref "$PROJECT_ID" --production-ref "a-different-production-ref"
 
+# Codex P2 4371111142: a wrong identity on a RESTORE must fail loudly, never end in an empty PASS
+expect_fail "wrong identity on the OBJECT restore (no empty PASS, nothing uploaded)" "does not decrypt manifest.age" \
+  rehearse bash "$OPS/export-restore.sh" objects "$OBJECTS" --identity "$WORK/otherkey.txt" --target-ref "$PROJECT_ID" --production-ref "a-production-ref-that-is-not-this" --storage-url "$API" --bucket "$BUCKET"
+expect_fail "wrong identity on the LOGICAL restore (the database is not touched)" "does not decrypt" \
+  rehearse bash "$OPS/export-restore.sh" logical "$LOGICAL" --identity "$WORK/otherkey.txt" --target-ref "$PROJECT_ID" --production-ref "a-production-ref-that-is-not-this"
+
 # --- 5. disaster, then V4: restore into a NEW project built from the migrations --------------------
 log "destroying the rehearsal project (stop --no-backup)"
 $CLI stop --workdir "$WORK/stack" --no-backup >/dev/null 2>&1

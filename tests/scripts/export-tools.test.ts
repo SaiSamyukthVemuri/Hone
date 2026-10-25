@@ -614,6 +614,94 @@ describe("Privacy PEER-1155: rehearsal is CI-only, no secret in argv, ref checks
   });
 });
 
+describe("Codex P2 4371111142: a failed manifest decryption never reads as an empty PASS", () => {
+  const ciEnv = (d: string, extra: Record<string, string> = {}) => ({ DB_URL, SERVICE_KEY: "k", EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d, ...extra });
+  const enc = (p: string) => Buffer.byteLength(`https://${REF}.supabase.co/storage/v1/object/treatment-images/${p}`);
+  const PATHS = ["s/c/a.png", "s/c/b.png", "s/c/c.png"];
+  /** A real object export (shims) and a key file; returns the export dir and the env pieces. */
+  function exported(name: string) {
+    const d = fixtures(name);
+    writeFileSync(path.join(d, "list.txt"), PATHS.map((p) => `${p}${US}${enc(p)}`).join("\n") + "\n");
+    writeFileSync(path.join(d, "coverage.txt"), "rows_total=3 rows_without_object=0 objects_total=3 objects_without_row=0\n");
+    const out = path.join(scratch, `${name}-out`);
+    const r = run("object-export.sh", ["--out", out, "--recipient", "age1x", "--expect-ref", REF, "--storage-url", `https://${REF}.supabase.co`], ciEnv(d));
+    expect(r.status, r.stderr).toBe(0);
+    const key = path.join(scratch, `${name}-key.txt`); writeFileSync(key, "AGE-SECRET-KEY-SHIM");
+    return { d, out, key };
+  }
+  const restoreArgs = (out: string, key: string) => ["objects", out, "--identity", key, "--target-ref", REF, "--production-ref", "prod", "--storage-url", `https://${REF}.supabase.co`];
+  const rehash = (out: string) => execFileSync("bash", ["-c", `cd ${out} && sha256sum -- manifest.age objects/*.age > hashes.sha256`]);
+  const putCalls = (log: string) => (readFileSync(log, "utf8").match(/\[-X\] \[PUT\]/g) ?? []).length;
+
+  it("NEGATIVE: a wrong identity fails the object restore (no PASS line, no upload)", () => {
+    const { d, out, key } = exported("p2b-wrong");
+    const log = path.join(scratch, "p2b-wrong.log"); writeFileSync(log, "");
+    const r = run("export-restore.sh", restoreArgs(out, key), ciEnv(d, { SHIM_AGE_WRONG_KEY: "1", SHIM_ARGV_LOG: log }));
+    expect(r.status).not.toBe(0);
+    expect(r.stdout + r.stderr).not.toContain("RESTORE PASS");
+    expect(r.stderr).toContain("does not decrypt manifest.age");
+    expect(putCalls(log)).toBe(0);
+  });
+
+  it("POSITIVE control: the same export restores with the right identity, and the PASS names uploaded of declared", () => {
+    const { d, out, key } = exported("p2b-ok");
+    const log = path.join(scratch, "p2b-ok.log"); writeFileSync(log, "");
+    const r = run("export-restore.sh", restoreArgs(out, key), ciEnv(d, { SHIM_ARGV_LOG: log }));
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toContain("RESTORE PASS (objects): 3 of 3 declared object(s)");
+    expect(putCalls(log)).toBe(3);
+  });
+
+  it("NEGATIVE: a manifest that declares zero objects, or fewer lines than it declares, is refused before any upload", () => {
+    for (const [label, manifest, want] of [
+      ["zero", "count=0 total_bytes=0\n", "declares 0"],
+      ["short", null, "lists 2 object(s) but declares 3"],
+      ["nocount", "", "declares no object count"],
+    ] as const) {
+      const { d, out, key } = exported(`p2b-${label}`);
+      const m = path.join(out, "manifest.age");
+      const lines = readFileSync(m, "utf8").split("\n").filter(Boolean);
+      writeFileSync(m, manifest === null ? lines.filter((_, i) => i !== 0).join("\n") + "\n" : manifest);
+      rehash(out);   // the hashes match the tampered files: only the manifest check can catch it
+      const log = path.join(scratch, `p2b-${label}.log`); writeFileSync(log, "");
+      const r = run("export-restore.sh", restoreArgs(out, key), ciEnv(d, { SHIM_ARGV_LOG: log }));
+      expect(r.status, label).not.toBe(0);
+      expect(r.stderr, label).toContain(want);
+      expect(r.stdout + r.stderr, label).not.toContain("RESTORE PASS");
+      expect(putCalls(log), label).toBe(0);
+    }
+  });
+
+  it("NEGATIVE: an object that does not hash as its manifest line says stops the restore BEFORE the first upload", () => {
+    const { d, out, key } = exported("p2b-pre");
+    const obj = path.join(out, "objects/000002.age");
+    writeFileSync(obj, readFileSync(obj, "utf8") + "x");
+    rehash(out);
+    const log = path.join(scratch, "p2b-pre.log"); writeFileSync(log, "");
+    const r = run("export-restore.sh", restoreArgs(out, key), ciEnv(d, { SHIM_ARGV_LOG: log }));
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("does not hash as its manifest line says");
+    expect(putCalls(log)).toBe(0);
+  });
+
+  it("verify-export.sh objects: a wrong identity is a V5 FAIL with no PASS line", () => {
+    const { out, key } = exported("p2b-verify");
+    const r = run("verify-export.sh", ["objects", out, "--identity", key], { SHIM_AGE_WRONG_KEY: "1" });
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).toContain("V5: the identity does not decrypt manifest.age");
+    expect(r.stdout).toContain("VERIFY FAIL");
+    expect(r.stdout).not.toContain("VERIFY PASS");
+  });
+
+  it("the lib never reads a missing table list or manifest as an empty (equal) one", () => {
+    const lib = (body: string) => spawnSync("bash", ["-c", `. ${path.join(OPS, "export-lib.sh")}; ${body}`], { encoding: "utf8" });
+    const empty = path.join(scratch, "p2b-empty"); writeFileSync(empty, "");
+    expect(lib(`tables_equal ${empty} ${path.join(scratch, "p2b-missing")}`).status).not.toBe(0);
+    expect(lib(`compare_manifests ${empty} ${empty}`).status).not.toBe(0);
+    expect(lib(`compare_manifests ${path.join(scratch, "p2b-missing")} ${empty}`).status).not.toBe(0);
+  });
+});
+
 describe("source contract: what the tools must never do", () => {
   const files = ["export-lib.sh", "logical-export.sh", "object-export.sh", "verify-export.sh", "export-restore.sh", "export-rehearsal.sh"];
   const src = Object.fromEntries(files.map((f) => [f, readFileSync(path.join(OPS, f), "utf8")]));
@@ -653,6 +741,34 @@ describe("source contract: what the tools must never do", () => {
     });
     return out;
   }
+
+  // A <(...) or >(...) swallows the exit status of what runs inside it, even under
+  // `set -o pipefail`: a failed decryption became an empty list and a PASS
+  // (Codex P2 4371111142). Decrypting inside a substitution is therefore banned; the
+  // decrypt must be a plain command substitution whose status is checked.
+  function decryptInSubstitution(source: string): string[] {
+    return source.split("\n").flatMap((raw, i) => {
+      const line = raw.replace(/^\s*#.*$/, "");
+      return /[<>]\(\s*(dec\b|age\b)/.test(line) || /[<>]\([^)]*\|\s*(dec\b|age\b)/.test(line) ? [`line ${i + 1}: ${raw.trim().slice(0, 80)}`] : [];
+    });
+  }
+
+  it("RED control: a decrypt inside a process substitution is detected; GREEN: a checked command substitution is not", () => {
+    for (const bad of [
+      'while read -r l; do M+=("$l"); done < <(dec "$DIR/manifest.age" | grep -v count)',
+      'diff <(age -d -i "$ID" a.age) <(cat b)',
+      'x < <(cat f | dec "$f")',
+    ]) expect(decryptInSubstitution(bad), bad).not.toEqual([]);
+    for (const good of [
+      'raw="$(age -d -i "$id" "$dir/manifest.age" 2>/dev/null)" || { fail; }',
+      'object_manifest_check <(printf \'%s\\n\' "${MANIFEST[@]}") "$N"',
+      'tee >(chk "$cre" "$cm") >(names "$nre" "$nf" "$nm")',
+    ]) expect(decryptInSubstitution(good), good).toEqual([]);
+  });
+
+  it("no tool decrypts inside a process substitution (its status would be lost)", () => {
+    for (const f of files) expect(decryptInSubstitution(src[f]), f).toEqual([]);
+  });
 
   it("RED control: the argv-secret detector catches every way of putting a secret on a command line", () => {
     for (const bad of [

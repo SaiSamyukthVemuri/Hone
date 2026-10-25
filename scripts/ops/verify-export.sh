@@ -47,17 +47,17 @@ case "$KIND" in
     [ -f "$DIR/markers/schema.verify.tables" ] || : >"$DIR/markers/schema.verify.tables"
     tables_equal "$DIR/markers/schema.tables" "$DIR/markers/schema.verify.tables" || note "V3: the schema table list differs from the one recorded at export"
     rm -f "$DIR/markers/schema.verify.tables"
-    dec "$DIR/manifest.age" | grep -q ' rows=[0-9]* md5=' || note "V2: the manifest has no fingerprint lines"
+    m2="$(dec "$DIR/manifest.age")" || m2=""
+    grep -q ' rows=[0-9]* md5=' <<<"$m2" || note "V2: the manifest does not decrypt or has no fingerprint lines"
     ;;
   objects)
-    MANIFEST=()
-    while IFS= read -r line; do MANIFEST+=("$line"); done < <(dec "$DIR/manifest.age" | grep -v '^count=')
-    want_n="$(dec "$DIR/manifest.age" | sed -n 's/^count=\([0-9]*\) .*/\1/p')"
+    if ! read_object_manifest "$DIR" "$ID"; then
+      note "V5: $MANIFEST_REASON"
+      MANIFEST=(); MANIFEST_DECLARED=0
+    fi
     n="${#MANIFEST[@]}"
-    [ "$n" = "$want_n" ] || note "V5: manifest lists $n object(s), its own count says ${want_n:-none}"
-    object_manifest_check <(printf '%s\n' "${MANIFEST[@]}") "$n" || note "V5: manifest check failed"
     files="$(find "$DIR/objects" -name '*.age' | wc -l | tr -d ' ')"
-    [ "$files" = "$n" ] || note "V5: $files object file(s), $n in the manifest"
+    [ "$files" = "${MANIFEST_DECLARED:-0}" ] || note "V5: $files object file(s), ${MANIFEST_DECLARED:-0} declared in the manifest"
     for line in "${MANIFEST[@]}"; do
       idx="${line%%"$US"*}"; want="${line##*"$US"}"
       have="$(dec "$DIR/objects/$idx.age" | sha256sum | cut -d' ' -f1)" || { note "V5: object $idx does not decrypt"; continue; }
