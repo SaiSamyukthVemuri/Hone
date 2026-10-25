@@ -47,6 +47,9 @@ const h = vi.hoisted(() => {
     /** Runs when the email claim is taken, i.e. strictly after the claim. */
     archiveAfterClaim: false,
     discovered: false,
+    /** Extra appointments (other clients) in the email 24h window, for the budget test. */
+    crowd: [] as Array<{ id: string; starts_at: string; archived: boolean }>,
+    queries: 0,
     emailSent: new Set<string>(),
     smsSentAt: new Set<string>(),
     emailSends: [] as string[],
@@ -84,7 +87,7 @@ const h = vi.hoisted(() => {
 
   /** Embedded `client:clients(a, b, c)` columns, as the select string names them. */
   function embeddedClient(select: string) {
-    const m = /client:clients\(([^)]*)\)/.exec(select);
+    const m = /client:clients(?:!inner)?\(([^)]*)\)/.exec(select);
     if (!m) return undefined;
     const cols = m[1]!.split(",").map((c) => c.trim()).filter(Boolean);
     const out: Record<string, unknown> = {};
@@ -96,24 +99,54 @@ const h = vi.hoisted(() => {
   function query(table: string) {
     const filters: Filter[] = [];
     let select = "";
+    let orClause = "";
+    let limitN = 1000;
     const hasIs = (col: string) => filters.some(([op, c]) => op === "is" && c === col);
     const answer = () => {
       if (table !== "appointments") return { data: [], error: null };
       const wants =
         hasIs("reminder_24h_sent_at") ? "email24" : hasIs("sms_reminder_24h_sent_at") ? "sms24" : null;
       if (!wants) return { data: [], error: null };
+      state.queries += 1;
+      // The query's own filter on the joined client, honored exactly as asked.
+      const filtersArchived = filters.some(([op, c, v]) => op === "is" && c === "client.archived_at" && v === null);
+      const rows: Array<{ id: string; starts_at: string; archived: boolean; real: boolean }> = [];
+      if (wants === "email24") {
+        for (const c of state.crowd) rows.push({ ...c, real: false });
+      }
       const already = wants === "email24" ? state.emailSent.has(APPT.id) : state.smsSentAt.has(APPT.id);
-      if (already) return { data: [], error: null };
-      state.discovered = true;
+      if (!already) rows.push({ id: APPT.id, starts_at: START, archived: !!state.client.archived_at, real: true });
+      let out = rows.filter((r) => !(filtersArchived && r.archived));
+      out.sort((x, y) => (x.starts_at === y.starts_at ? x.id.localeCompare(y.id) : x.starts_at.localeCompare(y.starts_at)));
+      const m = /starts_at\.gt\.\"([^\"]+)\",and\(starts_at\.eq\.\"[^\"]+\",id\.gt\.\"([^\"]+)\"\)/.exec(orClause);
+      if (m) out = out.filter((r) => r.starts_at > m[1]! || (r.starts_at === m[1] && r.id > m[2]!));
+      out = out.slice(0, limitN);
+      if (out.length) state.discovered = true;
       const cl = embeddedClient(select);
-      return { data: [{ ...APPT, ...(cl ? { client: cl } : {}) }], error: null };
+      return {
+        data: out.map((r) => ({
+          ...APPT,
+          id: r.id,
+          starts_at: r.starts_at,
+          ...(cl ? { client: r.real ? cl : { ...cl, archived_at: r.archived ? "2026-01-01T00:00:00Z" : null } } : {}),
+        })),
+        error: null,
+      };
     };
     const b: Record<string, unknown> = {};
     b.select = (s: string) => {
       select = s;
       return b;
     };
-    for (const m of ["order", "limit", "abortSignal", "or"]) b[m] = () => b;
+    for (const m of ["order", "abortSignal"]) b[m] = () => b;
+    b.limit = (n: number) => {
+      limitN = n;
+      return b;
+    };
+    b.or = (c: string) => {
+      orClause = c;
+      return b;
+    };
     for (const op of ["eq", "is", "lt", "gte", "lte"]) {
       b[op] = (column: string, value: unknown) => {
         filters.push([op, column, value]);
@@ -127,10 +160,12 @@ const h = vi.hoisted(() => {
         state.client.archived_at = "2026-10-09T12:00:00Z";
         state.archiveAfterDiscovery = false;
       }
-      if (table === "clients") {
+      if (table === "clients" || table === "studios") {
+        // A by-id live read: answer exactly the columns the select names.
+        const src = (table === "clients" ? state.client : APPT.studio) as Record<string, unknown>;
         const cols = select.split(",").map((c) => c.trim()).filter(Boolean);
         const row: Record<string, unknown> = {};
-        for (const c of cols) row[c] = (state.client as Record<string, unknown>)[c];
+        for (const c of cols) row[c] = src[c];
         return Promise.resolve({ data: row, error: null });
       }
       const cl = embeddedClient(select);
@@ -235,6 +270,8 @@ beforeEach(() => {
   s.archiveAfterDiscovery = false;
   s.archiveAfterClaim = false;
   s.discovered = false;
+  s.crowd = [];
+  s.queries = 0;
   s.emailSent = new Set();
   s.smsSentAt = new Set();
   s.emailSends = [];
@@ -357,6 +394,37 @@ describe("consent, STOP and suppression are unchanged (archived or not)", () => 
   it("a client with no email gets no email", async () => {
     h.state.client.email = null;
     await run();
+    expect(h.state.emailSends).toEqual([]);
+  });
+});
+
+describe("archived clients do not crowd out eligible ones in the scan budget (MSG-001 class)", () => {
+  it("a page of archived appointments ahead of the window does not consume the candidate budget", async () => {
+    // 260 archived visits all start before the eligible one: more than the
+    // 200-candidate / 8-query ceiling of one fire. Unfiltered, the scan spends
+    // the whole budget on them and never reaches the eligible reminder.
+    h.state.crowd = Array.from({ length: 260 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-${String(100 + i).padStart(12, "0")}`,
+      starts_at: `2026-10-09T${String(10 + Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}:00.000Z`,
+      archived: true,
+    }));
+    const body = await run();
+    expect(h.state.emailSends).toEqual(["client@example.test"]);
+    expect(body.reminder_24h).toMatchObject({ succeeded: 1 });
+  });
+
+  it("control: the same crowd of NON-archived appointments is still bounded by the budget", async () => {
+    h.state.crowd = Array.from({ length: 260 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-${String(100 + i).padStart(12, "0")}`,
+      starts_at: `2026-10-09T${String(10 + Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}:00.000Z`,
+      archived: false,
+    }));
+    // What the archived filter protects: an unfiltered crowd spends the whole
+    // fire's budget (8 queries) and the eligible reminder is not reached; the
+    // run reports an incomplete scan (500) and resumes on a later fire.
+    const res = await GET(new Request("https://hone.care/api/cron/appointment-reminders"));
+    expect(res.status).toBe(500);
+    expect(h.state.queries).toBeLessThanOrEqual(8);
     expect(h.state.emailSends).toEqual([]);
   });
 });

@@ -78,9 +78,14 @@ async function loadAppointmentsForWindow(opts: {
   let query = admin
     .from("appointments")
     .select(
-      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email, phone, sms_consent_at, sms_opted_out_at, archived_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
+      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients!inner(name, email, phone, sms_consent_at, sms_opted_out_at, archived_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
     )
     .eq("status", "confirmed")
+    // MSG-ARCH-01: archived clients are filtered in the query (inner join), so
+    // their visits never consume the per-run candidate and query budget or get
+    // re-scanned every fire. The send-time re-reads below still cover a client
+    // archived AFTER discovery.
+    .is("client.archived_at", null)
     .is(opts.notSentColumn, null)
     .lt(opts.attemptsColumn, MAX_ATTEMPTS)
     .gte("starts_at", opts.startIso)
