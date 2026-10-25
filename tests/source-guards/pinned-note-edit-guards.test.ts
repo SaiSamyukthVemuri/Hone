@@ -34,7 +34,14 @@ describe("pinned-note edit — server action contract", () => {
   });
 
   it("authorizes from the SESSION (getCurrentPractitionerWithStudio), never the form studio", () => {
-    expect(editBody()).toMatch(/const \{ studio \} = await getCurrentPractitionerWithStudio\(\)/);
+    expect(editBody()).toMatch(/const \{ practitioner, studio \} = await getCurrentPractitionerWithStudio\(\)/);
+  });
+
+  it("HON-44: a non-owner's update is additionally scoped to cautions they created; the owner's is not", () => {
+    const b = editBody();
+    expect(b).toMatch(/practitioner\.role !== "owner"[\s\S]*\.eq\("created_by_practitioner_id", practitioner\.id\)/);
+    // The author column is a FILTER, never a mutated column.
+    expect(b).not.toMatch(/\.update\(\{[^}]*created_by/);
   });
 
   it("is an in-place UPDATE scoped to id + the authed studio + client (tenant isolation, no delete+recreate)", () => {
