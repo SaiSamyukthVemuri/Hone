@@ -86,6 +86,8 @@ pull_attempts() { grep -cE 'Pulling from supabase/edge-runtime|failed to pull do
 RUNNER_IP="$(hostname -I | awk '{print $1}')"
 REMOTE_URL="postgresql://postgres:$PW@$RUNNER_IP:$PORT/postgres?sslmode=require&options=-c%20statement_timeout%3D120000"
 VER=2.102.0
+# SSL_CERT_FILE points at the throwaway database certificate; curl must not use it for the internet.
+dl() { env -u SSL_CERT_FILE curl "$@"; }
 WORK="$OUT/verified"; rm -rf "$WORK"; mkdir -p "$WORK"
 REL="https://github.com/supabase/cli/releases/download/v$VER"
 
@@ -93,17 +95,17 @@ say "# s1-verified-binary rehearsal on $(uname -sm); synthetic DB through produc
 
 # ---- (a) release archive + checksums.txt ---------------------------------------------------
 say "== (a) GitHub release archive, verified with sha256sum -c"
-curl -fsSL "https://api.github.com/repos/supabase/cli/releases/tags/v$VER" -o "$WORK/release.json" 2> "$WORK/release.err" || true
+dl -fsSL "https://api.github.com/repos/supabase/cli/releases/tags/v$VER" -o "$WORK/release.json" 2> "$WORK/release.err" || true
 if [ -s "$WORK/release.json" ]; then
   say "INFO  release assets (name, size):"
   python3 -c "import json,sys; d=json.load(open('$WORK/release.json')); print('\n'.join('   | %s  %s' % (a['name'], a['size']) for a in d.get('assets', [])))" | tee -a "$RES"
 fi
 ARCH_NAME="supabase_${VER}_linux_amd64.tar.gz"
 cd "$WORK"
-curl -fsSL -o "$ARCH_NAME" "$REL/$ARCH_NAME"
+dl -fsSL -o "$ARCH_NAME" "$REL/$ARCH_NAME"
 SUMS=""
 for n in "supabase_${VER}_checksums.txt" "checksums.txt"; do
-  if curl -fsSL -o "$n" "$REL/$n" 2> /dev/null; then SUMS="$n"; break; fi
+  if dl -fsSL -o "$n" "$REL/$n" 2> /dev/null; then SUMS="$n"; break; fi
 done
 expect "(a) archive and checksums file downloaded from the v$VER release" "$([ -s "$ARCH_NAME" ] && [ -n "$SUMS" ] && echo 0 || echo 1)" "archive=$(stat -c %s "$ARCH_NAME" 2> /dev/null) bytes; checksums file=$SUMS"
 say "INFO  archive sha256: $(sha256sum "$ARCH_NAME" | cut -d' ' -f1)"
@@ -119,6 +121,7 @@ expect "(a) a TAMPERED archive FAILS sha256sum -c (non-zero)" "$([ "$BAD" != "0"
 mkdir -p "$WORK/bin"; tar -xzf "$ARCH_NAME" -C "$WORK/bin"
 BIN="$(find "$WORK/bin" -name supabase -type f | head -1)"
 chmod +x "$BIN"
+[ -n "$BIN" ] && [ -x "$BIN" ] || { say "FAIL no verified binary: cannot continue"; exit 1; }
 VOUT="$($BIN --version 2>&1 | tail -1)"
 expect "(a) the extracted binary prints $VER" "$([ "$VOUT" = "$VER" ] && echo 0 || echo 1)" "--version='$VOUT'; binary sha256=$(sha256sum "$BIN" | cut -d' ' -f1)"
 say "INFO  archive contents: $(tar -tzf "$ARCH_NAME" | tr '\n' ' ')"
