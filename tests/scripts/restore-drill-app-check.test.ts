@@ -1,6 +1,6 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -144,28 +144,45 @@ describe("sign-in", () => {
     expect(calls).toEqual(["/auth/v1/admin/generate_link", "/auth/v1/verify"]);
   });
 
+  it("constructs the client on a runtime WITHOUT a WebSocket (Node 20, as in ci.yml)", async () => {
+    // Node 24 has a native WebSocket, so the runner's crash cannot reproduce
+    // here unless it is removed first: supabase-js builds a realtime client on
+    // construction and refuses to without one.
+    vi.stubGlobal("WebSocket", undefined);
+    // generate_link must succeed so signIn reaches the client construction.
+    vi.stubGlobal("fetch", async (input: string | URL | Request) =>
+      String(input instanceof Request ? input.url : input).endsWith("/admin/generate_link")
+        ? Response.json({ hashed_token: "h", verification_type: "magiclink" })
+        : new Response('{"msg":"nope"}', { status: 400 }),
+    );
+    const result = await signIn(API, "anon", "service");
+    expect(result.error).toMatch(/^verifyOtp: /);
+  });
+
   it("fails as a MISS, not a crash, when the user does not exist (the negative control)", async () => {
     vi.stubGlobal("fetch", async () => new Response("{}", { status: 404 }));
     expect((await signIn(API, "anon", "service")).error).toMatch(/generate_link answered 404/);
   });
 });
 
-describe("restore-drill.sh hook: PASS needs post-restore 0 and pre-restore exactly 1", () => {
+describe("restore-drill.sh hook: PASS needs post-restore 0 and pre-restore exactly 1 WITH the check's own MISS line", () => {
   const script = readFileSync("scripts/ops/restore-drill.sh", "utf8");
   const appCheck = script.match(/^app_check\(\) \{.*\}$/m)?.[0];
   const preCase = script.match(/^ {2}case "\$\(app_check pre-restore\)" in .*esac$/m)?.[0];
   const postCase = script.match(/^ {2}case "\$\(app_check post-restore\)" in .*esac$/m)?.[0];
+  const gate = script.match(/^ {2}if \[ "\$APP_NEGATIVE" = failed \] && ! grep -q .*; fi$/m)?.[0];
 
-  function outcome(caseLine: string, exitCode: number): string {
+  /** Run the drill's own hook lines against a fake check that prints `text` and exits `exitCode`. */
+  function outcome(lines: Array<string | undefined>, exitCode: number, text = ""): string {
     const dir = mkdtempSync(path.join(tmpdir(), "drill-hook-"));
     try {
       const check = path.join(dir, "check");
-      writeFileSync(check, `#!/bin/sh\nexit ${exitCode}\n`, { mode: 0o755 });
+      writeFileSync(check, `#!/bin/sh\ncat <<'EOF'\n${text}\nEOF\nexit ${exitCode}\n`, { mode: 0o755 });
       const body = [
         "set -euo pipefail",
         `APP_CHECK=${check}; API=x; EVIDENCE=${dir}`,
         appCheck,
-        caseLine.replace(/APP_NEGATIVE|APP_READ/g, "OUT"),
+        ...lines.map((l) => l!.replace(/APP_NEGATIVE|APP_READ/g, "OUT")),
         'echo "$OUT"',
       ].join("\n");
       return execFileSync("bash", ["-c", body], { encoding: "utf8" }).trim();
@@ -173,11 +190,14 @@ describe("restore-drill.sh hook: PASS needs post-restore 0 and pre-restore exact
       rmSync(dir, { recursive: true, force: true });
     }
   }
+  // The gate reads the pre-restore log, which the check's stdout lands in.
+  const pre = (code: number, text?: string) => outcome([preCase, gate], code, text);
 
   it("the hook lines exist", () => {
     expect(appCheck).toBeDefined();
     expect(preCase).toBeDefined();
     expect(postCase).toBeDefined();
+    expect(gate).toBeDefined();
     expect(script).toMatch(/\[ "\$APP_READ" = passed \] \|\| \{ RESULT=FAIL;/);
     expect(script).toMatch(/\[ "\$APP_NEGATIVE" = failed \] \|\| \{ RESULT=FAIL;/);
   });
@@ -187,8 +207,83 @@ describe("restore-drill.sh hook: PASS needs post-restore 0 and pre-restore exact
     [1, "failed"],
     [2, "error"],
     [127, "error"],
-  ])("exit %i maps to %s", (code, expected) => {
-    expect(outcome(preCase!, code)).toBe(expected);
-    expect(outcome(postCase!, code)).toBe(expected);
+  ])("post-restore: exit %i maps to %s", (code, expected) => {
+    expect(outcome([postCase], code)).toBe(expected);
+  });
+
+  it("negative control: exit 1 WITH a MISS line is the only accepted outcome", () => {
+    expect(pre(1, "app check MISS: client list: GET /clients answered 307")).toBe("failed");
+  });
+
+  it.each([
+    ["exit 1 with no MISS line (a crash, sudo or a bad import)", 1, "Error: Node.js 20 detected without native WebSocket support."],
+    ["exit 1 with a HARNESS line", 1, "app check HARNESS ERROR: uncaught: boom"],
+    ["exit 0 (nothing was missing)", 0, "app check ok"],
+    ["exit 2 (a harness error)", 2, "app check HARNESS ERROR: no build"],
+  ])("negative control: %s is an error, never a valid control", (_name, code, text) => {
+    expect(pre(code, text)).toBe(code === 0 ? "passed" : "error");
+  });
+});
+
+// A closed environment, so a stray variable from the shell cannot change an exit code.
+const CLEAN_ENV = Object.assign(Object.create(null), { PATH: process.env.PATH ?? "" }) as NodeJS.ProcessEnv;
+
+describe("the check never exits 1 for anything but a read MISS", () => {
+  const SCRIPT = "scripts/ops/restore-drill-app-check.mjs";
+  const API = "http://127.0.0.1:56521";
+
+  /** The real script, copied into a scratch tree so its repo root is the scratch dir. */
+  function run(args: string[], stamp?: string): { code: number | null; stderr: string } {
+    const root = mkdtempSync(path.join(tmpdir(), "drill-entry-"));
+    try {
+      mkdirSync(path.join(root, "scripts", "ops"), { recursive: true });
+      copyFileSync(SCRIPT, path.join(root, "scripts", "ops", "restore-drill-app-check.mjs"));
+      if (stamp !== undefined) {
+        mkdirSync(path.join(root, ".next"), { recursive: true });
+        writeFileSync(path.join(root, ".next", "restore-drill-app.json"), stamp);
+      }
+      const r = spawnSync(process.execPath, [path.join(root, "scripts", "ops", "restore-drill-app-check.mjs"), ...args], {
+        encoding: "utf8",
+        env: CLEAN_ENV,
+      });
+      return { code: r.status, stderr: r.stderr };
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  it("an UNCAUGHT error (a corrupt build stamp) exits 2 with the error logged", () => {
+    const r = run(["post-restore", API, tmpdir()], "{ not json");
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/HARNESS ERROR: uncaught: /);
+    expect(r.stderr).not.toMatch(/app check MISS/);
+  });
+
+  it.each([
+    ["no build", ["post-restore", API, tmpdir()], undefined],
+    ["a wrong API", ["pre-restore", "https://x.supabase.co", tmpdir()], undefined],
+    ["a bad phase", ["bogus"], undefined],
+    ["no arguments", [], undefined],
+  ])("%s is a harness error (2), not a miss", (_name, args, stamp) => {
+    const r = run(args, stamp);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/HARNESS ERROR/);
+  });
+
+  it("an error thrown OUTSIDE main() still exits 2, not Node's own 1", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "drill-late-"));
+    try {
+      mkdirSync(path.join(root, "scripts", "ops"), { recursive: true });
+      const copy = path.join(root, "scripts", "ops", "restore-drill-app-check.mjs");
+      // A throw on a microtask runs before main() returns, outside its try/catch.
+      const source = readFileSync(SCRIPT, "utf8");
+      const entry = "  process.exit(await main(process.argv.slice(2)));";
+      expect(source).toContain(entry);
+      writeFileSync(copy, source.replace(entry, `  queueMicrotask(() => { throw new Error("late"); });\n${entry}`));
+      const r = spawnSync(process.execPath, [copy, "bogus"], { encoding: "utf8", env: CLEAN_ENV });
+      expect(r.status).toBe(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

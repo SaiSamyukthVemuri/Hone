@@ -28,8 +28,10 @@
 # (phase pre-restore, the negative control) and once after the comparison
 # (phase post-restore). The check exits 0 when every read succeeds, 1 when a
 # read misses, and anything else on a harness error. The drill PASSES only
-# when post-restore exits 0 and pre-restore exits exactly 1, so a broken
-# harness can never pass as a negative control. Unset, the drill is unchanged.
+# when post-restore exits 0 and pre-restore exits exactly 1 AND its log carries
+# the check's own `app check MISS:` line (sudo, a bad import or any wrapper can
+# also exit 1), so a broken harness can never pass as a negative control. The
+# miss reason is copied into the drill log. Unset, the drill is unchanged.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -182,6 +184,9 @@ if [ -n "$APP_CHECK" ]; then
   TN=$(date +%s)
   log "negative control: application check against the rebuilt, not yet restored project"
   case "$(app_check pre-restore)" in 0) APP_NEGATIVE=passed;; 1) APP_NEGATIVE=failed;; *) APP_NEGATIVE=error;; esac
+  # Exit 1 counts as a read MISS only when the check itself said so.
+  if [ "$APP_NEGATIVE" = failed ] && ! grep -q '^app check MISS: ' "$EVIDENCE/app-check-pre-restore.log"; then APP_NEGATIVE=error; fi
+  log "negative control: $APP_NEGATIVE; $(grep -m1 '^app check ' "$EVIDENCE/app-check-pre-restore.log" | cut -c1-600 || true)"
   NEG_SECONDS=$(( $(date +%s) - TN ))
 fi
 log "loading rows"

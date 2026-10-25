@@ -19,7 +19,10 @@
 //       the check; restore-drill.sh calls it through RESTORE_DRILL_APP_CHECK.
 //
 // Exit codes: 0 every read succeeded; 1 a read missed (the negative control's
-// expected result); 2 a harness error (no build, port in use, server down).
+// expected result, always preceded by an `app check MISS:` line naming each
+// miss); 2 a harness error (no build, port in use, server down, ANY uncaught
+// error). Node itself exits 1 on an uncaught throw, so the entry point at the
+// bottom catches everything and maps it to 2: a crash must never read as a miss.
 //
 // Sign-in uses GoTrue's own magic-link token: the admin API issues it, and
 // verifyOtp exchanges it for a session exactly as the emailed link would. Only
@@ -174,6 +177,11 @@ export async function signIn(api, anonKey, serviceKey) {
   const { createServerClient } = await import("@supabase/ssr");
   const jar = new Map();
   const supabase = createServerClient(api, anonKey, {
+    // supabase-js builds a realtime client on construction, and on Node 20 (the
+    // version ci.yml pins) that throws without a WebSocket. This check never
+    // subscribes, so a transport that is never constructed is enough; adding
+    // the `ws` package would be a dependency change for no behaviour.
+    realtime: { transport: class NoRealtime {} },
     cookies: {
       getAll: () => [...jar].map(([name, value]) => ({ name, value })),
       setAll: (list) => list.forEach(({ name, value }) => (value ? jar.set(name, value) : jar.delete(name))),
@@ -300,12 +308,28 @@ function fail(code, message) {
   return code;
 }
 
+/** Run one invocation: 0 ok, MISS (1) only from a returned read miss, HARNESS (2) for everything thrown. */
+export async function main(argv) {
+  const [phase, api, evidence] = argv;
+  try {
+    const code =
+      phase === "build" ? await build(api)
+        : phase === "pre-restore" || phase === "post-restore" ? await check(phase, api, evidence)
+          : fail(HARNESS, "usage: restore-drill-app-check.mjs build <api> | <pre-restore|post-restore> <api> <evidence-dir>");
+    return code;
+  } catch (error) {
+    return fail(HARNESS, `uncaught: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
+  }
+}
+
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
-  const [phase, api, evidence] = process.argv.slice(2);
-  const code =
-    phase === "build" ? await build(api)
-      : phase === "pre-restore" || phase === "post-restore" ? await check(phase, api, evidence)
-        : fail(HARNESS, "usage: restore-drill-app-check.mjs build <api> | <pre-restore|post-restore> <api> <evidence-dir>");
-  process.exit(code);
+  // A late rejection or throw outside main() must not fall back to Node's own exit 1.
+  for (const event of ["uncaughtException", "unhandledRejection"]) {
+    process.on(event, (error) => {
+      console.error(`app check HARNESS ERROR: ${event}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
+      process.exit(HARNESS);
+    });
+  }
+  process.exit(await main(process.argv.slice(2)));
 }
