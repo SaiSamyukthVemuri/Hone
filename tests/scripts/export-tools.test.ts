@@ -54,6 +54,7 @@ if [ "$mode" = enc ]; then cat >"$out"; else
   write(
     path.join(bin, "pg_dump"),
     `#!/usr/bin/env bash
+if [ -n "\${SHIM_ARGV_LOG:-}" ]; then { printf 'pg_dump argv:'; printf ' [%s]' "$@"; printf '\\nPGPASSWORD=%s\\n' "\${PGPASSWORD:-}"; } >>"$SHIM_ARGV_LOG"; fi
 case " $* " in *" --snapshot="*) ;; *) echo "pg_dump called without --snapshot" >&2; exit 9;; esac
 D="$SHIM_DUMP_DIR"
 case " $* " in
@@ -70,6 +71,7 @@ esac
   write(
     path.join(bin, "psql"),
     `#!/usr/bin/env bash
+if [ -n "\${SHIM_ARGV_LOG:-}" ]; then { printf 'psql argv:'; printf ' [%s]' "$@"; printf '\\nPGPASSWORD=%s\\n' "\${PGPASSWORD:-}"; } >>"$SHIM_ARGV_LOG"; fi
 while IFS= read -r line; do
   [ -n "\${SHIM_PSQL_LOG:-}" ] && printf '%s\\n' "$line" >>"$SHIM_PSQL_LOG"
   case "$line" in
@@ -90,6 +92,10 @@ done
     path.join(bin, "curl"),
     `#!/usr/bin/env bash
 url=""; for a in "$@"; do case "$a" in http*) url="$a";; esac; done
+if [ -n "\${SHIM_ARGV_LOG:-}" ]; then
+  { printf 'curl argv:'; printf ' [%s]' "$@"; printf '\\n'; } >>"$SHIM_ARGV_LOG"
+  for a in "$@"; do case "$a" in @*) printf 'header-file=%s\\n' "\${a#@}" >>"$SHIM_ARGV_LOG"; [ -f "\${a#@}" ] && { printf 'header-file-mode=%s\\n' "$(stat -c %a "\${a#@}")" >>"$SHIM_ARGV_LOG"; cat "\${a#@}" >>"$SHIM_ARGV_LOG"; };; esac; done
+fi
 if [ -n "\${SHIM_CURL_FAIL_MATCH:-}" ] && [[ "$url" == *"$SHIM_CURL_FAIL_MATCH"* ]]; then echo "curl: (22) The requested URL returned error: 404" >&2; exit 22; fi
 if [ -n "\${SHIM_CURL_LIE_MATCH:-}" ] && [[ "$url" == *"$SHIM_CURL_LIE_MATCH"* ]]; then printf 'XX%s' "$url"; exit 0; fi
 printf '%s' "$url"
@@ -140,11 +146,11 @@ describe("export-lib: the pure checks", () => {
     expect(lib(`url_matches_ref '${DB_URL}' ''`).status).not.toBe(0);
     expect(lib(`url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' ${REF}`).status).not.toBe(0);
     // Rehearsal accepts loopback only for the ONE ref it declares: any other typed ref is refused.
-    expect(lib(`EXPORT_REHEARSAL=1; url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' ${REF}`).status).not.toBe(0);
-    expect(lib(`EXPORT_REHEARSAL=1; EXPORT_REHEARSAL_REF=${REF}; url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' ${REF}`).status).toBe(0);
-    expect(lib(`EXPORT_REHEARSAL=1; EXPORT_REHEARSAL_REF=${REF}; url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' wrongref`).status).not.toBe(0);
+    expect(lib(`EXPORT_REHEARSAL=1; GITHUB_ACTIONS=true; url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' ${REF}`).status).not.toBe(0);
+    expect(lib(`EXPORT_REHEARSAL=1; GITHUB_ACTIONS=true; EXPORT_REHEARSAL_REF=${REF}; url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' ${REF}`).status).toBe(0);
+    expect(lib(`EXPORT_REHEARSAL=1; GITHUB_ACTIONS=true; EXPORT_REHEARSAL_REF=${REF}; url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' wrongref`).status).not.toBe(0);
     // A non-loopback host that does not name the ref is refused in rehearsal exactly as in production (Codex P2).
-    expect(lib(`EXPORT_REHEARSAL=1; EXPORT_REHEARSAL_REF=${REF}; url_matches_ref 'postgresql://u:p@db.other.example/x' ${REF}`).status).not.toBe(0);
+    expect(lib(`EXPORT_REHEARSAL=1; GITHUB_ACTIONS=true; EXPORT_REHEARSAL_REF=${REF}; url_matches_ref 'postgresql://u:p@db.other.example/x' ${REF}`).status).not.toBe(0);
     // A ref that only appears in the PATH or the password does not count.
     expect(lib(`url_matches_ref 'postgresql://u:${REF}@evil.example/${REF}' ${REF}`).status).not.toBe(0);
   });
@@ -204,7 +210,7 @@ describe("export-lib: the pure checks", () => {
 });
 
 describe("logical-export.sh", () => {
-  const env = (d: string, extra: Record<string, string> = {}) => ({ DB_URL, EXPORT_REHEARSAL: "1", SHIM_DUMP_DIR: d, ...extra });
+  const env = (d: string, extra: Record<string, string> = {}) => ({ DB_URL, EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d, ...extra });
 
   it("NEGATIVE: refuses a connection string that does not name the typed ref", () => {
     const d = fixtures("lx-ref");
@@ -218,12 +224,14 @@ describe("logical-export.sh", () => {
     const lib = (body: string) => spawnSync("bash", ["-c", `. ${path.join(OPS, "export-lib.sh")}; ${body}`], { encoding: "utf8" });
     const ov = lib("EXPORT_PG_DUMP='pg_dump x'; export_configure_commands");
     expect(ov.status).not.toBe(0);
-    expect(ov.stderr).toContain("rehearsal-only");
-    expect(lib("EXPORT_REHEARSAL=1; DB_URL=u; EXPORT_PG_DUMP='pg_dump x'; export_configure_commands; echo ok").stdout).toContain("ok");
+    expect(ov.stderr).toContain("exist only for the CI rehearsal");
+    expect(
+      lib("EXPORT_REHEARSAL=1; GITHUB_ACTIONS=true; EXPORT_REHEARSAL_REF=testref; DB_URL=u; EXPORT_PG_DUMP='docker exec -i supabase_db_testref pg_dump -U postgres -d postgres'; export_configure_commands; echo ok").stdout,
+    ).toContain("ok");
     const env2 = lib("DB_URL='postgresql://u:p@h/x'; secret_input DB_URL 'p: '");
     expect(env2.status).not.toBe(0);
     expect(env2.stderr).toContain("set in the environment");
-    const rehearsal = lib("EXPORT_REHEARSAL=1; secret_input DB_URL 'p: '");
+    const rehearsal = lib("EXPORT_REHEARSAL=1; GITHUB_ACTIONS=true; secret_input DB_URL 'p: '");
     expect(rehearsal.stderr).toContain("rehearsal needs DB_URL");
   });
 
@@ -243,11 +251,8 @@ describe("logical-export.sh", () => {
     expect(r.status).not.toBe(0);
     expect(r.stdout).toContain("marker public-clients is 0");
     expect(r.stderr).toContain("COMPLETENESS GATE FAILED");
-    expect(readdirSync(out, { recursive: true }).filter((f) => existsSync(path.join(out, String(f))) && !String(f).endsWith("markers"))).toEqual(
-      expect.arrayContaining([]),
-    );
-    const left = (readdirSync(out, { recursive: true }) as string[]).filter((f) => !readdirSync(path.join(out), { withFileTypes: true }).some((e) => e.isDirectory() && e.name === f));
-    expect(left).toEqual([]);
+    // L3: the failed export leaves NO output directory behind at all.
+    expect(existsSync(out)).toBe(false);
   });
 
   it("NEGATIVE: a table in the dump that the schema-only dump lacks (or the reverse) fails V3", () => {
@@ -303,7 +308,7 @@ describe("object-export.sh", () => {
     Buffer.byteLength(`https://${REF}.supabase.co/storage/v1/object/treatment-images/${p.split("/").map(encodeURIComponent).join("/")}`);
   const list = (paths: string[]) => paths.map((p) => `${p}${US}${sizeOf(p)}`).join("\n") + "\n";
   const OBJ_ARGS = (out: string) => ["--out", out, "--recipient", "age1testrecipient", "--expect-ref", REF, "--storage-url", `https://${REF}.supabase.co`, "--sample", "2"];
-  const env = (d: string, extra: Record<string, string> = {}) => ({ DB_URL, SERVICE_KEY: "shim-service-key", EXPORT_REHEARSAL: "1", SHIM_DUMP_DIR: d, ...extra });
+  const env = (d: string, extra: Record<string, string> = {}) => ({ DB_URL, SERVICE_KEY: "shim-service-key", EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d, ...extra });
   const prep = (name: string, paths: string[]) => {
     const d = fixtures(name);
     writeFileSync(path.join(d, "list.txt"), list(paths));
@@ -402,11 +407,11 @@ describe("export-restore.sh never commits a truncation without its rows (Codex P
   it("NEGATIVE: a wrong identity stops BEFORE the database is touched; the session never sees a truncate or a commit", () => {
     const d = fixtures("rs-key");
     const out = path.join(scratch, "rs-key-out");
-    expect(run("logical-export.sh", LOGICAL_ARGS(out), { DB_URL, EXPORT_REHEARSAL: "1", SHIM_DUMP_DIR: d }).status).toBe(0);
+    expect(run("logical-export.sh", LOGICAL_ARGS(out), { DB_URL, EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d }).status).toBe(0);
     const key = path.join(scratch, "key5.txt"); writeFileSync(key, "AGE-SECRET-KEY-SHIM");
     const log = path.join(scratch, "rs-key-psql.log"); writeFileSync(log, "");
     const r = run("export-restore.sh", ["logical", out, "--identity", key, "--target-ref", REF, "--production-ref", "prod"], {
-      DB_URL, EXPORT_REHEARSAL: "1", SHIM_DUMP_DIR: d, SHIM_AGE_WRONG_KEY: "1", SHIM_PSQL_LOG: log,
+      DB_URL, EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d, SHIM_AGE_WRONG_KEY: "1", SHIM_PSQL_LOG: log,
     });
     expect(r.status).not.toBe(0);
     expect(r.stderr).toContain("does not decrypt");
@@ -416,7 +421,7 @@ describe("export-restore.sh never commits a truncation without its rows (Codex P
   it("NEGATIVE: a decryption that fails MID-LOAD sends ROLLBACK, never COMMIT", () => {
     const d = fixtures("rs-mid");
     const out = path.join(scratch, "rs-mid-out");
-    expect(run("logical-export.sh", LOGICAL_ARGS(out), { DB_URL, EXPORT_REHEARSAL: "1", SHIM_DUMP_DIR: d }).status).toBe(0);
+    expect(run("logical-export.sh", LOGICAL_ARGS(out), { DB_URL, EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d }).status).toBe(0);
     const key = path.join(scratch, "key6.txt"); writeFileSync(key, "AGE-SECRET-KEY-SHIM");
     // the shim age fails only for the auth part, and only after the pre-flight (a counter file)
     const flaky = path.join(scratch, "flaky-bin"); mkdirSync(flaky, { recursive: true });
@@ -430,7 +435,7 @@ cat "$file"
     const log = path.join(scratch, "rs-mid-psql.log"); writeFileSync(log, "");
     const r = spawnSync("bash", [path.join(OPS, "export-restore.sh"), "logical", out, "--identity", key, "--target-ref", REF, "--production-ref", "prod"], {
       encoding: "utf8",
-      env: { PATH: `${flaky}:${bin}:${process.env.PATH}`, HOME: scratch, DB_URL, EXPORT_REHEARSAL: "1", SHIM_DUMP_DIR: d, SHIM_PSQL_LOG: log } as unknown as NodeJS.ProcessEnv,
+      env: { PATH: `${flaky}:${bin}:${process.env.PATH}`, HOME: scratch, DB_URL, EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d, SHIM_PSQL_LOG: log } as unknown as NodeJS.ProcessEnv,
       timeout: 30_000,
     });
     const seen = readFileSync(log, "utf8");
@@ -445,10 +450,167 @@ describe("export-restore.sh refusals", () => {
     const d = path.join(scratch, "rs");
     mkdirSync(d, { recursive: true });
     const key = path.join(scratch, "key4.txt"); writeFileSync(key, "AGE-SECRET-KEY-SHIM");
-    const same = run("export-restore.sh", ["logical", d, "--identity", key, "--target-ref", REF, "--production-ref", REF], { DB_URL, EXPORT_REHEARSAL: "1" });
+    const same = run("export-restore.sh", ["logical", d, "--identity", key, "--target-ref", REF, "--production-ref", REF], { DB_URL, EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true" });
     expect(same.stderr).toContain("equals the production ref");
-    const prodHost = run("export-restore.sh", ["logical", d, "--identity", key, "--target-ref", REF, "--production-ref", "db"], { DB_URL, EXPORT_REHEARSAL: "1" });
+    const prodHost = run("export-restore.sh", ["logical", d, "--identity", key, "--target-ref", REF, "--production-ref", "db"], { DB_URL, EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true" });
     expect(prodHost.stderr).toContain("names the PRODUCTION ref");
+  });
+});
+
+describe("Privacy PEER-1155: rehearsal is CI-only, no secret in argv, ref checks, partial output", () => {
+  const ciEnv = (d: string, extra: Record<string, string> = {}) => ({ DB_URL, EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d, ...extra });
+
+  it("M1 NEGATIVE: EXPORT_REHEARSAL=1 without GITHUB_ACTIONS is refused by every tool, and so is any rehearsal-only variable alone", () => {
+    const d = fixtures("m1fx");
+    const key = path.join(scratch, "key7.txt"); writeFileSync(key, "AGE-SECRET-KEY-SHIM");
+    const noCi = { DB_URL, SERVICE_KEY: "k", EXPORT_REHEARSAL: "1", SHIM_DUMP_DIR: d };
+    const runs = [
+      run("logical-export.sh", LOGICAL_ARGS(path.join(scratch, "m1-a")), noCi),
+      run("object-export.sh", ["--out", path.join(scratch, "m1-b"), "--recipient", "age1x", "--expect-ref", REF, "--storage-url", `https://${REF}.supabase.co`], noCi),
+      run("export-restore.sh", ["logical", d, "--identity", key, "--target-ref", REF, "--production-ref", "prod"], noCi),
+    ];
+    for (const r of runs) {
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain("exist only for the CI rehearsal");
+    }
+    // each rehearsal-only variable on its own (no EXPORT_REHEARSAL at all) is refused too
+    for (const v of ["EXPORT_PSQL", "EXPORT_PG_DUMP", "EXPORT_TEST_HOOK_AFTER_LIST", "EXPORT_REHEARSAL_REF"]) {
+      const r = run("logical-export.sh", LOGICAL_ARGS(path.join(scratch, `m1-${v}`)), { DB_URL: DB_URL, SHIM_DUMP_DIR: d, [v]: "docker exec -i x psql" });
+      expect(r.status, v).not.toBe(0);
+      expect(r.stderr, v).toContain("exist only for the CI rehearsal");
+    }
+    // a value other than 1 is refused too
+    const odd = run("logical-export.sh", LOGICAL_ARGS(path.join(scratch, "m1-odd")), { DB_URL, SHIM_DUMP_DIR: d, EXPORT_REHEARSAL: "true", GITHUB_ACTIONS: "true" });
+    expect(odd.stderr).toContain("exist only for the CI rehearsal");
+  });
+
+  it("M1 NEGATIVE: an override may only be docker exec -i supabase_db_<rehearsal ref> psql|pg_dump -U postgres -d postgres", () => {
+    const lib = (body: string) => spawnSync("bash", ["-c", `. ${path.join(OPS, "export-lib.sh")}; EXPORT_REHEARSAL_REF=${REF}; ${body}`], { encoding: "utf8" });
+    const ok = (tool: string, cmd: string) => lib(`rehearsal_override_ok ${tool} ${cmd}`).status === 0;
+    const base = `docker exec -i supabase_db_${REF}`;
+    expect(ok("psql", `${base} psql -U postgres -d postgres`)).toBe(true);
+    expect(ok("pg_dump", `${base} pg_dump -U postgres -d postgres`)).toBe(true);
+    expect(ok("pg_dump", `${base} pg_dump -U postgres -d postgres --exclude-table=public.clients`)).toBe(true);
+    for (const bad of [
+      `docker exec -i supabase_db_other psql -U postgres -d postgres`,        // another container
+      `${base} psql -h prod.example -U postgres -d postgres`,                  // another host
+      `${base} psql -U postgres -d postgres -c "drop table x"`,               // extra arguments
+      `${base} psql -U postgres -d postgres --exclude-table=x`,                // pg_dump-only option on psql
+      `docker exec -e PGHOST=prod -i supabase_db_${REF} psql -U postgres -d postgres`, // environment injection
+      `docker run -i supabase_db_${REF} psql -U postgres -d postgres`,         // not exec
+      `bash ${base} psql`,                                                      // a wrapper
+      `/tmp/pgdump-wrapper.sh`,                                                 // a script
+      `psql`,
+    ]) {
+      expect(ok("psql", bad), bad).toBe(false);
+    }
+    expect(lib("EXPORT_REHEARSAL_REF=; rehearsal_override_ok psql docker exec -i supabase_db_ psql -U postgres -d postgres").status).not.toBe(0);
+    expect(ok("pg_dump", `${base} pg_dump -U postgres -d postgres --schema=public`)).toBe(false);
+  });
+
+  it("M1 NEGATIVE: an override naming another target is refused by the tool itself", () => {
+    const d = fixtures("m1-ov");
+    const r = run("logical-export.sh", LOGICAL_ARGS(path.join(scratch, "m1-ov-out")), ciEnv(d, { EXPORT_REHEARSAL_REF: REF, EXPORT_PSQL: "docker exec -i supabase_db_prod psql -U postgres -d postgres" }));
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("not the allow-listed rehearsal form");
+  });
+
+  it("M2: psql and pg_dump get the connection string WITHOUT its password; the password is PGPASSWORD in the child only", () => {
+    const d = fixtures("m2-pw");
+    const log = path.join(scratch, "m2-pw-argv.log"); writeFileSync(log, "");
+    const withPw = `postgresql://u:s3kr%40t@db.${REF}.supabase.co:5432/postgres`;
+    const r = run("logical-export.sh", LOGICAL_ARGS(path.join(scratch, "m2-pw-out")), ciEnv(d, { DB_URL: withPw, SHIM_ARGV_LOG: log }));
+    expect(r.status, r.stderr).toBe(0);
+    const argv = readFileSync(log, "utf8");
+    expect(argv).toContain("psql argv:");
+    expect(argv).toContain("pg_dump argv:");
+    // no argument carries the password in any form
+    for (const line of argv.split("\n").filter((l) => /argv:/.test(l))) {
+      expect(line).not.toMatch(/s3kr|%40t/);
+      expect(line).toContain(`[postgresql://u@db.${REF}.supabase.co:5432/postgres]`);
+    }
+    // the child's environment got the DECODED password
+    expect(argv).toMatch(/PGPASSWORD=s3kr@t/);
+    expect(r.stdout + r.stderr).not.toMatch(/s3kr/);
+  });
+
+  it("M2: curl gets the service-role key through a private 0600 header file, never an argument, and the file is removed", () => {
+    const paths = ["s/c/a.png", "s/c/b.png"];
+    const d = fixtures("m2-key");
+    const enc = (p: string) => Buffer.byteLength(`https://${REF}.supabase.co/storage/v1/object/treatment-images/${p}`);
+    writeFileSync(path.join(d, "list.txt"), paths.map((p) => `${p}${US}${enc(p)}`).join("\n") + "\n");
+    writeFileSync(path.join(d, "coverage.txt"), "rows_total=2 rows_without_object=0 objects_total=2 objects_without_row=0\n");
+    const log = path.join(scratch, "m2-key-argv.log"); writeFileSync(log, "");
+    const KEYV = "service-key-ABCDEF-0123456789";
+    const r = run("object-export.sh", ["--out", path.join(scratch, "m2-key-out"), "--recipient", "age1x", "--expect-ref", REF, "--storage-url", `https://${REF}.supabase.co`, "--sample", "1"], ciEnv(d, { SERVICE_KEY: KEYV, SHIM_ARGV_LOG: log }));
+    expect(r.status, r.stderr).toBe(0);
+    const argv = readFileSync(log, "utf8");
+    for (const line of argv.split("\n").filter((l) => /^curl argv:/.test(l))) {
+      expect(line).not.toContain(KEYV);
+      expect(line).not.toMatch(/Bearer|apikey/i);
+      expect(line).toMatch(/\[-H\] \[@\//);
+    }
+    expect(argv).toContain(`Authorization: Bearer ${KEYV}`);          // the file carried it
+    expect(argv).toMatch(/header-file-mode=600/);
+    const file = argv.split("\n").find((l) => l.startsWith("header-file="))!.slice("header-file=".length);
+    expect(existsSync(file), "the header file is removed on exit").toBe(false);
+    expect(r.stdout + r.stderr).not.toContain(KEYV);
+  });
+
+  it("L1: --production-ref must match supabase/.temp/project-ref when the checkout is linked", () => {
+    const d = path.join(scratch, "l1"); mkdirSync(d, { recursive: true });
+    const linkFile = path.join(scratch, "l1-project-ref"); writeFileSync(linkFile, "the-linked-ref\n");
+    const key = path.join(scratch, "key8.txt"); writeFileSync(key, "AGE-SECRET-KEY-SHIM");
+    const args = (prod: string) => ["logical", d, "--identity", key, "--target-ref", REF, "--production-ref", prod];
+    const bad = run("export-restore.sh", args("another-ref"), ciEnv(d, { EXPORT_PROJECT_REF_FILE: linkFile }));
+    expect(bad.status).not.toBe(0);
+    expect(bad.stderr).toContain("--production-ref 'another-ref' does not match");
+    // a matching ref is not refused for that reason (it fails later, on the empty export directory)
+    const good = run("export-restore.sh", args("the-linked-ref"), ciEnv(d, { EXPORT_PROJECT_REF_FILE: linkFile }));
+    expect(good.stderr).not.toContain("--production-ref");
+    // no link file: no check
+    const none = run("export-restore.sh", args("another-ref"), ciEnv(d, { EXPORT_PROJECT_REF_FILE: path.join(scratch, "no-such-file") }));
+    expect(none.stderr).not.toContain("--production-ref");
+  });
+
+  it("L2: outside rehearsal the ref must be a whole host label, not a substring", () => {
+    const lib = (body: string) => spawnSync("bash", ["-c", `. ${path.join(OPS, "export-lib.sh")}; ${body}`], { encoding: "utf8" });
+    expect(lib(`url_matches_ref 'postgresql://u:p@db.${REF}.supabase.co/x' ${REF}`).status).toBe(0);
+    expect(lib(`url_matches_ref 'https://${REF}.supabase.co' ${REF}`).status).toBe(0);
+    for (const host of [`db.my${REF}.supabase.co`, `db.${REF}x.supabase.co`, `${REF}evil.example`, `evil-${REF}.example`]) {
+      expect(lib(`url_matches_ref 'postgresql://u:p@${host}/x' ${REF}`).status, host).not.toBe(0);
+    }
+    // the substring was accepted before: prove the old rule would have passed these
+    expect(`db.my${REF}.supabase.co`.includes(REF)).toBe(true);
+  });
+
+  it("L3: a failed export deletes its partial output; an existing EMPTY directory is emptied, not removed; a good export is kept", () => {
+    const d = fixtures("l3", { withClients: false });
+    const created = path.join(scratch, "l3-created");
+    expect(run("logical-export.sh", LOGICAL_ARGS(created), ciEnv(d)).status).not.toBe(0);
+    expect(existsSync(created)).toBe(false);
+    const preexisting = path.join(scratch, "l3-pre"); mkdirSync(preexisting);
+    expect(run("logical-export.sh", LOGICAL_ARGS(preexisting), ciEnv(d)).status).not.toBe(0);
+    expect(existsSync(preexisting)).toBe(true);
+    expect(readdirSync(preexisting)).toEqual([]);
+    // a NON-empty directory is refused and left untouched
+    const full = path.join(scratch, "l3-full"); mkdirSync(full); writeFileSync(path.join(full, "keep.txt"), "mine");
+    expect(run("logical-export.sh", LOGICAL_ARGS(full), ciEnv(d)).status).not.toBe(0);
+    expect(readFileSync(path.join(full, "keep.txt"), "utf8")).toBe("mine");
+    // the object export: a vanished object leaves no directory
+    const d2 = fixtures("l3-obj");
+    const enc = (p: string) => Buffer.byteLength(`https://${REF}.supabase.co/storage/v1/object/treatment-images/${p}`);
+    writeFileSync(path.join(d2, "list.txt"), ["s/c/a.png", "s/c/b.png"].map((p) => `${p}${US}${enc(p)}`).join("\n") + "\n");
+    writeFileSync(path.join(d2, "coverage.txt"), "rows_total=2 rows_without_object=0 objects_total=2 objects_without_row=0\n");
+    const objOut = path.join(scratch, "l3-objout");
+    const r = run("object-export.sh", ["--out", objOut, "--recipient", "age1x", "--expect-ref", REF, "--storage-url", `https://${REF}.supabase.co`], ciEnv(d2, { SERVICE_KEY: "k", SHIM_CURL_FAIL_MATCH: "b.png" }));
+    expect(r.status).not.toBe(0);
+    expect(existsSync(objOut)).toBe(false);
+    // and a good export keeps its output
+    const ok = fixtures("l3-ok");
+    const okOut = path.join(scratch, "l3-okout");
+    expect(run("logical-export.sh", LOGICAL_ARGS(okOut), ciEnv(ok)).status).toBe(0);
+    expect(existsSync(path.join(okOut, "receipt.txt"))).toBe(true);
   });
 });
 
@@ -467,9 +629,62 @@ describe("source contract: what the tools must never do", () => {
 
   it("no tool writes, echoes or logs a connection string or a key", () => {
     for (const f of files) {
-      expect(src[f], f).not.toMatch(/(echo|printf)[^\n]*\$\{?(DB_URL|SERVICE_KEY)\b/);
-      expect(src[f], f).not.toMatch(/(>|>>|tee)\s*[^\n|]*\$\{?(DB_URL|SERVICE_KEY)/);
+      expect(src[f], f).not.toMatch(/(echo|printf)[^\n]*\$\{?(DB_URL|SERVICE_KEY)\b[^\n]*(>>?\s*[^\n"]*(log|txt)|\| *tee)/);
+      expect(src[f], f).not.toMatch(/export_log[^\n]*\$\{?(SERVICE_KEY|DB_PASS)\b/);
     }
+  });
+
+  // Privacy PEER-1155 M2. psql, pg_dump and curl command lines are readable by any
+  // process on the host (ps, /proc/<pid>/cmdline), so no tool may pass the password,
+  // the service-role key or a bearer header as an ARGUMENT. The password goes in
+  // PGPASSWORD in the one child's environment (with_pgpass); the key goes in a
+  // private 0600 header file (curl -H @file). A line-level detector, proved RED first.
+  function argvSecretViolations(source: string): string[] {
+    const out: string[] = [];
+    source.split("\n").forEach((raw, i) => {
+      const line = raw.replace(/^\s*#.*$/, "");
+      const secret = /\$\{?(SERVICE_KEY|DB_URL|DB_PASS|KEY|DBURL)\b/;
+      const exec = /\b(curl|psql|pg_dump|env|docker)\b/;
+      const at = `line ${i + 1}: ${raw.trim().slice(0, 90)}`;
+      if (exec.test(line) && secret.test(line)) out.push(`${at} (a secret on a command line)`);
+      if (/Bearer/.test(line) && !/>\s*"\$AUTH_HDR_FILE"/.test(line)) out.push(`${at} (a bearer header outside the header-file writer)`);
+      if (/-H\s+["']?(Authorization|apikey)/i.test(line)) out.push(`${at} (an auth header given as an argument)`);
+      if (/PGPASSWORD=/.test(line) && !/PGPASSWORD="\$DB_PASS" "\$@"/.test(line)) out.push(`${at} (PGPASSWORD outside with_pgpass)`);
+    });
+    return out;
+  }
+
+  it("RED control: the argv-secret detector catches every way of putting a secret on a command line", () => {
+    for (const bad of [
+      'curl -fsS "$url" -H "Authorization: Bearer $SERVICE_KEY"',
+      'curl -fsS "$url" -H "apikey: $SERVICE_KEY"',
+      'psql "$DB_URL" -c "select 1"',
+      'pg_dump "postgresql://u:$DB_PASS@h/db"',
+      'docker exec -e PGPASSWORD="$DB_PASS" c psql',
+      'env PGPASSWORD=x psql -h h',
+      'PGDUMP_CMD=(pg_dump "$DB_URL")',
+      "curl -H 'Authorization: Bearer abc' http://x",
+      'printf "Authorization: Bearer %s" "$SERVICE_KEY" | curl -K - http://x',
+    ]) {
+      expect(argvSecretViolations(bad), bad).not.toEqual([]);
+    }
+  });
+
+  it("GREEN control: the safe forms are accepted by the detector", () => {
+    for (const good of [
+      'curl -fsS "$url" -H @"$AUTH_HDR_FILE"',
+      'with_pgpass psql "$DB_URL_NOPASS" -qAtX',
+      'PGDUMP_CMD=(pg_dump "$DB_URL_NOPASS")',
+      '  if [ -n "$DB_PASS" ]; then PGPASSWORD="$DB_PASS" "$@"; else "$@"; fi',
+      "  printf 'Authorization: Bearer %s\\napikey: %s\\n' \"$SERVICE_KEY\" \"$SERVICE_KEY\" >\"$AUTH_HDR_FILE\"",
+      'url_matches_ref "$DB_URL" "$REF" || export_fail "x"',
+    ]) {
+      expect(argvSecretViolations(good), good).toEqual([]);
+    }
+  });
+
+  it("no tool, and not the CI rehearsal, passes a password, a service-role key or a bearer header as an argument", () => {
+    for (const f of files) expect(argvSecretViolations(src[f]), f).toEqual([]);
   });
 
   it("secrets are prompted, never read from an argument or file (and the prompt is hidden)", () => {
@@ -479,10 +694,23 @@ describe("source contract: what the tools must never do", () => {
     }
   });
 
-  it("the rehearsal-only switches are all guarded by EXPORT_REHEARSAL=1", () => {
-    expect(src["export-lib.sh"]).toMatch(/EXPORT_PG_DUMP:-\}\$\{EXPORT_PSQL:-\}" \] && \[ "\$\{EXPORT_REHEARSAL:-\}" != 1 \]/);
-    expect(src["object-export.sh"]).toMatch(/\[ "\$\{EXPORT_REHEARSAL:-\}" = 1 \] && \[ -n "\$\{EXPORT_TEST_HOOK_AFTER_LIST:-\}" \]/);
-    expect(src["export-lib.sh"]).toMatch(/EXPORT_REHEARSAL:-\}" = 1 \] && is_loopback_host "\$host" && \[ "\$ref" = "\$\{EXPORT_REHEARSAL_REF:-\}" \]/);
+  it("rehearsal mode is CI-only: every switch goes through is_rehearsal (EXPORT_REHEARSAL=1 AND GITHUB_ACTIONS=true)", () => {
+    const lib = src["export-lib.sh"];
+    expect(lib).toContain('is_rehearsal() { [ "${EXPORT_REHEARSAL:-}" = 1 ] && [ "${GITHUB_ACTIONS:-}" = true ]; }');
+    expect(lib).toMatch(/if is_rehearsal && is_loopback_host "\$host" && \[ "\$ref" = "\$\{EXPORT_REHEARSAL_REF:-\}" \]/);
+    expect(src["object-export.sh"]).toMatch(/if is_rehearsal && \[ -n "\$\{EXPORT_TEST_HOOK_AFTER_LIST:-\}" \]/);
+    // No tool tests EXPORT_REHEARSAL directly: they would bypass the CI requirement.
+    for (const f of ["logical-export.sh", "object-export.sh", "export-restore.sh", "verify-export.sh"]) {
+      expect(src[f].replace(/^\s*#.*$/gm, ""), f).not.toMatch(/\[ "\$\{EXPORT_REHEARSAL:-\}"/);
+      if (f !== "verify-export.sh") expect(src[f], f).toContain("export_guard_rehearsal");
+    }
+    expect(src["export-rehearsal.sh"]).toContain('[ "${GITHUB_ACTIONS:-}" = true ] ||');
+  });
+
+  it("the rehearsal does not grep ciphertext for plaintext (it proves nothing) and has no bash -c control strings holding a key", () => {
+    const r = src["export-rehearsal.sh"];
+    expect(r).not.toMatch(/--include='\*\.age'/);
+    expect(r).not.toMatch(/bash -c "\$\(declare/);
   });
 
   it("the three dump parts are separate pg_dump calls (--table overrides --schema) and use one snapshot", () => {

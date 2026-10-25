@@ -27,10 +27,16 @@
 #   object-export.sh --out DIR --recipient AGE_PUBLIC_KEY --expect-ref PROJECT_REF \
 #                    --storage-url https://<ref>.supabase.co [--bucket treatment-images] [--sample 5]
 #
-# REHEARSAL (EXPORT_REHEARSAL=1, CI only, synthetic): DB_URL and SERVICE_KEY may
-# come from the environment; a loopback URL satisfies --expect-ref;
-# EXPORT_TEST_HOOK_AFTER_LIST (a command) runs after the list is read, so the
-# rehearsal can delete an object between listing and download (negative control).
+# REHEARSAL (EXPORT_REHEARSAL=1 AND GITHUB_ACTIONS=true, CI only, synthetic):
+# DB_URL and SERVICE_KEY may come from the environment; a loopback URL satisfies
+# --expect-ref for the one declared rehearsal ref; EXPORT_TEST_HOOK_AFTER_LIST (a
+# command) runs after the list is read, so the rehearsal can delete an object
+# between listing and download (negative control). Outside a CI job every one of
+# these is refused.
+#
+# NO SECRET IN ARGV. The password is split off the connection string and given to
+# psql only as PGPASSWORD in that child's environment; the service-role key reaches
+# curl through a private 0600 header file (-H @file).
 # ---------------------------------------------------------------------------
 set -euo pipefail
 umask 077
@@ -57,21 +63,25 @@ case "$BUCKET" in *[!a-z0-9_-]*|'') export_fail "bucket name must be [a-z0-9_-]+
 case "$SAMPLE" in ''|*[!0-9]*) export_fail "--sample must be an integer";; esac
 command -v age >/dev/null || export_fail "age is not installed"
 command -v curl >/dev/null || export_fail "curl is not installed"
+export_guard_rehearsal   # rehearsal switches exist only in the CI rehearsal
+trap export_on_exit EXIT   # closes the session, removes secret files and TMP, deletes a partial output on any failure
 
 secret_input DB_URL "Database connection string (input hidden): "
 secret_input SERVICE_KEY "Service-role key (input hidden): "
 url_matches_ref "$DB_URL" "$REF" || export_fail "the connection string's host does not name project ref '$REF'; refusing"
 url_matches_ref "$STORAGE_URL" "$REF" || export_fail "the storage URL's host does not name project ref '$REF'; refusing"
 export_configure_commands
+make_auth_header_file   # the key reaches curl through a private 0600 file, never argv
 
 if [ -e "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then export_fail "$OUT exists and is not empty"; fi
+[ -e "$OUT" ] || EXPORT_OUT_CREATED=1
+EXPORT_OUT="$OUT"
 mkdir -p "$OUT/objects" "$OUT/tmp"
 TMP="$OUT/tmp"
 
 T0=$(date +%s)
 export_log "target hosts: $(host_of "$DB_URL") and $(host_of "$STORAGE_URL") (ref check passed)"
 snap_open
-trap 'snap_close; rm -rf "$TMP"' EXIT
 
 # --- 1. the list, from storage.objects, in memory only ---------------------------
 snap_query "select name || E'\\x1f' || coalesce((metadata->>'size'), '0') from storage.objects where bucket_id = '$BUCKET' order by name;"
@@ -86,17 +96,15 @@ COV="${SNAP_OUT[0]:-}"
 printf '%s\n' "$COV" >"$OUT/coverage.txt"
 export_log "coverage: $COV"
 snap_close
-trap 'rm -rf "$TMP"' EXIT
 
 # Rehearsal only: change the world between the listing and the download.
-if [ "${EXPORT_REHEARSAL:-}" = 1 ] && [ -n "${EXPORT_TEST_HOOK_AFTER_LIST:-}" ]; then
+if is_rehearsal && [ -n "${EXPORT_TEST_HOOK_AFTER_LIST:-}" ]; then
   export_log "rehearsal hook after the list"
   bash -c "$EXPORT_TEST_HOOK_AFTER_LIST"
 fi
 
 get() { # get PATH  -> object bytes on stdout; fails on any non-2xx
-  curl -fsS "$STORAGE_URL/storage/v1/object/$BUCKET/$(urlencode_path "$1")" \
-    -H "Authorization: Bearer $SERVICE_KEY" -H "apikey: $SERVICE_KEY"
+  curl -fsS "$STORAGE_URL/storage/v1/object/$BUCKET/$(urlencode_path "$1")" -H @"$AUTH_HDR_FILE"
 }
 
 # --- 2. download, hash while streaming, encrypt; manifest in memory --------------
@@ -139,7 +147,7 @@ export_log "sample re-download: ${#PICK[@]} object(s) (random plus the largest) 
 
 # --- 4. manifest (encrypted), totals, hashes -------------------------------------------
 { printf '%s\n' "${MANIFEST[@]}"; printf 'count=%s total_bytes=%s\n' "$N" "$TOTAL"; } | age -r "$RECIPIENT" -o "$OUT/manifest.age"
-rm -rf "$TMP"; trap - EXIT
+rm -rf "$TMP"
 (cd "$OUT" && sha256sum -- manifest.age objects/*.age >hashes.sha256)
 {
   echo "export=objects"

@@ -54,6 +54,7 @@ for p in 56620 56621 56622 56623 56624 56627 56629 8783; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then fail "port $p is already in use"; fi
 done
 command -v age >/dev/null && command -v age-keygen >/dev/null || fail "age and age-keygen are required"
+[ "${GITHUB_ACTIONS:-}" = true ] || fail "the rehearsal runs only in a GitHub Actions job (GITHUB_ACTIONS=true); refusing"
 
 STOPPED_AT=""
 cleanup() {
@@ -61,6 +62,7 @@ cleanup() {
   $CLI stop --workdir "$WORK/stack" --no-backup >/dev/null 2>&1 || true
   STOPPED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "stack_deleted_utc=$STOPPED_AT" >>"$EVIDENCE/receipt-v7.txt" || true
+  export_cleanup_secrets
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -88,7 +90,7 @@ console.log(h + "." + p + "." + s);'
 }
 upload() { # upload NAME FILE
   curl -fsS -X POST "$API/storage/v1/object/$BUCKET/$(urlencode_path "$PREFIX/$1")" \
-    -H "Authorization: Bearer $KEY" -H "apikey: $KEY" -H "Content-Type: application/octet-stream" \
+    -H @"$AUTH_HDR_FILE" -H "Content-Type: application/octet-stream" \
     --data-binary "@$2" >/dev/null || fail "upload $1"
 }
 
@@ -96,8 +98,20 @@ upload() { # upload NAME FILE
 rehearse() { # rehearse TOOL ARGS...   (runs with the rehearsal environment; stdout/stderr to caller)
   EXPORT_REHEARSAL=1 EXPORT_REHEARSAL_REF="$PROJECT_ID" DB_URL="$DBURL" SERVICE_KEY="$KEY" \
   EXPORT_PG_DUMP="${EXPORT_PG_DUMP_OVERRIDE:-docker exec -i $DB_CONTAINER pg_dump -U postgres -d postgres}" \
-  EXPORT_PSQL="docker exec -i $DB_CONTAINER psql -U postgres -d postgres" \
+  EXPORT_PSQL="${EXPORT_PSQL_OVERRIDE:-docker exec -i $DB_CONTAINER psql -U postgres -d postgres}" \
   "$@"
+}
+
+# env_rehearse VAR=value... COMMAND...: rehearse, with the given variables set for that call only.
+env_rehearse() {
+  local -a vars=()
+  while [ $# -gt 0 ] && [[ "$1" == [A-Z_]*=* ]]; do vars+=("$1"); shift; done
+  local v
+  for v in "${vars[@]}"; do export "${v?}"; done
+  local rc=0
+  rehearse "$@" || rc=$?
+  for v in "${vars[@]}"; do unset "${v%%=*}"; done
+  return $rc
 }
 
 RESULT=PASS
@@ -116,6 +130,7 @@ T0=$(date +%s)
 log "starting rehearsal stack $PROJECT_ID from $(git -C "$REPO_ROOT" rev-parse --short HEAD) migrations"
 start_stack before
 KEY="$(service_key)"; [ -n "$KEY" ] || fail "no service-role key from the stack"
+SERVICE_KEY="$KEY"; make_auth_header_file   # the key goes through a private 0600 header file, never argv
 psql_q -f - <"$OPS/restore-drill-seed.sql" >"$EVIDENCE/seed.log"
 for i in 1 2 3; do head -c $((4096 * i)) /dev/urandom >"$WORK/o$i.bin"; upload "synthetic-$i.png" "$WORK/o$i.bin"; done
 head -c 2048 /dev/urandom >"$WORK/thumb.bin"; upload "synthetic-1.thumb.webp" "$WORK/thumb.bin"
@@ -142,9 +157,12 @@ grep -q '^rows_total=3 rows_without_object=0 objects_total=5 objects_without_row
 if find "$LOGICAL" "$OBJECTS" -type f ! -name '*.age' ! -name '*.sha256' ! -name '*.count' ! -name '*.tables' ! -name 'receipt.txt' ! -name 'coverage.txt' | grep -q .; then
   check "no unexpected plaintext file in either export" fail
 else check "no unexpected plaintext file in either export" pass; fi
-if grep -rqs 'synthetic-1.png\|Synthetic Client' "$LOGICAL" "$OBJECTS" --include='*.age' --include='*.tables' --include='*.count' --include='receipt.txt' --include='coverage.txt'; then
-  check "no path or row text leaks outside the encrypted files" fail
-else check "no path or row text leaks outside the encrypted files" pass; fi
+# The side files are the ONLY plaintext an export directory may hold (the find above
+# proves nothing else exists); none of them may name a path or carry a row. (Ciphertext
+# is not grepped: that would prove nothing.)
+if grep -rqs 'synthetic-1.png\|Synthetic Client' "$LOGICAL" "$OBJECTS" --include='*.tables' --include='*.count' --include='*.sha256' --include='receipt.txt' --include='coverage.txt'; then
+  check "no path or row text in the plaintext side files (markers, hashes, receipts, coverage)" fail
+else check "no path or row text in the plaintext side files (markers, hashes, receipts, coverage)" pass; fi
 
 # --- 3. verify with the key ----------------------------------------------------------------
 bash "$OPS/verify-export.sh" logical "$LOGICAL" --identity "$WORK/key.txt" 2>&1 | tee -a "$EVIDENCE/rehearsal.log" | tail -1 | grep -q 'VERIFY PASS' \
@@ -153,14 +171,10 @@ bash "$OPS/verify-export.sh" objects "$OBJECTS" --identity "$WORK/key.txt" 2>&1 
   && check "V5 verify objects (every object re-hashed)" pass || check "V5 verify objects" fail
 
 # --- 4. negative controls: each MUST fail, for its own reason -----------------------------------
-cat >"$WORK/pgdump-no-clients.sh" <<NC
-#!/usr/bin/env bash
-exec docker exec -i "$DB_CONTAINER" pg_dump -U postgres -d postgres "\$@" --exclude-table=public.clients
-NC
-chmod +x "$WORK/pgdump-no-clients.sh"
 expect_fail "V3 gate: public.clients removed from the dump" "COMPLETENESS GATE FAILED" \
-  env EXPORT_PG_DUMP_OVERRIDE="$WORK/pgdump-no-clients.sh" bash -c "$(declare -f rehearse); KEY='$KEY'; PROJECT_ID='$PROJECT_ID'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; rehearse bash '$OPS/logical-export.sh' --out '$WORK/nc-clients' --recipient '$RECIPIENT' --expect-ref '$PROJECT_ID'"
-[ -z "$(find "$WORK/nc-clients" -type f 2>/dev/null)" ] && check "negative control: the failed export left no file behind" pass || check "negative control: the failed export left no file behind" fail
+  env_rehearse EXPORT_PG_DUMP_OVERRIDE="docker exec -i $DB_CONTAINER pg_dump -U postgres -d postgres --exclude-table=public.clients" \
+  bash "$OPS/logical-export.sh" --out "$WORK/nc-clients" --recipient "$RECIPIENT" --expect-ref "$PROJECT_ID"
+[ ! -e "$WORK/nc-clients" ] && check "negative control (L3): the failed export left NO output directory behind" pass || check "negative control (L3): the failed export left NO output directory behind" fail
 
 cp -r "$LOGICAL" "$WORK/tampered-logical"
 printf '\x00' | dd of="$WORK/tampered-logical/public-data.sql.age" bs=1 seek=40 count=1 conv=notrunc 2>/dev/null
@@ -173,18 +187,36 @@ expect_fail "V1/V5: one flipped object byte" "V1" bash "$OPS/verify-export.sh" o
 expect_fail "the wrong key cannot verify" "FAIL" bash "$OPS/verify-export.sh" logical "$LOGICAL" --identity "$WORK/otherkey.txt"
 
 expect_fail "wrong project ref is refused" "does not name project ref" \
-  bash -c "$(declare -f rehearse); KEY='$KEY'; PROJECT_ID='$PROJECT_ID'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; rehearse bash '$OPS/logical-export.sh' --out '$WORK/nc-ref' --recipient '$RECIPIENT' --expect-ref 'some-other-project'"
+  rehearse bash "$OPS/logical-export.sh" --out "$WORK/nc-ref" --recipient "$RECIPIENT" --expect-ref "some-other-project"
+
+# M1: rehearsal mode is unreachable outside CI; an override may only be the docker-exec form on the rehearsal container
+expect_fail "M1: EXPORT_REHEARSAL without GITHUB_ACTIONS is refused" "exist only for the CI rehearsal" \
+  rehearse env -u GITHUB_ACTIONS bash "$OPS/logical-export.sh" --out "$WORK/nc-ci" --recipient "$RECIPIENT" --expect-ref "$PROJECT_ID"
+expect_fail "M1: an EXPORT_PSQL override naming another container is refused" "not the allow-listed rehearsal form" \
+  env_rehearse EXPORT_PSQL_OVERRIDE="docker exec -i some-other-container psql -U postgres -d postgres" \
+  bash "$OPS/export-restore.sh" logical "$LOGICAL" --identity "$WORK/key.txt" --target-ref "$PROJECT_ID" --production-ref "a-production-ref-that-is-not-this"
+expect_fail "M1: an EXPORT_PSQL override reaching another host (-h) is refused" "not the allow-listed rehearsal form" \
+  env_rehearse EXPORT_PSQL_OVERRIDE="docker exec -i $DB_CONTAINER psql -h elsewhere.example -U postgres -d postgres" \
+  bash "$OPS/export-restore.sh" logical "$LOGICAL" --identity "$WORK/key.txt" --target-ref "$PROJECT_ID" --production-ref "a-production-ref-that-is-not-this"
 
 # an object deleted BETWEEN the listing and the download must fail the object export
-HOOK="curl -fsS -X DELETE '$API/storage/v1/object/$BUCKET/$(urlencode_path "$PREFIX/synthetic-2.png")' -H 'Authorization: Bearer $KEY' -H 'apikey: $KEY' >/dev/null"
+HOOK="curl -fsS -X DELETE '$API/storage/v1/object/$BUCKET/$(urlencode_path "$PREFIX/synthetic-2.png")' -H @'$AUTH_HDR_FILE' >/dev/null"
 expect_fail "T-1: an object deleted between listing and download" "could not be downloaded" \
-  bash -c "$(declare -f rehearse); KEY='$KEY'; PROJECT_ID='$PROJECT_ID'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; EXPORT_TEST_HOOK_AFTER_LIST=\"$HOOK\" rehearse bash '$OPS/object-export.sh' --out '$WORK/nc-obj' --recipient '$RECIPIENT' --expect-ref '$PROJECT_ID' --storage-url '$API' --bucket '$BUCKET'"
+  env_rehearse EXPORT_TEST_HOOK_AFTER_LIST="$HOOK" \
+  bash "$OPS/object-export.sh" --out "$WORK/nc-obj" --recipient "$RECIPIENT" --expect-ref "$PROJECT_ID" --storage-url "$API" --bucket "$BUCKET"
+[ ! -e "$WORK/nc-obj" ] && check "negative control (L3): the failed object export left NO output directory behind" pass || check "negative control (L3): the failed object export left NO output directory behind" fail
 # put it back (same bytes) so the later restore compares the taken export, not the damaged world
-curl -fsS -X POST "$API/storage/v1/object/$BUCKET/$(urlencode_path "$PREFIX/synthetic-2.png")" -H "Authorization: Bearer $KEY" -H "apikey: $KEY" \
+curl -fsS -X POST "$API/storage/v1/object/$BUCKET/$(urlencode_path "$PREFIX/synthetic-2.png")" -H @"$AUTH_HDR_FILE" \
   -H "Content-Type: application/octet-stream" --data-binary "@$WORK/o2.bin" >/dev/null
 
 expect_fail "restore refuses a target equal to production" "equals the production ref" \
-  bash -c "$(declare -f rehearse); KEY='$KEY'; PROJECT_ID='$PROJECT_ID'; DBURL='$DBURL'; DB_CONTAINER='$DB_CONTAINER'; rehearse bash '$OPS/export-restore.sh' logical '$LOGICAL' --identity '$WORK/key.txt' --target-ref '$PROJECT_ID' --production-ref '$PROJECT_ID'"
+  rehearse bash "$OPS/export-restore.sh" logical "$LOGICAL" --identity "$WORK/key.txt" --target-ref "$PROJECT_ID" --production-ref "$PROJECT_ID"
+
+# L1: the typed production ref must match supabase/.temp/project-ref when the checkout is linked
+echo "the-linked-production-ref" >"$WORK/project-ref"
+expect_fail "L1: --production-ref that differs from the linked project ref is refused" "does not match" \
+  env_rehearse EXPORT_PROJECT_REF_FILE="$WORK/project-ref" \
+  bash "$OPS/export-restore.sh" logical "$LOGICAL" --identity "$WORK/key.txt" --target-ref "$PROJECT_ID" --production-ref "a-different-production-ref"
 
 # --- 5. disaster, then V4: restore into a NEW project built from the migrations --------------------
 log "destroying the rehearsal project (stop --no-backup)"
@@ -193,6 +225,7 @@ TR=$(date +%s)
 log "starting a fresh project from migrations"
 start_stack after
 KEY="$(service_key)"; [ -n "$KEY" ] || fail "no service-role key after rebuild"
+SERVICE_KEY="$KEY"; make_auth_header_file
 rehearse bash "$OPS/export-restore.sh" logical "$LOGICAL" --identity "$WORK/key.txt" --target-ref "$PROJECT_ID" --production-ref "a-production-ref-that-is-not-this" 2>&1 | tee -a "$EVIDENCE/rehearsal.log" | tail -1 | grep -q 'RESTORE PASS (logical)' \
   && check "V4/V2: rows restored into a NEW project, fingerprints identical" pass || check "V4/V2: logical restore" fail
 rehearse bash "$OPS/export-restore.sh" objects "$OBJECTS" --identity "$WORK/key.txt" --target-ref "$PROJECT_ID" --production-ref "a-production-ref-that-is-not-this" --storage-url "$API" --bucket "$BUCKET" 2>&1 | tee -a "$EVIDENCE/rehearsal.log" | tail -1 | grep -q 'RESTORE PASS (objects)' \

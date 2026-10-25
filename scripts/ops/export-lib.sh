@@ -22,16 +22,50 @@ host_of() {
 
 is_loopback_host() { case "$1" in 127.0.0.1|localhost|::1|'[::1]') return 0;; *) return 1;; esac; }
 
+# --- rehearsal mode exists ONLY in a GitHub Actions job ---------------------------
+# EXPORT_REHEARSAL=1 lets a CI job use a loopback target, take secrets from the
+# environment and point the two commands at a container. None of that may be
+# reachable on an operator's machine, so it requires GITHUB_ACTIONS=true too, and
+# every rehearsal-only variable is refused without it (Privacy PEER-1155 M1).
+is_rehearsal() { [ "${EXPORT_REHEARSAL:-}" = 1 ] && [ "${GITHUB_ACTIONS:-}" = true ]; }
+
+export_guard_rehearsal() {
+  if [ -n "${EXPORT_REHEARSAL:-}${EXPORT_REHEARSAL_REF:-}${EXPORT_PG_DUMP:-}${EXPORT_PSQL:-}${EXPORT_TEST_HOOK_AFTER_LIST:-}" ] && ! is_rehearsal; then
+    export_fail "the EXPORT_REHEARSAL* / EXPORT_PG_DUMP / EXPORT_PSQL / EXPORT_TEST_HOOK_AFTER_LIST variables exist only for the CI rehearsal (EXPORT_REHEARSAL=1 and GITHUB_ACTIONS=true); refusing"
+  fi
+}
+
+# rehearsal_override_ok TOOL WORD...: the ONLY command an override may be is
+# `docker exec -i supabase_db_<rehearsal ref> <TOOL> -U postgres -d postgres`,
+# plus, for pg_dump, --exclude-table=... controls. Any other target, option or
+# program (another container, -h, -e, a script) is refused.
+rehearsal_override_ok() {
+  local tool="$1"; shift
+  local -a w=("$@")
+  [ "${w[0]:-}" = docker ] && [ "${w[1]:-}" = exec ] && [ "${w[2]:-}" = "-i" ] || return 1
+  [ -n "${EXPORT_REHEARSAL_REF:-}" ] && [ "${w[3]:-}" = "supabase_db_${EXPORT_REHEARSAL_REF}" ] || return 1
+  [ "${w[4]:-}" = "$tool" ] && [ "${w[5]:-}" = "-U" ] && [ "${w[6]:-}" = postgres ] && [ "${w[7]:-}" = "-d" ] && [ "${w[8]:-}" = postgres ] || return 1
+  local i
+  for ((i = 9; i < ${#w[@]}; i++)); do
+    [ "$tool" = pg_dump ] && [[ "${w[$i]}" == --exclude-table=* ]] || return 1
+  done
+}
+
+# A host carries the project ref when ONE of its dot-separated labels IS the ref
+# (db.<ref>.supabase.co, <ref>.supabase.co), not when the ref is a substring of a
+# label (Privacy PEER-1155 L2).
+host_has_label() { case ".$1." in *".$2."*) return 0;; *) return 1;; esac; }
+
 # The operator typed a project ref; every URL the tool will touch must name it.
-# Loopback is accepted only in rehearsal mode (EXPORT_REHEARSAL=1) AND only for
-# the one ref the rehearsal declares (EXPORT_REHEARSAL_REF), so a wrong typed ref
-# is refused in rehearsal exactly as it is in production. Returns 0/1.
+# Loopback is accepted only in rehearsal mode AND only for the one ref the
+# rehearsal declares (EXPORT_REHEARSAL_REF), so a wrong typed ref is refused in
+# rehearsal exactly as it is in production. Returns 0/1.
 url_matches_ref() {
   local url="$1" ref="$2" host
   [ -n "$ref" ] || return 1
   host="$(host_of "$url")"
-  if [ "${EXPORT_REHEARSAL:-}" = 1 ] && is_loopback_host "$host" && [ "$ref" = "${EXPORT_REHEARSAL_REF:-}" ]; then return 0; fi
-  case "$host" in *"$ref"*) return 0;; *) return 1;; esac
+  if is_rehearsal && is_loopback_host "$host" && [ "$ref" = "${EXPORT_REHEARSAL_REF:-}" ]; then return 0; fi
+  host_has_label "$host" "$ref"
 }
 
 # Percent-encode a Storage object path for a URL ('/' kept).
@@ -141,7 +175,8 @@ object_manifest_check() {
 # keeps the session open for pg_dump --snapshot and for snap_query. The session
 # must outlive every dump, so snap_close is the LAST step.
 snap_open() {
-  coproc SNAP { "${PSQL_CMD[@]}" -qAtX -F "$US" -v ON_ERROR_STOP=1; }
+  coproc SNAP { with_pgpass "${PSQL_CMD[@]}" -qAtX -F "$US" -v ON_ERROR_STOP=1; }
+  SNAP_IS_OPEN=1
   printf '%s\n' "begin isolation level repeatable read read only;" >&"${SNAP[1]}"
   printf '%s\n' "select pg_export_snapshot();" >&"${SNAP[1]}"
   local line
@@ -169,6 +204,8 @@ snap_query() {
 }
 
 snap_close() {
+  [ "${SNAP_IS_OPEN:-}" = 1 ] || return 0
+  SNAP_IS_OPEN=0
   printf '%s\n' "commit;" >&"${SNAP[1]}" 2>/dev/null || true
   eval "exec ${SNAP[1]}>&-" 2>/dev/null || true
   wait "$SNAP_PID" 2>/dev/null || true
@@ -179,16 +216,84 @@ snap_close() {
 # on one line so snap_query can send it.
 MANIFEST_SQL="select format('%s.%s rows=%s md5=%s', schemaname, relname, n, h) from (select t.schemaname, t.relname, (xpath('/row/n/text()', query_to_xml(format('select count(*) as n from %I.%I', t.schemaname, t.relname), false, true, '')))[1]::text as n, (xpath('/row/h/text()', query_to_xml(format('select md5(coalesce(string_agg(x::text, %L order by x::text), %L)) as h from %I.%I x', E'\\n', '', t.schemaname, t.relname), false, true, '')))[1]::text as h from pg_stat_user_tables t where t.schemaname = 'public' or (t.schemaname = 'storage' and t.relname in ('buckets', 'objects')) or (t.schemaname = 'auth' and t.relname <> 'schema_migrations')) s order by 1;"
 
-# The commands behind the two connections. PRODUCTION: pg_dump/psql with the
-# URL the operator typed. REHEARSAL (EXPORT_REHEARSAL=1) may override both with
-# EXPORT_PG_DUMP / EXPORT_PSQL, so a CI job can reach a throwaway database in a
-# container; outside rehearsal an override is refused.
-export_configure_commands() {
-  if [ -n "${EXPORT_PG_DUMP:-}${EXPORT_PSQL:-}" ] && [ "${EXPORT_REHEARSAL:-}" != 1 ]; then
-    export_fail "EXPORT_PG_DUMP / EXPORT_PSQL are rehearsal-only (EXPORT_REHEARSAL=1)"
+# --- secrets never go in argv (Privacy PEER-1155 M2) -------------------------------
+# The connection string is split: the command gets it WITHOUT the password, and
+# the password reaches psql/pg_dump only as PGPASSWORD in that one child's
+# environment (with_pgpass). The service-role key goes to curl through a private
+# 0600 header file (-H @file), never on a command line. /proc/<pid>/cmdline and
+# `ps` therefore show neither.
+DB_URL_NOPASS="" DB_PASS=""
+EXPORT_SECRET_FILES=()
+
+urldecode() { local LC_ALL=C; printf '%b' "${1//%/\\x}"; }
+
+split_db_url() {
+  local scheme rest authority tail userinfo hostport
+  scheme="${DB_URL%%://*}"; rest="${DB_URL#*://}"
+  authority="${rest%%/*}"; tail="${rest#"$authority"}"
+  DB_PASS=""
+  if [[ "$authority" == *@* ]]; then
+    userinfo="${authority%@*}"; hostport="${authority##*@}"
+    if [[ "$userinfo" == *:* ]]; then DB_PASS="$(urldecode "${userinfo#*:}")"; userinfo="${userinfo%%:*}"; fi
+    DB_URL_NOPASS="$scheme://$userinfo@$hostport$tail"
+  else
+    DB_URL_NOPASS="$DB_URL"
   fi
-  if [ -n "${EXPORT_PG_DUMP:-}" ]; then read -r -a PGDUMP_CMD <<<"$EXPORT_PG_DUMP"; else PGDUMP_CMD=(pg_dump "$DB_URL"); fi
-  if [ -n "${EXPORT_PSQL:-}" ]; then read -r -a PSQL_CMD <<<"$EXPORT_PSQL"; else PSQL_CMD=(psql "$DB_URL"); fi
+}
+
+# with_pgpass COMMAND...: run COMMAND with PGPASSWORD in ITS environment only.
+with_pgpass() {
+  if [ -n "$DB_PASS" ]; then PGPASSWORD="$DB_PASS" "$@"; else "$@"; fi
+}
+
+# make_auth_header_file: writes the Storage API headers for SERVICE_KEY to a
+# private file (mode 0600, on tmpfs when XDG_RUNTIME_DIR is one) and sets
+# AUTH_HDR_FILE. Removed by export_cleanup_secrets. Use: curl -H @"$AUTH_HDR_FILE".
+make_auth_header_file() {
+  local dir="${XDG_RUNTIME_DIR:-}"
+  { [ -n "$dir" ] && [ -d "$dir" ] && [ -w "$dir" ]; } || dir="${TMPDIR:-/tmp}"
+  AUTH_HDR_FILE="$(umask 077; mktemp "$dir/export-hdr.XXXXXX")"
+  EXPORT_SECRET_FILES+=("$AUTH_HDR_FILE")
+  printf 'Authorization: Bearer %s\napikey: %s\n' "$SERVICE_KEY" "$SERVICE_KEY" >"$AUTH_HDR_FILE"
+}
+
+export_cleanup_secrets() {
+  if [ "${#EXPORT_SECRET_FILES[@]}" -gt 0 ]; then rm -f "${EXPORT_SECRET_FILES[@]}" 2>/dev/null || true; fi
+}
+
+# The EXIT trap of the two export tools: close the database session, remove the
+# secret files, and on ANY failure before the receipt delete the partial output
+# (Privacy PEER-1155 L3): a half-written export must never be mistaken for one.
+# Set EXPORT_OUT (and EXPORT_OUT_CREATED=1 when the tool made the directory).
+export_on_exit() {
+  local rc=$?
+  snap_close
+  export_cleanup_secrets
+  [ -z "${TMP:-}" ] || rm -rf "$TMP"
+  if [ "$rc" -ne 0 ] && [ -n "${EXPORT_OUT:-}" ] && [ -d "$EXPORT_OUT" ] && [ ! -f "$EXPORT_OUT/receipt.txt" ]; then
+    export_log "removing the partial output"
+    if [ "${EXPORT_OUT_CREATED:-}" = 1 ]; then rm -rf "$EXPORT_OUT"; else find "$EXPORT_OUT" -mindepth 1 -delete 2>/dev/null || true; fi
+  fi
+}
+
+# The commands behind the two connections. PRODUCTION: pg_dump/psql with the
+# URL the operator typed, WITHOUT its password. REHEARSAL (CI only) may override
+# both, but only with the one allow-listed docker-exec form (rehearsal_override_ok).
+export_configure_commands() {
+  export_guard_rehearsal
+  split_db_url
+  if [ -n "${EXPORT_PG_DUMP:-}" ]; then
+    read -r -a PGDUMP_CMD <<<"$EXPORT_PG_DUMP"
+    rehearsal_override_ok pg_dump "${PGDUMP_CMD[@]}" || export_fail "EXPORT_PG_DUMP is not the allow-listed rehearsal form (docker exec -i supabase_db_<rehearsal ref> pg_dump -U postgres -d postgres); refusing"
+  else
+    PGDUMP_CMD=(pg_dump "$DB_URL_NOPASS")
+  fi
+  if [ -n "${EXPORT_PSQL:-}" ]; then
+    read -r -a PSQL_CMD <<<"$EXPORT_PSQL"
+    rehearsal_override_ok psql "${PSQL_CMD[@]}" || export_fail "EXPORT_PSQL is not the allow-listed rehearsal form (docker exec -i supabase_db_<rehearsal ref> psql -U postgres -d postgres); refusing"
+  else
+    PSQL_CMD=(psql "$DB_URL_NOPASS")
+  fi
 }
 
 # Prompt for a secret without echo and without a file or argument.
@@ -206,7 +311,7 @@ read_secret() { # read_secret VARNAME PROMPT
 # used); in rehearsal (CI, synthetic) it must come from the environment.
 secret_input() {
   local name="$1"
-  if [ "${EXPORT_REHEARSAL:-}" = 1 ]; then
+  if is_rehearsal; then
     [ -n "${!name:-}" ] || export_fail "rehearsal needs $name in the environment"
     return 0
   fi

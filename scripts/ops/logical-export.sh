@@ -24,9 +24,14 @@
 # Usage:
 #   logical-export.sh --out DIR --recipient AGE_PUBLIC_KEY --expect-ref PROJECT_REF
 #
-# REHEARSAL (EXPORT_REHEARSAL=1, CI only, synthetic data): DB_URL may come from
-# the environment, a loopback URL satisfies --expect-ref, and EXPORT_PG_DUMP /
-# EXPORT_PSQL may point the two commands at a container. See export-rehearsal.sh.
+# REHEARSAL (EXPORT_REHEARSAL=1 AND GITHUB_ACTIONS=true, CI only, synthetic data):
+# DB_URL may come from the environment, a loopback URL satisfies --expect-ref for
+# the one declared rehearsal ref, and EXPORT_PG_DUMP / EXPORT_PSQL may be the
+# allow-listed `docker exec` form only. Outside a CI job every one is refused.
+# See export-rehearsal.sh.
+#
+# NO SECRET IN ARGV. The password is split off the connection string and given to
+# pg_dump/psql only as PGPASSWORD in that child's environment.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 umask 077
@@ -47,19 +52,22 @@ done
 [ -n "$OUT" ] && [ -n "$RECIPIENT" ] && [ -n "$REF" ] || export_fail "usage: --out DIR --recipient AGE_PUBLIC_KEY --expect-ref PROJECT_REF"
 case "$RECIPIENT" in age1*) ;; *) export_fail "the recipient must be an age PUBLIC key (age1...)";; esac
 command -v age >/dev/null || export_fail "age is not installed"
+export_guard_rehearsal   # rehearsal switches exist only in the CI rehearsal
+trap export_on_exit EXIT   # closes the session, removes secret files, deletes a partial output on any failure
 
 secret_input DB_URL "Database connection string (input hidden): "
 url_matches_ref "$DB_URL" "$REF" || export_fail "the connection string's host does not name project ref '$REF'; refusing"
 export_configure_commands
 
 if [ -e "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then export_fail "$OUT exists and is not empty"; fi
+[ -e "$OUT" ] || EXPORT_OUT_CREATED=1
+EXPORT_OUT="$OUT"
 mkdir -p "$OUT/markers"
 
 T0=$(date +%s)
 export_log "target host: $(host_of "$DB_URL") (ref check passed)"
 snap_open
 export_log "snapshot taken"
-trap 'snap_close' EXIT
 
 # chk: write ONE integer marker, atomically; discards every row.
 chk() { # chk REGEX MARKER
@@ -76,11 +84,11 @@ names() { # names REGEX FIELD MARKER
 dump_part() { # dump_part FILE COUNT_REGEX COUNT_MARKER NAMES_REGEX NAMES_FIELD NAMES_MARKER pg_dump-args...
   local file="$1" cre="$2" cm="$3" nre="$4" nf="$5" nm="$6"; shift 6
   if [ -n "$cm" ]; then
-    "${PGDUMP_CMD[@]}" --snapshot="$SNAPSHOT_ID" "$@" \
+    with_pgpass "${PGDUMP_CMD[@]}" --snapshot="$SNAPSHOT_ID" "$@" \
       | tee >(chk "$cre" "$cm") >(names "$nre" "$nf" "$nm") \
       | age -r "$RECIPIENT" -o "$OUT/$file"
   else
-    "${PGDUMP_CMD[@]}" --snapshot="$SNAPSHOT_ID" "$@" \
+    with_pgpass "${PGDUMP_CMD[@]}" --snapshot="$SNAPSHOT_ID" "$@" \
       | tee >(names "$nre" "$nf" "$nm") \
       | age -r "$RECIPIENT" -o "$OUT/$file"
   fi
@@ -103,7 +111,6 @@ snap_query "$MANIFEST_SQL"
 [ "${#SNAP_OUT[@]}" -ge 1 ] || export_fail "the fingerprint query returned no table"
 printf '%s\n' "${SNAP_OUT[@]}" | age -r "$RECIPIENT" -o "$OUT/manifest.age"
 snap_close
-trap - EXIT
 
 # --- V3: completeness, on the streamed plaintext's markers -----------------------
 fail=0
