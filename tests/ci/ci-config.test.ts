@@ -1118,6 +1118,22 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     expect(job.if).toContain("needs.changes.outputs.full_matrix_required == 'true'");
   });
 
+  it("runs for a payment-spec-only change (Codex P2: browser groups map only e2e/ specs), and not for an unrelated path", async () => {
+    // @ts-expect-error - .mjs utility ships without type declarations
+    const { classify } = await import("../../scripts/classify-changes.mjs");
+    const paymentSpec = classify(["e2e-payment/quick-checkout-payment.spec.ts"]) as Record<string, unknown>;
+    // The classifier signal the job's `if:` consumes, with no wider trigger.
+    expect(paymentSpec.payment).toBe(true);
+    expect(paymentSpec.full_matrix_required).toBe(false);
+    expect(job.if).toContain("needs.changes.outputs.payment == 'true'");
+    // Negative control: a path that touches neither payment nor the specs.
+    const unrelated = classify(["docs/README.md"]) as Record<string, unknown>;
+    expect(unrelated.payment).toBe(false);
+    expect(unrelated.full_matrix_required).toBe(false);
+    // The signal is wired from the classifier's own output, not a literal.
+    expect(CI).toMatch(/payment: \$\{\{ steps\.classify\.outputs\.payment \}\}/);
+  });
+
   it("runs only the scoped WebKit projects, which exist only under HONE_E2E_WEBKIT=1", () => {
     const e2e = job.steps.filter((st) => /npx playwright test\b/.test(st.run ?? ""));
     expect(e2e).toHaveLength(2);
