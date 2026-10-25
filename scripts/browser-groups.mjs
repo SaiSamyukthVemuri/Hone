@@ -348,6 +348,9 @@ export const BROWSER_GROUPS = {
       // non-required WebKit project, so it is a no-op wherever this group runs.
       "webkit-time-input-key-probe.spec.ts",
       "practitioner-availability-compat.spec.ts",
+      // SCH-001: an owner booking for another practitioner emails that
+      // practitioner (fake Resend capture ledger) and the detail page names them.
+      "assigned-practitioner-mail.spec.ts",
       "practitioner-booking-studio-b.spec.ts",
       "practitioner-quick-book-studio-b.spec.ts",
       "practitioner-reassignment-studio-b.spec.ts",
