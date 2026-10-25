@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 247,
+    "count": 248,
     "last": "0257_studio_payment_jurisdiction_failed_attempt_ack.sql",
-    "sha256": "91bacac918d4ac70cdcf9e0f11f9199fe86162d01766231a9ecf9593f5ab0c85"
+    "sha256": "4f070e4b37c804f55e7674690d589b428d62a181eafce96c8fa83516ecc1b0df"
   },
   "public": {
     "tables": [
@@ -208,6 +208,7 @@
       "client_clinical_notes_before_insert",
       "client_clinical_notes_no_update",
       "client_personal_notes_set_studio_id",
+      "client_portal_access_guard",
       "clients_portrait_integrity",
       "clients_sms_permission_guard",
       "close_delivery_concern",
