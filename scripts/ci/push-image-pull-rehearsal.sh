@@ -138,7 +138,8 @@ say "INFO  control chain (normal db reset): rows 0213-0246=$CTRL_N signature=$CT
 # T1: (1) WHY - loopback URL, tracked config (pgdelta enabled), default registry
 fresh t1
 run_push t1-loopback-default "$LOOP_URL"
-expect "(1) the pull happens with the tracked config (loopback URL)" "$([ "$(grep -c 'Pulling from supabase/edge-runtime' "$OUT/t1-loopback-default.log")" -ge 1 ] || [ "$(edge_present)" -ge 1 ] && echo 0 || echo 1)" "pull lines=$(grep -c 'Pulling from supabase/edge-runtime' "$OUT/t1-loopback-default.log") image present=$(edge_present) exit=$RC"
+pull_attempts() { grep -cE 'Pulling from supabase/edge-runtime|failed to pull docker image' "$1"; }
+expect "(1) the pull is ATTEMPTED with the tracked config (loopback URL)" "$([ "$(pull_attempts "$OUT/t1-loopback-default.log")" -ge 1 ] && echo 0 || echo 1)" "attempt lines=$(pull_attempts "$OUT/t1-loopback-default.log") image present=$(edge_present) exit=$RC"
 say "INFO  (1) catalog cache files written (success of the post-push step):"
 ls supabase/.temp/pgdelta 2> /dev/null | sed 's/^/   | /' | tee -a "$RES"
 T1_RC=$RC; T1_SIG="$(hist_sig)"; T1_N="$(hist_n)"
@@ -153,8 +154,15 @@ ls supabase/.temp/pgdelta 2> /dev/null | sed 's/^/   | /' | tee -a "$RES"
 fresh t2
 run_push t2-remote-default "$REMOTE_URL"
 expect "(1) with a NON-LOOPBACK host the CLI says 'remote database' (not the loopback 'local database')" "$(grep -q 'Connecting to remote database' "$OUT/t2-remote-default.log" && echo 0 || echo 1)" "$(grep -m1 'Connecting to' "$OUT/t2-remote-default.log")"
-expect "(1) the pull ALSO happens for the non-loopback host" "$([ "$(grep -c 'Pulling from supabase/edge-runtime' "$OUT/t2-remote-default.log")" -ge 1 ] || [ "$(edge_present)" -ge 1 ] && echo 0 || echo 1)" "pull lines=$(grep -c 'Pulling from supabase/edge-runtime' "$OUT/t2-remote-default.log") image present=$(edge_present) exit=$RC"
+expect "(1) the pull is ALSO attempted for the non-loopback host" "$([ "$(pull_attempts "$OUT/t2-remote-default.log")" -ge 1 ] && echo 0 || echo 1)" "attempt lines=$(pull_attempts "$OUT/t2-remote-default.log") image present=$(edge_present) exit=$RC"
 expect "(1) the remote-URL push applied and recorded 0213-0246 identically to the control" "$([ "$(hist_n)" = "$CTRL_N" ] && [ "$(hist_sig)" = "$CTRL_SIG" ] && echo 0 || echo 1)" "rows=$(hist_n) sig=$(hist_sig)"
+
+# T2b: remote-looking host through the ghcr.io mirror, so the pull SUCCEEDS and the whole post-push step runs
+fresh t2b
+SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io run_push t2b-remote-ghcr "$REMOTE_URL"
+expect "(1) non-loopback host, pull succeeds: the image is pulled and the catalog cache file is written (the step runs for a remote URL exactly as for loopback)" "$([ "$(edge_present)" -ge 1 ] && [ "$(ls supabase/.temp/pgdelta 2> /dev/null | wc -l)" -ge 1 ] && echo 0 || echo 1)" "image present=$(edge_present) cache files: $(ls supabase/.temp/pgdelta 2> /dev/null | cut -c1-40 | tr '\n' ' ')"
+say "INFO  (1) T2b output around the post-push step:"
+grep -nE "Connecting to|Pulling from|Applying migration 0246|Warning|Finished" "$OUT/t2b-remote-ghcr.log" | cut -c1-200 | sed 's/^/   | /' | tee -a "$RES"
 
 # T4: (2) registry UNREACHABLE (fast refusal): the registry names resolve to a refusing address
 fresh t4
@@ -182,8 +190,11 @@ say "INFO  (3) docker-absent exit code: $RC; warning line: $(grep -m1 'Warning: 
 # T7: (3) env override of the config key
 fresh t7
 SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false run_push t7-env-override "$LOOP_URL"
-say "INFO  (3) SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false: pull lines=$(grep -c 'Pulling from supabase/edge-runtime' "$OUT/t7-env-override.log") image present=$(edge_present) exit=$RC rows=$(hist_n) sig_equal=$([ "$(hist_sig)" = "$CTRL_SIG" ] && echo yes || echo no)"
+expect "(3) SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false: no pull attempt, no warning, exit 0, 34 applied and recorded identically" "$([ "$RC" = "0" ] && [ "$(pull_attempts "$OUT/t7-env-override.log")" = "0" ] && ! grep -q 'Warning' "$OUT/t7-env-override.log" && [ "$(hist_n)" = "$CTRL_N" ] && [ "$(hist_sig)" = "$CTRL_SIG" ] && echo 0 || echo 1)" "exit=$RC rows=$(hist_n) attempts=$(pull_attempts "$OUT/t7-env-override.log") image present=$(edge_present)"
 T7_PULL="$(edge_present)"
+
+echo "---- T7 head and tail of the output (loopback, env-override form) ----" | tee -a "$RES"
+{ sed -n '1,3p' "$OUT/t7-env-override.log"; echo '   ...'; tail -n 4 "$OUT/t7-env-override.log"; } | sed 's/^/   | /' | tee -a "$RES"
 
 # T8: (3) a scratch workdir: byte-identical migrations, a config.toml WITHOUT the pgdelta table
 fresh t8
@@ -194,15 +205,15 @@ expect "(3) the scratch migrations are byte-identical to the tree's (sha256 of t
 expect "(3) the scratch config.toml has no pgdelta table" "$(grep -q pgdelta "$WD/supabase/config.toml" && echo 1 || echo 0)" "lines=$(wc -l < "$WD/supabase/config.toml")"
 run_push t8-workdir-nopgdelta "$LOOP_URL" "$WD"
 expect "(3) workdir without pgdelta: NO pull, NO edge-runtime image, exit 0, 34 files applied and recorded identically" "$([ "$RC" = "0" ] && [ "$(edge_present)" = "0" ] && [ "$(grep -c 'Pulling from' "$OUT/t8-workdir-nopgdelta.log")" = "0" ] && [ "$(hist_n)" = "$CTRL_N" ] && [ "$(hist_sig)" = "$CTRL_SIG" ] && echo 0 || echo 1)" "exit=$RC image present=$(edge_present) rows=$(hist_n)"
-echo "---- T8 full output (the expected output for the step table) ----" | tee -a "$RES"
-sed 's/^/   | /' "$OUT/t8-workdir-nopgdelta.log" | tee -a "$RES"
 
-# T9: the same avoidance, on the NON-LOOPBACK url, with the registry refusing (nothing in the push may depend on it)
+# T9: the env-override form, on the NON-LOOPBACK url, with the registry refusing (nothing in the push may depend on it)
 fresh t9
 block_registry 127.0.0.1
-run_push t9-remote-nopgdelta-registry-down "$REMOTE_URL" "$WD"
+SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false run_push t9-remote-envoverride-registry-down "$REMOTE_URL"
 unblock_registry
-expect "(3) remote URL + scratch workdir + registry down: exit 0, no warning, 34 applied and recorded identically" "$([ "$RC" = "0" ] && ! grep -q 'Warning' "$OUT/t9-remote-nopgdelta-registry-down.log" && [ "$(hist_n)" = "$CTRL_N" ] && [ "$(hist_sig)" = "$CTRL_SIG" ] && echo 0 || echo 1)" "exit=$RC rows=$(hist_n)"
+expect "(3) env override + remote URL + registry down: exit 0, no warning, no pull attempt, 34 applied and recorded identically" "$([ "$RC" = "0" ] && ! grep -q 'Warning' "$OUT/t9-remote-envoverride-registry-down.log" && [ "$(pull_attempts "$OUT/t9-remote-envoverride-registry-down.log")" = "0" ] && [ "$(hist_n)" = "$CTRL_N" ] && [ "$(hist_sig)" = "$CTRL_SIG" ] && echo 0 || echo 1)" "exit=$RC rows=$(hist_n)"
+echo "---- T9 full output: the expected lines for the step table (env-override form, non-loopback URL) ----" | tee -a "$RES"
+sed 's/^/   | /' "$OUT/t9-remote-envoverride-registry-down.log" | tee -a "$RES"
 
 say "SUMMARY exit codes: loopback+pull(T1)=$T1_RC registry-rejected(T4)=$T4_RC registry-blackholed(T5)=$T5_RC after ${T5_EL}s; env-override left image present=$T7_PULL"
 say "# verdict: $([ "$FAILS" = 0 ] && echo 'ALL EXPECTATIONS MET' || echo "$FAILS EXPECTATION(S) FAILED")"
