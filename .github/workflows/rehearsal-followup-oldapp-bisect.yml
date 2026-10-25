@@ -1,0 +1,109 @@
+# REHEARSAL - NEVER MERGE. Evidence only. The #1035 d189768b application and test suite, UNCHANGED, run against the database
+# chain 0001-0246 plus ONE follow-up migration (or 0247+0250), to attribute each old-app DB-test failure to the migration that
+# causes it. Local test stack only; the sanctioned read-only ghcr.io pull (D7b shape) is the only credential.
+name: rehearsal-followup-oldapp-bisect
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/rehearsal-followup-oldapp-bisect.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cell:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "old app + 0247", set: "0247" }
+          - { name: "old app + 0247,0250", set: "0247 0250" }
+          - { name: "old app + 0248", set: "0248" }
+          - { name: "old app + 0249", set: "0249" }
+          - { name: "old app + 0251", set: "0251" }
+          - { name: "old app + 0252", set: "0252" }
+          - { name: "old app + 0253", set: "0253" }
+          - { name: "old app + 0254", set: "0254" }
+          - { name: "old app + 0255", set: "0255" }
+          - { name: "old app + 0256", set: "0256" }
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Keep 0001-0246 plus only this cell's follow-up migrations
+        env:
+          SET: ${{ matrix.set }}
+        run: |
+          set -eu
+          cd supabase/migrations
+          for f in [0-9]*.sql; do
+            n="${f%%_*}"
+            keep=0
+            [ "$((10#$n))" -le 246 ] && keep=1
+            for s in $SET; do [ "$n" = "$s" ] && keep=1; done
+            [ "$keep" = 1 ] || rm "$f"
+          done
+          echo "last: $(ls | tail -1); follow-ups present: $(ls | grep -E '^02(4[7-9]|5[0-6])_' | tr '\n' ' ')"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          version: 2.102.0
+
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start local Supabase (DB + REST API)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply the chain from scratch
+        id: db_chain
+        run: supabase db reset --local
+
+      - name: Old DB/RLS integration tests against this chain
+        if: ${{ !cancelled() && steps.db_chain.outcome == 'success' }}
+        continue-on-error: true
+        shell: bash
+        run: npm run test:db 2>&1 | tee "$RUNNER_TEMP/test-db.log"; exit "${PIPESTATUS[0]}"
+
+      - name: Failing tests (attribution)
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          CELL: ${{ matrix.name }}
+        run: |
+          echo "ATTRIBUTION [$CELL]"
+          sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/test-db.log" | grep -E "^ FAIL |Test Files |^ +Tests " | sed -E 's/^ FAIL +//' | cut -c1-220 | sort -u
