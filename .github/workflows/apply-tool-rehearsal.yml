@@ -38,7 +38,7 @@ jobs:
     # Photos' probes (a 130 s and a 140 s sleep): well inside 60 minutes.
     timeout-minutes: 60
     env:
-      EXCLUDE: studio,imgproxy,realtime,edge-runtime,logflare,vector
+      EXCLUDE: studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta,supavisor
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
