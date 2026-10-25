@@ -42,7 +42,7 @@ type Joined = Appointment & {
   // the existing email name/email. Selected in loadAppointmentsForWindow.
   client: Pick<
     Client,
-    "name" | "email" | "phone" | "sms_consent_at" | "sms_opted_out_at"
+    "name" | "email" | "phone" | "sms_consent_at" | "sms_opted_out_at" | "archived_at"
   > | null;
   practitioner: { display_name: string | null; email: string | null } | null;
 };
@@ -78,7 +78,7 @@ async function loadAppointmentsForWindow(opts: {
   let query = admin
     .from("appointments")
     .select(
-      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email, phone, sms_consent_at, sms_opted_out_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
+      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email, phone, sms_consent_at, sms_opted_out_at, archived_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
     )
     .eq("status", "confirmed")
     .is(opts.notSentColumn, null)
@@ -234,6 +234,9 @@ async function sendReminderPass(opts: {
 
   if (!appt.studio) return;
   if (!appt.client?.email) return;
+  // MSG-ARCH-01: an archived client is not messaged automatically. Selection
+  // is only a snapshot; the live re-read after the claim below is the fence.
+  if (appt.client.archived_at) return;
 
   const wantsReminder =
     (appt.studio as unknown as Record<string, boolean>)[studioToggle] === true;
@@ -285,6 +288,23 @@ async function sendReminderPass(opts: {
   // existing handler failure path; never settle or clear the counted claim.
   if (freshError) throw new Error("reminder appointment state unavailable");
   if (!fresh || fresh.status !== "confirmed") {
+    stats.skipped += 1;
+    return;
+  }
+
+  // MSG-ARCH-01: archived since discovery. Its own live read, after the claim,
+  // so the status/start select above stays exactly as it was. Nothing is sent
+  // and nothing is recorded as sent; the claim is cleared the way CASE 4 -> 5
+  // clears it. An unavailable read is not evidence of "not archived".
+  const { data: liveClient, error: liveClientError } = await admin
+    .from("clients")
+    .select("archived_at")
+    .eq("id", appt.client_id)
+    .eq("studio_id", appt.studio.id)
+    .maybeSingle();
+  if (liveClientError) throw new Error("reminder client state unavailable");
+  if (liveClient?.archived_at) {
+    await recordEmailResult(admin, appt.id, emailType, false);
     stats.skipped += 1;
     return;
   }
@@ -480,6 +500,8 @@ async function sendSmsReminderPass(opts: {
     return;
   }
   if (!appt.client) return;
+  // MSG-ARCH-01: an archived client is not texted automatically.
+  if (appt.client.archived_at) return;
   // Hard prerequisites for the SMS helper. Skipping early avoids a
   // claim roundtrip when there is no point.
   if (!appt.client.phone) return;
@@ -546,21 +568,24 @@ async function sendSmsReminderPass(opts: {
   // while the row was queued reach the real sender's consent gate.
   const { data: recipient, error: recipientError } = await admin
     .from("appointments")
-    .select("status, client_id, client:clients(phone, sms_consent_at, sms_opted_out_at), studio:studios(send_24h_sms_reminders, send_2h_sms_reminders)")
+    .select("status, client_id, client:clients(phone, sms_consent_at, sms_opted_out_at, archived_at), studio:studios(send_24h_sms_reminders, send_2h_sms_reminders)")
     .eq("id", appt.id)
     .eq("studio_id", appt.studio.id)
     .maybeSingle();
   const current = recipient as unknown as {
     status: string;
     client_id: string;
-    client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at"> | Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">[] | null;
+    client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at" | "archived_at"> | Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at" | "archived_at">[] | null;
     studio: Pick<Studio, "send_24h_sms_reminders" | "send_2h_sms_reminders"> | Pick<Studio, "send_24h_sms_reminders" | "send_2h_sms_reminders">[] | null;
   } | null;
   const currentClient = pickRel(current?.client ?? null);
   const currentStudio = pickRel(current?.studio ?? null);
   if (
     recipientError || !currentClient || !currentStudio ||
-    current?.status !== "confirmed" || current.client_id !== appt.client_id
+    current?.status !== "confirmed" || current.client_id !== appt.client_id ||
+    // MSG-ARCH-01: archived since discovery. Refused before the helper, so no
+    // claim exists to release and nothing can be recorded as sent.
+    currentClient.archived_at
   ) {
     // Do not attach the queued client's intake link to a reassigned client.
     // A later run can select that appointment with its new context.
