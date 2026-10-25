@@ -830,6 +830,37 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
   }
 
+  // SEC-004. KNOWING AN EMAIL IS NOT PROOF OF OWNING IT.
+  //
+  // Nothing on this public surface proves the booker controls the address they
+  // typed. An active client matched by that address used to be adopted as the
+  // appointment's client (client_type=existing by design, client_type=new
+  // because the lookup above did not look at the type), so anyone who knew a
+  // client's email could put appointments on their record, stamp SMS consent
+  // against it and have their reminders sent to that client.
+  //
+  // So a public submission NEVER attaches to an existing client. Ownership is
+  // proved where it already is: the secure client portal's emailed single-use
+  // link, from which a returning client books (app/portal/rebook-actions.ts).
+  // The one exception is an AUTHORIZED invitation, whose recipient hash already
+  // proves control of the invited address.
+  //
+  // PRIVACY. The refusal is the archived-client collision copy, verbatim, so an
+  // active match, an archived match and (for client_type=existing) no match at
+  // all are the SAME answer; the booker never learns a client exists. It
+  // returns before anything is written, consent included, and before any
+  // invitation is spent. The residual, stated rather than hidden: client_type=new
+  // with an UNMATCHED email still books, so new-vs-matched stays distinguishable
+  // by outcome, bounded by the per-IP and per-email limits above. Closing that
+  // would mean confirming every public booking.
+  if (invitationAuth?.kind !== "authorized" && (existingClient || clientType === "existing")) {
+    logInternalBookingError("public_booking_identity_unconfirmed", {
+      studioId: studio.id,
+      emailFingerprint: hashFingerprint(normalizedEmail),
+    });
+    return { ok: false, error: archivedClientCollisionError(studio.name) };
+  }
+
   // WAIT-03B B2 / P3-A. CONSUME THE INVITATION HERE -- before the client
   // resolution below, which is the first thing in this action that can WRITE a
   // clients row.
