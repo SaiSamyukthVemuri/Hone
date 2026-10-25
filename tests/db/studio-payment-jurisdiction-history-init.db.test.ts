@@ -816,7 +816,7 @@ describe("J9-I g09d prediction equals the command", () => {
       ca: ["refused_currency_history"], us: ["refused_currency_history"] },
     { label: "NULL-currency row beside otherwise cad history", build: async (s) => { await settlement(s, "cad"); await writeNullCurrencyAudit(s); },
       ca: ["refused_currency_history"], us: ["refused_currency_history"] },
-    { label: "foreign currency in stripe_refunds", build: async (s) => { await name("stripe_refunds", s, null, false, "eur"); },
+    { label: "foreign currency in stripe_refunds", build: async (s) => { await name("stripe_refunds", s, `acct_T${rid()}`, false, "eur"); },
       ca: ["refused_currency_history"], us: ["refused_currency_history"] },
     { label: "appointment_payments row", build: async (s) => {
         await raw("appointment_payments", { appointment_id: randomUUID(), studio_id: s.studioId, client_id: s.clientId,
