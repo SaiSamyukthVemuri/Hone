@@ -15,7 +15,7 @@ import {
 } from "@/lib/booking/tz";
 import { maxPublicBookingHorizonDays } from "@/lib/booking/horizon";
 import type { Practitioner, Studio } from "@/lib/types/database";
-import { dbErrorCode } from "@/lib/logging/error-class";
+import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 
 // Typed result used by every action that can hit the unified shadow's
 // gist exclusion (sqlstate 23P01). Owner-facing UI displays
@@ -257,7 +257,7 @@ export async function upsertDayDefaultAction(formData: FormData): Promise<void> 
     p_close_time: isOpen ? close : null,
   });
   if (error || data !== "ok") {
-    logAvailabilityDbError("upsert_day_default", "rpc", dbErrorCode(error) ?? (typeof data === "string" ? data : "unknown"));
+    logAvailabilityDbError("upsert_day_default", "rpc", failureCode(error, data));
     throw new Error("Could not save these hours. Please try again.");
   }
   revalidatePath("/settings/availability");
@@ -344,7 +344,7 @@ export async function upsertOverrideAction(formData: FormData): Promise<void> {
     p_note: note,
   });
   if (error || data !== "ok") {
-    logAvailabilityDbError("upsert_override", "rpc", dbErrorCode(error) ?? (typeof data === "string" ? data : "unknown"));
+    logAvailabilityDbError("upsert_override", "rpc", failureCode(error, data));
     throw new Error("Could not save this date override. Please try again.");
   }
   revalidatePath("/settings/availability");
@@ -363,7 +363,7 @@ export async function deleteOverrideAction(formData: FormData): Promise<void> {
     p_effective_date: null,
   });
   if (error || data !== "ok") {
-    logAvailabilityDbError("delete_override", "rpc", dbErrorCode(error) ?? (typeof data === "string" ? data : "unknown"));
+    logAvailabilityDbError("delete_override", "rpc", failureCode(error, data));
     throw new Error("Could not delete this date override. Please try again.");
   }
   revalidatePath("/settings/availability");

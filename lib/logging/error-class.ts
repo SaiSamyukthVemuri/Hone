@@ -157,3 +157,20 @@ export function boundedErrorLabel(error: unknown, fallback = "handler_failed"): 
   if (error instanceof Error && LABEL_RE.test(error.message)) return error.message;
   return `${fallback}:${thrownErrorClass(error)}`;
 }
+
+// snake_case words, as the RPC commands return them ("time_unavailable", "created").
+const RESULT_CODE_RE = /^[a-z][a-z0-9_]{1,63}$/;
+
+/**
+ * The diagnostic code for a failed database call: the database error's closed
+ * code when there is an error object, otherwise the command's own RESULT code
+ * (a refusal such as "time_unavailable") when it has exactly the shape of one,
+ * otherwise `fallback`. A result that is not a bounded identifier is never
+ * logged. A nullish fallback after dbErrorCode is dead code (it never
+ * returns nullish), so a call that fails by RESULT, with no error object, uses
+ * this instead.
+ */
+export function failureCode(error: unknown, result: unknown, fallback = "unknown"): string {
+  if (error) return dbErrorCode(error);
+  return typeof result === "string" && RESULT_CODE_RE.test(result) ? result : fallback;
+}

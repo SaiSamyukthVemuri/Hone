@@ -328,3 +328,52 @@ describe("team removal failure line (the one site whose fallback logic changed)"
     expect(src).not.toMatch(/dbErrorCode\(error\) \?\?/);
   });
 });
+
+// N1 (Insurance PEER-1138-DELTA): `dbErrorCode(x) ?? fallback` is dead code, because dbErrorCode
+// never returns nullish, so a call that failed by RESULT (no error object) logged 'unknown'. Each
+// pattern below is pinned at its sites; the unit behaviour is tests/lib/logging/error-class.test.ts.
+describe("failing-RPC result codes still reach the log when there is no error object (N1)", () => {
+  const read = async (file: string) => (await import("node:fs")).readFileSync(file, "utf8");
+
+  it("no `dbErrorCode(...) ??` survives anywhere in app/ or lib/ (a dead fallback)", async () => {
+    const { readdirSync, statSync, readFileSync } = await import("node:fs");
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const full = `${dir}/${name}`;
+        if (statSync(full).isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(name) && /dbErrorCode\([^)]*\)\s*\?\?/.test(readFileSync(full, "utf8").replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, ""))) hits.push(full);
+      }
+    };
+    walk("app");
+    walk("lib");
+    expect(hits).toEqual([]);
+  });
+
+  it("pattern 1, RPC returning a string: availability saves log the result string", async () => {
+    const src = await read("app/(app)/settings/availability/actions.ts");
+    expect([...src.matchAll(/"rpc", failureCode\(error, data\)\)/g)]).toHaveLength(3);
+  });
+
+  it("pattern 2, a command result variable: portal rebook logs the command result, then 'no_result'", async () => {
+    const src = await read("app/portal/rebook-actions.ts");
+    expect(src).toContain("code: failureCode(rpcErr, commandResult),");
+    expect(src).toContain('code: failureCode(rpcErr, commandResult, "no_result"),');
+  });
+
+  it("pattern 3, a first-row result code: waitlist manual entry and legacy import log it", async () => {
+    const src = await read("app/(app)/settings/waitlist/profile-actions.ts");
+    expect([...src.matchAll(/failureCode\(error, code\)/g)]).toHaveLength(2);
+  });
+
+  it("pattern 4, a property of the returned row: the post-care settle failure logs settled.result", async () => {
+    const src = await read("app/(app)/calendar/actions.ts");
+    expect(src).toContain("code: failureCode(settleErr, settled?.result),");
+  });
+
+  it("pattern 5, no result exists to log: a failed read logs its code only when there is an error, else null", async () => {
+    const src = await read("app/portal/rebook-actions.ts");
+    expect(src).toContain("code: studioErr ? dbErrorCode(studioErr) : null,");
+    expect(src).toContain("code: prErr ? dbErrorCode(prErr) : null,");
+  });
+});

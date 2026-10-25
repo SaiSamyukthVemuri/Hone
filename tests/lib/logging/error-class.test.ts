@@ -4,6 +4,7 @@ import {
   boundedErrorLabel,
   THROWN_ERROR_CLASSES,
   dbErrorCode,
+  failureCode,
   safeDbCode,
   stripeErrorFields,
   thrownErrorClass,
@@ -200,5 +201,31 @@ describe("boundedErrorLabel: what may be STORED for a failed unit of work", () =
     expect(boundedErrorLabel(Object.assign(new Error(HOSTILE), { code: "ECONNRESET" }))).toBe("handler_failed:network");
     expect(boundedErrorLabel(HOSTILE)).toBe("handler_failed:non_error");
     expect(boundedErrorLabel(new Error(HOSTILE), "sync_failed")).toBe("sync_failed:error");
+  });
+});
+
+describe("failureCode: a failed call logs its error's code, else the command's own RESULT code (N1)", () => {
+  it("an error object wins, and only as its closed code", () => {
+    expect(failureCode({ code: "23505", message: HOSTILE }, "time_unavailable")).toBe("23505");
+    expect(failureCode({ code: HOSTILE, message: HOSTILE }, "time_unavailable")).toBe("unknown");
+  });
+
+  it("no error object: a bounded result code is logged (the diagnostic the dead '?? result' fallback lost)", () => {
+    expect(failureCode(null, "time_unavailable")).toBe("time_unavailable");
+    expect(failureCode(undefined, "not_eligible")).toBe("not_eligible");
+  });
+
+  it("no error object and a result that is not a bounded identifier is never logged", () => {
+    expect(failureCode(null, HOSTILE)).toBe("unknown");
+    expect(failureCode(null, "Has Spaces")).toBe("unknown");
+    expect(failureCode(null, "x".repeat(65))).toBe("unknown");
+    expect(failureCode(null, { result: "created" })).toBe("unknown");
+    expect(leaks(failureCode(null, HOSTILE))).toBe(false);
+  });
+
+  it("no error and no result uses the caller's fallback, else 'unknown'", () => {
+    expect(failureCode(null, null)).toBe("unknown");
+    expect(failureCode(null, undefined, "no_result")).toBe("no_result");
+    expect(failureCode(null, 42, "no_result")).toBe("no_result");
   });
 });

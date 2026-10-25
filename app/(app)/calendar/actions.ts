@@ -28,7 +28,7 @@ import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { localDateString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { safeLog } from "@/lib/logging/safe-log";
-import { dbErrorCode } from "@/lib/logging/error-class";
+import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 
 export type BookResult =
   | { ok: true; appointmentId: string }
@@ -1317,7 +1317,7 @@ export async function sendPostcareEmailAction(
       // fabricate a failure state here; the claim simply goes stale and becomes
       // reclaimable, which is the conservative outcome.
       logPostcare("send_postcare_settle_failure_unpersisted", {
-        code: dbErrorCode(settleErr) ?? settled?.result ?? "unknown",
+        code: failureCode(settleErr, settled?.result),
         appointmentId,
       });
     }

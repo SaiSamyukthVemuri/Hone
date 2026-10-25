@@ -6,7 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { studioLocalDateInstant } from "@/lib/waitlist/studio-local-date";
 import { isAvailabilityPreference } from "@/lib/waitlist/join-profile";
-import { dbErrorCode } from "@/lib/logging/error-class";
+import { failureCode } from "@/lib/logging/error-class";
 
 // ===========================================================================
 // WAIT-04A — the three owner commands migration 0193 already ships
@@ -221,7 +221,7 @@ export async function addWaitlistEntryAction(
 
   const code = firstResultCode(data);
   if (error || code !== "created") {
-    logRefusal("waitlist_manual_entry_failed", owner.studioId, dbErrorCode(error) ?? code ?? "unknown");
+    logRefusal("waitlist_manual_entry_failed", owner.studioId, failureCode(error, code));
     return {
       ok: false,
       message: refusalMessage(
@@ -333,7 +333,7 @@ export async function importLegacyWaitlistEntryAction(
 
   const code = firstResultCode(data);
   if (error || code !== "imported") {
-    logRefusal("waitlist_legacy_import_failed", owner.studioId, dbErrorCode(error) ?? code ?? "unknown");
+    logRefusal("waitlist_legacy_import_failed", owner.studioId, failureCode(error, code));
     return {
       ok: false,
       message: refusalMessage(
