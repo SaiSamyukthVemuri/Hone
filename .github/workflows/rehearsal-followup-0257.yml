@@ -1,0 +1,88 @@
+# REHEARSAL - NEVER MERGE. Evidence only: where 0257 (#1150, reserved for the 0214 follow-up) sits relative to 0247-0256.
+# The branch holds 0001-0256 with the #1035 (amended) 0214. Cells add 0257 over that, or swap in the UNAMENDED 0214 (8ff9350e)
+# that 0257 exists for. Each cell starts the local stack, which applies the directory to an empty database.
+name: rehearsal-followup-0257
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/rehearsal-followup-0257.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cell:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "0001-0256 (amended 0214) + 0257", keep: "9999", unamended: "no" }
+          - { name: "0001-0256 with UNAMENDED 0214 + 0257", keep: "9999", unamended: "yes" }
+          - { name: "0001-0246 with UNAMENDED 0214 + 0257 (no 0247-0256)", keep: "0246", unamended: "yes" }
+          - { name: "0001-0246 (amended 0214) + 0257 (no 0247-0256)", keep: "0246", unamended: "no" }
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build this cell's migration directory
+        env:
+          KEEP: ${{ matrix.keep }}
+          UNAMENDED: ${{ matrix.unamended }}
+        run: |
+          set -eu
+          cd supabase/migrations
+          for f in [0-9]*.sql; do
+            n="${f%%_*}"
+            [ "$((10#$n))" -le "$((10#$KEEP))" ] || rm "$f"
+          done
+          if [ "$UNAMENDED" = yes ]; then cp ../../rehearsal-0257/0214_studio_payment_jurisdiction.unamended.sql 0214_studio_payment_jurisdiction.sql; fi
+          cp ../../rehearsal-0257/0257_payment_jurisdiction_history_init.sql .
+          echo "last: $(ls | tail -1); count: $(ls | wc -l); 0214 sha: $(sha256sum 0214_studio_payment_jurisdiction.sql | cut -c1-8)"
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          version: 2.102.0
+
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start local Supabase (applies the directory to an empty database)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"; exit "${PIPESTATUS[0]}"
+
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Report
+        if: always()
+        shell: bash
+        env:
+          CELL: ${{ matrix.name }}
+          OUTCOME: ${{ steps.sb_start.outcome }}
+        run: |
+          log="$RUNNER_TEMP/supabase-start.log"
+          if [ "$OUTCOME" = success ]; then
+            c="$(docker ps --format '{{.Names}}' | grep '^supabase_db_' | head -1)"
+            v="$(docker exec "$c" psql -U postgres -At -c "select count(*) || ' migrations, max ' || max(version) from supabase_migrations.schema_migrations")"
+            echo "RESULT [$CELL] APPLIED: $v"
+          else
+            echo "RESULT [$CELL] FAILED TO APPLY"
+            grep -iE "ERROR|SQLSTATE|At statement" "$log" | head -8 | sed 's/^/    /'
+          fi
