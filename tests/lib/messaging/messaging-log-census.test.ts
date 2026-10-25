@@ -681,6 +681,47 @@ describe("MSG-007 log census: the analyzer catches what it must", () => {
     expect(ws[2].errorText).toEqual(["problem"]);
   });
 
+  it("a sanitizer's pass-through argument is judged: a fallback that is a link, or not provable, is caught (Codex P2 4370118061)", () => {
+    const decl = `
+      declare function failureCode(e: unknown, r: unknown, fallback?: string): string;
+      declare function dbErrorCode(e: unknown, internal?: readonly string[]): string;
+      declare function boundedErrorLabel(e: unknown, fallback?: string): string;
+      declare function invitationEmailFailure(kind: string, e: unknown): string;`;
+    const { writers: ws } = analyze(`${decl}
+      export function p(err: unknown, res: unknown, fb: string) {
+        console.error(JSON.stringify({ a: failureCode(err, res) }));
+        console.error(JSON.stringify({ a: failureCode(err, res, "settle_unpersisted") }));
+        console.error(JSON.stringify({ a: failureCode(err, res, "https://example.test/manage/abcdef123") }));
+        console.error(JSON.stringify({ a: failureCode(err, res, fb) }));
+        console.error(JSON.stringify({ a: dbErrorCode(err, ["https://example.test/x"]) }));
+        console.error(JSON.stringify({ a: boundedErrorLabel(err, "https://example.test/y") }));
+        console.error(JSON.stringify({ a: invitationEmailFailure("https://example.test/z", err) }));
+      }`);
+    expect(ws).toHaveLength(7);
+    const link = (w: Writer) => w.literals.map(literalViolation).filter(Boolean);
+    expect(link(ws[0]).concat(link(ws[1]))).toEqual([]);
+    expect(ws[0].unproven.concat(ws[1].unproven)).toEqual([]);
+    for (const i of [2, 4, 5, 6]) expect(link(ws[i]), `writer ${i}`).toEqual(["a link"]);
+    expect(ws[3].unproven).toEqual(["param fb"]);
+  });
+
+  it("only JSON.stringify and the built-in String are stringify; any other method of that name is an ordinary call (Codex P2 4370118063)", () => {
+    const { writers: ws } = analyze(`
+      export function s(diagnostic: { stringify(): string }, v: unknown) {
+        console.error(JSON.stringify({ a: "ok" }));
+        console.error(String("ok"));
+        console.error(diagnostic.stringify());
+        console.error(JSON.stringify({ a: diagnostic.stringify() }));
+        console.error(util.String(v));
+      }`);
+    expect(ws).toHaveLength(5);
+    expect(ws[0].unproven).toEqual([]);
+    expect(ws[1].unproven).toEqual([]);
+    expect(ws[2].unproven).toEqual(["call diagnostic.stringify()"]);
+    expect(ws[3].unproven).toEqual(["call diagnostic.stringify()"]);
+    expect(ws[4].unproven).toEqual(["call util.String()"]);
+  });
+
   it("an element access, a computed key and a spread of an unproven value are unproven", () => {
     const { writers: ws } = analyze(`
       export function k2(rows: string[], key: string, extra: object) {

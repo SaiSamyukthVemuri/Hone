@@ -72,7 +72,10 @@ const ERROR_NAME_RE = /^(?:e|err|error|\w*(?:Err|Error))$/;
 // there), and a function not listed has an unresolved result (fail closed).
 // `sanitizes: true` means the arguments are not written either: only the
 // bounded result is.
-export type VerifiedFunction = { file: string; returns: string; sanitizes?: true };
+// `passes`: for a sanitizer, the argument positions whose value is RETURNED
+// unchanged (a fallback, a caller-listed code). Those are judged like any
+// written value; only the other arguments are dropped (Codex P2 4370118061).
+export type VerifiedFunction = { file: string; returns: string; sanitizes?: true; passes?: readonly number[] };
 export const VERIFIED_FUNCTIONS: Readonly<Record<string, VerifiedFunction>> = {
   smsTypeForLog: { file: "lib/sms/send-appointment.ts", returns: "one of three SMS types, or \"unknown\"", sanitizes: true },
   smsAttemptForLog: { file: "lib/sms/send-appointment.ts", returns: "an integer 1-3, or null", sanitizes: true },
@@ -90,14 +93,14 @@ export const VERIFIED_FUNCTIONS: Readonly<Record<string, VerifiedFunction>> = {
   missingSuccessFields: { file: "app/reschedule/[token]/actions.ts", returns: "names from the constant REQUIRED_SUCCESS_FIELDS" },
   // #1138 (MSG-LOG-RAW-ERROR-2) owns "no raw error text anywhere"; these are its
   // classifiers, proved closed by tests/lib/logging/error-class.test.ts.
-  dbErrorCode: { file: "lib/logging/error-class.ts", returns: "a SQLSTATE / PostgREST code, a caller-listed synthetic code, or \"unknown\"", sanitizes: true },
+  dbErrorCode: { file: "lib/logging/error-class.ts", returns: "a SQLSTATE / PostgREST code, a caller-listed synthetic code, or \"unknown\"", sanitizes: true, passes: [1] },
   safeDbCode: { file: "lib/logging/error-class.ts", returns: "a SQLSTATE / PostgREST code, or \"unknown\"", sanitizes: true },
   thrownErrorClass: { file: "lib/logging/error-class.ts", returns: "one of THROWN_ERROR_CLASSES", sanitizes: true },
   stripeErrorFields: { file: "lib/logging/error-class.ts", returns: "{ stripeType, stripeCode } from a closed type list and a snake_case code shape", sanitizes: true },
-  failureCode: { file: "lib/logging/error-class.ts", returns: "a SQLSTATE / PostgREST code, a bounded result code, or the fallback", sanitizes: true },
-  boundedErrorLabel: { file: "lib/logging/error-class.ts", returns: "a snake_case machine label, or <fallback>:<thrown class>", sanitizes: true },
+  failureCode: { file: "lib/logging/error-class.ts", returns: "a SQLSTATE / PostgREST code, a bounded result code, or the fallback", sanitizes: true, passes: [2] },
+  boundedErrorLabel: { file: "lib/logging/error-class.ts", returns: "a snake_case machine label, or <fallback>:<thrown class>", sanitizes: true, passes: [1] },
   boundedErrorName: { file: "app/(app)/calendar/actions.ts", returns: "a name from LOGGABLE_ERROR_NAMES, \"other\" or \"non_error\"", sanitizes: true },
-  invitationEmailFailure: { file: "app/(app)/settings/team/actions.ts", returns: "team_invitation_email_failed:<kind>:<identifier-shaped name>:retryable=<boolean>", sanitizes: true },
+  invitationEmailFailure: { file: "app/(app)/settings/team/actions.ts", returns: "team_invitation_email_failed:<kind>:<identifier-shaped name>:retryable=<boolean>", sanitizes: true, passes: [0] },
   "Math.min": { file: "builtin", returns: "a number" },
 };
 // Array or string methods whose result, on a verified function's result, is
@@ -468,7 +471,10 @@ function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, dep
     if (ts.isPropertyAccessExpression(callee) && (calleeName === "toISOString" || calleeName === "getTime") && isProvenDate(callee.expression)) {
       return allow("date");
     }
-    if (calleeName === "stringify" || calleeName === "String") {
+    // Only the built-ins: `diagnostic.stringify()` is a call like any other
+    // (Codex P2 4370118063).
+    const calleeText = callee.getText();
+    if (calleeText === "JSON.stringify" || calleeText === "String") {
       e.arguments.forEach((a) => next(a));
       return allow("stringify");
     }
@@ -480,6 +486,7 @@ function walkValue(expr: ts.Expression, acc: Acc, skip: ReadonlySet<string>, dep
       // A sanitizer's input is not written; any other verified function's
       // inputs are read for names only, never as written values.
       if (!verified.sanitizes) e.arguments.forEach((a) => next(a, false));
+      else e.arguments.forEach((a, i) => { if (verified.passes?.includes(i)) next(a); });
       return allow("verified-function");
     }
     if (ts.isPropertyAccessExpression(callee)) next(callee.expression, false);
