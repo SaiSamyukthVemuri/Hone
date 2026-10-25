@@ -6,6 +6,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VARIANT="$HERE/run-window-read-macos.sh"
 ORIG="$HERE/run-window-read.sh"
 T="$(mktemp -d "${TMPDIR:-/tmp}/rwr-macos.XXXXXX")"
+T="$(cd "$T" && pwd -P)"
 trap 'rm -rf "$T"' EXIT
 pass=0; fail=0
 ok()  { pass=$((pass+1)); echo "ok   - $1"; }
@@ -28,6 +29,8 @@ echo "npx $*" >> "$STUB_LOG"
 echo '{"rows":[]}'
 STUB
 chmod +x "$T/bin/supabase" "$T/bin/npx"
+# A sha256sum shim for the PINNED runner only (it needs one; stock macOS has none). Last on PATH, so GNU's wins where it exists.
+mkdir -p "$T/shim"; printf '#!/bin/sh\nexec shasum -a 256 "$@"\n' > "$T/shim/sha256sum"; chmod +x "$T/shim/sha256sum"
 
 # A working directory shaped like the linked checkout.
 mkcwd() { # name [pooler-url-text]
@@ -94,6 +97,11 @@ echo "$(errtxt)" | grep -q "does not match MANIFEST" && ok "shasum: refusal text
 rm -f "$MP/shasum"
 check "no hash tool: refused" "$(RUN_PATH="$MP" run "$D/run-window-read-macos.sh" "$C" gate.sql)" 2
 errtxt | grep -q "neither sha256sum nor shasum" && ok "no hash tool: names the reason" || bad "no hash tool: names the reason" "$(errtxt)"
+
+# the problem the variant fixes: the pinned runner cannot run where there is no sha256sum
+MP2="$T/minpath2"; mkdir -p "$MP2"; for t in awk sed tr grep cut wc mktemp date mv printenv basename dirname cat shasum perl env head rm sh bash; do p="$(command -v "$t" 2>/dev/null || true)"; [ -n "$p" ] && ln -sf "$p" "$MP2/$t"; done
+Dp="$(mkdirs pinned "$ORIG" "$GOOD")"
+check "pinned runner with no sha256sum on PATH: fails (127), which is why the variant exists" "$(BIN="" RUN_PATH="$MP2:$T/bin" run "$Dp/run-window-read.sh" "$C" gate.sql)" 127
 
 # ---- 4. HONE_SUPABASE_BIN refusals ----
 refuse_case() { # label expected-substring [ENVX]
@@ -175,7 +183,7 @@ lex() { # label sql expected-exit
   dv="$(mkdirs "lv$RANDOM" "$VARIANT" "$2")"; do_="$(mkdirs "lo$RANDOM" "$ORIG" "$2")"; cc="$(mkcwd "l$RANDOM")"
   rv="$(run "$dv/run-window-read-macos.sh" "$cc" gate.sql)"; ev="$(errtxt | sed 's/ .*//' | head -1)"; evt="$(errtxt | grep REFUSED | head -1)"
   # the pinned runner needs npx (fake on PATH) and no pooler/password: it does not have those guards, so give it the same good env
-  ro="$(BIN="" RUN_PATH="$T/bin:$PATH" run "$do_/run-window-read.sh" "$cc" gate.sql)"; eot="$(errtxt | grep REFUSED | head -1)"
+  ro="$(BIN="" RUN_PATH="$T/bin:$PATH:$T/shim" run "$do_/run-window-read.sh" "$cc" gate.sql)"; eot="$(errtxt | grep REFUSED | head -1)"
   check "lexical [$1]: variant exit" "$rv" "$3"
   check "lexical [$1]: pinned runner exit (same verdict)" "$ro" "$3"
   [ "$3" = 2 ] && check "lexical [$1]: same refusal text" "$evt" "$eot"
@@ -207,7 +215,7 @@ cc="$(mkcwd real)"; n=0; same=0
 for f in $(awk '{print $2}' "$HERE/MANIFEST.sha256"); do
   n=$((n+1))
   rv="$(run "$HERE/run-window-read-macos.sh" "$cc" "$f")"
-  ro="$(BIN="" RUN_PATH="$T/bin:$PATH" run "$HERE/run-window-read.sh" "$cc" "$f")"
+  ro="$(BIN="" RUN_PATH="$T/bin:$PATH:$T/shim" run "$HERE/run-window-read.sh" "$cc" "$f")"
   [ "$rv" = 0 ] && [ "$ro" = 0 ] && same=$((same+1)) || bad "real gate file $f: variant $rv, pinned $ro" "$(errtxt)"
 done
 check "real manifest: every listed file is admitted by both runners" "$same/$n" "$n/$n"
