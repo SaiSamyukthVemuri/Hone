@@ -965,6 +965,7 @@ export default async function ClientCheatSheetPage({
               that could change how today's treatment is delivered. */}
           <ClientPinnedNotesCard
             clientId={client.id}
+            viewer={{ isOwner: practitioner.role === "owner", practitionerId: practitioner.id }}
             notes={pinnedNotes}
             addAction={addClientPinnedNoteAction}
             editAction={editClientPinnedNoteAction}
@@ -1344,27 +1345,33 @@ export default async function ClientCheatSheetPage({
                         <div className="text-xs text-neutral-500">{p.notes}</div>
                       )}
                     </div>
-                    <form action={deleteClientPricingAction}>
-                      <input type="hidden" name="id" value={p.id} />
-                      <input type="hidden" name="client_id" value={client.id} />
-                      <button
-                        type="submit"
-                        aria-label={`Delete ${p.service_name} pricing`}
-                        className="rounded-md border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 dark:border-neutral-700 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
-                      >
-                        ✕
-                      </button>
-                    </form>
+                    {/* HON-44: price changes are owner-only (the action refuses
+                        a non-owner too); the control is withdrawn, not disabled. */}
+                    {practitioner.role === "owner" && (
+                      <form action={deleteClientPricingAction}>
+                        <input type="hidden" name="id" value={p.id} />
+                        <input type="hidden" name="client_id" value={client.id} />
+                        <button
+                          type="submit"
+                          aria-label={`Delete ${p.service_name} pricing`}
+                          className="rounded-md border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 dark:border-neutral-700 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
+                        >
+                          ✕
+                        </button>
+                      </form>
+                    )}
                   </li>
                 ))}
               </ul>
             )}
-            <div className="border-t border-neutral-200 pt-3 dark:border-neutral-800">
-              <AddPricingForm
-                clientId={client.id}
-                action={addClientPricingAction}
-              />
-            </div>
+            {practitioner.role === "owner" && (
+              <div className="border-t border-neutral-200 pt-3 dark:border-neutral-800">
+                <AddPricingForm
+                  clientId={client.id}
+                  action={addClientPricingAction}
+                />
+              </div>
+            )}
           </section>
         </>
       )}

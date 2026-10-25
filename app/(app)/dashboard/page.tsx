@@ -453,8 +453,13 @@ export default async function DashboardPage({
   // and not the linked-session chain immediately below. They used to be three
   // separate awaits placed after that chain, so the card's own preparation
   // facts arrived four waves deep.
+  // HON-44 (Sam decision 12): payment state and checkout are owner-only. A
+  // non-owner never queries payment_charge_attempts or client_pricing here (the
+  // read is not issued), and the row below renders no checkout control for them.
   const paymentStatesPromise = settleLater(
-    getAppointmentPaymentStates(studio.id, apptIds, studio.timezone),
+    isOwner
+      ? getAppointmentPaymentStates(studio.id, apptIds, studio.timezone)
+      : Promise.resolve(new Map<string, AppointmentPaymentState>()),
   );
   const beforeTodayPreviewsPromise = settleLater(
     viewingToday
@@ -856,6 +861,7 @@ export default async function DashboardPage({
                   intakeStatus={intakeByClient.get(appt.client_id) ?? null}
                   linkedSession={sessionByAppointment.get(appt.id) ?? null}
                   paymentState={paymentStates.get(appt.id) ?? "unavailable"}
+                  isOwner={isOwner}
                   historyAsked={viewingToday}
                   isCurrent={currentAppointmentIdSet.has(appt.id)}
                   cardOnFile={resolveCardOnFileStatus(
@@ -969,6 +975,7 @@ function AppointmentRow({
   intakeStatus,
   linkedSession,
   paymentState,
+  isOwner,
   prepSummary,
   historyAsked,
   isCurrent,
@@ -984,6 +991,8 @@ function AppointmentRow({
   intakeStatus: ClientIntakeForm["status"] | null;
   linkedSession: { sessionId: string; hasChartedArea: boolean } | null;
   paymentState: AppointmentPaymentState;
+  // The viewer is the studio owner. Checkout is owner-only (HON-44).
+  isOwner: boolean;
   // Dashboard V2 Part 2A: the #517 previous-treatment model for THIS
   // appointment, already built by the page from one batched read. Keyed by
   // APPOINTMENT id upstream, so two same-client appointments each get their own
@@ -1398,11 +1407,13 @@ function AppointmentRow({
       <div className="flex w-full flex-col items-start gap-1 self-start pl-24 sm:w-auto sm:items-end sm:pl-0">
         {/* Quick checkout (Chloe): take payment from the roster without opening
             charting. Paid/Processing/Refunded show a status badge instead. */}
-        <AppointmentCheckoutCell
-          appointmentId={appt.id}
-          status={appt.status}
-          paymentState={paymentState}
-        />
+        {isOwner && (
+          <AppointmentCheckoutCell
+            appointmentId={appt.id}
+            status={appt.status}
+            paymentState={paymentState}
+          />
+        )}
         {/* UI-01B: PendingLink, not Link. This is a SEGMENT change, so no
             route boundary is involved and — with zero loading.tsx in the tree —
             React keeps this row mounted while the destination RSC is in flight.
