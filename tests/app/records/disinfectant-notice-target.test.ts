@@ -27,4 +27,12 @@ describe("records page: the disinfectant notice's target record", () => {
     expect(page).toContain("action={updateDisinfectantRecordAction}");
     expect(page).toContain("<EditDisinfectantForm");
   });
+  it("fetches the ONE requested record when it is not among the listed rows, and builds the audit from the placed rows", () => {
+    expect(page).toContain("getDisinfectantRecordForNotice(studioId, focusRecordId)");
+    expect(page).toContain("placeFocusedRecord(");
+    expect(page).toMatch(/getAuditEventsByRecord\(\s*studioId,\s*"disinfectant",\s*records\.map/);
+  });
+  it("never echoes the requested id into the page", () => {
+    expect(page).not.toMatch(/\{focusRecordId\}|\{sp\.record\}/);
+  });
 });
