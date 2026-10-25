@@ -113,7 +113,7 @@ jobs:
           log="$RUNNER_TEMP/supabase-start.log"
           if [ "$OUTCOME" = success ]; then
             c="$(docker ps --format '{{.Names}}' | grep '^supabase_db_' | head -1)"
-            v="$(docker exec "$c" psql -U postgres -At -c 'select count(*)||" migrations, max "||max(version) from supabase_migrations.schema_migrations')"
+            v="$(docker exec "$c" psql -U postgres -At -c "select count(*) || ' migrations, max ' || max(version) from supabase_migrations.schema_migrations")"
             echo "RESULT [$CELL] APPLIED: $v"
           else
             echo "RESULT [$CELL] FAILED TO APPLY"
