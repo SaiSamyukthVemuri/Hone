@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // SEC-004. Drives the REAL publicBookAppointmentAction with tripwires (same
 // scaffold as new-client-waitlist-gate.test.ts). Expiry and single use of the
@@ -358,7 +360,7 @@ describe("SEC-004: knowing an email does not attach a public booking to a client
     expectNothingMutated();
   });
 
-  it("STAFF LINK RACE: the client is archived/linked between the lookup and the commit -> the command's own refusal, same copy, nothing booked", async () => {
+  it("RACE, ARCHIVED WINNER: the client is archived between the lookup and the commit -> the command's own refusal, same copy, nothing booked", async () => {
     scenario.existingClientOnFile = false;
     scenario.rpcResult = "archived_client_collision";
     const r = await publicBookAppointmentAction(form());
@@ -397,5 +399,35 @@ describe("SEC-004: knowing an email does not attach a public booking to a client
     );
     expect(r.ok === false && r.error).not.toBe(ARCHIVED_COPY);
     expect(rpcCalls.length).toBeGreaterThan(0);
+  });
+
+  // KNOWN RESIDUAL - PINNED, NOT HIDDEN (Insurance PEER-1132 F1).
+  //
+  // The action's lookup and the database commit are not one step. An ACTIVE
+  // client with the submitted email that appears in between (staff "Add
+  // Client" takes no studio lock; a concurrent public booking can create one)
+  // is ADOPTED by create_public_appointment_for_new_client, and the booking
+  // lands on that client. Only an ARCHIVED winner is refused. The DB-side fix
+  // is the 0256 request; WHEN IT LANDS, FLIP THESE TWO TESTS to expect the
+  // refusal. They exist so the window is documented, not rediscovered.
+  it("KNOWN RESIDUAL: an ACTIVE client created between the lookup and the commit is adopted by the command (booked, not refused)", async () => {
+    scenario.existingClientOnFile = false; // the lookup saw nobody...
+    admissionOverride = { ok: true, mode: "open", source: "persisted" };
+    // ...but the command, under its lock, resolves an active client and books on it.
+    const r = await publicBookAppointmentAction(form({ email: "raced@example.test" }));
+    expect(r.ok, "documents the residual: this is an attach, closed only by 0256").toBe(true);
+    expect(rpcCalls).toEqual(["create_public_appointment_for_new_client"]);
+  });
+
+  it("KNOWN RESIDUAL (database side): 0204's command refuses only an ARCHIVED winner and adopts an active one", () => {
+    const sql = readFileSync(join(process.cwd(), "supabase/migrations/0204_new_client_admission_mode.sql"), "utf8");
+    const start = sql.indexOf("function public.create_public_appointment_for_new_client");
+    const body = sql.slice(start, sql.indexOf("\n$$;", start));
+    // The lookup under the lock keeps an ACTIVE row's id and carries on...
+    expect(body).toMatch(/select c\.id, c\.archived_at is not null\s+into v_client_id, v_archived/);
+    // ...and the only identity refusal is the archived one.
+    const refusals = [...body.matchAll(/select '([a-z_]+)'::text/g)].map((m) => m[1]);
+    expect(refusals).toContain("archived_client_collision");
+    expect(refusals).not.toContain("existing_client_requires_confirmation");
   });
 });

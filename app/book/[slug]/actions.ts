@@ -839,7 +839,11 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // client's email could put appointments on their record, stamp SMS consent
   // against it and have their reminders sent to that client.
   //
-  // So a public submission NEVER attaches to an existing client. Ownership is
+  // So this ACTION never attaches a public submission to an existing client.
+  // (The database command still re-resolves the email under its own lock: an
+  // ACTIVE client that appears between this lookup and that commit is adopted,
+  // a narrow residual that needs the DB-side refusal requested as 0256 and is
+  // pinned by tests/app/book/sec-004-public-booking-no-attach.test.ts.) Ownership is
   // proved where it already is: the secure client portal's emailed single-use
   // link, from which a returning client books (app/portal/rebook-actions.ts).
   // The one exception is an AUTHORIZED invitation, whose recipient hash already
