@@ -316,7 +316,10 @@ export default async function DashboardPage({
       : Promise.resolve(null as NewClientReadiness | null),
   );
   const practiceMetricsPromise = settleLater(
-    getPracticeDashboardMetrics(studio.id, studio.timezone, period),
+    // HON-44: studio money totals are owner-only, refused at the read.
+    getPracticeDashboardMetrics(studio.id, studio.timezone, period, {
+      viewerIsOwner: isOwner,
+    }),
   );
   const clientsNeedingAttentionPromise = settleLater(
     getClientsNeedingAttention(studio.id),
