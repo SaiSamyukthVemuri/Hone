@@ -127,8 +127,9 @@ export async function GET(req: Request) {
         failures.push({
           rule_id: r.id,
           studio_id: r.studio_id,
-          error: rpcErr.message,
-          code: rpcErr.code ?? null,
+          // Closed code only: this array is the response body (and failure_codes below).
+          error: dbErrorCode(rpcErr),
+          code: dbErrorCode(rpcErr),
         });
         continue;
       }

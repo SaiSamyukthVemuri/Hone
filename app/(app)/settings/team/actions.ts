@@ -9,6 +9,7 @@ import { resend, FROM_ADDRESS } from "@/lib/email/client";
 import { buildInvitationEmail } from "@/lib/email/templates/invitation";
 import { safeLog } from "@/lib/logging/safe-log";
 import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_ROLES: ReadonlyArray<PractitionerRole> = ["owner", "practitioner"];
@@ -31,10 +32,12 @@ type OwnerContext = {
   studioName: string;
 };
 
+const OWNER_ONLY_MESSAGE = "Only studio owners can manage the team.";
+
 async function assertOwner(): Promise<OwnerContext> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    throw new Error("Only studio owners can manage the team.");
+    throw new Error(OWNER_ONLY_MESSAGE);
   }
   return {
     studioId: studio.id,
@@ -128,7 +131,7 @@ export async function invitePractitionerAction(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : "Unauthorized.",
+      error: err instanceof Error && err.message === OWNER_ONLY_MESSAGE ? OWNER_ONLY_MESSAGE : "Unauthorized.",
     };
   }
   const { studioId, practitionerId, inviterName, studioName } = context;
@@ -187,7 +190,7 @@ export async function invitePractitionerAction(
         error: `${email} already has a pending invite at another studio. Ask them to accept or revoke that one first.`,
       };
     }
-    return { ok: false, error: `Failed to send invite: ${error.message}` };
+    return { ok: false, error: userFacingDbFailure("send the invite", error, "team_invite_insert_failed") };
   }
 
   // Fire-and-forget the email. Any failure stays inside sendInvitationEmail
