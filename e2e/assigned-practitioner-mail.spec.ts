@@ -33,7 +33,8 @@ test.beforeAll(async () => {
   seed = await seedE2eStudio();
   serviceId = await getE2eServiceId(seed.studioId);
   ({ clientId } = await seedE2eClient(seed));
-  B = await seedE2eMember(seed);
+  // The lane's fake Resend REJECTS by default; `success+` asks it to accept B's mail.
+  B = await seedE2eMember(seed, { recipientModePrefix: "success+" });
   await setStudioCapacityEnabled(seed.studioId, true);
   await setStudioCapacityBookingEnabled(seed.studioId, true);
   await seedServiceEligibility(seed.studioId, serviceId, B.practitionerId);
@@ -74,6 +75,13 @@ test("owner books for B: B is emailed, the owner is not, and the detail page nam
   const toB = () =>
     readResendLedger(mark).filter((r) => r.to.toLowerCase() === B.email.toLowerCase());
   await expect.poll(() => toB().length, { timeout: 20_000, message: "no email to the assigned practitioner" }).toBeGreaterThan(0);
+  // The ledger records an attempt BEFORE its outcome is decided, so a row alone
+  // proves only recipient selection. Every attempt to B must have been run in
+  // the accepting mode (the fake returns error: null), i.e. an ACCEPTED send.
+  expect(
+    toB().map((r) => r.mode),
+    "B's notification was not an accepted send",
+  ).toEqual(toB().map(() => "success"));
 
   // The owner who made the booking did NOT receive the practitioner notification.
   const ownerSubjects = readResendLedger(mark)
