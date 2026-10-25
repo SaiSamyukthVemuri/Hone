@@ -102,6 +102,20 @@ function summarise() {
 }
 const clip = (s: unknown) => String(s ?? "").slice(0, 220);
 
+// B-OLD's own log lines for a call (synthetic data only): the app-side signal an
+// operator would see in the runtime log.
+async function withLogs<T>(fn: () => Promise<T>): Promise<{ value: T; logs: string[] }> {
+  const logs: string[] = [];
+  const spy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+    logs.push(clip(a.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ")).replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, "<uuid>"));
+  });
+  try {
+    return { value: await fn(), logs: logs.slice(0, 6) };
+  } finally {
+    spy.mockRestore();
+  }
+}
+
 type Caught = { ok: true; value: unknown } | { ok: false; code: string; message: string };
 async function attempt(fn: () => Promise<unknown>): Promise<Caught> {
   try {
@@ -135,7 +149,8 @@ async function attemptRow(id: string) {
 }
 async function eventRow(eventId: string) {
   const r = await adminQuery(
-    `select processed_at is not null as processed, processing_claim_token is not null as claimed, error
+    `select processed_at is not null as processed, processing_claim_token is not null as claimed, error,
+            payload_summary
        from public.stripe_events where stripe_event_id = $1`,
     [eventId],
   );
@@ -143,6 +158,7 @@ async function eventRow(eventId: string) {
 }
 
 async function setJurisdiction(studioId: string, country: "CA" | "US") {
+  if (!hasJurisdiction) return;
   await adminQuery(
     `insert into public.studio_payment_jurisdictions
        (studio_id, payment_country, payment_currency, source, verification_reference)
@@ -169,7 +185,7 @@ async function legacyAttempt(sc: PaymentScenario, reason: "session_payment" | "n
     sessionId = null;
   }
   return adminTx(async (q) => {
-    await q(`alter table public.payment_charge_attempts disable trigger payment_charge_attempts_jurisdiction_guard`);
+    if (hasJurisdiction) await q(`alter table public.payment_charge_attempts disable trigger payment_charge_attempts_jurisdiction_guard`);
     const r = await q(
       `insert into public.payment_charge_attempts
          (studio_id, charge_reason, client_id, session_id, appointment_id, created_by_practitioner_id,
@@ -181,7 +197,7 @@ async function legacyAttempt(sc: PaymentScenario, reason: "session_payment" | "n
        reason === "session_payment" ? sc.expectedAmountMinor : 5000, status, c.id, c.sig,
        c.stripe_account_id, c.stripe_customer_id, c.stripe_payment_method_id, pi],
     );
-    await q(`alter table public.payment_charge_attempts enable trigger payment_charge_attempts_jurisdiction_guard`);
+    if (hasJurisdiction) await q(`alter table public.payment_charge_attempts enable trigger payment_charge_attempts_jurisdiction_guard`);
     return r.rows[0].id as string;
   });
 }
@@ -262,14 +278,14 @@ async function deliver(type: string, object: Record<string, unknown>, account: s
     request: { id: null, idempotency_key: null },
   });
   const header = sig.webhooks.generateTestHeaderString({ payload, secret: WEBHOOK_SECRET });
-  const res = await POST(new Request("http://localhost/api/stripe/webhook", {
+  const { value: res, logs } = await withLogs(() => POST(new Request("http://localhost/api/stripe/webhook", {
     method: "POST",
     headers: { "stripe-signature": header, "content-type": "application/json" },
     body: payload,
-  }));
+  })));
   let body: unknown = null;
   try { body = await res.json(); } catch { /* none */ }
-  return { eventId, status: res.status, body: clip(JSON.stringify(body)) };
+  return { eventId, status: res.status, body: clip(JSON.stringify(body)), logs };
 }
 
 async function acctOf(sc: PaymentScenario): Promise<string> {
@@ -278,146 +294,151 @@ async function acctOf(sc: PaymentScenario): Promise<string> {
 }
 
 // ---- scenario ------------------------------------------------------------
+let hasJurisdiction = true; // false on the 0212 CONTROL run (no 0214 objects)
+
+async function hook(S: string, id: string, label: string, d: { status: number; body: string; eventId: string; logs: string[] }, extra: Record<string, unknown> = {}) {
+  rec(S, id, label, d.status === 500 ? "refused" : "succeeded", { http: d.status, body: d.body, event: await eventRow(d.eventId), logs: d.logs, ...extra });
+}
+
+async function execute(S: string, id: string, label: string, sc: PaymentScenario, attemptId: string): Promise<boolean> {
+  const before = await ledger();
+  const { runSessionPaymentCharge } = await import("@/lib/billing/session-payment-charge");
+  const { value: r, logs } = await withLogs(() => attempt(() => runSessionPaymentCharge({ attemptId, studioId: sc.studioId, practitionerId: sc.practitionerId })));
+  const after = await ledger();
+  const row = await attemptRow(attemptId);
+  const pis = count(after, "pi_create") - count(before, "pi_create");
+  const consistent = pis === 0 || (row && row.pi && ["succeeded", "pending_stripe", "failed"].includes(row.status));
+  const outcome: Outcome = !r.ok ? "harness_error" : pis > 0 && !consistent ? "partial" : (r.value as { ok?: boolean }).ok ? "succeeded" : "refused";
+  rec(S, id, label, outcome, { result: clip(JSON.stringify(r.ok ? r.value : r)), fakePaymentIntents: pis, row, logs });
+  return row?.status === "succeeded" && !!row.pi;
+}
+
 async function scenario(name: string, jur: null | "CA" | "US") {
   const S = name;
   const sc = await seedEligibleQuickCheckoutScenario({ label: name.toLowerCase() });
   if (jur) await setJurisdiction(sc.studioId, jur);
   const account = await acctOf(sc);
+  const feeMethod = jur === "US" ? "paid_other_external" : "paid_e_transfer";
 
-  // W1 session charge prepare (quick checkout and the session page share it)
+  // W1/W2 prepare (INSERT attempt)
   const p1 = await prepareSession(sc);
-  if (p1.ok) rec(S, "W1", "session charge prepare (INSERT attempt, currency cad)", "succeeded", { attemptId: "<id>" });
-  else rec(S, "W1", "session charge prepare (INSERT attempt, currency cad)", DB_REFUSAL.test(p1.message) ? "refused" : "harness_error", { code: p1.code, error: p1.message });
-
-  // W2 manual fee prepare
+  rec(S, "W1", "session charge prepare (INSERT attempt, currency cad)", p1.ok ? "succeeded" : DB_REFUSAL.test(p1.message) ? "refused" : "harness_error", p1.ok ? {} : { code: p1.code, error: p1.message });
   const f1 = await prepareFee(sc);
-  if (f1.ok) rec(S, "W2", "manual fee prepare (INSERT attempt)", "succeeded", {});
-  else rec(S, "W2", "manual fee prepare (INSERT attempt)", DB_REFUSAL.test(f1.message) ? "refused" : "harness_error", { code: f1.code, error: f1.message });
+  rec(S, "W2", "manual fee prepare (INSERT attempt)", f1.ok ? "succeeded" : DB_REFUSAL.test(f1.message) ? "refused" : "harness_error", f1.ok ? {} : { code: f1.code, error: f1.message });
 
-  // W3 settlements: record cash, waive, supersede (authenticated owner, as PostgREST would)
-  for (const [id, label, sql, args] of [
-    ["W3a", "settlement record (paid_cash)", `select * from public.record_appointment_settlement($1,$2,'paid_cash',$3,null,false)`, null],
-    ["W3b", "settlement waive", `select * from public.waive_appointment_fee($1,$2,$3,null,false)`, null],
+  // W3 settlements as the authenticated owner (cash / external / other, waive, supersede)
+  for (const [id, label, sql] of [
+    ["W3a", "settlement record (paid_cash)", `select * from public.record_appointment_settlement($1,$2,'paid_cash',$3,null,false)`],
+    ["W3b", "settlement waive", `select * from public.waive_appointment_fee($1,$2,$3,null,false)`],
   ] as const) {
-    void args;
     const appt = await newAppointment(sc);
     const r = await attempt(() => asUser(sc.practitionerUserId, (q) => q(sql, [sc.studioId, appt, 5000])));
-    if (r.ok) {
-      const row = ((r.value as { rows: Array<Record<string, unknown>> }).rows[0] ?? {});
-      const written = await adminQuery(`select count(*)::int as n from public.appointment_settlements where appointment_id=$1`, [appt]);
-      rec(S, id, label, written.rows[0].n > 0 ? "succeeded" : "no_effect", { result: row.result ?? null, rows: written.rows[0].n });
-    } else {
-      const written = await adminQuery(`select count(*)::int as n from public.appointment_settlements where appointment_id=$1`, [appt]);
-      rec(S, id, label, DB_REFUSAL.test(r.message) ? (written.rows[0].n === 0 ? "refused" : "partial") : "harness_error", { code: r.code, error: r.message, rows: written.rows[0].n });
-    }
+    const n = (await adminQuery(`select count(*)::int as n from public.appointment_settlements where appointment_id=$1`, [appt])).rows[0].n;
+    if (r.ok) rec(S, id, label, n > 0 ? "succeeded" : "no_effect", { result: ((r.value as { rows: Array<Record<string, unknown>> }).rows[0] ?? {}).result ?? null, rows: n });
+    else rec(S, id, label, DB_REFUSAL.test(r.message) ? (n === 0 ? "refused" : "partial") : "harness_error", { code: r.code, error: r.message, rows: n });
   }
   {
-    // supersede needs an existing settlement; exists only when W3a succeeded.
     const appt = await newAppointment(sc);
     const first = await attempt(() => asUser(sc.practitionerUserId, (q) => q(`select * from public.record_appointment_settlement($1,$2,'paid_cash',5000,null,false)`, [sc.studioId, appt])));
     if (first.ok) {
       const sid = (await adminQuery(`select id from public.appointment_settlements where appointment_id=$1 order by recorded_at desc limit 1`, [appt])).rows[0]?.id;
-      const r = await attempt(() => asUser(sc.practitionerUserId, (q) => q(`select * from public.supersede_appointment_settlement($1,$2,'paid_e_transfer',5000,'rehearsal',null,false)`, [sc.studioId, sid])));
+      const r = await attempt(() => asUser(sc.practitionerUserId, (q) => q(`select * from public.supersede_appointment_settlement($1,$2,$3,5000,'rehearsal',null,false)`, [sc.studioId, sid, feeMethod])));
       rec(S, "W3c", "settlement supersede", r.ok ? "succeeded" : DB_REFUSAL.test(r.message) ? "refused" : "harness_error", r.ok ? {} : { code: r.code, error: r.message });
     } else {
       rec(S, "W3c", "settlement supersede", "no_effect", { reason: "no settlement could be recorded first", firstError: first.message });
     }
   }
 
-  // W4 execute an attempt (quick checkout / session charge / manual fee charge)
-  let chargedId: string | null = null;
-  const toRun: Array<[string, string, string | null]> = [];
-  if (p1.ok) toRun.push(["W4a", "session charge execute (prepared under 0246)", p1.value as string]);
+  // W4 execute attempts: prepared under 0246 (when the prepare succeeded) and, with no
+  // jurisdiction row, attempts that existed BEFORE S1.
+  const charged: string[] = [];
+  const queue: Array<[string, string, string]> = [];
+  if (p1.ok) queue.push(["W4a", "session charge execute (prepared under 0246)", p1.value as string]);
+  if (f1.ok) queue.push(["W4d", "manual fee charge execute (prepared under 0246)", f1.value as string]);
   if (!jur) {
-    const legacy = await legacyAttempt(sc, "session_payment", "ready", null);
-    toRun.push(["W4b", "session charge execute (attempt prepared BEFORE S1)", legacy]);
-    const legacyFee = await legacyAttempt(sc, "no_show_fee", "ready", null);
-    toRun.push(["W4c", "manual fee charge execute (attempt prepared BEFORE S1)", legacyFee]);
+    queue.push(["W4b", "session charge execute (attempt prepared BEFORE S1)", await legacyAttempt(sc, "session_payment", "ready", null)]);
+    queue.push(["W4c", "manual fee charge execute (attempt prepared BEFORE S1)", await legacyAttempt(sc, "no_show_fee", "ready", null)]);
   }
-  for (const [id, label, attemptId] of toRun) {
-    if (!attemptId) continue;
-    const before = await ledger();
-    const { runSessionPaymentCharge } = await import("@/lib/billing/session-payment-charge");
-    const r = await attempt(() => runSessionPaymentCharge({ attemptId, studioId: sc.studioId, practitionerId: sc.practitionerId }));
-    const after = await ledger();
-    const row = await attemptRow(attemptId);
-    const piCreated = count(after, "paymentIntents") - count(before, "paymentIntents");
-    const consistent = piCreated === 0 || (row && row.pi && (row.status === "succeeded" || row.status === "pending_stripe" || row.status === "failed"));
-    const outcome: Outcome = !r.ok ? "harness_error"
-      : piCreated > 0 && !consistent ? "partial"
-      : (r.value as { ok?: boolean }).ok ? "succeeded" : "refused";
-    rec(S, id, label, outcome, {
-      result: clip(JSON.stringify(r.ok ? r.value : r)), fakeStripeCalls: after.length - before.length, fakePaymentIntents: piCreated, row,
-    });
-    if (row?.status === "succeeded" && row.pi && !chargedId) chargedId = attemptId;
-  }
+  for (const [id, label, aid] of queue) if (await execute(S, id, label, sc, aid)) charged.push(aid);
 
-  // W5 success webhook for a charged attempt; W6 refund; W7 charge.refunded webhook
-  if (chargedId) {
-    const row = await attemptRow(chargedId);
-    const { eventId, status, body } = await deliver("payment_intent.succeeded", {
-      id: row.pi, object: "payment_intent", status: "succeeded", amount: sc.expectedAmountMinor, currency: "cad",
-      latest_charge: row.ch ?? `ch_rehearsal_${randomUUID().slice(0, 8)}`,
-      metadata: { hone_session_payment_charge_attempt_id: chargedId, hone_studio_id: sc.studioId, hone_client_id: sc.clientId, hone_environment: "test" },
+  // W5 success webhook for an attempt B-OLD's executor already marked succeeded (idempotent no-op expected)
+  if (charged[0]) {
+    const row = await attemptRow(charged[0]);
+    const d = await deliver("payment_intent.succeeded", {
+      id: row.pi, object: "payment_intent", status: "succeeded", amount: sc.expectedAmountMinor, currency: "cad", latest_charge: row.ch,
+      metadata: { hone_session_payment_charge_attempt_id: charged[0], hone_studio_id: sc.studioId, hone_client_id: sc.clientId, hone_environment: "test" },
     }, account);
-    const ev = await eventRow(eventId);
-    rec(S, "W5", "payment_intent.succeeded webhook", status === 500 ? "refused" : "succeeded", { http: status, body, event: ev, attemptAfter: await attemptRow(chargedId) });
+    await hook(S, "W5", "payment_intent.succeeded webhook (attempt already succeeded)", d, { attemptAfter: await attemptRow(charged[0]) });
+  }
+  // W5b success webhook for an attempt NOT yet reconciled (unknown outcome: pending_stripe) -> reaches the reconciler
+  if (!jur) {
+    const pi = `pi_test_rehearsal_pending_${randomUUID().slice(0, 8)}`;
+    const aid = await legacyAttempt(sc, "no_show_fee", "pending_stripe", pi);
+    const before = await attemptRow(aid);
+    const d = await deliver("payment_intent.succeeded", {
+      id: pi, object: "payment_intent", status: "succeeded", amount: 5000, currency: "cad", latest_charge: `ch_test_rehearsal_${randomUUID().slice(0, 8)}`,
+      metadata: { hone_session_payment_charge_attempt_id: aid, hone_studio_id: sc.studioId, hone_client_id: sc.clientId, hone_environment: "test" },
+    }, account);
+    const after = await attemptRow(aid);
+    const unchanged = JSON.stringify(before) === JSON.stringify(after);
+    rec(S, "W5b", "payment_intent.succeeded webhook (attempt still pending_stripe)", d.status === 500 ? (unchanged ? "refused" : "partial") : "succeeded",
+      { http: d.status, body: d.body, event: await eventRow(d.eventId), logs: d.logs, attemptBefore: before, attemptAfter: after });
+  }
 
+  // W6 refund of a charged attempt
+  if (charged[0]) {
     const { refundPaymentChargeAttempt } = await import("@/lib/billing/payment-refund");
     const before = await ledger();
-    const rr = await attempt(() => refundPaymentChargeAttempt({ attemptId: chargedId!, studioId: sc.studioId, practitionerId: sc.practitionerId, internalNote: null }));
+    const { value: rr, logs } = await withLogs(() => attempt(() => refundPaymentChargeAttempt({ attemptId: charged[0], studioId: sc.studioId, practitionerId: sc.practitionerId, internalNote: null })));
     const after = await ledger();
-    const rrow = await attemptRow(chargedId);
-    const refunds = count(after, "refunds") - count(before, "refunds");
-    const consistent = refunds === 0 || (rrow?.refund_id && rrow.refund_status);
+    const rrow = await attemptRow(charged[0]);
+    const refunds = count(after, "refund_create") - count(before, "refund_create");
+    const consistent = refunds === 0 || (rrow?.refund_id && rrow.refund_status === "succeeded");
     rec(S, "W6", "refund (refundPaymentChargeAttempt)", !rr.ok ? "harness_error" : refunds > 0 && !consistent ? "partial" : (rr.value as { ok?: boolean }).ok ? "succeeded" : "refused",
-      { result: clip(JSON.stringify(rr.ok ? rr.value : rr)), fakeRefunds: refunds, row: rrow });
-
-    const refundObj = { id: rrow?.refund_id ?? `re_rehearsal_${randomUUID().slice(0, 8)}`, object: "refund", amount: sc.expectedAmountMinor, status: "succeeded", payment_intent: row.pi, charge: row.ch };
-    const cr = await deliver("charge.refunded", {
-      id: row.ch ?? "ch_rehearsal", object: "charge", amount: sc.expectedAmountMinor, amount_refunded: sc.expectedAmountMinor, currency: "cad",
-      refunded: true, payment_intent: row.pi, refunds: { object: "list", data: [refundObj] },
+      { result: clip(JSON.stringify(rr.ok ? rr.value : rr)), fakeRefunds: refunds, row: rrow, logs });
+  }
+  // W7 charge.refunded webhook on a SECOND charged attempt with no prior refund (direct writer)
+  if (charged[1]) {
+    const row = await attemptRow(charged[1]);
+    const amount = (await adminQuery(`select amount_cents as a from public.payment_charge_attempts where id=$1`, [charged[1]])).rows[0].a;
+    const d = await deliver("charge.refunded", {
+      id: row.ch, object: "charge", amount, amount_refunded: amount, currency: "cad", refunded: true, payment_intent: row.pi,
+      refunds: { object: "list", data: [{ id: `re_test_rehearsal_${randomUUID().slice(0, 8)}`, object: "refund", amount, status: "succeeded", payment_intent: row.pi, charge: row.ch }] },
       metadata: { hone_studio_id: sc.studioId },
     }, account);
-    rec(S, "W7", "charge.refunded webhook (direct writer)", cr.status === 500 ? "refused" : "succeeded", { http: cr.status, body: cr.body, event: await eventRow(cr.eventId), attemptAfter: await attemptRow(chargedId) });
-  } else {
-    rec(S, "W5", "payment_intent.succeeded webhook", "no_effect", { reason: "no charge executed in this scenario" });
-    rec(S, "W6", "refund (refundPaymentChargeAttempt)", "no_effect", { reason: "no charged attempt" });
-    rec(S, "W7", "charge.refunded webhook (direct writer)", "no_effect", { reason: "no charged attempt" });
+    await hook(S, "W7", "charge.refunded webhook (direct writer, no prior refund)", d, { attemptBefore: row, attemptAfter: await attemptRow(charged[1]) });
   }
 
   // W8 payment_failed webhook on a pending attempt (direct writer)
   if (!jur) {
-    const pi = `pi_rehearsal_failed_${randomUUID().slice(0, 8)}`;
+    const pi = `pi_test_rehearsal_failed_${randomUUID().slice(0, 8)}`;
     const failing = await legacyAttempt(sc, "no_show_fee", "pending_stripe", pi);
     const d = await deliver("payment_intent.payment_failed", {
       id: pi, object: "payment_intent", status: "requires_payment_method", amount: 5000, currency: "cad",
       last_payment_error: { code: "card_declined", message: "synthetic" },
       metadata: { hone_session_payment_charge_attempt_id: failing, hone_studio_id: sc.studioId, hone_client_id: sc.clientId, hone_environment: "test" },
     }, account);
-    rec(S, "W8", "payment_intent.payment_failed webhook (direct writer)", d.status === 500 ? "refused" : "succeeded", { http: d.status, body: d.body, event: await eventRow(d.eventId), attemptAfter: await attemptRow(failing) });
+    await hook(S, "W8", "payment_intent.payment_failed webhook (direct writer)", d, { attemptAfter: await attemptRow(failing) });
   }
 
   // W9 setup_intent.succeeded webhook (saved card)
   {
     const cust = await adminQuery(`select stripe_customer_id as c from public.client_stripe_customers where client_id=$1 limit 1`, [sc.clientId]);
     const sigId = (await adminQuery(`select id from public.client_consent_signatures where client_id=$1 order by template_version desc limit 1`, [sc.clientId])).rows[0].id;
-    const before = (await adminQuery(`select id, status from public.client_payment_methods where client_id=$1 order by created_at`, [sc.clientId])).rows;
-    const siId = `seti_rehearsal_${randomUUID().slice(0, 8)}`;
+    const cards = async () => (await adminQuery(`select id, status from public.client_payment_methods where client_id=$1 order by created_at`, [sc.clientId])).rows;
+    const before = await cards();
     const d = await deliver("setup_intent.succeeded", {
-      id: siId, object: "setup_intent", status: "succeeded", customer: cust.rows[0].c, payment_method: `pm_rehearsal_${randomUUID().slice(0, 8)}`,
+      id: `seti_test_rehearsal_${randomUUID().slice(0, 8)}`, object: "setup_intent", status: "succeeded", customer: cust.rows[0].c, payment_method: `pm_test_rehearsal_${randomUUID().slice(0, 8)}`,
       metadata: { hone_studio_id: sc.studioId, hone_client_id: sc.clientId, hone_card_authorization_signature_id: sigId },
     }, account);
-    const after = (await adminQuery(`select id, status from public.client_payment_methods where client_id=$1 order by created_at`, [sc.clientId])).rows;
+    const after = await cards();
     const unchanged = JSON.stringify(before) === JSON.stringify(after);
     rec(S, "W9", "setup_intent.succeeded webhook (save card)", d.status === 500 && unchanged ? "refused" : d.status === 500 ? "partial" : "succeeded",
-      { http: d.status, body: d.body, event: await eventRow(d.eventId), cardsBefore: before.length, cardsAfter: after.length, activeCardUnchanged: unchanged });
+      { http: d.status, body: d.body, event: await eventRow(d.eventId), logs: d.logs, cardsBefore: before.length, cardsAfter: after.length, activeCardUnchanged: unchanged });
   }
 
-  // W10 Connect account provisioning claim for a studio with no account yet
+  // W10 Connect account provisioning claim (onboarding start) for a studio with no account yet
   {
-    const fresh = await adminQuery(`select id from public.studios where id=$1`, [sc.studioId]);
-    void fresh;
     const { seedStudio } = await import("./helpers/harness");
     const st = await seedStudio(`${name.toLowerCase()}-prov`);
     if (jur) await setJurisdiction(st.studioId, jur);
@@ -433,40 +454,44 @@ async function scenario(name: string, jur: null | "CA" | "US") {
 
   // W11 customer provisioning claim + complete (portal card setup, step 1)
   {
-    const extra = (await adminQuery(`insert into public.clients (id, studio_id, name) values (gen_random_uuid(), $1, 'Client extra') returning id`, [sc.studioId])).rows[0].id;
+    const extra = (await adminQuery(`insert into public.clients (id, studio_id, name, email) values (gen_random_uuid(), $1, 'Client extra', $2) returning id`, [sc.studioId, `extra-${randomUUID().slice(0, 8)}@harness.local`])).rows[0].id;
     const r = await attempt(async () => {
       const { createAdminClient } = await import("@/lib/supabase/admin-server");
       const admin = createAdminClient();
       const { data, error } = await admin.rpc("create_or_claim_stripe_customer_provisioning", { p_client_id: extra, p_studio_id: sc.studioId, p_stripe_account_id: account, p_stripe_livemode: false });
       if (error) throw Object.assign(new Error(error.message), { code: error.code });
       const claim = Array.isArray(data) ? data[0] : data;
-      const done = await admin.rpc("complete_stripe_customer_provisioning", { p_attempt_id: claim.attempt_id, p_claim_token: claim.out_processing_claim_token, p_stripe_customer_id: `cus_rehearsal_${randomUUID().slice(0, 8)}` });
+      const done = await admin.rpc("complete_stripe_customer_provisioning", { p_attempt_id: claim.attempt_id, p_claim_token: claim.out_processing_claim_token, p_stripe_customer_id: `cus_test_rehearsal_${randomUUID().slice(0, 8)}` });
       if (done.error) throw Object.assign(new Error(done.error.message), { code: done.error.code });
       return "completed";
     });
     rec(S, "W11", "customer provisioning claim+complete (card setup step 1)", r.ok ? "succeeded" : DB_REFUSAL.test(r.message) ? "refused" : "harness_error", r.ok ? {} : { code: r.code, error: r.message });
   }
 
-  // W12 account.updated / dispute webhooks (not revoked)
+  // W12/W13 not revoked
   {
     const d = await deliver("account.updated", { id: account, object: "account", country: "CA", charges_enabled: true, payouts_enabled: true, details_submitted: true }, account);
-    rec(S, "W12", "account.updated webhook (status sync)", d.status === 500 ? "refused" : "succeeded", { http: d.status, body: d.body, event: await eventRow(d.eventId) });
+    await hook(S, "W12", "account.updated webhook (status sync)", d);
     const x = await deliver("charge.dispute.created", { id: `dp_rehearsal_${randomUUID().slice(0, 8)}`, object: "dispute", amount: 5000, currency: "cad", charge: "ch_rehearsal_dispute", reason: "fraudulent", status: "needs_response" }, account);
-    rec(S, "W13", "charge.dispute.created webhook (alert only)", x.status === 500 ? "refused" : "succeeded", { http: x.status, body: x.body, event: await eventRow(x.eventId) });
+    await hook(S, "W13", "charge.dispute.created webhook (alert only)", x);
   }
 }
 
-describe("BOLD-REVOKES: B-OLD 9488913d against the 0246 database", () => {
+describe("BOLD-REVOKES: B-OLD 9488913d against the database under test", () => {
+  beforeAll(async () => {
+    hasJurisdiction = (await adminQuery(`select to_regclass('public.studio_payment_jurisdictions') is not null as t`)).rows[0].t;
+    console.log("BOLD_REVOKES_DB " + JSON.stringify({ hasJurisdiction, max: (await adminQuery(`select max(version) as v from supabase_migrations.schema_migrations`)).rows[0].v }));
+  });
   it("SA: studio with NO payment jurisdiction row (S1 done, S2 not yet)", async () => {
     await scenario("SA", null);
     expect(results.filter((r) => r.scenario === "SA" && r.outcome === "harness_error")).toEqual([]);
   }, 180_000);
   it("SB: studio initialised CA/cad at S2, still served by B-OLD", async () => {
-    await scenario("SB", "CA");
+    if (hasJurisdiction) await scenario("SB", "CA");
     expect(results.filter((r) => r.scenario === "SB" && r.outcome === "harness_error")).toEqual([]);
   }, 180_000);
   it("SC: studio initialised US/usd at S2, still served by B-OLD (B-OLD hard-codes cad)", async () => {
-    await scenario("SC", "US");
+    if (hasJurisdiction) await scenario("SC", "US");
     expect(results.filter((r) => r.scenario === "SC" && r.outcome === "harness_error")).toEqual([]);
   }, 180_000);
 });
