@@ -99,7 +99,11 @@ test.beforeAll(async () => {
 
 // Open Quick Book on a specific day's DayColumn (desktop week grid).
 async function openDesktopQuickBook(page: Page, dateStr: string) {
-  await page.goto("/calendar");
+  // The WEEK grid is what this proves (a DayColumn labelled by date alone). A
+  // bare /calendar opens the team Day view for a capacity-ON studio with several
+  // practitioners (HON-48, #1131), whose columns are labelled "... for <name> on
+  // <date>", so the week is named explicitly.
+  await page.goto("/calendar?view=week");
   await page
     .getByRole("button", { name: `Open quick-book draft for ${dateStr}` })
     .click();
@@ -270,7 +274,9 @@ test.describe("mobile calendar Quick Book (capacity ON)", () => {
   });
 
   async function openMobileQuickBook(page: Page) {
-    await page.goto("/calendar"); // mobile shell renders CalendarMobileDayView (today)
+    // The week view's mobile shell renders CalendarMobileDayView (today); a bare
+    // /calendar would open the team Day view here (HON-48), so name the week.
+    await page.goto("/calendar?view=week");
     const fab = page.getByRole("button", { name: "Add appointment or block time" });
     await expect(fab).toBeVisible({ timeout: 20_000 });
     // Real 56px FAB tap target (>= 44px).

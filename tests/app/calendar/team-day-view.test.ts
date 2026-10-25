@@ -111,7 +111,12 @@ describe("team day page path", () => {
   const day = PAGE.slice(PAGE.indexOf("async function renderTeamDayView"));
 
   it("is offered by one rule for every studio: capacity on and more than one active practitioner", () => {
-    expect(PAGE).toContain("return capacityEnabled && activePractitioners.length > 1;");
+    // The one rule moved to initial-view.ts with HON-48's default view, so the
+    // page and the Day view's own guard share it.
+    expect(readFileSync(path.join(ROOT, "app/(app)/calendar/initial-view.ts"), "utf8")).toContain(
+      "return capacityEnabled && activePractitioners.length > 1;",
+    );
+    expect(PAGE).toContain("isTeamCalendar");
     expect(PAGE).not.toMatch(/studio\.id\s*===/);
     expect(day).toContain("if (!isTeamCalendar(capacityEnabled, activePractitioners))");
   });
