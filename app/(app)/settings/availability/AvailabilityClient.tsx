@@ -16,6 +16,7 @@ import {
   upsertOverrideAction,
 } from "./actions";
 import { SectionLabel } from "@/components/ui/section-label";
+import { settlePendingPreset } from "@/lib/availability/preset-state";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const DAY_NAMES_LONG = [
@@ -344,10 +345,12 @@ export function AvailabilityClient({
           });
         }
         setDays(next);
-        setPendingPreset(null);
+        // Clear the panel only if it is still THIS preset's: one the owner
+        // picked while this save was finishing must survive it.
+        setPendingPreset((cur) => settlePendingPreset(cur, preset));
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not apply preset.");
-        setPendingPreset(null);
+        setPendingPreset((cur) => settlePendingPreset(cur, preset));
       }
     });
   }
