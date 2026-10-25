@@ -252,6 +252,13 @@ export const BROWSER_GROUPS = {
       // already fails safe to EXTENDED coverage, so the spec runs whenever it
       // matters.
       "authenticated-route-error-containment.spec.ts",
+      // DAT-002 (E-GAPS): a REAL read failure (a revoked SELECT grant on the
+      // disposable stack) reaches the dashboard boundary, the /records section
+      // refusal and the global-search refusal, never 0 or empty. Beside the
+      // boundary spec above for the same reason: it proves the shell-wide
+      // refusal family, and any diff that can reach it is unattributable
+      // application code that already fails safe to EXTENDED.
+      "dat-002-read-failure-refusal.spec.ts",
       // UI-01: the shared pending-navigation primitive, a sibling concern to
       // the app-shell error boundary above it — PendingLink is what every
       // query-only navigation (day nav, period pills, calendar toolbar) has
