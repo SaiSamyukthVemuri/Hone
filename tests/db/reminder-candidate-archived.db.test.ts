@@ -18,6 +18,12 @@ import { adminQuery, closePool, seedStudio, type SeededStudio } from "./helpers/
 // are scoped by this run's studio ids, never by global counts.
 // ===========================================================================
 
+// supabase-js builds a Realtime client eagerly; Node 20 has no native WebSocket.
+// Same stub as tests/db/client-directory-row-ceiling.db.test.ts (REST only here).
+if (typeof (globalThis as { WebSocket?: unknown }).WebSocket === "undefined") {
+  (globalThis as { WebSocket?: unknown }).WebSocket = class WebSocketStub {};
+}
+
 const admin = createClient(E2E_SUPABASE_URL, E2E_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });

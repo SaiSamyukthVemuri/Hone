@@ -11,12 +11,12 @@ export const MAX_ATTEMPTS = 3;
 // Widened to accept SMS column names too. The same join shape works
 // for both email and SMS passes; the difference is purely which
 // _sent_at / _send_attempts columns we filter on.
-type SentColumn =
+export type SentColumn =
   | "reminder_24h_sent_at"
   | "reminder_2h_sent_at"
   | "sms_reminder_24h_sent_at"
   | "sms_reminder_2h_sent_at";
-type AttemptsColumn =
+export type AttemptsColumn =
   | "reminder_24h_send_attempts"
   | "reminder_2h_send_attempts"
   | "sms_reminder_24h_send_attempts"
