@@ -25,6 +25,7 @@ import {
   sendPostcareToClient,
 } from "@/lib/email/send-appointment";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
+import { confirmationSmsWillPass } from "@/lib/sms/consent-gate";
 import { localDateString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { safeLog } from "@/lib/logging/safe-log";
@@ -956,12 +957,23 @@ async function dispatchBookingEmails(p: DispatchParams) {
   // that turned email confirmations off, or a client with no email address,
   // silently lost the SMS the client had consented to. The intake link is
   // ensured when either channel can carry it.
+  // 1181-F1: issuing the link creates a blank intake row and stamps it as
+  // issued, so it happens only when a message can actually carry it: the
+  // confirmation email, or a confirmation SMS that passes the FULL consent gate
+  // (switch, consent, not STOPped, usable phone). The stamp says "emailed" only
+  // when an email is what carries it.
+  const smsCanCarry = confirmationSmsWillPass(p.studio, {
+    phone: p.clientPhone,
+    sms_consent_at: p.clientSmsConsentAt ?? null,
+    sms_opted_out_at: p.clientSmsOptedOutAt ?? null,
+  });
   const intake =
-    emailWanted || p.studio.send_confirmation_sms === true
+    emailWanted || smsCanCarry
       ? await ensureIntakeForClient({
           studioId: p.studio.id,
           clientId: p.appointment.client_id,
           appOrigin,
+          emailed: emailWanted,
         })
       : null;
   const { createAdminClient } = await import("@/lib/supabase/admin-server");

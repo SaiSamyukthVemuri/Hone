@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   email: vi.fn(async () => ({ ok: true })),
   practitionerEmail: vi.fn(async () => ({ ok: true })),
   sms: vi.fn(async () => ({ ok: true })),
+  ensure: vi.fn(async () => null),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -65,7 +66,7 @@ vi.mock("@/lib/booking/appointment-token", () => ({ generateAppointmentToken: ()
 vi.mock("@/lib/booking/tokens", () => ({ generateCancellationToken: () => "synthetic" }));
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: vi.fn() }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://synthetic.example.test" }));
-vi.mock("@/lib/intake/queries", () => ({ ensureIntakeForClient: async () => null }));
+vi.mock("@/lib/intake/queries", () => ({ ensureIntakeForClient: h.ensure }));
 vi.mock("@/lib/email/send-appointment", () => ({
   sendBookingConfirmationToClient: h.email,
   sendBookingNotificationToPractitioner: h.practitionerEmail,
@@ -155,5 +156,46 @@ describe("HON-13: internal booking honours send_confirmation_sms on its own", ()
     h.studio.notify_practitioner_on_new_booking = false;
     await book();
     expect(h.practitionerEmail).not.toHaveBeenCalled();
+  });
+});
+
+// 1181-F1: issuing an intake link creates a blank intake row and stamps the link
+// as emailed. That must happen only when something can actually carry the link:
+// the confirmation email, or a confirmation SMS that passes the FULL consent gate.
+describe("1181-F1: no intake row or issued stamp unless a message can carry the link", () => {
+  beforeEach(() => {
+    h.studio.send_confirmation_emails = false;
+  });
+
+  it.each([
+    ["an unconsented client", { sms_consent_at: null }],
+    ["a STOPped client", { sms_opted_out_at: "2026-09-02T00:00:00Z" }],
+    ["a client with no phone", { phone: null }],
+    ["a client with an unusable phone", { phone: "not-a-number" }],
+  ])("%s: nothing can be sent, so no intake link is issued", async (_n, patch) => {
+    Object.assign(h.client, patch);
+    await book();
+    expect(h.ensure).not.toHaveBeenCalled();
+  });
+
+  it("the studio SMS switch off and no email: no intake link either", async () => {
+    h.studio.send_confirmation_sms = false;
+    await book();
+    expect(h.ensure).not.toHaveBeenCalled();
+  });
+
+  it("control: a consented client with a valid phone gets the link via SMS", async () => {
+    await book();
+    expect(h.ensure).toHaveBeenCalledTimes(1);
+    // Only an SMS carries it, so the issued stamp must not claim an email.
+    expect(h.ensure).toHaveBeenCalledWith(expect.objectContaining({ emailed: false }));
+  });
+
+  it("control: the confirmation email going out still issues the link", async () => {
+    h.studio.send_confirmation_emails = true;
+    Object.assign(h.client, { sms_consent_at: null });
+    await book();
+    expect(h.ensure).toHaveBeenCalledTimes(1);
+    expect(h.ensure).toHaveBeenCalledWith(expect.objectContaining({ emailed: true }));
   });
 });
