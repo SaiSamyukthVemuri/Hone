@@ -4,6 +4,7 @@ import {
   disinfectantDueStatus,
   daysBetween,
 } from "@/lib/record-keeping/disinfectant-status";
+import { disinfectantNoticeHref } from "@/lib/record-keeping/disinfectant-focus";
 
 // Overdue-disinfectant operational alerts for the Notification Centre (Willow,
 // Issue #420 follow-up / Chloe: overdue "Replace now" disinfectants should also
@@ -50,7 +51,6 @@ type DisinfectantRow = {
   date_discarded: string | null;
 };
 
-const DISINFECTANTS_HREF = "/records?section=disinfectants";
 
 // Pure + deterministic (studio-local `todayYmd` is passed in), so it is fully
 // unit-testable and timezone-consistent with the Records UI. Overdue is decided
@@ -76,7 +76,9 @@ export function computeOverdueDisinfectantAlerts(
       daysOverdueText:
         daysOverdue === 1 ? "1 day overdue" : `${daysOverdue} days overdue`,
       severity: "warning",
-      href: DISINFECTANTS_HREF,
+      // HON-12: opens THIS record's own Edit form on the Records page (the existing
+      // replacement / date action), not just the section.
+      href: disinfectantNoticeHref(r.id),
       actionLabel: "Review disinfectant records",
     });
   }
