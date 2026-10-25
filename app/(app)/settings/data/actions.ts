@@ -6,6 +6,7 @@ import JSZip from "jszip";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { rowsToCsv } from "@/lib/csv";
+import { dbErrorCode } from "@/lib/logging/error-class";
 // The clinical-notes filename and header row are still owned by this module;
 // the export registry imports them from here, and this module reaches them
 // through the registry like every other file. One definition, one consumer.
@@ -67,6 +68,29 @@ function slugify(s: string): string {
 
 function todayStamp(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+// MSG-LOG-RAW-ERROR (F3). The export's read failure is returned to the owner's
+// page, so it is a fixed sentence chosen by class; the log carries the closed
+// code only. The paginator's own refusal (a table it could not read completely)
+// has no SQLSTATE and keeps its meaning by that fixed phrase, read by pattern
+// and never echoed.
+function exportReadFailure(error: unknown): string {
+  console.error(
+    JSON.stringify({
+      event: "studio_export_read_failed",
+      code: dbErrorCode(error),
+      timestamp: new Date().toISOString(),
+    }),
+  );
+  const text =
+    typeof error === "object" && error !== null && typeof (error as { message?: unknown }).message === "string"
+      ? (error as { message: string }).message
+      : "";
+  if (/refusing to return a partial table/.test(text)) {
+    return "Failed to load data for export: a table could not be read completely, so nothing was exported. Try again.";
+  }
+  return "Failed to load data for export. Nothing was exported. Try again, and contact support if it keeps happening.";
 }
 
 export async function exportStudioDataAction(): Promise<ExportResult> {
@@ -476,10 +500,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // excluded from failing the export.
   ]) {
     if (r.error) {
-      return {
-        ok: false,
-        error: `Failed to load data for export: ${r.error.message}`,
-      };
+      return { ok: false, error: exportReadFailure(r.error) };
     }
   }
 
@@ -543,7 +564,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   if (budgetDecision.kind === "fail") {
     return {
       ok: false,
-      error: `Failed to load data for export: ${budgetDecision.message}`,
+      error: exportReadFailure((budgetContextRes as BudgetExportReadResult).error),
     };
   }
   const budgetContextExported = budgetDecision.kind === "export";
@@ -1006,25 +1027,25 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       table: "clients",
       fetched: (clientsRes.data ?? []).length,
       expected: clientsCount.error ? null : clientsCount.count,
-      error: clientsCount.error?.message,
+      error: clientsCount.error ? dbErrorCode(clientsCount.error) : undefined,
     },
     {
       table: "sessions",
       fetched: (sessionsRes.data ?? []).length,
       expected: sessionsCount.error ? null : sessionsCount.count,
-      error: sessionsCount.error?.message,
+      error: sessionsCount.error ? dbErrorCode(sessionsCount.error) : undefined,
     },
     {
       table: "appointments",
       fetched: (appointmentsRes.data ?? []).length,
       expected: appointmentsCount.error ? null : appointmentsCount.count,
-      error: appointmentsCount.error?.message,
+      error: appointmentsCount.error ? dbErrorCode(appointmentsCount.error) : undefined,
     },
     {
       table: "client_clinical_notes",
       fetched: (clinicalNotesRes.data ?? []).length,
       expected: notesCount.error ? null : notesCount.count,
-      error: notesCount.error?.message,
+      error: notesCount.error ? dbErrorCode(notesCount.error) : undefined,
     },
   ];
 

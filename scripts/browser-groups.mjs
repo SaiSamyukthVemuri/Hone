@@ -197,6 +197,10 @@ export const BROWSER_GROUPS = {
       // SENTRY-BOOKING-ERR-01: the /book/[slug] error boundary contains a failed
       // or stale Server Action and recovers. A diff to app/book/** selects this
       // group, which is the diff that can break it.
+      // F2: /settings/booking shows a fixed sentence for any ?error= value, never
+      // the query's own text. Here because settings/booking/actions.ts selects
+      // this group.
+      "settings-booking-error-param.spec.ts",
       "public-booking-error-containment.spec.ts",
       "public-booking-slot-read-failure.spec.ts",
       // TWILIO-EGRESS-FAKE (MSG-006): a public booking with SMS consent reaches

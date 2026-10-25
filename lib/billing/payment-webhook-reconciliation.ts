@@ -192,7 +192,7 @@ async function resolveAttemptByMetadataOrId(args: {
       return {
         ok: false,
         reason: "database_error",
-        detail: `${error.code}:${error.message}`,
+        detail: dbErrorCode(error),
       };
     }
     if (data) {
@@ -214,7 +214,7 @@ async function resolveAttemptByMetadataOrId(args: {
       return {
         ok: false,
         reason: "database_error",
-        detail: `${error.code}:${error.message}`,
+        detail: dbErrorCode(error),
       };
     }
     if (data) {
@@ -236,7 +236,7 @@ async function resolveAttemptByMetadataOrId(args: {
       return {
         ok: false,
         reason: "database_error",
-        detail: `${error.code}:${error.message}`,
+        detail: dbErrorCode(error),
       };
     }
     if (data) {
@@ -256,7 +256,7 @@ async function resolveAttemptByMetadataOrId(args: {
       return {
         ok: false,
         reason: "database_error",
-        detail: `${error.code}:${error.message}`,
+        detail: dbErrorCode(error),
       };
     }
     if (data) {
