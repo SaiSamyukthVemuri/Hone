@@ -17,7 +17,7 @@ as $$
 begin
   if (new.archived_at is distinct from old.archived_at
       or new.archived_by is distinct from old.archived_by)
-     and pg_catalog.current_user in ('authenticated', 'anon') then
+     and current_user in ('authenticated', 'anon') then
     raise exception 'client archive and unarchive are paused' using errcode = '55000';
   end if;
   return new;
