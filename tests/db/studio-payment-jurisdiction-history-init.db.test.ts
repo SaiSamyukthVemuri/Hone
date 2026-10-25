@@ -753,7 +753,7 @@ describe("J9-H 0257 follow-up", () => {
   it("H3 an audit row written by the 0214 writer, before the command ran, reads history_verified=false", async () => {
     const s = await studio("h3");
     await adminQuery(
-      `select * from public.set_studio_payment_jurisdiction($1,'CA','cad','operator:test','plain init','fixture:evidence',false)`,
+      `select * from public.set_studio_payment_jurisdiction($1::uuid,'CA','cad','operator:test','plain init',false,'fixture:evidence')`,
       [s.studioId]);
     expect(await audit(s.studioId)).toEqual([{
       from_country: null, to_country: "CA", to_currency: "cad", history_verified: false,

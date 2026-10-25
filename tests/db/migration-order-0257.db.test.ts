@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Pool } from "pg";
@@ -17,12 +17,15 @@ import { resolveLocalDbUrl } from "./helpers/harness";
 // applied (0001..0246). 0247-0256 are held, so they are NOT in a tree that
 // ships only 0257, and they ARE in a tree that has merged the held work.
 
-const REPO_MIGRATIONS = path.resolve(__dirname, "../../supabase/migrations");
-const names = readdirSync(REPO_MIGRATIONS).filter((n) => n.endsWith(".sql")).sort();
+// Names are synthetic (dry-run compares versions only), so no suite walks the
+// migrations directory. 0158 is the permanently skipped slot.
+const pad = (n: number) => String(n).padStart(4, "0");
 const versionOf = (n: string) => n.slice(0, 4);
-const BELOW = names.filter((n) => versionOf(n) < "0257");
-const HELD = Array.from({ length: 10 }, (_, i) => `${String(247 + i).padStart(4, "0")}_held_stub.sql`);
-const THIS = names.find((n) => versionOf(n) === "0257")!;
+const BELOW = Array.from({ length: 246 }, (_, i) => i + 1)
+  .filter((n) => n !== 158)
+  .map((n) => `${pad(n)}_applied_stub.sql`);
+const HELD = Array.from({ length: 10 }, (_, i) => `${pad(247 + i)}_held_stub.sql`);
+const THIS = "0257_payment_jurisdiction_history_init.sql";
 
 const cli = spawnSync("supabase", ["--version"], { encoding: "utf8" });
 const HAVE_CLI = cli.status === 0;
