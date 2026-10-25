@@ -81,12 +81,11 @@ export type Studio = {
   new_client_admission_mode?: string;
   new_client_admission_mode_set_at?: string | null;
   new_client_admission_mode_set_by?: string | null;
-  // HON-47. Client self-service controls: the first two from 0234, the third
-  // from the HON-47 draft migration. Default TRUE in the database; optional here
-  // for rows loaded before those apply, and read ONLY through
+  // HON-47 / 0252. The client-portal flag. The other two self-service flags
+  // (client_cancellation_enabled, client_reschedule_enabled, 0234) are declared
+  // below with the 0213-0246 fields. Default TRUE in the database; optional here
+  // for rows loaded before 0252 applies, and read ONLY through
   // clientSelfServicePolicyFromStudio, which maps an absent key to TRUE.
-  client_cancellation_enabled?: boolean;
-  client_reschedule_enabled?: boolean;
   client_portal_enabled?: boolean;
   // Migration 0025: studio-level email toggles.
   send_confirmation_emails: boolean;
@@ -177,6 +176,10 @@ export type Studio = {
   // to an eligible prospect. Default false. Optional because a row read before
   // 0206 is applied has no such column, and absent must mean OFF.
   send_waitlist_invitation_sms?: boolean;
+
+  // Existing finite 0213–0246 schema fields; this DTO grants no write authority.
+  client_cancellation_enabled: boolean;
+  client_reschedule_enabled: boolean;
 };
 
 // Migration 0140: per-studio resumable onboarding-v2 (owner first-run) state.
@@ -539,6 +542,10 @@ export type Appointment = {
   rescheduled_from_appointment_id: string | null;
   rescheduled_to_appointment_id: string | null;
   cancellation_kind: string | null;
+
+  // Existing finite 0213–0246 schema fields; this DTO grants no write authority.
+  created_by_receptionist_id?: string | null;
+  cancelled_by_receptionist_id?: string | null;
 };
 
 // Migration 0049: SMS types accepted by claim_sms_send and
@@ -788,6 +795,11 @@ export type Practitioner = {
   // actually used stays on session_blocks.machine_frequency.
   default_machine_frequency: MachineFrequency | null;
   created_at: string;
+
+  // Existing finite 0213–0246 schema fields; this DTO grants no write authority.
+  default_machine_id: string | null;
+  default_machine_mode: string | null;
+  last_public_assignment_at: string | null;
 };
 
 export type Client = {
@@ -841,6 +853,9 @@ export type Client = {
   // Migration 0052: lowercased/trimmed email maintained by trigger
   // for portal lookups. Added here by the PR #221 drift check.
   normalized_email: string | null;
+
+  // Existing finite 0213–0246 schema fields; this DTO grants no write authority.
+  portrait_image_id: string | null;
 };
 
 // Migration 0126 (Willow PR A): dedicated dated CONSULTATION notes + SKIN/HAIR
@@ -1347,6 +1362,9 @@ export type TreatmentImage = {
   updated_at: string;
   deleted_at: string | null;
   deleted_by: string | null;
+
+  // Existing finite 0213–0246 schema fields; this DTO grants no write authority.
+  capture_stage: "before" | "after" | null;
 };
 
 export type InvitationStatus = "pending" | "accepted" | "revoked";
@@ -1408,6 +1426,8 @@ export type ClientTag = {
 export type IntakeStatus = "in_progress" | "submitted" | "reviewed";
 
 export type ClientIntakeForm = {
+  questionnaire_snapshot: unknown | null;
+  revision: string | number;
   id: string;
   studio_id: string;
   client_id: string;

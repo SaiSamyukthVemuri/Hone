@@ -21,6 +21,7 @@
 import { NONE_VALUE, type Question } from "@/lib/intake/questions";
 
 type FieldProps = {
+  noneValue?: string;
   q: Question;
   value: unknown;
   notesValue: unknown;
@@ -30,6 +31,7 @@ type FieldProps = {
 };
 
 export function IntakeQuestionField({
+  noneValue = NONE_VALUE,
   q,
   value,
   notesValue,
@@ -55,7 +57,7 @@ export function IntakeQuestionField({
         </div>
       )}
 
-      {renderControl(q, value, onChange, error)}
+      {renderControl(q, value, onChange, error, noneValue)}
 
       {error && (
         <p id={`${q.key}_error`} className="text-xs text-red-700" role="alert">
@@ -94,6 +96,7 @@ function renderControl(
   value: unknown,
   onChange: (v: unknown) => void,
   error?: string,
+  noneValue: string = NONE_VALUE,
 ): React.ReactNode {
   const baseInputClass =
     "w-full min-h-[44px] rounded-md border border-neutral-300 bg-white px-3 py-2 text-base leading-normal focus:border-neutral-900 focus:outline-none";
@@ -196,7 +199,7 @@ function renderControl(
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {(q.options ?? []).map((opt) => {
           const isSel = selected.has(opt.value);
-          const isNone = opt.value === NONE_VALUE;
+          const isNone = opt.value === noneValue;
           return (
             <button
               key={opt.value}
@@ -205,11 +208,11 @@ function renderControl(
                 // "None of the above" is exclusive: selecting it clears any
                 // other choices; selecting any other option clears it.
                 if (isNone) {
-                  onChange(isSel ? [] : [NONE_VALUE]);
+                  onChange(isSel ? [] : [noneValue]);
                   return;
                 }
                 const next = new Set(selected);
-                next.delete(NONE_VALUE);
+                next.delete(noneValue);
                 if (isSel) next.delete(opt.value);
                 else next.add(opt.value);
                 onChange(Array.from(next));

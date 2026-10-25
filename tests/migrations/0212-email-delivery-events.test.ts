@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion, versionsAbove } from "./helpers/migration-state";
 
 // ===========================================================================
 // Migration 0212 — DELIVERY-EVENTS-01 email delivery events. SOURCE CONTRACT.
@@ -65,19 +65,11 @@ describe("0212 sits correctly in the migration sequence", () => {
     );
   });
 
-  it("is no longer the repository maximum: newer migrations sit above it", () => {
-    // Only the CURRENT maximum migration's own test may assert isRepoMax - see
-    // CLAUDE.md §2. It reached this file from 0210's test, and leaves for 0252's
-    // own test (tests/migrations/0252-client-portal-controls.test.ts).
-    expect(isRepoMax(VERSION)).toBe(false);
-    // DERIVED, NOT PINNED: something sits above it, and everything above it is
-    // greater. A literal list would be the forbidden pin in other clothes.
-    const above = versionsAbove(VERSION);
-    expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);
-    expect(
-      above.every((v) => Number(v) > Number(VERSION)),
-      "versionsAbove returned a version at or below its own",
-    ).toBe(true);
+  it("keeps the later receipt repair in a forward migration", () => {
+    // 0212 is applied/frozen (raw hash above); 0227 supplies the reviewed
+    // receipt repair forward. Current-max coverage belongs to the derived guard.
+    expect(countVersion("0227")).toBe(1);
+    expect(versionsAbove(VERSION)).toContain("0227");
   });
 
   it("is allocated exactly once", () => {
