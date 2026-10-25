@@ -1,0 +1,108 @@
+# S1-VERIFIED-BINARY. REHEARSAL - NEVER MERGE.
+#
+# Runs the S1 procedure with a CLI binary that is VERIFIED (release archive +
+# sha256sum -c, or npm tarball + dist.integrity) before it is given a database
+# password, with SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false, against a
+# non-loopback address of a DISPOSABLE SYNTHETIC local database built through
+# production's migration prefix 0212 -- not a copy of production. No hosted
+# project, no provider, no customer data.
+#
+# Supply chain as the other workflows: actions pinned by SHA, contents: read,
+# persist-credentials: false. The one credential is the D7b read-only ghcr.io
+# login, held only across a direct pinned-CLI start, as in ci.yml. The stack
+# start uses the pinned npx shim (orchestration only); everything the
+# rehearsal asserts runs with the verified binary.
+
+name: s1-verified-binary-rehearsal
+
+on:
+  pull_request:
+    paths:
+      - "scripts/ci/s1-verified-binary-rehearsal.sh"
+      - ".github/workflows/s1-verified-binary-rehearsal.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hone-s1-verified-binary-rehearsal-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apply-tool:
+    name: s1 verified binary rehearsal (not required)
+    runs-on: ubuntu-latest
+    # D7b: read-only package scope for the authenticated ghcr.io image pull only.
+    permissions:
+      contents: read
+      packages: read
+    # Stack start, a release download, an npm pack, four database resets and two pushes
+    # (the control push may wait out the image pull retries), well inside 60 minutes.
+    timeout-minutes: 60
+    env:
+      EXCLUDE: studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta,supavisor
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+
+      - name: Pinned Supabase CLI shim (supabase@2.102.0 via npx)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          printf '#!/bin/sh\nexec npx --yes supabase@2.102.0 "$@"\n' > "$RUNNER_TEMP/bin/supabase"
+          chmod +x "$RUNNER_TEMP/bin/supabase"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start the local Supabase stack (with storage)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        # public.ecr.aws throttles these pulls ("Data limit exceeded"), so try the
+        # ghcr.io mirror first (the credential above applies to it), then the
+        # default registry. Either way the pinned CLI starts the same images.
+        run: |
+          set -o pipefail
+          { SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io supabase start -x "$EXCLUDE" \
+              || supabase start -x "$EXCLUDE"; } 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x "$EXCLUDE"
+
+      - name: Rehearse the S1 procedure with a verified binary
+        shell: bash
+        env:
+          REHEARSAL_OUT: ${{ runner.temp }}/apply-tool-out
+        run: |
+          set -u
+          export DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
+          echo "db container: $DB"
+          bash scripts/ci/s1-verified-binary-rehearsal.sh
+
+      - name: Upload rehearsal logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s1-verified-binary-rehearsal-logs
+          path: ${{ runner.temp }}/apply-tool-out/
+          retention-days: 7
