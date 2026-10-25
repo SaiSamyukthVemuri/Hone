@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   STRIPE_ERROR_TYPES,
+  boundedErrorLabel,
   THROWN_ERROR_CLASSES,
   dbErrorCode,
   safeDbCode,
@@ -54,6 +55,15 @@ describe("dbErrorCode: a database error becomes its SQLSTATE or PostgREST code, 
     expect(dbErrorCode(undefined)).toBe("unknown");
     expect(dbErrorCode("23505")).toBe("unknown");
     expect(dbErrorCode(new Error(HOSTILE))).toBe("unknown");
+  });
+
+  it("a caller's own closed list of internal synthetic codes is honoured, and nothing else", () => {
+    expect(dbErrorCode({ code: "audit_write_unavailable" }, ["audit_write_unavailable"])).toBe("audit_write_unavailable");
+    expect(dbErrorCode({ code: "audit_write_unavailable" })).toBe("unknown");
+    expect(dbErrorCode({ code: "something_else" }, ["audit_write_unavailable"])).toBe("unknown");
+    expect(dbErrorCode({ code: HOSTILE }, [HOSTILE.slice(0, 5)])).toBe("unknown");
+    // a real database code still passes, with or without a list
+    expect(dbErrorCode({ code: "23505" }, ["audit_write_unavailable"])).toBe("23505");
   });
 
   it("safeDbCode applies the same rule to a code that was already pulled off an error", () => {
@@ -159,5 +169,36 @@ describe("stripeErrorFields: only the documented type and a machine code, never 
     expect(stripeErrorFields(undefined)).toEqual({});
     expect(stripeErrorFields(HOSTILE)).toEqual({});
     expect(stripeErrorFields(new Error(HOSTILE))).toEqual({});
+  });
+});
+
+describe("boundedErrorLabel: what may be STORED for a failed unit of work", () => {
+  it("keeps this codebase's own bounded identifiers", () => {
+    expect(boundedErrorLabel(new Error("stripe_webhook_payment_original_binding_pending"))).toBe("stripe_webhook_payment_original_binding_pending");
+    expect(boundedErrorLabel(new Error("handler_failed"))).toBe("handler_failed");
+    expect(boundedErrorLabel(new Error("payment_webhook_maintenance_deferred:charge.refunded"))).toBe("payment_webhook_maintenance_deferred:charge.refunded");
+  });
+
+  it.each([
+    ["a database message", new Error(HOSTILE)],
+    ["a message with an email", new Error("failed for synthetic.person@example.test")],
+    ["an uppercase message", new Error("PAYMENT_FAILED")],
+    ["a sentence", new Error("could not find the account")],
+    ["a too-short message", new Error("ab")],
+    ["an over-long identifier", new Error("a".repeat(101))],
+    ["an empty message", new Error("")],
+    ["an email-shaped message", new Error("a_b:c@example.test")],
+    ["a message with a space after a colon", new Error("failed: synthetic person")],
+    ["a trailing separator", new Error("failed:")],
+    ["a url", new Error("https://example.test/x")],
+  ])("%s is stored as handler_failed:<class>", (_name, error) => {
+    expect(boundedErrorLabel(error)).toBe("handler_failed:error");
+    expect(leaks(boundedErrorLabel(error))).toBe(false);
+  });
+
+  it("classifies a network failure and a thrown string, and takes another fallback prefix", () => {
+    expect(boundedErrorLabel(Object.assign(new Error(HOSTILE), { code: "ECONNRESET" }))).toBe("handler_failed:network");
+    expect(boundedErrorLabel(HOSTILE)).toBe("handler_failed:non_error");
+    expect(boundedErrorLabel(new Error(HOSTILE), "sync_failed")).toBe("sync_failed:error");
   });
 });

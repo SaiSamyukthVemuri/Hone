@@ -89,7 +89,7 @@ import {
   paymentWebhookMaintenanceOn,
 } from "@/lib/billing/payment-webhook-maintenance";
 import { ensureCardChangeNotification } from "@/lib/billing/card-change-notification";
-import { dbErrorCode, thrownErrorClass, stripeErrorFields } from "@/lib/logging/error-class";
+import { boundedErrorLabel, dbErrorCode, stripeErrorFields, thrownErrorClass } from "@/lib/logging/error-class";
 
 // Force Node runtime: Stripe SDK + raw body buffering need Node, not
 // the Edge runtime.
@@ -314,7 +314,8 @@ export async function POST(req: Request): Promise<Response> {
         {
           p_event_id: event.id,
           p_claim_token: claimToken,
-          p_error: err instanceof Error ? err.message : "handler_failed",
+          // stored on stripe_events.error: a deliberate identifier or a class, never free text
+          p_error: boundedErrorLabel(err),
         },
       );
       if (releaseErr) {

@@ -83,6 +83,7 @@ import { captureServerEvent } from "@/lib/analytics/server";
 // magic-link logs already use (app/portal/login/actions.ts), so the
 // same email yields the same fingerprint across surfaces.
 import { hashFingerprint } from "@/lib/portal/tokens";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -203,7 +204,7 @@ export async function fetchPublicSlotsAction(params: {
     // for correlation; drop the raw Postgres message (can echo
     // submitted values on a public surface).
     logInternalBookingError("public_slots_service_lookup_failed", {
-      code: error.code,
+      code: dbErrorCode(error),
       studioId: studio.id,
     });
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
@@ -334,7 +335,7 @@ export async function fetchNextAvailableDateAction(params: {
   if (svcErr) {
     // PR #261: sqlstate code + studioId only; drop raw DB message.
     logInternalBookingError("public_next_available_service_lookup_failed", {
-      code: svcErr.code,
+      code: dbErrorCode(svcErr),
       studioId: studio.id,
     });
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
@@ -823,7 +824,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // drop raw DB message. The fingerprint correlates repeated
     // failures for one booker without writing their raw email.
     logInternalBookingError("public_booking_client_lookup_failed", {
-      code: lookupErr.code,
+      code: dbErrorCode(lookupErr),
       studioId: studio.id,
       emailFingerprint: hashFingerprint(normalizedEmail),
     });
@@ -1403,7 +1404,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // drop raw DB message (the appointments row carries free-text notes,
     // so its error text must never reach logs on a public surface).
     logInternalBookingError("public_booking_insert_failed", {
-      code: rpcErr?.code,
+      code: dbErrorCode(rpcErr),
       studioId: studio.id,
       emailFingerprint: hashFingerprint(normalizedEmail),
     });
@@ -1585,7 +1586,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
             // studio-name fallback and skips the practitioner-specific email
             // rather than risking a stale recipient.
             logInternalBookingError("public_booking_practitioner_lookup_failed", {
-              code: prErr?.code,
+              code: dbErrorCode(prErr),
               studioId: studio.id,
             });
             return null;
@@ -1644,7 +1645,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
         );
       if (consentErr) {
         logInternalBookingError("public_booking_marketing_consent_insert_failed", {
-          code: consentErr.code,
+          code: dbErrorCode(consentErr),
           studioId: studio.id,
         });
       }

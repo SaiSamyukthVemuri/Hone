@@ -307,3 +307,24 @@ describe("card-on-file batch lookup (the one site whose structure changed)", () 
     expect(logged()).not.toMatch(LEAK);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A STORED field: the Stripe webhook's release-claim error (#1138 F3)
+// ---------------------------------------------------------------------------
+describe("Stripe webhook: the error stored with a released claim", () => {
+  it("is a bounded label, not the handler's free-text message (source contract)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/api/stripe/webhook/route.ts", "utf8");
+    expect(src).toMatch(/p_error: boundedErrorLabel\(err\),/);
+    expect(src).not.toMatch(/p_error: err instanceof Error \? err\.message/);
+  });
+});
+
+describe("team removal failure line (the one site whose fallback logic changed)", () => {
+  it("logs the database code when the call errored, else the RPC's own result string, else 'unknown'", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/(app)/settings/team/actions.ts", "utf8");
+    expect(src).toContain('${error ? dbErrorCode(error) : typeof data === "string" ? data : "unknown"}');
+    expect(src).not.toMatch(/dbErrorCode\(error\) \?\?/);
+  });
+});

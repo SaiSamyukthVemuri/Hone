@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAdmin } from "@/lib/admin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { logAdminAction } from "@/lib/audit/admin-actions";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // PR #193. Resolve an ops alert from the admin dashboard. Admin-only
 // (same ADMIN_EMAILS allowlist as every /admin action; the layout
@@ -104,7 +105,7 @@ export async function resolveOpsAlertAction(
     console.error(
       JSON.stringify({
         event: "ops_alert_resolver_practitioner_lookup_failed",
-        code: practitionerLookupError.code ?? "unknown",
+        code: dbErrorCode(practitionerLookupError),
         timestamp: new Date().toISOString(),
       }),
     );

@@ -207,7 +207,7 @@ export async function bookAppointmentForClientAction(
     .eq("active", true)
     .maybeSingle();
   if (serviceErr) {
-    logBookingDbError("book_appointment", "service_lookup", serviceErr.code);
+    logBookingDbError("book_appointment", "service_lookup", dbErrorCode(serviceErr));
     return { ok: false, error: "Could not load the service. Please try again." };
   }
   if (!service) return { ok: false, error: "Service not found." };
@@ -224,7 +224,7 @@ export async function bookAppointmentForClientAction(
     .eq("studio_id", studio.id)
     .maybeSingle();
   if (clientErr) {
-    logBookingDbError("book_appointment", "client_lookup", clientErr.code);
+    logBookingDbError("book_appointment", "client_lookup", dbErrorCode(clientErr));
     return { ok: false, error: "Could not load the client. Please try again." };
   }
   if (!client) return { ok: false, error: "Client not found." };
@@ -358,7 +358,7 @@ export async function bookAppointmentForClientAction(
         code: "slot_taken",
       };
     }
-    logBookingDbError("book_appointment", "rpc", rpcErr.code);
+    logBookingDbError("book_appointment", "rpc", dbErrorCode(rpcErr));
     return { ok: false, error: "Could not create the appointment. Please try again." };
   }
   const outcome = (rpcRows as BookingRpcRow[] | null)?.[0];
@@ -795,7 +795,7 @@ export async function createClientForCalendarBookingAction(
     // Never surface a raw Postgres/PostgREST message (constraint names, schema
     // hints, or submitted values) to the browser: the quick-book drawer renders
     // this string verbatim. Log a bounded SQLSTATE marker instead.
-    logBookingDbError("create_client", "insert", error?.code);
+    logBookingDbError("create_client", "insert", dbErrorCode(error));
     return { ok: false, error: "Could not create the client. Please try again." };
   }
 
@@ -880,7 +880,7 @@ export async function fetchLastServiceForClientAction(
       .maybeSingle();
     if (error) {
       // Log the SQLSTATE only; never propagate the raw DB text to the browser.
-      logBookingDbError("last_service", "query", error.code);
+      logBookingDbError("last_service", "query", dbErrorCode(error));
       throw new Error("last_service_query_failed");
     }
     return (data as Row | null) ?? null;
@@ -1235,7 +1235,7 @@ export async function sendPostcareEmailAction(
     // no direct-UPDATE fallback, because this route no longer settles either,
     // a fallback claim would send an email the database could never record.
     logPostcare("send_postcare_claim_command_failed", {
-      code: claimRpcErr.code,
+      code: dbErrorCode(claimRpcErr),
       appointmentId,
     });
     return { ok: false, error: "Could not send postcare. Please try again." };
@@ -1317,7 +1317,7 @@ export async function sendPostcareEmailAction(
       // fabricate a failure state here; the claim simply goes stale and becomes
       // reclaimable, which is the conservative outcome.
       logPostcare("send_postcare_settle_failure_unpersisted", {
-        code: settleErr?.code ?? settled?.result ?? "unknown",
+        code: dbErrorCode(settleErr) ?? settled?.result ?? "unknown",
         appointmentId,
       });
     }

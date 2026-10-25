@@ -21,14 +21,17 @@ const SQLSTATE_RE = /^[0-9A-Z]{5}$/;
 const POSTGREST_RE = /^PGRST[0-9]{3}$/;
 
 /**
- * The database error's code, or "unknown". `error` is what supabase-js and
+ * The database error's code, or "unknown" (or one of the caller's own `internal`
+ * synthetic codes, listed at the call site). `error` is what supabase-js and
  * pg hand back ({ code, message, details, hint }); only `code` is read, and only
  * when it is exactly a SQLSTATE or a PostgREST code.
  */
-export function dbErrorCode(error: unknown): string {
-  return safeDbCode(
-    typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined,
-  );
+export function dbErrorCode(error: unknown, internal: readonly string[] = []): string {
+  const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined;
+  // `internal` is a CLOSED list written at the call site, for the synthetic codes
+  // that code itself puts on a stand-in error object (e.g. "audit_write_unavailable").
+  if (typeof code === "string" && internal.includes(code)) return code;
+  return safeDbCode(code);
 }
 
 /** The same rule for a code that was already pulled off an error. */
@@ -138,4 +141,19 @@ export function stripeErrorFields(error: unknown): { stripeType?: string; stripe
   if (typeof type === "string" && (STRIPE_ERROR_TYPES as readonly string[]).includes(type)) out.stripeType = type;
   if (out.stripeType && typeof code === "string" && STRIPE_CODE_RE.test(code)) out.stripeCode = code;
   return out;
+}
+
+// snake_case words joined by ':' or '.', e.g. "payment_webhook_maintenance_deferred:charge.refunded"
+const LABEL_RE = /^(?=.{3,100}$)[a-z][a-z0-9_]*(?:[:.][a-z0-9_]+)*$/;
+
+/**
+ * A short label safe to STORE (not only to log) for a failed unit of work, for
+ * example `stripe_events.error`. An Error whose message is itself a bounded
+ * machine identifier (`stripe_webhook_payment_original_binding_pending`) is kept
+ * as is: those are this codebase's own deliberate failure codes. Anything else
+ * is `<fallback>:<class>`, never free text from a database, an SDK or a provider.
+ */
+export function boundedErrorLabel(error: unknown, fallback = "handler_failed"): string {
+  if (error instanceof Error && LABEL_RE.test(error.message)) return error.message;
+  return `${fallback}:${thrownErrorClass(error)}`;
 }

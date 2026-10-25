@@ -19,6 +19,7 @@ import {
   PULSE_DELAY_MAX,
   PULSE_DELAY_RANGE_ERROR,
 } from "@/lib/constants";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 const VALID_MODES: ReadonlyArray<ElectrolysisMode> = ["thermo", "galv", "blend"];
 
@@ -533,7 +534,7 @@ async function softDeleteEntry(
       JSON.stringify({
         event: "remove_pass_update_failed",
         table,
-        code: error.code,
+        code: dbErrorCode(error),
         studioId: studio.id,
         sessionId,
         entryId: id,
