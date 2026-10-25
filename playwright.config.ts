@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import { E2E_APP_ORIGIN, E2E_WEB_SERVER_ENV } from "./e2e/helpers/local-env";
+// REHEARSAL NOTE (BOLD-FULL-COMPAT, comment only): this line exists so the PR classifier selects the browser shards. No behaviour change.
 
 // Browser E2E lane (PR #227). One browser (Chromium), one core flow
 // (the treatment-memory loop), against a LOCAL Next dev server and
