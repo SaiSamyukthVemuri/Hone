@@ -198,6 +198,10 @@ export const BROWSER_GROUPS = {
       // or stale Server Action and recovers. A diff to app/book/** selects this
       // group, which is the diff that can break it.
       "public-booking-error-containment.spec.ts",
+      // TWILIO-EGRESS-FAKE (MSG-006): a public booking with SMS consent reaches
+      // the confirmation SMS, and the lane's Twilio egress fake answers it
+      // in-process. The booking surface is what drives the send.
+      "twilio-egress-fake.spec.ts",
     ],
   },
   calendar: {
@@ -231,6 +235,10 @@ export const BROWSER_GROUPS = {
       // runs extended) and `sessions` carries a cost pin. Needs REAL storage,
       // so it SELF-SKIPS in CI (no storage-api); its evidence is a local run.
       "fett-photos-thumbnail-recovery.spec.ts",
+      // ENG-002: Photos-tab upload accepts JPEG/PNG/WebP and refuses SVG/HEIF.
+      // Same placement and same self-skip as the spec above; both run for real
+      // in the non-required `storage photos` job, which has storage-api.
+      "treatment-image-upload-formats.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the
@@ -248,6 +256,13 @@ export const BROWSER_GROUPS = {
       // already fails safe to EXTENDED coverage, so the spec runs whenever it
       // matters.
       "authenticated-route-error-containment.spec.ts",
+      // DAT-002 (E-GAPS): a REAL read failure (a revoked SELECT grant on the
+      // disposable stack) reaches the dashboard boundary, the /records section
+      // refusal and the global-search refusal, never 0 or empty. Beside the
+      // boundary spec above for the same reason: it proves the shell-wide
+      // refusal family, and any diff that can reach it is unattributable
+      // application code that already fails safe to EXTENDED.
+      "dat-002-read-failure-refusal.spec.ts",
       // UI-01: the shared pending-navigation primitive, a sibling concern to
       // the app-shell error boundary above it — PendingLink is what every
       // query-only navigation (day nav, period pills, calendar toolbar) has
@@ -328,6 +343,9 @@ export const BROWSER_GROUPS = {
       // HON-62: the weekly-hours editor's native time inputs (keyboard
       // entry, touch tap, save/reload, untouched existing hours).
       "availability-hours-editor.spec.ts",
+      // HON-62 WebKit discriminator: bare time inputs, no app. It skips outside the
+      // non-required WebKit project, so it is a no-op wherever this group runs.
+      "webkit-time-input-key-probe.spec.ts",
       "practitioner-availability-compat.spec.ts",
       "practitioner-booking-studio-b.spec.ts",
       "practitioner-quick-book-studio-b.spec.ts",

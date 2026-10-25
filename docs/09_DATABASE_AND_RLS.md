@@ -303,7 +303,7 @@ audit, ledger or append-only table.
 
 | Rule | Why |
 |---|---|
-| Pin the search path in every RPC body — either `set search_path = pg_catalog, pg_temp` (the long-standing form) **or** `set search_path = ""` with every reference fully schema-qualified (the stricter form used by 0157's four functions) | Prevents search-path injection. **Pinning is mandatory; the exact form is not.** Verified 2026-07-27: all 139 `SECURITY DEFINER` functions in `public` have a pinned search path, 0 lack one. |
+| Pin the search path in every RPC body — either `set search_path = pg_catalog, pg_temp` (the long-standing form) **or** `set search_path = ""` with every reference fully schema-qualified (the stricter form used by 0157's four functions) | Prevents search-path injection. **Pinning is mandatory; the exact form is not.** Verified 2026-07-27: all 139 `SECURITY DEFINER` functions in `public` have a pinned search path, 0 lack one (history; the 2026-10-25 inventory below is the current statement). |
 | Returns a typed `table(…)` or scalar; never raw row | Lets the caller branch on the result code without trusting the row shape. |
 | `revoke execute … from public, anon, authenticated; grant execute … to service_role;` | Default surface is closed. |
 | Argument list is fully typed; never `… variadic anyelement` or similar | Concrete signatures are auditable. |
@@ -327,6 +327,63 @@ trigger functions that must be callable inside the policy/trigger evaluation con
 0129 had left a residual `anon` EXECUTE grant on two charting RPCs — Supabase's
 `ALTER DEFAULT PRIVILEGES` grants `anon` EXECUTE at create time, so `revoke … from public`
 alone is **not** sufficient. Always revoke from `anon` explicitly.
+
+#### Inventory at 2026-10-25 (current; the 2026-07-27 table above is kept as history)
+
+Each row names its source. The sources measure different things, so the numbers are **not directly
+comparable** with the 2026-07-27 row (different date, schema state and method).
+
+| Measure | Value | Source |
+|---|---|---|
+| `SECURITY DEFINER` functions in `public`, repository chain through 0212 (hosted max) | **259** (of 332 live `public` functions) | Static reconstruction from `supabase/migrations` (CREATE/ALTER/DROP FUNCTION, GRANT/REVOKE and DO-block loops): the LINT-TRIAGE handoff record (not stored in this repository), reconciled to the export below |
+| …executable by `authenticated` (Supabase linter `authenticated_security_definer_function_executable`) | **45** (was 22 on 2026-07-27) | Supabase Performance & Security Lints export, observed 2026-10-25 00:11Z, sha256 `d03e3568f8fb8d92602bd88349d4897341ff518ed73b6b9612842e7de94caf26`; the static reconstruction matches by name except the swap noted below |
+| …executable by `anon` (`anon_security_definer_function_executable`) | **8** (was 7) | Same export; named below |
+| Functions with a mutable `search_path` (`function_search_path_mutable`) | **13**, all `SECURITY INVOKER` trigger functions | Same export; invoker status read from the migrations |
+| `SECURITY DEFINER` functions without a pinned `search_path` | **0** | The linter flags any `public` function with a mutable path; none of the 13 it flags is `SECURITY DEFINER` |
+
+**13 `SECURITY INVOKER` trigger functions lack a pinned `search_path` (LINT-002); every `SECURITY DEFINER`
+function is pinned.** The 13 are `set_updated_at`, `reject_payment_consents_mutation`,
+`reject_payment_audit_mutation`, `set_updated_at_now`, `treatment_plan_stages_set_studio_id`,
+`client_personal_notes_set_studio_id`, `tg_client_portal_messages_set_updated_at`,
+`tg_client_portal_message_replies_set_updated_at`, `tg_consent_form_templates_set_updated_at`,
+`tg_client_payment_methods_set_updated_at`, `payment_charge_attempts_touch_updated_at`,
+`enforce_treatment_image_integrity` and `tg_studio_tracking_providers_set_updated_at`. Their invoker status
+is derived from the migrations; a read-only `pg_proc.prosecdef` check would confirm it. Pinning them is
+a pending low-risk hardening migration (three of them read tables, so their bodies need review first);
+it is not applied.
+
+**The eight `anon`-executable functions, and why each is harmless.** None is a business RPC. The three
+predicates return `false` for every input when called without a session (`auth.uid()` is null), so
+they reveal nothing; the five trigger-type functions cannot be invoked through `/rpc` at all
+(PostgreSQL refuses: "trigger functions can only be called as triggers"). A regression test for this
+exposure is pending in PR #1120 and is not yet on production.
+
+| Function | Kind | Why it is harmless | Introduced |
+|---|---|---|---|
+| `is_studio_member(uuid)` | RLS predicate, `boolean` | Constant `false` without a session; used inside policies | 0001 |
+| `is_studio_owner(uuid)` | RLS predicate, `boolean` | Constant `false` without a session | 0001 |
+| `session_is_visible(uuid)` | RLS predicate, `boolean` | Constant `false` without a session (delegates to `is_studio_member`) | 0001 |
+| `handle_new_user()` | trigger | Not callable through `/rpc` | 0007, replaced by 0141 |
+| `enforce_appointment_buffer()` | trigger | Not callable through `/rpc` | 0152 |
+| `guard_scoped_recurring_rule_capacity()` | trigger | Not callable through `/rpc` | 0139 |
+| `studios_admission_mode_guard()` | trigger | Not callable through `/rpc`. New since 2026-07-27: 0204 created it without a by-name revoke, so create-time default privileges left `anon`/`authenticated`/`service_role` EXECUTE (the §5 default-privileges trap). Harmless in effect, but a revoke by name remains pending | 0204 |
+| `rls_auto_enable()` | **event trigger, platform-owned** | Backs the event trigger `ensure_rls` (`ddl_command_end`), which enables RLS on newly created tables. Returns `event_trigger`, so a direct call is refused. Owner `postgres`, `search_path = pg_catalog`. **Do not alter it.** It is created platform-side and has **no definition in `supabase/migrations`**; the repository did not previously document where it comes from (read-only hosted catalog read, 2026-10-25) | none (platform) |
+
+**`rls_auto_enable` and recovery.** Because it is not in the migrations, a project rebuilt from them
+(a restore drill, a disaster-recovery rebuild) will **not** have the `ensure_rls` event trigger, so new
+tables there are not auto-secured. Any rebuilt project must be checked for it.
+
+**Chain versus hosted drift: `snapshot_appointment_buffer()`** (0029, a trigger function). The export lists
+`rls_auto_enable` and not this function in the `anon` and `authenticated` sets, but the repository chain
+leaves both roles with EXECUTE. Hosted production is **stricter**: its EXECUTE is held by `postgres` and
+`service_role` only (hosted catalog read, 2026-10-25). There is no exposure on production, and a direct
+call of a trigger function fails anyway; but a fresh or rebuilt project from the chain grants `anon` and
+`authenticated`. Aligning the chain with an explicit revoke by name is a pending low-risk migration.
+
+**Where the evidence sits.** Classification of all 70 export rows: the LINT-TRIAGE handoff record. The hosted
+catalog read: the LINT-HOSTED-CATALOG-READ handoff record of 2026-10-25. Both are operator
+handoff files, not stored in this repository. No tenant data is involved in any
+source; the counts above are derived from those files, not typed into a test.
 
 ### Notable RPC families
 
