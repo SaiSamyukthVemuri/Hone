@@ -1,31 +1,37 @@
-// CLN-002 — START_SESSION APPOINTMENT IDENTITY ON THE PRODUCTION CHAIN (0181).
+// CLN-002 — START_SESSION APPOINTMENT IDENTITY, SCHEMA-AWARE.
 //
 // Audit finding CLN-002 (P1/High): "Starting a chart for appointment B can
 // return appointment A's session". 0181's coalesce lookup keys on studio,
 // client, practitioner, modality and the time window, never on the requested
 // appointment, so a B start inside the window of A's chart is handed A's chart.
-// The fix is 0241 (#1035), whose hosted apply is held; it is not on this chain.
+// The fix is 0241 (#1035), whose hosted apply is held.
 //
-// This file runs on whatever chain the DB lane builds (today 0001 -> 0212) and
-// has two parts:
+// This file asks the DATABASE which start_session it runs (the function's own
+// source, cross-checked against the recorded migrations; see
+// helpers/start-session-shape.ts, pinned on both shapes without a database by
+// tests/migrations/cln002-start-session-shape.test.ts), and asserts the
+// contract that chain is meant to have. The same tests run on both chains;
+// nothing is skipped and nothing needs editing when 0241 lands.
 //
-//   BASELINE: behaviour that must hold today and after 0241 (create, same-A
-//   reuse, no-appointment reuse without relinking, a fresh chart outside the
-//   window). Ordinary assertions.
+//   BASELINE: behaviour that holds on both chains (create, same-A reuse,
+//   no-appointment reuse without relinking, a fresh chart outside the window).
 //
-//   KNOWN DEFECT (characterization, NOT a gate): the defect, asserted as it is
-//   today, so the lane stays green while it proves the defect is real. The
-//   "target" case is an `it.fails` expected failure: it states the correct
-//   contract and is reported as passing only while that contract is broken.
-//   The positive characterization keeps the expected failure honest: a fixture
-//   error cannot pass for the defect, because the defect itself is asserted.
+//   SHAPE: the detector must resolve to exactly one shape. If the two signals
+//   disagree, or the source is neither shape, the file FAILS rather than guess.
 //
-// WHEN 0241 LANDS, this describe turns red on purpose: the characterization no
-// longer holds and the `it.fails` target starts passing (which `it.fails`
-// reports as a failure). The change that brings 0241 onto this chain deletes
-// the KNOWN DEFECT describe and keeps the baseline.
+//   CLN-002 CONTRACT, by shape:
+//     0181 (the production chain): the KNOWN DEFECT is asserted as it is, so the
+//       lane stays green while proving the defect is real: a B start inside A's
+//       window is handed A's chart, still linked to A, with no B chart; and the
+//       target contract, checked directly, does NOT hold. That second assertion
+//       is explicit (the check must throw), so a fixture error cannot pass for
+//       the defect.
+//     0241: the TARGET contract holds: B gets its own chart, A's stays linked to
+//       A; and the defect reply is absent.
+//   Both the five-argument and the legacy four-argument calls are covered
+//   (0241 keeps 0181's four-argument wrapper, which delegates).
 //
-// What is still safe today: #978's fail-closed containment in
+// What is still safe on the 0181 chain: #978's fail-closed containment in
 // app/(app)/clients/[id]/sessions/new/actions.ts reads the chart back and
 // refuses one linked to another appointment before any completion, postcare,
 // analytics or redirect. Its unit tests feed the action exactly the reply this
@@ -48,6 +54,7 @@ import {
   seedStudio,
   type SeededStudio,
 } from "./helpers/harness";
+import { resolveStartSessionShape, type StartSessionShape } from "./helpers/start-session-shape";
 
 const COALESCE_MINUTES = 90;
 const CALL5 = "select * from public.start_session($1,$2,$3,$4,$5)";
@@ -57,8 +64,24 @@ type Start = { session_id: string; reused: boolean };
 
 let S: SeededStudio;
 let user: Client;
+let shape: StartSessionShape;
+
+/** The start_session this database runs, from its own source and history. */
+async function detectShape(): Promise<StartSessionShape> {
+  const src = await adminQuery(
+    `select p.prosrc from pg_proc p
+      where p.oid = 'public.start_session(uuid,text,uuid,integer,uuid)'::regprocedure`,
+  );
+  if (src.rows.length !== 1) throw new Error(`expected one five-argument start_session, found ${src.rows.length}`);
+  const hist = await adminQuery(`select version from supabase_migrations.schema_migrations order by version`);
+  return resolveStartSessionShape({
+    prosrc: (src.rows[0] as { prosrc: string }).prosrc,
+    migrationsRecorded: (hist.rows as Array<{ version: string }>).map((r) => r.version),
+  });
+}
 
 beforeAll(async () => {
+  shape = await detectShape();
   S = await seedStudio("cln002-char");
   user = new Client({ connectionString: resolveLocalDbUrl() });
   await user.connect();
@@ -150,33 +173,60 @@ describe("CLN-002 baseline: start_session behaviour that holds before and after 
   });
 });
 
-describe("KNOWN DEFECT CLN-002 (characterization, not a gate; 0241 held in #1035)", () => {
+describe("CLN-002 start_session shape", () => {
+  it("resolves to exactly one shape from the database (never guessed)", () => {
+    expect(["0181", "0241"]).toContain(shape);
+  });
+});
+
+describe("CLN-002 contract for the start_session this database runs", () => {
   for (const [label, call] of [["five-argument", CALL5], ["legacy four-argument", CALL4]] as const) {
-    it(`today (0181, ${label}): a start for B inside A's window is handed A's chart, still linked to A`, async () => {
+    /** The target contract (0241): B inside A's window gets B's own chart. */
+    async function targetContract(): Promise<void> {
       await purge();
       const a = await appointment();
       const b = await appointment();
       const first = await start(a, call);
       const second = await start(b, call);
-      // THE DEFECT: B gets A's chart back as a reuse.
+      expect(second.reused).toBe(false);
+      expect(second.session_id).not.toBe(first.session_id);
+      expect(await links()).toEqual([
+        { id: first.session_id, appointment_id: a },
+        { id: second.session_id, appointment_id: b },
+      ]);
+    }
+
+    it(`${label}: a start for B inside A's window follows the contract of the detected shape`, async () => {
+      if (shape === "0241") {
+        await targetContract();
+        return;
+      }
+      // 0181: THE KNOWN DEFECT, asserted as it is today.
+      await purge();
+      const a = await appointment();
+      const b = await appointment();
+      const first = await start(a, call);
+      const second = await start(b, call);
+      // B gets A's chart back as a reuse.
       expect(second).toEqual({ session_id: first.session_id, reused: true });
       // A's link is not overwritten, and B has no chart of its own. This is the
       // exact reply #978's readback refuses at the application layer.
       expect(await links()).toEqual([{ id: first.session_id, appointment_id: a }]);
+      // And the target contract, checked directly, does not hold here. It must
+      // throw; if it passes, the detector and the database disagree.
+      await expect(targetContract()).rejects.toThrow();
     });
   }
 
-  it.fails("target contract (0241): a start for B inside A's window gets B's own chart", async () => {
+  it("a start for B inside the window never takes a chart linked to a different appointment (both chains)", async () => {
     await purge();
     const a = await appointment();
     const b = await appointment();
     const first = await start(a);
     const second = await start(b);
-    expect(second.reused).toBe(false);
-    expect(second.session_id).not.toBe(first.session_id);
-    expect(await links()).toEqual([
-      { id: first.session_id, appointment_id: a },
-      { id: second.session_id, appointment_id: b },
-    ]);
+    // On 0181 B is handed A's chart, which stays linked to A. On 0241 B has its
+    // own. Either way A's link is never overwritten to B.
+    expect((await links()).find((l) => l.id === first.session_id)?.appointment_id).toBe(a);
+    expect(second.session_id === first.session_id).toBe(shape === "0181");
   });
 });
