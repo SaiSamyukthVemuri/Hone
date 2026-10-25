@@ -84,6 +84,10 @@ import {
   shouldIgnoreLiveModeEvent,
 } from "@/lib/billing/payment-webhook-reconciliation";
 import { PaymentOriginalBindingPendingError } from "@/lib/billing/payment-webhook-reconciliation";
+import {
+  PaymentWebhookMaintenanceDeferral,
+  paymentWebhookMaintenanceOn,
+} from "@/lib/billing/payment-webhook-maintenance";
 import { ensureCardChangeNotification } from "@/lib/billing/card-change-notification";
 
 // Force Node runtime: Stripe SDK + raw body buffering need Node, not
@@ -272,7 +276,11 @@ export async function POST(req: Request): Promise<Response> {
     // Expected original-binding races still release the winning claim and
     // return 500 below, but must not page/email operators on every delivery.
     // Same-message ordinary errors remain genuine failures.
-    if (!(err instanceof PaymentOriginalBindingPendingError)) {
+    // The maintenance deferral is an operator-chosen 500, not a failure: one
+    // structural line, no page/email, then the same release and 500.
+    if (err instanceof PaymentWebhookMaintenanceDeferral) {
+      logInternal("stripe_webhook_maintenance_deferred", { eventType: err.eventType });
+    } else if (!(err instanceof PaymentOriginalBindingPendingError)) {
       logInternal("stripe_webhook_handler_failed", {
         eventId: event.id,
         eventType: event.type,
@@ -454,10 +462,14 @@ async function handleStripeEvent(
     case "payment_intent.succeeded": {
       return await handlePaymentIntentSucceeded(event, ctx);
     }
+    // PAYMENT-WEBHOOK-MAINTENANCE-FLAG: with the switch ON, these two direct
+    // writers are deferred to Stripe redelivery before any read or write.
     case "payment_intent.payment_failed": {
+      if (paymentWebhookMaintenanceOn()) throw new PaymentWebhookMaintenanceDeferral(event.type);
       return await handlePaymentIntentPaymentFailed(event, ctx);
     }
     case "charge.refunded": {
+      if (paymentWebhookMaintenanceOn()) throw new PaymentWebhookMaintenanceDeferral(event.type);
       return await handleChargeRefunded(event, ctx);
     }
     case "charge.dispute.created": {
