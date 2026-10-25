@@ -55,6 +55,27 @@ vi.mock("@/lib/stripe/server", async (orig) => {
   return { ...real, getStripe: () => client as unknown as Stripe };
 });
 
+// The e2e fake refund object states neither `charge` nor `payment_intent`, which
+// B-OLD's refund completion check requires (a fake gap, not a 0246 effect; the
+// 0212 control run shows the same). Real Stripe states both, so the adapter adds
+// them from the durable attempt. Nothing else about the fake changes.
+vi.mock("@/lib/stripe/session-payment-stripe", async () => {
+  const { createFakeStripe } = await import("@/lib/stripe/e2e-fake-stripe");
+  const { adminQuery: q } = await import("./helpers/harness");
+  return {
+    getSessionPaymentStripe: () => {
+      const fake = createFakeStripe() as unknown as { refunds: { create: (p: { charge?: string | null }, o?: unknown) => Promise<Record<string, unknown>> } };
+      const create = fake.refunds.create.bind(fake.refunds);
+      fake.refunds.create = async (params, opts) => {
+        const res = await create(params, opts);
+        const row = await q(`select stripe_payment_intent_id as pi from public.payment_charge_attempts where stripe_charge_id=$1 limit 1`, [params.charge ?? ""]);
+        return { ...res, charge: params.charge, payment_intent: row.rows[0]?.pi ?? null };
+      };
+      return fake as unknown as Stripe;
+    },
+  };
+});
+
 const saved = {
   url: process.env.NEXT_PUBLIC_SUPABASE_URL,
   key: process.env.SUPABASE_SERVICE_ROLE_KEY,
@@ -140,7 +161,7 @@ const count = (calls: string[], needle: string) => calls.filter((m) => m.include
 // ---- DB helpers ----------------------------------------------------------
 async function attemptRow(id: string) {
   const r = await adminQuery(
-    `select status, stripe_payment_intent_id as pi, stripe_charge_id as ch, charged_at is not null as charged,
+    `select status, stripe_customer_id as cus, stripe_payment_intent_id as pi, stripe_charge_id as ch, charged_at is not null as charged,
             refund_status, stripe_refund_id as refund_id, failure_code
        from public.payment_charge_attempts where id = $1`,
     [id],
@@ -249,13 +270,19 @@ async function prepareSession(sc: PaymentScenario, ccy = "cad") {
 // B-OLD's manual-fee prepare insert (manual-fee-actions.ts), minimal legal shape.
 async function prepareFee(sc: PaymentScenario) {
   const appt = await newAppointment(sc);
+  const c = (await adminQuery(
+    `select id, stripe_account_id, stripe_customer_id, stripe_payment_method_id, card_authorization_signature_id as sig
+       from public.client_payment_methods where studio_id=$1 and client_id=$2 and status='active' limit 1`,
+    [sc.studioId, sc.clientId],
+  )).rows[0];
   return attempt(async () => {
     const r = await adminQuery(
       `insert into public.payment_charge_attempts
          (studio_id, charge_reason, client_id, appointment_id, created_by_practitioner_id,
-          amount_cents, currency, status, stripe_livemode)
-       values ($1,'no_show_fee',$2,$3,$4,5000,'cad','ready',false) returning id`,
-      [sc.studioId, sc.clientId, appt, sc.practitionerId],
+          amount_cents, currency, status, stripe_livemode, client_payment_method_id,
+          card_authorization_signature_id, stripe_account_id, stripe_customer_id, stripe_payment_method_id)
+       values ($1,'no_show_fee',$2,$3,$4,5000,'cad','ready',false,$5,$6,$7,$8,$9) returning id`,
+      [sc.studioId, sc.clientId, appt, sc.practitionerId, c.id, c.sig, c.stripe_account_id, c.stripe_customer_id, c.stripe_payment_method_id],
     );
     return r.rows[0].id as string;
   });
@@ -365,7 +392,7 @@ async function scenario(name: string, jur: null | "CA" | "US") {
   if (charged[0]) {
     const row = await attemptRow(charged[0]);
     const d = await deliver("payment_intent.succeeded", {
-      id: row.pi, object: "payment_intent", status: "succeeded", amount: sc.expectedAmountMinor, currency: "cad", latest_charge: row.ch,
+      id: row.pi, object: "payment_intent", status: "succeeded", amount: sc.expectedAmountMinor, currency: "cad", latest_charge: row.ch, customer: row.cus,
       metadata: { hone_session_payment_charge_attempt_id: charged[0], hone_studio_id: sc.studioId, hone_client_id: sc.clientId, hone_environment: "test" },
     }, account);
     await hook(S, "W5", "payment_intent.succeeded webhook (attempt already succeeded)", d, { attemptAfter: await attemptRow(charged[0]) });
@@ -376,7 +403,7 @@ async function scenario(name: string, jur: null | "CA" | "US") {
     const aid = await legacyAttempt(sc, "no_show_fee", "pending_stripe", pi);
     const before = await attemptRow(aid);
     const d = await deliver("payment_intent.succeeded", {
-      id: pi, object: "payment_intent", status: "succeeded", amount: 5000, currency: "cad", latest_charge: `ch_test_rehearsal_${randomUUID().slice(0, 8)}`,
+      id: pi, object: "payment_intent", status: "succeeded", amount: 5000, currency: "cad", customer: before.cus,
       metadata: { hone_session_payment_charge_attempt_id: aid, hone_studio_id: sc.studioId, hone_client_id: sc.clientId, hone_environment: "test" },
     }, account);
     const after = await attemptRow(aid);
@@ -402,7 +429,7 @@ async function scenario(name: string, jur: null | "CA" | "US") {
     const row = await attemptRow(charged[1]);
     const amount = (await adminQuery(`select amount_cents as a from public.payment_charge_attempts where id=$1`, [charged[1]])).rows[0].a;
     const d = await deliver("charge.refunded", {
-      id: row.ch, object: "charge", amount, amount_refunded: amount, currency: "cad", refunded: true, payment_intent: row.pi,
+      id: row.ch, object: "charge", amount, amount_refunded: amount, currency: "cad", refunded: true, payment_intent: row.pi, customer: row.cus,
       refunds: { object: "list", data: [{ id: `re_test_rehearsal_${randomUUID().slice(0, 8)}`, object: "refund", amount, status: "succeeded", payment_intent: row.pi, charge: row.ch }] },
       metadata: { hone_studio_id: sc.studioId },
     }, account);
@@ -414,7 +441,7 @@ async function scenario(name: string, jur: null | "CA" | "US") {
     const pi = `pi_test_rehearsal_failed_${randomUUID().slice(0, 8)}`;
     const failing = await legacyAttempt(sc, "no_show_fee", "pending_stripe", pi);
     const d = await deliver("payment_intent.payment_failed", {
-      id: pi, object: "payment_intent", status: "requires_payment_method", amount: 5000, currency: "cad",
+      id: pi, object: "payment_intent", status: "requires_payment_method", amount: 5000, currency: "cad", customer: (await attemptRow(failing)).cus,
       last_payment_error: { code: "card_declined", message: "synthetic" },
       metadata: { hone_session_payment_charge_attempt_id: failing, hone_studio_id: sc.studioId, hone_client_id: sc.clientId, hone_environment: "test" },
     }, account);
