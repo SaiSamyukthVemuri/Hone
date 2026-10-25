@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { FITZ_QUESTION_KEYS, computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
+import { ISSUED_QUESTIONNAIRE, questionnaireForRow } from "@/lib/intake/questionnaire";
 
 // ===========================================================================
 // PERF2 — Client Profile read decomposition.
@@ -230,4 +232,53 @@ describe("nothing widened", () => {
     expect(waveIdx).toBeLessThan(endIdx);
   });
 
+});
+
+// Evaluate only the actual pure profile-summary initializer. This is a value
+// gate regression, not page rendering, tab-read, RLS or database proof; the
+// existing DB suites above remain the authority for those boundaries.
+describe("profile Fitzpatrick questionnaire provenance", () => {
+  function summaryFor(intake: Record<string, unknown> | null) {
+    let initializer: ts.Expression | undefined;
+    const visit = (node: ts.Node) => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) &&
+          node.name.text === "selfReportedFitzpatrick") initializer = node.initializer;
+      ts.forEachChild(node, visit);
+    };
+    visit(pageComponent());
+    if (!initializer) throw new Error("Profile summary initializer missing");
+    const compiled = ts.transpileModule(
+      `const evaluate = (submittedIntake, questionnaireForRow, computeFitzpatrickEstimate) => (${initializer.getText(SF)});`,
+      { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } },
+    ).outputText;
+    const evaluate = new Function(`${compiled}; return evaluate;`)() as (
+      intake: Record<string, unknown> | null,
+      decode: typeof questionnaireForRow,
+      score: typeof computeFitzpatrickEstimate,
+    ) => ReturnType<typeof computeFitzpatrickEstimate>;
+    return evaluate(intake, questionnaireForRow, computeFitzpatrickEstimate);
+  }
+  const responses = Object.fromEntries(FITZ_QUESTION_KEYS.map(key => [key, "2"]));
+  const expected = { score: 20, type: "III" };
+
+  it("retains the pre-0246 absent-field legacy summary", () => {
+    expect(summaryFor({ responses })).toEqual(expected);
+  });
+  it("retains an explicit NULL legacy summary", () => {
+    expect(summaryFor({ responses, questionnaire_snapshot: null })).toEqual(expected);
+  });
+  it("retains the approved issued questionnaire summary", () => {
+    expect(summaryFor({ responses, questionnaire_snapshot: ISSUED_QUESTIONNAIRE })).toEqual(expected);
+  });
+  it.each([undefined, {}, [], "legacy", { ...ISSUED_QUESTIONNAIRE, schema_version: 99 },
+    { ...ISSUED_QUESTIONNAIRE, content_digest: "forged" }])(
+    "suppresses valid-looking answers with invalid present provenance %j", snapshot => {
+      expect(computeFitzpatrickEstimate(responses)).toEqual(expected);
+      expect(summaryFor({ responses, questionnaire_snapshot: snapshot })).toBeNull();
+    },
+  );
+  it("does not create a summary without an intake or complete answers", () => {
+    expect(summaryFor(null)).toBeNull();
+    expect(summaryFor({ responses: {}, questionnaire_snapshot: ISSUED_QUESTIONNAIRE })).toBeNull();
+  });
 });

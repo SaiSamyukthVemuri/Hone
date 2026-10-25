@@ -62,7 +62,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     },
     rpc: async (name: string) => {
       h.rpcCalls.push(name);
-      if (name !== "reconcile_card_payment_succeeded") {
+      if (name !== "reconcile_bound_payment_event") {
         throw new Unexpected(`unexpected rpc ${name}`);
       }
       return {
@@ -150,7 +150,7 @@ describe("1 · a settlement committed first is NAMED, not reported as 'terminal'
 
     const out = await handlePaymentIntentSucceeded(EVENT, CTX);
 
-    expect(h.rpcCalls).toContain("reconcile_card_payment_succeeded");
+    expect(h.rpcCalls).toContain("reconcile_bound_payment_event");
     expect(out.settledExternallyConflict).toBe(true);
     expect(out.localTerminalMismatch).toBeUndefined();
   });
@@ -213,7 +213,7 @@ describe("3 + 4 · the ordinary reconciliations still happen", () => {
     h.attempt = baseAttempt("ready");
     h.rpcResult = "reconciled";
     const out = await handlePaymentIntentSucceeded(EVENT, CTX);
-    expect(h.rpcCalls).toContain("reconcile_card_payment_succeeded");
+    expect(h.rpcCalls).toContain("reconcile_bound_payment_event");
     expect(out.reconciledFromStatus).toBe("ready");
     expect(out.alreadySucceeded).toBeUndefined();
     expect(h.alerts).toEqual([]);
@@ -237,11 +237,12 @@ describe("3 + 4 · the ordinary reconciliations still happen", () => {
 });
 
 describe("5 · already succeeded BEFORE the initial read stays idempotent", () => {
-  it("returns early and never calls the command", async () => {
+  it("revalidates the idempotent event inside the bound command", async () => {
     h.attempt = baseAttempt("succeeded");
+    h.rpcResult = "already_succeeded";
     const out = await handlePaymentIntentSucceeded(EVENT, CTX);
     expect(out.alreadySucceeded).toBe(true);
-    expect(h.rpcCalls).toEqual([]);
+    expect(h.rpcCalls).toEqual(["reconcile_bound_payment_event"]);
     expect(h.alerts).toEqual([]);
   });
 });
@@ -258,7 +259,7 @@ describe("6 · a terminal row unrelated to any settlement keeps its behaviour", 
 
       // It now gets there THROUGH the command — which is what lets the
       // settlement case be told apart — but the outcome is unchanged.
-      expect(h.rpcCalls).toContain("reconcile_card_payment_succeeded");
+      expect(h.rpcCalls).toContain("reconcile_bound_payment_event");
       expect(out.localTerminalMismatch).toBe(status);
       expect(out.reconciledFromStatus).toBeUndefined();
       expect(h.writes).toEqual([]);
@@ -293,6 +294,9 @@ describe("the no-false-reconciliation contract, stated once", () => {
       "already_succeeded",
       "zero_rows",
       "not_found",
+      "identity_mismatch",
+      "invalid_input",
+      "unexpected_response",
     ]) {
       h.attempt = baseAttempt("ready");
       h.rpcResult = result;

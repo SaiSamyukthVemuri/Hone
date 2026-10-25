@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
   adminQuery,
+  adminTx,
   purgeAppointmentAudit,
   asUser,
   closePool,
@@ -186,10 +187,16 @@ describe("#16/#18 historical charting is immutable when inventory later changes"
       probe_inventory_item_id: item,
       probe_lot_number: "DEL-LOT",
     });
-    await adminQuery(
-      "delete from public.record_keeping_sterile_items where id=$1",
-      [item],
-    );
+    await adminTx(async q => {
+      // Owner-only fixture edit with the real synthetic practitioner attribution.
+      await q("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: a.userId, role: "authenticated" }),
+      ]);
+      await q(
+        "delete from public.record_keeping_sterile_items where id=$1",
+        [item],
+      );
+    });
     const r = await adminQuery(
       "select probe_inventory_item_id, probe_lot_number, studio_id from public.session_blocks where id=$1",
       [blockId],

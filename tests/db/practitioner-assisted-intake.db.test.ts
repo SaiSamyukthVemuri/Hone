@@ -1,7 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   adminQuery,
+  adminTx,
+  asRole,
   closePool,
   seedStudio,
   userQuery,
@@ -330,5 +333,205 @@ describe("5. the documented limitation is real, and stated honestly", () => {
     );
     // It succeeds. That is the limitation, proven rather than assumed.
     expect(res.rowCount).toBe(1);
+  });
+});
+
+// Finite 0246 additive-stage coverage. Existing direct-write limitation above
+// remains intentional; held 0248 closure cases stay in the original owner suite.
+describe("0243 public/assisted revision and atomic profile boundary", () => {
+  const command = "select * from public.write_intake_revision($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb)";
+  function parameters(id: string, revision: string, operation = "save", responses: Record<string, unknown> = {}, profile: Record<string, unknown> = {}, studio = A.studioId, client = A.clientId) {
+    return [id, studio, client, revision, JSON.stringify(responses), operation === "save" ? 1 : 5, operation, JSON.stringify(profile)];
+  }
+  async function write(args: unknown[]) {
+    return adminTx(async (q) => { await q("set local role service_role"); return (await q(command, args)).rows[0]; });
+  }
+  it.each(["anon", "authenticated"] as const)("%s cannot invoke the privileged writer", async (role) => {
+    const id = await seedIntake(A, "in_progress");
+    await expect(asRole(role, (q) => q(command, parameters(id, "0")))).rejects.toMatchObject({ code: "42501" });
+  });
+  it.each([["save", "save"], ["save", "submit"], ["submit", "submit"]])(
+    "two %s/%s requests with one snapshot have exactly one winner", async (first, second) => {
+      const id = await seedIntake(A, "in_progress");
+      const results = await Promise.all([
+        write(parameters(id, "0", first, { legal_name: "Public A" })),
+        write(parameters(id, "0", second, { legal_name: "Public B" })),
+      ]);
+      expect(results.filter((r) => ["saved", "submitted"].includes(r.outcome))).toHaveLength(1);
+      expect(results.filter((r) => ["conflict", "terminal"].includes(r.outcome))).toHaveLength(1);
+      const { rows: [row] } = await adminQuery("select revision::text, responses from public.client_intake_forms where id=$1", [id]);
+      expect(row.revision).toBe("1");
+      expect(["Public A", "Public B"]).toContain(row.responses.legal_name);
+    },
+  );
+  it("a prior assisted write invalidates the public snapshot, and a stale assisted write cannot overwrite it", async () => {
+    const id = await seedIntake(A, "in_progress");
+    expect((await write(parameters(id, "0", "save", { legal_name: "Assisted" }))).outcome).toBe("saved");
+    expect((await write(parameters(id, "0", "save", { legal_name: "Stale public" }))).outcome).toBe("conflict");
+    expect((await write(parameters(id, "1", "save", { legal_name: "Current public" }))).outcome).toBe("saved");
+    expect((await write(parameters(id, "1", "save", { legal_name: "Stale assisted" }))).outcome).toBe("conflict");
+    expect((await storedResponses(id)).legal_name).toBe("Current public");
+  });
+  it("pins the actual definer/invoker owner, role graph and effective command ACL", async () => {
+    const { rows: [context] } = await adminQuery(`
+      select w.proowner::text as writer_owner, g.proowner::text as guard_owner,
+        w.prosecdef as writer_definer, g.prosecdef as guard_definer,
+        w.proconfig as writer_config, g.proconfig as guard_config
+      from pg_catalog.pg_proc w, pg_catalog.pg_proc g
+      where w.oid='public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb)'::regprocedure
+        and g.oid='public.advance_intake_revision()'::regprocedure`);
+    expect(context.writer_owner).toBe(context.guard_owner);
+    expect(context.writer_definer).toBe(true); expect(context.guard_definer).toBe(false);
+    expect(context.writer_config).toEqual(['search_path=""']);
+    expect(context.guard_config).toEqual(['search_path=""']);
+    // Role metadata is authoritative here. SET ROLE in this harness would
+    // still have a postgres session_user and could falsely appear permitted.
+    const { rows } = await adminQuery(`select r.rolname,
+      pg_catalog.pg_has_role(r.oid,w.proowner,'MEMBER') as is_owner_member,
+      pg_catalog.pg_has_role(r.oid,w.proowner,'SET') as can_assume_owner,
+      pg_catalog.has_function_privilege(r.oid,w.oid,'EXECUTE') as can_execute
+      from pg_catalog.pg_roles r, pg_catalog.pg_proc w
+      where r.rolname in ('anon','authenticated','service_role','authenticator')
+        and w.oid='public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb)'::regprocedure`);
+    expect(rows).toHaveLength(4);
+    expect(rows.every((row) => row.can_assume_owner === false)).toBe(true);
+    expect(rows.every((row) => row.is_owner_member === false)).toBe(true);
+    for (const role of ['anon','authenticated','service_role']) {
+      expect(rows.find((row) => row.rolname === role)?.can_execute).toBe(role === 'service_role');
+    }
+    const { rows: delegates } = await adminQuery(`select p.oid::regprocedure::text as signature
+      from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and p.prosecdef
+        and p.oid<>'public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb)'::regprocedure
+        and p.prosrc ~* '(^|[^a-z0-9_])client_intake_forms([^a-z0-9_]|$)'
+      and (
+        p.oid = pg_catalog.to_regprocedure('public.receptionist_client_contacts(pg_catalog.uuid,pg_catalog.text,pg_catalog.int4)')
+        and p.proowner = (select w.proowner from pg_catalog.pg_proc w where w.oid='public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb)'::regprocedure) and p.provolatile = 's' and p.prokind = 'f'
+        and p.prolang = (select l.oid from pg_catalog.pg_language l where l.lanname = 'plpgsql')
+        and p.proconfig = array['search_path=pg_catalog, pg_temp']::text[]
+        and pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc, 'UTF8')), 'hex') = '4ad10247566c4186a5c03d12180c2946ae05919fcc75f4145e5a8566ada9ff6a'
+        and exists (
+          select 1 from pg_catalog.pg_proc helper
+          where helper.oid = pg_catalog.to_regprocedure('public.receptionist_actor_id(pg_catalog.uuid)')
+            and helper.proowner = p.proowner and helper.prosecdef
+            and helper.provolatile = 's' and helper.prokind = 'f'
+            and helper.prolang = (select l.oid from pg_catalog.pg_language l where l.lanname = 'sql')
+            and helper.proconfig = array['search_path=pg_catalog, pg_temp']::text[]
+            and pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(helper.prosrc, 'UTF8')), 'hex') = 'cf6256e2abdaaa6c319b17b26b22da159ab1017d5b2970676695961bdd9af7b4'
+            and not pg_catalog.has_function_privilege('anon', helper.oid, 'EXECUTE')
+            and not pg_catalog.has_function_privilege('authenticated', helper.oid, 'EXECUTE')
+            and not pg_catalog.has_function_privilege('service_role', helper.oid, 'EXECUTE')
+            and not exists (
+              select 1 from pg_catalog.aclexplode(coalesce(helper.proacl, pg_catalog.acldefault('f', helper.proowner))) a
+              where a.privilege_type = 'EXECUTE' and a.grantee <> helper.proowner
+            )
+        )
+        and pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
+        and not pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')
+        and not pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE')
+        and not exists (
+          select 1 from pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
+          where a.privilege_type = 'EXECUTE' and (a.grantee not in
+            (p.proowner, (select r.oid from pg_catalog.pg_roles r where r.rolname = 'authenticated'))
+            or (a.grantee <> p.proowner and a.is_grantable))
+        )
+      ) is not true
+        and (pg_catalog.has_function_privilege('anon',p.oid,'EXECUTE')
+          or pg_catalog.has_function_privilege('authenticated',p.oid,'EXECUTE')
+          or pg_catalog.has_function_privilege('service_role',p.oid,'EXECUTE'))`);
+    expect(delegates).toEqual([]);
+  });
+  it("additive0243 keeps legacy writes available and invalidates stale CAS before later0248 closure", async () => {
+    const id = await seedIntake(A, "in_progress");
+    const migration = readFileSync("supabase/migrations/0243_intake_revision_cas_and_profile_sync.sql", "utf8");
+    const start = migration.indexOf("create function public.advance_intake_revision()");
+    const additiveGuard = migration.slice(start, migration.indexOf("\n$$;", start) + 4)
+      .replace("create function", "create or replace function");
+    await adminTx(async q => {
+      await q("savepoint additive_phase");
+      try {
+        // Simulate only the earlier additive function inside a rolled-back
+        // catalog savepoint. No migration-history rows or frozen SQL change.
+        await q(additiveGuard);
+        await q("set local role authenticated");
+        await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: A.userId, role: "authenticated" })]);
+        const { rows: [legacy] } = await q("update public.client_intake_forms set responses=$2::jsonb,revision=999 where id=$1 returning revision::text,responses",
+          [id, JSON.stringify({ legal_name: "Legacy additive writer" })]);
+        expect(legacy).toEqual({ revision: "1", responses: { legal_name: "Legacy additive writer" } });
+        await q("set local role service_role");
+        const command = "select * from public.write_intake_revision($1,$2,$3,$4,$5::jsonb,1,'save','{}'::jsonb)";
+        const { rows: [stale] } = await q(command, [id,A.studioId,A.clientId,0,JSON.stringify({ legal_name: "Stale CAS" })]);
+        expect(stale).toEqual({ outcome: "conflict", new_revision: null });
+        expect((await q("select responses from public.client_intake_forms where id=$1", [id])).rows[0].responses).toEqual(legacy.responses);
+        const { rows: [fresh] } = await q(command, [id,A.studioId,A.clientId,1,JSON.stringify({ legal_name: "Fresh CAS" })]);
+        expect(fresh).toEqual({ outcome: "saved", new_revision: "2" });
+      } finally {
+        await q("rollback to savepoint additive_phase");
+      }
+      // The exact final guard and original row are restored, not dropped.
+      await expect(q("select 1")).resolves.toBeDefined();
+    });
+    expect((await adminQuery("select revision::text,responses from public.client_intake_forms where id=$1", [id])).rows[0])
+      .toEqual({ revision: "0", responses: { q: "draft" } });
+  });
+  it.each(["authenticated", "service_role"] as const)("%s keeps notes/link/no-op status writes and revision invalidation", async (role) => {
+    for (const status of ["in_progress", "submitted", "reviewed"] as const) {
+      const id = await seedIntake(A, status);
+      await asRole(role, async (q) => {
+        await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: A.userId, role })]);
+        const { rows: [row] } = await q("update public.client_intake_forms set practitioner_notes='Allowed note',intake_link_send_count=1,status=$2,revision=999 where id=$1 returning revision::text,responses,status", [id, status]);
+        expect(row).toEqual({ revision: "1", responses: { q: "draft" }, status });
+      });
+    }
+  });
+  it("wrong studio/client refuses without a revision or a write", async () => {
+    const id = await seedIntake(A, "in_progress");
+    expect(await write(parameters(id, "0", "save", {}, {}, B.studioId))).toEqual({ outcome: "not_available", new_revision: null });
+    expect(await write(parameters(id, "0", "save", {}, {}, A.studioId, B.clientId))).toEqual({ outcome: "not_available", new_revision: null });
+    expect((await storedResponses(id)).q).toBe("draft");
+  });
+  it("only the submit winner appends allergies once and preserves current nonempty profile fields", async () => {
+    const id = await seedIntake(A, "in_progress");
+    await adminQuery("update public.clients set allergies='Practitioner latest', pronouns='They', emergency_contact_phone='Existing' where id=$1", [A.clientId]);
+    const args = parameters(id, "0", "submit", { legal_name: "Submitted" }, { allergy_text: "Intake contribution", pronouns: "Different", emergency_contact_phone: "Different" });
+    expect((await write(args)).outcome).toBe("submitted");
+    expect((await write(args)).outcome).toBe("terminal");
+    const { rows: [client] } = await adminQuery("select allergies,pronouns,emergency_contact_phone from public.clients where id=$1", [A.clientId]);
+    expect(client.pronouns).toBe("They"); expect(client.emergency_contact_phone).toBe("Existing");
+    expect(client.allergies).toContain("Practitioner latest");
+    expect(client.allergies.split("Intake contribution")).toHaveLength(2);
+  });
+  it("invalid profile date rolls back both the submitted transition and new answers", async () => {
+    const id = await seedIntake(A, "in_progress");
+    await adminQuery("update public.clients set date_of_birth=null where id=$1", [A.clientId]);
+    await expect(write(parameters(id, "0", "submit", { legal_name: "Must rollback" }, { date_of_birth: "not-a-date" }))).rejects.toBeTruthy();
+    const { rows: [row] } = await adminQuery("select status,revision::text,submitted_at,responses from public.client_intake_forms where id=$1", [id]);
+    expect(row.status).toBe("in_progress"); expect(row.revision).toBe("0"); expect(row.submitted_at).toBeNull(); expect(row.responses.q).toBe("draft");
+  });
+  it("waits for a concurrent profile edit, then merges the latest locked values", async () => {
+    const id = await seedIntake(A, "in_progress");
+    let held!: () => void; let release!: () => void; let identified!: () => void;
+    const locked = new Promise<void>((r) => { held = r; });
+    const unlock = new Promise<void>((r) => { release = r; });
+    const pidReady = new Promise<void>((r) => { identified = r; });
+    let pid = 0;
+    const editor = adminTx(async (q) => {
+      await q("update public.clients set allergies='Concurrent practitioner', address='Current address' where id=$1", [A.clientId]);
+      held(); await unlock;
+    });
+    await locked;
+    const submit = adminTx(async (q) => {
+      await q("set local role service_role"); pid = (await q("select pg_backend_pid() as pid")).rows[0].pid; identified();
+      return (await q(command, parameters(id, "0", "submit", {}, { allergy_text: "New intake", address: "Stale address" }))).rows[0];
+    });
+    await pidReady;
+    try {
+      await expect.poll(async () => (await adminQuery("select wait_event_type from pg_stat_activity where pid=$1", [pid])).rows[0]?.wait_event_type, { timeout: 5000 }).toBe("Lock");
+    } finally { release(); }
+    await editor;
+    expect((await submit).outcome).toBe("submitted");
+    const { rows: [client] } = await adminQuery("select allergies,address from public.clients where id=$1", [A.clientId]);
+    expect(client.address).toBe("Current address");
+    expect(client.allergies).toContain("Concurrent practitioner"); expect(client.allergies).toContain("New intake");
   });
 });

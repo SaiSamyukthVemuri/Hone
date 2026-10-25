@@ -20,6 +20,12 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "lib/audit/governed-writes.ts",
+    purpose: "SEC-003: only the existing archive/unarchive and owner-export audit emissions after direct member INSERT closure.",
+    why: "Internal server-only existing archive/unarchive and owner-export writers. Session getUser and exact active actor/user/studio checks precede service-client construction; archive additionally checks exact client via RLS and export requires owner plus bounded registry metadata. Final membership FOR UPDATE and hardcoded audit insertion are in two explicit narrow service-only 0242 commands under their same existing trusted non-runtime owner. Owner/context/ACL and runtime MEMBER/SET assumptions are checked fail-closed;0178 keeps service_role SELECT-only on practitioner identity, with no new UPDATE grant. There is no separate app-read/direct-INSERT authority decision. Missing/refused/malformed commands fail closed, no old API/table fallback. New command EXECUTE capability needs explicit source/ACL approval; no user/table grants. No generic caller-supplied action/entity/actor metadata. Export refuses bytes on failure; archive failures, including thrown audit reads/transport, return the curated best-effort refusal so committed state/revalidation/redirect survive.",
+    scopeGuard: "freshAuditMembership",
+  },
+  {
     path: "app/(app)/settings/waitlist/profile-actions.ts",
     purpose:
       "WAIT-04A owner surface — the sole caller of set_waitlist_entry_availability, create_practitioner_waitlist_entry and import_legacy_waitlist_entry (all migration 0193).",
@@ -170,12 +176,6 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     path: "app/(app)/clients/[id]/intake/actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
-    scopeGuard: "getCurrentPractitionerWithStudio",
-  },
-  {
-    path: "app/(app)/clients/[id]/pinned-notes-actions.ts",
-    purpose: "Authenticated practitioner server action.",
-    why: "editClientPinnedNoteAction service-role UPDATE after the caller's studio is resolved via getCurrentPractitionerWithStudio(); the update is scoped to (id, studio_id = that studio.id, client_id) plus an optimistic-concurrency guard on the note text (client_pinned_notes has no UPDATE RLS policy).",
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
@@ -619,6 +619,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Payment / consent ledger helper.",
     why: "Invoked by authenticated actions and the signature-verified webhook; uses service-role for the payment_charge_attempts / consent RPCs and write-throughs. Scoped by the caller-supplied studio_id/client_id/appointment_id.",
     scopeGuard: '.eq("studio_id"',
+  },
+  {
+    path: "lib/billing/payment-jurisdiction-server.ts",
+    purpose:
+      "PAY-CCY-02 (0214): the one server read of a studio's payment country and charge currency.",
+    why: "studio_payment_jurisdictions grants SELECT to service_role ONLY (revoked from public, anon and authenticated by name) and has no RLS policy, so there is no browser-role path to it by design. The read is a single SELECT of two columns scoped by the caller's server-resolved studio id (callers obtain it from getCurrentPractitionerWithStudio or an already studio-scoped helper); it writes nothing, and a failed or unparseable read is returned as unknown, never defaulted to Canada.",
+    scopeGuard: '.eq("studio_id", studioId)',
   },
   {
     path: "lib/booking/public-slot-range.ts",

@@ -1,5 +1,7 @@
 "use server";
 
+import { recordClientArchiveAudit } from "@/lib/audit/governed-writes";
+
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
@@ -391,22 +393,9 @@ export async function archiveClientAction(formData: FormData): Promise<void> {
     throw new Error(`Failed to archive client: ${error.message}`);
   }
 
-  // The client change already committed. Audit transport failures are
-  // recoverable and must not prevent revalidation or successful navigation.
-  let auditErr: { code?: string } | null = null;
-  try {
-    const { error: auditWriteError } = await supabase.from("audit_logs").insert({
-      studio_id: studio.id,
-      actor_id: practitioner.id,
-      action: "client_archived",
-      entity_type: "client",
-      entity_id: clientId,
-      metadata: { archived_at: nowIso },
-    });
-    auditErr = auditWriteError;
-  } catch {
-    auditErr = { code: "audit_write_unavailable" };
-  }
+  const { error: auditErr } = await recordClientArchiveAudit({
+    expectedStudioId: studio.id, clientId, change: "archive", archivedAt: nowIso,
+  });
   if (auditErr) {
     safeLog.error(
       JSON.stringify({
@@ -450,22 +439,9 @@ export async function unarchiveClientAction(formData: FormData): Promise<void> {
     throw new Error(`Failed to unarchive client: ${error.message}`);
   }
 
-  // The client change already committed. Audit transport failures are
-  // recoverable and must not prevent revalidation or successful navigation.
-  let auditErr: { code?: string } | null = null;
-  try {
-    const { error: auditWriteError } = await supabase.from("audit_logs").insert({
-      studio_id: studio.id,
-      actor_id: practitioner.id,
-      action: "client_unarchived",
-      entity_type: "client",
-      entity_id: clientId,
-      metadata: {},
-    });
-    auditErr = auditWriteError;
-  } catch {
-    auditErr = { code: "audit_write_unavailable" };
-  }
+  const { error: auditErr } = await recordClientArchiveAudit({
+    expectedStudioId: studio.id, clientId, change: "unarchive",
+  });
   if (auditErr) {
     safeLog.error(
       JSON.stringify({
