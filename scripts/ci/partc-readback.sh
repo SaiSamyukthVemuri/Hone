@@ -95,8 +95,8 @@ json_shape() { printf '%s' "$1" | awk "$JSON_SHAPE_AWK"; }
 #   call in this file is the only login attempt until it has succeeded; every failure ends the script.
 run_q() {
   id=$1; q=$2; u=$3; want=$4; keys=$5
-  out="$RES/$id.json"; meta="$RES/$id.meta"; err="$WORK/$id.err"
-  [ ! -e "$out" ] && [ ! -e "$meta" ] || die "$id: a result already exists (never overwritten)"
+  final="$RES/$id.json"; out="$WORK/$id.raw"; meta="$RES/$id.meta"; err="$WORK/$id.err"
+  [ ! -e "$final" ] && [ ! -e "$meta" ] || die "$id: a result already exists (never overwritten)"
   qsha=$(sha_str "$q")
   started=$(utcnow)
   rc=0
@@ -123,7 +123,8 @@ run_q() {
   [ "$rows" = "$want" ] || die "$id: expected $want row(s), got $rows"
   [ "$(printf '%s\n' "$info" | grep -c '^ROW ')" = "$want" ] || die "$id: the row count does not match"
   [ "$(printf '%s\n' "$info" | sed -n 's/^ROW //p' | while IFS= read -r k; do printf '%s\n' "$k" | tr ',' '\n' | LC_ALL=C sort | tr '\n' ',' ; echo; done | sort -u)" = "$keys," ] || die "$id: the row is not in the expected shape"
-  rsha=$(sha "$out")
+  mv "$out" "$final" || die "$id: could not keep the result"
+  rsha=$(sha "$final")
   printf '{"query_id":"%s","query_sha256":"%s","result_sha256":"%s","started_at_utc":"%s","captured_at_utc":"%s","exit_code":0,"script_sha256":"%s"}\n' \
     "$id" "$qsha" "$rsha" "$started" "$captured" "$SELF_SHA" > "$meta" || die "$id: could not write the sidecar"
   [ "$(grep -c '' "$meta")" = 1 ] || die "$id: the sidecar is not exactly one line"
@@ -190,15 +191,15 @@ if [ "$M1" = UNKNOWN ] || [ "$M2" = UNKNOWN ]; then
 elif [ "$M1" = 0 ] && [ "$M2" = 0 ]; then
   echo "  C1 = C2 = 0: the pooler DROPPED the startup options on this connection, and no role default applies."
   echo "  => the 120 s watchdog IS REQUIRED for S1. Nothing on this connection will cancel a long statement."
+elif [ "$M1" = "$M2" ] && [ "$M2" != 0 ]; then
+  echo "  C1 = C2 = $C2: a non-zero default applies with or without the option (see C3 source and C4)."
+  echo "  => a role or database default governs; read C3 'source' and C4 to see where it is set."
 elif [ "$M1" = 120000 ] && [ "$M2" != 0 ] && [ "$M2" != UNKNOWN ]; then
   echo "  C1 = 120 s, C2 = $C2: the startup option IS honoured, and a default of $C2 applies when it is absent."
   echo "  => a role or database default exists (see C3 'source' and C4); the 120 s limit can still be set at connect time."
 elif [ "$M1" = 120000 ] && [ "$M2" = 0 ]; then
   echo "  C1 = 120 s, C2 = 0: the startup option IS honoured on hosted. No role default applies."
   echo "  => the 120 s limit can be set at connect time; the watchdog is a second line only."
-elif [ "$M1" = "$M2" ] && [ "$M2" != 0 ]; then
-  echo "  C1 = C2 = $C2: a non-zero default applies with or without the option (see C3 source and C4)."
-  echo "  => a role or database default governs; read C3 'source' and C4 to see where it is set."
 else
   echo "  C1 = $C1, C2 = $C2: a pattern this table does not list. Report the four values. Do not decide."
 fi

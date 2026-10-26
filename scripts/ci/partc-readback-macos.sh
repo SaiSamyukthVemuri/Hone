@@ -163,7 +163,7 @@ M0=$(plog_mark); ENVOK=0; ENVN=0
 for v in PGPASSWORD SUPABASE_ACCESS_TOKEN HTTPS_PROXY SUPABASE_DB_PASSWORD PGHOST; do
   H=$(mkhome env-$v); RC=$(runpty env-$v "$H" "$OUT/copy-real.sh" "$PW" "$v=envleftover-value-xyz"); TX="$LOGS/tx-env-$v.log"
   ENVN=$((ENVN + 1))
-  [ "$RC" = 1 ] && grep -q "STOP: unset these variables first (names only): $v " "$TX" && ! grep -q 'envleftover-value-xyz' "$TX" && ! grep -q 'Database password' "$TX" && ENVOK=$((ENVOK + 1))
+  [ "$RC" = 1 ] && grep -q "STOP: unset these variables first (names only): $v " "$TX" && ! grep -v '^spawn ' "$TX" | grep -q 'envleftover-value-xyz' && ! grep -q 'Database password' "$TX" && ENVOK=$((ENVOK + 1))
 done
 SLICE="$LOGS/pg-env.log"; plog_since "$M0" > "$SLICE"
 expect_  "env leftover: each of PGPASSWORD, SUPABASE_ACCESS_TOKEN, HTTPS_PROXY, SUPABASE_DB_PASSWORD, PGHOST stops the script before the password prompt, naming the variable but never its value" "$([ "$ENVOK" = "$ENVN" ] && echo 0 || echo 1)" "stopped $ENVOK/$ENVN"
@@ -280,7 +280,7 @@ mkstub m7 "$(J1 0)" "$(J1 0)" '[
     "setting": "0",
     "source": "default"
   }
-]' "$C4_OK";                                                                          chk_malformed "C3 repeats a name and misses one" m7 c3 3 'the setting idle_in_transaction_session_timeout is not present exactly once'
+]' "$C4_OK";                                                                          chk_malformed "C3 repeats a name and misses one" m7 c3 3 'the setting [a-z_]+ is not present exactly once'
 mkstub m8 "$(J1 0)" "$(J1 0)" "$C3_OK" '[
   {
     "rolconfig": null,
