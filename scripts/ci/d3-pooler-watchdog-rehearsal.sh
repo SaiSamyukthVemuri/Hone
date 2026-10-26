@@ -262,7 +262,7 @@ wd_stop
 for p in "$D1BG" "$D2BG" "$A1" "$A2" "$A3" "$A4"; do wait "$p" 2> /dev/null; done
 say "-- watchdog log (scope):"; sed 's/^/   | /' "$OUT/wd-scope.log" | tee -a "$RES"
 survived() { grep -q "done-$1" "$OUT/decoy-$2.log" && ! grep -q -E '57014|canceling statement' "$OUT/decoy-$2.log"; }
-expect "(A1) the S1 session was pinned, exactly one statement cancelled (57014), the CLI exited non-zero" "$([ "$PINNED" = 0 ] && [ "$SCOPE_RC" != 0 ] && grep -q '57014' "$OUT/run-scope.log" && grep -c 'WATCHDOG CANCELLED' "$OUT/wd-scope.log" | grep -qx 1 && echo 0 || echo 1)" "pinned=$PINNED exit=$SCOPE_RC cancelled-lines=$(grep -c 'WATCHDOG CANCELLED' "$OUT/wd-scope.log")"
+expect "(A1) the S1 session was pinned, exactly one statement cancelled (57014), the CLI exited non-zero" "$([ "$PINNED" = 0 ] && [ "$SCOPE_RC" != 0 ] && grep -q '57014' "$OUT/run-scope.log" && grep -c 'WATCHDOG CANCELLED' "$OUT/wd-scope.log" | grep -qx 1 && echo 0 || echo 1)" "pin-wait-exit=$PINNED (0 means the PINNED line was seen) exit=$SCOPE_RC cancelled-lines=$(grep -c 'WATCHDOG CANCELLED' "$OUT/wd-scope.log")"
 expect "(A2) a second pooled postgres session open BEFORE the watchdog armed was NOT cancelled (ran to completion, no 57014)" "$(survived D1 D1 && echo 0 || echo 1)" "$(tr '\n' ' ' < "$OUT/decoy-D1.log" | cut -c1-120)"
 expect "(A3) a second pooled postgres session opened AFTER the pin was NOT cancelled" "$(survived D2 D2 && echo 0 || echo 1)" "$(tr '\n' ' ' < "$OUT/decoy-D2.log" | cut -c1-120)"
 expect "(A4) app traffic (authenticator with SET ROLE anon / authenticated / service_role) was NOT cancelled" "$(survived anon anon && survived authd authd && survived svc svc && echo 0 || echo 1)" "anon:$(tr '\n' ' ' < "$OUT/decoy-anon.log" | cut -c1-60) | authd:$(tr '\n' ' ' < "$OUT/decoy-authd.log" | cut -c1-40) | svc:$(tr '\n' ' ' < "$OUT/decoy-svc.log" | cut -c1-40)"
@@ -516,9 +516,9 @@ ${=Q} --db-url "$OPTURL" "show statement_timeout"; print -r -- "exit=$?"
 print -r -- "### 2 show statement_timeout, WITHOUT options"
 ${=Q} --db-url "$PLAINURL" "show statement_timeout"; print -r -- "exit=$?"
 print -r -- "### 3 pg_settings"
-${=Q} --db-url "$OPTURL" "select name, setting, source from pg_settings where name in ('statement_timeout','lock_timeout','idle_in_transaction_session_timeout')"; print -r -- "exit=$?"
+${=Q} --db-url "$PLAINURL" "select name, setting, source from pg_settings where name in ('statement_timeout','lock_timeout','idle_in_transaction_session_timeout')"; print -r -- "exit=$?"
 print -r -- "### 4 pg_roles"
-${=Q} --db-url "$OPTURL" "select rolname, rolconfig from pg_roles where rolname = 'postgres'"; print -r -- "exit=$?"
+${=Q} --db-url "$PLAINURL" "select rolname, rolconfig from pg_roles where rolname = 'postgres'"; print -r -- "exit=$?"
 ZSH
 sed -e "s#<USER>#$PUSER#g" -e "s#<HOSTPORT>#$RUNNER_IP:$TLSP#g" "$OUT/readback.zsh" > "$OUT/readback.rendered.zsh"
 zsh -n "$OUT/readback.rendered.zsh"; expect "(G) the read-back script parses under zsh" "$?" "ok"
