@@ -143,7 +143,7 @@ export function compare({ templates, t, prod, rest, restFar }) {
     }
     if (extra.has("studios")) fail(`studios: the copy holds ${extra.get("studios")} more studios than production at T (studio deletes after T shift the ordinals; compare by hand)`);
     pass(`S0B-4 id digests equal for ${TABLES.length - extra.size} tables${extra.size ? ` and consistent with deletes after T for ${extra.size}` : ""} (ids are never printed)`);
-    for (const [nm, d] of extra) lines.push(`NOTE  post-T deletes signature: ${nm}: the restored copy holds ${d} more ids than production at T (informational; the bucket check bounds lost rows at 0)`);
+    for (const [nm, d] of extra) lines.push(`NOTE  post-T deletes signature: ${nm}: the restored copy holds ${d} more ids than production at T (informational; no bucket shows a loss, but a loss masked by an extra row in the same bucket is not excluded)`);
     const okCell = (nm, a, b) => (extra.has(nm) ? Number(b) >= Number(a) : String(b) === String(a));
 
     if (!P["v3-studio-counts"].length) fail("production has no studio at or before T");

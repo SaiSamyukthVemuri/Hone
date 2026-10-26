@@ -184,6 +184,13 @@ validate badt3 "2099-01-01T00:00:00Z" "$RREF" "$PW_P" "$PW_R"; expect_fail "T in
 validate badref "$T" "NOT-A-REF" "$PW_P" "$PW_R"; expect_fail "a malformed restored ref" 'STOP: the restored ref is not 20 lower-case letters' 0
 validate badlast4 "$T" "$RREF" "$PW_P" "$PW_R" "zzzz"; expect_fail "the last 4 characters of the restored ref typed wrongly" 'STOP: the last 4 characters do not match' 0
 
+# D4: the CLI login-role / ban text path also writes the tombstone
+: > "$ROOT/e2e-fake-loginrole"
+validate loginrole "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "the login-role text path" 'STOP: rest v1-history.sql: the CLI reported a login-role' 1
+[ -f "$ROOT/s0b/FAILED-LOGIN" ] && ok "D4: the login-role text path wrote the FAILED-LOGIN tombstone: $(cat "$ROOT/s0b/FAILED-LOGIN")" || bad "D4: no tombstone on the login-role path"
+validate afterlogin "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "a re-run after the login-role path is refused" 'STOP: a previous run failed a login' 0
+mv "$ROOT/s0b/FAILED-LOGIN" "$W/FAILED-LOGIN.loginrole"; mv "$ROOT/e2e-fake-loginrole" "$W/e2e-fake-loginrole.done"
+
 # S3: the two passwords typed in the wrong order. The RESTORED project is read first, so the failed login is on the new project and production is never contacted.
 validate swapped "$T" "$RREF" "$PW_R" "$PW_P"; expect_fail "the two passwords typed in the wrong order" 'STOP: rest v1-history.sql failed' 1
 if [ "$(tail -n "$DC" "$ROOT/e2e-calls.log" | awk '{print $2}' | sort -u | tr '\n' ' ')" = "$RREF " ]; then ok "S3: the only read of the swapped run went to the RESTORED project; production was not contacted"; else bad "S3 swapped run touched production"; fi
@@ -200,8 +207,8 @@ lastline() { tail -n 1 "$OUT.txt"; }
 precheck pre_a
 if [ "$RC" != 0 ] && [ "$DC" = 12 ] && [ "$(lastline)" = "S0B PRECHECK STOP" ] \
    && grep -q '^cron.job: 3 jobs, 2 active, 2 mention http/net/functions (1 active)' "$OUT.txt" && grep -q '^ALERT  3 cron job(s) exist' "$OUT.txt" && grep -q '^ALERT  2 queued pg_net' "$OUT.txt" && grep -q '^ALERT  1 database webhook' "$OUT.txt" && grep -q '^ALERT  2 vault secret' "$OUT.txt" \
-   && grep -q '^ALERT  1 foreign server' "$OUT.txt" && grep -q '^ALERT  1 logical replication subscription' "$OUT.txt" && grep -q '^ALERT  1 publication(s) other than supabase_realtime' "$OUT.txt" && grep -q '^ALERT  1 non-platform event trigger' "$OUT.txt" \
-   && grep -q '^ALERT  1 function(s) in non-platform schemas call http' "$OUT.txt" && grep -q '^ALERT  1 trigger(s) run an http-calling function' "$OUT.txt" \
+   && grep -q '^ALERT  1 foreign server' "$OUT.txt" && grep -q '^ALERT  1 logical replication subscription' "$OUT.txt" && grep -q '^ALERT  1 publication(s) other than supabase_realtime' "$OUT.txt" && grep -q '^ALERT  1 event trigger(s) not owned by' "$OUT.txt" \
+   && grep -q '^ALERT  1 function(s) not owned by a supabase_' "$OUT.txt" && grep -q '^ALERT  1 trigger(s) run an http-calling function' "$OUT.txt" \
    && grep -q '^storage rehearsal-a: 5 objects, 500 bytes' "$OUT.txt" && grep -q '^storage (all buckets): 6 objects, 507 bytes' "$OUT.txt" && grep -q '^auth.users: 0' "$OUT.txt"; then
   ok "S1/S2: pre-check with the stub features present exits non-zero, 12 reads, ALERTs for cron, pg_net queue, webhook, vault, foreign server, subscription, publication, event trigger, http-calling function and trigger, and the LAST line is S0B PRECHECK STOP"
 else bad "pre-check (features present)" "exit $RC, reads $DC; tail: $(tail -n 16 "$OUT.txt")"; fi
@@ -224,6 +231,20 @@ if [ "$RC" = 0 ] && [ "$DC" = 8 ] && grep -q '^cron.job: not present' "$OUT.txt"
   ok "S1: with nothing that can call out the pre-check exits 0 and the LAST line is S0B PRECHECK CLEAR (8 reads, no read of a missing relation)"
 else bad "pre-check (nothing present)" "exit $RC, reads $DC; tail: $(tail -n 14 "$OUT.txt")"; fi
 
+# D1: a user function in schema extensions calling net.http_post is scanned (no schema exclusion), D3: dblink, D2: a platform-looking event trigger name does not hide it
+PSQLD postgres -c 'create function extensions.rh_helper() returns void language plpgsql as $f$ begin perform net.http_post(url := '"'"'x'"'"'); end $f$' >/dev/null
+precheck pre_g
+if [ "$RC" != 0 ] && [ "$DC" = 8 ] && grep -q '^ALERT  1 function(s) not owned by a supabase_' "$OUT.txt" && [ "$(lastline)" = "S0B PRECHECK STOP" ]; then ok "D1: a user function in schema extensions that calls net.http_post is counted: STOP"; else bad "D1 extensions function" "exit $RC, reads $DC; tail: $(tail -n 8 "$OUT.txt")"; fi
+PSQLD postgres -c 'drop function extensions.rh_helper()' >/dev/null
+PSQLD postgres -c 'create function public.rh_noop() returns event_trigger language plpgsql as $f$ begin null; end $f$' -c 'create event trigger pgrst_ddl_watch on ddl_command_end execute function public.rh_noop()' >/dev/null
+precheck pre_h
+if [ "$RC" != 0 ] && [ "$DC" = 8 ] && grep -q '^ALERT  1 event trigger(s) not owned by' "$OUT.txt" && grep -q '1 carry a usual platform name' "$OUT.txt" && [ "$(lastline)" = "S0B PRECHECK STOP" ]; then ok "D2: a non-platform event trigger carrying the platform name pgrst_ddl_watch is NOT hidden by its name: STOP"; else bad "D2 platform-looking event trigger" "exit $RC, reads $DC; tail: $(tail -n 8 "$OUT.txt")"; fi
+PSQLD postgres -c 'drop event trigger pgrst_ddl_watch' -c 'drop function public.rh_noop()' >/dev/null
+PSQLD postgres -c 'create function public.rh_dbl() returns void language plpgsql as $f$ begin perform dblink_exec('"'"'a'"'"', '"'"'b'"'"'); end $f$' >/dev/null
+precheck pre_i
+if [ "$RC" != 0 ] && [ "$DC" = 8 ] && grep -q '^ALERT  1 function(s) not owned by a supabase_' "$OUT.txt" && [ "$(lastline)" = "S0B PRECHECK STOP" ]; then ok "D3: a function calling dblink is counted: STOP"; else bad "D3 dblink" "exit $RC, reads $DC; tail: $(tail -n 8 "$OUT.txt")"; fi
+PSQLD postgres -c 'drop function public.rh_dbl()' >/dev/null
+
 # S3: a failed login in the pre-check leaves the tombstone and blocks both scripts
 precheck pre_e "$PW_R"
 if [ "$RC" != 0 ] && [ "$DC" = 1 ] && [ -f "$ROOT/s0b/FAILED-LOGIN" ] && [ "$(lastline)" = "S0B PRECHECK STOP" ]; then ok "S3: a wrong production password in the pre-check stops after one read and writes the FAILED-LOGIN tombstone"; else bad "pre-check failed login" "exit $RC, reads $DC; tail: $(tail -n 6 "$OUT.txt")"; fi
@@ -236,7 +257,7 @@ leak=0
 for s in "$PW_P" "$PW_R" "$TOKEN"; do if grep -rqF -- "$s" "$W"/*.out "$W"/*.out.txt 2>/dev/null; then leak=1; fi; done
 [ "$leak" = 0 ] && ok "no password and no access token appears in any transcript" || bad "a secret appears in a transcript"
 if grep -rqF -- "$PW_P" "$ROOT"/s0b-validate.* "$ROOT"/s0b-precheck.* 2>/dev/null || grep -rqF -- "$TOKEN" "$ROOT"/s0b-validate.* "$ROOT"/s0b-precheck.* 2>/dev/null; then bad "a secret was written to a work directory"; else ok "no password and no token was written to any work directory"; fi
-[ "$(ls "$ROOT" | grep -c '^s0b-validate\.')" -ge 10 ] && ok "every run used its own private work directory (mode 700): $(stat -f '%Lp' "$(ls -1dt "$ROOT"/s0b-validate.* | head -n 1)")" || bad "work directories"
+[ "$(ls "$ROOT" | grep -c '^s0b-validate\.')" -ge 11 ] && ok "every run used its own private work directory (mode 700): $(stat -f '%Lp' "$(ls -1dt "$ROOT"/s0b-validate.* | head -n 1)")" || bad "work directories"
 
 echo; echo "steps: $pass ok, $fail FAIL"
 cp "$ROOT/e2e-calls.log" "$W/calls.log" 2>/dev/null || true

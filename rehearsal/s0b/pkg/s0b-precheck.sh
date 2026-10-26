@@ -12,7 +12,7 @@ BIN="$ROOT/supabase-cli/supabase-go"
 S0B="$ROOT/s0b"
 GO_SHA=dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b
 RUNNER_SHA=471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357
-MANIFEST_SHA=3de27046f314172646b4fe6d15f79bc796250218c73da0132df0de1573c35596
+MANIFEST_SHA=e5a5f9a0e7842f9a20d282c0d3bd3313e0ec67ae111a4194f79c0609db07fa70
 PROD_REF=alhhybgqdmcdyzpybykj
 TOMB="$S0B/FAILED-LOGIN"
 
@@ -65,7 +65,7 @@ run1() { # run1 FILE : 0 ok, 1 refused or failed (log kept)
   local f=$1 stem rc=0; stem=${f%.sql}
   ( export SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD; cd "$LINK" && env HONE_WINDOW_PROJECT_REF="$PROD_REF" HONE_SUPABASE_BIN="$BIN" HONE_WINDOW_RESULT_DIR="$RES" \
       SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 /bin/bash "$S0B/run-window-read-macos.sh" "$f" ) </dev/null 2>"$LOGS/$stem.err" || rc=$?
-  if grep -qiE 'login role|unban|network.?ban|reset.*password' "$LOGS/$stem.err"; then die "$f: the CLI reported a login-role / ban / password path; stopped and REPORT it"; fi
+  if grep -qiE 'login role|unban|network.?ban|reset.*password' "$LOGS/$stem.err"; then tombstone "$f"; echo "A login-role / ban path was recorded in $TOMB: no further run is allowed until Sam decides." >&2; die "$f: the CLI reported a login-role / ban / password path; stopped and REPORT it"; fi
   if [ "$rc" != 0 ] && is_auth_failure "$LOGS/$stem.err"; then tombstone "$f"; echo "An authentication failure was recorded in $TOMB: no further run is allowed until Sam decides." >&2; die "$f: authentication failed; stopped. Nothing after it was run."; fi
   [ "$rc" = 0 ] && [ -f "$RES/$stem.json" ] && [ -f "$RES/$stem.meta.json" ]
 }
@@ -140,12 +140,12 @@ risk("replication", null, "p8-subscriptions", ([r]) => {
   if (num(r.publications_other) > 0) alert(`${r.publications_other} publication(s) other than supabase_realtime`);
 });
 risk("event triggers", null, "p9-event-triggers", ([e]) => {
-  console.log(`pg_event_trigger: ${e.event_triggers_all} (${e.event_triggers_other} other than the platform prefixes)`);
-  if (num(e.event_triggers_other) > 0) alert(`${e.event_triggers_other} non-platform event trigger(s)`);
+  console.log(`pg_event_trigger: ${e.event_triggers_all} (${e.event_triggers_other} not platform by identity; ${e.event_triggers_exact_platform_names} carry a usual platform name, information only)`);
+  if (num(e.event_triggers_other) > 0) alert(`${e.event_triggers_other} event trigger(s) not owned by or running code owned by a supabase_* role or an extension`);
 });
 risk("code that calls out", null, "p10-callout-code", ([c]) => {
   console.log(`functions whose source calls net.http_*/http_request/extensions.http: ${c.functions_calling_http}; triggers running them or the webhook function: ${c.triggers_calling_http}`);
-  if (num(c.functions_calling_http) > 0) alert(`${c.functions_calling_http} function(s) in non-platform schemas call http`);
+  if (num(c.functions_calling_http) > 0) alert(`${c.functions_calling_http} function(s) not owned by a supabase_* role or an extension call http, dblink or pg_background`);
   if (num(c.triggers_calling_http) > 0) alert(`${c.triggers_calling_http} trigger(s) run an http-calling function or the webhook function`);
 });
 info("storage.objects", p.has_storage_objects, "p5-storage", (rows) => {

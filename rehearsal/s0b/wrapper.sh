@@ -27,6 +27,7 @@ done
 [ "$sub" = "db query" ] || { echo "s0b wrapper: refused: $ORIG" >&2; exit 9; }
 case "$file" in "$H"/s0b-*/*.sql|"$H"/s0b/*.sql) ;; *) echo "s0b wrapper: refused query file: $file" >&2; exit 9 ;; esac
 echo "$(date -u +%H:%M:%S) $ref $db $(basename "$file")" >> "$LOG"
+[ ! -e "$H/e2e-fake-loginrole" ] || { echo "Initialising login role postgres" >&2; exit 1; }   # REHEARSAL: stands for the CLI login-role text path
 n=$#; skip=0; i=0
 while [ $i -lt $n ]; do
   a="$1"; shift; i=$((i+1))

@@ -15,8 +15,8 @@ BIN="$ROOT/supabase-cli/supabase-go"
 S0B="$ROOT/s0b"
 GO_SHA=dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b
 RUNNER_SHA=471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357
-MANIFEST_SHA=3de27046f314172646b4fe6d15f79bc796250218c73da0132df0de1573c35596
-CMP_SHA=5656ede142212a59ab1836f5d3121f08c328c6249b3b5648a2dd150c83d025e8
+MANIFEST_SHA=e5a5f9a0e7842f9a20d282c0d3bd3313e0ec67ae111a4194f79c0609db07fa70
+CMP_SHA=a54ce2e45d2c6c322ca08df61f291663baaf39726ac8f8f6bb3b1e2cc233a958
 PROD_REF=alhhybgqdmcdyzpybykj
 FAR=9999-12-31T00:00:00Z
 TOMB="$S0B/FAILED-LOGIN"
@@ -116,6 +116,7 @@ do_run() { # do_run NAME LINKDIR REF PW TVALUE FILES...
     ( export SUPABASE_ACCESS_TOKEN; export SUPABASE_DB_PASSWORD="$pw"; cd "$link" && env HONE_WINDOW_PROJECT_REF="$ref" HONE_SUPABASE_BIN="$BIN" HONE_WINDOW_RESULT_DIR="$res" \
         SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 /bin/bash "$gen/run-window-read-macos.sh" "$f" ) </dev/null 2>"$WORK/logs/$name-$stem.err" || rc=$?
     if grep -qiE 'login role|unban|network.?ban|reset.*password' "$WORK/logs/$name-$stem.err"; then
+      tombstone "$name"; echo "A login-role / ban path was recorded in $TOMB: no further run is allowed until Sam decides." >&2
       die "$name $f: the CLI reported a login-role / ban / password path; stopped and REPORT it (log: $WORK/logs/$name-$stem.err)"
     fi
     if [ "$rc" != 0 ] && is_auth_failure "$WORK/logs/$name-$stem.err"; then tombstone "$name"; echo "An authentication failure was recorded in $TOMB: no further run is allowed until Sam decides." >&2; fi
