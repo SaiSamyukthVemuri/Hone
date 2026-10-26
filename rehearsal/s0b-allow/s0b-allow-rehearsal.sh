@@ -60,6 +60,7 @@ chk "$PKG/s0b-precheck.sh" "$ROOT/_e2e/s0b-precheck.sh" '^[<>] (GO_SHA|RUNNER_SH
 CUR=p9
 install_pin() { PSQLD postgres -f "$HERE/definition.sql" >/dev/null && PSQLD postgres -f "$HERE/trigger.sql" >/dev/null; }
 reset_pin() {
+  PSQLD postgres -c 'drop event trigger if exists zz_hostile' >/dev/null   # it would fire on the reset's own DDL and abort it
   PSQLD postgres -c 'alter extension pgcrypto drop function public.rls_auto_enable()' >/dev/null 2>&1 || true
   PSQLD postgres -c 'drop function if exists public.rls_auto_enable() cascade' >/dev/null
   PSQLD postgres -c 'drop schema if exists rh_s cascade' >/dev/null
