@@ -1,0 +1,102 @@
+# REHEARSAL - NEVER MERGE. OBS-READ-PREP: runs the observation read on a throwaway local Supabase at the
+# 0212 chain with synthetic studios. No hosted call, no secrets beyond the sanctioned read-only ghcr.io pull.
+name: rehearsal-obs-read
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/obs-read/**"
+      - ".github/workflows/rehearsal-obs-read.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  obs-read-0212:
+    name: observation read on a synthetic 0212 database
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Keep only migrations 0001-0212 (the hosted chain)
+        run: |
+          for f in supabase/migrations/02*.sql; do n="$(basename "$f" | cut -c1-4)"; [ "$((10#$n))" -gt 212 ] && rm -- "$f"; done
+          ls supabase/migrations | tail -1
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          version: 2.102.0
+      - name: Log in to ghcr.io for Supabase images (read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Start local Supabase (applies 0001-0212 on start)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+      - name: Log out of ghcr.io
+        if: always()
+        run: docker logout ghcr.io
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+      - name: Observation read proof
+        run: bash rehearsal/obs-read/prove.sh
+      - name: Gap-pending read v2 refuses at 0212 (the chain guard fires, not a missing column)
+        shell: bash
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          [ "$(psql -X -At -h 127.0.0.1 -p 54322 -U postgres -d postgres -c 'select max(version) from supabase_migrations.schema_migrations')" = 0212 ]
+          if out=$(psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 54322 -U postgres -d postgres --csv -f rehearsal/obs-read/obs/obs-1035-gap-pending-payments-v2.sql 2>&1); then echo "NOT REFUSED"; echo "$out"; exit 1; fi
+          echo "$out"
+          echo "$out" | grep -qi "division by zero"
+          echo "refused at 0212: division by zero"
+
+  obs-read-0246:
+    name: post-S3 read on a synthetic 0246 database
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          version: 2.102.0
+      - name: Log in to ghcr.io for Supabase images (read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Start local Supabase (applies 0001-0212 on start)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+      - name: Log out of ghcr.io
+        if: always()
+        run: docker logout ghcr.io
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+      - name: Observation read proof
+        run: |
+          bash rehearsal/obs-read/prove-post.sh
+          bash rehearsal/obs-read/prove-pending-v2.sh
