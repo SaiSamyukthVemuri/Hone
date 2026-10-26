@@ -191,26 +191,26 @@ ask() { # ask VAR "prompt"
 echo "The time now is $(utcnow). Times are UTC, like 2026-10-27T01:00:00Z. Nothing is defaulted." >&2
 ask WSTART "Window start (UTC): "
 printf '%s' "$WSTART" | LC_ALL=C grep -Eq "^$iso\$" || die "window start is not YYYY-MM-DDTHH:MM:SSZ"
-R4SEL=""; R4DIR=""
-for d in "$ROOT"/row4.*; do
-  [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/row4-attestation.json" ] && [ -f "$d/verdict.txt" ] || continue
-  [ -n "$(find "$d" -maxdepth 0 -user "$(id -un)" ! -perm -020 ! -perm -002 2>/dev/null)" ] || continue
-  grep -qx 'OVERALL PASS' "$d/verdict.txt" || continue
-  v=$(sed -n 's/^ *"selected_at_utc": "\([^"]*\)".*/\1/p' "$d/row4-attestation.json" | head -1)
-  printf '%s' "$v" | LC_ALL=C grep -Eq "^$iso\$" || continue
-  if [ -z "$R4SEL" ] || [ "$v" \> "$R4SEL" ]; then R4SEL="$v"; R4DIR="$d"; fi
-done
-[ -n "$R4SEL" ] || die "no passing row-4 result was found under $ROOT (a row4.* directory whose verdict.txt has the line OVERALL PASS). Run window-row4.sh first. Nothing was attempted."
+ask WEND "Window end (UTC): "
+printf '%s' "$WEND" | LC_ALL=C grep -Eq "^$iso\$" || die "window end is not YYYY-MM-DDTHH:MM:SSZ"
+[ "$WEND" \> "$WSTART" ] || die "the window end is not after the window start"
+R4DIR=$(ls -dt "$ROOT"/row4.* 2>/dev/null | head -1)
+[ -n "$R4DIR" ] || die "no row-4 result was found under $ROOT (a row4.* directory). Run window-row4.sh first. Nothing was attempted."
+if [ ! -d "$R4DIR" ] || [ -L "$R4DIR" ] || [ -z "$(find "$R4DIR" -maxdepth 0 -user "$(id -un)" ! -perm -020 ! -perm -002 2>/dev/null)" ] || [ ! -f "$R4DIR/row4-attestation.json" ] || [ ! -f "$R4DIR/verdict.txt" ] || ! grep -qx 'OVERALL PASS' "$R4DIR/verdict.txt"; then
+  die "the latest row-4 run was refused (or did not finish): do not start S1. Latest: $R4DIR. Run window-row4.sh again from the start. Nothing was attempted."
+fi
+R4SEL=$(sed -n 's/^ *"selected_at_utc": "\([^"]*\)".*/\1/p' "$R4DIR/row4-attestation.json" | head -1)
+printf '%s' "$R4SEL" | LC_ALL=C grep -Eq "^$iso\$" || die "the latest row-4 run has no readable selected restore point. Nothing was attempted."
 echo "Row 4 result found: $R4DIR" >&2
 ask RPOINT "Type the selected restore point exactly as row 4 printed it (UTC): "
 printf '%s' "$RPOINT" | LC_ALL=C grep -Eq "^$iso\$" || die "the restore point is not YYYY-MM-DDTHH:MM:SSZ"
 [ "$RPOINT" = "$R4SEL" ] || die "the restore point you typed is not the one in the row-4 result. Nothing was attempted."
-now_s=$(epoch "$(utcnow)"); rp_s=$(epoch "$RPOINT"); ws_s=$(epoch "$WSTART")
-case "$now_s$rp_s$ws_s" in *[!0-9]*|'') die "cannot read the times" ;; esac
+now_s=$(epoch "$(utcnow)"); rp_s=$(epoch "$RPOINT"); ws_s=$(epoch "$WSTART"); we_s=$(epoch "$WEND")
+case "$now_s$rp_s$ws_s$we_s" in *[!0-9]*|'') die "cannot read the times" ;; esac
 [ "$rp_s" -le "$now_s" ] || die "the restore point is in the future"
 [ $((now_s - rp_s)) -le 2700 ] || die "the restore point is older than 45 minutes: run window-row4.sh again from the start. Nothing was attempted."
 [ "$rp_s" -ge "$ws_s" ] || die "the restore point is before the window start. Nothing was attempted."
-echo "restore point $RPOINT (row-4 result $R4DIR; window start $WSTART)" >> "$RUN"
+echo "restore point $RPOINT (row-4 result $R4DIR; window $WSTART to $WEND)" >> "$RUN"
 echo "Restore point accepted: $RPOINT ($(( (now_s - rp_s) / 60 )) minutes old)." >&2
 
 # ---------------------------------------------------------------------------------------------------------
@@ -273,6 +273,7 @@ ask GOWORD "Type  APPLY  to run the single push of those 34 migrations now: "
 [ "$GOWORD" = APPLY ] || die "not confirmed (type exactly: APPLY). NOTHING was applied."
 now_s=$(epoch "$(utcnow)")
 case "$now_s" in ''|*[!0-9]*) die "cannot read the time" ;; esac
+[ $(( (we_s - now_s) / 60 )) -ge 75 ] || die "fewer than 75 minutes of the window remain ($(( (we_s - now_s) / 60 )) left; the steps after S1 need read-back 10, promote 10, watch 35, export guard 5 and lifting the holds 15). NOTHING was applied. Do not start the push."
 [ $((now_s - rp_s)) -le 3600 ] || die "the restore point is now more than 60 minutes old: run window-row4.sh again from the start. NOTHING was applied."
 STAGE=push
 echo "push started $(utcnow)" >> "$RUN"

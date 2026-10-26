@@ -14,11 +14,21 @@ LEFT="LEFTOVER-CANARY-9a7c"
 # PW_PATTERN: what a leak looks like. A canary password is searched for verbatim; the Linux stack's own password is the common word
 # "postgres", so there the patterns are the password-bearing forms (PGPASSWORD=, user:password@, password=) plus the canaries.
 : "${PW_PATTERN:=$PW_OK|$PW_BAD|$LEFT}"
-A_RP=""; A_WS=""; A_W1=yes; A_W2=yes; A_PW="$PW_OK"; A_GO=APPLY
+A_RP=""; A_WS=""; A_WE=""; A_W1=yes; A_W2=yes; A_PW="$PW_OK"; A_GO=APPLY
 R4_AGE=600; R4_NONE=""; R4_VERDICT="OVERALL PASS"
 iso_at() { python3 -I -c 'import sys,datetime as d;print((d.datetime.now(d.timezone.utc)+d.timedelta(seconds=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
 PINS_FROM=""   # a pkg dir whose pins.env the test copy should use (forged-consistent bundles); empty = the base package
 
+setmtime() { python3 -I -c 'import os,sys,time;t=time.time()-int(sys.argv[2]);os.utime(sys.argv[1],(t,t))' "$1" "$2"; }
+r4sel() { sed -n 's/^ *"selected_at_utc": "\([^"]*\)".*/\1/p' "$F/home/hone-s1/row4.$1/row4-attestation.json"; }
+r4extra() { # r4extra NAME SEL_AGE_S VERDICT_TEXT|none MTIME_AGE_S  (an extra row-4 run in the current fixture; VERDICT none = a run that left no files)
+  local d="$F/home/hone-s1/row4.$1"; mkdir -p "$d"; chmod 700 "$d"
+  if [ "$3" != none ]; then
+    printf '{\n  "pre_migration_restore_point": {\n    "selected_at_utc": "%s",\n    "basis": "latest_at_or_after"\n  }\n}\n' "$(iso_at "$((0 - $2))")" > "$d/row4-attestation.json"
+    printf 'x\n%s\n' "$3" > "$d/verdict.txt"
+  fi
+  setmtime "$d" "$4"
+}
 mkfix() { # mkfix NAME PKGDIR [bin]  -> F
   F="$T/$1"; rm -rf "$F"; mkdir -p "$F/home/hone-s1/supabase-cli" "$F/pkg"
   chmod 700 "$F/home/hone-s1"; chmod 755 "$F/home/hone-s1/supabase-cli"
@@ -29,6 +39,7 @@ mkfix() { # mkfix NAME PKGDIR [bin]  -> F
     mkdir -p "$F/home/hone-s1/row4.AbC123"; chmod 700 "$F/home/hone-s1/row4.AbC123"
     printf '{\n  "pre_migration_restore_point": {\n    "selected_at_utc": "%s",\n    "basis": "latest_at_or_after"\n  },\n  "g4_pitr": {}\n}\n' "$R4_SEL" > "$F/home/hone-s1/row4.AbC123/row4-attestation.json"
     printf 'PASS x\n%s\n' "$R4_VERDICT" > "$F/home/hone-s1/row4.AbC123/verdict.txt"
+    setmtime "$F/home/hone-s1/row4.AbC123" 300
   fi
   local pf="${PINS_FROM:-$2}"
   local bsha lsha gsha
@@ -38,8 +49,8 @@ mkfix() { # mkfix NAME PKGDIR [bin]  -> F
     --ref "$REFTEST" --url "$URLTEST" ${GO34FILE:+--go34 "$GO34FILE"} $NOPLAT > "$F/rewrites.txt" || { echo "fixture.py failed"; exit 1; }
 }
 answers() { # answers FILE   (the order of the prompts is the script's: window start, restore point, password, watchdog x2, APPLY)
-  printf 'Window start (UTC)\t%s\nexactly as row 4 printed it\t%s\nDatabase password\t%s\narmed  (type yes)\t%s\nsession to start  (type yes)\t%s\nType  APPLY\t%s\n' \
-    "${A_WS:-$(iso_at -3600)}" "${A_RP:-$R4_SEL}" "$A_PW" "$A_W1" "$A_W2" "$A_GO" > "$1"
+  printf 'Window start (UTC)\t%s\nWindow end (UTC)\t%s\nexactly as row 4 printed it\t%s\nDatabase password\t%s\narmed  (type yes)\t%s\nsession to start  (type yes)\t%s\nType  APPLY\t%s\n' \
+    "${A_WS:-$(iso_at -3600)}" "${A_WE:-$(iso_at 7200)}" "${A_RP:-$R4_SEL}" "$A_PW" "$A_W1" "$A_W2" "$A_GO" > "$1"
 }
 runk() { # runk EXTRA_ENV_ASSIGNMENT(optional)  -> RC, CONN (delta), transcript at $F/transcript.txt
   answers "$F/answers.tsv"
@@ -108,9 +119,21 @@ refused "env leftover" "unset these variables first (names only): SUPABASE_DB_PA
 ! has "$LEFT" && ok "env leftover: the variable's VALUE is never printed" || bad "env leftover value printed"
 
 R4_NONE=1 mkfix rp-none "$BASEPKG"; runk
-refused "F1 no row-4 result on the Mac" "no passing row-4 result was found"
+refused "F1 no row-4 result on the Mac" "no row-4 result was found"
 R4_VERDICT="OVERALL FAIL" mkfix rp-failverdict "$BASEPKG"; runk
-refused "F1 row-4 verdict is not OVERALL PASS" "no passing row-4 result was found"
+refused "F1 the only row-4 run was refused" "the latest row-4 run was refused"
+mkfix g1-latest-refused "$BASEPKG"; r4extra NEWREFUSED 400 "OVERALL FAIL" 100; runk
+refused "G1 pass at T1, REFUSED at T2 (newer): the older pass is not used" "the latest row-4 run was refused"
+mkfix g1-latest-unfinished "$BASEPKG"; r4extra NEWEMPTY 0 none 100; runk
+refused "G1 a newer row-4 run that left no result (did not finish)" "the latest row-4 run was refused (or did not finish)"
+mkfix g1-newer-pass "$BASEPKG"; r4extra NEWPASS 400 "OVERALL PASS" 100; A_RP=$(r4sel NEWPASS); A_GO=no; runk; A_RP=""; A_GO=APPLY
+refused_after_dry "G1 two passing runs: the newer one is used (typed point = the newer's)" "not confirmed (type exactly: APPLY)"
+mkfix g1-older-typed "$BASEPKG"; r4extra NEWPASS2 400 "OVERALL PASS" 100; runk
+refused "G1 two passing runs: typing the OLDER point is refused" "not the one in the row-4 result"
+R4_VERDICT="OVERALL FAIL" mkfix g1-pass-after-refused "$BASEPKG"; r4extra LATERPASS 400 "OVERALL PASS" 100; A_RP=$(r4sel LATERPASS); A_GO=no; runk; A_RP=""; A_GO=APPLY
+refused_after_dry "G1 refused at T1, PASS at T2 (newer): accepted" "not confirmed (type exactly: APPLY)"
+mkfix we-before "$BASEPKG"; A_WE=$(iso_at -60); runk; A_WE=""
+refused "G3 window end not after the window start" "the window end is not after the window start"
 mkfix rp-typo "$BASEPKG"; A_RP='yesterday'; runk; A_RP=""
 refused "F1 restore point typed malformed" "restore point is not YYYY-MM-DDTHH:MM:SSZ"
 mkfix rp-mismatch "$BASEPKG"; A_RP=$(iso_at -700); runk; A_RP=""
@@ -169,6 +192,8 @@ mkfix no-watching "$BASEPKG"; A_W2=no; runk; A_W2=yes
 refused_after_dry "F2 watchdog 'watching' not confirmed" "watchdog 'watching' not confirmed"
 mkfix no-apply "$BASEPKG"; A_GO=no; runk; A_GO=APPLY
 refused_after_dry "APPLY not typed" "not confirmed (type exactly: APPLY)"
+mkfix g3-short "$BASEPKG"; A_WE=$(iso_at 4200); runk; A_WE=""
+refused_after_dry "G3 only 70 minutes of the window remain at APPLY" "fewer than 75 minutes of the window remain"
 mkfix ctrlc "$BASEPKG"; A_GO='^C'; runk; A_GO=APPLY
 if [ "$RC" = 130 ] && has "Do not press Ctrl-C or close this window during the push; the only way to stop a statement is the watchdog." && [ "$(db_hist_count)" = 211 ]; then ok "F3: Ctrl-C at the APPLY prompt: the trap message carries the warning; exit 130; nothing applied"; else bad "ctrl-c trap" "rc=$RC $(tail -c 300 "$F/transcript.txt" | tr '\r\n' '  ')"; fi
 
