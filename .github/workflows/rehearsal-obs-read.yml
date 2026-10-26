@@ -51,6 +51,17 @@ jobs:
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
       - name: Observation read proof
         run: bash rehearsal/obs-read/prove.sh
+      - name: Gap-pending read v2 refuses at 0212 (the chain guard fires, not a missing column)
+        shell: bash
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          [ "$(psql -X -At -h 127.0.0.1 -p 54322 -U postgres -d postgres -c 'select max(version) from supabase_migrations.schema_migrations')" = 0212 ]
+          if out=$(psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 54322 -U postgres -d postgres --csv -f rehearsal/obs-read/obs/obs-1035-gap-pending-payments-v2.sql 2>&1); then echo "NOT REFUSED"; echo "$out"; exit 1; fi
+          echo "$out"
+          echo "$out" | grep -qi "division by zero"
+          echo "refused at 0212: division by zero"
 
   obs-read-0246:
     name: post-S3 read on a synthetic 0246 database
@@ -88,4 +99,4 @@ jobs:
       - name: Observation read proof
         run: |
           bash rehearsal/obs-read/prove-post.sh
-          bash rehearsal/obs-read/prove-pending.sh
+          bash rehearsal/obs-read/prove-pending-v2.sh

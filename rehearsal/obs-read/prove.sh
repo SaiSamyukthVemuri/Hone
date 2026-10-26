@@ -55,6 +55,6 @@ out=$(env -i PATH="$PATH" bash "$B/run-window-read-macos.sh" obs-0214-observed-p
 echo "$out" | grep -q "is not listed in MANIFEST.sha256"
 cd "$HERE"
 echo "== 7. the gap-pending file refuses at 0212 (guard 0246): the tables exist there, so the guard itself must raise"
-out=$($P --csv -f obs/obs-1035-gap-pending-payments.sql 2>&1) && { echo "NOT REFUSED"; exit 1; } || true
+out=$($P --csv -f obs/obs-1035-gap-pending-payments-v2.sql 2>&1) && { echo "NOT REFUSED"; exit 1; } || true
 echo "$out" | grep -qi "division by zero" && echo "gap-pending file refused at 0212: division by zero"
 echo "OBS-READ-PREP PROOF (0212): ALL PASS"
