@@ -1,0 +1,44 @@
+# PART C READ-BACK ON MACOS. REHEARSAL - NEVER MERGE. A stock macos-14 arm64 runner: bash 3.2, BSD tools, the darwin_arm64
+# supabase-go (verified), a real pty (expect), a local PostgreSQL with TLS and password authentication (NOT Supavisor).
+# No hosted call, no secrets, canary credentials only.
+name: partc-readback-macos
+
+on:
+  pull_request:
+    paths:
+      - "scripts/ci/partc-readback.sh"
+      - "scripts/ci/partc-readback-macos.sh"
+      - ".github/workflows/partc-readback-macos.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hone-partc-readback-macos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  partc-macos:
+    name: Part C read-back on macOS (not required)
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rehearse Part C on macOS
+        shell: /bin/zsh {0}
+        env:
+          REHEARSAL_OUT: ${{ runner.temp }}/partc-macos-out
+        run: /bin/bash scripts/ci/partc-readback-macos.sh
+
+      - name: Upload rehearsal logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: partc-readback-macos-logs
+          path: ${{ runner.temp }}/partc-macos-out/logs/
+          retention-days: 7
