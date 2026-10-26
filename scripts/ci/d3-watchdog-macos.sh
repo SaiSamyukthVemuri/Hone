@@ -152,6 +152,7 @@ say "-- writer logs so far: W1=[$(tr '\n' ' ' < "$OUT/w-W1.log" | cut -c1-120)] 
 ( psqlp -c "set statement_timeout = 0" -c "begin" -c "create table public.d3_mac_t (id int)" -c "select pg_sleep(45)" -c "create table public.d3_mac_late (id int)" -c "commit" > "$OUT/push-like.log" 2>&1; echo $? > "$OUT/push-like.rc" ) &
 PLBG=$!
 wait "$EXPBG" 2> /dev/null; wait "$PLBG" 2> /dev/null
+for _ in $(seq 1 200); do grep -q done-W1 "$OUT/w-W1.log" 2> /dev/null && grep -q done-W2 "$OUT/w-W2.log" 2> /dev/null && break; sleep 1; done
 sed 's/\r//g' "$OUT/run-exp.log" > "$OUT/run-exp.clean.log"
 sed 's/^/   | /' "$OUT/run-exp.clean.log" | head -n 40 | tee -a "$RES"
 ARMED_LINE="$(grep 'WATCHDOG armed' "$OUT/run-exp.clean.log" | head -1)"
