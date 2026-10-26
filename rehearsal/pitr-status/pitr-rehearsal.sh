@@ -236,7 +236,7 @@ RC=0; python3 "$HERE/driver.py" "$W/rs.out" "$W/a-tok.txt" -- env -i PATH="$SAFE
 kill $APIPID 2>/dev/null; wait $APIPID 2>/dev/null
 LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\r//g' "$W/rs.out" > "$W/rs.clean"; mv "$W/rs.clean" "$W/rs.out"; tail -n 12 "$W/rs.out"; cat "$W/api.log"
 [ $RC = 0 ] && has "$W/rs.out" "pitr_enabled: true" && has "$W/rs.out" "PITR BACKUPS READ COMPLETE" && ok "pitr-backups.sh ran end to end with the REAL supabase-go (pty-typed token, stub API): exit 0" || bad "realscript run" "rc=$RC"
-[ "$(grep -c '' "$W/api.log")" = 1 ] && grep -qx 'GET /v1/projects/abcdefghijklmnopqrst/database/backups auth=yes' "$W/api.log" && ok "the stub API saw exactly ONE request: GET .../database/backups with a Bearer token (no project lookup, no login-role, no ban-list, no write)" || bad "realscript request log" "$(cat "$W/api.log")"
+[ "$(grep -c '' "$W/api.log")" = 1 ] && grep -qx "GET /v1/projects/$REF/database/backups auth=yes" "$W/api.log" && ok "the stub API saw exactly ONE request: GET .../database/backups with a Bearer token (no project lookup, no login-role, no ban-list, no write)" || bad "realscript request log" "$(cat "$W/api.log")"
 [ "$(grep -c 'connection received' "$PGD/pg.log")" = "$CONN0" ] && ok "no database connection was opened during the script run" || bad "realscript db connection"
 find "$H3" -type f | sort > "$W/h3.after"; echo "files created under the fake HOME by the run (names only):"; comm -13 "$W/h3.before" "$W/h3.after" | sed "s#$H3/##"
 ! grep -rIlF -- "$TOK" "$H3" "$W/rs.out" "$W/api.log" 2>/dev/null | grep -q . && ok "the token appears in no transcript or file of the script run" || bad "realscript token leak"
@@ -257,19 +257,6 @@ c0=$(calls); runwal idle "$SCEN" "$W/a-both.txt"
 [ $(( $(calls) - c0 )) = 4 ] && ok "four logins: the main file and the ready count, twice" || bad "idle call count" "$(( $(calls) - c0 ))"
 has "$OUT" "interval by the database clock: 1" && ok "the interval was measured by the database clock and met N (15 s in the test copy)" || bad "interval line"
 if [ "$SCEN" = v_plain ] && [ "$RDY_PLAIN" = denied ]; then has "$OUT" "not readable" && ok "the ready count was not readable for $SCEN: recorded, not a stop" || bad "unreadable ready path"; fi
-
-# label case: a base backup archives a .backup label
-prep_idle; "$B/pg_basebackup" -h "$PGD" -p 55433 -U postgres -D "$W/basebackup" -X fetch -c fast >/dev/null 2>&1
-i=0; while [ $i -lt 40 ]; do case "$(su 'select last_archived_wal from pg_stat_archiver')" in *.backup) break ;; esac; /bin/sleep 1; i=$((i+1)); done; /bin/sleep 14
-LASTW=$(su 'select last_archived_wal from pg_stat_archiver')
-case "$LASTW" in
-  *.backup)
-    runwal label_plain v_plain "$W/a-both.txt"
-    if [ "$RDY_PLAIN" = denied ]; then [ $RC = 0 ] && has "$OUT" "INDICATION: UNKNOWN" && ok "LABEL case, ready count not readable: INDICATION UNKNOWN (the idle path stays closed)" || bad "label unreadable" "rc=$RC $(indic)"; fi
-    runwal label_mon v_monitor "$W/a-both.txt"
-    [ $RC = 0 ] && has "$OUT" "INDICATION: IDLE_PROVEN" && has "$OUT" '"label" means' && ok "LABEL case, ready count readable and 0 (v_monitor): INDICATION IDLE_PROVEN" || bad "label readable" "rc=$RC $(indic)" ;;
-  *) echo "last archived is $LASTW (not a label): label case not exercised"; printf 'wal\tskip\tlabel case not exercised: last archived %s\n' "$LASTW" >> "$TSV" ;;
-esac
 
 prep_idle
 gen_loop 12 & GEN=$!
@@ -307,6 +294,56 @@ su "revoke execute on function pg_current_wal_insert_lsn() from public" >/dev/nu
 runwal denied v_plain "$W/a-both.txt"
 su "grant execute on function pg_current_wal_insert_lsn() to public" >/dev/null
 [ $RC != 0 ] && has "$OUT" "a permission refusal was reported" && [ ! -e "$PS/FAILED-LOGIN" ] && ok "a permission refusal on a main field: STOP with the idle path closed; not treated as a login failure" || bad "permission refusal" "rc=$RC"
+
+# ------------------------------------------------------------------------------------------------ the INDICATION table (synthetic readings)
+section indication
+sed -n "/<<'NODE'/,/^NODE\$/p" "$PKG/pitr-wal-twice.sh" | sed '1d;$d' > "$W/show.mjs"
+python3 -I - "$W" <<'PY' && ok "the INDICATION table: all synthetic cases (idle, active, stalled, label with and without a readable zero .ready count, carry across a log id, restart, T=0, archive_mode off, interval 599 s, clock skew 61 s, ...) classified as expected" || bad "indication table" "see the lines above"
+import copy, json, os, subprocess, sys
+W = sys.argv[1]
+def row(n, **kw):
+    t = "2026-10-26T14:00:00Z" if n == 1 else "2026-10-26T14:10:00Z"
+    r = dict(db_now_utc=t, postmaster_start_utc="2026-10-26T00:00:00Z", in_recovery=False, lsn_write="0/5000060", lsn_insert="0/5000060", lsn_flush="0/5000060",
+             cur_wal_file="000000010000000000000005", cur_wal_offset="96", archived_count=7, last_archived_wal="000000010000000000000004", last_archived_utc="2026-10-26T13:00:00Z",
+             failed_count=0, last_failed_wal=None, last_failed_utc=None, archiver_stats_reset_utc="2026-10-25T00:00:00Z", archive_mode="on", archive_timeout_s=300, wal_level="replica",
+             checkpoint_timeout="5min", wal_segment_size="16MB", wal_segment_size_bytes=16777216, next_xid="1000", xact_commit=10 + n, xact_rollback=0)
+    r.update(kw); return r
+def case(name, want, d1=None, d2=None, both=None, ready=(0, 0), skew=0, t2="2026-10-26T14:10:00Z"):
+    d = os.path.join(W, "syn-" + name)
+    for sub in ("r1", "r2", "r1ready", "r2ready"): os.makedirs(os.path.join(d, sub), exist_ok=True)
+    r1 = row(1, **(both or {}), **(d1 or {})); r2 = row(2, **(both or {}), **(d2 or {})); r2["db_now_utc"] = t2
+    json.dump([r1], open(d + "/r1/pitr-wal-status.json", "w")); json.dump([r2], open(d + "/r2/pitr-wal-status.json", "w"))
+    for n, rd in ((1, ready[0]), (2, ready[1])):
+        if rd is None: open(d + "/r%dready/UNREADABLE" % n, "w").write("not readable")
+        else: json.dump([{"ready_count": rd, "status_files": rd}], open(d + "/r%dready/pitr-ready-count.json" % n, "w"))
+    import datetime
+    for n, t in ((1, r1["db_now_utc"]), (2, r2["db_now_utc"])):
+        dt = datetime.datetime.strptime(t, "%Y-%m-%dT%H:%M:%SZ") - datetime.timedelta(seconds=skew)
+        f = dt.strftime("%Y-%m-%dT%H:%M:%SZ"); open(d + "/stamps-%d.txt" % n, "w").write("mac_before=%s\nmac_after=%s\n" % (f, f))
+    o = subprocess.run(["node", W + "/show.mjs"], env=dict(os.environ, A_WORK=d, A_N="600"), capture_output=True, text=True)
+    got = [l for l in o.stdout.splitlines() if l.startswith("INDICATION:")]
+    g = got[0].split()[1] if got else "NONE(%s)" % o.stderr.strip()[:80]
+    print("%-34s want %-15s got %s" % (name, want, g)); return g == want
+res = [
+ case("idle", "IDLE_PROVEN"),
+ case("ready-files-waiting", "STALLED", ready=(2, 2)),
+ case("label-ready-zero", "IDLE_PROVEN", both=dict(last_archived_wal="000000010000000000000004.00000028.backup")),
+ case("label-ready-unreadable", "UNKNOWN", both=dict(last_archived_wal="000000010000000000000004.00000028.backup"), ready=(None, None)),
+ case("two-segments-ahead", "STALLED", both=dict(cur_wal_file="000000010000000000000006", lsn_write="0/6000060", lsn_insert="0/6000060", lsn_flush="0/6000060")),
+ case("carry-across-log-id", "IDLE_PROVEN", both=dict(last_archived_wal="0000000100000000000000FF", cur_wal_file="000000010000000100000000", lsn_write="1/60", lsn_insert="1/60", lsn_flush="1/60")),
+ case("lsn-moved-nothing-shipped", "STALLED", d2=dict(lsn_write="0/5000F00", lsn_insert="0/5000F00", lsn_flush="0/5000F00")),
+ case("failed-count-rose", "STALLED", d2=dict(failed_count=3, last_failed_wal="000000010000000000000005", last_failed_utc="2026-10-26T14:05:00Z")),
+ case("active-and-archiving", "ACTIVE_HEALTHY", d2=dict(archived_count=8, last_archived_wal="000000010000000000000005", cur_wal_file="000000010000000000000006", lsn_write="0/6000060", lsn_insert="0/6000060", lsn_flush="0/6000060", last_archived_utc="2026-10-26T14:08:00Z")),
+ case("restart-between-readings", "UNKNOWN", d2=dict(postmaster_start_utc="2026-10-26T14:05:00Z")),
+ case("archive-timeout-zero", "UNKNOWN", both=dict(archive_timeout_s=0)),
+ case("archive-mode-off", "UNKNOWN", both=dict(archive_mode="off")),
+ case("interval-599s", "UNKNOWN", t2="2026-10-26T14:09:59Z"),
+ case("clock-skew-61s", "UNKNOWN", skew=61),
+ case("next-xid-moved", "UNKNOWN", d2=dict(next_xid="1005")),
+ case("null-required-field", "UNKNOWN", both=dict(last_archived_utc=None)),
+]
+sys.exit(0 if all(res) else 1)
+PY
 
 # ------------------------------------------------------------------------------------------------ secrets, final
 section final
