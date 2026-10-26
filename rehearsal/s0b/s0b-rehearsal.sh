@@ -33,7 +33,7 @@ CUR=pkg
 [ "$(sha "$PKG/run-window-read-macos.sh")" = 471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357 ] && ok "the runner copy is the pinned 471ecb9d" || bad "runner copy sha"
 for s in s0b-validate.sh s0b-precheck.sh; do /bin/bash -n "$PKG/$s" && ok "bash -n $s" || bad "bash -n $s"; done
 UT=0; ( cd "$PKG" && node --test s0b-compare.test.mjs ) > "$W/unit.out" 2>&1 || UT=$?
-if [ "$UT" = 0 ] && grep -q '^ℹ fail 0$' "$W/unit.out"; then ok "comparator unit tests: $(grep '^ℹ pass' "$W/unit.out") (node $(node --version))"; else bad "comparator unit tests" "$(tail -n 15 "$W/unit.out")"; fi
+if [ "$UT" = 0 ] && grep -Eq '^(ℹ|#) fail 0$' "$W/unit.out"; then ok "comparator unit tests: $(grep -E '^(ℹ|#) pass' "$W/unit.out") (node $(node --version))"; else bad "comparator unit tests" "$(tail -n 15 "$W/unit.out")"; fi
 
 # ---------------------------------------------------------------------------------------------------------------------
 CUR=infra
@@ -123,7 +123,7 @@ expect_fail() { # expect_fail NAME REGEX CALLS : exit non-zero, the verdict line
 
 mk_restored r_clean
 validate pass "$T" "$RREF" "$PW_P" "$PW_R"
-if [ "$RC" = 0 ] && [ "$(tail -n 1 <(grep -E '^(S0B PASS|S0B FAIL)' "$OUT.txt"))" = "S0B PASS" ] && [ "$DC" = 16 ]; then
+if [ "$RC" = 0 ] && grep -qx 'S0B PASS' "$OUT.txt" && ! grep -q '^S0B FAIL' "$OUT.txt" && [ "$DC" = 16 ]; then
   ok "clean restore: S0B PASS, exit 0, 16 database reads (6 production, 6 restored, 4 restored unfiltered)"
 else bad "clean restore" "exit $RC, reads $DC; tail: $(tail -n 12 "$OUT.txt")"; fi
 grep -E '^PASS ' "$OUT.txt" | sed 's/^/       /'
