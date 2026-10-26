@@ -124,7 +124,7 @@ TX="$LOGS/tx-happy.log"; D=$(rdir "$H"); SLICE="$LOGS/pg-happy.log"; plog_since 
 say "-- happy path transcript"; sed 's/^/   | /' "$TX" | tee -a "$RES" > /dev/null; sed 's/^/   | /' "$TX" | head -n 40
 expect_ "happy path: exit 0, four 'ok' lines, the four values and the interpretation are printed" "$([ "$RC" = 0 ] && [ "$(grep -c '^ok c[1-4] ' "$TX")" = 4 ] && grep -q '^PART C READ-BACK' "$TX" && grep -q '^INTERPRETATION' "$TX" && echo 0 || echo 1)" "exit=$RC"
 expect_ "happy path: C1 (with options) read back 2min and C2 (without) read back 0 on a real server, and the table says the option IS honoured" "$(grep -q 'WITH options=-c statement_timeout=120000 : 2min' "$TX" && grep -q 'WITHOUT options *: 0$' "$TX" && grep -q 'the startup option IS honoured' "$TX" && echo 0 || echo 1)" "$(grep -E 'C1 |C2 ' "$TX" | tr '\n' ' ' | cut -c1-200)"
-expect_ "happy path: C3 shows all three settings with their source; C4 shows rolconfig null" "$(grep -q 'statement_timeout  *: 0|' "$TX" && grep -q 'lock_timeout  *: 0|' "$TX" && grep -q 'idle_in_transaction_session_timeout  *: 0|' "$TX" && grep -q 'C4 .*: null' "$TX" && echo 0 || echo 1)" "$(grep -E '^        (statement|lock|idle)' "$TX" | tr '\n' ' ' | cut -c1-200)"
+expect_ "happy path: C3 shows all three settings with their source; C4 reports no role-level setting (real CLI shape, nested braces handled)" "$(grep -q 'statement_timeout  *: 0|' "$TX" && grep -q 'lock_timeout  *: 0|' "$TX" && grep -q 'idle_in_transaction_session_timeout  *: 0|' "$TX" && grep -q 'the postgres role has NO role-level setting' "$TX" && echo 0 || echo 1)" "$(grep -E '^        (statement|lock|idle)' "$TX" | tr '\n' ' ' | cut -c1-200)"
 expect_ "happy path: neither the password nor the project ref appears anywhere in the terminal transcript" "$(t no_secret "$TX")" "transcript lines=$(wc -l < "$TX" | tr -d ' ')"
 expect_ "happy path: server saw exactly 4 authorized connections (one per query) and zero failures" "$([ "$(grep -c 'connection authorized' "$SLICE")" = 4 ] && [ "$(grep -c 'authentication failed' "$SLICE")" = 0 ] && echo 0 || echo 1)" "authorized=$(grep -c 'connection authorized' "$SLICE") received=$(grep -c 'connection received' "$SLICE")"
 STM="$(grep "^postgres.$FREF|LOG:" "$SLICE" | sed -E "s/^[^|]*\|LOG: +//" | sort -u)"
@@ -137,6 +137,7 @@ for i in c1 c2 c3 c4; do
   grep -q "\"query_sha256\":\"$(shas "$Q")\"" "$D/$i.meta" && grep -q "\"result_sha256\":\"$(sha "$D/$i.json")\"" "$D/$i.meta" && grep -q '"exit_code":0' "$D/$i.meta" && OKS=$((OKS + 1))
 done
 expect_ "happy path: each sidecar binds the query text sha, the result sha and exit 0 (recomputed here independently)" "$([ "$OKS" = 4 ] && echo 0 || echo 1)" "bound=$OKS/4; $(cat "$D/c1.meta" | cut -c1-120)..."
+say "INFO  C4 raw CLI JSON has $(tr -d '\n ' < "$D/c4.json" | tr -cd '{' | wc -c | tr -d ' ') opening braces (nested struct when more than 1)"
 say "INFO  raw CLI JSON shapes (real binary): $(tr -d '\n ' < "$D/c1.json") $(tr -d '\n ' < "$D/c3.json" | cut -c1-120) $(tr -d '\n ' < "$D/c4.json")"
 expect_ "happy path: the password variable is not in the script's environment after it ends (the script ran as a child of env -i; its exit cleared it)" "0" "child process; the EXIT trap also runs unset PGPASSWORD"
 
@@ -144,7 +145,7 @@ expect_ "happy path: the password variable is not in the script's environment af
 su_psql -c "alter role \"postgres.$FREF\" set statement_timeout = '30s'" -c "alter role postgres set statement_timeout = '30s'" > /dev/null
 H=$(mkhome roledef); RC=$(runpty roledef "$H" "$OUT/copy-real.sh" "$PW"); TX="$LOGS/tx-roledef.log"
 sed 's/^/   | /' "$TX" | sed -n '/PART C READ-BACK/,/^Results/p' | tee -a "$RES"
-expect_ "role default: C1=2min, C2=30s; the table says the option is honoured and a default of 30s applies; C4 shows the role-level setting" "$([ "$RC" = 0 ] && grep -q 'WITH options=-c statement_timeout=120000 : 2min' "$TX" && grep -q 'WITHOUT options *: 30s' "$TX" && grep -q 'a default of 30s applies' "$TX" && grep -q 'C4 .*: \["statement_timeout=30s"\]' "$TX" && grep -q 'the postgres role has role-level settings' "$TX" && echo 0 || echo 1)" "exit=$RC"
+expect_ "role default: C1=2min, C2=30s; the table says the option is honoured and a default of 30s applies; C4 shows the role-level setting" "$([ "$RC" = 0 ] && grep -q 'WITH options=-c statement_timeout=120000 : 2min' "$TX" && grep -q 'WITHOUT options *: 30s' "$TX" && grep -q 'a default of 30s applies' "$TX" && grep -q 'the postgres role has role-level settings: .*statement_timeout=30s' "$TX" && echo 0 || echo 1)" "exit=$RC"
 su_psql -c "alter role \"postgres.$FREF\" reset statement_timeout" -c "alter role postgres reset statement_timeout" > /dev/null
 
 # ---- 7. WRONG PASSWORD: exactly one attempt, then the script dies ---------------------------------------------------------
@@ -285,7 +286,49 @@ mkstub m8 "$(J1 0)" "$(J1 0)" "$C3_OK" '[
     "rolconfig": null,
     "rolname": "someone_else"
   }
-]';                                                                                   chk_malformed "C4 for a different role" m8 c4 4 'the row is not in the expected shape'
+]';                                                                                   chk_malformed "C4 for a different role" m8 c4 4 'the row is not the postgres role'
+C4_STRUCT_NULL='[
+  {
+    "rolconfig": {
+      "Elements": null,
+      "Dimensions": null,
+      "Status": 1
+    },
+    "rolname": "postgres"
+  }
+]'
+C4_STRUCT_SET='[
+  {
+    "rolconfig": {
+      "Elements": [
+        "statement_timeout=30s"
+      ],
+      "Dimensions": [
+        {
+          "Length": 1,
+          "LowerBound": 1
+        }
+      ],
+      "Status": 2
+    },
+    "rolname": "postgres"
+  }
+]'
+mkstub s1 "$(J1 0)" "$(J1 0)" "$C3_OK" "$C4_STRUCT_NULL"; RC=$(stubrun s1); TX="$LOGS/tx-stub-s1.log"
+expect_ "C4 as a nested struct with null elements (pgx array shape): accepted, reported as no role-level setting (Insurance F2)" "$([ "$RC" = 0 ] && grep -q 'the postgres role has NO role-level setting' "$TX" && echo 0 || echo 1)" "exit=$RC"
+mkstub s2 "$(J1 0)" "$(J1 0)" "$C3_OK" "$C4_STRUCT_SET"; RC=$(stubrun s2); TX="$LOGS/tx-stub-s2.log"
+expect_ "C4 as a nested struct with elements: accepted, the setting is shown" "$([ "$RC" = 0 ] && grep -q 'role-level settings: .*statement_timeout=30s' "$TX" && echo 0 || echo 1)" "exit=$RC"
+mkstub s3 "$(J1 0)" "$(J1 0)" "$C3_OK" "$(printf '%s\n%s' "$C4_STRUCT_SET" "$C4_STRUCT_SET" | tr -d '\n' | sed 's/\]\[/,/')"; RC=$(stubrun s3); TX="$LOGS/tx-stub-s3.log"
+expect_ "C4 with two rows (nested): counted by top-level object, rejected as 2 rows, dies at c4" "$([ "$RC" = 1 ] && grep -qE 'STOP: c4: (expected 1 row|the output is not a JSON array)' "$TX" && echo 0 || echo 1)" "exit=$RC $(grep '^STOP' "$TX" | head -1 | cut -c1-80)"
+mkstub s4 "$(J1 0)" "$(J1 0)" "$C3_OK" '[
+  {
+    "rolconfig": {
+      "Elements": [
+    "rolname": "postgres"
+  }
+]'; RC=$(stubrun s4); TX="$LOGS/tx-stub-s4.log"
+expect_ "C4 with unbalanced nested braces: rejected, dies at c4" "$([ "$RC" = 1 ] && grep -q 'STOP: c4: ' "$TX" && ! grep -q 'PART C READ-BACK' "$TX" && echo 0 || echo 1)" "exit=$RC $(grep '^STOP' "$TX" | head -1 | cut -c1-80)"
+
 mkstub m9 "$(J1 0)" "$(J1 0)" "$C3_OK" "$C4_OK" c1 'FATAL: password authentication failed for user "x"'; RC=$(stubrun m9); TX="$LOGS/tx-stub-m9.log"
 expect_ "CLI exits 1 with an authentication error on the FIRST query: dies at once, one call only, the exact 'do not retry...' line" "$([ "$RC" = 1 ] && grep -q 'STOP: c1: AUTHENTICATION FAILED' "$TX" && grep -q 'do not retry; do not reset the password; do not unban' "$TX" && [ "$(ncalls m9)" = 1 ] && echo 0 || echo 1)" "exit=$RC calls=$(ncalls m9)"
 mkstub m10 "$(J1 0)" "$(J1 0)" "$C3_OK" "$C4_OK" c3 'FATAL: connection refused'; RC=$(stubrun m10); TX="$LOGS/tx-stub-m10.log"

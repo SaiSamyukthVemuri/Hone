@@ -61,7 +61,36 @@ IFS= read -rs -p "Database password (not shown): " PGPASSWORD </dev/tty || die "
 echo >&2
 [ -n "$PGPASSWORD" ] || die "empty password"
 
-# run_q <id> <query> <url> <expected-rows> <column-regex>
+# json_shape: a STRUCTURAL read of a whitespace-stripped JSON text (awk; no node or python needed on the Mac).
+# Counts the top-level array's row objects by depth (a row may hold nested objects and arrays, e.g. a pgx array
+# struct), lists each row's own keys, and returns the raw value of "rolconfig" when a row has one. Prints
+#   ROWS <n> / ROW <k1,k2,..> per row / VAL <raw rolconfig> / END <final depth> <still-in-string> <negative-depth>
+JSON_SHAPE_AWK='
+{
+  s = $0; n = length(s)
+  for (i = 1; i <= n; i++) {
+    c = substr(s, i, 1)
+    if (ins) {
+      if (esc) { esc = 0 } else if (c == "\\") { esc = 1 } else if (c == "\"") { ins = 0; laststr = buf; lastd = depth } else { buf = buf c }
+      if (cap) val = val c
+      continue
+    }
+    if (c == "\"") { ins = 1; buf = ""; if (cap) val = val c; continue }
+    if (cap && depth == 2 && (c == "," || c == "}")) { cap = 0; print "VAL " val }
+    if (c == "{" || c == "[") { depth++; if (c == "{" && depth == 2) { rows++; keys = "" } }
+    else if (c == "}" || c == "]") { if (c == "}" && depth == 2) print "ROW " keys; depth--; if (depth < 0) neg = 1 }
+    else if (c == ":" && depth == 2 && lastd == 2) {
+      keys = keys (keys == "" ? "" : ",") laststr
+      if (laststr == "rolconfig") { cap = 1; val = ""; lastd = -1; continue }
+      lastd = -1
+    }
+    if (cap) val = val c
+  }
+}
+END { print "ROWS " (rows + 0); print "END " depth " " (ins + 0) " " (neg + 0) }'
+json_shape() { printf '%s' "$1" | awk "$JSON_SHAPE_AWK"; }
+
+# run_q <id> <query> <url> <expected-rows> <required-keys, sorted, comma-separated>
 #   Runs ONE query through the pinned CLI and validates and records its output. Never retried. The first
 #   call in this file is the only login attempt until it has succeeded; every failure ends the script.
 run_q() {
@@ -88,9 +117,12 @@ run_q() {
   [ -s "$out" ] || die "$id: empty output"
   c=$(LC_ALL=C tr -d '[:space:]' < "$out")
   case "$c" in "[{"*"}]") ;; *) die "$id: the output is not a JSON array of objects" ;; esac
-  rows=$(printf '%s' "$c" | grep -o '{' | wc -l | tr -d ' ')
+  info=$(json_shape "$c")
+  [ "$(printf '%s\n' "$info" | sed -n 's/^END //p')" = "0 0 0" ] || die "$id: the output is not balanced JSON"
+  rows=$(printf '%s\n' "$info" | sed -n 's/^ROWS //p')
   [ "$rows" = "$want" ] || die "$id: expected $want row(s), got $rows"
-  printf '%s' "$c" | grep -Eq "$keys" || die "$id: the row is not in the expected shape"
+  [ "$(printf '%s\n' "$info" | grep -c '^ROW ')" = "$want" ] || die "$id: the row count does not match"
+  [ "$(printf '%s\n' "$info" | sed -n 's/^ROW //p' | while IFS= read -r k; do printf '%s\n' "$k" | tr ',' '\n' | LC_ALL=C sort | tr '\n' ',' ; echo; done | sort -u)" = "$keys," ] || die "$id: the row is not in the expected shape"
   rsha=$(sha "$out")
   printf '{"query_id":"%s","query_sha256":"%s","result_sha256":"%s","started_at_utc":"%s","captured_at_utc":"%s","exit_code":0,"script_sha256":"%s"}\n' \
     "$id" "$qsha" "$rsha" "$started" "$captured" "$SELF_SHA" > "$meta" || die "$id: could not write the sidecar"
@@ -120,17 +152,25 @@ to_ms() {
 }
 
 # --- the four reads, in order, one at a time; nothing is run after a failure
-run_q c1 "$Q1" "$URL$OPT" 1 '^\[\{"statement_timeout":"[^"\\]*"\}\]$'
-run_q c2 "$Q2" "$URL" 1 '^\[\{"statement_timeout":"[^"\\]*"\}\]$'
-run_q c3 "$Q3" "$URL" 3 '^\[(\{"name":"[^"\\]*","setting":"[^"\\]*","source":"[^"\\]*"\},?){3}\]$'
+run_q c1 "$Q1" "$URL$OPT" 1 statement_timeout
+run_q c2 "$Q2" "$URL" 1 statement_timeout
+run_q c3 "$Q3" "$URL" 3 name,setting,source
 # C3 must hold each of the three names exactly once (checked before C4 is run).
 for nm in statement_timeout lock_timeout idle_in_transaction_session_timeout; do
   [ "$(LC_ALL=C tr -d '[:space:]' < "$RES/c3.json" | grep -o "\"name\":\"$nm\"" | wc -l | tr -d ' ')" = 1 ] || die "c3: the setting $nm is not present exactly once"
 done
-run_q c4 "$Q4" "$URL" 1 '^\[\{"rolconfig":(null|\["[^]]*\]),"rolname":"postgres"\}\]$'
+run_q c4 "$Q4" "$URL" 1 rolconfig,rolname
 unset PGPASSWORD
+LC_ALL=C tr -d '[:space:]' < "$RES/c4.json" | grep -q '"rolname":"postgres"' || die "c4: the row is not the postgres role"
 
-C1=$(val c1 statement_timeout); C2=$(val c2 statement_timeout); C4=$(val c4 rolconfig)
+LC_ALL=C tr -d '[:space:]' < "$RES/c4.json" | grep -q '"rolname":"postgres"' || die "c4: the row is not the postgres role"
+C1=$(val c1 statement_timeout); C2=$(val c2 statement_timeout)
+# C4: rolconfig may be null, a plain array, or the CLI's array struct with nested braces; read it structurally.
+C4RAW=$(json_shape "$(LC_ALL=C tr -d '[:space:]' < "$RES/c4.json")" | sed -n 's/^VAL //p' | head -n 1)
+[ -n "$C4RAW" ] || die "c4: no rolconfig value found"
+C4=$(printf '%s' "$C4RAW" | sed -nE 's/.*"Elements":(null|\[[^]]*\]).*/\1/p')
+[ -n "$C4" ] || C4=$C4RAW
+case "$C4" in null|'[]') C4_EMPTY=1 ;; *) C4_EMPTY=0 ;; esac
 S_ST=$(setting_of statement_timeout); S_LT=$(setting_of lock_timeout); S_IT=$(setting_of idle_in_transaction_session_timeout)
 M1=$(to_ms "$C1"); M2=$(to_ms "$C2")
 
@@ -162,10 +202,8 @@ elif [ "$M1" = "$M2" ] && [ "$M2" != 0 ]; then
 else
   echo "  C1 = $C1, C2 = $C2: a pattern this table does not list. Report the four values. Do not decide."
 fi
-case "$C4" in
-  null) echo "  C4: the postgres role has NO role-level setting (rolconfig is null)." ;;
-  *) echo "  C4: the postgres role has role-level settings: $C4" ;;
-esac
+if [ "$C4_EMPTY" = 1 ]; then echo "  C4: the postgres role has NO role-level setting (rolconfig is empty)."
+else echo "  C4: the postgres role has role-level settings: $C4"; fi
 echo
 echo "Results and one-line sidecars: $RES (counts and setting names only; no secret, no ref in the files)."
 echo "Close this Terminal. Nothing was written to the hosted project."
