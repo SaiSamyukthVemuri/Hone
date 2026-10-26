@@ -1,7 +1,8 @@
 # D3 WATCHDOG (operator form). REHEARSAL - NEVER MERGE.
 # Run it as a FILE in a SECOND Terminal (Terminal 2), never pasted:   zsh d3-watchdog.zsh
 # from the directory that holds ./supabase-cli (the same directory S1 runs in), AFTER the dry run lists exactly the
-# expected files and BEFORE the push starts in Terminal 1. The user, host and sslmode below are the S1 values.
+# expected files and BEFORE the push starts in Terminal 1. The file is fixed (so its hash can be checked); it takes the
+# S1 user, host:port and sslmode from the environment: WD_USER, WD_HOSTPORT, WD_SSLMODE (default require).
 # There is NO password in this file: it asks for it with read -rs (not echoed, not in any argument list).
 #
 # What it does: it cancels ONE backend, the one it PINNED as the S1 push session, and only when that backend has been
@@ -44,7 +45,11 @@ d3_stop() {
 d3_watchdog() {
   local out armed pin bstart appn xstart xs same mig n act run cancelled lastq idle=0 fails=0 q me t0=$SECONDS tarm
   : ${WD_LIMIT:=120} ${WD_EVERY:=5} ${WD_MAX:=1200} ${WD_PIN_WAIT:=120}
-  WD_URL="postgresql://<USER>@<HOSTPORT>/postgres?sslmode=<SSLMODE>"
+  if [[ -z $WD_USER || -z $WD_HOSTPORT ]]; then
+    print -r -- "WATCHDOG: set WD_USER and WD_HOSTPORT first (the same user and host:port as the S1 commands), and WD_SSLMODE if it is not require. Refusing to run."
+    return 1
+  fi
+  WD_URL="postgresql://${WD_USER}@${WD_HOSTPORT}/postgres?sslmode=${WD_SSLMODE:-require}"
   WD_ERR="${TMPDIR:-/tmp}/d3-wd.err"
   mkdir -p supabase/.temp && print -r -- v2.102.0 > supabase/.temp/cli-latest
   if [[ $(< supabase/.temp/cli-latest) != v2.102.0 ]] || [[ -z $(find supabase/.temp/cli-latest -mmin -540 2> /dev/null) ]]; then

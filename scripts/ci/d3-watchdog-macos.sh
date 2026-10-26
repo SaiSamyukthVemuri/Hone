@@ -62,6 +62,7 @@ say "INFO  ssl: $(psqlp -c 'show ssl')"
 render() { sed -e "s#<USER>#postgres#" -e "s#<HOSTPORT>#127.0.0.1:$PORT#" -e "s#<SSLMODE>#require#" "$1"; }
 render scripts/ci/d3-watchdog.zsh > "$HOME_S1/d3-watchdog.zsh"
 ( cd "$HOME_S1" && shasum -a 256 d3-watchdog.zsh > d3-watchdog.zsh.sha256 )
+cmp -s scripts/ci/d3-watchdog.zsh "$HOME_S1/d3-watchdog.zsh"; expect_ "the file Sam runs is byte-identical to the repository file (no placeholders to edit; user and host come from WD_USER / WD_HOSTPORT)" "$?" "$(shasum -a 256 scripts/ci/d3-watchdog.zsh | cut -c1-16)"
 say "INFO  rendered watchdog sha256: $(cut -c1-64 "$HOME_S1/d3-watchdog.zsh.sha256")"
 /bin/zsh -n "$HOME_S1/d3-watchdog.zsh"; expect_ "the watchdog file parses under macOS zsh (zsh -n)" "$?" "$(/bin/zsh --version)"
 
@@ -121,6 +122,8 @@ expect "READY> "
 send "shasum -a 256 -c d3-watchdog.zsh.sha256\r"
 expect "d3-watchdog.zsh: OK"
 expect "READY> "
+send "export WD_USER=postgres WD_HOSTPORT=127.0.0.1:$env(PGPORT) WD_SSLMODE=require\r"
+expect "READY> "
 send "WD_LIMIT=15 WD_EVERY=3 zsh d3-watchdog.zsh\r"
 while {![file exists $env(FLAG)]} { after 300 }
 send "$env(WDPW)\r"
@@ -136,7 +139,7 @@ mkwriter() { # mkwriter <name> <seconds>: a postgres-role transaction that has w
   ( psqlp -c "set statement_timeout = 0" -c "begin" -c "insert into public.d3_decoy values (1)" -c "/*D3-$1*/ select pg_sleep($2)" -c "commit" -c "select 'done-$1'" > "$OUT/w-$1.log" 2>&1 ) &
 }
 rm -f "$OUT/flag"
-( cd "$HOME_S1" && FLAG="$OUT/flag" EXPLOG="$OUT/run-exp.log" WORKDIR="$HOME_S1" CAFILE="$MITM/mitmproxy-ca-cert.pem" WDPW="$PW" /usr/bin/expect -f "$OUT/run.exp" > /dev/null 2>&1 ) &
+( cd "$HOME_S1" && PGPORT="$PORT" FLAG="$OUT/flag" EXPLOG="$OUT/run-exp.log" WORKDIR="$HOME_S1" CAFILE="$MITM/mitmproxy-ca-cert.pem" WDPW="$PW" /usr/bin/expect -f "$OUT/run.exp" > /dev/null 2>&1 ) &
 EXPBG=$!
 # the shell is parked at the password prompt of the watchdog file; start the two writers NOW so they are active at arm time
 for _ in $(seq 1 120); do grep -q 'WD_LIMIT=15 WD_EVERY=3 zsh d3-watchdog.zsh' "$OUT/run-exp.log" 2> /dev/null && break; sleep 1; done
@@ -175,7 +178,7 @@ stubrun() { # stubrun <label> <WD_MAX> ; the stub body is on stdin
   cat > "$d/supabase-cli/supabase-go"
   chmod +x "$d/supabase-cli/supabase-go"
   render scripts/ci/d3-watchdog.zsh > "$d/d3-watchdog.zsh"
-  ( cd "$d" && printf '%s\n' "$PW" | WD_LIMIT=15 WD_EVERY=2 WD_MAX="$2" WD_PIN_WAIT="${STUBPW:-120}" /bin/zsh d3-watchdog.zsh > "$OUT/stub-$1.log" 2>&1; echo $? > "$OUT/stub-$1.rc" )
+  ( cd "$d" && printf '%s\n' "$PW" | WD_USER=postgres WD_HOSTPORT=127.0.0.1:1 WD_SSLMODE=require WD_LIMIT=15 WD_EVERY=2 WD_MAX="$2" WD_PIN_WAIT="${STUBPW:-120}" /bin/zsh d3-watchdog.zsh > "$OUT/stub-$1.log" 2>&1; echo $? > "$OUT/stub-$1.rc" )
 }
 stubrun selftest 6 <<'STUB'
 #!/bin/sh

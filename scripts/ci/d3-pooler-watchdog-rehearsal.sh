@@ -179,9 +179,9 @@ zsh -n "$OUT/d3-watchdog.rendered.zsh"; expect "the operator watchdog parses und
 wd_start() { # wd_start <label> <limit> <every> [proxy-label]
   local label="$1"
   if [ -n "${4:-}" ]; then
-    ( cd "$WDHOME" && printf '%s\n' "$PWU" | WD_LIMIT="$2" WD_EVERY="$3" WD_PIN_WAIT="${WDPW:-120}" with_proxy "$4" env -u GITHUB_TOKEN -u GH_TOKEN zsh -f "$OUT/d3-watchdog.rendered.zsh" > "$OUT/wd-$label.log" 2>&1; echo $? > "$OUT/wdrc-$label.txt" ) &
+    ( cd "$WDHOME" && printf '%s\n' "$PWU" | WD_USER="$PUSER" WD_HOSTPORT="$RUNNER_IP:$TLSP" WD_SSLMODE=require WD_LIMIT="$2" WD_EVERY="$3" WD_PIN_WAIT="${WDPW:-120}" with_proxy "$4" env -u GITHUB_TOKEN -u GH_TOKEN zsh -f "$OUT/d3-watchdog.rendered.zsh" > "$OUT/wd-$label.log" 2>&1; echo $? > "$OUT/wdrc-$label.txt" ) &
   else
-    ( cd "$WDHOME" && printf '%s\n' "$PWU" | WD_LIMIT="$2" WD_EVERY="$3" WD_PIN_WAIT="${WDPW:-120}" zsh -f "$OUT/d3-watchdog.rendered.zsh" > "$OUT/wd-$label.log" 2>&1; echo $? > "$OUT/wdrc-$label.txt" ) &
+    ( cd "$WDHOME" && printf '%s\n' "$PWU" | WD_USER="$PUSER" WD_HOSTPORT="$RUNNER_IP:$TLSP" WD_SSLMODE=require WD_LIMIT="$2" WD_EVERY="$3" WD_PIN_WAIT="${WDPW:-120}" zsh -f "$OUT/d3-watchdog.rendered.zsh" > "$OUT/wd-$label.log" 2>&1; echo $? > "$OUT/wdrc-$label.txt" ) &
   fi
   WDBG=$!
 }
