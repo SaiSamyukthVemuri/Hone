@@ -114,7 +114,16 @@ allok=1; for f in pitr-backups.sh pitr-wal-twice.sh run-window-read-macos.sh MAN
 mkdir -p "$W/home2/hone-s1"; cp "$W/vps/machines/pitr-status/pitr-wal-status.sql" "$W/vps/machines/pitr-status/pitr-wal-status.sql.keep"; echo "-- x" >> "$W/vps/machines/pitr-status/pitr-wal-status.sql"
 env -i HOME="$W/home2" PATH="$W/bin:/usr/bin:/bin:/usr/sbin:/sbin" E2E_VPS="$W/vps" /bin/zsh -c "$LINE" > "$W/dl2.out" 2>&1; rc=$?
 mv "$W/vps/machines/pitr-status/pitr-wal-status.sql.keep" "$W/vps/machines/pitr-status/pitr-wal-status.sql"
-[ $rc != 0 ] && has "$W/dl2.out" "STOP: sha256 mismatch for pitr-wal-status.sql" && [ ! -e "$W/home2/hone-s1/pitr-status" ] && ok "a tampered file: STOP, and nothing was installed" || bad "tamper case" "rc=$rc"
+has "$W/dl2.out" "STOP: sha256 mismatch for pitr-wal-status.sql" && ! has "$W/dl2.out" "installed" && [ ! -e "$W/home2/hone-s1/pitr-status" ] && ok "a tampered file: STOP, and nothing was installed" || bad "tamper case" "rc=$rc"
+
+# the backups-only download line (PITR-BACKUPS-MACOS.md): one file; tamper -> STOP, nothing installed
+BLINE=$(grep -m1 '^    ( set -u' "$PKG/PITR-BACKUPS-MACOS.md" | sed 's/^    //')
+mkdir -p "$W/home4/hone-s1"
+env -i HOME="$W/home4" PATH="$W/bin:/usr/bin:/bin:/usr/sbin:/sbin" E2E_VPS="$W/vps" /bin/zsh -c "$BLINE" > "$W/dl3.out" 2>&1; cat "$W/dl3.out"
+has "$W/dl3.out" "pitr-backups.sh: sha256 OK, installed" && [ "$(ls "$W/home4/hone-s1/pitr-status")" = "pitr-backups.sh" ] && [ "$(sha "$W/home4/hone-s1/pitr-status/pitr-backups.sh")" = "$(sha "$PKG/pitr-backups.sh")" ] && ok "the backups-only download line installs exactly pitr-backups.sh (sha256 checked first)" || bad "backups-only line"
+cp "$W/vps/machines/pitr-status/pitr-backups.sh" "$W/pb.keep"; echo "#" >> "$W/vps/machines/pitr-status/pitr-backups.sh"; mkdir -p "$W/home5/hone-s1"
+env -i HOME="$W/home5" PATH="$W/bin:/usr/bin:/bin:/usr/sbin:/sbin" E2E_VPS="$W/vps" /bin/zsh -c "$BLINE" > "$W/dl4.out" 2>&1; mv "$W/pb.keep" "$W/vps/machines/pitr-status/pitr-backups.sh"
+has "$W/dl4.out" "STOP: sha256 mismatch for pitr-backups.sh" && ! has "$W/dl4.out" "installed" && [ ! -e "$W/home5/hone-s1/pitr-status" ] && ok "backups-only line, tampered file: STOP, nothing installed" || bad "backups-only tamper"
 
 # test copies: only the pins and the interval constants differ
 cp "$PS/run-window-read-macos.sh" "$W/runner.orig"
@@ -206,10 +215,31 @@ mkdir -p "$W/realcwd/supabase/.temp" "$W/realhome"; echo v2.102.0 > "$W/realcwd/
 ( cd "$W/realcwd" && env -i HOME="$W/realhome" PATH=/usr/bin:/bin SUPABASE_ACCESS_TOKEN="$TOK" SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 "$REALBIN" --agent no --profile supabase-local backups list --project-ref abcdefghijklmnopqrst -o json > "$W/real.out" 2> "$W/real.err" ); rc=$?
 kill $APIPID 2>/dev/null; wait $APIPID 2>/dev/null
 cat "$W/api.log"; head -c 300 "$W/real.out"; echo; head -c 300 "$W/real.err"; echo
-[ $rc = 0 ] && grep -q '"pitr_enabled":true' "$W/real.out" && ok "the REAL supabase-go v2.102.0 ran 'backups list -o json' (against the stub API) and printed the JSON" || bad "real cli run" "rc=$rc"
-[ "$(grep -c '' "$W/api.log")" = 1 ] && grep -qx 'GET /v1/projects/abcdefghijklmnopqrst/database/backups auth=yes' "$W/api.log" && ok "the API saw exactly ONE request: GET /v1/projects/<ref>/database/backups with a Bearer token - no login-role, no ban-list, no project lookup, no write" || bad "api request log" "$(cat "$W/api.log")"
+[ $rc = 0 ] && grep -Eq '"pitr_enabled": ?true' "$W/real.out" && ok "the REAL supabase-go v2.102.0 ran 'backups list -o json' (against the stub API) and printed the JSON" || bad "real cli run" "rc=$rc"
+NREQ=$(grep -c '' "$W/api.log")
+bad_req=$(grep -vE '^GET /v1/projects/abcdefghijklmnopqrst(/database/backups)? auth=yes$' "$W/api.log" || true)
+[ -z "$bad_req" ] && grep -q 'database/backups' "$W/api.log" && ok "a bare 'backups list' in an UNSEEDED folder made $NREQ read-only GET request(s), nothing else: the backups GET$( [ "$NREQ" = 2 ] && echo ' plus the CLI telemetry project lookup GET /v1/projects/<ref> (a finding; pitr-backups.sh seeds linked-project.json to avoid it)')" || bad "unseeded request log" "$(cat "$W/api.log")"
 [ "$(grep -c 'connection received' "$PGD/pg.log")" = "$CONN0" ] && ok "no database connection was opened (the local database's connection log did not change)" || bad "db connection"
 ! grep -rqF -- "$TOK" "$W/real.out" "$W/real.err" "$W/realcwd" "$W/realhome" 2>/dev/null && ok "the token appears in no output or file of the real run" || bad "real token leak"
+
+# the WHOLE pitr-backups.sh with the REAL binary against the stub API (one test copy line: --profile supabase-local)
+section realscript
+H3="$W/home3"; mkdir -p "$H3/hone-s1/supabase-cli" "$H3/hone-s1/pitr-status"
+cp "$REALBIN" "$H3/hone-s1/supabase-cli/supabase-go"; chmod 755 "$H3/hone-s1/supabase-cli/supabase-go"
+sed 's/"\$BIN" --agent no backups list/"$BIN" --agent no --profile supabase-local backups list/' "$PKG/pitr-backups.sh" > "$H3/hone-s1/pitr-status/pitr-backups.sh"
+[ "$(diff "$PKG/pitr-backups.sh" "$H3/hone-s1/pitr-status/pitr-backups.sh" | grep -c '^>')" = 1 ] && ok "test copy of pitr-backups.sh differs by ONE line (--profile supabase-local); GO_SHA stays the real pin dce26b75" || bad "realscript copy"
+find "$H3" -type f | sort > "$W/h3.before"
+: > "$W/api.log"; python3 -I "$HERE/stub-api.py" "$ROOT/pitr-backups-stub.json" "$W/api.log" > "$W/api.out" 2>&1 & APIPID=$!
+for i in 1 2 3 4 5 6 7 8 9 10; do /usr/bin/nc -z 127.0.0.1 8080 2>/dev/null && break; /bin/sleep 1; done
+CONN0=$(grep -c 'connection received' "$PGD/pg.log")
+RC=0; python3 "$HERE/driver.py" "$W/rs.out" "$W/a-tok.txt" -- env -i PATH="$SAFEPATH" HOME="$H3" TERM=dumb /bin/bash "$H3/hone-s1/pitr-status/pitr-backups.sh" >/dev/null 2>&1 || RC=$?
+kill $APIPID 2>/dev/null; wait $APIPID 2>/dev/null
+LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\r//g' "$W/rs.out" > "$W/rs.clean"; mv "$W/rs.clean" "$W/rs.out"; tail -n 12 "$W/rs.out"; cat "$W/api.log"
+[ $RC = 0 ] && has "$W/rs.out" "pitr_enabled: true" && has "$W/rs.out" "PITR BACKUPS READ COMPLETE" && ok "pitr-backups.sh ran end to end with the REAL supabase-go (pty-typed token, stub API): exit 0" || bad "realscript run" "rc=$RC"
+[ "$(grep -c '' "$W/api.log")" = 1 ] && grep -qx 'GET /v1/projects/abcdefghijklmnopqrst/database/backups auth=yes' "$W/api.log" && ok "the stub API saw exactly ONE request: GET .../database/backups with a Bearer token (no project lookup, no login-role, no ban-list, no write)" || bad "realscript request log" "$(cat "$W/api.log")"
+[ "$(grep -c 'connection received' "$PGD/pg.log")" = "$CONN0" ] && ok "no database connection was opened during the script run" || bad "realscript db connection"
+find "$H3" -type f | sort > "$W/h3.after"; echo "files created under the fake HOME by the run (names only):"; comm -13 "$W/h3.before" "$W/h3.after" | sed "s#$H3/##"
+! grep -rIlF -- "$TOK" "$H3" "$W/rs.out" "$W/api.log" 2>/dev/null | grep -q . && ok "the token appears in no transcript or file of the script run" || bad "realscript token leak"
 
 # ------------------------------------------------------------------------------------------------ tool 2: pitr-wal-twice.sh
 section wal

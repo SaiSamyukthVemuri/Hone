@@ -13,6 +13,9 @@
 #   backups/list/list.go     one call, V1ListAllBackups (an HTTPS GET to the Management API), then prints.
 # The Management API is reached with the access token only. The database password is NOT needed and is refused if present.
 # Afterwards the CLI may check for a newer release unless supabase/.temp/cli-latest is fresh: this script seeds it (v2.102.0).
+# Found in the rehearsal with the REAL binary: after the command, root.go's ensureProjectGroupsCached makes ONE extra read-only
+# GET /v1/projects/<ref> (to cache the project name for telemetry) unless supabase/.temp/linked-project.json already exists. This script
+# seeds that file (the ref only; empty name and organization) in its private folder, so the only request is the backups GET.
 #
 # Read-only. Fail-closed: the first failure stops. No retries. The token is typed privately (never echoed, never on a command
 # line, never written), exported only to the one child, and cleared on any exit.
@@ -53,6 +56,7 @@ chmod 700 "$OUT" || die "chmod failed"
 LINK="$OUT/cwd"
 mkdir -p "$LINK/supabase/.temp" && chmod 700 "$LINK" || die "mkdir failed"
 printf '%s\n' v2.102.0 > "$LINK/supabase/.temp/cli-latest" || die "write cli-latest failed"
+printf '{"ref":"%s","name":"","organization_id":"","organization_slug":""}\n' "$REF" > "$LINK/supabase/.temp/linked-project.json" || die "write linked-project.json failed"
 
 IFS= read -rs -p "Supabase access token (not shown): " tok </dev/tty || die "could not read the access token"
 echo >&2
