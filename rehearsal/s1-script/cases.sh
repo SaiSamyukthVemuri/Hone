@@ -132,7 +132,7 @@ mkfix g1-older-typed "$BASEPKG"; r4extra NEWPASS2 400 "OVERALL PASS" 100; runk
 refused "G1 two passing runs: typing the OLDER point is refused" "not the one in the row-4 result"
 R4_VERDICT="OVERALL FAIL" mkfix g1-pass-after-refused "$BASEPKG"; r4extra LATERPASS 400 "OVERALL PASS" 100; A_RP=$(r4sel LATERPASS); A_GO=no; runk; A_RP=""; A_GO=APPLY
 refused_after_dry "G1 refused at T1, PASS at T2 (newer): accepted" "not confirmed (type exactly: APPLY)"
-mkfix we-before "$BASEPKG"; A_WE=$(iso_at -60); runk; A_WE=""
+mkfix we-before "$BASEPKG"; A_WS=$(iso_at -30); A_WE=$(iso_at -60); runk; A_WS=""; A_WE=""
 refused "G3 window end not after the window start" "the window end is not after the window start"
 mkfix rp-typo "$BASEPKG"; A_RP='yesterday'; runk; A_RP=""
 refused "F1 restore point typed malformed" "restore point is not YYYY-MM-DDTHH:MM:SSZ"
