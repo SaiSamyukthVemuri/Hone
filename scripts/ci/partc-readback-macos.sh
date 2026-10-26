@@ -91,7 +91,7 @@ set timeout 90
 log_file -noappend $env(XLOG)
 spawn /usr/bin/env -i HOME=$env(XHOME) PATH=/usr/bin:/bin:/usr/sbin:/sbin TERM=xterm {*}$env(XEXTRA) /bin/bash $env(XSCRIPT)
 expect {
-  "Database password" { if {$env(XPW) ne "NONE"} { send "$env(XPW)\r" } ; exp_continue }
+  "Database password" { after 700; if {$env(XPW) ne "NONE"} { send "$env(XPW)\r" } ; exp_continue }
   eof { }
   timeout { puts "EXPECT-TIMEOUT" }
 }
