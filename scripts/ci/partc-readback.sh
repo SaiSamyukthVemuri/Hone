@@ -116,17 +116,18 @@ run_q() {
       "$BIN" --agent no db query --db-url "$u" -o json "$q" ) </dev/null >"$out" 2>"$err" || rc=$?
   captured=$(utcnow)
   if grep -qiE 'login role|unban|network.?ban|reset.*password' "$err"; then
+    tombstone "$id"   # a hosted write may have happened: block any re-run
     die "$id: the CLI reported a login-role / ban / password path (a hosted write may have happened). $NOLOGIN"
   fi
   if [ "$rc" != 0 ]; then
     # Authentication failures look like: password authentication failed / SQLSTATE 28P01 / 28000 / too many authentication errors.
-    if grep -qiE 'authenticat|28P01|28000|password|banned|circuit' "$err" || [ "$id" = c1 ]; then
+    if grep -qiE 'authenticat|28P01|28000|password|banned|circuit|tenant or user not found' "$err" || [ "$id" = c1 ]; then
       tombstone "$id"
     fi
-    if grep -qiE 'authenticat|28P01|28000|password|banned|circuit' "$err"; then
+    if grep -qiE 'authenticat|28P01|28000|password|banned|circuit|tenant or user not found' "$err"; then
       die "$id: AUTHENTICATION FAILED (exit $rc). This was the one attempt. $NOLOGIN"
     fi
-    tail -n 3 "$err" | sed -E -e 's/postgres(ql)?:\/\/[^ ]*/<url>/g' -e 's/([Uu]ser|[Hh]ost|[Hh]ostaddr|[Dd]bname)=[^ ,)]*/\1=<masked>/g' -e 's/([Uu]ser|[Rr]ole) "[^"]*"/\1 <masked>/g' -e 's/[A-Za-z0-9.-]*\.supabase\.com[:0-9]*/<host>/g' >&2
+    tail -n 3 "$err" | sed -E -e 's/postgres(ql)?:\/\/[^ ]*/<url>/g' -e 's/postgres\.[a-z0-9]{20}/postgres.<masked>/g' -e 's/([Uu]ser|[Hh]ost|[Hh]ostaddr|[Dd]bname)=[^ ,)]*/\1=<masked>/g' -e 's/([Uu]ser|[Rr]ole) "[^"]*"/\1 <masked>/g' -e 's/[A-Za-z0-9.-]*\.supabase\.com[:0-9]*/<host>/g' >&2
     die "$id: the CLI exited $rc. Nothing after it was run. $NOLOGIN"
   fi
   [ -s "$out" ] || die "$id: empty output"

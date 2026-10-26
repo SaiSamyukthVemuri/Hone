@@ -337,6 +337,11 @@ mkstub s4 "$(J1 0)" "$(J1 0)" "$C3_OK" '[
 ]'; RC=$(stubrun s4); TX="$LOGS/tx-stub-s4.log"
 expect_ "C4 with unbalanced nested braces: rejected, dies at c4" "$([ "$RC" = 1 ] && grep -q 'STOP: c4: ' "$TX" && ! grep -q 'PART C READ-BACK' "$TX" && echo 0 || echo 1)" "exit=$RC $(grep '^STOP' "$TX" | head -1 | cut -c1-80)"
 
+mkstub t1 "$(J1 0)" "$(J1 0)" "$C3_OK" "$C4_OK" c3 'FATAL: (ENOTFOUND) Tenant or user not found'; RC=$(stubrun t1); TX="$LOGS/tx-stub-t1.log"
+expect_ "'Tenant or user not found' (Supavisor) on a LATER query is an authentication failure: AUTHENTICATION FAILED, do-not-retry line, tombstone naming c3, three calls only" "$([ "$RC" = 1 ] && grep -q 'STOP: c3: AUTHENTICATION FAILED' "$TX" && grep -q 'do not retry; do not reset the password; do not unban' "$TX" && grep -q 'on query c3$' "$OUT/h-stub-t1/hone-s1/partc-script/FAILED-LOGIN" && [ "$(ncalls t1)" = 3 ] && echo 0 || echo 1)" "exit=$RC calls=$(ncalls t1)"
+mkstub t2 "$(J1 0)" "$(J1 0)" "$C3_OK" "$C4_OK" c4 'dial error: lookup for postgres.abcdefghij0123456789 at db.x failed; retry postgres.abcdefghij0123456789 later'; RC=$(stubrun t2); TX="$LOGS/tx-stub-t2.log"
+expect_ "mask: a bare postgres.<20-char ref> anywhere in the echoed free text is masked (both occurrences); the ref is never printed" "$([ "$RC" = 1 ] && grep -q 'postgres.<masked>' "$TX" && ! grep -q abcdefghij0123456789 "$TX" && echo 0 || echo 1)" "$(grep -m1 'masked' "$TX" | cut -c1-120)"
+
 mkstub m9 "$(J1 0)" "$(J1 0)" "$C3_OK" "$C4_OK" c1 'FATAL: password authentication failed for user "x"'; RC=$(stubrun m9); TX="$LOGS/tx-stub-m9.log"
 expect_ "CLI exits 1 with an authentication error on the FIRST query: dies at once, one call only, the exact 'do not retry...' line" "$([ "$RC" = 1 ] && grep -q 'STOP: c1: AUTHENTICATION FAILED' "$TX" && grep -q 'do not retry; do not reset the password; do not unban' "$TX" && [ "$(ncalls m9)" = 1 ] && echo 0 || echo 1)" "exit=$RC calls=$(ncalls m9)"
 mkstub m10 "$(J1 0)" "$(J1 0)" "$C3_OK" "$C4_OK" c3 'FATAL: could not connect: host=h.example.supabase.com:5432 user=postgres.leakyref hostaddr=10.1.2.3 failed for user "postgres.leakyref"'; RC=$(stubrun m10); TX="$LOGS/tx-stub-m10.log"
@@ -345,6 +350,7 @@ expect_ "tombstone: a NON-auth failure on a later query (c3) writes no tombstone
 expect_ "CLI exits 1 on a LATER query (c3, not an auth error): dies, three calls only, still the 'do not retry' line, no PART C output" "$([ "$RC" = 1 ] && grep -q 'STOP: c3: the CLI exited 1' "$TX" && grep -q 'do not retry; do not reset the password; do not unban' "$TX" && [ "$(ncalls m10)" = 3 ] && ! grep -q 'PART C READ-BACK' "$TX" && echo 0 || echo 1)" "exit=$RC calls=$(ncalls m10)"
 mkstub m11 "$(J1 0)" "$(J1 0)" "$C3_OK" "$C4_OK" c1 'Initialising login role...'; RC=$(stubrun m11); TX="$LOGS/tx-stub-m11.log"
 expect_ "tombstone: an auth failure on the first CLI query (stub) writes the tombstone with query id c1" "$(grep -q 'on query c1$' "$OUT/h-stub-m9/hone-s1/partc-script/FAILED-LOGIN" && echo 0 || echo 1)" "$(cat "$OUT/h-stub-m9/hone-s1/partc-script/FAILED-LOGIN" 2> /dev/null)"
+expect_ "tombstone: the login-role/unban/reset branch ALSO writes the tombstone (a hosted write may have happened)" "$(grep -q 'on query c1$' "$OUT/h-stub-m11/hone-s1/partc-script/FAILED-LOGIN" && echo 0 || echo 1)" "$(cat "$OUT/h-stub-m11/hone-s1/partc-script/FAILED-LOGIN" 2> /dev/null)"
 expect_ "CLI reports a login-role path (stderr): the script stops and says a hosted write may have happened; exit 1; one call" "$([ "$RC" = 1 ] && grep -q 'a hosted write may have happened' "$TX" && [ "$(ncalls m11)" = 1 ] && echo 0 || echo 1)" "exit=$RC"
 # a successful stub run must have made exactly four calls in the documented order and shapes
 CALLS="$OUT/stub-zero/calls"
