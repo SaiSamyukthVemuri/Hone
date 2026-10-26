@@ -1,0 +1,92 @@
+# REHEARSAL - NEVER MERGE. S1-SCRIPT: runs the real s1-apply.sh (a) on a stock macOS arm64 runner (/bin/bash 3.2, BSD tools) with the real
+# darwin supabase-go against a real local PostgreSQL holding a SYNTHETIC history and bundle, and (b) on Linux with the REAL 34 migration files
+# through the LOCAL Supavisor session pooler (behind a TLS relay) on a SYNTHETIC database built through production's migration prefix 0212,
+# NOT a verified copy of production data or configuration. No hosted call, no customer data, canary credentials only.
+name: rehearsal-s1-script
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/s1-script/**"
+      - ".github/workflows/rehearsal-s1-script.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  s1-script-macos:
+    name: s1-apply.sh on macOS arm64 (bash 3.2, real supabase-go, real Postgres, synthetic bundle)
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts and file pins
+        run: |
+          uname -sm
+          /bin/bash --version | head -1
+          python3 --version
+          shasum -a 256 rehearsal/s1-script/s1-apply.sh rehearsal/s1-script/migrations-d189768b.tar rehearsal/s1-script/MIGRATIONS-d189768b.sha256
+      - name: Install PostgreSQL 16 (the database the script's CLI connects to)
+        run: brew install postgresql@16 2>&1 | tail -n 3
+      - name: Script cases under /bin/bash 3.2, launched from zsh like the operator's terminal
+        shell: /bin/zsh {0}
+        run: /bin/bash rehearsal/s1-script/test-macos.sh 2>&1 | tee "$RUNNER_TEMP/macos-cases.txt"; exit ${pipestatus[1]}
+
+  s1-script-supavisor:
+    name: s1-apply.sh with the REAL 34 files through the local Supavisor session pooler (Linux)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Keep only migrations 0001-0212 (the hosted chain before S1)
+        run: |
+          for f in supabase/migrations/02*.sql; do n="$(basename "$f" | cut -c1-4)"; [ "$((10#$n))" -gt 212 ] && rm -- "$f"; done
+          ls supabase/migrations | tail -1
+      - name: Enable the local session pooler (CI workspace only, not committed)
+        run: |
+          sed -i '/^\[db.pooler\]/,/^\[/ { s/^enabled = false/enabled = true/; s/^pool_mode = .*/pool_mode = "session"/ }' supabase/config.toml
+          git diff -U0 supabase/config.toml
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+      - name: Set up Supabase CLI (only to start the synthetic stack)
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          version: 2.102.0
+      - name: Log in to ghcr.io for Supabase images (read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Start the synthetic stack (applies 0001-0212)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          { SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta \
+              || supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta; } 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+      - name: Log out of ghcr.io
+        if: always()
+        run: docker logout ghcr.io
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta
+      - name: Script cases with the real bundle through Supavisor
+        shell: bash
+        run: |
+          set -o pipefail
+          export DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
+          echo "db container: $DB"
+          bash rehearsal/s1-script/test-linux.sh 2>&1 | tee "$RUNNER_TEMP/linux-cases.txt"
