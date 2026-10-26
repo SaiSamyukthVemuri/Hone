@@ -156,6 +156,9 @@ now = int(time.time()); iso = lambda s: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", 
 if kind == "healthy":
     b = [{"is_physical_backup": True, "status": "COMPLETED", "inserted_at": iso(now-3600*5)}, {"is_physical_backup": True, "status": "COMPLETED", "inserted_at": iso(now-3600*29)}]
     pb = {"earliest_physical_backup_date_unix": now-7*86400, "latest_physical_backup_date_unix": now-600}
+elif kind == "empty":
+    b = []
+    pb = {"earliest_physical_backup_date_unix": now-8*86400, "latest_physical_backup_date_unix": now-60}
 elif kind == "stuck":
     b = [{"is_physical_backup": True, "status": "FAILED", "inserted_at": iso(now-600)}, {"is_physical_backup": False, "status": "COMPLETED", "inserted_at": iso(now-900)}, {"is_physical_backup": True, "status": "COMPLETED", "inserted_at": iso(now-3600*6)}]
     pb = {"earliest_physical_backup_date_unix": now-7*86400-17400, "latest_physical_backup_date_unix": now-(4*3600+49*60)}
@@ -241,9 +244,35 @@ LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\r//g' "$W/rs.out" > "$W/rs.clean"; 
 find "$H3" -type f | sort > "$W/h3.after"; echo "files created under the fake HOME by the run (names only):"; comm -13 "$W/h3.before" "$W/h3.after" | sed "s#$H3/##"
 ! grep -rIlF -- "$TOK" "$H3" "$W/rs.out" "$W/api.log" 2>/dev/null | grep -q . && ok "the token appears in no transcript or file of the script run" || bad "realscript token leak"
 
+# the same script, REAL binary, stub API serving the real PITR shape (backups [] + a physical range) -> the candidate-4 comparator (row 4)
+section c4api
+mkstub empty
+python3 -I "$HERE/stub-api.py" "$ROOT/pitr-backups-stub.json" "$W/api2.log" > "$W/api2.out" 2>&1 & APIPID=$!
+for i in 1 2 3 4 5 6 7 8 9 10; do /usr/bin/nc -z 127.0.0.1 8080 2>/dev/null && break; /bin/sleep 1; done
+RC=0; python3 "$HERE/driver.py" "$W/rs2.out" "$W/a-tok.txt" -- env -i PATH="$SAFEPATH" HOME="$H3" TERM=dumb /bin/bash "$H3/hone-s1/pitr-status/pitr-backups.sh" >/dev/null 2>&1 || RC=$?
+kill $APIPID 2>/dev/null; wait $APIPID 2>/dev/null
+CAPD=$(ls -dt "$H3"/hone-s1/pitr-backups.* | head -n 1); ls -A "$CAPD" | tr '\n' ' '; echo
+[ $RC = 0 ] && ok "pitr-backups.sh (real binary, stub API, backups [] under PITR) ran: exit 0, capture $(basename "$CAPD")" || bad "c4api capture" "rc=$RC"
+rm -rf "$W/c4-api"; node "$HERE/../candidate4/chain.mjs" api "$HERE/../candidate4/window-reads-c4" "$CAPD" "$(sha "$H3/hone-s1/pitr-status/pitr-backups.sh")" "$W/c4-api" > "$W/c4-api.out" 2>&1; rc=$?
+tail -n 14 "$W/c4-api.out" | cut -c1-230
+if [ $rc = 90 ]; then echo "SKIP - c4api: the test window overlaps 07:45-10:00 UTC"; else
+[ $rc = 0 ] && grep -qx 'OVERALL PASS (provider range; base backup UNVERIFIED; restore not tested)' "$W/c4-api.out" && ok "c4 chain: the REAL pitr-backups.sh capture (real layout: backups.err and cwd/ present) passes the candidate-4 comparator with the UNVERIFIED label" || bad "c4api comparator" "rc=$rc"; fi
+
 # ------------------------------------------------------------------------------------------------ tool 2: pitr-wal-twice.sh
 section wal
 wait_archived() { c0=$(su "select archived_count from pg_stat_archiver"); i=0; while [ $i -lt 40 ]; do [ "$(su 'select archived_count from pg_stat_archiver')" -gt "$c0" ] && return 0; /bin/sleep 1; i=$((i+1)); done; return 1; }
+C4="$HERE/../candidate4"; C4WR="$C4/window-reads-c4"
+c4chain() { # c4chain NAME WALDIR EXPECT(PASS|FAIL): the REAL pitr-wal-twice.sh output through the candidate-4 comparator (row 4, idle_proven_latest)
+  rm -rf "$W/c4-$1"; node "$C4/chain.mjs" idle "$C4WR" "$2" "$TRUN" "$(sha "$PS/MANIFEST.sha256")" "$W/c4-$1" > "$W/c4-$1.out" 2>&1; local rc=$?
+  tail -n 14 "$W/c4-$1.out" | cut -c1-230
+  if [ $rc = 90 ]; then echo "SKIP - c4 chain $1: the test window overlaps 07:45-10:00 UTC"; return; fi
+  if [ "$3" = PASS ]; then
+    [ $rc = 0 ] && grep -qx 'OVERALL PASS (provider range; base backup UNVERIFIED; restore not tested; idle path, restore target L)' "$W/c4-$1.out" && ok "c4 chain: the REAL $1 reading passes the candidate-4 idle rules (exit 0, idle label, restore target L)" || bad "c4 chain $1 expected PASS" "rc=$rc"
+  else
+    [ $rc = 1 ] && grep -q 'OVERALL FAIL' "$W/c4-$1.out" && ok "c4 chain: the REAL $1 reading is refused by the candidate-4 idle rules (exit 1)" || bad "c4 chain $1 expected FAIL" "rc=$rc"
+  fi
+}
+newest_wal() { ls -dt "$ROOT"/pitr-wal.* 2>/dev/null | head -n 1; }
 prep_idle() { su "alter system set archive_command = 'test ! -f $ARCH/%f && cp %p $ARCH/%f'" >/dev/null; su "select pg_reload_conf()" >/dev/null
   su "insert into gen values ('x')" >/dev/null; su "select pg_switch_wal()" >/dev/null; wait_archived; /bin/sleep 14; }
 gen_loop() { i=0; while [ $i -lt "$1" ]; do su "insert into gen select repeat('x',500) from generate_series(1,2000)" >/dev/null 2>&1; su "select pg_switch_wal()" >/dev/null 2>&1; /bin/sleep 5; i=$((i+1)); done; }
@@ -258,15 +287,18 @@ c0=$(calls); runwal idle "$SCEN" "$W/a-both.txt"
 has "$OUT" "interval by the database clock: 1" && ok "the interval was measured by the database clock and met N (15 s in the test copy)" || bad "interval line"
 if [ "$SCEN" = v_plain ] && [ "$RDY_PLAIN" = denied ]; then has "$OUT" "not readable" && ok "the ready count was not readable for $SCEN: recorded, not a stop" || bad "unreadable ready path"; fi
 
+c4chain idle "$(newest_wal)" PASS
 prep_idle
 gen_loop 12 & GEN=$!
 runwal active v_monitor "$W/a-both.txt"; wait $GEN
 [ $RC = 0 ] && has "$OUT" "INDICATION: ACTIVE_HEALTHY" && ok "ACTIVE: WAL moves and archived_count rises, failed_count does not -> INDICATION: ACTIVE_HEALTHY" || bad "active" "rc=$RC $(indic)"
+c4chain active "$(newest_wal)" FAIL
 prep_idle
 su "alter system set archive_command = 'false'" >/dev/null; su "select pg_reload_conf()" >/dev/null
 gen_loop 12 & GEN=$!
 runwal stalled v_monitor "$W/a-both.txt"; wait $GEN
 [ $RC = 0 ] && has "$OUT" "INDICATION: STALLED" && ok "STALLED (archive_command failing): failed_count rises / segments wait -> INDICATION: STALLED" || bad "stalled" "rc=$RC $(indic)"
+c4chain stalled "$(newest_wal)" FAIL
 grep -E '^failed_count|^ready_count' "$OUT" | head -n 3
 su "alter system set archive_command = 'test ! -f $ARCH/%f && cp %p $ARCH/%f'" >/dev/null; su "select pg_reload_conf()" >/dev/null
 i=0; while [ $i -lt 90 ]; do [ "$(su "select count(*) from pg_ls_archive_statusdir() where name like '%.ready'")" = 0 ] && break; /bin/sleep 1; i=$((i+1)); done
