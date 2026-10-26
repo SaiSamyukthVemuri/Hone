@@ -17,8 +17,8 @@ select pg_temp.ins('stripe_account_provisioning_attempts', jsonb_build_object('s
 
 -- charge attempts
 select pg_temp.ins('payment_charge_attempts', jsonb_build_object('studio_id', pg_temp.sid(1), 'charge_reason', 'no_show_fee', 'appointment_id', '00000000-0000-0000-0000-0000000000a1', 'amount_cents', 5000, 'currency', 'cad', 'status', 'ready', 'stripe_livemode', true, 'stripe_account_id', 'acct_W'));
-select pg_temp.ins('payment_charge_attempts', jsonb_build_object('studio_id', pg_temp.sid(1), 'charge_reason', 'no_show_fee', 'appointment_id', '00000000-0000-0000-0000-0000000000a1', 'amount_cents', 5000, 'currency', 'cad', 'status', 'ready', 'stripe_livemode', false, 'stripe_account_id', 'acct_Wtest'));
-select pg_temp.ins('payment_charge_attempts', jsonb_build_object('studio_id', pg_temp.sid(7), 'charge_reason', 'no_show_fee', 'appointment_id', '00000000-0000-0000-0000-0000000000a1', 'amount_cents', 5000, 'currency', 'cad', 'status', 'ready', 'stripe_livemode', true, 'stripe_account_id', 'acct_S'));
+select pg_temp.ins('payment_charge_attempts', jsonb_build_object('studio_id', pg_temp.sid(1), 'charge_reason', 'no_show_fee', 'appointment_id', '00000000-0000-0000-0000-0000000000a2', 'amount_cents', 5000, 'currency', 'cad', 'status', 'ready', 'stripe_livemode', false, 'stripe_account_id', 'acct_Wtest'));
+select pg_temp.ins('payment_charge_attempts', jsonb_build_object('studio_id', pg_temp.sid(7), 'charge_reason', 'no_show_fee', 'appointment_id', '00000000-0000-0000-0000-0000000000a3', 'amount_cents', 5000, 'currency', 'cad', 'status', 'ready', 'stripe_livemode', true, 'stripe_account_id', 'acct_S'));
 
 -- unknown-mode (null) customer on a live-bound account: the initializer treats unknown like live and needs an unknown-mode bound row, so this is unbound
 select pg_temp.ins('client_stripe_customers', jsonb_build_object('studio_id', pg_temp.sid(7), 'stripe_account_id', 'acct_S', 'stripe_livemode', null));
