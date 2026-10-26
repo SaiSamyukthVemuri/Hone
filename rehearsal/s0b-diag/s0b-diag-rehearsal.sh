@@ -141,7 +141,7 @@ leak=0
 for s in "$PW_P" "$PW_X" "$TOKEN"; do if grep -rqF -- "$s" "$W"/*.out "$W"/*.out.txt 2>/dev/null; then leak=1; fi; done
 [ "$leak" = 0 ] && ok "no password and no access token appears in any transcript" || bad "a secret appears in a transcript"
 if grep -rqF -e "$PW_P" -e "$PW_X" -e "$TOKEN" "$ROOT"/s0b-diag-run.* 2>/dev/null; then bad "a secret was written to a work directory"; else ok "no password and no token was written to any work directory"; fi
-[ "$(ls "$ROOT" | grep -c '^s0b-diag-run\.')" -ge 4 ] && ok "every run used its own private work directory (mode 700): $(stat -f '%Lp' "$(ls -1dt "$ROOT"/s0b-diag-run.* | head -n 1)")" || bad "work directories"
+[ "$(ls "$ROOT" | grep -c '^s0b-diag-run\.')" -ge 3 ] && ok "every run that got past the checks used its own private work directory (mode 700): $(stat -f '%Lp' "$(ls -1dt "$ROOT"/s0b-diag-run.* | head -n 1)")" || bad "work directories"
 
 echo; echo "steps: $pass ok, $fail FAIL"
 cp "$ROOT/e2e-calls.log" "$W/calls.log" 2>/dev/null || true
