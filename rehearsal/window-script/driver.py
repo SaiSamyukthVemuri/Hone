@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Drive an interactive script through a pty. usage: driver.py <out-file> <answers-file> -- <command...>
 answers-file: lines "prompt substring<TAB>answer". Writes the terminal transcript to out-file; exits with the script's exit code."""
-import os, pty, sys, select, time, signal
+import os, pty, sys, select, time, signal, termios
 out, answers_file = sys.argv[1], sys.argv[2]
 cmd = sys.argv[sys.argv.index("--") + 1:]
 answers = [l.rstrip("\n").split("\t", 1) for l in open(answers_file) if l.strip()]
@@ -21,6 +21,11 @@ while time.time() < deadline:
         buf += d
         while i < len(answers) and answers[i][0].encode() in buf[pos:]:
             pos = buf.index(answers[i][0].encode(), pos) + len(answers[i][0])
+            if "not shown" in buf[max(0, pos - 160):pos].decode("utf-8", "replace"):
+                # a hidden prompt: type only once the script has turned the terminal's echo off (a person types later than this)
+                t0 = time.time()
+                while time.time() - t0 < 5 and termios.tcgetattr(fd)[3] & termios.ECHO:
+                    time.sleep(0.02)
             os.write(fd, (answers[i][1] + "\n").encode()); i += 1
 else:
     os.kill(pid, signal.SIGKILL)
