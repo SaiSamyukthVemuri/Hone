@@ -1,0 +1,56 @@
+# REHEARSAL - NEVER MERGE. WINDOW-SCRIPT: runs window-s0a.sh on a stock macOS arm64 runner (/bin/bash 3.2, BSD tools)
+# against a STUB supabase-go and synthetic results (see rehearsal/window-script/test.sh for exactly what is stubbed).
+# No hosted call, no database, no secrets.
+name: rehearsal-window-script
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/window-script/**"
+      - ".github/workflows/rehearsal-window-script.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  window-script-macos:
+    name: window-s0a.sh on macOS arm64 (bash 3.2, stub supabase-go)
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts
+        run: |
+          uname -sm
+          /bin/bash --version | head -1
+          node --version
+          python3 --version
+          date -u
+          shasum -a 256 rehearsal/window-script/window-s0a.sh rehearsal/window-script/window-row4.sh
+      - name: Comparator tests (126 original + PITR), candidate 3 proof, mutation proof
+        working-directory: rehearsal/window-script/window-reads
+        run: |
+          node --test compare-preflight.test.mjs 2>&1 | tail -n 9
+          node --test baseline-candidate3-proof.test.mjs 2>&1 | tail -n 9
+          node --test pitr-mutation-proof.test.mjs 2>&1 | tail -n 9
+          node --test compare-preflight.test.mjs baseline-candidate3-proof.test.mjs pitr-mutation-proof.test.mjs > "$RUNNER_TEMP/node-tests.txt" 2>&1
+          rc=$?
+          grep -E '^(✖|ℹ (tests|pass|fail|skipped))' "$RUNNER_TEMP/node-tests.txt" | head -40
+          exit $rc
+      - name: The one-line download from the document, under bash and zsh (fake scp)
+        run: |
+          /bin/bash rehearsal/window-script/test-download.sh bash
+          /bin/bash rehearsal/window-script/test-download.sh zsh
+      - name: Script and tests under /bin/bash (3.2)
+        run: /bin/bash rehearsal/window-script/test.sh
+      - name: The same tests launched from zsh (how the operator's shell starts it)
+        shell: /bin/zsh {0}
+        run: |
+          /bin/bash rehearsal/window-script/test.sh > "$RUNNER_TEMP/zsh-run.txt" 2>&1
+          rc=$?
+          grep -A40 -E '^FAIL' "$RUNNER_TEMP/zsh-run.txt" | head -80
+          tail -n 3 "$RUNNER_TEMP/zsh-run.txt"
+          exit $rc
