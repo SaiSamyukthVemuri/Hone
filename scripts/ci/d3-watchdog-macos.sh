@@ -122,7 +122,7 @@ send "shasum -a 256 -c d3-watchdog.zsh.sha256\r"
 expect "d3-watchdog.zsh: OK"
 expect "READY> "
 send "WD_LIMIT=15 WD_EVERY=3 zsh d3-watchdog.zsh\r"
-after 1500
+while {![file exists $env(FLAG)]} { after 300 }
 send "$env(WDPW)\r"
 expect {
   "Close this Terminal" { }
@@ -135,10 +135,14 @@ EXP
 mkwriter() { # mkwriter <name> <seconds>: a postgres-role transaction that has written, then sleeps
   ( psqlp -c "set statement_timeout = 0" -c "begin" -c "insert into public.d3_decoy values (1)" -c "/*D3-$1*/ select pg_sleep($2)" -c "commit" -c "select 'done-$1'" > "$OUT/w-$1.log" 2>&1 ) &
 }
-mkwriter W1 70; mkwriter W2 70
-sleep 3
-( cd "$HOME_S1" && EXPLOG="$OUT/run-exp.log" WORKDIR="$HOME_S1" CAFILE="$MITM/mitmproxy-ca-cert.pem" WDPW="$PW" /usr/bin/expect -f "$OUT/run.exp" > /dev/null 2>&1 ) &
+rm -f "$OUT/flag"
+( cd "$HOME_S1" && FLAG="$OUT/flag" EXPLOG="$OUT/run-exp.log" WORKDIR="$HOME_S1" CAFILE="$MITM/mitmproxy-ca-cert.pem" WDPW="$PW" /usr/bin/expect -f "$OUT/run.exp" > /dev/null 2>&1 ) &
 EXPBG=$!
+# the shell is parked at the password prompt of the watchdog file; start the two writers NOW so they are active at arm time
+for _ in $(seq 1 120); do grep -q 'WD_LIMIT=15 WD_EVERY=3 zsh d3-watchdog.zsh' "$OUT/run-exp.log" 2> /dev/null && break; sleep 1; done
+mkwriter W1 150; mkwriter W2 150
+sleep 3
+touch "$OUT/flag"
 for _ in $(seq 1 60); do grep -q 'WATCHDOG armed' "$OUT/run-exp.log" 2> /dev/null && break; sleep 1; done
 sleep 4
 say "-- diagnostics at the moment the push-like session starts: postgres-role backends"
