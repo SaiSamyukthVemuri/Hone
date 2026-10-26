@@ -141,6 +141,9 @@ sleep 3
 EXPBG=$!
 for _ in $(seq 1 60); do grep -q 'WATCHDOG armed' "$OUT/run-exp.log" 2> /dev/null && break; sleep 1; done
 sleep 4
+say "-- diagnostics at the moment the push-like session starts: postgres-role backends"
+psqlp -F '|' -c "select pid, usename, datname, backend_type, state, backend_xid, left(query, 40) from pg_stat_activity where usename = 'postgres' order by backend_start" | sed 's/^/   | /' | tee -a "$RES"
+say "-- writer logs so far: W1=[$(tr '\n' ' ' < "$OUT/w-W1.log" | cut -c1-120)] W2=[$(tr '\n' ' ' < "$OUT/w-W2.log" | cut -c1-120)]"
 # the push-like session: a transaction that creates an object (xid + AccessExclusiveLock) then one long statement
 ( psqlp -c "set statement_timeout = 0" -c "begin" -c "create table public.d3_mac_t (id int)" -c "select pg_sleep(45)" -c "create table public.d3_mac_late (id int)" -c "commit" > "$OUT/push-like.log" 2>&1; echo $? > "$OUT/push-like.rc" ) &
 PLBG=$!
