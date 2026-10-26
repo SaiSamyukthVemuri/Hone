@@ -2,6 +2,7 @@
 # REHEARSAL - NEVER MERGE. OBS-READ-PREP proof, on a throwaway CI database at the 0212 chain.
 set -euo pipefail
 cd "$(dirname "$0")"
+HERE="$(pwd)"
 export PGPASSWORD=postgres
 P="psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 54322 -U postgres -d postgres"
 SQL=obs/obs-0214-live-named-accounts.sql
@@ -32,7 +33,7 @@ sha() { sha256sum "$1" | cut -d' ' -f1; }
 [ "$(sha obs/run-window-read-macos.sh)" = 471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357 ]
 cmp obs/run-window-read-macos.sh main/run-window-read-macos.sh
 [ "$(sha main/MANIFEST.sha256)" = 2b1608a9ec43caf97bd9ead3fe1d10895652a080a4b8ae0a891a17be3038cd94 ]
-[ "$(wc -l < obs/MANIFEST.sha256)" = 2 ]
+[ "$(wc -l < obs/MANIFEST.sha256)" = 3 ]
 echo "obs manifest: $(sha obs/MANIFEST.sha256)"
 W=$(mktemp -d); mkdir -p "$W/linked/supabase/.temp"; cd "$W/linked"
 run() { env -i PATH="$PATH" bash "$1/run-window-read-macos.sh" obs-0214-live-named-accounts.sql 2>&1 || true; }
@@ -52,4 +53,8 @@ out=$(env -i PATH="$PATH" bash "$A/run-window-read-macos.sh" obs-0214-observed-p
 echo "$out" | grep -q "HONE_WINDOW_PROJECT_REF is not set"
 out=$(env -i PATH="$PATH" bash "$B/run-window-read-macos.sh" obs-0214-observed-post-s3.sql 2>&1 || true); echo "post file, main manifest: $out"
 echo "$out" | grep -q "is not listed in MANIFEST.sha256"
+cd "$HERE"
+echo "== 7. the gap-pending file refuses at 0212 (guard 0246): the tables exist there, so the guard itself must raise"
+out=$($P --csv -f obs/obs-1035-gap-pending-payments.sql 2>&1) && { echo "NOT REFUSED"; exit 1; } || true
+echo "$out" | grep -qi "division by zero" && echo "gap-pending file refused at 0212: division by zero"
 echo "OBS-READ-PREP PROOF (0212): ALL PASS"

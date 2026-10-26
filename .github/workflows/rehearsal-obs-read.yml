@@ -86,4 +86,6 @@ jobs:
         if: steps.sb_start.outcome == 'failure'
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
       - name: Observation read proof
-        run: bash rehearsal/obs-read/prove-post.sh
+        run: |
+          bash rehearsal/obs-read/prove-post.sh
+          bash rehearsal/obs-read/prove-pending.sh
