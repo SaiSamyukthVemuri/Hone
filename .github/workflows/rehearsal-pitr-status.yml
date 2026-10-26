@@ -1,0 +1,51 @@
+# REHEARSAL - NEVER MERGE. PITR-STATUS-READS: pitr-backups.sh and the two-reading WAL status wrapper against a throwaway local PostgreSQL 17
+# with archive_mode on (idle / active / stalled), a stub Management API and the real darwin supabase-go (see rehearsal/pitr-status/pitr-rehearsal.sh).
+# No hosted call, no secrets; the only network use is fetching the public supabase CLI release.
+name: rehearsal-pitr-status
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/pitr-status/**"
+      - ".github/workflows/rehearsal-pitr-status.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  pitr-status:
+    name: pitr-backups.sh and the two-reading WAL status (macOS arm64)
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts
+        run: |
+          uname -sm
+          /bin/bash --version | head -1
+          /bin/zsh --version
+          node --version
+          python3 --version
+          date -u
+      - name: The rehearsal
+        env:
+          E2E_WORK: ${{ runner.temp }}/pitr
+        run: /bin/bash rehearsal/pitr-status/pitr-rehearsal.sh
+      - name: What the Postgres log says on a failure
+        if: failure()
+        run: tail -n 40 "$RUNNER_TEMP/pitr/pg/pg.log" 2>/dev/null || true
+      - name: Keep the transcripts and step table
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pitr-status
+          path: |
+            ${{ runner.temp }}/pitr/*.out
+            ${{ runner.temp }}/pitr/steps.tsv
+            ${{ runner.temp }}/pitr/visibility.tsv
+            ${{ runner.temp }}/pitr/api.log
+            ${{ runner.temp }}/pitr/home/hone-s1/pitr-calls.log
+          retention-days: 3
