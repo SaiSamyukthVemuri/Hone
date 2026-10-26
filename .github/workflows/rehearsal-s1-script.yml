@@ -105,3 +105,23 @@ jobs:
       - name: Line under zsh, started from zsh
         shell: /bin/zsh {0}
         run: /bin/bash rehearsal/s1-script/test-download.sh /bin/zsh rehearsal/s1-script rehearsal/s1-script/DOWNLOAD-COMMAND.txt
+
+  watchdog-sheet:
+    name: watchdog sheet lines pasted into interactive bash 3.2 and zsh (fake scp, stub watchdog) on macOS
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Sheet sha256 and shells
+        run: |
+          shasum -a 256 rehearsal/s1-script/WATCHDOG-OPERATOR.txt
+          /bin/bash --version | head -1
+          /bin/zsh --version
+      - name: Sheet lines in an interactive /bin/bash (3.2)
+        run: /bin/bash rehearsal/s1-script/test-sheet.sh /bin/bash rehearsal/s1-script
+      - name: Sheet lines in an interactive /bin/zsh
+        shell: /bin/zsh {0}
+        run: /bin/bash rehearsal/s1-script/test-sheet.sh /bin/zsh rehearsal/s1-script
