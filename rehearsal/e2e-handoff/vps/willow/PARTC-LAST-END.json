@@ -1,0 +1,18 @@
+{
+  "script_sha": "a1aa85c097a3c2c4f0b9c4d5d7172c177f904f229598b2bfcf8e5a1ca7c6531e",
+  "download_cmd": "( set -u; S=$(mktemp -d) && D=sam@100.123.145.56:/home/sam/hone-handoffs/2026-10-18/willow/partc && scp -q \"$D/partc-readback.sh\" \"$S/\" && [ \"$(shasum -a 256 \"$S/partc-readback.sh\" | cut -d' ' -f1)\" = a1aa85c097a3c2c4f0b9c4d5d7172c177f904f229598b2bfcf8e5a1ca7c6531e ] && [ -d \"$HOME/hone-s1\" ] && mkdir -p \"$HOME/hone-s1/partc-script\" && cp \"$S/partc-readback.sh\" \"$HOME/hone-s1/partc-script/\" && chmod 0755 \"$HOME/hone-s1/partc-script/partc-readback.sh\" && echo \"partc-readback.sh: sha256 OK, installed\" ) || echo \"STOP: download or sha256 check failed; nothing was installed\"",
+  "ci": {
+    "pr": 1192,
+    "state": "draft, never merge",
+    "head": "47290c80364084768cb992f9ebfabdcd3f72f8b0",
+    "macos14_run": 40263240048,
+    "macos14_result": "success, 54 PASS, ALL EXPECTATIONS MET (one rehearsal run)",
+    "ci_run": 40263239928,
+    "ci_result": "attempt 1 failed in extended browser shard 2 on the known React Client Manifest infrastructure fault (AppointmentLifecycleActions, a second occurrence of the FLAKE-READ class; this diff touches no app code); one failed-jobs rerun passed -> success (attempt 2)"
+  },
+  "lows": {
+    "1": "the login-role/unban/network-ban/reset-password stderr branch now writes the FAILED-LOGIN tombstone before dying; rehearsed (stub 'Initialising login role...' on c1 -> tombstone 'on query c1')",
+    "2": "a bare postgres.<20-char ref> is masked anywhere in echoed stderr (both occurrences in a stub error; ref never printed); 'Tenant or user not found' is an authentication failure: AUTHENTICATION FAILED, do-not-retry line, tombstone naming the query (stub on c3, three calls only)"
+  },
+  "note": "Stopped as ordered. Part C stays held for Sam's approval; nothing was run against any hosted system."
+}
