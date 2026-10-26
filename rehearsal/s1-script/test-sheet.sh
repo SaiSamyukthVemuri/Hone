@@ -40,7 +40,7 @@ session() { # session NAME HOMEOPTS(none|nocli) SRCDIR SHA EXTRAENV lines...   -
   env HOME="$H" PATH="$T/bin:/usr/bin:/bin:/usr/sbin:/sbin" TERM=dumb TMPDIR="$T" FAKE_SCP_SRC="$src" FAKE_SCP_LOG="$T/scp-$name.log" STUB_MARK="$T/mark-$name" ${SESSION_ENV:+"$SESSION_ENV"} \
     python3 -I "$HERE/drive-sheet.py" "$OUT" "$SH" -- "${lines[@]}"
 }
-out() { tr -d '\r' < "$OUT"; }
+out() { tr -d '\r' < "$OUT" | sed -E 's/^(%[ ]+)+//'; }
 # ---- (1) the download line
 session dl-good ok "$T/src" "$STUBSHA" "$L5"
 out | grep -q "^d3-watchdog.zsh: sha256 OK, installed" && [ "$(shasum -a 256 "$H/hone-s1/d3-watchdog.zsh" | cut -d' ' -f1)" = "$STUBSHA" ] && ok "$SH download line, good: installed into ~/hone-s1 with the matching sha256" || bad "download good" "$(out | tail -5)"
