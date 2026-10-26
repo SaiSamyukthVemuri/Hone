@@ -10,6 +10,7 @@ MODE=real
 DB="${DB:?the supabase db container name}"
 PW_OK=postgres          # the stack's own local password: a canary, never a real credential
 NOPLAT="--no-platform"
+C4STATUS=na; C4DIR=""
 PW_PATTERN="PGPASSWORD=postgres|:postgres@|assword=postgres|WRONG-CANARY-5d41|LEFTOVER-CANARY-9a7c"
 VER=2.102.0
 echo "platform: $(uname -sm); bash: $BASH_VERSION"

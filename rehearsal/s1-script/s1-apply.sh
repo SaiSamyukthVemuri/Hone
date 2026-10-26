@@ -196,8 +196,16 @@ printf '%s' "$WEND" | LC_ALL=C grep -Eq "^$iso\$" || die "window end is not YYYY
 [ "$WEND" \> "$WSTART" ] || die "the window end is not after the window start"
 R4DIR=$(ls -dt "$ROOT"/row4.* 2>/dev/null | head -1)
 [ -n "$R4DIR" ] || die "no row-4 result was found under $ROOT (a row4.* directory). Run window-row4.sh first. Nothing was attempted."
-if [ ! -d "$R4DIR" ] || [ -L "$R4DIR" ] || [ -z "$(find "$R4DIR" -maxdepth 0 -user "$(id -un)" ! -perm -020 ! -perm -002 2>/dev/null)" ] || [ ! -f "$R4DIR/row4-attestation.json" ] || [ ! -f "$R4DIR/verdict.txt" ] || ! grep -qx 'OVERALL PASS' "$R4DIR/verdict.txt"; then
+L1='OVERALL PASS (provider range; base backup UNVERIFIED; restore not tested)'
+L2='OVERALL PASS (provider range; base backup UNVERIFIED; restore not tested; idle path, restore target L)'
+if [ ! -d "$R4DIR" ] || [ -L "$R4DIR" ] || [ -z "$(find "$R4DIR" -maxdepth 0 -user "$(id -un)" ! -perm -020 ! -perm -002 2>/dev/null)" ] || [ ! -f "$R4DIR/row4-attestation.json" ] || [ ! -f "$R4DIR/verdict.txt" ]; then
   die "the latest row-4 run was refused (or did not finish): do not start S1. Latest: $R4DIR. Run window-row4.sh again from the start. Nothing was attempted."
+fi
+if grep -Fxq -- "$L2" "$R4DIR/verdict.txt"; then
+  die "the idle-path row-4 result is not accepted by this S1 script; use the named restore point. Latest: $R4DIR. Nothing was attempted."
+fi
+if ! grep -Fxq -- "$L1" "$R4DIR/verdict.txt" || grep -qx 'OVERALL PASS' "$R4DIR/verdict.txt" || [ "$(grep -c '^OVERALL PASS' "$R4DIR/verdict.txt")" != 1 ]; then
+  die "the latest row-4 run was refused (or did not finish): do not start S1. This script accepts only the candidate-4 line: $L1. Latest: $R4DIR. Nothing was attempted."
 fi
 R4SEL=$(sed -n 's/^ *"selected_at_utc": "\([^"]*\)".*/\1/p' "$R4DIR/row4-attestation.json" | head -1)
 printf '%s' "$R4SEL" | LC_ALL=C grep -Eq "^$iso\$" || die "the latest row-4 run has no readable selected restore point. Nothing was attempted."

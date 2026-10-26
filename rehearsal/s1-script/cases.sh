@@ -15,7 +15,8 @@ LEFT="LEFTOVER-CANARY-9a7c"
 # "postgres", so there the patterns are the password-bearing forms (PGPASSWORD=, user:password@, password=) plus the canaries.
 : "${PW_PATTERN:=$PW_OK|$PW_BAD|$LEFT}"
 A_RP=""; A_WS=""; A_WE=""; A_W1=yes; A_W2=yes; A_PW="$PW_OK"; A_GO=APPLY
-R4_AGE=600; R4_NONE=""; R4_VERDICT="OVERALL PASS"
+C4_L1=$(sed -n "s/^L1='\(.*\)'$/\1/p" "$HERE/c4/window-row4.sh"); C4_L2=$(sed -n "s/^L2='\(.*\)'$/\1/p" "$HERE/c4/window-row4.sh")
+R4_AGE=600; R4_NONE=""; R4_VERDICT="$C4_L1"
 iso_at() { python3 -I -c 'import sys,datetime as d;print((d.datetime.now(d.timezone.utc)+d.timedelta(seconds=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
 PINS_FROM=""   # a pkg dir whose pins.env the test copy should use (forged-consistent bundles); empty = the base package
 
@@ -96,6 +97,8 @@ grep -q '^URL="postgresql://postgres\.\$REF@aws-1-us-east-1\.pooler\.supabase\.c
 
 [ -z "$(grep -nE '/tmp|\$\$' "$HERE/s1-apply.sh")" ] && ok "F5: no /tmp path and no PID-named file in the script (temp files are inside the private work dir)" || bad "F5: /tmp or \$\$ in the script"
 grep -q 'Do not press Ctrl-C or close this window during the push; the only way to stop a statement is the watchdog.' "$HERE/s1-apply.sh" && [ "$(grep -c 'Do not press Ctrl-C or close this window during the push; the only way to stop a statement is the watchdog.' "$HERE/s1-apply.sh")" = 2 ] && ok "F3: the Ctrl-C warning is printed before APPLY and is in the INT trap message" || bad "F3 text"
+[ -n "$C4_L1" ] && [ "$(grep -E '^L1=' "$HERE/s1-apply.sh" | sed "s/^L1='//; s/'\$//")" = "$C4_L1" ] && [ "$(grep -E '^L2=' "$HERE/s1-apply.sh" | sed "s/^L2='//; s/'\$//")" = "$C4_L2" ] && ok "C4: the script's L1 and L2 lines are byte-identical to those in the real candidate-4 window-row4.sh (0fd4fbe4)" || bad "C4: L1/L2 differ from window-row4.sh"
+[ "$(sha "$HERE/c4/window-row4.sh")" = 0fd4fbe4236ff2688c7f0ea66ee9229bd6a7f60390a10ba114e88e80a8faa882 ] && ok "C4: window-row4.sh is the candidate-4 file (0fd4fbe4)" || bad "C4: window-row4.sh sha"
 echo "== the embedded GO list and the environment scan (real script)"
 sed -n "/^GO34='/,/sql'\$/p" "$HERE/s1-apply.sh" | sed "s/^GO34='//; s/'\$//" > "$T/embedded-go34.txt"
 [ "$(grep -c '' "$T/embedded-go34.txt")" = 34 ] && ok "the script embeds 34 lines" || bad "embedded list lines: $(grep -c '' "$T/embedded-go34.txt")"
@@ -126,11 +129,11 @@ mkfix g1-latest-refused "$BASEPKG"; r4extra NEWREFUSED 400 "OVERALL FAIL" 100; r
 refused "G1 pass at T1, REFUSED at T2 (newer): the older pass is not used" "the latest row-4 run was refused"
 mkfix g1-latest-unfinished "$BASEPKG"; r4extra NEWEMPTY 0 none 100; runk
 refused "G1 a newer row-4 run that left no result (did not finish)" "the latest row-4 run was refused (or did not finish)"
-mkfix g1-newer-pass "$BASEPKG"; r4extra NEWPASS 400 "OVERALL PASS" 100; A_RP=$(r4sel NEWPASS); A_GO=no; runk; A_RP=""; A_GO=APPLY
+mkfix g1-newer-pass "$BASEPKG"; r4extra NEWPASS 400 "$C4_L1" 100; A_RP=$(r4sel NEWPASS); A_GO=no; runk; A_RP=""; A_GO=APPLY
 refused_after_dry "G1 two passing runs: the newer one is used (typed point = the newer's)" "not confirmed (type exactly: APPLY)"
-mkfix g1-older-typed "$BASEPKG"; r4extra NEWPASS2 400 "OVERALL PASS" 100; runk
+mkfix g1-older-typed "$BASEPKG"; r4extra NEWPASS2 400 "$C4_L1" 100; runk
 refused "G1 two passing runs: typing the OLDER point is refused" "not the one in the row-4 result"
-R4_VERDICT="OVERALL FAIL" mkfix g1-pass-after-refused "$BASEPKG"; r4extra LATERPASS 400 "OVERALL PASS" 100; A_RP=$(r4sel LATERPASS); A_GO=no; runk; A_RP=""; A_GO=APPLY
+R4_VERDICT="OVERALL FAIL" mkfix g1-pass-after-refused "$BASEPKG"; r4extra LATERPASS 400 "$C4_L1" 100; A_RP=$(r4sel LATERPASS); A_GO=no; runk; A_RP=""; A_GO=APPLY
 refused_after_dry "G1 refused at T1, PASS at T2 (newer): accepted" "not confirmed (type exactly: APPLY)"
 mkfix we-before "$BASEPKG"; A_WS=$(iso_at -30); A_WE=$(iso_at -60); runk; A_WS=""; A_WE=""
 refused "G3 window end not after the window start" "the window end is not after the window start"
@@ -194,6 +197,39 @@ mkfix no-apply "$BASEPKG"; A_GO=no; runk; A_GO=APPLY
 refused_after_dry "APPLY not typed" "not confirmed (type exactly: APPLY)"
 mkfix g3-short "$BASEPKG"; A_WE=$(iso_at 4200); runk; A_WE=""
 refused_after_dry "G3 only 70 minutes of the window remain at APPLY" "fewer than 75 minutes of the window remain"
+# ---- candidate-4 row-4 outputs
+r4adopt() { # r4adopt VERDICT_MODE : replace the fixture's row-4 dir by a copy of the REAL candidate-4 run, then edit its verdict.txt per mode
+  rm -rf "$F/home/hone-s1"/row4.*; cp -R "$C4DIR" "$F/home/hone-s1/row4.REALC4"; chmod -R go-rwx "$F/home/hone-s1/row4.REALC4"
+  local v="$F/home/hone-s1/row4.REALC4/verdict.txt"
+  case "$1" in
+    real) ;;
+    real+bare) printf 'OVERALL PASS\n' >> "$v" ;;
+    bare) printf 'OVERALL PASS\n' > "$v" ;;
+    l2) grep -Fv -- "$C4_L1" "$v" > "$v.x"; printf '%s\n' "$C4_L2" >> "$v.x"; mv "$v.x" "$v" ;;
+    l1+l2) printf '%s\n' "$C4_L2" >> "$v" ;;
+    other) grep -Fv -- "$C4_L1" "$v" > "$v.x"; printf 'OVERALL PASS (provider range; something else)\n' >> "$v.x"; mv "$v.x" "$v" ;;
+  esac
+  setmtime "$F/home/hone-s1/row4.REALC4" 100
+  R4_SEL=$(r4sel REALC4)
+}
+if [ "$C4STATUS" = ok ]; then
+  grep -Fxq -- "$C4_L1" "$C4DIR/verdict.txt" && ! grep -qx 'OVERALL PASS' "$C4DIR/verdict.txt" && ok "C4: the REAL row-4 run's verdict.txt carries L1 and no bare OVERALL PASS ($(grep -c '' "$C4DIR/verdict.txt") lines)" || bad "C4: real verdict shape"
+  mkfix c4-real "$BASEPKG"; r4adopt real; A_GO=no; runk; A_GO=APPLY
+  refused_after_dry "C4 REAL row-4 run (L1): accepted through the dry run" "not confirmed (type exactly: APPLY)"
+  mkfix c4-real-bare "$BASEPKG"; r4adopt real+bare; runk
+  refused "C4 real L1 plus a bare OVERALL PASS line" "the latest row-4 run was refused"
+  mkfix c4-bare "$BASEPKG"; r4adopt bare; runk
+  refused "C4 bare OVERALL PASS only (the candidate-3 form) is refused" "the latest row-4 run was refused"
+  mkfix c4-l2 "$BASEPKG"; r4adopt l2; runk
+  refused "C4 L2 (idle-path row-4 result)" "the idle-path row-4 result is not accepted by this S1 script; use the named restore point"
+  mkfix c4-l1l2 "$BASEPKG"; r4adopt l1+l2; runk
+  refused "C4 L1 and L2 both present" "the idle-path row-4 result is not accepted by this S1 script"
+  mkfix c4-other "$BASEPKG"; r4adopt other; runk
+  refused "C4 a different labelled OVERALL PASS line" "the latest row-4 run was refused"
+else
+  echo "C4 status: $C4STATUS"
+  case "$C4STATUS" in skip) echo "SKIP - the real candidate-4 row-4 run was skipped (blackout overlap); the c4 cases did not run" ;; na) echo "NOTE - the real candidate-4 row-4 run needs macOS (BSD tools); it is covered by the macOS job" ;; *) bad "C4: the real candidate-4 row-4 run failed" ;; esac
+fi
 mkfix ctrlc "$BASEPKG"; A_GO='^C'; runk; A_GO=APPLY
 if [ "$RC" = 130 ] && has "Do not press Ctrl-C or close this window during the push; the only way to stop a statement is the watchdog." && [ "$(db_hist_count)" = 211 ]; then ok "F3: Ctrl-C at the APPLY prompt: the trap message carries the warning; exit 130; nothing applied"; else bad "ctrl-c trap" "rc=$RC $(tail -c 300 "$F/transcript.txt" | tr '\r\n' '  ')"; fi
 

@@ -60,4 +60,10 @@ db_table_exists() { [ "$(dbq -c "select count(*) from information_schema.tables 
 db_cancel_sleep() { [ "$(dbq -c "select count(*) from (select pg_cancel_backend(pid) from pg_stat_activity where state='active' and query like '%pg_sleep(30)%' and pid<>pg_backend_pid()) x")" -ge 1 ] 2>/dev/null; }
 conn_count() { grep -c 'connection received' "$T/pg.log"; }
 
+# ---- a REAL candidate-4 row-4 run (the unmodified window-row4.sh 0fd4fbe4 + comparator) for the S1 script to read
+C4DIR=""; C4STATUS=ok
+bash "$HERE/c4/gen-row4.sh" "$T/c4home" > "$T/c4gen.log" 2>&1; c4rc=$?
+cat "$T/c4gen.log" | tail -n 25
+if [ "$c4rc" = 0 ]; then C4DIR=$(ls -d "$T/c4home"/hone-s1/row4.* | head -1); elif [ "$c4rc" = 3 ]; then C4STATUS=skip; else C4STATUS=fail; fi
+
 . "$HERE/cases.sh"
