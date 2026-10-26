@@ -21,7 +21,7 @@ while time.time() < deadline:
         buf += d
         while i < len(answers) and answers[i][0].encode() in buf[pos:]:
             pos = buf.index(answers[i][0].encode(), pos) + len(answers[i][0])
-            if "not shown" in buf[max(0, pos - 160):pos].decode("utf-8", "replace"):
+            if answers[i][0] in ("Supabase access token", "Database password"):
                 # a hidden prompt: type only once the script has turned the terminal's echo off (a person types later than this)
                 t0 = time.time()
                 while time.time() - t0 < 5 and termios.tcgetattr(fd)[3] & termios.ECHO:
