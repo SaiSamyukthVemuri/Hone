@@ -90,3 +90,18 @@ jobs:
           export DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
           echo "db container: $DB"
           bash rehearsal/s1-script/test-linux.sh 2>&1 | tee "$RUNNER_TEMP/linux-cases.txt"
+
+  download-line:
+    name: the one-line download command under bash 3.2 and zsh (fake scp) on macOS
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Line under /bin/bash (3.2)
+        run: /bin/bash rehearsal/s1-script/test-download.sh /bin/bash rehearsal/s1-script rehearsal/s1-script/DOWNLOAD-COMMAND.txt
+      - name: Line under zsh, started from zsh
+        shell: /bin/zsh {0}
+        run: /bin/bash rehearsal/s1-script/test-download.sh /bin/zsh rehearsal/s1-script rehearsal/s1-script/DOWNLOAD-COMMAND.txt
