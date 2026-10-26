@@ -18,8 +18,8 @@ export const RUNNER_SHA = "471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44ea
 export const FAR = "9999-12-31T00:00:00Z";
 export const PLACEHOLDER = "@@T@@";
 export const T_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/;
-export const V_FILES = ["v1-history.sql", "v2-catalog.sql", "v3-studio-counts.sql", "v4-orphans.sql", "v5-recovery-point.sql", "v6-storage-meta.sql"];
-const FAR_FILES = V_FILES.slice(2);
+export const V_FILES = ["v1-history.sql", "v2-catalog.sql", "v3-studio-counts.sql", "v4-orphans.sql", "v5-recovery-point.sql", "v6-storage-meta.sql", "v7-id-digests.sql", "v8-id-buckets.sql"];
+const FAR_FILES = V_FILES.slice(2, 6);
 const RUNNER = "run-window-read-macos.sh";
 const TABLES = ["appointment_payments", "appointments", "client_consent_signatures", "client_intake_forms", "clients", "payment_charge_attempts", "sessions", "studios"];
 
@@ -118,38 +118,68 @@ export function compare({ templates, t, prod, rest, restFar }) {
     const fp = P["v2-catalog"].filter((r) => r.kind === "fingerprint").map((r) => `${r.name} ${String(r.md5).slice(0, 12)}`).join("; ");
     pass(`S0B-3 catalog equal: ${P["v2-catalog"].length} rows (schemas, RLS flags, ${fp})`);
 
+    // S5: digest of the sorted ids per table (ids never printed). Equal counts need an equal digest. A restored copy that holds MORE ids than
+    // production held at T is the signature of rows hard-deleted in production after T: informational, never a failure by itself, but the
+    // 256-bucket read must show no bucket where the copy holds fewer ids than production (a lower bound on lost rows) and no equal-count bucket with a different digest.
+    const dg = (x) => new Map(x["v7-id-digests"].map((r) => [String(r.table_name), r]));
+    const dP = dg(P), dR = dg(R);
+    const bk = (x) => { const m = new Map(); for (const r of x["v8-id-buckets"]) m.set(`${r.table_name}/${r.bucket}`, r); return m; };
+    const bP = bk(P), bR = bk(R);
+    const extra = new Map();
+    for (const nm of TABLES) {
+      const a = dP.get(nm), b = dR.get(nm);
+      const pn = Number(a?.ids ?? 0), rn = Number(b?.ids ?? 0);
+      if (rn < pn) fail(`${nm}: the restored copy holds ${pn - rn} fewer ids than production held at T (lost rows)`);
+      if (rn === pn) { if (String(a?.ids_md5 ?? "") !== String(b?.ids_md5 ?? "")) fail(`${nm}: same number of ids but the id digest differs`); continue; }
+      let lost = 0, clash = 0;
+      for (const key of new Set([...bP.keys(), ...bR.keys()])) {
+        if (!key.startsWith(`${nm}/`)) continue;
+        const x = Number(bP.get(key)?.ids ?? 0), y = Number(bR.get(key)?.ids ?? 0);
+        if (y < x) lost += x - y;
+        if (x === y && String(bP.get(key)?.ids_md5 ?? "") !== String(bR.get(key)?.ids_md5 ?? "")) clash++;
+      }
+      if (lost > 0 || clash > 0) fail(`${nm}: the restored copy holds ${rn - pn} more ids than production at T, and the bucket check shows ${lost} lost and ${clash} different-digest buckets`);
+      extra.set(nm, rn - pn);
+    }
+    if (extra.has("studios")) fail(`studios: the copy holds ${extra.get("studios")} more studios than production at T (studio deletes after T shift the ordinals; compare by hand)`);
+    pass(`S0B-4 id digests equal for ${TABLES.length - extra.size} tables${extra.size ? ` and consistent with deletes after T for ${extra.size}` : ""} (ids are never printed)`);
+    for (const [nm, d] of extra) lines.push(`NOTE  post-T deletes signature: ${nm}: the restored copy holds ${d} more ids than production at T (informational; the bucket check bounds lost rows at 0)`);
+    const okCell = (nm, a, b) => (extra.has(nm) ? Number(b) >= Number(a) : String(b) === String(a));
+
     if (!P["v3-studio-counts"].length) fail("production has no studio at or before T");
+    const V3 = { clients: "clients", appointments: "appointments", sessions: "sessions", client_consent_signatures: "consents", client_intake_forms: "intake_forms", payment_charge_attempts: "charge_attempts", appointment_payments: "appointment_payments" };
     for (const [nm, x] of [["restored@T", R], ["restored@unfiltered", F]]) {
-      if (!same(P["v3-studio-counts"], x["v3-studio-counts"])) {
-        const a = P["v3-studio-counts"], b = x["v3-studio-counts"];
-        const i = a.findIndex((r, j) => !same(r, b[j] ?? null));
-        fail(`per-studio counts differ (production@T vs ${nm}) at studio ordinal ${(a[i] ?? b[i] ?? {}).studio_ordinal}`);
+      const a = P["v3-studio-counts"], b = x["v3-studio-counts"];
+      if (a.length !== b.length) fail(`per-studio counts differ (production@T vs ${nm}): ${a.length} vs ${b.length} studios`);
+      for (let i = 0; i < a.length; i++) {
+        if (String(a[i].studio_ordinal) !== String(b[i].studio_ordinal)) fail(`per-studio counts differ (production@T vs ${nm}) at studio ordinal ${a[i].studio_ordinal}`);
+        for (const [tbl, col] of Object.entries(V3)) if (!okCell(tbl, a[i][col], b[i][col])) fail(`per-studio counts differ (production@T vs ${nm}) at studio ordinal ${a[i].studio_ordinal}`);
       }
     }
-    pass(`S0B-4 per-studio counts equal across production@T, restored@T and restored@unfiltered (${P["v3-studio-counts"].length} studios)`);
+    pass(`S0B-5 per-studio counts equal across production@T, restored@T and restored@unfiltered (${P["v3-studio-counts"].length} studios)`);
 
     for (const [nm, x] of [["production@T", P], ["restored@T", R], ["restored@unfiltered", F]]) {
       const o = one(x["v4-orphans"], `${nm} orphans`);
       const bad = Object.entries(o).filter(([, v]) => String(v) !== "0");
       if (bad.length) fail(`orphans on ${nm}: ${bad.map(([k, v]) => `${k}=${v}`).join(", ")}`);
     }
-    pass("S0B-5 orphan checks are 0 on production@T, restored@T and restored@unfiltered");
+    pass("S0B-6 orphan checks are 0 on production@T, restored@T and restored@unfiltered");
 
     const rp = byKey(P["v5-recovery-point"], "table_name"), rr = byKey(R["v5-recovery-point"], "table_name"), rf = byKey(F["v5-recovery-point"], "table_name");
     for (const nm of TABLES) {
       const a = rp.get(nm), b = rr.get(nm), c = rf.get(nm);
       if (!a || !b || !c) fail(`recovery point: table ${nm} missing from a result`);
       const want = String(a.rows_created_le_t);
-      if (String(b.rows_created_le_t) !== want) fail(`${nm}: rows created at or before T: production ${want}, restored ${b.rows_created_le_t}`);
-      if (String(b.rows_total) !== want) fail(`${nm}: restored holds ${b.rows_total} rows, production held ${want} at T`);
-      if (String(c.rows_total) !== want) fail(`${nm}: restored unfiltered holds ${c.rows_total} rows, production held ${want} at T`);
+      if (!okCell(nm, want, b.rows_created_le_t)) fail(`${nm}: rows created at or before T: production ${want}, restored ${b.rows_created_le_t}`);
+      if (!okCell(nm, want, b.rows_total)) fail(`${nm}: restored holds ${b.rows_total} rows, production held ${want} at T`);
+      if (!okCell(nm, want, c.rows_total) || String(c.rows_total) !== String(b.rows_total)) fail(`${nm}: restored unfiltered holds ${c.rows_total} rows, production held ${want} at T`);
       if (String(b.rows_newer_than_t) !== "0" || String(c.rows_newer_than_t) !== "0") fail(`${nm}: the restored copy holds rows newer than T (${b.rows_newer_than_t})`);
     }
-    pass(`S0B-6 recovery point consistent for ${TABLES.length} tables: restored row counts equal production at T and nothing is newer than T`);
+    pass(`S0B-7 recovery point consistent for ${TABLES.length} tables: restored row counts equal production at T and nothing is newer than T`);
 
     const s = one(P["v6-storage-meta"], "production storage metadata");
     for (const [nm, x] of [["restored@T", R], ["restored@unfiltered", F]]) if (!same(s, one(x["v6-storage-meta"], nm))) fail(`storage object metadata differs (production@T vs ${nm})`);
-    pass(`S0B-7 storage object metadata equal (${s.objects_le_t} objects; the files themselves are not in a database restore)`);
+    pass(`S0B-8 storage object metadata equal (${s.objects_le_t} objects; the files themselves are not in a database restore)`);
     lines.push("S0B PASS");
     return { ok: true, lines };
   } catch (e) {

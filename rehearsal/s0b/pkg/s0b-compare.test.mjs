@@ -12,7 +12,7 @@ import { compare, V_FILES, FAR, RUNNER_SHA } from "./s0b-compare.mjs";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const T = "2026-10-26T12:00:00Z";
 const sha = (b) => createHash("sha256").update(b).digest("hex");
-const FAR_FILES = V_FILES.slice(2);
+const FAR_FILES = V_FILES.slice(2, 6);
 const TABLES = ["appointment_payments", "appointments", "client_consent_signatures", "client_intake_forms", "clients", "payment_charge_attempts", "sessions", "studios"];
 
 const history = () => [{ applied_count: 211, hosted_max: "0212", versions_ge_0213: 0, rows_0211: 1, rows_0212: 1, name_0212: "synthetic", statements_0212: 73, statements_sha256_0212: "bc13731bb8c36b8a1db2f5a5185d0700308e598e92347a3ab87df696814ef142", last4: "0212,0211,0210,0209" }];
@@ -26,7 +26,9 @@ const studios = () => [1, 2, 3].map((o) => ({ studio_ordinal: o, clients: 10 * o
 const orphans = () => [{ appointments_without_client: 0, payments_without_appointment: 0, charge_attempts_without_appointment: 0, clients_without_studio: 0 }];
 const recovery = (n = 7) => TABLES.map((t) => ({ table_name: t, rows_created_le_t: n, rows_total: n, rows_newer_than_t: 0 }));
 const storage = () => [{ objects_le_t: 5, bytes_le_t: 12345 }];
-const base = () => ({ "v1-history": history(), "v2-catalog": catalog(), "v3-studio-counts": studios(), "v4-orphans": orphans(), "v5-recovery-point": recovery(), "v6-storage-meta": storage() });
+const digests = (n = 7) => TABLES.map((t) => ({ table_name: t, ids: n, ids_md5: "d" + t }));
+const buckets = (n = 7) => TABLES.flatMap((t) => [{ table_name: t, bucket: "0a", ids: 3, ids_md5: "x" + t }, { table_name: t, bucket: "1b", ids: n - 3, ids_md5: "y" + t }]);
+const base = () => ({ "v7-id-digests": digests(), "v8-id-buckets": buckets(), "v1-history": history(), "v2-catalog": catalog(), "v3-studio-counts": studios(), "v4-orphans": orphans(), "v5-recovery-point": recovery(), "v6-storage-meta": storage() });
 
 function mkRun(root, name, files, tValue, results, tamper = {}) {
   const gen = join(root, name, "gen"), res = join(root, name, "res");
@@ -57,14 +59,14 @@ const last = (r) => r.lines[r.lines.length - 1];
 
 test("templates: V3..V6 carry exactly one placeholder, V1 and V2 none", () => {
   const n = (f) => readFileSync(join(HERE, f), "utf8").split("@@T@@").length - 1;
-  assert.deepEqual(V_FILES.map(n), [0, 0, 1, 1, 1, 1]);
+  assert.deepEqual(V_FILES.map(n), [0, 0, 1, 1, 1, 1, 1, 1]);
 });
 
 test("PASS: a clean restore", () => {
   const w = world(); const r = run(w);
   assert.equal(r.ok, true, r.lines.join("\n"));
   assert.equal(last(r), "S0B PASS");
-  assert.equal(r.lines.filter((l) => l.startsWith("PASS ")).length, 7);
+  assert.equal(r.lines.filter((l) => l.startsWith("PASS ")).length, 8);
 });
 
 test("PASS: production gained rows after T but the T filter hides them (they are not in its T-filtered result)", () => {
@@ -86,6 +88,38 @@ test("FAIL: a row created before T is missing from the restored copy", () => {
 test("FAIL: a row deleted before T (restored total below production at T)", () => {
   const w = world({ rest: { "v5-recovery-point": recovery(6) }, far: { "v5-recovery-point": recovery(6) } });
   const r = run(w); assert.equal(r.ok, false); assert.match(last(r), /^S0B FAIL: appointment_payments: rows created at or before T/);
+});
+
+test("PASS with NOTE: the copy holds extra rows (deleted in production after T) and no bucket shows a lost row", () => {
+  const more = studios().map((x, i) => (i === 0 ? { ...x, clients: x.clients + 2 } : x));
+  const rd = digests().map((x) => (x.table_name === "clients" ? { ...x, ids: 9, ids_md5: "other" } : x));
+  const rb = buckets().map((x) => (x.table_name === "clients" ? (x.bucket === "0a" ? { ...x, ids: 4, ids_md5: "z" } : { ...x, ids: 5, ids_md5: "w" }) : x));
+  const rec = recovery().map((x) => (x.table_name === "clients" ? { ...x, rows_created_le_t: 9, rows_total: 9 } : x));
+  const r = run(world({ rest: { "v3-studio-counts": more, "v7-id-digests": rd, "v8-id-buckets": rb, "v5-recovery-point": rec }, far: { "v3-studio-counts": more, "v5-recovery-point": rec } }));
+  assert.equal(r.ok, true, r.lines.join("\n")); assert.equal(last(r), "S0B PASS");
+  assert.ok(r.lines.some((l) => /^NOTE  post-T deletes signature: clients: the restored copy holds 2 more ids/.test(l)));
+});
+
+test("FAIL: extra ids in the copy but a bucket shows a lost row", () => {
+  const rd = digests().map((x) => (x.table_name === "clients" ? { ...x, ids: 9, ids_md5: "other" } : x));
+  const rb = buckets().map((x) => (x.table_name === "clients" ? (x.bucket === "0a" ? { ...x, ids: 2, ids_md5: "z" } : { ...x, ids: 7, ids_md5: "w" }) : x));
+  const r = run(world({ rest: { "v7-id-digests": rd, "v8-id-buckets": rb } })); assert.equal(r.ok, false); assert.match(last(r), /^S0B FAIL: clients: .*1 lost/);
+});
+
+test("FAIL: fewer ids in the copy (lost rows)", () => {
+  const rd = digests().map((x) => (x.table_name === "sessions" ? { ...x, ids: 6 } : x));
+  const r = run(world({ rest: { "v7-id-digests": rd } })); assert.equal(r.ok, false); assert.match(last(r), /^S0B FAIL: sessions: the restored copy holds 1 fewer ids/);
+});
+
+test("FAIL: same number of ids but a different digest", () => {
+  const rd = digests().map((x) => (x.table_name === "appointments" ? { ...x, ids_md5: "changed" } : x));
+  const r = run(world({ rest: { "v7-id-digests": rd } })); assert.equal(r.ok, false); assert.match(last(r), /^S0B FAIL: appointments: same number of ids but the id digest differs/);
+});
+
+test("FAIL: extra studios in the copy (ordinals shift)", () => {
+  const rd = digests().map((x) => (x.table_name === "studios" ? { ...x, ids: 8, ids_md5: "o" } : x));
+  const rb = buckets().map((x) => (x.table_name === "studios" ? (x.bucket === "0a" ? { ...x, ids: 4, ids_md5: "z" } : x) : x));
+  const r = run(world({ rest: { "v7-id-digests": rd, "v8-id-buckets": rb } })); assert.equal(r.ok, false); assert.match(last(r), /^S0B FAIL: studios: the copy holds 1 more studios/);
 });
 
 test("FAIL: unfiltered restored count differs from T-filtered", () => {

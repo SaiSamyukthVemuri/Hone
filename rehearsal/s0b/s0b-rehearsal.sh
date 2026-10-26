@@ -57,7 +57,8 @@ T=$(python3 -c 'import datetime;print((datetime.datetime.now(datetime.timezone.u
 printf '%s' "$T" > "$W/T.txt"
 PSQLD postgres -f "$HERE/lib.sql" -f "$HERE/data.sql" -v phase=pre -v t="$T" > "$W/data-pre.log" 2>&1 && ok "synthetic rows created before T=$T (3 studios, clients, appointments, sessions, consents, intake, charges, payments, storage metadata)" || { bad "pre-T data" "$(tail -n 8 "$W/data-pre.log")"; exit 2; }
 PSQLD postgres -f "$HERE/stubs.sql" > "$W/stubs.log" 2>&1 && ok "stub cron / pg_net / webhook / vault objects created in the synthetic production" || { bad "stubs" "$(tail -n 5 "$W/stubs.log")"; exit 2; }
-"$B/pg_dump" -h "$W/pg" -p 55432 -U postgres -d postgres -Fc -f "$W/prod.dump" && ok "pg_dump of the synthetic production at T" || { bad "pg_dump"; exit 2; }
+PSQLD postgres -f "$HERE/stubs2.sql" > "$W/stubs2.log" 2>&1 && ok "stub foreign server / publication / subscription / event trigger / http-calling function and trigger created" || { bad "stubs2" "$(tail -n 8 "$W/stubs2.log")"; exit 2; }
+"$B/pg_dump" --no-subscriptions -h "$W/pg" -p 55432 -U postgres -d postgres -Fc -f "$W/prod.dump" && ok "pg_dump of the synthetic production at T" || { bad "pg_dump"; exit 2; }
 PSQLD postgres -f "$HERE/lib.sql" -f "$HERE/data.sql" -v phase=post -v t="$T" > "$W/data-post.log" 2>&1 && ok "synthetic rows created AFTER T in production only (studio 4, extra rows in studios 1 and 2, two storage objects)" || { bad "post-T data" "$(tail -n 8 "$W/data-post.log")"; exit 2; }
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -69,7 +70,7 @@ GOSHA=$(sha "$ROOT/supabase-cli/supabase-go")
 printf '%s\n' "$RREF" > "$ROOT/e2e-restored-ref"; : > "$ROOT/e2e-calls.log"
 sed "s/^SUPABASE_GO_SHA256=.*/SUPABASE_GO_SHA256=$GOSHA/" "$PKG/run-window-read-macos.sh" > "$ROOT/s0b/run-window-read-macos.sh"; chmod 0755 "$ROOT/s0b/run-window-read-macos.sh"
 RSHA=$(sha "$ROOT/s0b/run-window-read-macos.sh")
-for f in "$PKG"/p?-*.sql "$PKG"/v?-*.sql "$PKG/MANIFEST.sha256"; do cp "$f" "$ROOT/s0b/"; done
+for f in "$PKG"/p*.sql "$PKG"/v*.sql "$PKG/MANIFEST.sha256"; do cp "$f" "$ROOT/s0b/"; done
 sed -E "s/^export const RUNNER_SHA = \"[0-9a-f]{64}\";/export const RUNNER_SHA = \"$RSHA\";/" "$PKG/s0b-compare.mjs" > "$ROOT/s0b/s0b-compare.mjs"
 CSHA=$(sha "$ROOT/s0b/s0b-compare.mjs")
 sed -e "s/^GO_SHA=.*/GO_SHA=$GOSHA/" -e "s/^RUNNER_SHA=.*/RUNNER_SHA=$RSHA/" -e "s/^CMP_SHA=.*/CMP_SHA=$CSHA/" "$PKG/s0b-validate.sh" > "$ROOT/_e2e/s0b-validate.sh"
@@ -83,7 +84,7 @@ chk "$PKG/run-window-read-macos.sh" "$ROOT/s0b/run-window-read-macos.sh" '^[<>] 
 chk "$PKG/s0b-compare.mjs" "$ROOT/s0b/s0b-compare.mjs" '^[<>] export const RUNNER_SHA ='
 chk "$PKG/s0b-validate.sh" "$ROOT/_e2e/s0b-validate.sh" '^[<>] (GO_SHA|RUNNER_SHA|CMP_SHA)='
 chk "$PKG/s0b-precheck.sh" "$ROOT/_e2e/s0b-precheck.sh" '^[<>] (GO_SHA|RUNNER_SHA)='
-( cd "$ROOT/s0b" && shasum -a 256 -c MANIFEST.sha256 >/dev/null 2>&1 ) && ok "the 13 pinned SQL files verify against the pinned MANIFEST.sha256" || bad "manifest"
+( cd "$ROOT/s0b" && shasum -a 256 -c MANIFEST.sha256 >/dev/null 2>&1 ) && ok "the 19 pinned SQL files verify against the pinned MANIFEST.sha256" || bad "manifest"
 
 # ---------------------------------------------------------------------------------------------------------------------
 CUR=restore
@@ -104,15 +105,16 @@ drive() { # drive NAME ANSWERS SCRIPT
   OUT="$W/$1.out"; tr -d '\r' < "$OUT" > "$OUT.txt"
 }
 calls() { grep -c . "$ROOT/e2e-calls.log" | tr -d ' '; }
-validate() { # validate NAME T RREF PWP PWR   (answers the prompts of s0b-validate.sh)
+validate() { # validate NAME T RREF PWP PWR [LAST4]   (answers the prompts of s0b-validate.sh)
   {
     printf 'Recovery timestamp T you gave the restore\t%s\n' "$2"
     printf 'Project ref of the RESTORED\t%s\n' "$3"
+    printf 'Type the last 4 characters of the RESTORED project ref\t%s\n' "${6:-${3: -4}}"
     printf "Type yes only if the restored project's session pooler host\tyes\n"
     printf 'Type yes: the restored project is a NEW project\tyes\n'
     printf 'Supabase access token\t%s\n' "$TOKEN"
-    printf 'PRODUCTION database password\t%s\n' "$4"
     printf 'RESTORED project database password\t%s\n' "$5"
+    printf 'PRODUCTION database password\t%s\n' "$4"
   } > "$W/$1.ans"
   C0=$(calls); drive "$1" "$W/$1.ans" "$ROOT/_e2e/s0b-validate.sh"; DC=$(( $(calls) - C0 ))
 }
@@ -123,8 +125,8 @@ expect_fail() { # expect_fail NAME REGEX CALLS : exit non-zero, the verdict line
 
 mk_restored r_clean
 validate pass "$T" "$RREF" "$PW_P" "$PW_R"
-if [ "$RC" = 0 ] && grep -qx 'S0B PASS' "$OUT.txt" && ! grep -q '^S0B FAIL' "$OUT.txt" && [ "$DC" = 16 ]; then
-  ok "clean restore: S0B PASS, exit 0, 16 database reads (6 production, 6 restored, 4 restored unfiltered)"
+if [ "$RC" = 0 ] && grep -qx 'S0B PASS' "$OUT.txt" && ! grep -q '^S0B FAIL' "$OUT.txt" && [ "$DC" = 20 ]; then
+  ok "clean restore: S0B PASS, exit 0, 20 database reads: restored 8, restored unfiltered 4, production 8 LAST"
 else bad "clean restore" "exit $RC, reads $DC; tail: $(tail -n 12 "$OUT.txt")"; fi
 grep -E '^PASS ' "$OUT.txt" | sed 's/^/       /'
 RUNDIR=$(ls -1dt "$ROOT"/s0b-validate.* | head -n 1)
@@ -140,71 +142,101 @@ grep -q "p as (select '$T'::timestamptz as t)" "$RUNDIR/prod/gen/v3-studio-count
 CUR=negatives
 mk_restored r_late
 MUT r_late "select pg_temp.rh_ins('public.clients', jsonb_build_object('id', gen_random_uuid(), 'studio_id', md5('studio1')::uuid, 'created_at', '$T'::timestamptz + interval '5 minutes', 'updated_at', '$T'::timestamptz + interval '5 minutes'));"
-validate late "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "a restored row created AFTER T (caught by the unfiltered read)" '^S0B FAIL: per-studio counts differ \(production@T vs restored@unfiltered\) at studio ordinal 1' 16
+validate late "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "a restored row created AFTER T (caught by the unfiltered read)" '^S0B FAIL: per-studio counts differ \(production@T vs restored@unfiltered\) at studio ordinal 1' 20
 
 mk_restored r_missing
 MUT r_missing "delete from public.appointments where id = md5('preappt2-2')::uuid;"
-validate missing "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "a pre-T appointment MISSING from the restored copy" '^S0B FAIL: per-studio counts differ \(production@T vs restored@T\) at studio ordinal 2' 16
+validate missing "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "a pre-T appointment MISSING from the restored copy (id digest)" '^S0B FAIL: appointments: the restored copy holds 1 fewer ids than production held at T' 20
 
 mk_restored r_deleted
 MUT r_deleted "delete from public.payment_charge_attempts where id = md5('precharge3')::uuid;"
-validate deleted "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "a pre-T charge attempt DELETED in the restored copy" '^S0B FAIL: per-studio counts differ \(production@T vs restored@T\) at studio ordinal 3' 16
+validate deleted "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "a pre-T charge attempt DELETED in the restored copy (id digest)" '^S0B FAIL: payment_charge_attempts: the restored copy holds 1 fewer ids' 20
+
+mk_restored r_swapid
+MUT r_swapid "update public.clients set id = gen_random_uuid() where id = md5('preclient1-1')::uuid;"
+validate swapid "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "same number of clients but one id differs (id digest)" '^S0B FAIL: clients: same number of ids but the id digest differs' 20
 
 mk_restored r_updated
 MUT r_updated "update public.appointments set updated_at = '$T'::timestamptz + interval '5 minutes' where id = md5('preappt1-1')::uuid;"
-validate updated "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "a pre-T row UPDATED after T in the restored copy" '^S0B FAIL: appointments: the restored copy holds rows newer than T' 16
+validate updated "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "a pre-T row UPDATED after T in the restored copy" '^S0B FAIL: appointments: the restored copy holds rows newer than T' 20
 
 mk_restored r_history
 MUT r_history "delete from supabase_migrations.schema_migrations where version = (select min(version) from supabase_migrations.schema_migrations);"
-validate history "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "a migration history row missing from the restored copy" '^S0B FAIL: migration history differs' 16
+validate history "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "a migration history row missing from the restored copy" '^S0B FAIL: migration history differs' 20
 
 mk_restored r_catalog
 MUT r_catalog "do \$\$ declare r record; begin select * into r from pg_policies where schemaname = 'public' order by tablename, policyname limit 1; execute format('drop policy %I on public.%I', r.policyname, r.tablename); end \$\$;"
-validate catalog "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "a policy missing from the restored copy" '^S0B FAIL: catalog fingerprint differs' 16
+validate catalog "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "a policy missing from the restored copy" '^S0B FAIL: catalog fingerprint differs' 20
+
+# S5: rows the copy holds that production lacks at T = rows deleted in production after T: informational, not a failure
+mk_restored r_extra
+MUT r_extra "select pg_temp.rh_ins('public.clients', jsonb_build_object('id', gen_random_uuid(), 'studio_id', md5('studio1')::uuid, 'created_at', '$T'::timestamptz - interval '1 hour', 'updated_at', '$T'::timestamptz - interval '1 hour'));"
+validate extra "$T" "$RREF" "$PW_P" "$PW_R"
+if [ "$RC" = 0 ] && grep -qx 'S0B PASS' "$OUT.txt" && grep -q '^NOTE  post-T deletes signature: clients: the restored copy holds 1 more ids than production at T' "$OUT.txt" && [ "$DC" = 20 ]; then
+  ok "S5: a restored copy holding one more client than production at T (a delete after T) passes with a NOTE naming the table, not a fail"
+else bad "S5 post-T deletes signature" "exit $RC, reads $DC; tail: $(tail -n 10 "$OUT.txt")"; fi
 
 mk_restored r_clean
-validate sameref "$T" "$REF" "$PW_P" "$PW_R"; expect_fail "restored ref equal to the production ref" 'STOP: the restored ref equals the production ref' 0
+validate sameref "$T" "$REF" "$PW_P" "$PW_R" "bykj"; expect_fail "restored ref equal to the production ref" 'STOP: the restored ref equals the production ref' 0
 validate badt1 "2026-10-26" "$RREF" "$PW_P" "$PW_R"; expect_fail "T without a time" 'STOP: T is not YYYY-MM-DDTHH:MM:SSZ' 0
 validate badt2 "$T'; drop table x;--" "$RREF" "$PW_P" "$PW_R"; expect_fail "T with a quote and a statement" 'STOP: T is not YYYY-MM-DDTHH:MM:SSZ' 0
 validate badt3 "2099-01-01T00:00:00Z" "$RREF" "$PW_P" "$PW_R"; expect_fail "T in the future" 'STOP: T must be after 2026-01-01 and in the past' 0
 validate badref "$T" "NOT-A-REF" "$PW_P" "$PW_R"; expect_fail "a malformed restored ref" 'STOP: the restored ref is not 20 lower-case letters' 0
-validate swapped "$T" "$RREF" "$PW_R" "$PW_P"; expect_fail "the two passwords typed in the wrong order" 'STOP: prod v1-history.sql failed' 1
+validate badlast4 "$T" "$RREF" "$PW_P" "$PW_R" "zzzz"; expect_fail "the last 4 characters of the restored ref typed wrongly" 'STOP: the last 4 characters do not match' 0
+
+# S3: the two passwords typed in the wrong order. The RESTORED project is read first, so the failed login is on the new project and production is never contacted.
+validate swapped "$T" "$RREF" "$PW_R" "$PW_P"; expect_fail "the two passwords typed in the wrong order" 'STOP: rest v1-history.sql failed' 1
+if [ "$(tail -n "$DC" "$ROOT/e2e-calls.log" | awk '{print $2}' | sort -u | tr '\n' ' ')" = "$RREF " ]; then ok "S3: the only read of the swapped run went to the RESTORED project; production was not contacted"; else bad "S3 swapped run touched production"; fi
+[ -f "$ROOT/s0b/FAILED-LOGIN" ] && ok "S3: the failed login left the FAILED-LOGIN tombstone: $(cat "$ROOT/s0b/FAILED-LOGIN")" || bad "S3: no tombstone after a failed login"
+validate afterfail "$T" "$RREF" "$PW_P" "$PW_R"; expect_fail "a re-run after a failed login is refused" 'STOP: a previous run failed a login' 0
+mv "$ROOT/s0b/FAILED-LOGIN" "$W/FAILED-LOGIN.validate"
 
 CUR=precheck
-precheck() { # precheck NAME
-  { printf 'Supabase access token\t%s\n' "$TOKEN"; printf 'PRODUCTION database password\t%s\n' "$PW_P"; } > "$W/$1.ans"
+precheck() { # precheck NAME [PASSWORD]
+  { printf 'Supabase access token\t%s\n' "$TOKEN"; printf 'PRODUCTION database password\t%s\n' "${2:-$PW_P}"; } > "$W/$1.ans"
   C0=$(calls); drive "$1" "$W/$1.ans" "$ROOT/_e2e/s0b-precheck.sh"; DC=$(( $(calls) - C0 ))
 }
+lastline() { tail -n 1 "$OUT.txt"; }
 precheck pre_a
-if [ "$RC" = 0 ] && [ "$DC" = 8 ] && grep -q '^cron.job: 3 jobs, 2 active, 2 mention http/net/functions (1 active)' "$OUT.txt" && grep -q '^ALERT  1 active cron job(s) mention' "$OUT.txt" && grep -q '^ALERT  2 queued pg_net' "$OUT.txt" && grep -q '^ALERT  1 database webhook' "$OUT.txt" && grep -q '^ALERT  2 vault secret' "$OUT.txt" \
-   && grep -q '^storage rehearsal-a: 5 objects, 500 bytes' "$OUT.txt" && grep -q '^storage (all buckets): 6 objects, 507 bytes' "$OUT.txt" && grep -q '^auth.users: 0' "$OUT.txt" && grep -q '^S0B PRECHECK DONE: 4 alert' "$OUT.txt"; then
-  ok "pre-check with stub features present: the chain guard passed, 8 reads, four ALERTs (cron with http, queued pg_net, webhook, vault), storage per bucket, auth users"
-else bad "pre-check (features present)" "exit $RC, reads $DC; tail: $(tail -n 14 "$OUT.txt")"; fi
-! grep -qE 'select 1|http_post|example.invalid|rehearsal-secret' "$OUT.txt" && ok "the pre-check output carries counts only: no cron command text, URL or secret name" || bad "pre-check printed a command, URL or secret name"
+if [ "$RC" != 0 ] && [ "$DC" = 12 ] && [ "$(lastline)" = "S0B PRECHECK STOP" ] \
+   && grep -q '^cron.job: 3 jobs, 2 active, 2 mention http/net/functions (1 active)' "$OUT.txt" && grep -q '^ALERT  3 cron job(s) exist' "$OUT.txt" && grep -q '^ALERT  2 queued pg_net' "$OUT.txt" && grep -q '^ALERT  1 database webhook' "$OUT.txt" && grep -q '^ALERT  2 vault secret' "$OUT.txt" \
+   && grep -q '^ALERT  1 foreign server' "$OUT.txt" && grep -q '^ALERT  1 logical replication subscription' "$OUT.txt" && grep -q '^ALERT  1 publication(s) other than supabase_realtime' "$OUT.txt" && grep -q '^ALERT  1 non-platform event trigger' "$OUT.txt" \
+   && grep -q '^ALERT  1 function(s) in non-platform schemas call http' "$OUT.txt" && grep -q '^ALERT  1 trigger(s) run an http-calling function' "$OUT.txt" \
+   && grep -q '^storage rehearsal-a: 5 objects, 500 bytes' "$OUT.txt" && grep -q '^storage (all buckets): 6 objects, 507 bytes' "$OUT.txt" && grep -q '^auth.users: 0' "$OUT.txt"; then
+  ok "S1/S2: pre-check with the stub features present exits non-zero, 12 reads, ALERTs for cron, pg_net queue, webhook, vault, foreign server, subscription, publication, event trigger, http-calling function and trigger, and the LAST line is S0B PRECHECK STOP"
+else bad "pre-check (features present)" "exit $RC, reads $DC; tail: $(tail -n 16 "$OUT.txt")"; fi
+! grep -qE 'select 1|http_post|example.invalid|rehearsal-secret|rh_srv|rh_sub|rh_evt' "$OUT.txt" && ok "the pre-check output carries counts only: no command text, URL, secret or object name" || bad "pre-check printed a command, URL or object name"
 
 PSQLD postgres -c 'drop table net.http_request_queue' -c 'create function net.boom() returns bigint language plpgsql as $f$ begin raise exception '"'"'rehearsal unreadable'"'"'; end $f$' -c 'create view net.http_request_queue as select net.boom() as id' >/dev/null
 precheck pre_b
-if [ "$RC" = 0 ] && [ "$DC" = 8 ] && grep -q '^UNREADABLE p2-net.sql' "$OUT.txt" && grep -q '^net queue: UNREADABLE' "$OUT.txt" && grep -q '^ALERT  2 vault secret' "$OUT.txt" && grep -q '^S0B PRECHECK DONE: 3 alert' "$OUT.txt"; then
-  ok "pre-check with one unreadable object: marked UNREADABLE, not retried, and the remaining files were still read"
+if [ "$RC" != 0 ] && [ "$DC" = 12 ] && grep -q '^UNREADABLE p2-net.sql' "$OUT.txt" && grep -q '^CANNOT RULE OUT  net queue: UNREADABLE' "$OUT.txt" && grep -q '^ALERT  2 vault secret' "$OUT.txt" && [ "$(lastline)" = "S0B PRECHECK STOP" ]; then
+  ok "S1: an unreadable risk object counts as an alert (CANNOT RULE OUT), is not retried, the remaining files were still read, and the last line is S0B PRECHECK STOP"
 else bad "pre-check (unreadable object)" "exit $RC, reads $DC; tail: $(tail -n 14 "$OUT.txt")"; fi
 
 PSQLD postgres -c "insert into supabase_migrations.schema_migrations (version, name) values ('0213', 'rehearsal')" >/dev/null
 precheck pre_d
-if [ "$RC" != 0 ] && [ "$DC" = 1 ] && grep -q 'STOP: production history max is not 0212 (chain guard)' "$OUT.txt"; then ok "pre-check chain guard: history max 0213 stops it after one read"; else bad "pre-check chain guard" "exit $RC, reads $DC; tail: $(tail -n 6 "$OUT.txt")"; fi
+if [ "$RC" != 0 ] && [ "$DC" = 1 ] && grep -q 'STOP: production history max is not 0212 (chain guard)' "$OUT.txt" && [ "$(lastline)" = "S0B PRECHECK STOP" ]; then ok "pre-check chain guard: history max 0213 stops it after one read (last line S0B PRECHECK STOP)"; else bad "pre-check chain guard" "exit $RC, reads $DC; tail: $(tail -n 6 "$OUT.txt")"; fi
 PSQLD postgres -c "delete from supabase_migrations.schema_migrations where version = '0213'" >/dev/null
 
-PSQLD postgres -c 'drop schema cron cascade' -c 'drop schema net cascade' -c 'drop schema supabase_functions cascade' -c 'drop schema vault cascade' >/dev/null
+PSQLD postgres -c 'drop schema cron cascade' -c 'drop schema net cascade' -c 'drop schema supabase_functions cascade' -c 'drop schema vault cascade' -c 'drop subscription rh_sub' -c 'drop publication rh_pub' -c 'drop event trigger rh_evt' -c 'drop trigger rh_trg on public.studios' -c 'drop function public.rh_callout_trg()' -c 'drop function public.rh_evt()' -c 'drop server rh_srv' -c 'drop foreign data wrapper rh_fdw' >/dev/null || bad "dropping the stubs"
 precheck pre_c
-if [ "$RC" = 0 ] && [ "$DC" = 4 ] && grep -q '^cron.job: not present' "$OUT.txt" && grep -q '^vault.secrets: not present' "$OUT.txt" && grep -q '^S0B PRECHECK DONE: 0 alert' "$OUT.txt"; then
-  ok "pre-check with the optional features absent: only the history guard, presence, storage and auth reads (4); no read of a missing relation"
-else bad "pre-check (features absent)" "exit $RC, reads $DC; tail: $(tail -n 12 "$OUT.txt")"; fi
+if [ "$RC" = 0 ] && [ "$DC" = 8 ] && grep -q '^cron.job: not present' "$OUT.txt" && grep -q '^vault.secrets: not present' "$OUT.txt" && grep -q '^pg_foreign_server: 0' "$OUT.txt" && grep -q '^pg_subscription: 0' "$OUT.txt" && [ "$(lastline)" = "S0B PRECHECK CLEAR" ]; then
+  ok "S1: with nothing that can call out the pre-check exits 0 and the LAST line is S0B PRECHECK CLEAR (8 reads, no read of a missing relation)"
+else bad "pre-check (nothing present)" "exit $RC, reads $DC; tail: $(tail -n 14 "$OUT.txt")"; fi
+
+# S3: a failed login in the pre-check leaves the tombstone and blocks both scripts
+precheck pre_e "$PW_R"
+if [ "$RC" != 0 ] && [ "$DC" = 1 ] && [ -f "$ROOT/s0b/FAILED-LOGIN" ] && [ "$(lastline)" = "S0B PRECHECK STOP" ]; then ok "S3: a wrong production password in the pre-check stops after one read and writes the FAILED-LOGIN tombstone"; else bad "pre-check failed login" "exit $RC, reads $DC; tail: $(tail -n 6 "$OUT.txt")"; fi
+precheck pre_f
+if [ "$RC" != 0 ] && [ "$DC" = 0 ] && grep -q 'STOP: a previous run failed a login' "$OUT.txt"; then ok "S3: the pre-check refuses to run while the tombstone exists (0 reads)"; else bad "pre-check tombstone block" "exit $RC, reads $DC"; fi
+mv "$ROOT/s0b/FAILED-LOGIN" "$W/FAILED-LOGIN.precheck"
 
 CUR=secrets
 leak=0
 for s in "$PW_P" "$PW_R" "$TOKEN"; do if grep -rqF -- "$s" "$W"/*.out "$W"/*.out.txt 2>/dev/null; then leak=1; fi; done
 [ "$leak" = 0 ] && ok "no password and no access token appears in any transcript" || bad "a secret appears in a transcript"
 if grep -rqF -- "$PW_P" "$ROOT"/s0b-validate.* "$ROOT"/s0b-precheck.* 2>/dev/null || grep -rqF -- "$TOKEN" "$ROOT"/s0b-validate.* "$ROOT"/s0b-precheck.* 2>/dev/null; then bad "a secret was written to a work directory"; else ok "no password and no token was written to any work directory"; fi
-[ "$(ls "$ROOT" | grep -c '^s0b-validate\.')" -ge 8 ] && ok "every run used its own private work directory (mode 700): $(stat -f '%Lp' "$(ls -1dt "$ROOT"/s0b-validate.* | head -n 1)")" || bad "work directories"
+[ "$(ls "$ROOT" | grep -c '^s0b-validate\.')" -ge 10 ] && ok "every run used its own private work directory (mode 700): $(stat -f '%Lp' "$(ls -1dt "$ROOT"/s0b-validate.* | head -n 1)")" || bad "work directories"
 
 echo; echo "steps: $pass ok, $fail FAIL"
 cp "$ROOT/e2e-calls.log" "$W/calls.log" 2>/dev/null || true

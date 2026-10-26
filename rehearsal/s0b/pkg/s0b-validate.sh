@@ -15,11 +15,12 @@ BIN="$ROOT/supabase-cli/supabase-go"
 S0B="$ROOT/s0b"
 GO_SHA=dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b
 RUNNER_SHA=471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357
-MANIFEST_SHA=d04063acb8dae3874c50ae1abf38680d5c755bb2a9359432a70debaf86a57b47
-CMP_SHA=c5a4d1fd28aa6e7e24453c5077d52dec0d1fdb301e03494324577da49e3378c1
+MANIFEST_SHA=3de27046f314172646b4fe6d15f79bc796250218c73da0132df0de1573c35596
+CMP_SHA=5656ede142212a59ab1836f5d3121f08c328c6249b3b5648a2dd150c83d025e8
 PROD_REF=alhhybgqdmcdyzpybykj
 FAR=9999-12-31T00:00:00Z
-VFILES="v1-history.sql v2-catalog.sql v3-studio-counts.sql v4-orphans.sql v5-recovery-point.sql v6-storage-meta.sql"
+TOMB="$S0B/FAILED-LOGIN"
+VFILES="v1-history.sql v2-catalog.sql v3-studio-counts.sql v4-orphans.sql v5-recovery-point.sql v6-storage-meta.sql v7-id-digests.sql v8-id-buckets.sql"
 FFILES="v3-studio-counts.sql v4-orphans.sql v5-recovery-point.sql v6-storage-meta.sql"
 
 cleanup() {
@@ -32,6 +33,10 @@ die() { echo "STOP: $*" >&2; exit 1; }
 sha() { shasum -a 256 -- "$1" | cut -d' ' -f1; }
 iso='[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'
 utcnow() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+is_auth_failure() { LC_ALL=C sed $'s/\033\\[[0-9;]*[A-Za-z]//g' "$1" | grep -qiE 'authenticat|28P01|28000|password authentication|banned|circuit|SASL|tenant or user not found'; }
+tombstone() { # written BEFORE dying on an authentication failure: the UTC time and the run name, no secret
+  printf 'failed login at %s in run %s\n' "$(utcnow)" "$1" > "$TOMB" 2>/dev/null || echo "WARNING: could not write $TOMB; do not re-run anyway." >&2
+}
 
 # ---- Part 0: this Mac, the verified tools, a clean environment (NAMES only), fresh private dirs ---------------------
 [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || die "not macOS arm64"
@@ -45,11 +50,14 @@ case "$nodemajor" in ''|*[!0-9]*) die "cannot read the node version" ;; esac
 [ -f "$S0B/run-window-read-macos.sh" ] && [ "$(sha "$S0B/run-window-read-macos.sh")" = "$RUNNER_SHA" ] || die "runner missing or sha256 mismatch"
 [ -f "$S0B/MANIFEST.sha256" ] && [ "$(sha "$S0B/MANIFEST.sha256")" = "$MANIFEST_SHA" ] || die "manifest missing or sha256 mismatch"
 oks=$(cd "$S0B" && shasum -a 256 -c MANIFEST.sha256) || die "a pinned template does not match MANIFEST.sha256"
-[ "$(printf '%s\n' "$oks" | grep -c ': OK$')" = 13 ] || die "MANIFEST.sha256 did not verify exactly 13 pinned files"
+[ "$(printf '%s\n' "$oks" | grep -c ': OK$')" = 19 ] || die "MANIFEST.sha256 did not verify exactly 19 pinned files"
 [ -f "$S0B/s0b-compare.mjs" ] && [ "$(sha "$S0B/s0b-compare.mjs")" = "$CMP_SHA" ] || die "comparator missing or sha256 mismatch"
 bad=$(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | grep -E '^(SUPABASE_[A-Za-z0-9_]*|PG[A-Za-z0-9_]*|DATABASE_URL|E2E_SUPABASE_URL|HONE_LOCAL_DB_URL|HONE_WINDOW_[A-Z_]*|HONE_SUPABASE_BIN|GITHUB_TOKEN|GH_TOKEN|HTTPS_PROXY|HTTP_PROXY|ALL_PROXY|NO_PROXY|https_proxy|http_proxy|all_proxy|no_proxy|SSL_CERT_FILE|SSL_CERT_DIR|NODE_OPTIONS|NODE_PATH|NODE_EXTRA_CA_CERTS|BASH_ENV|ENV|DYLD_[A-Z_]*|LD_PRELOAD|LD_LIBRARY_PATH)$' | sort -u | tr '\n' ' ')
 [ -z "$bad" ] || die "unset these variables first (names only): $bad"
 [ -r /dev/tty ] || die "no terminal for private entry"
+if [ -e "$TOMB" ] || [ -L "$TOMB" ]; then
+  die "a previous run failed a login ($TOMB exists): report it to OPS; do not re-run; delete the file only after Sam decides. Nothing was attempted."
+fi
 
 ask() { local _v; IFS= read -r -p "$2" _v </dev/tty || die "could not read $1"; printf -v "$1" '%s' "$_v"; }
 utc_ok() { printf '%s' "$1" | LC_ALL=C grep -Eq "^$iso\$"; }
@@ -61,6 +69,9 @@ ask T "Recovery timestamp T you gave the restore (UTC): "; utc_ok "$T" || die "T
 ask REST_REF "Project ref of the RESTORED project (20 lower-case letters, from its dashboard URL): "
 printf '%s' "$REST_REF" | LC_ALL=C grep -Eq '^[a-z]{20}$' || die "the restored ref is not 20 lower-case letters"
 [ "$REST_REF" != "$PROD_REF" ] || die "the restored ref equals the production ref: this must be the NEW project"
+LAST4=${REST_REF#????????????????}
+echo "You typed a restored project ref ending in  $LAST4 . Production ends in  ${PROD_REF#????????????????} ." >&2
+ask REF4 "Type the last 4 characters of the RESTORED project ref again to confirm it is the NEW project: "; [ "$REF4" = "$LAST4" ] || die "the last 4 characters do not match what you typed; stopped before any read"
 echo "The runner only accepts the session pooler  aws-1-us-east-1.pooler.supabase.com:5432  with user  postgres.<ref> ." >&2
 echo "Open the restored project, Connect, Session pooler, and read the host. If it is any other host, STOP: do not work around it." >&2
 ask PHOST "Type yes only if the restored project's session pooler host is exactly aws-1-us-east-1.pooler.supabase.com: "; [ "$PHOST" = yes ] || die "restored pooler host not confirmed (the runner would refuse); stopped"
@@ -84,9 +95,9 @@ mklink "$WORK/link-rest" "$REST_REF"
 
 IFS= read -rs -p "Supabase access token (not shown; the same account owns both projects): " SUPABASE_ACCESS_TOKEN </dev/tty || die "could not read the access token"; echo >&2
 [ -n "$SUPABASE_ACCESS_TOKEN" ] || die "empty access token"
+IFS= read -rs -p "RESTORED project database password (not shown; set when the restore was created): " PW_REST </dev/tty || die "could not read the password"; echo >&2
 IFS= read -rs -p "PRODUCTION database password (not shown): " PW_PROD </dev/tty || die "could not read the password"; echo >&2
 [ -n "$PW_PROD" ] || die "empty production password"
-IFS= read -rs -p "RESTORED project database password (not shown; set when the restore was created): " PW_REST </dev/tty || die "could not read the password"; echo >&2
 [ -n "$PW_REST" ] || die "empty restored password"
 
 # ---- Part 2: one run = generated dir (runner copy, files with T substituted, manifest) + result dir -----------------
@@ -107,6 +118,7 @@ do_run() { # do_run NAME LINKDIR REF PW TVALUE FILES...
     if grep -qiE 'login role|unban|network.?ban|reset.*password' "$WORK/logs/$name-$stem.err"; then
       die "$name $f: the CLI reported a login-role / ban / password path; stopped and REPORT it (log: $WORK/logs/$name-$stem.err)"
     fi
+    if [ "$rc" != 0 ] && is_auth_failure "$WORK/logs/$name-$stem.err"; then tombstone "$name"; echo "An authentication failure was recorded in $TOMB: no further run is allowed until Sam decides." >&2; fi
     if [ "$rc" != 0 ]; then tail -n 5 "$WORK/logs/$name-$stem.err" >&2; die "$name $f failed (exit $rc): authentication error, refusal or invalid result. Nothing after it was run."; fi
     r="$res/$stem.json"; m="$res/$stem.meta.json"
     [ -f "$r" ] && [ -f "$m" ] || die "$name $f: result or sidecar missing"
@@ -119,12 +131,12 @@ do_run() { # do_run NAME LINKDIR REF PW TVALUE FILES...
     fi
   done
 }
-echo "Production, rows created at or before T = $T" >&2
-do_run prod "$WORK/link-prod" "$PROD_REF" "$PW_PROD" "$T" $VFILES
 echo "Restored project, rows created at or before T = $T" >&2
 do_run rest "$WORK/link-rest" "$REST_REF" "$PW_REST" "$T" $VFILES
 echo "Restored project, unfiltered (T replaced by $FAR)" >&2
 do_run restfar "$WORK/link-rest" "$REST_REF" "$PW_REST" "$FAR" $FFILES
+echo "Production (read LAST, so a swapped password or ref fails on the new project first), rows created at or before T = $T" >&2
+do_run prod "$WORK/link-prod" "$PROD_REF" "$PW_PROD" "$T" $VFILES
 unset SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD PW_PROD PW_REST
 
 # ---- Part 3: the pinned comparator, its verdict printed verbatim; exit 0 ONLY on the exact last line S0B PASS ------
