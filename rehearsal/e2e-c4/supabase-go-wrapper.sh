@@ -31,7 +31,7 @@ case "$sub" in "db query"|"db push") ;; *) echo "e2e wrapper: refused: $ORIG" >&
 echo "$(date -u +%H:%M:%S) $sub $(basename "${file:-}") $flag" >> "$LOG"
 if [ "$sub" = "db query" ]; then
   case "$file" in
-    */window-reads/*.sql) cat "$H/e2e-canned/$(basename "$file" .sql).json"; exit $? ;;
+    */window-reads/*.sql|*/window-reads-c4/*.sql) cat "$H/e2e-canned/$(basename "$file" .sql).json"; exit $? ;;
     */window-reads-s1/*.sql) ;;
     *) echo "e2e wrapper: refused query file: $file" >&2; exit 9 ;;
   esac
