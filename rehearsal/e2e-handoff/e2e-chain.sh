@@ -52,9 +52,11 @@ B=$("$HERE/pg-setup.sh" "$W/pg" "$PASSWORD") || { echo "pg-setup failed"; tail -
 PSQL() { "$B/psql" -X -At -h "$W/pg" -p 55432 -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"; }
 LOCALURL="postgresql://postgres.$REF@127.0.0.1:55432/postgres?sslmode=require"
 # ---- the REAL darwin supabase-go v2.102.0
-mkdir -p "$W/dl" && ( cd "$W/dl" && curl -fsSL -o cli.tgz https://github.com/supabase/cli/releases/download/v2.102.0/supabase_2.102.0_darwin_arm64.tar.gz && tar -xzf cli.tgz supabase ) || { echo "could not fetch the CLI"; exit 2; }
-REALBIN="$W/dl/supabase"
-[ "$(sha "$REALBIN")" = dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b ] && ok "the real darwin_arm64 supabase-go v2.102.0 hashes to the pinned dce26b75" || { bad "real CLI sha" "$(sha "$REALBIN")"; exit 2; }
+mkdir -p "$W/dl" && ( cd "$W/dl" && curl -fsSL -o cli.tgz https://github.com/supabase/cli/releases/download/v2.102.0/supabase_2.102.0_darwin_arm64.tar.gz && tar -xzf cli.tgz ) || { echo "could not fetch the CLI"; exit 2; }
+echo "release archive members and sha256:"; ( cd "$W/dl" && tar -tzf cli.tgz && for f in $(tar -tzf cli.tgz); do [ -f "$f" ] && shasum -a 256 "$f"; done )
+REALBIN=""
+for f in "$W/dl/"*; do [ -f "$f" ] && [ "$(sha "$f")" = dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b ] && REALBIN="$f"; done
+[ -n "$REALBIN" ] && ok "the real darwin_arm64 supabase-go v2.102.0 ($(basename "$REALBIN") in the release archive) hashes to the pinned dce26b75" || { bad "no member of the release archive hashes to dce26b75"; exit 2; }
 # ---- the real CLI brings the throwaway database to 0212 from the real chain (0001..0212 of the bundle)
 mkdir -p "$W/build/supabase/migrations" "$W/build/supabase/.temp" && tar -xf "$VPS/team/s1-apply/migrations-d189768b.tar" -C "$W/build"
 for f in "$W/build/supabase/migrations/"*.sql; do v=$(basename "$f" | cut -c1-4); [ "$v" -gt 0212 ] && rm "$f"; done
