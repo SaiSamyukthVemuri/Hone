@@ -54,16 +54,16 @@ def cmd_copy(a):
     o = dict(zip(rest[0::2], rest[1::2]))
     lines = open(src).read().split("\n")
     out, changed, in_go = [], [], False
-    go34 = open(o["--go34"]).read().rstrip("\n")
+    go34 = open(o["--go34"]).read().rstrip("\n") if "--go34" in o else None
     for l in lines:
         n = l
-        if l == "#GO34-BEGIN": in_go = True; out.append(l); out.append("GO34='" + go34 + "'"); changed.append("GO34 block"); continue
+        if l == "#GO34-BEGIN" and go34 is not None: in_go = True; out.append(l); out.append("GO34='" + go34 + "'"); changed.append("GO34 block"); continue
         if l == "#GO34-END": in_go = False; out.append(l); continue
         if in_go: continue
         for key, flag in (("GO_SHA", "--go-sha"), ("BUNDLE_SHA", "--bundle-sha"), ("LIST_SHA", "--list-sha"), ("REF", "--ref")):
             if l.startswith(key + "="): n = f"{key}={o[flag]}"
         if l.startswith("URL="): n = 'URL="' + o["--url"] + '"'
-        if l.startswith("H0214="): n = "H0214=" + [x for x in go34.split("\n") if "  0214_" in x][0].split("  ")[0]
+        if l.startswith("H0214=") and go34 is not None: n = "H0214=" + [x for x in go34.split("\n") if "  0214_" in x][0].split("  ")[0]
         if flags and l.startswith('[ "$(uname -s)" = Darwin ]'): n = "true"
         if n != l: changed.append(n.split("=")[0] if "=" in n else n)
         out.append(n)

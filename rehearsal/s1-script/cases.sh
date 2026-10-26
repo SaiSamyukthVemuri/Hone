@@ -27,7 +27,7 @@ mkfix() { # mkfix NAME PKGDIR [bin]  -> F
   bsha=$(sed -n 's/^BUNDLE_SHA=//p' "$pf/pins.env"); lsha=$(sed -n 's/^LIST_SHA=//p' "$pf/pins.env")
   gsha=$(sha "$F/home/hone-s1/supabase-cli/supabase-go")
   python3 -I "$HERE/fixture.py" copy "$HERE/s1-apply.sh" "$F/pkg/s1-apply.sh" --go-sha "$gsha" --bundle-sha "$bsha" --list-sha "$lsha" \
-    --ref "$REFTEST" --url "$URLTEST" --go34 "$GO34FILE" $NOPLAT > "$F/rewrites.txt" || { echo "fixture.py failed"; exit 1; }
+    --ref "$REFTEST" --url "$URLTEST" ${GO34FILE:+--go34 "$GO34FILE"} $NOPLAT > "$F/rewrites.txt" || { echo "fixture.py failed"; exit 1; }
 }
 answers() { # answers FILE
   printf 'Pre-migration PITR restore point\t%s\nprinted the word  armed\t%s\nprinted the word  watching\t%s\nDatabase password\t%s\nType  APPLY\t%s\n' \
@@ -68,6 +68,14 @@ grep -nE '^[^#]*\benv\b *\|? *grep|^[^#]*\bprintenv|^[^#]*\bset +-x|^[^#]*echo +
 [ "$(grep -E '^GO_SHA=' "$HERE/s1-apply.sh" | cut -d= -f2)" = dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b ] && ok "GO_SHA is the recorded supabase-go dce26b75" || bad "GO_SHA"
 [ "$(grep -E '^BUNDLE_SHA=' "$HERE/s1-apply.sh" | cut -d= -f2)" = "$(sha "$HERE/migrations-d189768b.tar")" ] && [ "$(grep -E '^LIST_SHA=' "$HERE/s1-apply.sh" | cut -d= -f2)" = "$(sha "$HERE/MIGRATIONS-d189768b.sha256")" ] && ok "the script's bundle and list pins equal the committed files' sha256" || bad "bundle/list pins differ from the committed files"
 grep -q '^URL="postgresql://postgres\.\$REF@aws-1-us-east-1\.pooler\.supabase\.com:5432/postgres?sslmode=require"$' "$HERE/s1-apply.sh" && ok "the URL is the session pooler (5432), user only, sslmode=require, no password, no options" || bad "URL line"
+
+echo "== the embedded GO list and the environment scan (real script)"
+sed -n "/^GO34='/,/sql'\$/p" "$HERE/s1-apply.sh" | sed "s/^GO34='//; s/'\$//" > "$T/embedded-go34.txt"
+[ "$(grep -c '' "$T/embedded-go34.txt")" = 34 ] && ok "the script embeds 34 lines" || bad "embedded list lines: $(grep -c '' "$T/embedded-go34.txt")"
+awk '{v=substr($2,1,4); if (v+0>=213 && v+0<=246) print}' "$HERE/MIGRATIONS-d189768b.sha256" | diff -q "$T/embedded-go34.txt" - > /dev/null && ok "the embedded 34 lines equal the 0213..0246 lines of MIGRATIONS-d189768b.sha256 byte for byte" || bad "embedded GO34 differs from the manifest"
+[ "$(sha "$HERE/G3-CHECKSUMS-d189768b.txt")" = bbdcd917da77f750f7987d6a5fdca172c6a564fc029d10d19a6ae1e51190f0f6 ] && ok "G3-CHECKSUMS-d189768b.txt (the GO package list, bbdcd917) is the committed copy" || bad "G3 file sha"
+sed 's#[^ ]*/##' "$HERE/G3-CHECKSUMS-d189768b.txt" | sed 's/  */  /' | diff -q "$T/embedded-go34.txt" - > /dev/null && ok "the embedded 34 lines equal the GO package checksums (G3, paths stripped), in the same order" || bad "embedded GO34 differs from the G3 list"
+[ "$(grep -E '^bad=' "$HERE/s1-apply.sh" | grep -o "grep -E '[^']*'")" = "$(grep -o "grep -E '[^']*'" "$HERE/s0a-env-regex.txt")" ] && ok "the environment-scan regex is identical to window-s0a.sh's (source sha 02290ee1)" || bad "environment regex differs from window-s0a.sh"
 
 echo "== the bundle itself (real files)"
 tar -tf "$HERE/migrations-d189768b.tar" | sed 's#/$##' | grep -Evx 'supabase|supabase/migrations|supabase/migrations/[0-9]{4}_[A-Za-z0-9_]+\.sql' | head -1 | grep -q . && bad "bundle holds a foreign entry" || ok "the committed bundle holds only supabase/migrations/NNNN_name.sql"

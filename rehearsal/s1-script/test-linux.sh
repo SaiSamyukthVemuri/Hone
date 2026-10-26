@@ -48,7 +48,7 @@ BASEPKG="$T/real"; mkdir -p "$BASEPKG"
 cp "$HERE/migrations-d189768b.tar" "$HERE/MIGRATIONS-d189768b.sha256" "$BASEPKG/"
 printf 'BUNDLE_SHA=%s\nLIST_SHA=%s\n' "$(sha256sum "$BASEPKG/migrations-d189768b.tar" | cut -d' ' -f1)" "$(sha256sum "$BASEPKG/MIGRATIONS-d189768b.sha256" | cut -d' ' -f1)" > "$BASEPKG/pins.env"
 awk '{v=substr($2,1,4); if (v+0>=213 && v+0<=246) print}' "$BASEPKG/MIGRATIONS-d189768b.sha256" > "$BASEPKG/go34.txt"
-GO34FILE="$BASEPKG/go34.txt"
+GO34FILE=""   # real mode: the script keeps its OWN embedded list, which the static cases compare to the manifest and G3
 
 db_reset_state() { psqld -c "delete from supabase_migrations.schema_migrations where version >= '0213'" > /dev/null; }
 db_hist_count() { psqld -c "select count(*) from supabase_migrations.schema_migrations"; }
