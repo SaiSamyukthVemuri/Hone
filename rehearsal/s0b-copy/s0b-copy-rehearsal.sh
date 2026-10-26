@@ -232,6 +232,22 @@ rcase classic_prod_aws0              $C "$REF"  "$A0" "$PW_P" refused 'not exact
 rcase classic_copy_aws0              $C "$RREF" "$A0" "$PW_R" refused 'not exactly the aws-1-us-east-1 session pooler'
 [ "$(sha "$PKG/run-window-read-macos.sh")" = 471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357 ] && ok "471ecb9d is still byte-identical in the package copy" || bad "471ecb9d changed"
 
+# ------------------------------------------------------------------ S0B-EMPTY-TABLE: a genuinely empty table, end to end
+CUR=empty-table
+{ cat "$HERE/lib.sql"; echo "delete from public.appointment_payments;"; } | PSQLD postgres > "$W/prod-empty.log" 2>&1 && [ "$(PSQLD postgres -c 'select count(*) from public.appointment_payments')" = 0 ] && ok "production's appointment_payments is now genuinely empty (v5/v7 will return no row for it)" || bad "emptying production" "$(tail -n 3 "$W/prod-empty.log")"
+mk_restored r_emptyok
+MUT r_emptyok "delete from public.appointment_payments;"
+validate emptyok "$T" "$RREF" "$PW_P" "$PW_R"
+if [ "$RC" = 0 ] && grep -qx 'S0B PASS' "$OUT.txt" && [ "$DC" = 20 ] && grep -q '^PASS  S0B-4 .*(appointment_payments: empty in all three reads, corroborated by per-studio 0 and the catalog)$' "$OUT.txt" && grep -q '^PASS  S0B-7 .*(appointment_payments: empty in all three reads, corroborated by per-studio 0 and the catalog)$' "$OUT.txt"; then
+  ok "END TO END: appointment_payments empty in production and the restored copy: S0B PASS, 20 reads, and the S0B-4 and S0B-7 pass lines name it as empty and corroborated"
+else bad "empty table end to end" "exit $RC, reads $DC; tail: $(tail -n 12 "$OUT.txt")"; fi
+grep -E '^PASS  S0B-[47] ' "$OUT.txt" | sed 's/^/       /'
+EMPTYRUN=$(ls -1dt "$ROOT"/s0b-validate.* | head -n 1)
+[ ! -s "$EMPTYRUN/prod/res/v5-recovery-point.json" ] || node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1]));process.exit(r.some(x=>x.table_name==="appointment_payments")?1:0)' "$EMPTYRUN/prod/res/v5-recovery-point.json" && ok "the captured production v5 result really has no appointment_payments row" || bad "v5 still has the row"
+mk_restored r_emptypartial
+validate emptypartial "$T" "$RREF" "$PW_P" "$PW_R"
+expect_fail "production empty but the restored copy still holds payments" '^S0B FAIL: appointment_payments: an id digest is present in restored@T only' 20
+
 CUR=secrets
 leak=0
 for s in "$PW_P" "$PW_R" "$TOKEN"; do if grep -rqF -- "$s" "$W"/*.out "$W"/*.out.txt 2>/dev/null; then leak=1; fi; done

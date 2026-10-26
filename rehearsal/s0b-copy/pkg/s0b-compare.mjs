@@ -123,13 +123,46 @@ export function compare({ templates, t, prod, rest, restFar }) {
     // S5: digest of the sorted ids per table (ids never printed). Equal counts need an equal digest. A restored copy that holds MORE ids than
     // production held at T is the signature of rows hard-deleted in production after T: informational, never a failure by itself, but the
     // 256-bucket read must show no bucket where the copy holds fewer ids than production (a lower bound on lost rows) and no equal-count bucket with a different digest.
-    const dg = (x) => new Map(x["v7-id-digests"].map((r) => [String(r.table_name), r]));
-    const dP = dg(P), dR = dg(R);
+    // v5 and v7 GROUP BY table_name over a UNION, so a genuinely EMPTY table yields no row. "Absent = empty" is admitted ONLY when corroborated
+    // (admitEmpty below); a duplicate or unknown table_name in either result is a FAIL.
+    const keyed = (rows, label, what) => {
+      const m = new Map();
+      for (const r of rows) {
+        const k = String(r.table_name);
+        if (!TABLES.includes(k)) fail(`${what}: unknown table_name ${k} in ${label}`);
+        if (m.has(k)) fail(`${what}: duplicate table_name ${k} in ${label}`);
+        m.set(k, r);
+      }
+      return m;
+    };
+    const rp = keyed(P["v5-recovery-point"], "production@T", "recovery point"), rr = keyed(R["v5-recovery-point"], "restored@T", "recovery point"), rf = keyed(F["v5-recovery-point"], "restored@unfiltered", "recovery point");
+    const dP = keyed(P["v7-id-digests"], "production@T", "id digests"), dR = keyed(R["v7-id-digests"], "restored@T", "id digests");
+    const V3 = { clients: "clients", appointments: "appointments", sessions: "sessions", client_consent_signatures: "consents", client_intake_forms: "intake_forms", payment_charge_attempts: "charge_attempts", appointment_payments: "appointment_payments" };
+    const rlsListed = (x, nm) => x["v2-catalog"].some((r) => r.kind === "rls" && String(r.name) === nm);
+    // A table is admitted as EMPTY only if ALL of this holds, in all the reads: absent from v5 in production@T, restored@T and restored@unfiltered; its v3 per-studio
+    // column is 0 for every studio in all three; absent from v7 in production and restored, with no v8 bucket row in either; and listed (kind rls) in both catalogs.
+    // A table with no v3 column (studios) can never be admitted. Anything partial is a FAIL with the message below.
+    const missing = (nm) => fail(`recovery point: table ${nm} missing from a result`);
+    const admitEmpty = (nm) => {
+      if (rp.has(nm) || rr.has(nm) || rf.has(nm)) missing(nm);
+      const col = V3[nm];
+      if (!col) missing(nm);
+      for (const x of [P, R, F]) {
+        const rows = x["v3-studio-counts"];
+        if (!rows.length || rows.some((r) => String(r[col]) !== "0")) missing(nm);
+      }
+      if (dP.has(nm) || dR.has(nm)) missing(nm);
+      if ([P, R].some((x) => x["v8-id-buckets"].some((r) => String(r.table_name) === nm))) missing(nm);
+      if (!rlsListed(P, nm) || !rlsListed(R, nm)) missing(nm);
+    };
+    const emptyNote = (list) => (list.length ? ` (${list.map((nm) => `${nm}: empty in all three reads, corroborated by per-studio 0 and the catalog`).join("; ")})` : "");
     const bk = (x) => { const m = new Map(); for (const r of x["v8-id-buckets"]) m.set(`${r.table_name}/${r.bucket}`, r); return m; };
     const bP = bk(P), bR = bk(R);
-    const extra = new Map();
+    const extra = new Map(), emptyDigests = [];
     for (const nm of TABLES) {
       const a = dP.get(nm), b = dR.get(nm);
+      if (!a && !b) { admitEmpty(nm); emptyDigests.push(nm); continue; }
+      if (!a || !b) fail(`${nm}: an id digest is present in ${a ? "production@T" : "restored@T"} only`);
       const pn = Number(a?.ids ?? 0), rn = Number(b?.ids ?? 0);
       if (rn < pn) fail(`${nm}: the restored copy holds ${pn - rn} fewer ids than production held at T (lost rows)`);
       if (rn === pn) { if (String(a?.ids_md5 ?? "") !== String(b?.ids_md5 ?? "")) fail(`${nm}: same number of ids but the id digest differs`); continue; }
@@ -144,12 +177,11 @@ export function compare({ templates, t, prod, rest, restFar }) {
       extra.set(nm, rn - pn);
     }
     if (extra.has("studios")) fail(`studios: the copy holds ${extra.get("studios")} more studios than production at T (studio deletes after T shift the ordinals; compare by hand)`);
-    pass(`S0B-4 id digests equal for ${TABLES.length - extra.size} tables${extra.size ? ` and consistent with deletes after T for ${extra.size}` : ""} (ids are never printed)`);
+    pass(`S0B-4 id digests equal for ${TABLES.length - extra.size} tables${extra.size ? ` and consistent with deletes after T for ${extra.size}` : ""} (ids are never printed)${emptyNote(emptyDigests)}`);
     for (const [nm, d] of extra) lines.push(`NOTE  post-T deletes signature: ${nm}: the restored copy holds ${d} more ids than production at T (informational; no bucket shows a loss, but a loss masked by an extra row in the same bucket is not excluded)`);
     const okCell = (nm, a, b) => (extra.has(nm) ? Number(b) >= Number(a) : String(b) === String(a));
 
     if (!P["v3-studio-counts"].length) fail("production has no studio at or before T");
-    const V3 = { clients: "clients", appointments: "appointments", sessions: "sessions", client_consent_signatures: "consents", client_intake_forms: "intake_forms", payment_charge_attempts: "charge_attempts", appointment_payments: "appointment_payments" };
     for (const [nm, x] of [["restored@T", R], ["restored@unfiltered", F]]) {
       const a = P["v3-studio-counts"], b = x["v3-studio-counts"];
       if (a.length !== b.length) fail(`per-studio counts differ (production@T vs ${nm}): ${a.length} vs ${b.length} studios`);
@@ -167,17 +199,18 @@ export function compare({ templates, t, prod, rest, restFar }) {
     }
     pass("S0B-6 orphan checks are 0 on production@T, restored@T and restored@unfiltered");
 
-    const rp = byKey(P["v5-recovery-point"], "table_name"), rr = byKey(R["v5-recovery-point"], "table_name"), rf = byKey(F["v5-recovery-point"], "table_name");
+    const emptyRecovery = [];
     for (const nm of TABLES) {
       const a = rp.get(nm), b = rr.get(nm), c = rf.get(nm);
-      if (!a || !b || !c) fail(`recovery point: table ${nm} missing from a result`);
+      if (!a && !b && !c) { admitEmpty(nm); emptyRecovery.push(nm); continue; }
+      if (!a || !b || !c) missing(nm);
       const want = String(a.rows_created_le_t);
       if (!okCell(nm, want, b.rows_created_le_t)) fail(`${nm}: rows created at or before T: production ${want}, restored ${b.rows_created_le_t}`);
       if (!okCell(nm, want, b.rows_total)) fail(`${nm}: restored holds ${b.rows_total} rows, production held ${want} at T`);
       if (!okCell(nm, want, c.rows_total) || String(c.rows_total) !== String(b.rows_total)) fail(`${nm}: restored unfiltered holds ${c.rows_total} rows, production held ${want} at T`);
       if (String(b.rows_newer_than_t) !== "0" || String(c.rows_newer_than_t) !== "0") fail(`${nm}: the restored copy holds rows newer than T (${b.rows_newer_than_t})`);
     }
-    pass(`S0B-7 recovery point consistent for ${TABLES.length} tables: restored row counts equal production at T and nothing is newer than T`);
+    pass(`S0B-7 recovery point consistent for ${TABLES.length} tables: restored row counts equal production at T and nothing is newer than T${emptyNote(emptyRecovery)}`);
 
     const s = one(P["v6-storage-meta"], "production storage metadata");
     for (const [nm, x] of [["restored@T", R], ["restored@unfiltered", F]]) if (!same(s, one(x["v6-storage-meta"], nm))) fail(`storage object metadata differs (production@T vs ${nm})`);

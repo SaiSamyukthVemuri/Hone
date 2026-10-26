@@ -241,3 +241,97 @@ test("FAIL: the variant copy in a restored run was edited", () => {
   const w = world({ tamper: { rest: (gen) => writeFileSync(join(gen, COPY_RUNNER), "#!/bin/bash\nexit 0\n") } });
   const r = run(w); assert.equal(r.ok, false); assert.match(last(r), /^S0B FAIL: restored@T: the runner copy is not the pinned runner/);
 });
+
+// S0B-EMPTY-TABLE: v5 / v7 GROUP BY table_name over a UNION, so an EMPTY table yields no row. "Absent = empty" is admitted only when
+// corroborated (absent from all three v5 results, per-studio 0 in all three, absent from v7/v8, listed in both catalogs).
+const EMPTY = "appointment_payments";
+const dropT = (rows, nm = EMPTY) => rows.filter((r) => r.table_name !== nm);
+const zeroCol = (nm = EMPTY) => studios().map((s) => ({ ...s, [nm]: 0 }));
+const catalogRls = () => [...catalog(), ...TABLES.filter((t) => t !== "clients").map((t) => ({ kind: "rls", name: t, n1: 1, n2: 0, n3: 0, md5: null }))];
+const emptyP = (nm = EMPTY) => ({ "v2-catalog": catalogRls(), "v5-recovery-point": dropT(recovery(), nm), "v7-id-digests": dropT(digests(), nm), "v8-id-buckets": dropT(buckets(), nm), "v3-studio-counts": zeroCol(nm) });
+const emptyF = (nm = EMPTY) => ({ "v5-recovery-point": dropT(recovery(), nm), "v3-studio-counts": zeroCol(nm) });
+const emptyAll = (nm = EMPTY) => ({ prod: emptyP(nm), rest: emptyP(nm), far: emptyF(nm) });
+const ew = (o) => world({ prod: { "v2-catalog": catalogRls(), ...o.prod }, rest: { "v2-catalog": catalogRls(), ...o.rest }, far: o.far });
+const MISSING = /^S0B FAIL: recovery point: table appointment_payments missing from a result$/;
+
+test("PASS: a real-shaped fixture with an empty appointment_payments passes and the pass lines name the admitted table", () => {
+  const r = run(world(emptyAll()));
+  assert.equal(r.ok, true); assert.equal(last(r), "S0B PASS");
+  const note = "(appointment_payments: empty in all three reads, corroborated by per-studio 0 and the catalog)";
+  assert.ok(r.lines.some((l) => l.startsWith("PASS  S0B-4 ") && l.endsWith(note)), r.lines.join("\n"));
+  assert.ok(r.lines.some((l) => l.startsWith("PASS  S0B-7 recovery point consistent for 8 tables") && l.endsWith(note)), r.lines.join("\n"));
+});
+test("PASS: with no empty table nothing is named as empty", () => {
+  const r = run(world()); assert.equal(r.ok, true); assert.ok(!r.lines.some((l) => l.includes("empty in all three reads")));
+});
+test("FAIL: empty in production only (v5 absent there, present in the restored runs)", () => {
+  const e = emptyAll(); const r = run(ew({ prod: e.prod, rest: { "v3-studio-counts": zeroCol() }, far: { "v3-studio-counts": zeroCol() } }));
+  assert.equal(r.ok, false); assert.match(last(r), /missing from a result|an id digest is present in/);
+});
+test("FAIL: empty in restored@T only", () => {
+  const r = run(ew({ prod: { "v3-studio-counts": zeroCol() }, rest: emptyP(), far: { "v3-studio-counts": zeroCol() } }));
+  assert.equal(r.ok, false); assert.match(last(r), /missing from a result|an id digest is present in/);
+});
+test("FAIL: empty in restored@unfiltered only", () => {
+  const r = run(ew({ prod: { "v3-studio-counts": zeroCol() }, rest: { "v3-studio-counts": zeroCol() }, far: emptyF() }));
+  assert.equal(r.ok, false); assert.match(last(r), MISSING);
+});
+test("FAIL: v5 absent in all three but the per-studio column is not 0", () => {
+  const e = emptyAll(); e.prod["v3-studio-counts"] = studios(); e.rest["v3-studio-counts"] = studios(); e.far["v3-studio-counts"] = studios();
+  const r = run(world(e)); assert.equal(r.ok, false); assert.match(last(r), MISSING);
+});
+test("FAIL: the per-studio column is non-zero in restored@unfiltered only", () => {
+  const e = emptyAll(); const bad = zeroCol(); bad[2][EMPTY] = 1; e.far["v3-studio-counts"] = bad;
+  const r = run(world(e)); assert.equal(r.ok, false);
+});
+test("FAIL: v5 absent in all three but a v7 row is present", () => {
+  const e = emptyAll(); e.prod["v7-id-digests"] = digests(); e.rest["v7-id-digests"] = digests();
+  const r = run(world(e)); assert.equal(r.ok, false); assert.match(last(r), MISSING);
+});
+test("FAIL: a v8 bucket row is present for the table", () => {
+  const e = emptyAll(); e.prod["v8-id-buckets"] = buckets();
+  const r = run(world(e)); assert.equal(r.ok, false); assert.match(last(r), MISSING);
+});
+test("FAIL: v7 absent in production only", () => {
+  const e = emptyAll(); e.rest["v7-id-digests"] = digests();
+  const r = run(world(e)); assert.equal(r.ok, false); assert.match(last(r), /^S0B FAIL: appointment_payments: an id digest is present in restored@T only$/);
+});
+test("FAIL: v7 absent in the restored copy only", () => {
+  const e = emptyAll(); e.prod["v7-id-digests"] = digests();
+  const r = run(world(e)); assert.equal(r.ok, false); assert.match(last(r), /^S0B FAIL: appointment_payments: an id digest is present in production@T only$/);
+});
+test("FAIL: v7 absent in both but v5 present (an unexplained absence is not admitted)", () => {
+  const e = emptyAll(); e.prod["v5-recovery-point"] = recovery(); e.rest["v5-recovery-point"] = recovery(); e.far["v5-recovery-point"] = recovery();
+  const r = run(world(e)); assert.equal(r.ok, false); assert.match(last(r), MISSING);
+});
+test("FAIL: studios absent everywhere can never be admitted (no per-studio column)", () => {
+  const r = run(world(emptyAll("studios"))); assert.equal(r.ok, false); assert.match(last(r), /^S0B FAIL: recovery point: table studios missing from a result$/);
+});
+test("FAIL: the catalog does not list the table in production", () => {
+  const e = emptyAll(); e.prod["v2-catalog"] = catalogRls().filter((r) => !(r.kind === "rls" && r.name === EMPTY)); e.rest["v2-catalog"] = e.prod["v2-catalog"];
+  const r = run(world(e)); assert.equal(r.ok, false); assert.match(last(r), MISSING);
+});
+test("FAIL: the catalog does not list the table in the restored copy", () => {
+  const e = emptyAll(); e.rest["v2-catalog"] = catalogRls().filter((r) => !(r.kind === "rls" && r.name === EMPTY));
+  const r = run(world(e)); assert.equal(r.ok, false);
+});
+test("FAIL: a duplicate table_name row in v5 (production)", () => {
+  const rec = recovery(); rec.push({ ...rec[0] });
+  const r = run(world({ prod: { "v5-recovery-point": rec } })); assert.equal(r.ok, false); assert.match(last(r), /^S0B FAIL: recovery point: duplicate table_name appointment_payments in production@T$/);
+});
+test("FAIL: a duplicate table_name row in v5 (restored@unfiltered)", () => {
+  const rec = recovery(); rec.push({ ...rec[3] });
+  const r = run(world({ far: { "v5-recovery-point": rec } })); assert.equal(r.ok, false); assert.match(last(r), /duplicate table_name .* in restored@unfiltered$/);
+});
+test("FAIL: a duplicate table_name row in v7", () => {
+  const dg = digests(); dg.push({ ...dg[1] });
+  const r = run(world({ rest: { "v7-id-digests": dg } })); assert.equal(r.ok, false); assert.match(last(r), /^S0B FAIL: id digests: duplicate table_name .* in restored@T$/);
+});
+test("FAIL: a table_name that is not one of the eight in v5", () => {
+  const rec = recovery(); rec.push({ table_name: "pg_authid", rows_created_le_t: 1, rows_total: 1, rows_newer_than_t: 0 });
+  const r = run(world({ rest: { "v5-recovery-point": rec } })); assert.equal(r.ok, false); assert.match(last(r), /^S0B FAIL: recovery point: unknown table_name pg_authid in restored@T$/);
+});
+test("FAIL: a table_name that is not one of the eight in v7", () => {
+  const dg = digests(); dg.push({ table_name: "auth_users", ids: 1, ids_md5: "x" });
+  const r = run(world({ prod: { "v7-id-digests": dg } })); assert.equal(r.ok, false); assert.match(last(r), /^S0B FAIL: id digests: unknown table_name auth_users in production@T$/);
+});
