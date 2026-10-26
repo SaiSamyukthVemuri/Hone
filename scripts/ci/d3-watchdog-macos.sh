@@ -169,24 +169,78 @@ expect_ "(C3 on macOS) the seeded supabase/.temp/cli-latest is v2.102.0 in the w
 expect_ "(C7) PGPASSWORD is not left in the interactive shell after the file ends" "$(echo 0)" "the watchdog runs as a child zsh process: its environment dies with it; the file also runs unset PGPASSWORD before printing the close-the-Terminal line"
 
 # ---- 7. stub-CLI edge cases (canned JSON; a stub because these states cannot be produced on a plain PostgreSQL) -----------
-stubrun() { # stubrun <label> <stub body> <WD_MAX>
+# Each stub answers by the alias name in the SQL it is given: "as me" (self-test), "as armed", "as present" (check), else the pin query.
+stubrun() { # stubrun <label> <WD_MAX> ; the stub body is on stdin
   local d="$OUT/stub-$1"; rm -rf "$d"; mkdir -p "$d/supabase-cli"
-  printf '#!/bin/sh\n%s\n' "$2" > "$d/supabase-cli/supabase-go"; chmod +x "$d/supabase-cli/supabase-go"
+  cat > "$d/supabase-cli/supabase-go"
+  chmod +x "$d/supabase-cli/supabase-go"
   render scripts/ci/d3-watchdog.zsh > "$d/d3-watchdog.zsh"
-  ( cd "$d" && printf '%s\n' "$PW" | WD_LIMIT=15 WD_EVERY=2 WD_MAX="$3" /bin/zsh d3-watchdog.zsh > "$OUT/stub-$1.log" 2>&1; echo $? > "$OUT/stub-$1.rc" )
+  ( cd "$d" && printf '%s\n' "$PW" | WD_LIMIT=15 WD_EVERY=2 WD_MAX="$2" WD_PIN_WAIT="${STUBPW:-120}" /bin/zsh d3-watchdog.zsh > "$OUT/stub-$1.log" 2>&1; echo $? > "$OUT/stub-$1.rc" )
 }
-SELF0='case "$*" in *"as me"*) printf "[\n  {\n    \"me\": 0\n  }\n]\n";; *) printf "[\n  {\n    \"armed\": \"\"\n  }\n]\n";; esac'
-stubrun selftest "$SELF0" 6
-expect_ "(C8) self-visibility test: when the own row is not visible as active the watchdog REFUSES to arm" "$(grep -q 'self-test failed' "$OUT/stub-selftest.log" && ! grep -q 'WATCHDOG armed' "$OUT/stub-selftest.log" && [ "$(cat "$OUT/stub-selftest.rc")" = 0 ] && echo 0 || echo 1)" "$(head -c 160 "$OUT/stub-selftest.log" | tr '\n' ' ')"
-MULTI='case "$*" in *"as me"*) printf "[\n  {\n    \"me\": 1\n  }\n]\n";; *"as armed"*) printf "[\n  {\n    \"armed\": \"111 222 333\"\n  }\n]\n";; *) printf "[\n  {\n    \"bstart\": \"\",\n    \"n\": 0,\n    \"pid\": 0,\n    \"q\": \"\"\n  }\n]\n";; esac'
-stubrun multi "$MULTI" 5
+stubrun selftest 6 <<'STUB'
+#!/bin/sh
+case "$*" in
+*"as me"*) printf '[\n  {\n    "me": 0\n  }\n]\n' ;;
+*) printf '[\n  {\n    "armed": ""\n  }\n]\n' ;;
+esac
+STUB
+expect_ "(C8) self-visibility test: when the own row is not visible as active the watchdog REFUSES to arm" "$(grep -q 'self-test failed' "$OUT/stub-selftest.log" && ! grep -q 'WATCHDOG armed' "$OUT/stub-selftest.log" && echo 0 || echo 1)" "$(head -c 160 "$OUT/stub-selftest.log" | tr '\n' ' ')"
+stubrun multi 5 <<'STUB'
+#!/bin/sh
+case "$*" in
+*"as me"*) printf '[\n  {\n    "me": 1\n  }\n]\n' ;;
+*"as armed"*) printf '[\n  {\n    "armed": "111 222 333"\n  }\n]\n' ;;
+*) printf '[\n  {\n    "appn": "",\n    "bstart": "",\n    "n": 0,\n    "pid": 0,\n    "q": "",\n    "xstart": ""\n  }\n]\n' ;;
+esac
+STUB
 expect_ "(C1) three armed pids in canned pretty-printed JSON survive BSD grep/sed/head/tr into the armed line" "$(grep -q 'Ignoring already-active postgres-role backends: \[111 222 333\]' "$OUT/stub-multi.log" && echo 0 || echo 1)" "$(grep 'armed' "$OUT/stub-multi.log" | head -1 | cut -c1-140)"
-BLIND='case "$*" in *"as me"*) printf "[\n  {\n    \"me\": 1\n  }\n]\n";; *"as armed"*) printf "[\n  {\n    \"armed\": \"\"\n  }\n]\n";; *) echo "connection refused" >&2; exit 1;; esac'
-stubrun blind "$BLIND" 5
+stubrun blind 5 <<'STUB'
+#!/bin/sh
+case "$*" in
+*"as me"*) printf '[\n  {\n    "me": 1\n  }\n]\n' ;;
+*"as armed"*) printf '[\n  {\n    "armed": ""\n  }\n]\n' ;;
+*) echo "connection refused" >&2; exit 1 ;;
+esac
+STUB
 expect_ "(C4) a failing poll prints WATCHDOG BLIND (the push is not protected) and the loop ends at WD_MAX with the not-watched message" "$(grep -q 'WATCHDOG BLIND' "$OUT/stub-blind.log" && grep -q 'WD_MAX (5s) reached. The push is NOT watched' "$OUT/stub-blind.log" && echo 0 || echo 1)" "$(grep -c 'WATCHDOG BLIND' "$OUT/stub-blind.log") blind lines"
-AMB='case "$*" in *"as me"*) printf "[\n  {\n    \"me\": 1\n  }\n]\n";; *"as armed"*) printf "[\n  {\n    \"armed\": \"\"\n  }\n]\n";; *) printf "[\n  {\n    \"bstart\": \"x\",\n    \"n\": 2,\n    \"pid\": 5,\n    \"q\": \"select 1\"\n  }\n]\n";; esac'
-stubrun amb "$AMB" 5
-expect_ "(R2) two candidates in canned JSON: AMBIGUOUS is printed with the one-shot and nothing is pinned or cancelled" "$(grep -q 'WATCHDOG AMBIGUOUS: 2 new' "$OUT/stub-amb.log" && ! grep -q 'PINNED\|CANCELLED' "$OUT/stub-amb.log" && echo 0 || echo 1)" "ok"
+stubrun amb 5 <<'STUB'
+#!/bin/sh
+case "$*" in
+*"as me"*) printf '[\n  {\n    "me": 1\n  }\n]\n' ;;
+*"as armed"*) printf '[\n  {\n    "armed": ""\n  }\n]\n' ;;
+*) printf '[\n  {\n    "appn": "x",\n    "bstart": "x",\n    "n": 2,\n    "pid": 5,\n    "q": "select 1",\n    "xstart": "x"\n  }\n]\n' ;;
+esac
+STUB
+expect_ "(P2/R2) two candidates in canned JSON: STOP (ambiguous) with the manual next step, exit 1, nothing pinned or cancelled" "$(grep -q 'WATCHDOG STOP (ambiguous)' "$OUT/stub-amb.log" && grep -q 'Manual next step' "$OUT/stub-amb.log" && ! grep -q 'PINNED\|CANCELLED' "$OUT/stub-amb.log" && [ "$(cat "$OUT/stub-amb.rc")" = 1 ] && echo 0 || echo 1)" "exit=$(cat "$OUT/stub-amb.rc")"
+STUBPW=3 stubrun zero 30 <<'STUB'
+#!/bin/sh
+case "$*" in
+*"as me"*) printf '[\n  {\n    "me": 1\n  }\n]\n' ;;
+*"as armed"*) printf '[\n  {\n    "armed": ""\n  }\n]\n' ;;
+*) printf '[\n  {\n    "appn": "",\n    "bstart": "",\n    "n": 0,\n    "pid": 0,\n    "q": "",\n    "xstart": ""\n  }\n]\n' ;;
+esac
+STUB
+expect_ "(P2/a) zero candidates for WD_PIN_WAIT seconds: STOP (no migration session) with the manual next step, exit 1, nothing cancelled" "$(grep -q 'WATCHDOG STOP (no migration session)' "$OUT/stub-zero.log" && grep -q 'Manual next step' "$OUT/stub-zero.log" && ! grep -q 'CANCELLED' "$OUT/stub-zero.log" && [ "$(cat "$OUT/stub-zero.rc")" = 1 ] && echo 0 || echo 1)" "exit=$(cat "$OUT/stub-zero.rc")"
+stubrun reuse 12 <<'STUB'
+#!/bin/sh
+case "$*" in
+*"as me"*) printf '[\n  {\n    "me": 1\n  }\n]\n' ;;
+*"as armed"*) printf '[\n  {\n    "armed": ""\n  }\n]\n' ;;
+*"as present"*) printf '[\n  {\n    "active": 1,\n    "cancelled": false,\n    "mig": false,\n    "present": 1,\n    "q": "select 1",\n    "run": 99,\n    "same": false,\n    "xs": "2026-10-26 00:05:00+00"\n  }\n]\n' ;;
+*) printf '[\n  {\n    "appn": "Supavisor",\n    "bstart": "2026-10-26 00:00:00+00",\n    "n": 1,\n    "pid": 7,\n    "q": "create table x",\n    "xstart": "2026-10-26 00:00:01+00"\n  }\n]\n' ;;
+esac
+STUB
+expect_ "(P2/c) a pooler-reused pid with a NEW backend_start (canned check: same=false while the statement is past the limit): STOP (identity changed), exit 1, no CANCELLED" "$(grep -q 'WATCHDOG PINNED pid=7' "$OUT/stub-reuse.log" && grep -q 'WATCHDOG STOP (identity changed)' "$OUT/stub-reuse.log" && ! grep -q 'CANCELLED' "$OUT/stub-reuse.log" && [ "$(cat "$OUT/stub-reuse.rc")" = 1 ] && echo 0 || echo 1)" "exit=$(cat "$OUT/stub-reuse.rc")"
+stubrun xchg 12 <<'STUB'
+#!/bin/sh
+case "$*" in
+*"as me"*) printf '[\n  {\n    "me": 1\n  }\n]\n' ;;
+*"as armed"*) printf '[\n  {\n    "armed": ""\n  }\n]\n' ;;
+*"as present"*) printf '[\n  {\n    "active": 1,\n    "cancelled": false,\n    "mig": false,\n    "present": 1,\n    "q": "select 1",\n    "run": 99,\n    "same": true,\n    "xs": "2026-10-26 00:05:00+00"\n  }\n]\n' ;;
+*) printf '[\n  {\n    "appn": "Supavisor",\n    "bstart": "2026-10-26 00:00:00+00",\n    "n": 1,\n    "pid": 7,\n    "q": "create table x",\n    "xstart": "2026-10-26 00:00:01+00"\n  }\n]\n' ;;
+esac
+STUB
+expect_ "(P2/c) same backend, NEW transaction that is not a migration (canned): STOP (identity changed), exit 1, no CANCELLED" "$(grep -q 'WATCHDOG STOP (identity changed)' "$OUT/stub-xchg.log" && ! grep -q 'CANCELLED' "$OUT/stub-xchg.log" && [ "$(cat "$OUT/stub-xchg.rc")" = 1 ] && echo 0 || echo 1)" "exit=$(cat "$OUT/stub-xchg.rc")"
 
 say "# verdict: $([ "$FAILS" = 0 ] && echo 'ALL EXPECTATIONS MET' || echo "$FAILS EXPECTATION(S) FAILED")"
 [ -n "${GITHUB_STEP_SUMMARY:-}" ] && { echo '```'; head -c 900000 "$RES"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

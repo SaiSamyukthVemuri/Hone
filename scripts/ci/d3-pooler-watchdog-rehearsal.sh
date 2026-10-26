@@ -179,9 +179,9 @@ zsh -n "$OUT/d3-watchdog.rendered.zsh"; expect "the operator watchdog parses und
 wd_start() { # wd_start <label> <limit> <every> [proxy-label]
   local label="$1"
   if [ -n "${4:-}" ]; then
-    ( cd "$WDHOME" && printf '%s\n' "$PWU" | WD_LIMIT="$2" WD_EVERY="$3" with_proxy "$4" env -u GITHUB_TOKEN -u GH_TOKEN zsh -f "$OUT/d3-watchdog.rendered.zsh" > "$OUT/wd-$label.log" 2>&1; echo $? > "$OUT/wdrc-$label.txt" ) &
+    ( cd "$WDHOME" && printf '%s\n' "$PWU" | WD_LIMIT="$2" WD_EVERY="$3" WD_PIN_WAIT="${WDPW:-120}" with_proxy "$4" env -u GITHUB_TOKEN -u GH_TOKEN zsh -f "$OUT/d3-watchdog.rendered.zsh" > "$OUT/wd-$label.log" 2>&1; echo $? > "$OUT/wdrc-$label.txt" ) &
   else
-    ( cd "$WDHOME" && printf '%s\n' "$PWU" | WD_LIMIT="$2" WD_EVERY="$3" zsh -f "$OUT/d3-watchdog.rendered.zsh" > "$OUT/wd-$label.log" 2>&1; echo $? > "$OUT/wdrc-$label.txt" ) &
+    ( cd "$WDHOME" && printf '%s\n' "$PWU" | WD_LIMIT="$2" WD_EVERY="$3" WD_PIN_WAIT="${WDPW:-120}" zsh -f "$OUT/d3-watchdog.rendered.zsh" > "$OUT/wd-$label.log" 2>&1; echo $? > "$OUT/wdrc-$label.txt" ) &
   fi
   WDBG=$!
 }
@@ -285,10 +285,68 @@ s1_start armed2 "$AD"; s1_wait armed2; A2RC=$S1RC
 sleep 3; wd_stop; wait "$W1BG" "$W2BG" 2> /dev/null
 sed 's/^/   | /' "$OUT/wd-armed2.log" | head -n 12 | tee -a "$RES"
 ARMED_N="$(sed -n 's/.*Ignoring already-active postgres-role backends: \[\([^]]*\)\].*/\1/p' "$OUT/wd-armed2.log" | head -1 | wc -w)"
-expect "(A2/C1) with two writers active at arm the armed list holds BOTH pids; neither is pinned, ambiguous or cancelled; the push session is pinned and cancelled (57014)" "$([ "$ARMED_N" -ge 2 ] && ! grep -q AMBIGUOUS "$OUT/wd-armed2.log" && [ "$(grep -c CANCELLED "$OUT/wd-armed2.log")" = 1 ] && [ "$A2RC" != 0 ] && grep -q 57014 "$OUT/run-armed2.log" && survived W1 W1 && survived W2 W2 && echo 0 || echo 1)" "armed pids=$ARMED_N ambiguous=$(grep -c AMBIGUOUS "$OUT/wd-armed2.log") cancelled-lines=$(grep -c CANCELLED "$OUT/wd-armed2.log") push exit=$A2RC W1=$(tr '\n' ' ' < "$OUT/decoy-W1.log" | cut -c1-40) W2=$(tr '\n' ' ' < "$OUT/decoy-W2.log" | cut -c1-40)"
+expect "(A2/C1) with two writers active at arm the armed list holds BOTH pids; neither is pinned, ambiguous or cancelled; the push session is pinned and cancelled (57014)" "$([ "$ARMED_N" -ge 2 ] && ! grep -q -F "STOP (ambiguous)" "$OUT/wd-armed2.log" && [ "$(grep -c CANCELLED "$OUT/wd-armed2.log")" = 1 ] && [ "$A2RC" != 0 ] && grep -q 57014 "$OUT/run-armed2.log" && survived W1 W1 && survived W2 W2 && echo 0 || echo 1)" "armed pids=$ARMED_N ambiguous=$(grep -c -F "STOP (ambiguous)" "$OUT/wd-armed2.log") cancelled-lines=$(grep -c CANCELLED "$OUT/wd-armed2.log") push exit=$A2RC W1=$(tr '\n' ' ' < "$OUT/decoy-W1.log" | cut -c1-40) W2=$(tr '\n' ' ' < "$OUT/decoy-W2.log" | cut -c1-40)"
 psqld -c "delete from public.d3_decoy" > /dev/null 2>&1
 clean_probe
 expect "(C3) the watchdog seeds and requires supabase/.temp/cli-latest = v2.102.0 in its own directory (fresh directory, it created it)" "$([ "$(cat "$WDHOME/supabase/.temp/cli-latest" 2> /dev/null)" = "v2.102.0" ] && echo 0 || echo 1)" "$(cat "$WDHOME/supabase/.temp/cli-latest" 2> /dev/null)"
+
+# ---------------- P1/P2. targeting and ambiguity (Sam's acceptance criteria) --------------------------------------
+cancel_msgs() { docker logs "$DB" 2>&1 | grep -c -E "canceling statement due to user request|terminating connection due to administrator command"; }
+say "== P1. the cancel reaches ONLY the push's migration session (identity = pid, backend_start, role, application_name, transaction)"
+clean_probe; PD="$OUT/wdir-p1"; mkwd "$PD"; write_probe "$PD" 4
+psqld -c "update public.d3_knob set value = 50" > /dev/null
+CM0="$(cancel_msgs)"
+wd_start p1 15 3; sleep 7
+( printf 'select 1;\n'; sleep 80; printf "select 'done-PI';\n" ) | PGPASSWORD="$PWU" PGCONNECT_TIMEOUT=15 psql "$(purl "$SSLM")" -X -At > "$OUT/decoy-PI.log" 2>&1 &
+PIBG=$!
+{ pq "$PWU" "$(purl "$SSLM")" -At -c "set statement_timeout = 0" -c "/*D3-readback*/ select pg_sleep(60)" -c "select 'done-PR'" > "$OUT/decoy-PR.log"; } &
+PRBG=$!
+sleep 4
+s1_start p1 "$PD"
+wait_for 40 'WATCHDOG PINNED' "$OUT/wd-p1.log"
+s1_wait p1; P1RC=$S1RC
+# a pooler-reused backend: Sam's next read-back goes through the same pooler right after the push session was cancelled
+{ pq "$PWU" "$(purl "$SSLM")" -At -c "set statement_timeout = 0" -c "select 'pid=' || pg_backend_pid()" -c "/*D3-readback2*/ select pg_sleep(35)" -c "select 'done-PR2'" > "$OUT/decoy-PR2.log"; } &
+PR2BG=$!
+sleep 30
+wait "$PR2BG" "$PRBG" "$PIBG" 2> /dev/null
+wd_stop
+sed 's/^/   | /' "$OUT/wd-p1.log" | head -n 16 | tee -a "$RES"
+PINPID="$(sed -n 's/.*WATCHDOG PINNED pid=\([0-9]*\).*/\1/p' "$OUT/wd-p1.log" | head -1)"
+R2PID="$(sed -n 's/^pid=\([0-9]*\)$/\1/p' "$OUT/decoy-PR2.log" | head -1)"
+say "RESULT P1 pooler reuse: the pinned backend was pid ${PINPID:-?}; Sam's second read-back ran on pid ${R2PID:-?} ($([ -n "$PINPID" ] && [ "$PINPID" = "$R2PID" ] && echo 'THE SAME backend: reused' || echo 'a different backend in this run'))"
+say "RESULT P1 what the watchdog did about it: $(grep -E 'STOP \(|STOPPED|next transaction' "$OUT/wd-p1.log" | tail -2 | cut -c1-170 | tr '\n' '|')"
+CM1="$(cancel_msgs)"
+expect "(P1) pinned identity printed (pid, start, app, transaction); ONLY the push session was cancelled (exactly one cancel in the server log, one CANCELLED line, CLI 57014); an idle postgres session, a long active read-only SELECT (read-back), and a read-back on a reused pooled backend all completed untouched" "$(grep -E 'WATCHDOG PINNED pid=[0-9]+ started=.* app=.* transaction=' "$OUT/wd-p1.log" > /dev/null && [ "$(grep -c CANCELLED "$OUT/wd-p1.log")" = 1 ] && [ "$P1RC" != 0 ] && grep -q 57014 "$OUT/run-p1.log" && [ "$((CM1 - CM0))" = 1 ] && grep -q done-PI "$OUT/decoy-PI.log" && survived PR PR && survived PR2 PR2 && ! grep -q 'canceling' "$OUT/decoy-PI.log" && echo 0 || echo 1)" "server-log cancels=$((CM1 - CM0)) cancelled-lines=$(grep -c CANCELLED "$OUT/wd-p1.log") push exit=$P1RC idle:$(tr '\n' ' ' < "$OUT/decoy-PI.log" | cut -c1-30) readback:$(tr '\n' ' ' < "$OUT/decoy-PR.log" | cut -c1-20) readback2:$(tr '\n' ' ' < "$OUT/decoy-PR2.log" | cut -c1-40)"
+clean_probe
+
+say "== P2. when the push session cannot be identified uniquely the watchdog cancels NOTHING and prints a STOP"
+# (a) zero candidates
+WDPW=10; wd_start p2zero 15 3; sleep 22; wd_stop; unset WDPW
+sed 's/^/   | /' "$OUT/wd-p2zero.log" | head -n 12 | tee -a "$RES"
+CM2="$(cancel_msgs)"
+expect "(P2 a, 0 candidates) no migration session within the wait: STOP (no migration session) with the manual next step, exit 1, zero cancels/terminates in the server log" "$(grep -q 'WATCHDOG STOP (no migration session)' "$OUT/wd-p2zero.log" && grep -q 'Manual next step' "$OUT/wd-p2zero.log" && [ "$(cat "$OUT/wdrc-p2zero.txt" 2> /dev/null)" = 1 ] && [ "$CM2" = "$CM1" ] && echo 0 || echo 1)" "wd exit=$(cat "$OUT/wdrc-p2zero.txt" 2> /dev/null) server-log cancel/terminate delta=$((CM2 - CM1))"
+# (b) two candidates at once
+wd_start p2two 15 3; sleep 7
+for w in X1 X2; do
+  { pq "$PWU" "$(purl "$SSLM")" -At -c "set statement_timeout = 0" -c "begin" -c "insert into public.d3_decoy values (1)" -c "/*D3-$w*/ select pg_sleep(40)" -c "commit" -c "select 'done-$w'" > "$OUT/decoy-$w.log"; } &
+  eval "${w}BG=$!"
+done
+wait_for 30 'STOP [(]ambiguous[)]' "$OUT/wd-p2two.log"; sleep 4
+wait "$X1BG" "$X2BG" 2> /dev/null; wd_stop
+sed 's/^/   | /' "$OUT/wd-p2two.log" | head -n 12 | tee -a "$RES"
+CM3="$(cancel_msgs)"
+expect "(P2 b, 2 candidates) two migration-like sessions at once: STOP (ambiguous) with reason and manual next step, exit 1, both sessions completed, zero cancels/terminates in the server log" "$(grep -q 'WATCHDOG STOP (ambiguous)' "$OUT/wd-p2two.log" && grep -q 'Manual next step' "$OUT/wd-p2two.log" && [ "$(cat "$OUT/wdrc-p2two.txt" 2> /dev/null)" = 1 ] && survived X1 X1 && survived X2 X2 && [ "$CM3" = "$CM2" ] && echo 0 || echo 1)" "wd exit=$(cat "$OUT/wdrc-p2two.txt" 2> /dev/null) cancel/terminate delta=$((CM3 - CM2))"
+# (c) the pinned identity changes mid-run: the same backend leaves its writing transaction and runs a long read-only statement
+wd_start p2id 15 3; sleep 7
+{ pq "$PWU" "$(purl "$SSLM")" -At -c "set statement_timeout = 0" -c "begin" -c "insert into public.d3_decoy values (1)" -c "select pg_sleep(8)" -c "commit" -c "/*D3-Y-readonly*/ select pg_sleep(40)" -c "select 'done-Y'" > "$OUT/decoy-Y.log"; } &
+YBG=$!
+wait_for 40 'STOP [(]identity changed[)]' "$OUT/wd-p2id.log"; sleep 3
+wait "$YBG" 2> /dev/null; wd_stop
+sed 's/^/   | /' "$OUT/wd-p2id.log" | head -n 12 | tee -a "$RES"
+CM4="$(cancel_msgs)"
+expect "(P2 c, identity changed) the pinned backend started a NEW transaction that is not a migration (its 40 s read-only statement is past the 15 s limit): STOP (identity changed), NOT cancelled, the session completed, zero cancels/terminates in the server log" "$(grep -q 'WATCHDOG PINNED' "$OUT/wd-p2id.log" && grep -q 'WATCHDOG STOP (identity changed)' "$OUT/wd-p2id.log" && [ "$(cat "$OUT/wdrc-p2id.txt" 2> /dev/null)" = 1 ] && survived Y Y && [ "$CM4" = "$CM3" ] && echo 0 || echo 1)" "wd exit=$(cat "$OUT/wdrc-p2id.txt" 2> /dev/null) cancel/terminate delta=$((CM4 - CM3)) session: $(tr '\n' ' ' < "$OUT/decoy-Y.log" | cut -c1-60)"
+psqld -c "delete from public.d3_decoy" > /dev/null 2>&1
 
 # ---------------- B. cancel + rollback + reconcile (scaled, then the REAL 120 s) ----------------
 reconcile_case() { # reconcile_case <label> <limit> <every> <knob seconds> <min elapsed> <max elapsed> [proxy label]
@@ -316,6 +374,16 @@ reconcile_case() { # reconcile_case <label> <limit> <every> <knob seconds> <min 
   catalog > "$OUT/catalog-post-$label.txt"
   diff "$OUT/catalog-pre-$label.txt" "$OUT/catalog-post-$label.txt" > "$OUT/catalog-diff-$label.txt"
   expect "(B/$label 3) rollback left NO trace: catalog diff against the pre-file state is empty (objects created before the slow statement are absent), no history row for 0214, 0213 intact" "$([ ! -s "$OUT/catalog-diff-$label.txt" ] && [ "$(hist_list)" = "0213" ] && [ "$(psqld -c "select count(*) from pg_tables where tablename in ('d3_t1','d3_late')") $(psqld -c "select count(*) from pg_type where typname = 'd3_ty'") $(psqld -c "select count(*) from pg_proc where proname = 'd3_fn'")" = "0 0 0" ] && echo 0 || echo 1)" "catalog lines pre/post $(wc -l < "$OUT/catalog-pre-$label.txt")/$(wc -l < "$OUT/catalog-post-$label.txt"); diff bytes $(wc -c < "$OUT/catalog-diff-$label.txt"); history>=0213: $(hist_list)"
+  local pinpid; pinpid="$(sed -n 's/.*WATCHDOG PINNED pid=\([0-9]*\).*/\1/p' "$OUT/wd-$label.log" | head -1)"
+  sleep 3
+  local idle_tx locks_left; idle_tx="$(psqld -c "select count(*) from pg_stat_activity where state like 'idle in transaction%' and usename = 'postgres'")"
+  locks_left="$(psqld -c "select count(*) from pg_locks where pid = ${pinpid:-0} and locktype <> 'virtualxid'")"
+  say "RESULT P3/$label (c) the CLI exit code and message: exit=$rc; last lines: $(tail -n 3 "$OUT/run-$label.log" | tr '\n' ' ' | cut -c1-300)"
+  expect "(P3/$label a) after the real cancel: no idle-in-transaction backend, no lock left on the cancelled pid ($pinpid), the cancelled file's objects absent (catalog diff empty, checked above)" "$([ "$idle_tx" = 0 ] && [ "$locks_left" = 0 ] && [ -n "$pinpid" ] && echo 0 || echo 1)" "idle-in-transaction=$idle_tx locks on pid $pinpid=$locks_left"
+  local g02 census
+  g02="$(psqld -c "select (select count(*) from supabase_migrations.schema_migrations) || '/' || (select max(version) from supabase_migrations.schema_migrations) || '/' || (select count(*) from supabase_migrations.schema_migrations where version >= '0213') || '/' || (select coalesce(string_agg(version, ',' order by version), '') from supabase_migrations.schema_migrations where version >= '0213')")"
+  census="$(psqld -c "select (select count(*) from pg_class where relnamespace = 'public'::regnamespace and relname in ('d3_ok')) || ',' || (select count(*) from pg_class where relnamespace = 'public'::regnamespace and relname in ('d3_t1','d3_t1_pkey','d3_t1_v_idx','d3_late')) || (select count(*) from pg_type where typname = 'd3_ty' and typnamespace = 'public'::regnamespace) || (select count(*) from pg_proc where proname = 'd3_fn' and pronamespace = 'public'::regnamespace) || ',' || (select count(*) from pg_class where relnamespace = 'public'::regnamespace and relname = 'd3_next') || ',' || (select count(*) from pg_class where relnamespace = 'public'::regnamespace and relname = 'd3_last')")"
+  expect "(P3/$label b,d) history/census equivalent of g02 and the object census match each other after the cancel: history holds exactly 0213 (count ${pre_total%%/*}, max 0213), NOT the cancelled 0214, nothing after; census present: 0213=1 object, 0214=0, 0215=0, 0216=0" "$([ "$g02" = "${pre_total%%/*}/0213/1/0213" ] && [ "$census" = "1,000,0,0" ] && echo 0 || echo 1)" "g02-equivalent applied/max/ge_first/list=$g02; census 0213,0214(tables+type+fn),0215,0216=$census"
   local listed; listed="$(dry_list "$wdir")"
   expect "(B/$label 4a) history equals exactly the files applied before the cancelled one; dry run lists exactly the remaining files starting with the cancelled one" "$([ "$(hist_list)" = "0213" ] && [ "$listed" = "0214,0215,0216" ] && echo 0 || echo 1)" "history=$(hist_list) dry-run lists: $listed"
   psqld -c "update public.d3_knob set value = 0" > /dev/null   # the slow condition removed; the FILE is byte-identical
@@ -353,12 +421,12 @@ d_case() { # d_case <label> <decoy-first: 1|0> <ro|w>  (ro = a long read-only SE
     { pq "$PWU" "$(purl "$SSLM")" -At -c "set statement_timeout = 0" -c "begin" -c "insert into public.d3_decoy values (1)" -c "/*D3-$label*/ select pg_sleep(60)" -c "commit" -c "select 'done-$label'" > "$OUT/decoy-$label.log"; } &
   fi
   local dbg=$!
-  if [ "$first" = 1 ]; then wait_for 20 'PINNED|AMBIGUOUS' "$OUT/wd-$label.log"; fi
+  if [ "$first" = 1 ]; then wait_for 20 'PINNED|STOP [(]ambiguous[)]' "$OUT/wd-$label.log"; fi
   s1_start "$label" "$dd"
-  wait_for 25 'PINNED|AMBIGUOUS' "$OUT/wd-$label.log"; wait_for 12 'AMBIGUOUS' "$OUT/wd-$label.log"
+  wait_for 25 'PINNED|STOP [(]ambiguous[)]' "$OUT/wd-$label.log"; wait_for 12 'STOP [(]ambiguous[)]' "$OUT/wd-$label.log"
   sleep 22
   local still=no; [ -s "$OUT/rc-$label.txt" ] || still=yes
-  say "RESULT D/$label: watchdog said: $(grep -E 'PINNED|AMBIGUOUS' "$OUT/wd-$label.log" | head -2 | cut -c1-150 | tr '\n' '|')  CANCELLED lines=$(grep -c CANCELLED "$OUT/wd-$label.log"); push still running after 22 s: $still"
+  say "RESULT D/$label: watchdog said: $(grep -E 'PINNED|STOP [(]ambiguous[)]' "$OUT/wd-$label.log" | head -2 | cut -c1-150 | tr '\n' '|')  CANCELLED lines=$(grep -c CANCELLED "$OUT/wd-$label.log"); push still running after 22 s: $still"
   local pid; pid="$(psqld -c "select pid from pg_stat_activity where usename = 'postgres' and backend_type = 'client backend' and query ilike '%d3_knob%' and pid <> pg_backend_pid() limit 1")"
   if [ -n "$pid" ] && [ "$still" = yes ] && [ "$(grep -c CANCELLED "$OUT/wd-$label.log")" = 0 ]; then
     one="$(env -u GITHUB_TOKEN -u GH_TOKEN "${S1ENV[@]}" PGPASSWORD="$PWU" "$GOBIN" --agent no db query --db-url "$TLSURL" -o json "select pg_cancel_backend($pid)" 2>&1 | tr -d '\n ' | cut -c1-100)"
@@ -368,7 +436,7 @@ d_case() { # d_case <label> <decoy-first: 1|0> <ro|w>  (ro = a long read-only SE
   sleep 3; wd_stop; wait "$dbg" 2> /dev/null
   sed 's/^/   | /' "$OUT/wd-$label.log" | head -n 12 | tee -a "$RES"
   say "RESULT D/$label: push exit=$rc 57014=$(grep -c 57014 "$OUT/run-$label.log"); decoy: $(tr '\n' ' ' < "$OUT/decoy-$label.log" | cut -c1-70)"
-  DCASE_AMB=$(grep -c AMBIGUOUS "$OUT/wd-$label.log"); DCASE_RC=$rc; DCASE_DECOY=$(survived "$label" "$label" && echo alive || echo cancelled)
+  DCASE_AMB=$(grep -c -F "STOP (ambiguous)" "$OUT/wd-$label.log"); DCASE_RC=$rc; DCASE_DECOY=$(survived "$label" "$label" && echo alive || echo cancelled)
   clean_probe
 }
 d_case rofirst 1 ro
