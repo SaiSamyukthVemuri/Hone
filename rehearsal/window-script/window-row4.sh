@@ -2,7 +2,8 @@
 # Hone #1035 WINDOW ROW 4 (recovery_regime pitr): the selected pre-migration restore point and a FRESH PITR reading,
 # checked by the pinned comparator stage `--stage row4`. Run IMMEDIATELY before S1, after window-s0a.sh passed.
 # No hosted call and no secret here: you type what the dashboard or the management API shows. The script stamps the
-# selected restore point itself, at the moment you ask for it, so the reading you type afterwards cannot predate it.
+# selected restore point itself, at the moment you ask for it, and the reading time as well (at your last answer), so
+# the reading cannot predate the selection. You select ONCE: you then wait for the dashboard to catch up, and answer.
 # Fail-closed: any bad answer or any non-PASS stops. No retries, no loop. Exit 0 ONLY after the comparator prints the
 # exact line "OVERALL PASS". That line covers the row-4 bracket only; it does not replace window-s0a.sh.
 set -u
@@ -13,6 +14,8 @@ WR="$ROOT/window-reads"
 CMP_SHA=147b5c67aa78ef80621c64eefe86755916d58dec284fdbe69f943348f8ba6058
 LIB_SHA=636bd85d5863df8aa6e852f7c35f837b47551c17ed1ec75f5c5d14403b6d3fe9
 BASELINE=BASELINE-W1-MACOS-CANDIDATE-3.json
+MIN_REMAIN_MIN=60
+SELECT_MAX_AGE_S=1800
 BASELINE_SHA=efc94a51f02bd2116a806229c8910b9ac48c2e5da6c0ff6556a3671e957301dd
 
 cleanup() { stty echo </dev/tty >/dev/null 2>&1 || true; }
@@ -47,11 +50,24 @@ int_ok() { printf '%s' "$1" | LC_ALL=C grep -Eq '^[1-9][0-9]{0,2}$'; }
 echo "Row 4. The time now is $(utcnow). Times are UTC, like 2026-10-27T01:00:00Z. Nothing is defaulted." >&2
 ask WSTART "Window start (UTC): "; utc_ok "$WSTART" || die "window start is not YYYY-MM-DDTHH:MM:SSZ"
 ask WEND "Window end (UTC): "; utc_ok "$WEND" || die "window end is not YYYY-MM-DDTHH:MM:SSZ"
+now_s=$(date -u +%s)
+we_s=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$WEND" +%s 2>/dev/null || date -u -d "$WEND" +%s 2>/dev/null) || die "cannot read the window end"
+case "$we_s" in ''|*[!0-9]*) die "cannot read the window end" ;; esac
+[ $(( (we_s - now_s) / 60 )) -ge "$MIN_REMAIN_MIN" ] || die "fewer than $MIN_REMAIN_MIN minutes of the window remain: S1 and the steps after it do not fit. Do not start S1."
+echo "Run this only after window-s0a.sh printed OVERALL PASS in this window." >&2
 echo "Do this only when the holds are in place and the last read-only checks are done. Typing  select  records the pre-migration restore point as the time NOW." >&2
 ask GO "Type exactly select: "; [ "$GO" = select ] || die "not selected (type exactly: select)"
 T_SEL=$(utcnow)
+T_SEL_S=$(date -u +%s)
+dl_s=$((T_SEL_S + SELECT_MAX_AGE_S))
+DEADLINE=$(date -u -r "$dl_s" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$dl_s" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || DEADLINE="30 minutes after $T_SEL"
 echo "Selected pre-migration restore point: $T_SEL. Write it down. Do NOT start S1 yet." >&2
-echo "Now read the PITR recovery range AFTER that time (never reuse the S0a reading). The dashboard shows LOCAL time: convert to UTC first (EDT is UTC-4, add 4 hours; EST from 2026-11-01 is UTC-5, add 5; across midnight add a day)." >&2
+echo "Now WAIT until the dashboard's latest recovery point is AT OR AFTER $T_SEL (on a quiet database expect about 15 minutes), then read and answer below. Do not select again." >&2
+echo "Everything must be answered by $DEADLINE (30 minutes after the selection). If it is still behind after about 25 minutes, stop: the named restore point route is a provider write and needs Sam's explicit authorization. If $DEADLINE passes, stop and run this script again from the start." >&2
+echo "The dashboard shows LOCAL time: convert to UTC first (EDT is UTC-4, add 4 hours; EST from 2026-11-01 is UTC-5, add 5; across midnight add a day). The reading time is stamped by this script at your last answer." >&2
+ask READY "Type ready when the dashboard's latest recovery point is at or after $T_SEL (or abort): "
+case "$READY" in ready) ;; abort) die "aborted by the operator; S1 was not started" ;; *) die "type exactly ready or abort" ;; esac
+[ $(( $(date -u +%s) - T_SEL_S )) -le "$SELECT_MAX_AGE_S" ] || die "more than 30 minutes passed since the selection $T_SEL: stop and run this script again from the start. Do NOT start S1."
 ask BASIS "Basis (latest_at_or_after or named_restore_point): "; case "$BASIS" in latest_at_or_after|named_restore_point) ;; *) die "basis must be latest_at_or_after or named_restore_point (an idle accept is a recorded manual decision, not an answer here)" ;; esac
 RP_NAME=""; RP_STATUS=""; RP_AT=""
 if [ "$BASIS" = named_restore_point ]; then
@@ -66,8 +82,8 @@ ask P_LATE "Latest recovery point (UTC): "; utc_ok "$P_LATE" || die "latest reco
 ask P_BSTAT "Latest base backup status (type exactly COMPLETED): "; [ "$P_BSTAT" = COMPLETED ] || die "base backup status must be exactly: COMPLETED"
 ask P_BAT "Latest base backup completed at (UTC): "; utc_ok "$P_BAT" || die "base backup time is not YYYY-MM-DDTHH:MM:SSZ"
 ask P_BSRC "Base backup read from (dashboard or management_api): "; case "$P_BSRC" in dashboard|management_api) ;; *) die "base backup source must be dashboard or management_api" ;; esac
-ask P_READ "Time you read the recovery range (UTC): "; utc_ok "$P_READ" || die "read time is not YYYY-MM-DDTHH:MM:SSZ"
 ask P_RSRC "Recovery range read from (dashboard or management_api): "; case "$P_RSRC" in dashboard|management_api) ;; *) die "read source must be dashboard or management_api" ;; esac
+P_READ=$(utcnow)
 
 cat > "$WORK/mk-attest.mjs" <<'NODE'
 import { writeFileSync } from "node:fs";
@@ -89,8 +105,8 @@ crc=0
 node "$WR/compare-preflight.mjs" --stage row4 --baseline "$WR/$BASELINE" --attest "$ATT" --window-start "$WSTART" --window-end "$WEND" </dev/null >"$VERDICT" 2>&1 || crc=$?
 cat "$VERDICT"
 if [ "$crc" = 0 ] && grep -qx 'OVERALL PASS' "$VERDICT"; then
-  echo "WINDOW ROW 4: OVERALL PASS for the selected restore point $T_SEL. This covers the row-4 bracket only; it does not replace window-s0a.sh. Start S1 now: a restore point older than the baseline's limit fails again." >&2
+  echo "WINDOW ROW 4: OVERALL PASS for the selected restore point $T_SEL. This covers the row-4 bracket only; it does not replace window-s0a.sh. Start S1 within 10 minutes (by $(date -u -r $(( $(date -u +%s) + 600 )) +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+10 minutes' +%Y-%m-%dT%H:%M:%SZ)); after that, run this script again from the start." >&2
   exit 0
 fi
-echo "Row 4 was refused. Options (none is automatic; this script does not loop or retry): (1) a quiet database can leave the latest recovery point behind the selected time: wait, then run this script again (it selects a new time); (2) with Sam's explicit authorization, a named restore point (basis named_restore_point); (3) a recorded manual substitution decision outside the comparator. Do NOT start S1." >&2
+echo "Row 4 was refused. Do NOT start S1. This script does not loop or retry. If the latest recovery point was behind the selected time, it was not ready: stop. If it is still behind about 25 minutes after the selection, use the named restore point route (a provider write; it needs Sam's explicit authorization) or a recorded manual substitution decision outside the comparator. If more than 30 minutes have passed since the selection, run this script again from the start." >&2
 die "the comparator did not print OVERALL PASS (exit $crc). Evidence is in $WORK"

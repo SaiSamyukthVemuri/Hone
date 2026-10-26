@@ -94,7 +94,7 @@ ask H1 "Cron-job.org reminders paused: "; [ "$H1" = yes ] || die "hold 1 not con
 ask H2 "People hold in place (no archive/export/charges/manual fee/portal card setup): "; [ "$H2" = yes ] || die "hold 2 not confirmed (type exactly: yes)"; T2=$(utcnow)
 ask MFLAG "Maintenance flag decision (no_flag or flag_on): "; case "$MFLAG" in no_flag|flag_on) ;; *) die "maintenance flag decision must be no_flag or flag_on" ;; esac; T3=$(utcnow)
 echo "G3: the head is the pinned final head $HEAD_SHA and its 34 checksums come from the pinned file $G3_FILE (sha256 checked above); the comparator compares them to the baseline. Nothing to type." >&2
-echo "G4 under PITR. Read these now, from the dashboard or the management API. The dashboard shows LOCAL time: convert to UTC first (EDT is UTC-4, so add 4 hours; EST from 2026-11-01 is UTC-5, add 5; across midnight add a day). Type UTC like 2026-10-27T01:00:00Z. An empty or malformed answer stops the script before any hosted read." >&2
+echo "G4 under PITR. Read these now, from the dashboard or the management API. The dashboard shows LOCAL time: convert the recovery and backup times to UTC first (EDT is UTC-4, so add 4 hours; EST from 2026-11-01 is UTC-5, add 5; across midnight add a day). Type UTC like 2026-10-27T01:00:00Z. The reading time is stamped by this script at your last PITR answer. An empty or malformed answer stops the script before any hosted read." >&2
 ask PITR_ON "PITR enabled (type exactly true): "; [ "$PITR_ON" = true ] || die "PITR enabled must be exactly: true"
 ask PITR_RET "PITR retention in days (a whole number, no unit): "; int_ok "$PITR_RET" || die "retention must be a whole number of days (1 to 999), digits only"
 ask P_EARLY "Earliest recovery point (UTC): "; utc_ok "$P_EARLY" || die "earliest recovery point is not YYYY-MM-DDTHH:MM:SSZ"
@@ -102,8 +102,8 @@ ask P_LATE "Latest recovery point (UTC): "; utc_ok "$P_LATE" || die "latest reco
 ask P_BSTAT "Latest base backup status (type exactly COMPLETED): "; [ "$P_BSTAT" = COMPLETED ] || die "base backup status must be exactly: COMPLETED"
 ask P_BAT "Latest base backup completed at (UTC): "; utc_ok "$P_BAT" || die "base backup time is not YYYY-MM-DDTHH:MM:SSZ"
 ask P_BSRC "Base backup read from (dashboard or management_api): "; case "$P_BSRC" in dashboard|management_api) ;; *) die "base backup source must be dashboard or management_api" ;; esac
-ask P_READ "Time you read the recovery range (UTC): "; utc_ok "$P_READ" || die "read time is not YYYY-MM-DDTHH:MM:SSZ"
 ask P_RSRC "Recovery range read from (dashboard or management_api): "; case "$P_RSRC" in dashboard|management_api) ;; *) die "read source must be dashboard or management_api" ;; esac
+P_READ=$(utcnow)
 ask R6CHOICE "R-6 choice (S0b or accept_rpo): "; case "$R6CHOICE" in S0b|accept_rpo) ;; *) die "R-6 choice must be S0b or accept_rpo" ;; esac
 ask R6TEXT "R-6 answer (your words, one line): "; text_ok "$R6TEXT" || die "R-6 answer is empty or has unsupported characters"
 ask R6REF "R-6 decision reference: "; text_ok "$R6REF" || die "R-6 reference is empty or has unsupported characters"

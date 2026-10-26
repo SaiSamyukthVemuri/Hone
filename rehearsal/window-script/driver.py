@@ -32,7 +32,11 @@ while time.time() < deadline:
                 t0 = time.time()
                 while time.time() - t0 < 5 and termios.tcgetattr(fd)[3] & termios.ECHO:
                     time.sleep(0.02)
-            os.write(fd, (tok(answers[i][1]) + "\n").encode()); i += 1
+            ans = answers[i][1]
+            m = re.match(r"\{sleep:([0-9]+)\}", ans)
+            if m:
+                time.sleep(int(m.group(1))); ans = ans[m.end():]
+            os.write(fd, (tok(ans) + "\n").encode()); i += 1
 else:
     os.kill(pid, signal.SIGKILL)
 _, st = os.waitpid(pid, 0)

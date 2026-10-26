@@ -33,6 +33,12 @@ ROW4="$HERE/window-row4.sh"
 r4st() { grep -E "^$1=" "$ROW4" | head -1 | cut -d= -f2; }
 [ "$(r4st CMP_SHA)" = "$(sha "$SRC/compare-preflight.mjs")" ] && [ "$(r4st LIB_SHA)" = "$(sha "$SRC/compare-preflight-lib.mjs")" ] && [ "$(r4st BASELINE_SHA)" = "$(sha "$SRC/BASELINE-W1-MACOS-CANDIDATE-3.json")" ] && ok "window-row4.sh pins equal the real comparator, lib and baseline" || bad "row-4 pins differ"
 bash -n "$ROW4" && ok "bash -n window-row4.sh" || bad "row-4 syntax"
+DOC="$HERE/WINDOW-COMMAND-MACOS.md"
+grep -q "run this script again\|it selects a new time" "$DOC" && bad "the doc still tells Sam to run row 4 again to get a new time" || ok "the doc no longer offers 'run again (it selects a new time)' as a remedy for a quiet database (F1)"
+grep -q "Sync the Mac clock" "$DOC" && grep -q "Set time and date automatically" "$DOC" && ok "the doc says to sync the Mac clock (F5)" || bad "no clock-sync line (F5)"
+grep -q "Pre-window read-only look" "$DOC" && grep -q "a decision for Sam" "$DOC" && grep -q "base backup not after the reading" "$DOC" && ok "the doc has the pre-window visibility check and the fallback as Sam's decision (F2)" || bad "F2 doc missing"
+grep -q "only after .window-s0a.sh. printed .OVERALL PASS" "$DOC" && grep -q "start S1 within 10 minutes" "$DOC" && grep -q "fewer than 60 minutes of the window remain" "$DOC" && ok "the doc says run row 4 only after S0a PASS, start S1 within 10 minutes, and N = 60 (F4)" || bad "F4 doc missing"
+grep -q "P_READ=\$(utcnow)" "$REAL" && grep -q "P_READ=\$(utcnow)" "$ROW4" && ! grep -q '^ask P_READ' "$REAL" "$ROW4" && ok "read_at_utc is stamped by date -u at the last prompt in both scripts, not typed (F3)" || bad "F3 not applied"
 for f in "$REAL" "$ROW4"; do grep -E '^(text_ok|utc_ok)\(\)' "$f" | grep -vq 'LC_ALL=C' && bad "a validator lacks LC_ALL=C in $f" || ok "text_ok and utc_ok run grep under LC_ALL=C ($(basename "$f"))"; done
 if grep -nE '^ask (G3|G4)|Absolute path|backup identifier' "$REAL" >/dev/null; then bad "the typed G3/G4 daily prompts are gone from the script"; else ok "no typed G3 path, head or daily G4 prompt remains"; fi
 # X1 class: no paste hazards, nothing to paste at all
@@ -78,10 +84,10 @@ while day<=b:
     day+=d.timedelta(days=1)
 PY
 }
-answers() { # answers FILE WSTART WEND  [variant tweaks via env: A_R6CHOICE A_PITRON A_RET A_LATE_AGO A_READ_AGO]
+answers() { # answers FILE WSTART WEND  [variant tweaks via env: A_R6CHOICE A_PITRON A_RET A_LATE_AGO A_BASE_AGO]
   local ws="$2" we="$3"
   { printf 'Operator label\tOP-1\nWindow start\t%s\nWindow end\t%s\nCron-job.org\tyes\nPeople hold\tyes\nMaintenance flag\tno_flag\n' "$ws" "$we"
-    printf 'PITR enabled\t%s\nPITR retention\t%s\nEarliest recovery point\t%s\nLatest recovery point\t%s\nLatest base backup status\tCOMPLETED\nLatest base backup completed\t%s\nBase backup read from\tmanagement_api\nTime you read\t%s\nRecovery range read from\tdashboard\n' "${A_PITRON-true}" "${A_RET-7}" "$(nowplus -1800)" "$(nowplus -${A_LATE_AGO:-10})" "$(nowplus -60)" "$(nowplus -${A_READ_AGO:-2})"
+    printf 'PITR enabled\t%s\nPITR retention\t%s\nEarliest recovery point\t%s\nLatest recovery point\t%s\nLatest base backup status\tCOMPLETED\nLatest base backup completed\t%s\nBase backup read from\tmanagement_api\nRecovery range read from\tdashboard\n' "${A_PITRON-true}" "${A_RET-7}" "$(nowplus -1800)" "$(nowplus -${A_LATE_AGO:-10})" "$(nowplus -${A_BASE_AGO:-60})"
     printf 'R-6 choice\t%s\nR-6 answer\tAccept the loss window for the cutover.\nR-6 decision reference\tdecision-ref-1\n0242 disposition (\tR-3\n0242 disposition reference\tdecision-ref-2\n' "${A_R6CHOICE:-accept_rpo}"
     printf 'Supabase access token\t%s\nDatabase password\t%s\n' "$TOKEN" "$PASSWORD"; } > "$1"
 }
@@ -151,8 +157,10 @@ mkfix pitrlag; ( export A_LATE_AGO=33 A_READ_AGO=2; answers "$F/answers.txt" "$W
 refuse "a PITR reading refused by the comparator (latest 31 min behind the read) stops BEFORE any hosted read" "attestation check S0-10 does not pass"
 has "$OUT" "Options (none is automatic; this script does not loop or retry)" && ok "  ... the options are printed (wait, named restore point, recorded substitution)" || bad "  ... options not printed"
 [ ! -s "$F/stub.log" ] && ok "  ... nothing was read" || bad "  ... stub called"
-mkfix pitredt; ( export A_READ_AGO=242; answers "$F/answers.txt" "$WS" "$WE" ); runit
-refuse "a read time typed in EDT (4 h old) is refused as stale before any hosted read" "attestation check S0-10 does not pass"
+mkfix pitredt; ( export A_LATE_AGO=240 A_BASE_AGO=300; answers "$F/answers.txt" "$WS" "$WE" ); runit
+refuse "a latest recovery point typed in EDT (4 h behind) is refused as lagging before any hosted read" "attestation check S0-10 does not pass"
+has "$OUT" "lags the reading" && ok "  ... the reason names the lag" || bad "  ... no lag reason"
+has "$OUT" "stamped by this script" && ok "  ... the prompt text says the reading time is stamped by the script" || bad "  ... no stamped-time notice"
 mkfix badwindow; answers "$F/answers.txt" "$(nowplus -300)" "$(nowplus -240)"; runit
 refuse "a window that is not now fails the attestation pre-check BEFORE any hosted read" "attestation check S0-8 does not pass"
 [ ! -s "$F/stub.log" ] && ok "  ... nothing was read" || bad "  ... stub called"
@@ -164,10 +172,11 @@ mkfix4() { # mkfix4 NAME -> F with the real comparator, lib, baseline 3 (no stub
   cp "$ROW4" "$F/window-row4.test.sh"
   if [ "${WS_DEV_LINUX:-}" = 1 ]; then sed -i 's/^\[ "\$(uname -s)" = Darwin \].*$/true/' "$F/window-row4.test.sh"; fi
 }
-answers4() { # answers4 FILE WSTART WEND BASIS LATEOFF [READOFF]  (offsets in seconds, resolved when typed)
-  { printf 'Window start\t%s\nWindow end\t%s\nType exactly select\tselect\nBasis (\t%s\n' "$2" "$3" "$4"
+answers4() { # answers4 FILE WSTART WEND BASIS LATEOFF [SLEEP]  (offsets in seconds, resolved when typed; the reading time is stamped by the script)
+  local sl=""; [ -n "${6:-}" ] && sl="{sleep:$6}"
+  { printf 'Window start\t%s\nWindow end\t%s\nType exactly select\tselect\nType ready\t%s%s\nBasis (\t%s\n' "$2" "$3" "$sl" "${READY:-ready}" "$4"
     [ "$4" = named_restore_point ] && printf 'Restore point name\tpre-s1-point\nRestore point status\tAVAILABLE\nRestore point completed\t{now}\n'
-    printf 'PITR enabled\ttrue\nPITR retention\t7\nEarliest recovery point\t{now-86400}\nLatest recovery point\t{now%s}\nLatest base backup status\tCOMPLETED\nLatest base backup completed\t{now-3600}\nBase backup read from\tmanagement_api\nTime you read\t{now%s}\nRecovery range read from\tdashboard\n' "$5" "${6:-}"; } > "$1"
+    printf 'PITR enabled\ttrue\nPITR retention\t7\nEarliest recovery point\t{now-86400}\nLatest recovery point\t{now%s}\nLatest base backup status\tCOMPLETED\nLatest base backup completed\t{now-3600}\nBase backup read from\tmanagement_api\nRecovery range read from\tdashboard\n' "$5"; } > "$1"
 }
 runit4() {
   RC=0
@@ -175,6 +184,9 @@ runit4() {
   OUT="$F/out.txt"
 }
 mkfix4 r4happy; answers4 "$F/answers.txt" "$WS" "$WE" latest_at_or_after "+0"; runit4
+has "$OUT" "WAIT until the dashboard's latest recovery point is AT OR AFTER" && has "$OUT" "Do not select again" && ok "  ... after the stamped time the script says to wait for the latest point and not to select again" || bad "  ... F1 wait text missing"
+has "$OUT" "Everything must be answered by" && has "$OUT" "about 25 minutes" && has "$OUT" "named restore point route" && ok "  ... the 30 minute deadline and the 25 minute named-restore-point route are stated" || bad "  ... deadline text missing"
+has "$OUT" "Start S1 within 10 minutes" && ok "  ... the PASS says to start S1 within 10 minutes" || bad "  ... S1 deadline missing"
 [ "$RC" = 0 ] && has "$OUT" "OVERALL PASS" && ok "row 4 happy path (latest at or after the selected point): exit 0 and OVERALL PASS" || { bad "row 4 happy path" "rc=$RC"; tail -20 "$OUT"; }
 has "$OUT" "covers the row-4 bracket only; it does not replace window-s0a.sh" && ok "  ... the PASS line says it covers row 4 only" || bad "  ... row-4 PASS disclaimer missing"
 [ "$(stat -c %a "$F"/hone-s1/row4.* 2>/dev/null || stat -f %Lp "$F"/hone-s1/row4.*)" = 700 ] && ok "  ... the row-4 work directory is mode 0700" || bad "  ... row-4 dir mode"
@@ -182,13 +194,24 @@ mkfix4 r4named; answers4 "$F/answers.txt" "$WS" "$WE" named_restore_point "+0"; 
 [ "$RC" = 0 ] && has "$OUT" "OVERALL PASS" && ok "row 4 named restore point (AVAILABLE, completed after the selection): exit 0 and OVERALL PASS" || { bad "row 4 named" "rc=$RC"; tail -20 "$OUT"; }
 mkfix4 r4quiet; answers4 "$F/answers.txt" "$WS" "$WE" latest_at_or_after "-120"; runit4
 refuse "row 4 quiet database: the latest recovery point is before the selected point -> not exit 0" "latest_recovery_at_utc is before the selected restore point"
-has "$OUT" "Do NOT start S1" && has "$OUT" "does not loop or retry" && ok "  ... the options are printed and S1 is not started" || bad "  ... options missing"
-mkfix4 r4stale; answers4 "$F/answers.txt" "$WS" "$WE" latest_at_or_after "+0" "-4000"; runit4
-refuse "row 4: a PITR reading dated before the selected point (reused or stale) is refused" "R4-2"
+has "$OUT" "Do NOT start S1" && has "$OUT" "does not loop or retry" && ok "  ... S1 is not started and the script does not loop or retry" || bad "  ... refusal text missing"
+has "$OUT" "it was not ready: stop" && has "$OUT" "named restore point route" && ok "  ... the refusal points to the named restore point route, not to running again" || bad "  ... refusal options wrong"
+has "$OUT" "it selects a new time" && bad "  ... the old 'run again, it selects a new time' text remains" || ok "  ... the old 'run again (it selects a new time)' option is gone"
+mkfix4 r4abort; ( export READY=abort; answers4 "$F/answers.txt" "$WS" "$WE" latest_at_or_after "+0" ); runit4
+refuse "row 4: typing abort at the ready gate stops, S1 not started" "aborted by the operator; S1 was not started"
+mkfix4 r4junk; ( export READY=yes; answers4 "$F/answers.txt" "$WS" "$WE" latest_at_or_after "+0" ); runit4
+refuse "row 4: anything but ready or abort at the gate stops" "type exactly ready or abort"
+mkfix4 r4late; answers4 "$F/answers.txt" "$WS" "$WE" latest_at_or_after "+0" 4; sed -i.bak 's/^SELECT_MAX_AGE_S=.*/SELECT_MAX_AGE_S=2/' "$F/window-row4.test.sh"; runit4
+refuse "row 4: ready typed after the selection aged out is refused, run again from the start" "stop and run this script again from the start"
+mkfix4 r4short; answers4 "$F/answers.txt" "$(nowplus -10)" "$(nowplus 30)" latest_at_or_after "+0"; runit4
+refuse "row 4: fewer than 60 minutes of the window remaining is refused before select" "fewer than 60 minutes of the window remain"
+has "$OUT" "Selected pre-migration restore point" && bad "  ... a point was selected anyway" || ok "  ... nothing was selected"
 mkfix4 r4idle; answers4 "$F/answers.txt" "$WS" "$WE" idle_accept "+0"; runit4
 refuse "row 4: an idle accept is not an answer" "basis must be latest_at_or_after or named_restore_point"
 mkfix4 r4win; answers4 "$F/answers.txt" "$(nowplus -300)" "$(nowplus -240)" latest_at_or_after "+0"; runit4
-refuse "row 4: a selected point outside the typed window is refused" "outside the window"
+refuse "row 4: a window that is already over is refused before select" "fewer than 60 minutes of the window remain"
+mkfix4 r4future; answers4 "$F/answers.txt" "$(nowplus 5)" "$(nowplus 300)" latest_at_or_after "+0"; runit4
+refuse "row 4: a selected point before the typed window start is refused by the comparator" "outside the window"
 mkfix4 r4lib; answers4 "$F/answers.txt" "$WS" "$WE" latest_at_or_after "+0"; printf '\n// x\n' >> "$F/hone-s1/window-reads/compare-preflight-lib.mjs"; runit4
 refuse "row 4 bad sha: an edited comparator lib is refused before anything is asked" "comparator lib missing or sha256 mismatch"
 mkfix4 r4env; answers4 "$F/answers.txt" "$WS" "$WE" latest_at_or_after "+0"; runit4 NODE_OPTIONS=--no-warnings
