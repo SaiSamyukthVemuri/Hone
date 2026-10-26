@@ -1,0 +1,37 @@
+# REHEARSAL - NEVER MERGE. WINDOW-SCRIPT: runs window-s0a.sh on a stock macOS arm64 runner (/bin/bash 3.2, BSD tools)
+# against a STUB supabase-go and synthetic results (see rehearsal/window-script/test.sh for exactly what is stubbed).
+# No hosted call, no database, no secrets.
+name: rehearsal-window-script
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/window-script/**"
+      - ".github/workflows/rehearsal-window-script.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  window-script-macos:
+    name: window-s0a.sh on macOS arm64 (bash 3.2, stub supabase-go)
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts
+        run: |
+          uname -sm
+          /bin/bash --version | head -1
+          node --version
+          python3 --version
+          date -u
+          shasum -a 256 rehearsal/window-script/window-s0a.sh
+      - name: Script and tests under /bin/bash (3.2)
+        run: /bin/bash rehearsal/window-script/test.sh
+      - name: The same tests launched from zsh (how the operator's shell starts it)
+        shell: /bin/zsh {0}
+        run: /bin/bash rehearsal/window-script/test.sh | tail -n 3
