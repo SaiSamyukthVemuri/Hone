@@ -1,0 +1,44 @@
+# REHEARSAL - NEVER MERGE. restore-point.sh (a provider write, prepared only) against a STUB Management API on 127.0.0.1:8081 with the real
+# macOS curl. No hosted call, no secrets (see rehearsal/restore-point/restore-point-rehearsal.sh).
+name: rehearsal-restore-point
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/restore-point/**"
+      - ".github/workflows/rehearsal-restore-point.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  restore-point:
+    name: restore-point.sh against a stub API (macOS arm64)
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts
+        run: |
+          uname -sm
+          /bin/bash --version | head -1
+          /usr/bin/curl --version | head -1
+          node --version
+          python3 --version
+      - name: The rehearsal
+        env:
+          E2E_WORK: ${{ runner.temp }}/rp
+        run: /bin/bash rehearsal/restore-point/restore-point-rehearsal.sh
+      - name: Keep the transcripts and step table
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: restore-point
+          path: |
+            ${{ runner.temp }}/rp/*.out
+            ${{ runner.temp }}/rp/steps.tsv
+            ${{ runner.temp }}/rp/api.log
+          retention-days: 3
