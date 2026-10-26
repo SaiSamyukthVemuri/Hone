@@ -163,7 +163,9 @@ mkfix r4pre; mkcap early -2500 -2400; mkdir -p "$F/hone-s1"; r4_answers "$WS" "$
 mkfix r4nocap; mkdir -p "$F/hone-s1"; printf x > "$F/early.txt"; printf x > "$F/late.txt"; r4_answers "$WS" "$WE" latest_at_or_after 2; runr4
 refuse "row 4 with no capture directory is refused" "no $F/hone-s1/pitr-backups.* directory"
 mkfix r4idle; mkcap one -300 -150; r4_answers "$WS" "$WE" idle_proven_latest 2; runr4
-refuse "row 4 idle_proven_latest with no pitr-wal.* reading is refused" "no $F/hone-s1/pitr-wal.* directory"
+refuse "row 4 refuses the idle basis for this window (S1 accepts only the latest-at-or-after result)" "the idle basis is not offered for this window"
+! grep -qE 'idle_proven_latest|pitr-wal' <(sed -n '/^ask BASIS/p' "$ROW4" | sed 's/idle_proven_latest) die.*//') && ok "the row-4 basis prompt offers only latest_at_or_after and named_restore_point" || bad "row-4 prompt still offers the idle basis"
+! grep -q 'take_idle\|--pitr-idle\|PIDLE' "$ROW4" && ok "window-row4.sh has no idle-evidence handling left" || bad "idle handling remains in row 4"
 fi
 
 echo; echo "passed: $pass failed: $fail skipped: $skipped"

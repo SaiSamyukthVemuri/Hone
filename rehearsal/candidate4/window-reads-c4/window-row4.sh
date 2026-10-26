@@ -2,14 +2,14 @@
 # Hone #1035 WINDOW ROW 4 (recovery_regime pitr): the selected pre-migration restore point and a FRESH PITR reading,
 # checked by the pinned comparator stage `--stage row4`. Run IMMEDIATELY before S1, after window-s0a.sh passed.
 # CANDIDATE 4. No hosted call and no secret here. The script stamps the selected restore point itself, at the moment you
-# ask for it. AFTER that you run pitr-backups.sh (and, for the idle basis, pitr-wal-twice.sh) in another Terminal; this
+# ask for it. AFTER that you run pitr-backups.sh in another Terminal; this
 # script takes the newest capture(s) after ownership and mode checks and the COMPARATOR reads the recovery range from them
 # (the dashboard values you type are only cross-checked, to 1 s). No base backup is asked for or accepted: the Management
 # API lists none under PITR. You select ONCE. Fail-closed: any bad answer or any non-PASS stops. No retries, no loop.
-# Exit 0 ONLY after the comparator prints one of the two exact lines
+# Exit 0 ONLY after the comparator prints the exact line
 #   OVERALL PASS (provider range; base backup UNVERIFIED; restore not tested)
-#   OVERALL PASS (provider range; base backup UNVERIFIED; restore not tested; idle path, restore target L)
-# The second means the recovery target is the provider latest point L (see the R4-2 row), valid until the printed time.
+# The bases offered are latest_at_or_after and named_restore_point. The idle basis is NOT offered in this window: S1 accepts
+# only the L1 result (no valid_until enforcement), so an idle-path row 4 could never start S1.
 # That line covers the row-4 bracket only; it does not replace window-s0a.sh.
 set -u
 umask 077
@@ -62,20 +62,6 @@ take_api() {
   file_ok "$1/backups.json" && file_ok "$1/backups.meta.json" || die "backups.json / backups.meta.json is not a regular file owned by you"
   mkdir -p "$2" && chmod 700 "$2" && cp "$1/backups.json" "$1/backups.meta.json" "$2/" || die "could not copy the pitr-backups result"
 }
-take_idle() {
-  dir_ok "$1" || die "$1 is not a private (mode 700) directory owned by you"
-  local sub f
-  mkdir -p "$2" && chmod 700 "$2" || die "mkdir failed"
-  for sub in r1 r2 r1ready r2ready; do
-    dir_ok "$1/$sub" || die "$1/$sub is not a private (mode 700) directory owned by you"
-    mkdir -p "$2/$sub" && chmod 700 "$2/$sub" || die "mkdir failed"
-    for f in $(ls -A "$1/$sub"); do
-      case "$f" in pitr-wal-status.json|pitr-wal-status.meta.json|pitr-ready-count.json|pitr-ready-count.meta.json|UNREADABLE) ;; *) die "$1/$sub holds an unexpected file: $f" ;; esac
-      file_ok "$1/$sub/$f" || die "$1/$sub/$f is not a regular file owned by you"
-      cp "$1/$sub/$f" "$2/$sub/$f" || die "copy failed"
-    done
-  done
-}
 
 echo "Row 4. The time now is $(utcnow). Times are UTC, like 2026-10-27T01:00:00Z. Nothing is defaulted." >&2
 ask WSTART "Window start (UTC): "; utc_ok "$WSTART" || die "window start is not YYYY-MM-DDTHH:MM:SSZ"
@@ -93,14 +79,14 @@ dl_s=$((T_SEL_S + SELECT_MAX_AGE_S))
 DEADLINE=$(date -u -r "$dl_s" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$dl_s" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || DEADLINE="30 minutes after $T_SEL"
 echo "Selected pre-migration restore point: $T_SEL. Write it down. Do NOT start S1 yet." >&2
 echo "Now, in ANOTHER Terminal and only AFTER $T_SEL: run pitr-backups.sh (read-only) to capture the recovery range. Then wait until the dashboard's latest recovery point is AT OR AFTER $T_SEL (on a quiet database expect about 15 minutes) and capture again; this script uses the NEWEST capture, and the comparator refuses one that started before $T_SEL. Do not select again." >&2
-echo "If the database is quiet and the latest point cannot catch up, the alternative is the idle proof: run pitr-wal-twice.sh AFTER $T_SEL (both of its reads must come after it), then answer idle_proven_latest below. The recovery target is then the provider latest point L, not $T_SEL." >&2
+echo "If the database is quiet and the latest point cannot catch up, do not use an idle path: S1 does not accept it. Wait, or stop (see the named restore point note below)." >&2
 echo "Everything must be answered by $DEADLINE (30 minutes after the selection). If it is still behind after about 25 minutes, stop: the named restore point route is a provider write and needs Sam's explicit authorization. If $DEADLINE passes, stop and run this script again from the start." >&2
 echo "The dashboard shows LOCAL time: convert to UTC first (EDT is UTC-4, add 4 hours; EST from 2026-11-01 is UTC-5, add 5; across midnight add a day)." >&2
 ask READY "Type ready when the newest pitr-backups capture was taken after $T_SEL and the dashboard's latest recovery point is at or after $T_SEL (or abort): "
 case "$READY" in ready) ;; abort) die "aborted by the operator; S1 was not started" ;; *) die "type exactly ready or abort" ;; esac
 [ $(( $(date -u +%s) - T_SEL_S )) -le "$SELECT_MAX_AGE_S" ] || die "more than 30 minutes passed since the selection $T_SEL: stop and run this script again from the start. Do NOT start S1."
 [ $(( (we_s - $(date -u +%s)) / 60 )) -ge "$MIN_REMAIN_MIN" ] || die "fewer than $MIN_REMAIN_MIN minutes of the window remain: do not start S1"
-ask BASIS "Basis (latest_at_or_after, named_restore_point or idle_proven_latest): "; case "$BASIS" in latest_at_or_after|named_restore_point|idle_proven_latest) ;; *) die "basis must be latest_at_or_after, named_restore_point or idle_proven_latest (a bare idle accept is a recorded manual decision, not an answer here)" ;; esac
+ask BASIS "Basis (latest_at_or_after or named_restore_point): "; case "$BASIS" in latest_at_or_after|named_restore_point) ;; idle_proven_latest) die "the idle basis is not offered for this window: S1 does not accept it. Use latest_at_or_after or named_restore_point" ;; *) die "basis must be latest_at_or_after or named_restore_point" ;; esac
 RP_NAME=""; RP_STATUS=""; RP_AT=""
 if [ "$BASIS" = named_restore_point ]; then
   ask RP_NAME "Restore point name: "; text_ok "$RP_NAME" || die "restore point name is empty or has unsupported characters"
@@ -111,14 +97,6 @@ PAPI_SRC=$(newest_dir pitr-backups) || true
 [ -n "${PAPI_SRC:-}" ] || die "no $ROOT/pitr-backups.* directory: run pitr-backups.sh after $T_SEL"
 take_api "$PAPI_SRC" "$WORK/pitr-api"
 echo "Using the pitr-backups capture in $PAPI_SRC." >&2
-IDLE_ARGS=""
-if [ "$BASIS" = idle_proven_latest ]; then
-  PIDLE_SRC=$(newest_dir pitr-wal) || true
-  [ -n "${PIDLE_SRC:-}" ] || die "no $ROOT/pitr-wal.* directory: run pitr-wal-twice.sh after $T_SEL"
-  take_idle "$PIDLE_SRC" "$WORK/pitr-idle"
-  echo "Using the idle evidence in $PIDLE_SRC." >&2
-  IDLE_ARGS="--pitr-idle $WORK/pitr-idle"
-fi
 ask PITR_ON "PITR enabled on the dashboard (type exactly true): "; [ "$PITR_ON" = true ] || die "PITR enabled must be exactly: true"
 ask PITR_RET "PITR retention in days (a whole number, no unit): "; int_ok "$PITR_RET" || die "retention must be a whole number of days (1 to 999), digits only"
 ask P_EARLY "Earliest recovery point on the dashboard (UTC): "; utc_ok "$P_EARLY" || die "earliest recovery point is not YYYY-MM-DDTHH:MM:SSZ"
@@ -141,19 +119,14 @@ A_SEL="$T_SEL" A_BASIS="$BASIS" A_RP_NAME="$RP_NAME" A_RP_STATUS="$RP_STATUS" A_
 
 VERDICT="$WORK/verdict.txt"
 crc=0
-node "$WR/compare-preflight.mjs" --stage row4 --baseline "$WR/$BASELINE" --attest "$ATT" --window-start "$WSTART" --window-end "$WEND" --pitr-api "$WORK/pitr-api" $IDLE_ARGS </dev/null >"$VERDICT" 2>&1 || crc=$?
+node "$WR/compare-preflight.mjs" --stage row4 --baseline "$WR/$BASELINE" --attest "$ATT" --window-start "$WSTART" --window-end "$WEND" --pitr-api "$WORK/pitr-api" </dev/null >"$VERDICT" 2>&1 || crc=$?
 cat "$VERDICT"
 L1='OVERALL PASS (provider range; base backup UNVERIFIED; restore not tested)'
-L2='OVERALL PASS (provider range; base backup UNVERIFIED; restore not tested; idle path, restore target L)'
-if [ "$crc" = 0 ] && grep -Fxq -e "$L1" -e "$L2" "$VERDICT" && ! grep -qx 'OVERALL PASS' "$VERDICT"; then
-  echo "WINDOW ROW 4: $(grep -Fx -e "$L1" -e "$L2" "$VERDICT" | head -n 1) for the selected restore point $T_SEL. This covers the row-4 bracket only; it does not replace window-s0a.sh." >&2
-  if [ "$BASIS" = idle_proven_latest ]; then
-    echo "IDLE PATH: the recovery target is the provider latest point L, NOT $T_SEL (see restore_target in the R4-2 row above). Start S1 BEFORE the valid_until time printed in that row; after it, run this script again from the start." >&2
-  else
-    echo "Start S1 within 10 minutes (by $(date -u -r $(( $(date -u +%s) + 600 )) +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+10 minutes' +%Y-%m-%dT%H:%M:%SZ)); after that, run this script again from the start." >&2
-  fi
+if [ "$crc" = 0 ] && grep -Fxq -e "$L1" "$VERDICT" && ! grep -qx 'OVERALL PASS' "$VERDICT"; then
+  echo "WINDOW ROW 4: $(grep -Fx -e "$L1" "$VERDICT" | head -n 1) for the selected restore point $T_SEL. This covers the row-4 bracket only; it does not replace window-s0a.sh." >&2
+  echo "Start S1 within 10 minutes (by $(date -u -r $(( $(date -u +%s) + 600 )) +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+10 minutes' +%Y-%m-%dT%H:%M:%SZ)); after that, run this script again from the start." >&2
   echo "A base backup is UNVERIFIED and no restore was tested." >&2
   exit 0
 fi
 echo "Row 4 was refused. Do NOT start S1. This script does not loop or retry. If the latest recovery point was behind the selected time, it was not ready: stop. If it is still behind about 25 minutes after the selection, use the named restore point route (a provider write; it needs Sam's explicit authorization) or a recorded manual substitution decision outside the comparator. If more than 30 minutes have passed since the selection, run this script again from the start." >&2
-die "the comparator did not print one of the two accepted PASS lines (exit $crc). Evidence is in $WORK"
+die "the comparator did not print the accepted PASS line (exit $crc). Evidence is in $WORK"
