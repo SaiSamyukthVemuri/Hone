@@ -235,7 +235,7 @@ drive sa "$W/a-sa.txt" "$ROOT/_e2e/s1-apply/s1-apply.sh"
 tail -n 16 "$OUT" | cut -c1-200
 [ "$RC" = 0 ] && has "$OUT" "S1 APPLIED: exactly 34 migrations (0213 .. 0246) in order" && ok "s1-apply.sh with the REAL bundle 599adf08: dry run exactly 34, stub watchdog confirmation, push, exit 0" || bad "s1-apply.sh" "rc=$RC"
 has "$OUT" "Dry run OK: exactly 34 migrations, 0213 .. 0246, in order." && ok "  ... the real CLI's dry-run output was parsed: exactly 34, 0213..0246 in order" || bad "  ... dry-run"
-tail -n 2 "$ROOT/e2e-calls.log" | tr '\n' ';' | grep -q 'db push  dry-run' ; DRYLINES=$(grep -c 'db push  dry-run' "$ROOT/e2e-calls.log"); PUSHLINES=$(grep -c 'db push  yes' "$ROOT/e2e-calls.log")
+DRYLINES=$(grep -cE 'db push +dry-run' "$ROOT/e2e-calls.log"); PUSHLINES=$(grep -cE 'db push +yes' "$ROOT/e2e-calls.log")
 [ "$DRYLINES" = 1 ] && [ "$PUSHLINES" = 1 ] && [ "$(( $(calls) - C1 ))" = 2 ] && ok "  ... exactly two connections: one dry run, one push" || bad "  ... connection count" "dry=$DRYLINES push=$PUSHLINES total=$(( $(calls) - C1 ))"
 HIST1=$(PSQL -c "select count(*)||'|'||max(version) from supabase_migrations.schema_migrations")
 [ "$HIST1" = "245|0246" ] && ok "  ... the synthetic database is at 0246 (245 history rows) after the real CLI push" || bad "  ... history" "$HIST1"
