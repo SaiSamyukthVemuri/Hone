@@ -40,6 +40,10 @@ jobs:
           rc=$?
           grep -E '^(✖|ℹ (tests|pass|fail|skipped))' "$RUNNER_TEMP/node-tests.txt" | head -40
           exit $rc
+      - name: The one-line download from the document, under bash and zsh (fake scp)
+        run: |
+          /bin/bash rehearsal/window-script/test-download.sh bash
+          /bin/bash rehearsal/window-script/test-download.sh zsh
       - name: Script and tests under /bin/bash (3.2)
         run: /bin/bash rehearsal/window-script/test.sh
       - name: The same tests launched from zsh (how the operator's shell starts it)
