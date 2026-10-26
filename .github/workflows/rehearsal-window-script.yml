@@ -34,4 +34,9 @@ jobs:
         run: /bin/bash rehearsal/window-script/test.sh
       - name: The same tests launched from zsh (how the operator's shell starts it)
         shell: /bin/zsh {0}
-        run: /bin/bash rehearsal/window-script/test.sh | tail -n 3
+        run: |
+          /bin/bash rehearsal/window-script/test.sh > "$RUNNER_TEMP/zsh-run.txt" 2>&1
+          rc=$?
+          grep -A40 -E '^FAIL' "$RUNNER_TEMP/zsh-run.txt" | head -80
+          tail -n 3 "$RUNNER_TEMP/zsh-run.txt"
+          exit $rc
