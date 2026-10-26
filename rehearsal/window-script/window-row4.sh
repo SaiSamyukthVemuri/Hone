@@ -68,6 +68,7 @@ echo "The dashboard shows LOCAL time: convert to UTC first (EDT is UTC-4, add 4 
 ask READY "Type ready when the dashboard's latest recovery point is at or after $T_SEL (or abort): "
 case "$READY" in ready) ;; abort) die "aborted by the operator; S1 was not started" ;; *) die "type exactly ready or abort" ;; esac
 [ $(( $(date -u +%s) - T_SEL_S )) -le "$SELECT_MAX_AGE_S" ] || die "more than 30 minutes passed since the selection $T_SEL: stop and run this script again from the start. Do NOT start S1."
+[ $(( (we_s - $(date -u +%s)) / 60 )) -ge "$MIN_REMAIN_MIN" ] || die "fewer than $MIN_REMAIN_MIN minutes of the window remain: do not start S1"
 ask BASIS "Basis (latest_at_or_after or named_restore_point): "; case "$BASIS" in latest_at_or_after|named_restore_point) ;; *) die "basis must be latest_at_or_after or named_restore_point (an idle accept is a recorded manual decision, not an answer here)" ;; esac
 RP_NAME=""; RP_STATUS=""; RP_AT=""
 if [ "$BASIS" = named_restore_point ]; then

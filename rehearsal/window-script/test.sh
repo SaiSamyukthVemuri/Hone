@@ -37,6 +37,7 @@ DOC="$HERE/WINDOW-COMMAND-MACOS.md"
 grep -q "run this script again\|it selects a new time" "$DOC" && bad "the doc still tells Sam to run row 4 again to get a new time" || ok "the doc no longer offers 'run again (it selects a new time)' as a remedy for a quiet database (F1)"
 grep -q "Sync the Mac clock" "$DOC" && grep -q "Set time and date automatically" "$DOC" && ok "the doc says to sync the Mac clock (F5)" || bad "no clock-sync line (F5)"
 grep -q "Pre-window read-only look" "$DOC" && grep -q "a decision for Sam" "$DOC" && grep -q "base backup not after the reading" "$DOC" && ok "the doc has the pre-window visibility check and the fallback as Sam's decision (F2)" || bad "F2 doc missing"
+grep -q "Refresh the dashboard page before you read it" "$DOC" && grep -q "checks again the moment you type" "$DOC" && ok "the doc says to refresh the dashboard page (N2) and that the 90-minute check repeats at ready (N1)" || bad "N1/N2 doc missing"
 grep -q "only after .window-s0a.sh. printed .OVERALL PASS" "$DOC" && grep -q "start S1 within 10 minutes" "$DOC" && grep -q "fewer than 90 minutes of the window remain" "$DOC" && ok "the doc says run row 4 only after S0a PASS, start S1 within 10 minutes, and N = 90 (F4)" || bad "F4 doc missing"
 grep -q "P_READ=\$(utcnow)" "$REAL" && grep -q "P_READ=\$(utcnow)" "$ROW4" && ! grep -q '^ask P_READ' "$REAL" "$ROW4" && ok "read_at_utc is stamped by date -u at the last prompt in both scripts, not typed (F3)" || bad "F3 not applied"
 for f in "$REAL" "$ROW4"; do grep -E '^(text_ok|utc_ok)\(\)' "$f" | grep -vq 'LC_ALL=C' && bad "a validator lacks LC_ALL=C in $f" || ok "text_ok and utc_ok run grep under LC_ALL=C ($(basename "$f"))"; done
@@ -203,6 +204,10 @@ mkfix4 r4junk; ( export READY=yes; answers4 "$F/answers.txt" "$WS" "$WE" latest_
 refuse "row 4: anything but ready or abort at the gate stops" "type exactly ready or abort"
 mkfix4 r4late; answers4 "$F/answers.txt" "$WS" "$WE" latest_at_or_after "+0" 4; sed -i.bak 's/^SELECT_MAX_AGE_S=.*/SELECT_MAX_AGE_S=2/' "$F/window-row4.test.sh"; runit4
 refuse "row 4: ready typed after the selection aged out is refused, run again from the start" "stop and run this script again from the start"
+mkfix4 r4after; answers4 "$F/answers.txt" "$WS" "$(python3 -c 'import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(seconds=5420)).strftime("%Y-%m-%dT%H:%M:%SZ"))')" latest_at_or_after "+0" 25; runit4
+refuse "row 4: 90 minutes remained at select but fewer after the wait -> refused at ready, do not start S1" "fewer than 90 minutes of the window remain: do not start S1"
+has "$OUT" "Selected pre-migration restore point" && ok "  ... the point had been selected (the first check passed), the second check refused" || bad "  ... first check did not pass"
+has "$OUT" "Row 4 was refused" && bad "  ... the comparator ran" || ok "  ... the comparator was not reached"
 mkfix4 r4short; answers4 "$F/answers.txt" "$(nowplus -10)" "$(nowplus 30)" latest_at_or_after "+0"; runit4
 refuse "row 4: fewer than 90 minutes of the window remaining is refused before select" "fewer than 90 minutes of the window remain"
 has "$OUT" "Selected pre-migration restore point" && bad "  ... a point was selected anyway" || ok "  ... nothing was selected"
