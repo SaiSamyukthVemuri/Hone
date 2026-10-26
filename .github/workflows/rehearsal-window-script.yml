@@ -29,7 +29,17 @@ jobs:
           node --version
           python3 --version
           date -u
-          shasum -a 256 rehearsal/window-script/window-s0a.sh
+          shasum -a 256 rehearsal/window-script/window-s0a.sh rehearsal/window-script/window-row4.sh
+      - name: Comparator tests (126 original + PITR), candidate 3 proof, mutation proof
+        working-directory: rehearsal/window-script/window-reads
+        run: |
+          node --test compare-preflight.test.mjs 2>&1 | tail -n 9
+          node --test baseline-candidate3-proof.test.mjs 2>&1 | tail -n 9
+          node --test pitr-mutation-proof.test.mjs 2>&1 | tail -n 9
+          node --test compare-preflight.test.mjs baseline-candidate3-proof.test.mjs pitr-mutation-proof.test.mjs > "$RUNNER_TEMP/node-tests.txt" 2>&1
+          rc=$?
+          grep -E '^(✖|ℹ (tests|pass|fail|skipped))' "$RUNNER_TEMP/node-tests.txt" | head -40
+          exit $rc
       - name: Script and tests under /bin/bash (3.2)
         run: /bin/bash rehearsal/window-script/test.sh
       - name: The same tests launched from zsh (how the operator's shell starts it)

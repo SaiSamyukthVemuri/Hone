@@ -107,6 +107,125 @@ export function readRows(text) {
   return { rows };
 }
 
+// ---------------------------------------------------------------------------
+// G4 under PITR. baseline.recovery_regime is "daily" (the default when absent: the
+// original S0-10, unchanged) or "pitr". Under "pitr" the daily g4 fields are REJECTED
+// (a recovery point can never be written into backup_id / status / backup_completed_at_utc)
+// and a separate g4_pitr attestation is required. Every field must be present with its own
+// type; none has a default and none is inferred from another (the base backup is never
+// derived from the recovery range, the retention never from an add-on name).
+// The selected pre-migration restore point is recorded at row 4, AFTER S0a, so S0-10 at S0a
+// checks the PITR reading against the read time and REJECTS a pre_migration_restore_point;
+// evaluatePitrPoint (command: --stage row4) checks the point against a fresh reading.
+export const RECOVERY_REGIMES = ["daily", "pitr"];
+export const G4_PITR_THRESHOLDS = { min_retention_days: 1, earliest_margin_minutes: 0, max_latest_lag_minutes: 1, max_read_age_minutes: 1, max_pre_point_age_minutes: 1 };
+export const G4_PITR_KEYS = ["pitr_enabled", "retention_days", "earliest_recovery_at_utc", "latest_recovery_at_utc", "latest_base_backup_status", "latest_base_backup_completed_at_utc", "base_backup_source", "read_at_utc", "read_source"];
+export const PITR_POINT_KEYS = ["selected_at_utc", "basis", "restore_point_name", "restore_point_status", "restore_point_completed_at_utc"];
+const PITR_SOURCES = ["dashboard", "management_api"];
+const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+const isoMs = (v) => { if (typeof v !== "string" || !ISO_UTC.test(v)) return NaN; const t = Date.parse(v); return Number.isFinite(t) && new Date(t).toISOString().slice(0, 19) + "Z" === v ? t : NaN; }; // the round trip rejects 2026-02-30, which Date.parse rolls over to 2 March
+const plain = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const nonEmpty = (v) => typeof v === "string" && v.trim().length > 0;
+
+export function recoveryRegime(baseline) {
+  if (!baseline || typeof baseline !== "object") return "daily";
+  return baseline.recovery_regime === undefined ? "daily" : baseline.recovery_regime;
+}
+
+function pitrThresholds(baseline) {
+  const t = baseline && baseline.g4_pitr;
+  if (!plain(t)) return { error: "baseline.g4_pitr is missing (required under recovery_regime pitr)" };
+  for (const [k, min] of Object.entries(G4_PITR_THRESHOLDS)) {
+    if (typeof t[k] !== "number" || !Number.isInteger(t[k]) || t[k] < min) return { error: `baseline.g4_pitr.${k} must be an integer >= ${min}` };
+  }
+  return { th: t };
+}
+
+// g: the g4_pitr attestation. anchorMs: the instant the recovery window must reach back past
+// (the read time at S0a; the selected restore point at row 4). selectedMs: only at row 4.
+function pitrReading(g, { th, now, anchorMs = null, selectedMs = null }) {
+  if (!plain(g)) return fail("g4_pitr is missing or not an object");
+  for (const k of Object.keys(g)) if (!G4_PITR_KEYS.includes(k)) return fail(`g4_pitr.${k} is not an allowed field (a recovery point is never a daily g4 field)`);
+  for (const k of G4_PITR_KEYS) if (g[k] === undefined || g[k] === null || g[k] === "") return fail(`g4_pitr.${k} is missing`);
+  if (g.pitr_enabled !== true) return fail("g4_pitr.pitr_enabled must be the boolean true");
+  if (typeof g.retention_days !== "number" || !Number.isInteger(g.retention_days)) return fail("g4_pitr.retention_days must be an integer");
+  if (g.retention_days < th.min_retention_days) return fail(`g4_pitr.retention_days ${g.retention_days} is below the minimum ${th.min_retention_days}`);
+  const t = {};
+  for (const k of ["earliest_recovery_at_utc", "latest_recovery_at_utc", "latest_base_backup_completed_at_utc", "read_at_utc"]) {
+    t[k] = isoMs(g[k]);
+    if (!Number.isFinite(t[k])) return fail(`g4_pitr.${k} is not a UTC time (YYYY-MM-DDTHH:MM:SSZ)`);
+  }
+  if (g.latest_base_backup_status !== "COMPLETED") return fail("g4_pitr.latest_base_backup_status must be COMPLETED");
+  for (const k of ["base_backup_source", "read_source"]) if (!PITR_SOURCES.includes(g[k])) return fail(`g4_pitr.${k} must be dashboard or management_api`);
+  if (t.read_at_utc > now) return fail("g4_pitr.read_at_utc is in the future");
+  if (now - t.read_at_utc > th.max_read_age_minutes * 60e3) return fail(`g4_pitr.read_at_utc is older than ${th.max_read_age_minutes} min: the recovery range moves, read it again`);
+  if (t.latest_recovery_at_utc < t.earliest_recovery_at_utc) return fail("g4_pitr.latest_recovery_at_utc is before earliest_recovery_at_utc");
+  if (t.latest_recovery_at_utc > t.read_at_utc) return fail("g4_pitr.latest_recovery_at_utc is after read_at_utc");
+  if (t.read_at_utc - t.latest_recovery_at_utc > th.max_latest_lag_minutes * 60e3) return fail(`g4_pitr.latest_recovery_at_utc lags the reading by more than ${th.max_latest_lag_minutes} min`);
+  if (t.latest_base_backup_completed_at_utc > t.read_at_utc) return fail("g4_pitr.latest_base_backup_completed_at_utc is after read_at_utc");
+  if (t.latest_base_backup_completed_at_utc > t.latest_recovery_at_utc) return fail("g4_pitr.latest_base_backup_completed_at_utc is after latest_recovery_at_utc");
+  const anchor = anchorMs === null ? t.read_at_utc : anchorMs;
+  if (t.earliest_recovery_at_utc > anchor - th.earliest_margin_minutes * 60e3) return fail(`g4_pitr.earliest_recovery_at_utc does not reach back ${th.earliest_margin_minutes} min before ${anchorMs === null ? "the reading" : "the selected restore point"}`);
+  if (selectedMs !== null) {
+    if (t.read_at_utc < selectedMs) return fail("g4_pitr.read_at_utc is earlier than the selected restore point (read the range AFTER selecting it)");
+    if (t.latest_recovery_at_utc < selectedMs) return fail("g4_pitr.latest_recovery_at_utc is before the selected restore point (no recovery point covers it yet)");
+  }
+  return pass(`PITR on, ${g.retention_days} d retention, base backup COMPLETED`);
+}
+
+function pitrPoint(p, { th, now, ws, we }) {
+  if (!plain(p)) return { r: fail("pre_migration_restore_point is missing or not an object") };
+  for (const k of Object.keys(p)) if (!PITR_POINT_KEYS.includes(k)) return { r: fail(`pre_migration_restore_point.${k} is not an allowed field`) };
+  for (const k of ["selected_at_utc", "basis"]) if (p[k] === undefined || p[k] === null || p[k] === "") return { r: fail(`pre_migration_restore_point.${k} is missing`) };
+  const sel = isoMs(p.selected_at_utc);
+  if (!Number.isFinite(sel)) return { r: fail("pre_migration_restore_point.selected_at_utc is not a UTC time (YYYY-MM-DDTHH:MM:SSZ)") };
+  if (sel > now) return { r: fail("pre_migration_restore_point.selected_at_utc is in the future") };
+  if (!Number.isFinite(ws) || !Number.isFinite(we) || sel < ws || sel > we) return { r: fail("pre_migration_restore_point.selected_at_utc is outside the window") };
+  if (now - sel > th.max_pre_point_age_minutes * 60e3) return { r: fail(`pre_migration_restore_point.selected_at_utc is older than ${th.max_pre_point_age_minutes} min: select it again just before S1`) };
+  if (!["latest_at_or_after", "named_restore_point"].includes(p.basis)) return { r: fail("pre_migration_restore_point.basis must be latest_at_or_after or named_restore_point (an idle accept is a recorded manual decision outside this comparator)") };
+  const named = ["restore_point_name", "restore_point_status", "restore_point_completed_at_utc"];
+  if (p.basis === "latest_at_or_after") {
+    for (const k of named) if (p[k] !== undefined) return { r: fail(`pre_migration_restore_point.${k} belongs to basis named_restore_point only`) };
+  } else {
+    for (const k of named) if (p[k] === undefined || p[k] === null || p[k] === "") return { r: fail(`pre_migration_restore_point.${k} is missing (required for basis named_restore_point)`) };
+    if (!nonEmpty(p.restore_point_name)) return { r: fail("pre_migration_restore_point.restore_point_name must be a non-empty string") };
+    if (p.restore_point_status !== "AVAILABLE") return { r: fail("pre_migration_restore_point.restore_point_status must be AVAILABLE") };
+    const c = isoMs(p.restore_point_completed_at_utc);
+    if (!Number.isFinite(c)) return { r: fail("pre_migration_restore_point.restore_point_completed_at_utc is not a UTC time (YYYY-MM-DDTHH:MM:SSZ)") };
+    if (c < sel) return { r: fail("pre_migration_restore_point.restore_point_completed_at_utc is before selected_at_utc") };
+    if (c > now) return { r: fail("pre_migration_restore_point.restore_point_completed_at_utc is in the future") };
+  }
+  return { r: pass(`selected ${p.selected_at_utc}, basis ${p.basis}`), sel };
+}
+
+// Row 4 (after the holds and the S0a reads, immediately before S1): the selected restore point against a fresh PITR reading.
+export function evaluatePitrPoint({ baseline, attest, window = {}, now = Date.now() }) {
+  const rows = [];
+  const add = (id, label, r) => rows.push({ id, label, source: "attest", required: true, status: r.status, detail: r.detail });
+  const regime = recoveryRegime(baseline);
+  add("R4-0", "recovery_regime is pitr and the thresholds are pinned", regime !== "pitr" ? fail(`baseline.recovery_regime is ${JSON.stringify(regime)}; the row-4 check applies only under pitr`) : (() => { const x = pitrThresholds(baseline); return x.error ? fail(x.error) : pass(); })());
+  const th = regime === "pitr" ? pitrThresholds(baseline).th : null;
+  const A = plain(attest) ? attest : null;
+  const keysOk = A && Object.keys(A).every((k) => k === "g4_pitr" || k === "pre_migration_restore_point");
+  const ws = Date.parse(window.start), we = Date.parse(window.end);
+  let sel = NaN;
+  if (!th) {
+    add("R4-1", "selected pre-migration restore point recorded and inside the window", fail("not evaluated: R4-0 failed"));
+    add("R4-2", "fresh PITR reading covers the selected restore point", fail("not evaluated: R4-0 failed"));
+  } else if (!A || !keysOk) {
+    const why = !A ? "row-4 attestation missing or unreadable" : "the row-4 attestation holds only g4_pitr and pre_migration_restore_point";
+    add("R4-1", "selected pre-migration restore point recorded and inside the window", fail(why));
+    add("R4-2", "fresh PITR reading covers the selected restore point", fail(why));
+  } else {
+    const pp = pitrPoint(A.pre_migration_restore_point, { th, now, ws, we });
+    add("R4-1", "selected pre-migration restore point recorded and inside the window", pp.r);
+    sel = pp.sel === undefined ? NaN : pp.sel;
+    add("R4-2", "fresh PITR reading covers the selected restore point", Number.isFinite(sel) ? pitrReading(A.g4_pitr, { th, now, anchorMs: sel, selectedMs: sel }) : fail("needs a valid selected restore point (R4-1)"));
+  }
+  const overall = rows.every((r) => r.status === "PASS") ? "PASS" : "FAIL";
+  return { overall, rows };
+}
+
 // files: { name -> text | undefined }. baseline / attest: parsed objects or null.
 export function evaluate({ files, metas = {}, manifest = null, baseline, attest, window = {}, maxAgeMin = DEFAULT_MAX_AGE_MIN, dataOnly = false, now = Date.now(), manifestFileSha256 = null }) {
   const parsed = {};
@@ -337,12 +456,27 @@ export function evaluate({ files, metas = {}, manifest = null, baseline, attest,
     return diff.length ? fail(`checksum differs from the package at: ${diff.join(", ")}`) : pass("34/34 checksums equal the pinned list");
   });
   res["S0-10"] = att((a) => {
-    const g = a.g4, r = a.r6;
+    const regime = recoveryRegime(baseline);
+    if (!RECOVERY_REGIMES.includes(regime)) return fail(`baseline.recovery_regime ${JSON.stringify(regime)} is unknown (daily or pitr)`);
+    const r = a.r6;
+    const r6ok = r && ["S0b", "accept_rpo"].includes(r.choice) && named(r.answer_text) && named(r.reference);
+    if (regime === "pitr") {
+      if (a.g4 !== undefined) return fail("g4 (the daily backup fields) is rejected under recovery_regime pitr; use g4_pitr");
+      if (a.pre_migration_restore_point !== undefined) return fail("pre_migration_restore_point is recorded at row 4, after S0a; it is rejected here and checked by --stage row4");
+      const x = pitrThresholds(baseline);
+      if (x.error) return fail(x.error);
+      const pr = pitrReading(a.g4_pitr, { th: x.th, now });
+      if (pr.status !== "PASS") return pr;
+      if (!r6ok) return fail("r6 needs choice S0b|accept_rpo, answer_text and reference");
+      return pr;
+    }
+    if (a.g4_pitr !== undefined || a.pre_migration_restore_point !== undefined) return fail("g4_pitr / pre_migration_restore_point are rejected under recovery_regime daily");
+    const g = a.g4;
     if (!g || !named(g.backup_id) || g.status !== "COMPLETED" || !Number.isFinite(when(g.backup_completed_at_utc))) return fail("g4 needs backup_id, status COMPLETED and a valid backup_completed_at_utc");
     const maxH = baseline && baseline.g4_max_age_hours;
     if (!Number.isInteger(maxH) || maxH <= 0) return fail("baseline.g4_max_age_hours missing");
     if (now - when(g.backup_completed_at_utc) > maxH * 3600e3) return fail(`the backup is older than ${maxH} h`);
-    if (!r || !["S0b", "accept_rpo"].includes(r.choice) || !named(r.answer_text) || !named(r.reference)) return fail("r6 needs choice S0b|accept_rpo, answer_text and reference");
+    if (!r6ok) return fail("r6 needs choice S0b|accept_rpo, answer_text and reference");
     return pass();
   });
   res["S0-11"] = att((a) => a.disposition_0242 && ["bridge_ready", "R-3"].includes(a.disposition_0242.choice) && named(a.disposition_0242.reference) ? pass() : fail("disposition_0242 needs choice bridge_ready|R-3 and a reference"));

@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { FILES, DEFAULT_MAX_AGE_MIN, evaluate, evaluateS1, format } from "./compare-preflight-lib.mjs";
+import { FILES, DEFAULT_MAX_AGE_MIN, evaluate, evaluateS1, evaluatePitrPoint, format } from "./compare-preflight-lib.mjs";
 
 process.exitCode = 3;
 
@@ -20,7 +20,7 @@ const argv = process.argv.slice(2);
 const get = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
 const readJson = (p) => { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; } };
 const readText = (p) => { try { return readFileSync(p, "utf8"); } catch { return undefined; } };
-const usage = "usage: compare-preflight.mjs --results <dir> --baseline <file> --attest <file> --window-start <UTC> --window-end <UTC> [--max-age-min N] [--manifest <MANIFEST.sha256>] [--data-only]\n       compare-preflight.mjs --stage s1 --census <file> --g10 <file> --readback <file> --baseline <file>";
+const usage = "usage: compare-preflight.mjs --results <dir> --baseline <file> --attest <file> --window-start <UTC> --window-end <UTC> [--max-age-min N] [--manifest <MANIFEST.sha256>] [--data-only]\n       compare-preflight.mjs --stage row4 --baseline <file> --attest <row-4 file> --window-start <UTC> --window-end <UTC>\n       compare-preflight.mjs --stage s1 --census <file> --g10 <file> --readback <file> --baseline <file>";
 
 function manifestMap(p) {
   const t = readText(p);
@@ -38,7 +38,9 @@ function emit(o) {
 }
 
 try {
-  if (get("--stage") === "s1") {
+  if (get("--stage") === "row4") {
+    emit(evaluatePitrPoint({ baseline: get("--baseline") ? readJson(get("--baseline")) : null, attest: get("--attest") ? readJson(get("--attest")) : null, window: { start: get("--window-start"), end: get("--window-end") } }));
+  } else if (get("--stage") === "s1") {
     const base = get("--baseline") ? readJson(get("--baseline")) : null;
     emit(evaluateS1({ censusText: readText(get("--census") ?? ""), g10Text: readText(get("--g10") ?? ""), readback: get("--readback") ? readJson(get("--readback")) : null, expected: base && base.s1 }));
   } else {

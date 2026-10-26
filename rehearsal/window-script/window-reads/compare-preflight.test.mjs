@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, symlinkSync, readF
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { FILES, G2, W3_TABLES, S1_TABLES, CHECKSUM_VERSIONS, SUPERSEDED_0214_SHA, PINNED_0214_SHA, BLACKOUT_UTC, evaluate, evaluateS1, readRows, NEW_0214_FUNCTIONS, format } from "./compare-preflight-lib.mjs";
+import { FILES, G2, W3_TABLES, S1_TABLES, CHECKSUM_VERSIONS, SUPERSEDED_0214_SHA, PINNED_0214_SHA, BLACKOUT_UTC, evaluate, evaluateS1, readRows, NEW_0214_FUNCTIONS, format, evaluatePitrPoint, G4_PITR_KEYS, PITR_POINT_KEYS, recoveryRegime } from "./compare-preflight-lib.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const sha = (t) => createHash("sha256").update(t).digest("hex");
@@ -469,4 +469,224 @@ test("D2: 0214 is pinned in the code: the baseline or the attestation naming any
     assert.equal(status(o, "S0-9").status, "FAIL", status(o, "S0-9").detail);
   }
   assert.equal(status(run((f) => f), "S0-9").status, "PASS");
+});
+
+
+// ---- G4 under PITR: recovery_regime, g4_pitr (S0a) and the row-4 selected restore point ----------------------------
+const PITR_TH = { min_retention_days: 7, earliest_margin_minutes: 5, max_latest_lag_minutes: 30, max_read_age_minutes: 60, max_pre_point_age_minutes: 30 };
+const pitrBaseline = (mut = (b) => b) => mut({ ...baseline(), recovery_regime: "pitr", g4_pitr: { ...PITR_TH } });
+const pitrAttest = (mut = (a) => a) => { const a = attest(); delete a.g4; a.g4_pitr = { pitr_enabled: true, retention_days: 7, earliest_recovery_at_utc: at("01:35"), latest_recovery_at_utc: at("23:35"), latest_base_backup_status: "COMPLETED", latest_base_backup_completed_at_utc: at("23:30"), base_backup_source: "management_api", read_at_utc: at("23:38"), read_source: "dashboard" }; return mut(a) ?? a; };
+const s0 = (a, b = pitrBaseline(), o = {}) => status(run((f) => f, { baseline: b, attest: a, ...o }), "S0-10");
+const failsWith = (st, frag) => { assert.equal(st.status, "FAIL", `expected FAIL, got ${st.status}: ${st.detail}`); assert.ok(st.detail.includes(frag), `detail ${JSON.stringify(st.detail)} lacks ${JSON.stringify(frag)}`); };
+
+test("PITR: recoveryRegime defaults to daily when the field is absent and the existing daily path is unchanged", () => {
+  assert.equal(recoveryRegime(baseline()), "daily"); assert.equal(recoveryRegime(null), "daily"); assert.equal(recoveryRegime({ recovery_regime: "pitr" }), "pitr");
+  const o = run(); assert.equal(o.overall, "PASS"); assert.equal(status(o, "S0-10").status, "PASS");
+  assert.equal(status(run((f) => f, { baseline: { ...baseline(), recovery_regime: "daily" } }), "S0-10").status, "PASS");
+});
+test("PITR: regime pitr with a valid g4_pitr passes S0-10 and the whole run", () => {
+  const o = run((f) => f, { baseline: pitrBaseline(), attest: pitrAttest() });
+  assert.equal(status(o, "S0-10").status, "PASS", status(o, "S0-10").detail); assert.equal(o.overall, "PASS", JSON.stringify(o.rows.filter((r) => r.status !== "PASS")));
+});
+test("PITR: the mislabel control — a daily g4 under regime pitr FAILS, however valid", () => failsWith(s0(attest()), "g4 (the daily backup fields) is rejected"));
+test("PITR: g4_pitr under regime daily FAILS", () => failsWith(s0(pitrAttest((a) => ({ ...a, g4: attest().g4 })), baseline()), "rejected under recovery_regime daily"));
+test("PITR: g4_pitr alone under regime daily FAILS (no g4)", () => { const a = attest(); a.g4_pitr = pitrAttest().g4_pitr; failsWith(s0(a, baseline()), "rejected under recovery_regime daily"); });
+test("PITR: both g4 and g4_pitr FAIL in either regime", () => {
+  const both = pitrAttest((a) => ({ ...a, g4: attest().g4 }));
+  assert.equal(s0(both, pitrBaseline()).status, "FAIL"); assert.equal(s0(both, baseline()).status, "FAIL");
+});
+test("PITR: neither g4 nor g4_pitr FAILS under pitr", () => failsWith(s0(pitrAttest((a) => { delete a.g4_pitr; return a; })), "g4_pitr is missing"));
+test("PITR: an unknown recovery_regime FAILS (and so do null and a wrong case)", () => { for (const r of ["weekly", null, "PITR", "", 1]) failsWith(s0(pitrAttest(), { ...pitrBaseline(), recovery_regime: r }), "unknown"); });
+test("PITR: pre_migration_restore_point is rejected at S0a under either regime (row 4 records it)", () => {
+  const pt = { selected_at_utc: at("23:30"), basis: "latest_at_or_after" };
+  failsWith(s0(pitrAttest((a) => ({ ...a, pre_migration_restore_point: pt }))), "recorded at row 4");
+  failsWith(s0({ ...attest(), pre_migration_restore_point: pt }, baseline()), "rejected under recovery_regime daily");
+});
+test("PITR: r6 is unchanged under pitr (bad choice, empty text, absent all FAIL; the checks around it are untouched)", () => {
+  for (const m of [(a) => { a.r6.choice = "later"; }, (a) => { a.r6.answer_text = ""; }, (a) => { delete a.r6; }]) failsWith(s0(pitrAttest((a) => { m(a); return a; })), "r6 needs");
+});
+test("PITR: the thresholds are required under pitr and must be integers (each missing, string, float, below minimum FAILS)", () => {
+  failsWith(s0(pitrAttest(), { ...baseline(), recovery_regime: "pitr" }), "baseline.g4_pitr is missing");
+  for (const [k, min] of Object.entries({ min_retention_days: 1, earliest_margin_minutes: 0, max_latest_lag_minutes: 1, max_read_age_minutes: 1, max_pre_point_age_minutes: 1 })) {
+    for (const v of [undefined, null, String(PITR_TH[k]), PITR_TH[k] + 0.5, min - 1]) {
+      const b = pitrBaseline(); if (v === undefined) delete b.g4_pitr[k]; else b.g4_pitr[k] = v;
+      failsWith(s0(pitrAttest(), b), `baseline.g4_pitr.${k}`);
+    }
+  }
+});
+const pitrField = (k, mut) => [k, mut];
+const pitrBad = {
+  "pitr_enabled string 'true'": ["pitr_enabled", (g) => { g.pitr_enabled = "true"; }, "pitr_enabled must be the boolean true"],
+  "pitr_enabled false": ["pitr_enabled", (g) => { g.pitr_enabled = false; }, "pitr_enabled must be the boolean true"],
+  "retention 6": ["retention_days", (g) => { g.retention_days = 6; }, "below the minimum 7"],
+  "retention '7' string": ["retention_days", (g) => { g.retention_days = "7"; }, "retention_days must be an integer"],
+  "retention 7.5": ["retention_days", (g) => { g.retention_days = 7.5; }, "retention_days must be an integer"],
+  "earliest too late (inside the 5 min margin of the reading)": ["earliest_recovery_at_utc", (g) => { g.earliest_recovery_at_utc = "2026-10-26T23:34:00Z"; }, "does not reach back"],
+  "latest before earliest": ["latest_recovery_at_utc", (g) => { g.latest_recovery_at_utc = "2026-10-26T01:00:00Z"; }, "before earliest_recovery_at_utc"],
+  "latest in the future": ["latest_recovery_at_utc", (g) => { g.latest_recovery_at_utc = "2026-10-26T23:50:00Z"; }, "after read_at_utc"],
+  "latest after the reading": ["latest_recovery_at_utc", (g) => { g.latest_recovery_at_utc = "2026-10-26T23:39:00Z"; }, "after read_at_utc"],
+  "latest lagging the reading by 31 min": ["latest_recovery_at_utc", (g) => { g.latest_recovery_at_utc = "2026-10-26T23:07:00Z"; g.latest_base_backup_completed_at_utc = at("23:00"); }, "lags the reading"],
+  "base backup FAILED": ["latest_base_backup_status", (g) => { g.latest_base_backup_status = "FAILED"; }, "must be COMPLETED"],
+  "base backup PENDING": ["latest_base_backup_status", (g) => { g.latest_base_backup_status = "PENDING"; }, "must be COMPLETED"],
+  "base backup completed after the reading": ["latest_base_backup_completed_at_utc", (g) => { g.latest_base_backup_completed_at_utc = "2026-10-26T23:39:00Z"; }, "after read_at_utc"],
+  "base backup completed after the latest recovery point": ["latest_base_backup_completed_at_utc", (g) => { g.latest_base_backup_completed_at_utc = "2026-10-26T23:36:00Z"; }, "after latest_recovery_at_utc"],
+  "base_backup_source unknown": ["base_backup_source", (g) => { g.base_backup_source = "inferred"; }, "base_backup_source must be"],
+  "read_source unknown": ["read_source", (g) => { g.read_source = "memory"; }, "read_source must be"],
+  "read 61 min old": ["read_at_utc", (g) => { g.read_at_utc = "2026-10-26T22:39:00Z"; g.latest_recovery_at_utc = at("22:35"); g.latest_base_backup_completed_at_utc = at("22:30"); }, "older than 60 min"],
+  "read in the future": ["read_at_utc", (g) => { g.read_at_utc = "2026-10-26T23:41:00Z"; }, "in the future"],
+  "an extra field (backup_id) inside g4_pitr": ["backup_id", (g) => { g.backup_id = "x"; }, "backup_id is not an allowed field"],
+  "an extra field (status) inside g4_pitr": ["status", (g) => { g.status = "COMPLETED"; }, "status is not an allowed field"],
+};
+for (const [name, [, m, frag]] of Object.entries(pitrBad)) test(`PITR FAIL: ${name}`, () => failsWith(s0(pitrAttest((a) => { m(a.g4_pitr); return a; })), frag));
+test("PITR boundaries: read 59 min old PASSES; latest exactly at the 30 min lag PASSES; earliest exactly at the margin PASSES", () => {
+  assert.equal(s0(pitrAttest((a) => { Object.assign(a.g4_pitr, { read_at_utc: "2026-10-26T22:41:00Z", latest_recovery_at_utc: at("22:41"), latest_base_backup_completed_at_utc: at("22:30") }); return a; })).status, "PASS");
+  assert.equal(s0(pitrAttest((a) => { Object.assign(a.g4_pitr, { latest_recovery_at_utc: at("23:08"), latest_base_backup_completed_at_utc: at("23:00") }); return a; })).status, "PASS");
+  assert.equal(s0(pitrAttest((a) => { a.g4_pitr.earliest_recovery_at_utc = "2026-10-26T23:33:00Z"; return a; })).status, "PASS");
+});
+test("PITR: base backup absent while the recovery range is valid FAILS (never inferred from the range)", () => {
+  for (const ks of [["latest_base_backup_status", "latest_base_backup_completed_at_utc", "base_backup_source"], ["latest_base_backup_status"], ["latest_base_backup_completed_at_utc"]]) failsWith(s0(pitrAttest((a) => { for (const k of ks) delete a.g4_pitr[k]; return a; })), "is missing");
+});
+test("PITR: an empty g4_pitr object FAILS", () => failsWith(s0(pitrAttest((a) => { a.g4_pitr = {}; return a; })), "is missing"));
+for (const bad of [null, [], "x", 1, true]) test(`PITR: g4_pitr that is ${JSON.stringify(bad)} FAILS`, () => failsWith(s0(pitrAttest((a) => { a.g4_pitr = bad; return a; })), "g4_pitr is missing"));
+// the missing-field table: every required field, deleted / null / '' / wrong type
+for (const k of G4_PITR_KEYS) {
+  for (const [how, put] of [["deleted", (g) => { delete g[k]; }], ["null", (g) => { g[k] = null; }], ["empty string", (g) => { g[k] = ""; }], ["wrong type (object)", (g) => { g[k] = {}; }], ["wrong type (array)", (g) => { g[k] = [1]; }]]) {
+    test(`PITR missing-field table: g4_pitr.${k} ${how} FAILS naming the field`, () => { const st = s0(pitrAttest((a) => { put(a.g4_pitr); return a; })); assert.equal(st.status, "FAIL"); assert.ok(st.detail.includes(k), st.detail); });
+  }
+}
+for (const k of ["earliest_recovery_at_utc", "latest_recovery_at_utc", "latest_base_backup_completed_at_utc", "read_at_utc"]) {
+  for (const v of ["yesterday", "2026-10-26 23:35:00", "2026-10-26T23:35:00+00:00", "2026-10-26T23:35:00", "2026-10-26T23:35Z", "2026-02-30T00:00:00Z", 1789000000]) test(`PITR time format: g4_pitr.${k} = ${JSON.stringify(v)} FAILS`, () => failsWith(s0(pitrAttest((a) => { a.g4_pitr[k] = v; return a; })), `g4_pitr.${k} is not a UTC time`));
+}
+test("PITR: --data-only still reports the attestation checks NOT-EVALUATED under pitr", () => {
+  const o = run((f) => f, { baseline: pitrBaseline(), attest: pitrAttest(), dataOnly: true });
+  assert.equal(status(o, "S0-10").status, "NOT-EVALUATED"); assert.equal(o.overall, "DATA-ONLY");
+});
+test("PITR: a bad g4_pitr fails only S0-10 among the attested checks and the overall", () => {
+  const o = run((f) => f, { baseline: pitrBaseline(), attest: pitrAttest((a) => { a.g4_pitr.pitr_enabled = false; return a; }) });
+  assert.equal(o.overall, "FAIL"); for (const id of ["S0-1", "S0-8", "S0-9", "S0-11", "S0-12"]) assert.equal(status(o, id).status, "PASS", id);
+});
+
+// row 4: the selected pre-migration restore point (command: --stage row4)
+const SEL = at("23:30");
+const r4Attest = (mut = (a) => a) => { const a = pitrAttest(); const x = { g4_pitr: a.g4_pitr, pre_migration_restore_point: { selected_at_utc: SEL, basis: "latest_at_or_after" } }; return mut(x) ?? x; };
+const r4 = (a, b = pitrBaseline(), o = {}) => evaluatePitrPoint({ baseline: b, attest: a, window: { start: WS, end: WE }, now: NOW, ...o });
+const r4row = (o, id) => o.rows.find((r) => r.id === id);
+const r4fails = (o, id, frag) => { const r = r4row(o, id); assert.equal(o.overall, "FAIL"); assert.equal(r.status, "FAIL", `${id}: ${r.detail}`); assert.ok(r.detail.includes(frag), `${JSON.stringify(r.detail)} lacks ${JSON.stringify(frag)}`); };
+test("ROW4: the valid latest_at_or_after point passes all three rows and the overall", () => { const o = r4(r4Attest()); assert.equal(o.overall, "PASS", JSON.stringify(o.rows)); assert.deepEqual(o.rows.map((r) => r.id), ["R4-0", "R4-1", "R4-2"]); });
+test("ROW4: the valid named_restore_point passes", () => assert.equal(r4(r4Attest((a) => { Object.assign(a.pre_migration_restore_point, { basis: "named_restore_point", restore_point_name: "pre-s1-restore-point", restore_point_status: "AVAILABLE", restore_point_completed_at_utc: at("23:31") }); return a; })).overall, "PASS"));
+test("ROW4: latest one second BEFORE the selected point FAILS, equal PASSES, after PASSES", () => {
+  const g = (l) => r4Attest((a) => { a.g4_pitr.latest_recovery_at_utc = l; a.g4_pitr.latest_base_backup_completed_at_utc = "2026-10-26T23:20:00Z"; return a; });
+  r4fails(r4(g("2026-10-26T23:29:59Z")), "R4-2", "before the selected restore point");
+  assert.equal(r4(g("2026-10-26T23:30:00Z")).overall, "PASS"); assert.equal(r4(g("2026-10-26T23:30:01Z")).overall, "PASS");
+});
+test("ROW4: read_at earlier than the selected point FAILS (the range was read before it was selected)", () => r4fails(r4(r4Attest((a) => { a.g4_pitr.read_at_utc = "2026-10-26T23:29:00Z"; a.g4_pitr.latest_recovery_at_utc = at("23:29"); a.g4_pitr.latest_base_backup_completed_at_utc = at("23:20"); return a; })), "R4-2", "earlier than the selected restore point"));
+test("ROW4: earliest after selected minus margin FAILS; exactly at the margin PASSES", () => {
+  r4fails(r4(r4Attest((a) => { a.g4_pitr.earliest_recovery_at_utc = "2026-10-26T23:26:00Z"; return a; })), "R4-2", "reach back");
+  assert.equal(r4(r4Attest((a) => { a.g4_pitr.earliest_recovery_at_utc = "2026-10-26T23:25:00Z"; return a; })).overall, "PASS");
+});
+test("ROW4: the selected point in the future, before the window, after the window, or older than 30 min FAILS; 30 min PASSES", () => {
+  const sel = (t) => r4Attest((a) => { a.pre_migration_restore_point.selected_at_utc = t; return a; });
+  r4fails(r4(sel("2026-10-26T23:41:00Z")), "R4-1", "in the future");
+  r4fails(r4(sel("2026-10-26T22:59:00Z")), "R4-1", "outside the window");
+  r4fails(r4(sel("2026-10-26T23:09:00Z")), "R4-1", "older than 30 min");
+  r4fails(r4(sel("2026-10-26T23:30:00Z"), pitrBaseline(), { window: { start: WS, end: "2026-10-26T23:20:00Z" } }), "R4-1", "outside the window");
+});
+test("ROW4: the selected point exactly 30 min old PASSES", () => assert.equal(r4(r4Attest((a) => { a.pre_migration_restore_point.selected_at_utc = "2026-10-26T23:10:00Z"; a.g4_pitr.earliest_recovery_at_utc = at("01:35"); return a; })).overall, "PASS"));
+test("ROW4: a basis that is neither latest_at_or_after nor named_restore_point FAILS (idle accept, unknown, missing)", () => {
+  for (const b of ["idle_accept", "unknown", "", null, 1]) r4fails(r4(r4Attest((a) => { a.pre_migration_restore_point.basis = b; return a; })), "R4-1", b === "idle_accept" || b === "unknown" || typeof b === "number" ? "basis must be" : "basis is missing");
+});
+test("ROW4: named_restore_point needs a name, status AVAILABLE and a completed time at or after the selected point", () => {
+  const nm = (m) => r4Attest((a) => { Object.assign(a.pre_migration_restore_point, { basis: "named_restore_point", restore_point_name: "n", restore_point_status: "AVAILABLE", restore_point_completed_at_utc: at("23:31") }); m(a.pre_migration_restore_point); return a; });
+  assert.equal(r4(nm(() => {})).overall, "PASS");
+  r4fails(r4(nm((p) => { delete p.restore_point_name; })), "R4-1", "restore_point_name is missing");
+  r4fails(r4(nm((p) => { p.restore_point_name = "  "; })), "R4-1", "non-empty");
+  for (const st of ["PENDING", "FAILED", "REMOVED", "available", undefined]) r4fails(r4(nm((p) => { if (st === undefined) delete p.restore_point_status; else p.restore_point_status = st; })), "R4-1", "restore_point_status");
+  r4fails(r4(nm((p) => { p.restore_point_completed_at_utc = "2026-10-26T23:29:59Z"; })), "R4-1", "before selected_at_utc");
+  r4fails(r4(nm((p) => { delete p.restore_point_completed_at_utc; })), "R4-1", "restore_point_completed_at_utc is missing");
+  r4fails(r4(nm((p) => { p.restore_point_completed_at_utc = "2026-10-26T23:50:00Z"; })), "R4-1", "in the future");
+});
+test("ROW4: restore_point_* fields with basis latest_at_or_after FAIL (no silent extras)", () => r4fails(r4(r4Attest((a) => { a.pre_migration_restore_point.restore_point_name = "n"; return a; })), "R4-1", "belongs to basis named_restore_point only"));
+for (const k of ["selected_at_utc", "basis"]) for (const [how, put] of [["deleted", (p) => { delete p[k]; }], ["null", (p) => { p[k] = null; }], ["empty string", (p) => { p[k] = ""; }]]) test(`ROW4 missing-field table: pre_migration_restore_point.${k} ${how} FAILS naming the field`, () => r4fails(r4(r4Attest((a) => { put(a.pre_migration_restore_point); return a; })), "R4-1", `pre_migration_restore_point.${k}`));
+for (const v of ["soon", "2026-10-26 23:30:00", "2026-10-26T23:30:00+00:00", 1789000000]) test(`ROW4 time format: selected_at_utc = ${JSON.stringify(v)} FAILS`, () => r4fails(r4(r4Attest((a) => { a.pre_migration_restore_point.selected_at_utc = v; return a; })), "R4-1", "selected_at_utc is not a UTC time"));
+test("ROW4: an extra field in the point or at the top of the row-4 attestation FAILS", () => {
+  r4fails(r4(r4Attest((a) => { a.pre_migration_restore_point.note = "x"; return a; })), "R4-1", "note is not an allowed field");
+  const o = r4(r4Attest((a) => ({ ...a, g4: attest().g4 }))); assert.equal(o.overall, "FAIL"); assert.ok(r4row(o, "R4-1").detail.includes("holds only"));
+});
+test("ROW4: a missing or non-object row-4 attestation, a missing point or a missing reading FAILS", () => {
+  for (const a of [null, undefined, [], "x"]) assert.equal(r4(a).overall, "FAIL");
+  r4fails(r4(r4Attest((x) => { delete x.pre_migration_restore_point; return x; })), "R4-1", "pre_migration_restore_point is missing");
+  r4fails(r4(r4Attest((x) => { delete x.g4_pitr; return x; })), "R4-2", "g4_pitr is missing");
+});
+test("ROW4: every S0a reading rule also binds the row-4 reading (disabled/false/short retention/failed base backup/stale read)", () => {
+  for (const m of [(g) => { g.pitr_enabled = false; }, (g) => { g.retention_days = 6; }, (g) => { g.latest_base_backup_status = "FAILED"; }, (g) => { g.read_at_utc = "2026-10-26T22:39:00Z"; }, (g) => { g.backup_id = "x"; }]) assert.equal(r4(r4Attest((a) => { m(a.g4_pitr); return a; })).overall, "FAIL");
+});
+test("ROW4: the check applies only under regime pitr and needs the thresholds", () => {
+  r4fails(r4(r4Attest(), baseline()), "R4-0", "applies only under pitr");
+  r4fails(r4(r4Attest(), { ...baseline(), recovery_regime: "pitr" }), "R4-0", "baseline.g4_pitr is missing");
+  assert.equal(r4(r4Attest(), null).overall, "FAIL");
+});
+test("ROW4: through the command, OVERALL PASS exits 0; a point after the latest recovery point exits non-zero with OVERALL FAIL", () => {
+  const d = mkdtempSync(path.join(tmpdir(), "row4-"));
+  const wb = path.join(d, "b.json"), wa = path.join(d, "a.json");
+  writeFileSync(wb, JSON.stringify(pitrBaseline()));
+  const go = (att, win = { start: WS, end: WE }) => { writeFileSync(wa, JSON.stringify(att)); return spawnSync(process.execPath, [path.join(HERE, "compare-preflight.mjs"), "--stage", "row4", "--baseline", wb, "--attest", wa, "--window-start", win.start, "--window-end", win.end], { encoding: "utf8" }); };
+  // the command uses the real clock, so build times around the real now
+  const nowS = Math.floor(Date.now() / 1000) * 1000, iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const sel = nowS - 5 * 60e3;
+  const att = { g4_pitr: { ...pitrAttest().g4_pitr, earliest_recovery_at_utc: iso(nowS - 5 * 3600e3), latest_recovery_at_utc: iso(nowS - 60e3), latest_base_backup_completed_at_utc: iso(nowS - 3600e3), read_at_utc: iso(nowS - 30e3) }, pre_migration_restore_point: { selected_at_utc: iso(sel), basis: "latest_at_or_after" } };
+  const win = { start: iso(nowS - 3600e3), end: iso(nowS + 3600e3) };
+  const ok = go(att, win); assert.equal(ok.status, 0, ok.stdout + ok.stderr); assert.ok(ok.stdout.split("\n").includes("OVERALL PASS"));
+  att.pre_migration_restore_point.selected_at_utc = iso(nowS - 30e3); att.g4_pitr.latest_recovery_at_utc = iso(nowS - 60e3);
+  const bad = go(att, win); assert.notEqual(bad.status, 0); assert.ok(bad.stdout.includes("OVERALL FAIL")); assert.ok(!bad.stdout.split("\n").includes("OVERALL PASS"));
+});
+test("ROW4: an unparseable restore_point_completed_at_utc FAILS (NaN must not slip through the order comparisons)", () => {
+  for (const v of ["soon", "2026-10-26 23:31:00", "2026-02-30T00:00:00Z", 1789000000, "2026-10-26T23:31:00+00:00"]) r4fails(r4(r4Attest((a) => { Object.assign(a.pre_migration_restore_point, { basis: "named_restore_point", restore_point_name: "n", restore_point_status: "AVAILABLE", restore_point_completed_at_utc: v }); return a; })), "R4-1", "restore_point_completed_at_utc is not a UTC time");
+});
+test("ROW4: when R4-0 or the shape fails, all three rows are still reported and R4-1/R4-2 FAIL (a refusal cannot hide a row)", () => {
+  for (const o of [r4(r4Attest(), baseline()), r4(r4Attest(), { ...baseline(), recovery_regime: "pitr" }), r4(null), r4(r4Attest((a) => ({ ...a, extra: 1 })))]) {
+    assert.deepEqual(o.rows.map((r) => r.id), ["R4-0", "R4-1", "R4-2"]); assert.equal(o.overall, "FAIL");
+    assert.ok(o.rows.filter((r) => r.id !== "R4-0").every((r) => r.status === "FAIL"), JSON.stringify(o.rows));
+  }
+});
+
+// ---- Sam's verified dashboard reading (2026-10-26T01:54Z; OPS addendum 4) as one realistic fixture -----------------
+// retention 7 d; earliest 2026-10-19T07:38:28Z; latest 2026-10-26T01:39:31Z (a lag of 14 min 29 s on a quiet database).
+// The dashboard showed EDT (UTC-4); these are the UTC conversions. The BASE-BACKUP time is NOT part of that reading:
+// the value below is SYNTHETIC (an assumption that satisfies "not after the latest recovery point"), and the sources are assumptions.
+const SAM_NOW = Date.parse("2026-10-26T01:55:00Z"), SAM_WIN = { start: "2026-10-26T01:00:00Z", end: "2026-10-26T04:00:00Z" };
+const samG4 = () => ({ pitr_enabled: true, retention_days: 7, earliest_recovery_at_utc: "2026-10-19T07:38:28Z", latest_recovery_at_utc: "2026-10-26T01:39:31Z", latest_base_backup_status: "COMPLETED", latest_base_backup_completed_at_utc: "2026-10-26T00:30:00Z", base_backup_source: "dashboard", read_at_utc: "2026-10-26T01:54:00Z", read_source: "dashboard" });
+const samS0 = (mut = () => {}) => { const a = pitrAttest((x) => { x.g4_pitr = samG4(); mut(x.g4_pitr); return x; }); return status(run((f) => f, { baseline: pitrBaseline(), attest: a, now: SAM_NOW, window: SAM_WIN }), "S0-10"); };
+test("SAM'S READING: the real values PASS S0-10 under the 30 min lag tolerance (the 14.5 min lag is inside it)", () => { const st = samS0(); assert.equal(st.status, "PASS", st.detail); });
+test("SAM'S READING: the 14 min 29 s lag is refused by a 14 min tolerance and accepted by 15, so the evidence sets the value (30 is about twice it)", () => {
+  const b = pitrBaseline((x) => { x.g4_pitr.max_latest_lag_minutes = 14; return x; });
+  const a = pitrAttest((x) => { x.g4_pitr = samG4(); return x; });
+  assert.equal(status(run((f) => f, { baseline: b, attest: a, now: SAM_NOW, window: SAM_WIN }), "S0-10").status, "FAIL");
+  const b15 = pitrBaseline((x) => { x.g4_pitr.max_latest_lag_minutes = 15; return x; });
+  assert.equal(status(run((f) => f, { baseline: b15, attest: a, now: SAM_NOW, window: SAM_WIN }), "S0-10").status, "PASS");
+});
+test("SAM'S READING, negative controls: a time typed in EDT without converting FAILS (read 4 h old, or latest 4 h behind)", () => {
+  failsWith(samS0((g) => { g.read_at_utc = "2026-10-25T21:54:00Z"; }), "older than 60 min");
+  failsWith(samS0((g) => { g.latest_recovery_at_utc = "2026-10-25T21:39:31Z"; g.latest_base_backup_completed_at_utc = "2026-10-25T20:30:00Z"; }), "lags the reading");
+  failsWith(samS0((g) => { g.earliest_recovery_at_utc = "2026-10-19T03:38:28+04:00"; }), "not a UTC time");
+});
+test("SAM'S READING, negative controls: lag just inside 30 min PASSES, 30 min 1 s FAILS; retention 6 FAILS; base backup not COMPLETED FAILS", () => {
+  assert.equal(samS0((g) => { g.latest_recovery_at_utc = "2026-10-26T01:24:00Z"; g.latest_base_backup_completed_at_utc = "2026-10-26T00:30:00Z"; }).status, "PASS");
+  failsWith(samS0((g) => { g.latest_recovery_at_utc = "2026-10-26T01:23:59Z"; }), "lags the reading");
+  failsWith(samS0((g) => { g.retention_days = 6; }), "below the minimum");
+  failsWith(samS0((g) => { g.latest_base_backup_status = "PENDING"; }), "must be COMPLETED");
+});
+const samR4 = (sel, mut = () => {}, o = {}) => r4({ g4_pitr: (() => { const g = samG4(); mut(g); return g; })(), pre_migration_restore_point: { selected_at_utc: sel, basis: "latest_at_or_after" } }, pitrBaseline(), { now: SAM_NOW, window: SAM_WIN, ...o });
+test("SAM'S READING at row 4: a selected point at or before the latest recovery point PASSES (equal included)", () => {
+  assert.equal(samR4("2026-10-26T01:39:00Z").overall, "PASS"); assert.equal(samR4("2026-10-26T01:39:31Z").overall, "PASS");
+});
+test("SAM'S READING at row 4: a point selected NOW (01:54Z) is after the latest recovery point 01:39:31Z and FAILS: the quiet-database case the options exist for", () => {
+  r4fails(samR4("2026-10-26T01:53:00Z"), "R4-2", "before the selected restore point");
+  r4fails(samR4("2026-10-26T01:39:32Z"), "R4-2", "before the selected restore point");
+});
+test("SAM'S READING at row 4: the named-restore-point route passes only when the recovery point has caught up (latest at or after the selected point)", () => {
+  const named = (g) => { g.latest_recovery_at_utc = "2026-10-26T01:53:30Z"; };
+  const a = () => ({ g4_pitr: (() => { const g = samG4(); named(g); g.latest_base_backup_completed_at_utc = "2026-10-26T01:00:00Z"; return g; })(), pre_migration_restore_point: { selected_at_utc: "2026-10-26T01:53:00Z", basis: "named_restore_point", restore_point_name: "pre-s1", restore_point_status: "AVAILABLE", restore_point_completed_at_utc: "2026-10-26T01:53:10Z" } });
+  assert.equal(r4(a(), pitrBaseline(), { now: SAM_NOW, window: SAM_WIN }).overall, "PASS");
+  const stale = a(); stale.g4_pitr.latest_recovery_at_utc = "2026-10-26T01:39:31Z"; stale.g4_pitr.latest_base_backup_completed_at_utc = "2026-10-26T01:00:00Z";
+  r4fails(r4(stale, pitrBaseline(), { now: SAM_NOW, window: SAM_WIN }), "R4-2", "before the selected restore point");
 });
