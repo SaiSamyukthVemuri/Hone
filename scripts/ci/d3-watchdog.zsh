@@ -22,7 +22,7 @@
 
 d3_wdq() { ./supabase-cli/supabase-go --agent no db query --db-url "$WD_URL" -o json "$1" 2> "$WD_ERR" || { print -r -- "$(date +%T) query failed: $(tail -n 2 "$WD_ERR" | tr '\n' ' ')" >&2; return 1; }; }
 # first value of a JSON key, from one-line or pretty-printed JSON, with grep and sed only (a stock Mac has no jq)
-d3_wdget() { tr -d '\n' | grep -o "\"$1\": *\"\{0,1\}[^\",}]*" | head -n 1 | sed 's/^[^:]*: *"\{0,1\}//'; }
+d3_wdget() { tr -d '\n' | grep -o "\"$1\": *\"\{0,1\}[^\",}]*" | head -n 1 | sed -e 's/^[^:]*: *"\{0,1\}//' -e 's/[[:space:]]*$//'; }
 
 d3_watchdog() {
   local out armed pin bstart n act run cancelled lastq idle=0 fails=0 q me t0=$SECONDS
