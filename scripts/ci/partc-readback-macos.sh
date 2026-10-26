@@ -124,6 +124,7 @@ TX="$LOGS/tx-happy.log"; D=$(rdir "$H"); SLICE="$LOGS/pg-happy.log"; plog_since 
 say "-- happy path transcript"; sed 's/^/   | /' "$TX" | tee -a "$RES" > /dev/null; sed 's/^/   | /' "$TX" | head -n 40
 expect_ "happy path: exit 0, four 'ok' lines, the four values and the interpretation are printed" "$([ "$RC" = 0 ] && [ "$(grep -c '^ok c[1-4] ' "$TX")" = 4 ] && grep -q '^PART C READ-BACK' "$TX" && grep -q '^INTERPRETATION' "$TX" && echo 0 || echo 1)" "exit=$RC"
 expect_ "happy path: C1 (with options) read back 2min and C2 (without) read back 0 on a real server, and the table says the option IS honoured" "$(grep -q 'WITH options=-c statement_timeout=120000 : 2min' "$TX" && grep -q 'WITHOUT options *: 0$' "$TX" && grep -q 'the startup option IS honoured' "$TX" && echo 0 || echo 1)" "$(grep -E 'C1 |C2 ' "$TX" | tr '\n' ' ' | cut -c1-200)"
+expect_ "happy path: the footer says 'Results and sidecars' and no tombstone was written" "$(grep -q '^Results and sidecars: ' "$TX" && [ ! -e "$H/hone-s1/partc-script/FAILED-LOGIN" ] && echo 0 || echo 1)" "ok"
 expect_ "happy path: C3 shows all three settings with their source; C4 reports no role-level setting (real CLI shape, nested braces handled)" "$(grep -q 'statement_timeout  *: 0|' "$TX" && grep -q 'lock_timeout  *: 0|' "$TX" && grep -q 'idle_in_transaction_session_timeout  *: 0|' "$TX" && grep -q 'the postgres role has NO role-level setting' "$TX" && echo 0 || echo 1)" "$(grep -E '^        (statement|lock|idle)' "$TX" | tr '\n' ' ' | cut -c1-200)"
 expect_ "happy path: neither the password nor the project ref appears anywhere in the terminal transcript" "$(t no_secret "$TX")" "transcript lines=$(wc -l < "$TX" | tr -d ' ')"
 expect_ "happy path: server saw exactly 4 authorized connections (one per query) and zero failures" "$([ "$(grep -c 'connection authorized' "$SLICE")" = 4 ] && [ "$(grep -c 'authentication failed' "$SLICE")" = 0 ] && echo 0 || echo 1)" "authorized=$(grep -c 'connection authorized' "$SLICE") received=$(grep -c 'connection received' "$SLICE")"
@@ -157,6 +158,13 @@ expect_ "wrong password: exit 1, the STOP line says AUTHENTICATION FAILED and 'd
 expect_ "wrong password: neither password (right or wrong) nor the ref is in the transcript" "$(t no_secret "$TX")" "ok"
 D=$(rdir "$H")
 expect_ "wrong password: no result file and no sidecar was kept for the failed query (the results directory holds nothing)" "$([ -z "$(ls "$D" 2> /dev/null)" ] && echo 0 || echo 1)" "files=$(ls "$D" 2> /dev/null | wc -l | tr -d ' ')"
+
+TB="$H/hone-s1/partc-script/FAILED-LOGIN"
+expect_ "tombstone: the failed login wrote FAILED-LOGIN (UTC time + query id c1, no secret, no ref) before dying" "$([ -f "$TB" ] && grep -Eq '^failed login at [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z on query c1$' "$TB" && ! grep -q -e "$PW" -e "$BADPW" -e "$FREF" "$TB" && [ "$(stat -f %Lp "$(dirname "$TB")")" = 700 ] && echo 0 || echo 1)" "$(cat "$TB" 2> /dev/null)"
+M1=$(plog_mark); RC=$(runpty tomb2 "$H" "$OUT/copy-real.sh" "$PW"); SLICE="$LOGS/pg-tomb2.log"; plog_since "$M1" > "$SLICE"
+expect_ "tombstone: a second run (even with the RIGHT password) is refused at start with the exact message, exit 1, no prompt, ZERO connections, tombstone untouched" "$([ "$RC" = 1 ] && grep -q 'STOP: a previous run failed a login: report it to OPS; do not re-run; delete the file only after Sam decides.' "$LOGS/tx-tomb2.log" && ! grep -q 'Database password' "$LOGS/tx-tomb2.log" && [ "$(grep -c 'connection received' "$SLICE")" = 0 ] && [ "$(grep -c . "$TB")" = 1 ] && echo 0 || echo 1)" "exit=$RC received=$(grep -c 'connection received' "$SLICE")"
+rm -f "$TB"; RC=$(runpty tomb3 "$H" "$OUT/copy-real.sh" "$PW")
+expect_ "tombstone: after Sam deletes the file the script runs again (exit 0)" "$([ "$RC" = 0 ] && echo 0 || echo 1)" "exit=$RC"
 
 # ---- 8. ENV LEFTOVER: dies before the password prompt, names only, nothing hosted ----------------------------------------
 M0=$(plog_mark); ENVOK=0; ENVN=0
@@ -331,9 +339,12 @@ expect_ "C4 with unbalanced nested braces: rejected, dies at c4" "$([ "$RC" = 1 
 
 mkstub m9 "$(J1 0)" "$(J1 0)" "$C3_OK" "$C4_OK" c1 'FATAL: password authentication failed for user "x"'; RC=$(stubrun m9); TX="$LOGS/tx-stub-m9.log"
 expect_ "CLI exits 1 with an authentication error on the FIRST query: dies at once, one call only, the exact 'do not retry...' line" "$([ "$RC" = 1 ] && grep -q 'STOP: c1: AUTHENTICATION FAILED' "$TX" && grep -q 'do not retry; do not reset the password; do not unban' "$TX" && [ "$(ncalls m9)" = 1 ] && echo 0 || echo 1)" "exit=$RC calls=$(ncalls m9)"
-mkstub m10 "$(J1 0)" "$(J1 0)" "$C3_OK" "$C4_OK" c3 'FATAL: connection refused'; RC=$(stubrun m10); TX="$LOGS/tx-stub-m10.log"
+mkstub m10 "$(J1 0)" "$(J1 0)" "$C3_OK" "$C4_OK" c3 'FATAL: could not connect: host=h.example.supabase.com:5432 user=postgres.leakyref hostaddr=10.1.2.3 failed for user "postgres.leakyref"'; RC=$(stubrun m10); TX="$LOGS/tx-stub-m10.log"
+expect_ "mask: the echoed stderr tail shows user= / host= / hostaddr= and quoted user as <masked>; neither the ref, the host name nor the address is printed" "$(grep -q 'user=<masked>' "$TX" && grep -q 'host=<masked>' "$TX" && ! grep -q -e leakyref -e h.example -e 10.1.2.3 "$TX" && echo 0 || echo 1)" "$(grep -m1 'masked' "$TX" | cut -c1-140)"
+expect_ "tombstone: a NON-auth failure on a later query (c3) writes no tombstone" "$([ ! -e "$OUT/h-stub-m10/hone-s1/partc-script/FAILED-LOGIN" ] && echo 0 || echo 1)" "ok"
 expect_ "CLI exits 1 on a LATER query (c3, not an auth error): dies, three calls only, still the 'do not retry' line, no PART C output" "$([ "$RC" = 1 ] && grep -q 'STOP: c3: the CLI exited 1' "$TX" && grep -q 'do not retry; do not reset the password; do not unban' "$TX" && [ "$(ncalls m10)" = 3 ] && ! grep -q 'PART C READ-BACK' "$TX" && echo 0 || echo 1)" "exit=$RC calls=$(ncalls m10)"
 mkstub m11 "$(J1 0)" "$(J1 0)" "$C3_OK" "$C4_OK" c1 'Initialising login role...'; RC=$(stubrun m11); TX="$LOGS/tx-stub-m11.log"
+expect_ "tombstone: an auth failure on the first CLI query (stub) writes the tombstone with query id c1" "$(grep -q 'on query c1$' "$OUT/h-stub-m9/hone-s1/partc-script/FAILED-LOGIN" && echo 0 || echo 1)" "$(cat "$OUT/h-stub-m9/hone-s1/partc-script/FAILED-LOGIN" 2> /dev/null)"
 expect_ "CLI reports a login-role path (stderr): the script stops and says a hosted write may have happened; exit 1; one call" "$([ "$RC" = 1 ] && grep -q 'a hosted write may have happened' "$TX" && [ "$(ncalls m11)" = 1 ] && echo 0 || echo 1)" "exit=$RC"
 # a successful stub run must have made exactly four calls in the documented order and shapes
 CALLS="$OUT/stub-zero/calls"

@@ -13,6 +13,7 @@ umask 077
 
 ROOT="$HOME/hone-s1"
 BIN="$ROOT/supabase-cli/supabase-go"
+TOMB="$ROOT/partc-script/FAILED-LOGIN"
 GO_SHA=dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b  # REHEARSAL-SUBST
 REF=alhhybgqdmcdyzpybykj                                              # REHEARSAL-SUBST
 HOSTPORT=aws-1-us-east-1.pooler.supabase.com:5432                     # REHEARSAL-SUBST
@@ -38,6 +39,11 @@ utcnow() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 iso='[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'
 NOLOGIN="STOP HERE: do not retry; do not reset the password; do not unban. Close this Terminal and report the STOP line above."
 
+# A previous failed login leaves a tombstone. Refuse to start: repeated failed logins can get this Mac's IP banned.
+if [ -e "$TOMB" ] || [ -L "$TOMB" ]; then
+  echo "STOP: a previous run failed a login: report it to OPS; do not re-run; delete the file only after Sam decides." >&2
+  exit 1
+fi
 # --- Part 0: this Mac, the pinned CLI, a clean environment (NAMES only, never values), fresh private directories
 [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || die "not macOS arm64"
 command -v shasum >/dev/null 2>&1 || die "shasum not found"
@@ -90,6 +96,12 @@ JSON_SHAPE_AWK='
 END { print "ROWS " (rows + 0); print "END " depth " " (ins + 0) " " (neg + 0) }'
 json_shape() { printf '%s' "$1" | awk "$JSON_SHAPE_AWK"; }
 
+# tombstone <id>: record (UTC time + query id, nothing secret) that a login failed, BEFORE dying.
+tombstone() {
+  mkdir -p "$ROOT/partc-script" 2>/dev/null && chmod 700 "$ROOT/partc-script" 2>/dev/null
+  printf 'failed login at %s on query %s\n' "$(utcnow)" "$1" > "$TOMB" 2>/dev/null || echo "WARNING: could not write $TOMB; do not re-run anyway." >&2
+}
+
 # run_q <id> <query> <url> <expected-rows> <required-keys, sorted, comma-separated>
 #   Runs ONE query through the pinned CLI and validates and records its output. Never retried. The first
 #   call in this file is the only login attempt until it has succeeded; every failure ends the script.
@@ -108,10 +120,13 @@ run_q() {
   fi
   if [ "$rc" != 0 ]; then
     # Authentication failures look like: password authentication failed / SQLSTATE 28P01 / 28000 / too many authentication errors.
+    if grep -qiE 'authenticat|28P01|28000|password|banned|circuit' "$err" || [ "$id" = c1 ]; then
+      tombstone "$id"
+    fi
     if grep -qiE 'authenticat|28P01|28000|password|banned|circuit' "$err"; then
       die "$id: AUTHENTICATION FAILED (exit $rc). This was the one attempt. $NOLOGIN"
     fi
-    tail -n 3 "$err" | sed -E 's/postgres(ql)?:\/\/[^ ]*/<url>/g' >&2
+    tail -n 3 "$err" | sed -E -e 's/postgres(ql)?:\/\/[^ ]*/<url>/g' -e 's/([Uu]ser|[Hh]ost|[Hh]ostaddr|[Dd]bname)=[^ ,)]*/\1=<masked>/g' -e 's/([Uu]ser|[Rr]ole) "[^"]*"/\1 <masked>/g' -e 's/[A-Za-z0-9.-]*\.supabase\.com[:0-9]*/<host>/g' >&2
     die "$id: the CLI exited $rc. Nothing after it was run. $NOLOGIN"
   fi
   [ -s "$out" ] || die "$id: empty output"
@@ -206,5 +221,5 @@ fi
 if [ "$C4_EMPTY" = 1 ]; then echo "  C4: the postgres role has NO role-level setting (rolconfig is empty)."
 else echo "  C4: the postgres role has role-level settings: $C4"; fi
 echo
-echo "Results and one-line sidecars: $RES (counts and setting names only; no secret, no ref in the files)."
+echo "Results and sidecars: $RES (counts and setting names only; no secret, no ref in the files)."
 echo "Close this Terminal. Nothing was written to the hosted project."
