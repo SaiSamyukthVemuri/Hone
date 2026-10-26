@@ -11,6 +11,9 @@ bad() { fail=$((fail+1)); echo "FAIL - $1"; [ -n "${2:-}" ] && echo "       $2";
 sha() { shasum -a 256 -- "$1" | cut -d' ' -f1; }
 PW_BAD="WRONG-CANARY-5d41"
 LEFT="LEFTOVER-CANARY-9a7c"
+# PW_PATTERN: what a leak looks like. A canary password is searched for verbatim; the Linux stack's own password is the common word
+# "postgres", so there the patterns are the password-bearing forms (PGPASSWORD=, user:password@, password=) plus the canaries.
+: "${PW_PATTERN:=$PW_OK|$PW_BAD|$LEFT}"
 A_RP='{now-60}'; A_W1=yes; A_W2=yes; A_PW="$PW_OK"; A_GO=APPLY
 PINS_FROM=""   # a pkg dir whose pins.env the test copy should use (forged-consistent bundles); empty = the base package
 
@@ -43,7 +46,8 @@ runk() { # runk EXTRA_ENV_ASSIGNMENT(optional)  -> RC, CONN (delta), transcript 
 has() { grep -qF -- "$1" "$F/transcript.txt"; }
 leak_scan() { # the typed passwords and the leftover canary appear nowhere on disk, in the transcript or in any process listing
   local hits
-  hits=$(grep -rlF -e "$PW_OK" -e "$PW_BAD" -e "$LEFT" "$F" 2>/dev/null | grep -v "/answers.tsv$" | tr '\n' ' ')
+  hits=$(grep -rlaE -e "$PW_PATTERN" "$F" 2>/dev/null | grep -v "/answers.tsv$" | tr '\n' ' ')
+  grep -qaE "Database password \(not shown\): *($PW_OK|$PW_BAD)" "$F/transcript.txt" 2>/dev/null && hits="$hits transcript-echo"
   [ -z "$hits" ] && ok "$1: no password or canary in any log, transcript, process listing or file" || bad "$1: secret found in: $hits"
 }
 refused() { # refused NAME "text" : exit 1, the text is shown, zero connections, nothing applied, no APPLIED line
@@ -165,7 +169,7 @@ else bad "happy path" "rc=$RC hist=$(db_hist_count) max=$(db_hist_max) $(tail -c
 grep -q 'Connecting to remote database' "$W/logs/dry-run.log" && grep -q 'Connecting to remote database' "$W/logs/push.log" && ok "both CLI runs treated the target as REMOTE (not the local-stack path)" || bad "remote/local classification"
 [ -z "$(find "$W" ! -user "$(id -un)" -o -perm -040 -o -perm -004 2>/dev/null | head -1)" ] && ok "work dir, logs and project dir are private (no group/other access)" || bad "permissions: $(find "$W" -perm -040 -o -perm -004 | head -3)"
 grep -q 'db push' "$F/ps.txt" && ok "process sampler saw the CLI run (the argv check below is not vacuous)" || bad "sampler never saw the CLI"
-! grep -qF -e "$PW_OK" "$F/ps.txt" && ok "the password never appeared in any process argv (sampled every 50 ms)" || bad "password in argv"
+! grep -qaE -e "$PW_PATTERN" "$F/ps.txt" && ok "the password never appeared in any process argv (sampled every 50 ms)" || bad "password in argv"
 leak_scan "happy path"
 find "$W/project" -type f ! -path "*/supabase/migrations/*" | sed "s#$W/project/##" | tr '\n' ' ' | sed 's/^/files outside migrations in the project dir: /; s/$/\n/' | tee -a "$F/info.txt"
 echo "-- rewrites in the test copy: $(cat "$F/rewrites.txt")"
