@@ -23,4 +23,3 @@ begin
   execute format('insert into public.%I (%s) select %s from jsonb_populate_record(null::public.%I, %L::jsonb)', tbl, cols, cols, tbl, j);
 end $f$;
 create or replace function pg_temp.sid(i int) returns text language sql as $$ select ('00000000-0000-0000-0000-00000000000' || i)::uuid::text $$;
-
