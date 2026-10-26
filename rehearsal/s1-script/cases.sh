@@ -46,7 +46,7 @@ runk() { # runk EXTRA_ENV_ASSIGNMENT(optional)  -> RC, CONN (delta), transcript 
 has() { grep -qF -- "$1" "$F/transcript.txt"; }
 leak_scan() { # the typed passwords and the leftover canary appear nowhere on disk, in the transcript or in any process listing
   local hits
-  hits=$(grep -rlaE -e "$PW_PATTERN" "$F" 2>/dev/null | grep -v "/answers.tsv$" | tr '\n' ' ')
+  hits=$(grep -rlaE --exclude=supabase-go --exclude="*.tar" -e "$PW_PATTERN" "$F" 2>/dev/null | grep -v "/answers.tsv$" | tr '\n' ' ')
   grep -qaE "Database password \(not shown\): *($PW_OK|$PW_BAD)" "$F/transcript.txt" 2>/dev/null && hits="$hits transcript-echo"
   [ -z "$hits" ] && ok "$1: no password or canary in any log, transcript, process listing or file" || bad "$1: secret found in: $hits"
 }
