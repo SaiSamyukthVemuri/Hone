@@ -14,7 +14,9 @@ LEFT="LEFTOVER-CANARY-9a7c"
 # PW_PATTERN: what a leak looks like. A canary password is searched for verbatim; the Linux stack's own password is the common word
 # "postgres", so there the patterns are the password-bearing forms (PGPASSWORD=, user:password@, password=) plus the canaries.
 : "${PW_PATTERN:=$PW_OK|$PW_BAD|$LEFT}"
-A_RP='{now-60}'; A_W1=yes; A_W2=yes; A_PW="$PW_OK"; A_GO=APPLY
+A_RP=""; A_WS=""; A_W1=yes; A_W2=yes; A_PW="$PW_OK"; A_GO=APPLY
+R4_AGE=600; R4_NONE=""; R4_VERDICT="OVERALL PASS"
+iso_at() { python3 -I -c 'import sys,datetime as d;print((d.datetime.now(d.timezone.utc)+d.timedelta(seconds=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
 PINS_FROM=""   # a pkg dir whose pins.env the test copy should use (forged-consistent bundles); empty = the base package
 
 mkfix() { # mkfix NAME PKGDIR [bin]  -> F
@@ -22,6 +24,12 @@ mkfix() { # mkfix NAME PKGDIR [bin]  -> F
   chmod 700 "$F/home/hone-s1"; chmod 755 "$F/home/hone-s1/supabase-cli"
   cp "${3:-$GOBIN}" "$F/home/hone-s1/supabase-cli/supabase-go"; chmod 755 "$F/home/hone-s1/supabase-cli/supabase-go"
   cp "$2/migrations-d189768b.tar" "$2/MIGRATIONS-d189768b.sha256" "$F/pkg/"
+  R4_SEL=$(iso_at "$((0 - R4_AGE))")
+  if [ -z "$R4_NONE" ]; then   # the result window-row4.sh leaves: $HOME/hone-s1/row4.XXXXXX/{row4-attestation.json,verdict.txt}
+    mkdir -p "$F/home/hone-s1/row4.AbC123"; chmod 700 "$F/home/hone-s1/row4.AbC123"
+    printf '{\n  "pre_migration_restore_point": {\n    "selected_at_utc": "%s",\n    "basis": "latest_at_or_after"\n  },\n  "g4_pitr": {}\n}\n' "$R4_SEL" > "$F/home/hone-s1/row4.AbC123/row4-attestation.json"
+    printf 'PASS x\n%s\n' "$R4_VERDICT" > "$F/home/hone-s1/row4.AbC123/verdict.txt"
+  fi
   local pf="${PINS_FROM:-$2}"
   local bsha lsha gsha
   bsha=$(sed -n 's/^BUNDLE_SHA=//p' "$pf/pins.env"); lsha=$(sed -n 's/^LIST_SHA=//p' "$pf/pins.env")
@@ -29,9 +37,9 @@ mkfix() { # mkfix NAME PKGDIR [bin]  -> F
   python3 -I "$HERE/fixture.py" copy "$HERE/s1-apply.sh" "$F/pkg/s1-apply.sh" --go-sha "$gsha" --bundle-sha "$bsha" --list-sha "$lsha" \
     --ref "$REFTEST" --url "$URLTEST" ${GO34FILE:+--go34 "$GO34FILE"} $NOPLAT > "$F/rewrites.txt" || { echo "fixture.py failed"; exit 1; }
 }
-answers() { # answers FILE
-  printf 'Pre-migration PITR restore point\t%s\nprinted the word  armed\t%s\nprinted the word  watching\t%s\nDatabase password\t%s\nType  APPLY\t%s\n' \
-    "$A_RP" "$A_W1" "$A_W2" "$A_PW" "$A_GO" > "$1"
+answers() { # answers FILE   (the order of the prompts is the script's: window start, restore point, password, watchdog x2, APPLY)
+  printf 'Window start (UTC)\t%s\nexactly as row 4 printed it\t%s\nDatabase password\t%s\narmed  (type yes)\t%s\nsession to start  (type yes)\t%s\nType  APPLY\t%s\n' \
+    "${A_WS:-$(iso_at -3600)}" "${A_RP:-$R4_SEL}" "$A_PW" "$A_W1" "$A_W2" "$A_GO" > "$1"
 }
 runk() { # runk EXTRA_ENV_ASSIGNMENT(optional)  -> RC, CONN (delta), transcript at $F/transcript.txt
   answers "$F/answers.tsv"
@@ -55,6 +63,12 @@ refused() { # refused NAME "text" : exit 1, the text is shown, zero connections,
   leak_scan "$1"
 }
 
+refused_after_dry() { # refused_after_dry NAME "text" : dry run happened (one connection, 34 listed), then STOP; no push; nothing applied
+  [ "$RC" = 1 ] && has "$2" && has "Dry run OK: exactly 34" && [ "$CONN" = 1 ] && [ ! -e "$F"/home/hone-s1/s1apply.*/logs/push.log ] && [ "$(db_hist_count)" = 211 ] && ! has "S1 APPLIED" && ok "$1: dry run listed 34, then '$2'; exit 1; one connection; no push; history still 211" || bad "$1: expected '$2' after the dry run" "rc=$RC conn=$CONN hist=$(db_hist_count) $(tail -c 400 "$F/transcript.txt" | tr '\r\n' '  ')"
+  leak_scan "$1"
+}
+ln1() { grep -n -F -m1 -- "$1" "$F/transcript.txt" | cut -d: -f1; }
+
 REAL_NOTE="synthetic bundle"; [ "$MODE" = real ] && REAL_NOTE="the REAL bundle and 34 files"
 
 echo "== static: the real script"
@@ -69,6 +83,8 @@ grep -nE '^[^#]*\benv\b *\|? *grep|^[^#]*\bprintenv|^[^#]*\bset +-x|^[^#]*echo +
 [ "$(grep -E '^BUNDLE_SHA=' "$HERE/s1-apply.sh" | cut -d= -f2)" = "$(sha "$HERE/migrations-d189768b.tar")" ] && [ "$(grep -E '^LIST_SHA=' "$HERE/s1-apply.sh" | cut -d= -f2)" = "$(sha "$HERE/MIGRATIONS-d189768b.sha256")" ] && ok "the script's bundle and list pins equal the committed files' sha256" || bad "bundle/list pins differ from the committed files"
 grep -q '^URL="postgresql://postgres\.\$REF@aws-1-us-east-1\.pooler\.supabase\.com:5432/postgres?sslmode=require"$' "$HERE/s1-apply.sh" && ok "the URL is the session pooler (5432), user only, sslmode=require, no password, no options" || bad "URL line"
 
+[ -z "$(grep -nE '/tmp|\$\$' "$HERE/s1-apply.sh")" ] && ok "F5: no /tmp path and no PID-named file in the script (temp files are inside the private work dir)" || bad "F5: /tmp or \$\$ in the script"
+grep -q 'Do not press Ctrl-C or close this window during the push; the only way to stop a statement is the watchdog.' "$HERE/s1-apply.sh" && [ "$(grep -c 'Do not press Ctrl-C or close this window during the push; the only way to stop a statement is the watchdog.' "$HERE/s1-apply.sh")" = 2 ] && ok "F3: the Ctrl-C warning is printed before APPLY and is in the INT trap message" || bad "F3 text"
 echo "== the embedded GO list and the environment scan (real script)"
 sed -n "/^GO34='/,/sql'\$/p" "$HERE/s1-apply.sh" | sed "s/^GO34='//; s/'\$//" > "$T/embedded-go34.txt"
 [ "$(grep -c '' "$T/embedded-go34.txt")" = 34 ] && ok "the script embeds 34 lines" || bad "embedded list lines: $(grep -c '' "$T/embedded-go34.txt")"
@@ -91,20 +107,24 @@ mkfix env-leftover "$BASEPKG"; runk "SUPABASE_DB_PASSWORD=$LEFT"
 refused "env leftover" "unset these variables first (names only): SUPABASE_DB_PASSWORD"
 ! has "$LEFT" && ok "env leftover: the variable's VALUE is never printed" || bad "env leftover value printed"
 
-mkfix no-armed "$BASEPKG"; A_W1=no; runk; A_W1=yes
-refused "watchdog 'armed' not confirmed" "watchdog 'armed' not confirmed"
-! has "Database password" && ok "watchdog: the password prompt is never reached" || bad "password asked before the confirmations"
-mkfix no-watching "$BASEPKG"; A_W2=no; runk; A_W2=yes
-refused "watchdog 'watching' not confirmed" "watchdog 'watching' not confirmed"
-mkfix bad-rp "$BASEPKG"; A_RP='yesterday'; runk; A_RP='{now-60}'
-refused "restore point malformed" "restore point is not YYYY-MM-DDTHH:MM:SSZ"
-mkfix future-rp "$BASEPKG"; A_RP='{now+3600}'; runk; A_RP='{now-60}'
-refused "restore point in the future" "restore point is in the future"
+R4_NONE=1 mkfix rp-none "$BASEPKG"; runk
+refused "F1 no row-4 result on the Mac" "no passing row-4 result was found"
+R4_VERDICT="OVERALL FAIL" mkfix rp-failverdict "$BASEPKG"; runk
+refused "F1 row-4 verdict is not OVERALL PASS" "no passing row-4 result was found"
+mkfix rp-typo "$BASEPKG"; A_RP='yesterday'; runk; A_RP=""
+refused "F1 restore point typed malformed" "restore point is not YYYY-MM-DDTHH:MM:SSZ"
+mkfix rp-mismatch "$BASEPKG"; A_RP=$(iso_at -700); runk; A_RP=""
+refused "F1 typed point differs from row 4's" "not the one in the row-4 result"
+R4_AGE=3000 mkfix rp-stale "$BASEPKG"; runk
+refused "F1 restore point older than 45 minutes" "older than 45 minutes"
+R4_AGE=-3600 mkfix rp-future "$BASEPKG"; runk
+refused "F1 restore point in the future" "restore point is in the future"
+mkfix rp-beforewin "$BASEPKG"; A_WS=$(iso_at -300); runk; A_WS=""
+refused "F1 restore point before the typed window start" "restore point is before the window start"
 mkfix empty-pw "$BASEPKG"; A_PW=''; runk; A_PW="$PW_OK"
 refused "empty password" "empty password; nothing was attempted"
 
 mkfix bin-bad "$BASEPKG"; printf 'x' >> "$F/home/hone-s1/supabase-cli/supabase-go"
-# the test copy pinned the ORIGINAL binary's sha; the appended byte makes it differ
 runk; refused "binary altered" "supabase-go missing or sha256 mismatch"
 
 for v in tamper add247 add247-list drop alter link; do
@@ -126,43 +146,77 @@ refused "a symlink entry in the bundle (pins forged to match)" "holds a link or 
 STUB="$T/stub-supabase-go"
 printf '#!/bin/sh\necho "Initialising login role..." >&2\nexit 0\n' > "$STUB"; chmod 755 "$STUB"
 mkfix login-role "$BASEPKG" "$STUB"; runk
-[ "$RC" = 1 ] && has "the CLI reported a login-role / ban / password / Management API path" && ! has "S1 APPLIED" && ok "login-role text in the CLI output: STOP and REPORT (stub CLI prints it; exit 1)" || bad "login-role scan" "rc=$RC $(tail -c 300 "$F/transcript.txt" | tr '\r\n' '  ')"
+[ "$RC" = 1 ] && has "the CLI reported a login-role / ban / password / Management API path" && ! has "S1 APPLIED" && ok "login-role text in the dry-run output: STOP and REPORT (stub CLI prints it; exit 1)" || bad "login-role scan" "rc=$RC $(tail -c 300 "$F/transcript.txt" | tr '\r\n' '  ')"
+
+# stub CLI for the push phase: the dry run lists the expected 34, the push answers with an authentication failure
+STUB2="$T/stub-push-auth"
+{ printf '#!/bin/sh\ncase "$*" in *--dry-run*) echo "DRY RUN: migrations will *not* be pushed to the database." >&2; echo "Connecting to remote database..." >&2; echo "Would push these migrations:" >&2\n'
+  awk '{printf "echo \" \342\200\242 %s\" >&2\n", $2}' "$T/embedded-go34.txt"
+  echo 'echo "Finished supabase db push."; exit 0;; esac'
+  echo 'echo '"'"'failed to connect to postgres: failed SASL auth (FATAL: password authentication failed for user "postgres.secretref" (SQLSTATE 28P01)) host=db.secretref.supabase.com'"'"' >&2'
+  echo 'exit 1'; } > "$STUB2"; chmod 755 "$STUB2"
+mkfix push-auth "$BASEPKG" "$STUB2"; runk
+TF="$F/home/hone-s1/s1-apply/FAILED-LOGIN"
+if [ "$RC" = 1 ] && has "The push may already have applied: do the S1 read-back before anything else" && [ -f "$TF" ] && grep -q 'phase push' "$TF" && ! has "secretref"; then ok "TOMBSTONE: an authentication failure in the push wrote FAILED-LOGIN (UTC time + phase push), said the push may already have applied, and masked user/host in the echoed tail"; else bad "push-phase tombstone" "rc=$RC $(tail -c 500 "$F/transcript.txt" | tr '\r\n' '  ')"; fi
+runk
+refused "TOMBSTONE: the next run" "a previous run failed a login"
+
+# ---- order, watchdog, confirmation (the dry run comes first) --------------------------------------------------------
+db_reset_state
+mkfix no-armed "$BASEPKG"; A_W1=no; runk; A_W1=yes
+refused_after_dry "F2 watchdog 'armed' not confirmed" "watchdog 'armed' not confirmed"
+mkfix no-watching "$BASEPKG"; A_W2=no; runk; A_W2=yes
+refused_after_dry "F2 watchdog 'watching' not confirmed" "watchdog 'watching' not confirmed"
+mkfix no-apply "$BASEPKG"; A_GO=no; runk; A_GO=APPLY
+refused_after_dry "APPLY not typed" "not confirmed (type exactly: APPLY)"
+mkfix ctrlc "$BASEPKG"; A_GO='^C'; runk; A_GO=APPLY
+if [ "$RC" = 130 ] && has "Do not press Ctrl-C or close this window during the push; the only way to stop a statement is the watchdog." && [ "$(db_hist_count)" = 211 ]; then ok "F3: Ctrl-C at the APPLY prompt: the trap message carries the warning; exit 130; nothing applied"; else bad "ctrl-c trap" "rc=$RC $(tail -c 300 "$F/transcript.txt" | tr '\r\n' '  ')"; fi
 
 # ---- connection cases -----------------------------------------------------------------------------------------------------
-db_reset_state
 mkfix wrong-pw "$BASEPKG"; A_PW="$PW_BAD"; runk; A_PW="$PW_OK"
+TF="$F/home/hone-s1/s1-apply/FAILED-LOGIN"
 if [ "$RC" = 1 ] && has "the dry run failed" && [ "$CONN" = 1 ] && [ ! -e "$F"/home/hone-s1/s1apply.*/logs/push.log ] && [ "$(db_hist_count)" = 211 ] && ! has "S1 APPLIED"; then
   ok "wrong password: exactly ONE connection attempt, exit 1, no push, nothing applied (history still 211)"
 else bad "wrong password" "rc=$RC conn=$CONN hist=$(db_hist_count) $(tail -c 400 "$F/transcript.txt" | tr '\r\n' '  ')"; fi
+[ -f "$TF" ] && grep -qE '^failed login at [0-9T:Z-]+ in phase dry-run$' "$TF" && ok "TOMBSTONE: the wrong password wrote FAILED-LOGIN (UTC time + phase dry-run, nothing else)" || bad "dry-run tombstone: $(cat "$TF" 2>/dev/null)"
 leak_scan "wrong password"
-
-mkfix no-apply "$BASEPKG"; A_GO=no; runk; A_GO=APPLY
-if [ "$RC" = 1 ] && has "Dry run OK: exactly 34 migrations" && has "not confirmed (type exactly: APPLY)" && [ "$CONN" = 1 ] && [ "$(db_hist_count)" = 211 ]; then
-  ok "APPLY not typed: the dry run listed 34, then STOP; one connection; nothing applied"
-else bad "no APPLY" "rc=$RC conn=$CONN hist=$(db_hist_count)"; fi
+runk
+refused "TOMBSTONE: a re-run after a failed login" "a previous run failed a login"
+! has "Window start" && ok "TOMBSTONE: the re-run asked nothing (refused before any prompt)" || bad "tombstone: prompts shown"
 
 db_hist_add 0213
 mkfix dry33 "$BASEPKG"; runk
-if [ "$RC" = 1 ] && has "the dry run lists 33 migrations, expected exactly 34" && [ "$CONN" = 1 ] && [ "$(db_hist_count)" = 212 ]; then ok "dry run lists 33: STOP before any push; history unchanged"; else bad "dry33" "rc=$RC conn=$CONN $(tail -c 300 "$F/transcript.txt" | tr '\r\n' '  ')"; fi
+if [ "$RC" = 1 ] && has "the dry run lists 33 migrations, expected exactly 34" && [ "$CONN" = 1 ] && [ "$(db_hist_count)" = 212 ] && ! has "START THE WATCHDOG"; then ok "dry run lists 33: STOP before the watchdog step and any push; history unchanged"; else bad "dry33" "rc=$RC conn=$CONN $(tail -c 300 "$F/transcript.txt" | tr '\r\n' '  ')"; fi
 db_hist_del 0213
 if [ "$MODE" = syn ]; then
   db_hist_del 0212
   mkfix dry35 "$BASEPKG"; runk
   if [ "$RC" = 1 ] && has "the dry run lists 35 migrations, expected exactly 34" && [ "$CONN" = 1 ] && [ "$(db_hist_count)" = 210 ]; then ok "dry run lists 35: STOP before any push; history unchanged"; else bad "dry35" "rc=$RC conn=$CONN $(tail -c 300 "$F/transcript.txt" | tr '\r\n' '  ')"; fi
   db_hist_add 0212
-fi
 
-if [ "$MODE" = syn ]; then
   python3 -I "$HERE/fixture.py" syn "$T/syn-fail" --fail 0230
   db_reset_state
   GO34FILE_SAVE="$GO34FILE"; GO34FILE="$T/syn-fail/go34.txt"
   mkfix fail-mig "$T/syn-fail"; runk
   GO34FILE="$GO34FILE_SAVE"
   n=$(db_hist_count)
-  if [ "$RC" = 1 ] && has "the push failed" && has "Do NOT rerun this script" && ! has "S1 APPLIED" && [ "$n" = 228 ] && [ "$(db_hist_max)" = 0229 ] && db_table_exists s1_t0229 && ! db_table_exists s1_t0230 && ! db_table_exists s1_t0231; then
-    ok "a failing migration (0230): the push stops; ONLY 0213..0229 are recorded (history 228, max 0229); 0230 not applied, 0231.. never run; exit 1; 'do NOT rerun'"
+  if [ "$RC" = 1 ] && has "the push failed" && has "The push may already have applied: do the S1 read-back before anything else" && has "Do NOT rerun this script" && ! has "S1 APPLIED" && [ "$n" = 228 ] && [ "$(db_hist_max)" = 0229 ] && db_table_exists s1_t0229 && ! db_table_exists s1_t0230 && ! db_table_exists s1_t0231; then
+    ok "a failing migration (0230): the push stops; ONLY 0213..0229 are recorded (history 228, max 0229); 0230 not applied, 0231.. never run; exit 1; F4 read-back wording; 'do NOT rerun'"
   else bad "failing migration" "rc=$RC hist=$n max=$(db_hist_max) $(tail -c 500 "$F/transcript.txt" | tr '\r\n' '  ')"; fi
   leak_scan "failing migration"
+  [ ! -e "$F/home/hone-s1/s1-apply/FAILED-LOGIN" ] && ok "a failing migration is not an authentication failure: no tombstone" || bad "tombstone written for a migration failure"
+
+  python3 -I "$HERE/fixture.py" syn "$T/syn-slow" --sleep 0230
+  db_reset_state
+  GO34FILE_SAVE="$GO34FILE"; GO34FILE="$T/syn-slow/go34.txt"
+  mkfix cancel57014 "$T/syn-slow"
+  ( for _ in $(seq 1 90); do sleep 1; db_cancel_sleep && break; done ) & cpid=$!
+  runk; kill "$cpid" 2>/dev/null; wait "$cpid" 2>/dev/null
+  GO34FILE="$GO34FILE_SAVE"
+  n=$(db_hist_count)
+  if [ "$RC" = 1 ] && has "57014" && has "D3 operator runbook, section 5, After a cancel" && has "The push may already have applied" && [ "$n" = 228 ] && [ "$(db_hist_max)" = 0229 ]; then
+    ok "F4: a statement cancelled mid-push (57014): exit 1, the message points to the D3 runbook section 5 (After a cancel) and says the push may already have applied; history 228, max 0229"
+  else bad "57014 cancel" "rc=$RC hist=$n max=$(db_hist_max) $(tail -c 600 "$F/transcript.txt" | tr '\r\n' '  ')"; fi
 fi
 
 # ---- the happy path (last: it applies) ----------------------------------------------------------------------------------
@@ -173,9 +227,12 @@ if [ "$RC" = 0 ] && has "S1 APPLIED: exactly 34 migrations (0213 .. 0246) in ord
   ok "happy path ($REAL_NOTE): exit 0; dry run listed exactly 34; push applied 34 in order; history = 245 rows, max 0246"
 else bad "happy path" "rc=$RC hist=$(db_hist_count) max=$(db_hist_max) $(tail -c 600 "$F/transcript.txt" | tr '\r\n' '  ')"; fi
 [ "$CONN" = 2 ] && ok "happy path: exactly 2 connection attempts (one dry run, one push)" || bad "connection attempts: $CONN"
-[ "$(grep -c '^Applying migration ' "$W/logs/push.log" 2>/dev/null)" = 34 ] && grep -qx 'Finished supabase db push.' "$W/logs/push.log" && ok "push log: 34 'Applying migration' lines and the finish line" || bad "push log shape"
+a=$(ln1 "Window start (UTC)"); b=$(ln1 "exactly as row 4 printed it"); c=$(ln1 "Database password"); d=$(ln1 "Dry run OK"); e=$(ln1 "START THE WATCHDOG NOW"); f=$(ln1 "armed  (type yes)"); g=$(ln1 "Do not press Ctrl-C or close this window during the push"); h=$(ln1 "Type  APPLY")
+[ -n "$a$b$c$d$e$f$g$h" ] && [ "$a" -le "$b" ] && [ "$b" -le "$c" ] && [ "$c" -lt "$d" ] && [ "$d" -lt "$e" ] && [ "$e" -le "$f" ] && [ "$f" -lt "$g" ] && [ "$g" -le "$h" ] && ok "F2/F3 order in the transcript: window start, restore point, password, dry run OK, start-the-watchdog, armed/watching, Ctrl-C warning, APPLY" || bad "prompt order" "$a $b $c $d $e $f $g $h"
+[ -n "$W" ] && [ "$(grep -c '^Applying migration ' "$W/logs/push.log" 2>/dev/null)" = 34 ] && grep -qx 'Finished supabase db push.' "$W/logs/push.log" && ok "push log: 34 'Applying migration' lines and the finish line" || bad "push log shape"
 grep -q 'Connecting to remote database' "$W/logs/dry-run.log" && grep -q 'Connecting to remote database' "$W/logs/push.log" && ok "both CLI runs treated the target as REMOTE (not the local-stack path)" || bad "remote/local classification"
 [ -z "$(find "$W" ! -user "$(id -un)" -o -perm -040 -o -perm -004 2>/dev/null | head -1)" ] && ok "work dir, logs and project dir are private (no group/other access)" || bad "permissions: $(find "$W" -perm -040 -o -perm -004 | head -3)"
+[ ! -e "$F/home/hone-s1/s1-apply/FAILED-LOGIN" ] && ok "a successful run leaves no tombstone" || bad "tombstone after success"
 grep -q 'db push' "$F/ps.txt" && ok "process sampler saw the CLI run (the argv check below is not vacuous)" || bad "sampler never saw the CLI"
 ! grep -qaE -e "$PW_PATTERN" "$F/ps.txt" && ok "the password never appeared in any process argv (sampled every 50 ms)" || bad "password in argv"
 leak_scan "happy path"

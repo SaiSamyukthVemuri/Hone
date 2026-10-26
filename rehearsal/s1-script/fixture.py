@@ -73,13 +73,14 @@ def cmd_copy(a):
     print("test copy rewrites: " + ", ".join(changed))
 
 def cmd_syn(a):
-    out = a[0]; fail = a[a.index("--fail") + 1] if "--fail" in a else None
+    out = a[0]; fail = a[a.index("--fail") + 1] if "--fail" in a else None; slow = a[a.index("--sleep") + 1] if "--sleep" in a else None
     names = [n for _, n in read_pairs(os.path.join(os.path.dirname(os.path.abspath(__file__)), "MIGRATIONS-d189768b.sha256"))]
     files = {}
     for n in names:
         v = int(n[:4])
         if v <= 212: body = b"select 1;\n"
         elif fail and n.startswith(fail): body = b"begin;\nselect 1/0;\ncommit;\n"
+        elif slow and n.startswith(slow): body = b"begin;\nselect pg_sleep(30);\ncommit;\n"
         else:
             nap = "select pg_sleep(2);\n" if n[:4] in ("0213", "0229", "0246") else ""   # keeps the CLI alive long enough for the argv sampler
             body = f"begin;\ncreate table public.s1_t{n[:4]} (id int);\n{nap}commit;\n".encode()

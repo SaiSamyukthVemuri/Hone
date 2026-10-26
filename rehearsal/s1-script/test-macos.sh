@@ -57,6 +57,7 @@ db_hist_max() { dbq -c "select max(version) from supabase_migrations.schema_migr
 db_hist_add() { dbq -c "insert into supabase_migrations.schema_migrations (version,name) values ('$1','x')" > /dev/null; }
 db_hist_del() { dbq -c "delete from supabase_migrations.schema_migrations where version='$1'" > /dev/null; }
 db_table_exists() { [ "$(dbq -c "select count(*) from information_schema.tables where table_schema='public' and table_name='$1'")" = 1 ]; }
+db_cancel_sleep() { [ "$(dbq -c "select count(*) from (select pg_cancel_backend(pid) from pg_stat_activity where state='active' and query like '%pg_sleep(30)%' and pid<>pg_backend_pid()) x")" -ge 1 ] 2>/dev/null; }
 conn_count() { grep -c 'connection received' "$T/pg.log"; }
 
 . "$HERE/cases.sh"

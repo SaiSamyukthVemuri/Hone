@@ -38,6 +38,8 @@ while time.time() < deadline:
                     time.sleep(0.02)
                 if termios.tcgetattr(fd)[3] & termios.ECHO:
                     open(out, "wb").write(buf + b"\n[driver] password prompt did not turn echo off\n"); os.kill(pid, signal.SIGKILL); sys.exit(97)
+            if answers[i][1] == "^C":
+                os.write(fd, b"\x03"); i += 1; continue
             os.write(fd, (tok(answers[i][1]) + "\n").encode()); i += 1
 else:
     os.kill(pid, signal.SIGKILL)

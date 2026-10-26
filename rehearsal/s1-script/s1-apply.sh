@@ -22,6 +22,7 @@ REF=alhhybgqdmcdyzpybykj
 URL="postgresql://postgres.$REF@aws-1-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
 HEAD_SHA=d189768b86fe1c53e330c65078f3a9f2949f8e59
 H0214=a8bdcefe7b01216e986838fe336a9eb3613b6e892bd8de2c101cdd4e2f03751b
+TOMB="$ROOT/s1-apply/FAILED-LOGIN"
 NFILES=245
 MAXV=246
 
@@ -71,14 +72,21 @@ cleanup() {
   stty echo </dev/tty >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
-trap 'echo >&2; echo "STOP: interrupted at stage $STAGE; credentials cleared. If the stage was the push, the database state is UNKNOWN: read back the migration history before anything else, and do NOT rerun this script." >&2; exit 130' INT TERM HUP
+trap 'echo >&2; echo "STOP: interrupted at stage $STAGE; credentials cleared. Do not press Ctrl-C or close this window during the push; the only way to stop a statement is the watchdog. If the stage was the push, the database state is UNKNOWN: do the S1 read-back before anything else, and do NOT rerun this script." >&2; exit 130' INT TERM HUP
 die() { echo "STOP: $*" >&2; exit 1; }
 sha() { shasum -a 256 -- "$1" | cut -d' ' -f1; }
 utcnow() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 iso='[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'
+epoch() { date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null || date -u -d "$1" +%s 2>/dev/null; }
 strip() { LC_ALL=C sed $'s/\033\\[[0-9;]*[A-Za-z]//g' "$1"; }
 
 [ $# -eq 0 ] || die "this script takes no arguments"
+mask() { LC_ALL=C sed -E -e 's#postgres(ql)?://[^ ]*#<url>#g' -e 's#([Uu]ser|[Hh]ost|[Hh]ostaddr|[Dd]bname)=[^ ,)]*#\1=<masked>#g' -e 's#([Uu]ser|[Rr]ole) "[^"]*"#\1 <masked>#g' -e 's#[A-Za-z0-9.-]*\.supabase\.com[:0-9]*#<host>#g'; }
+is_auth_failure() { strip "$1" | grep -qiE 'authenticat|28P01|28000|password|banned|circuit|SASL|tenant or user not found'; }
+tombstone() { # tombstone PHASE: written BEFORE dying on an authentication failure; holds the UTC time and the phase, no secret
+  mkdir -p "$ROOT/s1-apply" 2>/dev/null
+  printf 'failed login at %s in phase %s\n' "$(utcnow)" "$1" > "$TOMB" 2>/dev/null || echo "WARNING: could not write $TOMB; do not re-run anyway." >&2
+}
 
 # ---------------------------------------------------------------------------------------------------------
 # Part 0: this Mac, the verified binary, a clean environment (NAMES only, never values)
@@ -93,12 +101,19 @@ SELF=$(cd "$(dirname "$0")" && pwd -P) || die "cannot resolve the script directo
 [ -n "$(find "$BIN" -maxdepth 0 -user "$(id -un)" ! -perm -020 ! -perm -002 2>/dev/null)" ] || die "supabase-go must be owned by you and not writable by group or others"
 bad=$(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | grep -E '^(SUPABASE_[A-Za-z0-9_]*|PG[A-Za-z0-9_]*|DATABASE_URL|E2E_SUPABASE_URL|HONE_LOCAL_DB_URL|HONE_WINDOW_[A-Z_]*|HONE_SUPABASE_BIN|GITHUB_TOKEN|GH_TOKEN|HTTPS_PROXY|HTTP_PROXY|ALL_PROXY|NO_PROXY|https_proxy|http_proxy|all_proxy|no_proxy|SSL_CERT_FILE|SSL_CERT_DIR|NODE_OPTIONS|NODE_PATH|NODE_EXTRA_CA_CERTS|BASH_ENV|ENV|DYLD_[A-Z_]*|LD_PRELOAD|LD_LIBRARY_PATH)$' | sort -u | tr '\n' ' ')
 [ -z "$bad" ] || die "unset these variables first (names only): $bad"
+if [ -e "$TOMB" ] || [ -L "$TOMB" ]; then
+  die "a previous run failed a login ($TOMB exists): report it to OPS; do not re-run; delete the file only after Sam decides. Nothing was attempted."
+fi
 case "$URL" in postgresql://*) ;; *) die "internal: the URL is not a postgresql:// URL" ;; esac
 userinfo=${URL#postgresql://}; userinfo=${userinfo%%@*}
 case "$userinfo" in *:*|*%*) die "internal: the URL carries a password-like userinfo" ;; esac
 case "$URL" in *password=*|*Password=*) die "internal: the URL carries a password parameter" ;; esac
 case "$URL" in *:6543/*) die "internal: the transaction pooler (6543) is never used" ;; esac
 case "$URL" in *sslmode=require*) ;; *) die "internal: the URL does not require TLS" ;; esac
+
+mkdir -p "$ROOT" || die "mkdir failed"
+WORK=$(mktemp -d "$ROOT/s1apply.XXXXXX") || die "mktemp failed"
+chmod 700 "$WORK" || die "chmod failed"
 
 # ---------------------------------------------------------------------------------------------------------
 # Part 1: the bundle. Both files are pinned by sha256; the tar is checked entry by entry BEFORE extraction.
@@ -121,9 +136,8 @@ done < "$SELF/$LIST"
 [ "$prev" = "$MAXV" ] || die "$LIST does not end at $(printf '%04d' "$MAXV")"
 n=$(grep -c '' "$SELF/$LIST"); [ "$n" = "$NFILES" ] || die "$LIST has $n lines, expected $NFILES"
 # the 34 pending files equal the GO package list, byte for byte (names and hashes)
-awk '{v=substr($2,1,4)+0; if (v>=213 && v<=246) print}' "$SELF/$LIST" > "${TMPDIR:-/tmp}/.s1-go34.$$" || die "cannot derive the pending list"
-printf '%s\n' "$GO34" | diff -q - "${TMPDIR:-/tmp}/.s1-go34.$$" >/dev/null 2>&1 || { rm -f "${TMPDIR:-/tmp}/.s1-go34.$$"; die "the 34 pending files in $LIST differ from the GO package list"; }
-rm -f "${TMPDIR:-/tmp}/.s1-go34.$$"
+awk '{v=substr($2,1,4)+0; if (v>=213 && v<=246) print}' "$SELF/$LIST" > "$WORK/pending-from-list.txt" || die "cannot derive the pending list"
+printf '%s\n' "$GO34" | diff -q - "$WORK/pending-from-list.txt" >/dev/null 2>&1 || die "the 34 pending files in $LIST differ from the GO package list"
 [ "$(printf '%s\n' "$GO34" | grep -c '')" = 34 ] || die "internal: the embedded GO list is not 34 lines"
 printf '%s\n' "$GO34" | grep -q "^$H0214  0214_" || die "0214 is not $H0214"
 # tar entries: names, types, nothing else
@@ -133,18 +147,14 @@ printf '%s\n' "$ents" | grep -Evx 'supabase|supabase/migrations|supabase/migrati
 tar -tvf "$SELF/$BUNDLE" 2>/dev/null | cut -c1 | grep -Evx '[-d]' | head -1 | grep -q . && die "$BUNDLE holds a link or special entry"
 over=$(printf '%s\n' "$ents" | sed -n 's#^supabase/migrations/\([0-9][0-9][0-9][0-9]\)_.*#\1#p' | awk -v m="$MAXV" '$1+0>m' | head -1)
 [ -z "$over" ] || die "$BUNDLE holds a file above $(printf '%04d' "$MAXV"): version $over"
-printf '%s\n' "$ents" | sed -n 's#^supabase/migrations/##p' | LC_ALL=C sort > "${TMPDIR:-/tmp}/.s1-tar.$$"
-awk '{print $2}' "$SELF/$LIST" | LC_ALL=C sort > "${TMPDIR:-/tmp}/.s1-lst.$$"
-extra=$(LC_ALL=C comm -23 "${TMPDIR:-/tmp}/.s1-tar.$$" "${TMPDIR:-/tmp}/.s1-lst.$$" | head -3 | tr '\n' ' ')
-missing=$(LC_ALL=C comm -13 "${TMPDIR:-/tmp}/.s1-tar.$$" "${TMPDIR:-/tmp}/.s1-lst.$$" | head -3 | tr '\n' ' ')
-rm -f "${TMPDIR:-/tmp}/.s1-tar.$$" "${TMPDIR:-/tmp}/.s1-lst.$$"
+printf '%s\n' "$ents" | sed -n 's#^supabase/migrations/##p' | LC_ALL=C sort > "$WORK/names-from-tar.txt"
+awk '{print $2}' "$SELF/$LIST" | LC_ALL=C sort > "$WORK/names-from-list.txt"
+extra=$(LC_ALL=C comm -23 "$WORK/names-from-tar.txt" "$WORK/names-from-list.txt" | head -3 | tr '\n' ' ')
+missing=$(LC_ALL=C comm -13 "$WORK/names-from-tar.txt" "$WORK/names-from-list.txt" | head -3 | tr '\n' ' ')
 [ -z "$extra" ] || die "$BUNDLE has files that $LIST does not list: $extra"
 [ -z "$missing" ] || die "$BUNDLE is missing files that $LIST lists: $missing"
 
 # a fresh private project dir made from the bundle ONLY (no config.toml, no .env, no pooler-url, no linked project)
-mkdir -p "$ROOT" || die "mkdir failed"
-WORK=$(mktemp -d "$ROOT/s1apply.XXXXXX") || die "mktemp failed"
-chmod 700 "$WORK" || die "chmod failed"
 PROJ="$WORK/project"; LOGS="$WORK/logs"
 mkdir "$PROJ" "$LOGS" || die "mkdir failed"
 chmod 700 "$PROJ" "$LOGS" || die "chmod failed"
@@ -169,22 +179,39 @@ RUN="$WORK/run.txt"
 echo "Bundle verified: $NFILES files, 0001..$(printf '%04d' "$MAXV"), the 34 pending files equal the GO package list. Working directory: $WORK" >&2
 
 # ---------------------------------------------------------------------------------------------------------
-# Part 2: what the operator confirms (BEFORE any connection). Nothing is guessed or defaulted.
+# Part 2: the restore point gate (BEFORE any connection). Row 4 (window-row4.sh) leaves its result on this Mac; the
+# restore point is READ from it and the operator must type it exactly as row 4 printed it. Nothing is guessed.
 # ---------------------------------------------------------------------------------------------------------
-STAGE=prompts
+STAGE=restore-point
 ask() { # ask VAR "prompt"
   local _v
   IFS= read -r -p "$2" _v </dev/tty || die "could not read $1"
   printf -v "$1" '%s' "$_v"
 }
 echo "The time now is $(utcnow). Times are UTC, like 2026-10-27T01:00:00Z. Nothing is defaulted." >&2
-ask RPOINT "Pre-migration PITR restore point you recorded (UTC): "
+ask WSTART "Window start (UTC): "
+printf '%s' "$WSTART" | LC_ALL=C grep -Eq "^$iso\$" || die "window start is not YYYY-MM-DDTHH:MM:SSZ"
+R4SEL=""; R4DIR=""
+for d in "$ROOT"/row4.*; do
+  [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/row4-attestation.json" ] && [ -f "$d/verdict.txt" ] || continue
+  [ -n "$(find "$d" -maxdepth 0 -user "$(id -un)" ! -perm -020 ! -perm -002 2>/dev/null)" ] || continue
+  grep -qx 'OVERALL PASS' "$d/verdict.txt" || continue
+  v=$(sed -n 's/^ *"selected_at_utc": "\([^"]*\)".*/\1/p' "$d/row4-attestation.json" | head -1)
+  printf '%s' "$v" | LC_ALL=C grep -Eq "^$iso\$" || continue
+  if [ -z "$R4SEL" ] || [ "$v" \> "$R4SEL" ]; then R4SEL="$v"; R4DIR="$d"; fi
+done
+[ -n "$R4SEL" ] || die "no passing row-4 result was found under $ROOT (a row4.* directory whose verdict.txt has the line OVERALL PASS). Run window-row4.sh first. Nothing was attempted."
+echo "Row 4 result found: $R4DIR" >&2
+ask RPOINT "Type the selected restore point exactly as row 4 printed it (UTC): "
 printf '%s' "$RPOINT" | LC_ALL=C grep -Eq "^$iso\$" || die "the restore point is not YYYY-MM-DDTHH:MM:SSZ"
-[ ! "$RPOINT" \> "$(utcnow)" ] || die "the restore point is in the future"
-echo "The watchdog is the separate window that cancels a statement running past 120 seconds. It must be running first." >&2
-ask W1 "The watchdog window printed the word  armed  (type yes): "; [ "$W1" = yes ] || die "watchdog 'armed' not confirmed (type exactly: yes)"
-ask W2 "The watchdog window printed the word  watching  (type yes): "; [ "$W2" = yes ] || die "watchdog 'watching' not confirmed (type exactly: yes)"
-{ echo "restore point typed: $RPOINT"; echo "watchdog armed and watching confirmed $(utcnow)"; } >> "$RUN"
+[ "$RPOINT" = "$R4SEL" ] || die "the restore point you typed is not the one in the row-4 result. Nothing was attempted."
+now_s=$(epoch "$(utcnow)"); rp_s=$(epoch "$RPOINT"); ws_s=$(epoch "$WSTART")
+case "$now_s$rp_s$ws_s" in *[!0-9]*|'') die "cannot read the times" ;; esac
+[ "$rp_s" -le "$now_s" ] || die "the restore point is in the future"
+[ $((now_s - rp_s)) -le 2700 ] || die "the restore point is older than 45 minutes: run window-row4.sh again from the start. Nothing was attempted."
+[ "$rp_s" -ge "$ws_s" ] || die "the restore point is before the window start. Nothing was attempted."
+echo "restore point $RPOINT (row-4 result $R4DIR; window start $WSTART)" >> "$RUN"
+echo "Restore point accepted: $RPOINT ($(( (now_s - rp_s) / 60 )) minutes old)." >&2
 
 # ---------------------------------------------------------------------------------------------------------
 # Part 3: the password (typed, never echoed), then ONE dry run. No retry: a failed login stops the script.
@@ -200,6 +227,9 @@ run_cli() { # run_cli LOGFILE args...  (the password is in the child's environme
 }
 scan_log() { # scan_log FILE: a login-role / ban / password-reset path means the CLI left the plan
   if strip "$1" | grep -qiE 'login role|initialising|unban|network.?ban|reset.*password|api\.supabase\.com'; then
+    if [ "$STAGE" = push ]; then
+      die "the CLI reported a login-role / ban / password / Management API path DURING the push. The push may already have applied: do the S1 read-back before anything else. REPORT it (log: $1). Do not retry."
+    fi
     die "the CLI reported a login-role / ban / password / Management API path. Stopped; REPORT it (log: $1). Do not retry."
   fi
 }
@@ -213,7 +243,8 @@ rc=0; run_cli "$DRY" db push --db-url "$URL" --dry-run || rc=$?
 echo "dry run finished $(utcnow) exit $rc" >> "$RUN"
 scan_log "$DRY"
 if [ "$rc" != 0 ]; then
-  strip "$DRY" | tail -n 6 >&2
+  strip "$DRY" | tail -n 6 | mask >&2
+  if is_auth_failure "$DRY"; then tombstone dry-run; echo "An authentication failure was recorded in $TOMB: no further run is allowed until Sam decides." >&2; fi
   die "the dry run failed (exit $rc), for example a connection or authentication error. NOTHING was applied. Do not retry from this script; report the log: $DRY"
 fi
 dsum=$(strip "$DRY")
@@ -231,9 +262,18 @@ echo "dry run listed exactly the 34 expected versions in order" >> "$RUN"
 # Part 4: ONE push. The operator types APPLY. The log must show 34 "Applying migration" lines in order, then the
 # finish line, and the CLI must exit 0.
 # ---------------------------------------------------------------------------------------------------------
+STAGE=watchdog
+echo "START THE WATCHDOG NOW in Terminal 2 (D3 operator runbook, section 2). It cancels a statement running past 120 seconds. Wait until it has printed BOTH: WATCHDOG armed (self-test ok)  and  watching for the push session to start." >&2
+ask W1 "Terminal 2 printed  WATCHDOG armed  (type yes): "; [ "$W1" = yes ] || die "watchdog 'armed' not confirmed (type exactly: yes). NOTHING was applied."
+ask W2 "Terminal 2 printed  watching for the push session to start  (type yes): "; [ "$W2" = yes ] || die "watchdog 'watching' not confirmed (type exactly: yes). NOTHING was applied."
+echo "watchdog armed and watching confirmed $(utcnow)" >> "$RUN"
 STAGE=confirm
+echo "Do not press Ctrl-C or close this window during the push; the only way to stop a statement is the watchdog." >&2
 ask GOWORD "Type  APPLY  to run the single push of those 34 migrations now: "
 [ "$GOWORD" = APPLY ] || die "not confirmed (type exactly: APPLY). NOTHING was applied."
+now_s=$(epoch "$(utcnow)")
+case "$now_s" in ''|*[!0-9]*) die "cannot read the time" ;; esac
+[ $((now_s - rp_s)) -le 3600 ] || die "the restore point is now more than 60 minutes old: run window-row4.sh again from the start. NOTHING was applied."
 STAGE=push
 echo "push started $(utcnow)" >> "$RUN"
 echo "Running the push (one connection attempt)..." >&2
@@ -245,9 +285,13 @@ psum=$(strip "$PUSH")
 napp=$(printf '%s\n' "$psum" | grep -c '^Applying migration ')
 scan_log "$PUSH"
 fail_report() {
-  strip "$PUSH" | tail -n 12 >&2
+  strip "$PUSH" | tail -n 12 | mask >&2
+  if [ "$rc" != 0 ] && is_auth_failure "$PUSH"; then tombstone push; echo "An authentication failure was recorded in $TOMB: no further run is allowed until Sam decides." >&2; fi
   echo "Applying-migration lines seen: $napp of 34." >&2
-  die "$1 The database state is what the CLI reports above: files before the failing one are recorded and the failing file did not commit, but READ BACK the migration history before anything else. Do NOT rerun this script. Report the log: $PUSH"
+  if strip "$PUSH" | grep -qE '57014|canceling statement due to user request'; then
+    echo "A statement was cancelled (SQLSTATE 57014): follow the D3 operator runbook, section 5, After a cancel." >&2
+  fi
+  die "$1 The push may already have applied: do the S1 read-back before anything else. Files before the failing one are recorded and the failing file did not commit, but verify by reading the migration history. Do NOT rerun this script. Report the log: $PUSH"
 }
 [ "$rc" = 0 ] || fail_report "the push failed (exit $rc)."
 [ "$napp" = 34 ] || fail_report "the push logged $napp 'Applying migration' lines, expected 34."
