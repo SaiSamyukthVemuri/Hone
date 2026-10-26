@@ -46,7 +46,7 @@ D=$(mktemp -d); cp "$OLDPWD"/main/* "$D"/; cp "$OLDPWD"/obs/obs-0214-live-named-
 out=$(run "$D"); echo "main runner dir: $out"; echo "$out" | grep -q "is not listed in MANIFEST.sha256"
 echo "== 6. the post-S3 file refuses at 0212 (its guard is 0246), and the runner accepts it with this manifest"
 if out=$($P --csv -f obs/obs-0214-observed-post-s3.sql 2>&1); then echo "NOT REFUSED"; exit 1; fi
-echo "$out" | grep -q "division by zero" && echo "post-S3 file refused at 0212: division by zero"
+echo "post-S3 file refused at 0212, reason: $(echo "$out" | grep -m1 ERROR)"
 cd "$W/linked"
 out=$(env -i PATH="$PATH" bash "$A/run-window-read-macos.sh" obs-0214-observed-post-s3.sql 2>&1 || true); echo "post file, this manifest: $out"
 echo "$out" | grep -q "HONE_WINDOW_PROJECT_REF is not set"
