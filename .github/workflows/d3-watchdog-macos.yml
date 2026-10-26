@@ -1,0 +1,44 @@
+# D3 WATCHDOG ON MACOS. REHEARSAL - NEVER MERGE. A stock macos-14 arm64 runner: BSD tools, zsh, the darwin_arm64 supabase-go
+# (verified), a real interactive zsh on a pty, a local PostgreSQL (not Supavisor). No hosted call, no secrets.
+name: d3-watchdog-macos
+
+on:
+  pull_request:
+    paths:
+      - "scripts/ci/d3-watchdog.zsh"
+      - "scripts/ci/d3-watchdog-macos.sh"
+      - ".github/workflows/d3-watchdog-macos.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hone-d3-watchdog-macos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  watchdog-macos:
+    name: D3 watchdog on macOS (not required)
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository (full history, the old paste block is read from the previous head)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Rehearse the watchdog on macOS
+        shell: /bin/zsh {0}
+        env:
+          REHEARSAL_OUT: ${{ runner.temp }}/d3-macos-out
+        run: /bin/bash scripts/ci/d3-watchdog-macos.sh
+
+      - name: Upload rehearsal logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: d3-watchdog-macos-logs
+          path: ${{ runner.temp }}/d3-macos-out/
+          retention-days: 7
