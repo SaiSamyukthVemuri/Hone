@@ -80,7 +80,9 @@ def cmd_syn(a):
         v = int(n[:4])
         if v <= 212: body = b"select 1;\n"
         elif fail and n.startswith(fail): body = b"begin;\nselect 1/0;\ncommit;\n"
-        else: body = f"begin;\ncreate table public.s1_t{n[:4]} (id int);\ncommit;\n".encode()
+        else:
+            nap = "select pg_sleep(2);\n" if n[:4] in ("0213", "0229", "0246") else ""   # keeps the CLI alive long enough for the argv sampler
+            body = f"begin;\ncreate table public.s1_t{n[:4]} (id int);\n{nap}commit;\n".encode()
         files[n] = body
     emit(out, files)
 
