@@ -142,8 +142,12 @@ EXPBG=$!
 for _ in $(seq 1 120); do grep -q 'WD_LIMIT=15 WD_EVERY=3 zsh d3-watchdog.zsh' "$OUT/run-exp.log" 2> /dev/null && break; sleep 1; done
 mkwriter W1 150; mkwriter W2 150
 sleep 3
+say "INFO  $(date +%T) writers started, releasing the watchdog password prompt"
 touch "$OUT/flag"
-for _ in $(seq 1 60); do grep -q 'WATCHDOG armed' "$OUT/run-exp.log" 2> /dev/null && break; sleep 1; done
+ARMED_SEEN=no
+for _ in $(seq 1 150); do grep -q 'watching for the push session to start' "$OUT/run-exp.log" 2> /dev/null && { ARMED_SEEN=yes; break; }; sleep 1; done
+say "INFO  $(date +%T) watchdog armed and polling: $ARMED_SEEN"
+[ "$ARMED_SEEN" = yes ] || say "WARN  the watchdog never reached its polling loop in 150 s; the checks below will fail for that reason"
 sleep 4
 say "-- diagnostics at the moment the push-like session starts: postgres-role backends"
 psqlp -F '|' -c "select pid, usename, datname, backend_type, state, backend_xid, left(query, 40) from pg_stat_activity where usename = 'postgres' order by backend_start" | sed 's/^/   | /' | tee -a "$RES"
