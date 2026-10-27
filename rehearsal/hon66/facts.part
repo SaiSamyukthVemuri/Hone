@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # REHEARSAL - NEVER MERGE. HON66 facts: why the S1 watchdog never PINNED on 2026-10-27, measured on a REAL supabase-go push through a
 # REAL local Supavisor session pooler, with a realistic FAST push (34 small migration files), plus the session attributes the push shows.
-set -u
-. "$(dirname "$0")/common.sh"
 say "== F1. a fast 34-file push through the pooler: duration, and the push session as pg_stat_activity shows it (sampled every ~10 ms)"
 sadm -c "create table if not exists public.zz_probe_samples (t timestamptz, pid int, usename text, app text, btype text, state text, xid text, xact_start timestamptz, qstart timestamptz, caddr text, q text, lockmode text)" > /dev/null
 sampler_sql() { cat <<'SQL'
@@ -72,4 +70,3 @@ say "RESULT ... after ALTER ROLE postgres SET statement_timeout='9s' (role defau
 sadm -c "alter role postgres reset statement_timeout" > /dev/null
 say "RESULT supabase-go db query reads application_name/statement_timeout in-session: $(PGPASSWORD="$PWU" "$GOBIN" --agent no db query --db-url "$TLSURL_BASE&application_name=hon66-gq&options=-c%20statement_timeout%3D7000" -o json "show statement_timeout" 2>&1 | tr -d '\n ' | cut -c1-120)"
 say "== done facts; failures: $FAILS"
-exit $FAILS

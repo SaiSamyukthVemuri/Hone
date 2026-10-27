@@ -1,0 +1,78 @@
+# REHEARSAL - NEVER MERGE. HON66 H6 (Insurance): what the pinned CLI sends over HTTP, observed through a local recording fake Management API
+# (mitmproxy answers every api.supabase.com request itself; nothing leaves the runner). Canary credentials generated at run time.
+say "== H6. recorded requests: db push --db-url sends none; reads hit only the expected endpoints"
+python3 -m venv "$OUT/venv" > /dev/null 2>&1 && "$OUT/venv/bin/pip" install --quiet "mitmproxy==11.0.2" > "$OUT/pip.log" 2>&1 || { tail -n 5 "$OUT/pip.log"; say "FAIL mitmproxy install"; }
+MITM="$OUT/mitm"; mkdir -p "$MITM"
+cat > "$MITM/fakeapi.py" <<'PY'
+import json, os, re
+from mitmproxy import http
+OUT = os.environ["MITM_OUT"]
+class Fake:
+    def request(self, flow: http.HTTPFlow):
+        r = flow.request
+        with open(OUT, "a") as f:
+            f.write(json.dumps({"method": r.method, "host": r.pretty_host, "path": r.path.split("?")[0], "has_auth": "authorization" in r.headers}) + "\n")
+        p = r.path.split("?")[0]
+        if r.method == "POST" and re.fullmatch(r"/v1/projects/[a-z]+/database/query", p):
+            flow.response = http.Response.make(201, json.dumps([{"one": 1}]), {"Content-Type": "application/json"})
+        elif r.method == "GET" and re.fullmatch(r"/v1/projects/[a-z]+/database/backups", p):
+            flow.response = http.Response.make(200, json.dumps({"region": "x", "walg_enabled": True, "pitr_enabled": True, "backups": [], "physical_backup_data": {}}), {"Content-Type": "application/json"})
+        else:
+            flow.response = http.Response.make(404, json.dumps({"message": "fake api: not found"}), {"Content-Type": "application/json"})
+addons = [Fake()]
+PY
+PORTP=8089
+with_fake_api() { # with_fake_api <label> <command...>
+  local label="$1"; shift
+  : > "$OUT/flows-$label.jsonl"
+  MITM_OUT="$OUT/flows-$label.jsonl" "$OUT/venv/bin/mitmdump" -q -p "$PORTP" --set confdir="$MITM" -s "$MITM/fakeapi.py" > "$OUT/mitm-$label.log" 2>&1 &
+  local pid=$!
+  for _ in $(seq 1 40); do [ -f "$MITM/mitmproxy-ca-cert.pem" ] && (echo > /dev/tcp/127.0.0.1/$PORTP) 2> /dev/null && break; sleep 0.5; done
+  env HTTPS_PROXY="http://127.0.0.1:$PORTP" HTTP_PROXY="http://127.0.0.1:$PORTP" NO_PROXY="" SSL_CERT_FILE="$MITM/mitmproxy-ca-cert.pem" "$@"
+  local rc=$?
+  sleep 1; kill "$pid" 2> /dev/null; wait "$pid" 2> /dev/null
+  return $rc
+}
+flows() { sed 's/^/   | /' "$OUT/flows-$1.jsonl"; }
+nflows() { local n; n="$(grep -c . "$OUT/flows-$1.jsonl" 2> /dev/null)"; echo "${n:-0}"; }
+FAKEREF=abcdefghijklmnopqrst
+FAKETOKEN="sbp_$(openssl rand -hex 20)"
+mklinked() { # mklinked <dir> : a linked dir like the reviewed wrappers write (no config.toml)
+  rm -rf "$1"; mkdir -p "$1/supabase/.temp" "$1/supabase/migrations"
+  printf '%s\n' "$FAKEREF" > "$1/supabase/.temp/project-ref"
+  printf '%s' "postgresql://$PUSER@$RUNNER_IP:$TLSP/postgres" > "$1/supabase/.temp/pooler-url"
+  cp "$OUT/cli-latest" "$1/supabase/.temp/cli-latest"
+}
+clean_hon66
+# 1. db push --db-url (the S1 apply form): password in PGPASSWORD, no token. A dry run and a real push of ONE small file.
+A1="$OUT/api-push"; mkwd "$A1"; cat > "$A1/supabase/migrations/0213_hon66_api.sql" <<'SQL'
+create table public.hon66_api (id int);
+SQL
+with_fake_api push env -u GITHUB_TOKEN -u GH_TOKEN "${S1ENV[@]}" PGPASSWORD="$PWU" bash -c "cd '$A1' && '$GOBIN' db push --db-url '$TLSURL_BASE' --dry-run > '$OUT/api-push-dry.log' 2>&1; echo \$? > '$OUT/api-push-dry.rc'; '$GOBIN' db push --db-url '$TLSURL_BASE' --yes > '$OUT/api-push-real.log' 2>&1; echo \$? > '$OUT/api-push-real.rc'"
+say "RESULT db push --db-url dry run exit=$(cat "$OUT/api-push-dry.rc") push exit=$(cat "$OUT/api-push-real.rc"); HTTP requests seen: $(nflows push)"; flows push | tee -a "$RES"
+expect "(H6a) db push --db-url (dry run + real push, no token) sends NO HTTP request" "$([ "$(nflows push)" = 0 ] && [ "$(cat "$OUT/api-push-real.rc")" = 0 ] && [ "$(hist_n)" = 1 ] && echo 0 || echo 1)" "requests=$(nflows push) pushed=$(hist_n)"
+clean_hon66
+# 2. db push --linked with a password and NO token (dry run only): no login-role POST, no ban calls
+mklinked "$OUT/api-linked"
+with_fake_api linked env -u GITHUB_TOKEN -u GH_TOKEN -u SUPABASE_ACCESS_TOKEN "${S1ENV[@]}" SUPABASE_DB_PASSWORD="$PWU" bash -c "cd '$OUT/api-linked' && '$GOBIN' db push --linked --dry-run > '$OUT/api-linked.log' 2>&1; echo \$? > '$OUT/api-linked.rc'"
+say "RESULT db push --linked --dry-run (password, no token) exit=$(cat "$OUT/api-linked.rc"); requests: $(nflows linked)"; flows linked | tee -a "$RES"; say "   log: $(tr '\n' ' ' < "$OUT/api-linked.log" | cut -c1-300)"
+expect "(H6b) db push --linked WITH a password and NO token makes no login-role / ban / any HTTP request" "$([ "$(nflows linked)" = 0 ] && echo 0 || echo 1)" "requests=$(nflows linked) exit=$(cat "$OUT/api-linked.rc")"
+# 3. db query --linked -o json -f file (the window reads): token + password
+echo "select 1 as one" > "$OUT/api-q.sql"
+mklinked "$OUT/api-linked"
+with_fake_api query env -u GITHUB_TOKEN -u GH_TOKEN "${S1ENV[@]}" SUPABASE_ACCESS_TOKEN="$FAKETOKEN" SUPABASE_DB_PASSWORD="$PWU" bash -c "cd '$OUT/api-linked' && '$GOBIN' --agent no db query --linked -o json -f '$OUT/api-q.sql' > '$OUT/api-query.out' 2> '$OUT/api-query.err'; echo \$? > '$OUT/api-query.rc'"
+say "RESULT db query --linked exit=$(cat "$OUT/api-query.rc"); requests: $(nflows query); stdout: $(head -c 120 "$OUT/api-query.out" | tr -d '\n ')"; flows query | tee -a "$RES"
+QPOST=$(grep -c '"method": "POST", "host": "api.supabase.com", "path": "/v1/projects/'$FAKEREF'/database/query"' "$OUT/flows-query.jsonl")
+QOTHER=$(grep -v '"/v1/projects/'$FAKEREF'/database/query"' "$OUT/flows-query.jsonl" | grep -vc '"method": "GET", "host": "api.supabase.com", "path": "/v1/projects/'$FAKEREF'"')
+expect "(H6c) db query --linked sends exactly one POST /database/query (and nothing but the optional GET project beside it); no read-only endpoint, no other path" "$([ "$QPOST" = 1 ] && [ "$QOTHER" = 0 ] && echo 0 || echo 1)" "post=$QPOST other=$QOTHER total=$(nflows query)"
+# 4. backups list
+mklinked "$OUT/api-linked"
+with_fake_api backups env -u GITHUB_TOKEN -u GH_TOKEN "${S1ENV[@]}" SUPABASE_ACCESS_TOKEN="$FAKETOKEN" bash -c "cd '$OUT/api-linked' && '$GOBIN' --agent no backups list --project-ref $FAKEREF -o json > '$OUT/api-backups.out' 2> '$OUT/api-backups.err'; echo \$? > '$OUT/api-backups.rc'"
+say "RESULT backups list exit=$(cat "$OUT/api-backups.rc"); requests: $(nflows backups)"; flows backups | tee -a "$RES"
+BGET=$(grep -c '"method": "GET", "host": "api.supabase.com", "path": "/v1/projects/'$FAKEREF'/database/backups"' "$OUT/flows-backups.jsonl")
+BOTHER=$(grep -v '/database/backups"' "$OUT/flows-backups.jsonl" | grep -vc '"method": "GET", "host": "api.supabase.com", "path": "/v1/projects/'$FAKEREF'"')
+expect "(H6d) backups list sends exactly one GET /database/backups (plus at most the optional GET project)" "$([ "$BGET" = 1 ] && [ "$BOTHER" = 0 ] && echo 0 || echo 1)" "get=$BGET other=$BOTHER"
+ALLF=$(cat "$OUT"/flows-*.jsonl)
+expect "(H6e) no command sent anything to /restore-point, /restore-pitr, /cli/login-role, /network_bans, /database/query/read-only or /migrations" "$(printf '%s' "$ALLF" | grep -qE 'restore-point|restore-pitr|login-role|network_bans|network-bans|query/read-only|/migrations' && echo 1 || echo 0)" "total requests over all steps: $(printf '%s\n' "$ALLF" | grep -c .)"
+expect "(H6f) the canary token never reached the database or a log: absent from the db-push logs" "$(grep -qF "$FAKETOKEN" "$OUT/api-push-real.log" "$OUT/api-push-dry.log" 2>/dev/null && echo 1 || echo 0)" "-"
+clean_hon66

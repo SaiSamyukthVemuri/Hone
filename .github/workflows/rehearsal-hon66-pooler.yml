@@ -104,10 +104,7 @@ jobs:
           set -u
           export DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
           echo "db container: $DB"
-          rc=0
-          bash rehearsal/hon66/facts.sh || rc=$?
-          if [ -f rehearsal/hon66/verify.sh ]; then bash rehearsal/hon66/verify.sh || rc=$?; fi
-          exit $rc
+          bash rehearsal/hon66/main.sh
 
       - name: Upload rehearsal logs
         if: ${{ always() }}
