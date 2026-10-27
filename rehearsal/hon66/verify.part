@@ -13,17 +13,17 @@ mk_lockme() { # a table the postgres role may ALTER (member of its owner role) b
 hold_lock() { ( sadm -c "set role hon66_owner; begin; lock table public.hon66_lockme in access exclusive mode; select pg_sleep($1); commit" > "$OUT/v3-holder-$2.out" 2>&1 ) & HOLD=$!; }
 vnew() { # vnew <label> : clean db state + a fresh 0213..0246 workdir in $VW + the expected list
   clean_hon66; rm_lockme
-  VW="$OUT/vw-$1"; mkwd "$VW"; write_fast34 "$VW"; ( cd "$VW/supabase/migrations" && ls | awk '$0 >= "0213"' ) > "$EXPF"
+  VTAG="$1"; VTD="$OUT/td-$1"; rm -rf "$VTD"; VW="$OUT/vw-$1"; mkwd "$VW"; write_fast34 "$VW"; ( cd "$VW/supabase/migrations" && ls | awk '$0 >= "0213"' ) > "$EXPF"
 }
 slow_at() { echo "select pg_sleep($3);" >> "$1/supabase/migrations/$2_hon66_fast.sql"; } # slow_at <dir> <nnnn> <secs>
 vwrap() { # vwrap <label> [extra wrapper args...] : the wrapper, foreground, output in $OUT/w-<label>.out, exit in VRC
   local l="$1"; shift
-  HONE_GATE_PASSWORD_FILE="$PWF" bash "$G/hone-push-linux.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --workdir "$VW" --expected "$EXPF" --state-dir "$OUT/sd-$l" "$@" > "$OUT/w-$l.out" 2>&1; VRC=$?
+  bash "$G/hone-push-linux.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --workdir "$VW" --expected "$EXPF" --state-dir "$OUT/sd-$l" --approval-id "ap-$VTAG" --tombstone-dir "$VTD" "$@" 3< "$PWF" > "$OUT/w-$l.out" 2>&1; VRC=$?
 }
 vwrap_bg() { # background form; VWPID is the wrapper's pid
   local l="$1"; shift
   # an async job of a non-interactive shell starts with SIGINT ignored; reset it so the wrapper's own INT trap can be tested
-  HONE_GATE_PASSWORD_FILE="$PWF" python3 -I -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp("bash", ["bash"] + sys.argv[1:])' "$G/hone-push-linux.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --workdir "$VW" --expected "$EXPF" --state-dir "$OUT/sd-$l" "$@" > "$OUT/w-$l.out" 2>&1 &
+  python3 -I -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp("bash", ["bash"] + sys.argv[1:])' "$G/hone-push-linux.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --workdir "$VW" --expected "$EXPF" --state-dir "$OUT/sd-$l" --approval-id "ap-$VTAG" --tombstone-dir "$VTD" "$@" 3< "$PWF" > "$OUT/w-$l.out" 2>&1 &
   VWPID=$!
 }
 vhist() { hist_n; }
@@ -35,11 +35,11 @@ vkill_guards() { local f; for f in "$OUT"/sd-*/guard/guard.pid "$OUT"/sd-*/canar
 vout() { tr '\n' ' ' < "$OUT/w-$1.out" | cut -c1-600; }
 nopw() { ! grep -rqF "$PWU" "$OUT"/w-*.out "$OUT"/sd-* 2> /dev/null; }
 say "== V1. happy path through the pooler: reconcile, in-flight check, canary, guard, push, evidence; then a re-run pushes nothing"
-vnew v1; vwrap v1 --limit 120 --every 1
+vnew v1; vwrap v1 --limit 120 --every 2
 expect "(V1a) wrapper: COMPLETE 34/34, canary cancelled, guard heartbeat observed, exit 0" "$([ "$VRC" = 0 ] && grep -q '^RESULT: COMPLETE 34/34' "$OUT/w-v1.out" && grep -q '^CANARY:' "$OUT/w-v1.out" && grep -q 'first heartbeat observed' "$OUT/w-v1.out" && echo 0 || echo 1)" "rc=$VRC $(vout v1)"
 EVID="$(grep '^GUARD EVIDENCE' "$OUT/w-v1.out")"; say "RESULT $EVID"
 expect "(V1b) the guard evidence reports zero blind polls and zero cancels on a healthy fast push" "$(echo "$EVID" | grep -q 'blind polls over the whole guard life: 0; cancels: 0' && echo 0 || echo 1)" "$EVID"
-vwrap v1r --limit 120 --every 1
+vwrap v1r --limit 120 --every 2
 expect "(V1c) re-run after completion: ALREADY-COMPLETE, nothing pushed, history unchanged (34)" "$([ "$VRC" = 0 ] && grep -q 'ALREADY-COMPLETE 34/34' "$OUT/w-v1r.out" && [ "$(vhist)" = 34 ] && echo 0 || echo 1)" "rc=$VRC n=$(vhist)"
 expect "(V1d) the password never appears in any wrapper/guard output or state file" "$(nopw && echo 0 || echo 1)" "-"
 
@@ -80,46 +80,47 @@ rm_lockme
 
 say "== V4. interruption mid-push with state-reconciled resume (slow file 0217 = 12 s so the push is mid-flight)"
 # V4a SIGINT to the CLI
-vnew v4a; slow_at "$VW" 0217 12; vwrap_bg v4a --limit 120 --every 1
+vnew v4a; slow_at "$VW" 0217 12; vwrap_bg v4a --limit 120 --every 2
 vwait_hist 4 120; sleep 3; CP="$(vgo_pid)"; kill -INT "$CP" 2> /dev/null; wait "$VWPID" 2> /dev/null; VRC=$?
 say "RESULT V4a SIGINT to the CLI mid-file: rc=$VRC; history when interrupted/after=$(vhist); CLI exited early? $(grep -c 'RESULT: PARTIAL' "$OUT/w-v4a.out") (0 = it ignored or survived SIGINT); $(vout v4a)"
 expect "(V4a) after SIGINT to the CLI the wrapper reports a state-derived verdict (COMPLETE/PARTIAL clean prefix/INCONSISTENT never), exit 0 or 4" "$([ "$VRC" = 0 ] || [ "$VRC" = 4 ] && grep -qE '^RESULT: (COMPLETE|PARTIAL)' "$OUT/w-v4a.out" && echo 0 || echo 1)" "rc=$VRC n=$(vhist)"
-sleep 14; vwrap v4a2 --limit 120 --every 1
+sleep 14; vwrap v4a2 --limit 120 --every 2
 expect "(V4a2) the follow-up run resumes or confirms: COMPLETE 34/34 or ALREADY-COMPLETE, each version exactly once, 34 tables" "$([ "$VRC" = 0 ] && [ "$(vdist)" = 34 ] && [ "$(vhist)" = 34 ] && [ "$(vtbl)" = 34 ] && echo 0 || echo 1)" "rc=$VRC n=$(vhist) distinct=$(vdist) tables=$(vtbl) $(vout v4a2)"
 # V4b SIGTERM to the CLI
-vnew v4b; slow_at "$VW" 0217 12; vwrap_bg v4b --limit 120 --every 1
+vnew v4b; slow_at "$VW" 0217 12; vwrap_bg v4b --limit 120 --every 2
 vwait_hist 4 120; sleep 3; CP="$(vgo_pid)"; kill -TERM "$CP" 2> /dev/null; wait "$VWPID" 2> /dev/null; VRC=$?
 expect "(V4b) after SIGTERM to the CLI: a clean state-derived verdict (exit 0 or 4)" "$([ "$VRC" = 0 ] || [ "$VRC" = 4 ] && grep -qE '^RESULT: (COMPLETE|PARTIAL)' "$OUT/w-v4b.out" && echo 0 || echo 1)" "rc=$VRC $(vout v4b)"
-sleep 14; vwrap v4b2 --limit 120 --every 1
+sleep 14; vwrap v4b2 --limit 120 --every 2
 expect "(V4b2) resume completes: 34 distinct versions, 34 tables" "$([ "$VRC" = 0 ] && [ "$(vdist)" = 34 ] && [ "$(vtbl)" = 34 ] && echo 0 || echo 1)" "rc=$VRC n=$(vhist) $(vout v4b2)"
 # V4c SIGKILL to the CLI, then an IMMEDIATE re-run: a possibly-running server statement must block a blind re-push
-vnew v4c; slow_at "$VW" 0217 12; vwrap_bg v4c --limit 120 --every 1
+vnew v4c; slow_at "$VW" 0217 12; vwrap_bg v4c --limit 120 --every 2
 vwait_hist 4 120; sleep 3; CP="$(vgo_pid)"; kill -KILL "$CP" 2> /dev/null; wait "$VWPID" 2> /dev/null; VRC=$?
 H_AFTER_KILL="$(vhist)"
-vwrap v4c2 --limit 120 --every 1
+vwrap v4c2 --limit 120 --every 2
 say "RESULT V4c SIGKILL to the CLI: first rc=$VRC history after kill=$H_AFTER_KILL; immediate re-run rc=$VRC: $(vout v4c2)"
 SECOND_RC=$VRC
 expect "(V4c) an immediate re-run after SIGKILL either refuses on an in-flight statement/moved history or resumes from a CLEAN prefix; never INCONSISTENT, never a duplicate" "$(! grep -q 'INCONSISTENT' "$OUT/w-v4c2.out" && [ "$(vdist)" = "$(vhist)" ] && echo 0 || echo 1)" "rc=$SECOND_RC n=$(vhist) distinct=$(vdist)"
-sleep 14; vwrap v4c3 --limit 120 --every 1
+sleep 14; vwrap v4c3 --limit 120 --every 2
 expect "(V4c2) once the server is quiet, the resume completes: 34/34, each once, 34 tables" "$([ "$VRC" = 0 ] && [ "$(vdist)" = 34 ] && [ "$(vhist)" = 34 ] && [ "$(vtbl)" = 34 ] && echo 0 || echo 1)" "rc=$VRC n=$(vhist) distinct=$(vdist) tables=$(vtbl)"
 # V4d SIGINT then SIGTERM to the WRAPPER: recorded, push and guard NOT killed, push finishes, verdict reported
-vnew v4d; slow_at "$VW" 0217 12; vwrap_bg v4d --limit 120 --every 1
+vnew v4d; slow_at "$VW" 0217 12; vwrap_bg v4d --limit 120 --every 2
 vwait_hist 4 120; sleep 2; kill -INT "$VWPID"; sleep 1; kill -TERM "$VWPID"; wait "$VWPID" 2> /dev/null; VRC=$?
 expect "(V4d) signals to the wrapper are recorded and the push still finishes: COMPLETE 34/34, SIGNAL line printed, 34 tables" "$([ "$VRC" = 0 ] && grep -q 'SIGNAL received' "$OUT/w-v4d.out" && grep -q '^RESULT: COMPLETE 34/34' "$OUT/w-v4d.out" && [ "$(vtbl)" = 34 ] && echo 0 || echo 1)" "rc=$VRC $(vout v4d)"
 # V4e SIGKILL to the WRAPPER: the push and the guard keep running as orphans; a re-run reconciles
-vnew v4e; slow_at "$VW" 0217 12; vwrap_bg v4e --limit 120 --every 1
+vnew v4e; slow_at "$VW" 0217 12; vwrap_bg v4e --limit 120 --every 2
 vwait_hist 4 120; sleep 2; kill -KILL "$VWPID"; wait "$VWPID" 2> /dev/null
-GUARD_ALIVE="$(kill -0 "$(cat "$OUT/sd-v4e/guard/guard.pid" 2> /dev/null)" 2> /dev/null && echo yes || echo no)"
-sleep 16; vkill_guards
-vwrap v4e2 --limit 120 --every 1
-expect "(V4e) SIGKILL of the wrapper: the orphaned CLI finished the push (34), the orphan guard was still alive (kept protecting), and a re-run reports ALREADY-COMPLETE" "$([ "$GUARD_ALIVE" = yes ] && [ "$(vhist)" = 34 ] && grep -q 'ALREADY-COMPLETE 34/34' "$OUT/w-v4e2.out" && echo 0 || echo 1)" "guard_alive=$GUARD_ALIVE n=$(vhist) $(vout v4e2)"
+sleep 3; GUARD_ALIVE="$(kill -0 "$(cat "$OUT/sd-v4e/guard/guard.pid" 2> /dev/null)" 2> /dev/null && echo yes || echo no)"
+INFLIGHT_LEFT="$([ -s "$VTD/IN-FLIGHT" ] && echo yes || echo no)"
+sleep 14; vkill_guards
+vwrap v4e2 --limit 120 --every 2
+expect "(V4e) SIGKILL of the wrapper: the orphaned CLI still finished the push (34), the guard STOPPED itself (no cancelling guard left behind), IN-FLIGHT was left, and the re-run is the recorded resume: ALREADY-COMPLETE, IN-FLIGHT cleared, RUN-RECORD notes resume-of-in-flight" "$([ "$GUARD_ALIVE" = no ] && [ "$INFLIGHT_LEFT" = yes ] && [ "$(vhist)" = 34 ] && grep -q 'ALREADY-COMPLETE 34/34' "$OUT/w-v4e2.out" && grep -q 'RESUME: an earlier run left IN-FLIGHT' "$OUT/w-v4e2.out" && [ ! -e "$VTD/IN-FLIGHT" ] && grep -q 'resume-of-in-flight' "$VTD/RUN-RECORD" && echo 0 || echo 1)" "guard_alive=$GUARD_ALIVE inflight_left=$INFLIGHT_LEFT n=$(vhist) $(vout v4e2)"
 # V4f relay drop (network drop) mid-push, then restore
-vnew v4f; slow_at "$VW" 0217 12; vwrap_bg v4f --limit 120 --every 1
+vnew v4f; slow_at "$VW" 0217 12; vwrap_bg v4f --limit 120 --every 2
 vwait_hist 4 120; sleep 3; kill "$RELAY" 2> /dev/null; sleep 4; start_relay
 wait "$VWPID" 2> /dev/null; VRC=$?
 say "RESULT V4f relay dropped for ~4 s mid-push: wrapper rc=$VRC; $(vout v4f)"
 expect "(V4f) after a network drop the wrapper ends in a state-derived verdict or UNKNOWN (never INCONSISTENT) and reports blind polls honestly" "$(! grep -q 'INCONSISTENT' "$OUT/w-v4f.out" && grep -qE '^RESULT: (COMPLETE|PARTIAL|UNKNOWN)' "$OUT/w-v4f.out" && echo 0 || echo 1)" "rc=$VRC"
-sleep 16; vkill_guards; vwrap v4f2 --limit 120 --every 1
+sleep 16; vkill_guards; vwrap v4f2 --limit 120 --every 2
 expect "(V4f2) after the network is back, the re-run completes without a duplicate: 34 distinct, 34 tables" "$([ "$VRC" = 0 ] && [ "$(vdist)" = 34 ] && [ "$(vhist)" = 34 ] && [ "$(vtbl)" = 34 ] && echo 0 || echo 1)" "rc=$VRC n=$(vhist) distinct=$(vdist) tables=$(vtbl) $(vout v4f2)"
 vkill_guards
 
@@ -129,18 +130,65 @@ RB_DIRECT="$(psqld -c "select string_agg(version, ',' order by version) from sup
 RB_EXPECT="$(seq 213 246 | while read -r i; do printf '%04d\n' "$i"; done | paste -sd, -)"
 expect "(V5) read-back through the pooler equals the direct read equals the contiguous 0213..0246 list" "$([ "$RB_POOL" = "$RB_DIRECT" ] && [ "$RB_DIRECT" = "$RB_EXPECT" ] && echo 0 || echo 1)" "pooler=${RB_POOL:0:30}.. direct==expected:$([ "$RB_DIRECT" = "$RB_EXPECT" ] && echo yes || echo no)"
 
-say "== V6. the credential file is refused unless it is a regular, unlinked, one-line, owner-only (600) file; nothing is attempted"
+say "== V6. credentials and state: fd 3 must hold exactly one non-empty line; FAILED-LOGIN blocks every later run; nothing is attempted"
 vnew v6; N0="$(vhist)"
-badpw() { # badpw <label> <path>
-  HONE_GATE_PASSWORD_FILE="$2" bash "$G/hone-push-linux.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --workdir "$VW" --expected "$EXPF" --state-dir "$OUT/sd-$1" > "$OUT/w-$1.out" 2>&1; BRC=$?
-  [ "$BRC" = 2 ] && grep -q 'PUSH REFUSED' "$OUT/w-$1.out" && [ "$(vhist)" = "$N0" ]
+badfd() { # badfd <label> <expected refusal text> <fd3-source-command or CLOSED> [extra args]
+  local l="$1" want="$2" src="$3"; shift 3
+  if [ "$src" = CLOSED ]; then bash "$G/hone-push-linux.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --workdir "$VW" --expected "$EXPF" --state-dir "$OUT/sd-$l" --approval-id ap-v6 --tombstone-dir "$VTD" "$@" 3<&- > "$OUT/w-$l.out" 2>&1; BRC=$?
+  else bash "$G/hone-push-linux.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --workdir "$VW" --expected "$EXPF" --state-dir "$OUT/sd-$l" --approval-id ap-v6 --tombstone-dir "$VTD" "$@" 3< <(eval "$src") > "$OUT/w-$l.out" 2>&1; BRC=$?; fi
+  [ "$BRC" = 2 ] && grep -q "PUSH REFUSED: .*$want" "$OUT/w-$l.out" && [ "$(vhist)" = "$N0" ]
 }
-cp "$PWF" "$OUT/v-pw644"; chmod 644 "$OUT/v-pw644"; ln -sf "$PWF" "$OUT/v-pwlink"; ln -f "$PWF" "$OUT/v-pwhard" 2> /dev/null
-: > "$OUT/v-pwempty"; chmod 600 "$OUT/v-pwempty"; printf 'a\nb\n' > "$OUT/v-pw2"; chmod 600 "$OUT/v-pw2"
 ALL=0
-for c in "missing:$OUT/v-nonexistent" "mode644:$OUT/v-pw644" "symlink:$OUT/v-pwlink" "hardlink:$OUT/v-pwhard" "empty:$OUT/v-pwempty" "twolines:$OUT/v-pw2" "relative:v-pw"; do
-  badpw "v6-${c%%:*}" "${c#*:}" && say "PASS  (V6) refused: ${c%%:*}" || { say "FAIL  (V6) not refused: ${c%%:*} (rc=$BRC)"; ALL=1; FAILS=$((FAILS + 1)); }
+for c in "closed|fd 3 is not open|CLOSED" "empty|empty or longer|printf ''" "twolines|more than one line|printf 'a\\nb\\n'" "oversize|empty or longer|head -c 5000 /dev/zero | tr '\\0' x; echo" "noapproval|approval-id|CLOSED|--approval-id=" ; do
+  IFS='|' read -r n want src extra <<< "$c"
+  if [ "$n" = noapproval ]; then
+    bash "$G/hone-push-linux.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --workdir "$VW" --expected "$EXPF" --state-dir "$OUT/sd-v6-$n" --tombstone-dir "$VTD" 3< "$PWF" > "$OUT/w-v6-$n.out" 2>&1; BRC=$?
+    [ "$BRC" = 2 ] && grep -q 'PUSH REFUSED: --approval-id' "$OUT/w-v6-$n.out" && [ "$(vhist)" = "$N0" ] && say "PASS  (V6) refused: $n" || { say "FAIL  (V6) not refused: $n (rc=$BRC)"; ALL=1; FAILS=$((FAILS + 1)); }
+  else
+    badfd "v6-$n" "$want" "$src" && say "PASS  (V6) refused: $n" || { say "FAIL  (V6) not refused: $n (rc=$BRC)"; ALL=1; FAILS=$((FAILS + 1)); }
+  fi
 done
-rm -f "$OUT/v-pwhard"
 expect "(V6z) no refusal printed the password; the history never moved" "$(nopw && [ "$(vhist)" = "$N0" ] && [ "$ALL" = 0 ] && echo 0 || echo 1)" "-"
+
+say "== V7. login failure (M4): a wrong password writes FAILED-LOGIN once; every later run refuses WITHOUT logging in"
+vnew v7; WRONG="$OUT/v-wrongpw"; printf '%s\n' "wrong-$PWU-wrong" > "$WRONG"
+bash "$G/hone-push-linux.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --workdir "$VW" --expected "$EXPF" --state-dir "$OUT/sd-v7a" --approval-id ap-v7 --tombstone-dir "$VTD" 3< "$WRONG" > "$OUT/w-v7a.out" 2>&1; R1=$?
+AF0="$(docker logs "$POOLER" 2>&1 | grep -ciE 'password authentication failed|SASL auth')"
+bash "$G/hone-push-linux.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --workdir "$VW" --expected "$EXPF" --state-dir "$OUT/sd-v7b" --approval-id ap-v7 --tombstone-dir "$VTD" 3< "$PWF" > "$OUT/w-v7b.out" 2>&1; R2=$?
+AF1="$(docker logs "$POOLER" 2>&1 | grep -ciE 'password authentication failed|SASL auth')"
+expect "(V7a) the first run refuses (exit 2) and writes FAILED-LOGIN" "$([ "$R1" = 2 ] && [ -s "$VTD/FAILED-LOGIN" ] && echo 0 || echo 1)" "rc=$R1 $(tr '\n' ' ' < "$OUT/w-v7a.out" | cut -c1-200)"
+expect "(V7b) the next run (even with the RIGHT password) refuses on FAILED-LOGIN with no login at all (Supavisor auth-failure count unchanged, history unchanged)" "$([ "$R2" = 2 ] && grep -q 'FAILED-LOGIN exists' "$OUT/w-v7b.out" && [ "$AF1" = "$AF0" ] && [ "$(vhist)" = 0 ] && echo 0 || echo 1)" "rc=$R2 af=$AF0/$AF1"
+expect "(V7c) neither password appears in any output or state file" "$(! grep -rqF -e "wrong-$PWU-wrong" -e "$PWU" "$OUT"/w-v7*.out "$OUT"/sd-v7* "$VTD" 2> /dev/null && echo 0 || echo 1)" "-"
+rm -f "$VTD/FAILED-LOGIN"
+
+say "== V8. guard scope (M3): only POOLED (Supavisor) postgres-role statements started after arming are cancelled; a DIRECT session is never touched; the cancel is recorded without the query text"
+vnew v8; GD="$OUT/sd-v8-guard"; mkdir -p "$GD"
+PGPASSWORD="$PWU" bash "$G/hone-push-guard.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --state-dir "$GD" --parent $$ --tombstone "$VTD/FAILED-LOGIN" --limit 3 --every 1 --max 60 > "$GD/guard.out" 2>&1 & GPID=$!
+for _ in $(seq 1 30); do grep -q ' ok ' "$GD/polls.log" 2> /dev/null && break; sleep 0.5; done
+( docker exec -e PGAPPNAME=hon66-direct -i "$DB" psql -U postgres -X -q -A -t -c "select pg_sleep(14)" > "$OUT/v8-direct.out" 2>&1; echo $? > "$OUT/v8-direct.rc" ) & DPID=$!
+( cd "$OUT" && PGPASSWORD="$PWU" "$GOBIN" --agent no db query --db-url "$TLSURL_BASE" -o json "select pg_sleep(40) /* hon66-secret-marker */" > "$OUT/v8-pooled.out" 2> "$OUT/v8-pooled.err"; echo $? > "$OUT/v8-pooled.rc" ) & PPID2=$!
+sleep 12
+POOLED_RC="$(cat "$OUT/v8-pooled.rc" 2> /dev/null || echo running)"; DIRECT_RC="$(cat "$OUT/v8-direct.rc" 2> /dev/null || echo running)"
+wait "$DPID" 2> /dev/null; DIRECT_RC="$(cat "$OUT/v8-direct.rc" 2> /dev/null || echo none)"
+kill "$GPID" 2> /dev/null; wait "$GPID" 2> /dev/null; wait "$PPID2" 2> /dev/null
+say "RESULT V8 pooled statement rc=$POOLED_RC (cancelled early?), direct session rc after its 14 s: $DIRECT_RC; cancels.log: $(cut -c1-220 "$GD/cancels.log" | tr '\n' ' ')"
+expect "(V8a) the pooled over-limit statement was cancelled (57014) while the direct postgres-role session (application_name hon66-direct) ran to completion (rc 0)" "$([ "$POOLED_RC" != running ] && [ "$POOLED_RC" != 0 ] && grep -qiE '57014|cancel' "$OUT/v8-pooled.err" && [ "$DIRECT_RC" = 0 ] && echo 0 || echo 1)" "pooled=$POOLED_RC direct=$DIRECT_RC"
+expect "(V8b) the cancel is recorded (pid|secs|app|addr|query_start|md5|len) and the query TEXT is not in the guard's output or state" "$([ -s "$GD/cancels.log" ] && grep -q 'Supavisor' "$GD/cancels.log" && ! grep -rq 'hon66-secret-marker\|pg_sleep' "$GD" && echo 0 || echo 1)" "-"
+say "== V9. parent exit (M3): a guard whose parent is gone stops by itself, within a few seconds"
+GD9="$OUT/sd-v9-guard"; mkdir -p "$GD9"; sleep 600 & PAR=$!
+PGPASSWORD="$PWU" bash "$G/hone-push-guard.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --state-dir "$GD9" --parent "$PAR" --tombstone "$VTD/FAILED-LOGIN" --limit 120 --every 1 --max 600 > "$GD9/guard.out" 2>&1 & G9=$!
+for _ in $(seq 1 30); do grep -q ' ok ' "$GD9/polls.log" 2> /dev/null && break; sleep 0.5; done
+kill "$PAR" 2> /dev/null; T9=$(date +%s); for _ in $(seq 1 30); do kill -0 "$G9" 2> /dev/null || break; sleep 1; done; E9=$(( $(date +%s) - T9 ))
+expect "(V9) the guard exited within 15 s of its parent's death (no orphan guard)" "$(! kill -0 "$G9" 2> /dev/null && [ "$E9" -le 15 ] && grep -q 'parent .* is gone' "$GD9/guard.out" && echo 0 || echo 1)" "exit_after=${E9}s"
+kill "$G9" 2> /dev/null
+
+say "== V10. backoff and tombstone (M4): with the relay down the guard backs off, stops after 3 failed polls, writes FAILED-LOGIN, and makes no further logins"
+GD10="$OUT/sd-v10-guard"; mkdir -p "$GD10"; rm -f "$VTD/FAILED-LOGIN"; sleep 600 & PAR=$!
+PGPASSWORD="$PWU" bash "$G/hone-push-guard.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --state-dir "$GD10" --parent "$PAR" --tombstone "$VTD/FAILED-LOGIN" --limit 120 --every 1 --max 120 > "$GD10/guard.out" 2>&1 & G10=$!
+for _ in $(seq 1 30); do grep -q ' ok ' "$GD10/polls.log" 2> /dev/null && break; sleep 0.5; done
+kill "$RELAY" 2> /dev/null; for _ in $(seq 1 60); do kill -0 "$G10" 2> /dev/null || break; sleep 1; done
+wait "$G10" 2> /dev/null; GRC=$?; start_relay; kill "$PAR" 2> /dev/null
+NB="$(grep -c ' blind ' "$GD10/polls.log")"
+expect "(V10) the guard stopped itself (exit 3) after exactly 3 blind polls, wrote the FAILED-LOGIN tombstone, and polled no more" "$([ "$GRC" = 3 ] && [ "$NB" = 3 ] && [ -s "$VTD/FAILED-LOGIN" ] && echo 0 || echo 1)" "rc=$GRC blind=$NB"
+rm -f "$VTD/FAILED-LOGIN"
 vkill_guards

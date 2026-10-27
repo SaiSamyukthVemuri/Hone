@@ -45,7 +45,7 @@ console.log(okc&&okb&&okt?"yes":"no "+okc+okb+okt);' "$BASE" "$S1D")
 [ "$names_ok" = yes ] && ok "the functions, bodies and table privileges the SQL reads are exactly the baseline's s1.closures, s1.body_md5 and s1.table_privileges" || bad "SQL lists differ from the baseline: $names_ok"
 for f in s1-g10 s1-closures s1-table-privileges s1-body-md5; do grep -q "= '0246'" "$S1D/$f.sql" && grep -q "1 / (case when" "$S1D/$f.sql" && ok "$f.sql carries the history max = 0246 chain guard" || bad "$f.sql has no 0246 guard"; done
 grep -q "0212" "$S1D/s1-g10.sql" | grep -v '^--' >/dev/null 2>&1; [ -z "$(grep -v '^--' "$S1D/s1-g10.sql" | grep 0212)" ] && ok "s1-g10.sql has no 0212 guard left in its code" || bad "s1-g10.sql still names 0212 in code"
-[ -z "$(grep -nE 'SUPABASE_DB_PASSWORD=|SUPABASE_ACCESS_TOKEN=' "$REAL" | grep -v 'read -rs' | grep -vE '^[0-9]+:(#|cleanup|unset)' | grep -E '=[^ ]')" ] && ok "secrets are only ever read with read -rs and cleared" || bad "a secret assignment outside read -rs"
+[ -z "$(grep -nE 'SUPABASE_DB_PASSWORD=|SUPABASE_ACCESS_TOKEN=' "$REAL" | grep -v -e 'read -rs' -e 'secret_from_fd3' -e 'READ_PW_PLACEHOLDER' | grep -vE '^[0-9]+:(#|cleanup|unset)' | grep -E '=[^ ]')" ] && ok "the PAT is only ever read via secret_from_fd3, the password is only the fixed placeholder, both cleared" || bad "a secret assignment outside read -rs"
 if grep -nE '^[^#]*[A-Za-z0-9_"]+ +# ' "$REAL" | grep -vE "^[0-9]+:\s*#" | grep -E 'printf|export|unset' >/dev/null; then bad "inline comment after a command"; else ok "no inline comment follows a command"; fi
 grep -q "^TOMB=\"\$ROOT/s1-read/FAILED-LOGIN\"" "$REAL" && grep -q 'tombstone "\$f"' "$REAL" && ok "a failed login writes a tombstone and the next run refuses (s1-apply's pattern)" || bad "no tombstone"
 
@@ -80,7 +80,7 @@ STUB
 runit() { # runit [ENV=VAL ...]  -> OUT, RC
   printf 'Supabase access token\t%s\nDatabase password\t%s\n' "$TOKEN" "$PASSWORD" > "$F/answers.txt"
   RC=0
-  python3 "$HERE/driver.py" "$F/out.txt" "$F/answers.txt" -- env -i PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$(dirname "$(node -p process.execPath)") HOME="$F" TERM=dumb HONE_GATE_TOKEN_FILE="$F/cred/token" HONE_GATE_PASSWORD_FILE="$F/cred/pw" STUB_LOG="$F/stub.log" STUB_RESULTS="$F/res" "$@" /bin/bash "$F/window-s1read.test.sh" || RC=$?
+  python3 "$HERE/driver.py" "$F/out.txt" "$F/answers.txt" -- bash -c 'exec 3< "$1"; shift; exec "$@"' _ "$F/cred/token" env -i PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$(dirname "$(node -p process.execPath)") HOME="$F" TERM=dumb STUB_LOG="$F/stub.log" STUB_RESULTS="$F/res" "$@" /bin/bash "$F/window-s1read.test.sh" || RC=$?
   OUT="$F/out.txt"
 }
 calls() { grep -c . "$F/stub.log"; }

@@ -1,6 +1,6 @@
 #!/bin/bash
 # LINUX VARIANT of the reviewed Mac script (HON66-LINUX-GATES), derived by machines/linux-gates/make-linux.py with a fixed substitution
-# list (see LINUX-DIFFS.txt). Credentials are read from files named by the launcher, never prompted, never on argv.
+# list (see LINUX-DIFFS.txt). The PAT arrives on fd 3 from hone-release; no database password is read (fixed non-secret placeholder); nothing is prompted or on argv.
 # Hone PITR STATUS (1 of 2): read the project's backup and PITR status from the Management API through the pinned supabase-go
 # 174a90e2. It runs exactly ONE command:  supabase-go --agent no backups list --project-ref <constant ref> -o json
 # and nothing else: no `backups restore`, no `db`, no `--linked`, no database connection.
@@ -19,7 +19,7 @@
 # GET /v1/projects/<ref> (to cache the project name for telemetry) unless supabase/.temp/linked-project.json already exists. This script
 # seeds that file (the ref only; empty name and organization) in its private folder, so the only request is the backups GET.
 #
-# Read-only. Fail-closed: the first failure stops. No retries. The token is read from a mode-600 file named by the launcher (never printed, never on a command
+# Read-only. Fail-closed: the first failure stops. No retries. The PAT arrives on fd 3 from hone-release (never printed, never on a command
 # line, never written), exported only to the one child, and cleared on any exit.
 set -u
 umask 077
@@ -31,22 +31,20 @@ REF=alhhybgqdmcdyzpybykj
 SELF="${BASH_SOURCE[0]}"
 
 tok=""
-# Credentials come from FILES named by the launcher (hone-gate-launch.sh), never from a prompt, never from argv.
-# secret_from_file VAR ENVNAME LABEL: the file must be absolute, a regular file (no symlink), one hard link, owned by you, mode 600,
-# in a directory that is not group/other-writable, one line, non-empty. The value is read into VAR only; nothing is printed.
-secret_from_file() {
-  local _v _p _envn="$2" _label="$3" _dir
-  _p="${!_envn:-}"
-  [ -n "$_p" ] || die "$_envn is not set (the launcher passes the path of the $_label file)"
-  case "$_p" in /*) ;; *) die "$_envn must be an absolute path" ;; esac
-  [ -f "$_p" ] && [ ! -L "$_p" ] || die "the $_label file is missing, not a regular file, or a symlink"
-  [ "$(stat -c '%u %a %h' "$_p" 2>/dev/null)" = "$(id -u) 600 1" ] || die "the $_label file must be owned by you, mode 600, one hard link"
-  _dir=$(dirname "$_p"); [ -z "$(find "$_dir" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ] || die "the directory of the $_label file is writable by group or others"
-  [ "$(grep -c '' "$_p")" -le 1 ] || die "the $_label file must hold exactly one line"
-  _v=""; IFS= read -r _v < "$_p" || [ -n "$_v" ] || die "could not read the $_label file"
-  [ -n "$_v" ] || die "the $_label file is empty"
+# The PAT arrives on FILE DESCRIPTOR 3, opened by hone-release (root-owned custody layer); it is never a file this script opens, never an
+# argument, never in the environment. There is no database-password input: reads use a FIXED, NON-SECRET placeholder only so that the
+# CLI never creates a login role (HON66-PROOF M9; the CI proves the read path never authenticates with it).
+READ_PW_PLACEHOLDER="hone-read-placeholder-not-a-secret"
+# secret_from_fd3 VAR LABEL: exactly one non-empty line of at most 4096 bytes on fd 3, then fd 3 is closed. Nothing is printed.
+secret_from_fd3() {
+  local _v="" _x="" _l="$2"
+  { true <&3; } 2>/dev/null || die "fd 3 is not open (hone-release passes the $_l on fd 3)"
+  IFS= read -r -n 4097 <&3 _v || [ -n "$_v" ] || die "could not read the $_l from fd 3"
+  if IFS= read -r -t 1 -n 1 _x <&3; then die "fd 3 holds more than one line or more than 4096 bytes"; fi
+  exec 3<&-
+  [ -n "$_v" ] || die "the $_l on fd 3 is empty"
+  [ "${#_v}" -le 4096 ] || die "the $_l on fd 3 is longer than 4096 bytes"
   printf -v "$1" '%s' "$_v"
-  unset "$_envn"
 }
 
 cleanup() { tok=""; unset SUPABASE_ACCESS_TOKEN; stty echo </dev/tty >/dev/null 2>&1 || true; }
@@ -77,7 +75,7 @@ mkdir -p "$LINK/supabase/.temp" && chmod 700 "$LINK" || die "mkdir failed"
 printf '%s\n' v2.102.0 > "$LINK/supabase/.temp/cli-latest" || die "write cli-latest failed"
 printf '{"ref":"%s","name":"","organization_id":"","organization_slug":""}\n' "$REF" > "$LINK/supabase/.temp/linked-project.json" || die "write linked-project.json failed"
 
-secret_from_file tok HONE_GATE_TOKEN_FILE "access token"
+secret_from_fd3 tok "access token"
 [ -n "$tok" ] || die "empty access token"
 
 # ---- the one command ------------------------------------------------------------------------------------------------------------

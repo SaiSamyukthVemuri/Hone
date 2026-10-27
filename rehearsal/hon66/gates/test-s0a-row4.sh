@@ -1,5 +1,5 @@
 #!/bin/bash
-# REHEARSAL - NEVER MERGE. HON66 LINUX VARIANTS of window-s0a (c5) and window-row4 (c5), on Linux x86_64, ported from rehearsal/candidate4/test.sh by a fixed sed list (credentials from mode-600 files, the original Linux runner run-window-read.sh behind the verified-binary npx shim, Linux baseline 5): window-s0a.sh and window-row4.sh (the REAL scripts; test copies differ only
+# REHEARSAL - NEVER MERGE. HON66 LINUX VARIANTS of window-s0a (c5) and window-row4 (c5), on Linux x86_64, ported from rehearsal/candidate4/test.sh by a fixed sed list (PAT on fd 3, the original Linux runner run-window-read.sh behind the verified-binary npx shim, Linux baseline 5): window-s0a.sh and window-row4.sh (the REAL scripts; test copies differ only
 # in pin lines) driven through a pty, with a STUB supabase-go and SYNTHETIC pitr-backups.sh captures (gen-capture.mjs, bound to the real pins
 # 85407d0b / dce26b75). NOT stubbed: the script logic, the runner (only its go-hash constant), the real comparator and lib (same sha), the 14
 # gate files, the baseline (only runner_sha256 / project_ref_sha256 re-pinned). Also runs the comparator's own unit tests.
@@ -91,7 +91,7 @@ s0a_answers() { # s0a_answers WSTART WEND [choice] [ack] [text]
 }
 runs0a() { # runs0a [script] [ENV=VAL ...]
   local sc="${1:-$F/window-s0a.test.sh}"; shift 2>/dev/null || true; RC=0
-  python3 "$HERE/driver.py" "$F/out.txt" "$F/answers.txt" -- env -i PATH=${SHIM:+$SHIM:}/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$(dirname "$(command -v node)") HOME="$F" TERM=dumb HONE_GATE_TOKEN_FILE="$F/cred/token" HONE_GATE_PASSWORD_FILE="$F/cred/pw" STUB_LOG="$F/stub.log" STUB_RESULTS="$F/res" "$@" /bin/bash "$sc" || RC=$?
+  python3 "$HERE/driver.py" "$F/out.txt" "$F/answers.txt" -- bash -c 'exec 3< "$1"; shift; exec "$@"' _ "$F/cred/token" env -i PATH=${SHIM:+$SHIM:}/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$(dirname "$(command -v node)") HOME="$F" TERM=dumb STUB_LOG="$F/stub.log" STUB_RESULTS="$F/res" "$@" /bin/bash "$sc" || RC=$?
   OUT="$F/out.txt"
 }
 refuse() { [ "$RC" != 0 ] && has "$OUT" "$2" && ok "$1" || { bad "$1" "rc=$RC want [$2]"; tail -6 "$OUT"; }; }
@@ -152,7 +152,7 @@ r4_answers() { # r4_answers WSTART WEND BASIS [sleep]
     printf 'Type ready when\t{sleep:%s}ready\nBasis (\t%s\n' "${4:-12}" "$3"
     printf 'PITR enabled\ttrue\nPITR retention\t7\nEarliest recovery point\t{cat:%s/early.txt}\nLatest recovery point\t{cat:%s/late.txt}\n' "$F" "$F"; } > "$F/answers.txt"
 }
-runr4() { RC=0; python3 "$HERE/driver.py" "$F/out.txt" "$F/answers.txt" -- env -i PATH=${SHIM:+$SHIM:}/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$(dirname "$(command -v node)") HOME="$F" TERM=dumb HONE_GATE_TOKEN_FILE="$F/cred/token" HONE_GATE_PASSWORD_FILE="$F/cred/pw" /bin/bash "$F/window-row4.test.sh" || RC=$?; OUT="$F/out.txt"; }
+runr4() { RC=0; python3 "$HERE/driver.py" "$F/out.txt" "$F/answers.txt" -- bash -c 'exec 3< "$1"; shift; exec "$@"' _ "$F/cred/token" env -i PATH=${SHIM:+$SHIM:}/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin:$(dirname "$(command -v node)") HOME="$F" TERM=dumb /bin/bash "$F/window-row4.test.sh" || RC=$?; OUT="$F/out.txt"; }
 mkfix r4ok; mkdir -p "$F/hone-s1"; : > "$F/answers.txt"
 # the capture is made AFTER the selection (the driver sleeps 12 s at the ready prompt); a background job writes it 6 s in
 ( /bin/sleep 6; node "$HERE/gen-capture.mjs" "$F/hone-s1/pitr-backups.r4" -1 0 real-layout > "$F/cap.txt" 2>&1; cut -d' ' -f1 "$F/cap.txt" > "$F/early.txt"; cut -d' ' -f2 "$F/cap.txt" > "$F/late.txt" ) &

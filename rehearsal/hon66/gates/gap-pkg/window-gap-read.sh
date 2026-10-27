@@ -1,12 +1,12 @@
 #!/bin/bash
 # LINUX VARIANT of the reviewed Mac script (HON66-LINUX-GATES), derived by machines/linux-gates/make-linux.py with a fixed substitution
-# list (see LINUX-DIFFS.txt). Credentials are read from files named by the launcher, never prompted, never on argv.
+# list (see LINUX-DIFFS.txt). The PAT arrives on fd 3 from hone-release; no database password is read (fixed non-secret placeholder); nothing is prompted or on argv.
 # Hone #1035 POST-S3 GAP READ (obs-1035-gap-pending-payments-v2.sql, 5aa510c0): count-only read of payment and card-setup rows
 # the old app may have left unreconciled between S1 and S3. ONE read-only file through the verified runner ec9b7c56 and
 # supabase-go 174a90e2; ONE login; no comparator (the rows are counts, read by a person). Must run within 24 h of S3
 # (by 2026-10-28T02:43Z): the SQL's lookback is a fixed 24 hours from NOW.
 # Fail-closed: the first failed command, refusal, authentication error or invalid result stops. No retry. Credentials are
-# read from mode-600 files (never printed, never on a command line, never written) and cleared on any exit. Nothing here creates a
+# received on fd 3 (never printed, never on a command line, never written) and cleared on any exit. Nothing here creates a
 # login role, resets a password or unbans an IP (PREVENTION is the runner's password-present rule; the log scan is only a
 # detector after the fact: a hit is REPORTED, never retried). A failed login writes a tombstone (gap-read/FAILED-LOGIN, no
 # secret); every later run of this script refuses, and so does a FAILED-LOGIN left by s1-read or s1-apply.
@@ -30,22 +30,20 @@ POOLER_URL="postgresql://postgres.$REF@aws-1-us-east-1.pooler.supabase.com:5432/
 TOMB="$ROOT/gap-read/FAILED-LOGIN"
 OTHER_TOMBS="$ROOT/s1-read/FAILED-LOGIN $ROOT/s1-apply/FAILED-LOGIN"
 
-# Credentials come from FILES named by the launcher (hone-gate-launch.sh), never from a prompt, never from argv.
-# secret_from_file VAR ENVNAME LABEL: the file must be absolute, a regular file (no symlink), one hard link, owned by you, mode 600,
-# in a directory that is not group/other-writable, one line, non-empty. The value is read into VAR only; nothing is printed.
-secret_from_file() {
-  local _v _p _envn="$2" _label="$3" _dir
-  _p="${!_envn:-}"
-  [ -n "$_p" ] || die "$_envn is not set (the launcher passes the path of the $_label file)"
-  case "$_p" in /*) ;; *) die "$_envn must be an absolute path" ;; esac
-  [ -f "$_p" ] && [ ! -L "$_p" ] || die "the $_label file is missing, not a regular file, or a symlink"
-  [ "$(stat -c '%u %a %h' "$_p" 2>/dev/null)" = "$(id -u) 600 1" ] || die "the $_label file must be owned by you, mode 600, one hard link"
-  _dir=$(dirname "$_p"); [ -z "$(find "$_dir" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ] || die "the directory of the $_label file is writable by group or others"
-  [ "$(grep -c '' "$_p")" -le 1 ] || die "the $_label file must hold exactly one line"
-  _v=""; IFS= read -r _v < "$_p" || [ -n "$_v" ] || die "could not read the $_label file"
-  [ -n "$_v" ] || die "the $_label file is empty"
+# The PAT arrives on FILE DESCRIPTOR 3, opened by hone-release (root-owned custody layer); it is never a file this script opens, never an
+# argument, never in the environment. There is no database-password input: reads use a FIXED, NON-SECRET placeholder only so that the
+# CLI never creates a login role (HON66-PROOF M9; the CI proves the read path never authenticates with it).
+READ_PW_PLACEHOLDER="hone-read-placeholder-not-a-secret"
+# secret_from_fd3 VAR LABEL: exactly one non-empty line of at most 4096 bytes on fd 3, then fd 3 is closed. Nothing is printed.
+secret_from_fd3() {
+  local _v="" _x="" _l="$2"
+  { true <&3; } 2>/dev/null || die "fd 3 is not open (hone-release passes the $_l on fd 3)"
+  IFS= read -r -n 4097 <&3 _v || [ -n "$_v" ] || die "could not read the $_l from fd 3"
+  if IFS= read -r -t 1 -n 1 _x <&3; then die "fd 3 holds more than one line or more than 4096 bytes"; fi
+  exec 3<&-
+  [ -n "$_v" ] || die "the $_l on fd 3 is empty"
+  [ "${#_v}" -le 4096 ] || die "the $_l on fd 3 is longer than 4096 bytes"
   printf -v "$1" '%s' "$_v"
-  unset "$_envn"
 }
 
 cleanup() {
@@ -120,14 +118,14 @@ printf '%s' "$POOLER_URL" > "$LINK/supabase/.temp/pooler-url" || die "write pool
 printf '%s\n' v2.102.0 > "$LINK/supabase/.temp/cli-latest" || die "write cli-latest failed"
 [ "$(cat "$LINK/supabase/.temp/cli-latest")" = v2.102.0 ] || die "cli-latest is not v2.102.0"
 T_START=$(utcnow)
-echo "Gap read started at $T_START (UTC). Credentials are read from the files named by the launcher; nothing is typed. It must run by 2026-10-28T02:43Z (24 h after S3); the SQL looks back a fixed 24 hours from now."  >&2
+echo "Gap read started at $T_START (UTC). The PAT arrives on fd 3; nothing is typed. It must run by 2026-10-28T02:43Z (24 h after S3); the SQL looks back a fixed 24 hours from now."  >&2
 
 # ---------------------------------------------------------------------------------------------------------
 # credentials, privately (never echoed; cleared by the EXIT/INT/TERM/HUP trap)
 # ---------------------------------------------------------------------------------------------------------
-secret_from_file SUPABASE_ACCESS_TOKEN HONE_GATE_TOKEN_FILE "access token"
+secret_from_fd3 SUPABASE_ACCESS_TOKEN "access token"
 [ -n "$SUPABASE_ACCESS_TOKEN" ] || die "empty access token"
-secret_from_file SUPABASE_DB_PASSWORD HONE_GATE_PASSWORD_FILE "database password"
+SUPABASE_DB_PASSWORD="$READ_PW_PLACEHOLDER"
 [ -n "$SUPABASE_DB_PASSWORD" ] || die "empty password"
 
 # ---------------------------------------------------------------------------------------------------------

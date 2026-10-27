@@ -15,22 +15,20 @@ OSGATE_OLD = '[ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || die "no
 OSGATE_NEW = '[ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] || die "not Linux x86_64 (the pinned supabase-go is linux_amd64)"'
 
 SECRET_HELPER = r'''
-# Credentials come from FILES named by the launcher (hone-gate-launch.sh), never from a prompt, never from argv.
-# secret_from_file VAR ENVNAME LABEL: the file must be absolute, a regular file (no symlink), one hard link, owned by you, mode 600,
-# in a directory that is not group/other-writable, one line, non-empty. The value is read into VAR only; nothing is printed.
-secret_from_file() {
-  local _v _p _envn="$2" _label="$3" _dir
-  _p="${!_envn:-}"
-  [ -n "$_p" ] || die "$_envn is not set (the launcher passes the path of the $_label file)"
-  case "$_p" in /*) ;; *) die "$_envn must be an absolute path" ;; esac
-  [ -f "$_p" ] && [ ! -L "$_p" ] || die "the $_label file is missing, not a regular file, or a symlink"
-  [ "$(stat -c '%u %a %h' "$_p" 2>/dev/null)" = "$(id -u) 600 1" ] || die "the $_label file must be owned by you, mode 600, one hard link"
-  _dir=$(dirname "$_p"); [ -z "$(find "$_dir" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ] || die "the directory of the $_label file is writable by group or others"
-  [ "$(grep -c '' "$_p")" -le 1 ] || die "the $_label file must hold exactly one line"
-  _v=""; IFS= read -r _v < "$_p" || [ -n "$_v" ] || die "could not read the $_label file"
-  [ -n "$_v" ] || die "the $_label file is empty"
+# The PAT arrives on FILE DESCRIPTOR 3, opened by hone-release (root-owned custody layer); it is never a file this script opens, never an
+# argument, never in the environment. There is no database-password input: reads use a FIXED, NON-SECRET placeholder only so that the
+# CLI never creates a login role (HON66-PROOF M9; the CI proves the read path never authenticates with it).
+READ_PW_PLACEHOLDER="hone-read-placeholder-not-a-secret"
+# secret_from_fd3 VAR LABEL: exactly one non-empty line of at most 4096 bytes on fd 3, then fd 3 is closed. Nothing is printed.
+secret_from_fd3() {
+  local _v="" _x="" _l="$2"
+  { true <&3; } 2>/dev/null || die "fd 3 is not open (hone-release passes the $_l on fd 3)"
+  IFS= read -r -n 4097 <&3 _v || [ -n "$_v" ] || die "could not read the $_l from fd 3"
+  if IFS= read -r -t 1 -n 1 _x <&3; then die "fd 3 holds more than one line or more than 4096 bytes"; fi
+  exec 3<&-
+  [ -n "$_v" ] || die "the $_l on fd 3 is empty"
+  [ "${#_v}" -le 4096 ] || die "the $_l on fd 3 is longer than 4096 bytes"
   printf -v "$1" '%s' "$_v"
-  unset "$_envn"
 }
 '''
 
@@ -57,7 +55,7 @@ def count(s, old, n, label):
 
 def common(s, name, creds):
     """creds: list of (VAR, ENVNAME, LABEL) read from files; the matching prompts are removed."""
-    s = s.replace("#!/bin/bash\n", "#!/bin/bash\n# LINUX VARIANT of the reviewed Mac script (HON66-LINUX-GATES), derived by machines/linux-gates/make-linux.py with a fixed substitution\n# list (see LINUX-DIFFS.txt). Credentials are read from files named by the launcher, never prompted, never on argv.\n", 1)
+    s = s.replace("#!/bin/bash\n", "#!/bin/bash\n# LINUX VARIANT of the reviewed Mac script (HON66-LINUX-GATES), derived by machines/linux-gates/make-linux.py with a fixed substitution\n# list (see LINUX-DIFFS.txt). The PAT arrives on fd 3 from hone-release; no database password is read (fixed non-secret placeholder); nothing is prompted or on argv.\n", 1)
     count(s, OSGATE_OLD, 1, name); s = s.replace(OSGATE_OLD, OSGATE_NEW)
     if MAC_GO_SHA in s:
         count(s, MAC_GO_SHA, 1, name); s = s.replace(MAC_GO_SHA, LINUX_GO_SHA)
@@ -66,15 +64,15 @@ def common(s, name, creds):
     s = s.replace('command -v shasum >/dev/null 2>&1 || die "shasum not found"', 'command -v sha256sum >/dev/null 2>&1 || die "sha256sum not found"')
     s = s.replace("shasum -a 256 -c MANIFEST.sha256", "sha256sum -c MANIFEST.sha256")
     s = s.replace("(run the Mac check first)", "(run the installer check first)")
-    s = s.replace("Credentials are typed privately (never echoed, never on a command line, never written)", "Credentials are read from mode-600 files named by the launcher (never printed, never on a command line, never written)")
-    s = s.replace("The token is typed privately (never echoed, never on a command", "The token is read from a mode-600 file named by the launcher (never printed, never on a command")
-    s = s.replace("typed privately (never echoed, never on a command line, never written)", "read from mode-600 files (never printed, never on a command line, never written)")
-    s = s.replace("Nothing is typed except the two hidden credentials.", "Credentials are read from the files named by the launcher; nothing is typed.")
+    s = s.replace("Credentials are typed privately (never echoed, never on a command line, never written)", "The PAT arrives on fd 3 from hone-release (never printed, never on a command line, never written)")
+    s = s.replace("The token is typed privately (never echoed, never on a command", "The PAT arrives on fd 3 from hone-release (never printed, never on a command")
+    s = s.replace("typed privately (never echoed, never on a command line, never written)", "received on fd 3 (never printed, never on a command line, never written)")
+    s = s.replace("Nothing is typed except the two hidden credentials.", "The PAT arrives on fd 3; nothing is typed.")
     s = s.replace("stat -f '%u %Lp'", "stat -c '%u %a'").replace("stat -f '%u'", "stat -c '%u'")
     for var, envn, label in creds:
         pat = re.compile(r'IFS= read -rs -p "[^"]*" ' + re.escape(var) + r' </dev/tty \|\| die "[^"]*"\necho >&2\n')
         assert len(pat.findall(s)) == 1, f"{name}: prompt for {var}"
-        s = pat.sub(f'secret_from_file {var} {envn} "{label}"\n', s)
+        s = pat.sub((f'secret_from_fd3 {var} "{label}"\n' if envn == "HONE_GATE_TOKEN_FILE" else f'{var}="$READ_PW_PLACEHOLDER"\n'), s)
     return s
 
 def insert_helper(s, name):

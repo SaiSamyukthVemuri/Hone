@@ -11,7 +11,7 @@ const iso = (s) => new Date(s * 1000).toISOString().replace(/\.\d+Z$/, "Z");
 const body = JSON.stringify({ backups: [], physical_backup_data: { earliest_physical_backup_date_unix: earliest, latest_physical_backup_date_unix: latest }, pitr_enabled: true, region: "us-east-1", walg_enabled: true }, null, 2) + "\n";
 mkdirSync(dir, { recursive: true, mode: 0o700 }); chmodSync(dir, 0o700);
 writeFileSync(path.join(dir, "backups.json"), body, { mode: 0o600 });
-const meta = { command: "backups list", started_at_utc: iso(captured), captured_at_utc: iso(captured), exit_code: 0, result_sha256: createHash("sha256").update(body).digest("hex"), supabase_go_sha256: "174a90e23b8dfe9ab4e2d2c2e91d4b6b2520fe5be968721555727f16c1bab43c", script_sha256: "fad0cf444455523ae9b65dbec6bbe271c2212aad4d35ef2f391ddb9a64597cbc" };
+const meta = { command: "backups list", started_at_utc: iso(captured), captured_at_utc: iso(captured), exit_code: 0, result_sha256: createHash("sha256").update(body).digest("hex"), supabase_go_sha256: "174a90e23b8dfe9ab4e2d2c2e91d4b6b2520fe5be968721555727f16c1bab43c", script_sha256: "cb5995276775565839f61b7c000726e91993fa5f03597726a9a74b48537f7faa" };
 writeFileSync(path.join(dir, "backups.meta.json"), JSON.stringify(meta) + "\n", { mode: 0o600 });
 if (layout === "real-layout") { writeFileSync(path.join(dir, "backups.err"), "", { mode: 0o600 }); mkdirSync(path.join(dir, "cwd"), { mode: 0o700 }); }
 console.log(`${iso(earliest)} ${iso(latest)}`);

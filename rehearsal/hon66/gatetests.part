@@ -1,7 +1,7 @@
 # REHEARSAL - NEVER MERGE. HON66: the Linux gate test suites on a Linux x86_64 runner (the s0a/row4/s1read/gap/pitr/launcher/install ports), run as
 # the real files with stub supabase-go and fixture results; no hosted call. The installer's real-archive case uses the archive common.sh verified.
 say "== G. Linux gate test suites"
-for t in test-s0a-row4 test-s1read test-gap test-pitr-launcher test-install; do
+for t in test-s0a-row4 test-s1read test-gap test-pitr test-install; do
   say "-- $t"
   ( cd "$HERE/gates" && INSTALL_ARCHIVE="$WORK/supabase_${VER}_linux_amd64.tar.gz" timeout 1500 bash "$t.sh" ) > "$OUT/$t.out" 2>&1; rc=$?
   tail -n 1 "$OUT/$t.out" | sed 's/^/   /' | tee -a "$RES"

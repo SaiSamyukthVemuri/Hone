@@ -60,16 +60,32 @@ mklinked "$OUT/api-linked"
 with_fake_api linked env -u GITHUB_TOKEN -u GH_TOKEN -u SUPABASE_ACCESS_TOKEN "${S1ENV[@]}" SUPABASE_DB_PASSWORD="$PWU" bash -c "cd '$OUT/api-linked' && '$GOBIN' db push --linked --dry-run > '$OUT/api-linked.log' 2>&1; echo \$? > '$OUT/api-linked.rc'"
 say "RESULT db push --linked --dry-run (password, no token) exit=$(cat "$OUT/api-linked.rc"); requests: $(nflows linked)"; flows linked | tee -a "$RES"; say "   log: $(tr '\n' ' ' < "$OUT/api-linked.log" | cut -c1-300)"
 expect "(H6b) db push --linked WITH a password and NO token makes no login-role / ban / any HTTP request" "$([ "$(nflows linked)" = 0 ] && echo 0 || echo 1)" "requests=$(nflows linked) exit=$(cat "$OUT/api-linked.rc")"
-# 3. db query --linked -o json -f file (the window reads): token + password
+# 3. db query --linked -o json -f file (the window reads). HON66-PROOF M9/H6c: the reads carry a FIXED NON-SECRET placeholder as the database
+# password and NO real one. Variants of how the direct host resolves x which pooler user the linked dir names, to find a path where the CLI's
+# pre-run succeeds on this IPv4-only runner; each variant records exit, requests and the Supavisor authentication failures it caused.
+PLACEHOLDER="hone-read-placeholder-not-a-secret"
 echo "select 1 as one" > "$OUT/api-q.sql"
-mklinked "$OUT/api-linked"
-with_fake_api query env -u GITHUB_TOKEN -u GH_TOKEN "${S1ENV[@]}" SUPABASE_ACCESS_TOKEN="$FAKETOKEN" SUPABASE_DB_PASSWORD="$PWU" bash -c "cd '$OUT/api-linked' && '$GOBIN' --agent no db query --linked -o json -f '$OUT/api-q.sql' > '$OUT/api-query.out' 2> '$OUT/api-query.err'; echo \$? > '$OUT/api-query.rc'"
-say "RESULT db query --linked exit=$(cat "$OUT/api-query.rc"); requests: $(nflows query); stdout: $(head -c 120 "$OUT/api-query.out" | tr -d '\n ')"; flows query | tee -a "$RES"
-say "   stderr (token and password never printed by the CLI; canary values filtered): $(tr '\n' ' ' < "$OUT/api-query.err" | sed -e "s/$FAKETOKEN/<canary-token>/g" -e "s/$PWU/<pw>/g" | cut -c1-400)"
-QPOST=$(grep -c '"method": "POST", "host": "api.supabase.com", "path": "/v1/projects/'$FAKEREF'/database/query"' "$OUT/flows-query.jsonl")
-QOTHER=$(grep -v '"/v1/projects/'$FAKEREF'/database/query"' "$OUT/flows-query.jsonl" | grep -vc '"method": "GET", "host": "api.supabase.com", "path": "/v1/projects/'$FAKEREF'"')
-say "RESULT db query --linked observed POST /database/query count=$QPOST (the local stack has no hosted project: the CLI's pre-run needs a reachable database, so exit=$(cat "$OUT/api-query.rc") here; the one-POST property is only provable when the pre-run succeeds)"
-expect "(H6c) db query --linked sent NOTHING to any path other than POST /database/query and the optional GET /v1/projects/<ref> (no read-only endpoint, no login-role, ban, restore or migrations call)" "$([ "$QOTHER" = 0 ] && [ "$QPOST" -le 1 ] && echo 0 || echo 1)" "post=$QPOST other=$QOTHER total=$(nflows query)"
+authfails() { docker logs "$POOLER" 2>&1 | grep -ciE 'password authentication failed|SASL auth' ; }
+H6C_OK=""; H6C_VARIANTS=0
+for hv in "aaaa:2001:db8::1" "a4:127.0.0.1" "lo6:::1"; do
+  for uv in "fake:postgres.$FAKEREF" "tenant:$PUSER"; do
+    L="$(printf "\\x$(printf '%x' $((97 + H6C_VARIANTS)))")"; R="$(printf '%020d' 0 | tr 0 "$L")"
+    echo "${hv#*:} db.$R.supabase.co" | sudo tee -a /etc/hosts > /dev/null
+    LD="$OUT/api-linked-$R"; rm -rf "$LD"; mkdir -p "$LD/supabase/.temp"; printf '%s\n' "$R" > "$LD/supabase/.temp/project-ref"
+    printf '%s' "postgresql://${uv#*:}@$RUNNER_IP:$TLSP/postgres" > "$LD/supabase/.temp/pooler-url"; cp "$OUT/cli-latest" "$LD/supabase/.temp/cli-latest"
+    AF0="$(authfails)"
+    with_fake_api "q$H6C_VARIANTS" env -u GITHUB_TOKEN -u GH_TOKEN "${S1ENV[@]}" SUPABASE_ACCESS_TOKEN="$FAKETOKEN" SUPABASE_DB_PASSWORD="$PLACEHOLDER" bash -c "cd '$LD' && '$GOBIN' --agent no db query --linked -o json -f '$OUT/api-q.sql' > '$LD/out' 2> '$LD/err'; echo \$? > '$LD/rc'"
+    AF1="$(authfails)"
+    P=$(grep -c '"method": "POST", "host": "api.supabase.com", "path": "/v1/projects/'$R'/database/query"' "$OUT/flows-q$H6C_VARIANTS.jsonl")
+    O=$(grep -v '"/v1/projects/'$R'/database/query"' "$OUT/flows-q$H6C_VARIANTS.jsonl" | grep -vc '"method": "GET", "host": "api.supabase.com", "path": "/v1/projects/'$R'"')
+    say "RESULT H6c variant host=${hv%%:*} user=${uv%%:*}: exit=$(cat "$LD/rc") POST=$P other=$O total=$(nflows "q$H6C_VARIANTS") supavisor_auth_failures_caused=$((AF1 - AF0)); stdout=$(head -c 80 "$LD/out" | tr -d '\n '); stderr=$(tr '\n' ' ' < "$LD/err" | sed -e "s/$FAKETOKEN/<canary-token>/g" -e "s/$PLACEHOLDER/<placeholder>/g" | cut -c1-200)"
+    [ "$O" = 0 ] || H6C_OTHER=1
+    [ "$(cat "$LD/rc")" = 0 ] && [ "$P" = 1 ] && [ "$O" = 0 ] && [ "$((AF1 - AF0))" = 0 ] && [ -z "$H6C_OK" ] && H6C_OK="host=${hv%%:*} user=${uv%%:*}"
+    H6C_VARIANTS=$((H6C_VARIANTS + 1))
+  done
+done
+expect "(H6c-a) in NO variant did db query --linked send anything beyond POST /database/query and the optional GET /v1/projects/<ref> (no read-only endpoint, no login-role, ban, restore or migrations call)" "$([ -z "${H6C_OTHER:-}" ] && echo 0 || echo 1)" "variants=$H6C_VARIANTS"
+expect "(H6c-b) PROOF: some variant ran db query --linked with the non-secret placeholder to exit 0, exactly one POST /database/query, nothing else, and ZERO Supavisor authentication failures (the DB password is not used to log in)" "$([ -n "$H6C_OK" ] && echo 0 || echo 1)" "${H6C_OK:-none}"
 # 4. backups list
 mklinked "$OUT/api-linked"
 with_fake_api backups env -u GITHUB_TOKEN -u GH_TOKEN "${S1ENV[@]}" SUPABASE_ACCESS_TOKEN="$FAKETOKEN" bash -c "cd '$OUT/api-linked' && '$GOBIN' --agent no backups list --project-ref $FAKEREF -o json > '$OUT/api-backups.out' 2> '$OUT/api-backups.err'; echo \$? > '$OUT/api-backups.rc'"

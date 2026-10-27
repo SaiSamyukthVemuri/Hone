@@ -1,6 +1,6 @@
 #!/bin/bash
 # LINUX VARIANT of the reviewed Mac script (HON66-LINUX-GATES), derived by machines/linux-gates/make-linux.py with a fixed substitution
-# list (see LINUX-DIFFS.txt). Credentials are read from files named by the launcher, never prompted, never on argv.
+# list (see LINUX-DIFFS.txt). The PAT arrives on fd 3 from hone-release; no database password is read (fixed non-secret placeholder); nothing is prompted or on argv.
 # Hone #1035 WINDOW ROW 4 (recovery_regime pitr): the selected pre-migration restore point and a FRESH PITR reading,
 # checked by the pinned comparator stage `--stage row4`. Run IMMEDIATELY before S1, after window-s0a.sh passed.
 # CANDIDATE 5 (candidate 4 + the S0-10 API span minimum 6 d from baseline g4_pitr_api.min_span_days; the typed retention minimum stays 7). No hosted call and no secret here. The script stamps the selected restore point itself, at the moment you
@@ -23,7 +23,7 @@ LIB_SHA=f0f13c80d91a5d23a69410d220b444db6935e915bd5f3f9319a5e67602b106ab
 BASELINE=BASELINE-W1-LINUX-CANDIDATE-5.json
 MIN_REMAIN_MIN=90
 SELECT_MAX_AGE_S=1800
-BASELINE_SHA=70ce8307e975b015b573f629f26fc322144bc3f9fe78bdb0b03dd92ac075b7a0
+BASELINE_SHA=eb815f84efaf3b22259ab5e6f746b73ad0e837b9daf983572f298b2a793adfd5
 
 cleanup() { stty echo </dev/tty >/dev/null 2>&1 || true; }
 trap cleanup EXIT

@@ -1,10 +1,10 @@
 #!/bin/bash
 # LINUX VARIANT of the reviewed Mac script (HON66-LINUX-GATES), derived by machines/linux-gates/make-linux.py with a fixed substitution
-# list (see LINUX-DIFFS.txt). Credentials are read from files named by the launcher, never prompted, never on argv.
+# list (see LINUX-DIFFS.txt). The PAT arrives on fd 3 from hone-release; no database password is read (fixed non-secret placeholder); nothing is prompted or on argv.
 # Hone #1035 WINDOW S0a (recovery_regime pitr): capture the 14 manifest-pinned read-only window files through the verified runner
 # ec9b7c56 and supabase-go 174a90e2, then run the pinned comparator and print its verdict.
 # Read-only. Fail-closed: the first failed command, refusal, authentication error, invalid result or non-PASS stops.
-# No retries. Credentials are read from mode-600 files named by the launcher (never printed, never on a command line, never written) and cleared
+# No retries. The PAT arrives on fd 3 from hone-release (never printed, never on a command line, never written) and cleared
 # on any exit. Nothing here creates a login role, resets a password or unbans an IP: PREVENTION is the runner's
 # password-present rule; the log scan below is only a detector after the fact (a hit must be REPORTED, never retried).
 # CANDIDATE 5 (candidate 4 + the S0-10 API span minimum 6 d from baseline g4_pitr_api.min_span_days; the typed retention minimum stays 7). Under PITR the Management API lists no base backup, so this script does not ask for one. The recovery range
@@ -29,7 +29,7 @@ MANIFEST_SHA=2b1608a9ec43caf97bd9ead3fe1d10895652a080a4b8ae0a891a17be3038cd94
 CMP_SHA=c9b0f102980104d5bd1d59c2127439dacc419ed1c7db235ad7f5acedf9205825
 LIB_SHA=f0f13c80d91a5d23a69410d220b444db6935e915bd5f3f9319a5e67602b106ab
 BASELINE=BASELINE-W1-LINUX-CANDIDATE-5.json
-BASELINE_SHA=70ce8307e975b015b573f629f26fc322144bc3f9fe78bdb0b03dd92ac075b7a0
+BASELINE_SHA=eb815f84efaf3b22259ab5e6f746b73ad0e837b9daf983572f298b2a793adfd5
 G3_FILE=G3-CHECKSUMS-d189768b.txt
 G3_SHA=bbdcd917da77f750f7987d6a5fdca172c6a564fc029d10d19a6ae1e51190f0f6
 REF=alhhybgqdmcdyzpybykj
@@ -37,22 +37,20 @@ POOLER_URL="postgresql://postgres.$REF@aws-1-us-east-1.pooler.supabase.com:5432/
 HEAD_SHA=d189768b86fe1c53e330c65078f3a9f2949f8e59
 FILES="g02-history.sql census-0213-0246.sql g06-payment-drain.sql g07-sms-claimed-number-duplicates.sql g09a-0214-reach-summary.sql g09b-0214-reach-per-studio.sql g09c-0214-bound-account-mode.sql g09d-0214-currency-history.sql g10-constraint-names.sql g11-0244-legacy-laser-types.sql g11b-0244-legacy-laser-classes.sql g12-0243-intake-definers.sql s1-open-transactions.sql w03-table-sizes.sql"
 
-# Credentials come from FILES named by the launcher (hone-gate-launch.sh), never from a prompt, never from argv.
-# secret_from_file VAR ENVNAME LABEL: the file must be absolute, a regular file (no symlink), one hard link, owned by you, mode 600,
-# in a directory that is not group/other-writable, one line, non-empty. The value is read into VAR only; nothing is printed.
-secret_from_file() {
-  local _v _p _envn="$2" _label="$3" _dir
-  _p="${!_envn:-}"
-  [ -n "$_p" ] || die "$_envn is not set (the launcher passes the path of the $_label file)"
-  case "$_p" in /*) ;; *) die "$_envn must be an absolute path" ;; esac
-  [ -f "$_p" ] && [ ! -L "$_p" ] || die "the $_label file is missing, not a regular file, or a symlink"
-  [ "$(stat -c '%u %a %h' "$_p" 2>/dev/null)" = "$(id -u) 600 1" ] || die "the $_label file must be owned by you, mode 600, one hard link"
-  _dir=$(dirname "$_p"); [ -z "$(find "$_dir" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ] || die "the directory of the $_label file is writable by group or others"
-  [ "$(grep -c '' "$_p")" -le 1 ] || die "the $_label file must hold exactly one line"
-  _v=""; IFS= read -r _v < "$_p" || [ -n "$_v" ] || die "could not read the $_label file"
-  [ -n "$_v" ] || die "the $_label file is empty"
+# The PAT arrives on FILE DESCRIPTOR 3, opened by hone-release (root-owned custody layer); it is never a file this script opens, never an
+# argument, never in the environment. There is no database-password input: reads use a FIXED, NON-SECRET placeholder only so that the
+# CLI never creates a login role (HON66-PROOF M9; the CI proves the read path never authenticates with it).
+READ_PW_PLACEHOLDER="hone-read-placeholder-not-a-secret"
+# secret_from_fd3 VAR LABEL: exactly one non-empty line of at most 4096 bytes on fd 3, then fd 3 is closed. Nothing is printed.
+secret_from_fd3() {
+  local _v="" _x="" _l="$2"
+  { true <&3; } 2>/dev/null || die "fd 3 is not open (hone-release passes the $_l on fd 3)"
+  IFS= read -r -n 4097 <&3 _v || [ -n "$_v" ] || die "could not read the $_l from fd 3"
+  if IFS= read -r -t 1 -n 1 _x <&3; then die "fd 3 holds more than one line or more than 4096 bytes"; fi
+  exec 3<&-
+  [ -n "$_v" ] || die "the $_l on fd 3 is empty"
+  [ "${#_v}" -le 4096 ] || die "the $_l on fd 3 is longer than 4096 bytes"
   printf -v "$1" '%s' "$_v"
-  unset "$_envn"
 }
 
 cleanup() {
@@ -253,9 +251,9 @@ echo "Attestation pre-check passed (S0-1, S0-8, S0-9, S0-10, S0-11, S0-12). Star
 # ---------------------------------------------------------------------------------------------------------
 # credentials, privately (never echoed; cleared by the EXIT/INT/TERM/HUP trap)
 # ---------------------------------------------------------------------------------------------------------
-secret_from_file SUPABASE_ACCESS_TOKEN HONE_GATE_TOKEN_FILE "access token"
+secret_from_fd3 SUPABASE_ACCESS_TOKEN "access token"
 [ -n "$SUPABASE_ACCESS_TOKEN" ] || die "empty access token"
-secret_from_file SUPABASE_DB_PASSWORD HONE_GATE_PASSWORD_FILE "database password"
+SUPABASE_DB_PASSWORD="$READ_PW_PLACEHOLDER"
 [ -n "$SUPABASE_DB_PASSWORD" ] || die "empty password"
 # Not exported here: only the runner subshell below exports them, so no other child inherits them.
 

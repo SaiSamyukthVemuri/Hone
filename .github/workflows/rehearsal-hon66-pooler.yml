@@ -76,6 +76,37 @@ jobs:
           sed -i '/^\[db.pooler\]/,/^\[/ { s/^enabled = false/enabled = true/; s/^pool_mode = .*/pool_mode = "session"/ }' supabase/config.toml
           git diff -U0 supabase/config.toml
 
+      # Same pre-pull as General's CI-REGISTRY change (PR #1200), copied into this rehearsal workflow only; it uses the job's own EXCLUDE.
+      - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
+        continue-on-error: true
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set +e
+          pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
+          listed="$(supabase services 2>/dev/null | awk -F'|' '/supabase\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*supabase\//,"",n); print n ":" $2 }}' | sort -u)"
+          imgs=""
+          for IMG in $listed; do
+            svc="${IMG%%:*}"
+            if [ "$svc" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
+            case ",$EXCLUDE," in *",$svc,"*) [ "$svc" = realtime ] || continue ;; esac
+            imgs="$imgs $IMG"
+          done
+          echo "images:$imgs"
+          for IMG in $imgs; do
+            got=0
+            for i in 1 2; do
+              if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi
+              echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
+            done
+            if [ "$got" = 0 ]; then
+              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do
+                if docker pull -q "$src" >/dev/null 2>&1; then docker tag "$src" ghcr.io/supabase/$IMG && got=1 && echo "using $src for $IMG, re-tagged locally" && break; fi
+              done
+            fi
+            [ "$got" = 1 ] || echo "::warning title=Supabase image pre-pull::$IMG could not be pulled from ghcr, ECR or Docker Hub"
+          done
+
       - name: Start the local Supabase stack (with storage)
         id: sb_start
         continue-on-error: true

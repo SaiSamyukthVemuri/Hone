@@ -1,7 +1,7 @@
 #!/bin/bash
 # REHEARSAL - NEVER MERGE. HON66: the LINUX variant of the gap read (ported from rehearsal/gap-read/test.sh by a fixed replace list) on Linux x86_64.
 # window-gap-read.sh (test copy differs from the real one only on the GO_SHA line, diffed below) runs with the ORIGINAL Linux runner (ec9b7c56, byte-identical)
-# so its lexical read-only gate runs on the REAL SQL 5aa510c0, against a STUB supabase-go returning a prepared result. Credentials come from mode-600 files. No hosted call.
+# so its lexical read-only gate runs on the REAL SQL 5aa510c0, against a STUB supabase-go returning a prepared result. The PAT arrives on fd 3. No hosted call.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"; SRC="$HERE/gap-pkg"
 T="$(mktemp -d "${TMPDIR:-/tmp}/gap.XXXXXX")"; T="$(cd "$T" && pwd -P)"
@@ -35,7 +35,7 @@ PY
 mkfix() { # mkfix NAME
   F="$T/$1"; H="$F/home"; ROOT="$H/hone-s1"; G="$ROOT/gap-read-2"; mkdir -p "$ROOT/supabase-cli" "$G"; chmod 700 "$ROOT"
   CALLS="$F/calls.log"; : > "$CALLS"; echo ok > "$F/mode"; mkrows "$F/result.json"
-  printf '#!/bin/sh\necho "$*" >> "%s"\nif [ "$(cat "%s")" = authfail ]; then echo "failed SASL auth (FATAL: password authentication failed)" >&2; exit 1; fi\ncat "%s"\n' "$CALLS" "$F/mode" "$F/result.json" > "$ROOT/supabase-cli/supabase-go"; chmod 755 "$ROOT/supabase-cli/supabase-go"
+  printf '#!/bin/sh\necho "$*" >> "%s"\nenv | grep "^SUPABASE_DB_PASSWORD=" > "'"$F"'/stub.env"\nif [ "$(cat "%s")" = authfail ]; then echo "failed SASL auth (FATAL: password authentication failed)" >&2; exit 1; fi\ncat "%s"\n' "$CALLS" "$F/mode" "$F/result.json" > "$ROOT/supabase-cli/supabase-go"; chmod 755 "$ROOT/supabase-cli/supabase-go"
   GOSHA=$(sha "$ROOT/supabase-cli/supabase-go")
   cp "$SRC/run-window-read.sh" "$G/run-window-read.sh"; chmod 755 "$G/run-window-read.sh"
   RSHA=$(sha "$G/run-window-read.sh")
@@ -44,7 +44,7 @@ mkfix() { # mkfix NAME
   RUNSCRIPT="$G/window-gap-read.sh"
   mkdir -p "$F/cred"; chmod 700 "$F/cred"; printf '%s\n' "$TOKEN" > "$F/cred/token"; printf '%s\n' "$PASSWORD" > "$F/cred/pw"; chmod 600 "$F/cred/token" "$F/cred/pw"
 }
-run() { RC=0; env -i PATH=/usr/bin:/bin:$(dirname "$(command -v node)") HOME="$H" TERM=dumb HONE_GATE_TOKEN_FILE="$F/cred/token" HONE_GATE_PASSWORD_FILE="$F/cred/pw" /bin/bash "$RUNSCRIPT" > "$F/out.txt" 2>&1 || RC=$?; OUT="$F/out.txt"; }
+run() { RC=0; env -i PATH=/usr/bin:/bin:$(dirname "$(command -v node)") HOME="$H" TERM=dumb /bin/bash "$RUNSCRIPT" 3< "$F/cred/token" > "$F/out.txt" 2>&1 || RC=$?; OUT="$F/out.txt"; }
 ncalls() { grep -c . "$CALLS"; }
 stop() { # stop LABEL MSG CALLS
   if [ "$RC" != 0 ] && has "$OUT" "$2" && [ "$(ncalls)" = "$3" ]; then ok "$1 (exit $RC, $3 supabase-go call(s))"; else bad "$1" "rc=$RC calls=$(ncalls)"; tail -6 "$OUT"; fi; }
@@ -94,21 +94,18 @@ mkfix badrun; printf '\n' >> "$G/run-window-read.sh"; run; stop "an edited runne
 mkfix tombs1; mkdir -p "$ROOT/s1-read"; echo x > "$ROOT/s1-read/FAILED-LOGIN"; run; stop "a FAILED-LOGIN left by s1-read refuses" "a previous run failed a login" 0
 mkfix tombs1a; mkdir -p "$ROOT/s1-apply"; echo x > "$ROOT/s1-apply/FAILED-LOGIN"; run; stop "a FAILED-LOGIN left by s1-apply refuses" "a previous run failed a login" 0
 mkfix tombown; mkdir -p "$ROOT/gap-read"; echo x > "$ROOT/gap-read/FAILED-LOGIN"; run; stop "its own FAILED-LOGIN refuses" "a previous run failed a login" 0
-mkfix emptypw; : > "$F/cred/pw"; run; stop "an empty password file is refused before any call" "could not read the database password file" 0
-mkfix envbad; RC=0; env -i PATH=/usr/bin:/bin:$(dirname "$(command -v node)") HOME="$H" TERM=dumb PGPASSWORD=x HONE_GATE_TOKEN_FILE="$F/cred/token" HONE_GATE_PASSWORD_FILE="$F/cred/pw" /bin/bash "$RUNSCRIPT" > "$F/out.txt" 2>&1 || RC=$?; OUT="$F/out.txt"; stop "PGPASSWORD in the environment is refused before any call" "unset these variables first" 0
+mkfix emptytok; : > "$F/cred/token"; run; stop "an empty fd 3 is refused before any call" "could not read the access token from fd 3" 0
+mkfix envbad; RC=0; env -i PATH=/usr/bin:/bin:$(dirname "$(command -v node)") HOME="$H" TERM=dumb PGPASSWORD=x /bin/bash "$RUNSCRIPT" 3< "$F/cred/token" > "$F/out.txt" 2>&1 || RC=$?; OUT="$F/out.txt"; stop "PGPASSWORD in the environment is refused before any call" "unset these variables first" 0
 mkfix authf; echo authfail > "$F/mode"; run
 [ "$RC" != 0 ] && [ -e "$ROOT/gap-read/FAILED-LOGIN" ] && [ "$(ncalls)" = 1 ] && ! grep -qF -e "$PASSWORD" -e "$TOKEN" "$ROOT/gap-read/FAILED-LOGIN" && ok "an authentication failure writes the tombstone (no secret), 1 call, no retry" || bad "auth failure" "rc=$RC calls=$(ncalls)"
 mkfix badlex; printf '%s\n' "$(cat "$G/$SQL")" > "$G/$SQL.tmp"; echo "update public.stripe_events set error = null;" >> "$G/$SQL.tmp"; mv "$G/$SQL.tmp" "$G/$SQL"; awk -v f="$SQL" -v s="$(sha "$G/$SQL")" '{ if ($2==f) $1=s; print $1"  "$2 }' "$G/MANIFEST.sha256" > "$G/M.new"; mv "$G/M.new" "$G/MANIFEST.sha256"; run
 [ "$RC" != 0 ] && [ "$(ncalls)" = 0 ] && ok "control: even with a re-pinned manifest, an edited SQL fails the wrapper's own pins before any call" || bad "control edited SQL" "rc=$RC calls=$(ncalls)"
 
-# credential-file refusals (every one before any call)
-cf() { mkfix "$1"; "${@:2}"; run; stop "$3" "$4" 0; }
-mkfix c644; chmod 644 "$F/cred/pw"; run; stop "a password file with mode 644 is refused before any call" "mode 600" 0
-mkfix csym; mv "$F/cred/pw" "$F/cred/pw.real"; ln -s "$F/cred/pw.real" "$F/cred/pw"; run; stop "a symlinked password file is refused before any call" "symlink" 0
-mkfix chard; ln "$F/cred/pw" "$F/cred/pw.hard"; run; stop "a hard-linked password file is refused before any call" "mode 600" 0
-mkfix cmulti; printf '%s\nextra\n' "$PASSWORD" > "$F/cred/pw"; run; stop "a two-line password file is refused before any call" "exactly one line" 0
-mkfix cmiss; rm -f "$F/cred/token"; run; stop "a missing token file is refused before any call" "access token file" 0
-mkfix cgw; chmod 770 "$F/cred"; run; stop "a group-writable credential directory is refused before any call" "writable by group or others" 0
-mkfix crel; RC=0; env -i PATH=/usr/bin:/bin:$(dirname "$(command -v node)") HOME="$H" TERM=dumb HONE_GATE_TOKEN_FILE="cred/token" HONE_GATE_PASSWORD_FILE="$F/cred/pw" /bin/bash "$RUNSCRIPT" > "$F/out.txt" 2>&1 || RC=$?; OUT="$F/out.txt"; stop "a relative token path is refused before any call" "absolute path" 0
+# fd 3 refusals (every one before any call)
+mkfix cmulti; printf '%s\nextra\n' "$TOKEN" > "$F/cred/token"; run; stop "a two-line fd 3 is refused before any call" "more than one line or more than 4096 bytes" 0
+mkfix cbig; head -c 5000 /dev/zero | tr '\0' x > "$F/cred/token"; echo >> "$F/cred/token"; run; stop "an oversize (>4096) token is refused before any call" "more than one line or more than 4096 bytes" 0
+mkfix cclosed; RC=0; env -i PATH=/usr/bin:/bin:$(dirname "$(command -v node)") HOME="$H" TERM=dumb /bin/bash "$RUNSCRIPT" 3<&- > "$F/out.txt" 2>&1 || RC=$?; OUT="$F/out.txt"; stop "fd 3 not open is refused before any call" "fd 3 is not open" 0
+mkfix cph; run; has "$CALLS" "--linked" && [ "$(grep -c . "$CALLS")" = 1 ] && ok "the one call carries no real password: the wrapper uses its fixed non-secret placeholder (the stub never sees PW-SECRET)" || bad "placeholder call"
+[ "$(cat "$F/stub.env")" = "SUPABASE_DB_PASSWORD=hone-read-placeholder-not-a-secret" ] && ok "the CLI child's SUPABASE_DB_PASSWORD is exactly the fixed non-secret placeholder" || bad "placeholder value" "$(cat "$F/stub.env" 2>/dev/null)"
 echo; echo "passed: $pass failed: $fail"
 [ "$fail" = 0 ]

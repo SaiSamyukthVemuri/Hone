@@ -12,8 +12,8 @@ rm -f run-window-read-macos.sh run-window-read-macos.test.sh window-s0a.sh windo
 cp "$LG/window-s0a-linux.sh" window-s0a.sh; cp "$LG/window-row4-linux.sh" window-row4.sh
 cp "$LG/BASELINE-W1-LINUX-CANDIDATE-5.json" .
 cp /home/sam/hone-handoffs/2026-10-18/machines/window-reads-c4/run-window-read.sh .
-cp "$LG/hone-push-guard.sh" "$LG/hone-push-linux.sh" "$H/"; cp "$LG/hone-gate-launch.sh" "$LG/pitr-backups-linux.sh" "$LG/window-s1read-linux.sh" "$LG/window-gap-read-linux.sh" "$LG/BASELINE-W1-LINUX-CANDIDATE-3.json" "$LG/make-linux.py" "$LG/LINUX-DIFFS.txt" "$H/"
-chmod 755 "$H/hone-push-guard.sh" "$H/hone-push-linux.sh" "$H/hone-gate-launch.sh" window-s0a.sh window-row4.sh run-window-read.sh
+cp "$LG/hone-push-guard.sh" "$LG/hone-push-linux.sh" "$LG/pitr-backups-linux.sh" "$LG/window-s1read-linux.sh" "$LG/window-gap-read-linux.sh" "$LG/BASELINE-W1-LINUX-CANDIDATE-3.json" "$LG/make-linux.py" "$LG/LINUX-DIFFS.txt" "$H/"
+chmod 755 "$H/hone-push-guard.sh" "$H/hone-push-linux.sh" window-s0a.sh window-row4.sh run-window-read.sh
 # the S1 read-back tree: comparator c3 data in window-reads/, the six S1 gate files + manifest + Linux runner in window-reads-s1/
 rm -rf "$H/window-reads" "$H/window-reads-s1"; mkdir -p "$H/window-reads" "$H/window-reads-s1"
 cp "$H/../../window-script/window-reads/compare-preflight.mjs" "$H/../../window-script/window-reads/compare-preflight-lib.mjs" "$H/window-reads/"
@@ -34,6 +34,6 @@ PS=$(sha256sum "$H/pitr-backups-linux.sh" | cut -d' ' -f1); sed -i -E "s/script_
 rm -rf "$H/stage"; S="$H/stage"; mkdir -p "$S/window-reads-c4" "$S/window-reads" "$S/window-reads-s1" "$S/gap-read-2" "$S/bin"
 cp -r "$H/window-reads-c4"/. "$S/window-reads-c4/"; cp "$H/window-reads"/* "$S/window-reads/"; cp "$H/window-reads-s1"/* "$S/window-reads-s1/"
 cp "$H/gap-pkg/obs-1035-gap-pending-payments-v2.sql" "$H/gap-pkg/run-window-read.sh" "$H/gap-pkg/window-gap-read.sh" "$S/gap-read-2/"; cp "$H/gap-pkg/MANIFEST.v2.sha256" "$S/gap-read-2/MANIFEST.sha256"
-cp "$H/pitr-backups-linux.sh" "$S/bin/pitr-backups.sh"; cp "$H/hone-gate-launch.sh" "$H/hone-push-guard.sh" "$H/hone-push-linux.sh" "$S/bin/"
+cp "$H/pitr-backups-linux.sh" "$S/bin/pitr-backups.sh"; cp "$H/hone-push-guard.sh" "$H/hone-push-linux.sh" "$S/bin/"
 ( cd "$S" && find . -type f ! -name LINUX-MANIFEST.sha256 | sed 's#^\./##' | LC_ALL=C sort | xargs sha256sum > LINUX-MANIFEST.sha256 )
 echo assembled

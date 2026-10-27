@@ -16,7 +16,7 @@
     "mode": "unavailable_under_pitr"
   },
   "g4_pitr_api": {
-    "script_sha256": "fad0cf444455523ae9b65dbec6bbe271c2212aad4d35ef2f391ddb9a64597cbc",
+    "script_sha256": "cb5995276775565839f61b7c000726e91993fa5f03597726a9a74b48537f7faa",
     "supabase_go_sha256": "174a90e23b8dfe9ab4e2d2c2e91d4b6b2520fe5be968721555727f16c1bab43c",
     "max_capture_age_minutes": 60,
     "dashboard_tolerance_seconds": 1,
