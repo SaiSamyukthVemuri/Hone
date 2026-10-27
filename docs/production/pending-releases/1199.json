@@ -1,6 +1,6 @@
 {
   "pr": 1199,
   "runtime": true,
-  "migrations": [],
+  "migrations": ["supabase/migrations/0258_hon58_identity.sql"],
   "release_receipt": "01-ops/1199-release-receipt.json"
 }

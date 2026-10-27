@@ -312,6 +312,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "sms_phone", reason: "internal_state", note: "Generated from exported `phone`; carries no additional customer fact and exists to support canonical SMS routing/eligibility. Same call as normalized_email: the export preserves the AUTHORED customer value, never a second generated copy of it. Migration 0199 added the column as `generated always as (public.sms_normalized_phone(phone)) stored`." },
       { column: "archived_by", reason: "pending_review", note: "Archive attribution; see archived_at." },
       { column: "portrait_image_id", reason: "pending_review", note: "0231 identification-portrait pointer to one of the client's own treatment_images rows; it travels with the treatment-photo export decision, not as a bare id." },
+      { column: "preferred_name", reason: "pending_review", note: "0258 (HON-58): the name the client goes by. Studio-owned client data that belongs in this file; adding a CSV column changes the export contract (0242 file map), so it is decided with the legal identity under HON-58, not as a side effect of the migration." },
     ],
     sourceCountCheck: { kind: "studio_scoped" },
     rowScope: "Every client row this studio holds is exported, archived clients included — the read does not filter on archived_at — and archived_at IS emitted, so archived state stays distinguishable from active.",
@@ -1218,6 +1219,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     rowScope: "Every service this studio has defined, active or not.",
     description:
       "The studio's service catalogue: name, description, duration, price, modality and booking presentation. Exported because the archive already names services on appointments and custom prices without letting a studio reconstruct the catalogue those names came from. price_cents is exported as recorded, including an authoritative zero.",
+  },
+  client_legal_identities: {
+    kind: "pending",
+    ticket: "HON-58",
+    tier: 1,
+    reason:
+      "Introduced by migration 0258 (HON-58). Staff-entered legal name of a client, one row per client, readable only by an owner or practitioner of the studio. Studio-owned client data with no representation in any exported file yet; the export decision (and whether it joins clients.csv) belongs with the preferred-name column and HON-46 document identity.",
   },
   client_intake_forms: {
     kind: "pending",

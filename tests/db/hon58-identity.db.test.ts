@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   adminQuery,
@@ -11,30 +10,16 @@ import {
   type SeededStudio,
 } from "./helpers/harness";
 
-// HON-58 identity PROPOSAL (docs/proposals/hon58-identity.sql), proved against
-// the real migrated local database. The proposal is not a migration and has no
-// number, so this suite applies the file itself in beforeAll and removes every
-// object it created in afterAll. The lane's database is throwaway, the suites
-// run serially (vitest.db.config.ts fileParallelism false), and the cleanup
-// returns the schema to what production has, so no other suite sees it.
+// HON-58 identity (migration 0258, reserved by OPS for HON-58), proved against
+// the real migrated local database: the migration chain applies it, so nothing
+// is applied or removed here.
 //
 // What it proves: preferred name on clients (nullable, shaped, no backfill);
 // legal identity readable/writable by an active OWNER or PRACTITIONER only;
 // a RECEPTIONIST (studio_receptionists, not a practitioners row), anon and
 // service_role denied; cross-studio isolation; no delete; one identity per
-// client; client and studio immutable.
-
-const PROPOSAL = readFileSync("docs/proposals/hon58-identity.sql", "utf8");
-
-const CLEANUP = `
-  begin;
-  drop table if exists public.client_legal_identities;
-  drop function if exists public.client_legal_identities_guard();
-  drop function if exists public.can_use_client_legal_identity(uuid);
-  alter table public.clients drop constraint if exists clients_preferred_name_shape;
-  alter table public.clients drop column if exists preferred_name;
-  commit;
-`;
+// client; client and studio immutable. The file's own shape is pinned in
+// tests/migrations/0258-hon58-identity.test.ts.
 
 let a: SeededStudio;
 let b: SeededStudio;
@@ -57,8 +42,6 @@ const INSERT_LEGAL = `insert into public.client_legal_identities
   values ($1, $2, $3, $4, $5) returning client_id, studio_id, updated_at`;
 
 beforeAll(async () => {
-  await adminQuery(CLEANUP); // a clean start even after an interrupted run
-  await adminQuery(PROPOSAL);
   a = await seedStudio("hon58-a");
   b = await seedStudio("hon58-b");
   aPractitioner = await seedMember(a, "hon58-a-practitioner");
@@ -67,34 +50,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await adminQuery(CLEANUP);
   await closePool();
-});
-
-describe("the proposal file", () => {
-  it("is a proposal: outside supabase/migrations, unnumbered, own transaction, lock_timeout", () => {
-    expect(PROPOSAL).toMatch(/^-- =+\n-- HON-58 identity/);
-    expect(PROPOSAL).toMatch(/\nbegin;\nset local lock_timeout = '5s';/);
-    expect(PROPOSAL.trimEnd().endsWith("commit;")).toBe(true);
-  });
-
-  it("is additive with no backfill, no index, no service_role grant, no anon/receptionist access", () => {
-    // Executable SQL only: no comment lines and no COMMENT ON statements (their text names the denied roles).
-    const sql = PROPOSAL.split("\n")
-      .filter((l) => !l.trimStart().startsWith("--"))
-      .join("\n")
-      .replace(/comment on [^;]*;/gi, "")
-      .toLowerCase();
-    expect(sql).not.toMatch(/\binsert\s+into\s+public\.clients\b/);
-    expect(sql).not.toMatch(/\bupdate\s+public\.clients\b/);
-    expect(sql).not.toMatch(/\bdelete\s+from\b/);
-    expect(sql).not.toMatch(/\bcreate\s+(unique\s+)?index\b/);
-    expect(sql).not.toMatch(/\bgrant\b[^;]*\bservice_role\b/);
-    expect(sql).not.toMatch(/\bto\s+anon\b/);
-    expect(sql).not.toMatch(/receptionist/); // denied by omission, through one predicate
-    expect(sql).toMatch(/revoke all on public\.client_legal_identities from public, anon, authenticated, service_role/);
-    expect(sql).toMatch(/revoke all on function public\.can_use_client_legal_identity\(uuid\) from public, anon, authenticated, service_role/);
-  });
 });
 
 describe("preferred name on the client", () => {
