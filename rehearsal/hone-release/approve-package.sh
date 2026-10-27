@@ -23,6 +23,7 @@ done
 hex() { printf '%s' "$2" | grep -Eq "^[0-9a-f]{$1}\$"; }
 hex 64 "${V[bundle_sha]}" && hex 64 "${V[list_sha]}" && hex 40 "${V[head]}" && hex 64 "${V[receipt_sha]}" || { echo "bundle_sha, list_sha, head and receipt_sha must be FULL lowercase hex (64, 64, 40, 64)" >&2; exit 1; }
 printf '%s' "${V[minutes]}" | grep -Eq '^[0-9]{1,2}$' && [ "${V[minutes]}" -ge 1 ] && [ "${V[minutes]}" -le 60 ] || { echo "minutes must be 1..60" >&2; exit 1; }
+if [ "${V[recovery_basis]}" = waiver ]; then printf '%s' "${V[waiver_id]}" | grep -Eq '^WAIVER-[0-9]{8}-[0-9]{1,3}$' || { echo "waiver_id must be WAIVER-YYYYMMDD-N, typed from the recorded waiver" >&2; exit 1; }; fi
 IN=/srv/hone-release-inbox
 [ -f "$IN/bundle.tar" ] && [ -f "$IN/list.sha256" ] && [ ! -L "$IN/bundle.tar" ] && [ ! -L "$IN/list.sha256" ] || { echo "the inbox files are missing or symlinks" >&2; exit 1; }
 bundle=$(sha256sum "$IN/bundle.tar" | cut -d' ' -f1); list=$(sha256sum "$IN/list.sha256" | cut -d' ' -f1)

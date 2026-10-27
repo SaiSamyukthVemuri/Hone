@@ -16,6 +16,10 @@ die() { echo "REFUSED: $*; nothing was installed" >&2; exit 1; }
 printf '%s' "$AGENT" | grep -Eq '^[a-z_][a-z0-9_-]{0,31}$' || die "bad agent user"
 printf '%s' "$REF" | grep -Eq '^[a-z0-9]{20}$' || die "bad project ref"
 id "$AGENT" >/dev/null 2>&1 || die "no such agent user"
+# F2: the custody claim is false when the agent user can reach root another way; there is no override
+for g in docker sudo wheel lxd adm; do
+  id -nG "$AGENT" | tr ' ' '\n' | grep -qx "$g" && die "the agent user $AGENT is a member of the group $g, which defeats the custody (root-equivalent or log access). Remove it from the group first (see INSTALL.md); no override exists"
+done
 # the package directory and pins file
 [ -f "$PINS" ] && [ ! -L "$PINS" ] || die "the pins file is missing or a symlink"
 PINS=$(realpath -e -- "$PINS")

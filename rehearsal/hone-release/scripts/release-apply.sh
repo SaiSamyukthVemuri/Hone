@@ -106,7 +106,7 @@ case "$A_recovery_basis" in
     [ $((now_s - rp_s)) -le 2700 ] || die "recovery_point is older than 45 minutes: run the row-4 step again and re-approve"
     [ "$A_waiver_id" = none ] || die "recovery_basis=row4 must have waiver_id=none" ;;
   waiver)
-    printf '%s' "$A_waiver_id" | grep -Eq '^[A-Za-z0-9._-]{4,64}$' && [ "$A_waiver_id" != none ] || die "recovery_basis=waiver needs a waiver_id"
+    printf '%s' "$A_waiver_id" | grep -Eq '^WAIVER-[0-9]{8}-[0-9]{1,3}$' || die "recovery_basis=waiver needs a waiver_id of the form WAIVER-YYYYMMDD-N, typed from the recorded waiver"
     [ "$A_recovery_point" = none ] || die "recovery_basis=waiver must have recovery_point=none" ;;
   *) die "recovery_basis must be row4 or waiver (the idle-path result is not accepted by this script)" ;;
 esac

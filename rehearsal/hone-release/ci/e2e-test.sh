@@ -113,7 +113,7 @@ install -m 644 -o sam -g sam "$BUNDLE" /srv/hone-release-inbox/bundle.tar
 install -m 644 -o sam -g sam "$LIST" /srv/hone-release-inbox/list.sha256
 RECEIPT=$(printf 'a%.0s' $(seq 1 64))
 approve() { bash "$SRC/approve-package.sh" id="$1" bundle_sha="$(sha256sum /srv/hone-release-inbox/bundle.tar | cut -d' ' -f1)" list_sha="$(sha256sum /srv/hone-release-inbox/list.sha256 | cut -d' ' -f1)" head="$HEAD40" pr=1193 receipt_sha="$RECEIPT" first=0213 last=0246 count=34 minutes=30 \
-  window_start="$(date -u -d '-10 minutes' +%Y-%m-%dT%H:%M:%SZ)" window_end="$(date -u -d '+3 hours' +%Y-%m-%dT%H:%M:%SZ)" recovery_basis=waiver recovery_point=none waiver_id=E2E-WAIVER pooler_host="$POOLER_HOST" max_push_seconds=300 attestation="synthetic target; recovery not applicable" > "$T/approve.out" 2>&1; }
+  window_start="$(date -u -d '-10 minutes' +%Y-%m-%dT%H:%M:%SZ)" window_end="$(date -u -d '+3 hours' +%Y-%m-%dT%H:%M:%SZ)" recovery_basis=waiver recovery_point=none waiver_id=WAIVER-20261027-1 pooler_host="$POOLER_HOST" max_push_seconds=300 attestation="synthetic target; recovery not applicable" > "$T/approve.out" 2>&1; }
 setpw() { printf '%s\n' "$1" | bash "$SRC/set-secret.sh" db-password --stdin >/dev/null; }
 SAMOUT="$T/sam.txt"; : > "$SAMOUT"; chmod 666 "$SAMOUT"
 runo() { OUT=$(runuser -u sam -- env -i PATH=/usr/bin:/bin HOME=/home/sam sudo -n -u hone-release $LB "$@" 2>&1); RC=$?; printf '%s\n' "$OUT" >> "$SAMOUT"; }

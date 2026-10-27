@@ -26,4 +26,13 @@
 | T5 | The target is exactly `postgresql://postgres.<ref>@<aws-N-region.pooler.supabase.com:5432>/postgres?sslmode=require`: any other host, port, user or parameter is refused. `sslmode=verify-full` was investigated and is NOT available: supabase-go 2.102.0 rebuilds the connection URL and drops `sslmode` and `sslrootcert` (a CI probe shows it connects with `verify-full` and a nonexistent `sslrootcert`). The server certificate is therefore not verified; the host pin is the control. Accepted residual. |
 | T6 | The approval is consumed and the state `DRYRUN-STARTED` is written before the FIRST dry-run login; a non-authentication dry-run failure leaves `FAILED-DRYRUN`; a wrong listing leaves `DRYRUN-STARTED`; all block the next run (even with a new approval) until root clears them. |
 
+## Insurance PEER-HON66-FIXES conditions
+
+| Finding | Change |
+|---|---|
+| F1 | No `SHA256SUMS.txt` inside the package (it would be an unpinned file that the installer must refuse); the convenience listing lives outside the package directory. |
+| F2 | `install.sh` refuses, with no override, an agent user in `docker`, `sudo`, `wheel`, `lxd` or `adm` (CI: one case per group; the custody job's agent user has none). |
+| F3 | `waiver_id` must match `WAIVER-YYYYMMDD-N` (in `approve-package.sh` and again in the apply); `None`, `waiver-1234` and similar are refused. |
+| F4 | CI: after an overdue push, while the orphaned CLI still runs, a second launch is refused by the state `IN-FLIGHT-OVERDUE`; with the state cleared by mistake it is still refused by the release lock the CLI holds; the push completes exactly once. |
+
 Unchanged on purpose: URL rules (port 5432 pooler, user only, `sslmode=require`, no password parameter, never 6543), seeded `cli-latest`, `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false`, telemetry off, the login-role / unban / ban log scan, no retry of any step.

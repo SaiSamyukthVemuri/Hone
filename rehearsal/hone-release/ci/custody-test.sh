@@ -51,6 +51,11 @@ chmod 666 /root/hr-pins.txt; t1refuse "a world-writable pins file" "pins file or
 sed -i '1s/^[0-9a-f]\{4\}/0000/' /root/hr-pins.txt; t1refuse "a wrong pin (the first line altered)" "does not match its pinned sha256"; mkpins
 cp "$T/supabase-go" "$T/supabase-go.bad"; printf 'x' >> "$T/supabase-go.bad"; bash "$SRC/install.sh" sam "$REF" "$T/supabase-go.bad" /root/hr-pins.txt > "$T/install.out" 2>&1 && bad "T1: a wrong supabase-go was accepted" || { grep -q "supabase-go sha256 differs" "$T/install.out" && notinstalled && ok "T1: a supabase-go that is not the pinned binary is refused"; }
 cp -r "$SRC" /tmp/hr-pkg-in-tmp; bash /tmp/hr-pkg-in-tmp/install.sh sam "$REF" "$T/supabase-go" /root/hr-pins.txt > "$T/install.out" 2>&1 && bad "T1: a package under /tmp was accepted" || { grep -q "root-owned" "$T/install.out" && notinstalled && ok "T1: a package under a world-writable ancestor (/tmp) is refused"; }; rm -rf /tmp/hr-pkg-in-tmp
+# F2: no override; refused for each root-equivalent or log-reading group, nothing installed
+for g in docker sudo wheel lxd adm; do
+  groupadd -f "$g" 2>/dev/null; u=f2-$g; id "$u" >/dev/null 2>&1 || useradd -m -s /bin/bash -G "$g" "$u"
+  bash "$SRC/install.sh" "$u" "$REF" "$T/supabase-go" /root/hr-pins.txt > "$T/install.out" 2>&1 && bad "F2: install ACCEPTED an agent user in group $g" || { grep -q "member of the group $g" "$T/install.out" && notinstalled && ok "F2: install.sh refuses an agent user in the group $g (no override); nothing installed"; }
+done
 inst && ok "T1: with every file matching its typed pin, install.sh installs (visudo validated; manifest built from the pins)" || { bad "install.sh" "$(tail -5 "$T/install.out")"; exit 1; }
 visudo -cf /etc/sudoers.d/hone-release >/dev/null && ok "visudo -cf accepts /etc/sudoers.d/hone-release" || bad "visudo"
 printf '%s\n' "$DBC" | bash "$SRC/set-secret.sh" db-password --stdin > /dev/null; printf '%s\n' "$PATC" | bash "$SRC/set-secret.sh" read-pat --stdin > /dev/null
@@ -62,7 +67,7 @@ install -m 644 -o sam -g sam "$T/syn/migrations-d189768b.tar" /srv/hone-release-
 install -m 644 -o sam -g sam "$T/syn/MIGRATIONS-d189768b.sha256" /srv/hone-release-inbox/list.sha256
 HEAD_REVIEWED=$HEAD40; RECEIPT=$(printf 'a%.0s' $(seq 1 64))
 approve() { # approve ID [key=value overrides]   every value is "typed from the reviewed record" (computed here from the files under review)
-  local id=$1; shift; local -A K=( [id]=$id [bundle_sha]=$(sha256sum /srv/hone-release-inbox/bundle.tar | cut -d' ' -f1) [list_sha]=$(sha256sum /srv/hone-release-inbox/list.sha256 | cut -d' ' -f1) [head]=$HEAD_REVIEWED [pr]=1193 [receipt_sha]=$RECEIPT [first]=0213 [last]=0246 [count]=34 [minutes]=30 [window_start]=$(date -u -d '-10 minutes' +%Y-%m-%dT%H:%M:%SZ) [window_end]=$(date -u -d '+3 hours' +%Y-%m-%dT%H:%M:%SZ) [recovery_basis]=waiver [recovery_point]=none [waiver_id]=WAIVER-0001 [pooler_host]=aws-0-us-east-1.pooler.supabase.com:5432 [max_push_seconds]=60 [attestation]="restore point attested by the approver, not verified here" )
+  local id=$1; shift; local -A K=( [id]=$id [bundle_sha]=$(sha256sum /srv/hone-release-inbox/bundle.tar | cut -d' ' -f1) [list_sha]=$(sha256sum /srv/hone-release-inbox/list.sha256 | cut -d' ' -f1) [head]=$HEAD_REVIEWED [pr]=1193 [receipt_sha]=$RECEIPT [first]=0213 [last]=0246 [count]=34 [minutes]=30 [window_start]=$(date -u -d '-10 minutes' +%Y-%m-%dT%H:%M:%SZ) [window_end]=$(date -u -d '+3 hours' +%Y-%m-%dT%H:%M:%SZ) [recovery_basis]=waiver [recovery_point]=none [waiver_id]=WAIVER-20261027-1 [pooler_host]=aws-0-us-east-1.pooler.supabase.com:5432 [max_push_seconds]=60 [attestation]="restore point attested by the approver, not verified here" )
   local kv; for kv in "$@"; do K[${kv%%=*}]=${kv#*=}; done
   local args=() k; for k in "${!K[@]}"; do args+=("$k=${K[$k]}"); done
   bash "$SRC/approve-package.sh" "${args[@]}" > "$T/approve.out" 2>&1; }
@@ -200,6 +205,9 @@ approve CUST-R1 recovery_basis=row4 recovery_point=$(date -u -d '-50 minutes' +%
 approve CUST-R2 recovery_basis=row4 recovery_point=$(date -u -d '-20 minutes' +%Y-%m-%dT%H:%M:%SZ) waiver_id=none; expect_refuse "a recovery point before the window start (T3)" apply "before the window start"
 approve CUST-R3 recovery_basis=row4 recovery_point=none waiver_id=none; expect_refuse "recovery_basis=row4 without a recovery point (T3)" apply "needs a recovery_point"
 approve CUST-R4 recovery_basis=waiver waiver_id=none; expect_refuse "recovery_basis=waiver without a waiver id (T3)" apply "needs a waiver_id"
+ap_refuse "a waiver id that is not WAIVER-YYYYMMDD-N (F3)" "WAIVER-YYYYMMDD-N" CUST-F3A waiver_id=None
+ap_refuse "a free-text waiver id (F3)" "WAIVER-YYYYMMDD-N" CUST-F3B waiver_id=waiver-1234
+approve CUST-F3C; edit waiver_id None; expect_refuse "an approval record whose waiver id was hand-edited to None (F3)" apply "needs a waiver_id of the form"
 approve CUST-R5 recovery_basis=idle recovery_point=none waiver_id=none; expect_refuse "an idle-path recovery basis (T3: only row4 or a recorded waiver)" apply "must be row4 or waiver"
 # T4: the timeout residual must be accepted in writing; the bounded wait is range-checked
 approve CUST-T4A; edit timeout_residual not-accepted; expect_refuse "no accepted timeout residual (T4)" apply "timeout_residual=accepted-server-limit-only"
@@ -280,9 +288,12 @@ clear_state; echo ok > $W/stub-mode; runo apply; [ $RC = 0 ] && ok "after ROOT c
 echo veryslow > $W/stub-mode; clear_state; approve CUST-OVERDUE max_push_seconds=10; : > $W/stub.log; chown hone-release:hone-release $W/stub.log
 runo apply
 [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "still running after 10 s" && [ "$(state | cut -d' ' -f1)" = IN-FLIGHT-OVERDUE ] && ok "T4: a push past the approved bound: the script stops waiting, exits non-zero, state IN-FLIGHT-OVERDUE, says the CLI was not stopped" || bad "T4 overdue" "rc=$RC state=$(state) $OUT"
+# F4: while the orphaned CLI is STILL running, a second launch is refused by the state; and even if root clears the state wrongly, by the lock the CLI holds
+pgrep -u hone-release -f supabase-go >/dev/null && ok "F4: the CLI is still running after the script stopped waiting" || bad "F4: the CLI is not running"
+approve CUST-OVERDUE2; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "IN-FLIGHT-OVERDUE" && ok "F4: a second launch while the CLI still runs is refused by the state IN-FLIGHT-OVERDUE" || bad "F4: not blocked by state" "$OUT"
+clear_state; approve CUST-OVERDUE3; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "holds the lock" && ok "F4: with the state cleared by mistake, a second launch is still refused by the release lock the orphaned CLI holds (fd inheritance)" || bad "F4: not blocked by lock" "$OUT"
 sleep 30
-grep -q "PUSH COMPLETED" $W/stub.log && ok "T4: the CLI was NOT killed by the bound: it ran on and completed" || bad "T4: the CLI did not complete" "$(tail -2 $W/stub.log)"
-approve CUST-OVERDUE2; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "IN-FLIGHT-OVERDUE" && ok "T4: the next run is refused while IN-FLIGHT-OVERDUE stands" || bad "T4: not blocked" "$OUT"
+grep -q "PUSH COMPLETED" $W/stub.log && [ "$(grep -c 'PUSH COMPLETED' $W/stub.log)" = 1 ] && ok "T4: the CLI was NOT killed by the bound: it ran on and completed exactly once (no second push started)" || bad "T4: the CLI did not complete exactly once" "$(tail -3 $W/stub.log)"
 clear_state
 # T6: a non-authentication dry-run failure consumes the approval and blocks the next run
 echo dryfail > $W/stub-mode; approve CUST-DRYFAIL; : > $W/stub.log; chown hone-release:hone-release $W/stub.log
