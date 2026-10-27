@@ -172,21 +172,24 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Pre-pull the database image (bounded back-off; ghcr, then the same tag from ECR or Docker Hub, re-tagged locally)
+      - name: Pre-pull the stack images (bounded back-off; ghcr, then the same tag from ECR or Docker Hub, re-tagged locally)
         shell: bash
         run: |
-          IMG=postgres:17.6.1.131
-          got=0
-          for i in 1 2 3; do
-            if docker pull ghcr.io/supabase/$IMG; then got=1; break; fi
-            echo "ghcr pull refused (attempt $i)"; sleep $((i*20))
-          done
-          if [ "$got" = 0 ]; then
-            for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do
-              if docker pull "$src"; then docker tag "$src" ghcr.io/supabase/$IMG && got=1 && echo "using $src, re-tagged as ghcr.io/supabase/$IMG (same tag; digest below)" && docker image inspect --format '{{index .RepoDigests 0}}' "$src" && break; fi
+          imgs="postgres:17.6.1.131 realtime:v2.100.0 $(supabase services 2>/dev/null | awk -F'|' '/supabase\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*supabase\//,"",n); print n ":" $2 }}' | tr '\n' ' ')"
+          echo "images: $imgs"
+          for IMG in $(printf '%s\n' $imgs | sort -u); do
+            got=0
+            for i in 1 2; do
+              if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi
+              echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
             done
-          fi
-          [ "$got" = 1 ] || echo "::warning::the database image could not be pulled from ghcr, ECR or Docker Hub; the stack start below will fail (infrastructure, reported as such)"
+            if [ "$got" = 0 ]; then
+              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do
+                if docker pull -q "$src" >/dev/null 2>&1; then docker tag "$src" ghcr.io/supabase/$IMG && got=1 && echo "using $src for $IMG, re-tagged locally: $(docker image inspect --format '{{index .RepoDigests 0}}' "$src")" && break; fi
+              done
+            fi
+            [ "$got" = 1 ] || echo "::warning::$IMG could not be pulled from ghcr, ECR or Docker Hub"
+          done
       - name: Start the synthetic stack (applies 0001-0212)
         id: sb_start
         continue-on-error: true
