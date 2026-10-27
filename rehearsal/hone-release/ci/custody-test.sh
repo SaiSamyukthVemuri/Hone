@@ -19,6 +19,7 @@ in1h() { date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ; }
 echo "host: $(uname -sr); sudo $(sudo -V | head -1); users before: $(getent passwd sam hone-release | cut -d: -f1 | tr '\n' ' ')"
 
 # ---------------------------------------------------------------- build the test variant and install it with the real installer
+chmod 440 /etc/sudoers.d/* 2>/dev/null   # a hosted runner ships /etc/sudoers.d/runner with a mode visudo rejects; unrelated to this proof
 id sam >/dev/null 2>&1 || useradd -m -s /bin/bash sam
 passwd -l sam >/dev/null 2>&1
 SRC="$T/src"; mkdir -p "$SRC/scripts"; cp "$HR/launcher" "$HR/install.sh" "$HR/set-secret.sh" "$HR/approve-package.sh" "$HR/actions.conf" "$HR/sudoers.hone-release" "$SRC/"; cp "$HR"/scripts/*.sh "$SRC/scripts/"

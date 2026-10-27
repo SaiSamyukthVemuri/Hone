@@ -200,4 +200,16 @@ jobs:
         run: |
           export DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
           echo "db container: $DB"
-          sudo -E env "DB=$DB" bash rehearsal/hone-release/ci/e2e-test.sh 2>&1 | tee "$RUNNER_TEMP/e2e.txt"; exit ${PIPESTATUS[0]}
+          sudo -E env "DB=$DB" bash rehearsal/hone-release/ci/e2e-test.sh supavisor 2>&1 | tee "$RUNNER_TEMP/e2e.txt"; exit ${PIPESTATUS[0]}
+
+  release-apply-pg:
+    name: hone-release apply with the REAL CLI through the launcher against a plain PostgreSQL with TLS (no docker pull)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Apply a synthetic package through the launcher
+        run: sudo bash rehearsal/hone-release/ci/e2e-test.sh pg 2>&1 | tee "$RUNNER_TEMP/e2e-pg.txt"; exit ${PIPESTATUS[0]}

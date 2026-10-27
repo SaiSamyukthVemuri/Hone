@@ -31,7 +31,7 @@ install -d -m 755 -o "$AGENT" -g "$AGENT" /srv/hone-release-inbox
 tmp=$(mktemp /etc/sudoers.d/.hone-release.XXXXXX); sed "s/@AGENT@/$AGENT/g" "$HERE/sudoers.hone-release" > "$tmp"; chown root:root "$tmp"; chmod 440 "$tmp"
 visudo -cf "$tmp" >/dev/null || { rm -f "$tmp"; echo "sudoers file did not validate; nothing installed" >&2; exit 1; }
 mv -f "$tmp" /etc/sudoers.d/hone-release
-visudo -c >/dev/null
+visudo -c >/dev/null 2>&1 || echo "note: visudo -c reports a problem elsewhere in the sudoers configuration (not in /etc/sudoers.d/hone-release, which validated)" >&2
 echo "installed. manifest:"; cat /usr/local/libexec/hone-release/manifest
 echo "launcher sha256 $(sha256sum /usr/local/libexec/hone-release/launcher | cut -d' ' -f1)"
 echo "next (root): set-secret.sh db-password ; set-secret.sh read-pat ; approve-package.sh ..."
