@@ -607,6 +607,7 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          set +e
           EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
           REG="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-}"
           BIN="$(command -v supabase || true)"
@@ -614,7 +615,17 @@ jobs:
             echo "::warning title=Supabase image pre-pull skipped::no image registry or no supabase CLI in the environment; the stack start pulls as before."
             exit 0
           fi
-          grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$BIN" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+          BIN_DIR="$(dirname "$(readlink -f "$BIN")")"
+          : > "$RUNNER_TEMP/cli-images.txt"
+          for cand in "$BIN_DIR/supabase-go" "$BIN"; do
+            [ -r "$cand" ] || continue
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then echo "image list read from $cand"; break; fi
+          done
+          if [ ! -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::the CLI lists no images (looked in $BIN_DIR/supabase-go and $BIN); the stack start pulls as before."
+            exit 0
+          fi
           pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
           images=""
           while read -r _from image _as alias; do
@@ -653,6 +664,7 @@ jobs:
               n=$((n + 1))
             done
           }
+          echo "pre-pulling:$images"
           ok=0; bad=0
           for img in $images; do
             if pull_one "$img"; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
@@ -908,6 +920,7 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          set +e
           EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
           REG="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-}"
           BIN="$(command -v supabase || true)"
@@ -915,7 +928,17 @@ jobs:
             echo "::warning title=Supabase image pre-pull skipped::no image registry or no supabase CLI in the environment; the stack start pulls as before."
             exit 0
           fi
-          grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$BIN" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+          BIN_DIR="$(dirname "$(readlink -f "$BIN")")"
+          : > "$RUNNER_TEMP/cli-images.txt"
+          for cand in "$BIN_DIR/supabase-go" "$BIN"; do
+            [ -r "$cand" ] || continue
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then echo "image list read from $cand"; break; fi
+          done
+          if [ ! -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::the CLI lists no images (looked in $BIN_DIR/supabase-go and $BIN); the stack start pulls as before."
+            exit 0
+          fi
           pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
           images=""
           while read -r _from image _as alias; do
@@ -954,6 +977,7 @@ jobs:
               n=$((n + 1))
             done
           }
+          echo "pre-pulling:$images"
           ok=0; bad=0
           for img in $images; do
             if pull_one "$img"; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
@@ -1345,6 +1369,7 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          set +e
           EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
           REG="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-}"
           BIN="$(command -v supabase || true)"
@@ -1352,7 +1377,17 @@ jobs:
             echo "::warning title=Supabase image pre-pull skipped::no image registry or no supabase CLI in the environment; the stack start pulls as before."
             exit 0
           fi
-          grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$BIN" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+          BIN_DIR="$(dirname "$(readlink -f "$BIN")")"
+          : > "$RUNNER_TEMP/cli-images.txt"
+          for cand in "$BIN_DIR/supabase-go" "$BIN"; do
+            [ -r "$cand" ] || continue
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then echo "image list read from $cand"; break; fi
+          done
+          if [ ! -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::the CLI lists no images (looked in $BIN_DIR/supabase-go and $BIN); the stack start pulls as before."
+            exit 0
+          fi
           pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
           images=""
           while read -r _from image _as alias; do
@@ -1391,6 +1426,7 @@ jobs:
               n=$((n + 1))
             done
           }
+          echo "pre-pulling:$images"
           ok=0; bad=0
           for img in $images; do
             if pull_one "$img"; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
@@ -1585,6 +1621,7 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          set +e
           EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
           REG="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-}"
           BIN="$(command -v supabase || true)"
@@ -1592,7 +1629,17 @@ jobs:
             echo "::warning title=Supabase image pre-pull skipped::no image registry or no supabase CLI in the environment; the stack start pulls as before."
             exit 0
           fi
-          grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$BIN" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+          BIN_DIR="$(dirname "$(readlink -f "$BIN")")"
+          : > "$RUNNER_TEMP/cli-images.txt"
+          for cand in "$BIN_DIR/supabase-go" "$BIN"; do
+            [ -r "$cand" ] || continue
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then echo "image list read from $cand"; break; fi
+          done
+          if [ ! -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::the CLI lists no images (looked in $BIN_DIR/supabase-go and $BIN); the stack start pulls as before."
+            exit 0
+          fi
           pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
           images=""
           while read -r _from image _as alias; do
@@ -1631,6 +1678,7 @@ jobs:
               n=$((n + 1))
             done
           }
+          echo "pre-pulling:$images"
           ok=0; bad=0
           for img in $images; do
             if pull_one "$img"; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
@@ -1822,6 +1870,7 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          set +e
           EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
           REG="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-}"
           BIN="$(command -v supabase || true)"
@@ -1829,7 +1878,17 @@ jobs:
             echo "::warning title=Supabase image pre-pull skipped::no image registry or no supabase CLI in the environment; the stack start pulls as before."
             exit 0
           fi
-          grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$BIN" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+          BIN_DIR="$(dirname "$(readlink -f "$BIN")")"
+          : > "$RUNNER_TEMP/cli-images.txt"
+          for cand in "$BIN_DIR/supabase-go" "$BIN"; do
+            [ -r "$cand" ] || continue
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then echo "image list read from $cand"; break; fi
+          done
+          if [ ! -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::the CLI lists no images (looked in $BIN_DIR/supabase-go and $BIN); the stack start pulls as before."
+            exit 0
+          fi
           pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
           images=""
           while read -r _from image _as alias; do
@@ -1868,6 +1927,7 @@ jobs:
               n=$((n + 1))
             done
           }
+          echo "pre-pulling:$images"
           ok=0; bad=0
           for img in $images; do
             if pull_one "$img"; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
@@ -2043,6 +2103,7 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          set +e
           EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector'
           REG="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-}"
           BIN="$(command -v supabase || true)"
@@ -2050,7 +2111,17 @@ jobs:
             echo "::warning title=Supabase image pre-pull skipped::no image registry or no supabase CLI in the environment; the stack start pulls as before."
             exit 0
           fi
-          grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$BIN" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+          BIN_DIR="$(dirname "$(readlink -f "$BIN")")"
+          : > "$RUNNER_TEMP/cli-images.txt"
+          for cand in "$BIN_DIR/supabase-go" "$BIN"; do
+            [ -r "$cand" ] || continue
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then echo "image list read from $cand"; break; fi
+          done
+          if [ ! -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::the CLI lists no images (looked in $BIN_DIR/supabase-go and $BIN); the stack start pulls as before."
+            exit 0
+          fi
           pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
           images=""
           while read -r _from image _as alias; do
@@ -2089,6 +2160,7 @@ jobs:
               n=$((n + 1))
             done
           }
+          echo "pre-pulling:$images"
           ok=0; bad=0
           for img in $images; do
             if pull_one "$img"; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
@@ -2272,6 +2344,7 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          set +e
           EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
           REG="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-}"
           BIN="$(command -v supabase || true)"
@@ -2279,7 +2352,17 @@ jobs:
             echo "::warning title=Supabase image pre-pull skipped::no image registry or no supabase CLI in the environment; the stack start pulls as before."
             exit 0
           fi
-          grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$BIN" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+          BIN_DIR="$(dirname "$(readlink -f "$BIN")")"
+          : > "$RUNNER_TEMP/cli-images.txt"
+          for cand in "$BIN_DIR/supabase-go" "$BIN"; do
+            [ -r "$cand" ] || continue
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then echo "image list read from $cand"; break; fi
+          done
+          if [ ! -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::the CLI lists no images (looked in $BIN_DIR/supabase-go and $BIN); the stack start pulls as before."
+            exit 0
+          fi
           pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
           images=""
           while read -r _from image _as alias; do
@@ -2318,6 +2401,7 @@ jobs:
               n=$((n + 1))
             done
           }
+          echo "pre-pulling:$images"
           ok=0; bad=0
           for img in $images; do
             if pull_one "$img"; then ok=$((ok + 1)); else bad=$((bad + 1)); fi

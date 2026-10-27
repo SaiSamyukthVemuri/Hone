@@ -1153,7 +1153,14 @@ describe("CI-REGISTRY: every Supabase-starting job pre-pulls its images with a b
   it("derives the image list from the pinned CLI itself: no image tag is written in the workflow", () => {
     for (const s of [...prepulls(CI), ...prepulls(NIGHTLY)]) {
       const c = code(s);
-      expect(c).toContain(`grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$BIN"`);
+      // The release archive ships TWO executables (the `supabase` wrapper and the Go
+      // `supabase-go` that embeds the Dockerfile); the list is read from the
+      // sibling supabase-go first, then from the command itself, and an empty
+      // list is a warning, never a failure (run 40555038056: the wrapper alone
+      // lists nothing and the step died silently under bash -e).
+      expect(c).toContain('for cand in "$BIN_DIR/supabase-go" "$BIN"; do');
+      expect(c).toContain(`grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$cand"`);
+      expect(c).toContain("set -uo pipefail\n          set +e");
       expect(c).toContain('BIN="$(command -v supabase || true)"');
       expect(c).toContain('images="$images $REG/supabase/${image##*/}"');
       expect(c).not.toMatch(/\b(?:postgres|postgres-meta|kong|gotrue|postgrest|mailpit|supavisor|realtime|studio)[:@]v?\d/);
