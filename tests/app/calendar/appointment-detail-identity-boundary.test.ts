@@ -162,7 +162,7 @@ describe("genuine failures stay loud", () => {
     const outcome = await renderDetail();
     expect(outcome).toEqual({
       kind: "error",
-      message: "Failed to load practitioner: connection terminated",
+      message: "Failed to load practitioner: unknown",
     });
     expect(appointmentReads()).toHaveLength(0);
   });

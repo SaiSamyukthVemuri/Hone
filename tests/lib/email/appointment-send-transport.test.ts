@@ -53,14 +53,15 @@ describe("the fake transport decides the outcome, per recipient", () => {
     expect(result.ok && result.messageId).toBe(FAKE_MESSAGE_ID);
   });
 
-  it("a `reject+` recipient is REFUSED, terminally, with the provider message", async () => {
+  it("a `reject+` recipient is REFUSED, terminally, as a closed category", async () => {
     vi.stubEnv("HONE_E2E_FAKE_RESEND", "1");
     const result = await sendEmailSafely({
       ...BASE,
       to: "reject+abc@harness.local",
     });
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.error).toMatch(/fake resend rejected/i);
+    // MSG-LOG-RAW-ERROR: the category, never the provider's own message.
+    expect(result.ok === false && result.error).toBe("provider_rejected");
     // TERMINAL, not retryable. Exact-head #793 P2: the fake's error envelope
     // used to carry only `message`, so `classifyResendError` fell through to
     // its unfamiliar-shape default and a "refusal" was classified as a
@@ -77,7 +78,7 @@ describe("the fake transport decides the outcome, per recipient", () => {
       to: "throw+abc@harness.local",
     });
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.error).toMatch(/network exception/i);
+    expect(result.ok === false && result.error).toBe("unknown");
     // A thrown network error IS retryable, and must stay distinguishable from
     // the terminal refusal above -- otherwise one fake mode could stand in for
     // the other and neither branch would be proven.
@@ -118,7 +119,7 @@ describe("production behaviour is unchanged", () => {
       "client@example.com",
     );
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.error).toMatch(/not configured/i);
+    expect(result.ok === false && result.error).toBe("not_configured");
   });
 
   it("a deployed runtime signal makes the fake marker REFUSE AT IMPORT", async () => {

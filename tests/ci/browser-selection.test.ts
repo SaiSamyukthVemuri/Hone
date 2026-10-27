@@ -223,7 +223,13 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // against a ~6 min target and a 15 min ceiling. The estimates these
     // measurements replace added up to roughly two and a half minutes for two
     // of them alone.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(43);
+    // Now 44 (production df33a762 had 40 with HON-48; the four machine specs above are on top): HON-48's team day view joined `calendar`, the group its
+    // /calendar paths already select. RECORDED AS A DECISION per the note
+    // above. Cost: SIX executed cases (six test() declarations, no loops): one
+    // SQL-only row check, four desktop page loads (one also steps to the next
+    // day) and one 390px touch page load, each a few seconds against the ~6 min
+    // target and 15 min ceiling.
+        expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(44);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

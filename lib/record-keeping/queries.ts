@@ -33,13 +33,15 @@ export async function getSterileItemRecords(
   studioId: string,
 ): Promise<RecordKeepingSterileItem[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("record_keeping_sterile_items")
     .select("*")
     .eq("studio_id", studioId)
     .order("date_purchased", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(200);
+  // DAT-002 (the #981 pattern): a failed read must not render as "no records".
+  if (error) throw new Error("Failed to load sterile item records");
   return (data ?? []) as RecordKeepingSterileItem[];
 }
 
@@ -73,7 +75,7 @@ export async function getExpiringSterileItems(
   const within = options.withinDays ?? SUPPLY_EXPIRING_WITHIN_DAYS;
   const supabase = await createClient();
   const horizon = supplyExpiryHorizon(todayIso, within);
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("record_keeping_sterile_items")
     .select("id, item_description, manufacturer_name, expiry_date")
     .eq("studio_id", studioId)
@@ -82,6 +84,9 @@ export async function getExpiringSterileItems(
     .lte("expiry_date", horizon)
     .order("expiry_date", { ascending: true })
     .limit(options.limit ?? 50);
+  // DAT-002 (the #981 pattern): refuse through the route error boundary.
+  // An empty list on a failed read would hide expiring sterile stock.
+  if (error) throw new Error("Failed to load expiring supplies");
   return (data ?? []) as Pick<
     RecordKeepingSterileItem,
     "id" | "item_description" | "manufacturer_name" | "expiry_date"
@@ -426,13 +431,15 @@ export async function getDisinfectantRecords(
   studioId: string,
 ): Promise<RecordKeepingDisinfectant[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("record_keeping_disinfectants")
     .select("*")
     .eq("studio_id", studioId)
     .order("date_prepared", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(200);
+  // DAT-002 (the #981 pattern): a failed read must not render as "no records".
+  if (error) throw new Error("Failed to load disinfectant records");
   return (data ?? []) as RecordKeepingDisinfectant[];
 }
 
@@ -440,13 +447,15 @@ export async function getExposureIncidentRecords(
   studioId: string,
 ): Promise<RecordKeepingExposureIncident[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("record_keeping_exposure_incidents")
     .select("*")
     .eq("studio_id", studioId)
     .order("incident_date", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(200);
+  // DAT-002 (the #981 pattern): a failed read must not render as "no records".
+  if (error) throw new Error("Failed to load exposure incident records");
   return (data ?? []) as RecordKeepingExposureIncident[];
 }
 
@@ -937,29 +946,37 @@ export async function getLotTraceability(
   const pattern = escapeIlikeExact(lot);
 
   const supabase = await createClient();
-  const [{ data: items }, { data: blockRows }, { data: practitioners }] =
-    await Promise.all([
-      supabase
-        .from("record_keeping_sterile_items")
-        .select("*")
-        .eq("studio_id", studioId)
-        .ilike("lot_number", pattern)
-        .order("date_purchased", { ascending: false })
-        .limit(50),
-      supabase
-        .from("session_blocks")
-        .select(
-          "id, session_id, primary_area, side, block_name, sort_order, probe_label, machine_frequency, probe_lot_number, session:sessions(id, started_at, modality, client_id, aftercare_and_risks_explained_at, performed_by_practitioner_id, practitioner_id, client:clients(id, name))",
-        )
-        .eq("studio_id", studioId)
-        .ilike("probe_lot_number", pattern)
-        .is("deleted_at", null)
-        .limit(200),
-      supabase
-        .from("practitioners")
-        .select("id, display_name, email")
-        .eq("studio_id", studioId),
-    ]);
+  const [
+    { data: items, error: itemsError },
+    { data: blockRows, error: blockRowsError },
+    { data: practitioners, error: practitionersError },
+  ] = await Promise.all([
+    supabase
+      .from("record_keeping_sterile_items")
+      .select("*")
+      .eq("studio_id", studioId)
+      .ilike("lot_number", pattern)
+      .order("date_purchased", { ascending: false })
+      .limit(50),
+    supabase
+      .from("session_blocks")
+      .select(
+        "id, session_id, primary_area, side, block_name, sort_order, probe_label, machine_frequency, probe_lot_number, session:sessions(id, started_at, modality, client_id, aftercare_and_risks_explained_at, performed_by_practitioner_id, practitioner_id, client:clients(id, name))",
+      )
+      .eq("studio_id", studioId)
+      .ilike("probe_lot_number", pattern)
+      .is("deleted_at", null)
+      .limit(200),
+    supabase
+      .from("practitioners")
+      .select("id, display_name, email")
+      .eq("studio_id", studioId),
+  ]);
+  // DAT-002 (the #981 pattern): a failed read must not render as "no
+  // traceability", nor as usages with no practitioner name.
+  if (itemsError || blockRowsError || practitionersError) {
+    throw new Error("Failed to load lot traceability");
+  }
 
   const practitionerName = new Map<string, string>(
     ((practitioners ?? []) as Array<{

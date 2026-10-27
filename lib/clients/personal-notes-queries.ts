@@ -11,6 +11,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import type { ClientPersonalNotes } from "@/lib/types/database";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 export async function getClientPersonalNotes(
   studioId: string,
@@ -25,7 +26,7 @@ export async function getClientPersonalNotes(
     .maybeSingle();
   if (error) {
     throw new Error(
-      `Failed to load client personal notes: ${error.message}`,
+      `Failed to load client personal notes: ${dbErrorCode(error)}`,
     );
   }
   return (data ?? null) as ClientPersonalNotes | null;

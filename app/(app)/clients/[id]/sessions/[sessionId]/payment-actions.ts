@@ -10,6 +10,7 @@ import {
   loadFailureMessage,
 } from "@/lib/billing/authoritative-session-payment";
 import { unresolvedAmountMessage } from "@/lib/billing/session-payment-amount";
+import { parsePaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 import { decideExecutionPricingPermission } from "@/lib/billing/execution-pricing-permission";
 import {
   getSessionPaymentEligibility,
@@ -39,6 +40,7 @@ import {
   refundPaymentChargeAttempt,
   type PaymentRefundResult,
 } from "@/lib/billing/payment-refund";
+import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
 // ---------------------------------------------------------------------------
 // prepareSessionPaymentChargeAction (PR #172).
@@ -118,6 +120,16 @@ const AUTHORITATIVE_AMOUNT_TOO_LARGE_ERROR =
   `This configured price is above the supported session-payment limit of $${(
     SESSION_PAYMENT_AMOUNT_CEILING_CENTS / 100
   ).toFixed(0)}. Review the pricing before preparing payment.`;
+// Codex P1 #4369182087 (#1035). The card prints the currency of the charge it
+// is about to prepare, run or refund and posts what it printed as
+// expected_currency. The server decides the currency itself (the verified
+// jurisdiction at prepare, the PERSISTED attempt currency at execute and
+// refund) and REFUSES, rather than proceeds, when the two differ or the posted
+// value is absent or not cad/usd. The posted value is never used as a currency.
+const CURRENCY_CHANGED_ERROR =
+  "The currency shown for this charge no longer matches the studio's verified currency. Refresh the page, check the amount and currency, and try again.";
+const CURRENCY_UNVERIFIED_ERROR =
+  "The currency of this charge could not be verified, so it was not run. Refresh the page and try again.";
 const DUPLICATE_ATTEMPT_ERROR =
   "A session payment attempt is already prepared for this session.";
 
@@ -158,12 +170,14 @@ export async function prepareSessionPaymentChargeAction(
   let actorIsOwner: boolean;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    // HON-44 (Sam decision 12): card charges and fee receipts are owner-only.
+    if (practitioner.role !== "owner") throw new Error("owner_only");
     practitionerId = practitioner.id;
     studioId = studio.id;
     studioTimezone = studio.timezone;
     actorIsOwner = practitioner.role === "owner";
   } catch (err) {
-    logInternal("session_payment_prepare_auth_failed", { err: String(err) });
+    logInternal("session_payment_prepare_auth_failed", { errorClass: thrownErrorClass(err) });
     return { ok: false, error: NOT_AUTHORIZED_ERROR };
   }
 
@@ -200,6 +214,16 @@ export async function prepareSessionPaymentChargeAction(
         "This session is not eligible for a session payment right now.",
       blockingReasons: eligibility.blockingReasons,
     };
+  }
+
+  // Displayed currency must equal the verified jurisdiction currency the
+  // attempt will be prepared in (stale page after a jurisdiction change, or a
+  // forged post): refuse, never prepare in a currency the person did not see.
+  if (
+    parsePaymentCurrency(strOrEmpty(formData.get("expected_currency"))) !==
+    eligibility.jurisdiction.currency
+  ) {
+    return { ok: false, error: CURRENCY_CHANGED_ERROR };
   }
 
   // Resolve client_id from the eligibility summary. The helper
@@ -323,7 +347,10 @@ export async function prepareSessionPaymentChargeAction(
       // execution and any later refund all read THIS column; nothing downstream
       // recomputes it from the service menu.
       amount_cents: decision.amountCents,
-      currency: "cad",
+      // #1035 P1-C. The studio's charge currency, from the jurisdiction the
+      // eligibility read decided on. The 0214 insert guard re-checks it under
+      // FOR SHARE, so a jurisdiction that changed since then still fails closed.
+      currency: eligibility.jurisdiction.currency,
       status: "ready",
       client_payment_method_id: eligibility.card.id,
       card_authorization_signature_id:
@@ -358,8 +385,7 @@ export async function prepareSessionPaymentChargeAction(
       return { ok: false, error: DUPLICATE_ATTEMPT_ERROR };
     }
     logInternal("session_payment_prepare_insert_failed", {
-      code: insertErr.code,
-      message: insertErr.message,
+      code: dbErrorCode(insertErr),
       sessionId,
     });
     return { ok: false, error: GENERIC_PRACTITIONER_ERROR };
@@ -432,11 +458,13 @@ export async function executeSessionPaymentChargeAction(
   let studioTimezone: string;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    // HON-44 (Sam decision 12): card charges and fee receipts are owner-only.
+    if (practitioner.role !== "owner") throw new Error("owner_only");
     practitionerId = practitioner.id;
     studioId = studio.id;
     studioTimezone = studio.timezone;
   } catch (err) {
-    logInternal("session_payment_execute_auth_failed", { err: String(err) });
+    logInternal("session_payment_execute_auth_failed", { errorClass: thrownErrorClass(err) });
     return {
       ok: false,
       outcome: "not_authorized",
@@ -488,12 +516,28 @@ export async function executeSessionPaymentChargeAction(
     const admin = createAdminClient();
     const { data: attemptRow, error: attemptRowError } = await admin
       .from("payment_charge_attempts")
-      .select("session_id")
+      .select("session_id, currency")
       .eq("id", attemptId)
       .eq("studio_id", studioId)
       .maybeSingle();
     const attemptSessionId = (attemptRow as { session_id?: string | null } | null)
       ?.session_id;
+    // The PERSISTED currency is what runSessionPaymentCharge sends to Stripe.
+    // Unknown stored currency: refuse. Displayed currency differs: refuse.
+    if (attemptRow) {
+      const persisted = parsePaymentCurrency(
+        (attemptRow as { currency?: unknown }).currency,
+      );
+      if (persisted === null) {
+        return { ok: false, outcome: "blocked", error: CURRENCY_UNVERIFIED_ERROR };
+      }
+      if (
+        parsePaymentCurrency(strOrEmpty(formData.get("expected_currency"))) !==
+        persisted
+      ) {
+        return { ok: false, outcome: "blocked", error: CURRENCY_CHANGED_ERROR };
+      }
+    }
     const permission = decideExecutionPricingPermission(
       attemptRowError || !attemptSessionId
         ? null
@@ -647,11 +691,13 @@ export async function sendPaymentChargeReceiptAction(
   let studioTimezone: string;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+    // HON-44 (Sam decision 12): card charges and fee receipts are owner-only.
+    if (practitioner.role !== "owner") throw new Error("owner_only");
     practitionerId = practitioner.id;
     studioId = studio.id;
     studioTimezone = studio.timezone;
   } catch (err) {
-    logInternal("payment_receipt_action_auth_failed", { err: String(err) });
+    logInternal("payment_receipt_action_auth_failed", { errorClass: thrownErrorClass(err) });
     return {
       ok: false,
       outcome: "not_authorized",
@@ -778,7 +824,7 @@ export async function refundPaymentChargeAttemptAction(
     studioId = studio.id;
     studioTimezone = studio.timezone;
   } catch (err) {
-    logInternal("payment_refund_action_auth_failed", { err: String(err) });
+    logInternal("payment_refund_action_auth_failed", { errorClass: thrownErrorClass(err) });
     return {
       ok: false,
       outcome: "not_authorized",
@@ -801,6 +847,31 @@ export async function refundPaymentChargeAttemptAction(
       outcome: "not_found",
       error: GENERIC_PRACTITIONER_ERROR,
     };
+  }
+
+  // Same rule as execute: the refund confirmation printed the persisted attempt
+  // currency; refuse if it is unknown or differs from what the person saw.
+  {
+    const { data: refundRow } = await createAdminClient()
+      .from("payment_charge_attempts")
+      .select("currency")
+      .eq("id", attemptId)
+      .eq("studio_id", studioId)
+      .maybeSingle();
+    if (refundRow) {
+      const persisted = parsePaymentCurrency(
+        (refundRow as { currency?: unknown }).currency,
+      );
+      if (persisted === null) {
+        return { ok: false, outcome: "amount_invalid", error: CURRENCY_UNVERIFIED_ERROR };
+      }
+      if (
+        parsePaymentCurrency(strOrEmpty(formData.get("expected_currency"))) !==
+        persisted
+      ) {
+        return { ok: false, outcome: "amount_invalid", error: CURRENCY_CHANGED_ERROR };
+      }
+    }
   }
 
   const result: PaymentRefundResult = await refundPaymentChargeAttempt({

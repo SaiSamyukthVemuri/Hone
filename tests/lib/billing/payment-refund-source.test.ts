@@ -415,7 +415,7 @@ describe("Action layer: refundPaymentChargeAttemptAction", () => {
   it("resolves practitioner + studio server-side (never trusts the browser)", () => {
     const block =
       ACTION.match(
-        /export async function refundPaymentChargeAttemptAction\([\s\S]{0,3000}\n\}/,
+        /export async function refundPaymentChargeAttemptAction\([\s\S]{0,6000}\n\}/,
       )?.[0] ?? "";
     expect(block).toMatch(/getCurrentPractitionerWithStudio/);
   });
@@ -423,7 +423,7 @@ describe("Action layer: refundPaymentChargeAttemptAction", () => {
   it("does NOT accept amount from the browser", () => {
     const block =
       ACTION.match(
-        /export async function refundPaymentChargeAttemptAction\([\s\S]{0,3000}\n\}/,
+        /export async function refundPaymentChargeAttemptAction\([\s\S]{0,6000}\n\}/,
       )?.[0] ?? "";
     expect(block).not.toMatch(/formData\.get\("amount/);
   });
@@ -431,7 +431,7 @@ describe("Action layer: refundPaymentChargeAttemptAction", () => {
   it("forwards only attempt_id, internal_note, plus session/client for revalidate", () => {
     const block =
       ACTION.match(
-        /export async function refundPaymentChargeAttemptAction\([\s\S]{0,3000}\n\}/,
+        /export async function refundPaymentChargeAttemptAction\([\s\S]{0,6000}\n\}/,
       )?.[0] ?? "";
     expect(block).toMatch(/refundPaymentChargeAttempt\(\{[\s\S]{0,400}attemptId/);
     expect(block).toMatch(/internalNote/);

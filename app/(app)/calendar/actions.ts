@@ -27,6 +27,8 @@ import {
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { localDateString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { safeLog } from "@/lib/logging/safe-log";
+import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 
 export type BookResult =
   | { ok: true; appointmentId: string }
@@ -205,7 +207,7 @@ export async function bookAppointmentForClientAction(
     .eq("active", true)
     .maybeSingle();
   if (serviceErr) {
-    logBookingDbError("book_appointment", "service_lookup", serviceErr.code);
+    logBookingDbError("book_appointment", "service_lookup", dbErrorCode(serviceErr));
     return { ok: false, error: "Could not load the service. Please try again." };
   }
   if (!service) return { ok: false, error: "Service not found." };
@@ -222,7 +224,7 @@ export async function bookAppointmentForClientAction(
     .eq("studio_id", studio.id)
     .maybeSingle();
   if (clientErr) {
-    logBookingDbError("book_appointment", "client_lookup", clientErr.code);
+    logBookingDbError("book_appointment", "client_lookup", dbErrorCode(clientErr));
     return { ok: false, error: "Could not load the client. Please try again." };
   }
   if (!client) return { ok: false, error: "Client not found." };
@@ -356,7 +358,7 @@ export async function bookAppointmentForClientAction(
         code: "slot_taken",
       };
     }
-    logBookingDbError("book_appointment", "rpc", rpcErr.code);
+    logBookingDbError("book_appointment", "rpc", dbErrorCode(rpcErr));
     return { ok: false, error: "Could not create the appointment. Please try again." };
   }
   const outcome = (rpcRows as BookingRpcRow[] | null)?.[0];
@@ -440,6 +442,23 @@ export async function bookAppointmentForClientAction(
   return { ok: true, appointmentId: created.id };
 }
 
+// A closed set of error names that are safe to log. Anything else, including a
+// custom name (which is free text), is "other"; a thrown non-Error is
+// "non_error".
+const LOGGABLE_ERROR_NAMES = new Set([
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "AbortError",
+  "TimeoutError",
+]);
+function boundedErrorName(err: unknown): string {
+  if (!(err instanceof Error)) return "non_error";
+  return LOGGABLE_ERROR_NAMES.has(err.name) ? err.name : "other";
+}
+
 export async function cancelAppointmentAction(formData: FormData): Promise<{
   ok: true;
 } | { ok: false; error: string }> {
@@ -475,8 +494,7 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
     console.error(
       JSON.stringify({
         event: "practitioner_cancel_rpc_error",
-        code: rpcErr.code,
-        message: rpcErr.message,
+        code: dbErrorCode(rpcErr),
         appointmentId,
         timestamp: new Date().toISOString(),
       }),
@@ -545,7 +563,15 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
           rebookUrl: `${getRequiredAppOrigin()}/book/${studio.slug}`,
         });
       } catch (err) {
-        console.error("client cancel notification email failed", err);
+        // MSG-LOG-RAW-ERROR: a bounded value only. The thrown message (a
+        // provider or transport message can quote the destination) and the
+        // raw error object never reach the log.
+        safeLog.error(
+          JSON.stringify({
+            event: "client_cancel_notification_email_failed",
+            error_name: boundedErrorName(err),
+          }),
+        );
       }
     }
 
@@ -597,8 +623,7 @@ export async function markAppointmentCompleteAction(
     console.error(
       JSON.stringify({
         event: "mark_complete_rpc_error",
-        code: rpcErr.code,
-        message: rpcErr.message,
+        code: dbErrorCode(rpcErr),
         appointmentId,
         timestamp: new Date().toISOString(),
       }),
@@ -667,8 +692,7 @@ export async function markAppointmentNoShowAction(
     console.error(
       JSON.stringify({
         event: "mark_no_show_rpc_error",
-        code: rpcErr.code,
-        message: rpcErr.message,
+        code: dbErrorCode(rpcErr),
         appointmentId,
         timestamp: new Date().toISOString(),
       }),
@@ -771,7 +795,7 @@ export async function createClientForCalendarBookingAction(
     // Never surface a raw Postgres/PostgREST message (constraint names, schema
     // hints, or submitted values) to the browser: the quick-book drawer renders
     // this string verbatim. Log a bounded SQLSTATE marker instead.
-    logBookingDbError("create_client", "insert", error?.code);
+    logBookingDbError("create_client", "insert", dbErrorCode(error));
     return { ok: false, error: "Could not create the client. Please try again." };
   }
 
@@ -856,7 +880,7 @@ export async function fetchLastServiceForClientAction(
       .maybeSingle();
     if (error) {
       // Log the SQLSTATE only; never propagate the raw DB text to the browser.
-      logBookingDbError("last_service", "query", error.code);
+      logBookingDbError("last_service", "query", dbErrorCode(error));
       throw new Error("last_service_query_failed");
     }
     return (data as Row | null) ?? null;
@@ -1126,8 +1150,7 @@ export async function sendPostcareEmailAction(
     console.error(
       JSON.stringify({
         event: "send_postcare_lookup_failed",
-        code: lookupErr.code,
-        message: lookupErr.message,
+        code: dbErrorCode(lookupErr),
         appointmentId,
         timestamp: new Date().toISOString(),
       }),
@@ -1212,7 +1235,7 @@ export async function sendPostcareEmailAction(
     // no direct-UPDATE fallback, because this route no longer settles either,
     // a fallback claim would send an email the database could never record.
     logPostcare("send_postcare_claim_command_failed", {
-      code: claimRpcErr.code,
+      code: dbErrorCode(claimRpcErr),
       appointmentId,
     });
     return { ok: false, error: "Could not send postcare. Please try again." };
@@ -1294,7 +1317,7 @@ export async function sendPostcareEmailAction(
       // fabricate a failure state here; the claim simply goes stale and becomes
       // reclaimable, which is the conservative outcome.
       logPostcare("send_postcare_settle_failure_unpersisted", {
-        code: settleErr?.code ?? settled?.result ?? "unknown",
+        code: failureCode(settleErr, settled?.result),
         appointmentId,
       });
     }
@@ -1338,7 +1361,7 @@ export async function sendPostcareEmailAction(
         // The email DID reach the provider but the settlement did not persist.
         // Bounded metadata only, and deliberately NO repair: we under-claim
         // ("still sending" -> reclaimable) rather than fabricate a sent state.
-        code: successWriteErr.code,
+        code: dbErrorCode(successWriteErr),
         appointmentId,
         timestamp: new Date().toISOString(),
       }),

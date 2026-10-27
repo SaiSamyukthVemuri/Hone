@@ -134,7 +134,9 @@ describe("client UPDATE failure diagnostic privacy", () => {
     const { data, updateFilters } = prepareUpdate({ code: "23514", message: sentinel });
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(updateClientAction(data)).resolves.toEqual({ ok: false, error: "Couldn't save the client. Please try again." });
-    expect(h.identity).toHaveBeenCalledOnce(); expect(h.lookup).toHaveBeenCalledOnce();
+    // Two single-row reads: visibility, then (HON-58 I1) the stored name, phone
+    // and date of birth that decide whether the probable-duplicate check runs.
+    expect(h.identity).toHaveBeenCalledOnce(); expect(h.lookup).toHaveBeenCalledTimes(2);
     expect(h.duplicate).toHaveBeenCalledExactlyOnceWith(1); expect(h.writes).toHaveBeenCalledOnce();
     expect(updateFilters.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
     expect(log).toHaveBeenCalledOnce();
@@ -288,7 +290,7 @@ describe.each([
     const update = setup();
     update.is.mockResolvedValue({ error: { message: "synthetic update refusal" } });
     update.not.mockResolvedValue({ error: { message: "synthetic update refusal" } });
-    await expect(action(form())).rejects.toThrow(`Failed to ${name} client: synthetic update refusal`);
+    await expect(action(form())).rejects.toThrow(`Failed to ${name} client: unknown`);
     expect(h.audit).not.toHaveBeenCalled(); expect(h.revalidate).not.toHaveBeenCalled(); expect(h.redirect).not.toHaveBeenCalled();
   });
   it.each(["auth", "visibility"])("preserves %s refusal before UPDATE or audit", async (mode) => {

@@ -102,6 +102,9 @@ const ELIGIBLE = {
   stripeCustomerId: "cus_SERVER",
   stripePaymentMethodId: "pm_SERVER",
   existingAttempts: [],
+  // #1035 P1-C: the jurisdiction eligibility read, and the only source of the
+  // prepared attempt's currency.
+  jurisdiction: { country: "CA", currency: "cad" },
 };
 
 let eligibility: unknown = ELIGIBLE;
@@ -144,12 +147,16 @@ type FormFields = {
   reason?: string;
   note?: string;
   session?: string;
+  // The currency the card DISPLAYED (posted as expected_currency); default cad.
+  shownCurrency?: string | null;
 };
 
 function form(fields: FormFields = {}): FormData {
   const fd = new FormData();
   fd.set("session_id", fields.session ?? "sess-1");
   fd.set("expected_amount_cents", fields.expected ?? "12000");
+  // The currency the card displayed (the verified jurisdiction's).
+  if (fields.shownCurrency !== null) fd.set("expected_currency", fields.shownCurrency ?? "cad");
   if (fields.final !== undefined) fd.set("final_amount_dollars", fields.final);
   if (fields.reason !== undefined) fd.set("adjustment_reason", fields.reason);
   if (fields.note !== undefined) fd.set("internal_note", fields.note);
@@ -212,14 +219,13 @@ describe("A · final equals the current reference", () => {
     });
   });
 
-  it("a non-owner may still prepare at the unchanged reference price", async () => {
+  it("a non-owner can no longer prepare a charge at all (HON-44, Sam decision 12: card charges are owner-only)", async () => {
     identity.practitioner = { id: "prac-2", role: "practitioner", active: true };
     const res = await prepareSessionPaymentChargeAction(
       form({ final: "120.00" }),
     );
-    expect(res.ok).toBe(true);
-    expect(inserted).toHaveLength(1);
-    expect(inserted[0].amount_cents).toBe(12_000);
+    expect(res.ok).toBe(false);
+    expect(inserted).toHaveLength(0);
   });
 });
 
@@ -831,5 +837,72 @@ describe("prepare refuses a visit that already has an attested outcome", () => {
     const r = await prepareSessionPaymentChargeAction(form({ final: "120.00" }));
     expect(r.ok).toBe(true);
     expect(inserted.length).toBe(before + 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1035 Codex P1 4352197754 (P1-C). The attempt is prepared in the studio's
+// CURRENCY, read by eligibility from its payment jurisdiction. A hard-coded
+// "cad" is refused by the 0214 insert guard for every US studio.
+// ---------------------------------------------------------------------------
+describe("P1-C · the prepared attempt carries the jurisdiction's currency", () => {
+  it("a US/usd eligible session inserts usd", async () => {
+    eligibility = { ...ELIGIBLE, jurisdiction: { country: "US", currency: "usd" } };
+    const res = await prepareSessionPaymentChargeAction(form({ final: "120.00", shownCurrency: "usd" }));
+    expect(res.ok).toBe(true);
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0].currency).toBe("usd");
+  });
+
+  it("a CA/cad eligible session still inserts cad", async () => {
+    const res = await prepareSessionPaymentChargeAction(form({ final: "120.00" }));
+    expect(res.ok).toBe(true);
+    expect(inserted[0].currency).toBe("cad");
+  });
+
+  it("a forged currency field cannot move a US studio to cad", async () => {
+    eligibility = { ...ELIGIBLE, jurisdiction: { country: "US", currency: "usd" } };
+    const fd = form({ final: "120.00", shownCurrency: "usd" });
+    fd.set("currency", "cad");
+    await prepareSessionPaymentChargeAction(fd);
+    expect(inserted[0].currency).toBe("usd");
+  });
+});
+
+// #1035 Codex P1 #4369182087. What the card DISPLAYED must equal the currency
+// the server prepares in. The posted expected_currency can only cause a
+// refusal; it is never used as a currency.
+describe("P1 #4369182087 · displayed currency must equal the verified jurisdiction currency", () => {
+  const US = { country: "US", currency: "usd" };
+  it("US studio, USD shown: prepared in usd (control)", async () => {
+    eligibility = { ...ELIGIBLE, jurisdiction: US };
+    const res = await prepareSessionPaymentChargeAction(form({ final: "120.00", shownCurrency: "usd" }));
+    expect(res.ok).toBe(true);
+    expect(inserted[0].currency).toBe("usd");
+  });
+  it("CA studio, CAD shown: prepared in cad (control)", async () => {
+    const res = await prepareSessionPaymentChargeAction(form({ final: "120.00", shownCurrency: "cad" }));
+    expect(res.ok).toBe(true);
+    expect(inserted[0].currency).toBe("cad");
+  });
+  it.each([
+    ["US studio but the page showed CAD (stale page / forged post)", US, "cad"],
+    ["CA studio but the page showed USD", { country: "CA", currency: "cad" }, "usd"],
+    ["no expected_currency posted", US, null],
+    ["an empty expected_currency", US, ""],
+    ["an unsupported currency", US, "eur"],
+    ["upper-case code is not the contract", US, "USD"],
+  ] as const)("%s: refused, nothing inserted", async (_l, jurisdiction, shown) => {
+    eligibility = { ...ELIGIBLE, jurisdiction };
+    const res = await prepareSessionPaymentChargeAction(form({ final: "120.00", shownCurrency: shown }));
+    expect(res.ok).toBe(false);
+    expect(inserted).toHaveLength(0);
+    if (!res.ok) expect(res.error).toMatch(/currency shown for this charge no longer matches/i);
+  });
+  it("unknown / missing jurisdiction: eligibility refuses and nothing is inserted (never a CAD default)", async () => {
+    eligibility = { eligible: false, blockingReasons: ["The studio's payment country and currency could not be verified. Refresh and try again."], existingAttempts: [] };
+    const res = await prepareSessionPaymentChargeAction(form({ final: "120.00", shownCurrency: "cad" }));
+    expect(res.ok).toBe(false);
+    expect(inserted).toHaveLength(0);
   });
 });

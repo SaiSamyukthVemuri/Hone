@@ -1,7 +1,0 @@
-{
-  "pr": 899,
-  "merge": "e1671b38c15e19b69a82c665da55eb05e7cdf53e",
-  "runtime": false,
-  "migrations": [],
-  "release_receipt": "01-ops/899-release-receipt.json"
-}

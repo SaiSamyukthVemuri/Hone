@@ -6,7 +6,7 @@
 //
 // The session payment v1 model lives in docs/16 §12 + docs/02
 // payment domain section:
-//   * Practitioner-confirmed amount in CAD
+//   * Practitioner-confirmed amount in the studio's verified currency (cad or usd, 0214)
 //   * Charge AFTER the session is completed
 //   * Off-session against the saved card
 //   * Test mode only in this PR (no Stripe call; row only)
@@ -16,7 +16,9 @@
 // status='ready', stripe_livemode=false. No PaymentIntent is
 // created here; that is a future PR.
 
-// Same $2,000 CAD ceiling enforced by the
+import type { PaymentCurrency, StudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction";
+
+// Same $2,000 ceiling (either currency) enforced by the
 // payment_charge_attempts.amount_cents CHECK
 // (amount_cents > 0 and amount_cents <= 200000). The application
 // layer also enforces the ceiling so the practitioner sees a
@@ -35,6 +37,13 @@ export const SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH = 1000;
 // record, so it is bounded well below the note cap: the two share the one
 // internal_note column and both must fit in it together.
 export const SESSION_PAYMENT_ADJUSTMENT_REASON_MAX_LENGTH = 200;
+
+// HON-45. The one blocking reason that means "this client has no card", shared
+// so the card can tell that fact apart from a fault. A failed card READ is a
+// different reason (ELIGIBILITY_READ_FAILED_REASON): Hone did not look, so it
+// must never be presented as "no card".
+export const NO_CARD_ON_FILE_REASON =
+  "Client must add a card on file before a session payment can be prepared.";
 
 // Summary shapes mirror lib/billing/manual-fee-types.ts so the UI
 // can render the same blocked / ready states without dragging a
@@ -87,6 +96,10 @@ export type SessionPaymentExistingAttemptSummary = {
   id: string;
   status: string;
   amountCents: number;
+  // The PERSISTED attempt currency (payment_charge_attempts.currency), parsed to
+  // cad|usd. null = the stored value was not one of the two allowed currencies:
+  // the card refuses to run or refund it rather than guess.
+  currency: PaymentCurrency | null;
   createdAt: string;
   stripePaymentIntentId: string | null;
   stripeChargeId: string | null;
@@ -138,6 +151,10 @@ export type SessionPaymentEligibility =
       stripeCustomerId: string;
       stripePaymentMethodId: string;
       existingAttempts: SessionPaymentExistingAttemptSummary[];
+      // #1035 P1-C. The payment jurisdiction this eligibility was decided on.
+      // The prepare action takes the attempt's currency from it, and the 0214
+      // insert guard re-checks it under lock.
+      jurisdiction: StudioPaymentJurisdiction;
     }
   | {
       eligible: false;

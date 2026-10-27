@@ -1731,7 +1731,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     ticket: "TRUTH-01B",
     tier: 1,
     reason:
-      "Introduced by migration 0223 (MPX-03, #829). The FIELD half of the published contract: for a (profile, version, mode), which fields exist, in what native unit and precision, and what kind of quantity each is. record_treatment_setup_group validates every reading against it and derives unit and precision from it. Like its mode-level parent it is a GLOBAL PRODUCT FACT with no studio_id, published by deployment authority only and immutable once published, holding no client, clinical or provider data. A studio export probably should not carry it, but an exported reading is only interpretable against the contract version it was captured under, so the decision belongs with whoever decides the readings' disposition.",
+      "Introduced by migration 0223 (MPX-03, #829). The FIELD half of the published contract: for a (profile, version, mode), which fields exist, in what native unit and precision, and what kind of quantity each is. The setup-group recording command that 0223 introduced validates every reading against it and derives unit and precision from it. Like its mode-level parent it is a GLOBAL PRODUCT FACT with no studio_id, published by deployment authority only and immutable once published, holding no client, clinical or provider data. A studio export probably should not carry it, but an exported reading is only interpretable against the contract version it was captured under, so the decision belongs with whoever decides the readings' disposition.",
   },
   machine_profile_mode_contract: {
     kind: "pending",

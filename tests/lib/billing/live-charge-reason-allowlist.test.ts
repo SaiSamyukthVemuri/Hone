@@ -74,7 +74,7 @@ describe("execute gate — manual-fee charge action (defense-in-depth)", () => {
     expect(gate).toBeGreaterThan(-1);
     // The gate must appear BEFORE the executor call.
     expect(gate).toBeLessThan(exec);
-    expect(src).toMatch(/\.select\("charge_reason"\)/);
+    expect(src).toMatch(/\.select\("charge_reason, currency"\)/);
     expect(src).toMatch(/return \{ ok: false, outcome: "blocked", error: hold \}/);
   });
 

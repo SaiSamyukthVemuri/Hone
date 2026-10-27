@@ -164,7 +164,7 @@ describe("the targeted browser lane's shard count is stated consistently", () =>
     // run39713000378: setup12–12.6min, zero observed browser assertions failed.
     // Ceilings are not performance targets; retain all four shards and tests.
     expect(CI_YML).toContain(
-      "timeout-minutes: ${{ (needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')) && 35 || 15 }}",
+      "timeout-minutes: ${{ (needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')) && 35 || 19 }}",
     );
     expect(CI_YML).toContain("run39713000378");
     expect(CI_YML).toContain("mobile:3 observed passes");

@@ -76,7 +76,13 @@ describe("desktop + mobile thread identical targeting context", () => {
   }
   it("the calendar page feeds both render paths from the server-resolved practitioner + studio", () => {
     expect((PAGE.match(/practitionerCapacityEnabled=\{studio\.practitioner_capacity_enabled === true\}/g) ?? []).length).toBe(2);
-    expect((PAGE.match(/currentPractitionerId=\{practitioner\.id\}/g) ?? []).length).toBe(2);
-    expect((PAGE.match(/currentPractitionerName=\{practitioner\.display_name\}/g) ?? []).length).toBe(2);
+    // HON-48: the team day view is the third path. It renders only after the
+    // capacity check redirects a non-team studio away, so it passes the flag
+    // as a literal true, with the same server-resolved acting practitioner.
+    expect((PAGE.match(/currentPractitionerId=\{practitioner\.id\}/g) ?? []).length).toBe(3);
+    expect((PAGE.match(/currentPractitionerName=\{practitioner\.display_name\}/g) ?? []).length).toBe(3);
+    const dayPath = PAGE.slice(PAGE.indexOf("async function renderTeamDayView"));
+    expect(dayPath.indexOf("if (!capacityEnabled) redirect(")).toBeGreaterThan(-1);
+    expect(dayPath.indexOf("if (!capacityEnabled) redirect(")).toBeLessThan(dayPath.indexOf("practitionerCapacityEnabled\n"));
   });
 });

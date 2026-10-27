@@ -92,6 +92,10 @@ jobs:
       mobile: ${{ steps.classify.outputs.mobile }}
       ci_workflows: ${{ steps.classify.outputs.ci_workflows }}
       full_matrix_required: ${{ steps.classify.outputs.full_matrix_required }}
+      # G4: a docs-only change to a document a unit test reads, and exactly
+      # those tests ('; '-joined). Consumed by canonical-record below.
+      docs_consistency: ${{ steps.classify.outputs.docs_consistency }}
+      docs_reader_tests: ${{ steps.classify.outputs.docs_reader_tests }}
       production_record: ${{ steps.record.outputs.production_record }}
       browser_run: ${{ steps.browser.outputs.browser_run }}
       browser_extended: ${{ steps.browser.outputs.browser_extended }}
@@ -426,9 +430,17 @@ jobs:
     # validate is skipped for docs-only diffs, so a production-record PR never
     # ran the canonical checks at all (#825 6215529089). This runs ONLY the
     # docs tests, enforced, for a docs-only change to docs/production/**.
+    #
+    # G4 widens WHEN it runs, not what the record step does. A docs-only change
+    # to a document a unit test reads (the ledger wording 0179 pins, the
+    # AGENTS.md text the OpenWiki guards read) ran no test at all and broke
+    # first on the production push. The classifier names exactly those readers
+    # and the second step runs them: unit-only, no build, no DB, no browser.
+    # The job id and name are unchanged because required checks and ENG-LOOP
+    # tables pin them.
     name: canonical production record (docs-only)
     needs: changes
-    if: ${{ needs.changes.outputs.docs_only == 'true' && needs.changes.outputs.production_record == 'true' }}
+    if: ${{ needs.changes.outputs.docs_only == 'true' && (needs.changes.outputs.production_record == 'true' || needs.changes.outputs.docs_consistency == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -448,9 +460,40 @@ jobs:
         run: npm ci
 
       - name: Canonical production-record checks (enforced)
+        # Exactly the job's ORIGINAL condition: the record step runs when it
+        # always did, and a document-reader-only run does not trigger it.
+        if: ${{ needs.changes.outputs.docs_only == 'true' && needs.changes.outputs.production_record == 'true' }}
         run: npx vitest run tests/docs
         env:
           CANONICAL_FRESHNESS: enforce
+
+      - name: Unit tests that read the changed documents
+        if: ${{ needs.changes.outputs.docs_consistency == 'true' }}
+        # THROUGH env, never interpolated into the script, so no path can
+        # become shell. An EMPTY list fails: docs_consistency=true with no
+        # reader is a classifier defect, and running nothing must not pass.
+        # Freshness exactly as validate judges a code PR: enforced on push and
+        # on a production-record PR, measured otherwise. The canonical facts
+        # test reads every document, so it is in this list for any docs-only
+        # PR, and its own default (enforce) would fail an ordinary docs PR on
+        # a record lag it did not cause.
+        env:
+          DOCS_READER_TESTS: ${{ needs.changes.outputs.docs_reader_tests }}
+          CANONICAL_FRESHNESS: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.production_record == 'true') && 'enforce' || 'measure' }}
+        run: |
+          set -euo pipefail
+          files=()
+          IFS=';' read -ra listed <<< "$DOCS_READER_TESTS"
+          for t in "${listed[@]}"; do
+            t="${t#"${t%%[![:space:]]*}"}"
+            t="${t%"${t##*[![:space:]]}"}"
+            if [ -n "$t" ]; then files+=("$t"); fi
+          done
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "docs_consistency is true but no reader test was named" >&2
+            exit 1
+          fi
+          npx vitest run "${files[@]}"
 
   db-integration:
     name: db integration (local supabase)
@@ -714,7 +757,7 @@ jobs:
     # minutes is still too slow and still worth investigating; it now reports
     # its own result instead of being cut mid-run and misread as a test failure.
     #
-    #   targeted  : target <10 min per shard, hard timeout 15 min  (3 shards)
+    #   targeted  : target <10 min per shard, hard timeout 19 min  (3 shards)
     #   extended  : target <10 min per shard, hard timeout 25 min  (4 shards)
     #
     # NEITHER CEILING MOVED WHEN TARGETED WAS SPLIT. The targeted lane was the
@@ -725,11 +768,14 @@ jobs:
     # ENG-003/004 run39713000378: cold setup12–12.6min before150–158tests;
     # 482 observed passes/4skips/0assertion failures before cancellation.
     # Worst measured projection22.15min + finiteheadroom => hard25.
-    # Keep target <10 min per shard and targeted hard15; investigate slow npm ci.
-    # Existing native24 work adds a second build and six cases per extended runner.
-    # Reuse reviewed HON-18 finite35m augmented ceiling; ordinary target remains <10m.
-    # Run39620772010 took15m59s before native20 (9.1m unsharded) was added.
-    timeout-minutes: ${{ (needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')) && 35 || 15 }}
+    # Keep target <10 min per shard; investigate slow npm ci.
+    # TARGETED 15 -> 19 (2026-10-23, Codex P2 4362256407 on #1059): the Playwright system-package install is now BOUNDED at a 6 min step
+    # ceiling (scripts/ci/playwright-system-deps.sh, worst case 325 s) and every job must clear it on top of its own time.
+    # AUGMENTED 35 (HON-18, finite35m): an extended shard, or a shard that selects machine-create-mode-journey.spec.ts, also runs the guarded
+    # native 3G proof (a second build and six cases per runner); run 39620772010 took 15m59s before native20 (9.1m unsharded) was added.
+    # MERGE NOTE (hon8-slice, local): this combines production df33a762's 19-minute targeted ceiling with the stack's 35-minute augmented
+    # ceiling. It RAISES extended from production's 25 to 35 because extended shards run the native proof; General must confirm at push.
+    timeout-minutes: ${{ (needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')) && 35 || 19 }}
     strategy:
       fail-fast: false
       matrix:
@@ -822,12 +868,39 @@ jobs:
 
       - name: Install Playwright Chromium (cache miss)
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
-      - name: Install Playwright system deps only (cache hit)
-        if: steps.pw-cache.outputs.cache-hit == 'true'
-        # Browser binaries come from the cache; only OS-level libs are needed.
-        run: npx playwright install-deps chromium
+      # System packages: CACHED per runner image + Playwright version and BOUNDED.
+      # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
+      # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
+      # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
+      # restores the cached .debs, cuts a stalled install off after its FIRST
+      # bound and retries once on archive.ubuntu.com under its RETRY bound. The
+      # bounds are defined ONLY in scripts/ci/playwright-system-deps.sh (never
+      # restated here; tests/ci/ci-config.test.ts derives the step ceiling from
+      # them). The save runs straight after, not in a post step that a failed or
+      # cancelled job would skip.
+      - name: Resolve runner image
+        id: img
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright system packages (bounded, .deb cache)
+        timeout-minutes: 6
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Record setup duration
         id: setup_done
@@ -913,6 +986,19 @@ jobs:
           path: test-results/
           retention-days: 7
 
+      # React #418 attribution: the egress guard already holds every refused
+      # Sentry envelope (url, transaction, frames, breadcrumbs) from this
+      # synthetic-data run; upload it so a one-in-many diagnostic can be tied
+      # to its page and case instead of a minified count in the run log.
+      - name: Upload refused Sentry envelopes
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sentry-egress-shard-${{ matrix.shard }}
+          path: /tmp/hone-e2e-sentry-egress/*.jsonl
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Timing diagnostics
         if: always()
         env:
@@ -963,6 +1049,7 @@ jobs:
           RECORD_RESULT: ${{ needs.canonical-record.result }}
           DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
           PRODUCTION_RECORD: ${{ needs.changes.outputs.production_record }}
+          DOCS_CONSISTENCY: ${{ needs.changes.outputs.docs_consistency }}
         run: |
           set -euo pipefail
 
@@ -997,9 +1084,11 @@ jobs:
           # docs/production/** change validate is skipped, so canonical-record is
           # the only check that can reject a stale record. Its result is carried
           # HERE, failing closed, rather than relying on a new check name.
-          if [ "${DOCS_ONLY:-}" = "true" ] && [ "${PRODUCTION_RECORD:-}" = "true" ]; then
+          # The same job also runs the unit tests that read a changed document
+          # (G4, docs_consistency), so that case is required on the same terms.
+          if [ "${DOCS_ONLY:-}" = "true" ] && { [ "${PRODUCTION_RECORD:-}" = "true" ] || [ "${DOCS_CONSISTENCY:-}" = "true" ]; }; then
             if [ "${RECORD_RESULT:-}" != "success" ]; then
-              echo "::error::canonical production record check did not succeed (result: ${RECORD_RESULT:-<missing>}) on a production-record change, so this required check fails closed"
+              echo "::error::canonical production record / document-reader check did not succeed (result: ${RECORD_RESULT:-<missing>}) on a docs-only change that requires it, so this required check fails closed"
               exit 1
             fi
             echo "canonical record : success"
@@ -1180,12 +1269,39 @@ jobs:
 
       - name: Install Playwright Chromium (cache miss)
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
-      - name: Install Playwright system deps only (cache hit)
-        if: steps.pw-cache.outputs.cache-hit == 'true'
-        # Browser binaries come from the cache; only OS-level libs are needed.
-        run: npx playwright install-deps chromium
+      # System packages: CACHED per runner image + Playwright version and BOUNDED.
+      # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
+      # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
+      # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
+      # restores the cached .debs, cuts a stalled install off after its FIRST
+      # bound and retries once on archive.ubuntu.com under its RETRY bound. The
+      # bounds are defined ONLY in scripts/ci/playwright-system-deps.sh (never
+      # restated here; tests/ci/ci-config.test.ts derives the step ceiling from
+      # them). The save runs straight after, not in a post step that a failed or
+      # cancelled job would skip.
+      - name: Resolve runner image
+        id: img
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright system packages (bounded, .deb cache)
+        timeout-minutes: 6
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Payment browser E2E (quick checkout, guarded fake Stripe)
         run: npm run test:e2e:payment
@@ -1226,8 +1342,13 @@ jobs:
       packages: read
     # run39713000378 mobile:3 observed passes before10min cancellation;
     # setup~10min + existing6-case phase~0.4min + finiteheadroom => hard12.
+    # 12 -> 15 (2026-10-23): run 39979564413 passed 6/6 and was cancelled at 12
+    # after an 8.4 min apt stall. Measured ~5.8 min p90 + the bounded install
+    # step's own ceiling (derived from scripts/ci/playwright-system-deps.sh's
+    # constants by tests/ci/ci-config.test.ts) + margin must fit. TARGET ~6 min
+    # is unchanged (CLAUDE.md section 4).
     # This ceiling is not a performance or physical-device acceptance target.
-    timeout-minutes: 12
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -1317,11 +1438,39 @@ jobs:
       - name: Install Playwright Chromium (cache miss)
         # Both projects (iPhone-profile + Pixel 5 control) run on Chromium.
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
-      - name: Install Playwright system deps only (cache hit)
-        if: steps.pw-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+      # System packages: CACHED per runner image + Playwright version and BOUNDED.
+      # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
+      # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
+      # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
+      # restores the cached .debs, cuts a stalled install off after its FIRST
+      # bound and retries once on archive.ubuntu.com under its RETRY bound. The
+      # bounds are defined ONLY in scripts/ci/playwright-system-deps.sh (never
+      # restated here; tests/ci/ci-config.test.ts derives the step ceiling from
+      # them). The save runs straight after, not in a post step that a failed or
+      # cancelled job would skip.
+      - name: Resolve runner image
+        id: img
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright system packages (bounded, .deb cache)
+        timeout-minutes: 6
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Mobile completion browser E2E (chromium iphone-profile + control)
         run: npm run test:e2e:mobile
@@ -1461,12 +1610,39 @@ jobs:
 
       - name: Install Playwright Chromium (cache miss)
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
-      - name: Install Playwright system deps only (cache hit)
-        if: steps.pw-cache.outputs.cache-hit == 'true'
-        # Browser binaries come from the cache; only OS-level libs are needed.
-        run: npx playwright install-deps chromium
+      # System packages: CACHED per runner image + Playwright version and BOUNDED.
+      # On 2026-10-23 every ceiling cancellation (6 of 6) was this install
+      # crawling at ~45 kB/s from the runner's Ubuntu mirror for up to 11.3 min
+      # while the tests passed (machines/SETUP-TIME-MEASURE-END.json). The script
+      # restores the cached .debs, cuts a stalled install off after its FIRST
+      # bound and retries once on archive.ubuntu.com under its RETRY bound. The
+      # bounds are defined ONLY in scripts/ci/playwright-system-deps.sh (never
+      # restated here; tests/ci/ci-config.test.ts derives the step ceiling from
+      # them). The save runs straight after, not in a post step that a failed or
+      # cancelled job would skip.
+      - name: Resolve runner image
+        id: img
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright system packages (bounded, .deb cache)
+        timeout-minutes: 6
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
       - name: Synthetic Google browser E2E (dual destination, guarded fake Google)
         run: npm run test:e2e:google
@@ -1481,4 +1657,300 @@ jobs:
         with:
           name: google-playwright-traces
           path: test-results/
+          retention-days: 7
+
+  # Photo checks that need REAL storage (E-GAPS CLN-005 + ENG-002). Every other
+  # Supabase-starting job excludes storage-api, so the photo specs self-skip
+  # there (an upload 503s at Kong) and the signed-URL DB cases are skipped by
+  # the db lane. This job starts the same trimmed stack WITH storage-api
+  # (imgproxy stays out: photos sign plain objects, no transforms), fails on a
+  # storage preflight before anything could self-skip, then runs the
+  # storage-dependent DB file and the two storage photo specs. The specs set
+  # bypassCSP in the test browser because the local stack serves storage over
+  # http; the app CSP is not touched. Not required: no job needs it, the
+  # aggregator does not read it and branch protection does not name it.
+  storage-photos:
+    name: storage photos (not required)
+    needs: changes
+    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') }}
+    runs-on: ubuntu-latest
+    # D7b: read-only package scope for the authenticated ghcr.io image pull only.
+    permissions:
+      contents: read
+      packages: read
+    # Target ~10 min: the mobile lane's setup (~6 min p90 incl. the bounded
+    # system-package install) plus storage-api, one DB file and two specs. The
+    # hard timeout exceeds it (CLAUDE.md section 4).
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          # Same pin and rationale as the other browser lanes (grants parity, v1 branch).
+          version: 2.102.0
+
+      - name: Configure local auth for the E2E origin
+        run: |
+          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
+          test -f supabase/config.toml
+          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
+          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
+
+      # D7b (Sam, 2026-10-22, option A). Same sanctioned read-only ghcr.io
+      # login as the other Supabase-starting jobs, pinned by
+      # tests/ci/ci-config.test.ts.
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start local Supabase stack (db + auth + mail capture + storage)
+        id: sb_start
+        # storage-api is deliberately NOT in the -x list. Direct pinned-CLI
+        # call while the ghcr.io credential is held: no checked-out script runs
+        # before the logout (Codex P2 4354172124).
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply full migration chain from scratch
+        run: supabase db reset --local
+
+      - name: Storage preflight (the storage checks self-skip without it)
+        id: storage_up
+        run: curl -fsS http://127.0.0.1:54321/storage/v1/version
+
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-
+
+      - name: Install Playwright Chromium (cache miss)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium
+
+      # System packages: the same cached, BOUNDED install as the mobile lane
+      # (bounds live only in scripts/ci/playwright-system-deps.sh).
+      - name: Resolve runner image
+        id: img
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright system packages (.deb)
+        id: deb-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright system packages (bounded, .deb cache)
+        id: pw_sys
+        timeout-minutes: 6
+        run: bash scripts/ci/playwright-system-deps.sh
+
+      - name: Save Playwright system packages (.deb)
+        if: steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      # Playwright is fully prepared ABOVE, before the fallible DB step, so a red
+      # DB step cannot leave the browser step without a browser (Codex P2
+      # 4368722781). Each of the two test steps runs when the preflight passed,
+      # whatever the other one did (the mirror rule); the browser step also
+      # needs its system packages, whose success implies the earlier prep.
+      - name: Signed-URL route DB cases (storage-dependent)
+        if: ${{ !cancelled() && steps.storage_up.outcome == 'success' }}
+        run: npx vitest run --config vitest.db.config.ts tests/db/treatment-image-signed-url-route.db.test.ts
+
+      - name: Storage photo E2E (CLN-005 + ENG-002)
+        if: ${{ !cancelled() && steps.storage_up.outcome == 'success' && steps.pw_sys.outcome == 'success' }}
+        run: npx playwright test e2e/fett-photos-thumbnail-recovery.spec.ts e2e/treatment-image-upload-formats.spec.ts --project=chromium
+        env:
+          HONE_E2E_FAKE_RESEND: "1"
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: storage-photos-playwright-traces
+          path: test-results/
+          retention-days: 7
+
+  # HON-62 and CLN-006: the weekly-hours editor's native <input type="time"> and
+  # the mounted-keyboard/focus cases for the three modal dialogs (photo preview,
+  # DoneCharting warning, quick checkout) in WebKit, the engine behind iPad
+  # Safari. Playwright's Linux WebKit is not Safari: a case that hits an engine
+  # limit is annotated in its spec, never silently skipped. NOT REQUIRED and NOT AGGREGATED: no branch
+  # protection rule names it and `browser-e2e` does not need it, so a WebKit
+  # failure is evidence for the HON-62 owner, never a merge block. A separate
+  # job rather than a step in the targeted shards, so the required lane's
+  # projects, sharding, budget and aggregator are untouched.
+  #
+  # Runs when the HON-62 spec is selected, and on every extended or full-matrix
+  # run. The project exists only under HONE_E2E_WEBKIT=1 (playwright.config.ts),
+  # so no other lane can pick it up.
+  #
+  # Its browser is NOT cached: actions/cache keys Chromium's cache on runner OS +
+  # Playwright version + lockfile, and a WebKit-only save under that key would
+  # be restored by the Chromium jobs as a hit with no Chromium in it. The .debs
+  # use their own key for the same reason.
+  #
+  #   target ~15 min (setup, then TWO webServer builds: the ordinary config for
+  #   the HON-62 and CLN-006 specs, the payment config for quick checkout); hard
+  #   timeout 30 min = target + the 6 min bounded system-package step + margin
+  #   (CLAUDE.md section 4).
+  webkit-hon-62:
+    name: webkit time inputs (HON-62, not required)
+    needs: changes
+    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' }}
+    runs-on: ubuntu-latest
+    # D7b: read-only package scope for the authenticated ghcr.io image pull only.
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          # Same pin and rationale as db-integration (grants parity, v1 branch).
+          version: 2.102.0
+
+      - name: Configure local auth for the E2E origin
+        # Same as browser-e2e-shard: allow-list the local E2E app origin.
+        run: |
+          supabase init --force --with-intellij-settings=false --with-vscode-settings=false >/dev/null 2>&1 || supabase init >/dev/null 2>&1 || true
+          test -f supabase/config.toml
+          sed -i 's|^site_url = .*|site_url = "http://localhost:3111"|' supabase/config.toml
+          sed -i 's|^additional_redirect_urls = .*|additional_redirect_urls = ["http://localhost:3111/**", "http://127.0.0.1:3111/**"]|' supabase/config.toml
+
+      # D7b: the same sanctioned, read-only ghcr.io login as browser-e2e-shard,
+      # held across the direct Supabase start only.
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start local Supabase stack (db + auth + mail capture)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply full migration chain from scratch
+        run: supabase db reset --local
+
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Install Playwright WebKit (uncached, see above)
+        run: npx playwright install webkit
+
+      - name: Resolve runner image
+        id: img
+        run: echo "id=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright WebKit system packages (.deb)
+        id: deb-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-webkit-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright WebKit system packages (bounded, .deb cache)
+        timeout-minutes: 6
+        run: bash scripts/ci/playwright-system-deps.sh webkit
+
+      - name: Save Playwright WebKit system packages (.deb)
+        if: steps.deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-debs
+          key: pw-webkit-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
+
+      - name: WebKit E2E (HON-62 time inputs, CLN-006 dialogs)
+        run: npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts e2e/finish-appointment-mobile.spec.ts e2e/fett-photos-touch-floor.spec.ts --project=webkit-hon-62 --project=webkit-cln-006
+        env:
+          HONE_E2E_WEBKIT: "1"
+          HONE_E2E_FAKE_RESEND: "1"
+
+      # Quick checkout lives in the payment lane's testDir and needs its fake-
+      # Stripe server (set by that config alone, never by this workflow). Its own
+      # --output keeps this run's traces from being cleaned by, or cleaning, the
+      # step above. Runs whatever the step above did (the mirror rule).
+      - name: WebKit E2E (CLN-006 quick checkout)
+        if: ${{ !cancelled() }}
+        run: npx playwright test --config playwright.payment.config.ts e2e-payment/quick-checkout-payment.spec.ts --project=webkit-cln-006-payment --output=test-results-payment
+        env:
+          HONE_E2E_WEBKIT: "1"
+          HONE_E2E_FAKE_RESEND: "1"
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-traces-webkit-hon-62
+          path: |
+            test-results/
+            test-results-payment/
           retention-days: 7

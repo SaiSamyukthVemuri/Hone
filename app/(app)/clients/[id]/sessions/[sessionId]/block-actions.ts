@@ -825,6 +825,13 @@ export type RemoveSessionAreaResult =
 // ONE trusted transaction with a mandatory reason and full actor/time
 // attribution; finalized/void records are rejected by the RPC. Unlike the
 // block-only softDeleteSessionBlockAction above, this does NOT orphan children.
+const AREA_REMOVE_OWN_MESSAGES: ReadonlyArray<string> = [
+  "Treatment area not found or not editable",
+  "Caller is not an active practitioner in this studio",
+  "Finalized records cannot be edited",
+  "A reason of at least 10 characters is required",
+];
+
 export async function removeSessionAreaAction(
   input: SoftDeleteBlockInput,
 ): Promise<RemoveSessionAreaResult> {
@@ -850,11 +857,14 @@ export async function removeSessionAreaAction(
     p_reason: reason,
   });
   if (error) {
-    // A plpgsql check_violation (23514) carries a safe, human message.
-    const business = error.code === "23514";
+    // soft_delete_session_area (0123) raises these four sentences itself with
+    // errcode check_violation (23514). A table CHECK failure shares that code but
+    // carries the database's own text, so only an EXACT match of the function's
+    // own sentences is shown; anything else is the generic message.
+    const own = error.code === "23514" ? AREA_REMOVE_OWN_MESSAGES.find((m) => m === error.message) : undefined;
     return {
       ok: false,
-      error: business ? error.message : "Couldn't remove the area right now. Please try again.",
+      error: own ?? "Couldn't remove the area right now. Please try again.",
     };
   }
   const row = Array.isArray(data) ? data[0] : data;

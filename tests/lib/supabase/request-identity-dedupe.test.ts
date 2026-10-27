@@ -516,7 +516,7 @@ describe("every gate still fires on the shared read", () => {
   it("a failed membership read still surfaces, never becomes 'no memberships'", async () => {
     await request({ failWith: { message: "boom" } }, async () => {
       await expect(queries.listActiveStudioMemberships()).rejects.toThrow(
-        /Failed to load practitioner: boom/,
+        /Failed to load practitioner: unknown/,
       );
     });
   });

@@ -1,9 +1,11 @@
 "use server";
 
+import { dbErrorCode } from "@/lib/logging/error-class";
 import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
+import { safeLog } from "@/lib/logging/safe-log";
 import {
   isPractitionerMethod,
   isSettlementMethod,
@@ -35,9 +37,55 @@ import {
 
 const NOT_AUTHORIZED = "You are not authorized to do that.";
 
+// 0214: a settlement takes its currency from the studio's payment
+// jurisdiction, and a studio with none is refused by the insert trigger
+// (payment_jurisdiction_missing). That is a setup gap, not a permission
+// failure, so it gets its own copy and its own ops event instead of
+// NOT_AUTHORIZED.
+const JURISDICTION_MISSING =
+  "This studio's payment country and currency have not been confirmed yet, so nothing was recorded. Contact Hone support to finish payment setup.";
+
 export type SettlementActionResult =
   | { ok: true; code: SettlementResultCode; message: string; settlementId: string | null }
-  | { ok: false; code: SettlementResultCode | "unavailable"; message: string };
+  | {
+      ok: false;
+      code: SettlementResultCode | "unavailable" | "payment_jurisdiction_missing";
+      message: string;
+    };
+
+type SettlementAction = "record" | "waive" | "supersede";
+
+/** Map a command ERROR. Only the 0214 jurisdiction refusal is told apart. */
+function classifyRpcError(error: { code?: string; message?: string }): {
+  dbCode: string;
+  jurisdictionMissing: boolean;
+} {
+  return {
+    dbCode: dbErrorCode(error),
+    jurisdictionMissing:
+      typeof error.message === "string" &&
+      error.message.startsWith("payment_jurisdiction_missing:"),
+  };
+}
+
+function rpcFailure(
+  action: SettlementAction,
+  failed: { dbCode: string; jurisdictionMissing: boolean },
+): SettlementActionResult {
+  if (failed.jurisdictionMissing) {
+    // The message names the studio; only the action and a validated code are
+    // logged, never the message.
+    safeLog.error(
+      JSON.stringify({
+        event: "settlement_payment_jurisdiction_missing",
+        action,
+        dbCode: failed.dbCode,
+      }),
+    );
+    return { ok: false, code: "payment_jurisdiction_missing", message: JURISDICTION_MISSING };
+  }
+  return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };
+}
 
 function failure(code: SettlementResultCode): SettlementActionResult {
   return { ok: false, code, message: SETTLEMENT_RESULT_MESSAGE[code] };
@@ -92,16 +140,22 @@ export async function recordAppointmentSettlementAction(
   formData: FormData,
 ): Promise<SettlementActionResult> {
   let studioId: string;
+  let isOwner: boolean;
   try {
-    const { studio } = await getCurrentPractitionerWithStudio();
+    const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     studioId = studio.id;
+    isOwner = practitioner.role === "owner";
   } catch {
     return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };
   }
+  // HON-44 (Sam decision 12): recording what a client paid is a financial act and
+  // is owner-only. The role is derived above, never read from the form. This is
+  // the APP half; the database command still admits any member until 0254.
+  if (!isOwner) return failure("not_owner");
 
   const appointmentId = String(formData.get("appointment_id") ?? "");
   const method = String(formData.get("method") ?? "");
-  // The four a practitioner may record. `waived` reaching this action means a
+  // The four methods the owner may record. `waived` reaching this action means a
   // hand-built POST; the command refuses it too, and returns owner_only.
   if (!appointmentId || !isPractitionerMethod(method)) {
     return failure(method === "waived" ? "owner_only" : "invalid_input");
@@ -125,7 +179,7 @@ export async function recordAppointmentSettlementAction(
     // whatever this says.
     p_livemode: inferStripeLivemode(),
   });
-  if (error) return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };
+  if (error) return rpcFailure("record", classifyRpcError(error));
 
   const code = readCode(data);
   if (!code) return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };
@@ -180,7 +234,7 @@ export async function waiveAppointmentFeeAction(
     p_note: note,
     p_livemode: inferStripeLivemode(),
   });
-  if (error) return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };
+  if (error) return rpcFailure("waive", classifyRpcError(error));
 
   const code = readCode(data);
   if (!code) return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };
@@ -242,7 +296,7 @@ export async function supersedeAppointmentSettlementAction(
     p_note: note,
     p_livemode: inferStripeLivemode(),
   });
-  if (error) return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };
+  if (error) return rpcFailure("supersede", classifyRpcError(error));
 
   const code = readCode(data);
   if (!code) return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };

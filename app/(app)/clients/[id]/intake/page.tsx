@@ -59,6 +59,7 @@ import { IntakeResendCard } from "./IntakeResendCard";
 import { computeIntakeLinkStatus } from "@/lib/intake/link-status";
 import { IntakeHistoryList } from "./IntakeHistoryList";
 import { NoneAnswerSummary } from "./NoneAnswerSummary";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 function optionLabel(q: Question, value: string): string {
   const match = q.options?.find((o) => o.value === value);
@@ -150,7 +151,7 @@ export default async function ClientIntakePage({
     .eq("studio_id", studio.id)
     .eq("id", id)
     .maybeSingle();
-  if (clientErr) throw new Error(clientErr.message);
+  if (clientErr) throw new Error(`db_error:${dbErrorCode(clientErr)}`);
   if (!client) notFound();
 
   // Photo consent lives in the CLIENT PORTAL, not in the intake, so the
@@ -353,7 +354,10 @@ export default async function ClientIntakePage({
 
       <AllergiesSummary responses={responses} />
 
-      <IntakeReviewFlags responses={responses} steps={INTAKE_STEPS} />
+      {/* #1035 P2 4354364701: the flags apply current clinical rules to the
+          stored answers, so they are withheld, like the Fitzpatrick summary,
+          when the saved questionnaire cannot be verified. */}
+      {catalogue.kind !== "invalid" ? <IntakeReviewFlags responses={responses} steps={INTAKE_STEPS} /> : null}
 
       {catalogue.kind !== "invalid" ? <FitzpatrickSummary responses={responses} steps={INTAKE_STEPS} /> : null}
 

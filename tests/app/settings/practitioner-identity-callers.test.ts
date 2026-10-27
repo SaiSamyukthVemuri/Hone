@@ -97,7 +97,7 @@ describe("0178 — the ops resolver states its plurality and failure rules in co
   it("logs a BOUNDED diagnostic — an event name and a code, never row or user data", () => {
     const src = codeOnly(OPS);
     expect(src).toContain("ops_alert_resolver_practitioner_lookup_failed");
-    expect(src).toMatch(/code: practitionerLookupError\.code \?\? "unknown"/);
+    expect(src).toMatch(/code: dbErrorCode\(practitionerLookupError\)/);
     expect(src).not.toMatch(/practitionerLookupError\.message|practitionerLookupError\.details/);
   });
 });

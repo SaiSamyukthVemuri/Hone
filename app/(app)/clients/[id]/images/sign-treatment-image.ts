@@ -6,6 +6,7 @@ import {
   validateTreatmentImagePath,
   buildTreatmentImageThumbPath,
 } from "@/lib/images/treatment-images";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // FETT photos (HON-43): the ONE server-side signer for a treatment photo URL.
 // Both callers resolve the studio from the authenticated session first, then
@@ -53,7 +54,7 @@ export async function signTreatmentImageUrl(
       .is("deleted_at", null);
     if (input.clientId !== undefined) query = query.eq("client_id", input.clientId);
     const { data: row, error } = await query.maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(`db_error:${dbErrorCode(error)}`);
     if (!row) return refused;
 
     // Trust boundary (PR #276): NEVER sign a path that does not bind to the

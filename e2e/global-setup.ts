@@ -12,6 +12,7 @@ import {
   markSentryEgress,
   SENTRY_EGRESS_MARK_ENV,
 } from "./helpers/sentry-egress";
+import { assertTwilioEgressFakeWired } from "./helpers/twilio-egress";
 
 // ===========================================================================
 // Playwright globalSetup — ONE hook, shared by every browser lane
@@ -79,6 +80,9 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
   // where this run's egress records begin so globalTeardown can report them.
   assertSentryEgressGuardWired(config.webServer?.env);
   process.env[SENTRY_EGRESS_MARK_ENV] = String(markSentryEgress().offset);
+  // TWILIO-EGRESS-FAKE (MSG-006): likewise refuse a lane whose server could
+  // reach the real Twilio API.
+  assertTwilioEgressFakeWired(config.webServer?.env);
 
   const lane = laneFor(config.configFile);
   const context = checkoutIdentity();

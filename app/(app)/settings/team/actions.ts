@@ -7,6 +7,9 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { PractitionerRole } from "@/lib/types/database";
 import { resend, FROM_ADDRESS } from "@/lib/email/client";
 import { buildInvitationEmail } from "@/lib/email/templates/invitation";
+import { safeLog } from "@/lib/logging/safe-log";
+import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_ROLES: ReadonlyArray<PractitionerRole> = ["owner", "practitioner"];
@@ -29,10 +32,12 @@ type OwnerContext = {
   studioName: string;
 };
 
+const OWNER_ONLY_MESSAGE = "Only studio owners can manage the team.";
+
 async function assertOwner(): Promise<OwnerContext> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    throw new Error("Only studio owners can manage the team.");
+    throw new Error(OWNER_ONLY_MESSAGE);
   }
   return {
     studioId: studio.id,
@@ -71,11 +76,37 @@ async function sendInvitationEmail(params: {
       text,
     });
     if (error) {
-      console.error("Failed to send invitation email:", error);
+      safeLog.error(invitationEmailFailure("provider_error", error));
     }
   } catch (error) {
-    console.error("Failed to send invitation email:", error);
+    safeLog.error(invitationEmailFailure("transport_threw", error));
   }
+}
+
+// MSG-LOG-RAW-ERROR: the provider's error object and a thrown error can carry
+// the destination address and provider text, so the log line is a closed
+// category, an error name only when it is a bare identifier, and a retryable
+// flag (429 and 5xx retry, other 4xx do not, a throw is a transport failure).
+const ERROR_NAME_RE = /^[A-Za-z_]{1,64}$/;
+
+function invitationEmailFailure(
+  kind: "provider_error" | "transport_threw",
+  error: unknown,
+): string {
+  const rawName =
+    error && typeof error === "object" && "name" in error ? error.name : undefined;
+  const name =
+    typeof rawName === "string" && ERROR_NAME_RE.test(rawName) ? rawName : "unknown";
+  const status =
+    error && typeof error === "object" && "statusCode" in error
+      ? error.statusCode
+      : undefined;
+  const retryable =
+    kind === "transport_threw" ||
+    typeof status !== "number" ||
+    status === 429 ||
+    status >= 500;
+  return `team_invitation_email_failed:${kind}:${name}:retryable=${retryable}`;
 }
 
 export async function invitePractitionerAction(
@@ -100,7 +131,7 @@ export async function invitePractitionerAction(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : "Unauthorized.",
+      error: err instanceof Error && err.message === OWNER_ONLY_MESSAGE ? OWNER_ONLY_MESSAGE : "Unauthorized.",
     };
   }
   const { studioId, practitionerId, inviterName, studioName } = context;
@@ -159,7 +190,7 @@ export async function invitePractitionerAction(
         error: `${email} already has a pending invite at another studio. Ask them to accept or revoke that one first.`,
       };
     }
-    return { ok: false, error: `Failed to send invite: ${error.message}` };
+    return { ok: false, error: userFacingDbFailure("send the invite", error, "team_invite_insert_failed") };
   }
 
   // Fire-and-forget the email. Any failure stays inside sendInvitationEmail
@@ -190,7 +221,7 @@ export async function revokeInvitationAction(formData: FormData): Promise<void> 
     .eq("studio_id", studioId)
     .eq("status", "pending");
   if (error) {
-    throw new Error(`Failed to revoke invitation: ${error.message}`);
+    throw new Error(`Failed to revoke invitation: ${dbErrorCode(error)}`);
   }
   revalidatePath("/settings/team");
 }
@@ -220,7 +251,7 @@ export async function removePractitionerAction(formData: FormData): Promise<void
   });
   if (error || data !== "ok") {
     console.error(
-      `team_action_db_error:remove_practitioner:${error?.code ?? (typeof data === "string" ? data : "unknown")}`,
+      `team_action_db_error:remove_practitioner:${error ? dbErrorCode(error) : failureCode(null, data)}`,
     );
     if (data === "cannot_modify_owner")
       throw new Error("The studio owner cannot be removed.");

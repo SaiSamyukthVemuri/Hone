@@ -800,3 +800,76 @@ describe("MSG-007 SMS diagnostics carry only closed metadata", () => {
   });
 
 });
+
+// ===========================================================================
+// MSG-007 — the SUCCESS path logs the minimum necessary.
+// ===========================================================================
+//
+// The failure path was bounded in #1016/#1038 (fixed reasons, no ids). The
+// success line `sms_sent` went out through raw console.log with the
+// appointment's record id and a masked destination ("+1***99" still discloses
+// the last two digits). It now carries the event, the SMS type and the
+// provider message SID only. The appointment and destination stay in the
+// delivery ledger, which is where an operator correlates them.
+describe("MSG-007 success-path log privacy", () => {
+  const APPT = "7d3f1c2e-1b4a-4c5d-8e6f-0a1b2c3d4e5f";
+  const PHONE = "604-555-0199";
+  const INTAKE_URL = "https://hone.care/intake/synthetic-intake-token-0001";
+  const MANAGE_URL = "https://hone.care/manage/synthetic-manage-token-0001";
+  // Each link as the text carries it, without the sentence's closing punctuation.
+  const linksIn = (body: string) =>
+    (body.match(/https?:\/\/\S+/g) ?? []).map((l) => l.replace(/[.,;:!?)]+$/, ""));
+
+  it("a sent reminder logs sms_sent with no record id, phone fragment or body", async () => {
+    const { captureConsole, expectMinimumNecessary } = await import("./helpers/log-capture");
+    const logs = captureConsole();
+    const r = await send24hReminderSmsToClient(input({ appointmentId: APPT, intakeUrl: INTAKE_URL }));
+    expect(r.ok).toBe(true);
+    const body = sentForm().get("Body")!;
+    // Every link the text carried is a bearer credential; none may be logged.
+    const links = linksIn(body);
+    expect(links).toEqual(expect.arrayContaining([INTAKE_URL, expect.stringContaining("/manage/")]));
+    expectMinimumNecessary(logs.text(), {
+      phones: [PHONE, "+16045550199"],
+      bodies: [body],
+      secrets: links,
+    });
+    // Operator-useful fixed facts survive.
+    expect(logs.events()).toContainEqual(
+      expect.objectContaining({ event: "sms_sent", smsType: "reminder_24h", messageSid: SID }),
+    );
+  });
+
+  it("a sent booking confirmation logs sms_sent with no record id, phone fragment or body", async () => {
+    const { captureConsole, expectMinimumNecessary } = await import("./helpers/log-capture");
+    const logs = captureConsole();
+    const r = await sendBookingConfirmationSmsToClient({
+      admin: admin(),
+      appointmentId: APPT,
+      startsAt: new Date(START),
+      timezone: "America/Vancouver",
+      studio: {
+        id: "5e1d2c3b-4a59-4687-9a8b-7c6d5e4f3a2b",
+        name: "Synthetic Studio",
+        send_confirmation_sms: true,
+        send_24h_sms_reminders: true,
+        send_2h_sms_reminders: true,
+      },
+      client: { phone: PHONE, sms_consent_at: "2026-09-01T00:00:00Z", sms_opted_out_at: null },
+      intakeUrl: INTAKE_URL,
+      manageUrl: MANAGE_URL,
+    });
+    expect(r.ok).toBe(true);
+    const body = sentForm().get("Body")!;
+    const links = linksIn(body);
+    expect(links).toEqual(expect.arrayContaining([INTAKE_URL, MANAGE_URL]));
+    expectMinimumNecessary(logs.text(), {
+      phones: [PHONE, "+16045550199"],
+      bodies: [body],
+      secrets: links,
+    });
+    expect(logs.events()).toContainEqual(
+      expect.objectContaining({ event: "sms_sent", smsType: "confirmation", messageSid: SID }),
+    );
+  });
+});

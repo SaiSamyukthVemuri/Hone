@@ -5,6 +5,11 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { captureServerEvent } from "@/lib/analytics/server";
+import {
+  findPossibleDuplicateClient,
+  type PossibleDuplicate,
+} from "@/lib/clients/possible-duplicate";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 function nullableString(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") return null;
@@ -26,13 +31,35 @@ function nullableInt(value: FormDataEntryValue | null): number | null {
 // `void` half of the union covers that path for TypeScript. See the
 // matching update action in app/(app)/clients/[id]/actions.ts for
 // the explanation of why this isn't a throw.
-export type ClientSaveResult = { ok: false; error: string };
+//
+// HON-58: `possibleDuplicates` lists EVERY client in the studio with the same
+// phone, or the same name and date of birth. Nothing was inserted; the form
+// offers "Save as a new client anyway", which resubmits with one
+// confirm_possible_duplicate value per listed client.
+export type ClientSaveResult = {
+  ok: false;
+  error: string;
+  possibleDuplicates?: PossibleDuplicate[];
+};
 
 const ACTIVE_DUPLICATE_ERROR =
   "That email is already used by another active client. Use a different email or archive the duplicate client first.";
 const ARCHIVED_DUPLICATE_ERROR =
   "That email belongs to an archived client. Unarchive that client or use a different email.";
 const GENERIC_SAVE_ERROR = "Couldn't save the client. Please try again.";
+
+function possibleDuplicatesMessage(duplicates: PossibleDuplicate[]): string {
+  const describe = (d: PossibleDuplicate) =>
+    `${d.archived ? "an archived client, " : ""}${d.clientName} (${
+      d.reason === "phone" ? "same phone number" : "same name and date of birth"
+    })`;
+  if (duplicates.length === 1) {
+    return `This may be the same person as ${describe(duplicates[0])}.`;
+  }
+  return `This may be the same person as one of ${duplicates.length} existing clients: ${duplicates
+    .map(describe)
+    .join("; ")}.`;
+}
 
 function isClientDuplicateEmailDbError(
   error: { code?: string | null; message?: string | null } | null | undefined,
@@ -78,8 +105,7 @@ export async function createClientAction(
         console.error(
           JSON.stringify({
             event: "client_create_duplicate_lookup_failed",
-            code: lookupErr.code,
-            message: lookupErr.message,
+            code: dbErrorCode(lookupErr),
             timestamp: new Date().toISOString(),
           }),
         );
@@ -97,16 +123,50 @@ export async function createClientAction(
     }
   }
 
+  // HON-58: probable-duplicate warning (same phone, or same name + date of
+  // birth). Advisory, so the create proceeds only when EVERY current match
+  // was confirmed by id (Team L1: confirming one must not pass another);
+  // a confirmation never covers a client it does not name.
+  // A failed read refuses the create rather than implying "no duplicate".
+  const phone = nullableString(formData.get("phone"));
+  const dateOfBirth = nullableString(formData.get("date_of_birth"));
+  const duplicateCheck = await findPossibleDuplicateClient(supabase, studio.id, {
+    name,
+    phone,
+    dateOfBirth,
+  });
+  if (duplicateCheck.kind === "unavailable") {
+    console.error(
+      JSON.stringify({
+        event: "client_create_possible_duplicate_lookup_failed",
+        code: duplicateCheck.code,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: GENERIC_SAVE_ERROR };
+  }
+  if (duplicateCheck.kind === "match") {
+    const confirmed = new Set(formData.getAll("confirm_possible_duplicate"));
+    const duplicates = duplicateCheck.duplicates;
+    if (duplicates.some((d) => !confirmed.has(d.clientId))) {
+      return {
+        ok: false,
+        error: possibleDuplicatesMessage(duplicates),
+        possibleDuplicates: duplicates,
+      };
+    }
+  }
+
   const { data, error } = await supabase
     .from("clients")
     .insert({
       studio_id: studio.id,
       name,
       pronouns: nullableString(formData.get("pronouns")),
-      phone: nullableString(formData.get("phone")),
+      phone,
       email,
       address: nullableString(formData.get("address")),
-      date_of_birth: nullableString(formData.get("date_of_birth")),
+      date_of_birth: dateOfBirth,
       fitzpatrick_type: nullableInt(formData.get("fitzpatrick_type")),
       // Chloe Session 1A: `clients.skin_notes` is RETIRED as a practitioner
       // editor. It is no longer submitted by the client form and is no longer
@@ -151,8 +211,7 @@ export async function createClientAction(
     console.error(
       JSON.stringify({
         event: "client_create_failed",
-        code: error?.code,
-        message: error?.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );

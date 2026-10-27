@@ -1,3 +1,4 @@
+import { dbErrorCode } from "@/lib/logging/error-class";
 // Practitioner-visible portal access/send event log (Portal Access PR 3).
 // Rows live in client_portal_access_events (migration 0111): studio-scoped,
 // append-only, service-role insert only. This helper is the ONLY writer.
@@ -70,7 +71,7 @@ export async function logPortalAccessEvent(
         JSON.stringify({
           event: "portal_access_event_log_failed",
           eventType: input.eventType,
-          code: error.code,
+          code: dbErrorCode(error),
           timestamp: new Date().toISOString(),
         }),
       );

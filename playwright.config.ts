@@ -39,7 +39,38 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    // HON-62 WebKit proof. Present ONLY when HONE_E2E_WEBKIT=1, which only the
+    // non-required `webkit-hon-62` CI job sets, so every other run sees exactly
+    // the one chromium project. Scoped to the native time-input spec: WebKit is
+    // the engine behind iPad Safari, where the weekly-hours fields are used.
+    ...(process.env.HONE_E2E_WEBKIT === "1"
+      ? [
+          {
+            name: "webkit-hon-62",
+            testMatch: /(availability-hours-editor|webkit-time-input-key-probe)\.spec\.ts$/,
+            // The app CSP's upgrade-insecure-requests is applied by WebKit to
+            // http://localhost (Chromium exempts localhost), so every script,
+            // style and font was rewritten to https://localhost:3111 and failed
+            // the TLS handshake: no hydration, a permanently disabled login
+            // button (run 40077309473). Bypass the CSP in this test browser
+            // only; the app's CSP is unchanged and the chromium lanes keep
+            // exercising it.
+            use: { ...devices["Desktop Safari"], bypassCSP: true },
+          },
+          // CLN-006 mounted-keyboard and focus cases in WebKit (non-required
+          // job only). Scoped by file AND by title so the rest of these two
+          // specs, which Chromium already runs in full, is not repeated here.
+          {
+            name: "webkit-cln-006",
+            testMatch: /(finish-appointment-mobile|fett-photos-touch-floor)\.spec\.ts$/,
+            grep: /aftercare warning keyboard stays contained|every photo control measures at least 44px/,
+            use: { ...devices["Desktop Safari"], bypassCSP: true },
+          },
+        ]
+      : []),
+  ],
   webServer: {
     // PRODUCTION server, not `next dev`: the dev watcher recompiles
     // whenever Playwright writes artifacts, which Fast-Refreshes the

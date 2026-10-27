@@ -102,6 +102,13 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         if (profileRace) { const edit = profileRace; profileRace = null; edit(); }
         const client = db.clients.find((c) => c.id === row.client_id && c.studio_id === row.studio_id)!;
         const contribution = args.p_profile as Record<string, string | null>;
+        // 0243 casts date_of_birth with ::date inside the transaction; a value
+        // the cast rejects raises and rolls the whole submission back.
+        const dob = contribution.date_of_birth;
+        if (!db.clients.find((c) => c.id === row.client_id)?.date_of_birth && dob
+            && (!/^\d{4}-\d{2}-\d{2}$/.test(dob) || Number.isNaN(Date.parse(dob)))) {
+          return { data: null, error: { code: "22007", message: "invalid input syntax for type date" } };
+        }
         for (const key of ["emergency_contact_name", "emergency_contact_phone", "date_of_birth", "pronouns", "address"]) {
           if (!client[key] && contribution[key]) client[key] = contribution[key];
         }
@@ -534,6 +541,19 @@ describe("0243 profile synchronization through the real submit action", () => {
     expect(db.clients[0].allergies).toContain("Concurrent practitioner");
     expect(db.clients[0].allergies).toContain("Synthetic intake contribution");
     expect(db.clients[0].emergency_contact_phone).toBe("Latest emergency");
+  });
+  it.each(["not-a-date", "05/04/1990", "1990-13-01", "1850-01-01", "2999-01-01"])(
+    "an unusable birth date %j still submits and leaves the profile birth date untouched", async (dob) => {
+      const result = await submitIntakeAction({ token: "good", expectedRevision: "0", responses: completeAnswers({ date_of_birth: dob }) });
+      expect(result.ok).toBe(true);
+      expect(storedRow().status).toBe("submitted");
+      expect(storedResponses().date_of_birth).toBe(dob);
+      expect(db.clients[0].date_of_birth).toBeUndefined();
+    });
+  it("a valid birth date still fills an empty profile field", async () => {
+    const result = await submitIntakeAction({ token: "good", expectedRevision: "0", responses: completeAnswers({ date_of_birth: "1990-04-02" }) });
+    expect(result.ok).toBe(true);
+    expect(db.clients[0].date_of_birth).toBe("1990-04-02");
   });
   it("does not report a successful submitted intake when the atomic profile write fails", async () => {
     profileFailure = true;

@@ -40,6 +40,18 @@ export type SearchGroup = {
 };
 
 export const SEARCH_MIN_CHARS = 2;
+
+// The most candidate rows ONE client read in global search may scan per
+// search (SEARCH-SCAN-BOUND). The search runs on every debounced keystroke and
+// has four client reads, so a search scans at most 4 x 2000 = 8000 rows. 2000
+// is two pages of the read's 1000-row page (PostgREST's default max-rows): at
+// most three sequential requests per read (two pages and a one-row probe)
+// instead of one per thousand candidates. The rows are already prefiltered
+// candidates, so a read that reaches 2000 means the query is too unselective,
+// and "refine your search" is the honest answer. A read that stops at this
+// bound reports it, and the panel says the client list is partial. The real
+// scan-cost fix is an index (HON-58 Q4), deliberately not made here.
+export const CLIENT_SCAN_CAP_PER_READ = 2000;
 export const SEARCH_MAX_QUERY_LENGTH = 80;
 
 /**
@@ -95,6 +107,27 @@ export const GROUP_ORDER: ReadonlyArray<{
 // convention as the record-keeping lot search).
 export function escapeIlike(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+// The `%query%` pattern every global-search read uses: the query LITERALLY,
+// with only ILIKE's own wildcards and escape escaped. Punctuation is never
+// widened to a wildcard (Codex P2 4367010228): "a(b" must not match "aXb".
+export function containsPattern(query: string): string {
+  return `%${escapeIlike(query)}%`;
+}
+
+// One value inside a PostgREST `.or()` filter. The `.or()` grammar reserves
+// `,` `.` `:` `(` `)` and `"`, so an unquoted "Smith, Jane" split the client
+// filter into a malformed clause and the read returned nothing (HON-58).
+// PostgREST's own escaping is used instead: the value is always
+// double-quoted, and inside the quotes `\` and `"` are backslash-escaped.
+export function orFilterValue(value: string): string {
+  return `"${value.replace(/[\\"]/g, "\\$&")}"`;
+}
+
+/** `col.ilike."pattern"` for each column, joined for `.or()`. */
+export function orIlike(columns: readonly string[], pattern: string): string {
+  return columns.map((col) => `${col}.ilike.${orFilterValue(pattern)}`).join(",");
 }
 
 export function sanitizeQuery(raw: string): string {

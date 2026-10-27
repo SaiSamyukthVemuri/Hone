@@ -14,6 +14,7 @@ import {
 } from "@/lib/notifications/disinfectant-alerts";
 import { markAllReadFormAction } from "./actions";
 import type { PractitionerNotification } from "@/lib/types/database";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // PR #164. Practitioner notification center. Server component.
 // Lists the studio's notifications newest-first (RLS-scoped via the
@@ -44,7 +45,7 @@ export default async function NotificationsPage() {
     .order("created_at", { ascending: false })
     .limit(NOTIFICATION_LIST_LIMIT);
   if (error) {
-    throw new Error(`Failed to load notifications: ${error.message}`);
+    throw new Error(`Failed to load notifications: ${dbErrorCode(error)}`);
   }
   const notifications = (data ?? []) as PractitionerNotification[];
   const unreadCount = notifications.filter((n) => n.read_at == null).length;

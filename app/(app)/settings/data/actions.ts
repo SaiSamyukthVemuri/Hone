@@ -6,6 +6,7 @@ import JSZip from "jszip";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { rowsToCsv } from "@/lib/csv";
+import { dbErrorCode } from "@/lib/logging/error-class";
 // The clinical-notes filename and header row are still owned by this module;
 // the export registry imports them from here, and this module reaches them
 // through the registry like every other file. One definition, one consumer.
@@ -67,6 +68,29 @@ function slugify(s: string): string {
 
 function todayStamp(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+// MSG-LOG-RAW-ERROR (F3). The export's read failure is returned to the owner's
+// page, so it is a fixed sentence chosen by class; the log carries the closed
+// code only. The paginator's own refusal (a table it could not read completely)
+// has no SQLSTATE and keeps its meaning by that fixed phrase, read by pattern
+// and never echoed.
+function exportReadFailure(error: unknown): string {
+  console.error(
+    JSON.stringify({
+      event: "studio_export_read_failed",
+      code: dbErrorCode(error),
+      timestamp: new Date().toISOString(),
+    }),
+  );
+  const text =
+    typeof error === "object" && error !== null && typeof (error as { message?: unknown }).message === "string"
+      ? (error as { message: string }).message
+      : "";
+  if (/refusing to return a partial table/.test(text)) {
+    return "Failed to load data for export: a table could not be read completely, so nothing was exported. Try again.";
+  }
+  return "Failed to load data for export. Nothing was exported. Try again, and contact support if it keeps happening.";
 }
 
 export async function exportStudioDataAction(): Promise<ExportResult> {
@@ -432,17 +456,21 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    fetchExportRows("client_budget_context", (from, to) =>
-      supabase
-        .from("client_budget_context")
-        .select(
-          "client_id, budget_level, budget_notes, updated_by_practitioner_id, created_at, updated_at",
-        )
-        .eq("studio_id", studio.id)
-        // client_id is the PRIMARY KEY (one row per client), so ordering on
-        // it alone is already unique and deterministic — no tiebreak needed.
-        .order("client_id", { ascending: true })
-        .range(from, to),
+    fetchExportRows(
+      "client_budget_context",
+      (from, to) =>
+        supabase
+          .from("client_budget_context")
+          .select(
+            "client_id, budget_level, budget_notes, updated_by_practitioner_id, created_at, updated_at",
+          )
+          .eq("studio_id", studio.id)
+          // client_id is the PRIMARY KEY (one row per client), so ordering on
+          // it alone is already unique and deterministic — no tiebreak needed.
+          .order("client_id", { ascending: true })
+          .range(from, to),
+      // No `id` column: the page-boundary check keys on the primary key.
+      { rowKey: (row) => row.client_id },
     ),
   ]);
 
@@ -472,10 +500,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // excluded from failing the export.
   ]) {
     if (r.error) {
-      return {
-        ok: false,
-        error: `Failed to load data for export: ${r.error.message}`,
-      };
+      return { ok: false, error: exportReadFailure(r.error) };
     }
   }
 
@@ -539,7 +564,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   if (budgetDecision.kind === "fail") {
     return {
       ok: false,
-      error: `Failed to load data for export: ${budgetDecision.message}`,
+      error: exportReadFailure((budgetContextRes as BudgetExportReadResult).error),
     };
   }
   const budgetContextExported = budgetDecision.kind === "export";
@@ -676,22 +701,26 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // records EVERY treated area + laterality, not just the legacy first-area
   // projection in block_primary_area/block_side. Studio-scoped, ordered.
   const areaRowsRes = await fetchAllRows<{
+    id: string;
     session_block_id: string;
     area: string;
     laterality: Laterality;
     display_order: number;
-  }>((from, to) =>
-    supabase
-      .from("session_block_areas")
-      .select("session_block_id, area, laterality, display_order")
-      .eq("studio_id", studio.id)
-      .order("display_order", { ascending: true })
-      .order("created_at", { ascending: true })
-      // `id` is not selected, but ordering by it is still valid and is what
-      // makes the page boundary deterministic: display_order + created_at
-      // repeat freely across blocks.
-      .order("id", { ascending: true })
-      .range(from, to),
+  }>(
+    (from, to) =>
+      supabase
+        .from("session_block_areas")
+        .select("id, session_block_id, area, laterality, display_order")
+        .eq("studio_id", studio.id)
+        .order("display_order", { ascending: true })
+        .order("created_at", { ascending: true })
+        // `id` is what makes the page boundary deterministic: display_order +
+        // created_at repeat freely across blocks. It is selected so the
+        // boundary check below can compare it.
+        .order("id", { ascending: true })
+        .range(from, to),
+    // OPS-DAT-EXPORT-01: a shifted page boundary must not drop an area row.
+    { rowKey: (row) => row.id },
   );
   // F5. FAIL CLOSED.
   //
@@ -998,25 +1027,25 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       table: "clients",
       fetched: (clientsRes.data ?? []).length,
       expected: clientsCount.error ? null : clientsCount.count,
-      error: clientsCount.error?.message,
+      error: clientsCount.error ? dbErrorCode(clientsCount.error) : undefined,
     },
     {
       table: "sessions",
       fetched: (sessionsRes.data ?? []).length,
       expected: sessionsCount.error ? null : sessionsCount.count,
-      error: sessionsCount.error?.message,
+      error: sessionsCount.error ? dbErrorCode(sessionsCount.error) : undefined,
     },
     {
       table: "appointments",
       fetched: (appointmentsRes.data ?? []).length,
       expected: appointmentsCount.error ? null : appointmentsCount.count,
-      error: appointmentsCount.error?.message,
+      error: appointmentsCount.error ? dbErrorCode(appointmentsCount.error) : undefined,
     },
     {
       table: "client_clinical_notes",
       fetched: (clinicalNotesRes.data ?? []).length,
       expected: notesCount.error ? null : notesCount.count,
-      error: notesCount.error?.message,
+      error: notesCount.error ? dbErrorCode(notesCount.error) : undefined,
     },
   ];
 

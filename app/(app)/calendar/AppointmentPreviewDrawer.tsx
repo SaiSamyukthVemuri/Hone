@@ -7,6 +7,8 @@ import { formatTimeForStudio, type TimeFormat } from "@/lib/booking/tz";
 import { appointmentDisplayStatus } from "./appointment-display-status";
 import { timeRangeLabel, weekdayLabel, monthDayLabel } from "./calendar-format";
 import { MoveAppointmentButton } from "./MoveAppointmentButton";
+import { PractitionerTag } from "./PractitionerTag";
+import { calendarPractitionerIdentity } from "@/lib/calendar/practitioner-identity";
 
 // In-context appointment PREVIEW (desktop PR C-lite). Opened from an appointment
 // card on the desktop week grid so a practitioner can inspect a booking WITHOUT
@@ -72,6 +74,7 @@ export function AppointmentPreviewDrawer({
   const clientName = a.client?.name?.trim() || "Client";
   const serviceName = a.service?.name?.trim() || null;
   const modality = a.service?.modality?.trim() || null;
+  const practitionerIdentity = calendarPractitionerIdentity(a.practitioner);
 
   const ds = appointmentDisplayStatus(a.status, a.ends_at);
   const statusLabel =
@@ -135,6 +138,14 @@ export function AppointmentPreviewDrawer({
               <dd className="text-right font-medium">
                 {serviceName}
                 {modality ? ` · ${modality}` : ""}
+              </dd>
+            </div>
+          )}
+          {practitionerIdentity && (
+            <div className="flex justify-between gap-3">
+              <dt className="text-neutral-500">Practitioner</dt>
+              <dd className="font-medium">
+                <PractitionerTag identity={practitionerIdentity} className="justify-end" />
               </dd>
             </div>
           )}
