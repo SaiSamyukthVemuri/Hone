@@ -65,7 +65,7 @@ expect "(H6b) db push --linked WITH a password and NO token makes no login-role 
 # pre-run succeeds on this IPv4-only runner; each variant records exit, requests and the Supavisor authentication failures it caused.
 PLACEHOLDER="hone-read-placeholder-not-a-secret"
 echo "select 1 as one" > "$OUT/api-q.sql"
-authfails() { docker logs "$POOLER" 2>&1 | grep -ciE 'password authentication failed|SASL auth' ; }
+authfails() { docker logs "$POOLER" 2>&1 | grep -ci 'password authentication failed' ; }
 H6C_OK=""; H6C_VARIANTS=0
 for hv in "aaaa:2001:db8::1" "a4:127.0.0.1" "lo6:::1"; do
   for uv in "fake:postgres.$FAKEREF" "tenant:$PUSER"; do
