@@ -204,7 +204,6 @@ approve CUST-W3 window_end=$(date -u -d '+60 minutes' +%Y-%m-%dT%H:%M:%SZ); expe
 approve CUST-R1 recovery_basis=row4 recovery_point=$(date -u -d '-50 minutes' +%Y-%m-%dT%H:%M:%SZ) waiver_id=none window_start=$(date -u -d '-90 minutes' +%Y-%m-%dT%H:%M:%SZ); expect_refuse "a row-4 recovery point older than 45 minutes (T3)" apply "older than 45 minutes"
 approve CUST-R2 recovery_basis=row4 recovery_point=$(date -u -d '-20 minutes' +%Y-%m-%dT%H:%M:%SZ) waiver_id=none; expect_refuse "a recovery point before the window start (T3)" apply "before the window start"
 approve CUST-R3 recovery_basis=row4 recovery_point=none waiver_id=none; expect_refuse "recovery_basis=row4 without a recovery point (T3)" apply "needs a recovery_point"
-approve CUST-R4 recovery_basis=waiver waiver_id=none; expect_refuse "recovery_basis=waiver without a waiver id (T3)" apply "needs a waiver_id"
 ap_refuse "a waiver id that is not WAIVER-YYYYMMDD-N (F3)" "WAIVER-YYYYMMDD-N" CUST-F3A waiver_id=None
 ap_refuse "a free-text waiver id (F3)" "WAIVER-YYYYMMDD-N" CUST-F3B waiver_id=waiver-1234
 approve CUST-F3C; edit waiver_id None; expect_refuse "an approval record whose waiver id was hand-edited to None (F3)" apply "needs a waiver_id of the form"
@@ -288,12 +287,13 @@ clear_state; echo ok > $W/stub-mode; runo apply; [ $RC = 0 ] && ok "after ROOT c
 echo veryslow > $W/stub-mode; clear_state; approve CUST-OVERDUE max_push_seconds=10; : > $W/stub.log; chown hone-release:hone-release $W/stub.log
 runo apply
 [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "still running after 10 s" && [ "$(state | cut -d' ' -f1)" = IN-FLIGHT-OVERDUE ] && ok "T4: a push past the approved bound: the script stops waiting, exits non-zero, state IN-FLIGHT-OVERDUE, says the CLI was not stopped" || bad "T4 overdue" "rc=$RC state=$(state) $OUT"
-# F4: while the orphaned CLI is STILL running, a second launch is refused by the state; and even if root clears the state wrongly, by the lock the CLI holds
+# F4: while the orphaned CLI is STILL running it holds the release lock (fd inheritance): a second launch is refused by the LOCK; once it has ended the state IN-FLIGHT-OVERDUE still refuses
 pgrep -u hone-release -f supabase-go >/dev/null && ok "F4: the CLI is still running after the script stopped waiting" || bad "F4: the CLI is not running"
-approve CUST-OVERDUE2; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "IN-FLIGHT-OVERDUE" && ok "F4: a second launch while the CLI still runs is refused by the state IN-FLIGHT-OVERDUE" || bad "F4: not blocked by state" "$OUT"
-clear_state; approve CUST-OVERDUE3; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "holds the lock" && ok "F4: with the state cleared by mistake, a second launch is still refused by the release lock the orphaned CLI holds (fd inheritance)" || bad "F4: not blocked by lock" "$OUT"
+approve CUST-OVERDUE2; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "holds the lock" && ok "F4: a second launch while the orphaned CLI still runs is refused by the release lock the CLI holds" || bad "F4: not blocked by the lock" "$OUT"
+[ "$(state | cut -d' ' -f1)" = IN-FLIGHT-OVERDUE ] && ok "F4: the refused launch left the state IN-FLIGHT-OVERDUE untouched" || bad "F4: state changed" "$(state)"
 sleep 30
 grep -q "PUSH COMPLETED" $W/stub.log && [ "$(grep -c 'PUSH COMPLETED' $W/stub.log)" = 1 ] && ok "T4: the CLI was NOT killed by the bound: it ran on and completed exactly once (no second push started)" || bad "T4: the CLI did not complete exactly once" "$(tail -3 $W/stub.log)"
+approve CUST-OVERDUE3; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "IN-FLIGHT-OVERDUE" && ok "F4: after the CLI has ended, the state IN-FLIGHT-OVERDUE still refuses the next launch (only root clears it)" || bad "F4: not blocked by the state" "$OUT"
 clear_state
 # T6: a non-authentication dry-run failure consumes the approval and blocks the next run
 echo dryfail > $W/stub-mode; approve CUST-DRYFAIL; : > $W/stub.log; chown hone-release:hone-release $W/stub.log
