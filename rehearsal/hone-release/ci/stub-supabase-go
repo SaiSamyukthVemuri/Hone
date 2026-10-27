@@ -16,6 +16,7 @@ esac
 names=$(ls supabase/migrations | awk -v f="$((10#$FIRST))" -v l="$((10#$LAST))" '{v=substr($1,1,4)+0; if (v>=f && v<=l) print $1}')
 case " $* " in
   *" --dry-run "*)
+    [ "$mode" = dryfail ] && { echo "ERROR: unexpected failure while planning (SQLSTATE XX000)" >&2; exit 1; }
     [ "$mode" = authfail ] && { echo 'failed to connect to postgres: failed SASL auth (FATAL: password authentication failed for user "postgres.secretref" (SQLSTATE 28P01)) host=db.secretref.supabase.com' >&2; exit 1; }
     echo "DRY RUN: migrations will *not* be pushed to the database." >&2; echo "Connecting to remote database..." >&2; echo "Would push these migrations:" >&2
     printf '%s\n' "$names" | while read -r n; do printf ' \xe2\x80\xa2 %s\n' "$n" >&2; done
@@ -26,6 +27,7 @@ i=0
 printf '%s\n' "$names" | while read -r n; do
   i=$((i+1)); echo "Applying migration $n..." >&2
   [ "$mode" = slow ] && [ "$i" = 3 ] && sleep 8
+  [ "$mode" = veryslow ] && [ "$i" = 3 ] && sleep 25
   [ "$mode" = failmid ] && [ "$i" = 3 ] && { echo "ERROR: boom (SQLSTATE XX000)" >&2; exit 3; }
 done
 rc=$?

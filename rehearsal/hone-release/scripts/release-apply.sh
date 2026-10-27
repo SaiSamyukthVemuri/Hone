@@ -2,7 +2,9 @@
 # hone-release action: apply. Linux, non-interactive. Run ONLY by the launcher, as hone-release, with the database password on
 # fd 3 and a sanitised environment. Derived from the reviewed s1-apply.sh 2dfd3354 (see DELTAS.md for every difference).
 # It applies ONE package that root has approved in /etc/hone-release/APPROVED-PACKAGE: the bundle sha, the list sha and the
-# head (the commit id in the tar's own header) must equal the approval, the approval must be unexpired and not yet used.
+# head (the commit id in the tar's own header) must equal the approval, which also binds the PR number, the PR head and the release
+# receipt sha, the window, the recovery basis, the timeout residual and the exact target. The approval must be unexpired (at most
+# 60 minutes after approved_at) and is CONSUMED at the first dry-run attempt.
 # ONE dry run, ONE push, NO retry. A durable IN-FLIGHT marker is written before the push; anything but a clean APPLIED state
 # blocks the next run until root clears it. Nothing here asks for a keystroke: the root-written approval is the control.
 set -u
@@ -24,6 +26,7 @@ RUNDIR=""
 die() { echo "STOP: $*" >&2; exit 1; }
 utcnow() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 sha() { sha256sum -- "$1" | cut -d' ' -f1; }
+epoch() { date -u -d "$1" +%s 2>/dev/null; }
 iso='[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'
 mask() { LC_ALL=C sed -E -e 's#postgres(ql)?://[^ ]*#<url>#g' -e 's#([Uu]ser|[Hh]ost|[Hh]ostaddr|[Dd]bname)=[^ ,)]*#\1=<masked>#g' -e 's#([Uu]ser|[Rr]ole) "[^"]*"#\1 <masked>#g' -e 's#[A-Za-z0-9.-]*\.supabase\.com[:0-9]*#<host>#g'; }
 is_auth_failure() { grep -qiE 'authenticat|28P01|28000|password|banned|circuit|SASL|tenant or user not found' "$1"; }
@@ -63,7 +66,7 @@ APPROVAL_ID=""
 for p in "$APPROVAL" /etc/hone-release /etc; do
   [ "$(stat -c %u "$p")" = 0 ] && [ $(( 8#$(stat -c %a "$p") & 8#022 )) = 0 ] || die "$p is not root-owned and private to root"
 done
-declare_keys="approval_id head bundle_sha list_sha project_ref target_url first last count expires_at recovery_attestation watchdog"
+declare_keys="approval_id approved_at head bundle_sha list_sha pr pr_head receipt_sha project_ref target_url pooler_host first last count expires_at window_start window_end recovery_basis recovery_point waiver_id max_push_seconds timeout_residual recovery_attestation watchdog"
 seen=" "
 while IFS= read -r l || [ -n "$l" ]; do
   case "$l" in ''|'#'*) continue ;; esac
@@ -76,22 +79,45 @@ while IFS= read -r l || [ -n "$l" ]; do
 done < "$APPROVAL"
 for k in $declare_keys; do case "$seen" in *" $k "*) ;; *) die "APPROVED-PACKAGE lacks the key: $k" ;; esac; done
 APPROVAL_ID=$A_approval_id
+now_s=$(epoch "$(utcnow)")
 printf '%s' "$A_approval_id" | grep -Eq '^[A-Za-z0-9._-]{4,64}$' || die "approval_id is malformed"
-printf '%s' "$A_head" | grep -Eq '^[0-9a-f]{40}$' || die "head is not a 40-hex commit id"
-printf '%s%s' "$A_bundle_sha" "$A_list_sha" | grep -Eq '^[0-9a-f]{128}$' || die "bundle_sha or list_sha is malformed"
+printf '%s' "$A_head$A_pr_head" | grep -Eq '^[0-9a-f]{80}$' || die "head or pr_head is not a 40-hex commit id"
+[ "$A_head" = "$A_pr_head" ] || die "the approval's pr_head is not its head: the bundle must be an archive of the reviewed PR head"
+printf '%s' "$A_pr" | grep -Eq '^[0-9]{1,6}$' || die "pr is not a PR number"
+printf '%s%s%s' "$A_bundle_sha" "$A_list_sha" "$A_receipt_sha" | grep -Eq '^[0-9a-f]{192}$' || die "bundle_sha, list_sha or receipt_sha is malformed"
 printf '%s' "$A_project_ref" | grep -Eq '^[a-z0-9]{20}$' || die "project_ref is malformed"
 printf '%s%s%s' "$A_first" "$A_last" "$A_count" | grep -Eq '^[0-9]{4}[0-9]{4}[0-9]{1,3}$' || die "first, last or count is malformed"
-printf '%s' "$A_expires_at" | LC_ALL=C grep -Eq "^$iso\$" || die "expires_at is not YYYY-MM-DDTHH:MM:SSZ"
-[ ! "$A_expires_at" \< "$(utcnow)" ] && [ "$A_expires_at" != "$(utcnow)" ] || die "the approval has expired (expires_at $A_expires_at)"
-[ "$A_watchdog" = waived-by-approver ] || die "watchdog readiness is not enforced by this script; the approval must say watchdog=waived-by-approver (recorded as such)"
-case "$A_target_url" in
-  postgresql://*) ;; *) die "target_url is not a postgresql:// URL" ;;
+for k in approved_at expires_at window_start window_end; do eval "v=\$A_$k"; printf '%s' "$v" | LC_ALL=C grep -Eq "^$iso\$" || die "$k is not YYYY-MM-DDTHH:MM:SSZ"; done
+ap_s=$(epoch "$A_approved_at"); ex_s=$(epoch "$A_expires_at"); ws_s=$(epoch "$A_window_start"); we_s=$(epoch "$A_window_end")
+case "$now_s$ap_s$ex_s$ws_s$we_s" in *[!0-9]*|'') die "cannot read the approval times" ;; esac
+[ "$ap_s" -le "$now_s" ] || die "approved_at is in the future"
+[ "$ex_s" -gt "$now_s" ] || die "the approval has expired (expires_at $A_expires_at)"
+[ $((ex_s - ap_s)) -le 3600 ] || die "the approval lives more than 60 minutes (approved_at to expires_at)"
+[ "$ws_s" -lt "$we_s" ] || die "the approved window ends before it starts"
+[ "$now_s" -ge "$ws_s" ] || die "the approved window has not opened (window_start $A_window_start): no apply outside the window"
+[ "$now_s" -lt "$we_s" ] || die "the approved window has closed (window_end $A_window_end): no apply outside the window"
+[ $(( (we_s - now_s) / 60 )) -ge 75 ] || die "fewer than 75 minutes of the approved window remain ($(( (we_s - now_s) / 60 )) left; the steps after the apply need them). Nothing was attempted."
+case "$A_recovery_basis" in
+  row4)
+    printf '%s' "$A_recovery_point" | LC_ALL=C grep -Eq "^$iso\$" || die "recovery_basis=row4 needs a recovery_point in UTC"
+    rp_s=$(epoch "$A_recovery_point"); [ -n "$rp_s" ] || die "cannot read recovery_point"
+    [ "$rp_s" -le "$now_s" ] || die "recovery_point is in the future"
+    [ "$rp_s" -ge "$ws_s" ] || die "recovery_point is before the window start"
+    [ $((now_s - rp_s)) -le 2700 ] || die "recovery_point is older than 45 minutes: run the row-4 step again and re-approve"
+    [ "$A_waiver_id" = none ] || die "recovery_basis=row4 must have waiver_id=none" ;;
+  waiver)
+    printf '%s' "$A_waiver_id" | grep -Eq '^[A-Za-z0-9._-]{4,64}$' || die "recovery_basis=waiver needs a waiver_id"
+    [ "$A_recovery_point" = none ] || die "recovery_basis=waiver must have recovery_point=none" ;;
+  *) die "recovery_basis must be row4 or waiver (the idle-path result is not accepted by this script)" ;;
 esac
-ui=${A_target_url#postgresql://}; ui=${ui%%@*}
-case "$ui" in *:*|*%*) die "target_url carries a password-like userinfo" ;; esac
-case "$A_target_url" in *:6543/*) die "the transaction pooler (6543) is never used" ;; esac
-case "$A_target_url" in *sslmode=require*) ;; *) die "target_url does not require TLS" ;; esac
-case "$A_target_url" in *"$A_project_ref"*) ;; *) die "target_url does not name the approved project_ref" ;; esac
+[ "$A_watchdog" = waived-by-approver ] || die "watchdog readiness is not enforced by this script; the approval must say watchdog=waived-by-approver (recorded as such)"
+[ "$A_timeout_residual" = accepted-server-limit-only ] || die "the approval must say timeout_residual=accepted-server-limit-only: the pooler ignores timeout options, the files carry their own lock_timeout, and no other bound exists (accepted residual)"
+printf '%s' "$A_max_push_seconds" | grep -Eq '^[0-9]{2,4}$' && [ "$A_max_push_seconds" -ge 10 ] && [ "$A_max_push_seconds" -le 1800 ] || die "max_push_seconds must be 10..1800"
+# the exact target: the pinned pooler host:5432, user postgres.<ref>, and ONE of two exact TLS forms
+printf '%s' "$A_pooler_host" | grep -Eq '^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com:5432$' || die "pooler_host is not a Supabase session pooler host on port 5432"
+want_q="sslmode=require"   # NOTE: supabase-go 2.102.0 rebuilds the URL (ToPostgresURL) and drops sslmode/sslrootcert, so TLS is used but the server certificate is NOT verified; the control is the exact pooler host below (accepted residual)
+want_url="postgresql://postgres.$A_project_ref@$A_pooler_host/postgres?$want_q"
+[ "$A_target_url" = "$want_url" ] || die "target_url is not exactly the approved form for this project and pooler host (no other host, port, user or parameter is accepted)"
 [ ! -e "$STATE/consumed/$APPROVAL_ID" ] || die "approval $APPROVAL_ID was already used (single use). Nothing was attempted."
 
 # ---- intake: copy from the inbox (anything the caller can write) into the private work dir FIRST, hash the COPY
@@ -135,11 +161,17 @@ vout=$(cd "$PROJ/supabase/migrations" && sha256sum -c "$RUNDIR/list.sha256" 2>&1
 [ "$(printf '%s\n' "$vout" | grep -c ': OK$')" = "$NFILES" ] || die "the extracted migrations did not verify $NFILES files"
 mkdir -p "$PROJ/supabase/.temp" && printf '%s\n' v2.102.0 > "$PROJ/supabase/.temp/cli-latest" || die "cannot seed cli-latest"
 RUN="$RUNDIR/run.txt"
-{ echo "release apply run started $(utcnow) approval $APPROVAL_ID"; echo "script sha256 ${HONE_RELEASE_SCRIPT_SHA:-unknown}"; echo "head $A_head bundle $A_bundle_sha list $A_list_sha"; echo "versions $A_first..$A_last count $A_count; files $NFILES"; echo "target (no password): $A_target_url"; echo "recovery attestation (root-written, NOT verified here): $A_recovery_attestation"; echo "watchdog: $A_watchdog (readiness NOT enforced by this script)"; } > "$RUN"
+{ echo "release apply run started $(utcnow) approval $APPROVAL_ID"; echo "script sha256 ${HONE_RELEASE_SCRIPT_SHA:-unknown}"; echo "head $A_head bundle $A_bundle_sha list $A_list_sha"; echo "versions $A_first..$A_last count $A_count; files $NFILES"; echo "bound to PR $A_pr head $A_pr_head receipt sha256 $A_receipt_sha"; echo "window $A_window_start .. $A_window_end; recovery basis $A_recovery_basis point $A_recovery_point waiver $A_waiver_id"; echo "tls form: $want_q (host $A_pooler_host)"; echo "timeout residual: $A_timeout_residual; client-side bounded wait $A_max_push_seconds s"; echo "target (no password): $A_target_url"; echo "recovery attestation (root-written, NOT verified here): $A_recovery_attestation"; echo "watchdog: $A_watchdog (readiness NOT enforced by this script)"; } > "$RUN"
 
-run_cli() { # run_cli LOG args...   the password is in the one child's environment only
-  local lf="$1"; shift
-  ( cd "$PROJ" && PGPASSWORD="$PW" SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 setsid -w "$BIN" "$@" ) </dev/null >"$lf" 2>&1
+run_cli() { # run_cli LOG SECONDS args...   the password is in the one child's environment only; the CLI is NEVER killed on overrun
+  local lf="$1" maxs="$2"; shift 2
+  ( cd "$PROJ" && PGPASSWORD="$PW" SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 setsid -w "$BIN" "$@" ) </dev/null >"$lf" 2>&1 &
+  local cpid=$! waited=0
+  while kill -0 "$cpid" 2>/dev/null; do
+    [ "$waited" -lt "$maxs" ] || return 124
+    sleep 1; waited=$((waited + 1))
+  done
+  wait "$cpid"
 }
 scan_log() { if grep -qiE 'login role|initialising|unban|network.?ban|reset.*password|api\.supabase\.com' "$1"; then
   [ "$STAGE" != push ] || write_state FAILED "log-scan-hit"
@@ -149,13 +181,18 @@ scan_log() { if grep -qiE 'login role|initialising|unban|network.?ban|reset.*pas
 # ---- ONE dry run
 STAGE=dry-run
 DRY="$LOGS/dry-run.log"; rc=0
-run_cli "$DRY" db push --db-url "$A_target_url" --dry-run || rc=$?
+# the approval is consumed at the FIRST dry-run attempt, and a state that only root clears is written before the first login
+mkdir "$STATE/consumed/$APPROVAL_ID" 2>/dev/null || die "approval $APPROVAL_ID was consumed by another run. Nothing was attempted."
+write_state DRYRUN-STARTED || die "cannot write the DRYRUN-STARTED state. Nothing was attempted."
+run_cli "$DRY" 120 db push --db-url "$A_target_url" --dry-run || rc=$?
+[ "$rc" != 124 ] || die "the dry run is still running after 120 s; this script stopped waiting and did NOT stop the CLI. State DRYRUN-STARTED stands until root clears it. Nothing was pushed by this script."
 echo "dry run finished $(utcnow) exit $rc" >> "$RUN"
 scan_log "$DRY"
 if [ "$rc" != 0 ]; then
   tail -n 6 "$DRY" | mask >&2
   if is_auth_failure "$DRY"; then write_state FAILED-LOGIN dry-run; echo "An authentication failure was recorded in the state: no further run until root clears it." >&2; fi
-  die "the dry run failed (exit $rc). NOTHING was applied. No retry."
+  is_auth_failure "$DRY" || write_state FAILED-DRYRUN "exit-$rc"
+  die "the dry run failed (exit $rc). NOTHING was applied. The approval is consumed and the state ($(cut -d' ' -f1 "$STATE/APPLY-STATE")) stands until root clears it: no retry from this script."
 fi
 grep -qx 'DRY RUN: migrations will \*not\* be pushed to the database.' "$DRY" || die "the dry run did not announce itself as a dry run"
 grep -qx 'Would push these migrations:' "$DRY" || die "the dry run did not print 'Would push these migrations:'"
@@ -166,12 +203,23 @@ echo "dry run listed exactly the approved $A_count versions in order" >> "$RUN"
 
 # ---- ONE push: consume the approval, write the durable IN-FLIGHT marker, then push
 STAGE=push
-mkdir "$STATE/consumed/$APPROVAL_ID" 2>/dev/null || die "approval $APPROVAL_ID was consumed by another run. NOTHING was applied."
+# the gates are checked again immediately before the push (the dry run and the intake take time)
+now_s=$(epoch "$(utcnow)")
+[ "$now_s" -lt "$ex_s" ] || die "the approval expired during the dry run. NOTHING was applied."
+[ "$now_s" -lt "$we_s" ] && [ $(( (we_s - now_s) / 60 )) -ge 75 ] || die "fewer than 75 minutes of the approved window remain before the push. NOTHING was applied."
+if [ "$A_recovery_basis" = row4 ]; then [ $((now_s - rp_s)) -le 3600 ] || die "recovery_point is now older than 60 minutes. NOTHING was applied."; fi
 write_state IN-FLIGHT || die "cannot write the IN-FLIGHT marker. NOTHING was applied."
 echo "push started $(utcnow)" >> "$RUN"
 PUSH="$LOGS/push.log"; rc=0
 trap '' INT TERM HUP
-run_cli "$PUSH" db push --db-url "$A_target_url" --yes || rc=$?
+run_cli "$PUSH" "$A_max_push_seconds" db push --db-url "$A_target_url" --yes || rc=$?
+if [ "$rc" = 124 ]; then
+  PW=""; unset PW
+  write_state IN-FLIGHT-OVERDUE "after-${A_max_push_seconds}s"
+  echo "push overdue $(utcnow)" >> "$RUN"
+  tail -n 6 "$PUSH" | mask >&2
+  die "the push is still running after ${A_max_push_seconds} s. This script stopped WAITING; it did not stop the CLI (the only way to stop a statement is the watchdog or the database's own limit: the accepted residual). State IN-FLIGHT-OVERDUE: read back the migration history before anything else. Only root clears the state."
+fi
 echo "push finished $(utcnow) exit $rc" >> "$RUN"
 PW=""; unset PW
 fail() {

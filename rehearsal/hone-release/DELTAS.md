@@ -15,4 +15,15 @@
 | 11 | prints to the operator's terminal | the same masked tails (url, user=, host=, quoted user/role, *.supabase.com); no secret is ever read into a printed variable | |
 | 12 | `scan_log`, ONE dry run, ONE push, exact 34 in order, finish line, exit 0 | unchanged in logic (count and names come from the approval) | |
 
+## HON66-FIXES (T1-T6) added to v1
+
+| Fix | What changed |
+|---|---|
+| T1 | `install.sh` refuses unless EVERY package file matches a sha256 that root typed from the reviewed record into a pins file that is root-owned, outside the package, and lists exactly the package files (no extra, none missing, no symlink, nothing group/other-writable); the package must sit in a root-owned directory with no world-writable ancestor (not /tmp); the manifest is built from the pins and the installed copies are re-hashed. |
+| T2 | `approve-package.sh` takes the reviewed bundle sha, list sha, head, PR number, PR head (must equal head) and release-receipt sha as TYPED arguments, recomputes them from the inbox and refuses on any difference (no "type what was printed"); prints the count and first/last file; caps the approval at 60 minutes; the record binds PR, PR head and receipt sha. |
+| T3 | The approval carries `window_start`/`window_end` (no apply outside; at least 75 minutes left at the start and again just before the push), `recovery_basis` = `row4` (a recovery point inside the window and at most 45 minutes old, 60 before the push) or `waiver` (a recorded waiver id); the idle-path basis is refused. Watchdog stays `waived-by-approver`. |
+| T4 | Accepted residual, written into every approval: `timeout_residual=accepted-server-limit-only` (the pooler ignores timeout options; each file carries its own `set local lock_timeout`; no other bound). A client-side bounded wait (`max_push_seconds` 10..1800) makes the script stop WAITING, never kill the CLI: state `IN-FLIGHT-OVERDUE` stands until root clears it. Machines' guard is NOT folded in (M3/M4 unfixed, V1-V5 unproven). |
+| T5 | The target is exactly `postgresql://postgres.<ref>@<aws-N-region.pooler.supabase.com:5432>/postgres?sslmode=require`: any other host, port, user or parameter is refused. `sslmode=verify-full` was investigated and is NOT available: supabase-go 2.102.0 rebuilds the connection URL and drops `sslmode` and `sslrootcert` (a CI probe shows it connects with `verify-full` and a nonexistent `sslrootcert`). The server certificate is therefore not verified; the host pin is the control. Accepted residual. |
+| T6 | The approval is consumed and the state `DRYRUN-STARTED` is written before the FIRST dry-run login; a non-authentication dry-run failure leaves `FAILED-DRYRUN`; a wrong listing leaves `DRYRUN-STARTED`; all block the next run (even with a new approval) until root clears them. |
+
 Unchanged on purpose: URL rules (port 5432 pooler, user only, `sslmode=require`, no password parameter, never 6543), seeded `cli-latest`, `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false`, telemetry off, the login-role / unban / ban log scan, no retry of any step.
