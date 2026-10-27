@@ -100,3 +100,38 @@ export function parsePreferredName(
   }
   return { ok: true, value };
 }
+
+export type LegalIdentityInput = {
+  legal_given_name: string | null;
+  legal_middle_name: string | null;
+  legal_family_name: string | null;
+};
+
+/**
+ * Read a legal identity typed by staff. Each part is trimmed and space-collapsed
+ * (blank is "not given"), at most 200 characters (the table's check), and at
+ * least a given or a family name is required (the table's check). Nothing is
+ * inferred or defaulted: a legal identity is exactly what staff entered.
+ */
+export function parseLegalIdentity(raw: {
+  given?: FormDataEntryValue | string | null;
+  middle?: FormDataEntryValue | string | null;
+  family?: FormDataEntryValue | string | null;
+}): { ok: true; value: LegalIdentityInput } | { ok: false; error: string } {
+  const part = (v: FormDataEntryValue | string | null | undefined): string | null =>
+    typeof v === "string" ? clean(v) || null : null;
+  const value: LegalIdentityInput = {
+    legal_given_name: part(raw.given),
+    legal_middle_name: part(raw.middle),
+    legal_family_name: part(raw.family),
+  };
+  for (const v of Object.values(value)) {
+    if (v !== null && v.length > PREFERRED_NAME_MAX) {
+      return { ok: false, error: `Each legal name part must be ${PREFERRED_NAME_MAX} characters or fewer.` };
+    }
+  }
+  if (value.legal_given_name === null && value.legal_family_name === null) {
+    return { ok: false, error: "Enter at least a given name or a family name." };
+  }
+  return { ok: true, value };
+}

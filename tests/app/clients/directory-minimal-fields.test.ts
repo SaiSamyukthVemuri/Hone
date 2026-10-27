@@ -5,14 +5,15 @@ import { describe, expect, it, vi } from "vitest";
 // to ClientSearch, a client component, so every column was serialized into
 // the browser's RSC payload although the list renders only name, pronouns,
 // phone and email (plus the id for the link). This pins that ClientSearch
-// receives exactly those five fields and no other client value. The directory
+// receives exactly those fields and no other client value. HON-58 adds two:
+// the preferred name and, for the signed-in owner or practitioner, the legal name. The directory
 // read's own column list is pinned in
 // tests/lib/supabase/client-directory-columns.test.ts.
 
 // A full clients row as the database holds it. Every value the list does not
 // render is a sentinel that must never reach the client component.
 const FULL_ROW = {
-  id: "c1", studio_id: "studio-1", name: "Visible Name", pronouns: "they/them",
+  id: "c1", studio_id: "studio-1", name: "Visible Name", preferred_name: "Visible Preferred", pronouns: "they/them",
   phone: "+1 555 0100", email: "visible@example.test", address: "SENTINEL-address",
   date_of_birth: "SENTINEL-dob", sms_phone: "SENTINEL-sms-phone",
   fitzpatrick_type: 4, skin_notes: "SENTINEL-skin", allergies: "SENTINEL-allergies",
@@ -23,6 +24,12 @@ const FULL_ROW = {
   sms_consent_at: "SENTINEL-consent-at", sms_consent_source: "SENTINEL-consent-src",
   sms_opted_out_at: null, sms_opt_out_source: null, normalized_email: "SENTINEL-normalized",
 };
+
+const legal = vi.hoisted(() => ({ result: { ok: true as boolean, value: new Map([["c1", "Legal Visible"]]) } }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({}) }));
+vi.mock("@/lib/clients/legal-identity", () => ({
+  readLegalNamesForStudio: async () => (legal.result.ok ? legal.result : { ok: false }),
+}));
 
 vi.mock("@/lib/supabase/queries", () => ({
   requirePractitionerWithStudio: async () => ({ studio: { id: "studio-1" } }),
@@ -52,15 +59,26 @@ function findElement(node: ReactNode, type: unknown): ReactElement<Record<string
 }
 
 describe("DAT-001 /clients hands ClientSearch only what it renders", () => {
-  it("passes exactly id, name, pronouns, phone and email, and no other client value", async () => {
+  it("passes exactly id, name, preferred and legal name, pronouns, phone and email, and no other client value", async () => {
+    legal.result = { ok: true, value: new Map([["c1", "Legal Visible"]]) };
     const tree = await ClientsPage({ searchParams: Promise.resolve({}) });
     const search = findElement(tree, ClientSearch);
     expect(search).not.toBeNull();
     const clients = search!.props.clients as Array<Record<string, unknown>>;
     expect(clients).toEqual([{
-      id: "c1", name: "Visible Name", pronouns: "they/them",
-      phone: "+1 555 0100", email: "visible@example.test",
+      id: "c1", name: "Visible Name", preferred_name: "Visible Preferred", legal_name: "Legal Visible",
+      pronouns: "they/them", phone: "+1 555 0100", email: "visible@example.test",
     }]);
     expect(JSON.stringify(search!.props)).not.toContain("SENTINEL");
+  });
+
+  it("an unavailable or empty legal-name read lists every client without a legal name (never an error)", async () => {
+    for (const result of [{ ok: false as boolean, value: new Map<string, string>() }, { ok: true, value: new Map<string, string>() }]) {
+      legal.result = result;
+      const tree = await ClientsPage({ searchParams: Promise.resolve({}) });
+      const clients = findElement(tree, ClientSearch)!.props.clients as Array<Record<string, unknown>>;
+      expect(clients).toHaveLength(1);
+      expect(clients[0]).toMatchObject({ id: "c1", name: "Visible Name", legal_name: null });
+    }
   });
 });

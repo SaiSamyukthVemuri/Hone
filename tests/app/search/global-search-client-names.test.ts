@@ -19,9 +19,10 @@ const ilikeCalls: Array<{ table: string; col: string; pattern: string }> = [];
 // to prove a short page does not end a read early.
 // failClientsAt, when set, makes a clients read whose page starts at that
 // offset answer with an error instead of rows.
-const server: { maxRows: number; failClientsAt: ((offset: number) => boolean) | null } = {
+const server: { maxRows: number; failClientsAt: ((offset: number) => boolean) | null; failTable: string | null } = {
   maxRows: 1000,
   failClientsAt: null,
+  failTable: null,
 };
 
 const RE_METACHARS = /[.*+?^${}()|[\]\\]/g;
@@ -73,6 +74,13 @@ function builder(table: string) {
         if (c.op !== "ilike") throw new Error(`fake supabase: unsupported .or operator ${c.op}`);
         return c;
       });
+      // The name-candidate read (HON-58) ANDs one two-column OR (name, preferred_name)
+      // per query word; record those patterns like a plain ilike so the
+      // folded-letters-only property below sees them. The direct read's
+      // four-column OR carries the raw query and is not recorded.
+      if (clauses.length === 2 && clauses.every((c) => c.col === "name" || c.col === "preferred_name")) {
+        for (const c of clauses) ilikeCalls.push({ table, col: c.col, pattern: c.value });
+      }
       predicates.push((r) => clauses.some((c) => matchesIlike(r[c.col], c.value)));
       return chain;
     },
@@ -99,6 +107,9 @@ function builder(table: string) {
       return chain;
     },
     then(resolve: (v: { data: Row[] | null; error: { message: string } | null }) => unknown) {
+      if (server.failTable === table) {
+        return Promise.resolve({ data: null, error: { message: "fake read failure" } }).then(resolve as never);
+      }
       if (table === "clients" && server.failClientsAt?.(range?.[0] ?? 0)) {
         return Promise.resolve({ data: null, error: { message: "fake read failure" } }).then(
           resolve as never,
@@ -170,6 +181,7 @@ beforeEach(() => {
   ilikeCalls.length = 0;
   server.maxRows = 1000;
   server.failClientsAt = null;
+  server.failTable = null;
   tables.clients = [
     client("c-janie", "Jane (Janie) Smith", { phone: "(555) 010-0001" }),
     client("c-obrien", "Saoirse O'Brien"),
@@ -476,5 +488,74 @@ describe("global search panel: a bounded client scan is never shown as complete"
   it("says the client list is partial, and never says No results found. while it is", () => {
     expect(panel).toContain("Showing the first client matches. Refine your search to find more.");
     expect(panel).toMatch(/groups\.length === 0 && !clientsTruncated \? \(/);
+  });
+});
+
+// HON-58 slice 4: the same record through its PREFERRED name (own column) and
+// its LEGAL name (owner/practitioner-only table). Synthetic names.
+describe("global search: preferred and legal names on the one client record", () => {
+  beforeEach(() => {
+    tables.clients.push(
+      client("c-pref", "Margaret Nowak", { preferred_name: "Maggie" }),
+      client("c-simon", "Simon Horvat", { preferred_name: "Šimon" }),
+      client("c-legal", "Dana R", { preferred_name: "Dee" }),
+      client("c-legal-archived", "Old Record", { archived_at: "2026-01-01T00:00:00Z" }),
+      client("c-legal-foreign", "Foreign Record", { studio_id: STUDIO_B }),
+    );
+    tables.client_legal_identities = [
+      { client_id: "c-legal", studio_id: STUDIO_A, legal_given_name: "Dana", legal_middle_name: null, legal_family_name: "Reyes-Okafor" },
+      { client_id: "c-legal-archived", studio_id: STUDIO_A, legal_given_name: "Olive", legal_middle_name: null, legal_family_name: "Archived" },
+      { client_id: "c-legal-foreign", studio_id: STUDIO_B, legal_given_name: "Fiona", legal_middle_name: null, legal_family_name: "Foreign" },
+    ];
+  });
+
+  it.each([
+    ["preferred name alone", "maggie", "c-pref"],
+    ["preferred name with the stored surname", "maggie nowak", "c-pref"],
+    ["the stored name", "margaret nowak", "c-pref"],
+    ["a non-ASCII preferred name by its folded spelling", "simon", "c-simon"],
+  ])("finds the record by %s (%j)", async (_l, query, id) => {
+    expect(await clientIdsFor(query)).toContain(id);
+  });
+
+  it("shows the preferred name as the result title", async () => {
+    const res = await globalSearchAction("maggie");
+    if (!res.ok) throw new Error("search failed");
+    expect(res.results.find((r) => r.id === "client:c-pref")?.title).toBe("Maggie");
+  });
+
+  it.each([
+    ["legal family name", "okafor"],
+    ["legal given + family", "dana reyes okafor"],
+    ["legal family name, punctuation folded", "reyes okafor"],
+    ["preferred name", "dee"],
+    ["stored name", "dana r"],
+  ])("finds the same record by %s (%j) and returns it once", async (_l, query) => {
+    const ids = await clientIdsFor(query);
+    expect(ids.filter((id) => id === "c-legal")).toHaveLength(1);
+  });
+
+  it("names the legal identity in the subtitle only when it differs from the displayed name", async () => {
+    const res = await globalSearchAction("okafor");
+    if (!res.ok) throw new Error("search failed");
+    const hit = res.results.find((r) => r.id === "client:c-legal");
+    expect(hit?.title).toBe("Dee");
+    expect(hit?.subtitle).toBe("Legal name: Dana Reyes-Okafor");
+  });
+
+  it("never finds an archived client's or another studio's client through a legal name", async () => {
+    expect(await clientIdsFor("archived")).not.toContain("c-legal-archived");
+    expect(await clientIdsFor("foreign")).not.toContain("c-legal-foreign");
+  });
+
+  it("a failed legal-identity read fails the search rather than hiding a legal-name match", async () => {
+    server.failTable = "client_legal_identities";
+    expect((await globalSearchAction("okafor")).ok).toBe(false);
+  });
+
+  it("a studio with no legal identities (or a viewer the database shows none) still searches by the other names", async () => {
+    tables.client_legal_identities = [];
+    expect(await clientIdsFor("maggie")).toContain("c-pref");
+    expect(await clientIdsFor("okafor")).not.toContain("c-legal");
   });
 });

@@ -7,6 +7,8 @@ import {
 } from "@/lib/supabase/queries";
 import { ClientSearch, type ClientSearchRow } from "@/components/client-search";
 import { ArchivedClientsList } from "./ArchivedClientsList";
+import { createClient } from "@/lib/supabase/server";
+import { readLegalNamesForStudio } from "@/lib/clients/legal-identity";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 
 // Clients page. Two views: active (default) and archived. Selected
@@ -52,9 +54,17 @@ export default async function ClientsPage({
 
   // DAT-001: ClientSearch is a client component, so its props reach the
   // browser. Hand it only the fields it renders, never whole directory rows.
+  // HON-58: the legal names come from the signed-in read of the owner and
+  // practitioner only table; a failed read just means no legal-name search or
+  // display on this view (the page still lists every client by display name).
+  const legal =
+    view === "archived" ? null : await readLegalNamesForStudio(await createClient(), studio.id);
+  const legalNames = legal && legal.ok ? legal.value : new Map<string, string>();
   const searchRows: ClientSearchRow[] = activeClients.map((c) => ({
     id: c.id,
     name: c.name,
+    preferred_name: c.preferred_name ?? null,
+    legal_name: legalNames.get(c.id) ?? null,
     pronouns: c.pronouns,
     phone: c.phone,
     email: c.email,

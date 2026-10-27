@@ -21,6 +21,8 @@ import {
   type NavSearchContext,
 } from "@/lib/search/navigation-registry";
 import { mergeMemoryBlockRows } from "@/lib/search/treatment-memory-merge";
+import { clientDisplayName, clientLegalName } from "@/lib/clients/identity";
+import { LEGAL_IDENTITY_COLUMNS, type LegalIdentityRow } from "@/lib/clients/legal-identity";
 import {
   hasNameQuery,
   matchesClientSearch,
@@ -86,8 +88,14 @@ const MEMORY_CHILD_CANDIDATE_CAP = MEMORY_CAP * 5;
 // So the inner join is what makes the parent-session filters below actually
 // remove rows, and it removes them in the DATABASE: before ordering and before
 // the cap, so an inactive record can never occupy one of the four slots.
+function clientSubtitle(c: ClientSearchRow): string | undefined {
+  const contact = c.email || c.phone || undefined;
+  const legal = c.legal_name && c.legal_name !== clientDisplayName(c) ? `Legal name: ${c.legal_name}` : null;
+  return [legal, contact].filter(Boolean).join(" · ") || undefined;
+}
+
 const MEMORY_BLOCK_SELECT =
-  "id, session_id, primary_area, side, block_name, caution_note, reaction_notes, probe_label, probe_lot_number, created_at, session:sessions!inner(client_id, started_at, deleted_at, record_status, client:clients(name))";
+  "id, session_id, primary_area, side, block_name, caution_note, reaction_notes, probe_label, probe_lot_number, created_at, session:sessions!inner(client_id, started_at, deleted_at, record_status, client:clients(name, preferred_name))";
 
 // A treatment record is SEARCHABLE only while its parent session is active.
 // `sessions.record_status` is `text NOT NULL check (record_status in ('draft',
@@ -142,6 +150,10 @@ function rowsOrFail<T>(r: { data: T[] | null; error: unknown }): T[] {
 type ClientSearchRow = {
   id: string;
   name: string | null;
+  // HON-58: the name the client goes by, and (owner/practitioner only, read from
+  // client_legal_identities) the legal name. Both are matched by the same rule.
+  preferred_name?: string | null;
+  legal_name?: string | null;
   email: string | null;
   phone: string | null;
 };
@@ -172,7 +184,7 @@ async function searchClientRows(
   const base = () =>
     supabase
       .from("clients")
-      .select("id, name, email, phone")
+      .select("id, name, preferred_name, email, phone")
       .eq("studio_id", studioId)
       .is("archived_at", null);
 
@@ -205,25 +217,77 @@ async function searchClientRows(
     }
   };
 
+  // HON-58: a client found by LEGAL name. The legal identity lives in its own
+  // owner/practitioner-only table, so this is a separate, bounded read: the
+  // first query word, as an in-order subsequence, against the given, middle or
+  // family name; the matching clients are then read and confirmed over the
+  // stored, preferred and legal names together. A non-ASCII query word is not
+  // prefiltered (ILIKE cannot fold it), so it finds no extra row here. A failed
+  // read fails the whole search (DAT-002), as every other client read does.
+  const searchByLegalName = async (): Promise<ClientSearch | null> => {
+    const patterns = nameCandidatePatterns(query);
+    if (patterns.length === 0) return { rows: [], truncated: false };
+    const { data, error } = await supabase
+      .from("client_legal_identities")
+      .select(LEGAL_IDENTITY_COLUMNS)
+      .eq("studio_id", studioId)
+      .or(orIlike(["legal_given_name", "legal_middle_name", "legal_family_name"], patterns[0]))
+      .order("client_id")
+      .range(0, CLIENT_SCAN_CAP_PER_READ - 1);
+    if (error) return null;
+    const legalRows = (data ?? []) as LegalIdentityRow[];
+    if (legalRows.length === 0) return { rows: [], truncated: false };
+    const legalById = new Map<string, string>();
+    for (const row of legalRows) {
+      const legal = clientLegalName(row);
+      if (legal) legalById.set(row.client_id, legal);
+    }
+    const found: ClientSearchRow[] = [];
+    const ids = [...legalById.keys()];
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data: clientData, error: clientErr } = await base().in("id", ids.slice(i, i + 200));
+      if (clientErr) return null;
+      for (const row of (clientData ?? []) as ClientSearchRow[]) {
+        const withLegal = { ...row, legal_name: legalById.get(row.id) ?? null };
+        if (matchesClientSearch(withLegal, query)) found.push(withLegal);
+        if (found.length >= CLIENT_CAP) return { rows: found, truncated: false };
+      }
+    }
+    return { rows: found, truncated: legalRows.length >= CLIENT_SCAN_CAP_PER_READ };
+  };
+
   const namePatterns = nameCandidatePatterns(query);
   const phonePattern = phoneCandidatePattern(query);
   const none = Promise.resolve<ClientSearch>({ rows: [], truncated: false });
 
-  const [direct, asciiNamed, otherNamed, phoned] = await Promise.all([
-    // The direct read is confirmed and paged like every other client read
-    // (Codex P2 4367010228): no row reaches the cap unconfirmed.
-    confirmed(() => base().or(orIlike(["name", "email", "phone"], like))),
+  // HON-58: one record, two name columns. Each query word may be found in the
+  // stored name OR the preferred name (so "maggie nowak" admits a record stored
+  // as "Margaret Nowak" with preferred name "Maggie"): one ILIKE-or per word,
+  // AND-ed. A name with a non-ASCII character is admitted whatever it contains,
+  // per column, because ILIKE cannot fold it. The matcher then confirms every
+  // candidate over the stored, preferred and legal names together.
+  const nameReads = [
     namePatterns.length > 0
       ? confirmed(() => {
           let q = base();
-          for (const pattern of namePatterns) q = q.ilike("name", pattern);
+          for (const pattern of namePatterns) q = q.or(orIlike(["name", "preferred_name"], pattern));
           return q;
         })
       : none,
-    hasNameQuery(query) ? confirmed(() => base().filter("name", "match", NON_ASCII_NAME_REGEX)) : none,
+    ...(["name", "preferred_name"] as const).map((column) =>
+      hasNameQuery(query) ? confirmed(() => base().filter(column, "match", NON_ASCII_NAME_REGEX)) : none,
+    ),
+  ];
+
+  const [direct, phoned, legalMatched, ...named] = await Promise.all([
+    // The direct read is confirmed and paged like every other client read
+    // (Codex P2 4367010228): no row reaches the cap unconfirmed.
+    confirmed(() => base().or(orIlike(["name", "preferred_name", "email", "phone"], like))),
     phonePattern ? confirmed(() => base().ilike("phone", phonePattern)) : none,
+    searchByLegalName(),
+    ...nameReads,
   ]);
-  if (!direct || !asciiNamed || !otherNamed || !phoned) return null;
+  if (!direct || !phoned || !legalMatched || named.some((r) => !r)) return null;
 
   const seen = new Set<string>();
   const rows: ClientSearchRow[] = [];
@@ -232,14 +296,16 @@ async function searchClientRows(
     seen.add(row.id);
     rows.push(row);
   }
-  for (const row of [...asciiNamed.rows, ...otherNamed.rows, ...phoned.rows]) {
+  for (const row of [...(named as ClientSearch[]).flatMap((r) => r.rows), ...phoned.rows, ...legalMatched.rows]) {
     if (seen.has(row.id)) continue;
     seen.add(row.id);
     rows.push(row);
   }
   return {
-    rows: rows.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "")).slice(0, CLIENT_CAP),
-    truncated: [direct, asciiNamed, otherNamed, phoned].some((r) => r.truncated),
+    rows: rows
+      .sort((a, b) => clientDisplayName(a).localeCompare(clientDisplayName(b)))
+      .slice(0, CLIENT_CAP),
+    truncated: [direct, phoned, legalMatched, ...(named as ClientSearch[])].some((r) => r.truncated),
   };
 }
 
@@ -339,7 +405,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
       .then(rowsOrFail),
     supabase
       .from("sessions")
-      .select("id, client_id, started_at, next_session_note, client:clients(name)")
+      .select("id, client_id, started_at, next_session_note, client:clients(name, preferred_name)")
       .eq("studio_id", studioId)
       .is("deleted_at", null)
       // Same liveness rule as the block paths: a voided session's next-visit
@@ -401,7 +467,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
       ? supabase
           .from("appointments")
           .select(
-            "id, starts_at, status, client:clients(name), service:services(name)",
+            "id, starts_at, status, client:clients(name, preferred_name), service:services(name)",
           )
           .eq("studio_id", studioId)
           .in("client_id", clientIds)
@@ -413,7 +479,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
       ? supabase
           .from("appointments")
           .select(
-            "id, starts_at, status, client:clients(name), service:services(name)",
+            "id, starts_at, status, client:clients(name, preferred_name), service:services(name)",
           )
           .eq("studio_id", studioId)
           .eq("status", status)
@@ -442,7 +508,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
       ? await supabase
           .from("appointments")
           .select(
-            "id, starts_at, status, client:clients(name), service:services(name)",
+            "id, starts_at, status, client:clients(name, preferred_name), service:services(name)",
           )
           .eq("studio_id", studioId)
           .in("service_id", serviceRows.map((s) => s.id as string))
@@ -457,9 +523,10 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
     results.push({
       id: `client:${c.id}`,
       type: "client",
-      title: (c.name as string) || "Client",
-      subtitle:
-        (c.email as string | null) || (c.phone as string | null) || undefined,
+      title: clientDisplayName(c) || "Client",
+      // HON-58: the legal name rides in the subtitle only when it was found for
+      // this (authorized) viewer and differs from the displayed name.
+      subtitle: clientSubtitle(c),
       href: `/clients/${c.id}`,
     });
   }
@@ -475,7 +542,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
     results.push({
       id: `appointment:${id}`,
       type: "appointment",
-      title: (client?.name as string) || "Appointment",
+      title: clientDisplayName(client ?? {}) || "Appointment",
       subtitle: (service?.name as string) || undefined,
       href: `/calendar/${id}`,
       date: fmtDate(a.starts_at as string),
@@ -535,7 +602,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
     results.push({
       id: `memory:block:${b.id}`,
       type: "memory",
-      title: (client?.name as string) || "Session",
+      title: clientDisplayName(client ?? {}) || "Session",
       subtitle: caution
         ? `Recorded caution · ${area}`
         : lot
@@ -550,7 +617,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
     results.push({
       id: `memory:note:${s.id}`,
       type: "memory",
-      title: (client?.name as string) || "Session",
+      title: clientDisplayName(client ?? {}) || "Session",
       subtitle: "Recorded treatment note",
       href: `/clients/${s.client_id}/sessions/${s.id}`,
       date: fmtDate(s.started_at as string),

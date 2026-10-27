@@ -7,6 +7,9 @@ import {
 import { PendingButton } from "@/components/pending-button";
 import { ClientForm, type ClientFormValues } from "@/components/client-form";
 import { clientDisplayName, type WithPreferredName } from "@/lib/clients/identity";
+import { readLegalIdentity } from "@/lib/clients/legal-identity";
+import { LegalIdentityForm } from "@/components/legal-identity-form";
+import { createClient } from "@/lib/supabase/server";
 import { updateClientAction, unarchiveClientAction } from "../actions";
 import { ArchiveClientControl } from "./ArchiveClientControl";
 
@@ -40,6 +43,11 @@ export default async function EditClientPage({
 
   const isArchived = c.archived_at != null;
 
+  // HON-58: the legal identity, read with the signed-in client (only an owner or
+  // practitioner can see the table). A failed read is shown as unavailable, not
+  // as an empty form, so staff never overwrite a legal name they could not see.
+  const legal = await readLegalIdentity(await createClient(), id);
+
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-8">
       <div>
@@ -61,6 +69,21 @@ export default async function EditClientPage({
         hiddenFields={{ client_id: id }}
         saveAnywayLabel="Save changes anyway"
       />
+
+      {legal.ok ? (
+        <LegalIdentityForm
+          clientId={id}
+          initial={{
+            given: legal.value?.legal_given_name ?? "",
+            middle: legal.value?.legal_middle_name ?? "",
+            family: legal.value?.legal_family_name ?? "",
+          }}
+        />
+      ) : (
+        <p className="rounded-lg border border-neutral-200 p-4 text-sm text-neutral-500 dark:border-neutral-800">
+          The legal name could not be loaded right now. Reload the page to try again.
+        </p>
+      )}
 
       {/* Archive / unarchive sits at the bottom of the edit page so a
           practitioner editing a client cannot accidentally hit it
