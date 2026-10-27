@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { settlePendingPreset } from "@/lib/availability/preset-state";
+import {
+  presetConfirmControl,
+  settlePendingPreset,
+} from "@/lib/availability/preset-state";
 
 // AVAIL-PRESET-01. A preset chosen while the previous save is still finishing
 // must survive that save's completion. The component could not be rendered
@@ -56,5 +59,53 @@ describe("AvailabilityClient routes both settle paths through it", () => {
   it("clears it only if it is still the confirmed one, on success and on error", () => {
     const uses = confirm.match(/setPendingPreset\(\(cur\) => settlePendingPreset\(cur, preset\)\)/g) ?? [];
     expect(uses).toHaveLength(2);
+  });
+});
+
+describe("the confirm button follows the save in flight, not the panel", () => {
+  it("nothing in flight: Replace, enabled", () => {
+    expect(presetConfirmControl(A, null, false)).toEqual({ label: "Replace", disabled: false });
+  });
+
+  it("the panel shows the preset being saved: Applying…, disabled", () => {
+    expect(presetConfirmControl(A, A, false)).toEqual({ label: "Applying…", disabled: true });
+  });
+
+  it("the panel shows B while A saves: it does not claim B is applying, and waits", () => {
+    expect(presetConfirmControl(B, A, false)).toEqual({ label: "Replace", disabled: true });
+  });
+
+  it("after A settles B is offered again, enabled", () => {
+    expect(presetConfirmControl(B, null, false)).toEqual({ label: "Replace", disabled: false });
+  });
+
+  it("a day-hours save in flight blocks a preset save", () => {
+    expect(presetConfirmControl(A, null, true)).toEqual({ label: "Replace", disabled: true });
+  });
+});
+
+describe("AvailabilityClient wires the in-flight preset and the cross-save guards", () => {
+  const SRC = readFileSync(
+    join(process.cwd(), "app/(app)/settings/availability/AvailabilityClient.tsx"),
+    "utf8",
+  );
+  const confirm = SRC.slice(
+    SRC.indexOf("function confirmApplyPreset"),
+    SRC.indexOf("const replaceControl"),
+  );
+
+  it("records the preset being saved before the transition and clears it only if still that one, in finally", () => {
+    expect(confirm).toMatch(/setApplyingPreset\(preset\);\s*startPresetTransition/);
+    expect(confirm).toMatch(/finally \{\s*setApplyingPreset\(\(cur\) => settlePendingPreset\(cur, preset\)\);/);
+  });
+
+  it("the Replace button takes its label and disabled state from presetConfirmControl", () => {
+    expect(SRC).toMatch(/disabled=\{replaceControl\.disabled\}/);
+    expect(SRC).toMatch(/\{replaceControl\.label\}/);
+    expect(SRC).not.toMatch(/presetPending \? "Applying…"/);
+  });
+
+  it("the day editor's Save is disabled while a preset saves", () => {
+    expect(SRC).toMatch(/saving=\{savingDow === editingDow \|\| presetPending\}/);
   });
 });

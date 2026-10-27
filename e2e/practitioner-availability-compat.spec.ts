@@ -104,6 +104,10 @@ test("a preset chosen while the previous save is finishing survives that save", 
   // Choose the second preset while the first save is still finishing.
   await page.getByRole("button", { name: /Weekdays 10/ }).click();
   await expect(page.getByText(/Replace current hours with/)).toContainText("Weekdays 10");
+  // The in-flight label belongs to the FIRST preset, not to the panel's: the
+  // panel for the second preset offers "Replace" but waits for the first save.
+  await expect(page.getByRole("button", { name: /^Replace$/ })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Applying…" })).toHaveCount(0);
 
   release();
   // The first save settles (its pending label goes away) ...
