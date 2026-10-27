@@ -1,0 +1,12 @@
+# hone-release: install steps for Sam (root on the VPS; nothing here was run on it)
+
+Prerequisite and headline limit: **this custody holds only if the agent user is in neither the `docker` nor the `sudo` group.** On this VPS `sam` is in both (`groups=sam,sudo,users,docker`). Docker-group membership is root-equivalent (`docker run -v /var/lib/hone-release/secrets:/s ... cat` reads the secrets; CI shows it), and sudo-group membership means `sudo -l` shows a general ALL rule and a sudo password typed in an agent's pane gives that pane root. Moving the lanes' docker use to another user (or rootless docker) and removing the agent user from both groups is **your decision** and blocks the custody claim until done.
+
+1. Copy `rehearsal/hone-release/` and the linux supabase-go (verified: archive `9c0421ba…`, inner `174a90e2…`) to a root-owned directory.
+2. `sudo bash install.sh <agent-user> <project-ref> <path-to-supabase-go>` — creates the `hone-release` system user, the directories (700), the root-owned launcher, scripts and manifest, the sudoers line (checked by `visudo -cf` first). It writes no secret and no approval.
+3. `sudo bash set-secret.sh db-password` and `sudo bash set-secret.sh read-pat` — each at a hidden prompt, typed twice. Two files, two actions: the apply action receives ONLY the database password (the CLI needs no token for `--db-url`); read actions receive ONLY the read-only PAT (Database Read + Backups Read). Record the rotation dates.
+4. Per stage: the agent copies `bundle.tar` and `list.sha256` into `/srv/hone-release-inbox` (mode 644); you run `sudo bash approve-package.sh <approval_id> <first> <last> <count> <expires_UTC> <target_url> "<recovery attestation text>"` and type the first 8 characters of the bundle sha. Sam's per-stage approval is that command. The record is single-use.
+5. The agent runs `sudo -n -u hone-release /usr/local/libexec/hone-release/launcher apply` (or `read-backups`, `status`) — the only three commands the sudoers line allows.
+6. Anything but a clean APPLIED state blocks the next run; only root clears `/var/lib/hone-release/state/APPLY-STATE` after the migration history has been read back.
+
+Not covered by this version (stated, not hidden): watchdog readiness (E3), quiet-database recovery-point rule (E4), the clock-bound row-4 checks of the Mac script; the approval records `watchdog=waived-by-approver` and root's `recovery_attestation` text, unverified.

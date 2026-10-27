@@ -14,9 +14,9 @@ def sha(b): return hashlib.sha256(b).hexdigest()
 def read_pairs(listfile):
     return [tuple(l.rstrip("\n").split("  ", 1)) for l in open(listfile) if l.strip()]
 
-def write_tar(path, files, extra=None):
+def write_tar(path, files, extra=None, head=None):
     """files: dict name -> bytes ; ustar, fixed mtime, directories first (as git archive)."""
-    with tarfile.open(path, "w", format=tarfile.USTAR_FORMAT) as t:
+    with (tarfile.open(path, "w", format=tarfile.PAX_FORMAT, pax_headers={"comment": head}) if head else tarfile.open(path, "w", format=tarfile.USTAR_FORMAT)) as t:
         for d in ("supabase", "supabase/migrations"):
             ti = tarfile.TarInfo(d + "/"); ti.type = tarfile.DIRTYPE; ti.mode = 0o775; ti.mtime = 1761420540; t.addfile(ti)
         for name in sorted(files):
@@ -29,9 +29,9 @@ def write_list(path, files):
     with open(path, "w") as f:
         for name in sorted(files): f.write(f"{sha(files[name])}  {name}\n")
 
-def emit(outdir, files, bundle="migrations-d189768b.tar", lst="MIGRATIONS-d189768b.sha256", extra=None, list_files=None):
+def emit(outdir, files, bundle="migrations-d189768b.tar", lst="MIGRATIONS-d189768b.sha256", extra=None, list_files=None, head=None):
     os.makedirs(outdir, exist_ok=True)
-    write_tar(os.path.join(outdir, bundle), files, extra)
+    write_tar(os.path.join(outdir, bundle), files, extra, head)
     write_list(os.path.join(outdir, lst), list_files if list_files is not None else files)
     go34 = {k: v for k, v in (list_files if list_files is not None else files).items() if 213 <= int(k[:4]) <= 246}
     with open(os.path.join(outdir, "go34.txt"), "w") as f:
@@ -73,6 +73,7 @@ def cmd_copy(a):
     print("test copy rewrites: " + ", ".join(changed))
 
 def cmd_syn(a):
+    head = a[a.index("--head") + 1] if "--head" in a else None
     out = a[0]; fail = a[a.index("--fail") + 1] if "--fail" in a else None; slow = a[a.index("--sleep") + 1] if "--sleep" in a else None
     names = [n for _, n in read_pairs(os.path.join(os.path.dirname(os.path.abspath(__file__)), "MIGRATIONS-d189768b.sha256"))]
     files = {}
@@ -85,7 +86,7 @@ def cmd_syn(a):
             nap = "select pg_sleep(2);\n" if n[:4] in ("0213", "0229", "0246") else ""   # keeps the CLI alive long enough for the argv sampler
             body = f"begin;\ncreate table public.s1_t{n[:4]} (id int);\n{nap}commit;\n".encode()
         files[n] = body
-    emit(out, files)
+    emit(out, files, head=head)
 
 def cmd_vary(a):
     src, out, kind = a[0], a[1], a[2]

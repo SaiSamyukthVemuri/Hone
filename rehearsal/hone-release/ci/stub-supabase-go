@@ -1,0 +1,35 @@
+#!/bin/bash
+# REHEARSAL STUB for the vendor CLI (custody tests only). It records, WITHOUT printing any secret, what the launcher gave it:
+# the environment variable NAMES, whether PGPASSWORD / SUPABASE_ACCESS_TOKEN equal the canaries (match/no-match), and argv.
+W=/var/lib/hone-release/work
+mode=$(cat "$W/stub-mode" 2>/dev/null || echo ok)
+read -r FIRST LAST < "$W/stub-range" 2>/dev/null || { FIRST=0213; LAST=0246; }
+{
+  echo "CALL $(date -u +%H:%M:%S) mode=$mode argv=$*"
+  echo "ENVNAMES $(env | cut -d= -f1 | sort | tr '\n' ' ')"
+  if [ -n "${PGPASSWORD:-}" ]; then [ "$PGPASSWORD" = "$(cat "$W/canary-db" 2>/dev/null)" ] && echo "PGPASSWORD matches the db canary" || echo "PGPASSWORD present, NOT the canary"; else echo "PGPASSWORD absent"; fi
+  if [ -n "${SUPABASE_ACCESS_TOKEN:-}" ]; then [ "$SUPABASE_ACCESS_TOKEN" = "$(cat "$W/canary-pat" 2>/dev/null)" ] && echo "TOKEN matches the pat canary" || echo "TOKEN present, NOT the canary"; else echo "TOKEN absent"; fi
+} >> "$W/stub.log"
+case "$1" in
+  backups) echo '[{"name":"stub","status":"COMPLETED"}]'; exit 0 ;;
+esac
+names=$(ls supabase/migrations | awk -v f="$((10#$FIRST))" -v l="$((10#$LAST))" '{v=substr($1,1,4)+0; if (v>=f && v<=l) print $1}')
+case " $* " in
+  *" --dry-run "*)
+    [ "$mode" = authfail ] && { echo 'failed to connect to postgres: failed SASL auth (FATAL: password authentication failed for user "postgres.secretref" (SQLSTATE 28P01)) host=db.secretref.supabase.com' >&2; exit 1; }
+    echo "DRY RUN: migrations will *not* be pushed to the database." >&2; echo "Connecting to remote database..." >&2; echo "Would push these migrations:" >&2
+    printf '%s\n' "$names" | while read -r n; do printf ' \xe2\x80\xa2 %s\n' "$n" >&2; done
+    echo "Finished supabase db push."; exit 0 ;;
+esac
+echo "Connecting to remote database..." >&2
+i=0
+printf '%s\n' "$names" | while read -r n; do
+  i=$((i+1)); echo "Applying migration $n..." >&2
+  [ "$mode" = slow ] && [ "$i" = 3 ] && sleep 8
+  [ "$mode" = failmid ] && [ "$i" = 3 ] && { echo "ERROR: boom (SQLSTATE XX000)" >&2; exit 3; }
+done
+rc=$?
+[ "$mode" = failmid ] && exit 1
+echo "PUSH COMPLETED $(date -u +%H:%M:%S)" >> "$W/stub.log"
+echo "Finished supabase db push."
+exit 0
