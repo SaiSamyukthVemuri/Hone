@@ -20,9 +20,9 @@ id "$AGENT" >/dev/null 2>&1 || die "no such agent user"
 [ -f "$PINS" ] && [ ! -L "$PINS" ] || die "the pins file is missing or a symlink"
 PINS=$(realpath -e -- "$PINS")
 case "$PINS" in "$HERE"/*) die "the pins file is inside the package directory" ;; esac
-chain_ok() { local p="$1" m; while :; do [ ! -L "$p" ] && [ "$(stat -c %u "$p")" = 0 ] || return 1; m=$(stat -c %a "$p"); [ $(( 8#$m & 8#022 )) = 0 ] || return 1; [ "$p" != / ] || break; p=$(dirname "$p"); done; }
-chain_ok "$PINS" || die "the pins file or a parent directory is not root-owned and private to root"
-chain_ok "$HERE" || die "the package directory or a parent is not root-owned and private to root (copy the package to a root-owned directory first)"
+chain_ok() { local p="$1" m; CHAIN_BAD=; while :; do if [ -L "$p" ] || [ "$(stat -c %u "$p")" != 0 ]; then CHAIN_BAD="$p ($(stat -c '%U %a' "$p"), or a symlink)"; return 1; fi; m=$(stat -c %a "$p"); if [ $(( 8#$m & 8#022 )) != 0 ]; then CHAIN_BAD="$p (mode $m is group- or other-writable)"; return 1; fi; [ "$p" != / ] || break; p=$(dirname "$p"); done; }
+chain_ok "$PINS" || die "the pins file or a parent directory is not root-owned and private to root: $CHAIN_BAD"
+chain_ok "$HERE" || die "the package directory or a parent is not root-owned and private to root (copy the package to a root-owned directory first): $CHAIN_BAD"
 [ -z "$(find "$HERE" -type l | head -1)" ] || die "the package contains a symlink"
 [ -z "$(find "$HERE" ! -user root | head -1)" ] || die "the package contains a file not owned by root"
 [ -z "$(find "$HERE" -perm /022 ! -type l | head -1)" ] || die "the package contains a group- or other-writable file or directory"
