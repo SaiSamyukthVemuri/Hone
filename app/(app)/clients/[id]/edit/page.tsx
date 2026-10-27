@@ -6,6 +6,7 @@ import {
 } from "@/lib/supabase/queries";
 import { PendingButton } from "@/components/pending-button";
 import { ClientForm, type ClientFormValues } from "@/components/client-form";
+import { clientDisplayName, type WithPreferredName } from "@/lib/clients/identity";
 import { updateClientAction, unarchiveClientAction } from "../actions";
 import { ArchiveClientControl } from "./ArchiveClientControl";
 
@@ -20,8 +21,11 @@ export default async function EditClientPage({
   if (!data) notFound();
 
   const c = data.client;
+  // HON-58: getClientById reads "*", so the column arrives when the database has it.
+  const preferredName = (c as WithPreferredName).preferred_name ?? "";
   const initial: ClientFormValues = {
     name: c.name ?? "",
+    preferred_name: preferredName,
     pronouns: c.pronouns ?? "",
     date_of_birth: c.date_of_birth ?? "",
     phone: c.phone ?? "",
@@ -43,7 +47,7 @@ export default async function EditClientPage({
           href={`/clients/${id}`}
           className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
-          ← {c.name}
+          ← {clientDisplayName({ name: c.name, preferred_name: preferredName })}
         </Link>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">Edit client</h1>
       </div>

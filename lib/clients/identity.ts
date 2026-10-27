@@ -76,3 +76,27 @@ export function clientIdentityPair(client: ClientIdentityFields): { display: str
   const legal = clientLegalName(client);
   return { display, legal: legal !== null && legal !== display ? legal : null };
 }
+
+/** The longest preferred name the database accepts (clients_preferred_name_shape). */
+export const PREFERRED_NAME_MAX = 200;
+
+/** Added to a client row type: the HON-58 column, absent on a database without it. */
+export type WithPreferredName = { preferred_name?: string | null };
+
+/**
+ * Read a preferred name typed into a form. Blank is "no preferred name" (null);
+ * runs of spaces collapse; the database check requires the stored value to be
+ * trimmed and at most PREFERRED_NAME_MAX characters, so both are enforced here
+ * and a too-long value is refused rather than silently cut.
+ */
+export function parsePreferredName(
+  raw: FormDataEntryValue | string | null | undefined,
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (typeof raw !== "string") return { ok: true, value: null };
+  const value = clean(raw);
+  if (value.length === 0) return { ok: true, value: null };
+  if (value.length > PREFERRED_NAME_MAX) {
+    return { ok: false, error: `Preferred name must be ${PREFERRED_NAME_MAX} characters or fewer.` };
+  }
+  return { ok: true, value };
+}
