@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
-  committedPatch: null as Record<string, unknown> | null, pendingPatch: null as Record<string, unknown> | null,
-  identity: vi.fn(), lookup: vi.fn(), duplicate: vi.fn(), audit: vi.fn(), redirect: vi.fn(), revalidate: vi.fn(), filters: [] as Array<[string, unknown]>, writes: vi.fn(),
+  getUser: vi.fn(), member: vi.fn(), memberFilters: [] as Array<[string, unknown]>,
+  admin: vi.fn(), identity: vi.fn(), lookup: vi.fn(), duplicate: vi.fn(), audit: vi.fn(), redirect: vi.fn(), revalidate: vi.fn(), filters: [] as Array<[string, unknown]>, writes: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ redirect: h.redirect }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidate }));
 vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: h.identity }));
-vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: (table: string) => {
-  if (table === "audit_logs") return { insert: h.audit };
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ auth: { getUser: h.getUser }, from: (table: string) => {
+  if (table === "practitioners") {
+    const member = { select: () => member, eq: (key: string, value: unknown) => { h.memberFilters.push([key, value]); return member; }, maybeSingle: h.member };
+    return member;
+  }
+  if (table === "audit_logs") throw new Error("Direct user-scoped audit insert is forbidden");
   const query = {
     select: () => query,
     eq: (key: string, value: unknown) => { h.filters.push([key, value]); return query; },
@@ -19,6 +23,20 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: (ta
   };
   return query;
 } }) }));
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => {
+  h.admin();
+  return { rpc: (name: string, args: Record<string, unknown>) => {
+    if (name !== "record_client_archive_audit_governed") throw new Error("Unexpected privileged command");
+    expect(args.p_user_id).toBe("user-A");
+    return Promise.resolve(h.audit({ studio_id: args.p_studio_id, actor_id: args.p_actor_id,
+      action: args.p_archived ? "client_archived" : "client_unarchived", entity_type: "client", entity_id: args.p_client_id,
+      metadata: args.p_archived ? { archived_at: args.p_archived_at } : {},
+    })).then((reply: { error: unknown }) => ({ data: !reply.error, error: reply.error }));
+  }, from: (table: string) => {
+    if (table !== "audit_logs") throw new Error("Unexpected privileged table");
+    return { insert: h.audit };
+  } };
+} }));
 import { updateClientAction, archiveClientAction, unarchiveClientAction } from "@/app/(app)/clients/[id]/actions";
 
 const STUDIO = "11111111-2222-4333-8444-555555555555";
@@ -29,7 +47,9 @@ function form() {
   return data;
 }
 beforeEach(() => {
-  vi.clearAllMocks(); h.filters = []; h.committedPatch = null; h.pendingPatch = null;
+  vi.clearAllMocks(); h.filters = []; h.memberFilters = [];
+  h.getUser.mockResolvedValue({ data: { user: { id: "user-A" } }, error: null });
+  h.member.mockResolvedValue({ data: { id: ACTOR, user_id: "user-A", studio_id: STUDIO, active: true, role: "practitioner" }, error: null });
   h.audit.mockReset(); h.redirect.mockReset(); h.revalidate.mockReset();
   h.identity.mockResolvedValue({ studio: { id: STUDIO } });
 });
@@ -150,13 +170,12 @@ describe.each([
   { name: "unarchive", action: unarchiveClientAction, event: "client_unarchive_audit_failed", auditAction: "client_unarchived", destination: `/clients/${CLIENT}` },
 ])("$name audit diagnostic privacy", ({ name, action, event, auditAction, destination }) => {
   function setup() {
-    h.identity.mockResolvedValue({ practitioner: { id: ACTOR }, studio: { id: STUDIO } });
+    h.identity.mockResolvedValue({ practitioner: { id: ACTOR, active: true, role: "practitioner" }, studio: { id: STUDIO } });
     h.lookup.mockResolvedValue({ data: { id: CLIENT }, error: null });
     const update = { eq: vi.fn(), is: vi.fn(), not: vi.fn() };
     update.eq.mockReturnValue(update);
-    const commit = async () => { h.committedPatch = { ...h.pendingPatch! }; return { error: null }; };
-    update.is.mockImplementation(commit); update.not.mockImplementation(commit);
-    h.writes.mockReset(); h.writes.mockImplementation((patch: Record<string, unknown>) => { h.pendingPatch = patch; return update; });
+    update.is.mockResolvedValue({ error: null }); update.not.mockResolvedValue({ error: null });
+    h.writes.mockReset(); h.writes.mockReturnValue(update);
     h.audit.mockResolvedValue({ error: null });
     h.redirect.mockImplementation(() => { throw NAV; });
     return update;
@@ -167,8 +186,12 @@ describe.each([
     h.audit.mockResolvedValue({ error: { code: "23514", message: sentinel } });
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(action(form())).rejects.toBe(NAV);
-    expect(h.identity).toHaveBeenCalledOnce(); expect(h.lookup).toHaveBeenCalledOnce();
-    expect(h.filters).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
+    // The governed helper independently reauthorizes and checks the client again.
+    expect(h.identity).toHaveBeenCalledTimes(2); expect(h.lookup).toHaveBeenCalledTimes(2);
+    expect(h.admin).toHaveBeenCalledOnce();
+    expect(h.getUser).toHaveBeenCalledOnce(); expect(h.member).toHaveBeenCalledOnce();
+    expect(h.memberFilters).toEqual([["id", ACTOR], ["user_id", "user-A"], ["studio_id", STUDIO], ["active", true]]);
+    expect(h.filters).toEqual([["id", CLIENT], ["studio_id", STUDIO], ["id", CLIENT], ["studio_id", STUDIO]]);
     expect(h.writes).toHaveBeenCalledOnce();
     expect(update.eq.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
     const mutation = h.writes.mock.calls[0]![0];
@@ -184,40 +207,81 @@ describe.each([
     expect(h.redirect).toHaveBeenCalledExactlyOnceWith(destination);
     expect(log).toHaveBeenCalledOnce();
     const payload = JSON.parse(String(log.mock.calls[0]![0]));
-    expect(payload).toEqual({ event, clientId: "[id]", code: "23514", timestamp: expect.any(String) });
+    expect(payload).toEqual({ event, clientId: "[id]", code: "audit_write_unavailable", timestamp: expect.any(String) });
     expect(Number.isNaN(Date.parse(payload.timestamp))).toBe(false);
     for (const text of ["synthetic-patient", "private-clinical", "synthetic-token", CLIENT])
       expect(JSON.stringify(log.mock.calls)).not.toContain(text);
   });
-  it("preserves committed success and safe diagnostics when inline audit insert throws", async () => {
+  it.each(["identity", "client", "fresh-auth", "fresh-member", "rpc"])("keeps committed state and redirect/revalidation after thrown audit %s", async (stage) => {
     const update = setup();
     const sentinel = `synthetic-patient@example.test private-clinical-sentinel synthetic-token ${CLIENT}`;
-    h.audit.mockRejectedValue(new Error(sentinel));
+    const failure = new Error(sentinel);
+    const identity = { practitioner: { id: ACTOR, active: true, role: "practitioner" }, studio: { id: STUDIO } };
+    let committedState: Record<string, unknown> | null = null;
+    const sequence: string[] = [];
+    const commit = async () => {
+      committedState = { ...h.writes.mock.calls[0]![0] };
+      sequence.push("committed");
+      return { error: null };
+    };
+    update.is.mockImplementation(commit); update.not.mockImplementation(commit);
+    const rejectAfterCommit = async () => {
+      expect(sequence).toEqual(["committed"]);
+      sequence.push(stage);
+      throw failure;
+    };
+    if (stage === "identity") h.identity.mockResolvedValueOnce(identity).mockImplementationOnce(rejectAfterCommit);
+    if (stage === "client") h.lookup.mockResolvedValueOnce({ data: { id: CLIENT }, error: null }).mockImplementationOnce(rejectAfterCommit);
+    if (stage === "fresh-auth") h.getUser.mockImplementationOnce(rejectAfterCommit);
+    if (stage === "fresh-member") h.member.mockImplementationOnce(rejectAfterCommit);
+    if (stage === "rpc") h.audit.mockImplementationOnce(rejectAfterCommit);
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(action(form())).rejects.toBe(NAV);
-    expect(h.committedPatch).toEqual(name === "archive"
+    expect(sequence).toEqual(["committed", stage]);
+    expect(committedState).toEqual(name === "archive"
       ? { archived_at: expect.any(String), archived_by: ACTOR } : { archived_at: null, archived_by: null });
     expect(h.writes).toHaveBeenCalledOnce();
     expect(update.eq.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
     expect(update.is.mock.calls).toEqual(name === "archive" ? [["archived_at", null]] : []);
     expect(update.not.mock.calls).toEqual(name === "unarchive" ? [["archived_at", "is", null]] : []);
-    expect(h.audit).toHaveBeenCalledExactlyOnceWith({
-      studio_id: STUDIO, actor_id: ACTOR, action: auditAction, entity_type: "client", entity_id: CLIENT,
-      metadata: name === "archive" ? { archived_at: h.committedPatch!.archived_at } : {},
-    });
     expect(h.revalidate.mock.calls).toEqual([[`/clients/${CLIENT}`], ["/clients"]]);
     expect(h.redirect).toHaveBeenCalledExactlyOnceWith(destination);
+    expect(h.admin).toHaveBeenCalledTimes(stage === "rpc" ? 1 : 0);
+    expect(h.audit).toHaveBeenCalledTimes(stage === "rpc" ? 1 : 0);
     expect(log).toHaveBeenCalledOnce();
-    expect(JSON.parse(String(log.mock.calls[0]![0]))).toEqual({ event, clientId: "[id]", code: "audit_write_unavailable", timestamp: expect.any(String) });
-    for (const raw of [sentinel, "synthetic-patient", "private-clinical", "synthetic-token", CLIENT])
-      expect(JSON.stringify(log.mock.calls)).not.toContain(raw);
+    const payload = JSON.parse(String(log.mock.calls[0]![0]));
+    expect(payload).toEqual({ event, clientId: "[id]", code: "audit_write_unavailable", timestamp: expect.any(String) });
+    for (const text of ["synthetic-patient", "private-clinical", "synthetic-token", CLIENT])
+      expect(JSON.stringify(log.mock.calls)).not.toContain(text);
   });
-  it("preserves normal committed success without inventing an audit warning", async () => {
-    setup(); const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  it("preserves normal governed committed success without inventing an audit warning", async () => {
+    const update = setup();
+    let committedState: Record<string, unknown> | null = null;
+    const commit = async () => {
+      committedState = { ...h.writes.mock.calls[0]![0] };
+      return { error: null };
+    };
+    update.is.mockImplementation(commit); update.not.mockImplementation(commit);
+    h.audit.mockImplementation(async () => {
+      expect(committedState).toEqual(name === "archive"
+        ? { archived_at: expect.any(String), archived_by: ACTOR } : { archived_at: null, archived_by: null });
+      return { error: null };
+    });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(action(form())).rejects.toBe(NAV);
-    expect(h.committedPatch).toEqual(name === "archive"
+    expect(committedState).toEqual(name === "archive"
       ? { archived_at: expect.any(String), archived_by: ACTOR } : { archived_at: null, archived_by: null });
-    expect(h.audit).toHaveBeenCalledOnce();
+    expect(h.writes).toHaveBeenCalledOnce();
+    expect(update.eq.mock.calls).toEqual([["id", CLIENT], ["studio_id", STUDIO]]);
+    expect(update.is.mock.calls).toEqual(name === "archive" ? [["archived_at", null]] : []);
+    expect(update.not.mock.calls).toEqual(name === "unarchive" ? [["archived_at", "is", null]] : []);
+    expect(h.getUser).toHaveBeenCalledOnce(); expect(h.member).toHaveBeenCalledOnce();
+    expect(h.memberFilters).toEqual([["id", ACTOR], ["user_id", "user-A"], ["studio_id", STUDIO], ["active", true]]);
+    expect(h.admin).toHaveBeenCalledOnce();
+    expect(h.audit).toHaveBeenCalledExactlyOnceWith({
+      studio_id: STUDIO, actor_id: ACTOR, action: auditAction, entity_type: "client", entity_id: CLIENT,
+      metadata: name === "archive" ? { archived_at: committedState!.archived_at } : {},
+    });
     expect(h.revalidate.mock.calls).toEqual([[`/clients/${CLIENT}`], ["/clients"]]);
     expect(h.redirect).toHaveBeenCalledExactlyOnceWith(destination);
     expect(log).not.toHaveBeenCalled();
@@ -227,7 +291,6 @@ describe.each([
     update.is.mockResolvedValue({ error: { message: "synthetic update refusal" } });
     update.not.mockResolvedValue({ error: { message: "synthetic update refusal" } });
     await expect(action(form())).rejects.toThrow(`Failed to ${name} client: unknown`);
-    expect(h.committedPatch).toBeNull();
     expect(h.audit).not.toHaveBeenCalled(); expect(h.revalidate).not.toHaveBeenCalled(); expect(h.redirect).not.toHaveBeenCalled();
   });
   it.each(["auth", "visibility"])("preserves %s refusal before UPDATE or audit", async (mode) => {
@@ -236,7 +299,6 @@ describe.each([
     else h.lookup.mockResolvedValue({ data: null, error: null });
     await expect(action(form())).rejects.toThrow(mode === "auth" ? "synthetic auth refusal" : "Client not found.");
     if (mode === "auth") expect(h.lookup).not.toHaveBeenCalled();
-    expect(h.committedPatch).toBeNull();
     expect(h.writes).not.toHaveBeenCalled(); expect(h.audit).not.toHaveBeenCalled();
     expect(h.revalidate).not.toHaveBeenCalled(); expect(h.redirect).not.toHaveBeenCalled();
   });

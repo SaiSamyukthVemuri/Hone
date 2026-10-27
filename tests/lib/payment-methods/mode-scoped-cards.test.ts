@@ -74,7 +74,9 @@ describe("5) card retire-on-replace is mode-scoped", () => {
 
   it("the webhook passes the EVENT's mode into the command, never a literal", () => {
     const src = read("app/api/stripe/webhook/route.ts");
-    const call = src.slice(src.indexOf('"save_client_card_on_file"'));
+    const commandIdx = src.indexOf('"save_client_card_on_file_ordered"');
+    expect(commandIdx).toBeGreaterThan(-1);
+    const call = src.slice(commandIdx);
     const args = call.slice(0, call.indexOf("},"));
     expect(args).toMatch(/p_stripe_livemode: ctx\.livemode/);
     expect(src).not.toMatch(/\.eq\("stripe_livemode", (true|false)\)/);

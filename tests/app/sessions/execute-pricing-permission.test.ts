@@ -33,9 +33,9 @@ vi.mock("@/lib/stripe/server", () => ({ inferStripeLivemode: () => false }));
 
 // The attempt-row read. `attemptRow` / `attemptRowError` are set per test.
 const attemptLookup: {
-  row: { session_id: string | null } | null;
+  row: { session_id: string | null; currency?: string | null } | null;
   error: unknown;
-} = { row: { session_id: "sess-1" }, error: null };
+} = { row: { session_id: "sess-1", currency: "cad" }, error: null };
 
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
@@ -81,10 +81,11 @@ vi.mock("@/lib/billing/session-payment-charge", () => ({
 
 import { executeSessionPaymentChargeAction } from "@/app/(app)/clients/[id]/sessions/[sessionId]/payment-actions";
 
-function form(): FormData {
+function form(shownCurrency: string | null = "cad"): FormData {
   const fd = new FormData();
   fd.set("attempt_id", "attempt-1");
   fd.set("confirm_charge", "true");
+  if (shownCurrency !== null) fd.set("expected_currency", shownCurrency);
   // Untrusted context. Deliberately points at a DIFFERENT session than the
   // attempt row carries, so any implementation that repriced the browser's
   // session instead of the stored one would be visible here.
@@ -95,7 +96,7 @@ function form(): FormData {
 
 beforeEach(() => {
   runCharge.mockClear();
-  attemptLookup.row = { session_id: "sess-1" };
+  attemptLookup.row = { session_id: "sess-1", currency: "cad" };
   attemptLookup.error = null;
   repriced = {
     ok: true,
@@ -124,7 +125,7 @@ describe("execution requires a currently authoritative CHARGEABLE price", () => 
   it("E1b a read ERROR blocks even when a row IS returned", async () => {
     // Same distinguishing case as M5b: a null row would block regardless, so
     // only an error alongside a usable row proves the error is honoured.
-    attemptLookup.row = { session_id: "sess-1" };
+    attemptLookup.row = { session_id: "sess-1", currency: "cad" };
     attemptLookup.error = { message: "boom" };
     const res = await executeSessionPaymentChargeAction(form());
     expect(res.ok).toBe(false);
@@ -133,7 +134,7 @@ describe("execution requires a currently authoritative CHARGEABLE price", () => 
   });
 
   it("E2 attempt row unavailable / no trusted session_id -> blocked, runner never called", async () => {
-    attemptLookup.row = { session_id: null };
+    attemptLookup.row = { session_id: null, currency: "cad" };
     const res = await executeSessionPaymentChargeAction(form());
     expect(res.ok).toBe(false);
     expect(res).toMatchObject({ outcome: "blocked" });
@@ -265,11 +266,58 @@ describe("execution requires a currently authoritative CHARGEABLE price", () => 
       result: { kind: "free", serviceName: "Consultation", durationMinutes: 30 },
       appointmentId: "appt-1",
     };
-    attemptLookup.row = { session_id: "sess-1" };
+    attemptLookup.row = { session_id: "sess-1", currency: "cad" };
     const res = await executeSessionPaymentChargeAction(form());
     // free on the STORED session blocks, proving the stored id was the one used
     expect(res).toMatchObject({ outcome: "blocked" });
     expect(runCharge).toHaveBeenCalledTimes(0);
     expect(seen).toEqual([]);
+  });
+});
+
+
+// #1035 Codex P1 #4369182087. The confirm step runs the PERSISTED attempt, in
+// the PERSISTED currency; what the card displayed is posted only so the server
+// can refuse a mismatch. runSessionPaymentCharge (which sends the persisted
+// currency to Stripe: tests/lib/billing/session-payment-charge-currency.test.ts)
+// is the oracle: a refusal here leaves it at zero calls.
+describe("execute confirms the persisted attempt currency", () => {
+  it("C1 USD attempt, USD shown: runs (control)", async () => {
+    attemptLookup.row = { session_id: "sess-1", currency: "usd" };
+    const res = await executeSessionPaymentChargeAction(form("usd"));
+    expect(res.ok).toBe(true);
+    expect(runCharge).toHaveBeenCalledTimes(1);
+  });
+  it("C2 CAD attempt, CAD shown: runs (control)", async () => {
+    attemptLookup.row = { session_id: "sess-1", currency: "cad" };
+    expect((await executeSessionPaymentChargeAction(form("cad"))).ok).toBe(true);
+    expect(runCharge).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    ["C3 USD attempt but CAD was shown", "usd", "cad"],
+    ["C4 CAD attempt but USD was shown", "cad", "usd"],
+    ["C5 nothing posted", "usd", null],
+    ["C6 empty posted", "usd", ""],
+    ["C7 unsupported posted", "usd", "eur"],
+  ] as const)("%s: blocked, runner never called", async (_l, persisted, shown) => {
+    attemptLookup.row = { session_id: "sess-1", currency: persisted };
+    const res = await executeSessionPaymentChargeAction(form(shown));
+    expect(res.ok).toBe(false);
+    expect(res).toMatchObject({ outcome: "blocked" });
+    if (!res.ok) expect(res.error).toMatch(/currency shown for this charge no longer matches/i);
+    expect(runCharge).toHaveBeenCalledTimes(0);
+  });
+  it.each([
+    ["C8 persisted currency is eur", "eur"],
+    ["C9 persisted currency is null", null],
+    ["C10 persisted currency is upper-case", "USD"],
+  ] as const)("%s: refused as unverifiable even when the page showed it, runner never called", async (_l, persisted) => {
+    attemptLookup.row = { session_id: "sess-1", currency: persisted };
+    for (const shown of ["cad", "usd", String(persisted)]) {
+      const res = await executeSessionPaymentChargeAction(form(shown));
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error).toMatch(/currency of this charge could not be verified/i);
+    }
+    expect(runCharge).toHaveBeenCalledTimes(0);
   });
 });
