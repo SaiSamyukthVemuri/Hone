@@ -1153,8 +1153,8 @@ describe("CI-REGISTRY: every Supabase-starting job pre-pulls its images with a b
       const c = code(s);
       expect(c).toContain("supabase services 2>/dev/null | awk -F'|'");
       expect(c).not.toMatch(/\b(?:postgres|postgres-meta|kong|gotrue|postgrest|mailpit|supavisor|realtime|studio|storage-api|edge-runtime|logflare)[:@]v?\d/);
-      // Excluded services are skipped; the supavisor only when the pooler is enabled.
-      expect(c).toContain('case ",$EXCLUDE," in *",$svc,"*) continue ;; esac');
+      // Excluded services are skipped EXCEPT realtime (the CLI pulls it even with -x realtime, run 40557844633); the supavisor only when the pooler is enabled.
+      expect(c).toContain('case ",$EXCLUDE," in *",$svc,"*) [ "$svc" = realtime ] || continue ;; esac');
       expect(c).toContain('if [ "$svc" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi');
     }
   });

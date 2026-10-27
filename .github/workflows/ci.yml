@@ -615,7 +615,10 @@ jobs:
           for IMG in $listed; do
             svc="${IMG%%:*}"
             if [ "$svc" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
-            case ",$EXCLUDE," in *",$svc,"*) continue ;; esac
+            # The CLI pulls the realtime image even with -x realtime (run 40557844633:
+            # "Retrying after 4s: ghcr.io/supabase/realtime" while initialising the
+            # database), so realtime is never skipped.
+            case ",$EXCLUDE," in *",$svc,"*) [ "$svc" = realtime ] || continue ;; esac
             imgs="$imgs $IMG"
           done
           echo "images:$imgs"
@@ -890,7 +893,10 @@ jobs:
           for IMG in $listed; do
             svc="${IMG%%:*}"
             if [ "$svc" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
-            case ",$EXCLUDE," in *",$svc,"*) continue ;; esac
+            # The CLI pulls the realtime image even with -x realtime (run 40557844633:
+            # "Retrying after 4s: ghcr.io/supabase/realtime" while initialising the
+            # database), so realtime is never skipped.
+            case ",$EXCLUDE," in *",$svc,"*) [ "$svc" = realtime ] || continue ;; esac
             imgs="$imgs $IMG"
           done
           echo "images:$imgs"
@@ -1301,7 +1307,10 @@ jobs:
           for IMG in $listed; do
             svc="${IMG%%:*}"
             if [ "$svc" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
-            case ",$EXCLUDE," in *",$svc,"*) continue ;; esac
+            # The CLI pulls the realtime image even with -x realtime (run 40557844633:
+            # "Retrying after 4s: ghcr.io/supabase/realtime" while initialising the
+            # database), so realtime is never skipped.
+            case ",$EXCLUDE," in *",$svc,"*) [ "$svc" = realtime ] || continue ;; esac
             imgs="$imgs $IMG"
           done
           echo "images:$imgs"
@@ -1515,7 +1524,10 @@ jobs:
           for IMG in $listed; do
             svc="${IMG%%:*}"
             if [ "$svc" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
-            case ",$EXCLUDE," in *",$svc,"*) continue ;; esac
+            # The CLI pulls the realtime image even with -x realtime (run 40557844633:
+            # "Retrying after 4s: ghcr.io/supabase/realtime" while initialising the
+            # database), so realtime is never skipped.
+            case ",$EXCLUDE," in *",$svc,"*) [ "$svc" = realtime ] || continue ;; esac
             imgs="$imgs $IMG"
           done
           echo "images:$imgs"
@@ -1726,7 +1738,10 @@ jobs:
           for IMG in $listed; do
             svc="${IMG%%:*}"
             if [ "$svc" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
-            case ",$EXCLUDE," in *",$svc,"*) continue ;; esac
+            # The CLI pulls the realtime image even with -x realtime (run 40557844633:
+            # "Retrying after 4s: ghcr.io/supabase/realtime" while initialising the
+            # database), so realtime is never skipped.
+            case ",$EXCLUDE," in *",$svc,"*) [ "$svc" = realtime ] || continue ;; esac
             imgs="$imgs $IMG"
           done
           echo "images:$imgs"
@@ -1921,7 +1936,10 @@ jobs:
           for IMG in $listed; do
             svc="${IMG%%:*}"
             if [ "$svc" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
-            case ",$EXCLUDE," in *",$svc,"*) continue ;; esac
+            # The CLI pulls the realtime image even with -x realtime (run 40557844633:
+            # "Retrying after 4s: ghcr.io/supabase/realtime" while initialising the
+            # database), so realtime is never skipped.
+            case ",$EXCLUDE," in *",$svc,"*) [ "$svc" = realtime ] || continue ;; esac
             imgs="$imgs $IMG"
           done
           echo "images:$imgs"
@@ -2124,7 +2142,10 @@ jobs:
           for IMG in $listed; do
             svc="${IMG%%:*}"
             if [ "$svc" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
-            case ",$EXCLUDE," in *",$svc,"*) continue ;; esac
+            # The CLI pulls the realtime image even with -x realtime (run 40557844633:
+            # "Retrying after 4s: ghcr.io/supabase/realtime" while initialising the
+            # database), so realtime is never skipped.
+            case ",$EXCLUDE," in *",$svc,"*) [ "$svc" = realtime ] || continue ;; esac
             imgs="$imgs $IMG"
           done
           echo "images:$imgs"
