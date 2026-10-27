@@ -139,7 +139,7 @@ badfd() { # badfd <label> <expected refusal text> <fd3-source-command or CLOSED>
   [ "$BRC" = 2 ] && grep -q "PUSH REFUSED: .*$want" "$OUT/w-$l.out" && [ "$(vhist)" = "$N0" ]
 }
 ALL=0
-for c in "closed|fd 3 is not open|CLOSED" "empty|empty or longer|printf ''" "twolines|more than one line|printf 'a\\nb\\n'" "oversize|empty or longer|head -c 5000 /dev/zero | tr '\\0' x; echo" "noapproval|approval-id|CLOSED|--approval-id=" ; do
+for c in "closed|fd 3 is not open|CLOSED" "empty|could not read the password from fd 3|printf ''" "twolines|more than one line|printf 'a\\nb\\n'" "oversize|more than one line or more than 4096 bytes|head -c 5000 /dev/zero | tr '\\0' x; echo" "noapproval|approval-id|CLOSED|--approval-id=" ; do
   IFS='|' read -r n want src extra <<< "$c"
   if [ "$n" = noapproval ]; then
     bash "$G/hone-push-linux.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --workdir "$VW" --expected "$EXPF" --state-dir "$OUT/sd-v6-$n" --tombstone-dir "$VTD" 3< "$PWF" > "$OUT/w-v6-$n.out" 2>&1; BRC=$?
@@ -153,9 +153,9 @@ expect "(V6z) no refusal printed the password; the history never moved" "$(nopw 
 say "== V7. login failure (M4): a wrong password writes FAILED-LOGIN once; every later run refuses WITHOUT logging in"
 vnew v7; WRONG="$OUT/v-wrongpw"; printf '%s\n' "wrong-$PWU-wrong" > "$WRONG"
 bash "$G/hone-push-linux.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --workdir "$VW" --expected "$EXPF" --state-dir "$OUT/sd-v7a" --approval-id ap-v7 --tombstone-dir "$VTD" 3< "$WRONG" > "$OUT/w-v7a.out" 2>&1; R1=$?
-AF0="$(docker logs "$POOLER" 2>&1 | grep -ciE 'password authentication failed|SASL auth')"
+sleep 3; AF0="$(docker logs "$POOLER" 2>&1 | grep -ciE 'password authentication failed|SASL auth')"
 bash "$G/hone-push-linux.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --workdir "$VW" --expected "$EXPF" --state-dir "$OUT/sd-v7b" --approval-id ap-v7 --tombstone-dir "$VTD" 3< "$PWF" > "$OUT/w-v7b.out" 2>&1; R2=$?
-AF1="$(docker logs "$POOLER" 2>&1 | grep -ciE 'password authentication failed|SASL auth')"
+sleep 3; AF1="$(docker logs "$POOLER" 2>&1 | grep -ciE 'password authentication failed|SASL auth')"
 expect "(V7a) the first run refuses (exit 2) and writes FAILED-LOGIN" "$([ "$R1" = 2 ] && [ -s "$VTD/FAILED-LOGIN" ] && echo 0 || echo 1)" "rc=$R1 $(tr '\n' ' ' < "$OUT/w-v7a.out" | cut -c1-200)"
 expect "(V7b) the next run (even with the RIGHT password) refuses on FAILED-LOGIN with no login at all (Supavisor auth-failure count unchanged, history unchanged)" "$([ "$R2" = 2 ] && grep -q 'FAILED-LOGIN exists' "$OUT/w-v7b.out" && [ "$AF1" = "$AF0" ] && [ "$(vhist)" = 0 ] && echo 0 || echo 1)" "rc=$R2 af=$AF0/$AF1"
 expect "(V7c) neither password appears in any output or state file" "$(! grep -rqF -e "wrong-$PWU-wrong" -e "$PWU" "$OUT"/w-v7*.out "$OUT"/sd-v7* "$VTD" 2> /dev/null && echo 0 || echo 1)" "-"
@@ -183,7 +183,7 @@ expect "(V9) the guard exited within 15 s of its parent's death (no orphan guard
 kill "$G9" 2> /dev/null
 
 say "== V10. backoff and tombstone (M4): with the relay down the guard backs off, stops after 3 failed polls, writes FAILED-LOGIN, and makes no further logins"
-GD10="$OUT/sd-v10-guard"; mkdir -p "$GD10"; rm -f "$VTD/FAILED-LOGIN"; sleep 600 & PAR=$!
+GD10="$OUT/sd-v10-guard"; mkdir -p "$GD10" "$VTD"; rm -f "$VTD/FAILED-LOGIN"; sleep 600 & PAR=$!
 PGPASSWORD="$PWU" bash "$G/hone-push-guard.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --state-dir "$GD10" --parent "$PAR" --tombstone "$VTD/FAILED-LOGIN" --limit 120 --every 1 --max 120 > "$GD10/guard.out" 2>&1 & G10=$!
 for _ in $(seq 1 30); do grep -q ' ok ' "$GD10/polls.log" 2> /dev/null && break; sleep 0.5; done
 kill "$RELAY" 2> /dev/null; for _ in $(seq 1 60); do kill -0 "$G10" 2> /dev/null || break; sleep 1; done
