@@ -159,7 +159,7 @@ AF0="$(afc)"; for _ in $(seq 1 30); do sleep 2; AFN="$(afc)"; [ "$AFN" = "$AF0" 
 bash "$G/hone-push-linux.sh" --go "$GOBIN" --url-base "$TLSURL_BASE" --workdir "$VW" --expected "$EXPF" --state-dir "$OUT/sd-v7b" --approval-id ap-v7 --tombstone-dir "$VTD" 3< "$PWF" > "$OUT/w-v7b.out" 2>&1; R2=$?
 sleep 6; AF1="$(afc)"; docker logs "$POOLER" 2>&1 | grep -i 'authentication failed' | tail -n 5 | cut -c1-240 > "$OUT/v7-authfail-sample.txt"
 expect "(V7a) the first run refuses (exit 2) and writes FAILED-LOGIN" "$([ "$R1" = 2 ] && [ -s "$VTD/FAILED-LOGIN" ] && echo 0 || echo 1)" "rc=$R1 $(tr '\n' ' ' < "$OUT/w-v7a.out" | cut -c1-200)"
-expect "(V7b) the next run (even with the RIGHT password) refuses on FAILED-LOGIN with no login at all (Supavisor auth-failure count unchanged, history unchanged)" "$([ "$R2" = 2 ] && grep -q 'FAILED-LOGIN exists' "$OUT/w-v7b.out" && [ "$AF1" = "$AF0" ] && [ "$(vhist)" = 0 ] && echo 0 || echo 1)" "rc=$R2 af=$AF0/$AF1"
+expect "(V7b) the next run (even with the RIGHT password) refuses on FAILED-LOGIN with no login at all (structural proof: no CLI ran, "Nothing attempted", history unchanged; the Supavisor auth-failure count is informational only, because Supavisor internal tenant connections log 28P01 continuously on a local stack)" "$([ "$R2" = 2 ] && grep -q 'FAILED-LOGIN exists' "$OUT/w-v7b.out" && [ ! -e "$OUT/sd-v7b/push.err" ] && grep -q 'Nothing attempted' "$OUT/w-v7b.out" && [ "$(vhist)" = 0 ] && echo 0 || echo 1)" "rc=$R2 af=$AF0/$AF1"
 expect "(V7c) neither password appears in any output or state file" "$(! grep -rqF -e "wrong-$PWU-wrong" -e "$PWU" "$OUT"/w-v7*.out "$OUT"/sd-v7* "$VTD" 2> /dev/null && echo 0 || echo 1)" "-"
 rm -f "$VTD/FAILED-LOGIN"
 
