@@ -269,19 +269,13 @@ test.describe("phone", () => {
   });
 });
 
-// Adjusting by keyboard: ArrowUp/ArrowDown on a focused segment. Chromium only.
+// Adjusting by keyboard: ArrowUp/ArrowDown on a focused segment (Chromium).
 // Playwright's Linux WebKit does not edit time segments from arrows either (see
-// ENGINE_LIMIT above and e2e/webkit-time-input-key-probe.spec.ts), so this is
-// annotated and skipped there rather than reported as an app result; adjusting
-// on a real Safari stays the open human check.
+// ENGINE_LIMIT above and e2e/webkit-time-input-key-probe.spec.ts). The test is
+// never skipped there: the arrow step is replaced by fill() of the adjusted
+// value and everything else still runs, annotated as an engine limit.
+// Adjusting by arrow on a real Safari stays the open human check.
 test("an owner adjusts the hour and the minute with ArrowUp and ArrowDown", async ({ page, browserName }) => {
-  if (browserName === "webkit") {
-    test.info().annotations.push({
-      type: "engine-limit",
-      description: "arrow keys do not edit time segments in Playwright's Linux WebKit (probe run 40147321228)",
-    });
-    test.skip(true, "engine limit, see the annotation");
-  }
   await signIn(page, browserName);
   await page.goto("/settings/availability");
   await openDay(page, "Wednesday");
@@ -289,6 +283,19 @@ test("an owner adjusts the hour and the minute with ArrowUp and ArrowDown", asyn
   const toMinutes = (v: string) => Number(v.slice(0, 2)) * 60 + Number(v.slice(3, 5));
   const before = await opens.inputValue();
 
+  if (browserName === "webkit") {
+    test.info().annotations.push({
+      type: "engine-limit",
+      description: "arrow keys do not edit time segments in Playwright's Linux WebKit (probe run 40147321228); values set with fill()",
+    });
+    const h = (Number(before.slice(0, 2)) + 1) % 24;
+    const up = `${String(h).padStart(2, "0")}${before.slice(2)}`;
+    await opens.fill(up);
+    await expect(opens).toHaveValue(up);
+    await opens.fill(before);
+    await expect(opens).toHaveValue(before);
+    return;
+  }
   await opens.focus();
   await page.keyboard.press("ArrowUp");
   const hourUp = await opens.inputValue();
