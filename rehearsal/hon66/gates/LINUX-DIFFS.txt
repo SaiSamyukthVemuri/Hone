@@ -1,0 +1,306 @@
+--- mac/window-reads-c4/window-s0a.sh
++++ linux/window-s0a-linux.sh
+@@ -1,0 +2,2 @@
++# LINUX VARIANT of the reviewed Mac script (HON66-LINUX-GATES), derived by machines/linux-gates/make-linux.py with a fixed substitution
++# list (see LINUX-DIFFS.txt). Credentials are read from files named by the launcher, never prompted, never on argv.
+@@ -24,2 +26,2 @@
+-GO_SHA=dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b
+-RUNNER_SHA=471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357
++GO_SHA=174a90e23b8dfe9ab4e2d2c2e91d4b6b2520fe5be968721555727f16c1bab43c
++RUNNER_SHA=ec9b7c568a69d3b776ee9c643bcb52eb567639ab9cb0c995b33f59cf6d974468
+@@ -29,2 +31,2 @@
+-BASELINE=BASELINE-W1-MACOS-CANDIDATE-5.json
+-BASELINE_SHA=1b22730afd845aa50358a4fe3fb5f68aa36d22293329c7d16ba2effce7a50d82
++BASELINE=BASELINE-W1-LINUX-CANDIDATE-5.json
++BASELINE_SHA=3a4125b00bec7ba46d778f3f014f3eba8e32c3d1dafc778a24836b39c68de464
+@@ -37,0 +40,18 @@
++# Credentials come from FILES named by the launcher (hone-gate-launch.sh), never from a prompt, never from argv.
++# secret_from_file VAR ENVNAME LABEL: the file must be absolute, a regular file (no symlink), one hard link, owned by you, mode 600,
++# in a directory that is not group/other-writable, one line, non-empty. The value is read into VAR only; nothing is printed.
++secret_from_file() {
++  local _v _p _envn="$2" _label="$3" _dir
++  _p="${!_envn:-}"
++  [ -n "$_p" ] || die "$_envn is not set (the launcher passes the path of the $_label file)"
++  case "$_p" in /*) ;; *) die "$_envn must be an absolute path" ;; esac
++  [ -f "$_p" ] && [ ! -L "$_p" ] || die "the $_label file is missing, not a regular file, or a symlink"
++  [ "$(stat -c '%u %a %h' "$_p" 2>/dev/null)" = "$(id -u) 600 1" ] || die "the $_label file must be owned by you, mode 600, one hard link"
++  _dir=$(dirname "$_p"); [ -z "$(find "$_dir" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ] || die "the directory of the $_label file is writable by group or others"
++  [ "$(grep -c '' "$_p")" -le 1 ] || die "the $_label file must hold exactly one line"
++  _v=""; IFS= read -r _v < "$_p" || [ -n "$_v" ] || die "could not read the $_label file"
++  [ -n "$_v" ] || die "the $_label file is empty"
++  printf -v "$1" '%s' "$_v"
++  unset "$_envn"
++}
++
+@@ -45 +65 @@
+-sha() { shasum -a 256 -- "$1" | cut -d' ' -f1; }
++sha() { sha256sum -- "$1" | cut -d' ' -f1; }
+@@ -52,2 +72,2 @@
+-[ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || die "not macOS arm64"
+-command -v shasum >/dev/null 2>&1 || die "shasum not found"
++[ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] || die "not Linux x86_64 (the pinned supabase-go is linux_amd64)"
++command -v sha256sum >/dev/null 2>&1 || die "sha256sum not found"
+@@ -59,2 +79,2 @@
+-[ -f "$BIN" ] && [ "$(sha "$BIN")" = "$GO_SHA" ] || die "supabase-go missing or sha256 mismatch (run the Mac check first)"
+-[ -f "$WR/run-window-read-macos.sh" ] && [ "$(sha "$WR/run-window-read-macos.sh")" = "$RUNNER_SHA" ] || die "runner missing or sha256 mismatch"
++[ -f "$BIN" ] && [ "$(sha "$BIN")" = "$GO_SHA" ] || die "supabase-go missing or sha256 mismatch (run the installer check first)"
++[ -f "$WR/run-window-read.sh" ] && [ "$(sha "$WR/run-window-read.sh")" = "$RUNNER_SHA" ] || die "runner missing or sha256 mismatch"
+@@ -62 +82 @@
+-oks=$(cd "$WR" && shasum -a 256 -c MANIFEST.sha256) || die "a gate file does not match MANIFEST.sha256"
++oks=$(cd "$WR" && sha256sum -c MANIFEST.sha256) || die "a gate file does not match MANIFEST.sha256"
+@@ -72,0 +93,14 @@
++
++# The ORIGINAL Linux runner (run-window-read.sh, unchanged) calls `npx --yes supabase@2.102.0 db query ...`, which would download and run
++# unverified bytes. This shim is first on PATH for that one child: it accepts ONLY that exact invocation, requires a non-empty database
++# password (the password-present rule that prevents the CLI's hosted login-role write), re-checks the pinned supabase-go sha256 and execs it.
++SHIM="$WORK/shim"; mkdir -p "$SHIM" && chmod 700 "$SHIM" || die "mkdir shim failed"
++cat > "$SHIM/npx" <<'SHIMEOF'
++#!/bin/bash
++GO_SHA=@GO_SHA@
++[ "$#" -eq 9 ] && [ "$1" = --yes ] && [ "$2" = supabase@2.102.0 ] && [ "$3" = db ] && [ "$4" = query ] && [ "$5" = --linked ] && [ "$6" = -o ] && [ "$7" = json ] && [ "$8" = -f ] || { echo "npx shim: REFUSED: not the reviewed db query invocation" >&2; exit 97; }
++[ -n "${SUPABASE_DB_PASSWORD:-}" ] || { echo "npx shim: REFUSED: no database password (it would let the CLI create a login role)" >&2; exit 97; }
++[ -n "${HONE_SUPABASE_BIN:-}" ] && [ -f "$HONE_SUPABASE_BIN" ] && [ "$(sha256sum "$HONE_SUPABASE_BIN" | cut -d' ' -f1)" = "$GO_SHA" ] || { echo "npx shim: REFUSED: supabase-go missing or sha256 mismatch" >&2; exit 97; }
++exec env -u GITHUB_TOKEN -u GH_TOKEN "$HONE_SUPABASE_BIN" --agent no db query --linked -o json -f "$9"
++SHIMEOF
++sed -i "s/@GO_SHA@/$GO_SHA/" "$SHIM/npx" && chmod 700 "$SHIM/npx" || die "shim write failed"
+@@ -103,3 +137,3 @@
+-  [ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -f '%u %Lp' "$1" 2>/dev/null)" = "$(id -u) 700" ]
+-}
+-file_ok() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -f '%u' "$1" 2>/dev/null)" = "$(id -u)" ]; }
++  [ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u %a' "$1" 2>/dev/null)" = "$(id -u) 700" ]
++}
++file_ok() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u' "$1" 2>/dev/null)" = "$(id -u)" ]; }
+@@ -222,2 +256 @@
+-IFS= read -rs -p "Supabase access token (not shown): " SUPABASE_ACCESS_TOKEN </dev/tty || die "could not read the access token"
+-echo >&2
++secret_from_file SUPABASE_ACCESS_TOKEN HONE_GATE_TOKEN_FILE "access token"
+@@ -225,2 +258 @@
+-IFS= read -rs -p "Database password (not shown; only its presence is used here): " SUPABASE_DB_PASSWORD </dev/tty || die "could not read the password"
+-echo >&2
++secret_from_file SUPABASE_DB_PASSWORD HONE_GATE_PASSWORD_FILE "database password"
+@@ -240 +272 @@
+-      SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 /bin/bash "$WR/run-window-read-macos.sh" "$f" ) </dev/null 2>"$LOGS/$stem.err" || rc=$?
++      SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 PATH="$SHIM:$PATH" /bin/bash "$WR/run-window-read.sh" "$f" ) </dev/null 2>"$LOGS/$stem.err" || rc=$?
+
+--- mac/window-reads-c4/window-row4.sh
++++ linux/window-row4-linux.sh
+@@ -1,0 +2,2 @@
++# LINUX VARIANT of the reviewed Mac script (HON66-LINUX-GATES), derived by machines/linux-gates/make-linux.py with a fixed substitution
++# list (see LINUX-DIFFS.txt). Credentials are read from files named by the launcher, never prompted, never on argv.
+@@ -21 +23 @@
+-BASELINE=BASELINE-W1-MACOS-CANDIDATE-5.json
++BASELINE=BASELINE-W1-LINUX-CANDIDATE-5.json
+@@ -24 +26 @@
+-BASELINE_SHA=1b22730afd845aa50358a4fe3fb5f68aa36d22293329c7d16ba2effce7a50d82
++BASELINE_SHA=3a4125b00bec7ba46d778f3f014f3eba8e32c3d1dafc778a24836b39c68de464
+@@ -30 +32 @@
+-sha() { shasum -a 256 -- "$1" | cut -d' ' -f1; }
++sha() { sha256sum -- "$1" | cut -d' ' -f1; }
+@@ -34,2 +36,2 @@
+-[ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || die "not macOS arm64"
+-command -v shasum >/dev/null 2>&1 || die "shasum not found"
++[ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] || die "not Linux x86_64 (the pinned supabase-go is linux_amd64)"
++command -v sha256sum >/dev/null 2>&1 || die "sha256sum not found"
+@@ -57,2 +59,2 @@
+-dir_ok() { [ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -f '%u %Lp' "$1" 2>/dev/null)" = "$(id -u) 700" ]; }
+-file_ok() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -f '%u' "$1" 2>/dev/null)" = "$(id -u)" ]; }
++dir_ok() { [ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u %a' "$1" 2>/dev/null)" = "$(id -u) 700" ]; }
++file_ok() { [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -c '%u' "$1" 2>/dev/null)" = "$(id -u)" ]; }
+
+--- mac/window-reads-s1/window-s1read.sh
++++ linux/window-s1read-linux.sh
+@@ -1,0 +2,2 @@
++# LINUX VARIANT of the reviewed Mac script (HON66-LINUX-GATES), derived by machines/linux-gates/make-linux.py with a fixed substitution
++# list (see LINUX-DIFFS.txt). Credentials are read from files named by the launcher, never prompted, never on argv.
+@@ -18,2 +20,2 @@
+-GO_SHA=dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b
+-RUNNER_SHA=471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357
++GO_SHA=174a90e23b8dfe9ab4e2d2c2e91d4b6b2520fe5be968721555727f16c1bab43c
++RUNNER_SHA=ec9b7c568a69d3b776ee9c643bcb52eb567639ab9cb0c995b33f59cf6d974468
+@@ -23,2 +25,2 @@
+-BASELINE=BASELINE-W1-MACOS-CANDIDATE-3.json
+-BASELINE_SHA=efc94a51f02bd2116a806229c8910b9ac48c2e5da6c0ff6556a3671e957301dd
++BASELINE=BASELINE-W1-LINUX-CANDIDATE-3.json
++BASELINE_SHA=ef91480a6457965a32dbb369a4ab9a5b76aba42e3c665262abb779055611b005
+@@ -30,0 +33,18 @@
++# Credentials come from FILES named by the launcher (hone-gate-launch.sh), never from a prompt, never from argv.
++# secret_from_file VAR ENVNAME LABEL: the file must be absolute, a regular file (no symlink), one hard link, owned by you, mode 600,
++# in a directory that is not group/other-writable, one line, non-empty. The value is read into VAR only; nothing is printed.
++secret_from_file() {
++  local _v _p _envn="$2" _label="$3" _dir
++  _p="${!_envn:-}"
++  [ -n "$_p" ] || die "$_envn is not set (the launcher passes the path of the $_label file)"
++  case "$_p" in /*) ;; *) die "$_envn must be an absolute path" ;; esac
++  [ -f "$_p" ] && [ ! -L "$_p" ] || die "the $_label file is missing, not a regular file, or a symlink"
++  [ "$(stat -c '%u %a %h' "$_p" 2>/dev/null)" = "$(id -u) 600 1" ] || die "the $_label file must be owned by you, mode 600, one hard link"
++  _dir=$(dirname "$_p"); [ -z "$(find "$_dir" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ] || die "the directory of the $_label file is writable by group or others"
++  [ "$(grep -c '' "$_p")" -le 1 ] || die "the $_label file must hold exactly one line"
++  _v=""; IFS= read -r _v < "$_p" || [ -n "$_v" ] || die "could not read the $_label file"
++  [ -n "$_v" ] || die "the $_label file is empty"
++  printf -v "$1" '%s' "$_v"
++  unset "$_envn"
++}
++
+@@ -38 +58 @@
+-sha() { shasum -a 256 -- "$1" | cut -d' ' -f1; }
++sha() { sha256sum -- "$1" | cut -d' ' -f1; }
+@@ -56 +76 @@
+-[ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || die "not macOS arm64"
++[ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] || die "not Linux x86_64 (the pinned supabase-go is linux_amd64)"
+@@ -60 +80 @@
+-command -v shasum >/dev/null 2>&1 || die "shasum not found"
++command -v sha256sum >/dev/null 2>&1 || die "sha256sum not found"
+@@ -67,2 +87,2 @@
+-[ -f "$BIN" ] && [ "$(sha "$BIN")" = "$GO_SHA" ] || die "supabase-go missing or sha256 mismatch (run the Mac check first)"
+-[ -f "$WR1/run-window-read-macos.sh" ] && [ "$(sha "$WR1/run-window-read-macos.sh")" = "$RUNNER_SHA" ] || die "runner copy missing or sha256 mismatch"
++[ -f "$BIN" ] && [ "$(sha "$BIN")" = "$GO_SHA" ] || die "supabase-go missing or sha256 mismatch (run the installer check first)"
++[ -f "$WR1/run-window-read.sh" ] && [ "$(sha "$WR1/run-window-read.sh")" = "$RUNNER_SHA" ] || die "runner copy missing or sha256 mismatch"
+@@ -70 +90 @@
+-oks=$(cd "$WR1" && shasum -a 256 -c MANIFEST.sha256) || die "an S1 gate file does not match MANIFEST.sha256"
++oks=$(cd "$WR1" && sha256sum -c MANIFEST.sha256) || die "an S1 gate file does not match MANIFEST.sha256"
+@@ -79,0 +100,14 @@
++
++# The ORIGINAL Linux runner (run-window-read.sh, unchanged) calls `npx --yes supabase@2.102.0 db query ...`, which would download and run
++# unverified bytes. This shim is first on PATH for that one child: it accepts ONLY that exact invocation, requires a non-empty database
++# password (the password-present rule that prevents the CLI's hosted login-role write), re-checks the pinned supabase-go sha256 and execs it.
++SHIM="$WORK/shim"; mkdir -p "$SHIM" && chmod 700 "$SHIM" || die "mkdir shim failed"
++cat > "$SHIM/npx" <<'SHIMEOF'
++#!/bin/bash
++GO_SHA=@GO_SHA@
++[ "$#" -eq 9 ] && [ "$1" = --yes ] && [ "$2" = supabase@2.102.0 ] && [ "$3" = db ] && [ "$4" = query ] && [ "$5" = --linked ] && [ "$6" = -o ] && [ "$7" = json ] && [ "$8" = -f ] || { echo "npx shim: REFUSED: not the reviewed db query invocation" >&2; exit 97; }
++[ -n "${SUPABASE_DB_PASSWORD:-}" ] || { echo "npx shim: REFUSED: no database password (it would let the CLI create a login role)" >&2; exit 97; }
++[ -n "${HONE_SUPABASE_BIN:-}" ] && [ -f "$HONE_SUPABASE_BIN" ] && [ "$(sha256sum "$HONE_SUPABASE_BIN" | cut -d' ' -f1)" = "$GO_SHA" ] || { echo "npx shim: REFUSED: supabase-go missing or sha256 mismatch" >&2; exit 97; }
++exec env -u GITHUB_TOKEN -u GH_TOKEN "$HONE_SUPABASE_BIN" --agent no db query --linked -o json -f "$9"
++SHIMEOF
++sed -i "s/@GO_SHA@/$GO_SHA/" "$SHIM/npx" && chmod 700 "$SHIM/npx" || die "shim write failed"
+@@ -89 +122,0 @@
+-[ -r /dev/tty ] || die "no terminal for private entry"
+@@ -96,2 +129 @@
+-IFS= read -rs -p "Supabase access token (not shown): " SUPABASE_ACCESS_TOKEN </dev/tty || die "could not read the access token"
+-echo >&2
++secret_from_file SUPABASE_ACCESS_TOKEN HONE_GATE_TOKEN_FILE "access token"
+@@ -99,2 +131 @@
+-IFS= read -rs -p "Database password (not shown; only its presence is used here): " SUPABASE_DB_PASSWORD </dev/tty || die "could not read the password"
+-echo >&2
++secret_from_file SUPABASE_DB_PASSWORD HONE_GATE_PASSWORD_FILE "database password"
+@@ -113 +144 @@
+-      SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 /bin/bash "$WR1/run-window-read-macos.sh" "$f" ) </dev/null 2>"$LOGS/$stem.err" || rc=$?
++      SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 PATH="$SHIM:$PATH" /bin/bash "$WR1/run-window-read.sh" "$f" ) </dev/null 2>"$LOGS/$stem.err" || rc=$?
+
+--- mac/pitr-status/pitr-backups.sh
++++ linux/pitr-backups-linux.sh
+@@ -1,0 +2,2 @@
++# LINUX VARIANT of the reviewed Mac script (HON66-LINUX-GATES), derived by machines/linux-gates/make-linux.py with a fixed substitution
++# list (see LINUX-DIFFS.txt). Credentials are read from files named by the launcher, never prompted, never on argv.
+@@ -27 +29 @@
+-GO_SHA=dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b
++GO_SHA=174a90e23b8dfe9ab4e2d2c2e91d4b6b2520fe5be968721555727f16c1bab43c
+@@ -31,0 +34,18 @@
++# Credentials come from FILES named by the launcher (hone-gate-launch.sh), never from a prompt, never from argv.
++# secret_from_file VAR ENVNAME LABEL: the file must be absolute, a regular file (no symlink), one hard link, owned by you, mode 600,
++# in a directory that is not group/other-writable, one line, non-empty. The value is read into VAR only; nothing is printed.
++secret_from_file() {
++  local _v _p _envn="$2" _label="$3" _dir
++  _p="${!_envn:-}"
++  [ -n "$_p" ] || die "$_envn is not set (the launcher passes the path of the $_label file)"
++  case "$_p" in /*) ;; *) die "$_envn must be an absolute path" ;; esac
++  [ -f "$_p" ] && [ ! -L "$_p" ] || die "the $_label file is missing, not a regular file, or a symlink"
++  [ "$(stat -c '%u %a %h' "$_p" 2>/dev/null)" = "$(id -u) 600 1" ] || die "the $_label file must be owned by you, mode 600, one hard link"
++  _dir=$(dirname "$_p"); [ -z "$(find "$_dir" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ] || die "the directory of the $_label file is writable by group or others"
++  [ "$(grep -c '' "$_p")" -le 1 ] || die "the $_label file must hold exactly one line"
++  _v=""; IFS= read -r _v < "$_p" || [ -n "$_v" ] || die "could not read the $_label file"
++  [ -n "$_v" ] || die "the $_label file is empty"
++  printf -v "$1" '%s' "$_v"
++  unset "$_envn"
++}
++
+@@ -36 +56 @@
+-sha() { shasum -a 256 -- "$1" | cut -d' ' -f1; }
++sha() { sha256sum -- "$1" | cut -d' ' -f1; }
+@@ -42,2 +62,2 @@
+-[ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || die "not macOS arm64"
+-command -v shasum >/dev/null 2>&1 || die "shasum not found"
++[ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] || die "not Linux x86_64 (the pinned supabase-go is linux_amd64)"
++command -v sha256sum >/dev/null 2>&1 || die "sha256sum not found"
+@@ -50 +70 @@
+-[ -f "$BIN" ] && [ "$(sha "$BIN")" = "$GO_SHA" ] || die "supabase-go missing or sha256 mismatch (run the Mac check first)"
++[ -f "$BIN" ] && [ "$(sha "$BIN")" = "$GO_SHA" ] || die "supabase-go missing or sha256 mismatch (run the installer check first)"
+@@ -53 +72,0 @@
+-[ -r /dev/tty ] || die "no terminal for private entry"
+@@ -61,2 +80 @@
+-IFS= read -rs -p "Supabase access token (not shown): " tok </dev/tty || die "could not read the access token"
+-echo >&2
++secret_from_file tok HONE_GATE_TOKEN_FILE "access token"
+
+--- mac/window-gap-read/window-gap-read.sh
++++ linux/window-gap-read-linux.sh
+@@ -1,0 +2,2 @@
++# LINUX VARIANT of the reviewed Mac script (HON66-LINUX-GATES), derived by machines/linux-gates/make-linux.py with a fixed substitution
++# list (see LINUX-DIFFS.txt). Credentials are read from files named by the launcher, never prompted, never on argv.
+@@ -20,2 +22,2 @@
+-GO_SHA=dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b
+-RUNNER_SHA=471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357
++GO_SHA=174a90e23b8dfe9ab4e2d2c2e91d4b6b2520fe5be968721555727f16c1bab43c
++RUNNER_SHA=ec9b7c568a69d3b776ee9c643bcb52eb567639ab9cb0c995b33f59cf6d974468
+@@ -30,0 +33,18 @@
++# Credentials come from FILES named by the launcher (hone-gate-launch.sh), never from a prompt, never from argv.
++# secret_from_file VAR ENVNAME LABEL: the file must be absolute, a regular file (no symlink), one hard link, owned by you, mode 600,
++# in a directory that is not group/other-writable, one line, non-empty. The value is read into VAR only; nothing is printed.
++secret_from_file() {
++  local _v _p _envn="$2" _label="$3" _dir
++  _p="${!_envn:-}"
++  [ -n "$_p" ] || die "$_envn is not set (the launcher passes the path of the $_label file)"
++  case "$_p" in /*) ;; *) die "$_envn must be an absolute path" ;; esac
++  [ -f "$_p" ] && [ ! -L "$_p" ] || die "the $_label file is missing, not a regular file, or a symlink"
++  [ "$(stat -c '%u %a %h' "$_p" 2>/dev/null)" = "$(id -u) 600 1" ] || die "the $_label file must be owned by you, mode 600, one hard link"
++  _dir=$(dirname "$_p"); [ -z "$(find "$_dir" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ] || die "the directory of the $_label file is writable by group or others"
++  [ "$(grep -c '' "$_p")" -le 1 ] || die "the $_label file must hold exactly one line"
++  _v=""; IFS= read -r _v < "$_p" || [ -n "$_v" ] || die "could not read the $_label file"
++  [ -n "$_v" ] || die "the $_label file is empty"
++  printf -v "$1" '%s' "$_v"
++  unset "$_envn"
++}
++
+@@ -38 +58 @@
+-sha() { shasum -a 256 -- "$1" | cut -d' ' -f1; }
++sha() { sha256sum -- "$1" | cut -d' ' -f1; }
+@@ -56 +76 @@
+-[ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || die "not macOS arm64"
++[ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] || die "not Linux x86_64 (the pinned supabase-go is linux_amd64)"
+@@ -62 +82 @@
+-command -v shasum >/dev/null 2>&1 || die "shasum not found"
++command -v sha256sum >/dev/null 2>&1 || die "sha256sum not found"
+@@ -69 +89 @@
+-[ -f "$BIN" ] && [ "$(sha "$BIN")" = "$GO_SHA" ] || die "supabase-go missing or sha256 mismatch (run the Mac check first)"
++[ -f "$BIN" ] && [ "$(sha "$BIN")" = "$GO_SHA" ] || die "supabase-go missing or sha256 mismatch (run the installer check first)"
+@@ -71 +91 @@
+-[ -f "$GR/run-window-read-macos.sh" ] && [ "$(sha "$GR/run-window-read-macos.sh")" = "$RUNNER_SHA" ] || die "runner copy missing or sha256 mismatch"
++[ -f "$GR/run-window-read.sh" ] && [ "$(sha "$GR/run-window-read.sh")" = "$RUNNER_SHA" ] || die "runner copy missing or sha256 mismatch"
+@@ -78,0 +99,14 @@
++
++# The ORIGINAL Linux runner (run-window-read.sh, unchanged) calls `npx --yes supabase@2.102.0 db query ...`, which would download and run
++# unverified bytes. This shim is first on PATH for that one child: it accepts ONLY that exact invocation, requires a non-empty database
++# password (the password-present rule that prevents the CLI's hosted login-role write), re-checks the pinned supabase-go sha256 and execs it.
++SHIM="$WORK/shim"; mkdir -p "$SHIM" && chmod 700 "$SHIM" || die "mkdir shim failed"
++cat > "$SHIM/npx" <<'SHIMEOF'
++#!/bin/bash
++GO_SHA=@GO_SHA@
++[ "$#" -eq 9 ] && [ "$1" = --yes ] && [ "$2" = supabase@2.102.0 ] && [ "$3" = db ] && [ "$4" = query ] && [ "$5" = --linked ] && [ "$6" = -o ] && [ "$7" = json ] && [ "$8" = -f ] || { echo "npx shim: REFUSED: not the reviewed db query invocation" >&2; exit 97; }
++[ -n "${SUPABASE_DB_PASSWORD:-}" ] || { echo "npx shim: REFUSED: no database password (it would let the CLI create a login role)" >&2; exit 97; }
++[ -n "${HONE_SUPABASE_BIN:-}" ] && [ -f "$HONE_SUPABASE_BIN" ] && [ "$(sha256sum "$HONE_SUPABASE_BIN" | cut -d' ' -f1)" = "$GO_SHA" ] || { echo "npx shim: REFUSED: supabase-go missing or sha256 mismatch" >&2; exit 97; }
++exec env -u GITHUB_TOKEN -u GH_TOKEN "$HONE_SUPABASE_BIN" --agent no db query --linked -o json -f "$9"
++SHIMEOF
++sed -i "s/@GO_SHA@/$GO_SHA/" "$SHIM/npx" && chmod 700 "$SHIM/npx" || die "shim write failed"
+@@ -88 +121,0 @@
+-[ -r /dev/tty ] || die "no terminal for private entry"
+@@ -95,2 +128 @@
+-IFS= read -rs -p "Supabase access token (not shown): " SUPABASE_ACCESS_TOKEN </dev/tty || die "could not read the access token"
+-echo >&2
++secret_from_file SUPABASE_ACCESS_TOKEN HONE_GATE_TOKEN_FILE "access token"
+@@ -98,2 +130 @@
+-IFS= read -rs -p "Database password (not shown; only its presence is used here): " SUPABASE_DB_PASSWORD </dev/tty || die "could not read the password"
+-echo >&2
++secret_from_file SUPABASE_DB_PASSWORD HONE_GATE_PASSWORD_FILE "database password"
+@@ -108 +139 @@
+-    SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 /bin/bash "$GR/run-window-read-macos.sh" "$f" ) </dev/null 2>"$LOGS/$stem.err" || rc=$?
++    SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 PATH="$SHIM:$PATH" /bin/bash "$GR/run-window-read.sh" "$f" ) </dev/null 2>"$LOGS/$stem.err" || rc=$?

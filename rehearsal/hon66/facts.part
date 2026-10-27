@@ -35,7 +35,8 @@ say "RESULT how long (ms) the push session was visible: $(psqld -c "select coale
 say "RESULT predicate hits: samples matching the WATCHDOG's pin predicate (postgres role, client backend, state=active, xid or relation lock >= ShareUpdateExclusive): $(psqld -c "select count(*) from public.zz_probe_samples where usename='postgres' and btype='client backend' and state='active' and (xid is not null or lockmode ~ 'ShareUpdateExclusiveLock|ShareLock|ShareRowExclusiveLock|ExclusiveLock|AccessExclusiveLock')")"
 say "RESULT distinct push-session states: $(psqld -c "select string_agg(distinct state || ':' || (xid is not null)::text, ', ') from public.zz_probe_samples where app = 'hon66-probe'")"
 say "RESULT distinct postgres backends (pids) used by the push: $(psqld -c "select count(distinct pid) from public.zz_probe_samples where app = 'hon66-probe'")"
-expect "(F1b) application_name from the db-url reaches pg_stat_activity through the session pooler" "$([ "$PUSHPID_SAMPLES" -gt 0 ] && echo 0 || echo 1)" "samples=$PUSHPID_SAMPLES"
+PUSHSAMPLES=$(psqld -c "select count(*) from public.zz_probe_samples where usename = 'postgres' and app = 'Supavisor' and state = 'active' and xid is not null")
+expect "(F1b) the push session IS visible as postgres|Supavisor|active with an xid (so the watchdog predicate is not the defect), and application_name from the db-url does NOT reach pg_stat_activity (a nonce pin is impossible through the pooler)" "$([ "$PUSHPID_SAMPLES" = 0 ] && [ "$PUSHSAMPLES" -gt 0 ] && echo 0 || echo 1)" "nonce_samples=$PUSHPID_SAMPLES push_like_samples=$PUSHSAMPLES"
 
 say "== F2. the REAL operator watchdog (d3-watchdog.zsh) against the same fast push: poll 5 s (the shipped value) and poll 1 s"
 render() { cp "$HERE/d3-watchdog.zsh" "$OUT/wd.zsh"; }
@@ -67,6 +68,13 @@ say "RESULT ... with options=-c statement_timeout=7000 -c lock_timeout=3000 in t
 say "RESULT ... with application_name=hon66-x in the URL: $(SHOWT "$TLSURL_BASE&application_name=hon66-x")"
 sadm -c "alter role postgres set statement_timeout = '9s'" > /dev/null
 say "RESULT ... after ALTER ROLE postgres SET statement_timeout='9s' (role default; hosted analogue = the 2 min that was the only protection on 02:37Z): $(SHOWT "$TLSURL_BASE")"
+sadm -c "select count(pg_terminate_backend(pid)) from pg_stat_activity where usename = 'postgres' and backend_type = 'client backend' and pid <> pg_backend_pid()" > /dev/null; sleep 2
+SHOW_ROLE_NEW="$(SHOWT "$TLSURL_BASE")"
+say "RESULT ... after ALTER ROLE and terminating the pooled backends (new backends): $SHOW_ROLE_NEW"
 sadm -c "alter role postgres reset statement_timeout" > /dev/null
+sadm -c "select count(pg_terminate_backend(pid)) from pg_stat_activity where usename = 'postgres' and backend_type = 'client backend' and pid <> pg_backend_pid()" > /dev/null; sleep 2
+OPT_SHOW="$(SHOWT "$TLSURL_BASE&options=-c%20statement_timeout%3D7000%20-c%20lock_timeout%3D3000")"
+expect "(F3a) options=-c ... in the db-url is NOT applied through the session pooler (statement_timeout stays 0)" "$(case "$OPT_SHOW" in "0 0 "*) echo 0;; *) echo 1;; esac)" "$OPT_SHOW"
+expect "(F3b) a role-level default IS applied to NEW pooled backends only (a hosted write: proposal, not a mechanism this lane may apply)" "$(case "$SHOW_ROLE_NEW" in "9s "*) echo 0;; *) echo 1;; esac)" "$SHOW_ROLE_NEW"
 say "RESULT supabase-go db query reads application_name/statement_timeout in-session: $(PGPASSWORD="$PWU" "$GOBIN" --agent no db query --db-url "$TLSURL_BASE&application_name=hon66-gq&options=-c%20statement_timeout%3D7000" -o json "show statement_timeout" 2>&1 | tr -d '\n ' | cut -c1-120)"
 say "== done facts; failures: $FAILS"

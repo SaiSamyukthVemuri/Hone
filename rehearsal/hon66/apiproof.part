@@ -62,6 +62,7 @@ echo "select 1 as one" > "$OUT/api-q.sql"
 mklinked "$OUT/api-linked"
 with_fake_api query env -u GITHUB_TOKEN -u GH_TOKEN "${S1ENV[@]}" SUPABASE_ACCESS_TOKEN="$FAKETOKEN" SUPABASE_DB_PASSWORD="$PWU" bash -c "cd '$OUT/api-linked' && '$GOBIN' --agent no db query --linked -o json -f '$OUT/api-q.sql' > '$OUT/api-query.out' 2> '$OUT/api-query.err'; echo \$? > '$OUT/api-query.rc'"
 say "RESULT db query --linked exit=$(cat "$OUT/api-query.rc"); requests: $(nflows query); stdout: $(head -c 120 "$OUT/api-query.out" | tr -d '\n ')"; flows query | tee -a "$RES"
+say "   stderr (token and password never printed by the CLI; canary values filtered): $(tr '\n' ' ' < "$OUT/api-query.err" | sed -e "s/$FAKETOKEN/<canary-token>/g" -e "s/$PWU/<pw>/g" | cut -c1-400)"
 QPOST=$(grep -c '"method": "POST", "host": "api.supabase.com", "path": "/v1/projects/'$FAKEREF'/database/query"' "$OUT/flows-query.jsonl")
 QOTHER=$(grep -v '"/v1/projects/'$FAKEREF'/database/query"' "$OUT/flows-query.jsonl" | grep -vc '"method": "GET", "host": "api.supabase.com", "path": "/v1/projects/'$FAKEREF'"')
 expect "(H6c) db query --linked sends exactly one POST /database/query (and nothing but the optional GET project beside it); no read-only endpoint, no other path" "$([ "$QPOST" = 1 ] && [ "$QOTHER" = 0 ] && echo 0 || echo 1)" "post=$QPOST other=$QOTHER total=$(nflows query)"

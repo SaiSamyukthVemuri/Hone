@@ -1,0 +1,77 @@
+{
+  "_note": "TEMPLATE, no values. Every field below is read by compare-preflight-lib.mjs (checks S0-1, S0-8, S0-9, S0-10, S0-11, S0-12). Replace each <...> at the window; a bare true/false or a missing field fails the check. Times are UTC ISO-8601, must not be in the future. Do not put names of people, studios or customers in this file other than an operator label. UNDER baseline.recovery_regime 'pitr' (BASELINE-W1-MACOS-CANDIDATE-4, g4_pitr_base.mode unavailable_under_pitr: the Management API lists no base backup, so latest_base_backup_status / latest_base_backup_completed_at_utc / base_backup_source / read_at_utc / read_source are REJECTED; the range comes from --pitr-api) use g4_pitr in place of g4: a daily g4 is REJECTED, and so is pre_migration_restore_point (recorded at row 4, ATTEST-TEMPLATE-ROW4.json). window-s0a.sh builds this file itself; this template is for reading.",
+  "operator": "<operator label, non-empty>",
+  "project_ref_sha256": "<64 hex: sha256 of the production project ref; must equal baseline.project_ref_sha256>",
+  "holds": {
+    "cron_job_org_paused": {
+      "confirmed_by": "<operator label>",
+      "at_utc": "<UTC time>"
+    },
+    "people_hold_in_place": {
+      "confirmed_by": "<operator label>",
+      "at_utc": "<UTC time>"
+    },
+    "maintenance_flag_decision": {
+      "choice": "<no_flag | flag_on>",
+      "confirmed_by": "<operator label>",
+      "at_utc": "<UTC time>"
+    }
+  },
+  "g3": {
+    "head_sha": "<40 hex: the pinned final head; must equal baseline.g3.head_sha>",
+    "checksums": {
+      "0213": "<64 hex>",
+      "0214": "<64 hex: the amended file, a8bdcefe...>",
+      "0215": "<64 hex>",
+      "0216": "<64 hex>",
+      "0217": "<64 hex>",
+      "0218": "<64 hex>",
+      "0219": "<64 hex>",
+      "0220": "<64 hex>",
+      "0221": "<64 hex>",
+      "0222": "<64 hex>",
+      "0223": "<64 hex>",
+      "0224": "<64 hex>",
+      "0225": "<64 hex>",
+      "0226": "<64 hex>",
+      "0227": "<64 hex>",
+      "0228": "<64 hex>",
+      "0229": "<64 hex>",
+      "0230": "<64 hex>",
+      "0231": "<64 hex>",
+      "0232": "<64 hex>",
+      "0233": "<64 hex>",
+      "0234": "<64 hex>",
+      "0235": "<64 hex>",
+      "0236": "<64 hex>",
+      "0237": "<64 hex>",
+      "0238": "<64 hex>",
+      "0239": "<64 hex>",
+      "0240": "<64 hex>",
+      "0241": "<64 hex>",
+      "0242": "<64 hex>",
+      "0243": "<64 hex>",
+      "0244": "<64 hex>",
+      "0245": "<64 hex>",
+      "0246": "<64 hex>"
+    }
+  },
+  "g4_pitr": {
+    "pitr_enabled": "<the boolean true, as the dashboard shows it; the comparator reads the real value from the captured pitr-backups result>",
+    "retention_days": "<integer, >= baseline.g4_pitr.min_retention_days>",
+    "earliest_recovery_at_utc": "<YYYY-MM-DDTHH:MM:SSZ as the dashboard shows it; cross-checked against the API within 1 s>",
+    "latest_recovery_at_utc": "<YYYY-MM-DDTHH:MM:SSZ as the dashboard shows it; cross-checked against the API within 1 s>"
+  },
+  "r6": {
+    "choice": "<S0b | accept_rpo>",
+    "answer_text": "<non-empty text>",
+    "reference": "<non-empty decision reference>",
+    "base_backup_unverified_ack": "<the boolean true, required in mode unavailable_under_pitr; with accept_rpo the answer_text must contain: unverified base backup>"
+  },
+  "disposition_0242": {
+    "choice": "<bridge_ready | R-3>",
+    "reference": "<non-empty reference>"
+  },
+  "denial_files": "<[] : an empty array>",
+  "runner_refusals": "<0>"
+}
