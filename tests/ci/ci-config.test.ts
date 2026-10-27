@@ -1132,13 +1132,17 @@ describe("CI-REGISTRY: every Supabase-starting job pre-pulls its images with a b
 
   it("is non-fatal and bounded: continue-on-error, a step timeout, 2 ghcr attempts with 15 s / 30 s back-off, then ECR, then Docker Hub", () => {
     for (const s of [...prepulls(CI), ...prepulls(NIGHTLY)]) {
-      expect(s).toMatch(/\n        continue-on-error: true\n        timeout-minutes: 15\n        shell: bash\n        run: \|\n/);
+      expect(s).toMatch(/\n        continue-on-error: true\n        timeout-minutes: 20\n        shell: bash\n        run: \|\n/);
       const c = code(s);
       expect(c).toContain("set +e");
       expect(c).toContain("for i in 1 2; do");
       expect(c).toContain("if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi");
       expect(c).toContain("sleep $((i*15))");
-      expect(c).toContain("for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do");
+      // Docker Hub has no supabase/kong|mailpit|postgrest: the third source is the upstream reference
+      // the CLI builds from (ORIG, from its embedded Dockerfile), re-tagged to the name the start looks for.
+      expect(c).toContain("for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG ${ORIG:+docker.io/$ORIG}; do");
+      expect(c).toContain('printf \'%s %s\\n\' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"');
+      expect(c).toContain('done < "$RUNNER_TEMP/pull-list.txt"');
       // Re-tagged locally so the start finds the image, with the digest printed as evidence.
       expect(c).toContain('docker tag "$src" ghcr.io/supabase/$IMG');
       expect(c).toContain("docker image inspect --format '{{index .RepoDigests 0}}' \"$src\"");

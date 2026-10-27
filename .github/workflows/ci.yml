@@ -606,9 +606,14 @@ jobs:
       # database even with -x realtime / -x storage-api (runs 40557844633,
       # 40559826388). Inline, never a checked-out script, because the credential is
       # held (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
+      # Docker Hub has no supabase/kong, supabase/mailpit or supabase/postgrest, so the
+      # third source is the upstream reference the CLI's Dockerfile builds from
+      # (library/kong, axllent/mailpit, postgrest/postgrest, ...), re-tagged to the
+      # name the start looks for (run 4acd71fd: kong, mailpit and postgrest had no
+      # fallback and were still throttled).
       - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 20
         shell: bash
         run: |
           set +e
@@ -621,7 +626,7 @@ jobs:
             grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
             [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
           done
-          imgs=""
+          : > "$RUNNER_TEMP/pull-list.txt"
           if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then
             while read -r _from image _as alias; do
               case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
@@ -630,26 +635,26 @@ jobs:
                 supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
                 *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
               esac
-              imgs="$imgs ${image##*/}"
+              printf '%s %s\n' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"
             done < "$RUNNER_TEMP/cli-images.txt"
           else
             echo "::warning title=Supabase image pre-pull::the CLI's embedded image list was not readable; falling back to supabase services (a subset)."
-            imgs="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u | tr '\n' ' ')"
+            supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u > "$RUNNER_TEMP/pull-list.txt"
           fi
-          echo "images:$imgs"
-          for IMG in $imgs; do
+          echo "images: $(awk '{print $1}' "$RUNNER_TEMP/pull-list.txt" | tr '\n' ' ')"
+          while read -r IMG ORIG; do
             got=0
             for i in 1 2; do
               if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi
               echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
             done
             if [ "$got" = 0 ]; then
-              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do
+              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG ${ORIG:+docker.io/$ORIG}; do
                 if docker pull -q "$src" >/dev/null 2>&1; then docker tag "$src" ghcr.io/supabase/$IMG && got=1 && echo "using $src for $IMG, re-tagged locally: $(docker image inspect --format '{{index .RepoDigests 0}}' "$src")" && break; fi
               done
             fi
             [ "$got" = 1 ] || echo "::warning title=Supabase image pre-pull::$IMG could not be pulled from ghcr, ECR or Docker Hub"
-          done
+          done < "$RUNNER_TEMP/pull-list.txt"
 
       - name: Start local Supabase (DB + REST API)
         id: sb_start
@@ -899,9 +904,14 @@ jobs:
       # database even with -x realtime / -x storage-api (runs 40557844633,
       # 40559826388). Inline, never a checked-out script, because the credential is
       # held (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
+      # Docker Hub has no supabase/kong, supabase/mailpit or supabase/postgrest, so the
+      # third source is the upstream reference the CLI's Dockerfile builds from
+      # (library/kong, axllent/mailpit, postgrest/postgrest, ...), re-tagged to the
+      # name the start looks for (run 4acd71fd: kong, mailpit and postgrest had no
+      # fallback and were still throttled).
       - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 20
         shell: bash
         run: |
           set +e
@@ -914,7 +924,7 @@ jobs:
             grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
             [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
           done
-          imgs=""
+          : > "$RUNNER_TEMP/pull-list.txt"
           if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then
             while read -r _from image _as alias; do
               case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
@@ -923,26 +933,26 @@ jobs:
                 supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
                 *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
               esac
-              imgs="$imgs ${image##*/}"
+              printf '%s %s\n' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"
             done < "$RUNNER_TEMP/cli-images.txt"
           else
             echo "::warning title=Supabase image pre-pull::the CLI's embedded image list was not readable; falling back to supabase services (a subset)."
-            imgs="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u | tr '\n' ' ')"
+            supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u > "$RUNNER_TEMP/pull-list.txt"
           fi
-          echo "images:$imgs"
-          for IMG in $imgs; do
+          echo "images: $(awk '{print $1}' "$RUNNER_TEMP/pull-list.txt" | tr '\n' ' ')"
+          while read -r IMG ORIG; do
             got=0
             for i in 1 2; do
               if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi
               echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
             done
             if [ "$got" = 0 ]; then
-              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do
+              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG ${ORIG:+docker.io/$ORIG}; do
                 if docker pull -q "$src" >/dev/null 2>&1; then docker tag "$src" ghcr.io/supabase/$IMG && got=1 && echo "using $src for $IMG, re-tagged locally: $(docker image inspect --format '{{index .RepoDigests 0}}' "$src")" && break; fi
               done
             fi
             [ "$got" = 1 ] || echo "::warning title=Supabase image pre-pull::$IMG could not be pulled from ghcr, ECR or Docker Hub"
-          done
+          done < "$RUNNER_TEMP/pull-list.txt"
 
       - name: Start local Supabase stack (db + auth + mail capture)
         id: sb_start
@@ -1328,9 +1338,14 @@ jobs:
       # database even with -x realtime / -x storage-api (runs 40557844633,
       # 40559826388). Inline, never a checked-out script, because the credential is
       # held (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
+      # Docker Hub has no supabase/kong, supabase/mailpit or supabase/postgrest, so the
+      # third source is the upstream reference the CLI's Dockerfile builds from
+      # (library/kong, axllent/mailpit, postgrest/postgrest, ...), re-tagged to the
+      # name the start looks for (run 4acd71fd: kong, mailpit and postgrest had no
+      # fallback and were still throttled).
       - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 20
         shell: bash
         run: |
           set +e
@@ -1343,7 +1358,7 @@ jobs:
             grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
             [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
           done
-          imgs=""
+          : > "$RUNNER_TEMP/pull-list.txt"
           if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then
             while read -r _from image _as alias; do
               case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
@@ -1352,26 +1367,26 @@ jobs:
                 supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
                 *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
               esac
-              imgs="$imgs ${image##*/}"
+              printf '%s %s\n' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"
             done < "$RUNNER_TEMP/cli-images.txt"
           else
             echo "::warning title=Supabase image pre-pull::the CLI's embedded image list was not readable; falling back to supabase services (a subset)."
-            imgs="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u | tr '\n' ' ')"
+            supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u > "$RUNNER_TEMP/pull-list.txt"
           fi
-          echo "images:$imgs"
-          for IMG in $imgs; do
+          echo "images: $(awk '{print $1}' "$RUNNER_TEMP/pull-list.txt" | tr '\n' ' ')"
+          while read -r IMG ORIG; do
             got=0
             for i in 1 2; do
               if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi
               echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
             done
             if [ "$got" = 0 ]; then
-              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do
+              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG ${ORIG:+docker.io/$ORIG}; do
                 if docker pull -q "$src" >/dev/null 2>&1; then docker tag "$src" ghcr.io/supabase/$IMG && got=1 && echo "using $src for $IMG, re-tagged locally: $(docker image inspect --format '{{index .RepoDigests 0}}' "$src")" && break; fi
               done
             fi
             [ "$got" = 1 ] || echo "::warning title=Supabase image pre-pull::$IMG could not be pulled from ghcr, ECR or Docker Hub"
-          done
+          done < "$RUNNER_TEMP/pull-list.txt"
 
       - name: Start local Supabase stack (db + auth + mail capture)
         id: sb_start
@@ -1560,9 +1575,14 @@ jobs:
       # database even with -x realtime / -x storage-api (runs 40557844633,
       # 40559826388). Inline, never a checked-out script, because the credential is
       # held (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
+      # Docker Hub has no supabase/kong, supabase/mailpit or supabase/postgrest, so the
+      # third source is the upstream reference the CLI's Dockerfile builds from
+      # (library/kong, axllent/mailpit, postgrest/postgrest, ...), re-tagged to the
+      # name the start looks for (run 4acd71fd: kong, mailpit and postgrest had no
+      # fallback and were still throttled).
       - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 20
         shell: bash
         run: |
           set +e
@@ -1575,7 +1595,7 @@ jobs:
             grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
             [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
           done
-          imgs=""
+          : > "$RUNNER_TEMP/pull-list.txt"
           if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then
             while read -r _from image _as alias; do
               case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
@@ -1584,26 +1604,26 @@ jobs:
                 supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
                 *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
               esac
-              imgs="$imgs ${image##*/}"
+              printf '%s %s\n' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"
             done < "$RUNNER_TEMP/cli-images.txt"
           else
             echo "::warning title=Supabase image pre-pull::the CLI's embedded image list was not readable; falling back to supabase services (a subset)."
-            imgs="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u | tr '\n' ' ')"
+            supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u > "$RUNNER_TEMP/pull-list.txt"
           fi
-          echo "images:$imgs"
-          for IMG in $imgs; do
+          echo "images: $(awk '{print $1}' "$RUNNER_TEMP/pull-list.txt" | tr '\n' ' ')"
+          while read -r IMG ORIG; do
             got=0
             for i in 1 2; do
               if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi
               echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
             done
             if [ "$got" = 0 ]; then
-              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do
+              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG ${ORIG:+docker.io/$ORIG}; do
                 if docker pull -q "$src" >/dev/null 2>&1; then docker tag "$src" ghcr.io/supabase/$IMG && got=1 && echo "using $src for $IMG, re-tagged locally: $(docker image inspect --format '{{index .RepoDigests 0}}' "$src")" && break; fi
               done
             fi
             [ "$got" = 1 ] || echo "::warning title=Supabase image pre-pull::$IMG could not be pulled from ghcr, ECR or Docker Hub"
-          done
+          done < "$RUNNER_TEMP/pull-list.txt"
 
       - name: Start local Supabase stack (db + auth + mail capture)
         id: sb_start
@@ -1789,9 +1809,14 @@ jobs:
       # database even with -x realtime / -x storage-api (runs 40557844633,
       # 40559826388). Inline, never a checked-out script, because the credential is
       # held (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
+      # Docker Hub has no supabase/kong, supabase/mailpit or supabase/postgrest, so the
+      # third source is the upstream reference the CLI's Dockerfile builds from
+      # (library/kong, axllent/mailpit, postgrest/postgrest, ...), re-tagged to the
+      # name the start looks for (run 4acd71fd: kong, mailpit and postgrest had no
+      # fallback and were still throttled).
       - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 20
         shell: bash
         run: |
           set +e
@@ -1804,7 +1829,7 @@ jobs:
             grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
             [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
           done
-          imgs=""
+          : > "$RUNNER_TEMP/pull-list.txt"
           if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then
             while read -r _from image _as alias; do
               case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
@@ -1813,26 +1838,26 @@ jobs:
                 supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
                 *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
               esac
-              imgs="$imgs ${image##*/}"
+              printf '%s %s\n' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"
             done < "$RUNNER_TEMP/cli-images.txt"
           else
             echo "::warning title=Supabase image pre-pull::the CLI's embedded image list was not readable; falling back to supabase services (a subset)."
-            imgs="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u | tr '\n' ' ')"
+            supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u > "$RUNNER_TEMP/pull-list.txt"
           fi
-          echo "images:$imgs"
-          for IMG in $imgs; do
+          echo "images: $(awk '{print $1}' "$RUNNER_TEMP/pull-list.txt" | tr '\n' ' ')"
+          while read -r IMG ORIG; do
             got=0
             for i in 1 2; do
               if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi
               echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
             done
             if [ "$got" = 0 ]; then
-              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do
+              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG ${ORIG:+docker.io/$ORIG}; do
                 if docker pull -q "$src" >/dev/null 2>&1; then docker tag "$src" ghcr.io/supabase/$IMG && got=1 && echo "using $src for $IMG, re-tagged locally: $(docker image inspect --format '{{index .RepoDigests 0}}' "$src")" && break; fi
               done
             fi
             [ "$got" = 1 ] || echo "::warning title=Supabase image pre-pull::$IMG could not be pulled from ghcr, ECR or Docker Hub"
-          done
+          done < "$RUNNER_TEMP/pull-list.txt"
 
       - name: Start local Supabase stack (db + auth + mail capture)
         id: sb_start
@@ -2002,9 +2027,14 @@ jobs:
       # database even with -x realtime / -x storage-api (runs 40557844633,
       # 40559826388). Inline, never a checked-out script, because the credential is
       # held (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
+      # Docker Hub has no supabase/kong, supabase/mailpit or supabase/postgrest, so the
+      # third source is the upstream reference the CLI's Dockerfile builds from
+      # (library/kong, axllent/mailpit, postgrest/postgrest, ...), re-tagged to the
+      # name the start looks for (run 4acd71fd: kong, mailpit and postgrest had no
+      # fallback and were still throttled).
       - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 20
         shell: bash
         run: |
           set +e
@@ -2017,7 +2047,7 @@ jobs:
             grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
             [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
           done
-          imgs=""
+          : > "$RUNNER_TEMP/pull-list.txt"
           if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then
             while read -r _from image _as alias; do
               case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
@@ -2026,26 +2056,26 @@ jobs:
                 supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
                 *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
               esac
-              imgs="$imgs ${image##*/}"
+              printf '%s %s\n' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"
             done < "$RUNNER_TEMP/cli-images.txt"
           else
             echo "::warning title=Supabase image pre-pull::the CLI's embedded image list was not readable; falling back to supabase services (a subset)."
-            imgs="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u | tr '\n' ' ')"
+            supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u > "$RUNNER_TEMP/pull-list.txt"
           fi
-          echo "images:$imgs"
-          for IMG in $imgs; do
+          echo "images: $(awk '{print $1}' "$RUNNER_TEMP/pull-list.txt" | tr '\n' ' ')"
+          while read -r IMG ORIG; do
             got=0
             for i in 1 2; do
               if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi
               echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
             done
             if [ "$got" = 0 ]; then
-              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do
+              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG ${ORIG:+docker.io/$ORIG}; do
                 if docker pull -q "$src" >/dev/null 2>&1; then docker tag "$src" ghcr.io/supabase/$IMG && got=1 && echo "using $src for $IMG, re-tagged locally: $(docker image inspect --format '{{index .RepoDigests 0}}' "$src")" && break; fi
               done
             fi
             [ "$got" = 1 ] || echo "::warning title=Supabase image pre-pull::$IMG could not be pulled from ghcr, ECR or Docker Hub"
-          done
+          done < "$RUNNER_TEMP/pull-list.txt"
 
       - name: Start local Supabase stack (db + auth + mail capture + storage)
         id: sb_start
@@ -2223,9 +2253,14 @@ jobs:
       # database even with -x realtime / -x storage-api (runs 40557844633,
       # 40559826388). Inline, never a checked-out script, because the credential is
       # held (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
+      # Docker Hub has no supabase/kong, supabase/mailpit or supabase/postgrest, so the
+      # third source is the upstream reference the CLI's Dockerfile builds from
+      # (library/kong, axllent/mailpit, postgrest/postgrest, ...), re-tagged to the
+      # name the start looks for (run 4acd71fd: kong, mailpit and postgrest had no
+      # fallback and were still throttled).
       - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 20
         shell: bash
         run: |
           set +e
@@ -2238,7 +2273,7 @@ jobs:
             grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
             [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
           done
-          imgs=""
+          : > "$RUNNER_TEMP/pull-list.txt"
           if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then
             while read -r _from image _as alias; do
               case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
@@ -2247,26 +2282,26 @@ jobs:
                 supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
                 *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
               esac
-              imgs="$imgs ${image##*/}"
+              printf '%s %s\n' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"
             done < "$RUNNER_TEMP/cli-images.txt"
           else
             echo "::warning title=Supabase image pre-pull::the CLI's embedded image list was not readable; falling back to supabase services (a subset)."
-            imgs="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u | tr '\n' ' ')"
+            supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u > "$RUNNER_TEMP/pull-list.txt"
           fi
-          echo "images:$imgs"
-          for IMG in $imgs; do
+          echo "images: $(awk '{print $1}' "$RUNNER_TEMP/pull-list.txt" | tr '\n' ' ')"
+          while read -r IMG ORIG; do
             got=0
             for i in 1 2; do
               if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi
               echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
             done
             if [ "$got" = 0 ]; then
-              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do
+              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG ${ORIG:+docker.io/$ORIG}; do
                 if docker pull -q "$src" >/dev/null 2>&1; then docker tag "$src" ghcr.io/supabase/$IMG && got=1 && echo "using $src for $IMG, re-tagged locally: $(docker image inspect --format '{{index .RepoDigests 0}}' "$src")" && break; fi
               done
             fi
             [ "$got" = 1 ] || echo "::warning title=Supabase image pre-pull::$IMG could not be pulled from ghcr, ECR or Docker Hub"
-          done
+          done < "$RUNNER_TEMP/pull-list.txt"
 
       - name: Start local Supabase stack (db + auth + mail capture)
         id: sb_start
