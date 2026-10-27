@@ -98,13 +98,17 @@ fi
 chown -R root:root "$SRC"; chmod -R go-w "$SRC"
 (cd "$SRC" && find . -type f | sed 's#^\./##' | LC_ALL=C sort | while read -r f; do printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f"; done) > /root/hr-pins-e2e.txt; chown root:root /root/hr-pins-e2e.txt; chmod 644 /root/hr-pins-e2e.txt
 bash "$SRC/install.sh" sam "$REF" "$T/cli/supabase-go" /root/hr-pins-e2e.txt > "$T/install.out" 2>&1 && ok "install.sh with the REAL supabase-go (every file matched its pin)" || { bad "install" "$(tail -4 "$T/install.out")"; exit 1; }
-# T5 evidence: the vendor CLI does NOT honour sslmode/sslrootcert in --db-url (it rebuilds the URL), so verify-full cannot be required on this path:
-# a dry run with sslmode=verify-full and a NONEXISTENT sslrootcert still connects (an honoured setting would fail).
+# T5 evidence: does the vendor CLI ENFORCE sslmode=verify-full from --db-url? It parses sslrootcert (a missing file fails the parse) but the connection is
+# rebuilt from its parsed config without the TLS settings. The probe gives it a VALID but WRONG CA file and verify-full: if the setting were enforced
+# the connection would fail with a certificate error; if it connects, verify-full is NOT enforced and the exact pooler-host pin is the only control.
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$T/wrong.key" -out "$T/wrong.pem" -days 1 -subj "/CN=not-the-server-ca" >/dev/null 2>&1
 mkdir -p "$T/probe/supabase/migrations" "$T/probe/supabase/.temp"; echo v2.102.0 > "$T/probe/supabase/.temp/cli-latest"
-PROBE_URL="postgresql://postgres.$REF@${POOLER_HOST}/postgres?sslmode=verify-full&sslrootcert=/nonexistent/ca.pem"
+PROBE_URL="postgresql://postgres.$REF@${POOLER_HOST}/postgres?sslmode=verify-full&sslrootcert=$T/wrong.pem"
 c0=$(conns)
 ( cd "$T/probe" && HOME="$T/probe" PGPASSWORD=postgres SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 "$T/cli/supabase-go" db push --db-url "$PROBE_URL" --dry-run > "$T/probe.out" 2>&1 ); prc=$?
-if [ "$prc" = 0 ] && [ "$(( $(conns) - c0 ))" -ge 1 ]; then ok "T5 evidence: supabase-go connects with sslmode=verify-full and a nonexistent sslrootcert (it drops both): verify-full cannot be enforced on this path; the exact pooler-host pin is the control (accepted residual)"; else bad "T5 probe" "rc=$prc $(tail -3 "$T/probe.out")"; fi
+if [ "$prc" = 0 ] && [ "$(( $(conns) - c0 ))" -ge 1 ]; then ok "T5 evidence: supabase-go connects with sslmode=verify-full and a valid-but-WRONG sslrootcert: verify-full is NOT enforced on this path (the connection URL is rebuilt without it); the exact pooler-host pin is the control (accepted residual)"
+elif grep -qiE "certificate|x509|unknown authority" "$T/probe.out"; then bad "T5 probe: verify-full IS enforced by this CLI path - implement it (sslmode=verify-full plus a pinned CA) instead of the residual" "$(tail -2 "$T/probe.out")"
+else bad "T5 probe: inconclusive" "rc=$prc $(tail -3 "$T/probe.out")"; fi
 install -m 644 -o sam -g sam "$BUNDLE" /srv/hone-release-inbox/bundle.tar
 install -m 644 -o sam -g sam "$LIST" /srv/hone-release-inbox/list.sha256
 RECEIPT=$(printf 'a%.0s' $(seq 1 64))

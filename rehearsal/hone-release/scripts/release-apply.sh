@@ -106,7 +106,7 @@ case "$A_recovery_basis" in
     [ $((now_s - rp_s)) -le 2700 ] || die "recovery_point is older than 45 minutes: run the row-4 step again and re-approve"
     [ "$A_waiver_id" = none ] || die "recovery_basis=row4 must have waiver_id=none" ;;
   waiver)
-    printf '%s' "$A_waiver_id" | grep -Eq '^[A-Za-z0-9._-]{4,64}$' || die "recovery_basis=waiver needs a waiver_id"
+    printf '%s' "$A_waiver_id" | grep -Eq '^[A-Za-z0-9._-]{4,64}$' && [ "$A_waiver_id" != none ] || die "recovery_basis=waiver needs a waiver_id"
     [ "$A_recovery_point" = none ] || die "recovery_basis=waiver must have recovery_point=none" ;;
   *) die "recovery_basis must be row4 or waiver (the idle-path result is not accepted by this script)" ;;
 esac
@@ -115,7 +115,7 @@ esac
 printf '%s' "$A_max_push_seconds" | grep -Eq '^[0-9]{2,4}$' && [ "$A_max_push_seconds" -ge 10 ] && [ "$A_max_push_seconds" -le 1800 ] || die "max_push_seconds must be 10..1800"
 # the exact target: the pinned pooler host:5432, user postgres.<ref>, and ONE of two exact TLS forms
 printf '%s' "$A_pooler_host" | grep -Eq '^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com:5432$' || die "pooler_host is not a Supabase session pooler host on port 5432"
-want_q="sslmode=require"   # NOTE: supabase-go 2.102.0 rebuilds the URL (ToPostgresURL) and drops sslmode/sslrootcert, so TLS is used but the server certificate is NOT verified; the control is the exact pooler host below (accepted residual)
+want_q="sslmode=require"   # NOTE: supabase-go 2.102.0 PARSES sslmode/sslrootcert but then rebuilds the connection URL (ToPostgresURL) without them, so TLS is used but the server certificate is NOT verified (CI probe); the control is the exact pooler host below (accepted residual)
 want_url="postgresql://postgres.$A_project_ref@$A_pooler_host/postgres?$want_q"
 [ "$A_target_url" = "$want_url" ] || die "target_url is not exactly the approved form for this project and pooler host (no other host, port, user or parameter is accepted)"
 [ ! -e "$STATE/consumed/$APPROVAL_ID" ] || die "approval $APPROVAL_ID was already used (single use). Nothing was attempted."
