@@ -22,4 +22,18 @@ cp "$H/../../s1-read/window-reads-s1"/*.sql "$H/../../s1-read/window-reads-s1/MA
 cp "$LG/window-s1read-linux.sh" "$H/window-reads-s1/window-s1read.sh"; chmod 755 "$H/window-reads-s1/window-s1read.sh"
 cp /home/sam/hone-handoffs/2026-10-18/machines/window-reads-c4/run-window-read.sh "$H/window-reads-s1/"
 cp "$H/../../s1-read/gen-s1-results.mjs" "$H/"
+# the gap-read package: pinned SQL + MANIFEST.v2 + the original Linux runner + the Linux wrapper
+rm -rf "$H/gap-pkg"; mkdir -p "$H/gap-pkg"
+cp "$H/../../gap-read/pkg/obs-1035-gap-pending-payments-v2.sql" "$H/../../gap-read/pkg/MANIFEST.v2.sha256" "$H/gap-pkg/"
+cp /home/sam/hone-handoffs/2026-10-18/machines/window-reads-c4/run-window-read.sh "$H/gap-pkg/"
+cp "$LG/window-gap-read-linux.sh" "$H/gap-pkg/window-gap-read.sh"; chmod 755 "$H/gap-pkg/window-gap-read.sh"
+cp "$H/../../gap-read/driver.py" "$H/gap-driver.py" 2>/dev/null || true
+# gen-capture binds its synthetic capture to the CURRENT Linux pitr-backups script
+PS=$(sha256sum "$H/pitr-backups-linux.sh" | cut -d' ' -f1); sed -i -E "s/script_sha256: \"[0-9a-f]{64}\"/script_sha256: \"$PS\"/" "$H/gen-capture.mjs"
+# the install stage: the layout the gates expect under ~/hone-s1, plus a manifest of every file
+rm -rf "$H/stage"; S="$H/stage"; mkdir -p "$S/window-reads-c4" "$S/window-reads" "$S/window-reads-s1" "$S/gap-read-2" "$S/bin"
+cp -r "$H/window-reads-c4"/. "$S/window-reads-c4/"; cp "$H/window-reads"/* "$S/window-reads/"; cp "$H/window-reads-s1"/* "$S/window-reads-s1/"
+cp "$H/gap-pkg/obs-1035-gap-pending-payments-v2.sql" "$H/gap-pkg/run-window-read.sh" "$H/gap-pkg/window-gap-read.sh" "$S/gap-read-2/"; cp "$H/gap-pkg/MANIFEST.v2.sha256" "$S/gap-read-2/MANIFEST.sha256"
+cp "$H/pitr-backups-linux.sh" "$S/bin/pitr-backups.sh"; cp "$H/hone-gate-launch.sh" "$H/hone-push-guard.sh" "$H/hone-push-linux.sh" "$S/bin/"
+( cd "$S" && find . -type f ! -name LINUX-MANIFEST.sha256 | sed 's#^\./##' | LC_ALL=C sort | xargs sha256sum > LINUX-MANIFEST.sha256 )
 echo assembled

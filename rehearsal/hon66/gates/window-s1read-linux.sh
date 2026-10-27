@@ -2,10 +2,10 @@
 # LINUX VARIANT of the reviewed Mac script (HON66-LINUX-GATES), derived by machines/linux-gates/make-linux.py with a fixed substitution
 # list (see LINUX-DIFFS.txt). Credentials are read from files named by the launcher, never prompted, never on argv.
 # Hone #1035 S1 READ-BACK (GO-REQUEST section 8 row 6): after s1-apply.sh, read the hosted project's migration history,
-# object census, privilege closures and replaced function bodies through the verified runner 471ecb9d and supabase-go
-# dce26b75, then run the pinned comparator (compare-preflight.mjs --stage s1) and print its verdict.
+# object census, privilege closures and replaced function bodies through the verified runner ec9b7c56 and supabase-go
+# 174a90e2, then run the pinned comparator (compare-preflight.mjs --stage s1) and print its verdict.
 # Read-only. Fail-closed: the first failed command, refusal, authentication error, invalid result or non-PASS stops.
-# No retries. Credentials are typed privately (never echoed, never on a command line, never written) and cleared on any
+# No retries. Credentials are read from mode-600 files named by the launcher (never printed, never on a command line, never written) and cleared on any
 # exit. Nothing here creates a login role, resets a password or unbans an IP: PREVENTION is the runner's password-present
 # rule; the log scan below is only a detector after the fact (a hit is REPORTED, never retried).
 # A failed login writes a tombstone (s1-read/FAILED-LOGIN, no secret) and every later run refuses until Sam decides.
@@ -121,7 +121,7 @@ printf '%s' "$POOLER_URL" > "$LINK/supabase/.temp/pooler-url" || die "write pool
 printf '%s\n' v2.102.0 > "$LINK/supabase/.temp/cli-latest" || die "write cli-latest failed"
 [ "$(cat "$LINK/supabase/.temp/cli-latest")" = v2.102.0 ] || die "cli-latest is not v2.102.0"
 T_START=$(utcnow)
-echo "S1 read-back started at $T_START (UTC). Nothing is typed except the two hidden credentials. Record the start and end times: the gap read must run within 24 h of S1." >&2
+echo "S1 read-back started at $T_START (UTC). Credentials are read from the files named by the launcher; nothing is typed. Record the start and end times: the gap read must run within 24 h of S1." >&2
 
 # ---------------------------------------------------------------------------------------------------------
 # credentials, privately (never echoed; cleared by the EXIT/INT/TERM/HUP trap)

@@ -66,6 +66,10 @@ def common(s, name, creds):
     s = s.replace('command -v shasum >/dev/null 2>&1 || die "shasum not found"', 'command -v sha256sum >/dev/null 2>&1 || die "sha256sum not found"')
     s = s.replace("shasum -a 256 -c MANIFEST.sha256", "sha256sum -c MANIFEST.sha256")
     s = s.replace("(run the Mac check first)", "(run the installer check first)")
+    s = s.replace("Credentials are typed privately (never echoed, never on a command line, never written)", "Credentials are read from mode-600 files named by the launcher (never printed, never on a command line, never written)")
+    s = s.replace("The token is typed privately (never echoed, never on a command", "The token is read from a mode-600 file named by the launcher (never printed, never on a command")
+    s = s.replace("typed privately (never echoed, never on a command line, never written)", "read from mode-600 files (never printed, never on a command line, never written)")
+    s = s.replace("Nothing is typed except the two hidden credentials.", "Credentials are read from the files named by the launcher; nothing is typed.")
     s = s.replace("stat -f '%u %Lp'", "stat -c '%u %a'").replace("stat -f '%u'", "stat -c '%u'")
     for var, envn, label in creds:
         pat = re.compile(r'IFS= read -rs -p "[^"]*" ' + re.escape(var) + r' </dev/tty \|\| die "[^"]*"\necho >&2\n')
@@ -98,6 +102,8 @@ def runner(s, name, where):
     return s
 
 OUT = {}
+def cf(s):   # comment lines only: the Mac short shas in prose become the Linux ones (the full constants are replaced elsewhere)
+    return "\n".join((l.replace("dce26b75", "174a90e2").replace("471ecb9d", "ec9b7c56") if l.startswith("#") else l) for l in s.split("\n"))
 def build():
     # ---------------- window-s0a (c5) ----------------
     n = "window-s0a"; s = open(M + "window-reads-c4/window-s0a.sh").read()
@@ -105,29 +111,29 @@ def build():
     s = insert_helper(s, n); s = runner(s, n, "$WR")
     s = s.replace("BASELINE=BASELINE-W1-MACOS-CANDIDATE-5.json", "BASELINE=BASELINE-W1-LINUX-CANDIDATE-5.json")
     count(s, "BASELINE_SHA=1b22730afd845aa50358a4fe3fb5f68aa36d22293329c7d16ba2effce7a50d82", 1, n)   # re-pinned below
-    OUT[n] = s
+    OUT[n] = cf(s)
     # ---------------- window-row4 (c5) ----------------
     n = "window-row4"; s = open(M + "window-reads-c4/window-row4.sh").read()
     s = common(s, n, [])
     s = s.replace("BASELINE=BASELINE-W1-MACOS-CANDIDATE-5.json", "BASELINE=BASELINE-W1-LINUX-CANDIDATE-5.json")
     count(s, "BASELINE_SHA=1b22730afd845aa50358a4fe3fb5f68aa36d22293329c7d16ba2effce7a50d82", 1, n)
-    OUT[n] = s
+    OUT[n] = cf(s)
     # ---------------- window-s1read ----------------
     n = "window-s1read"; s = open(M + "window-reads-s1/window-s1read.sh").read()
     s = common(s, n, [("SUPABASE_ACCESS_TOKEN", "HONE_GATE_TOKEN_FILE", "access token"), ("SUPABASE_DB_PASSWORD", "HONE_GATE_PASSWORD_FILE", "database password")])
     s = insert_helper(s, n); s = drop_tty_check(s, n); s = runner(s, n, "$WR1")
     s = s.replace("BASELINE=BASELINE-W1-MACOS-CANDIDATE-3.json", "BASELINE=BASELINE-W1-LINUX-CANDIDATE-3.json")
-    OUT[n] = s
+    OUT[n] = cf(s)
     # ---------------- pitr-backups ----------------
     n = "pitr-backups"; s = open(M + "pitr-status/pitr-backups.sh").read()
     s = common(s, n, [("tok", "HONE_GATE_TOKEN_FILE", "access token")])
     s = insert_helper(s, n); s = drop_tty_check(s, n)
-    OUT[n] = s
+    OUT[n] = cf(s)
     # ---------------- gap read ----------------
     n = "window-gap-read"; s = open(M + "window-gap-read/window-gap-read.sh").read()
     s = common(s, n, [("SUPABASE_ACCESS_TOKEN", "HONE_GATE_TOKEN_FILE", "access token"), ("SUPABASE_DB_PASSWORD", "HONE_GATE_PASSWORD_FILE", "database password")])
     s = insert_helper(s, n); s = drop_tty_check(s, n); s = runner(s, n, "$GR")
-    OUT[n] = s
+    OUT[n] = cf(s)
 build()
 
 # ---------------- baselines: the Mac baselines with ONLY the platform pins changed (text edit, formatting untouched) ----------------

@@ -1,0 +1,16 @@
+{
+  "_note": "TEMPLATE, no values. Row 4 (immediately before S1), checked by: compare-preflight.mjs --stage row4 --baseline <candidate 3> --attest <this file> --pitr-api <pitr-backups dir> [--pitr-idle <pitr-wal dir>] --window-start <UTC> --window-end <UTC>. Write the selected restore point down FIRST, then take a NEW PITR reading (never reuse the S0a one): its read_at_utc must be later than selected_at_utc. window-row4.sh builds this file itself. A passing row-4 check is required in addition to the S0a OVERALL PASS.",
+  "pre_migration_restore_point": {
+    "selected_at_utc": "<YYYY-MM-DDTHH:MM:SSZ: now, written down before the reading below; inside the window; not older than max_pre_point_age_minutes>",
+    "basis": "<latest_at_or_after | named_restore_point | idle_proven_latest>",
+    "restore_point_name": "<only for named_restore_point>",
+    "restore_point_status": "<only for named_restore_point: AVAILABLE>",
+    "restore_point_completed_at_utc": "<only for named_restore_point: at or after selected_at_utc>"
+  },
+  "g4_pitr": {
+    "pitr_enabled": "<the boolean true>",
+    "retention_days": "<integer, >= baseline.g4_pitr.min_retention_days>",
+    "earliest_recovery_at_utc": "<YYYY-MM-DDTHH:MM:SSZ as the dashboard shows it; cross-checked against the API within 1 s>",
+    "latest_recovery_at_utc": "<YYYY-MM-DDTHH:MM:SSZ as the dashboard shows it; cross-checked against the API within 1 s>"
+  }
+}

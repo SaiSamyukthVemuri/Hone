@@ -2,11 +2,11 @@
 # LINUX VARIANT of the reviewed Mac script (HON66-LINUX-GATES), derived by machines/linux-gates/make-linux.py with a fixed substitution
 # list (see LINUX-DIFFS.txt). Credentials are read from files named by the launcher, never prompted, never on argv.
 # Hone #1035 POST-S3 GAP READ (obs-1035-gap-pending-payments-v2.sql, 5aa510c0): count-only read of payment and card-setup rows
-# the old app may have left unreconciled between S1 and S3. ONE read-only file through the verified runner 471ecb9d and
-# supabase-go dce26b75; ONE login; no comparator (the rows are counts, read by a person). Must run within 24 h of S3
+# the old app may have left unreconciled between S1 and S3. ONE read-only file through the verified runner ec9b7c56 and
+# supabase-go 174a90e2; ONE login; no comparator (the rows are counts, read by a person). Must run within 24 h of S3
 # (by 2026-10-28T02:43Z): the SQL's lookback is a fixed 24 hours from NOW.
 # Fail-closed: the first failed command, refusal, authentication error or invalid result stops. No retry. Credentials are
-# typed privately (never echoed, never on a command line, never written) and cleared on any exit. Nothing here creates a
+# read from mode-600 files (never printed, never on a command line, never written) and cleared on any exit. Nothing here creates a
 # login role, resets a password or unbans an IP (PREVENTION is the runner's password-present rule; the log scan is only a
 # detector after the fact: a hit is REPORTED, never retried). A failed login writes a tombstone (gap-read/FAILED-LOGIN, no
 # secret); every later run of this script refuses, and so does a FAILED-LOGIN left by s1-read or s1-apply.
@@ -120,7 +120,7 @@ printf '%s' "$POOLER_URL" > "$LINK/supabase/.temp/pooler-url" || die "write pool
 printf '%s\n' v2.102.0 > "$LINK/supabase/.temp/cli-latest" || die "write cli-latest failed"
 [ "$(cat "$LINK/supabase/.temp/cli-latest")" = v2.102.0 ] || die "cli-latest is not v2.102.0"
 T_START=$(utcnow)
-echo "Gap read started at $T_START (UTC). Nothing is typed except the two hidden credentials. It must run by 2026-10-28T02:43Z (24 h after S3); the SQL looks back a fixed 24 hours from now."  >&2
+echo "Gap read started at $T_START (UTC). Credentials are read from the files named by the launcher; nothing is typed. It must run by 2026-10-28T02:43Z (24 h after S3); the SQL looks back a fixed 24 hours from now."  >&2
 
 # ---------------------------------------------------------------------------------------------------------
 # credentials, privately (never echoed; cleared by the EXIT/INT/TERM/HUP trap)

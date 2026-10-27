@@ -1,0 +1,1 @@
+{"command":"backups list","started_at_utc":"2026-10-26T15:52:32Z","captured_at_utc":"2026-10-26T15:52:32Z","exit_code":0,"result_sha256":"d534159e07517d9997f4df97d4e027dfb978a93de4b73280b5181c9ac10b5fe5","supabase_go_sha256":"dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b","script_sha256":"85407d0b01d11497161c1c9d0374751ecaec80faed9609f2d4f073d71fe49413"}

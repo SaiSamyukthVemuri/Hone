@@ -2,7 +2,7 @@
 # LINUX VARIANT of the reviewed Mac script (HON66-LINUX-GATES), derived by machines/linux-gates/make-linux.py with a fixed substitution
 # list (see LINUX-DIFFS.txt). Credentials are read from files named by the launcher, never prompted, never on argv.
 # Hone PITR STATUS (1 of 2): read the project's backup and PITR status from the Management API through the pinned supabase-go
-# dce26b75. It runs exactly ONE command:  supabase-go --agent no backups list --project-ref <constant ref> -o json
+# 174a90e2. It runs exactly ONE command:  supabase-go --agent no backups list --project-ref <constant ref> -o json
 # and nothing else: no `backups restore`, no `db`, no `--linked`, no database connection.
 #
 # Why that command is read-only and needs no database password (supabase/cli v2.102.0, read at the tag):
@@ -19,7 +19,7 @@
 # GET /v1/projects/<ref> (to cache the project name for telemetry) unless supabase/.temp/linked-project.json already exists. This script
 # seeds that file (the ref only; empty name and organization) in its private folder, so the only request is the backups GET.
 #
-# Read-only. Fail-closed: the first failure stops. No retries. The token is typed privately (never echoed, never on a command
+# Read-only. Fail-closed: the first failure stops. No retries. The token is read from a mode-600 file named by the launcher (never printed, never on a command
 # line, never written), exported only to the one child, and cleared on any exit.
 set -u
 umask 077

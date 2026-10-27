@@ -1,0 +1,10 @@
+{
+  "backups": [],
+  "physical_backup_data": {
+    "earliest_physical_backup_date_unix": 1792420048,
+    "latest_physical_backup_date_unix": 1793024848
+  },
+  "pitr_enabled": true,
+  "region": "us-east-1",
+  "walg_enabled": true
+}

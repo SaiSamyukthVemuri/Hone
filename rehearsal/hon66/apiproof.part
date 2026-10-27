@@ -43,6 +43,9 @@ mklinked() { # mklinked <dir> : a linked dir like the reviewed wrappers write (n
   printf '%s' "postgresql://$PUSER@$RUNNER_IP:$TLSP/postgres" > "$1/supabase/.temp/pooler-url"
   cp "$OUT/cli-latest" "$1/supabase/.temp/cli-latest"
 }
+# the hosted direct host is AAAA-only; the CLI falls back to supabase/.temp/pooler-url only when the direct dial fails with a network error
+# (not on NXDOMAIN). An unroutable IPv6 address for the fake ref's host reproduces that on this IPv4-only runner (no packet leaves the machine).
+echo "2001:db8::1 db.$FAKEREF.supabase.co" | sudo tee -a /etc/hosts > /dev/null
 clean_hon66
 # 1. db push --db-url (the S1 apply form): password in PGPASSWORD, no token. A dry run and a real push of ONE small file.
 A1="$OUT/api-push"; mkwd "$A1"; cat > "$A1/supabase/migrations/0213_hon66_api.sql" <<'SQL'

@@ -74,7 +74,7 @@ done
 echo "RECONCILE: history holds the first $k of $NEXP expected files."
 if [ "$k" = "$NEXP" ]; then echo "RESULT: ALREADY-COMPLETE $k/$NEXP (nothing pushed)"; exit 0; fi
 PENDING=$(printf '%s' "$EXPECTED" | awk -v k=$k '{for (i = k + 1; i <= NF; i++) printf "%s ", $i}')
-DRY=$( cd "$WD" && "$GO" --agent no db push --db-url "$URLBASE" --dry-run 2> "$SD/dry.err" ) || refuse "the dry run failed: $(tail -n 1 "$SD/dry.err" | cut -c1-120)"
+DRY=$( cd "$WD" && "$GO" --agent no db push --db-url "$URLBASE" --dry-run 2>&1 ) || refuse "the dry run failed: $(printf '%s' "$DRY" | tail -n 1 | cut -c1-120)"
 DRYL=$(printf '%s\n' "$DRY" | grep -oE '[0-9]{4}_[A-Za-z0-9_]+\.sql' | sort -u | tr '\n' ' ')
 [ "$DRYL" = "$PENDING" ] || refuse "the dry run does not list exactly the remaining $((NEXP - k)) files (listed: $(printf '%s' "$DRYL" | wc -w))"
 echo "RECONCILE: the dry run lists exactly the remaining $((NEXP - k)) files."

@@ -2,9 +2,9 @@
 # LINUX VARIANT of the reviewed Mac script (HON66-LINUX-GATES), derived by machines/linux-gates/make-linux.py with a fixed substitution
 # list (see LINUX-DIFFS.txt). Credentials are read from files named by the launcher, never prompted, never on argv.
 # Hone #1035 WINDOW S0a (recovery_regime pitr): capture the 14 manifest-pinned read-only window files through the verified runner
-# 471ecb9d and supabase-go dce26b75, then run the pinned comparator and print its verdict.
+# ec9b7c56 and supabase-go 174a90e2, then run the pinned comparator and print its verdict.
 # Read-only. Fail-closed: the first failed command, refusal, authentication error, invalid result or non-PASS stops.
-# No retries. Credentials are typed privately (never echoed, never on a command line, never written) and cleared
+# No retries. Credentials are read from mode-600 files named by the launcher (never printed, never on a command line, never written) and cleared
 # on any exit. Nothing here creates a login role, resets a password or unbans an IP: PREVENTION is the runner's
 # password-present rule; the log scan below is only a detector after the fact (a hit must be REPORTED, never retried).
 # CANDIDATE 5 (candidate 4 + the S0-10 API span minimum 6 d from baseline g4_pitr_api.min_span_days; the typed retention minimum stays 7). Under PITR the Management API lists no base backup, so this script does not ask for one. The recovery range
@@ -29,7 +29,7 @@ MANIFEST_SHA=2b1608a9ec43caf97bd9ead3fe1d10895652a080a4b8ae0a891a17be3038cd94
 CMP_SHA=c9b0f102980104d5bd1d59c2127439dacc419ed1c7db235ad7f5acedf9205825
 LIB_SHA=f0f13c80d91a5d23a69410d220b444db6935e915bd5f3f9319a5e67602b106ab
 BASELINE=BASELINE-W1-LINUX-CANDIDATE-5.json
-BASELINE_SHA=3a4125b00bec7ba46d778f3f014f3eba8e32c3d1dafc778a24836b39c68de464
+BASELINE_SHA=70ce8307e975b015b573f629f26fc322144bc3f9fe78bdb0b03dd92ac075b7a0
 G3_FILE=G3-CHECKSUMS-d189768b.txt
 G3_SHA=bbdcd917da77f750f7987d6a5fdca172c6a564fc029d10d19a6ae1e51190f0f6
 REF=alhhybgqdmcdyzpybykj
