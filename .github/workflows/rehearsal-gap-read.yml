@@ -1,0 +1,33 @@
+# REHEARSAL - NEVER MERGE. GAP-READ-MAC: window-gap-read.sh driven through a pty on macOS arm64 with the real runner and a STUB supabase-go
+# (see rehearsal/gap-read/test.sh). No hosted call, no hosted database, no secrets.
+name: rehearsal-gap-read
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/gap-read/**"
+      - ".github/workflows/rehearsal-gap-read.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  gap-read:
+    name: post-S3 gap read wrapper (macOS arm64)
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts
+        run: |
+          uname -sm
+          /bin/bash --version | head -1
+          python3 --version
+          /bin/zsh --version
+          node --version
+          date -u
+      - name: The rehearsal
+        run: /bin/bash rehearsal/gap-read/test.sh
