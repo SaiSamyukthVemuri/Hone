@@ -5,8 +5,13 @@
 G="$HERE/gates"
 PWF="$OUT/v-pw"; printf '%s\n' "$PWU" > "$PWF"; chmod 600 "$PWF"
 EXPF="$OUT/v-expected.txt"
+rm_lockme() { sadm -c "drop table if exists public.hon66_lockme" > /dev/null; sadm -c "drop role if exists hon66_owner" > /dev/null 2>&1; }
+mk_lockme() { # a table the postgres role may ALTER (member of its owner role) but whose lock is held by a supabase_admin session (not counted as a postgres-role statement)
+  rm_lockme; sadm -c "create role hon66_owner nologin; create table public.hon66_lockme (id int); alter table public.hon66_lockme owner to hon66_owner; grant hon66_owner to postgres" > /dev/null
+}
+hold_lock() { ( sadm -c "set role hon66_owner; begin; lock table public.hon66_lockme in access exclusive mode; select pg_sleep($1); commit" > "$OUT/v3-holder-$2.out" 2>&1 ) & HOLD=$!; }
 vnew() { # vnew <label> : clean db state + a fresh 0213..0246 workdir in $VW + the expected list
-  clean_hon66; sadm -c "drop table if exists public.hon66_lockme" > /dev/null
+  clean_hon66; rm_lockme
   VW="$OUT/vw-$1"; mkwd "$VW"; write_fast34 "$VW"; ( cd "$VW/supabase/migrations" && ls | awk '$0 >= "0213"' ) > "$EXPF"
 }
 slow_at() { echo "select pg_sleep($3);" >> "$1/supabase/migrations/$2_hon66_fast.sql"; } # slow_at <dir> <nnnn> <secs>
@@ -49,18 +54,18 @@ sleep 2; vwrap v2b --limit 6 --every 1
 expect "(V2c) resume after the fix: the wrapper re-derives the state (prefix 4), the dry run is exactly the 30 remaining, COMPLETE 34/34, each version once" "$([ "$VRC" = 0 ] && grep -q 'history holds the first 4 of 34' "$OUT/w-v2b.out" && grep -q 'exactly the remaining 30 files' "$OUT/w-v2b.out" && grep -q '^RESULT: COMPLETE 34/34' "$OUT/w-v2b.out" && [ "$(vdist)" = 34 ] && [ "$(vhist)" = 34 ] && echo 0 || echo 1)" "rc=$VRC n=$(vhist) distinct=$(vdist)"
 
 say "== V3. a lock wait (the other session holds the table): the guard cancels it; and the session-bound alternative (role lock_timeout on NEW backends)"
-vnew v3; sadm -c "create table public.hon66_lockme (id int)" > /dev/null
+vnew v3; mk_lockme
 echo "alter table public.hon66_lockme add column c int;" >> "$VW/supabase/migrations/0217_hon66_fast.sql"
-( sadm -c "begin; lock table public.hon66_lockme in access exclusive mode; select pg_sleep(45); commit" > "$OUT/v3-holder.out" 2>&1 ) & HOLD=$!
+hold_lock 45 a
 sleep 2
 T0=$(date +%s); vwrap v3 --limit 6 --every 1; T1=$(date +%s)
 expect "(V3a) the guard cancelled the lock-blocked statement at limit (6 s) + poll; PARTIAL 4/34; the lock holder was not touched" "$([ $((T1 - T0)) -lt 40 ] && [ "$VRC" = 4 ] && grep -q 'cancels: [1-9]' "$OUT/w-v3.out" && grep -q 'PARTIAL 4/34' "$OUT/w-v3.out" && kill -0 "$HOLD" 2> /dev/null && echo 0 || echo 1)" "elapsed=$((T1 - T0)) rc=$VRC $(vout v3)"
 wait "$HOLD" 2> /dev/null
 # session-bound alternative: ALTER ROLE ... SET lock_timeout (a HOSTED WRITE: this proves the mechanism locally; it is a proposal, not applied by any script here)
-clean_hon66; sadm -c "drop table if exists public.hon66_lockme; create table public.hon66_lockme (id int)" > /dev/null
+clean_hon66; mk_lockme
 sadm -c "alter role postgres set lock_timeout = '3s'" > /dev/null
 sadm -c "select count(pg_terminate_backend(pid)) from pg_stat_activity where usename = 'postgres' and backend_type = 'client backend' and pid <> pg_backend_pid()" > /dev/null; sleep 2
-( sadm -c "begin; lock table public.hon66_lockme in access exclusive mode; select pg_sleep(25); commit" > "$OUT/v3-holder2.out" 2>&1 ) & HOLD=$!
+hold_lock 25 b
 sleep 2
 W3="$OUT/vw-v3b"; mkwd "$W3"; write_fast34 "$W3"; echo "alter table public.hon66_lockme add column c int;" >> "$W3/supabase/migrations/0217_hon66_fast.sql"
 T0=$(date +%s); push_bg v3b "$W3" "$TLSURL_BASE"; push_wait v3b; T1=$(date +%s)
@@ -70,7 +75,7 @@ expect "(V3b) with the role-level lock_timeout on new backends the SERVER refuse
 wait "$HOLD" 2> /dev/null
 sadm -c "alter role postgres reset lock_timeout" > /dev/null
 sadm -c "select count(pg_terminate_backend(pid)) from pg_stat_activity where usename = 'postgres' and backend_type = 'client backend' and pid <> pg_backend_pid()" > /dev/null; sleep 2
-sadm -c "drop table if exists public.hon66_lockme" > /dev/null
+rm_lockme
 
 say "== V4. interruption mid-push with state-reconciled resume (slow file 0217 = 12 s so the push is mid-flight)"
 # V4a SIGINT to the CLI
