@@ -595,17 +595,17 @@ jobs:
       # pulls ~10 images at once and ghcr.io answers "toomanyrequests ... allowed:
       # 44000/minute" (a short burst throttle across parallel jobs); docker and the
       # CLI do not retry, and the bind-retry step correctly refuses (not a port
-      # collision). Mechanism reused from Team's proven rehearsal (#1193, run
-      # 40552718991): pull each image the pinned CLI lists (`supabase services`,
-      # no tag written here) from ghcr.io with a bounded back-off, then the same
-      # tag from ECR or Docker Hub, re-tagged locally so the start finds it.
-      # Every listed image is pulled whatever the job excludes: the start pulls
-      # realtime and storage-api while initialising the database even with
-      # -x realtime / -x storage-api (runs 40557844633, 40559826388). The images
-      # `services` does not list (kong, mailpit, imgproxy, vector) are read from
-      # the CLI's own embedded Dockerfile and pulled unless the job excludes them.
-      # Inline, never a checked-out script, because the credential is held
-      # (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
+      # collision). Mechanism from Team's proven rehearsal (#1193, run 40552718991):
+      # pull each image from ghcr.io with a bounded back-off, then the same tag from
+      # ECR or Docker Hub, re-tagged locally so the start finds it. The list is the
+      # pinned CLI's OWN image list, read from its embedded Dockerfile (`FROM <image>
+      # AS <service>` in the sibling supabase-go; `supabase services` lists only a
+      # subset and is the fallback), so no tag is written here. It covers the job's
+      # exact -x set: every service the job does not exclude, plus postgres,
+      # realtime and storage-api, which the start pulls while initialising the
+      # database even with -x realtime / -x storage-api (runs 40557844633,
+      # 40559826388). Inline, never a checked-out script, because the credential is
+      # held (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
       - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
         continue-on-error: true
         timeout-minutes: 15
@@ -614,23 +614,28 @@ jobs:
           set +e
           EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
           pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
-          listed="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u)"
           BIN="$(command -v supabase || true)"
-          embedded=""
+          : > "$RUNNER_TEMP/cli-images.txt"
           for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do
             [ -r "$cand" ] || continue
-            embedded="$(grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (kong|mailpit|imgproxy|vector)$' "$cand" | sort -u | awk '{n=$2; sub(/^.*\//,"",n); print n}')"
-            [ -n "$embedded" ] && break
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
           done
           imgs=""
-          for IMG in $listed; do
-            if [ "${IMG%%:*}" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
-            imgs="$imgs $IMG"
-          done
-          for IMG in $embedded; do
-            case ",$EXCLUDE," in *",${IMG%%:*},"*) continue ;; esac
-            imgs="$imgs $IMG"
-          done
+          if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            while read -r _from image _as alias; do
+              case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
+              case "$svc" in
+                postgres|realtime|storage-api) ;;
+                supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+                *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+              esac
+              imgs="$imgs ${image##*/}"
+            done < "$RUNNER_TEMP/cli-images.txt"
+          else
+            echo "::warning title=Supabase image pre-pull::the CLI's embedded image list was not readable; falling back to supabase services (a subset)."
+            imgs="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u | tr '\n' ' ')"
+          fi
           echo "images:$imgs"
           for IMG in $imgs; do
             got=0
@@ -883,17 +888,17 @@ jobs:
       # pulls ~10 images at once and ghcr.io answers "toomanyrequests ... allowed:
       # 44000/minute" (a short burst throttle across parallel jobs); docker and the
       # CLI do not retry, and the bind-retry step correctly refuses (not a port
-      # collision). Mechanism reused from Team's proven rehearsal (#1193, run
-      # 40552718991): pull each image the pinned CLI lists (`supabase services`,
-      # no tag written here) from ghcr.io with a bounded back-off, then the same
-      # tag from ECR or Docker Hub, re-tagged locally so the start finds it.
-      # Every listed image is pulled whatever the job excludes: the start pulls
-      # realtime and storage-api while initialising the database even with
-      # -x realtime / -x storage-api (runs 40557844633, 40559826388). The images
-      # `services` does not list (kong, mailpit, imgproxy, vector) are read from
-      # the CLI's own embedded Dockerfile and pulled unless the job excludes them.
-      # Inline, never a checked-out script, because the credential is held
-      # (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
+      # collision). Mechanism from Team's proven rehearsal (#1193, run 40552718991):
+      # pull each image from ghcr.io with a bounded back-off, then the same tag from
+      # ECR or Docker Hub, re-tagged locally so the start finds it. The list is the
+      # pinned CLI's OWN image list, read from its embedded Dockerfile (`FROM <image>
+      # AS <service>` in the sibling supabase-go; `supabase services` lists only a
+      # subset and is the fallback), so no tag is written here. It covers the job's
+      # exact -x set: every service the job does not exclude, plus postgres,
+      # realtime and storage-api, which the start pulls while initialising the
+      # database even with -x realtime / -x storage-api (runs 40557844633,
+      # 40559826388). Inline, never a checked-out script, because the credential is
+      # held (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
       - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
         continue-on-error: true
         timeout-minutes: 15
@@ -902,23 +907,28 @@ jobs:
           set +e
           EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
           pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
-          listed="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u)"
           BIN="$(command -v supabase || true)"
-          embedded=""
+          : > "$RUNNER_TEMP/cli-images.txt"
           for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do
             [ -r "$cand" ] || continue
-            embedded="$(grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (kong|mailpit|imgproxy|vector)$' "$cand" | sort -u | awk '{n=$2; sub(/^.*\//,"",n); print n}')"
-            [ -n "$embedded" ] && break
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
           done
           imgs=""
-          for IMG in $listed; do
-            if [ "${IMG%%:*}" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
-            imgs="$imgs $IMG"
-          done
-          for IMG in $embedded; do
-            case ",$EXCLUDE," in *",${IMG%%:*},"*) continue ;; esac
-            imgs="$imgs $IMG"
-          done
+          if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            while read -r _from image _as alias; do
+              case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
+              case "$svc" in
+                postgres|realtime|storage-api) ;;
+                supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+                *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+              esac
+              imgs="$imgs ${image##*/}"
+            done < "$RUNNER_TEMP/cli-images.txt"
+          else
+            echo "::warning title=Supabase image pre-pull::the CLI's embedded image list was not readable; falling back to supabase services (a subset)."
+            imgs="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u | tr '\n' ' ')"
+          fi
           echo "images:$imgs"
           for IMG in $imgs; do
             got=0
@@ -1307,17 +1317,17 @@ jobs:
       # pulls ~10 images at once and ghcr.io answers "toomanyrequests ... allowed:
       # 44000/minute" (a short burst throttle across parallel jobs); docker and the
       # CLI do not retry, and the bind-retry step correctly refuses (not a port
-      # collision). Mechanism reused from Team's proven rehearsal (#1193, run
-      # 40552718991): pull each image the pinned CLI lists (`supabase services`,
-      # no tag written here) from ghcr.io with a bounded back-off, then the same
-      # tag from ECR or Docker Hub, re-tagged locally so the start finds it.
-      # Every listed image is pulled whatever the job excludes: the start pulls
-      # realtime and storage-api while initialising the database even with
-      # -x realtime / -x storage-api (runs 40557844633, 40559826388). The images
-      # `services` does not list (kong, mailpit, imgproxy, vector) are read from
-      # the CLI's own embedded Dockerfile and pulled unless the job excludes them.
-      # Inline, never a checked-out script, because the credential is held
-      # (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
+      # collision). Mechanism from Team's proven rehearsal (#1193, run 40552718991):
+      # pull each image from ghcr.io with a bounded back-off, then the same tag from
+      # ECR or Docker Hub, re-tagged locally so the start finds it. The list is the
+      # pinned CLI's OWN image list, read from its embedded Dockerfile (`FROM <image>
+      # AS <service>` in the sibling supabase-go; `supabase services` lists only a
+      # subset and is the fallback), so no tag is written here. It covers the job's
+      # exact -x set: every service the job does not exclude, plus postgres,
+      # realtime and storage-api, which the start pulls while initialising the
+      # database even with -x realtime / -x storage-api (runs 40557844633,
+      # 40559826388). Inline, never a checked-out script, because the credential is
+      # held (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
       - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
         continue-on-error: true
         timeout-minutes: 15
@@ -1326,23 +1336,28 @@ jobs:
           set +e
           EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
           pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
-          listed="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u)"
           BIN="$(command -v supabase || true)"
-          embedded=""
+          : > "$RUNNER_TEMP/cli-images.txt"
           for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do
             [ -r "$cand" ] || continue
-            embedded="$(grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (kong|mailpit|imgproxy|vector)$' "$cand" | sort -u | awk '{n=$2; sub(/^.*\//,"",n); print n}')"
-            [ -n "$embedded" ] && break
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
           done
           imgs=""
-          for IMG in $listed; do
-            if [ "${IMG%%:*}" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
-            imgs="$imgs $IMG"
-          done
-          for IMG in $embedded; do
-            case ",$EXCLUDE," in *",${IMG%%:*},"*) continue ;; esac
-            imgs="$imgs $IMG"
-          done
+          if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            while read -r _from image _as alias; do
+              case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
+              case "$svc" in
+                postgres|realtime|storage-api) ;;
+                supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+                *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+              esac
+              imgs="$imgs ${image##*/}"
+            done < "$RUNNER_TEMP/cli-images.txt"
+          else
+            echo "::warning title=Supabase image pre-pull::the CLI's embedded image list was not readable; falling back to supabase services (a subset)."
+            imgs="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u | tr '\n' ' ')"
+          fi
           echo "images:$imgs"
           for IMG in $imgs; do
             got=0
@@ -1534,17 +1549,17 @@ jobs:
       # pulls ~10 images at once and ghcr.io answers "toomanyrequests ... allowed:
       # 44000/minute" (a short burst throttle across parallel jobs); docker and the
       # CLI do not retry, and the bind-retry step correctly refuses (not a port
-      # collision). Mechanism reused from Team's proven rehearsal (#1193, run
-      # 40552718991): pull each image the pinned CLI lists (`supabase services`,
-      # no tag written here) from ghcr.io with a bounded back-off, then the same
-      # tag from ECR or Docker Hub, re-tagged locally so the start finds it.
-      # Every listed image is pulled whatever the job excludes: the start pulls
-      # realtime and storage-api while initialising the database even with
-      # -x realtime / -x storage-api (runs 40557844633, 40559826388). The images
-      # `services` does not list (kong, mailpit, imgproxy, vector) are read from
-      # the CLI's own embedded Dockerfile and pulled unless the job excludes them.
-      # Inline, never a checked-out script, because the credential is held
-      # (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
+      # collision). Mechanism from Team's proven rehearsal (#1193, run 40552718991):
+      # pull each image from ghcr.io with a bounded back-off, then the same tag from
+      # ECR or Docker Hub, re-tagged locally so the start finds it. The list is the
+      # pinned CLI's OWN image list, read from its embedded Dockerfile (`FROM <image>
+      # AS <service>` in the sibling supabase-go; `supabase services` lists only a
+      # subset and is the fallback), so no tag is written here. It covers the job's
+      # exact -x set: every service the job does not exclude, plus postgres,
+      # realtime and storage-api, which the start pulls while initialising the
+      # database even with -x realtime / -x storage-api (runs 40557844633,
+      # 40559826388). Inline, never a checked-out script, because the credential is
+      # held (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
       - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
         continue-on-error: true
         timeout-minutes: 15
@@ -1553,23 +1568,28 @@ jobs:
           set +e
           EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
           pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
-          listed="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u)"
           BIN="$(command -v supabase || true)"
-          embedded=""
+          : > "$RUNNER_TEMP/cli-images.txt"
           for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do
             [ -r "$cand" ] || continue
-            embedded="$(grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (kong|mailpit|imgproxy|vector)$' "$cand" | sort -u | awk '{n=$2; sub(/^.*\//,"",n); print n}')"
-            [ -n "$embedded" ] && break
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
           done
           imgs=""
-          for IMG in $listed; do
-            if [ "${IMG%%:*}" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
-            imgs="$imgs $IMG"
-          done
-          for IMG in $embedded; do
-            case ",$EXCLUDE," in *",${IMG%%:*},"*) continue ;; esac
-            imgs="$imgs $IMG"
-          done
+          if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            while read -r _from image _as alias; do
+              case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
+              case "$svc" in
+                postgres|realtime|storage-api) ;;
+                supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+                *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+              esac
+              imgs="$imgs ${image##*/}"
+            done < "$RUNNER_TEMP/cli-images.txt"
+          else
+            echo "::warning title=Supabase image pre-pull::the CLI's embedded image list was not readable; falling back to supabase services (a subset)."
+            imgs="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u | tr '\n' ' ')"
+          fi
           echo "images:$imgs"
           for IMG in $imgs; do
             got=0
@@ -1758,17 +1778,17 @@ jobs:
       # pulls ~10 images at once and ghcr.io answers "toomanyrequests ... allowed:
       # 44000/minute" (a short burst throttle across parallel jobs); docker and the
       # CLI do not retry, and the bind-retry step correctly refuses (not a port
-      # collision). Mechanism reused from Team's proven rehearsal (#1193, run
-      # 40552718991): pull each image the pinned CLI lists (`supabase services`,
-      # no tag written here) from ghcr.io with a bounded back-off, then the same
-      # tag from ECR or Docker Hub, re-tagged locally so the start finds it.
-      # Every listed image is pulled whatever the job excludes: the start pulls
-      # realtime and storage-api while initialising the database even with
-      # -x realtime / -x storage-api (runs 40557844633, 40559826388). The images
-      # `services` does not list (kong, mailpit, imgproxy, vector) are read from
-      # the CLI's own embedded Dockerfile and pulled unless the job excludes them.
-      # Inline, never a checked-out script, because the credential is held
-      # (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
+      # collision). Mechanism from Team's proven rehearsal (#1193, run 40552718991):
+      # pull each image from ghcr.io with a bounded back-off, then the same tag from
+      # ECR or Docker Hub, re-tagged locally so the start finds it. The list is the
+      # pinned CLI's OWN image list, read from its embedded Dockerfile (`FROM <image>
+      # AS <service>` in the sibling supabase-go; `supabase services` lists only a
+      # subset and is the fallback), so no tag is written here. It covers the job's
+      # exact -x set: every service the job does not exclude, plus postgres,
+      # realtime and storage-api, which the start pulls while initialising the
+      # database even with -x realtime / -x storage-api (runs 40557844633,
+      # 40559826388). Inline, never a checked-out script, because the credential is
+      # held (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
       - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
         continue-on-error: true
         timeout-minutes: 15
@@ -1777,23 +1797,28 @@ jobs:
           set +e
           EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
           pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
-          listed="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u)"
           BIN="$(command -v supabase || true)"
-          embedded=""
+          : > "$RUNNER_TEMP/cli-images.txt"
           for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do
             [ -r "$cand" ] || continue
-            embedded="$(grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (kong|mailpit|imgproxy|vector)$' "$cand" | sort -u | awk '{n=$2; sub(/^.*\//,"",n); print n}')"
-            [ -n "$embedded" ] && break
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
           done
           imgs=""
-          for IMG in $listed; do
-            if [ "${IMG%%:*}" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
-            imgs="$imgs $IMG"
-          done
-          for IMG in $embedded; do
-            case ",$EXCLUDE," in *",${IMG%%:*},"*) continue ;; esac
-            imgs="$imgs $IMG"
-          done
+          if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            while read -r _from image _as alias; do
+              case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
+              case "$svc" in
+                postgres|realtime|storage-api) ;;
+                supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+                *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+              esac
+              imgs="$imgs ${image##*/}"
+            done < "$RUNNER_TEMP/cli-images.txt"
+          else
+            echo "::warning title=Supabase image pre-pull::the CLI's embedded image list was not readable; falling back to supabase services (a subset)."
+            imgs="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u | tr '\n' ' ')"
+          fi
           echo "images:$imgs"
           for IMG in $imgs; do
             got=0
@@ -1966,17 +1991,17 @@ jobs:
       # pulls ~10 images at once and ghcr.io answers "toomanyrequests ... allowed:
       # 44000/minute" (a short burst throttle across parallel jobs); docker and the
       # CLI do not retry, and the bind-retry step correctly refuses (not a port
-      # collision). Mechanism reused from Team's proven rehearsal (#1193, run
-      # 40552718991): pull each image the pinned CLI lists (`supabase services`,
-      # no tag written here) from ghcr.io with a bounded back-off, then the same
-      # tag from ECR or Docker Hub, re-tagged locally so the start finds it.
-      # Every listed image is pulled whatever the job excludes: the start pulls
-      # realtime and storage-api while initialising the database even with
-      # -x realtime / -x storage-api (runs 40557844633, 40559826388). The images
-      # `services` does not list (kong, mailpit, imgproxy, vector) are read from
-      # the CLI's own embedded Dockerfile and pulled unless the job excludes them.
-      # Inline, never a checked-out script, because the credential is held
-      # (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
+      # collision). Mechanism from Team's proven rehearsal (#1193, run 40552718991):
+      # pull each image from ghcr.io with a bounded back-off, then the same tag from
+      # ECR or Docker Hub, re-tagged locally so the start finds it. The list is the
+      # pinned CLI's OWN image list, read from its embedded Dockerfile (`FROM <image>
+      # AS <service>` in the sibling supabase-go; `supabase services` lists only a
+      # subset and is the fallback), so no tag is written here. It covers the job's
+      # exact -x set: every service the job does not exclude, plus postgres,
+      # realtime and storage-api, which the start pulls while initialising the
+      # database even with -x realtime / -x storage-api (runs 40557844633,
+      # 40559826388). Inline, never a checked-out script, because the credential is
+      # held (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
       - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
         continue-on-error: true
         timeout-minutes: 15
@@ -1985,23 +2010,28 @@ jobs:
           set +e
           EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector'
           pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
-          listed="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u)"
           BIN="$(command -v supabase || true)"
-          embedded=""
+          : > "$RUNNER_TEMP/cli-images.txt"
           for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do
             [ -r "$cand" ] || continue
-            embedded="$(grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (kong|mailpit|imgproxy|vector)$' "$cand" | sort -u | awk '{n=$2; sub(/^.*\//,"",n); print n}')"
-            [ -n "$embedded" ] && break
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
           done
           imgs=""
-          for IMG in $listed; do
-            if [ "${IMG%%:*}" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
-            imgs="$imgs $IMG"
-          done
-          for IMG in $embedded; do
-            case ",$EXCLUDE," in *",${IMG%%:*},"*) continue ;; esac
-            imgs="$imgs $IMG"
-          done
+          if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            while read -r _from image _as alias; do
+              case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
+              case "$svc" in
+                postgres|realtime|storage-api) ;;
+                supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+                *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+              esac
+              imgs="$imgs ${image##*/}"
+            done < "$RUNNER_TEMP/cli-images.txt"
+          else
+            echo "::warning title=Supabase image pre-pull::the CLI's embedded image list was not readable; falling back to supabase services (a subset)."
+            imgs="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u | tr '\n' ' ')"
+          fi
           echo "images:$imgs"
           for IMG in $imgs; do
             got=0
@@ -2182,17 +2212,17 @@ jobs:
       # pulls ~10 images at once and ghcr.io answers "toomanyrequests ... allowed:
       # 44000/minute" (a short burst throttle across parallel jobs); docker and the
       # CLI do not retry, and the bind-retry step correctly refuses (not a port
-      # collision). Mechanism reused from Team's proven rehearsal (#1193, run
-      # 40552718991): pull each image the pinned CLI lists (`supabase services`,
-      # no tag written here) from ghcr.io with a bounded back-off, then the same
-      # tag from ECR or Docker Hub, re-tagged locally so the start finds it.
-      # Every listed image is pulled whatever the job excludes: the start pulls
-      # realtime and storage-api while initialising the database even with
-      # -x realtime / -x storage-api (runs 40557844633, 40559826388). The images
-      # `services` does not list (kong, mailpit, imgproxy, vector) are read from
-      # the CLI's own embedded Dockerfile and pulled unless the job excludes them.
-      # Inline, never a checked-out script, because the credential is held
-      # (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
+      # collision). Mechanism from Team's proven rehearsal (#1193, run 40552718991):
+      # pull each image from ghcr.io with a bounded back-off, then the same tag from
+      # ECR or Docker Hub, re-tagged locally so the start finds it. The list is the
+      # pinned CLI's OWN image list, read from its embedded Dockerfile (`FROM <image>
+      # AS <service>` in the sibling supabase-go; `supabase services` lists only a
+      # subset and is the fallback), so no tag is written here. It covers the job's
+      # exact -x set: every service the job does not exclude, plus postgres,
+      # realtime and storage-api, which the start pulls while initialising the
+      # database even with -x realtime / -x storage-api (runs 40557844633,
+      # 40559826388). Inline, never a checked-out script, because the credential is
+      # held (Codex P2 4354172124). Non-fatal: the start still pulls what is missing.
       - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
         continue-on-error: true
         timeout-minutes: 15
@@ -2201,23 +2231,28 @@ jobs:
           set +e
           EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
           pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
-          listed="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u)"
           BIN="$(command -v supabase || true)"
-          embedded=""
+          : > "$RUNNER_TEMP/cli-images.txt"
           for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do
             [ -r "$cand" ] || continue
-            embedded="$(grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (kong|mailpit|imgproxy|vector)$' "$cand" | sort -u | awk '{n=$2; sub(/^.*\//,"",n); print n}')"
-            [ -n "$embedded" ] && break
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
           done
           imgs=""
-          for IMG in $listed; do
-            if [ "${IMG%%:*}" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
-            imgs="$imgs $IMG"
-          done
-          for IMG in $embedded; do
-            case ",$EXCLUDE," in *",${IMG%%:*},"*) continue ;; esac
-            imgs="$imgs $IMG"
-          done
+          if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            while read -r _from image _as alias; do
+              case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
+              case "$svc" in
+                postgres|realtime|storage-api) ;;
+                supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+                *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+              esac
+              imgs="$imgs ${image##*/}"
+            done < "$RUNNER_TEMP/cli-images.txt"
+          else
+            echo "::warning title=Supabase image pre-pull::the CLI's embedded image list was not readable; falling back to supabase services (a subset)."
+            imgs="$(supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u | tr '\n' ' ')"
+          fi
           echo "images:$imgs"
           for IMG in $imgs; do
             got=0

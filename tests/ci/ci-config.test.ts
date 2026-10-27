@@ -1148,21 +1148,26 @@ describe("CI-REGISTRY: every Supabase-starting job pre-pulls its images with a b
     }
   });
 
-  it("derives the image list from the pinned CLI (`supabase services` + the CLI's embedded Dockerfile): no image tag is written in the workflow", () => {
+  it("derives the image list from the pinned CLI's own embedded Dockerfile (services is only the fallback): no image tag is written in the workflow", () => {
     for (const s of [...prepulls(CI), ...prepulls(NIGHTLY)]) {
       const c = code(s);
-      expect(c).toContain("supabase services 2>/dev/null | awk -F'|'");
-      // Images `services` does not list, read from the CLI itself (the release archive's
-      // `supabase` is a wrapper; the Dockerfile text is in the sibling supabase-go).
+      // The release archive's `supabase` is a wrapper; the Dockerfile text is in the sibling supabase-go.
       expect(c).toContain('for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do');
-      expect(c).toContain("grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (kong|mailpit|imgproxy|vector)$' \"$cand\"");
+      expect(c).toContain("grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' \"$cand\"");
+      expect(c).toContain("supabase services 2>/dev/null | awk -F'|'");
       expect(c).not.toMatch(/\b(?:postgres|postgres-meta|kong|gotrue|postgrest|mailpit|supavisor|realtime|studio|storage-api|edge-runtime|logflare|imgproxy|vector)[:@]v?\d/);
-      // EVERY listed image is pulled whatever the job excludes (the start pulls realtime and
-      // storage-api while initialising the database even with -x for them); only the supavisor
-      // waits for the pooler, and only the unlisted extras honour the job's exclusions.
-      expect(c).toContain('if [ "${IMG%%:*}" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi');
-      expect(c).toContain('case ",$EXCLUDE," in *",${IMG%%:*},"*) continue ;; esac');
-      expect(c.match(/EXCLUDE/g)?.length).toBe(2);
+    }
+  });
+
+  it("covers the job's exact -x set: every non-excluded service, plus postgres/realtime/storage-api which the start pulls while initialising the database", () => {
+    for (const s of [...prepulls(CI), ...prepulls(NIGHTLY)]) {
+      const c = code(s);
+      for (const [alias, svc] of [["pg", "postgres"], ["storage", "storage-api"], ["edgeruntime", "edge-runtime"], ["pgmeta", "postgres-meta"]]) {
+        expect(c, alias).toContain(`${alias}) svc=${svc} ;;`);
+      }
+      expect(c).toContain("postgres|realtime|storage-api) ;;");
+      expect(c).toContain('supavisor) [ -n "$pooler_on" ] || continue;');
+      expect(c).toContain('*) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;');
     }
   });
 
