@@ -1132,7 +1132,7 @@ describe("CI-REGISTRY: every Supabase-starting job pre-pulls its images with a b
 
   it("is non-fatal and bounded: continue-on-error, a step timeout, 2 ghcr attempts with 15 s / 30 s back-off, then ECR, then Docker Hub", () => {
     for (const s of [...prepulls(CI), ...prepulls(NIGHTLY)]) {
-      expect(s).toMatch(/\n        continue-on-error: true\n        timeout-minutes: 12\n        shell: bash\n        run: \|\n/);
+      expect(s).toMatch(/\n        continue-on-error: true\n        timeout-minutes: 15\n        shell: bash\n        run: \|\n/);
       const c = code(s);
       expect(c).toContain("set +e");
       expect(c).toContain("for i in 1 2; do");
@@ -1148,14 +1148,21 @@ describe("CI-REGISTRY: every Supabase-starting job pre-pulls its images with a b
     }
   });
 
-  it("derives the image list from the pinned CLI (`supabase services`): no image tag is written in the workflow", () => {
+  it("derives the image list from the pinned CLI (`supabase services` + the CLI's embedded Dockerfile): no image tag is written in the workflow", () => {
     for (const s of [...prepulls(CI), ...prepulls(NIGHTLY)]) {
       const c = code(s);
       expect(c).toContain("supabase services 2>/dev/null | awk -F'|'");
-      expect(c).not.toMatch(/\b(?:postgres|postgres-meta|kong|gotrue|postgrest|mailpit|supavisor|realtime|studio|storage-api|edge-runtime|logflare)[:@]v?\d/);
-      // Excluded services are skipped EXCEPT realtime (the CLI pulls it even with -x realtime, run 40557844633); the supavisor only when the pooler is enabled.
-      expect(c).toContain('case ",$EXCLUDE," in *",$svc,"*) [ "$svc" = realtime ] || continue ;; esac');
-      expect(c).toContain('if [ "$svc" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi');
+      // Images `services` does not list, read from the CLI itself (the release archive's
+      // `supabase` is a wrapper; the Dockerfile text is in the sibling supabase-go).
+      expect(c).toContain('for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do');
+      expect(c).toContain("grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (kong|mailpit|imgproxy|vector)$' \"$cand\"");
+      expect(c).not.toMatch(/\b(?:postgres|postgres-meta|kong|gotrue|postgrest|mailpit|supavisor|realtime|studio|storage-api|edge-runtime|logflare|imgproxy|vector)[:@]v?\d/);
+      // EVERY listed image is pulled whatever the job excludes (the start pulls realtime and
+      // storage-api while initialising the database even with -x for them); only the supavisor
+      // waits for the pooler, and only the unlisted extras honour the job's exclusions.
+      expect(c).toContain('if [ "${IMG%%:*}" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi');
+      expect(c).toContain('case ",$EXCLUDE," in *",${IMG%%:*},"*) continue ;; esac');
+      expect(c.match(/EXCLUDE/g)?.length).toBe(2);
     }
   });
 
