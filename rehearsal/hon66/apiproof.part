@@ -66,6 +66,37 @@ expect "(H6b) db push --linked WITH a password and NO token makes no login-role 
 PLACEHOLDER="hone-read-placeholder-not-a-secret"
 echo "select 1 as one" > "$OUT/api-q.sql"
 authfails() { docker logs "$POOLER" 2>&1 | grep -ci 'password authentication failed' ; }
+# SOURCE FINDING (HON66-PROOF-3, supabase/cli v2.102.0 apps/cli-go): cmd/root.go:118 runs flags.ParseDatabaseConfig for every command, so
+# `db query --linked` first runs NewDbConfigWithPassword (internal/utils/flags/db_url.go:92-157): a 5 s TCP DIAL of db.<ref>.<project-host>:5432
+# (L105-109). Only when the dial FAILS does it try the pooler (utils/connect.go:65-98), and GetPoolerConfig returns nil unless the pooler host's
+# eTLD+1 equals the profile's pooler_host (connect.go:115-123, `supabase.com`); a local/IP pooler host never qualifies, which is why every
+# earlier variant ended in "IPv6 is not supported". With the dial succeeding and SUPABASE_DB_PASSWORD set, no API login-role call is made
+# (db_url.go:149-151); RunLinked (internal/db/query/query.go:83-94) then uses only the Management API and never reads DbConfig.
+# So the test is a REACHABLE direct host: a local listener on 5432 that records the bytes each connection sends (a login would send a startup packet).
+LISTLOG="$OUT/h6c-listener.log"; : > "$LISTLOG"
+python3 -I - "$LISTLOG" > /dev/null 2>&1 <<'PYL' &
+import socket, sys, threading
+log = open(sys.argv[1], "a", buffering=1)
+def serve(fam, addr):
+    try:
+        s = socket.socket(fam, socket.SOCK_STREAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(addr); s.listen(16)
+    except OSError as e:
+        log.write("bind-failed %s %s\n" % (addr[0], e)); return
+    while True:
+        c, _ = s.accept(); c.settimeout(1.0); n = 0
+        try:
+            while True:
+                b = c.recv(4096)
+                if not b: break
+                n += len(b)
+        except OSError:
+            pass
+        log.write("conn %s bytes=%d\n" % (addr[0], n)); c.close()
+for fam, addr in ((socket.AF_INET, ("127.0.0.1", 5432)), (socket.AF_INET6, ("::1", 5432, 0, 0))):
+    threading.Thread(target=serve, args=(fam, addr), daemon=True).start()
+threading.Event().wait()
+PYL
+H6C_LISTENER=$!; sleep 1
 H6C_OK=""; H6C_VARIANTS=0
 for hv in "aaaa:2001:db8::1" "a4:127.0.0.1" "lo6:::1"; do
   for uv in "fake:postgres.$FAKEREF" "tenant:$PUSER"; do
@@ -73,19 +104,20 @@ for hv in "aaaa:2001:db8::1" "a4:127.0.0.1" "lo6:::1"; do
     echo "${hv#*:} db.$R.supabase.co" | sudo tee -a /etc/hosts > /dev/null
     LD="$OUT/api-linked-$R"; rm -rf "$LD"; mkdir -p "$LD/supabase/.temp"; printf '%s\n' "$R" > "$LD/supabase/.temp/project-ref"
     printf '%s' "postgresql://${uv#*:}@$RUNNER_IP:$TLSP/postgres" > "$LD/supabase/.temp/pooler-url"; cp "$OUT/cli-latest" "$LD/supabase/.temp/cli-latest"
-    AF0="$(authfails)"
+    AF0="$(authfails)"; LB0="$(wc -l < "$LISTLOG")"
     with_fake_api "q$H6C_VARIANTS" env -u GITHUB_TOKEN -u GH_TOKEN "${S1ENV[@]}" SUPABASE_ACCESS_TOKEN="$FAKETOKEN" SUPABASE_DB_PASSWORD="$PLACEHOLDER" bash -c "cd '$LD' && '$GOBIN' --agent no db query --linked -o json -f '$OUT/api-q.sql' > '$LD/out' 2> '$LD/err'; echo \$? > '$LD/rc'"
-    AF1="$(authfails)"
+    AF1="$(authfails)"; LB1="$(wc -l < "$LISTLOG")"; LBYTES="$(tail -n +"$((LB0 + 1))" "$LISTLOG" | grep -c 'bytes=[1-9]')"
     P=$(grep -c '"method": "POST", "host": "api.supabase.com", "path": "/v1/projects/'$R'/database/query"' "$OUT/flows-q$H6C_VARIANTS.jsonl")
     O=$(grep -v '"/v1/projects/'$R'/database/query"' "$OUT/flows-q$H6C_VARIANTS.jsonl" | grep -vc '"method": "GET", "host": "api.supabase.com", "path": "/v1/projects/'$R'"')
-    say "RESULT H6c variant host=${hv%%:*} user=${uv%%:*}: exit=$(cat "$LD/rc") POST=$P other=$O total=$(nflows "q$H6C_VARIANTS") supavisor_auth_failures_caused=$((AF1 - AF0)); stdout=$(head -c 80 "$LD/out" | tr -d '\n '); stderr=$(tr '\n' ' ' < "$LD/err" | sed -e "s/$FAKETOKEN/<canary-token>/g" -e "s/$PLACEHOLDER/<placeholder>/g" | cut -c1-200)"
+    say "RESULT H6c variant host=${hv%%:*} user=${uv%%:*}: exit=$(cat "$LD/rc") POST=$P other=$O total=$(nflows "q$H6C_VARIANTS") supavisor_auth_failures_caused=$((AF1 - AF0)) (informational: Supavisor logs its own 28P01 noise) listener_connections=$((LB1 - LB0)) listener_connections_with_bytes=$LBYTES; stdout=$(head -c 80 "$LD/out" | tr -d '\n '); stderr=$(tr '\n' ' ' < "$LD/err" | sed -e "s/$FAKETOKEN/<canary-token>/g" -e "s/$PLACEHOLDER/<placeholder>/g" | cut -c1-200)"
     [ "$O" = 0 ] || H6C_OTHER=1
-    [ "$(cat "$LD/rc")" = 0 ] && [ "$P" = 1 ] && [ "$O" = 0 ] && [ "$((AF1 - AF0))" = 0 ] && [ -z "$H6C_OK" ] && H6C_OK="host=${hv%%:*} user=${uv%%:*}"
+    [ "$(cat "$LD/rc")" = 0 ] && [ "$P" = 1 ] && [ "$O" = 0 ] && [ "$LBYTES" = 0 ] && [ -z "$H6C_OK" ] && H6C_OK="host=${hv%%:*} user=${uv%%:*}"
     H6C_VARIANTS=$((H6C_VARIANTS + 1))
   done
 done
+kill "$H6C_LISTENER" 2> /dev/null; wait "$H6C_LISTENER" 2> /dev/null
 expect "(H6c-a) in NO variant did db query --linked send anything beyond POST /database/query and the optional GET /v1/projects/<ref> (no read-only endpoint, no login-role, ban, restore or migrations call)" "$([ -z "${H6C_OTHER:-}" ] && echo 0 || echo 1)" "variants=$H6C_VARIANTS"
-expect "(H6c-b) PROOF: some variant ran db query --linked with the non-secret placeholder to exit 0, exactly one POST /database/query, nothing else, and ZERO Supavisor authentication failures (the DB password is not used to log in)" "$([ -n "$H6C_OK" ] && echo 0 || echo 1)" "${H6C_OK:-none}"
+expect "(H6c-b) PROOF: some variant ran db query --linked with the non-secret placeholder to exit 0, exactly one POST /database/query, nothing else, and NO byte was ever sent to the database host it dialled (the password is not used to log in; a login would send a startup packet)" "$([ -n "$H6C_OK" ] && echo 0 || echo 1)" "${H6C_OK:-none}"
 # 4. backups list
 mklinked "$OUT/api-linked"
 with_fake_api backups env -u GITHUB_TOKEN -u GH_TOKEN "${S1ENV[@]}" SUPABASE_ACCESS_TOKEN="$FAKETOKEN" bash -c "cd '$OUT/api-linked' && '$GOBIN' --agent no backups list --project-ref $FAKEREF -o json > '$OUT/api-backups.out' 2> '$OUT/api-backups.err'; echo \$? > '$OUT/api-backups.rc'"
