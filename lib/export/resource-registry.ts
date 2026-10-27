@@ -1222,10 +1222,10 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
   },
   client_legal_identities: {
     kind: "pending",
-    ticket: "HON-58",
+    ticket: "TRUTH-01B",
     tier: 1,
     reason:
-      "Introduced by migration 0258 (HON-58). Staff-entered legal name of a client, one row per client, readable only by an owner or practitioner of the studio. Studio-owned client data with no representation in any exported file yet; the export decision (and whether it joins clients.csv) belongs with the preferred-name column and HON-46 document identity.",
+      "Introduced by migration 0258 (HON-58 identity). Staff-entered legal name of a client, one row per client, readable only by an owner or practitioner of the studio. Studio-owned client data with no representation in any exported file yet; the export decision (and whether it joins clients.csv) belongs with the preferred-name column and HON-46 document identity.",
   },
   client_intake_forms: {
     kind: "pending",
