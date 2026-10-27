@@ -218,7 +218,7 @@ ap_refuse "a quiet_db that is neither idle nor heartbeat (E4)" "quiet_db must be
 approve CUST-UNK; echo "extra=1" >> /etc/hone-release/APPROVED-PACKAGE; expect_refuse "an approval with an unknown key" apply "unknown key"
 approve CUST-OLDKEY; echo "watchdog=waived-by-approver" >> /etc/hone-release/APPROVED-PACKAGE; expect_refuse "the old watchdog=waived-by-approver key is no longer a thing" apply "unknown key"
 ap_refuse "an S0a sha that is not 64 hex" "FULL 64-hex" CUST-S0A s0a_sha=1234
-approve CUST-S0B s0a_at=$(date -u -d '-3 hours' +%Y-%m-%dT%H:%M:%SZ) window_start=$(date -u -d '-200 minutes' +%Y-%m-%dT%H:%M:%SZ); expect_refuse "an S0a result older than 3 hours (S0a freshness)" apply "older than 3 hours"
+approve CUST-S0B s0a_at=$(date -u -d '-190 minutes' +%Y-%m-%dT%H:%M:%SZ) window_start=$(date -u -d '-200 minutes' +%Y-%m-%dT%H:%M:%SZ); expect_refuse "an S0a result older than 3 hours (S0a freshness)" apply "older than 3 hours"
 approve CUST-S0C s0a_at=$(date -u -d '-30 minutes' +%Y-%m-%dT%H:%M:%SZ); expect_refuse "an S0a result from before the window start" apply "older than the window start"
 approve CUST-S0D min_span_days=3; expect_refuse "a minimum span under 6 days" apply "6 or more"
 # T5 (consolidated): the exact target is BUILT by the script; direct = db.<ref>.supabase.co:5432 + startup options, pooler = session pooler + per-file gate
