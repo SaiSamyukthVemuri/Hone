@@ -107,6 +107,8 @@ export function TimedBlockEditDrawer({
     setError(null);
     const fd = new FormData();
     fd.set("id", block!.id);
+    // HON-48: the version this drawer loaded; the action refuses a stale save.
+    fd.set("expected_updated_at", block!.updated_at);
     fd.set("date", date);
     fd.set("start_local", startLocal);
     fd.set("end_local", endLocal);
@@ -119,6 +121,8 @@ export function TimedBlockEditDrawer({
       const r = await updateTimedBlockAction(fd);
       if (!r.ok) {
         setError(r.error);
+        // Someone else changed or deleted this block: refetch so the calendar shows it.
+        if (r.stale) router.refresh();
         return;
       }
       router.refresh();
@@ -130,11 +134,13 @@ export function TimedBlockEditDrawer({
     setError(null);
     const fd = new FormData();
     fd.set("id", block!.id);
+    fd.set("expected_updated_at", block!.updated_at);
     startTransition(async () => {
       try {
         const result = await deleteTimedBlockAction(fd);
         if (!result.ok) {
           setError(result.error);
+          if (result.stale) router.refresh();
           return;
         }
         router.refresh();

@@ -1,5 +1,6 @@
 "use server";
 
+import { STALE_BLOCK_MESSAGE, readExpectedBlockVersion } from "@/lib/booking/timed-block-version";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
@@ -23,7 +24,9 @@ import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 // exception, which Next.js production masks to a generic message.
 export type BlockActionResult =
   | { ok: true }
-  | { ok: false; error: string };
+  // `stale` (HON-48): the block was changed or deleted by someone else after
+  // this form loaded it; the caller should refetch and show the latest.
+  | { ok: false; error: string; stale?: true };
 
 const FALLBACK_CONFLICT_MESSAGE =
   "This time overlaps an existing appointment or blocked period. Choose another time or resolve the existing calendar item first.";
@@ -883,6 +886,11 @@ export async function updateTimedBlockAction(
   const endLocal = trimmed(formData.get("end_local"));
   const category = trimmed(formData.get("category")).toLowerCase();
   const privateNote = nullable(formData.get("private_note"));
+  // HON-48: the version the form loaded this block at (absent = legacy form).
+  const expected = readExpectedBlockVersion(formData.get("expected_updated_at"));
+  if (expected.kind === "invalid") {
+    return { ok: false, error: "This edit could not be checked against the latest version. Reload and try again." };
+  }
 
   if (!id) return { ok: false, error: "Missing block id." };
   if (!dateStr) return { ok: false, error: "Date is required." };
@@ -920,7 +928,7 @@ export async function updateTimedBlockAction(
   // the request omits practitioner_id (a Legacy form, or a tampered request).
   const { data: existing, error: loadErr } = await supabase
     .from("studio_timed_blocks")
-    .select("practitioner_id")
+    .select("practitioner_id, updated_at")
     .eq("id", id)
     .eq("studio_id", studio.id)
     .maybeSingle();
@@ -928,10 +936,21 @@ export async function updateTimedBlockAction(
     logAvailabilityDbError("update_block", "load", dbErrorCode(loadErr));
     return { ok: false, error: "Could not update this block. Please try again." };
   }
-  if (!existing) return { ok: false, error: "Block not found." };
+  if (!existing) {
+    // With a version the form HAD this block, so "gone" means someone deleted it.
+    return expected.kind === "present"
+      ? { ok: false, error: STALE_BLOCK_MESSAGE, stale: true }
+      : { ok: false, error: "Block not found." };
+  }
+  if (expected.kind === "present" && existing.updated_at !== expected.value) {
+    return { ok: false, error: STALE_BLOCK_MESSAGE, stale: true };
+  }
   const scope = resolveSubmittedScope(formData, existing.practitioner_id);
 
-  const { error } = await supabase
+  // The write itself is conditional on the version too: the check above can be
+  // overtaken by another save between the read and this statement, and only a
+  // conditional UPDATE is atomic. Zero rows back means someone else won.
+  let update = supabase
     .from("studio_timed_blocks")
     .update({
       starts_at: startsAt,
@@ -943,6 +962,11 @@ export async function updateTimedBlockAction(
     })
     .eq("id", id)
     .eq("studio_id", studio.id);
+  if (expected.kind === "present") update = update.eq("updated_at", expected.value);
+  const { data: written, error } = await update.select("id");
+  if (!error && expected.kind === "present" && (written ?? []).length === 0) {
+    return { ok: false, error: STALE_BLOCK_MESSAGE, stale: true };
+  }
   if (error) {
     if (error.code === "23P01") {
       // Exclude the block we are editing from the conflict lookup
@@ -982,15 +1006,38 @@ export async function deleteTimedBlockAction(
   const { studio } = await assertOwnerWithStudio();
   const id = trimmed(formData.get("id"));
   if (!id) return { ok: false, error: "Missing block id." };
+  const expected = readExpectedBlockVersion(formData.get("expected_updated_at"));
+  if (expected.kind === "invalid") {
+    return { ok: false, error: "This delete could not be checked against the latest version. Reload and try again." };
+  }
   const supabase = await createClient();
-  const { error } = await supabase
+  // HON-48: with a version the delete only applies to the block the person was
+  // looking at; a block edited by someone else since is NOT deleted (they may
+  // not have meant that one), and one already deleted is simply done.
+  let del = supabase
     .from("studio_timed_blocks")
     .delete()
     .eq("id", id)
     .eq("studio_id", studio.id);
+  if (expected.kind === "present") del = del.eq("updated_at", expected.value);
+  const { data: deleted, error } = await del.select("id");
   if (error) {
     logAvailabilityDbError("delete_block", "delete", dbErrorCode(error));
     return { ok: false, error: "Could not delete this block. Please try again." };
+  }
+  if (expected.kind === "present" && (deleted ?? []).length === 0) {
+    const { data: still, error: checkErr } = await supabase
+      .from("studio_timed_blocks")
+      .select("id")
+      .eq("id", id)
+      .eq("studio_id", studio.id)
+      .maybeSingle();
+    if (checkErr) {
+      logAvailabilityDbError("delete_block", "recheck", dbErrorCode(checkErr));
+      return { ok: false, error: "Could not delete this block. Please try again." };
+    }
+    if (still) return { ok: false, error: STALE_BLOCK_MESSAGE, stale: true };
+    // Already gone: the outcome the person wanted. Fall through to success.
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
