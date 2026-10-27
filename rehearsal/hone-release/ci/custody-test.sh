@@ -196,6 +196,13 @@ for sg in INT TERM HUP; do runuser -u sam -- kill -$sg "$SP" 2>/dev/null; sleep 
 wait
 sig_out=$(cat $T/out/sig.txt); printf '%s\n' "$sig_out" >> "$SAMOUT"
 if grep -q "PUSH COMPLETED" $W/stub.log && [ "$(grep -c '^CALL.*Applying\|^CALL' $W/stub.log)" -ge 2 ] && [ "$(state | cut -d' ' -f1)" = APPLIED ]; then ok "SIGINT, SIGTERM and SIGHUP sent to sudo during the push did NOT tear it: the push ran to completion exactly once and the state ended APPLIED"; else bad "signal handling" "state $(state); $(cat $W/stub.log | tail -3); $sig_out"; fi
+# SIGKILL of the caller's sudo (cannot be handled): the release script keeps running and finishes cleanly; nothing is torn
+echo slow > $W/stub-mode; clear_state; approve CUST-SIGKILL; : > $W/stub.log; chown hone-release:hone-release $W/stub.log
+sam bash -c "sudo -n -u hone-release $LB apply > $T/out/sk.txt 2>&1" &
+for i in $(seq 1 60); do [ "$(state | cut -d' ' -f1)" = IN-FLIGHT ] && break; sleep 0.5; done
+SP=$(pgrep -x sudo | head -1); runuser -u sam -- kill -9 "$SP" 2>/dev/null
+wait; sleep 13
+if [ "$(grep -c 'PUSH COMPLETED' $W/stub.log)" = 1 ] && [ "$(state | cut -d' ' -f1)" = APPLIED ]; then ok "SIGKILL of the caller's sudo mid-push: the release script and the CLI ran on, the push completed exactly once, the state is APPLIED (not torn, not IN-FLIGHT)"; else bad "sigkill of sudo" "state $(state); $(tail -3 $W/stub.log)"; fi
 # an unclean death (the script is SIGKILLed, as by a crash or the OOM killer) leaves IN-FLIGHT and blocks the next run
 echo slow > $W/stub-mode; clear_state; approve CUST-KILL; : > $W/stub.log; chown hone-release:hone-release $W/stub.log
 sam bash -c "sudo -n -u hone-release $LB apply > $T/out/kill.txt 2>&1" &
