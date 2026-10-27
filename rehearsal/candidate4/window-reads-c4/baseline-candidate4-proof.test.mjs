@@ -77,8 +77,10 @@ const c4Attest = (x) => { const a = fx.attest(); delete a.g4; a.project_ref_sha2
 const run = (attest, baseline = c4, pitrApi) => { const f = results(); const msha = sha(manifestText); const metas = fx.metasFor(f, { manifest_sha256: msha, runner_sha256: c4.runner_sha256 }); for (const n of FILES) if (metas[n]) metas[n].sql_sha256 = man[`${n}.sql`];
   return evaluate({ files: f, metas, manifest: man, baseline, attest, window: { start: fx.WS, end: fx.WE }, now: fx.NOW, manifestFileSha256: msha, pitrApi }); };
 
-test("candidate 4 with a PITR attestation and a captured pitr-backups result: every row PASS and the labelled verdict line", () => {
-  const x = apiFor(c4); const o = run(c4Attest(x), c4, x.api);
+test("candidate 4 as shipped is REFUSED by the candidate-5 comparator (no g4_pitr_api.min_span_days); with it (= candidate 5) every row PASS and the labelled verdict line", () => {
+  const x = apiFor(c4); const refused = run(c4Attest(x), c4, x.api);
+  assert.equal(refused.rows.find((r) => r.id === "S0-10").status, "FAIL"); assert.ok(refused.rows.find((r) => r.id === "S0-10").detail.includes("min_span_days"));
+  const c5 = { ...c4, g4_pitr_api: { ...c4.g4_pitr_api, min_span_days: 6 } }; const o = run(c4Attest(x), c5, x.api);
   assert.equal(o.overall, "PASS", JSON.stringify(o.rows.filter((r) => r.status !== "PASS")));
   assert.equal(o.verdictLine, "OVERALL PASS (provider range; base backup UNVERIFIED; restore not tested)");
 });

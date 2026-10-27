@@ -5,7 +5,7 @@
 # No retries. Credentials are typed privately (never echoed, never on a command line, never written) and cleared
 # on any exit. Nothing here creates a login role, resets a password or unbans an IP: PREVENTION is the runner's
 # password-present rule; the log scan below is only a detector after the fact (a hit must be REPORTED, never retried).
-# CANDIDATE 4. Under PITR the Management API lists no base backup, so this script does not ask for one. The recovery range
+# CANDIDATE 5 (candidate 4 + the S0-10 API span minimum 6 d from baseline g4_pitr_api.min_span_days; the typed retention minimum stays 7). Under PITR the Management API lists no base backup, so this script does not ask for one. The recovery range
 # is read by the COMPARATOR from the captured pitr-backups result (the newest ~/hone-s1/pitr-backups.* directory, copied
 # here after ownership and mode checks); the dashboard values you type are only cross-checked against it (1 s).
 # Exit 0 ONLY after the comparator prints one of the two exact lines
@@ -25,9 +25,9 @@ GO_SHA=dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b
 RUNNER_SHA=471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357
 MANIFEST_SHA=2b1608a9ec43caf97bd9ead3fe1d10895652a080a4b8ae0a891a17be3038cd94
 CMP_SHA=c9b0f102980104d5bd1d59c2127439dacc419ed1c7db235ad7f5acedf9205825
-LIB_SHA=813425d4ad786c2e4b87f853a18c37065baf1ccec004fea2fd5c4542c37670f2
-BASELINE=BASELINE-W1-MACOS-CANDIDATE-4.json
-BASELINE_SHA=5f713678e5b51f34c498f119cec5ae05b33abe181f342410e6a0d4e4f013795d
+LIB_SHA=f0f13c80d91a5d23a69410d220b444db6935e915bd5f3f9319a5e67602b106ab
+BASELINE=BASELINE-W1-MACOS-CANDIDATE-5.json
+BASELINE_SHA=1b22730afd845aa50358a4fe3fb5f68aa36d22293329c7d16ba2effce7a50d82
 G3_FILE=G3-CHECKSUMS-d189768b.txt
 G3_SHA=bbdcd917da77f750f7987d6a5fdca172c6a564fc029d10d19a6ae1e51190f0f6
 REF=alhhybgqdmcdyzpybykj

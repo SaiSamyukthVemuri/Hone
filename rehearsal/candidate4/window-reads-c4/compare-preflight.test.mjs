@@ -705,7 +705,7 @@ const C4_SCRIPT = hx("e"), C4_GO = hx("f"), C4_RUNNER = hx("1"), C4_WMAN = hx("2
 const C4_WAL_SQL = sha("wal-status-sql"), C4_READY_SQL = sha("ready-count-sql");
 const c4Baseline = (mut = (b) => b) => mut({
   ...baseline(), recovery_regime: "pitr", g4_pitr: { ...PITR_TH }, g4_pitr_base: { mode: "unavailable_under_pitr" },
-  g4_pitr_api: { script_sha256: C4_SCRIPT, supabase_go_sha256: C4_GO, max_capture_age_minutes: 60, dashboard_tolerance_seconds: 1 },
+  g4_pitr_api: { script_sha256: C4_SCRIPT, supabase_go_sha256: C4_GO, max_capture_age_minutes: 60, dashboard_tolerance_seconds: 1, min_span_days: 6 },
   g4_pitr_idle: { enabled: true, min_interval_seconds: 600, interval_margin_seconds: 180, max_timeout_seconds: 1200, max_interval_seconds: 1800, max_clock_skew_seconds: 60, horizon_after_archive_seconds: 60, horizon_before_archive_extra_seconds: 300, max_start_to_s1_seconds: 600, runner_sha256: C4_RUNNER, manifest_sha256: C4_WMAN, wal_status_sql_sha256: C4_WAL_SQL, ready_count_sql_sha256: C4_READY_SQL },
 });
 // the captured pitr-backups result: backups.json text + the one-line sidecar. All times in ms.
@@ -768,7 +768,7 @@ const c4Neg = {
   "earliest missing": [{ api: { pb: { earliest_physical_backup_date_unix: undefined } } }, "earliest recovery point is not whole Unix seconds"],
   "latest missing": [{ api: { pb: { latest_physical_backup_date_unix: undefined } } }, "latest recovery point is not whole Unix seconds"],
   "earliest not before latest": [{ api: { earliest: NOW - 5 * 60e3 } }, "not before the latest"],
-  "span 6d23h59m59s": [{ api: { earliest: NOW - 5 * 60e3 - 7 * 86400e3 + 1e3 } }, "spans less than 7 days"],
+  "span 5d23h59m59s": [{ api: { earliest: NOW - 5 * 60e3 - 6 * 86400e3 + 1e3 } }, "spans less than 6 days"],
   "latest in the future": [{ api: { latest: NOW - 60e3, cap: NOW - 120e3 } }, "after the capture time"],
   "milliseconds instead of seconds": [{ api: { pb: { latest_physical_backup_date_unix: (NOW - 5 * 60e3) } } }, "between 2020 and 2100"],
   "a year before 2020": [{ api: { pb: { earliest_physical_backup_date_unix: 1500000000 } } }, "between 2020 and 2100"],
@@ -796,7 +796,7 @@ const c4Neg = {
   "baseline g4_pitr_api missing": [{ base: (b) => { delete b.g4_pitr_api; return b; } }, "baseline.g4_pitr_api is missing"],
   "baseline g4_pitr_api pins not hex": [{ base: (b) => { b.g4_pitr_api.script_sha256 = "abc"; return b; } }, "64 hex"],
   "baseline g4_pitr_api numbers wrong": [{ base: (b) => { b.g4_pitr_api.max_capture_age_minutes = 0; return b; } }, "must be integers"],
-  "earliest inside the 5 min margin of the capture": [{ api: { earliest: NOW - 120e3 - 4 * 60e3, latest: NOW - 120e3 - 60e3, pb: {} } }, "spans less than 7 days"],
+  "earliest inside the 5 min margin of the capture": [{ api: { earliest: NOW - 120e3 - 4 * 60e3, latest: NOW - 120e3 - 60e3, pb: {} } }, "spans less than 6 days"],
   "r6 missing": [{ att: (a) => { delete a.r6; return a; } }, "r6 needs"],
   "r6 without the ack": [{ att: (a) => { delete a.r6.base_backup_unverified_ack; return a; } }, "base_backup_unverified_ack must be the boolean true"],
   "r6 ack false": [{ att: (a) => { a.r6.base_backup_unverified_ack = false; return a; } }, "base_backup_unverified_ack must be the boolean true"],
@@ -1032,4 +1032,36 @@ test("C4 command: the S0 stage reads --pitr-api (the capture is judged against t
   const withApi = cli(path.join(dir, "compare-preflight.mjs"), [...args, "--pitr-api", path.join(root, "api")]), without = cli(path.join(dir, "compare-preflight.mjs"), args);
   assert.ok(/the pitr-api capture (time is in the future|is older than 60 min)/.test(withApi.stdout), withApi.stdout); assert.ok(!withApi.stdout.includes("pass --pitr-api"), withApi.stdout); assert.ok(without.stdout.includes("pass --pitr-api"), without.stdout);
   assert.equal(withApi.status, 1); assert.equal(without.status, 1);
+});
+
+// ---- CANDIDATE 5: the API span minimum is baseline.g4_pitr_api.min_span_days (6); the typed retention minimum stays g4_pitr.min_retention_days (7) ----
+const spanApi = (secs) => { const latest = NOW - 16 * 60e3; return { latest, earliest: latest - secs * 1000 }; };
+test("C5 tonight's real values (span 6 d 16 h 15 m 06 s) PASS S0-10 and the verdict carries the information line", () => {
+  const st = c4({ api: spanApi(6 * 86400 + 16 * 3600 + 15 * 60 + 6) });
+  assert.equal(st.status, "PASS", st.detail);
+  assert.ok(st.detail.includes("observed span 6 d 16 h 15 m; earliest later than latest - 7 d (a base-backup step); information only"), st.detail);
+});
+test("C5 span exactly 6 d PASSES; 5 d 23 h 59 m 59 s FAILS 'spans less than 6 days'", () => {
+  assert.equal(c4({ api: spanApi(6 * 86400) }).status, "PASS");
+  failsWith(c4({ api: spanApi(6 * 86400 - 1) }), "the API range spans less than 6 days");
+});
+test("C5 span exactly 7 d says the earliest is the clamp; a longer span says it is earlier", () => {
+  assert.ok(c4({ api: spanApi(7 * 86400) }).detail.includes("observed span 7 d 0 h 0 m; earliest = latest - 7 d (clamped); information only"));
+  assert.ok(c4({ api: spanApi(7 * 86400 + 1800) }).detail.includes("earliest earlier than latest - 7 d"));
+});
+test("C5 the typed dashboard retention minimum stays 7 (retention 6 FAILS even with a 6 d span)", () => {
+  failsWith(c4({ api: spanApi(6 * 86400 + 3600), att: (a) => { a.g4_pitr.retention_days = 6; return a; } }), "g4_pitr.retention_days 6 is below the minimum 7");
+});
+test("C5 lag 31 min still FAILS (unchanged); lag exactly 30 min still PASSES", () => {
+  failsWith(c4({ api: { latest: NOW - 120e3 - 31 * 60e3, earliest: NOW - 120e3 - 31 * 60e3 - 6 * 86400e3 - 3600e3 } }), "lags the capture by more than 30 min");
+  assert.equal(c4({ api: { latest: NOW - 120e3 - 30 * 60e3, earliest: NOW - 120e3 - 30 * 60e3 - 6 * 86400e3 - 3600e3 } }).status, "PASS");
+});
+test("C5 the span threshold comes from the baseline: min_span_days 7 refuses tonight's span", () => {
+  failsWith(c4({ api: spanApi(6 * 86400 + 16 * 3600), base: (b) => { b.g4_pitr_api.min_span_days = 7; return b; } }), "the API range spans less than 7 days");
+});
+for (const [name, v] of [["missing (a candidate-4 baseline)", undefined], ["0", 0], ["a string", "6"], ["a fraction", 6.5], ["null", null], ["negative", -6]]) {
+  test(`C5 baseline g4_pitr_api.min_span_days ${name} is refused`, () => failsWith(c4({ base: (b) => { if (v === undefined) delete b.g4_pitr_api.min_span_days; else b.g4_pitr_api.min_span_days = v; return b; } }), "min_span_days must be a positive integer"));
+}
+test("C5 the row-4 coverage rules are unchanged: the earliest must still reach back 5 min before the capture", () => {
+  failsWith(c4({ api: { earliest: NOW - 120e3 - 4 * 60e3, latest: NOW - 120e3 - 60e3, pb: {} } }), "the API range spans less than 6 days");
 });

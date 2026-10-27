@@ -1,5 +1,5 @@
 #!/bin/bash
-# REHEARSAL - NEVER MERGE. CANDIDATE-4 on macOS arm64 (macos-14): window-s0a.sh and window-row4.sh (the REAL scripts; test copies differ only
+# REHEARSAL - NEVER MERGE. CANDIDATE-5 (c4 + g4_pitr_api.min_span_days) on macOS arm64 (macos-14): window-s0a.sh and window-row4.sh (the REAL scripts; test copies differ only
 # in pin lines) driven through a pty, with a STUB supabase-go and SYNTHETIC pitr-backups.sh captures (gen-capture.mjs, bound to the real pins
 # 85407d0b / dce26b75). NOT stubbed: the script logic, the runner (only its go-hash constant), the real comparator and lib (same sha), the 14
 # gate files, the baseline (only runner_sha256 / project_ref_sha256 re-pinned). Also runs the comparator's own unit tests.
@@ -26,10 +26,10 @@ REAL="$SRC/window-s0a.sh"; ROW4="$SRC/window-row4.sh"
 st() { grep -E "^$2=" "$1" | head -1 | cut -d= -f2; }
 [ "$(st "$REAL" RUNNER_SHA)" = "$(sha "$SRC/run-window-read-macos.sh")" ] && [ "$(st "$REAL" MANIFEST_SHA)" = "$(sha "$SRC/MANIFEST.sha256")" ] \
  && [ "$(st "$REAL" CMP_SHA)" = "$(sha "$SRC/compare-preflight.mjs")" ] && [ "$(st "$REAL" LIB_SHA)" = "$(sha "$SRC/compare-preflight-lib.mjs")" ] \
- && [ "$(st "$REAL" BASELINE_SHA)" = "$(sha "$SRC/BASELINE-W1-MACOS-CANDIDATE-4.json")" ] && [ "$(st "$REAL" G3_SHA)" = "$(sha "$SRC/G3-CHECKSUMS-d189768b.txt")" ] \
- && ok "window-s0a.sh pins equal the real runner, manifest, comparator, lib, baseline 4 and G3 file" || bad "s0a pins differ from the real files"
-[ "$(st "$ROW4" CMP_SHA)" = "$(sha "$SRC/compare-preflight.mjs")" ] && [ "$(st "$ROW4" LIB_SHA)" = "$(sha "$SRC/compare-preflight-lib.mjs")" ] && [ "$(st "$ROW4" BASELINE_SHA)" = "$(sha "$SRC/BASELINE-W1-MACOS-CANDIDATE-4.json")" ] \
- && ok "window-row4.sh pins equal the real comparator, lib and baseline 4" || bad "row4 pins differ"
+ && [ "$(st "$REAL" BASELINE_SHA)" = "$(sha "$SRC/BASELINE-W1-MACOS-CANDIDATE-5.json")" ] && [ "$(st "$REAL" G3_SHA)" = "$(sha "$SRC/G3-CHECKSUMS-d189768b.txt")" ] \
+ && ok "window-s0a.sh pins equal the real runner, manifest, comparator, lib, baseline 5 and G3 file" || bad "s0a pins differ from the real files"
+[ "$(st "$ROW4" CMP_SHA)" = "$(sha "$SRC/compare-preflight.mjs")" ] && [ "$(st "$ROW4" LIB_SHA)" = "$(sha "$SRC/compare-preflight-lib.mjs")" ] && [ "$(st "$ROW4" BASELINE_SHA)" = "$(sha "$SRC/BASELINE-W1-MACOS-CANDIDATE-5.json")" ] \
+ && ok "window-row4.sh pins equal the real comparator, lib and baseline 5" || bad "row4 pins differ"
 bash -n "$REAL" && bash -n "$ROW4" && ok "bash -n on both scripts" || bad "syntax"
 [ "$(st "$REAL" WR)" != "" ] || true
 grep -q '^WR="\$ROOT/window-reads-c4"' "$REAL" && grep -q '^WR="\$ROOT/window-reads-c4"' "$ROW4" && ok "both scripts install into window-reads-c4, apart from the pinned candidate-3 directory" || bad "WR is not window-reads-c4"
@@ -37,7 +37,7 @@ grep -q '^WR="\$ROOT/window-reads-c4"' "$REAL" && grep -q '^WR="\$ROOT/window-re
 if grep -nE 'base_backup_status|latest_base_backup|Latest base backup' "$REAL" "$ROW4" | grep -v '^[^:]*:[0-9]*:\s*#' | grep -vq 'echo\|die\|ask.*UNVERIFIED'; then bad "a typed base-backup prompt remains"; else ok "no typed base-backup prompt remains in either script"; fi
 
 # ---- the comparator's own unit tests and the baseline proofs, on this runner's node
-( cd "$SRC" && node --test --test-concurrency=1 compare-preflight.test.mjs baseline-candidate4-proof.test.mjs baseline-candidate-proof.test.mjs baseline-repin-proof.test.mjs > "$T/unit.out" 2>&1 ); rc=$?
+( cd "$SRC" && node --test --test-concurrency=1 compare-preflight.test.mjs baseline-candidate4-proof.test.mjs baseline-candidate5-proof.test.mjs baseline-candidate-proof.test.mjs baseline-repin-proof.test.mjs > "$T/unit.out" 2>&1 ); rc=$?
 tail -n 12 "$T/unit.out"
 [ $rc = 0 ] && ok "comparator unit tests + baseline proofs pass on macOS ($(grep -E '^ℹ tests' "$T/unit.out" | tail -1))" || bad "unit tests" "rc=$rc"
 
@@ -58,12 +58,12 @@ STUB
   node -e '
     const fs=require("fs"),c=require("crypto");const [src,dst,rsha,ref]=process.argv.slice(1);
     const b=JSON.parse(fs.readFileSync(src));b.runner_sha256=rsha;b.project_ref_sha256=c.createHash("sha256").update(ref).digest("hex");
-    fs.writeFileSync(dst,JSON.stringify(b,null,2)+"\n");' "$SRC/BASELINE-W1-MACOS-CANDIDATE-4.json" "$WRD/BASELINE-W1-MACOS-CANDIDATE-4.json" "$RSHA" "$TREF"
-  BSHA=$(sha "$WRD/BASELINE-W1-MACOS-CANDIDATE-4.json")
+    fs.writeFileSync(dst,JSON.stringify(b,null,2)+"\n");' "$SRC/BASELINE-W1-MACOS-CANDIDATE-5.json" "$WRD/BASELINE-W1-MACOS-CANDIDATE-5.json" "$RSHA" "$TREF"
+  BSHA=$(sha "$WRD/BASELINE-W1-MACOS-CANDIDATE-5.json")
   sed -e "s/^GO_SHA=.*/GO_SHA=$GOSHA/" -e "s/^RUNNER_SHA=.*/RUNNER_SHA=$RSHA/" -e "s/^BASELINE_SHA=.*/BASELINE_SHA=$BSHA/" -e "s/^REF=.*/REF=$TREF/" "$REAL" > "$F/window-s0a.test.sh"
   cp "$ROW4" "$F/window-row4.test.sh"
   sed -e "s/^BASELINE_SHA=.*/BASELINE_SHA=$BSHA/" "$ROW4" > "$F/window-row4.test.sh"
-  node "$HERE/gen-results.mjs" "$F/res" "$WRD/BASELINE-W1-MACOS-CANDIDATE-4.json" "" "$SRC" || { echo "gen-results failed"; exit 1; }
+  node "$HERE/gen-results.mjs" "$F/res" "$WRD/BASELINE-W1-MACOS-CANDIDATE-5.json" "" "$SRC" || { echo "gen-results failed"; exit 1; }
   : > "$F/stub.log"
 }
 nowplus() { python3 -c 'import datetime,sys;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }

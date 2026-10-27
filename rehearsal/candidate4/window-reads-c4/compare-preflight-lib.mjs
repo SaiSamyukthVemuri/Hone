@@ -195,6 +195,12 @@ const UNIX_MIN = 1577836800, UNIX_MAX = 4102444800; // 2020-01-01 and 2100-01-01
 const hex64 = (v) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
 const posInt = (v, min = 1) => typeof v === "number" && Number.isInteger(v) && v >= min;
 const utcText = (ms) => new Date(ms).toISOString().slice(0, 19) + "Z";
+// INFORMATION only (candidate 5): the observed API span, and whether the earliest point is the 7 d clamp (latest minus 7 d) or later (a base-backup step).
+function spanInfo(earliestMs, latestMs) {
+  const s = Math.round((latestMs - earliestMs) / 1000), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  const rel = s === 7 * 86400 ? "earliest = latest - 7 d (clamped)" : s < 7 * 86400 ? "earliest later than latest - 7 d (a base-backup step)" : "earliest earlier than latest - 7 d";
+  return `observed span ${d} d ${h} h ${m} m; ${rel}; information only`;
+}
 
 export function pitrBaseMode(baseline) {
   const m = baseline && plain(baseline.g4_pitr_base) ? baseline.g4_pitr_base.mode : undefined;
@@ -206,6 +212,7 @@ function pitrApiConfig(baseline) {
   if (!plain(c)) return fail("baseline.g4_pitr_api is missing");
   if (!hex64(c.script_sha256) || !hex64(c.supabase_go_sha256)) return fail("baseline.g4_pitr_api.script_sha256 and supabase_go_sha256 must be 64 hex");
   if (!posInt(c.max_capture_age_minutes) || !posInt(c.dashboard_tolerance_seconds, 0)) return fail("baseline.g4_pitr_api.max_capture_age_minutes and dashboard_tolerance_seconds must be integers");
+  if (!posInt(c.min_span_days)) return fail("baseline.g4_pitr_api.min_span_days must be a positive integer (the observed-span minimum for the API range; candidate 5)");
   return { ...pass(), cfg: c };
 }
 
@@ -234,7 +241,7 @@ function apiRead(api, { cfg, th, now }) {
   for (const [n, v] of [["earliest", e], ["latest", l]]) if (typeof v !== "number" || !Number.isInteger(v) || v < UNIX_MIN || v >= UNIX_MAX) return fail(`the API ${n} recovery point is not whole Unix seconds between 2020 and 2100 (milliseconds, a string or a fraction?)`);
   if (!(e < l)) return fail("the API earliest recovery point is not before the latest");
   if (l * 1000 > cp) return fail("the API latest recovery point is after the capture time (in the future)");
-  if (l - e < th.min_retention_days * 86400) return fail(`the API range spans less than ${th.min_retention_days} days`);
+  if (l - e < cfg.min_span_days * 86400) return fail(`the API range spans less than ${cfg.min_span_days} days`);
   if (!Array.isArray(j.backups)) return fail("backups is missing or not an array");
   if (j.backups.some((b) => !plain(b))) return fail("a backups entry is not an object");
   return { ...pass(`API range ${utcText(e * 1000)}..${utcText(l * 1000)}, captured ${m.captured_at_utc}`), data: { earliestMs: e * 1000, latestMs: l * 1000, startMs: st, readMs: cp, completedPhysical: j.backups.filter((b) => b.is_physical_backup === true && b.status === "COMPLETED").length } };
@@ -267,7 +274,7 @@ function pitrReadingUnavailable(g, { th, now, cfg, api, anchorMs = null, selecte
     if (d.startMs < selectedMs) return fail("the pitr-api capture started before the selected restore point (capture it AFTER selecting)");
     if (!coverWaived && d.latestMs < selectedMs) return fail("the API latest recovery point is before the selected restore point (no recovery point covers it yet)");
   }
-  return { ...pass(`PITR on (API), ${g.retention_days} d retention, range ${utcText(d.earliestMs)}..${utcText(d.latestMs)}, base backup UNVERIFIED`), data: d };
+  return { ...pass(`PITR on (API), ${g.retention_days} d retention, range ${utcText(d.earliestMs)}..${utcText(d.latestMs)}, base backup UNVERIFIED; ${spanInfo(d.earliestMs, d.latestMs)}`), data: d };
 }
 
 function pitrReading(g, ctx) { return ctx.mode === "unavailable_under_pitr" ? pitrReadingUnavailable(g, ctx) : pitrReadingListed(g, ctx); }

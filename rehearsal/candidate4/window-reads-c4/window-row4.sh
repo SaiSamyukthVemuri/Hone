@@ -1,7 +1,7 @@
 #!/bin/bash
 # Hone #1035 WINDOW ROW 4 (recovery_regime pitr): the selected pre-migration restore point and a FRESH PITR reading,
 # checked by the pinned comparator stage `--stage row4`. Run IMMEDIATELY before S1, after window-s0a.sh passed.
-# CANDIDATE 4. No hosted call and no secret here. The script stamps the selected restore point itself, at the moment you
+# CANDIDATE 5 (candidate 4 + the S0-10 API span minimum 6 d from baseline g4_pitr_api.min_span_days; the typed retention minimum stays 7). No hosted call and no secret here. The script stamps the selected restore point itself, at the moment you
 # ask for it. AFTER that you run pitr-backups.sh in another Terminal; this
 # script takes the newest capture(s) after ownership and mode checks and the COMPARATOR reads the recovery range from them
 # (the dashboard values you type are only cross-checked, to 1 s). No base backup is asked for or accepted: the Management
@@ -17,11 +17,11 @@ umask 077
 ROOT="$HOME/hone-s1"
 WR="$ROOT/window-reads-c4"          # candidate 4 lives apart from window-reads: window-s1read.sh pins the candidate-3 comparator there
 CMP_SHA=c9b0f102980104d5bd1d59c2127439dacc419ed1c7db235ad7f5acedf9205825
-LIB_SHA=813425d4ad786c2e4b87f853a18c37065baf1ccec004fea2fd5c4542c37670f2
-BASELINE=BASELINE-W1-MACOS-CANDIDATE-4.json
+LIB_SHA=f0f13c80d91a5d23a69410d220b444db6935e915bd5f3f9319a5e67602b106ab
+BASELINE=BASELINE-W1-MACOS-CANDIDATE-5.json
 MIN_REMAIN_MIN=90
 SELECT_MAX_AGE_S=1800
-BASELINE_SHA=5f713678e5b51f34c498f119cec5ae05b33abe181f342410e6a0d4e4f013795d
+BASELINE_SHA=1b22730afd845aa50358a4fe3fb5f68aa36d22293329c7d16ba2effce7a50d82
 
 cleanup() { stty echo </dev/tty >/dev/null 2>&1 || true; }
 trap cleanup EXIT

@@ -10,7 +10,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 const [, , mode, wr, src, ...rest] = process.argv;
 const iso = (ms) => new Date(Math.floor(ms / 1000) * 1000).toISOString().replace(/\.\d+Z$/, "Z");
-const base = JSON.parse(readFileSync(path.join(wr, "BASELINE-W1-MACOS-CANDIDATE-4.json"), "utf8"));
+const base = JSON.parse(readFileSync(path.join(wr, "BASELINE-W1-MACOS-CANDIDATE-5.json"), "utf8"));
 const now = Date.now();
 const winStart = iso(now - 3600e3), winEnd = iso(now + 3 * 3600e3);
 { // blackout check, as in test.sh
