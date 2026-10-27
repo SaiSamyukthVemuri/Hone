@@ -1,4 +1,5 @@
 # REHEARSAL - NEVER MERGE. HON66 verification (Linux CI, local Supavisor): the replacement for the manual yes/yes + the d3 pin watchdog.
+# (head note: the CI Supabase start can fail on registry throttling before any test runs; that is infra, not a verify result.)
 #   V1 happy path + idempotent re-run   V2 statement-timeout firing + per-file rollback + resume   V3 lock wait cancelled by the guard,
 #   and the session-bound alternative (role lock_timeout, new backends)   V4 interruption (SIGINT/SIGTERM/SIGKILL to the CLI and to the
 #   wrapper, relay drop) with state-reconciled resume   V5 read-back   V6 credential-file refusals
