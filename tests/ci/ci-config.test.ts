@@ -2658,6 +2658,8 @@ describe("HON-18 existing browser job executes guarded native proof", () => {
     expect(() => check({ suites: [], errors: [] })).toThrow();
     expect(() => check(report([{ status: "failed" }, { status: "passed" }]))).toThrow();
     expect(() => check(report([{ status: "passed" }], [{ message: "synthetic runner error" }]))).toThrow();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // G4 — documents read by unit tests (RECORD-BATCHING-PROPOSAL.md part 2).
