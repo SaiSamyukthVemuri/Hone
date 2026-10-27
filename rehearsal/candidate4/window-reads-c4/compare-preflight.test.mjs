@@ -1030,7 +1030,7 @@ test("C4 command: the S0 stage reads --pitr-api (the capture is judged against t
   mkdirSync(path.join(root, "api")); writeFileSync(path.join(root, "api", "backups.json"), api.text); writeFileSync(path.join(root, "api", "backups.meta.json"), JSON.stringify(api.meta));
   const args = ["--results", res, "--baseline", path.join(root, "baseline.json"), "--attest", path.join(root, "attest.json"), "--window-start", "2026-10-26T23:00:00Z", "--window-end", "2026-10-27T02:00:00Z", "--manifest", man];
   const withApi = cli(path.join(dir, "compare-preflight.mjs"), [...args, "--pitr-api", path.join(root, "api")]), without = cli(path.join(dir, "compare-preflight.mjs"), args);
-  assert.ok(/the pitr-api capture (time is in the future|is older than 60 min)/.test(withApi.stdout), withApi.stdout); assert.ok(!withApi.stdout.includes("pass --pitr-api"), withApi.stdout); assert.ok(without.stdout.includes("pass --pitr-api"), without.stdout);
+  if (/the pitr-api capture (time is in the future|is older than 60 min)/.test(withApi.stdout) === false) assert.ok(Math.abs(Date.now() - Date.parse(api.meta.captured_at_utc)) < 3600e3, withApi.stdout); /* the fixture capture is inside the 60 min age window only for the hour after it was made; the clock-bound clause is then the age check itself (candidate 5: time bomb made explicit, not weakened elsewhere) */ assert.ok(!withApi.stdout.includes("pass --pitr-api"), withApi.stdout); assert.ok(without.stdout.includes("pass --pitr-api"), without.stdout);
   assert.equal(withApi.status, 1); assert.equal(without.status, 1);
 });
 
