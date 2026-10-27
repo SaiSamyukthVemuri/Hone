@@ -139,8 +139,20 @@ install -m 644 -o sam -g sam "$BUNDLE" /srv/hone-release-inbox/bundle.tar
 install -m 644 -o sam -g sam "$LIST" /srv/hone-release-inbox/list.sha256
 RECEIPT=$(printf 'a%.0s' $(seq 1 64))
 approve() { bash "$SRC/approve-package.sh" id="$1" bundle_sha="$(sha256sum /srv/hone-release-inbox/bundle.tar | cut -d' ' -f1)" list_sha="$(sha256sum /srv/hone-release-inbox/list.sha256 | cut -d' ' -f1)" head="$HEAD40" pr=1193 receipt_sha="$RECEIPT" first=0213 last=0246 count=34 minutes=30 \
-  window_start="$(date -u -d '-10 minutes' +%Y-%m-%dT%H:%M:%SZ)" window_end="$(date -u -d '+3 hours' +%Y-%m-%dT%H:%M:%SZ)" recovery_basis=waiver waiver_id=WAIVER-20261027-1 recovery_stamp=none s0a_sha="$(printf 'd%.0s' $(seq 1 64))" s0a_at="$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)" min_span_days=6 quiet_db="${QDB:-idle}" \
-  connection_mode="$CM" pooler_host="$PH" statement_timeout_s="${STS:-120}" lock_timeout_s=5 idle_tx_timeout_s=60 max_push_seconds="${MPS:-300}" attestation="synthetic target; recovery not applicable" > "$T/approve.out" 2>&1; }
+  window_start="$(date -u -d '-10 minutes' +%Y-%m-%dT%H:%M:%SZ)" window_end="$(date -u -d '+3 hours' +%Y-%m-%dT%H:%M:%SZ)" recovery_basis=waiver waiver_id=WAIVER-20261027-1 recovery_stamp=none s0a_writes=none history_before=211 drain_holds=yes drain_queues=yes drain_people=yes drain_max_busy=0 drain_attestation="synthetic target nothing to drain" serving_commit="$(printf 'c%.0s' $(seq 1 40))" serving_attestation="synthetic target no serving source" verify_sha=none s0a_sha="$(printf 'd%.0s' $(seq 1 64))" s0a_at="$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)" min_span_days=6 quiet_db="${QDB:-idle}" \
+  connection_mode="$CM" pooler_host="$PH" statement_timeout_s="${STS:-120}" lock_timeout_s=5 idle_tx_timeout_s=60 max_push_seconds="${MPS:-300}" attestation="synthetic target; recovery not applicable" > "$T/approve.out" 2>&1; local rc=$?; [ $rc = 0 ] && fake_bind; return $rc; }
+# The Management API is not reachable from CI, so the preflight action (read token) is exercised in the custody job with a STUB CLI. Here the binding root would write after
+# reading a GO package is WRITTEN BY THE HARNESS (a synthetic GO package about the current approval, sha-bound) so the REAL CLI can be driven through the real apply path.
+fake_bind() { python3 -I - "$ST" /etc/hone-release/APPROVED-PACKAGE <<'PYF'
+import json, sys, hashlib, time, os
+st, ap = sys.argv[1], sys.argv[2]
+aid = [l.split("=", 1)[1].strip() for l in open(ap) if l.startswith("approval_id=")][0]
+body = {"kind": "hone-release-gonogo", "approval_id": aid, "approval_sha256": hashlib.sha256(open(ap, "rb").read()).hexdigest(), "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "verdict": "GO", "reason": "synthetic package written by the e2e harness", "checks": []}
+body["sha256"] = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+open(os.path.join(st, "GONOGO.json"), "w").write(json.dumps(body, sort_keys=True, indent=1) + "\n"); os.chown(os.path.join(st, "GONOGO.json"), 0, 0)
+open("/etc/hone-release/GONOGO-BOUND", "w").write("gonogo_sha=%s\napproval_id=%s\nbound_at=%s\n" % (body["sha256"], aid, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())))
+PYF
+}
 setpw() { printf '%s\n' "$1" | bash "$SRC/set-secret.sh" db-password --stdin >/dev/null; }
 SAMOUT="$T/sam.txt"; : > "$SAMOUT"; chmod 666 "$SAMOUT"
 runo() { OUT=$(runuser -u sam -- env -i PATH=/usr/bin:/bin HOME=/home/sam sudo -n -u hone-release $LB "$@" 2>&1); RC=$?; printf '%s\n' "$OUT" >> "$SAMOUT"; }
@@ -174,13 +186,13 @@ kill $SP 2>/dev/null; wait $SP 2>/dev/null
 c=$(( $(conns) - c0 ))
 if [ $RC = 0 ] && printf '%s' "$OUT" | grep -q "APPLIED: exactly 34" && [ "$(hist)" = 245 ] && [ "$(histmax)" = 0246 ]; then ok "34 migrations applied through the launcher with the real CLI ($MODE, verify-full against the test CA): history 245, max 0246"; else bad "real apply" "rc=$RC hist=$(hist) $OUT"; fi
 [ "$c" = 2 ] && ok "exactly 2 connection attempts (one dry run, one push)" || bad "connection attempts: $c"
-[ "$(state | cut -d' ' -f1)" = APPLIED ] && [ -d $ST/consumed/E2E-GOOD ] && ok "state APPLIED and the approval consumed" || bad "state" "$(state)"
+[ "$(state | cut -d' ' -f1)" = APPLIED-UNVERIFIED ] && [ -d $ST/consumed/E2E-GOOD ] && ok "state APPLIED-UNVERIFIED (the verify action is the only way to APPLIED) and the approval consumed" || bad "state" "$(state)"
 grep -q 'db push' "$T/ps.txt" && ok "the process sampler saw the CLI (the argv check is not vacuous)" || bad "sampler never saw the CLI"
 ! grep -Eq 'PGPASSWORD|:postgres@|assword=' "$T/ps.txt" && ok "no password in the CLI's argv" || bad "password in argv"
 ! grep -Eq 'sslmode' "$T/ps.txt" && ok "the CLI's argv names no sslmode (verify-full travels in its environment)" || bad "sslmode in argv"
 [ "$(grep -a -c '^Applying migration' /var/lib/hone-release/logs/E2E-GOOD/push.log)" = 34 ] && ok "push log (kept under the release logs): 34 Applying migration lines" || bad "push log lines"
 if [ "$MODE" = pg ]; then grep -q 'options=-c%20statement_timeout%3D120000' "$T/ps.txt" && ok "T4 (B1): the real CLI's argv carries the startup options (statement 120 s, lock 5 s, idle-in-transaction 60 s, client-connection check 5 s)" || bad "options not in argv"; fi
-approve E2E-AGAIN; runo apply; [ $RC -ne 0 ] && [ "$(hist)" = 245 ] && ok "a further apply with a new approval does not push again (nothing pending: refused, history unchanged)" || bad "second apply" "rc=$RC $OUT"
+approve E2E-AGAIN; runo apply; [ $RC -ne 0 ] && [ "$(hist)" = 245 ] && ok "a further apply with a new approval does not push again (refused while APPLIED-UNVERIFIED, history unchanged)" || bad "second apply" "rc=$RC $OUT"
 
 # ---- 4. T4 server-enforced timeout through the REAL CLI (which runs RESET ALL before every file) and the client wall clock
 timing_bundle() { # timing_bundle FIXTUREARGS

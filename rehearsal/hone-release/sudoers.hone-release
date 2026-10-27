@@ -1,9 +1,9 @@
 # /etc/sudoers.d/hone-release  (mode 0440, root:root). @AGENT@ is replaced by the installer.
-# The agent user may run EXACTLY these six commands, as hone-release, with no password and no other argument.
+# The agent user may run EXACTLY these eight commands, as hone-release, with no password and no other argument.
 # No wildcards. No sudoedit. No SETENV: the caller's environment is discarded.
 Defaults:@AGENT@ env_reset
 Defaults:@AGENT@ !setenv
 Defaults:@AGENT@ !env_editor
 Defaults:@AGENT@ secure_path="/usr/bin:/bin"
 Defaults:@AGENT@ listpw=never
-@AGENT@ ALL=(hone-release) NOPASSWD: /usr/local/libexec/hone-release/launcher apply, /usr/local/libexec/hone-release/launcher read-backups, /usr/local/libexec/hone-release/launcher reconcile, /usr/local/libexec/hone-release/launcher idle-probe, /usr/local/libexec/hone-release/launcher heartbeat, /usr/local/libexec/hone-release/launcher status
+@AGENT@ ALL=(hone-release) NOPASSWD: /usr/local/libexec/hone-release/launcher apply, /usr/local/libexec/hone-release/launcher read-backups, /usr/local/libexec/hone-release/launcher reconcile, /usr/local/libexec/hone-release/launcher idle-probe, /usr/local/libexec/hone-release/launcher heartbeat, /usr/local/libexec/hone-release/launcher preflight, /usr/local/libexec/hone-release/launcher verify, /usr/local/libexec/hone-release/launcher status

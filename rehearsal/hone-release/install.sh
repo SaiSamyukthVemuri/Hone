@@ -43,7 +43,7 @@ while read -r want name; do
   [ "$(sha256sum "$HERE/$name" | cut -d' ' -f1)" = "$want" ] || die "$name does not match its pinned sha256 (the package was changed after review)"
 done < "$PINS"
 pin_of() { awk -v n="$1" '$2 == n {print $1}' "$PINS"; }
-for need in launcher install.sh set-secret.sh approve-package.sh actions.conf sudoers.hone-release ca/supabase-prod-ca-2021.crt scripts/release-apply.sh scripts/read-backups.sh scripts/status.sh scripts/reconcile.sh scripts/idle-probe.sh scripts/heartbeat.sh; do [ -n "$(pin_of "$need")" ] || die "the pins file lacks $need"; done
+for need in launcher install.sh set-secret.sh approve-package.sh actions.conf sudoers.hone-release ca/supabase-prod-ca-2021.crt scripts/release-apply.sh scripts/read-backups.sh scripts/status.sh scripts/reconcile.sh scripts/idle-probe.sh scripts/heartbeat.sh scripts/verify.sh scripts/post-s3-smoke.sh bind-gonogo.sh; do [ -n "$(pin_of "$need")" ] || die "the pins file lacks $need"; done
 [ "$(sha256sum "$0" | cut -d' ' -f1)" = "$(pin_of install.sh)" ] || die "this installer is not the pinned install.sh"
 GO_SHA=$(sed -n 's/^GO_SHA=//p' "$HERE/scripts/release-apply.sh" | head -1)
 [ "$(sha256sum "$GOBIN_SRC" | cut -d' ' -f1)" = "$GO_SHA" ] || die "supabase-go sha256 differs from the scripts' pin $GO_SHA"

@@ -5,7 +5,8 @@
 # at most 60 minutes). usage (all required; key=value):
 #   approve-package.sh id=<approval id> bundle_sha=<64 hex> list_sha=<64 hex> head=<40 hex> pr=<number> receipt_sha=<64 hex> first=NNNN last=NNNN count=N
 #     minutes=<1..60> window_start=<UTC> window_end=<UTC> recovery_basis=row4|waiver waiver_id=WAIVER-YYYYMMDD-N|none
-#     recovery_stamp=<UTC>|none s0a_sha=<64 hex> s0a_at=<UTC> min_span_days=<6..99> quiet_db=idle|heartbeat   (Sam's one-word E4 selection)
+#     recovery_stamp=<UTC>|none s0a_writes=<digits>|none s0a_sha=<64 hex> s0a_at=<UTC> min_span_days=<6..99> quiet_db=idle|heartbeat   (Sam's one-word E4 selection)
+#     history_before=<rows> drain_holds=yes drain_queues=yes drain_people=yes drain_max_busy=<0..99> drain_attestation="<words>" serving_commit=<40 hex> serving_attestation="<words>" verify_sha=<64 hex>|none
 #     connection_mode=direct|pooler pooler_host=<aws-N-region.pooler.supabase.com:5432>|none
 #     statement_timeout_s=<1..600> lock_timeout_s=<1..30> idle_tx_timeout_s=<1..300> max_push_seconds=<10..1800> attestation="<Sam's words>"
 # recovery_basis=row4 is the AUTONOMOUS path (needs the custody-recorded provider evidence at apply time); waiver is the ATTENDED FALLBACK (a recorded waiver id).
@@ -16,11 +17,11 @@ declare -A V
 for kv in "$@"; do
   case "$kv" in *=*) ;; *) echo "arguments are key=value" >&2; exit 1 ;; esac
   k=${kv%%=*}; v=${kv#*=}
-  case " id bundle_sha list_sha head pr receipt_sha first last count minutes window_start window_end recovery_basis waiver_id recovery_stamp s0a_sha s0a_at min_span_days quiet_db connection_mode pooler_host statement_timeout_s lock_timeout_s idle_tx_timeout_s max_push_seconds attestation " in *" $k "*) ;; *) echo "unknown argument: $k" >&2; exit 1 ;; esac
+  case " id bundle_sha list_sha head pr receipt_sha first last count minutes window_start window_end recovery_basis waiver_id recovery_stamp s0a_writes s0a_sha s0a_at min_span_days quiet_db connection_mode pooler_host history_before drain_holds drain_queues drain_people drain_max_busy drain_attestation serving_commit serving_attestation verify_sha statement_timeout_s lock_timeout_s idle_tx_timeout_s max_push_seconds attestation " in *" $k "*) ;; *) echo "unknown argument: $k" >&2; exit 1 ;; esac
   [ -z "${V[$k]+x}" ] || { echo "repeated argument: $k" >&2; exit 1; }
   V[$k]=$v
 done
-for k in id bundle_sha list_sha head pr receipt_sha first last count minutes window_start window_end recovery_basis waiver_id recovery_stamp s0a_sha s0a_at min_span_days quiet_db connection_mode pooler_host statement_timeout_s lock_timeout_s idle_tx_timeout_s max_push_seconds attestation; do
+for k in id bundle_sha list_sha head pr receipt_sha first last count minutes window_start window_end recovery_basis waiver_id recovery_stamp s0a_writes s0a_sha s0a_at min_span_days quiet_db connection_mode pooler_host history_before drain_holds drain_queues drain_people drain_max_busy drain_attestation serving_commit serving_attestation verify_sha statement_timeout_s lock_timeout_s idle_tx_timeout_s max_push_seconds attestation; do
   [ -n "${V[$k]+x}" ] && [ -n "${V[$k]}" ] || { echo "missing argument: $k" >&2; exit 1; }
 done
 hex() { printf '%s' "$2" | grep -Eq "^[0-9a-f]{$1}\$"; }
@@ -64,6 +65,8 @@ tmp=$(mktemp /etc/hone-release/.ap.XXXXXX)
   echo "first=${V[first]}"; echo "last=${V[last]}"; echo "count=${V[count]}"; echo "expires_at=$exp"; echo "window_start=${V[window_start]}"; echo "window_end=${V[window_end]}"
   echo "recovery_basis=${V[recovery_basis]}"; echo "waiver_id=${V[waiver_id]}"; echo "recovery_stamp=${V[recovery_stamp]}"; echo "s0a_sha=${V[s0a_sha]}"; echo "s0a_at=${V[s0a_at]}"; echo "min_span_days=${V[min_span_days]}"
   echo "quiet_db_mode=${V[quiet_db]}"; echo "autonomy=$AUTON"; echo "statement_timeout_s=$S"; echo "lock_timeout_s=$L"; echo "idle_tx_timeout_s=$I"; echo "timeout_control=$TC"
-  echo "max_push_seconds=${V[max_push_seconds]}"; echo "recovery_attestation=${V[attestation]}"; } > "$tmp"
+  echo "max_push_seconds=${V[max_push_seconds]}"; echo "recovery_attestation=${V[attestation]}"
+  echo "s0a_writes=${V[s0a_writes]}"; echo "history_before=${V[history_before]}"; echo "drain_holds=${V[drain_holds]}"; echo "drain_queues=${V[drain_queues]}"; echo "drain_people=${V[drain_people]}"; echo "drain_max_busy=${V[drain_max_busy]}"; echo "drain_attestation=${V[drain_attestation]}"
+  echo "serving_commit=${V[serving_commit]}"; echo "serving_attestation=${V[serving_attestation]}"; echo "verify_sha=${V[verify_sha]}"; } > "$tmp"
 chown root:root "$tmp"; chmod 644 "$tmp"; mv -f "$tmp" /etc/hone-release/APPROVED-PACKAGE
 echo "APPROVED-PACKAGE written (single use, consumed at the first dry-run attempt)"

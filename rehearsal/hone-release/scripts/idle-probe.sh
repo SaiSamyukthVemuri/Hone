@@ -1,7 +1,8 @@
 #!/bin/bash
 # hone-release action: idle-probe (E4 option (a), "idle proof"). READ-ONLY with the read token. It samples the write counters of the user tables
 # twice, IDLE_SECS apart, and records IDLE-PROOF (result=idle only if the two samples are equal). It proves "no row was written between the two
-# samples"; it does NOT prove when the last write was. The apply compares the provider's latest recovery point with the approval's recovery_stamp.
+# samples AND records the counter. The apply requires that counter to EQUAL the one typed from S0a (s0a_writes): no write since S0a, so the provider's
+# latest recovery point (not older than the point S0a saw) still covers everything. It does not prove S0a's own reading.
 set -u
 umask 077
 BIN=/usr/local/libexec/hone-release/bin/supabase-go
@@ -27,7 +28,7 @@ t2=$(date -u +%Y-%m-%dT%H:%M:%SZ); b=$(sample) || { TOKEN=""; die "the second sa
 TOKEN=""; unset TOKEN
 printf '%s%s' "$a" "$b" | grep -Eq '^[0-9]+$' || die "the samples are not numbers"
 res=active; [ "$a" = "$b" ] && res=idle
-line="IDLE-PROOF result=$res first_at=$t1 second_at=$t2 seconds=$IDLE_SECS"
+line="IDLE-PROOF result=$res first_at=$t1 second_at=$t2 seconds=$IDLE_SECS writes=$b"
 printf '%s\n' "$line" > "$STATE/IDLE-PROOF.tmp" && mv -f "$STATE/IDLE-PROOF.tmp" "$STATE/IDLE-PROOF"
 echo "$line"
 [ "$res" = idle ] || die "the write counters moved between the samples: the database is NOT idle"

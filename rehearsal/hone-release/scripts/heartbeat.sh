@@ -26,16 +26,36 @@ now=$(date -u +%s); exp=$(date -u -d "$(g expires_at)" +%s 2>/dev/null) || die "
 [ "$exp" -gt "$now" ] || die "the approval has expired"
 ID=$(g approval_id); printf '%s' "$ID" | grep -Eq '^[A-Za-z0-9._-]{4,64}$' || die "approval_id is malformed"
 [ ! -e "$STATE/heartbeat-done-$ID" ] || die "the heartbeat was already written for approval $ID (once per approval)"
+for p in "$APPROVAL" /etc/hone-release /etc; do [ "$(stat -c %u "$p")" = 0 ] && [ $(( 8#$(stat -c %a "$p") & 8#022 )) = 0 ] || die "$p is not root-owned and private to root"; done
 URL=$(g target_url); HOST=$(g db_host); REF=$(g project_ref)
 printf '%s' "$HOST" | grep -Eq "^db\.$REF\.supabase\.co:5432\$" || die "the approved host is not the exact direct host"
+[ "$REF" = "$(head -n 1 /etc/hone-release/PROJECT-REF 2>/dev/null)" ] || die "the approval's project ref is not the installed PROJECT-REF"
+S=$(g statement_timeout_s); L=$(g lock_timeout_s); I=$(g idle_tx_timeout_s)
+for tv in "$S" "$L" "$I"; do printf '%s' "$tv" | grep -Eq '^[0-9]{1,4}$' || die "a timeout in the approval is malformed"; done
+WANT="postgresql://postgres@$HOST/postgres?options=-c%20statement_timeout%3D$((S * 1000))%20-c%20lock_timeout%3D$((L * 1000))%20-c%20idle_in_transaction_session_timeout%3D$((I * 1000))%20-c%20client_connection_check_interval%3D5000"
+[ "$URL" = "$WANT" ] || die "target_url is not exactly the target rebuilt from the approval's fields (same builder as the apply)"
+ws=$(date -u -d "$(g window_start)" +%s 2>/dev/null); we=$(date -u -d "$(g window_end)" +%s 2>/dev/null); [ -n "$ws" ] && [ -n "$we" ] && [ "$now" -ge "$ws" ] && [ "$now" -lt "$we" ] || die "outside the approved window"
 [ -f "$BIN" ] && [ ! -L "$BIN" ] && [ "$(sha256sum "$BIN" | cut -d' ' -f1)" = "$GO_SHA" ] || die "supabase-go missing or sha256 mismatch"
 [ -f "$CA" ] && [ ! -L "$CA" ] && [ "$(sha256sum "$CA" | cut -d' ' -f1)" = "$CA_SHA" ] || die "the pinned CA is missing or its sha256 differs"
 WORK=$(mktemp -d /var/lib/hone-release/work/hb.XXXXXX) || die "no work dir"
 mkdir -p "$WORK/supabase/.temp" && printf '%s\n' v2.102.0 > "$WORK/supabase/.temp/cli-latest"
 t=$(date -u +%Y-%m-%dT%H:%M:%SZ); : > "$STATE/heartbeat-done-$ID"
 rc=0
-( cd "$WORK" && PGPASSWORD="$PW" PGSSLMODE=verify-full PGSSLROOTCERT="$CA" SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 timeout 60 "$BIN" db query --db-url "$URL" "select pg_logical_emit_message(true, 'hone-release-heartbeat', '$ID')::text as heartbeat_lsn" ) </dev/null > "$WORK/out.txt" 2> "$WORK/err.txt" || rc=$?
+( cd "$WORK" && PGPASSWORD="$PW" PGSSLMODE=verify-full PGSSLROOTCERT="$CA" SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 timeout 60 "$BIN" db query --db-url "$URL" -o json "select pg_logical_emit_message(true, 'hone-release-heartbeat', '$ID')::text as heartbeat_lsn, (select setting from pg_settings where name = 'statement_timeout') as st, (select setting from pg_settings where name = 'lock_timeout') as lt, (select setting from pg_settings where name = 'idle_in_transaction_session_timeout') as it, (select setting from pg_settings where name = 'client_connection_check_interval') as cc" ) </dev/null > "$WORK/out.txt" 2> "$WORK/err.txt" || rc=$?
 PW=""; unset PW
 if [ "$rc" != 0 ]; then tail -n 4 "$WORK/err.txt" | LC_ALL=C sed -E 's#postgres(ql)?://[^ ]*#<url>#g; s#[A-Za-z0-9.-]*\.supabase\.(com|co)[:0-9]*#<host>#g' >&2; die "the heartbeat write failed (exit $rc); no HEARTBEAT was recorded and it is not retried by this action"; fi
-printf 'HEARTBEAT at=%s approval=%s\n' "$t" "$ID" > "$STATE/HEARTBEAT.tmp" && mv -f "$STATE/HEARTBEAT.tmp" "$STATE/HEARTBEAT"
-echo "HEARTBEAT recorded at $t. The apply will STOP unless the provider's latest recovery point reaches this time (read-backups again after it advances)."
+# the same statement read the three timeouts and the check interval AS THE REAL ENDPOINT APPLIED THEM: this is the hosted proof that the startup options are honoured
+sm=$(python3 -I - "$WORK/out.txt" "$((S * 1000))" "$((L * 1000))" "$((I * 1000))" <<'PYS'
+import json, sys
+try:
+    j = json.load(open(sys.argv[1])); r = j if isinstance(j, list) else j.get("rows", j.get("result", []))
+    r = r[0]; got = [int(r["st"]), int(r["lt"]), int(r["it"]), int(r["cc"])]
+    want = [int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), 5000]
+    print("ok" if got == want else "MISMATCH:%s" % ",".join(map(str, got)))
+except Exception:
+    print("MISMATCH:unreadable")
+PYS
+)
+printf 'HEARTBEAT at=%s approval=%s settings=%s\n' "$t" "$ID" "$sm" > "$STATE/HEARTBEAT.tmp" && mv -f "$STATE/HEARTBEAT.tmp" "$STATE/HEARTBEAT"
+[ "$sm" = ok ] || die "the endpoint did NOT apply the approved startup options ($sm; order: statement, lock, idle-in-transaction, client-connection check, in ms). The WAL message was written, the heartbeat is recorded as settings=$sm and the autonomous apply will refuse it."
+echo "HEARTBEAT recorded at $t; the real endpoint applied the approved statement/lock/idle-in-transaction timeouts (settings=ok). The apply will STOP unless the provider's latest recovery point reaches this time (read-backups again after it advances)."

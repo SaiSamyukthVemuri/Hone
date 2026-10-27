@@ -11,6 +11,11 @@
 # approved file carries its own bounded `set local statement_timeout` (lexical gate). A client wall clock KILLS the CLI on overrun and maps to
 # UNKNOWN-KILLED: never PASS, never retry, reconcile by the read-only `reconcile` action. (C) basis=row4 needs custody-recorded provider evidence
 # (BACKUPS-EVIDENCE) plus the quiet-database proof selected by quiet_db_mode (idle | heartbeat); the script STOPs when it is missing.
+# Two actions share this one reviewed script (the launcher passes the action name in HONE_RELEASE_ACTION and a different secret):
+#   preflight  (read token on fd 3): runs EVERY check below that needs no database password, reads the history, the drain read check, and writes the
+#              reviewable GO/NO-GO package state/GONOGO.json (sha-bound to the approval). It never consumes the approval and never touches the state word.
+#   apply      (database password on fd 3): additionally requires the GO/NO-GO to be bound by root (GONOGO-BOUND), then ONE dry run, ONE push.
+# After the push the state is APPLIED-UNVERIFIED; only the verify action (history, stage checks, smoke, receipt) turns it into APPLIED.
 # ONE dry run, ONE push, NO retry. A durable IN-FLIGHT marker is written before the push; anything but a clean APPLIED state
 # blocks the next run until root clears it. Nothing here asks for a keystroke: the root-written approval is the control.
 set -u
@@ -31,7 +36,49 @@ MAXBYTES=67108864
 PW=""
 STAGE=start
 RUNDIR=""
-die() { echo "STOP: $*" >&2; exit 1; }
+ACTION=${HONE_RELEASE_ACTION:-}
+die() { echo "STOP: $*" >&2; [ "$ACTION" != preflight ] || gonogo_write NO-GO "$*"; exit 1; }
+PFC="$STATE/gonogo.checks"
+pf_check() { [ "$ACTION" = preflight ] || return 0; printf '%s|%s|%s\n' "$1" "$2" "$3" >> "$PFC"; } # pf_check NAME PASS|FAIL DETAIL
+gonogo_write() { # gonogo_write GO|NO-GO REASON   the reviewable package: checks + verdict + the sha of the approval it is about
+  mkdir -p "$STATE" 2>/dev/null
+  python3 -I - "$1" "$2" "$STATE" "${APPROVAL:-}" "$PFC" <<'PYG'
+import json, sys, os, hashlib, time
+verdict, reason, st, ap, pfc = sys.argv[1:6]
+def sha(b): return hashlib.sha256(b).hexdigest()
+asha = sha(open(ap, "rb").read()) if ap and os.path.isfile(ap) else "none"
+aid = "none"
+if asha != "none":
+    for l in open(ap):
+        if l.startswith("approval_id="): aid = l.strip().split("=", 1)[1]
+checks = []
+if os.path.isfile(pfc):
+    for l in open(pfc):
+        p = l.rstrip("\n").split("|", 2)
+        if len(p) == 3: checks.append({"name": p[0], "result": p[1], "detail": p[2]})
+if verdict == "GO" and any(c["result"] != "PASS" for c in checks): verdict = "NO-GO"; reason = "a check failed"
+body = {"kind": "hone-release-gonogo", "approval_id": aid, "approval_sha256": asha, "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "verdict": verdict, "reason": reason, "checks": checks}
+canon = json.dumps(body, sort_keys=True, separators=(",", ":"))
+body["sha256"] = sha(canon.encode())
+tmp = os.path.join(st, "GONOGO.json.tmp")
+open(tmp, "w").write(json.dumps(body, sort_keys=True, indent=1) + "\n"); os.replace(tmp, os.path.join(st, "GONOGO.json"))
+print(json.dumps(body, sort_keys=True, indent=1))
+PYG
+}
+receipt_add() { # receipt_add STAGE DETAIL   one link of the sha-chained receipt for this approval (logs/<id>/receipt.json)
+  [ -n "${APPROVAL_ID:-}" ] || return 0
+  mkdir -p "$LOGROOT/$APPROVAL_ID" && python3 -I - "$LOGROOT/$APPROVAL_ID/receipt.json" "$1" "$2" <<'PYR'
+import json, sys, os, hashlib, time
+path, stage, detail = sys.argv[1:4]
+def sha(b): return hashlib.sha256(b).hexdigest()
+r = json.load(open(path)) if os.path.isfile(path) else {"kind": "hone-release-receipt", "entries": []}
+prev = r["entries"][-1]["sha256"] if r["entries"] else "0" * 64
+e = {"seq": len(r["entries"]) + 1, "stage": stage, "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "detail": detail, "prev": prev}
+e["sha256"] = sha((prev + json.dumps(e, sort_keys=True, separators=(",", ":"))).encode())
+r["entries"].append(e); r["head"] = e["sha256"]
+tmp = path + ".tmp"; open(tmp, "w").write(json.dumps(r, sort_keys=True, indent=1) + "\n"); os.replace(tmp, path)
+PYR
+}
 utcnow() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 sha() { sha256sum -- "$1" | cut -d' ' -f1; }
 epoch() { date -u -d "$1" +%s 2>/dev/null; }
@@ -44,17 +91,19 @@ write_state() { # write_state WORD [detail]: durable (fsync) replacement of the 
 trap 'PW=""; unset PW' EXIT
 trap 'echo >&2; echo "STOP: signal received at stage $STAGE. A running push is NOT stopped by this signal (only the server-side timeouts and the client wall clock stop it). If the stage was the push, the state is IN-FLIGHT and blocks the next run until root clears it: run the read-only reconcile action first." >&2' INT TERM HUP
 
-[ "${HONE_RELEASE_ACTION:-}" = apply ] || die "not started by the launcher for the apply action"
+case "$ACTION" in apply|preflight) ;; *) die "not started by the launcher for the apply or preflight action" ;; esac
 [ "$(uname -s)" = Linux ] || die "not Linux"
 for t in flock setsid sha256sum tar awk sed python3; do command -v "$t" >/dev/null 2>&1 || die "$t not found"; done
 
 # ---- the password: fd 3 only, never argv or environment
-{ IFS= read -r PW <&3; } 2>/dev/null || die "no database password on fd 3"
+{ IFS= read -r PW <&3; } 2>/dev/null || die "no secret on fd 3"
 exec 3<&-
-[ -n "$PW" ] || die "empty database password; nothing was attempted"
+[ -n "$PW" ] || die "empty secret; nothing was attempted"
+TOKEN=""; if [ "$ACTION" = preflight ]; then TOKEN=$PW; PW=""; : > "$PFC" 2>/dev/null || { mkdir -p "$STATE"; : > "$PFC"; }; fi
 env | grep -E '^(PG|SUPABASE_|DATABASE_URL|GITHUB_TOKEN|GH_TOKEN|HTTPS?_PROXY|ALL_PROXY|NODE_|BASH_ENV|ENV|LD_)' >/dev/null && die "the environment holds a variable that must not be there (names withheld)"
 [ -f "$BIN" ] && [ ! -L "$BIN" ] && [ "$(sha "$BIN")" = "$GO_SHA" ] || die "supabase-go missing or sha256 mismatch"
 [ -f "$CA" ] && [ ! -L "$CA" ] && [ "$(sha "$CA")" = "$CA_SHA" ] || die "the pinned Supabase root CA is missing or its sha256 differs from the pin in this script (T5)"
+pf_check tooling PASS "supabase-go sha256 and the pinned CA sha256 match the pins in this script"
 
 # ---- state and the single release lock
 mkdir -p "$STATE/consumed" "$WORKROOT" "$LOGROOT" 2>/dev/null
@@ -64,6 +113,7 @@ if [ -e "$STATE/APPLY-STATE" ]; then
   st=$(cat "$STATE/APPLY-STATE")
   case "$st" in
     APPLIED\ *) ;;
+    APPLIED-UNVERIFIED\ *) die "the last push is APPLIED-UNVERIFIED: run the verify action first (history, stage checks, smoke, receipt); only root clears a failed verification. Nothing was attempted." ;;
     IN-FLIGHT\ *) die "the previous apply outcome is UNKNOWN ($st): read back the migration history; only root clears this. Nothing was attempted." ;;
     *) die "the previous run left the state: $st. Report it to OPS; only root clears it. Nothing was attempted." ;;
   esac
@@ -75,7 +125,7 @@ APPROVAL_ID=""
 for p in "$APPROVAL" /etc/hone-release /etc; do
   [ "$(stat -c %u "$p")" = 0 ] && [ $(( 8#$(stat -c %a "$p") & 8#022 )) = 0 ] || die "$p is not root-owned and private to root"
 done
-declare_keys="approval_id approved_at head bundle_sha list_sha pr pr_head receipt_sha project_ref target_url connection_mode db_host first last count expires_at window_start window_end recovery_basis waiver_id recovery_stamp s0a_sha s0a_at min_span_days quiet_db_mode autonomy statement_timeout_s lock_timeout_s idle_tx_timeout_s timeout_control max_push_seconds recovery_attestation"
+declare_keys="history_before s0a_writes drain_holds drain_queues drain_people drain_max_busy drain_attestation serving_commit serving_attestation verify_sha approval_id approved_at head bundle_sha list_sha pr pr_head receipt_sha project_ref target_url connection_mode db_host first last count expires_at window_start window_end recovery_basis waiver_id recovery_stamp s0a_sha s0a_at min_span_days quiet_db_mode autonomy statement_timeout_s lock_timeout_s idle_tx_timeout_s timeout_control max_push_seconds recovery_attestation"
 seen=" "
 while IFS= read -r l || [ -n "$l" ]; do
   case "$l" in ''|'#'*) continue ;; esac
@@ -106,6 +156,7 @@ case "$now_s$ap_s$ex_s$ws_s$we_s" in *[!0-9]*|'') die "cannot read the approval 
 [ "$now_s" -ge "$ws_s" ] || die "the approved window has not opened (window_start $A_window_start): no apply outside the window"
 [ "$now_s" -lt "$we_s" ] || die "the approved window has closed (window_end $A_window_end): no apply outside the window"
 [ $(( (we_s - now_s) / 60 )) -ge 75 ] || die "fewer than 75 minutes of the approved window remain ($(( (we_s - now_s) / 60 )) left; the steps after the apply need them). Nothing was attempted."
+pf_check window PASS "inside the approved window with at least 75 minutes left"
 printf '%s' "$A_s0a_sha" | grep -Eq '^[0-9a-f]{64}$' || die "s0a_sha must be the 64-hex sha256 of the S0a result record"
 printf '%s' "$A_s0a_at" | LC_ALL=C grep -Eq "^$iso\$" || die "s0a_at is not YYYY-MM-DDTHH:MM:SSZ"
 s0_s=$(epoch "$A_s0a_at"); [ -n "$s0_s" ] && [ "$s0_s" -le "$now_s" ] || die "s0a_at is in the future"
@@ -126,26 +177,40 @@ check_recovery() { # check_recovery MAXAGE   the custody-recorded provider evide
   la=$(epoch "$E_latest"); sp=$E_span_seconds
   printf '%s' "$sp" | grep -Eq '^[0-9]+$' && [ "$sp" -ge $((A_min_span_days * 86400)) ] || die "the recovery span ($sp s) is below the approved minimum ($A_min_span_days days)"
   if [ "$A_quiet_db_mode" = heartbeat ]; then
-    [ "$A_recovery_stamp" = none ] || die "quiet_db_mode=heartbeat must have recovery_stamp=none (the stamp is the recorded heartbeat)"
+    [ "$A_recovery_stamp" = none ] && [ "$A_s0a_writes" = none ] || die "quiet_db_mode=heartbeat must have recovery_stamp=none and s0a_writes=none (the stamp is the recorded heartbeat)"
     local hf="$STATE/HEARTBEAT" ha
     [ -f "$hf" ] && [ ! -L "$hf" ] || die "quiet_db_mode=heartbeat but no HEARTBEAT was recorded: run the heartbeat action, then read-backups after the recovery point advances"
     ha=$(sed -n 's/^HEARTBEAT at=\([^ ]*\) approval=.*/\1/p' "$hf" | head -1); printf '%s' "$ha" | LC_ALL=C grep -Eq "^$iso\$" || die "HEARTBEAT is malformed"
-    [ "$(sed -n 's/^HEARTBEAT at=[^ ]* approval=//p' "$hf" | head -1)" = "$APPROVAL_ID" ] || die "the HEARTBEAT belongs to another approval"
+    [ "$(sed -n 's/^HEARTBEAT at=[^ ]* approval=\([^ ]*\).*/\1/p' "$hf" | head -1)" = "$APPROVAL_ID" ] || die "the HEARTBEAT belongs to another approval"
+    grep -q ' settings=ok$' "$hf" || die "the HEARTBEAT did not confirm the startup options on the real endpoint (settings is not ok)"
     ha=$(epoch "$ha"); [ $((now2 - ha)) -le 3600 ] || die "the HEARTBEAT is older than 60 minutes"
     [ "$ha" -ge "$ws_s" ] || die "the HEARTBEAT is before the window start"
     [ "$ra" -ge "$ha" ] || die "BACKUPS-EVIDENCE was read before the heartbeat: read-backups again after the recovery point advances"
     [ "$la" -ge "$ha" ] || die "the provider's latest recovery point ($E_latest) is older than the heartbeat: the recovery point has not advanced past the stamp"
   else
+    [ "$A_s0a_writes" != none ] && printf '%s' "$A_s0a_writes" | grep -Eq '^[0-9]{1,18}$' || die "quiet_db_mode=idle needs s0a_writes: the user-table write counter seen at S0a (digits)"
     printf '%s' "$A_recovery_stamp" | LC_ALL=C grep -Eq "^$iso\$" || die "quiet_db_mode=idle needs recovery_stamp in UTC (the latest recovery point seen at S0a)"
-    local st; st=$(epoch "$A_recovery_stamp"); [ "$st" -ge "$ws_s" ] && [ "$st" -le "$now2" ] || die "recovery_stamp must be inside the window and not in the future"
-    [ "$la" -ge "$st" ] || die "the provider's latest recovery point ($E_latest) is older than the recovery_stamp: the recovery point is not current"
-    local pf="$STATE/IDLE-PROOF" pa
+    # a quiet database has a recovery point OLDER than the window: that is the case this option exists for. The stamp is the point S0a saw; it may predate the
+    # window but not S0a, and the provider's latest point must not have gone back past it.
+    local st; st=$(epoch "$A_recovery_stamp"); [ "$st" -le "$s0_s" ] && [ "$st" -ge $((s0_s - 604800)) ] || die "recovery_stamp must be the recovery point S0a saw: not after s0a_at and not more than 7 days before it"
+    [ "$la" -ge "$st" ] || die "the provider's latest recovery point ($E_latest) is older than the recovery_stamp: the recovery point went backwards"
+    local pf="$STATE/IDLE-PROOF" pa pw
     [ -f "$pf" ] && [ ! -L "$pf" ] || die "quiet_db_mode=idle but no IDLE-PROOF: run the idle-probe action"
     grep -q '^IDLE-PROOF result=idle ' "$pf" || die "the idle proof says the database is NOT idle"
     pa=$(sed -n 's/.* second_at=\([^ ]*\) .*/\1/p' "$pf" | head -1); printf '%s' "$pa" | LC_ALL=C grep -Eq "^$iso\$" || die "IDLE-PROOF is malformed"
     pa=$(epoch "$pa"); [ $((now2 - pa)) -le "$maxage" ] || die "IDLE-PROOF is older than $maxage s: run idle-probe again"
+    pw=$(sed -n 's/.* writes=\([0-9]*\)$/\1/p' "$pf" | head -1)
+    [ -n "$pw" ] && [ "$pw" = "$A_s0a_writes" ] || die "the user-table write counter ($pw) differs from the one at S0a ($A_s0a_writes): writes happened since S0a, so the quiet-database claim fails"
   fi
 }
+# drain / hold preconditions and the compatible-serving attestations: typed at approval, a launcher refusal, not an OPS-only step
+for k in drain_holds drain_queues drain_people; do eval "v=\$A_$k"; [ "$v" = yes ] || die "drain precondition $k is not attested yes (reminder/cron holds paused, queues drained, people hold): nothing was attempted"; done
+printf '%s' "$A_drain_max_busy" | grep -Eq '^[0-9]{1,2}$' || die "drain_max_busy must be 0..99"
+[ "${#A_drain_attestation}" -ge 12 ] && [ "${#A_serving_attestation}" -ge 12 ] || die "drain_attestation and serving_attestation must be the approver's own words (12 characters or more)"
+printf '%s' "$A_serving_commit" | grep -Eq '^[0-9a-f]{40}$' || die "serving_commit must be the 40-hex commit of the compatible application deployment"
+printf '%s' "$A_verify_sha" | grep -Eq '^([0-9a-f]{64}|none)$' || die "verify_sha must be 64 hex or none"
+printf '%s' "$A_history_before" | grep -Eq '^[0-9]{1,5}$' || die "history_before must be the number of history rows before the stage"
+pf_check drain-attestations PASS "holds paused, queues drained, people hold: attested yes by the approver; max busy sessions $A_drain_max_busy"
 case "$A_recovery_basis" in
   row4)
     [ "$A_waiver_id" = none ] || die "recovery_basis=row4 must have waiver_id=none"
@@ -173,6 +238,9 @@ case "$A_connection_mode" in
 esac
 # the URL carries NO sslmode: the vendor CLI drops it anyway; TLS verification is the child's PGSSLMODE=verify-full + PGSSLROOTCERT (pinned CA), proved in CI
 [ "$A_target_url" = "$want_url" ] || die "target_url is not exactly the approved form for this project, connection mode and timeouts (no other host, port, user or parameter is accepted)"
+pf_check target PASS "connection $A_connection_mode, the target was rebuilt from the approval fields and equals the record"
+pf_check recovery PASS "basis $A_recovery_basis, path $A_autonomy"
+GNG_SHA=none
 [ ! -e "$STATE/consumed/$APPROVAL_ID" ] || die "approval $APPROVAL_ID was already used (single use). Nothing was attempted."
 
 # ---- intake: copy from the inbox (anything the caller can write) into the private work dir FIRST, hash the COPY
@@ -214,6 +282,7 @@ tar -xf "$RUNDIR/bundle.tar" -C "$PROJ" || die "could not extract the bundle"
 [ "$(find "$PROJ" -type f | wc -l | tr -d ' ')" = "$NFILES" ] || die "the extracted bundle does not hold exactly $NFILES files"
 vout=$(cd "$PROJ/supabase/migrations" && sha256sum -c "$RUNDIR/list.sha256" 2>&1) || die "an extracted migration differs from the list"
 [ "$(printf '%s\n' "$vout" | grep -c ': OK$')" = "$NFILES" ] || die "the extracted migrations did not verify $NFILES files"
+pf_check package PASS "bundle sha, list sha, head, $NFILES files, exactly $A_count pending $A_first..$A_last verified from a private copy"
 mkdir -p "$PROJ/supabase/.temp" && printf '%s\n' v2.102.0 > "$PROJ/supabase/.temp/cli-latest" || die "cannot seed cli-latest"
 # T4 (lexical gate, both modes): no approved file may weaken or remove a server-side timeout; on the pooler every file must carry its own bounded ones
 python3 -I - "$PROJ/supabase/migrations" "$RUNDIR/pending.txt" "$A_connection_mode" "$A_statement_timeout_s" "$A_lock_timeout_s" "$A_idle_tx_timeout_s" <<'PYGATE' > "$RUNDIR/gate.txt" 2>&1 || { tail -n 6 "$RUNDIR/gate.txt" >&2; die "an approved file fails the timeout gate (T4). Nothing was attempted."; }
@@ -251,6 +320,7 @@ for n in names:
 print("timeout gate: %d files, %d problems (mode %s)" % (len(names), bad, mode))
 sys.exit(1 if bad else 0)
 PYGATE
+pf_check timeout-gate PASS "no approved file weakens a server-side timeout (mode $A_connection_mode)"
 RUN="$RUNDIR/run.txt"
 { echo "release apply run started $(utcnow) approval $APPROVAL_ID"; echo "script sha256 ${HONE_RELEASE_SCRIPT_SHA:-unknown}"; echo "head $A_head bundle $A_bundle_sha list $A_list_sha"; echo "versions $A_first..$A_last count $A_count; files $NFILES"; echo "bound to PR $A_pr head $A_pr_head receipt sha256 $A_receipt_sha"; echo "window $A_window_start .. $A_window_end; recovery basis $A_recovery_basis stamp $A_recovery_stamp waiver $A_waiver_id; path $A_autonomy; quiet-db mode $A_quiet_db_mode"; echo "s0a sha256 $A_s0a_sha at $A_s0a_at; min span $A_min_span_days days"; echo "connection mode $A_connection_mode host $A_db_host; TLS verify-full against the pinned CA sha256 $CA_SHA"; echo "timeouts (server side): $A_timeout_control statement ${A_statement_timeout_s}s lock ${A_lock_timeout_s}s idle-in-tx ${A_idle_tx_timeout_s}s; client wall clock ${A_max_push_seconds}s then KILL -> UNKNOWN-KILLED"; echo "target (no password): $A_target_url"; echo "recovery attestation (root-written): $A_recovery_attestation"; } > "$RUN"
 
@@ -282,11 +352,47 @@ scan_log() { if grep -qiE 'login role|initialising|unban|network.?ban|reset.*pas
   [ "$STAGE" != push ] || die "the CLI reported a login-role / ban / password / Management API path DURING the push. The push may already have applied: do the read-back before anything else. Do not retry."
   die "the CLI reported a login-role / ban / password / Management API path. Stopped; REPORT it. Do not retry."; fi; }
 
+if [ "$ACTION" = apply ]; then # the approver binds to the reviewed GO/NO-GO package: root wrote GONOGO-BOUND after reading state/GONOGO.json
+  GB=/etc/hone-release/GONOGO-BOUND
+  [ -f "$GB" ] && [ ! -L "$GB" ] && [ "$(stat -c %u "$GB")" = 0 ] && [ $(( 8#$(stat -c %a "$GB") & 8#022 )) = 0 ] || die "no root-written GONOGO-BOUND: run the preflight action, have the approver read the GO/NO-GO package and bind it with bind-gonogo.sh. Nothing was attempted."
+  gb() { sed -n "s/^$1=//p" "$GB" | head -1; }
+  [ "$(gb approval_id)" = "$APPROVAL_ID" ] || die "the GO/NO-GO binding is for another approval"
+  bat=$(epoch "$(gb bound_at)"); [ -n "$bat" ] && [ $((now_s - bat)) -le 1800 ] && [ "$bat" -le "$now_s" ] || die "the GO/NO-GO binding is older than 30 minutes: run preflight again and re-bind"
+  GNG="$STATE/GONOGO.json"; [ -f "$GNG" ] && [ ! -L "$GNG" ] || die "no GONOGO.json in the release state"
+  GNG_SHA=$(python3 -I - "$GNG" "$APPROVAL" <<'PYV'
+import json, sys, hashlib
+j = json.load(open(sys.argv[1])); sh = j.pop("sha256", "")
+canon = json.dumps(j, sort_keys=True, separators=(",", ":"))
+ok = hashlib.sha256(canon.encode()).hexdigest() == sh and j.get("verdict") == "GO" and j.get("approval_sha256") == hashlib.sha256(open(sys.argv[2], "rb").read()).hexdigest()
+print(sh if ok else "BAD")
+PYV
+)
+  [ "$GNG_SHA" != BAD ] && [ "$GNG_SHA" = "$(gb gonogo_sha)" ] || die "GONOGO.json is not the bound package (its sha256, verdict GO or the approval it is about differ from the binding)"
+fi
+# ---- preflight stops here: the reads that need the READ token, then the reviewable GO/NO-GO package
+if [ "$ACTION" = preflight ]; then
+  STAGE=preflight
+  PFW="$RUNDIR/pf"; mkdir -p "$PFW/supabase/.temp" && printf '%s\n' v2.102.0 > "$PFW/supabase/.temp/cli-latest" && printf '%s' "$A_project_ref" > "$PFW/supabase/.temp/project-ref"
+  pq() { ( cd "$PFW" && SUPABASE_ACCESS_TOKEN="$TOKEN" SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 "$BIN" db query --linked -o json "$1" ) </dev/null 2> "$PFW/err.txt"; }
+  pjson() { python3 -I -c 'import json,sys; j=json.load(sys.stdin); r=j if isinstance(j,list) else j.get("rows",j.get("result",[])); print(" ".join(str(r[0][k]) for k in sys.argv[1:]))' "$@"; }
+  h=$(pq "select count(*)::int as n, coalesce(max(version), '') as mx from supabase_migrations.schema_migrations" | pjson n mx) || die "the history read failed (preflight): NO-GO"
+  hn=${h%% *}; hx=${h#* }
+  if [ "$hn" = "$A_history_before" ] && [ -n "$hx" ] && [ "$hx" \< "$A_first" ]; then pf_check history PASS "history rows $hn (approved $A_history_before), max version $hx is below the first approved version $A_first: no drift"
+  else pf_check history FAIL "history rows $hn (approved $A_history_before), max $hx, first approved $A_first: DRIFT"; fi
+  b=$(pq "select count(*)::int as busy from pg_stat_activity where backend_type = 'client backend' and pid <> pg_backend_pid() and state <> 'idle' and datname = current_database()" | pjson busy) || die "the drain read failed (preflight): NO-GO"
+  if [ "$b" -le "$A_drain_max_busy" ]; then pf_check drain-read PASS "$b busy client sessions (allowed $A_drain_max_busy)"; else pf_check drain-read FAIL "$b busy client sessions exceed the allowed $A_drain_max_busy"; fi
+  TOKEN=""; unset TOKEN
+  gonogo_write GO "all checks recorded"
+  grep -q '|FAIL|' "$PFC" && exit 1
+  exit 0
+fi
+
 # ---- ONE dry run
 STAGE=dry-run
 DRY="$LOGS/dry-run.log"; rc=0
 # the approval is consumed at the FIRST dry-run attempt, and a state that only root clears is written before the first login
 mkdir "$STATE/consumed/$APPROVAL_ID" 2>/dev/null || die "approval $APPROVAL_ID was consumed by another run. Nothing was attempted."
+receipt_add bound "gonogo $GNG_SHA; approval $(sha "$APPROVAL"); bundle $A_bundle_sha; list $A_list_sha; head $A_head; pr $A_pr; receipt $A_receipt_sha; path $A_autonomy; mode $A_connection_mode"
 write_state DRYRUN-STARTED || die "cannot write the DRYRUN-STARTED state. Nothing was attempted."
 run_cli "$DRY" 120 db push --db-url "$A_target_url" --dry-run || rc=$?
 if [ "$rc" = 124 ]; then write_state FAILED-DRYRUN "killed-after-120s"; die "the dry run did not finish in 120 s; the CLI was KILLED (client wall clock). A dry run writes nothing. State FAILED-DRYRUN stands until root clears it. Nothing was pushed."; fi
@@ -304,6 +410,7 @@ grep -q 'Applying migration' "$DRY" && die "the dry run printed 'Applying migrat
 got=$(LC_ALL=C grep -E '^ *[^ ]+ +[0-9]{4}_[A-Za-z0-9_]+\.sql *$' "$DRY" | LC_ALL=C sed -E 's/^.* ([0-9]{4}_[A-Za-z0-9_]+\.sql) *$/\1/')
 [ "$got" = "$WANT" ] || die "the dry run does not list exactly the approved versions $A_first..$A_last in order ($(printf '%s\n' "$got" | grep -c .) listed, $A_count approved). NOTHING was applied."
 echo "dry run listed exactly the approved $A_count versions in order" >> "$RUN"
+receipt_add dry-run "log sha256 $(sha "$DRY"); exactly $A_count approved versions listed in order"
 
 # ---- ONE push: consume the approval, write the durable IN-FLIGHT marker, then push
 STAGE=push
@@ -320,9 +427,10 @@ run_cli "$PUSH" "$A_max_push_seconds" db push --db-url "$A_target_url" --yes || 
 if [ "$rc" = 124 ]; then
   PW=""; unset PW
   write_state UNKNOWN-KILLED "after-${A_max_push_seconds}s"
+  receipt_add push-unknown-killed "killed at the client wall clock after ${A_max_push_seconds}s; log sha256 $(sha "$PUSH"); outcome UNKNOWN"
   echo "push killed at the client wall clock $(utcnow)" >> "$RUN"
   tail -n 6 "$PUSH" | mask >&2
-  die "the push did not finish in ${A_max_push_seconds} s; the CLI was KILLED (client wall clock). The outcome is UNKNOWN: files that completed are applied, the open one was aborted by the server when the connection closed. This is NOT a pass and nothing is retried. Run the read-only reconcile action; only root clears the state UNKNOWN-KILLED."
+  die "the push did not finish in ${A_max_push_seconds} s; the CLI was KILLED (client wall clock). The outcome is UNKNOWN: files that completed are applied; the open file's transaction is rolled back when the server notices the closed connection (on the direct form client_connection_check_interval makes it abort the running statement within seconds; on the pooler the statement runs until its own per-file statement_timeout). This is NOT a pass and nothing is retried. Run the read-only reconcile action; only root clears the state UNKNOWN-KILLED."
 fi
 echo "push finished $(utcnow) exit $rc" >> "$RUN"
 PW=""; unset PW
@@ -339,9 +447,10 @@ napp=$(grep -c '^Applying migration ' "$PUSH")
 applied=$(LC_ALL=C grep -E '^Applying migration [0-9]{4}_[A-Za-z0-9_]+\.sql\.\.\.$' "$PUSH" | LC_ALL=C sed -E 's/^Applying migration ([0-9]{4}_[A-Za-z0-9_]+\.sql)\.\.\.$/\1/')
 [ "$applied" = "$WANT" ] || fail "the applied migrations are not exactly the approved versions in order."
 grep -qx 'Finished supabase db push.' "$PUSH" || fail "the 'Finished supabase db push.' line is missing."
-write_state APPLIED "versions-$A_first-$A_last"
+write_state APPLIED-UNVERIFIED "versions-$A_first-$A_last"
+receipt_add push "log sha256 $(sha "$PUSH"); $A_count Applying migration lines in order; finish line present; exit 0; state APPLIED-UNVERIFIED until verify"
 { echo "APPLIED $(utcnow): $A_count migrations $A_first..$A_last in order, finish line present, exit 0"; echo "dry-run log sha256 $(sha "$DRY")"; echo "push log sha256 $(sha "$PUSH")"; } >> "$RUN"
 mkdir -p "$LOGROOT/$APPROVAL_ID" && cp "$RUN" "$LOGROOT/$APPROVAL_ID/run.txt" && cp "$DRY" "$PUSH" "$LOGROOT/$APPROVAL_ID/" 2>/dev/null
 echo "APPLIED: exactly $A_count migrations ($A_first .. $A_last) in order; 'Finished supabase db push.'; exit 0. Approval $APPROVAL_ID is consumed." >&2
-echo "NEXT (read back before anything else): the migration history and the post-apply checks." >&2
+echo "NEXT: run the verify action (history read-back, stage checks, smoke, receipt). The state stays APPLIED-UNVERIFIED until it passes; a mismatch stops the release." >&2
 exit 0
