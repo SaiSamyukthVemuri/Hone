@@ -55,9 +55,17 @@ function isPhoneShaped(query: string): boolean {
   return PHONE_SHAPED_RE.test(query) && digitsOf(query).length >= MIN_PHONE_DIGITS;
 }
 
-/** The fields a client search reads. Extra fields are ignored. */
+/**
+ * The fields a client search reads. Extra fields are ignored. `preferred_name`
+ * and the legal parts (HON-58) are matched only when the caller selected them,
+ * so a surface that is not allowed legal identity never searches it.
+ */
 export type SearchableClient = {
   name?: string | null;
+  preferred_name?: string | null;
+  legal_given_name?: string | null;
+  legal_middle_name?: string | null;
+  legal_family_name?: string | null;
   email?: string | null;
   phone?: string | null;
 };
@@ -80,7 +88,20 @@ export function nameMatchesQuery(name: string | null | undefined, rawQuery: stri
 export function matchesClientSearch(client: SearchableClient, rawQuery: string): boolean {
   const query = rawQuery.trim();
   if (query.length === 0) return true;
-  if (nameMatchesQuery(client.name, query)) return true;
+  // One identity, several names: the stored name, the preferred name and the
+  // legal parts are searched as ONE word set, so "janie smith" finds a record
+  // stored as "Jane Smith" with preferred name "Janie", and a legal surname
+  // finds it too. With only `name` set this is exactly the old rule.
+  const allNames = [
+    client.name,
+    client.preferred_name,
+    client.legal_given_name,
+    client.legal_middle_name,
+    client.legal_family_name,
+  ]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .join(" ");
+  if (nameMatchesQuery(allNames, query)) return true;
 
   const lower = query.toLowerCase();
   if ((client.email ?? "").toLowerCase().includes(lower)) return true;
