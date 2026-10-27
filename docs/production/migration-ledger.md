@@ -15,7 +15,43 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
 
-## Current state (source-composed 2026-10-22; hosted declaration `0212` unchanged; finite repo prefix through `0246`)
+## Current state (verified 2026-10-27, post-S1 apply; `0213`–`0246` APPLIED, repo == hosted)
+
+> **CURRENT RELATIONSHIP: repo == hosted at `0246`.** The 34 migrations `0213`–`0246` were APPLIED to production by ONE push on 2026-10-27 (migration-first), by Sam under explicit per-change authorization, inside the window 2026-10-27T01:11:00Z–04:30:00Z. Migration history went from 211 rows (max `0212`) to **245 rows (max `0246`)**, read back at 2026-10-27T02:37:56Z–02:38:28Z (`window-s1read.sh` `dc930b6a0c74ab5a50998b6667ff3839085687e404d416e28828be9d3ca7136a`): OVERALL PASS — 34 new versions, nothing above `0246`, the object census, the privilege closures (`0239`/`0242`/`0245`) and the function-body hashes. Migration history is not table-content evidence. **Do not reapply any of `0213`–`0246`.** `0247` and above are not applied and remain separately held.
+>
+> **This record carries exceptions, and none of them is a PASS** (listed in full below). In particular the row-4 recovery bracket was **WAIVED, NOT PASSED**, by Sam, and the base backup and any restore are **UNVERIFIED / NOT TESTED**.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0246**, declared in `docs/production/migration-state.json`. Read back 2026-10-27T02:37:56Z–02:38:28Z: 245 history rows, 34 new versions `0213`–`0246`, nothing above. **No server apply timestamp was captured**, so `hosted_applied_at` stays null (the history table has no timestamp column); see the operator-observed outer bracket below. |
+| **Repo migration max** | **0246** (`0246_intake_questionnaire_snapshot.sql`), derived from 245 source files on the production tip. |
+| **Remote-only migrations** | **None.** The repository and production agree. |
+| **Pending migrations** | **None.** Nothing authored is unapplied through `0246`. |
+| **Next free number** | Next free number is **0247** by this tree's derived filenames, **not claimed** or reallocated here. Willow `0247` is already allocated and separately held; availability in a finite source tree is not allocation authority. |
+| **Project ref** | Canonical Hone production project. |
+
+### The apply (facts as recorded by OPS, 2026-10-26/27)
+
+- **Source.** Bundle `migrations-d189768b.tar` sha256 `599adf08712f6c702f5921ee54f7a83c653ee9faba60604d501aba7af841527b` (a `git archive` of `d189768b86fe1c53e330c65078f3a9f2949f8e59 supabase/migrations`: 245 files, `0001`–`0246`); file list sha256 `513035041c76717b5f8df1e2133cf2951c1b03c58d0cde5ce1e5dcdf5492c069`. The 34 pending files are `0213`–`0246`; `0214` = `a8bdcefe7b01216e986838fe336a9eb3613b6e892bd8de2c101cdd4e2f03751b` (P-2). The per-file checksums are in the previous state block below.
+- **Tool.** Sam ran `s1-apply-waiver.sh` (sha256 `090c37173730af78be8223d1cc77535767b5c8cd6f24f17fe0fe59e55aa8ced3`), a variant of the reviewed `s1-apply.sh` `2dfd335461d09561d4b427cbf1918b8a5165709da3184ff7642a149344009004`; the variant differs in the row-4 gate only (Insurance PEER-S1-WAIVER: APPROVE). The dry run listed exactly the 34 versions in order; then ONE push.
+- **Before.** S0a (`window.Iztxog`, verified 2026-10-27T01:22:01Z): OVERALL PASS (provider range; base backup UNVERIFIED; restore not tested); all S0-1 to S0-14 PASS; history 211 rows, max `0212`.
+- **Merge.** M `7e56d2d9c8396840ebb56a80421e595679c83821` merged at 2026-10-27T01:29:42Z as a merge commit; parents `7610fd70620f196448cbb646965e3f66384080ea` and `d189768b86fe1c53e330c65078f3a9f2949f8e59`; tree `b1013bb8dff75d6e2307da914a978bc0d7dfd3de` = the tree of `d189768b`. B-1035 `dpl_DFJxuNJKpXGUtRGeXPek5LYK3SvN` was built from M; the production env gates passed.
+- **Operator-observed outer bracket (NOT an apply time; never copy into `hosted_applied_at`).** The push ran after the pre-variant recovery read (2026-10-27T02:18:53Z) and the waiver file (about 02:20:30Z), and finished before the S1 read-back began (02:37:56Z); Sam reported it complete at about 02:39:49Z. No precise client-side window and no server instant were captured.
+- **Promote.** B-1035 was promoted WITHOUT a rebuild at about 02:43Z (Vercel `request_promote` by OPS under Sam's delegation). `hone.care` and `www` pointed at B-1035 on reads at 02:43:48Z and 02:45:17Z. `post-s3-smoke.sh` (`0c69ce828a982234d97751284514bdd9d7d3af026871e572bfd799bfe614571c`) passed 39/39 at 02:44:27Z and 03:16:27Z. Observation 02:43Z–03:16Z: 0 runtime errors and 0 error/warning logs, with near-zero traffic (clean but LOW evidence).
+
+### Exceptions (each is stated plainly; none is a PASS)
+
+1. **Row-4 recovery bracket: WAIVED, NOT PASSED**, by Sam at 2026-10-27T02:08:02Z (for this release only). The accepted provider recovery point is **2026-10-27T01:18:33Z** (PITR enabled; earliest 2026-10-20T07:37:25Z; span 6 d 17 h 41 m; read 02:18:53Z). The database was idle, so the latest recovery point did not advance past the selection time (T_SEL 01:38:56Z).
+2. **Named restore point (Q18):** the request at about 01:40:41Z returned HTTP 400 "This endpoint is unavailable at the moment". The name `hs1-20261027014041` has **OUTCOME UNKNOWN** and is never a restore target. No restore was tested; the base backup is UNVERIFIED.
+3. **Watchdog:** armed but **never pinned** to the push session. It gave no second-line protection; the server `statement_timeout` of 2 minutes was the only timeout.
+4. **B6 two-read alias check** was not repeated before S1.
+5. **S0-10 span minimum** was 6 days (candidate 5, Sam's decision); the S0a span was 6 d 17 h 21 m.
+6. **Window guards #1124/#1153 were dropped.** The people hold was Sam's attestation (studios offline). The cron-job.org appointment-reminders job was paused from 01:11:35Z for the window.
+7. **B-OLD** (the previous deployment) served the `0246` database from about 02:37Z to 02:43Z, until the promote.
+8. **Post-merge CI** run 40432892536 on M: one clock-bound test failure (`tests/app/invitation/recipient-actions.test.ts`, a fixture that resolves Mondays against the real clock). A time-bomb test, not a product defect; fixed forward later. No post-merge rerun.
+9. **S2 jurisdiction writes are deferred.**
+
+## Previous state (source-composed 2026-10-22; hosted declaration `0212` unchanged; finite repo prefix through `0246`)
 
 > **CURRENT RELATIONSHIP: repo > hosted.** This non-production candidate contains the contiguous pending `0213`–`0246` source prefix. These are published owner sources copied byte-identically, not new SQL authorship or an apply. Hosted history stays declared through `0212`; no hosted/shared/customer schema or data was changed. Migration history is not table-existence evidence. The previous 0212 reconciliation and historical apply records below remain preserved; **do not reapply 0212**.
 >
