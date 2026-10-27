@@ -32,7 +32,7 @@ case "$LIMIT$EVERY$MAX" in *[!0-9]*|'') echo "GUARD: --limit/--every/--max must 
 [ "$EVERY" -ge 1 ] && [ "$LIMIT" -ge 1 ] || { echo "GUARD: --limit/--every must be >= 1" >&2; exit 2; }
 [ -n "$GO" ] && [ -x "$GO" ] && [ -n "$URLBASE" ] && [ -n "$SD" ] || { echo "GUARD: --go, --url-base and --state-dir are required" >&2; exit 2; }
 case "$URLBASE" in *@*) : ;; *) echo "GUARD: --url-base needs a user@host" >&2; exit 2 ;; esac
-case "$URLBASE" in *:*@*:*) echo "GUARD: --url-base must not carry a password" >&2; exit 2 ;; esac
+UI=${URLBASE#*://}; UI=${UI%%@*}; case "$UI" in *:*) echo "GUARD: --url-base must not carry a password" >&2; exit 2 ;; esac
 [ "$(printf '%s' "${HONE_GATE_PASSWORD_FILE:-}" | head -c1)" = / ] || { echo "GUARD: HONE_GATE_PASSWORD_FILE must be an absolute path" >&2; exit 2; }
 PWF=$HONE_GATE_PASSWORD_FILE; unset HONE_GATE_PASSWORD_FILE
 [ -f "$PWF" ] && [ ! -L "$PWF" ] && [ "$(stat -c '%u %a %h' -- "$PWF")" = "$(id -u) 600 1" ] || { echo "GUARD: the password file must be a regular, unlinked file, owner $(id -u), mode 600" >&2; exit 2; }

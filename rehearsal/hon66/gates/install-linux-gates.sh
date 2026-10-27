@@ -32,11 +32,12 @@ done <<< "$actual"
 BIN=""
 if [ -n "$ARCH" ]; then
   [ -f "$ARCH" ] && [ ! -L "$ARCH" ] || die "the archive is missing or a symlink"
-  [ "$(tar -tzf "$ARCH" 2>/dev/null | grep -vx 'supabase' | grep -vx 'LICENSE' | grep -vx 'README.md' | wc -l)" = 0 ] || die "the archive holds unexpected members"
+  [ "$(tar -tzf "$ARCH" 2>/dev/null | grep -vx 'supabase' | grep -vx 'supabase-go' | grep -vx 'LICENSE' | grep -vx 'README.md' | wc -l)" = 0 ] || die "the archive holds unexpected members"
   TMP=$(mktemp -d) || die "mktemp failed"; trap 'rm -rf "$TMP"' EXIT
-  tar -xzf "$ARCH" -C "$TMP" supabase 2> /dev/null || die "the archive has no supabase member"
-  [ "$(sha256sum -- "$TMP/supabase" | cut -d' ' -f1)" = "$GOSHA" ] || die "the extracted supabase binary is not the pinned linux_amd64 2.102.0 build (sha256 mismatch): nothing installed"
-  BIN="$TMP/supabase"
+  M=$(tar -tzf "$ARCH" | grep -xE 'supabase-go|supabase' | head -1); [ -n "$M" ] || die "the archive has no supabase member"
+  tar -xzf "$ARCH" -C "$TMP" "$M" 2> /dev/null || die "the archive has no supabase member"
+  [ "$(sha256sum -- "$TMP/$M" | cut -d' ' -f1)" = "$GOSHA" ] || die "the extracted supabase binary is not the pinned linux_amd64 2.102.0 build (sha256 mismatch): nothing installed"
+  BIN="$TMP/$M"
   if [ -e "$ROOT/supabase-cli/supabase-go" ]; then [ "$(sha256sum -- "$ROOT/supabase-cli/supabase-go" | cut -d' ' -f1)" = "$GOSHA" ] || die "$ROOT/supabase-cli/supabase-go exists and is not the pinned build: move it away first"; fi
 fi
 mkdir -p "$ROOT" && chmod 700 "$ROOT" || die "cannot create $ROOT"
