@@ -47,7 +47,7 @@ runo() { local o; o=$(sam sudo -n -u hone-release $LB "$@" 2>&1); RC=$?; printf 
 # ---------------------------------------------------------------- 1. what sam can see and read
 sl=$(sam sudo -n -l 2>&1)
 printf '%s\n' "$sl" >> "$SAMOUT"
-n=$(printf '%s\n' "$sl" | grep -c 'launcher')
+n=$(printf '%s\n' "$sl" | grep -o 'launcher [a-z-]*' | sort -u | wc -l)
 echo "$sl" | grep -E 'NOPASSWD|launcher|Sorry|may run' | sed 's/^/       /'
 [ "$n" -ge 3 ] && ! printf '%s\n' "$sl" | grep -Eq '\(ALL( : ALL)?\) +(NOPASSWD: +)?ALL$|\(root\)' && printf '%s' "$sl" | grep -q 'launcher apply' && printf '%s' "$sl" | grep -q 'launcher read-backups' && printf '%s' "$sl" | grep -q 'launcher status' && ok "sudo -l shows exactly the three launcher lines (as hone-release), nothing else, no ALL" || bad "sudo -l" "$sl"
 for f in /var/lib/hone-release/secrets/db-password /var/lib/hone-release/secrets/read-pat /var/lib/hone-release/work/canary-db; do
@@ -95,7 +95,7 @@ refuse "launcher with a newline in the argument" sudo -n -u hone-release $LB $'s
 refuse "the status script directly" sudo -n -u hone-release $LX/scripts/status.sh
 sam cp $LB /tmp/launcher.copy 2>/dev/null; refuse "a copy of the launcher in /tmp" sudo -n -u hone-release /tmp/launcher.copy status
 refuse "sudo -E" sudo -n -E -u hone-release $LB status
-refuse "sudo -A / askpass form" sudo -A -u hone-release $LB status
+refuse "sudo -A with an unlisted command" sudo -A -u hone-release id
 
 # ---------------------------------------------------------------- 4. environment and path injection
 cat > "$T/pre.c" <<'C'

@@ -47,7 +47,7 @@ if [ "$MODE" = supavisor ]; then
 else
   PGBIN=$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | tail -1)
   [ -x "$PGBIN/initdb" ] || { apt-get install -y -qq postgresql >/dev/null 2>&1; PGBIN=$(ls -d /usr/lib/postgresql/*/bin | tail -1); }
-  PGD=$T/pgdata; install -d -o postgres -g postgres "$PGD" "$T/sock"; chmod 755 "$T"
+  PGD=$T/pgdata; install -d -o postgres -g postgres "$PGD" "$T/sock" "$T/pgl"; chmod 755 "$T"
   runuser -u postgres -- "$PGBIN/initdb" -D "$PGD" -U admin -A trust -E UTF8 >/dev/null 2>&1 || { echo "initdb failed"; exit 1; }
   openssl req -new -x509 -days 1 -nodes -out "$PGD/server.crt" -keyout "$PGD/server.key" -subj "/CN=localhost" >/dev/null 2>&1; chown postgres:postgres "$PGD/server.crt" "$PGD/server.key"; chmod 600 "$PGD/server.key"
   cat >> "$PGD/postgresql.conf" <<CONF
@@ -61,7 +61,7 @@ log_connections = on
 password_encryption = scram-sha-256
 CONF
   printf 'local all all trust\nhostssl all all 127.0.0.1/32 scram-sha-256\nhost all all 127.0.0.1/32 reject\n' > "$PGD/pg_hba.conf"
-  runuser -u postgres -- "$PGBIN/pg_ctl" -D "$PGD" -l "$T/pg.log" -w start >/dev/null || { cat "$T/pg.log"; exit 1; }
+  runuser -u postgres -- "$PGBIN/pg_ctl" -D "$PGD" -l "$T/pgl/pg.log" -w start >/dev/null || { cat "$T/pgl/pg.log"; exit 1; }
   psqld() { "$PGBIN/psql" -X -q -A -t -v ON_ERROR_STOP=1 -h "$T/sock" -p 54329 -U admin -d postgres "$@"; }
   REF=abcdefghijklmnopqrst
   psqld -c "create role \"postgres.$REF\" login superuser password 'postgres'"
@@ -69,7 +69,7 @@ CONF
   psqld -c "create schema supabase_migrations; create table supabase_migrations.schema_migrations (version text not null primary key, statements text[], name text);" >/dev/null
   awk '{v=substr($2,1,4); if (v+0<=212) printf "insert into supabase_migrations.schema_migrations (version,name) values (\x27%s\x27,\x27%s\x27);\n", v, substr($2,6,length($2)-9)}' "$T/syn/MIGRATIONS-d189768b.sha256" | psqld >/dev/null
   URL="postgresql://postgres.$REF@127.0.0.1:54329/postgres?sslmode=require"
-  conns() { grep -c 'connection received' "$T/pg.log"; }
+  conns() { grep -c 'connection received' "$T/pgl/pg.log"; }
   hist() { psqld -c "select count(*) from supabase_migrations.schema_migrations"; }
   histmax() { psqld -c 'select max(version) from supabase_migrations.schema_migrations'; }
   GOODPW=postgres
