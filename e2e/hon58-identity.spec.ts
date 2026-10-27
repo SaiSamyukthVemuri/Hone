@@ -65,7 +65,7 @@ test("preferred and legal names on one client: create, record, search, display, 
     await page.getByLabel(/^middle name/i).fill("Anne");
     await page.getByLabel(/^family name/i).fill(legalFamily);
     await page.getByRole("button", { name: /^save legal name$/i }).click();
-    await expect(page.getByRole("status")).toHaveText(/legal name saved/i, { timeout: 20_000 });
+    await expect(page.getByText("Legal name saved.")).toBeVisible({ timeout: 20_000 });
     const rows = await sql<{ client_id: string; source: string; legal_family_name: string }>(
       `select client_id, source, legal_family_name from public.client_legal_identities where client_id = $1`,
       [clientId],

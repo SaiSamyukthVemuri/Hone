@@ -147,7 +147,9 @@ describe("cross-studio isolation", () => {
   });
 
   it("a row cannot pair studio B with studio A's client (composite foreign key)", async () => {
-    await expect(asUser(b.userId, (q) => q(INSERT_LEGAL, [a.clientId, b.studioId, "X", "Y", b.practitionerId]))).rejects.toMatchObject({ code: "23503" });
+    // A client of studio A that has NO legal identity yet, so the primary key cannot answer first.
+    const bare = (await adminQuery("insert into public.clients (id, studio_id, name) values ($1,$2,'Bare Client') returning id", [randomUUID(), a.studioId])).rows[0].id;
+    await expect(asUser(b.userId, (q) => q(INSERT_LEGAL, [bare, b.studioId, "X", "Y", b.practitionerId]))).rejects.toMatchObject({ code: "23503" });
   });
 });
 
