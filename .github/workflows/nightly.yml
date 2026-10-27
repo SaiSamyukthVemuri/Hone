@@ -190,86 +190,48 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # CI-REGISTRY (OPS, 2026-10-27). The D7b login succeeds, then `supabase start`
+      # CI-REGISTRY (OPS, 2026-10-27). The D7b login succeeds, then the stack start
       # pulls ~10 images at once and ghcr.io answers "toomanyrequests ... allowed:
       # 44000/minute" (a short burst throttle across parallel jobs); docker and the
       # CLI do not retry, and the bind-retry step correctly refuses (not a port
-      # collision). So the images are pulled here first, one at a time, with a
-      # bounded retry (5 attempts, jittered 2-20 s, the registry's own retry-after
-      # honoured when it is longer). The list is read from the pinned CLI itself;
-      # no tag is written in this file. Inline, never a checked-out script, because
-      # the credential is held (Codex P2 4354172124). A failure here is only a
-      # warning: the stack start still pulls whatever is missing, as before.
-      - name: Pre-pull Supabase images (bounded retry, D7b credential held)
+      # collision). Mechanism reused from Team's proven rehearsal (#1193, run
+      # 40552718991): pull each image the pinned CLI lists (`supabase services`,
+      # no tag written here) from ghcr.io with a bounded back-off, then the same
+      # tag from ECR or Docker Hub, re-tagged locally so the start finds it. Only
+      # the images this job does not exclude are pulled. Inline, never a
+      # checked-out script, because the credential is held (Codex P2 4354172124).
+      # Non-fatal: the start still pulls whatever is missing, as before.
+      - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
         if: matrix.needs_supabase
         continue-on-error: true
-        timeout-minutes: 8
+        timeout-minutes: 12
         shell: bash
         run: |
-          set -uo pipefail
           set +e
           EXCLUDE=''
-          REG="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-}"
-          BIN="$(command -v supabase || true)"
-          if [ -z "$REG" ] || [ -z "$BIN" ]; then
-            echo "::warning title=Supabase image pre-pull skipped::no image registry or no supabase CLI in the environment; the stack start pulls as before."
-            exit 0
-          fi
-          BIN_DIR="$(dirname "$(readlink -f "$BIN")")"
-          : > "$RUNNER_TEMP/cli-images.txt"
-          for cand in "$BIN_DIR/supabase-go" "$BIN"; do
-            [ -r "$cand" ] || continue
-            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
-            if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then echo "image list read from $cand"; break; fi
-          done
-          if [ ! -s "$RUNNER_TEMP/cli-images.txt" ]; then
-            echo "::warning title=Supabase image pre-pull skipped::the CLI lists no images (looked in $BIN_DIR/supabase-go and $BIN); the stack start pulls as before."
-            exit 0
-          fi
           pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
-          images=""
-          while read -r _from image _as alias; do
-            case "$alias" in
-              pg) svc=db ;; kong) svc=kong ;; gotrue) svc=gotrue ;; postgrest) svc=postgrest ;;
-              realtime) svc=realtime ;; storage) svc=storage-api ;; imgproxy) svc=imgproxy ;;
-              edgeruntime) svc=edge-runtime ;; studio) svc=studio ;; pgmeta) svc=postgres-meta ;;
-              logflare) svc=logflare ;; vector) svc=vector ;; mailpit) svc=mailpit ;;
-              supavisor) svc=supavisor; [ -n "$pooler_on" ] || continue ;;
-              *) continue ;;
-            esac
+          listed="$(supabase services 2>/dev/null | awk -F'|' '/supabase\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*supabase\//,"",n); print n ":" $2 }}' | sort -u)"
+          imgs=""
+          for IMG in $listed; do
+            svc="${IMG%%:*}"
+            if [ "$svc" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi
             case ",$EXCLUDE," in *",$svc,"*) continue ;; esac
-            images="$images $REG/supabase/${image##*/}"
-          done < "$RUNNER_TEMP/cli-images.txt"
-          pull_one() {
-            local img="$1" n=1 out hi wait hint
-            while :; do
-              if out="$(docker pull "$img" 2>&1)"; then
-                echo "pulled $img (attempt $n)"
-                return 0
-              fi
-              if ! printf '%s' "$out" | grep -qiE 'toomanyrequests|too many requests|rate limit|timeout|temporarily|connection reset|unexpected eof|tls handshake'; then
-                echo "::warning title=Supabase image pre-pull::$img failed and is not retryable: $(printf '%s' "$out" | tail -n 1)"
-                return 1
-              fi
-              if [ "$n" -ge 5 ]; then
-                echo "::warning title=Supabase image pre-pull::gave up on $img after 5 attempts: $(printf '%s' "$out" | tail -n 1)"
-                return 1
-              fi
-              hi=$((4 * n + 2)); [ "$hi" -gt 20 ] && hi=20
-              wait=$((2 + RANDOM % (hi - 1)))
-              hint="$(printf '%s' "$out" | sed -n 's/.*retry-after: \([0-9][0-9]*\)\(\.[0-9]*\)\{0,1\}s.*/\1/p' | head -n 1)"
-              if [ -n "$hint" ] && [ "$hint" -gt "$wait" ]; then wait=$hint; [ "$wait" -gt 60 ] && wait=60; fi
-              echo "attempt $n of $img was throttled; waiting ${wait}s"
-              sleep "$wait"
-              n=$((n + 1))
-            done
-          }
-          echo "pre-pulling:$images"
-          ok=0; bad=0
-          for img in $images; do
-            if pull_one "$img"; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
+            imgs="$imgs $IMG"
           done
-          echo "::notice title=Supabase image pre-pull::$ok pulled, $bad not pulled (the stack start pulls what is missing)"
+          echo "images:$imgs"
+          for IMG in $imgs; do
+            got=0
+            for i in 1 2; do
+              if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi
+              echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
+            done
+            if [ "$got" = 0 ]; then
+              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do
+                if docker pull -q "$src" >/dev/null 2>&1; then docker tag "$src" ghcr.io/supabase/$IMG && got=1 && echo "using $src for $IMG, re-tagged locally: $(docker image inspect --format '{{index .RepoDigests 0}}' "$src")" && break; fi
+              done
+            fi
+            [ "$got" = 1 ] || echo "::warning title=Supabase image pre-pull::$IMG could not be pulled from ghcr, ECR or Docker Hub"
+          done
 
       - name: Bring up the database
         id: sb_start

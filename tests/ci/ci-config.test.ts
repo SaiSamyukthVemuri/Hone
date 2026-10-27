@@ -1080,9 +1080,9 @@ describe("D7b: Supabase-starting jobs pull ghcr.io images authenticated, read-on
       // checked-out script; its failure falls through to ONE retry step that
       // runs the repo's wrapper only AFTER the logout.
       // CI-REGISTRY (OPS 2026-10-27): the one step allowed between the login and
-      // the start is the bounded image pre-pull, inline and credential-neutral
-      // (see the CI-REGISTRY describe below for its exact contract).
-      expect(steps[at + 1]).toMatch(/^      - name: Pre-pull Supabase images \(bounded retry, D7b credential held\)\n/);
+      // the start is the image pre-pull, inline and credential-neutral (see the
+      // CI-REGISTRY describe below for its exact contract).
+      expect(steps[at + 1]).toMatch(/^      - name: Pre-pull Supabase images \(bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally\)\n/);
       const start = steps[at + 2];
       expect(start).toMatch(/^      - name: (Start local Supabase|Bring up the database)/);
       expect(start).toMatch(/\n        id: sb_start\n/);
@@ -1095,27 +1095,25 @@ describe("D7b: Supabase-starting jobs pull ghcr.io images authenticated, read-on
     }
     expect((body().match(/uses: docker\/login-action@/g) ?? []).length).toBe(setups.length);
     expect((body().match(/run: docker logout ghcr\.io/g) ?? []).length).toBe(setups.length);
-    // The workflow must never SET the registry (setup-cli exports ghcr.io itself;
-    // an override would silently change where the credential is used). Reading it
-    // (`${SUPABASE_INTERNAL_IMAGE_REGISTRY:-}` in the pre-pull) is allowed:
-    // CI-REGISTRY, 2026-10-27.
-    expect(body()).not.toMatch(/SUPABASE_INTERNAL_IMAGE_REGISTRY(\s*:\s|\s*=)/);
+    expect(body()).not.toMatch(/SUPABASE_INTERNAL_IMAGE_REGISTRY/);
   });
 });
 
-describe("CI-REGISTRY: every Supabase-starting job pre-pulls its images with a bounded retry", () => {
+describe("CI-REGISTRY: every Supabase-starting job pre-pulls its images with a bounded back-off and a registry fallback", () => {
   // Run 40540979643 (and 40524759962): after a successful D7b login the start
   // pulled ~10 images in a burst and ghcr.io answered `toomanyrequests ...
   // allowed: 44000/minute`; docker and the CLI do not retry and the bind-retry
-  // step (correctly) refuses. The pre-pull serialises the pulls and retries a
-  // throttle a bounded number of times, while the credential is held.
+  // step (correctly) refuses. Mechanism reused from Team's proven rehearsal
+  // (#1193, run 40552718991): pull each image the pinned CLI lists from ghcr.io
+  // with a bounded back-off, then the same tag from ECR or Docker Hub re-tagged
+  // locally, while the credential is held.
   const stepsOf = (body: string) => body.split(/\n(?=      - )/);
-  const prepulls = (body: string) => stepsOf(body).filter((s) => /^      - name: Pre-pull Supabase images \(bounded retry, D7b credential held\)\n/.test(s));
+  const prepulls = (body: string) => stepsOf(body).filter((s) => /^      - name: Pre-pull Supabase images \(bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally\)\n/.test(s));
   const code = (s: string) => s.replace(/^\s*#.*$/gm, "");
   const excludeOf = (s: string) => s.match(/\n          EXCLUDE='([^']*)'\n/)?.[1];
   const startExclude = (s: string) => s.match(/\n        run: supabase start(?: -x ([^ \n]+))? 2>&1/)?.[1] ?? "";
 
-  it.each([["ci.yml", () => CI, 7], ["nightly.yml", () => NIGHTLY, 1]])("%s: one pre-pull per setup-cli, with the same exclusions as the start that follows it", (_n, body, count) => {
+  it.each([["ci.yml", () => CI, 7], ["nightly.yml", () => NIGHTLY, 1]])("%s: one pre-pull per setup-cli, directly after the login, with the same exclusions as the start that follows it", (_n, body, count) => {
     const all = stepsOf(body());
     const pre = prepulls(body());
     expect(pre.length).toBe(count);
@@ -1129,58 +1127,43 @@ describe("CI-REGISTRY: every Supabase-starting job pre-pulls its images with a b
 
   it("the pre-pull bodies are identical across jobs except the exclusion list (and nightly's condition)", () => {
     const norm = (s: string) => s.replace(/EXCLUDE='[^']*'/, "EXCLUDE='…'").replace(/\n        if: matrix\.needs_supabase/, "");
-    const bodies = new Set([...prepulls(CI), ...prepulls(NIGHTLY)].map(norm));
-    expect(bodies.size).toBe(1);
+    expect(new Set([...prepulls(CI), ...prepulls(NIGHTLY)].map(norm)).size).toBe(1);
   });
 
-  it("is non-fatal, bounded and inline: continue-on-error, a step timeout, 5 attempts, jittered 2-20 s, retry-after honoured", () => {
-    const p = [...prepulls(CI), ...prepulls(NIGHTLY)];
-    for (const s of p) {
-      expect(s).toMatch(/\n        continue-on-error: true\n        timeout-minutes: 8\n        shell: bash\n        run: \|\n/);
+  it("is non-fatal and bounded: continue-on-error, a step timeout, 2 ghcr attempts with 15 s / 30 s back-off, then ECR, then Docker Hub", () => {
+    for (const s of [...prepulls(CI), ...prepulls(NIGHTLY)]) {
+      expect(s).toMatch(/\n        continue-on-error: true\n        timeout-minutes: 12\n        shell: bash\n        run: \|\n/);
       const c = code(s);
-      expect(c).toContain('if [ "$n" -ge 5 ]; then');
-      expect(c).toContain('hi=$((4 * n + 2)); [ "$hi" -gt 20 ] && hi=20');
-      expect(c).toContain("wait=$((2 + RANDOM % (hi - 1)))");
-      expect(c).toContain("retry-after");
-      expect(c).toMatch(/\[ "\$wait" -gt 60 \] && wait=60/);
-      // Only a throttle / transport blip is retried; anything else fails fast.
-      expect(c).toMatch(/grep -qiE 'toomanyrequests\|too many requests\|rate limit\|timeout\|temporarily\|connection reset\|unexpected eof\|tls handshake'/);
+      expect(c).toContain("set +e");
+      expect(c).toContain("for i in 1 2; do");
+      expect(c).toContain("if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi");
+      expect(c).toContain("sleep $((i*15))");
+      expect(c).toContain("for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG; do");
+      // Re-tagged locally so the start finds the image, with the digest printed as evidence.
+      expect(c).toContain('docker tag "$src" ghcr.io/supabase/$IMG');
+      expect(c).toContain("docker image inspect --format '{{index .RepoDigests 0}}' \"$src\"");
+      expect(c).toContain("could not be pulled from ghcr, ECR or Docker Hub");
       // The credential is held: no checked-out script, no package manager, no repo code, no new credential use.
       expect(c).not.toMatch(/scripts\/|\bbash scripts|\bnpm |\bnpx |\bnode |\.sh\b|docker login|secrets\.|GITHUB_TOKEN/);
     }
   });
 
-  it("derives the image list from the pinned CLI itself: no image tag is written in the workflow", () => {
+  it("derives the image list from the pinned CLI (`supabase services`): no image tag is written in the workflow", () => {
     for (const s of [...prepulls(CI), ...prepulls(NIGHTLY)]) {
       const c = code(s);
-      // The release archive ships TWO executables (the `supabase` wrapper and the Go
-      // `supabase-go` that embeds the Dockerfile); the list is read from the
-      // sibling supabase-go first, then from the command itself, and an empty
-      // list is a warning, never a failure (run 40555038056: the wrapper alone
-      // lists nothing and the step died silently under bash -e).
-      expect(c).toContain('for cand in "$BIN_DIR/supabase-go" "$BIN"; do');
-      expect(c).toContain(`grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS [A-Za-z0-9_]+$' "$cand"`);
-      expect(c).toContain("set -uo pipefail\n          set +e");
-      expect(c).toContain('BIN="$(command -v supabase || true)"');
-      expect(c).toContain('images="$images $REG/supabase/${image##*/}"');
-      expect(c).not.toMatch(/\b(?:postgres|postgres-meta|kong|gotrue|postgrest|mailpit|supavisor|realtime|studio)[:@]v?\d/);
-      expect(c).not.toMatch(/ghcr\.io\/supabase|public\.ecr\.aws/);
+      expect(c).toContain("supabase services 2>/dev/null | awk -F'|'");
+      expect(c).not.toMatch(/\b(?:postgres|postgres-meta|kong|gotrue|postgrest|mailpit|supavisor|realtime|studio|storage-api|edge-runtime|logflare)[:@]v?\d/);
+      // Excluded services are skipped; the supavisor only when the pooler is enabled.
+      expect(c).toContain('case ",$EXCLUDE," in *",$svc,"*) continue ;; esac');
+      expect(c).toContain('if [ "$svc" = supavisor ] && [ -z "$pooler_on" ]; then continue; fi');
     }
-  });
-
-  it("covers every service alias `start` can pull, maps each to its -x name, and skips the supavisor unless the pooler is enabled", () => {
-    const c = code(prepulls(CI)[0]);
-    for (const [alias, svc] of [["pg", "db"], ["kong", "kong"], ["gotrue", "gotrue"], ["postgrest", "postgrest"], ["realtime", "realtime"], ["storage", "storage-api"], ["imgproxy", "imgproxy"], ["edgeruntime", "edge-runtime"], ["studio", "studio"], ["pgmeta", "postgres-meta"], ["logflare", "logflare"], ["vector", "vector"], ["mailpit", "mailpit"]]) {
-      expect(c, alias).toContain(`${alias}) svc=${svc} ;;`);
-    }
-    expect(c).toContain('supavisor) svc=supavisor; [ -n "$pooler_on" ] || continue ;;');
-    expect(c).toMatch(/\*\) continue ;;/);
   });
 
   it("the bind-retry step, the logout and the direct start are unchanged", () => {
     for (const body of [CI, NIGHTLY]) {
-      expect((body.match(/run: docker logout ghcr\.io/g) ?? []).length).toBe((body.match(/uses: supabase\/setup-cli@/g) ?? []).length);
-      expect((body.match(/scripts\/ci\/supabase-start-bind-retry\.sh --after-failed-start/g) ?? []).length).toBe((body.match(/uses: supabase\/setup-cli@/g) ?? []).length);
+      const n = (body.match(/uses: supabase\/setup-cli@/g) ?? []).length;
+      expect((body.match(/run: docker logout ghcr\.io/g) ?? []).length).toBe(n);
+      expect((body.match(/scripts\/ci\/supabase-start-bind-retry\.sh --after-failed-start/g) ?? []).length).toBe(n);
     }
   });
 });
