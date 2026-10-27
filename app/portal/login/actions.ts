@@ -19,6 +19,7 @@ import {
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { buildPortalMagicLinkEmail } from "@/lib/email/templates/portal-magic-link";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // PR #166. Magic-link TTL was 30 minutes in PR #129 and survived
@@ -234,8 +235,7 @@ export async function requestPortalMagicLinkAction(
       });
     if (insertErr) {
       logSanitized("portal_login_magic_insert_failed", {
-        code: insertErr.code,
-        message: insertErr.message,
+        code: dbErrorCode(insertErr),
       });
       continue;
     }

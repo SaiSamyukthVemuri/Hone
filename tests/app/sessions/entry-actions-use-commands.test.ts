@@ -43,7 +43,7 @@ describe("addLaserEntryAction — calls create_laser_entry", () => {
   });
 
   it("preserves its error message and revalidation contract", () => {
-    expect(body).toMatch(/throw new Error\(`Failed to add entry: \$\{error\.message\}`\)/);
+    expect(body).toMatch(/throw new Error\(`Failed to add entry: \$\{dbErrorCode\(error\)\}`\)/);
     expect(body).toMatch(/revalidatePath\(`\/clients\/\$\{clientId\}\/sessions\/\$\{sessionId\}`\)/);
   });
 

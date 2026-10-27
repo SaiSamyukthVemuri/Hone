@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import {
   getClientById,
+  sessionPerformerName,
+  sessionRecordedByName,
   requirePractitionerWithStudio,
   getLaserTreatmentCountsForClient,
   getPriorLaserSessionCount,
@@ -14,6 +16,7 @@ import {
 import { LogLaserEntryForm } from "@/components/log-laser-entry-form";
 import { LaserEntryRow } from "@/components/entry-row";
 import { SessionPerformerLine } from "@/components/session-performer-line";
+import { toPerformerOptions } from "@/lib/sessions/performer-options";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
 import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-eligibility";
 import { AftercareExplainedToggle } from "@/app/(app)/records/record-forms";
@@ -84,6 +87,7 @@ import {
 import { SectionLabel } from "@/components/ui/section-label";
 import { SessionPhotos } from "./SessionPhotos";
 import { signedSessionPhotos } from "./session-photos";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 export default async function SessionDetailPage({
   params,
@@ -137,6 +141,7 @@ export default async function SessionDetailPage({
   // join the wave. It is `session.appointment_id ?? null` — a pure derivation,
   // no I/O, no behaviour.
   const linkedAppointmentId = session.appointment_id ?? null;
+  const isOwner = practitioner.role === "owner";
 
   const [
     sessionPhotos,
@@ -167,17 +172,24 @@ export default async function SessionDetailPage({
     timed("session-chart.clinical-notes", () =>
       buildClinicalNoteSections(id, { historyLimit: 10 }),
     ),
-    timed("session-chart.payment-eligibility", () =>
-      getSessionPaymentEligibility({ studioId: studio.id, sessionId: session.id }),
-    ),
-    timed("session-chart.payment-amount", () =>
-      getAuthoritativeSessionPaymentAmount({
-        studioId: studio.id,
-        sessionId: session.id,
-        studioTimezone: studio.timezone,
-      }),
-    ),
-    linkedAppointmentId
+    // HON-44 (Sam decision 12): the payment card is owner-only, so its three
+    // loaders run for the owner ALONE. A non-owner's request issues none of these
+    // reads, and nothing payment-shaped exists to be passed to a rendered element.
+    isOwner
+      ? timed("session-chart.payment-eligibility", () =>
+          getSessionPaymentEligibility({ studioId: studio.id, sessionId: session.id }),
+        )
+      : Promise.resolve(null),
+    isOwner
+      ? timed("session-chart.payment-amount", () =>
+          getAuthoritativeSessionPaymentAmount({
+            studioId: studio.id,
+            sessionId: session.id,
+            studioTimezone: studio.timezone,
+          }),
+        )
+      : Promise.resolve(null),
+    isOwner && linkedAppointmentId
       ? timed("session-chart.settlements", () =>
           getAppointmentSettlements(studio.id, [linkedAppointmentId]),
         )
@@ -192,7 +204,7 @@ export default async function SessionDetailPage({
   ]);
   const lastEntryNotFromThisSession =
     lastEntry && !sessionEntryIds.has(lastEntry.id) ? lastEntry : null;
-  const sessionPaymentAmount = pricedForPage.ok ? pricedForPage.result : null;
+  const sessionPaymentAmount = pricedForPage?.ok ? pricedForPage.result : null;
   // HON-11: the quoted price that prefills the cash/e-transfer amount when the
   // prepare form is hidden (no card on file). Quick checkout passes the same
   // fact; without it this page showed a blank box for the visit the dashboard
@@ -274,8 +286,7 @@ export default async function SessionDetailPage({
         JSON.stringify({
           event: "session_payment_default_amount_read_failed",
           appointment_id: linkedAppointmentId,
-          code: apptErr.code ?? null,
-          message: apptErr.message ?? null,
+          code: dbErrorCode(apptErr),
         }),
       );
     }
@@ -608,10 +619,13 @@ export default async function SessionDetailPage({
         <SessionPerformerLine
           sessionId={session.id}
           clientId={id}
-          practitioners={clientData.practitioners}
+          // DAT-001: a client component; pass only what the line renders.
+          practitioners={toPerformerOptions(clientData.practitioners)}
           initialPerformerId={
             session.performed_by_practitioner_id ?? session.practitioner_id
           }
+          performerName={sessionPerformerName(session, clientData.attributionRoster)}
+          recordedByName={sessionRecordedByName(session, clientData.attributionRoster)}
           updatePerformerAction={updateSessionPerformerAction}
         />
         {/* PR #194 (Chloe retest): when a treatment plan is attached,
@@ -1051,6 +1065,10 @@ export default async function SessionDetailPage({
           NextStepCard's "Go to billing" link deep-scrolls into the
           payment card. The wrapper is a noop visually; the anchor
           is the entire surface the practitioner is looking for. */}
+      {/* HON-44 (Sam decision 12): charging, recording payment and the amount are
+          owner-only; the server actions refuse a non-owner, and the whole card is
+          withdrawn for one. */}
+      {isOwner && sessionPaymentEligibility && (
       <div id="session-payment">
         <SessionPaymentPrepareCard
           sessionId={session.id}
@@ -1081,6 +1099,7 @@ export default async function SessionDetailPage({
           refundAction={refundPaymentChargeAttemptAction}
         />
       </div>
+      )}
 
       {/* An archived (legacy finalized) record cannot be soft-deleted, the DB
           guard from 0119 still enforces that, so the destructive control is

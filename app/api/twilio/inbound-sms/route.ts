@@ -14,6 +14,7 @@ import {
   readClientSuppressionCandidates,
   readProspectSuppressionCandidates,
 } from "@/lib/sms/suppression-candidates";
+import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
 // Twilio inbound SMS webhook (PR Twilio v1).
 //
@@ -44,7 +45,9 @@ import {
 //      try to interpret it; v1 is opt-out only, not conversational.
 //
 // Logging discipline:
-//   * Never log full From or To numbers; use maskedPhone().
+//   * Never log From or To numbers, masked or not, in a log line (MSG-007:
+//     a masked number still discloses its last two digits). The audit rows
+//     below keep the masked form; they are first-party records, not logs.
 //   * Never log Body for non-STOP messages (could contain PII).
 //   * Never log Auth Token.
 
@@ -106,7 +109,7 @@ export async function POST(req: Request): Promise<Response> {
     rawBody = await req.text();
   } catch (err) {
     logError("twilio_inbound_body_read_failed", {
-      error: err instanceof Error ? err.message : String(err),
+      errorClass: thrownErrorClass(err),
     });
     return NextResponse.json({ ok: false }, { status: 400 });
   }
@@ -169,11 +172,7 @@ export async function POST(req: Request): Promise<Response> {
     // v1 is opt-out only: any other inbound message is acknowledged
     // with an empty TwiML and not persisted. We do not log the body
     // (could be PII); we log only the masked From for traceability.
-    logEvent("twilio_inbound_non_stop", {
-      fromMasked: maskedPhone(from),
-      toMasked: maskedPhone(to),
-      messageSid,
-    });
+    logEvent("twilio_inbound_non_stop", { messageSid });
     return twimlResponse(EMPTY_TWIML);
   }
 
@@ -182,10 +181,7 @@ export async function POST(req: Request): Promise<Response> {
     // No digits to match against; nothing to opt out. Still ack with
     // the STOP TwiML so the sender's phone confirms the carrier's
     // STOP filter rather than seeing a silent failure.
-    logEvent("twilio_inbound_stop_no_digits", {
-      fromMasked: maskedPhone(from),
-      messageSid,
-    });
+    logEvent("twilio_inbound_stop_no_digits", { messageSid });
     return twimlResponse(STOP_TWIML);
   }
 
@@ -240,7 +236,7 @@ export async function POST(req: Request): Promise<Response> {
     // passes have had their turn.
     clientScanFailed = true;
     logError("twilio_inbound_client_scan_failed", {
-      error: err instanceof Error ? err.message : String(err),
+      errorClass: thrownErrorClass(err),
       messageSid,
     });
   }
@@ -276,8 +272,7 @@ export async function POST(req: Request): Promise<Response> {
       optOutErrors += 1;
       logError("twilio_inbound_client_optout_failed", {
         clientId: matched.id,
-        code: updateErr.code,
-        message: updateErr.message,
+        code: dbErrorCode(updateErr),
         messageSid,
       });
     } else {
@@ -333,7 +328,7 @@ export async function POST(req: Request): Promise<Response> {
     // the client rows already stamped above are not re-attempted needlessly.
     prospectScanFailed = true;
     logError("twilio_inbound_prospect_scan_failed", {
-      error: err instanceof Error ? err.message : String(err),
+      errorClass: thrownErrorClass(err),
       messageSid,
     });
   }
@@ -352,8 +347,7 @@ export async function POST(req: Request): Promise<Response> {
       prospectOptOutErrors += 1;
       logError("twilio_inbound_prospect_optout_failed", {
         matchedCount: matchedProspects.length,
-        code: suppressErr.code,
-        message: suppressErr.message,
+        code: dbErrorCode(suppressErr),
         messageSid,
       });
     } else {
@@ -403,8 +397,7 @@ export async function POST(req: Request): Promise<Response> {
     if (auditErr) {
       logError("twilio_inbound_audit_insert_failed", {
         successfulCount: successfullyOptedOutClients.length,
-        code: auditErr.code,
-        message: auditErr.message,
+        code: dbErrorCode(auditErr),
         messageSid,
       });
     }
@@ -438,8 +431,7 @@ export async function POST(req: Request): Promise<Response> {
       // a suppression that already happened; losing it must not un-suppress.
       logError("twilio_inbound_prospect_audit_insert_failed", {
         successfulCount: successfullyOptedOutProspects.length,
-        code: prospectAuditErr.code,
-        message: prospectAuditErr.message,
+        code: dbErrorCode(prospectAuditErr),
         messageSid,
       });
     }
@@ -475,7 +467,6 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   logEvent("twilio_inbound_stop_processed", {
-    fromMasked: maskedPhone(from),
     matchedCount: matchedClients.length,
     alreadyOptedOutCount,
     successfulCount: successfullyOptedOutClients.length,

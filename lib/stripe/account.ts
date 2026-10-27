@@ -9,11 +9,9 @@
 
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import {
-  STRIPE_CONNECT_COUNTRY,
-  getStripe,
-  inferStripeLivemode,
-} from "./server";
+import type { PaymentCountry } from "@/lib/billing/payment-jurisdiction";
+import { getStripe, inferStripeLivemode } from "./server";
+import { dbErrorCode, stripeErrorFields, thrownErrorClass } from "@/lib/logging/error-class";
 
 function logInternalStripeError(event: string, detail: unknown) {
   try {
@@ -41,6 +39,11 @@ export type CreateOrLoadResult = {
   stripeAccountId: string;
   livemode: boolean;
   alreadyProvisioned: boolean;
+  // #1035 P1-B. True only when THIS call created the account and Hone recorded
+  // its country as the studio's payment country. Absent when no Account object
+  // was to hand (an existing or in-flight account); the next status refresh or
+  // account webhook records it.
+  accountCountryConfirmed?: boolean;
 };
 
 export async function createOrLoadConnectedAccountForStudio(
@@ -56,8 +59,7 @@ export async function createOrLoadConnectedAccountForStudio(
   );
   if (claimErr) {
     logInternalStripeError("create_or_claim_provisioning_failed", {
-      code: claimErr.code,
-      message: claimErr.message,
+      code: dbErrorCode(claimErr),
       studioId,
     });
     throw new Error("Could not start Stripe onboarding. Please try again.");
@@ -100,6 +102,19 @@ export async function createOrLoadConnectedAccountForStudio(
     );
   }
 
+  // #1035 P1-A. The account's country is the one 0214 stamped on THIS claim
+  // from the studio's payment jurisdiction, never the deployment-wide
+  // STRIPE_CONNECT_COUNTRY. A connected account's country is immutable on
+  // Stripe's side, so anything short of a readable CA/US stamp for this attempt
+  // and this claim token stops here, before any Stripe call.
+  const country = await readStampedPaymentCountry(admin, claim);
+  if (!country) {
+    await markProvisioningFailed(admin, claim, "payment_country_unverified", "payment_country_unverified");
+    throw new Error(
+      "Hone could not confirm the studio's payment country, so Stripe onboarding was not started.",
+    );
+  }
+
   // We own the claim. Call Stripe.accounts.create with the RPC-supplied
   // idempotency key so retries collapse on Stripe's side.
   let account: Stripe.Account;
@@ -107,7 +122,7 @@ export async function createOrLoadConnectedAccountForStudio(
     account = await stripe.accounts.create(
       {
         type: "express",
-        country: STRIPE_CONNECT_COUNTRY,
+        country,
         capabilities: {
           card_payments: { requested: true },
           transfers: { requested: true },
@@ -124,22 +139,12 @@ export async function createOrLoadConnectedAccountForStudio(
       stripeError: extractStripeError(err),
     });
     // Mark the provisioning attempt failed so a future caller can retry.
-    try {
-      const { error: markErr } = await admin.rpc(
-        "mark_stripe_account_provisioning_failed",
-        {
-          p_attempt_id: claim.attempt_id,
-          p_claim_token: claim.out_processing_claim_token,
-          p_error_code: extractStripeErrorCode(err),
-          p_error_message: "stripe_accounts_create_failed",
-        },
-      );
-      if (markErr) {
-        logInternalStripeError("mark_provisioning_failed_failed", { markErr });
-      }
-    } catch (markErr) {
-      logInternalStripeError("mark_provisioning_failed_threw", { markErr });
-    }
+    await markProvisioningFailed(
+      admin,
+      claim,
+      extractStripeErrorCode(err),
+      "stripe_accounts_create_failed",
+    );
     throw new Error("Stripe could not create the connected account.");
   }
 
@@ -154,8 +159,7 @@ export async function createOrLoadConnectedAccountForStudio(
   );
   if (completeErr) {
     logInternalStripeError("complete_provisioning_failed", {
-      code: completeErr.code,
-      message: completeErr.message,
+      code: dbErrorCode(completeErr),
       studioId,
       stripeAccountId: account.id,
     });
@@ -168,11 +172,173 @@ export async function createOrLoadConnectedAccountForStudio(
     );
   }
 
+  // #1035 P1-B. Bound now, so the record can find the settings row. The
+  // account exists and is bound whatever happens here, so a failure (including
+  // a reply that stored nothing) is reported as unconfirmed rather than thrown: the eligibility verdict and the
+  // 0214 charge guard already refuse an unconfirmed non-CA account.
+  let accountCountryConfirmed = false;
+  try {
+    const recorded = await recordAccountJurisdiction(admin, {
+      studioId,
+      stripeAccountId: account.id,
+      livemode,
+      account,
+    });
+    accountCountryConfirmed = recorded.confirmed;
+  } catch (recordErr) {
+    logInternalStripeError("record_account_jurisdiction_after_create_failed", {
+      studioId,
+      stripeAccountId: account.id,
+      errorClass: thrownErrorClass(recordErr),
+    });
+  }
+
   return {
     stripeAccountId: account.id,
     livemode,
     alreadyProvisioned: false,
+    accountCountryConfirmed,
   };
+}
+
+type AdminClient = ReturnType<typeof createAdminClient>;
+type ProvisioningClaim = {
+  attempt_id: string;
+  out_processing_claim_token: string | null;
+};
+
+// The stamped country for this attempt AND this claim token. A row a later
+// claim has re-stamped no longer matches the token, so it reads as missing.
+async function readStampedPaymentCountry(
+  admin: AdminClient,
+  claim: ProvisioningClaim,
+): Promise<PaymentCountry | null> {
+  const { data, error } = await admin
+    .from("stripe_account_provisioning_attempts")
+    .select("payment_country")
+    .eq("id", claim.attempt_id)
+    .eq("processing_claim_token", claim.out_processing_claim_token)
+    .maybeSingle();
+  if (error) {
+    logInternalStripeError("provisioning_payment_country_read_failed", {
+      code: dbErrorCode(error),
+      attemptId: claim.attempt_id,
+    });
+    return null;
+  }
+  const country = (data as { payment_country?: unknown } | null)?.payment_country;
+  if (country === "CA" || country === "US") return country;
+  logInternalStripeError("provisioning_payment_country_unverified", {
+    attemptId: claim.attempt_id,
+    present: data != null,
+  });
+  return null;
+}
+
+async function markProvisioningFailed(
+  admin: AdminClient,
+  claim: ProvisioningClaim,
+  errorCode: string,
+  errorMessage: string,
+): Promise<void> {
+  try {
+    const { error: markErr } = await admin.rpc(
+      "mark_stripe_account_provisioning_failed",
+      {
+        p_attempt_id: claim.attempt_id,
+        p_claim_token: claim.out_processing_claim_token,
+        p_error_code: errorCode,
+        p_error_message: errorMessage,
+      },
+    );
+    if (markErr) {
+      logInternalStripeError("mark_provisioning_failed_failed", {
+        code: dbErrorCode(markErr),
+      });
+    }
+  } catch (markErr) {
+    logInternalStripeError("mark_provisioning_failed_threw", {
+      errorClass: thrownErrorClass(markErr),
+      ...stripeErrorFields(markErr),
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// recordAccountJurisdiction (#1035 P1-B)
+// ---------------------------------------------------------------------------
+//
+// Records what Stripe says an account's country is, through 0214's
+// record_stripe_account_jurisdiction. Call it wherever an AUTHORITATIVE Account
+// object for the studio's bound account is in hand: after creation, after a
+// status refresh, and from the account webhooks. Without it the observed
+// country stays NULL and a US studio can never become chargeable.
+//
+// THROWS whenever no observation was stored, so each caller decides what a
+// failed write means: an rpc error, not_bound, invalid_input, an empty or
+// unreadable reply, or an Account that is not the bound one (#1035 Codex P2
+// 4352568927 — resolving on those let a refresh report success and the webhook
+// acknowledge an event that recorded nothing). Only a PERSISTED outcome
+// resolves: recorded, refreshed, or country_conflict. A persisted mismatch or
+// conflict is `confirmed: false`, and charging needs nothing more, because the
+// eligibility verdict and the 0214 guard read the persisted state.
+const PERSISTED_JURISDICTION_RESULTS = new Set(["recorded", "refreshed", "country_conflict"]);
+
+export type AccountJurisdictionRecord = {
+  confirmed: boolean;
+  result: string;
+};
+
+export async function recordAccountJurisdiction(
+  admin: AdminClient,
+  params: {
+    studioId: string;
+    stripeAccountId: string;
+    livemode: boolean;
+    account: Pick<Stripe.Account, "id" | "country" | "default_currency">;
+  },
+): Promise<AccountJurisdictionRecord> {
+  // Only the bound account's own object may speak for it.
+  if (params.account.id !== params.stripeAccountId) {
+    logInternalStripeError("record_account_jurisdiction_identity_unverified", {
+      studioId: params.studioId,
+      stripeAccountId: params.stripeAccountId,
+    });
+    throw new Error("record_stripe_account_jurisdiction refused: account identity unverified");
+  }
+  const { data, error } = await admin.rpc("record_stripe_account_jurisdiction", {
+    p_studio_id: params.studioId,
+    p_stripe_account_id: params.stripeAccountId,
+    p_stripe_livemode: params.livemode,
+    p_country: params.account.country ?? null,
+    p_default_currency: params.account.default_currency ?? null,
+  });
+  if (error) {
+    throw new Error(`record_stripe_account_jurisdiction failed: ${dbErrorCode(error)}`);
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { out_result?: unknown; out_matches?: unknown }
+    | null
+    | undefined;
+  const result = typeof row?.out_result === "string" ? row.out_result : "unreadable";
+  if (!PERSISTED_JURISDICTION_RESULTS.has(result)) {
+    logInternalStripeError("record_account_jurisdiction_not_persisted", {
+      studioId: params.studioId,
+      stripeAccountId: params.stripeAccountId,
+      result,
+    });
+    throw new Error(`record_stripe_account_jurisdiction stored nothing: ${result}`);
+  }
+  const confirmed =
+    (result === "recorded" || result === "refreshed") && row?.out_matches === true;
+  if (!confirmed) {
+    logInternalStripeError("record_account_jurisdiction_not_confirmed", {
+      studioId: params.studioId,
+      stripeAccountId: params.stripeAccountId,
+      result,
+    });
+  }
+  return { confirmed, result };
 }
 
 // ---------------------------------------------------------------------------
@@ -319,8 +485,7 @@ export async function refreshAccountStatusFromStripe(params: {
   // does for the two sibling throws in this function.
   if (existingSettingsErr) {
     logInternalStripeError("studio_payment_settings_preserve_read_failed", {
-      code: existingSettingsErr.code,
-      message: existingSettingsErr.message,
+      code: dbErrorCode(existingSettingsErr),
       studioId: params.studioId,
     });
     throw new Error(
@@ -343,9 +508,26 @@ export async function refreshAccountStatusFromStripe(params: {
   });
   if (syncErr) {
     logInternalStripeError("sync_studio_account_status_failed", {
-      code: syncErr.code,
-      message: syncErr.message,
+      code: dbErrorCode(syncErr),
       studioId: params.studioId,
+    });
+    throw new Error("Stripe status refresh succeeded but local sync failed.");
+  }
+
+  // #1035 P1-B. This is the refresh the practitioner is told to run when a
+  // US account's country is unconfirmed, so it must actually record it. A
+  // failed write fails the refresh, with the same message as a failed sync.
+  try {
+    await recordAccountJurisdiction(admin, {
+      studioId: params.studioId,
+      stripeAccountId: params.stripeAccountId,
+      livemode,
+      account,
+    });
+  } catch (recordErr) {
+    logInternalStripeError("record_account_jurisdiction_after_refresh_failed", {
+      studioId: params.studioId,
+      errorClass: thrownErrorClass(recordErr),
     });
     throw new Error("Stripe status refresh succeeded but local sync failed.");
   }

@@ -57,11 +57,12 @@ describe("PR #181: NextStepCard three-state CTA precedence", () => {
     expect(block).toMatch(/Appointment completed/);
   });
 
-  it("renders the 'Next step: chart the session and bill the client.' guidance", () => {
+  it("renders the HON-45 'Next step' guidance naming both truthful outcomes", () => {
     const block = blockFor("NextStepCard");
     expect(block).toMatch(
-      /Next step: chart the session and bill the client\./,
+      /Next step: chart the session, then charge a saved card or record\s+how the visit was settled\./,
     );
+    expect(block).not.toMatch(/bill the client/);
   });
 
   it("no linked session: CTA label is 'Start session' and href points to sessions/new", () => {

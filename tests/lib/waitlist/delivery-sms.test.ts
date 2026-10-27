@@ -425,3 +425,52 @@ describe("a practitioner-recorded consent is texted like any recorded consent (D
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+// ===========================================================================
+// MSG-007 — the SUCCESS path logs no record id.
+// ===========================================================================
+//
+// The `waitlist_invitation_sms` line went out through raw console.log with the
+// studio and invitation UUIDs on every outcome, sent included. #828 G-26 keeps
+// record ids out of the runtime log drain. The outcome and its fixed reason
+// stay; the delivery ledger row (claimed above) is the correlation an
+// operator uses.
+describe("MSG-007 success-path log privacy", () => {
+  it("an accepted invitation logs outcome 'accepted' with no record id, phone, link or body", async () => {
+    const { expectMinimumNecessary } = await import("@/tests/lib/sms/helpers/log-capture");
+    const r = await sendWaitlistInvitationSms({
+      admin: admin(),
+      studio: { id: "5e1d2c3b-4a59-4687-9a8b-7c6d5e4f3a2b", name: "Synthetic Studio" },
+      invitationId: "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      invitationUrl: URL_,
+      sleep: async () => undefined,
+    });
+    expect(r).toMatchObject({ state: "accepted" });
+    const all = logs.join("\n");
+    expectMinimumNecessary(all, {
+      phones: ["(604) 555-0199"],
+      bodies: [form().get("Body")!, TOKEN],
+      secrets: [URL_],
+    });
+    // The provider SID is the operator's correlation key for an accepted text.
+    expect(logs.map((l) => JSON.parse(l) as Record<string, unknown>)).toContainEqual(
+      expect.objectContaining({ event: "waitlist_invitation_sms", outcome: "accepted", messageSid: SID }),
+    );
+  });
+
+  it("a skipped invitation keeps its fixed reason and still logs no record id", async () => {
+    const { expectMinimumNecessary } = await import("@/tests/lib/sms/helpers/log-capture");
+    h.claim = { data: [target({ sms_opted_out_at: "2026-09-03T00:00:00Z" })], error: null };
+    await sendWaitlistInvitationSms({
+      admin: admin(),
+      studio: { id: "5e1d2c3b-4a59-4687-9a8b-7c6d5e4f3a2b", name: "Synthetic Studio" },
+      invitationId: "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      invitationUrl: URL_,
+      sleep: async () => undefined,
+    });
+    expectMinimumNecessary(logs.join("\n"), { phones: ["(604) 555-0199"] });
+    expect(logs.map((l) => JSON.parse(l) as Record<string, unknown>)).toContainEqual(
+      expect.objectContaining({ event: "waitlist_invitation_sms", outcome: "skipped", reason: "opted_out" }),
+    );
+  });
+});

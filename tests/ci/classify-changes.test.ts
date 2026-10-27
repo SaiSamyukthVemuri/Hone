@@ -1,6 +1,21 @@
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error - .mjs utility ships without type declarations
-import { classify, highestTier } from "../../scripts/classify-changes.mjs";
+import { REPO_ROOT, classify, dependenciesFor, highestTier, isDocsPath } from "../../scripts/classify-changes.mjs";
+import {
+  selectBrowserGroups,
+  specsForGroups,
+  EXTENDED,
+  BROWSER_GROUPS,
+  PUBLIC_BOOKING_SPECS,
+  PUBLIC_BOOKING_PATTERNS,
+// @ts-expect-error - .mjs utility ships without type declarations
+} from "../../scripts/browser-groups.mjs";
+// @ts-expect-error - .mjs utility ships without type declarations
+import { scanTestDependencies } from "../../scripts/test-dependencies.mjs";
 
 // Path-classification is proved here rather than by pushing fake commits to
 // trigger every CI lane. These cases ARE the acceptance criteria.
@@ -150,10 +165,12 @@ describe("classifier — output contract", () => {
       "mobile",
       "ci_workflows",
       "full_matrix_required",
+      "docs_consistency",
     ]) {
       expect(typeof r[k], `${k} must be boolean`).toBe("boolean");
     }
     expect(typeof r.changed_file_count).toBe("number");
+    expect(Array.isArray(r.docs_reader_tests), "docs_reader_tests must be a list").toBe(true);
   });
 });
 
@@ -405,5 +422,553 @@ describe("classifier — mixed diffs still take the highest tier", () => {
     const a = c("supabase/migrations/0177_x.sql", "lib/security/x.ts").riskReasons;
     const b = c("lib/security/x.ts", "supabase/migrations/0177_x.sql").riskReasons;
     expect(a).toEqual(b);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DEPENDENCY-AWARE SELECTION (RECORD-BATCHING-PROPOSAL.md part 2).
+//
+// A path rule cannot see that a TEST reads or imports a file elsewhere in the
+// tree. Each gap below shipped a real hole: the file changed, the lane that
+// tests it was skipped, and the guard first ran on the production push.
+//
+// Every case marked GAP fails on the classifier before this change. Cases
+// marked GUARD hold on both and exist so the fix cannot overreach.
+// ---------------------------------------------------------------------------
+
+type Deps = {
+  db: Record<string, string[]>;
+  dbDirs?: Record<string, string[]>;
+  docReaders: Record<string, string[]>;
+  docReaderDirs?: Record<string, string[]>;
+  docWildcard?: string[];
+};
+const EMPTY = { db: {}, dbDirs: {}, dbRootWalkers: {}, docReaders: {}, docReaderDirs: {}, docWildcard: [] };
+// The live scan of this checkout: exactly what classify() uses by default.
+const scanned = dependenciesFor() as Deps;
+const scan = (root: string) => scanTestDependencies(root, isDocsPath) as Deps;
+
+// Each tree has the repository's real top-level roots, so a missing path is
+// judged against roots that exist, as it is in a real checkout.
+const tree = (files: Record<string, string>) => {
+  const root = mkdtempSync(path.join(tmpdir(), "hone-deps-"));
+  const roots = { "docs/README.md": "# docs\n", "lib/keep.ts": "export {};\n", "app/page.tsx": "export {};\n" };
+  for (const [file, content] of Object.entries({ ...roots, ...files })) {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), content);
+  }
+  return root;
+};
+
+describe("dependency map — computed from the checkout being classified, never committed (#1053 round 4)", () => {
+  // A committed map went stale whenever ANY other PR added a reading test:
+  // CI run 39889013435 failed its freshness check on the merge ref, and merged
+  // that would have reddened the unit lane of unrelated PRs.
+  it("GAP: there is no committed map to go stale", () => {
+    expect(existsSync(path.join(REPO_ROOT, "scripts/test-dependencies.json"))).toBe(false);
+  });
+
+  it("GAP: classify() uses a scan of this checkout by default", () => {
+    expect(scanned).toEqual(scan(REPO_ROOT));
+  });
+
+  it("GAP: a reading test added by ANOTHER change is attributed with no regeneration step", () => {
+    const root = tree({ "tests/docs/added-elsewhere.test.ts": 'readFileSync("docs/production/current-state.md", "utf8");\n' });
+    try {
+      expect(scan(root).docReaders["docs/production/current-state.md"]).toEqual(["tests/docs/added-elsewhere.test.ts"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GUARD: the real scan finds the known edges, so an empty scan cannot pass quietly", () => {
+    // Anti-vacuity. If the scanner broke and found nothing, every GAP case
+    // below would fail - but a fixture-only suite would not, so pin real edges.
+    expect(scanned.db["lib/waitlist/invite-to-book-adapter.ts"]).toContain(
+      "tests/db/waitlist-integration-seams.db.test.ts",
+    );
+    expect(scanned.db["components/profile-tab.ts"]).toContain("tests/db/client-profile-tab-queries.db.test.ts");
+    const edges = Object.values(scanned.db).reduce((n, tests) => n + tests.length, 0);
+    expect(edges, "far fewer DB edges than the tree holds").toBeGreaterThanOrEqual(40);
+    expect(scanned.docReaders["docs/production/migration-ledger.md"]).toContain(
+      "tests/migrations/0179-actor-fk-integrity.test.ts",
+    );
+  });
+
+  it("GUARD: a path mentioned only in a comment is not an edge", () => {
+    // practitioner-identity-boundary.db.test.ts names lib/practitioner-colors.ts
+    // in a comment and never reads it. Prose must not widen the DB lane.
+    expect(scanned.db["lib/practitioner-colors.ts"]).toBeUndefined();
+  });
+});
+
+describe("dependency-aware selection — G1: tests/db source contracts", () => {
+  // #814. A DB suite reads these files as source contracts. Editing one
+  // selected `application` only, so the DB lane was skipped.
+  it.each([
+    "lib/waitlist/invite-to-book-adapter.ts",
+    "lib/waitlist/invite-to-book-contract.ts",
+    "app/(app)/settings/waitlist/page.tsx",
+    "app/(app)/settings/waitlist/invite-actions.ts",
+    "app/invitation/[token]/actions.ts",
+    "components/profile-tab.ts",
+    // Read through `${process.cwd()}/app/book/[slug]/actions.ts`.
+    "app/book/[slug]/actions.ts",
+  ])("GAP: %s selects the database lane", (file) => {
+    expect(c(file).database).toBe(true);
+  });
+});
+
+describe("dependency-aware selection — G2: modules DB suites import", () => {
+  it.each(["lib/booking/slots.ts", "lib/sessions/charted-session.ts", "lib/google-calendar/sync/operations.ts"])(
+    "GAP: %s selects the database lane",
+    (file) => {
+      expect(scanned.db[file], `${file} is no longer imported by a DB suite`).toBeDefined();
+      expect(c(file).database).toBe(true);
+    },
+  );
+
+  it("GUARD: selecting a lane is not assigning ceremony - the tier is unchanged", () => {
+    // The payment rule's distinction, applied here: a DB suite exercising
+    // slot maths makes its edit run the DB lane, not a T3 database change.
+    expect(tier("lib/booking/slots.ts")).toBe("T2");
+    expect(tier("lib/waitlist/invite-to-book-adapter.ts")).toBe("T1");
+  });
+
+  it("GAP: the classifier takes the map as data, so the rule is proved without the real tree", () => {
+    const deps: Deps = { db: { "lib/x/y.ts": ["tests/db/y.db.test.ts"] }, docReaders: {} };
+    expect((classify(["lib/x/y.ts"], deps) as Result).database).toBe(true);
+    expect((classify(["lib/x/y.ts"], { db: {}, docReaders: {} }) as Result).database).toBe(false);
+  });
+});
+
+describe("dependency-aware selection — G3: generated DB types and their drift check", () => {
+  // check:db-types runs ONLY in the database lane, so neither file was ever
+  // compared against the migrated schema on its own PR.
+  it.each(["lib/types/database.ts", "scripts/check-db-types.mjs"])("GAP: %s selects the database lane", (file) => {
+    expect(c(file).database).toBe(true);
+  });
+});
+
+describe("dependency-aware selection — G4: documents read by unit tests", () => {
+  it("GAP: a docs-only AGENTS.md change selects docs consistency and names its readers", () => {
+    const r = c("AGENTS.md");
+    expect(r.docs_only).toBe(true);
+    expect(r.docs_consistency).toBe(true);
+    // Its named readers, plus the tests that enumerate documentation.
+    for (const t of scanned.docReaders["AGENTS.md"]) expect(r.docs_reader_tests).toContain(t);
+    expect((r.docs_reader_tests as string[]).some((t) => t.startsWith("tests/openwiki/"))).toBe(true);
+  });
+
+  it("GAP: a ledger wording change selects the migration test that pins it", () => {
+    const r = c("docs/production/migration-ledger.md");
+    expect(r.docs_consistency).toBe(true);
+    expect(r.docs_reader_tests).toContain("tests/migrations/0179-actor-fk-integrity.test.ts");
+    // ...and stays a cheap docs-only diff in every other respect.
+    expect(r.docs_only).toBe(true);
+    expect(r.database).toBe(false);
+    expect(r.full_matrix_required).toBe(false);
+  });
+
+  it("a doc no test names runs only the enumerating readers, and stays cheap", () => {
+    // Since #1053 round 4 every document has readers: the tests that enumerate
+    // documentation. No test NAMES this one, so those are exactly its readers,
+    // and nothing beyond the unit tests runs.
+    const r = c("docs/no-test-reads-this-document.md");
+    expect(r.docs_only).toBe(true);
+    expect(r.docs_consistency).toBe(true);
+    expect(r.docs_reader_tests).toEqual(scanned.docWildcard);
+    expect(r.database).toBe(false);
+    expect(r.full_matrix_required).toBe(false);
+  });
+
+  it("a non-document change is never a document-reader selection", () => {
+    expect(c("components/sessions/SimplifiedEntryForm.tsx").docs_consistency).toBe(false);
+  });
+
+  it("GUARD: the reader list never contains a character that would corrupt $GITHUB_OUTPUT", () => {
+    for (const t of Object.values(scanned.docReaders).flat()) {
+      expect(t, `"${t}" would break the "; "-joined output`).not.toMatch(/[\n;]/);
+    }
+  });
+});
+
+describe("dependency-aware selection — the selector's own files", () => {
+  it.each(["scripts/test-dependencies.mjs", "scripts/docs-paths.mjs"])(
+    "GAP: %s is selection logic: full matrix, and extended browser coverage",
+    (file) => {
+      const r = c(file);
+      expect(r.ci_workflows).toBe(true);
+      expect(r.full_matrix_required).toBe(true);
+      expect(selectBrowserGroups([file]).groups).toEqual([EXTENDED]);
+    },
+  );
+
+});
+
+describe("dependency-aware selection — file count never narrows a lane", () => {
+  // Six hundred presentational files must not drown the one file that needs
+  // the DB, payment or browser lane.
+  const NOISE = Array.from({ length: 600 }, (_, i) => `components/noise/presentational-${i}.tsx`);
+
+  it("GAP: a DB-dependent file among 600 others still selects the database lane", () => {
+    expect(c(...NOISE, "lib/waitlist/invite-to-book-adapter.ts").database).toBe(true);
+  });
+
+  it("GUARD: a payment file among 600 others still selects the payment lane", () => {
+    expect(c(...NOISE, "lib/stripe/account.ts").payment).toBe(true);
+  });
+
+  it("GUARD: unattributable application code among 600 others still fails safe to extended", () => {
+    expect(selectBrowserGroups([...NOISE, "app/(app)/dashboard/page.tsx"]).groups).toEqual([EXTENDED]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Codex #1053, two P1s against the first scanner.
+// ---------------------------------------------------------------------------
+
+describe("dependency-aware selection — a document is whatever the classifier calls docs (4355376845)", () => {
+  // The reader map tracked `.md` only, so a unit test reading a JSON manifest
+  // under docs/ was invisible: editing that manifest was docs_only with
+  // docs_consistency false, and validate and canonical-record both skipped.
+  it("GAP: docs/roadmap/CAPABILITY_MANIFEST.json selects the migration test that reads it", () => {
+    const r = c("docs/roadmap/CAPABILITY_MANIFEST.json");
+    expect(r.docs_only).toBe(true);
+    expect(r.docs_consistency).toBe(true);
+    expect(r.docs_reader_tests).toContain("tests/migrations/0160-immutable-clinical-lineage.test.ts");
+  });
+
+  it("GUARD: every reader-map key is documentation by the classifier's own rule", () => {
+    // One definition: a key outside it could never be part of a docs-only diff.
+    for (const doc of Object.keys(scanned.docReaders)) {
+      expect(c(doc).docs_only, `${doc} is not docs to the classifier`).toBe(true);
+    }
+  });
+});
+
+describe("dependency-aware selection — deleting a file a test still reads (4355376850)", () => {
+  // The scanner kept a literal only when it named an EXISTING file, so a PR
+  // that deleted a document (or a DB source contract) its readers still read
+  // regenerated a map without the edge: the deletion classified docs-only, and
+  // the ENOENT first surfaced on the production push.
+  it("GAP: a deleted document keeps its reader, and its deletion runs that reader", () => {
+    const root = tree({
+      "tests/docs/reads-gone.test.ts": 'readFileSync("docs/production/gone.md", "utf8");\n',
+      "tests/migrations/reads-gone-manifest.test.ts": 'readFileSync(join(ROOT, "docs", "roadmap", "GONE.json"), "utf8");\n',
+    });
+    try {
+      const deps = scan(root);
+      expect(deps.docReaders["docs/production/gone.md"]).toEqual(["tests/docs/reads-gone.test.ts"]);
+      expect(deps.docReaders["docs/roadmap/GONE.json"]).toEqual(["tests/migrations/reads-gone-manifest.test.ts"]);
+      const r = classify(["docs/production/gone.md"], deps) as Result;
+      expect(r.docs_only).toBe(true);
+      expect(r.docs_consistency).toBe(true);
+      expect(r.docs_reader_tests).toEqual(["tests/docs/reads-gone.test.ts"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GAP: a deleted DB source contract keeps its DB suite", () => {
+    const root = tree({ "tests/db/reads-gone.db.test.ts": 'readFileSync("lib/waitlist/gone-adapter.ts", "utf8");\n' });
+    try {
+      const deps = scan(root);
+      expect(deps.db["lib/waitlist/gone-adapter.ts"]).toEqual(["tests/db/reads-gone.db.test.ts"]);
+      expect((classify(["lib/waitlist/gone-adapter.ts"], deps) as Result).database).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GUARD: a missing path is kept only when it is path-shaped under an attributable root", () => {
+    // Keeping absent paths must not turn every string in a test into an edge.
+    const root = tree({
+      "tests/docs/noise.test.ts": [
+        'expect(x).toBe("see the docs.");',
+        'expect(y).toBe("v1.2");',
+        'const url = "https://example.com/docs/page.md";',
+        'const elsewhere = "tmp/scratch/out.md";',
+        'const source = "lib/not-a-doc.ts";',
+      ].join("\n"),
+      "tests/db/noise.db.test.ts": 'const doc = "docs/not-a-source.md"; const pkg = "node_modules/x/index.js";\n',
+    });
+    try {
+      const deps = scan(root);
+      expect(deps).toEqual(EMPTY);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Codex #1053 P1 4355527598: tests that ENUMERATE a directory name no file.
+// tests/docs/reminder-cadence-truthfulness.test.ts reads every .md under
+// docs/ through readdirSync(ROOT) and a walker over join(ROOT, "docs"); no
+// literal names the documents, so a new or edited document selected nothing.
+// ---------------------------------------------------------------------------
+describe("dependency-aware selection — reads through a DIRECTORY CONSTANT (Codex P1 4362833513)", () => {
+  // tests/audits/findings-register-consistency.test.ts reads
+  //   const DIR = join(process.cwd(), "docs/audits/2026-07-30");
+  //   const read = (f) => readFileSync(join(DIR, f), "utf8");
+  //   read("MASTER_FINDINGS_REGISTER.json"); read("MASTER_FINDINGS_REGISTER.csv");
+  // No literal names either register, so a docs-only edit that broke their
+  // JSON/CSV consistency skipped the one test built to catch it.
+  const REGISTER = "tests/audits/findings-register-consistency.test.ts";
+
+  it.each(["docs/audits/2026-07-30/MASTER_FINDINGS_REGISTER.json", "docs/audits/2026-07-30/MASTER_FINDINGS_REGISTER.csv"])(
+    "GAP: %s selects the register consistency test",
+    (doc) => {
+      const r = c(doc);
+      expect(r.docs_only).toBe(true);
+      expect(r.docs_reader_tests).toContain(REGISTER);
+    },
+  );
+
+  it("ANTI-OVERREACH: a document outside that directory does not select it", () => {
+    expect(c("docs/production/current-state.md").docs_reader_tests).not.toContain(REGISTER);
+  });
+
+  it("GAP: a basename that is not statically known makes the test a reader of EVERY file under the directory", () => {
+    const root = tree({
+      "docs/guides/a.json": "{}\n",
+      "tests/docs/reads-guides.test.ts":
+        'const DIR = join(process.cwd(), "docs/guides");\nconst read = (f: string) => readFileSync(join(DIR, f), "utf8");\nread(pick());\n',
+    });
+    try {
+      const deps = scan(root);
+      expect(deps.docReaderDirs).toEqual({ "docs/guides": ["tests/docs/reads-guides.test.ts"] });
+      const r = classify(["docs/guides/brand-new.md"], deps) as Result;
+      expect(r.docs_reader_tests).toEqual(["tests/docs/reads-guides.test.ts"]);
+      expect((classify(["docs/other/x.md"], deps) as Result).docs_reader_tests ?? []).not.toContain("tests/docs/reads-guides.test.ts");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GAP: a basename joined as a LITERAL resolves to that file only, not the whole directory", () => {
+    const root = tree({
+      "docs/guides/a.json": "{}\n",
+      "docs/guides/b.json": "{}\n",
+      "tests/docs/reads-one.test.ts": 'const DIR = path.join(process.cwd(), "docs", "guides");\nreadFileSync(path.join(DIR, "a.json"), "utf8");\n',
+    });
+    try {
+      const deps = scan(root);
+      expect(deps.docReaders?.["docs/guides/a.json"]).toEqual(["tests/docs/reads-one.test.ts"]);
+      expect(deps.docReaders?.["docs/guides/b.json"]).toBeUndefined();
+      expect(deps.docReaderDirs).toEqual({});
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GAP: a constant relative to __dirname, and a template use, resolve too", () => {
+    const root = tree({
+      "docs/guides/a.json": "{}\n",
+      "tests/docs/rel.test.ts": 'const GUIDES = resolve(__dirname, "../../docs/guides");\nreadFileSync(`${GUIDES}/a.json`, "utf8");\n',
+    });
+    try {
+      expect(scan(root).docReaders?.["docs/guides/a.json"]).toEqual(["tests/docs/rel.test.ts"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GUARD: a constant that names no repository directory, or is never used to read, adds nothing", () => {
+    const root = tree({
+      "tests/docs/none.test.ts": 'const TMP = join(tmpdir(), "scratch");\nconst UNUSED = join(process.cwd(), "docs");\nreadFileSync(join(TMP, f));\n',
+    });
+    try {
+      const deps = scan(root);
+      expect(deps.docReaderDirs).toEqual({});
+      expect(deps.docReaders).toEqual({});
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GAP (DB lane): a tests/db suite reading lib/ through a directory constant selects the database lane", () => {
+    const root = tree({
+      "lib/billing/x.ts": "export {};\n",
+      "tests/db/reads-billing.db.test.ts": 'const SRC = join(process.cwd(), "lib/billing");\nconst src = (f: string) => readFileSync(join(SRC, f), "utf8");\n',
+    });
+    try {
+      expect(scan(root).dbDirs).toEqual({ "lib/billing": ["tests/db/reads-billing.db.test.ts"] });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("dependency-aware selection — directory readers (4355527598)", () => {
+  it("GAP: a brand-new document selects the test that reads every document under docs/", () => {
+    const r = c("docs/brand-new-guide.md");
+    expect(r.docs_consistency).toBe(true);
+    expect(r.docs_reader_tests).toContain("tests/docs/reminder-cadence-truthfulness.test.ts");
+  });
+
+  it("GUARD (operator decision, option b): no DB suite walks a WHOLE source root, so none is silently unselected", () => {
+    // tests/db/export-resource-registry.db.test.ts used to walk app/, lib/ and
+    // components/ to decide whether application code still references what the
+    // registry claims, which no application change could select. That half is
+    // now a unit test against supabase/schema-snapshot.json
+    // (tests/lib/export/registry-app-references.test.ts), run on every
+    // application PR. A NEW whole-root DB walker reappearing here is the same
+    // gap again and must be a deliberate decision, not a scan side effect.
+    const walkers = (scanned as Deps & { dbRootWalkers?: Record<string, string[]> }).dbRootWalkers ?? {};
+    expect(walkers).toEqual({});
+    expect(Object.keys(scanned.dbDirs ?? {}).filter((d) => !d.includes("/"))).toEqual([]);
+    expect(c("components/brand-new-widget.tsx").database).toBe(false);
+    // The schema snapshot that check trusts selects the DB lane, which is
+    // where it is compared with the live catalogue.
+    expect(c("supabase/schema-snapshot.json").database).toBe(true);
+  });
+
+  it("GAP: an enumerated literal directory covers every file beneath it, present or future", () => {
+    const root = tree({
+      "docs/runbooks/one.md": "# one\n",
+      "tests/docs/walks-runbooks.test.ts": 'for (const f of readdirSync(join(ROOT, "docs", "runbooks"))) read(f);\n',
+      "lib/billing/keep.ts": "export {};\n",
+      "tests/db/walks-billing.db.test.ts": 'for (const f of readdirSync(join("lib", "billing"))) read(f);\n',
+    });
+    try {
+      const deps = scan(root);
+      expect(deps.docReaderDirs).toEqual({ "docs/runbooks": ["tests/docs/walks-runbooks.test.ts"] });
+      expect(deps.dbDirs).toEqual({ "lib/billing": ["tests/db/walks-billing.db.test.ts"] });
+      expect((classify(["docs/runbooks/added-later.md"], deps) as Result).docs_reader_tests).toEqual(["tests/docs/walks-runbooks.test.ts"]);
+      expect((classify(["lib/billing/added-later.ts"], deps) as Result).database).toBe(true);
+      expect((classify(["lib/elsewhere/added-later.ts"], deps) as Result).database).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GAP: an enumerating test that touches docs through a VARIABLE reads every document", () => {
+    // `readdirSync(ROOT)` + a `.md` filter: the directory is not a literal, so
+    // the test is selected conservatively for any document.
+    const root = tree({ "tests/docs/root-docs.test.ts": 'readdirSync(ROOT).filter((f) => f.endsWith(".md"));\n' });
+    try {
+      const deps = scan(root);
+      expect(deps.docWildcard).toEqual(["tests/docs/root-docs.test.ts"]);
+      expect((classify(["SOMETHING.md"], deps) as Result).docs_reader_tests).toEqual(["tests/docs/root-docs.test.ts"]);
+      expect((classify(["lib/keep.ts"], deps) as Result).docs_reader_tests).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("GUARD: naming a directory without enumerating is not a directory read", () => {
+    // Elsewhere "lib" and "docs" are words; only an enumerating test reads one.
+    const root = tree({
+      "tests/db/names-lib.db.test.ts": 'expect(where).toBe("lib");\n',
+      "tests/docs/names-docs.test.ts": 'expect(kind).toBe("docs");\n',
+      "tests/lib/enumerates-no-docs.test.ts": 'readdirSync(join(ROOT, "lib"));\n',
+    });
+    try {
+      const deps = scan(root);
+      expect(deps.dbDirs).toEqual({});
+      expect(deps.docReaderDirs).toEqual({});
+      expect(deps.docWildcard).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// Codex #1053 P2 4355661335. The documented CLI deadlocked: the scanner
+// dynamically imported classify-changes.mjs, which statically imports the
+// scanner, so its top-level await never settled (exit 13, empty stdout).
+describe("the scanner's own CLI", () => {
+  it("`node scripts/test-dependencies.mjs` exits 0 and prints the map", () => {
+    const run = spawnSync(process.execPath, [path.join(REPO_ROOT, "scripts/test-dependencies.mjs")], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+    expect(run.status, `exit ${run.status}; stderr: ${run.stderr}`).toBe(0);
+    const map = JSON.parse(run.stdout) as Deps;
+    expect(map).toEqual(scanned);
+  }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// 1132-CLASSIFIER-GAP. A change to the public booking surface must select every
+// spec that books through the public form, not only the `booking` group's.
+// #1132 changed app/book/[slug]/actions.ts and ran 44 specs; three that book
+// through that form (two in `portal`, one in `responsive`) were never selected.
+// ---------------------------------------------------------------------------
+describe("classifier - the public booking surface selects every spec that books through it", () => {
+  const specsFor = (...files: string[]): string[] => {
+    const r = selectBrowserGroups(files) as { groups: string[]; extended: boolean };
+    expect(r.extended, "a targeted selection, so the proof is about groups, not 'everything'").toBe(false);
+    return specsForGroups(r.groups) as string[];
+  };
+
+  it("a change to the public booking ACTION selects all 21 audited public-booking specs", () => {
+    expect(PUBLIC_BOOKING_SPECS).toHaveLength(21);
+    const selected = new Set(specsFor("app/book/[slug]/actions.ts"));
+    const missing = PUBLIC_BOOKING_SPECS.filter((s: string) => !selected.has(s));
+    expect(missing, "public-booking specs not selected for a change to the action").toEqual([]);
+  });
+
+  it.each([
+    "app/book/[slug]/actions.ts",
+    "app/book/[slug]/PublicBookForm.tsx",
+    "lib/booking/slots.ts",
+    "lib/booking/new-client-admission.ts",
+  ])("%s selects the three specs the #1132 run missed", (file) => {
+    const selected = new Set(specsFor(file));
+    for (const s of ["appointment-token-hash.spec.ts", "public-cancel-policy-change.spec.ts", "mobile-ux.spec.ts"]) {
+      expect(selected.has(s), `${s} not selected for ${file}`).toBe(true);
+    }
+  });
+
+  it("the responsive group is selected, which is where mobile-ux lives", () => {
+    const r = selectBrowserGroups(["app/book/[slug]/actions.ts"]) as { groups: string[] };
+    expect(r.groups).toContain("responsive");
+    expect(r.groups).toContain("portal");
+  });
+
+  it("NEGATIVE CONTROL: a path outside the public booking surface does not pull the three in", () => {
+    const selected = new Set(specsFor("app/(app)/calendar/DayColumn.tsx"));
+    expect(selected.has("appointment-token-hash.spec.ts")).toBe(false);
+    expect(selected.has("mobile-ux.spec.ts")).toBe(false);
+  });
+
+  it("every listed spec exists and is filed in a group (so naming it selects something real)", () => {
+    const filed = new Set(
+      Object.values(BROWSER_GROUPS as Record<string, { specs: string[] }>).flatMap((g) => g.specs),
+    );
+    for (const s of PUBLIC_BOOKING_SPECS as string[]) {
+      expect(existsSync(path.join(REPO_ROOT, "e2e", s)), `${s} is not on disk`).toBe(true);
+      expect(filed.has(s), `${s} is in no browser group`).toBe(true);
+    }
+  });
+
+  it("DRIFT GUARD: every spec that books through the public form is listed", () => {
+    // The audit's detector, comment lines stripped: the booking helper, a goto to
+    // /book or /b/, or the public booking action and commands by name.
+    const code = (t: string) =>
+      t.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    const books =
+      /(bookAppointment\(|goto\([^)]*(\/book\/|\/b\/)|publicBookAppointmentAction|create_public_appointment|create_waitlist_public_appointment)/;
+    const found: string[] = [];
+    for (const dir of ["e2e", "e2e-payment"]) {
+      for (const f of readdirSync(path.join(REPO_ROOT, dir))) {
+        if (!f.endsWith(".spec.ts")) continue;
+        if (books.test(code(readFileSync(path.join(REPO_ROOT, dir, f), "utf8")))) found.push(f);
+      }
+    }
+    expect(found.length, "the detector found nothing: it is broken, not clean").toBeGreaterThan(10);
+    const listed = new Set(PUBLIC_BOOKING_SPECS as string[]);
+    expect(
+      found.filter((f) => !listed.has(f)),
+      "specs that book through the public form but are not in PUBLIC_BOOKING_SPECS",
+    ).toEqual([]);
+  });
+
+  it("the patterns are the action and the booking helpers, and nothing broader", () => {
+    expect((PUBLIC_BOOKING_PATTERNS as RegExp[]).map(String)).toEqual([String(/^app\/book\//), String(/^lib\/booking\//)]);
   });
 });

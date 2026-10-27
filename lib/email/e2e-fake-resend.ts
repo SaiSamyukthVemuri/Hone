@@ -1,5 +1,9 @@
 import "server-only";
 
+import { appendFileSync, mkdirSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 // Fake Resend transport for E2E / unit tests ONLY. Same fail-closed posture as
 // the fake-Stripe/fake-Google guards: OFF unless the explicit server-only marker
 // HONE_E2E_FAKE_RESEND=1 is present, and REFUSED outright in any deployed
@@ -109,6 +113,50 @@ export function fakeResendModeForRecipient(
   return asMode(env.HONE_E2E_FAKE_RESEND_DEFAULT_MODE) ?? "success";
 }
 
+// SCH-001 capture ledger. When the lane sets HONE_E2E_FAKE_RESEND_LEDGER to a
+// .jsonl path under the OS temp dir, every send the fake receives appends ONE
+// line {t, pid, mode, to, subject} BEFORE its outcome is decided, so a refused,
+// held or thrown send is recorded too. A spec reads the file to prove WHO an
+// action emailed. Recipient and subject only: never the HTML or text body, and
+// never an attachment. Same fail-closed gate as the transport itself (marker
+// on, no deployed-runtime signal), and a write error can never change a send.
+export type FakeResendLedgerRecord = {
+  t: string;
+  pid: number;
+  mode: FakeResendMode;
+  to: string;
+  subject: string;
+};
+
+export function fakeResendLedgerPath(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const raw = env.HONE_E2E_FAKE_RESEND_LEDGER;
+  if (!raw || !isE2eFakeResendEnabled(env)) return null;
+  const resolved = path.resolve(raw);
+  // The lane's webServer.env REPLACES process.env, so the server may not see the
+  // TMPDIR the spec process computed the path from. Both the spec and a bare
+  // server resolve to a temp directory; accept either spelling, nothing else.
+  const roots = [os.tmpdir(), "/tmp", "/var/tmp"].map((r) => path.resolve(r) + path.sep);
+  if (!roots.some((root) => resolved.startsWith(root)) || !resolved.endsWith(".jsonl")) return null;
+  if (resolved.split(path.sep).includes("..")) return null;
+  return resolved;
+}
+
+export function recordFakeResendSend(
+  record: FakeResendLedgerRecord,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const file = fakeResendLedgerPath(env);
+  if (!file) return;
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+    appendFileSync(file, `${JSON.stringify(record)}\n`);
+  } catch {
+    // The ledger observes; it never decides the outcome of a send.
+  }
+}
+
 // Structural shape both the real Resend client and the fake satisfy.
 //
 // RESCHEDULE-E2E-01 widened this to the FULL payload the appointment send path
@@ -157,11 +205,12 @@ export const FAKE_MESSAGE_ID = "fake-resend-message-id";
 export function createFakeResendTransport(): MinimalEmailTransport {
   return {
     emails: {
-      // Records nothing that could leak (no recipient/content persisted beyond
-      // the failonce bookkeeping); the outcome is asserted via
-      // studio_onboarding.welcome_email_status.
-      send: async ({ to }) => {
+      // Persists nothing by default beyond the failonce bookkeeping; when the
+      // lane arms the SCH-001 ledger it appends recipient and subject only. The
+      // onboarding outcome is asserted via studio_onboarding.welcome_email_status.
+      send: async ({ to, subject }) => {
         const mode = fakeResendModeForRecipient(to);
+        recordFakeResendSend({ t: new Date().toISOString(), pid: process.pid, mode, to, subject });
         if (mode === "hold") {
           // GENUINELY IN FLIGHT for HOLD_MS. Bounded and self-releasing: no test
           // can leave a request hanging, and nothing outside the fake changes.

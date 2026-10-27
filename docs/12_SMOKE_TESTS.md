@@ -163,7 +163,7 @@ After PR #181 ships, the calendar appointment detail and the session payment car
 
 1. Open a confirmed past test appointment.
 2. Click Mark completed and confirm.
-3. The appointment status flips. Below the lifecycle actions the calendar page now renders an "Appointment completed" card with the guidance line **"Next step: chart the session and bill the client."** and one primary CTA whose label depends on linked-session state:
+3. The appointment status flips. Below the lifecycle actions the calendar page now renders an "Appointment completed" card with the guidance line **"Next step: chart the session, then charge a saved card or record how the visit was settled."** and one primary CTA whose label depends on linked-session state:
    - No linked session: **Start session** (forwards to `/clients/<id>/sessions/new?appointment_id=<id>`).
    - Linked session but not started: **Open session** (forwards to the session page).
    - Linked started session: **Go to billing** (deep-links to the session page with `#session-payment`).
@@ -188,7 +188,7 @@ After PR #180 ships, the workflow Chloe could not finish becomes reachable. Run 
 1. Find or create a confirmed past test appointment (any time before now).
 2. Open it from `/calendar` or the calendar appointment detail.
 3. Confirm two buttons are visible: `Mark completed` (primary / filled) and `Mark no-show` (outline). Both are enabled because the appointment has already ended.
-4. Click `Mark completed`. A browser confirm appears with the exact copy: "Mark this appointment completed? This marks the appointment completed and allows the session to be charged after charting."
+4. Click `Mark completed`. A browser confirm appears with the exact copy: "Mark this appointment completed? No payment is taken. Afterwards you can charge a saved card or record how the visit was settled."
 5. Confirm. Within a moment the appointment detail flips. The hint reads "Appointment marked completed."
 6. SQL verify:
    ```sql

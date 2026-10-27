@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useRef } from "react";
+import { useRef, useState } from "react";
+import { calendarCollisionGroups, timedBlockCollisionId } from "@/lib/calendar/appointment-lanes";
+import { AppointmentOverlapChooser } from "./AppointmentOverlapChooser";
 import type { StudioTimedBlock } from "@/lib/types/database";
 import type {
   AppointmentWithPractitionerColor,
@@ -14,7 +16,17 @@ import {
   type TimeFormat,
 } from "@/lib/booking/tz";
 import { appointmentCardClasses } from "@/lib/calendar/service-colors";
-import { appointmentDisplayStatus } from "./appointment-display-status";
+import {
+  CARD_LINE_PX,
+  calendarPractitionerIdentity,
+  practitionerRowFits,
+} from "@/lib/calendar/practitioner-identity";
+import {
+  NO_SHOW_CARD_CLASS,
+  appointmentDisplayStatus,
+  appointmentStatusTag,
+} from "./appointment-display-status";
+import { PractitionerTag } from "./PractitionerTag";
 import {
   GRID_HEIGHT,
   HOUR_END,
@@ -30,6 +42,7 @@ import {
   timeRangeLabel,
 } from "./calendar-format";
 import { NowLine } from "./NowLine";
+import { calendarBlockScopeLabel, type BlockScopeNames } from "@/lib/calendar/block-scope";
 import type { DayAvailability } from "./DayColumn";
 
 // Single-day mobile timeline (PR: mobile calendar redesign). Renders ONE
@@ -62,6 +75,11 @@ type Props = {
   tz: string;
   timeFormat: TimeFormat;
   returnTo: string;
+  // HON-48: team calendar (practitioner capacity on) → name + color swatch.
+  showPractitioner?: boolean;
+  // BLOCK-SCOPE F3: under practitioner capacity, names each block's scope
+  // ("All practitioners" / "Only <name>"). Absent: no scope label.
+  blockScopeNames?: BlockScopeNames;
   // Open the quick-book drawer at an exact 24h HH:MM on this day.
   onBookAt: (localTime: string) => void;
   // Open the timed-block edit drawer for a tapped block.
@@ -79,10 +97,13 @@ export function MobileDayTimeline({
   tz,
   timeFormat,
   returnTo,
+  showPractitioner = false,
+  blockScopeNames,
   onBookAt,
   onEditBlock,
 }: Props) {
   const dayRef = useRef<HTMLDivElement>(null);
+  const [overlapIds, setOverlapIds] = useState<string[] | null>(null);
 
   // Out-of-hours tint (gray guidance only), identical model to DayColumn:
   // closed day tints the whole grid; open day tints before-open + after-close.
@@ -118,8 +139,39 @@ export function MobileDayTimeline({
     onBookAt(minutesToHHMM(snapped));
   }
 
+  const rectangles = appts.flatMap((a) => {
+    const start = new Date(a.starts_at);
+    const [h, m] = localTimeString(start, tz).split(":").map(Number);
+    const startMin = (h - HOUR_START) * 60 + m;
+    if (startMin < 0 || startMin >= VISIBLE_MINUTES) return [];
+    return [{ id: a.id, top: (startMin / ROW_MINUTES) * ROW_HEIGHT_PX,
+      height: Math.max(ROW_HEIGHT_PX - 2, (a.duration_minutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2) }];
+  });
+  const timedBlockRectangles = timedBlocks.flatMap(block => {
+    const start = new Date(block.starts_at);
+    const end = new Date(block.ends_at);
+    const [h, m] = localTimeString(start, tz).split(":").map(Number);
+    const minutes = (h - HOUR_START) * 60 + m;
+    if (minutes < 0 || minutes >= VISIBLE_MINUTES) return [];
+    const duration = Math.max(5, Math.round((end.getTime() - start.getTime()) / 60_000));
+    return [{ id: block.id, top: (minutes / ROW_MINUTES) * ROW_HEIGHT_PX,
+      height: Math.max(ROW_HEIGHT_PX - 2, (duration / ROW_MINUTES) * ROW_HEIGHT_PX - 2) }];
+  });
+  const groups = calendarCollisionGroups(rectangles, timedBlockRectangles);
+  const groupedBlockIds = new Set(groups.filter(group => group.ids.length > 1).flatMap(group => group.ids));
+  const appointmentsById = new Map(appts.map((a) => [a.id, a]));
+  const blocksById = new Map(timedBlocks.map(block => [timedBlockCollisionId(block.id), block]));
+  const selectedBlocks = (overlapIds ?? []).flatMap(id => {
+    const block = blocksById.get(id);
+    return block ? [block] : [];
+  });
+  const selectedOverlaps = (overlapIds ?? []).flatMap((id) => {
+    const a = appointmentsById.get(id);
+    return a ? [a] : [];
+  });
+
   return (
-    <div className="relative flex">
+    <div className="relative flex" data-testid="mobile-day-timeline" data-date={date}>
       {/* Time rail (left). Fixed-width, same 1px=1min hour offsets as the grid. */}
       <div
         className="relative w-14 shrink-0 border-r border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950"
@@ -208,14 +260,18 @@ export function MobileDayTimeline({
               (durationMinutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
             );
             const label = displayRecurringBreakLabel(occ.rule?.label);
+            const scope = blockScopeNames ? calendarBlockScopeLabel(occ.practitioner_id, blockScopeNames) : null;
             return (
               <div
                 key={occ.id}
                 style={{ top, height }}
                 className="absolute inset-x-1 z-10 overflow-hidden rounded-md border border-dashed border-neutral-400 bg-neutral-100/90 px-2 py-1 text-[11px] leading-tight text-neutral-600 dark:border-neutral-600 dark:bg-neutral-900/80 dark:text-neutral-300"
-                title={label}
+                title={scope ? `${label} · ${scope}` : label}
               >
-                <div className="truncate font-medium">{label}</div>
+                <div className="truncate font-medium">
+                  {label}
+                  {scope && <span data-block-scope="" className="font-normal"> · {scope}</span>}
+                </div>
                 <div className="truncate text-[10px] tabular-nums opacity-70">
                   {timeRangeLabel(
                     formatTimeForStudio(start, tz, timeFormat),
@@ -228,6 +284,7 @@ export function MobileDayTimeline({
 
         {/* One-off timed blocks: tappable → edit drawer (owner-gated inside). */}
         {timedBlocks.map((tb) => {
+          if (groupedBlockIds.has(timedBlockCollisionId(tb.id))) return null;
           const start = new Date(tb.starts_at);
           const end = new Date(tb.ends_at);
           const [h, m] = localTimeString(start, tz).split(":").map(Number);
@@ -243,16 +300,20 @@ export function MobileDayTimeline({
             (durationMinutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
           );
           const label = TIMED_BLOCK_LABEL[tb.category] ?? "Unavailable";
+          const scope = blockScopeNames ? calendarBlockScopeLabel(tb.practitioner_id, blockScopeNames) : null;
           return (
             <button
               key={tb.id}
               type="button"
               onClick={() => onEditBlock(tb)}
               style={{ top, height }}
-              className="absolute inset-x-1 z-10 flex flex-col items-start overflow-hidden rounded-md border border-neutral-400 bg-neutral-200/95 px-2 py-1 text-left text-[11px] leading-tight text-neutral-700 shadow-sm dark:border-neutral-600 dark:bg-neutral-800/95 dark:text-neutral-200"
-              title={tb.private_note ? `${label}: ${tb.private_note}` : label}
+              className="absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] flex flex-col items-start overflow-hidden rounded-md border border-neutral-400 bg-neutral-200/95 px-2 py-1 text-left text-[11px] leading-tight text-neutral-700 shadow-sm dark:border-neutral-600 dark:bg-neutral-800/95 dark:text-neutral-200"
+              title={[tb.private_note ? `${label}: ${tb.private_note}` : label, scope].filter(Boolean).join(" · ")}
             >
-              <span className="truncate font-medium">{label}</span>
+              <span className="truncate font-medium">
+                {label}
+                {scope && <span data-block-scope="" className="font-normal"> · {scope}</span>}
+              </span>
               <span className="truncate text-[10px] tabular-nums opacity-70">
                 {timeRangeLabel(
                   formatTimeForStudio(start, tz, timeFormat),
@@ -264,46 +325,83 @@ export function MobileDayTimeline({
         })}
 
         {/* Appointments: tap → existing detail page (with returnTo). */}
-        {appts.map((a) => {
+        {groups.map((group) => {
+          if (group.ids.some(id => blocksById.has(id)) && group.ids.length > 1) return (
+            <button key={group.ids.join(":")} type="button" style={{ top: group.top, height: group.height }}
+              aria-label={`Choose from ${group.ids.length} calendar items`}
+              className="absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 border-neutral-500 bg-neutral-100 px-2 py-1 text-left text-sm text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"
+              onClick={(event) => { event.stopPropagation(); setOverlapIds(group.ids); }}>
+              <span className="block font-semibold">{group.ids.length} calendar items</span>
+            </button>
+          );
+          if (group.ids.every(id => blocksById.has(id))) return null;
+
+          const members = group.ids.map((id) => appointmentsById.get(id)!);
+          const a = members[0];
           const start = new Date(a.starts_at);
-          const [h, m] = localTimeString(start, tz).split(":").map(Number);
-          const startMin = (h - HOUR_START) * 60 + m;
-          if (startMin < 0 || startMin >= VISIBLE_MINUTES) return null;
-          const top = (startMin / ROW_MINUTES) * ROW_HEIGHT_PX;
-          const height = Math.max(
-            ROW_HEIGHT_PX - 2,
-            (a.duration_minutes / ROW_MINUTES) * ROW_HEIGHT_PX - 2,
+          const top = group.top;
+          const height = group.height;
+          if (members.length > 1) return (
+            <button key={group.ids.join(":")} type="button" style={{ top, height }}
+              aria-label={`Choose from ${members.length} appointments`}
+              className="absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 border-neutral-500 bg-neutral-100 px-2 py-1 text-left text-sm text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100"
+              onClick={(event) => { event.stopPropagation(); setOverlapIds(group.ids); }}>
+              <span className="block font-semibold">{members.length} appointments</span>
+              <span className="block tabular-nums">{formatTimeForStudio(start, tz, timeFormat)}</span>
+            </button>
           );
           const clientName = a.client?.name?.trim() || "Client";
           const serviceName = a.service?.name?.trim() || null;
+          const practitionerIdentity = showPractitioner
+            ? calendarPractitionerIdentity(a.practitioner)
+            : null;
           const dispStart = formatTimeForStudio(start, tz, timeFormat);
           const dispEnd = a.ends_at
             ? formatTimeForStudio(new Date(a.ends_at), tz, timeFormat)
             : null;
           const timeRange = timeRangeLabel(dispStart, dispEnd);
+          const showService = serviceName !== null && height >= 46;
+          const practitionerRow =
+            practitionerIdentity !== null &&
+            practitionerRowFits(height, {
+              bodyLinePx: CARD_LINE_PX.mobileBody,
+              serviceRow: showService,
+            });
           const ds = appointmentDisplayStatus(a.status, a.ends_at);
           const terminal = ds !== "upcoming";
-          const statusTag =
-            ds === "done"
-              ? "Done"
-              : ds === "completed"
-                ? "Completed"
-                : ds === "no_show"
-                  ? "No-show"
-                  : null;
+          const statusTag = appointmentStatusTag(ds);
+          const noShow = ds === "no_show";
+          // No-show leads the line instead (see NO_SHOW_CARD_CLASS).
+          const trailingTag = noShow ? null : statusTag;
           return (
             <Link
               key={a.id}
               href={`/calendar/${a.id}${returnTo}`}
               style={{ top, height }}
-              className={`absolute inset-x-1 z-10 overflow-hidden rounded-lg border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[12px] leading-tight shadow-sm transition active:brightness-95 ${terminal ? "opacity-60" : ""}`}
+              className={`absolute inset-x-1 z-10 min-h-[44px] min-w-[44px] overflow-hidden rounded-lg border-l-4 ${appointmentCardClasses(a.service)} px-2 py-1 text-[12px] leading-tight shadow-sm transition active:brightness-95 ${terminal ? "opacity-60" : ""} ${noShow ? NO_SHOW_CARD_CLASS : ""}`}
             >
-              <div className="truncate text-[10px] font-semibold tabular-nums opacity-80">
-                {timeRange}
-                {statusTag ? ` · ${statusTag}` : ""}
+              <div className="flex min-w-0 items-center gap-1 text-[10px] font-semibold tabular-nums opacity-80">
+                {noShow && <span className="shrink-0">No-show ·</span>}
+                <span className="truncate">
+                  {timeRange}
+                  {trailingTag ? ` · ${trailingTag}` : ""}
+                </span>
+                {practitionerIdentity && !practitionerRow && (
+                  // Too short for its own row: the name rides the time row.
+                  <PractitionerTag
+                    identity={practitionerIdentity}
+                    className="font-medium"
+                  />
+                )}
               </div>
               <div className="truncate font-semibold">{clientName}</div>
-              {serviceName && height >= 46 && (
+              {practitionerIdentity && practitionerRow && (
+                <PractitionerTag
+                  identity={practitionerIdentity}
+                  className="text-[10px] font-medium"
+                />
+              )}
+              {showService && (
                 <div className="truncate text-[10px] opacity-70">
                   {serviceName}
                 </div>
@@ -312,6 +410,8 @@ export function MobileDayTimeline({
           );
         })}
       </div>
+      <AppointmentOverlapChooser blockScopeNames={blockScopeNames} timedBlocks={selectedBlocks} onSelectBlock={onEditBlock} appointments={selectedOverlaps} tz={tz} timeFormat={timeFormat} returnTo={returnTo}
+        onClose={() => setOverlapIds(null)} />
     </div>
   );
 }

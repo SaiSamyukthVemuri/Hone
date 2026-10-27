@@ -7,8 +7,8 @@
 //
 // Safety: we never accept or echo a full return URL (no open-redirect
 // surface). The return target is ALWAYS `/calendar` plus a validated subset
-// of the existing calendar params: `view` (week|month) and the date anchors
-// `week`/`month` (strict YYYY-MM-DD). Anything else is dropped, so the back
+// of the existing calendar params: `view` (day|week|month) and the date anchors
+// `day`/`week`/`month` (strict YYYY-MM-DD). `day` is the HON-48 team day view. Anything else is dropped, so the back
 // link can only ever point inside `/calendar`.
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -18,6 +18,7 @@ type ParamValue = string | string[] | null | undefined;
 
 export type CalendarReturnContext = {
   view?: ParamValue;
+  day?: ParamValue;
   week?: ParamValue;
   month?: ParamValue;
 };
@@ -33,8 +34,11 @@ export function buildCalendarReturnParams(ctx: CalendarReturnContext): string {
   const params = new URLSearchParams();
 
   const rawView = firstValue(ctx.view);
-  const view = rawView === "month" ? "month" : rawView === "week" ? "week" : null;
+  const view = rawView === "month" ? "month" : rawView === "week" ? "week" : rawView === "day" ? "day" : null;
   if (view) params.set("view", view);
+
+  const day = firstValue(ctx.day);
+  if (day && DATE_RE.test(day)) params.set("day", day);
 
   const week = firstValue(ctx.week);
   if (week && DATE_RE.test(week)) params.set("week", week);

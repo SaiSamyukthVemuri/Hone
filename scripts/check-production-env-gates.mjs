@@ -375,6 +375,17 @@ function main() {
   // failed (so one fix-and-redeploy surfaces all missing config at once).
   let failed = false;
 
+  // SCH-002: the slot-read fault marker is a test-only seam
+  // (lib/booking/e2e-slot-read-fault.ts). Its presence on a production build is
+  // a misconfiguration, so fail the build. Reads presence only, never a value.
+  if (process.env.HONE_E2E_SLOT_READ_FAULT !== undefined) {
+    process.stdout.write(
+      `FAIL e2e-slot-read-fault: HONE_E2E_SLOT_READ_FAULT is set on a Vercel ` +
+        `production build. This test-only fault seam must never exist in production.\n`,
+    );
+    failed = true;
+  }
+
   // Gate 3, Google Calendar OAuth/crypto config SHAPE (Phase A).
   // Validate-if-present, NON-BREAKING: total absence (Google Calendar
   // unprovisioned) PASSES so the current production deploy is unaffected and

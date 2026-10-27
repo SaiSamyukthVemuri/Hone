@@ -23,6 +23,7 @@ import {
 } from "@/lib/stripe/account";
 import { getAppOrigin, inferStripeLivemode } from "@/lib/stripe/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { dbErrorCode, thrownErrorClass, stripeErrorFields } from "@/lib/logging/error-class";
 
 const GENERIC_STRIPE_ERROR =
   "Stripe could not complete that action. Please try again.";
@@ -97,7 +98,8 @@ export async function startStripeConnectOnboardingAction(): Promise<void> {
     if (isNextRedirect(err)) throw err;
     logInternal("start_onboarding_create_or_load_failed", {
       studioId: studio.id,
-      err: err instanceof Error ? err.message : String(err),
+      errorClass: thrownErrorClass(err),
+      ...stripeErrorFields(err),
     });
     throw new Error(sanitizeForUser(err));
   }
@@ -112,7 +114,8 @@ export async function startStripeConnectOnboardingAction(): Promise<void> {
     if (isNextRedirect(err)) throw err;
     logInternal("start_onboarding_link_failed", {
       studioId: studio.id,
-      err: err instanceof Error ? err.message : String(err),
+      errorClass: thrownErrorClass(err),
+      ...stripeErrorFields(err),
     });
     throw new Error(sanitizeForUser(err));
   }
@@ -153,8 +156,7 @@ export async function refreshStripeStatusAction(): Promise<RefreshStatusResult> 
     .maybeSingle();
   if (settingsErr) {
     logInternal("refresh_status_settings_lookup_failed", {
-      code: settingsErr.code,
-      message: settingsErr.message,
+      code: dbErrorCode(settingsErr),
       studioId: studio.id,
     });
     return { ok: false, error: GENERIC_STRIPE_ERROR };
@@ -176,7 +178,8 @@ export async function refreshStripeStatusAction(): Promise<RefreshStatusResult> 
   } catch (err) {
     logInternal("refresh_status_call_failed", {
       studioId: studio.id,
-      err: err instanceof Error ? err.message : String(err),
+      errorClass: thrownErrorClass(err),
+      ...stripeErrorFields(err),
     });
     return { ok: false, error: sanitizeForUser(err) };
   }
@@ -222,7 +225,8 @@ export async function openStripeDashboardAction(): Promise<void> {
     if (isNextRedirect(err)) throw err;
     logInternal("open_dashboard_failed", {
       studioId: studio.id,
-      err: err instanceof Error ? err.message : String(err),
+      errorClass: thrownErrorClass(err),
+      ...stripeErrorFields(err),
     });
     throw new Error(sanitizeForUser(err));
   }

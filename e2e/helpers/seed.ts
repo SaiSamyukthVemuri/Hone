@@ -38,12 +38,26 @@ export type E2eSeed = {
 export async function sql<T = Record<string, unknown>>(
   text: string,
   params: unknown[] = [],
+  actorUserId?: string,
 ): Promise<T[]> {
   const client = new PgClient({ connectionString: E2E_DB_URL });
   await client.connect();
   try {
+    if (actorUserId !== undefined) {
+      if (!actorUserId) throw new Error("Synthetic clinical correction requires an actor");
+      // Retain owner-only fixture authority; 0244 independently verifies the
+      // real active practitioner behind this transaction-local auth identity.
+      await client.query("begin");
+      await client.query("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: actorUserId, role: "authenticated" }),
+      ]);
+    }
     const result = await client.query(text, params);
+    if (actorUserId !== undefined) await client.query("commit");
     return result.rows as T[];
+  } catch (error) {
+    if (actorUserId !== undefined) await client.query("rollback").catch(() => undefined);
+    throw error;
   } finally {
     await client.end();
   }
@@ -155,9 +169,13 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
 // non-owners. Returns the login email.
 export async function seedE2eMember(
   seed: E2eSeed,
+  // A fake-Resend mode prefix for the member's address (e.g. "success+"). The
+  // lane defaults the fake to `reject`, so a spec that needs the member's mail
+  // ACCEPTED asks for it here. Default: nothing, exactly as before.
+  options: { recipientModePrefix?: string } = {},
 ): Promise<{ email: string; displayName: string; practitionerId: string }> {
   const uniq = randomUUID().slice(0, 8);
-  const email = `e2e-member-${seed.runId}-${uniq}@harness.local`;
+  const email = `${options.recipientModePrefix ?? ""}e2e-member-${seed.runId}-${uniq}@harness.local`;
   const displayName = `E2E Member ${uniq}`;
   await sql(
     `insert into public.pending_invitations (studio_id, email, role, display_name)
@@ -1774,10 +1792,18 @@ export async function getSessionContentDigest(sessionId: string): Promise<string
 
 // Mutate the source session so its fingerprint changes (stale-preview test).
 export async function bumpSourceBlockEnergy(sessionId: string): Promise<void> {
+  const [actor] = await sql<{ user_id: string }>(
+    `select p.user_id from public.sessions s
+       join public.practitioners p on p.id = s.practitioner_id and p.studio_id = s.studio_id and p.active
+      where s.id = $1`,
+    [sessionId],
+  );
+  if (!actor?.user_id) throw new Error("bumpSourceBlockEnergy: no active session practitioner");
   await sql(
     `update public.session_blocks set energy_level = coalesce(energy_level,0) + 1
       where session_id = $1 and deleted_at is null`,
     [sessionId],
+    actor.user_id,
   );
 }
 
@@ -2139,17 +2165,18 @@ export async function seedE2eFullDetailSentinels(
   },
 ): Promise<void> {
   const block = (
-    await sql<{ id: string; session_id: string }>(
-      `select b.id, b.session_id
+    await sql<{ id: string; session_id: string; user_id: string }>(
+      `select b.id, b.session_id, p.user_id
          from public.session_blocks b
          join public.sessions s on s.id = b.session_id
+         join public.practitioners p on p.id = s.practitioner_id and p.studio_id = s.studio_id and p.active
         where s.studio_id = $1 and s.client_id = $2
         order by s.started_at desc
         limit 1`,
       [studioId, clientId],
     )
   )[0];
-  if (!block) throw new Error("seedE2eFullDetailSentinels: no seeded block found");
+  if (!block?.user_id) throw new Error("seedE2eFullDetailSentinels: no seeded block found");
   await sql(
     `update public.session_blocks
         set probe_lot_number = $2,
@@ -2157,12 +2184,14 @@ export async function seedE2eFullDetailSentinels(
             numbing_notes = $4
       where id = $1`,
     [block.id, sentinels.probeLot, sentinels.reactionNote, sentinels.numbingNote],
+    block.user_id,
   );
   await sql(
     `update public.electrolysis_entries
         set comments = $2
       where block_id = $1`,
     [block.id, sentinels.entryComment],
+    block.user_id,
   );
 }
 

@@ -6,6 +6,7 @@ import type {
   ConsentFormTemplate,
 } from "@/lib/types/database";
 import { consentRowState, type ConsentRowState } from "./signature-status";
+import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
 // PR #134. Shared read-side queries for consent templates and
 // signatures. Every function is scoped by an explicit studioId
@@ -36,8 +37,7 @@ export async function getConsentTemplatesForStudio(
     console.error(
       JSON.stringify({
         event: "consent_templates_for_studio_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -78,8 +78,7 @@ export async function getActiveConsentTemplatesForPortal(
     console.error(
       JSON.stringify({
         event: "consent_templates_for_portal_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -118,8 +117,7 @@ export async function getLatestSignaturesByTemplateForPortal(
     console.error(
       JSON.stringify({
         event: "consent_signatures_for_portal_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -180,8 +178,7 @@ export async function getLatestSignaturesForPractitionerView(
     console.error(
       JSON.stringify({
         event: "consent_signatures_for_practitioner_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -314,8 +311,7 @@ export async function getPortalPhotoConsentsForPractitionerView(
     console.error(
       JSON.stringify({
         event: "portal_photo_consent_templates_failed",
-        code: templatesError.code,
-        message: templatesError.message,
+        code: dbErrorCode(templatesError),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -356,8 +352,7 @@ export async function getPortalPhotoConsentsForPractitionerView(
     console.error(
       JSON.stringify({
         event: "portal_photo_consent_signatures_failed",
-        code: sigsError.code,
-        message: sigsError.message,
+        code: dbErrorCode(sigsError),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -447,8 +442,7 @@ export async function getCardAuthorizationCapability(
       console.error(
         JSON.stringify({
           event: "card_authorization_capability_failed",
-          code: error.code,
-          message: error.message,
+          code: dbErrorCode(error),
           timestamp: new Date().toISOString(),
         }),
       );
@@ -459,7 +453,7 @@ export async function getCardAuthorizationCapability(
     console.error(
       JSON.stringify({
         event: "card_authorization_capability_unavailable",
-        message: thrown instanceof Error ? thrown.message : "unknown",
+        errorClass: thrownErrorClass(thrown),
         timestamp: new Date().toISOString(),
       }),
     );

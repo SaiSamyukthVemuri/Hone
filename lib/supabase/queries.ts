@@ -2,6 +2,7 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "./server";
 import { readSelectedStudioId } from "./selected-studio";
+import { authorLabel } from "@/lib/attribution";
 import type { BlockArea } from "@/lib/sessions/block-areas";
 import type {
   ApilusModality,
@@ -21,6 +22,7 @@ import type {
   SessionBlockArea,
   Studio,
 } from "@/lib/types/database";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 export type PractitionerWithStudio = {
   practitioner: Practitioner;
@@ -72,7 +74,7 @@ async function loadActiveMembershipRows(
     .eq("user_id", userId)
     .eq("active", true);
   if (error) {
-    throw new Error(`Failed to load practitioner: ${error.message}`);
+    throw new Error(`Failed to load practitioner: ${dbErrorCode(error)}`);
   }
   return (data ?? []) as Array<Practitioner & { studio: Studio }>;
 }
@@ -287,7 +289,7 @@ export async function getPractitionersForStudio(
     .eq("studio_id", studioId)
     .eq("active", true)
     .order("display_name", { ascending: true });
-  if (error) throw new Error(`Failed to load practitioners: ${error.message}`);
+  if (error) throw new Error(`Failed to load practitioners: ${dbErrorCode(error)}`);
   return (data ?? []) as Practitioner[];
 }
 
@@ -298,14 +300,27 @@ export async function getPractitionersForStudio(
 // snapshots for display only after traversal. This is not a DB-wide snapshot.
 // Continue to empty even with a lower server cap; errors/repeated rows refuse
 // the whole directory rather than return a partial list.
-async function loadStudioClientDirectory(studioId: string, archived: boolean): Promise<Client[]> {
+//
+// DAT-001 minimal returned fields: name the columns. This is the union of
+// what the directory's consumers read (/clients, the calendar quick-book
+// drawer, records' exposed-person selector, procedure filter and print).
+// Clinical, consent and emergency-contact columns never leave the database
+// for a list. A consumer that needs another column must add it here.
+export const CLIENT_DIRECTORY_COLUMNS =
+  "id, name, pronouns, email, phone, address, archived_at";
+export type DirectoryClient = Pick<
+  Client,
+  "id" | "name" | "pronouns" | "email" | "phone" | "address" | "archived_at"
+>;
+
+async function loadStudioClientDirectory(studioId: string, archived: boolean): Promise<DirectoryClient[]> {
   const supabase = await createClient();
-  const clients: Client[] = [];
+  const clients: DirectoryClient[] = [];
   const seen = new Set<string>();
   let afterId: string | null = null;
   const failure = archived ? "Failed to load archived clients" : "Failed to load clients";
   for (;;) {
-    let query = supabase.from("clients").select("*").eq("studio_id", studioId);
+    let query = supabase.from("clients").select(CLIENT_DIRECTORY_COLUMNS).eq("studio_id", studioId);
     query = archived ? query.not("archived_at", "is", null) : query.is("archived_at", null);
     if (afterId !== null) query = query.gt("id", afterId);
     const { data, error } = await query
@@ -313,7 +328,7 @@ async function loadStudioClientDirectory(studioId: string, archived: boolean): P
       .range(0, 999);
     // Database messages may contain client data; never expose them here.
     if (error) throw new Error(failure);
-    const rows = (data ?? []) as Client[];
+    const rows = (data ?? []) as DirectoryClient[];
     if (rows.length === 0) {
       return clients.sort((a, b) => (
         archived
@@ -330,7 +345,7 @@ async function loadStudioClientDirectory(studioId: string, archived: boolean): P
   }
 }
 
-export async function getClientsForStudio(studioId: string): Promise<Client[]> {
+export async function getClientsForStudio(studioId: string): Promise<DirectoryClient[]> {
   // PR Willow launch fixes (migration 0050): filter archived clients
   // out of the active list. Archived rows still exist (their
   // appointments, sessions, intake, treatment plans, and audit
@@ -356,7 +371,7 @@ export async function getClientsForStudio(studioId: string): Promise<Client[]> {
 // client list continue to hide them.
 export async function getArchivedClientsForStudio(
   studioId: string,
-): Promise<Client[]> {
+): Promise<DirectoryClient[]> {
   return loadStudioClientDirectory(studioId, true);
 }
 
@@ -370,19 +385,66 @@ export type ClientCheatSheet = {
   pricing: ClientPricing[];
   sessions: SessionWithEntries[];
   practitioners: Practitioner[];
+  // HON-44 (a): every member of the studio INCLUDING deactivated ones, for
+  // naming who recorded or performed a historical session. `practitioners`
+  // stays active-only because it feeds pickers.
+  attributionRoster: AttributionPractitioner[];
 };
+
+export type AttributionPractitioner = Pick<Practitioner, "id" | "display_name" | "email">;
+
+function attributedName(
+  id: string | null,
+  roster: ReadonlyArray<AttributionPractitioner>,
+): string | null {
+  if (!id) return null;
+  const match = roster.find((p) => p.id === id);
+  return authorLabel(match ? match.display_name?.trim() || match.email : null);
+}
 
 // Resolves the human-readable name of who performed a session,
 // preferring performed_by_practitioner_id but falling back to the creator.
+// Pass the attribution roster (deactivated members included); an id that
+// still cannot be resolved reads "Unknown author" rather than disappearing.
 export function sessionPerformerName(
   session: Pick<Session, "performed_by_practitioner_id" | "practitioner_id">,
-  practitioners: Practitioner[],
+  roster: ReadonlyArray<AttributionPractitioner>,
 ): string | null {
-  const id = session.performed_by_practitioner_id ?? session.practitioner_id;
-  if (!id) return null;
-  const match = practitioners.find((p) => p.id === id);
-  if (!match) return null;
-  return match.display_name?.trim() ? match.display_name : match.email;
+  return attributedName(session.performed_by_practitioner_id ?? session.practitioner_id, roster);
+}
+
+// The session's ORIGINAL author (its creator), named only when someone else
+// is recorded as the performer; otherwise the performer line already says it.
+export function sessionRecordedByName(
+  session: Pick<Session, "performed_by_practitioner_id" | "practitioner_id">,
+  roster: ReadonlyArray<AttributionPractitioner>,
+): string | null {
+  const performer = session.performed_by_practitioner_id;
+  if (!performer || performer === session.practitioner_id) return null;
+  return attributedName(session.practitioner_id, roster);
+}
+
+// ONE roster read serves both lists, so the profile's per-tab query budget
+// (tests/db/client-profile-tab-queries.db.test.ts) is unchanged. Members read
+// their whole studio roster under RLS (0001 "practitioners: members read"),
+// deactivated rows included; the active list is filtered from it here, in the
+// same display_name order getPractitionersForStudio returns.
+async function getStudioRosters(studioId: string): Promise<{
+  practitioners: Practitioner[];
+  attributionRoster: AttributionPractitioner[];
+}> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("practitioners")
+    .select("*")
+    .eq("studio_id", studioId)
+    .order("display_name", { ascending: true });
+  if (error) throw new Error(`Failed to load practitioners: ${dbErrorCode(error)}`);
+  const rows = (data ?? []) as Practitioner[];
+  return {
+    practitioners: rows.filter((p) => p.active === true),
+    attributionRoster: rows.map((p) => ({ id: p.id, display_name: p.display_name, email: p.email })),
+  };
 }
 
 // Migration 0114: a voided pass (deleted_at set) stays in the DB but must never
@@ -412,10 +474,10 @@ export async function getClientById(
     .eq("id", clientId)
     .maybeSingle();
 
-  if (clientErr) throw new Error(`Failed to load client: ${clientErr.message}`);
+  if (clientErr) throw new Error(`Failed to load client: ${dbErrorCode(clientErr)}`);
   if (!client) return null;
 
-  const [pricingRes, sessionsRes, practitioners] = await Promise.all([
+  const [pricingRes, sessionsRes, { practitioners, attributionRoster }] = await Promise.all([
     supabase
       .from("client_pricing")
       .select("*")
@@ -429,13 +491,13 @@ export async function getClientById(
       .eq("client_id", clientId)
       .is("deleted_at", null)
       .order("started_at", { ascending: false }),
-    getPractitionersForStudio(studioId),
+    getStudioRosters(studioId),
   ]);
 
   if (pricingRes.error)
-    throw new Error(`Failed to load pricing: ${pricingRes.error.message}`);
+    throw new Error(`Failed to load pricing: ${dbErrorCode(pricingRes.error)}`);
   if (sessionsRes.error)
-    throw new Error(`Failed to load sessions: ${sessionsRes.error.message}`);
+    throw new Error(`Failed to load sessions: ${dbErrorCode(sessionsRes.error)}`);
 
   return {
     client: client as Client,
@@ -444,6 +506,7 @@ export async function getClientById(
       stripDeletedEntries,
     ),
     practitioners,
+    attributionRoster,
   };
 }
 
@@ -507,7 +570,7 @@ export async function getPastConfirmedAppointmentsForClient(
     .limit(50);
   if (error) {
     throw new Error(
-      `Failed to load past appointments: ${error.message}`,
+      `Failed to load past appointments: ${dbErrorCode(error)}`,
     );
   }
   const rows = (data ?? []) as Appointment[];
@@ -610,7 +673,7 @@ export async function getAppointmentsForClientProfile(
     .limit(CLIENT_APPOINTMENT_TIMELINE_LIMIT);
   if (apptErr) {
     throw new Error(
-      `Failed to load client appointments: ${apptErr.message}`,
+      `Failed to load client appointments: ${dbErrorCode(apptErr)}`,
     );
   }
   const appts = (rawAppts ?? []) as Array<{
@@ -647,7 +710,7 @@ export async function getAppointmentsForClientProfile(
     .order("started_at", { ascending: false });
   if (sessErr) {
     throw new Error(
-      `Failed to load linked sessions: ${sessErr.message}`,
+      `Failed to load linked sessions: ${dbErrorCode(sessErr)}`,
     );
   }
   const sessions = (rawSessions ?? []) as Array<{
@@ -704,7 +767,7 @@ export async function getSessionForClient(
     .is("deleted_at", null)
     .maybeSingle();
 
-  if (error) throw new Error(`Failed to load session: ${error.message}`);
+  if (error) throw new Error(`Failed to load session: ${dbErrorCode(error)}`);
   return data ? stripDeletedEntries(data as SessionWithEntries) : null;
 }
 
@@ -728,7 +791,7 @@ export async function getRecentEntryForClient(
     .order("started_at", { ascending: false })
     .limit(10);
 
-  if (sessErr) throw new Error(`Failed to load recent session: ${sessErr.message}`);
+  if (sessErr) throw new Error(`Failed to load recent session: ${dbErrorCode(sessErr)}`);
 
   for (const row of sessionRows ?? []) {
     // Migration 0114: never suggest defaults from a voided pass.
@@ -765,7 +828,7 @@ export async function getLaserTreatmentCountsForClient(
     .is("deleted_at", null);
 
   if (error)
-    throw new Error(`Failed to load laser treatment counts: ${error.message}`);
+    throw new Error(`Failed to load laser treatment counts: ${dbErrorCode(error)}`);
 
   const counts: Record<string, number> = {};
   for (const row of data ?? []) {
@@ -803,7 +866,7 @@ export async function getPriorLaserSessionCount(
     .is("deleted_at", null)
     .lt("started_at", beforeIso);
   if (error) {
-    throw new Error(`Failed to count prior laser sessions: ${error.message}`);
+    throw new Error(`Failed to count prior laser sessions: ${dbErrorCode(error)}`);
   }
   return count ?? 0;
 }
@@ -817,7 +880,7 @@ export async function getSessionAudit(
     .select("*")
     .eq("session_id", sessionId)
     .order("edited_at", { ascending: true });
-  if (error) throw new Error(`Failed to load session audit: ${error.message}`);
+  if (error) throw new Error(`Failed to load session audit: ${dbErrorCode(error)}`);
   return (data ?? []) as import("@/lib/types/database").SessionAudit[];
 }
 
@@ -830,7 +893,7 @@ export async function getActiveProbeLots(studioId: string): Promise<ProbeLot[]> 
     .eq("active", true)
     .order("probe_size", { ascending: true });
 
-  if (error) throw new Error(`Failed to load probe lots: ${error.message}`);
+  if (error) throw new Error(`Failed to load probe lots: ${dbErrorCode(error)}`);
   return (data ?? []) as ProbeLot[];
 }
 
@@ -853,7 +916,7 @@ export async function getTodayRosterForStudio(studioId: string): Promise<
     .lte("started_at", end.toISOString())
     .order("started_at", { ascending: true });
 
-  if (error) throw new Error(`Failed to load today's roster: ${error.message}`);
+  if (error) throw new Error(`Failed to load today's roster: ${dbErrorCode(error)}`);
 
   const grouped = new Map<string, { client: Client; sessions: Session[] }>();
   for (const row of data ?? []) {
@@ -901,7 +964,7 @@ export async function getSessionBlocks(
     .eq("session_id", sessionId)
     .is("deleted_at", null)
     .order("sort_order", { ascending: true });
-  if (error) throw new Error(`Failed to load session blocks: ${error.message}`);
+  if (error) throw new Error(`Failed to load session blocks: ${dbErrorCode(error)}`);
   return (data ?? []) as SessionBlock[];
 }
 
@@ -915,7 +978,7 @@ export async function getSessionBlockById(
     .eq("id", blockId)
     .is("deleted_at", null)
     .maybeSingle();
-  if (error) throw new Error(`Failed to load block: ${error.message}`);
+  if (error) throw new Error(`Failed to load block: ${dbErrorCode(error)}`);
   return (data ?? null) as SessionBlock | null;
 }
 
@@ -1013,7 +1076,7 @@ export async function getSessionBlockAreasByBlockIds(
         .order("display_order", { ascending: true })
         .order("created_at", { ascending: true })
         .limit(SESSION_BLOCK_AREA_ROW_LIMIT);
-      if (error) throw new Error(`Failed to load block areas: ${error.message}`);
+      if (error) throw new Error(`Failed to load block areas: ${dbErrorCode(error)}`);
       const rows = (data ?? []) as SessionBlockArea[];
       if (rows.length >= SESSION_BLOCK_AREA_ROW_LIMIT) {
         // Complete-result semantics: a response at the ceiling may have been
@@ -1086,11 +1149,11 @@ export async function getSessionWithBlocks(
   ]);
 
   if (sessionRes.error)
-    throw new Error(`Failed to load session: ${sessionRes.error.message}`);
+    throw new Error(`Failed to load session: ${dbErrorCode(sessionRes.error)}`);
   if (blocksRes.error)
-    throw new Error(`Failed to load blocks: ${blocksRes.error.message}`);
+    throw new Error(`Failed to load blocks: ${dbErrorCode(blocksRes.error)}`);
   if (entriesRes.error)
-    throw new Error(`Failed to load entries: ${entriesRes.error.message}`);
+    throw new Error(`Failed to load entries: ${dbErrorCode(entriesRes.error)}`);
   if (!sessionRes.data) return null;
 
   const session = sessionRes.data as Session;
@@ -1108,7 +1171,7 @@ export async function getSessionWithBlocks(
       .order("display_order", { ascending: true })
       .order("created_at", { ascending: true });
     if (areasRes.error)
-      throw new Error(`Failed to load block areas: ${areasRes.error.message}`);
+      throw new Error(`Failed to load block areas: ${dbErrorCode(areasRes.error)}`);
     for (const a of (areasRes.data ?? []) as SessionBlockArea[]) {
       const bucket = areasByBlock.get(a.session_block_id) ?? [];
       bucket.push(a);

@@ -229,14 +229,14 @@ describe("a read that FAILED answers nothing", () => {
     answers.studio = FAIL;
     const outcome = await visit();
     expect(outcome.kind, "UNKNOWN must never become notFound()").not.toBe("not-found");
-    expect(threwMessage(outcome)).toBe("Failed to load studio: injected studio failure");
+    expect(threwMessage(outcome)).toBe("Failed to load studio: XX000");
   });
 
   it("a failed services read throws instead of claiming the studio has no services", async () => {
     answers.services = FAIL;
     const outcome = await visit();
     expect(outcome.kind, "rendered the setup notice from a failed read").not.toBe("rendered");
-    expect(threwMessage(outcome)).toBe("Failed to load services: injected services failure");
+    expect(threwMessage(outcome)).toBe("Failed to load services: XX000");
   });
 
   it("a failed availability read throws instead of claiming the studio has no open day", async () => {
@@ -244,7 +244,7 @@ describe("a read that FAILED answers nothing", () => {
     const outcome = await visit();
     expect(outcome.kind, "rendered the setup notice from a failed read").not.toBe("rendered");
     expect(threwMessage(outcome)).toBe(
-      "Failed to load availability: injected availability failure",
+      "Failed to load availability: XX000",
     );
   });
 

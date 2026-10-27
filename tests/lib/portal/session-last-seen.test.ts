@@ -68,7 +68,7 @@ describe("last_seen_at touch: failure visibility", () => {
   it("the failure log withholds the session identifier and error text", () => {
     const touch = SESSION_CODE.slice(SESSION_CODE.indexOf("void admin"), SESSION_CODE.indexOf("return {\n    id: data.id"));
     expect(touch).not.toMatch(/sessionId:|message:|err:/);
-    expect(touch).toContain("code: touchError.code");
+    expect(touch).toContain("code: dbErrorCode(touchError)");
   });
 
   it("the failure log does NOT include the raw token, its hash, or email", () => {

@@ -12,6 +12,7 @@ import type {
   StudioRecurringBreakRule,
   StudioTimedBlock,
 } from "@/lib/types/database";
+import { dbErrorCode, dbFailureCode } from "@/lib/logging/error-class";
 
 // Active services for the studio, ordered by the practitioner-
 // controlled sort_order ascending and then by name as a deterministic
@@ -30,7 +31,7 @@ export async function getActiveServices(studioId: string): Promise<Service[]> {
     .eq("active", true)
     .order("sort_order", { ascending: true })
     .order("name");
-  if (error) throw new Error(`Failed to load services: ${error.message}`);
+  if (error) throw new Error(`Failed to load services: ${dbErrorCode(error)}`);
   return (data ?? []) as Service[];
 }
 
@@ -46,7 +47,7 @@ export async function servicesHaveCalendarColor(studioId: string): Promise<boole
     .limit(1);
   if (error) {
     if (isMissingColumnError(error, "calendar_color")) return false;
-    throw new Error(`Failed to probe calendar color: ${error.message}`);
+    throw new Error(`Failed to probe calendar color: ${dbErrorCode(error)}`);
   }
   return true;
 }
@@ -66,7 +67,7 @@ export async function getAllServices(studioId: string): Promise<Service[]> {
     .order("sort_order", { ascending: true })
     .order("name")
     .order("id");
-  if (error) throw new Error(`Failed to load services: ${error.message}`);
+  if (error) throw new Error(`Failed to load services: ${dbErrorCode(error)}`);
   return (data ?? []) as Service[];
 }
 
@@ -80,7 +81,7 @@ export async function getAvailabilityDefaults(
     .eq("studio_id", studioId)
     .order("day_of_week");
   if (error)
-    throw new Error(`Failed to load weekly defaults: ${error.message}`);
+    throw new Error(`Failed to load weekly defaults: ${dbErrorCode(error)}`);
   return (data ?? []) as StudioAvailabilityDefault[];
 }
 
@@ -97,7 +98,7 @@ export async function getOverridesForRange(
     .gte("effective_date", startDate)
     .lte("effective_date", endDate)
     .order("effective_date");
-  if (error) throw new Error(`Failed to load overrides: ${error.message}`);
+  if (error) throw new Error(`Failed to load overrides: ${dbErrorCode(error)}`);
   return (data ?? []) as StudioAvailabilityOverride[];
 }
 
@@ -108,7 +109,7 @@ export async function getBlockouts(studioId: string): Promise<StudioBlockout[]> 
     .select("*")
     .eq("studio_id", studioId)
     .order("starts_on");
-  if (error) throw new Error(`Failed to load blockouts: ${error.message}`);
+  if (error) throw new Error(`Failed to load blockouts: ${dbErrorCode(error)}`);
   return (data ?? []) as StudioBlockout[];
 }
 
@@ -129,7 +130,7 @@ export async function getTimedBlocksForRange(
     .gt("ends_at", startIso)
     .order("starts_at");
   if (error)
-    throw new Error(`Failed to load timed blocks: ${error.message}`);
+    throw new Error(`Failed to load timed blocks: ${dbErrorCode(error)}`);
   return (data ?? []) as StudioTimedBlock[];
 }
 
@@ -151,7 +152,7 @@ export async function getUpcomingTimedBlocks(
     .gt("ends_at", nowIso)
     .order("starts_at");
   if (error)
-    throw new Error(`Failed to load timed blocks: ${error.message}`);
+    throw new Error(`Failed to load timed blocks: ${dbErrorCode(error)}`);
   return (data ?? []) as StudioTimedBlock[];
 }
 
@@ -169,7 +170,7 @@ export async function getRecurringBreakRules(
     .eq("studio_id", studioId)
     .order("created_at");
   if (error)
-    throw new Error(`Failed to load recurring breaks: ${error.message}`);
+    throw new Error(`Failed to load recurring breaks: ${dbErrorCode(error)}`);
   return (data ?? []) as StudioRecurringBreakRule[];
 }
 
@@ -196,7 +197,7 @@ export async function getRecurringBreakOccurrencesForRange(
     .gt("ends_at", startIso)
     .order("starts_at");
   if (error)
-    throw new Error(`Failed to load recurring break occurrences: ${error.message}`);
+    throw new Error(`Failed to load recurring break occurrences: ${dbErrorCode(error)}`);
   type Raw = StudioRecurringBreakOccurrence & {
     rule: { label: string } | { label: string }[] | null;
   };
@@ -214,7 +215,7 @@ export async function getRecurringBreakOccurrencesForRange(
 // row was already accessible to this studio's session via the
 // underlying appointments query.
 export type AppointmentWithPractitionerColor = Appointment & {
-  practitioner: { id: string; color: string } | null;
+  practitioner: { id: string; color: string; display_name?: string | null } | null;
   client: { id: string; name: string } | null;
   service: {
     id: string;
@@ -231,7 +232,7 @@ export async function getAppointmentsForRange(
 ): Promise<AppointmentWithPractitionerColor[]> {
   const supabase = await createClient();
   const BASE =
-    "*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color), client:clients(id, name), ";
+    "*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color, display_name), client:clients(id, name), ";
   const runSelect = (serviceEmbed: string, afterId: string | null) => {
     let query = supabase
       .from("appointments")
@@ -277,8 +278,8 @@ export async function getAppointmentsForRange(
   // branching (same idiom for client and service).
   type Raw = Appointment & {
     practitioner:
-      | { id: string; color: string }
-      | { id: string; color: string }[]
+      | { id: string; color: string; display_name?: string | null }
+      | { id: string; color: string; display_name?: string | null }[]
       | null;
     client:
       | { id: string; name: string }
@@ -325,6 +326,6 @@ export async function getStudioBySlug(slug: string): Promise<Studio | null> {
     .select("*")
     .eq("slug", slug)
     .maybeSingle();
-  if (error) throw new Error(`Failed to load studio: ${error.message}`);
+  if (error) throw new Error(`Failed to load studio: ${dbFailureCode(error)}`);
   return (data ?? null) as Studio | null;
 }

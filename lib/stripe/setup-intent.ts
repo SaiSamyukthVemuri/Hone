@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getStripe, inferStripeLivemode } from "@/lib/stripe/server";
+import { dbErrorCode, stripeErrorFields, thrownErrorClass } from "@/lib/logging/error-class";
 
 // PR #135. Card-on-file Phase 1 helpers. Two server-only utilities:
 //   1. getOrCreateStripeCustomerForCardOnFile - serialises the
@@ -33,8 +34,17 @@ export type StripeCustomerResolution =
         | "provisioning_rpc_failed"
         | "stripe_customer_create_failed"
         | "complete_rpc_failed";
+      // CLOSED: a SQLSTATE / PostgREST code, or a thrown-error class with the
+      // Stripe SDK's documented type and code. Never a message: a Postgres or
+      // Stripe message can quote the value it rejected, and the portal action
+      // logs this field whole.
       detail?: string;
     };
+
+function stripeFailureDetail(err: unknown): string {
+  const { stripeType, stripeCode } = stripeErrorFields(err);
+  return [thrownErrorClass(err), stripeType, stripeCode].filter(Boolean).join(":");
+}
 
 // Idempotent get-or-create. Reuses the existing 0032 RPCs:
 //
@@ -92,12 +102,12 @@ export async function getOrCreateStripeCustomerForCardOnFile(params: {
   );
   if (claimErr) {
     if (claimErr.code === "P0002") {
-      return { ok: false, error: "missing_email", detail: claimErr.message };
+      return { ok: false, error: "missing_email", detail: dbErrorCode(claimErr) };
     }
     return {
       ok: false,
       error: "provisioning_rpc_failed",
-      detail: `${claimErr.code}:${claimErr.message}`,
+      detail: dbErrorCode(claimErr),
     };
   }
   const claim = Array.isArray(claimRows) ? claimRows[0] : claimRows;
@@ -155,7 +165,7 @@ export async function getOrCreateStripeCustomerForCardOnFile(params: {
     return {
       ok: false,
       error: "stripe_customer_create_failed",
-      detail: err instanceof Error ? err.message : String(err),
+      detail: stripeFailureDetail(err),
     };
   }
 
@@ -176,7 +186,7 @@ export async function getOrCreateStripeCustomerForCardOnFile(params: {
     return {
       ok: false,
       error: "complete_rpc_failed",
-      detail: `${completeErr.code}:${completeErr.message}`,
+      detail: dbErrorCode(completeErr),
     };
   }
 
@@ -232,7 +242,7 @@ export async function createCardOnFileSetupIntent(params: {
     );
     const clientSecret = setupIntent.client_secret;
     if (!clientSecret) {
-      return { ok: false, error: "Stripe did not return a client_secret." };
+      return { ok: false, error: "setup_intent_client_secret_missing" };
     }
     return {
       ok: true,
@@ -241,9 +251,9 @@ export async function createCardOnFileSetupIntent(params: {
       stripeLivemode: livemode,
     };
   } catch (err) {
-    return {
-      ok: false,
-      error: err instanceof Error ? err.message : "Stripe SetupIntent failed.",
-    };
+    // The SDK's message can quote the request or the customer, and the portal
+    // action logs this field whole: a thrown-error class and Stripe's documented
+    // type and code only.
+    return { ok: false, error: `setup_intent_create_failed:${stripeFailureDetail(err)}` };
   }
 }

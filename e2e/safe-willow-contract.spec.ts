@@ -4,6 +4,9 @@ import {
   getIntakeTokenForClient,
   getClientIdByEmail,
   getAppointmentsForClient,
+  getOwnerPractitionerId,
+  getStudioTimezone,
+  seedFutureAppointmentAt,
   getSessionBlockProbeLots,
   getSessionBlockAreas,
   getSessionRecordState,
@@ -41,7 +44,6 @@ let sessionId: string;
 
 test("SAFE-WILLOW: treatment-memory activation loop (synthetic Studio A)", async ({
   page,
-  browser,
 }) => {
   await test.step("seed a synthetic studio (never Willow/production)", async () => {
     seed = await seedE2eStudio();
@@ -170,11 +172,19 @@ test("SAFE-WILLOW: treatment-memory activation loop (synthetic Studio A)", async
   });
 
   await test.step("book a second visit — DB confirms returning client", async () => {
-    const p2 = await browser.newPage();
-    await bookAppointment(p2, seed);
-    await p2.close();
-    const appts = await getAppointmentsForClient(seed.studioId, clientId);
-    expect(appts.length).toBeGreaterThanOrEqual(2);
+    // SEC-004: a public booking never attaches to an existing client by email
+    // (knowing the address is not proof of owning it), so the returning client's
+    // second visit is created the way staff would: a confirmed appointment on the
+    // same client, later today in the studio's timezone.
+    await seedFutureAppointmentAt(
+      seed.studioId,
+      await getOwnerPractitionerId(seed.studioId),
+      clientId,
+      await getStudioTimezone(seed.studioId),
+      "23:00",
+    );
+    const appointments = await getAppointmentsForClient(seed.studioId, clientId);
+    expect(appointments.length).toBeGreaterThanOrEqual(2);
   });
 
   await test.step("activation: Before Today surfaces the prior memory — browser", async () => {

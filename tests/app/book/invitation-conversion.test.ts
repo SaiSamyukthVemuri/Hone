@@ -772,7 +772,10 @@ describe("D — ordinary public booking is untouched", () => {
 
     const out = await publicBookAppointmentAction(form({ client_type: "existing" }));
 
-    expect(out.ok).toBe(true);
+    // SEC-004: a matched email never attaches a public booking, so this is a
+    // refusal, and still zero conversions.
+    expect(out.ok).toBe(false);
+    expect(indexOfCall("create_public_appointment")).toBe(-1);
     expect(conversions()).toHaveLength(0);
   });
 });
@@ -910,7 +913,8 @@ describe("G — every client resolution path converts the client it actually boo
       form({ invitation_token: TOKEN, invitation_capability: CAP, client_type: "existing" }),
     );
 
-    expect(out.ok).toBe(true);
+    // SEC-004: refused outright (a matched email proves nothing), not booked.
+    expect(out.ok).toBe(false);
     // Nothing was consumed, so nothing was converted -- and the offer survives.
     expect(indexOfCall("redeem_new_client_waitlist_invitation_verified")).toBe(-1);
     expect(conversions()).toHaveLength(0);

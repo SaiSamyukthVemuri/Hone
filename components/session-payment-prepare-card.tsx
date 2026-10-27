@@ -12,6 +12,7 @@ import type {
 } from "@/lib/billing/session-payment-amount";
 import { decideSessionPaymentPresentation } from "@/lib/billing/ready-control-permission";
 import {
+  NO_CARD_ON_FILE_REASON,
   SESSION_PAYMENT_ADJUSTMENT_REASON_MAX_LENGTH,
   SESSION_PAYMENT_AMOUNT_CEILING_CENTS,
   SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH,
@@ -21,6 +22,7 @@ import {
   formatCadFromCents as formatCents,
   parseCadAmountToCents,
 } from "@/lib/billing/cad-amount";
+import { currencyLabel, currencyName, formatMoney } from "@/lib/billing/payment-jurisdiction";
 import { OWNER_ONLY_AMOUNT_ERROR } from "@/lib/billing/checkout-final-amount";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
@@ -423,9 +425,31 @@ export function SessionPaymentPrepareCard({
         </div>
       )}
 
-      {!eligibility.eligible && !activeAttempt && !prepareJustSucceeded && (
-        <BlockedPanel reasons={eligibility.blockingReasons} />
-      )}
+      {/* HON-45. "No card on file" is a fact about the client, not a fault:
+          completing and charting a visit takes no payment, and the visit stays
+          outstanding. When it is the ONLY reason, say what is true, calmly.
+          Any other reason, alone or alongside it, keeps the amber list,
+          because those really are something to fix. */}
+      {!eligibility.eligible && !activeAttempt && !prepareJustSucceeded &&
+        (isNoCardOnly(eligibility.blockingReasons) ? (
+          <NoCardOnFilePanel
+            settlementOffered={Boolean(appointmentId && canRecordSettlement)}
+            settledMethod={settledMethod}
+            settledAmountCents={settledAmountCents}
+            quotedAmountCents={settlementQuotedAmountCents}
+            // Codex P2 4365600228. An authoritative $0 price is not a debt.
+            // Read from the presentation decision (the same field that renders
+            // "No payment required"; the card never interprets pricing), or
+            // from the appointment's settlement snapshot, which is 0 only for
+            // an authoritatively free service.
+            authoritativelyFree={
+              presentation.freeNoticeServiceName !== null ||
+              settlementQuotedAmountCents === 0
+            }
+          />
+        ) : (
+          <BlockedPanel reasons={eligibility.blockingReasons} />
+        ))}
 
       {/* Blocked pricing: a calm explanation instead of a blank editable box.
           Preparation is withdrawn entirely. There is no amount to confirm. */}
@@ -566,6 +590,72 @@ function PreviousTerminalCallout({
 // render them as-is so the practitioner sees the same wording as the
 // server-side blocking message.
 // ---------------------------------------------------------------------------
+function isNoCardOnly(reasons: string[]): boolean {
+  return reasons.length === 1 && reasons[0] === NO_CARD_ON_FILE_REASON;
+}
+
+// HON-45. The cardless state, stated as a fact. Neutral, never amber, and
+// never a promise of a charge: Hone can only charge a saved card, so clinical
+// completion goes ahead and the visit simply stays OUTSTANDING.
+//
+// OUTSTANDING IS THE DEFAULT, NOT A RECORD. With no recorded settlement (or a
+// recorded "still owes", which attests the same thing) the visit is unpaid, and
+// that is shown without writing anything. It stops being outstanding only when
+// a real settlement records money received or an owner waiver. Nothing here
+// marks a visit paid or settled.
+//
+// Which amount (Codex P2 4365600234): a recorded "still owes" names its own
+// debt, which the practitioner may have entered independently of the price,
+// so it is shown as recorded. The quote is only for a visit with no
+// settlement. An authoritatively free visit with no settlement owes nothing
+// (Codex P2 4365600228), so no balance is claimed; a recorded "still owes"
+// is a real record and is still shown.
+function NoCardOnFilePanel({
+  settlementOffered,
+  settledMethod,
+  settledAmountCents,
+  quotedAmountCents,
+  authoritativelyFree,
+}: {
+  settlementOffered: boolean;
+  settledMethod: SettlementMethod | null;
+  settledAmountCents: number | null;
+  quotedAmountCents: number | null;
+  authoritativelyFree: boolean;
+}) {
+  const outstanding =
+    settledMethod === "still_owes" ||
+    (settledMethod === null && !authoritativelyFree);
+  const balanceCents =
+    settledMethod === "still_owes" ? settledAmountCents : quotedAmountCents;
+  return (
+    <div
+      data-testid="session-payment-no-card"
+      className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+    >
+      <p className="font-medium">No card on file · Nothing has been charged.</p>
+      <p className="mt-1">
+        Hone can only charge a saved card, and this client has none. Completing
+        and charting this visit does not take a payment.
+      </p>
+      {outstanding && (
+        <p data-testid="session-payment-outstanding" className="mt-1 font-medium">
+          {typeof balanceCents === "number" && balanceCents > 0
+            ? `Balance outstanding: ${formatCadFromCents(balanceCents)}. No payment has been received.`
+            : "Balance outstanding. No payment has been received."}
+        </p>
+      )}
+      {outstanding && (
+        <p className="mt-1">
+          {settlementOffered
+            ? "It stays outstanding until payment is actually received. Record it below only then."
+            : "It stays outstanding until payment is actually received."}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function BlockedPanel({ reasons }: { reasons: string[] }) {
   return (
     <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
@@ -694,6 +784,7 @@ function ReadyPanel({
           headline: "Paid",
           tone: "paid",
           amountCents: attempt.amountCents,
+          currency: attempt.currency,
         }}
         subLine="Refresh to see the full receipt options."
       >
@@ -730,8 +821,13 @@ function ReadyPanel({
         </p>
         <p className="text-xs text-amber-900 dark:text-amber-200">
           The client&apos;s saved card will be charged{" "}
-          {formatCadFromCents(attempt.amountCents)}.
+          {formatMoney(attempt.amountCents, attempt.currency)}.
         </p>
+        {attempt.currency === null && (
+          <p data-testid="attempt-currency-unknown" className="text-xs text-red-700 dark:text-red-400" role="alert">
+            The charge currency could not be verified, so this charge cannot be run. Refresh and try again.
+          </p>
+        )}
         {executeError && (
           <p className="text-xs text-red-700 dark:text-red-400" role="alert">
             {executeError}
@@ -747,7 +843,7 @@ function ReadyPanel({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            disabled={executePending}
+            disabled={executePending || attempt.currency === null}
             onClick={() => {
               setExecuteError(null);
               setExecuteBlockingReasons([]);
@@ -760,6 +856,10 @@ function ReadyPanel({
               fd.set("session_id", sessionId);
               fd.set("client_id", clientId);
               fd.set("confirm_charge", "true");
+              // What is on screen, sent only so the server can REFUSE a charge
+              // whose persisted currency differs. The server never takes the
+              // currency from this field.
+              fd.set("expected_currency", attempt.currency ?? "");
               startExecuteTransition(async () => {
                 const r = await executeAction(fd);
                 if (r.ok) {
@@ -780,7 +880,7 @@ function ReadyPanel({
             {executePending
               ? "Running charge..."
               : confirmExecute
-                ? `Confirm: run charge (${formatCadFromCents(attempt.amountCents)})`
+                ? `Confirm: run charge (${formatMoney(attempt.amountCents, attempt.currency)})`
                 : "Run charge"}
           </button>
           {confirmExecute && !executePending && (
@@ -876,7 +976,7 @@ function SucceededPanel({
               <>
                 Refunded <FormattedDateTime iso={attempt.refundedAt} />
                 {attempt.refundAmountCents != null
-                  ? ` · ${formatCadFromCents(attempt.refundAmountCents)}`
+                  ? ` · ${formatMoney(attempt.refundAmountCents, attempt.currency)}`
                   : ""}
               </>
             ) : (
@@ -1093,7 +1193,7 @@ function RefundSubPanel({
   // confirming equals the charge amount; partial refunds may
   // land in a future PR without changing the schema (the CHECK
   // refund_amount_cents <= amount_cents already allows it).
-  const refundAmountFormatted = formatCadFromCents(attempt.amountCents);
+  const refundAmountFormatted = formatMoney(attempt.amountCents, attempt.currency);
 
   return (
     <div className="mt-3 flex flex-col gap-2 rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-950">
@@ -1106,10 +1206,11 @@ function RefundSubPanel({
           <p className="font-medium">Refund succeeded.</p>
           <p className="mt-1">
             Amount refunded:{" "}
-            {formatCadFromCents(
+            {formatMoney(
               localRefunded?.refundAmountCents ??
                 attempt.refundAmountCents ??
                 attempt.amountCents,
+              attempt.currency,
             )}
           </p>
           {(localRefunded?.refundedAt ?? attempt.refundedAt) && (
@@ -1162,7 +1263,7 @@ function RefundSubPanel({
             {!confirming ? (
               <button
                 type="button"
-                disabled={pending}
+                disabled={pending || attempt.currency === null}
                 onClick={() => setConfirming(true)}
                 // min-h-[44px]: this is the control Chloe presses on a phone with a
         // client in the chair, so it meets the touch-target floor the rest of
@@ -1175,13 +1276,14 @@ function RefundSubPanel({
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  disabled={pending}
+                  disabled={pending || attempt.currency === null}
                   onClick={() => {
                     setError(null);
                     const fd = new FormData();
                     fd.set("attempt_id", attempt.id);
                     fd.set("session_id", sessionId);
                     fd.set("client_id", clientId);
+                    fd.set("expected_currency", attempt.currency ?? "");
                     startTransition(async () => {
                       const r = await refundAction(fd);
                       // setLocalRefunded fires ONLY when r.ok ===
@@ -1285,7 +1387,7 @@ function CancelledPanel({
     <div className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
       <p className="font-medium">Session payment cancelled.</p>
       <p className="mt-1">
-        Amount: {formatCadFromCents(attempt.amountCents)}
+        Amount: {formatMoney(attempt.amountCents, attempt.currency)}
         {" · "}
         Prepared: <FormattedDateTime iso={attempt.createdAt} />
       </p>
@@ -1312,7 +1414,7 @@ function BlockedAttemptPanel({
     <div className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
       <p className="font-medium">Session payment blocked.</p>
       <p className="mt-1">
-        Amount: {formatCadFromCents(attempt.amountCents)}
+        Amount: {formatMoney(attempt.amountCents, attempt.currency)}
         {" · "}
         Prepared: <FormattedDateTime iso={attempt.createdAt} />
       </p>
@@ -1335,7 +1437,7 @@ function UnknownStatusPanel({
     <div className="rounded-md border border-neutral-300 bg-neutral-50 p-3 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
       <p className="font-medium">Session payment status: {attempt.status}</p>
       <p className="mt-1">
-        Amount: {formatCadFromCents(attempt.amountCents)}
+        Amount: {formatMoney(attempt.amountCents, attempt.currency)}
         {" · "}
         Created: <FormattedDateTime iso={attempt.createdAt} />
       </p>
@@ -1483,6 +1585,15 @@ function PrepareForm({
           name="expected_amount_cents"
           value={String(amount.amountCents)}
         />
+        {/* The currency this form displays (the server-resolved jurisdiction).
+            Submitted only so the server can REFUSE if it has since changed; the
+            server prepares in its own jurisdiction currency, never this value. */}
+        <input
+          type="hidden"
+          name="expected_currency"
+          data-testid="expected-currency"
+          value={eligibility.jurisdiction.currency}
+        />
         <div className="flex flex-col gap-0.5 text-[11px] text-neutral-500">
           {amount.source === "custom_pricing" ? (
             <>
@@ -1503,7 +1614,7 @@ function PrepareForm({
           enough to hit with a client standing there. */}
       <label className="flex flex-col gap-1">
         <span className="text-[11px] uppercase tracking-wider text-neutral-500">
-          Final charge (CAD)
+          Final charge ({currencyLabel(eligibility.jurisdiction.currency)})
         </span>
         <input
           type="text"
@@ -1511,7 +1622,7 @@ function PrepareForm({
           data-testid="final-charge-input"
           // Named for a person reading it aloud, not for its position on the
           // page, so a test and a screen reader find it the same way.
-          aria-label="Final charge in Canadian dollars"
+          aria-label={`Final charge in ${currencyName(eligibility.jurisdiction.currency)}`}
           value={finalAmount}
           onChange={(e) => setFinalAmount(e.target.value)}
           // `decimal`, not `numeric`: the iPad keyboard has to offer a decimal
@@ -1653,7 +1764,7 @@ function AttemptHistory({
           <li key={a.id} className="flex flex-wrap items-center gap-2">
             <code className="text-[10px]">{a.id.slice(0, 8)}</code>
             <span>{STATUS_LABEL[a.status] ?? a.status}</span>
-            <span>{formatCadFromCents(a.amountCents)}</span>
+            <span>{formatMoney(a.amountCents, a.currency)}</span>
             <FormattedDateTime iso={a.createdAt} />
             {a.failureCode && (
               <span className="font-mono">code: {a.failureCode}</span>

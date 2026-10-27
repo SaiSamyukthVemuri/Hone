@@ -32,6 +32,7 @@ import type {
   ClinicalNoteKind,
 } from "@/lib/types/database";
 import { safeLog } from "@/lib/logging/safe-log";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 const MAX_BODY_LENGTH = 20000;
 const MAX_AREAS = 40;
@@ -41,12 +42,19 @@ const VALID_KINDS: ReadonlyArray<ClinicalNoteKind> = [
   "skin_hair_analysis",
 ];
 
+// The verified row's author is the signed-in practitioner (practitioner_id is
+// forced above), so the client can label a just-saved note with its real
+// author instead of a null that used to render as "You" (HON-44 (a)).
+function authorNameOf(practitioner: { display_name: string | null }): string | null {
+  return practitioner.display_name?.trim() || null;
+}
+
 // Unique-violation on the supersedes partial-unique index (a concurrent
 // revision of the same note already won).
 const UNIQUE_VIOLATION = "23505";
 
 export type ClinicalNoteActionResult =
-  | { ok: true; note: ClientClinicalNote }
+  | { ok: true; note: ClientClinicalNote; author_name: string | null }
   | { ok: false; code: "invalid" | "not_found" | "stale_revision" | "error"; error: string };
 
 function readKind(value: FormDataEntryValue | null): ClinicalNoteKind | null {
@@ -174,7 +182,7 @@ async function insertClinicalNote(params: {
     .maybeSingle();
   if (clientErr) {
     logNoteFailure("clinical_note_client_lookup_failed", {
-      code: clientErr.code,
+      code: dbErrorCode(clientErr),
       kind,
       clientId,
       studioId: studio.id,
@@ -215,7 +223,7 @@ async function insertClinicalNote(params: {
       };
     }
     logNoteFailure("clinical_note_insert_failed", {
-      code: error.code,
+      code: dbErrorCode(error),
       kind,
       clientId,
       studioId: studio.id,
@@ -238,7 +246,7 @@ async function insertClinicalNote(params: {
     .maybeSingle();
   if (verifyErr) {
     logNoteFailure("clinical_note_readback_failed", {
-      code: verifyErr.code,
+      code: dbErrorCode(verifyErr),
       kind,
       clientId,
       studioId: studio.id,
@@ -263,7 +271,7 @@ async function insertClinicalNote(params: {
   }
 
   revalidatePath(`/clients/${clientId}`);
-  return { ok: true, note: row };
+  return { ok: true, note: row, author_name: authorNameOf(practitioner) };
 }
 
 export async function addClinicalNoteAction(

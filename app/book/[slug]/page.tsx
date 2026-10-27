@@ -12,10 +12,12 @@ import {
   publicNewClientSurface,
 } from "@/lib/booking/new-client-admission";
 import type { Service } from "@/lib/types/database";
+import { forPublicBookingPage } from "@/lib/booking/studio-location";
 import {
   isPubliclyBookable,
   UNAVAILABLE_PUBLIC_BOOKING_MESSAGE,
 } from "@/lib/booking/readiness";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Public booking portal: deliberately renders WITHOUT the shared
 // MarketingHeader. A client landing here from the studio's own website
@@ -35,8 +37,13 @@ export default async function PublicBookingPage({
   // null means the read SUCCEEDED and found no studio: a 404. A read that
   // FAILED throws instead and lands in ./error.tsx as a retryable 500, so an
   // unreadable studio is never reported as one that does not exist.
-  const studio = await getStudioBySlug(slug);
-  if (!studio) notFound();
+  const studioRow = await getStudioBySlug(slug);
+  if (!studioRow) notFound();
+  // HON-50. Everything below reads this view, never the raw row: its address
+  // is null when the owner chose emails-only (or it is blank), and it carries
+  // no arrival instructions (email-only content). So neither can reach this
+  // public page's HTML or the props it hands its client form (RSC payload).
+  const studio = forPublicBookingPage(studioRow);
 
   // Service-role read since this is public.
   const admin = createAdminClient();
@@ -73,11 +80,11 @@ export default async function PublicBookingPage({
   // form, because the existing-client path depends on both reads in EVERY
   // admission mode; only the new-client waitlist journey could do without them.
   if (servicesRes.error) {
-    throw new Error(`Failed to load services: ${servicesRes.error.message}`);
+    throw new Error(`Failed to load services: ${dbErrorCode(servicesRes.error)}`);
   }
   if (availabilityRes.error) {
     throw new Error(
-      `Failed to load availability: ${availabilityRes.error.message}`,
+      `Failed to load availability: ${dbErrorCode(availabilityRes.error)}`,
     );
   }
   const services = (servicesRes.data ?? []) as Service[];

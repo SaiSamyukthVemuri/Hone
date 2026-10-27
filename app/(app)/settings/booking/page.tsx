@@ -9,6 +9,7 @@ import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
 import { BookingLinkCard } from "./BookingLinkCard";
 import { SaveButton } from "./SaveButton";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { bookingSettingsErrorSentence } from "@/lib/booking/settings-error-codes";
 
 // Plain option labels for the buffer select. The "Recommended" hint
 // is no longer inlined here because that crowded the select control
@@ -67,7 +68,9 @@ export default async function BookingSettingsPage({
   const errorParam = params.error;
   const saved =
     (Array.isArray(savedParam) ? savedParam[0] : savedParam) === "1";
-  const errorMessage = Array.isArray(errorParam) ? errorParam[0] : errorParam;
+  // `?error=` carries a CODE; only a recognised code becomes one of the fixed
+  // sentences, so a crafted link cannot write its own words in the banner.
+  const errorMessage = errorParam === undefined ? null : bookingSettingsErrorSentence(errorParam);
 
   const { practitioner, studio } = await requirePractitionerWithStudio();
   // The studio-owned mode, from the one authority that owns it. UNKNOWN is
@@ -85,13 +88,14 @@ export default async function BookingSettingsPage({
 
   return (
     <div className="flex flex-col gap-8">
-      <SaveBanner saved={saved} error={errorMessage ?? null} />
+      <SaveBanner saved={saved} error={errorMessage} />
 
       <section>
         <h2 className="text-xl font-medium">Booking</h2>
         <p className="mt-1 text-sm text-neutral-500">
           How clients find and book you. Public URL, timezone, default
-          appointment length, and the description shown on your booking page.
+          appointment length, the description shown on your booking page, and
+          the address clients see there and in appointment emails.
         </p>
       </section>
 
@@ -289,7 +293,7 @@ export default async function BookingSettingsPage({
           className="flex scroll-mt-24 flex-col gap-1.5"
         >
           <span className="text-sm font-medium">
-            Public address (shown on your booking page)
+            Public address (booking page and appointment emails)
           </span>
           <input
             name="address"
@@ -298,8 +302,10 @@ export default async function BookingSettingsPage({
             className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
           />
           <span className="text-xs text-neutral-500">
-            For home-based studios, leave this blank and share the address
-            after booking.
+            Shown on your public booking page, and in clients&rsquo;
+            confirmation, reminder and appointment-update emails and calendar
+            invites. For home-based studios, leave this blank and share the
+            address after booking.
           </span>
         </label>
 

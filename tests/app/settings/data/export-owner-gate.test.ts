@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   expectedCsvFiles,
+  exportedResources,
   exportSpec,
 } from "@/lib/export/resource-registry";
 import path from "node:path";
@@ -26,6 +27,9 @@ function codeOnly(src: string): string {
     .join("\n");
 }
 const CODE = codeOnly(ACTIONS);
+const WRITER = codeOnly(readFileSync(path.resolve(__dirname, "../../../../lib/audit/governed-writes.ts"), "utf8"));
+const AUDIT_SQL = readFileSync(path.resolve(__dirname, "../../../../supabase/migrations/0242_close_direct_generic_audit_inserts.sql"), "utf8");
+const EXPORT_WRITER = WRITER.slice(WRITER.indexOf("export async function recordStudioExportAudit"));
 
 describe("export: owner-only gate", () => {
   it("refuses non-owner practitioners with a generic error", () => {
@@ -53,14 +57,14 @@ describe("export: owner-only gate", () => {
 
 describe("export: audit trail", () => {
   it("a successful export writes an audit_logs row with the studio_export action", () => {
-    expect(CODE).toMatch(
-      /\.from\("audit_logs"\)\.insert\(\{\s*\n?\s*studio_id: studio\.id,\s*\n?\s*actor_id: practitioner\.id,\s*\n?\s*action: "studio_export",/,
-    );
+    expect(EXPORT_WRITER).toContain('admin.rpc("record_studio_export_audit_governed"');
+    expect(EXPORT_WRITER).toContain("p_actor_id: practitioner.id");
+    expect(AUDIT_SQL).toContain("v_actor,'studio_export','studio',p_studio_id");
   });
 
   it("the audit row carries entity + metadata (filename, files, row counts)", () => {
-    expect(CODE).toMatch(/entity_type: "studio",/);
-    expect(CODE).toMatch(/entity_id: studio\.id,/);
+    expect(AUDIT_SQL).toContain("v_actor,'studio_export','studio',p_studio_id");
+    expect(EXPORT_WRITER).toContain("p_studio_id: studio.id");
     expect(CODE).toMatch(/filename,/);
     // TRUTH-01A. `files` and `row_counts` were hand-written literals and had
     // drifted: the list named ten CSVs while the ZIP held fifteen, omitting all
@@ -69,14 +73,15 @@ describe("export: audit trail", () => {
     // `row_counts` from the same manifest counts. The behavioural proof that
     // they describe the real ZIP is in
     // tests/app/settings/data/export-emission-parity.test.ts.
-    expect(CODE).toMatch(/row_counts: Object\.fromEntries\(/);
+    expect(CODE).toMatch(/rowCounts: Object\.fromEntries\(/);
+    expect(EXPORT_WRITER).toContain("p_row_counts: { ...input.rowCounts }");
     expect(CODE).toMatch(/files: \[\.\.\.writtenCsvNames, "manifest\.json", "README\.txt"\]/);
     expect(CODE).not.toMatch(/"record_keeping_sterile_items\.csv",\s*\n\s*"record_keeping/);
   });
 
   it("audit insert happens after the zip is built and before the success return", () => {
     const zipIdx = CODE.indexOf("zip.generateAsync");
-    const auditIdx = CODE.indexOf('action: "studio_export"');
+    const auditIdx = CODE.indexOf("await recordStudioExportAudit(");
     const returnIdx = CODE.indexOf("return { ok: true, filename, base64 };");
     expect(zipIdx).toBeGreaterThan(-1);
     expect(auditIdx).toBeGreaterThan(zipIdx);
@@ -91,7 +96,7 @@ describe("export: audit trail", () => {
 
   it("the audit row never contains client data (metadata is names + counts only)", () => {
     const auditBlock = CODE.slice(
-      CODE.indexOf('.from("audit_logs")'),
+      CODE.indexOf("await recordStudioExportAudit("),
       CODE.indexOf("if (auditError)"),
     );
     expect(auditBlock).not.toMatch(/base64|allergies|skin_notes|email:|phone/);
@@ -105,7 +110,7 @@ describe("PR #189 boundaries (export action)", () => {
     );
   });
 
-  it("still uses the user-scoped client (RLS enforced), not the admin client", () => {
+  it("keeps export reads RLS-scoped; only the governed audit writer is privileged", () => {
     expect(ACTIONS).toMatch(/from "@\/lib\/supabase\/server"/);
     expect(ACTIONS).not.toMatch(/admin-server/);
   });
@@ -267,5 +272,263 @@ describe("PR #312: record-keeping / inspection CSVs", () => {
 
   it("no migration/schema/RLS change ships from the action (source is read-only)", () => {
     expect(CODE).not.toMatch(/alter table|create policy|drop policy|create table|\.rpc\(/i);
+  });
+});
+
+
+// SEC-003: execute the real server-only helper, not a permissive mocked audit
+// function. The production caller checks remain above; these probe its own
+// authorization/scope/metadata boundary before constructing service authority.
+const auditState = vi.hoisted(() => ({
+  actor: { id: "actor-A", active: true, role: "owner" },
+  studio: { id: "studio-A", name: "Studio A" },
+  throwAuth: false, throwWrite: false,
+  authUserId: "user-A" as string | null,
+  authError: null as { message: string } | null,
+  freshMember: { id: "actor-A", user_id: "user-A", studio_id: "studio-A", active: true, role: "owner" } as { id: string; user_id: string; studio_id: string; active: boolean; role: string } | null,
+  membershipError: null as { message: string } | null,
+  membershipReads: [] as Array<Record<string, unknown>>,
+  writeError: null as { message: string; code?: string } | null,
+  rpcReply: undefined as { data: unknown; error: null } | undefined,
+  readError: null as { message: string } | null,
+  adminConstructed: 0,
+  archivedAt: null as string | null,
+  auditLogs: [] as string[],
+  inserted: [] as Array<Record<string, unknown>>,
+  reads: [] as Array<Record<string, unknown>>,
+}));
+vi.mock("@/lib/supabase/queries", () => ({
+  getCurrentPractitionerWithStudio: async () => {
+    if (auditState.throwAuth) throw new Error("no active session");
+    return { practitioner: auditState.actor, studio: auditState.studio };
+  },
+}));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/logging/safe-log", () => ({ safeLog: { error: (value: string) => auditState.auditLogs.push(value) } }));
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: async () => ({
+    auth: { getUser: async () => ({ data: { user: auditState.authUserId ? { id: auditState.authUserId } : null }, error: auditState.authError }) },
+    from: (table: string) => ({
+    update: (patch: Record<string, unknown>) => {
+      const filters: Record<string, unknown> = {};
+      const chain = {
+        eq: (key: string, value: unknown) => { filters[key] = value; return chain; },
+        is: () => chain, not: () => chain,
+        then: (resolve: (value: unknown) => unknown) => {
+          if (table !== "clients" || filters.id !== "client-A" || filters.studio_id !== "studio-A") throw new Error("mutation scope lost");
+          auditState.archivedAt = patch.archived_at as string | null;
+          return Promise.resolve({ error: null }).then(resolve);
+        },
+      };
+      return chain;
+    },
+    select: (columns: string) => {
+    const filters: Record<string, unknown> = { table, columns };
+    const chain = {
+      eq: (key: string, value: unknown) => { filters[key] = value; return chain; },
+      maybeSingle: async () => {
+        if (table === "practitioners") {
+          auditState.membershipReads.push(filters);
+          return { data: auditState.freshMember, error: auditState.membershipError };
+        }
+        auditState.reads.push(filters);
+        return { data: filters.id === "client-A" && filters.studio_id === "studio-A" ? { id: "client-A" } : null, error: auditState.readError };
+      },
+    };
+    return chain;
+  } }) }),
+}));
+vi.mock("@/lib/supabase/admin-server", () => ({
+  createAdminClient: () => {
+    auditState.adminConstructed++;
+    return { rpc: async (name: string, args: Record<string, unknown>) => {
+      if (auditState.throwWrite) throw new Error("PRIVATE DATABASE TEXT");
+      if (auditState.writeError) return { data: null, error: auditState.writeError };
+      if (auditState.rpcReply !== undefined) return auditState.rpcReply;
+      const member = auditState.freshMember;
+      if (!member || !member.active || member.id !== args.p_actor_id || member.user_id !== args.p_user_id
+        || member.studio_id !== args.p_studio_id) return { data: false, error: null };
+      if (name === "record_studio_export_audit_governed") {
+        if (member.role !== "owner") return { data: false, error: null };
+        auditState.inserted.push({ studio_id: args.p_studio_id, actor_id: args.p_actor_id,
+          action: "studio_export", entity_type: "studio", entity_id: args.p_studio_id,
+          metadata: { filename: args.p_filename, files: args.p_files, row_counts: args.p_row_counts } });
+      } else if (name === "record_client_archive_audit_governed") {
+        auditState.inserted.push({ studio_id: args.p_studio_id, actor_id: args.p_actor_id,
+          action: args.p_archived ? "client_archived" : "client_unarchived", entity_type: "client", entity_id: args.p_client_id,
+          metadata: args.p_archived ? { archived_at: args.p_archived_at } : {} });
+      } else throw new Error("Unexpected privileged command");
+      return { data: true, error: null };
+    }, from: (table: string) => ({ insert: async (row: Record<string, unknown>) => {
+      if (table !== "audit_logs") throw new Error("unexpected privileged table");
+      if (auditState.throwWrite) throw new Error("PRIVATE DATABASE TEXT");
+      if (!auditState.writeError) auditState.inserted.push(row);
+      return { error: auditState.writeError };
+    } }) };
+  },
+}));
+import { recordClientArchiveAudit, recordStudioExportAudit } from "@/lib/audit/governed-writes";
+
+function exportAuditInput() {
+  return {
+    expectedStudioId: "studio-A", filename: "hone-export-studio-a-2026-10-21.zip",
+    files: [...expectedCsvFiles(), "manifest.json", "README.txt"],
+    rowCounts: Object.fromEntries(exportedResources().map(({ resource }) => [resource, 0])),
+  };
+}
+
+describe("SEC-003 governed archive/export writer", () => {
+  beforeEach(() => {
+    auditState.actor = { id: "actor-A", active: true, role: "owner" };
+    auditState.studio = { id: "studio-A", name: "Studio A" };
+    auditState.throwAuth = false; auditState.throwWrite = false;
+    auditState.authUserId = "user-A"; auditState.authError = null;
+    auditState.freshMember = { id: "actor-A", user_id: "user-A", studio_id: "studio-A", active: true, role: "owner" };
+    auditState.membershipError = null; auditState.membershipReads = [];
+    auditState.writeError = null; auditState.readError = null; auditState.rpcReply = undefined;
+    auditState.adminConstructed = 0; auditState.inserted = []; auditState.reads = [];
+    auditState.archivedAt = null; auditState.auditLogs = [];
+  });
+  it("derives archive identity and exact metadata, ignoring caller-injected actor/action/metadata", async () => {
+    const input = { expectedStudioId: "studio-A", clientId: "client-A", change: "archive" as const, archivedAt: "2026-10-21T01:00:00.000Z", actor_id: "forged", action: "clinical_records_printed", metadata: { arbitrary: "PRIVATE" } };
+    expect((await recordClientArchiveAudit(input)).error).toBeNull();
+    expect(auditState.reads).toEqual([{ table: "clients", columns: "id", id: "client-A", studio_id: "studio-A" }]);
+    expect(auditState.inserted).toEqual([{ studio_id: "studio-A", actor_id: "actor-A", action: "client_archived", entity_type: "client", entity_id: "client-A", metadata: { archived_at: input.archivedAt } }]);
+  });
+  it.each(["archive", "unarchive"] as const)("cached membership cannot authorize %s audit after uncached revocation", async (change) => {
+    auditState.freshMember!.active = false;
+    expect(auditState.actor.active).toBe(true);
+    expect((await recordClientArchiveAudit({ expectedStudioId: "studio-A", clientId: "client-A", change, archivedAt: "2026-10-21T01:00:00.000Z" })).error).not.toBeNull();
+    expect(auditState.adminConstructed).toBe(0);
+    expect(auditState.inserted).toEqual([]);
+  });
+  it("unarchive emits only the empty metadata object", async () => {
+    auditState.actor.role = "practitioner";
+    expect((await recordClientArchiveAudit({ expectedStudioId: "studio-A", clientId: "client-A", change: "unarchive", archivedAt: "ignored" })).error).toBeNull();
+    expect(auditState.inserted[0]).toMatchObject({ action: "client_unarchived", metadata: {} });
+  });
+  it.each([
+    { expectedStudioId: "studio-B", clientId: "client-A" },
+    { expectedStudioId: "studio-A", clientId: "client-B" },
+  ])("refuses foreign expected studio or client before service construction %j", async (scope) => {
+    expect((await recordClientArchiveAudit({ ...scope, change: "unarchive" })).error).not.toBeNull();
+    expect(auditState.adminConstructed).toBe(0);
+  });
+  it("refuses inactive/no-session/read-error cases without service writes", async () => {
+    const input = { expectedStudioId: "studio-A", clientId: "client-A", change: "unarchive" as const };
+    auditState.actor.active = false;
+    expect((await recordClientArchiveAudit(input)).error).not.toBeNull();
+    auditState.actor.active = true; auditState.throwAuth = true;
+    await expect(recordClientArchiveAudit(input)).resolves.toEqual({ error: { code: "audit_write_unavailable" } });
+    auditState.throwAuth = false; auditState.readError = { message: "PRIVATE" };
+    expect((await recordClientArchiveAudit(input)).error).not.toBeNull();
+    expect(auditState.adminConstructed).toBe(0);
+  });
+  it("rejects malformed timestamps or operation, never becoming a generic clinical writer", async () => {
+    expect((await recordClientArchiveAudit({ expectedStudioId: "studio-A", clientId: "client-A", change: "archive", archivedAt: "not-a-date" })).error).not.toBeNull();
+    expect((await recordClientArchiveAudit({ expectedStudioId: "studio-A", clientId: "client-A", change: "clinical_records_printed" as never })).error).not.toBeNull();
+    expect(auditState.adminConstructed).toBe(0);
+  });
+  it("exports only for the active owner, with exact bounded registry metadata", async () => {
+    const input = exportAuditInput();
+    expect((await recordStudioExportAudit(input)).error).toBeNull();
+    expect(auditState.membershipReads).toEqual([{
+      table: "practitioners", columns: "id,user_id,studio_id,active,role",
+      id: "actor-A", user_id: "user-A", studio_id: "studio-A", active: true,
+    }]);
+    expect(auditState.inserted[0]).toEqual({ studio_id: "studio-A", actor_id: "actor-A", action: "studio_export", entity_type: "studio", entity_id: "studio-A", metadata: { filename: input.filename, files: input.files, row_counts: input.rowCounts } });
+  });
+  it.each([
+    ["revoked", { active: false }], ["demoted", { role: "practitioner" }],
+    ["wrong actor", { id: "actor-B" }], ["wrong studio", { studio_id: "studio-B" }],
+    ["wrong user", { user_id: "user-B" }],
+  ])("cached owner cannot authorize export when fresh membership is %s", async (_label, mutation) => {
+    Object.assign(auditState.freshMember!, mutation);
+    expect(auditState.actor).toMatchObject({ active: true, role: "owner" });
+    expect((await recordStudioExportAudit(exportAuditInput())).error).not.toBeNull();
+    expect(auditState.adminConstructed).toBe(0);
+    expect(auditState.inserted).toEqual([]);
+  });
+  it.each(["missing member", "membership error", "missing user", "auth error"])(
+    "cached owner cannot authorize export after an uncached %s", async (failure) => {
+      if (failure === "missing member") auditState.freshMember = null;
+      if (failure === "membership error") auditState.membershipError = { message: "PRIVATE MEMBERSHIP DETAIL" };
+      if (failure === "missing user") auditState.authUserId = null;
+      if (failure === "auth error") auditState.authError = { message: "PRIVATE AUTH DETAIL" };
+      expect(auditState.actor).toMatchObject({ active: true, role: "owner" });
+      expect(await recordStudioExportAudit(exportAuditInput())).toEqual({ error: { code: "audit_write_unavailable" } });
+      expect(auditState.adminConstructed).toBe(0);
+      expect(auditState.inserted).toEqual([]);
+    },
+  );
+  it("rejects nonowner, inactive and changed-studio export contexts", async () => {
+    auditState.actor.role = "practitioner";
+    expect((await recordStudioExportAudit(exportAuditInput())).error).not.toBeNull();
+    auditState.actor.role = "owner"; auditState.actor.active = false;
+    expect((await recordStudioExportAudit(exportAuditInput())).error).not.toBeNull();
+    auditState.actor.active = true;
+    expect((await recordStudioExportAudit({ ...exportAuditInput(), expectedStudioId: "studio-B" })).error).not.toBeNull();
+    expect(auditState.adminConstructed).toBe(0);
+  });
+  it("refuses ungoverned files, counts, filename and incomplete metadata", async () => {
+    const input = exportAuditInput();
+    for (const mutation of [
+      { files: [...input.files, "arbitrary-provider-text.csv"] },
+      { files: [...input.files, "README.txt"] },
+      { files: input.files.filter((f) => f !== "manifest.json") },
+      { filename: "hone-export-other-studio-2026-10-21.zip" },
+      { rowCounts: { ...input.rowCounts, arbitrary: 1 } },
+      { rowCounts: Object.fromEntries(Object.keys(input.rowCounts).map((key) => [key, -1])) },
+    ]) expect((await recordStudioExportAudit({ ...input, ...mutation })).error).not.toBeNull();
+    expect(auditState.adminConstructed).toBe(0);
+  });
+  it.each(["archiveClientAction", "unarchiveClientAction"] as const)("%s preserves best-effort returned audit errors", async (action) => {
+    const actions = await import("@/app/(app)/clients/[id]/actions");
+    const form = new FormData(); form.set("client_id", "client-A");
+    auditState.archivedAt = action === "unarchiveClientAction" ? "2026-10-20T00:00:00.000Z" : null;
+    auditState.writeError = { message: "PRIVATE DATABASE TEXT" };
+    const destination = action === "archiveClientAction" ? "/clients" : "/clients/client-A";
+    await expect(actions[action](form)).rejects.toMatchObject({ message: "NEXT_REDIRECT", digest: expect.stringContaining(`;${destination};`) });
+    expect(auditState.archivedAt === null).toBe(action === "unarchiveClientAction");
+    expect(auditState.auditLogs).toHaveLength(1);
+    expect(auditState.auditLogs[0]).toContain("audit_write_unavailable");
+    expect(auditState.auditLogs[0]).not.toContain("PRIVATE");
+  });
+  it.each(["archiveClientAction", "unarchiveClientAction"] as const)("%s preserves committed success after a rejected audit RPC without leaking text", async (action) => {
+    const actions = await import("@/app/(app)/clients/[id]/actions");
+    const form = new FormData(); form.set("client_id", "client-A");
+    auditState.archivedAt = action === "unarchiveClientAction" ? "2026-10-20T00:00:00.000Z" : null;
+    auditState.throwWrite = true;
+    const destination = action === "archiveClientAction" ? "/clients" : "/clients/client-A";
+    await expect(actions[action](form)).rejects.toMatchObject({ message: "NEXT_REDIRECT", digest: expect.stringContaining(`;${destination};`) });
+    // The archive/unarchive update remains committed; audit failure does not
+    // invent a rollback or prevent the existing successful navigation.
+    expect(auditState.archivedAt === null).toBe(action === "unarchiveClientAction");
+    expect(auditState.auditLogs).toHaveLength(1);
+    expect(auditState.auditLogs[0]).toContain("audit_write_unavailable");
+    expect(auditState.auditLogs[0]).not.toContain("PRIVATE");
+  });
+  it.each(["PGRST202", "42501", "55P03"])("missing, forbidden or lock-timeout RPC (%s) cannot fall back to a direct audit insert", async code => {
+    auditState.writeError = { code, message: "PRIVATE DATABASE TEXT" };
+    expect(await recordStudioExportAudit(exportAuditInput())).toEqual({ error: { code: "audit_write_unavailable" } });
+    expect(await recordClientArchiveAudit({ expectedStudioId: "studio-A", clientId: "client-A", change: "unarchive" }))
+      .toEqual({ error: { code: "audit_write_unavailable" } });
+    expect(auditState.inserted).toEqual([]);
+  });
+  it.each([null, false, [], {}, "true", 1].map(data => ({ data })))("requires exact boolean true, refusing malformed success %j", async ({ data }) => {
+    auditState.rpcReply = { data, error: null };
+    expect(await recordStudioExportAudit(exportAuditInput())).toEqual({ error: { code: "audit_write_unavailable" } });
+    expect(await recordClientArchiveAudit({ expectedStudioId: "studio-A", clientId: "client-A", change: "unarchive" }))
+      .toEqual({ error: { code: "audit_write_unavailable" } });
+    expect(auditState.inserted).toEqual([]);
+  });
+  it("write errors/rejections remain curated; exports cannot report audit success", async () => {
+    auditState.writeError = { message: "PRIVATE DATABASE TEXT" };
+    expect((await recordStudioExportAudit(exportAuditInput())).error).not.toBeNull();
+    expect(JSON.stringify(await recordClientArchiveAudit({ expectedStudioId: "studio-A", clientId: "client-A", change: "unarchive" }))).not.toContain("PRIVATE");
+    auditState.writeError = null; auditState.throwWrite = true;
+    expect((await recordStudioExportAudit(exportAuditInput())).error).not.toBeNull();
+    await expect(recordClientArchiveAudit({ expectedStudioId: "studio-A", clientId: "client-A", change: "unarchive" })).resolves.toEqual({ error: { code: "audit_write_unavailable" } });
+    expect(auditState.inserted).toEqual([]);
   });
 });
