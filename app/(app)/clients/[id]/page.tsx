@@ -8,6 +8,8 @@ import { PendingLink } from "@/components/pending-link";
 import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { clientDisplayName, clientLegalName, type WithPreferredName } from "@/lib/clients/identity";
+import { readLegalIdentity } from "@/lib/clients/legal-identity";
 import {
   buildLastSessionSummary,
   pickLastTreatment,
@@ -241,6 +243,10 @@ export default async function ClientCheatSheetPage({
   }
 
   const { client, pricing, sessions, practitioners, attributionRoster } = data;
+  // HON-58: getClientById reads "*", so preferred_name arrives when the database has
+  // it. The heading shows the display name; the legal name (read below, in the
+  // one parallel wave) rides beside it for the owner or practitioner viewing.
+  const displayName = clientDisplayName(client as WithPreferredName & { name: string });
   const sessionsByRecency = orderByRecency(sessions);
   const newestSession = pickNewestNonVoidSession(sessionsByRecency);
   // PR Willow launch fixes: surface past appointments that the
@@ -330,6 +336,7 @@ export default async function ClientCheatSheetPage({
     activeCard,
     importedMemory,
     portalAccessEvents,
+    legalIdentityRead,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
@@ -413,7 +420,13 @@ export default async function ClientCheatSheetPage({
     isOverview
       ? getRecentPortalAccessEvents(studio.id, client.id, 5)
       : Promise.resolve([] as Awaited<ReturnType<typeof getRecentPortalAccessEvents>>),
+    // HON-58: the legal name, shown beside the display name in the heading on
+    // every tab. Read with the SIGNED-IN client, so only an owner or
+    // practitioner ever receives a row; a failed read omits the line.
+    createClient().then((supabase) => readLegalIdentity(supabase, client.id)),
   ]);
+  const legalName =
+    legalIdentityRead.ok && legalIdentityRead.value ? clientLegalName(legalIdentityRead.value) : null;
 
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
   // shape uses legacy decoding; a present undefined/malformed snapshot refuses
@@ -892,7 +905,7 @@ export default async function ClientCheatSheetPage({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="break-words text-2xl font-semibold tracking-tight md:text-3xl">
-                {client.name}
+                {displayName}
               </h1>
               {/* PR Willow launch fixes: when the client is archived
                   (migration 0050), show a calm badge so a practitioner
@@ -906,6 +919,7 @@ export default async function ClientCheatSheetPage({
               )}
             </div>
             <div className="mt-1 flex flex-col gap-y-0.5 text-sm text-neutral-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3">
+              {legalName && legalName !== displayName && <span>Legal name: {legalName}</span>}
               {client.pronouns && <span>{client.pronouns}</span>}
               {client.phone && <span>{client.phone}</span>}
               {client.email && <span className="break-all">{client.email}</span>}
@@ -1450,7 +1464,7 @@ export default async function ClientCheatSheetPage({
               Chloe's request). Same card, same actions. */}
           <PortalMessagesCard
             clientId={client.id}
-            clientName={client.name}
+            clientName={displayName}
             clientHasEmail={!!client.email && client.email.length > 0}
             clientIsArchived={client.archived_at != null}
             messages={portalMessages}

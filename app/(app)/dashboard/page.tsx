@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { clientDisplayName, type WithPreferredName } from "@/lib/clients/identity";
 import Link from "next/link";
 import { buttonClasses } from "@/components/ui/button";
 import {
@@ -162,7 +163,7 @@ type TodayAppointment = Pick<
   // `email` is here ONLY so the row can tell whether a portal link CAN be
   // sent. It widens the existing narrow projection by one column rather than
   // adding a second client query, and it is never rendered.
-  client: Pick<Client, "id" | "name" | "allergies" | "pronouns" | "email"> | null;
+  client: (Pick<Client, "id" | "name" | "allergies" | "pronouns" | "email"> & WithPreferredName) | null;
   service: Pick<Service, "id" | "name" | "modality"> | null;
   practitioner: { id: string; display_name: string | null; color: string } | null;
 };
@@ -347,7 +348,7 @@ export default async function DashboardPage({
   const { data: apptRows, error: apptErr } = await supabase
     .from("appointments")
     .select(
-      "id, starts_at, ends_at, duration_minutes, status, client_id, client:clients(id, name, allergies, pronouns, email), service:services(id, name, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
+      "id, starts_at, ends_at, duration_minutes, status, client_id, client:clients(id, name, preferred_name, allergies, pronouns, email), service:services(id, name, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
     )
     .eq("studio_id", studio.id)
     .gte("starts_at", startUtc.toISOString())
@@ -640,7 +641,7 @@ export default async function DashboardPage({
       return {
         appointmentId: appt.id,
         clientId: appt.client_id,
-        clientName: appt.client?.name ?? "Client",
+        clientName: appt.client ? clientDisplayName(appt.client) : "Client",
         timeLabel: localTimeString12h(new Date(appt.starts_at), studio.timezone),
         status: appt.status,
         serviceName: appt.service?.name ?? null,
@@ -1151,7 +1152,7 @@ function AppointmentRow({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-baseline gap-x-2">
               <span className="truncate font-medium">
-                {appt.client?.name ?? "Client deleted"}
+                {appt.client ? clientDisplayName(appt.client) : "Client deleted"}
               </span>
               {isCurrent && <CurrentPill />}
               <AppointmentStatusPill status={appt.status} />
@@ -1391,7 +1392,7 @@ function AppointmentRow({
             <DashboardTreatmentMemory
               appointmentId={appt.id}
               clientId={appt.client_id}
-              clientName={appt.client?.name ?? "this client"}
+              clientName={appt.client ? clientDisplayName(appt.client) : "this client"}
               /* The NARROW projection. `prepSummary` also carries the plan
                  note, which the server renders itself and only off Today —
                  passing the whole object crossed that note to the browser on

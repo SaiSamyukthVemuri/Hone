@@ -135,3 +135,22 @@ export function parseLegalIdentity(raw: {
   }
   return { ok: true, value };
 }
+
+/**
+ * The name on an INTERNAL clinical packet (a printed chart or notes): the legal
+ * identity, and the preferred name beside it in parentheses when it differs
+ * (OPS Q2). With no legal identity the stored name stands in, exactly as before.
+ */
+export function clinicalPacketName(client: ClientIdentityFields): string {
+  const legal = clientClinicalName(client);
+  const preferred = clean(client.preferred_name);
+  return preferred && preferred.toLowerCase() !== legal.toLowerCase() ? `${legal} (${preferred})` : legal;
+}
+
+/**
+ * The name on an INSURER or claim document (OPS Q2): the legal identity only,
+ * else the stored name. The preferred name is never printed there.
+ */
+export function insurerDocumentName(client: ClientIdentityFields): string {
+  return clientClinicalName(client);
+}

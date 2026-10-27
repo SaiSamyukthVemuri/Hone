@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { clientDisplayName } from "@/lib/clients/identity";
 import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { FormattedDateTime } from "@/components/formatted-date-time";
@@ -22,7 +23,7 @@ export default async function UpcomingPage() {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("appointments")
-    .select("*, client:clients(id, name, email, phone), service:services(id, name)")
+    .select("*, client:clients(id, name, preferred_name, email, phone), service:services(id, name)")
     .eq("studio_id", studio.id)
     .eq("status", "confirmed")
     .gte("starts_at", startUtc.toISOString())
@@ -62,7 +63,7 @@ export default async function UpcomingPage() {
               >
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">
-                    {a.client?.name ?? "Client"} · {a.service?.name ?? "Appointment"}
+                    {a.client ? clientDisplayName(a.client) : "Client"} · {a.service?.name ?? "Appointment"}
                   </div>
                   <div className="text-xs text-neutral-500">
                     <FormattedDateTime iso={a.starts_at} /> · {a.duration_minutes} min

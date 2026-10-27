@@ -1,5 +1,6 @@
 "use server";
 
+import { clientCommunicationName } from "@/lib/clients/identity";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -219,7 +220,7 @@ export async function bookAppointmentForClientAction(
   // by a practitioner action that is out of scope for this PR.
   const { data: client, error: clientErr } = await supabase
     .from("clients")
-    .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
+    .select("id, name, preferred_name, email, phone, sms_consent_at, sms_opted_out_at")
     .eq("id", clientId)
     .eq("studio_id", studio.id)
     .maybeSingle();
@@ -411,7 +412,8 @@ export async function bookAppointmentForClientAction(
       service,
       studio,
       ...(await assignedNotificationContact()),
-      clientName: client.name,
+      // HON-58: ordinary client communication uses the preferred name where a name is needed.
+      clientName: clientCommunicationName(client),
       clientEmail: client.email,
       clientPhone: client.phone,
       clientSmsConsentAt: client.sms_consent_at,
@@ -530,7 +532,7 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
   if (appt) {
     const { data: client } = await supabase
       .from("clients")
-      .select("name, email")
+      .select("name, preferred_name, email")
       .eq("id", appt.client_id)
       .maybeSingle();
     const { data: service } = appt.service_id
@@ -546,8 +548,8 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
         await sendCancellationEmail({
           appointmentId,
           to: client.email,
-          recipientName: client.name,
-          clientName: client.name,
+          recipientName: clientCommunicationName(client),
+          clientName: clientCommunicationName(client),
           studio,
           serviceName: service?.name ?? "your appointment",
           durationMinutes: appt.duration_minutes,
@@ -1141,7 +1143,7 @@ export async function sendPostcareEmailAction(
   const { data: appt, error: lookupErr } = await admin
     .from("appointments")
     .select(
-      "id, studio_id, status, starts_at, postcare_email_sent_at, postcare_email_send_attempts, postcare_email_claimed_at, postcare_email_failed_at, client:clients(id, name, email), service:services(id, name, modality), studio:studios(id, name, owner_email, timezone, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url, postcare_review_prompt_text, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name)",
+      "id, studio_id, status, starts_at, postcare_email_sent_at, postcare_email_send_attempts, postcare_email_claimed_at, postcare_email_failed_at, client:clients(id, name, preferred_name, email), service:services(id, name, modality), studio:studios(id, name, owner_email, timezone, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url, postcare_review_prompt_text, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name)",
     )
     .eq("id", appointmentId)
     .eq("studio_id", studio.id)
@@ -1261,7 +1263,7 @@ export async function sendPostcareEmailAction(
   const startsAt = appt.starts_at ? new Date(appt.starts_at) : null;
   const result = await sendPostcareToClient({
     appointmentId,
-    clientName: client.name ?? "",
+    clientName: clientCommunicationName(client),
     clientEmail: client.email,
     studio: studioRow as unknown as import("@/lib/types/database").Studio,
     practitionerName: performer?.display_name ?? null,

@@ -13,6 +13,7 @@ import type {
   StudioTimedBlock,
 } from "@/lib/types/database";
 import { dbErrorCode, dbFailureCode } from "@/lib/logging/error-class";
+import { clientDisplayName } from "@/lib/clients/identity";
 
 // Active services for the studio, ordered by the practitioner-
 // controlled sort_order ascending and then by name as a deterministic
@@ -232,7 +233,7 @@ export async function getAppointmentsForRange(
 ): Promise<AppointmentWithPractitionerColor[]> {
   const supabase = await createClient();
   const BASE =
-    "*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color, display_name), client:clients(id, name), ";
+    "*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color, display_name), client:clients(id, name, preferred_name), ";
   const runSelect = (serviceEmbed: string, afterId: string | null) => {
     let query = supabase
       .from("appointments")
@@ -282,8 +283,8 @@ export async function getAppointmentsForRange(
       | { id: string; color: string; display_name?: string | null }[]
       | null;
     client:
-      | { id: string; name: string }
-      | { id: string; name: string }[]
+      | { id: string; name: string; preferred_name?: string | null }
+      | { id: string; name: string; preferred_name?: string | null }[]
       | null;
     service:
       | { id: string; name: string; modality: string | null; calendar_color?: string | null }
@@ -297,9 +298,13 @@ export async function getAppointmentsForRange(
     const p = Array.isArray(row.practitioner)
       ? row.practitioner[0] ?? null
       : row.practitioner;
-    const c = Array.isArray(row.client)
+    const rawC = Array.isArray(row.client)
       ? row.client[0] ?? null
       : row.client;
+    // HON-58: on the calendar, `client.name` IS the display name (the preferred
+    // name when the client has one, else the stored name). The preferred name is
+    // not carried further: the calendar is an ordinary staff surface.
+    const c = rawC ? { id: rawC.id, name: clientDisplayName(rawC) } : null;
     const rawS = Array.isArray(row.service)
       ? row.service[0] ?? null
       : row.service;
