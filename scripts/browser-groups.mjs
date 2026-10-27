@@ -234,6 +234,11 @@ export const BROWSER_GROUPS = {
     specs: [
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
+      // HON-58 identity (0258): preferred/legal names on one client. Here and not
+      // in `sessions` for the same two reasons as UI-04 below: /clients/** has no
+      // PATH_TO_GROUP pattern, and `sessions` carries a cost pin. DB-coupled: it
+      // needs 0258 in the stack.
+      "hon58-identity.spec.ts",
       // FETT photos (HON-43): Photos-tab grid thumbnails survive a reload and
       // the 60 s signed-URL expiry. Here and not in `sessions` for UI-04's two
       // reasons: /clients/** has no PATH_TO_GROUP pattern (a photo diff already
