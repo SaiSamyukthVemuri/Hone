@@ -26,9 +26,9 @@ vi.mock("@/lib/supabase/queries", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 
 const attemptLookup: {
-  row: { charge_reason: string | null } | null;
+  row: { charge_reason: string | null; currency?: string | null } | null;
   error: unknown;
-} = { row: { charge_reason: "no_show_fee" }, error: null };
+} = { row: { charge_reason: "no_show_fee", currency: "cad" }, error: null };
 
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
@@ -66,10 +66,11 @@ vi.mock("@/lib/billing/session-payment-charge", () => ({
 
 import { chargeManualFeeAttemptAction } from "@/app/(app)/calendar/[id]/manual-fee-actions";
 
-function form(): FormData {
+function form(shownCurrency: string | null = "cad"): FormData {
   const fd = new FormData();
   fd.set("attempt_id", "attempt-1");
   fd.set("confirm_charge", "true");
+  if (shownCurrency !== null) fd.set("expected_currency", shownCurrency);
   // A caller cannot declare which flow they want; the reason is read from the
   // row. Setting it here must change nothing.
   fd.set("charge_reason", "no_show_fee");
@@ -78,7 +79,7 @@ function form(): FormData {
 
 beforeEach(() => {
   runCharge.mockClear();
-  attemptLookup.row = { charge_reason: "no_show_fee" };
+  attemptLookup.row = { charge_reason: "no_show_fee", currency: "cad" };
   attemptLookup.error = null;
   livemode = false;
 });
@@ -86,21 +87,21 @@ afterEach(() => vi.clearAllMocks());
 
 describe("manual-fee endpoint executes ONLY manual-fee attempts", () => {
   it("M1 a ready session_payment attempt is refused — in TEST mode too", async () => {
-    attemptLookup.row = { charge_reason: "session_payment" };
+    attemptLookup.row = { charge_reason: "session_payment", currency: "cad" };
     const res = await chargeManualFeeAttemptAction(form());
     expect(res.ok).toBe(false);
     expect(runCharge).toHaveBeenCalledTimes(0);
   });
 
   it("M2 no_show_fee in TEST mode still executes", async () => {
-    attemptLookup.row = { charge_reason: "no_show_fee" };
+    attemptLookup.row = { charge_reason: "no_show_fee", currency: "cad" };
     const res = await chargeManualFeeAttemptAction(form());
     expect(runCharge).toHaveBeenCalledTimes(1);
     expect(res.ok).toBe(true);
   });
 
   it("M3 late_cancellation_fee in TEST mode still executes", async () => {
-    attemptLookup.row = { charge_reason: "late_cancellation_fee" };
+    attemptLookup.row = { charge_reason: "late_cancellation_fee", currency: "cad" };
     const res = await chargeManualFeeAttemptAction(form());
     expect(runCharge).toHaveBeenCalledTimes(1);
     expect(res.ok).toBe(true);
@@ -108,7 +109,7 @@ describe("manual-fee endpoint executes ONLY manual-fee attempts", () => {
 
   it("M4 no_show_fee in LIVE mode remains held by the real hard hold", async () => {
     livemode = true;
-    attemptLookup.row = { charge_reason: "no_show_fee" };
+    attemptLookup.row = { charge_reason: "no_show_fee", currency: "cad" };
     const res = await chargeManualFeeAttemptAction(form());
     expect(res.ok).toBe(false);
     expect(res).toMatchObject({ outcome: "blocked" });
@@ -128,7 +129,7 @@ describe("manual-fee endpoint executes ONLY manual-fee attempts", () => {
     // because a null row blocks anyway — a mutant that drops the error check
     // still passes it. If the driver reports an error, the row is not
     // trustworthy no matter how valid it looks.
-    attemptLookup.row = { charge_reason: "no_show_fee" };
+    attemptLookup.row = { charge_reason: "no_show_fee", currency: "cad" };
     attemptLookup.error = { message: "boom" };
     const res = await chargeManualFeeAttemptAction(form());
     expect(res.ok).toBe(false);
@@ -148,14 +149,14 @@ describe("manual-fee endpoint executes ONLY manual-fee attempts", () => {
   it("M7 an unknown/unsupported charge reason is refused", async () => {
     for (const reason of ["refund", "subscription", "", "SESSION_PAYMENT"]) {
       runCharge.mockClear();
-      attemptLookup.row = { charge_reason: reason };
+      attemptLookup.row = { charge_reason: reason, currency: "cad" };
       const res = await chargeManualFeeAttemptAction(form());
       expect(res.ok, reason).toBe(false);
       expect(runCharge, reason).toHaveBeenCalledTimes(0);
     }
     // and a null reason
     runCharge.mockClear();
-    attemptLookup.row = { charge_reason: null };
+    attemptLookup.row = { charge_reason: null, currency: "cad" };
     const res = await chargeManualFeeAttemptAction(form());
     expect(res.ok).toBe(false);
     expect(runCharge).toHaveBeenCalledTimes(0);
@@ -166,7 +167,7 @@ describe("manual-fee endpoint executes ONLY manual-fee attempts", () => {
     for (const mode of [false, true]) {
       livemode = mode;
       runCharge.mockClear();
-      attemptLookup.row = { charge_reason: "session_payment" };
+      attemptLookup.row = { charge_reason: "session_payment", currency: "cad" };
       const res = await chargeManualFeeAttemptAction(form());
       expect(res.ok, `livemode=${mode}`).toBe(false);
       expect(runCharge, `livemode=${mode}`).toHaveBeenCalledTimes(0);
@@ -246,5 +247,32 @@ describe("execution entry-point census", () => {
     // and the manual-fee endpoint never consults the pricing permission (that
     // would couple manual fees to booked-service pricing)
     expect(MANUAL).not.toMatch(/decideExecutionPricingPermission/);
+  });
+});
+
+
+// #1035 Codex P1 #4369182087. The fee (no-show / late-cancellation) charge runs
+// the PERSISTED attempt in the PERSISTED currency; what the card printed is
+// posted only so a mismatch is REFUSED.
+describe("manual-fee charge confirms the persisted attempt currency", () => {
+  it("usd fee attempt, usd shown: executes (control)", async () => {
+    attemptLookup.row = { charge_reason: "no_show_fee", currency: "usd" };
+    const res = await chargeManualFeeAttemptAction(form("usd"));
+    expect(res.ok).toBe(true);
+    expect(runCharge).toHaveBeenCalledTimes(1);
+  });
+  it.each([["cad"], ["eur"], [""], [null]] as const)("usd fee attempt but %j shown: refused, runner never called", async (shown) => {
+    attemptLookup.row = { charge_reason: "no_show_fee", currency: "usd" };
+    const res = await chargeManualFeeAttemptAction(form(shown));
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/currency shown for this fee no longer matches/i);
+    expect(runCharge).toHaveBeenCalledTimes(0);
+  });
+  it.each([["eur"], [null], ["USD"]] as const)("stored currency %j: refused as unverifiable, runner never called", async (stored) => {
+    attemptLookup.row = { charge_reason: "late_cancellation_fee", currency: stored };
+    const res = await chargeManualFeeAttemptAction(form("usd"));
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/currency of this fee could not be verified/i);
+    expect(runCharge).toHaveBeenCalledTimes(0);
   });
 });

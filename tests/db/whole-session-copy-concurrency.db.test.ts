@@ -160,6 +160,9 @@ async function raceSourceEdit(
   try {
     // Editor opens a txn and holds a row lock on a source block (edit not yet committed).
     await editor.query("begin");
+    await editor.query("select set_config('request.jwt.claims', $1, true)", [
+      JSON.stringify({ sub: a.userId, role: "authenticated" }),
+    ]);
     await editor.query(editSql, editParams.map((p) => (p === "__SOURCE__" ? source : p)));
     // Copy runs concurrently; it must WAIT on the source locks, then (after the
     // editor commits) see the changed fingerprint and reject HN005 — or, if it

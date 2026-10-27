@@ -333,6 +333,22 @@ function allStrings(v: unknown, acc: string[] = []): string[] {
   return acc;
 }
 
+// THE CLOCK IS PART OF THE FIXTURE. The invitation fixture is scoped to
+// 2026-10-01..31 (and expires 2026-10-31T12:00Z), and the action resolves "today"
+// against the clock, so a test run against the REAL clock goes red once October
+// is over: P2-D failed on every branch from 26 Oct (Auckland) with no October
+// Monday left, and the out-of-scope tests fail from 1 Nov. Only `Date` is
+// faked (the action awaits real promises, and faking timers wholesale would
+// stall them); the horizon block below sets its own instant on top of this.
+const SUITE_NOW = new Date("2026-10-01T12:00:00.000Z");
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(SUITE_NOW);
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
   studioFixture.timezone = "America/Toronto";
   cookieJar.clear();

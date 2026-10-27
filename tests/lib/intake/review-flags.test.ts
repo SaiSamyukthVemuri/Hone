@@ -157,3 +157,28 @@ describe("deriveIntakeReviewFlags — wording safety", () => {
     }
   });
 });
+
+describe("0246 issued evidence labels with unchanged current clinical guidance", () => {
+  it("uses issued question and option text after current labels change, without changing severity or badges", async () => {
+    const { ISSUED_QUESTIONNAIRE, questionnaireForRow } = await import("@/lib/intake/questionnaire");
+    const { getQuestionByKey } = await import("@/lib/intake/questions");
+    const q = getQuestionByKey("medical_conditions")!;
+    const option = q.options!.find(o => o.value === "pacemaker")!;
+    const before = { question: q.label, option: option.label };
+    const responses = { medical_conditions: ["pacemaker"] };
+    const issued = questionnaireForRow(structuredClone(ISSUED_QUESTIONNAIRE));
+    const original = deriveIntakeReviewFlags(responses, issued.steps);
+    try {
+      q.label = "Different current question"; option.label = "Different current option";
+      expect(deriveIntakeReviewFlags(responses, issued.steps)).toEqual(original);
+      expect(original[0].basis).toContain(before.question);
+      expect(original[0].basis).toContain(before.option);
+      expect(deriveIntakeReviewFlags(responses)[0].basis).toContain("Different current question");
+      // Missing provenance does not hide a clinical alert or invent old words.
+      const unknown = deriveIntakeReviewFlags(responses, []);
+      expect(unknown[0].id).toBe(original[0].id);
+      expect(unknown[0].badges).toEqual(original[0].badges);
+      expect(unknown[0].basis).toContain("medical_conditions, pacemaker");
+    } finally { q.label = before.question; option.label = before.option; }
+  });
+});

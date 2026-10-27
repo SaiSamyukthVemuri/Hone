@@ -100,6 +100,25 @@ function makeFakeSupabase(state: DbState) {
   }
 
   return {
+    // Existing unit facade: only the governed CAS command, not a generic admin
+    // write. Actual PostgreSQL locks/ACLs/profile atomicity remain DB proof.
+    async rpc(fn: string, args: Record<string, unknown>) {
+      if (fn !== "write_intake_revision") throw new Error("unexpected writer");
+      if (state.failIntakeUpdateWith) {
+        const error = state.failIntakeUpdateWith; state.failIntakeUpdateWith = null;
+        return { data: null, error };
+      }
+      const matched = state.intakes.filter((r) => r.id === args.p_intake_id && r.studio_id === args.p_studio_id && r.client_id === args.p_client_id && !r.deleted_at);
+      if (matched.length !== 1) return { data: [{ outcome: "not_available", new_revision: null }], error: null };
+      const row = matched[0];
+      if (row.status !== "in_progress") return { data: [{ outcome: "terminal", new_revision: null }], error: null };
+      if (String(row.revision) !== args.p_expected_revision) return { data: [{ outcome: "conflict", new_revision: null }], error: null };
+      const patch = { responses: args.p_responses, current_step: args.p_step };
+      Object.assign(row, patch); row.revision = Number(row.revision) + 1;
+      row.updated_at = new Date(Date.parse(String(row.updated_at)) + 1000).toISOString();
+      state.updates.push({ patch, matched: 1 });
+      return { data: [{ outcome: "saved", new_revision: String(row.revision) }], error: null };
+    },
     from(table: string) {
       return {
         select: (cols: string) => selectChain(table, cols),
@@ -192,6 +211,8 @@ function intakeRow(over: Partial<Row> = {}): Row {
     reviewed_by: null,
     deleted_at: null,
     updated_at: T0,
+    revision: 0,
+    questionnaire_snapshot: null,
     ...over,
   };
 }
@@ -212,13 +233,13 @@ async function save(over: Partial<Parameters<typeof saveAssistedIntakeStepAction
   // The default concurrency token is read lazily: some cases deliberately
   // leave no row at all, and computing it eagerly would throw in the harness
   // instead of exercising the action.
-  const fallbackToken = state.intakes.find((r) => r.id === INTAKE)?.updated_at;
+  const fallbackToken = state.intakes.find((r) => r.id === INTAKE)?.revision;
   return saveAssistedIntakeStepAction({
     intakeId: INTAKE,
     clientId: CLIENT,
     step: 1,
     responses: { legal_name: "Dana Reyes" },
-    expectedUpdatedAt: String(fallbackToken ?? T0),
+    expectedRevision: String(fallbackToken ?? "0"),
     ...over,
   });
 }
@@ -227,6 +248,7 @@ function handoffFd(over: Record<string, string> = {}): FormData {
   const f = new FormData();
   f.set("intake_id", INTAKE);
   f.set("client_id", CLIENT);
+  f.set("expected_revision", String(state.intakes.find((r) => r.id === INTAKE)?.revision ?? "0"));
   for (const [k, v] of Object.entries(over)) f.set(k, v);
   return f;
 }
@@ -245,7 +267,7 @@ beforeEach(() => {
   state.updates = [];
   revalidatePath.mockClear();
   createAdminClientSpy.mockReset();
-  createAdminClientSpy.mockReturnValue({});
+  createAdminClientSpy.mockImplementation(() => makeFakeSupabase(state));
   generateIntakeLinkUrl.mockReset();
   generateIntakeLinkUrl.mockReturnValue("https://app.example.test/intake/tok-abc");
   stampIntakeLinkIssued.mockReset();
@@ -317,9 +339,11 @@ describe("1. recording the questionnaire", () => {
     expect(started).toBeLessThanOrEqual(Date.now() + 5_000);
   });
 
-  it("never uses the service role", async () => {
-    await save();
-    expect(createAdminClientSpy).not.toHaveBeenCalled();
+  it("uses the service client only after authorization for the governed save command", async () => {
+    expect((await save()).ok).toBe(true);
+    expect(createAdminClientSpy).toHaveBeenCalledTimes(1);
+    expect(currentIntake().status).toBe("in_progress");
+    expect(currentIntake().submitted_at).toBeNull();
   });
 
   it("unknown (non-question) keys are dropped", async () => {
@@ -406,7 +430,7 @@ describe("2. the client-owned boundary", () => {
         [ELECTROLYSIS_ACKNOWLEDGEMENT.id]: { ...clientRecord },
         legal_name: "Dana Reyes",
       } as Record<string, unknown>,
-      expectedUpdatedAt: String(currentIntake().updated_at),
+      expectedRevision: String(currentIntake().revision),
     });
     expect(res.ok).toBe(true);
     expect(storedResponses().legal_name).toBe("Dana Reyes");
@@ -420,7 +444,7 @@ describe("2. the client-owned boundary", () => {
     currentIntake().responses = { ack_accurate: false };
     const res = await save({
       responses: { legal_name: "Dana", ack_accurate: true } as Record<string, unknown>,
-      expectedUpdatedAt: String(currentIntake().updated_at),
+      expectedRevision: String(currentIntake().revision),
     });
     expect(res.ok).toBe(false);
     expect(state.updates).toHaveLength(0);
@@ -534,9 +558,9 @@ describe("3. authorization", () => {
       state.intakes = [intakeRow()];
       // Capture the token BEFORE mutating, so the concurrency predicate is
       // satisfied and the refusal we observe is the one under test.
-      const token = String(currentIntake().updated_at);
+      const token = String(currentIntake().revision);
       mutate(currentIntake());
-      const res = await save({ expectedUpdatedAt: token });
+      const res = await save({ expectedRevision: token });
       expect(res.ok).toBe(false);
       return res.ok ? "" : res.error;
     }
@@ -558,7 +582,7 @@ describe("3. authorization", () => {
     causes.push(await refusalFor((r) => { r.studio_id = "studio-other"; }));
     // absent entirely
     state.intakes = [];
-    const absent = await save({ expectedUpdatedAt: T0 });
+    const absent = await save({ expectedRevision: "0" });
     expect(absent.ok).toBe(false);
     causes.push(absent.ok ? "" : absent.error);
 
@@ -590,7 +614,7 @@ describe("4. more than one practitioner", () => {
     asPractitioner(PRAC_B, "Jane Doe");
     const res = await save({
       responses: { pronouns: "they/them" },
-      expectedUpdatedAt: String(currentIntake().updated_at),
+      expectedRevision: String(currentIntake().revision),
     });
     expect(res.ok).toBe(true);
 
@@ -622,7 +646,7 @@ describe("4. more than one practitioner", () => {
           last_updated_by: { practitioner_id: PRAC_B, display_name: "Jane Doe" },
         },
       } as Record<string, unknown>,
-      expectedUpdatedAt: String(currentIntake().updated_at),
+      expectedRevision: String(currentIntake().revision),
     });
     expect(provenance()!.started_by).toMatchObject({
       practitioner_id: PRAC_A,
@@ -638,7 +662,7 @@ describe("5. optimistic concurrency", () => {
     // Reuse the ORIGINAL token, now superseded by the write above.
     const res = await save({
       responses: { pronouns: "she/her" },
-      expectedUpdatedAt: T0,
+      expectedRevision: "0",
     });
     expect(res.ok).toBe(false);
     expect(storedResponses()).toEqual(afterFirst);
@@ -650,7 +674,7 @@ describe("5. optimistic concurrency", () => {
     if (!first.ok) return;
     const res = await save({
       responses: { pronouns: "she/her" },
-      expectedUpdatedAt: first.updatedAt,
+      expectedRevision: first.revision,
     });
     expect(res.ok).toBe(true);
     expect(storedResponses().pronouns).toBe("she/her");
@@ -741,5 +765,26 @@ describe("4332229852 whole-map draft navigation", () => {
     expect(rejected.ok).toBe(false);
     expect(JSON.stringify(currentIntake())).toBe(before);
     expect((await save({ step: 3, responses: { ...storedResponses(), has_allergies: "no" } })).ok).toBe(true);
+  });
+});
+
+describe("0246 assisted snapshot authority", () => {
+  it("known catalogue retains CAS and client-owned refusal without accepting supplied catalogue text", async () => {
+    const { ISSUED_QUESTIONNAIRE } = await import("@/lib/intake/questionnaire");
+    state.intakes = [intakeRow({ questionnaire_snapshot: structuredClone(ISSUED_QUESTIONNAIRE) })];
+    expect((await save({ step: 1, responses: { legal_name: "Synthetic", questionnaire_snapshot: { forged: true } } })).ok).toBe(true);
+    expect(storedResponses()).not.toHaveProperty("questionnaire_snapshot");
+    expect(currentIntake().questionnaire_snapshot).toEqual(ISSUED_QUESTIONNAIRE);
+    const before = JSON.stringify(currentIntake());
+    expect((await save({ step: 1, responses: { ack_accurate: true } })).ok).toBe(false);
+    expect(JSON.stringify(currentIntake())).toBe(before);
+  });
+  it.each([{}, { schema_version: 99 }, undefined])("refuses snapshot %j on save and handoff without stamping or minting a link", async (snapshot) => {
+    state.intakes = [intakeRow({ questionnaire_snapshot: snapshot })];
+    const before = JSON.stringify(currentIntake());
+    expect((await save({ step: 1, responses: { legal_name: "Unsaved" } })).ok).toBe(false);
+    expect((await handOffAssistedIntakeAction(handoffFd())).ok).toBe(false);
+    expect(JSON.stringify(currentIntake())).toBe(before);
+    expect(generateIntakeLinkUrl).not.toHaveBeenCalled();
   });
 });

@@ -214,6 +214,8 @@ beforeEach(() => {
       stripe_account_id: HEALTHY_ATTEMPT.stripe_account_id,
       stripe_livemode: false,
     },
+    // Explicit verified synthetic configuration; no runtime country default.
+    studio_payment_jurisdictions: { payment_country: "CA", payment_currency: "cad" },
     client_stripe_customers: {
       stripe_customer_id: HEALTHY_ATTEMPT.stripe_customer_id,
     },
@@ -315,6 +317,7 @@ describe("PREPARE: an unverifiable authorization is never eligible", () => {
         stripe_livemode: false,
         stripe_account_status: "enabled",
       },
+      studio_payment_jurisdictions: { payment_country: "CA", payment_currency: "cad" },
       // No prior attempt for this session.
       payment_charge_attempts: [],
     };
