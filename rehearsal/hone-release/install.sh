@@ -43,17 +43,22 @@ while read -r want name; do
   [ "$(sha256sum "$HERE/$name" | cut -d' ' -f1)" = "$want" ] || die "$name does not match its pinned sha256 (the package was changed after review)"
 done < "$PINS"
 pin_of() { awk -v n="$1" '$2 == n {print $1}' "$PINS"; }
-for need in launcher install.sh set-secret.sh approve-package.sh actions.conf sudoers.hone-release scripts/release-apply.sh scripts/read-backups.sh scripts/status.sh; do [ -n "$(pin_of "$need")" ] || die "the pins file lacks $need"; done
+for need in launcher install.sh set-secret.sh approve-package.sh actions.conf sudoers.hone-release ca/supabase-prod-ca-2021.crt scripts/release-apply.sh scripts/read-backups.sh scripts/status.sh scripts/reconcile.sh scripts/idle-probe.sh scripts/heartbeat.sh; do [ -n "$(pin_of "$need")" ] || die "the pins file lacks $need"; done
 [ "$(sha256sum "$0" | cut -d' ' -f1)" = "$(pin_of install.sh)" ] || die "this installer is not the pinned install.sh"
 GO_SHA=$(sed -n 's/^GO_SHA=//p' "$HERE/scripts/release-apply.sh" | head -1)
 [ "$(sha256sum "$GOBIN_SRC" | cut -d' ' -f1)" = "$GO_SHA" ] || die "supabase-go sha256 differs from the scripts' pin $GO_SHA"
+CA_SHA=$(sed -n 's/^CA_SHA=//p' "$HERE/scripts/release-apply.sh" | head -1)
+[ "$(sha256sum "$HERE/ca/supabase-prod-ca-2021.crt" | cut -d' ' -f1)" = "$CA_SHA" ] || die "the packaged CA file differs from the CA_SHA pinned in the apply script (T5)"
+openssl x509 -in "$HERE/ca/supabase-prod-ca-2021.crt" -noout -checkend 0 >/dev/null 2>&1 || die "the packaged CA file is not a valid, unexpired certificate"
 
 id hone-release >/dev/null 2>&1 || useradd --system --home-dir /var/lib/hone-release/home --no-create-home --shell /usr/sbin/nologin --user-group hone-release
 passwd -l hone-release >/dev/null 2>&1 || true
 install -d -m 700 -o hone-release -g hone-release /var/lib/hone-release /var/lib/hone-release/secrets /var/lib/hone-release/state /var/lib/hone-release/work /var/lib/hone-release/logs /var/lib/hone-release/home
-install -d -m 755 -o root -g root /usr/local/libexec/hone-release /usr/local/libexec/hone-release/scripts /usr/local/libexec/hone-release/bin /etc/hone-release
+install -d -m 755 -o root -g root /usr/local/libexec/hone-release /usr/local/libexec/hone-release/scripts /usr/local/libexec/hone-release/bin /usr/local/libexec/hone-release/ca /etc/hone-release
 install -m 755 -o root -g root "$HERE/launcher" /usr/local/libexec/hone-release/launcher
 install -m 755 -o root -g root "$GOBIN_SRC" /usr/local/libexec/hone-release/bin/supabase-go
+install -m 644 -o root -g root "$HERE/ca/supabase-prod-ca-2021.crt" /usr/local/libexec/hone-release/ca/supabase-prod-ca-2021.crt
+[ "$(sha256sum /usr/local/libexec/hone-release/ca/supabase-prod-ca-2021.crt | cut -d' ' -f1)" = "$(pin_of ca/supabase-prod-ca-2021.crt)" ] || { echo "REFUSED: installed CA differs from its pin" >&2; exit 1; }
 : > /usr/local/libexec/hone-release/manifest.new
 grep -Ev '^[[:space:]]*(#|$)' "$HERE/actions.conf" | while read -r action file secret; do
   install -m 755 -o root -g root "$HERE/scripts/$file" "/usr/local/libexec/hone-release/scripts/$file"
@@ -72,4 +77,4 @@ mv -f "$tmp" /etc/sudoers.d/hone-release
 visudo -c >/dev/null 2>&1 || echo "note: visudo -c reports a problem elsewhere in the sudoers configuration (not in /etc/sudoers.d/hone-release, which validated)" >&2
 echo "installed from pinned files. manifest:"; cat /usr/local/libexec/hone-release/manifest
 echo "launcher sha256 $(sha256sum /usr/local/libexec/hone-release/launcher | cut -d' ' -f1)"
-echo "next (root): set-secret.sh db-password ; set-secret.sh read-pat  ; approve-package.sh ..."
+echo "next (root): set-secret.sh db-password ; set-secret.sh read-pat ; confirm the CA sha256 against Supabase's dashboard copy (owner action) ; approve-package.sh ..."

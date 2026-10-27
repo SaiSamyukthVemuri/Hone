@@ -4,8 +4,11 @@
 # difference, prints the first and last file and the count, and only then writes /etc/hone-release/APPROVED-PACKAGE (root:root 644, single use,
 # at most 60 minutes). usage (all required; key=value):
 #   approve-package.sh id=<approval id> bundle_sha=<64 hex> list_sha=<64 hex> head=<40 hex> pr=<number> receipt_sha=<64 hex> first=NNNN last=NNNN count=N
-#     minutes=<1..60> window_start=<UTC> window_end=<UTC> recovery_basis=row4|waiver recovery_point=<UTC>|none waiver_id=<id>|none
-#     pooler_host=<host:5432> max_push_seconds=<10..1800> attestation="<Sam's words>"
+#     minutes=<1..60> window_start=<UTC> window_end=<UTC> recovery_basis=row4|waiver waiver_id=WAIVER-YYYYMMDD-N|none
+#     recovery_stamp=<UTC>|none s0a_sha=<64 hex> s0a_at=<UTC> min_span_days=<6..99> quiet_db=idle|heartbeat   (Sam's one-word E4 selection)
+#     connection_mode=direct|pooler pooler_host=<aws-N-region.pooler.supabase.com:5432>|none
+#     statement_timeout_s=<1..600> lock_timeout_s=<1..30> idle_tx_timeout_s=<1..300> max_push_seconds=<10..1800> attestation="<Sam's words>"
+# recovery_basis=row4 is the AUTONOMOUS path (needs the custody-recorded provider evidence at apply time); waiver is the ATTENDED FALLBACK (a recorded waiver id).
 set -eu
 umask 022
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
@@ -13,16 +16,20 @@ declare -A V
 for kv in "$@"; do
   case "$kv" in *=*) ;; *) echo "arguments are key=value" >&2; exit 1 ;; esac
   k=${kv%%=*}; v=${kv#*=}
-  case " id bundle_sha list_sha head pr receipt_sha first last count minutes window_start window_end recovery_basis recovery_point waiver_id pooler_host max_push_seconds attestation " in *" $k "*) ;; *) echo "unknown argument: $k" >&2; exit 1 ;; esac
+  case " id bundle_sha list_sha head pr receipt_sha first last count minutes window_start window_end recovery_basis waiver_id recovery_stamp s0a_sha s0a_at min_span_days quiet_db connection_mode pooler_host statement_timeout_s lock_timeout_s idle_tx_timeout_s max_push_seconds attestation " in *" $k "*) ;; *) echo "unknown argument: $k" >&2; exit 1 ;; esac
   [ -z "${V[$k]+x}" ] || { echo "repeated argument: $k" >&2; exit 1; }
   V[$k]=$v
 done
-for k in id bundle_sha list_sha head pr receipt_sha first last count minutes window_start window_end recovery_basis recovery_point waiver_id pooler_host max_push_seconds attestation; do
+for k in id bundle_sha list_sha head pr receipt_sha first last count minutes window_start window_end recovery_basis waiver_id recovery_stamp s0a_sha s0a_at min_span_days quiet_db connection_mode pooler_host statement_timeout_s lock_timeout_s idle_tx_timeout_s max_push_seconds attestation; do
   [ -n "${V[$k]+x}" ] && [ -n "${V[$k]}" ] || { echo "missing argument: $k" >&2; exit 1; }
 done
 hex() { printf '%s' "$2" | grep -Eq "^[0-9a-f]{$1}\$"; }
 hex 64 "${V[bundle_sha]}" && hex 64 "${V[list_sha]}" && hex 40 "${V[head]}" && hex 64 "${V[receipt_sha]}" || { echo "bundle_sha, list_sha, head and receipt_sha must be FULL lowercase hex (64, 64, 40, 64)" >&2; exit 1; }
 printf '%s' "${V[minutes]}" | grep -Eq '^[0-9]{1,2}$' && [ "${V[minutes]}" -ge 1 ] && [ "${V[minutes]}" -le 60 ] || { echo "minutes must be 1..60" >&2; exit 1; }
+hex 64 "${V[s0a_sha]}" || { echo "s0a_sha must be the FULL 64-hex sha256 of the S0a result record" >&2; exit 1; }
+case "${V[quiet_db]}" in idle|heartbeat) ;; *) echo "quiet_db must be idle or heartbeat" >&2; exit 1 ;; esac
+case "${V[connection_mode]}" in direct|pooler) ;; *) echo "connection_mode must be direct or pooler" >&2; exit 1 ;; esac
+case "${V[recovery_basis]}" in row4) AUTON=autonomous ;; waiver) AUTON=attended-fallback ;; *) echo "recovery_basis must be row4 or waiver" >&2; exit 1 ;; esac
 if [ "${V[recovery_basis]}" = waiver ]; then printf '%s' "${V[waiver_id]}" | grep -Eq '^WAIVER-[0-9]{8}-[0-9]{1,3}$' || { echo "waiver_id must be WAIVER-YYYYMMDD-N, typed from the recorded waiver" >&2; exit 1; }; fi
 IN=/srv/hone-release-inbox
 [ -f "$IN/bundle.tar" ] && [ -f "$IN/list.sha256" ] && [ ! -L "$IN/bundle.tar" ] && [ ! -L "$IN/list.sha256" ] || { echo "the inbox files are missing or symlinks" >&2; exit 1; }
@@ -38,16 +45,25 @@ n=$(awk -v f="$((10#${V[first]}))" -v l="$((10#${V[last]}))" '{v=substr($2,1,4)+
 [ "$n" = "${V[count]}" ] || { echo "REFUSED: the list holds $n files from ${V[first]} to ${V[last]}, not the typed count ${V[count]}" >&2; exit 1; }
 ref=$(head -n 1 /etc/hone-release/PROJECT-REF)
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ); exp=$(date -u -d "+${V[minutes]} minutes" +%Y-%m-%dT%H:%M:%SZ)
-q="sslmode=require"
-url="postgresql://postgres.$ref@${V[pooler_host]}/postgres?$q"
+S=${V[statement_timeout_s]}; L=${V[lock_timeout_s]}; I=${V[idle_tx_timeout_s]}
+for tv in "$S" "$L" "$I"; do printf '%s' "$tv" | grep -Eq '^[0-9]{1,4}$' && [ "$tv" -ge 1 ] || { echo "the three timeouts must be positive whole seconds" >&2; exit 1; }; done
+if [ "${V[connection_mode]}" = direct ]; then
+  host="db.$ref.supabase.co:5432"; TC=server-startup-options
+  url="postgresql://postgres@$host/postgres?options=-c%20statement_timeout%3D$((S * 1000))%20-c%20lock_timeout%3D$((L * 1000))%20-c%20idle_in_transaction_session_timeout%3D$((I * 1000))%20-c%20client_connection_check_interval%3D5000"
+else
+  host=${V[pooler_host]}; TC=server-per-file-set-local
+  url="postgresql://postgres.$ref@$host/postgres"
+fi
 echo "VERIFIED against the typed reviewed values: bundle ${bundle:0:12}... list ${list:0:12}... head ${head_:0:12}... PR #${V[pr]} receipt ${V[receipt_sha]:0:12}..."
 echo "package: $nfiles files in the list; pending ${V[first]}..${V[last]} = $n files; first pending $f1; last file in the list $fl"
-echo "window ${V[window_start]} .. ${V[window_end]}; approval valid until $exp; recovery ${V[recovery_basis]} ${V[recovery_point]} ${V[waiver_id]}; target (no password) $url"
+echo "window ${V[window_start]} .. ${V[window_end]}; approval valid until $exp; recovery ${V[recovery_basis]} ($AUTON) stamp ${V[recovery_stamp]} waiver ${V[waiver_id]}; quiet-database mode ${V[quiet_db]}; S0a ${V[s0a_sha]:0:12}... at ${V[s0a_at]}"
+echo "connection ${V[connection_mode]}; timeouts (server side, $TC) statement ${S}s lock ${L}s idle-in-transaction ${I}s; client wall clock ${V[max_push_seconds]}s then KILL; target (no password) $url"
 tmp=$(mktemp /etc/hone-release/.ap.XXXXXX)
 { echo "approval_id=${V[id]}"; echo "approved_at=$now"; echo "head=$head_"; echo "bundle_sha=$bundle"; echo "list_sha=$list"; echo "pr=${V[pr]}"; echo "pr_head=${V[head]}"; echo "receipt_sha=${V[receipt_sha]}"
-  echo "project_ref=$ref"; echo "target_url=$url"; echo "pooler_host=${V[pooler_host]}"
+  echo "project_ref=$ref"; echo "target_url=$url"; echo "connection_mode=${V[connection_mode]}"; echo "db_host=$host"
   echo "first=${V[first]}"; echo "last=${V[last]}"; echo "count=${V[count]}"; echo "expires_at=$exp"; echo "window_start=${V[window_start]}"; echo "window_end=${V[window_end]}"
-  echo "recovery_basis=${V[recovery_basis]}"; echo "recovery_point=${V[recovery_point]}"; echo "waiver_id=${V[waiver_id]}"; echo "max_push_seconds=${V[max_push_seconds]}"
-  echo "timeout_residual=accepted-server-limit-only"; echo "recovery_attestation=${V[attestation]}"; echo "watchdog=waived-by-approver"; } > "$tmp"
+  echo "recovery_basis=${V[recovery_basis]}"; echo "waiver_id=${V[waiver_id]}"; echo "recovery_stamp=${V[recovery_stamp]}"; echo "s0a_sha=${V[s0a_sha]}"; echo "s0a_at=${V[s0a_at]}"; echo "min_span_days=${V[min_span_days]}"
+  echo "quiet_db_mode=${V[quiet_db]}"; echo "autonomy=$AUTON"; echo "statement_timeout_s=$S"; echo "lock_timeout_s=$L"; echo "idle_tx_timeout_s=$I"; echo "timeout_control=$TC"
+  echo "max_push_seconds=${V[max_push_seconds]}"; echo "recovery_attestation=${V[attestation]}"; } > "$tmp"
 chown root:root "$tmp"; chmod 644 "$tmp"; mv -f "$tmp" /etc/hone-release/APPROVED-PACKAGE
 echo "APPROVED-PACKAGE written (single use, consumed at the first dry-run attempt)"

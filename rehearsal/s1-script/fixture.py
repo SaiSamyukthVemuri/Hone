@@ -4,7 +4,7 @@ The test copy differs from the real script ONLY in the lines this tool rewrites 
 platform check on Linux); it asserts that and prints the changed lines.
 usage:
   fixture.py copy  <real-script> <out-script> --go-sha S --bundle-sha S --list-sha S --ref R --url U --go34 FILE [--no-platform]
-  fixture.py syn   <outdir> [--fail 0230]                 synthetic bundle with the REAL names (+ list, go34 file)
+  fixture.py syn   <outdir> [--fail 0230] [--all-setlocal] [--tfile NNNN --tkind slow-b2|slow-b1|reset|zero|big|dyn]   synthetic bundle with the REAL names (+ list, go34 file)
   fixture.py vary  <srcdir> <outdir> <tamper|add247|add247-list|drop|alter|link>
 """
 import hashlib, io, os, sys, tarfile
@@ -85,7 +85,21 @@ def cmd_syn(a):
         else:
             nap = "select pg_sleep(2);\n" if n[:4] in ("0213", "0229", "0246") else ""   # keeps the CLI alive long enough for the argv sampler
             body = f"begin;\ncreate table public.s1_t{n[:4]} (id int);\n{nap}commit;\n".encode()
+        if "--all-setlocal" in a and v > 212:   # B2 shape: every file carries its own bounded server-side timeouts
+            body = body.replace(b"begin;\n", b"begin;\nset local lock_timeout = '5s';\nset local statement_timeout = '30s';\n", 1)
         files[n] = body
+    if "--tfile" in a:   # HON66-CONSOLIDATE timeout-gate variants on ONE file: slow-b2 | slow-b1 | reset | zero | big | dynamic
+        pre, kind = a[a.index("--tfile") + 1], a[a.index("--tkind") + 1]
+        k = [n for n in files if n.startswith(pre)][0]
+        sl = b"select pg_sleep(30);\n"
+        files[k] = {
+            "slow-b2": b"begin;\nset local lock_timeout = '5s';\nset local statement_timeout = '2s';\n" + sl + b"commit;\n",
+            "slow-b1": b"begin;\n" + sl + b"commit;\n",
+            "reset": b"begin;\nreset statement_timeout;\ncreate table public.s1_tx (id int);\ncommit;\n",
+            "zero": b"begin;\nset local statement_timeout = 0;\ncreate table public.s1_tx (id int);\ncommit;\n",
+            "big": b"begin;\nset local statement_timeout = '9999s';\ncreate table public.s1_tx (id int);\ncommit;\n",
+            "dyn": b"begin;\nselect set_config('statement_timeout', '0', true);\ncreate table public.s1_tx (id int);\ncommit;\n",
+        }[kind]
     emit(out, files, head=head)
 
 def cmd_vary(a):

@@ -20,5 +20,29 @@ mkdir -p "$WORK/supabase/.temp" && printf '%s\n' v2.102.0 > "$WORK/supabase/.tem
 rc=0
 ( cd "$WORK" && SUPABASE_ACCESS_TOKEN="$TOKEN" SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 "$BIN" backups list --project-ref "$REF" -o json ) </dev/null > "$WORK/out.json" 2> "$WORK/err.txt" || rc=$?
 TOKEN=""; unset TOKEN
-if [ "$rc" != 0 ]; then tail -n 5 "$WORK/err.txt" | LC_ALL=C sed -E 's#[A-Za-z0-9.-]*\.supabase\.com[:0-9]*#<host>#g; s#(sbp_)[A-Za-z0-9]+#\1<masked>#g' >&2; die "backups list failed (exit $rc)"; fi
+if [ "$rc" != 0 ]; then tail -n 5 "$WORK/err.txt" | LC_ALL=C sed -E 's#[A-Za-z0-9.-]*\.supabase\.(com|co)[:0-9]*#<host>#g; s#(sbp_)[A-Za-z0-9]+#\1<masked>#g' >&2; die "backups list failed (exit $rc)"; fi
 cat "$WORK/out.json"
+# C: the custody layer records WHAT THE PROVIDER SAID, timestamped, in state only hone-release can write. The apply STOPs unless this
+# record shows the recovery evidence the unattended path needs. Nothing here calls the restore-point endpoint (it is never a target).
+STATE=/var/lib/hone-release/state
+python3 -I - "$WORK/out.json" "$STATE" <<'PYEV' || die "the backups answer could not be turned into the evidence record"
+import json, sys, time, os
+j = json.load(open(sys.argv[1]))
+st = sys.argv[2]
+d = j.get("physical_backup_data") or {}
+lo, hi = d.get("earliest_physical_backup_date_unix"), d.get("latest_physical_backup_date_unix")
+pitr = bool(j.get("pitr_enabled"))
+now = int(time.time())
+iso = lambda u: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(u))
+ok = pitr and isinstance(lo, int) and isinstance(hi, int) and lo > 0 and hi >= lo and hi <= now + 60
+lines = ["read_at=" + iso(now), "pitr_enabled=" + ("true" if pitr else "false")]
+if ok:
+    lines += ["earliest=" + iso(lo), "latest=" + iso(hi), "span_seconds=%d" % (hi - lo)]
+else:
+    lines += ["earliest=none", "latest=none", "span_seconds=0"]
+tmp = os.path.join(st, "BACKUPS-EVIDENCE.tmp")
+with open(tmp, "w") as f:
+    f.write("\n".join(lines) + "\n"); f.flush(); os.fsync(f.fileno())
+os.replace(tmp, os.path.join(st, "BACKUPS-EVIDENCE"))
+print("evidence recorded: " + " ".join(lines), file=sys.stderr)
+PYEV

@@ -15,8 +15,34 @@ permissions:
   contents: read
 
 jobs:
+  scope:
+    name: which rehearsal evidence is already green for this head (no unchanged reruns)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      s1apply: ${{ steps.d.outputs.s1apply }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Did s1-apply.sh or its own harness change since the previous head of this PR?
+        id: d
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # s1-apply.sh, its cases and the macOS/zsh harnesses are byte-identical since the last green run (40571681931); only the hone-release package, the
+          # additive fixture options and this workflow changed, so the macOS and s1-apply Supavisor jobs are skipped rather than rerun.
+          if [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then echo "s1apply=true" >> "$GITHUB_OUTPUT"; echo "no previous head: run everything"; exit 0; fi
+          if git diff --name-only "$BEFORE" "$AFTER" | grep -Eq '^rehearsal/s1-script/(s1-apply\.sh|test-|cases\.sh|driver\.py|drive-sheet\.py|tlsfront-count\.py|c4/|WATCHDOG|DOWNLOAD|MIGRATIONS|migrations-|G3-)'; then echo "s1apply=true" >> "$GITHUB_OUTPUT"; else echo "s1apply=false" >> "$GITHUB_OUTPUT"; fi
+          git diff --name-only "$BEFORE" "$AFTER"; cat "$GITHUB_OUTPUT"
+
   s1-script-macos:
     name: s1-apply.sh on macOS arm64 (bash 3.2, real supabase-go, real Postgres, synthetic bundle)
+    needs: scope
+    if: needs.scope.outputs.s1apply == 'true'
     runs-on: macos-14
     timeout-minutes: 25
     steps:
@@ -38,6 +64,8 @@ jobs:
 
   s1-script-supavisor:
     name: s1-apply.sh with the REAL 34 files through the local Supavisor session pooler (Linux)
+    needs: scope
+    if: needs.scope.outputs.s1apply == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -112,6 +140,8 @@ jobs:
 
   download-line:
     name: the one-line download command under bash 3.2 and zsh (fake scp) on macOS
+    needs: scope
+    if: needs.scope.outputs.s1apply == 'true'
     runs-on: macos-14
     timeout-minutes: 10
     steps:
@@ -127,6 +157,8 @@ jobs:
 
   watchdog-sheet:
     name: watchdog sheet lines pasted into interactive bash 3.2 and zsh (fake scp, stub watchdog) on macOS
+    needs: scope
+    if: needs.scope.outputs.s1apply == 'true'
     runs-on: macos-14
     timeout-minutes: 15
     steps:

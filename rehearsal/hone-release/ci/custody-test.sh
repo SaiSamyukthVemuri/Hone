@@ -23,12 +23,13 @@ chmod 440 /etc/sudoers.d/* 2>/dev/null   # a hosted runner ships /etc/sudoers.d/
 id sam >/dev/null 2>&1 || useradd -m -s /bin/bash sam
 passwd -l sam >/dev/null 2>&1
 # T1: the package is copied to a ROOT-OWNED directory outside /tmp (no world-writable ancestor); the pins are what Sam types from the reviewed record
-SRC=/root/hr-pkg; rm -rf "$SRC" /root/hr-pins.txt; mkdir -p "$SRC/scripts" "$SRC/ci"
-cp "$HR/launcher" "$HR/install.sh" "$HR/set-secret.sh" "$HR/approve-package.sh" "$HR/actions.conf" "$HR/sudoers.hone-release" "$SRC/"; cp "$HR"/scripts/*.sh "$SRC/scripts/"
+SRC=/root/hr-pkg; rm -rf "$SRC" /root/hr-pins.txt; mkdir -p "$SRC/scripts" "$SRC/ci" "$SRC/ca"
+cp "$HR/launcher" "$HR/install.sh" "$HR/set-secret.sh" "$HR/approve-package.sh" "$HR/actions.conf" "$HR/sudoers.hone-release" "$SRC/"; cp "$HR"/scripts/*.sh "$SRC/scripts/"; cp "$HR"/ca/* "$SRC/ca/"
 cp "$HERE/stub-supabase-go" "$T/supabase-go"; chmod 755 "$T/supabase-go"
 STUBSHA=$(sha256sum "$T/supabase-go" | cut -d' ' -f1)
-sed -i "s/^GO_SHA=.*/GO_SHA=$STUBSHA/" "$SRC/scripts/release-apply.sh" "$SRC/scripts/read-backups.sh"
-echo "test variant rewrites: GO_SHA in release-apply.sh and read-backups.sh only (the stub's sha256)"
+sed -i "s/^GO_SHA=.*/GO_SHA=$STUBSHA/" "$SRC/scripts/release-apply.sh" "$SRC/scripts/read-backups.sh" "$SRC/scripts/reconcile.sh" "$SRC/scripts/idle-probe.sh" "$SRC/scripts/heartbeat.sh"
+sed -i "s/^IDLE_SECS=.*/IDLE_SECS=2/" "$SRC/scripts/idle-probe.sh"
+echo "test variant rewrites: GO_SHA in the five CLI-calling scripts (the stub's sha256) and IDLE_SECS 120 -> 2 in idle-probe.sh"
 diff <(sed 's/^GO_SHA=.*/GO_SHA=X/' "$HR/scripts/release-apply.sh") <(sed 's/^GO_SHA=.*/GO_SHA=X/' "$SRC/scripts/release-apply.sh") >/dev/null && ok "the installed apply script differs from the shipped one in the GO_SHA line only" || bad "variant differs elsewhere"
 rmdir "$SRC/ci" 2>/dev/null; chown -R root:root "$SRC"; chmod -R go-w "$SRC"
 mkpins() { (cd "$SRC" && find . -type f | sed 's#^\./##' | LC_ALL=C sort | while read -r f; do printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f"; done) > /root/hr-pins.txt; chown root:root /root/hr-pins.txt; chmod 644 /root/hr-pins.txt; }
@@ -67,7 +68,7 @@ install -m 644 -o sam -g sam "$T/syn/migrations-d189768b.tar" /srv/hone-release-
 install -m 644 -o sam -g sam "$T/syn/MIGRATIONS-d189768b.sha256" /srv/hone-release-inbox/list.sha256
 HEAD_REVIEWED=$HEAD40; RECEIPT=$(printf 'a%.0s' $(seq 1 64))
 approve() { # approve ID [key=value overrides]   every value is "typed from the reviewed record" (computed here from the files under review)
-  local id=$1; shift; local -A K=( [id]=$id [bundle_sha]=$(sha256sum /srv/hone-release-inbox/bundle.tar | cut -d' ' -f1) [list_sha]=$(sha256sum /srv/hone-release-inbox/list.sha256 | cut -d' ' -f1) [head]=$HEAD_REVIEWED [pr]=1193 [receipt_sha]=$RECEIPT [first]=0213 [last]=0246 [count]=34 [minutes]=30 [window_start]=$(date -u -d '-10 minutes' +%Y-%m-%dT%H:%M:%SZ) [window_end]=$(date -u -d '+3 hours' +%Y-%m-%dT%H:%M:%SZ) [recovery_basis]=waiver [recovery_point]=none [waiver_id]=WAIVER-20261027-1 [pooler_host]=aws-0-us-east-1.pooler.supabase.com:5432 [max_push_seconds]=60 [attestation]="restore point attested by the approver, not verified here" )
+  local id=$1; shift; local -A K=( [id]=$id [bundle_sha]=$(sha256sum /srv/hone-release-inbox/bundle.tar | cut -d' ' -f1) [list_sha]=$(sha256sum /srv/hone-release-inbox/list.sha256 | cut -d' ' -f1) [head]=$HEAD_REVIEWED [pr]=1193 [receipt_sha]=$RECEIPT [first]=0213 [last]=0246 [count]=34 [minutes]=30 [window_start]=$(date -u -d '-10 minutes' +%Y-%m-%dT%H:%M:%SZ) [window_end]=$(date -u -d '+3 hours' +%Y-%m-%dT%H:%M:%SZ) [recovery_basis]=waiver [waiver_id]=WAIVER-20261027-1 [recovery_stamp]=none [s0a_sha]=$(printf 'd%.0s' $(seq 1 64)) [s0a_at]=$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ) [min_span_days]=6 [quiet_db]=idle [connection_mode]=direct [pooler_host]=none [statement_timeout_s]=120 [lock_timeout_s]=5 [idle_tx_timeout_s]=60 [max_push_seconds]=60 [attestation]="restore point attested by the approver, not verified here" )
   local kv; for kv in "$@"; do K[${kv%%=*}]=${kv#*=}; done
   local args=() k; for k in "${!K[@]}"; do args+=("$k=${K[$k]}"); done
   bash "$SRC/approve-package.sh" "${args[@]}" > "$T/approve.out" 2>&1; }
@@ -83,7 +84,7 @@ sl=$(sam sudo -n -l 2>&1)
 printf '%s\n' "$sl" >> "$SAMOUT"
 n=$(printf '%s\n' "$sl" | grep -o 'launcher [a-z-]*' | sort -u | wc -l)
 echo "$sl" | grep -E 'NOPASSWD|launcher|Sorry|may run' | sed 's/^/       /'
-[ "$n" -ge 3 ] && ! printf '%s\n' "$sl" | grep -Eq '\(ALL( : ALL)?\) +(NOPASSWD: +)?ALL$|\(root\)' && printf '%s' "$sl" | grep -q 'launcher apply' && printf '%s' "$sl" | grep -q 'launcher read-backups' && printf '%s' "$sl" | grep -q 'launcher status' && ok "sudo -l shows exactly the three launcher lines (as hone-release), nothing else, no ALL" || bad "sudo -l" "$sl"
+[ "$n" -ge 6 ] && ! printf '%s\n' "$sl" | grep -Eq '\(ALL( : ALL)?\) +(NOPASSWD: +)?ALL$|\(root\)' && printf '%s' "$sl" | grep -q 'launcher apply' && printf '%s' "$sl" | grep -q 'launcher read-backups' && printf '%s' "$sl" | grep -q 'launcher status' && printf '%s' "$sl" | grep -q 'launcher reconcile' && printf '%s' "$sl" | grep -q 'launcher idle-probe' && printf '%s' "$sl" | grep -q 'launcher heartbeat' && ok "sudo -l shows exactly the six launcher lines (as hone-release), nothing else, no ALL" || bad "sudo -l" "$sl"
 for f in /var/lib/hone-release/secrets/db-password /var/lib/hone-release/secrets/read-pat /var/lib/hone-release/work/canary-db; do
   sam cat "$f" >/dev/null 2>&1 && bad "sam READ $f" || ok "sam cannot read $f"
 done
@@ -201,27 +202,34 @@ rm -f /etc/hone-release/APPROVED-PACKAGE; expect_refuse "no APPROVED-PACKAGE rec
 approve CUST-W1 window_start=$(date -u -d '+30 minutes' +%Y-%m-%dT%H:%M:%SZ) window_end=$(date -u -d '+5 hours' +%Y-%m-%dT%H:%M:%SZ); expect_refuse "an apply before the approved window opens (T3)" apply "has not opened"
 approve CUST-W2 window_start=$(date -u -d '-3 hours' +%Y-%m-%dT%H:%M:%SZ) window_end=$(date -u -d '-1 minute' +%Y-%m-%dT%H:%M:%SZ); expect_refuse "an apply after the window closed (T3)" apply "has closed"
 approve CUST-W3 window_end=$(date -u -d '+60 minutes' +%Y-%m-%dT%H:%M:%SZ); expect_refuse "fewer than 75 minutes of the window left (T3)" apply "fewer than 75 minutes"
-approve CUST-R1 recovery_basis=row4 recovery_point=$(date -u -d '-50 minutes' +%Y-%m-%dT%H:%M:%SZ) waiver_id=none window_start=$(date -u -d '-90 minutes' +%Y-%m-%dT%H:%M:%SZ); expect_refuse "a row-4 recovery point older than 45 minutes (T3)" apply "older than 45 minutes"
-approve CUST-R2 recovery_basis=row4 recovery_point=$(date -u -d '-20 minutes' +%Y-%m-%dT%H:%M:%SZ) waiver_id=none; expect_refuse "a recovery point before the window start (T3)" apply "before the window start"
-approve CUST-R3 recovery_basis=row4 recovery_point=none waiver_id=none; expect_refuse "recovery_basis=row4 without a recovery point (T3)" apply "needs a recovery_point"
+# (the old typed recovery_point is gone: row4 needs the custody-recorded provider evidence; see section 6b)
 ap_refuse "a waiver id that is not WAIVER-YYYYMMDD-N (F3)" "WAIVER-YYYYMMDD-N" CUST-F3A waiver_id=None
 ap_refuse "a free-text waiver id (F3)" "WAIVER-YYYYMMDD-N" CUST-F3B waiver_id=waiver-1234
 approve CUST-F3C; edit waiver_id None; expect_refuse "an approval record whose waiver id was hand-edited to None (F3)" apply "needs a waiver_id of the form"
-approve CUST-R5 recovery_basis=idle recovery_point=none waiver_id=none; expect_refuse "an idle-path recovery basis (T3: only row4 or a recorded waiver)" apply "must be row4 or waiver"
-# T4: the timeout residual must be accepted in writing; the bounded wait is range-checked
-approve CUST-T4A; edit timeout_residual not-accepted; expect_refuse "no accepted timeout residual (T4)" apply "timeout_residual=accepted-server-limit-only"
+ap_refuse "an unknown recovery basis" "recovery_basis must be row4 or waiver" CUST-R5 recovery_basis=idle waiver_id=none
+approve CUST-AU1; edit autonomy autonomous; expect_refuse "a waiver presented as the AUTONOMOUS path" apply "never the autonomous path"
+# T4 (consolidated): the three server-side timeouts are approval fields with ceilings; the record cannot say 'accepted residual' any more
 approve CUST-T4B max_push_seconds=5; expect_refuse "a client-side push bound under 10 s (T4)" apply "must be 10..1800"
-# watchdog / unknown / missing keys
-approve CUST-HEAD; sed -i '/^watchdog=/d' /etc/hone-release/APPROVED-PACKAGE; expect_refuse "an approval without the watchdog key" apply "lacks the key: watchdog"
-approve CUST-WD; edit watchdog required; expect_refuse "an approval that claims the watchdog is required (not enforced by this script)" apply "not enforced by this script"
+approve CUST-T4C statement_timeout_s=601; expect_refuse "a statement timeout above its ceiling (T4)" apply "above its ceiling"
+approve CUST-T4D; edit lock_timeout_s 0; expect_refuse "a zero lock timeout (T4)" apply "positive number of seconds"
+approve CUST-T4E; edit timeout_control accepted-server-limit-only; expect_refuse "the old accepted-residual wording as the timeout control (T4)" apply "server-startup-options"
+approve CUST-HEAD; sed -i '/^quiet_db_mode=/d' /etc/hone-release/APPROVED-PACKAGE; expect_refuse "an approval without the quiet_db_mode key (E4)" apply "lacks the key: quiet_db_mode"
+ap_refuse "a quiet_db that is neither idle nor heartbeat (E4)" "quiet_db must be idle or heartbeat" CUST-E4A quiet_db=maybe
 approve CUST-UNK; echo "extra=1" >> /etc/hone-release/APPROVED-PACKAGE; expect_refuse "an approval with an unknown key" apply "unknown key"
-# T5: the exact target (the CLI drops sslmode/sslrootcert, so the host pin is the control; see the e2e probe)
-approve CUST-H1 pooler_host=evil.example.com:5432; expect_refuse "a pooler host that is not a Supabase session pooler (T5)" apply "not a Supabase session pooler host"
-approve CUST-H2 pooler_host=aws-0-us-east-1.pooler.supabase.com:6543; expect_refuse "the transaction pooler port 6543 (T5)" apply "not a Supabase session pooler host"
-approve CUST-H3; edit target_url "postgresql://postgres.$REF:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"; expect_refuse "a target_url carrying a password (T5)" apply "not exactly the approved form"
-approve CUST-H4; edit target_url "postgresql://postgres.$REF@evil.example.com:5432/postgres?sslmode=require"; expect_refuse "a target_url whose host is not the approved pooler host (T5)" apply "not exactly the approved form"
-approve CUST-H5; edit target_url "postgresql://postgres.$REF@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=prefer"; expect_refuse "sslmode other than require / verify-full (T5)" apply "not exactly the approved form"
-approve CUST-H6; edit target_url "postgresql://postgres.$REF@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require\&options=-c"; expect_refuse "an extra URL parameter (T5)" apply "not exactly the approved form"
+approve CUST-OLDKEY; echo "watchdog=waived-by-approver" >> /etc/hone-release/APPROVED-PACKAGE; expect_refuse "the old watchdog=waived-by-approver key is no longer a thing" apply "unknown key"
+ap_refuse "an S0a sha that is not 64 hex" "FULL 64-hex" CUST-S0A s0a_sha=1234
+approve CUST-S0B s0a_at=$(date -u -d '-3 hours' +%Y-%m-%dT%H:%M:%SZ) window_start=$(date -u -d '-200 minutes' +%Y-%m-%dT%H:%M:%SZ); expect_refuse "an S0a result older than 3 hours (S0a freshness)" apply "older than 3 hours"
+approve CUST-S0C s0a_at=$(date -u -d '-30 minutes' +%Y-%m-%dT%H:%M:%SZ); expect_refuse "an S0a result from before the window start" apply "older than the window start"
+approve CUST-S0D min_span_days=3; expect_refuse "a minimum span under 6 days" apply "6 or more"
+# T5 (consolidated): the exact target is BUILT by the script; direct = db.<ref>.supabase.co:5432 + startup options, pooler = session pooler + per-file gate
+approve CUST-H1 connection_mode=pooler pooler_host=evil.example.com:5432 ; expect_refuse "a pooler host that is not a Supabase session pooler" apply "not a Supabase session pooler host"
+approve CUST-H2 connection_mode=pooler pooler_host=aws-0-us-east-1.pooler.supabase.com:6543; expect_refuse "the transaction pooler port 6543" apply "not a Supabase session pooler host"
+approve CUST-H3; edit target_url "postgresql://postgres:secret@db.$REF.supabase.co:5432/postgres?options=-c%20statement_timeout%3D120000%20-c%20lock_timeout%3D5000%20-c%20idle_in_transaction_session_timeout%3D60000%20-c%20client_connection_check_interval%3D5000"; expect_refuse "a target_url carrying a password" apply "not exactly the approved form"
+approve CUST-H4; edit target_url "postgresql://postgres@evil.example.com:5432/postgres?options=-c%20statement_timeout%3D120000%20-c%20lock_timeout%3D5000%20-c%20idle_in_transaction_session_timeout%3D60000%20-c%20client_connection_check_interval%3D5000"; expect_refuse "a target_url whose host is not the approved host" apply "not exactly the approved form"
+approve CUST-H5; edit target_url "postgresql://postgres@db.$REF.supabase.co:5432/postgres?sslmode=disable"; expect_refuse "a target_url that names its own TLS mode / drops the timeouts" apply "not exactly the approved form"
+approve CUST-H6; edit target_url "postgresql://postgres@db.$REF.supabase.co:5432/postgres?options=-c%20statement_timeout%3D0%20-c%20lock_timeout%3D5000%20-c%20idle_in_transaction_session_timeout%3D60000%20-c%20client_connection_check_interval%3D5000"; expect_refuse "a target_url whose statement_timeout is 0 (disabled)" apply "not exactly the approved form"
+approve CUST-H7; edit db_host "db.otherprojectxxxxxxxx.supabase.co:5432"; expect_refuse "a direct host of another project" apply "not the exact direct host"
+approve CUST-H8 connection_mode=pooler pooler_host=aws-0-us-east-1.pooler.supabase.com:5432; edit timeout_control server-startup-options; expect_refuse "the pooler claiming startup options enforce the timeouts (the pooler ignores them)" apply "server-per-file-set-local"
 # package gates
 approve CUST-SHA; cp /srv/hone-release-inbox/bundle.tar "$T/bundle.good"; sam bash -c "printf x >> /srv/hone-release-inbox/bundle.tar"
 expect_refuse "a bundle changed by the agent after approval (sha256)" apply "bundle sha256 is not the approved"; sam cp "$T/bundle.good" /srv/hone-release-inbox/bundle.tar
@@ -250,6 +258,77 @@ if [ $RC = 0 ] && printf '%s' "$OUT" | grep -q COMPLETED && grep -q "TOKEN match
 ! grep -E "argv=.*($DBC|$PATC)" $W/stub.log >/dev/null && ok "no secret in the read child's argv" || bad "secret in read argv"
 runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -Eq "already used|consumed|expired|no APPROVED" && ok "a second apply with the same (consumed) approval is refused" || bad "second apply" "rc=$RC $OUT"
 runo status; printf '%s' "$OUT" | grep -q "state: APPLIED" && ok "status reports the state without any secret" || bad "status" "$OUT"
+
+# ---------------------------------------------------------------- 7b. HON66-CONSOLIDATE: TLS environment, recovery evidence (C), the E4 selection, timeout gate (T4), reconcile
+ST=/var/lib/hone-release/state; CAP=/usr/local/libexec/hone-release/ca/supabase-prod-ca-2021.crt
+stubset() { printf '%s' "$2" > $W/$1; chown hone-release:hone-release $W/$1; }
+rec_ok() { stubset stub-pitr true; stubset stub-span-days 7; stubset stub-latest-age 30; rm -f $W/stub-active; }
+clr_ev() { rm -f $ST/BACKUPS-EVIDENCE $ST/IDLE-PROOF $ST/HEARTBEAT $ST/heartbeat-done-* $ST/RECONCILE; }
+fresh() { clear_state; : > $W/stub.log; chown hone-release:hone-release $W/stub.log; echo ok > $W/stub-mode; }
+stampago() { date -u -d "-$1 minutes" +%Y-%m-%dT%H:%M:%SZ; }
+AUTO=(recovery_basis=row4 waiver_id=none)
+# T5: the child gets verify-full and the pinned CA through its environment (the vendor CLI drops sslmode from the URL); the argv carries no sslmode and no password
+fresh; approve CUST-TLS; runo apply
+grep -q "^TLS PGSSLMODE=verify-full PGSSLROOTCERT=$CAP " $W/stub.log && ok "T5: the apply child's environment carries PGSSLMODE=verify-full and PGSSLROOTCERT=<the pinned CA under /usr/local/libexec/hone-release/ca>" || bad "T5: TLS environment" "$(grep '^TLS' $W/stub.log | head -2)"
+grep -q "argv=db push --db-url postgresql://postgres@db\.$REF\.supabase\.co:5432/postgres?options=-c%20statement_timeout%3D120000%20-c%20lock_timeout%3D5000%20-c%20idle_in_transaction_session_timeout%3D60000%20-c%20client_connection_check_interval%3D5000" $W/stub.log && ok "T4/T5: the direct target carries the three server-side timeouts as startup options, the user is plain postgres, and the URL names no sslmode and no password" || bad "target form" "$(grep -m1 '^CALL' $W/stub.log)"
+[ "$(sha256sum $CAP | cut -d' ' -f1)" = 700723581420dd1ac98fd7e9ac529f0ef210eadcaf87fc868a3ad7d114c2f3b7 ] && sam bash -c "echo x >> $CAP" 2>/dev/null; [ "$(sha256sum $CAP | cut -d' ' -f1)" = 700723581420dd1ac98fd7e9ac529f0ef210eadcaf87fc868a3ad7d114c2f3b7 ] && ok "T5: the pinned CA is root-owned, has the pinned sha256 and the agent cannot change it" || bad "CA pin"
+cp -a $CAP "$T/ca.orig"; echo "# x" >> $CAP; fresh; approve CUST-CA; expect_refuse "a CA file whose sha256 differs from the pin in the script (T5)" apply "pinned Supabase root CA"; cp -a "$T/ca.orig" $CAP; chown root:root $CAP; chmod 644 $CAP
+# C: the unattended path STOPs without the provider's recovery evidence; E4 (a) idle proof
+ST_MSG() { :; }
+fresh; clr_ev; rec_ok; approve CUST-N1 "${AUTO[@]}" recovery_stamp=$(stampago 2); expect_refuse "C: no BACKUPS-EVIDENCE (read-backups never ran): the launcher STOPs" apply "no BACKUPS-EVIDENCE"
+stubset stub-pitr false; runo read-backups; [ $RC = 0 ] && grep -q '^pitr_enabled=false' $ST/BACKUPS-EVIDENCE && ok "C: read-backups records what the provider said (pitr_enabled=false) in custody-owned state" || bad "evidence record" "$OUT"
+approve CUST-N2 "${AUTO[@]}" recovery_stamp=$(stampago 2); expect_refuse "C: the provider reports PITR not enabled: STOP" apply "PITR not enabled"
+rec_ok; stubset stub-span-days 3; runo read-backups; approve CUST-N3 "${AUTO[@]}" recovery_stamp=$(stampago 2); expect_refuse "C: a recovery span of 3 days under the 6-day minimum: STOP (S0-10)" apply "below the approved minimum"
+rec_ok; stubset stub-latest-age 600; runo read-backups; approve CUST-N4 "${AUTO[@]}" recovery_stamp=$(stampago 2); expect_refuse "C: the latest recovery point is older than the stamp: STOP (row-4 latest point >= stamp)" apply "older than the recovery_stamp"
+rec_ok; runo read-backups; approve CUST-N5 "${AUTO[@]}" recovery_stamp=$(stampago 2); expect_refuse "E4(a): evidence fine but no idle proof: STOP" apply "no IDLE-PROOF"
+touch $W/stub-active; chown hone-release:hone-release $W/stub-active; runo idle-probe; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "NOT idle" && grep -q 'result=active' $ST/IDLE-PROOF && ok "E4(a): a database whose write counters move is recorded as NOT idle" || bad "idle-probe active" "rc=$RC $OUT"
+approve CUST-N6 "${AUTO[@]}" recovery_stamp=$(stampago 2); expect_refuse "E4(a): the idle proof says active: STOP" apply "NOT idle"
+rec_ok; runo read-backups; runo idle-probe; [ $RC = 0 ] && grep -q 'result=idle' $ST/IDLE-PROOF && ok "E4(a): two equal write-counter samples 2 s apart record IDLE-PROOF result=idle (read token only)" || bad "idle-probe" "rc=$RC $OUT"
+sed -i "s/^read_at=.*/read_at=$(stampago 20)/" $ST/BACKUPS-EVIDENCE; approve CUST-N7 "${AUTO[@]}" recovery_stamp=$(stampago 2); expect_refuse "C: BACKUPS-EVIDENCE read 20 minutes ago: STOP (freshness 900 s)" apply "older than 900 s"
+fresh; rec_ok; runo read-backups; runo idle-probe; approve CUST-AUTO1 "${AUTO[@]}" recovery_stamp=$(stampago 2); runo apply
+if [ $RC = 0 ] && printf '%s' "$OUT" | grep -q "APPLIED: exactly 34" && grep -q 'path autonomous; quiet-db mode idle' /var/lib/hone-release/logs/CUST-AUTO1/run.txt; then ok "AUTONOMOUS path, E4(a) idle: with fresh evidence (PITR on, span 7 d, latest >= stamp) and an idle proof the apply proceeds and the run record says autonomous"; else bad "autonomous idle apply" "rc=$RC $OUT"; fi
+# E4 (b) heartbeat
+fresh; clr_ev; rec_ok; runo read-backups; approve CUST-HB0 "${AUTO[@]}" recovery_stamp=none quiet_db=heartbeat; expect_refuse "E4(b): no HEARTBEAT recorded: STOP" apply "no HEARTBEAT was recorded"
+sleep 1; : > $W/stub.log; chown hone-release:hone-release $W/stub.log; runo heartbeat
+[ $RC = 0 ] && grep -q '^HEARTBEAT at=' $ST/HEARTBEAT && grep -q "PGPASSWORD matches the db canary" $W/stub.log && grep -q 'pg_logical_emit_message' $W/stub.log && grep -q "^TLS PGSSLMODE=verify-full PGSSLROOTCERT=$CAP" $W/stub.log && ok "E4(b): the heartbeat action (db password only) emitted ONE logical WAL message over verify-full and recorded HEARTBEAT" || bad "heartbeat" "rc=$RC $OUT $(tail -5 $W/stub.log)"
+expect_refuse "E4(b): the apply refuses evidence that was read BEFORE the heartbeat" apply "read before the heartbeat"
+runo heartbeat; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "already written" && ok "E4(b): a second heartbeat for the same approval is refused" || bad "heartbeat twice" "$OUT"
+stubset stub-latest-age 600; sleep 1; runo read-backups; expect_refuse "E4(b): the provider's latest recovery point has not advanced past the heartbeat: STOP" apply "older than the heartbeat"
+stubset stub-latest-age 0; runo read-backups; runo apply
+[ $RC = 0 ] && printf '%s' "$OUT" | grep -q "APPLIED: exactly 34" && grep -q 'path autonomous; quiet-db mode heartbeat' /var/lib/hone-release/logs/CUST-HB0/run.txt && ok "AUTONOMOUS path, E4(b) heartbeat: recovery point advanced past the heartbeat, evidence read after it: the apply proceeds" || bad "heartbeat apply" "rc=$RC $OUT"
+fresh; rec_ok; approve CUST-HB6 "${AUTO[@]}"; runo heartbeat; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "does not select quiet_db_mode=heartbeat" && ok "E4: the heartbeat action refuses when the approval selected idle" || bad "heartbeat under idle" "$OUT"
+approve CUST-HB7 "${AUTO[@]}" recovery_stamp=none quiet_db=heartbeat; echo hbfail > $W/stub-mode; rm -f $ST/HEARTBEAT; runo heartbeat; r1=$RC; echo ok > $W/stub-mode; runo heartbeat
+[ $r1 -ne 0 ] && [ ! -e $ST/HEARTBEAT ] && [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "already written" && ok "E4(b): a failed heartbeat records nothing and is NOT retried by the action (the marker is spent)" || bad "heartbeat failure" "r1=$r1 rc=$RC $OUT"
+clear_state; clr_ev; echo ok > $W/stub-mode
+# a waiver is the ATTENDED FALLBACK and needs no provider evidence
+fresh; approve CUST-ATT; runo apply; [ $RC = 0 ] && grep -q 'path attended-fallback' /var/lib/hone-release/logs/CUST-ATT/run.txt && ok "ATTENDED FALLBACK: a recorded waiver proceeds without provider evidence and the run record says attended-fallback" || bad "attended" "$OUT"
+# T4: the lexical timeout gate (B1 direct: nothing may weaken a server-side timeout; B2 pooler: every file carries its own bounded ones)
+cp /srv/hone-release-inbox/bundle.tar "$T/bundle.keep"; cp /srv/hone-release-inbox/list.sha256 "$T/list.keep"
+GCN=0
+gate_case() { # gate_case DESC MODE "fixture args" EXPECT   (EXPECT = text of the refusal, or OK)
+  GCN=$((GCN+1)); local d=$1 m=$2 fa=$3 want=$4; rm -rf "$T/gv"; python3 -I "$S1/fixture.py" syn "$T/gv" --head $HEAD40 $fa >/dev/null
+  install -m 644 -o sam -g sam "$T/gv/migrations-d189768b.tar" /srv/hone-release-inbox/bundle.tar; install -m 644 -o sam -g sam "$T/gv/MIGRATIONS-d189768b.sha256" /srv/hone-release-inbox/list.sha256
+  fresh; if [ "$m" = pooler ]; then approve CUST-G$GCN connection_mode=pooler pooler_host=aws-0-us-east-1.pooler.supabase.com:5432; else approve CUST-G$GCN; fi; runo apply
+  if [ "$want" = OK ]; then [ $RC = 0 ] && ok "T4 gate: $d" || bad "T4 gate: $d" "$OUT"
+  else [ $RC -ne 0 ] && printf '%s' "$OUT$(cat $T/gv/../gate.out 2>/dev/null)" | grep -q "fails the timeout gate" && [ ! -s $W/stub.log ] && ok "T4 gate refuses before any CLI call: $d" || bad "T4 gate did not refuse: $d" "rc=$RC $OUT"; fi; }
+gate_case "direct: plain files (no timeout text) pass" direct "" OK
+gate_case "direct: a file that RESETs statement_timeout is refused" direct "--tfile 0230 --tkind reset" refuse
+gate_case "direct: a file that sets statement_timeout = 0 is refused" direct "--tfile 0230 --tkind zero" refuse
+gate_case "direct: a file with set local statement_timeout 9999s (above the 120 s ceiling) is refused" direct "--tfile 0230 --tkind big" refuse
+gate_case "direct: a file that uses set_config('statement_timeout') is refused" direct "--tfile 0230 --tkind dyn" refuse
+gate_case "pooler: plain files WITHOUT their own set local statement_timeout are refused (the pooler ignores startup options)" pooler "" refuse
+gate_case "pooler: every file carries bounded set local statement_timeout and lock_timeout: passes" pooler "--all-setlocal" OK
+install -m 644 -o sam -g sam "$T/bundle.keep" /srv/hone-release-inbox/bundle.tar; install -m 644 -o sam -g sam "$T/list.keep" /srv/hone-release-inbox/list.sha256
+# no action can reach the named restore point or any restore endpoint
+! grep -Eqi 'backups +restore|restore-point +(create|new)|/database/backups/restore|restore_point' $LX/scripts/*.sh $LX/launcher && ok "no installed script or the launcher can call a restore or restore-point endpoint (the named restore point stays excluded; HTTP 400 is never a restore target)" || bad "a restore call exists"
+# reconcile: read-only classification after an UNKNOWN outcome (token only, no password, never clears the state)
+fresh; approve CUST-REC; st0=$(state)
+stubset stub-recon ""; : > $W/stub.log; chown hone-release:hone-release $W/stub.log; runo reconcile
+[ $RC = 0 ] && printf '%s' "$OUT" | grep -q "RECONCILE NONE" && grep -q "TOKEN matches the pat canary" $W/stub.log && grep -q "PGPASSWORD absent" $W/stub.log && ok "reconcile: an empty history for the approved range -> NONE; the child got the read token and NO database password" || bad "reconcile none" "rc=$RC $OUT"
+stubset stub-recon "$(seq -f '%04g' 213 246 | tr '\n' ' ')"; runo reconcile; [ $RC = 0 ] && printf '%s' "$OUT" | grep -q "RECONCILE ALL" && ok "reconcile: all 34 approved versions present -> ALL" || bad "reconcile all" "$OUT"
+stubset stub-recon "0213 0214 0215"; runo reconcile; [ $RC = 0 ] && printf '%s' "$OUT" | grep -q "RECONCILE PARTIAL" && ok "reconcile: 3 of 34 present -> PARTIAL (never reported as a pass)" || bad "reconcile partial" "$OUT"
+echo qfail > $W/stub-mode; runo reconcile; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "stays UNKNOWN" && ok "reconcile: a failed read leaves the outcome UNKNOWN" || bad "reconcile qfail" "$OUT"
+echo ok > $W/stub-mode; [ "$(state)" = "$st0" ] && ok "reconcile never changed the release state (only root clears it)" || bad "reconcile changed the state" "$st0 -> $(state)"
 
 # ---------------------------------------------------------------- 8. interruption, signals and unknown outcome
 echo slow > $W/stub-mode; clear_state; approve CUST-SIG; : > $W/stub.log; chown hone-release:hone-release $W/stub.log
@@ -283,17 +362,19 @@ approve CUST-AFTERKILL; runo apply
 [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "UNKNOWN" && ok "the next apply refuses: the previous outcome is UNKNOWN, read back first; only root clears it" || bad "no refusal after unknown outcome" "rc=$RC $OUT"
 sam bash -c "rm -f /var/lib/hone-release/state/APPLY-STATE" 2>/dev/null; [ "$(state | cut -d' ' -f1)" = IN-FLIGHT ] && ok "sam cannot clear the IN-FLIGHT marker" || bad "sam cleared the marker"
 clear_state; echo ok > $W/stub-mode; runo apply; [ $RC = 0 ] && ok "after ROOT clears the state (and a fresh approval exists) the next apply proceeds" || bad "apply after root clear" "rc=$RC $OUT"
-# T4: the client-side bounded wait: the script stops WAITING, it never kills the CLI
+# T4 (consolidated): the client wall clock KILLS the CLI; the outcome is UNKNOWN-KILLED, never a pass, never a retry
 echo veryslow > $W/stub-mode; clear_state; approve CUST-OVERDUE max_push_seconds=10; : > $W/stub.log; chown hone-release:hone-release $W/stub.log
 runo apply
-[ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "still running after 10 s" && [ "$(state | cut -d' ' -f1)" = IN-FLIGHT-OVERDUE ] && ok "T4: a push past the approved bound: the script stops waiting, exits non-zero, state IN-FLIGHT-OVERDUE, says the CLI was not stopped" || bad "T4 overdue" "rc=$RC state=$(state) $OUT"
-# F4: while the orphaned CLI is STILL running it holds the release lock (fd inheritance): a second launch is refused by the LOCK; once it has ended the state IN-FLIGHT-OVERDUE still refuses
-pgrep -u hone-release -f supabase-go >/dev/null && ok "F4: the CLI is still running after the script stopped waiting" || bad "F4: the CLI is not running"
-approve CUST-OVERDUE2; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "holds the lock" && ok "F4: a second launch while the orphaned CLI still runs is refused by the release lock the CLI holds" || bad "F4: not blocked by the lock" "$OUT"
-[ "$(state | cut -d' ' -f1)" = IN-FLIGHT-OVERDUE ] && ok "F4: the refused launch left the state IN-FLIGHT-OVERDUE untouched" || bad "F4: state changed" "$(state)"
-sleep 30
-grep -q "PUSH COMPLETED" $W/stub.log && [ "$(grep -c 'PUSH COMPLETED' $W/stub.log)" = 1 ] && ok "T4: the CLI was NOT killed by the bound: it ran on and completed exactly once (no second push started)" || bad "T4: the CLI did not complete exactly once" "$(tail -3 $W/stub.log)"
-approve CUST-OVERDUE3; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "IN-FLIGHT-OVERDUE" && ok "F4: after the CLI has ended, the state IN-FLIGHT-OVERDUE still refuses the next launch (only root clears it)" || bad "F4: not blocked by the state" "$OUT"
+[ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "KILLED" && printf '%s' "$OUT" | grep -q "UNKNOWN" && [ "$(state | cut -d' ' -f1)" = UNKNOWN-KILLED ] && ok "T4: a push past the client wall clock: the CLI is KILLED, exit non-zero, state UNKNOWN-KILLED, the message says UNKNOWN / not a pass / reconcile" || bad "T4 kill" "rc=$RC state=$(state) $OUT"
+sleep 28
+! pgrep -u hone-release -f 'bin/supabase-go' >/dev/null && ! grep -q "PUSH COMPLETED" $W/stub.log && ok "T4: the killed CLI is gone and never completed the push (no PUSH COMPLETED line)" || bad "T4: the CLI survived the kill or completed" "$(tail -3 $W/stub.log)"
+approve CUST-OVERDUE2; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "UNKNOWN-KILLED" && [ "$(grep -c '^CALL' $W/stub.log)" = 2 ] && ok "T4: with a NEW approval the agent cannot launch again: refused by the state UNKNOWN-KILLED (still the two CLI calls of the first run: one dry run, one push)" || bad "T4: not blocked" "$OUT calls=$(grep -c '^CALL' $W/stub.log)"
+# the lock: two simultaneous runners, only one owns execution
+clear_state; echo slow > $W/stub-mode; approve CUST-LOCK1; : > $W/stub.log; chown hone-release:hone-release $W/stub.log
+sam bash -c "sudo -n -u hone-release $LB apply > $T/out/lock1.txt 2>&1" &
+for i in $(seq 1 40); do [ "$(state | cut -d' ' -f1)" = IN-FLIGHT ] && break; sleep 0.5; done
+approve CUST-LOCK2; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "holds the lock" && ok "two simultaneous launches: the second is refused by the single release lock while the first owns execution" || bad "lock" "$OUT"
+wait; [ "$(grep -c 'PUSH COMPLETED' $W/stub.log)" = 1 ] && ok "the owner of the lock completed exactly one push" || bad "push count under the lock test" "$(grep -c 'PUSH COMPLETED' $W/stub.log)"
 clear_state
 # T6: a non-authentication dry-run failure consumes the approval and blocks the next run
 echo dryfail > $W/stub-mode; approve CUST-DRYFAIL; : > $W/stub.log; chown hone-release:hone-release $W/stub.log
