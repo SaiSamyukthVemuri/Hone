@@ -81,7 +81,7 @@ fi
 
 # ---- install the shipped scripts (one rewrite in supavisor mode), the real CLI and the real launcher/sudoers
 id sam >/dev/null 2>&1 || useradd -m -s /bin/bash sam
-SRC=/opt/hr-pkg-e2e; rm -rf "$SRC" /opt/hr-pins-e2e.txt; mkdir -p "$SRC/scripts"
+SRC=/root/hr-pkg-e2e; rm -rf "$SRC" /root/hr-pins-e2e.txt; mkdir -p "$SRC/scripts"
 cp "$HR/launcher" "$HR/install.sh" "$HR/set-secret.sh" "$HR/approve-package.sh" "$HR/actions.conf" "$HR/sudoers.hone-release" "$SRC/"; cp "$HR"/scripts/*.sh "$SRC/scripts/"
 python3 - "$SRC/scripts/release-apply.sh" <<'PY'
 import sys
@@ -96,8 +96,8 @@ if [ "$RELAX" = 1 ]; then
   echo "e2e rewrites: the project_ref pattern [a-z0-9]{20} -> [a-z0-9-]{10,20} in release-apply.sh, read-backups.sh and install.sh (the local pooler tenant is pooler-dev)"
 fi
 chown -R root:root "$SRC"; chmod -R go-w "$SRC"
-(cd "$SRC" && find . -type f | sed 's#^\./##' | LC_ALL=C sort | while read -r f; do printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f"; done) > /opt/hr-pins-e2e.txt; chown root:root /opt/hr-pins-e2e.txt; chmod 644 /opt/hr-pins-e2e.txt
-bash "$SRC/install.sh" sam "$REF" "$T/cli/supabase-go" /opt/hr-pins-e2e.txt > "$T/install.out" 2>&1 && ok "install.sh with the REAL supabase-go (every file matched its pin)" || { bad "install" "$(tail -4 "$T/install.out")"; exit 1; }
+(cd "$SRC" && find . -type f | sed 's#^\./##' | LC_ALL=C sort | while read -r f; do printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f"; done) > /root/hr-pins-e2e.txt; chown root:root /root/hr-pins-e2e.txt; chmod 644 /root/hr-pins-e2e.txt
+bash "$SRC/install.sh" sam "$REF" "$T/cli/supabase-go" /root/hr-pins-e2e.txt > "$T/install.out" 2>&1 && ok "install.sh with the REAL supabase-go (every file matched its pin)" || { bad "install" "$(tail -4 "$T/install.out")"; exit 1; }
 # T5 evidence: the vendor CLI does NOT honour sslmode/sslrootcert in --db-url (it rebuilds the URL), so verify-full cannot be required on this path:
 # a dry run with sslmode=verify-full and a NONEXISTENT sslrootcert still connects (an honoured setting would fail).
 mkdir -p "$T/probe/supabase/migrations" "$T/probe/supabase/.temp"; echo v2.102.0 > "$T/probe/supabase/.temp/cli-latest"

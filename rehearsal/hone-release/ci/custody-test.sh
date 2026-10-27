@@ -23,7 +23,7 @@ chmod 440 /etc/sudoers.d/* 2>/dev/null   # a hosted runner ships /etc/sudoers.d/
 id sam >/dev/null 2>&1 || useradd -m -s /bin/bash sam
 passwd -l sam >/dev/null 2>&1
 # T1: the package is copied to a ROOT-OWNED directory outside /tmp (no world-writable ancestor); the pins are what Sam types from the reviewed record
-SRC=/opt/hr-pkg; rm -rf "$SRC" /opt/hr-pins.txt; mkdir -p "$SRC/scripts" "$SRC/ci"
+SRC=/root/hr-pkg; rm -rf "$SRC" /root/hr-pins.txt; mkdir -p "$SRC/scripts" "$SRC/ci"
 cp "$HR/launcher" "$HR/install.sh" "$HR/set-secret.sh" "$HR/approve-package.sh" "$HR/actions.conf" "$HR/sudoers.hone-release" "$SRC/"; cp "$HR"/scripts/*.sh "$SRC/scripts/"
 cp "$HERE/stub-supabase-go" "$T/supabase-go"; chmod 755 "$T/supabase-go"
 STUBSHA=$(sha256sum "$T/supabase-go" | cut -d' ' -f1)
@@ -31,12 +31,12 @@ sed -i "s/^GO_SHA=.*/GO_SHA=$STUBSHA/" "$SRC/scripts/release-apply.sh" "$SRC/scr
 echo "test variant rewrites: GO_SHA in release-apply.sh and read-backups.sh only (the stub's sha256)"
 diff <(sed 's/^GO_SHA=.*/GO_SHA=X/' "$HR/scripts/release-apply.sh") <(sed 's/^GO_SHA=.*/GO_SHA=X/' "$SRC/scripts/release-apply.sh") >/dev/null && ok "the installed apply script differs from the shipped one in the GO_SHA line only" || bad "variant differs elsewhere"
 rmdir "$SRC/ci" 2>/dev/null; chown -R root:root "$SRC"; chmod -R go-w "$SRC"
-mkpins() { (cd "$SRC" && find . -type f | sed 's#^\./##' | LC_ALL=C sort | while read -r f; do printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f"; done) > /opt/hr-pins.txt; chown root:root /opt/hr-pins.txt; chmod 644 /opt/hr-pins.txt; }
+mkpins() { (cd "$SRC" && find . -type f | sed 's#^\./##' | LC_ALL=C sort | while read -r f; do printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f"; done) > /root/hr-pins.txt; chown root:root /root/hr-pins.txt; chmod 644 /root/hr-pins.txt; }
 mkpins
-inst() { bash "$SRC/install.sh" sam "$REF" "$T/supabase-go" /opt/hr-pins.txt > "$T/install.out" 2>&1; }
+inst() { bash "$SRC/install.sh" sam "$REF" "$T/supabase-go" /root/hr-pins.txt > "$T/install.out" 2>&1; }
 notinstalled() { [ ! -e /usr/local/libexec/hone-release/launcher ] && [ ! -e /etc/sudoers.d/hone-release ]; }
 t1refuse() { if inst; then bad "T1: install ACCEPTED: $1"; else if grep -q "REFUSED: .*$2" "$T/install.out" && notinstalled; then ok "T1: install refused for the right reason and nothing installed: $1"; else bad "T1: wrong refusal for: $1" "$(tail -3 "$T/install.out")"; fi; fi; }
-echo "chain check (diagnostic): $(stat -c "%n %U %a" / /opt /opt/hr-pins.txt /opt/hr-pkg 2>&1 | tr "\n" ";")"
+echo "chain check (diagnostic): $(stat -c "%n %U %a" / /opt /root/hr-pins.txt /root/hr-pkg 2>&1 | tr "\n" ";")"
 cp -a "$SRC/scripts/release-apply.sh" "$T/ra.orig"; echo "# edited after review" >> "$SRC/scripts/release-apply.sh"
 t1refuse "a script changed after the pins were typed (release-apply.sh)" "does not match its pinned sha256"; cp -a "$T/ra.orig" "$SRC/scripts/release-apply.sh"
 cp -a "$SRC/launcher" "$T/l.orig"; echo "# x" >> "$SRC/launcher"; t1refuse "the launcher changed after review" "does not match its pinned sha256"; cp -a "$T/l.orig" "$SRC/launcher"
@@ -46,11 +46,11 @@ echo 'echo pwned' > "$SRC/scripts/extra.sh"; chmod 644 "$SRC/scripts/extra.sh"; 
 mv "$SRC/scripts/status.sh" "$T/status.moved"; t1refuse "a pinned file missing from the package" "not in the package"; mv "$T/status.moved" "$SRC/scripts/status.sh"
 ln -s /etc/passwd "$SRC/scripts/link.sh"; t1refuse "a symlink in the package" "contains a symlink"; rm -f "$SRC/scripts/link.sh"
 chmod 666 "$SRC/scripts/status.sh"; t1refuse "a world-writable package file" "group- or other-writable"; chmod 755 "$SRC/scripts/status.sh"
-cp /opt/hr-pins.txt "$SRC/pins.txt"; chown root:root "$SRC/pins.txt"; bash "$SRC/install.sh" sam "$REF" "$T/supabase-go" "$SRC/pins.txt" > "$T/install.out" 2>&1 && bad "T1: a pins file INSIDE the package was accepted" || { grep -q "inside the package" "$T/install.out" && notinstalled && ok "T1: a pins file inside the package directory is refused"; }; rm -f "$SRC/pins.txt"
-chmod 666 /opt/hr-pins.txt; t1refuse "a world-writable pins file" "pins file or a parent directory"; chmod 644 /opt/hr-pins.txt
-sed -i '1s/^[0-9a-f]\{4\}/0000/' /opt/hr-pins.txt; t1refuse "a wrong pin (the first line altered)" "does not match its pinned sha256"; mkpins
-cp "$T/supabase-go" "$T/supabase-go.bad"; printf 'x' >> "$T/supabase-go.bad"; bash "$SRC/install.sh" sam "$REF" "$T/supabase-go.bad" /opt/hr-pins.txt > "$T/install.out" 2>&1 && bad "T1: a wrong supabase-go was accepted" || { grep -q "supabase-go sha256 differs" "$T/install.out" && notinstalled && ok "T1: a supabase-go that is not the pinned binary is refused"; }
-cp -r "$SRC" /tmp/hr-pkg-in-tmp; bash /tmp/hr-pkg-in-tmp/install.sh sam "$REF" "$T/supabase-go" /opt/hr-pins.txt > "$T/install.out" 2>&1 && bad "T1: a package under /tmp was accepted" || { grep -q "root-owned" "$T/install.out" && notinstalled && ok "T1: a package under a world-writable ancestor (/tmp) is refused"; }; rm -rf /tmp/hr-pkg-in-tmp
+cp /root/hr-pins.txt "$SRC/pins.txt"; chown root:root "$SRC/pins.txt"; bash "$SRC/install.sh" sam "$REF" "$T/supabase-go" "$SRC/pins.txt" > "$T/install.out" 2>&1 && bad "T1: a pins file INSIDE the package was accepted" || { grep -q "inside the package" "$T/install.out" && notinstalled && ok "T1: a pins file inside the package directory is refused"; }; rm -f "$SRC/pins.txt"
+chmod 666 /root/hr-pins.txt; t1refuse "a world-writable pins file" "pins file or a parent directory"; chmod 644 /root/hr-pins.txt
+sed -i '1s/^[0-9a-f]\{4\}/0000/' /root/hr-pins.txt; t1refuse "a wrong pin (the first line altered)" "does not match its pinned sha256"; mkpins
+cp "$T/supabase-go" "$T/supabase-go.bad"; printf 'x' >> "$T/supabase-go.bad"; bash "$SRC/install.sh" sam "$REF" "$T/supabase-go.bad" /root/hr-pins.txt > "$T/install.out" 2>&1 && bad "T1: a wrong supabase-go was accepted" || { grep -q "supabase-go sha256 differs" "$T/install.out" && notinstalled && ok "T1: a supabase-go that is not the pinned binary is refused"; }
+cp -r "$SRC" /tmp/hr-pkg-in-tmp; bash /tmp/hr-pkg-in-tmp/install.sh sam "$REF" "$T/supabase-go" /root/hr-pins.txt > "$T/install.out" 2>&1 && bad "T1: a package under /tmp was accepted" || { grep -q "root-owned" "$T/install.out" && notinstalled && ok "T1: a package under a world-writable ancestor (/tmp) is refused"; }; rm -rf /tmp/hr-pkg-in-tmp
 inst && ok "T1: with every file matching its typed pin, install.sh installs (visudo validated; manifest built from the pins)" || { bad "install.sh" "$(tail -5 "$T/install.out")"; exit 1; }
 visudo -cf /etc/sudoers.d/hone-release >/dev/null && ok "visudo -cf accepts /etc/sudoers.d/hone-release" || bad "visudo"
 printf '%s\n' "$DBC" | bash "$SRC/set-secret.sh" db-password --stdin > /dev/null; printf '%s\n' "$PATC" | bash "$SRC/set-secret.sh" read-pat --stdin > /dev/null
