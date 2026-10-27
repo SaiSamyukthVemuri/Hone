@@ -1,0 +1,4 @@
+34c507a7a236c7a01c0c26b9537e468b78212aca683e7ee8a3dbcc6851a36922  s0b-diag2.sh
+ab57ca9030d93d5172936aab809d47ec9e7f19ffdce9200eb458e3033d8d5833  d2-ensure-rls-definition.sql
+bd5c6dd6790f97d2c8ac378fd2f45a3bc12a5d0d2ad5cccab658771eec30068d  MANIFEST.sha256
+471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357  run-window-read-macos.sh

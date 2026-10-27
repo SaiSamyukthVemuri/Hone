@@ -1,0 +1,163 @@
+# HON66-LINUX-GATES. REHEARSAL - NEVER MERGE. Watchdog diagnosis and session-bound timeout evidence through the local Supavisor SESSION pooler (enabled in CI only).
+#
+# (1) Downloads and verifies all eight v2.102.0 release archives and looks for
+# every second source of the same bytes; (2) observes, through a local
+# TLS-intercepting proxy, everything the verified CLI binary sends when it runs
+# the S1 dry run and push against a non-loopback address of a DISPOSABLE
+# SYNTHETIC local database through production's prefix 0212 (not a copy of
+# production). Canary credentials only. No hosted project, no provider, no
+# customer data.
+#
+# Supply chain as the other workflows: actions pinned by SHA, contents: read,
+# persist-credentials: false. The one credential is the D7b read-only ghcr.io
+# login, held only across a direct pinned-CLI start, as in ci.yml. The proxy is
+# a pinned mitmproxy installed into a throwaway virtualenv on the runner.
+
+name: rehearsal-hon66-pooler
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/hon66/**"
+      - ".github/workflows/rehearsal-hon66-pooler.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hone-rehearsal-hon66-pooler-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apply-tool:
+    name: HON66 pooler rehearsal (not required)
+    runs-on: ubuntu-latest
+    # D7b: read-only package scope for the authenticated ghcr.io image pull only.
+    permissions:
+      contents: read
+      packages: read
+    # Stack start, one release download, a pip install, one database reset and about a dozen
+    # CLI pushes (two of them wait out a real 120 s threshold): inside 60 minutes.
+    timeout-minutes: 60
+    env:
+      EXCLUDE: studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+
+      - name: Pinned Supabase CLI shim (supabase@2.102.0 via npx)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          printf '#!/bin/sh\nexec npx --yes supabase@2.102.0 "$@"\n' > "$RUNNER_TEMP/bin/supabase"
+          chmod +x "$RUNNER_TEMP/bin/supabase"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable the local session pooler (CI workspace only, not committed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i '/^\[db.pooler\]/,/^\[/ { s/^enabled = false/enabled = true/; s/^pool_mode = .*/pool_mode = "session"/ }' supabase/config.toml
+          git diff -U0 supabase/config.toml
+
+      # General's complete CI-REGISTRY pre-pull (PR #1200 head 3d179f78: CLI-derived image list, ghcr back-off, ECR/Docker Hub fallbacks, realtime never skipped), copied into this rehearsal workflow only; it uses the job's own EXCLUDE.
+      - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, re-tagged locally)
+        continue-on-error: true
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set +e
+          pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
+          BIN="$(command -v supabase || true)"
+          : > "$RUNNER_TEMP/cli-images.txt"
+          # The rehearsal runs the pinned CLI through an npx shim, so $BIN is a shell script: also try the npx-installed binary.
+          supabase --version >/dev/null 2>&1
+          NPXBIN="$(find "${npm_config_cache:-$HOME/.npm}/_npx" -type f \( -name supabase -o -name supabase-go \) -size +5M 2>/dev/null | head -n 1)"
+          for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$NPXBIN" "$BIN"; do
+            [ -r "$cand" ] || continue
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
+          done
+          : > "$RUNNER_TEMP/pull-list.txt"
+          if [ -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            while read -r _from image _as alias; do
+              case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
+              case "$svc" in
+                postgres|realtime|storage-api) ;;
+                supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+                *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+              esac
+              printf '%s %s\n' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"
+            done < "$RUNNER_TEMP/cli-images.txt"
+          else
+            echo "::warning title=Supabase image pre-pull::the CLI's embedded image list was not readable; falling back to supabase services (a subset)."
+            supabase services 2>/dev/null | awk -F'|' '/\//{gsub(/ /,"",$1); gsub(/ /,"",$2); if ($2 != "" && $2 != "-") { n=$1; sub(/^.*\//,"",n); print n ":" $2 }}' | sort -u > "$RUNNER_TEMP/pull-list.txt"
+          fi
+          echo "images: $(awk '{print $1}' "$RUNNER_TEMP/pull-list.txt" | tr '\n' ' ')"
+          while read -r IMG ORIG; do
+            got=0
+            for i in 1 2; do
+              if docker pull -q ghcr.io/supabase/$IMG >/dev/null 2>&1; then got=1; break; fi
+              echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
+            done
+            if [ "$got" = 0 ]; then
+              for src in public.ecr.aws/supabase/$IMG docker.io/supabase/$IMG ${ORIG:+docker.io/$ORIG}; do
+                if docker pull -q "$src" >/dev/null 2>&1; then docker tag "$src" ghcr.io/supabase/$IMG && got=1 && echo "using $src for $IMG, re-tagged locally: $(docker image inspect --format '{{index .RepoDigests 0}}' "$src")" && break; fi
+              done
+            fi
+            [ "$got" = 1 ] || echo "::warning title=Supabase image pre-pull::$IMG could not be pulled from ghcr, ECR or Docker Hub"
+          done < "$RUNNER_TEMP/pull-list.txt"
+
+      - name: Start the local Supabase stack (with storage)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        # public.ecr.aws throttles these pulls ("Data limit exceeded"), so try the
+        # ghcr.io mirror first (the credential above applies to it), then the
+        # default registry. Either way the pinned CLI starts the same images.
+        run: |
+          set -o pipefail
+          { SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io supabase start -x "$EXCLUDE" \
+              || supabase start -x "$EXCLUDE"; } 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x "$EXCLUDE"
+
+      - name: HON66 facts and verification (pooler)
+        shell: bash
+        env:
+          REHEARSAL_OUT: ${{ runner.temp }}/hon66-out
+        run: |
+          set -u
+          export DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
+          echo "db container: $DB"
+          bash rehearsal/hon66/main.sh
+
+      - name: Upload rehearsal logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rehearsal-hon66-pooler-logs
+          path: ${{ runner.temp }}/hon66-out/
+          retention-days: 7

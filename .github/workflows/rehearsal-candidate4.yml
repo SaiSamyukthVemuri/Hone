@@ -1,0 +1,32 @@
+# REHEARSAL - NEVER MERGE. CANDIDATE-4: window-s0a.sh and window-row4.sh (S0-10 under PITR) on macOS arm64, driven through a pty with a stub
+# supabase-go and synthetic pitr-backups captures; the comparator unit tests and baseline proofs. No hosted call, no secrets.
+name: rehearsal-candidate4
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/candidate4/**"
+      - ".github/workflows/rehearsal-candidate4.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  candidate4:
+    name: candidate 4 scripts and comparator (macOS arm64)
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts
+        run: |
+          uname -sm
+          /bin/bash --version | head -1
+          node --version
+          python3 --version
+          date -u
+      - name: The rehearsal
+        run: /bin/bash rehearsal/candidate4/test.sh

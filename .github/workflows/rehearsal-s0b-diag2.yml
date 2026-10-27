@@ -1,0 +1,48 @@
+# REHEARSAL - NEVER MERGE. S0B-DIAG2: the one-read definition of public.rls_auto_enable() on macOS arm64 against a synthetic local database
+# (see rehearsal/s0b-diag2/s0b-diag2-rehearsal.sh for exactly what is real and what is stubbed). No hosted call, no hosted database, no secrets:
+# the only network use is fetching the public supabase CLI release.
+name: rehearsal-s0b-diag2
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/s0b-diag2/**"
+      - ".github/workflows/rehearsal-s0b-diag2.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  s0b:
+    name: s0b-diag2 ensure_rls definition (macOS arm64)
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts
+        run: |
+          uname -sm
+          /bin/bash --version | head -1
+          node --version
+          python3 --version
+          date -u
+      - name: The rehearsal
+        env:
+          E2E_WORK: ${{ runner.temp }}/s0b-diag2
+        run: /bin/bash rehearsal/s0b-diag2/s0b-diag2-rehearsal.sh
+      - name: What the Postgres log says on a failure
+        if: failure()
+        run: tail -n 40 "$RUNNER_TEMP/s0b-diag2/pg/pg.log" 2>/dev/null || true
+      - name: Keep the transcripts and step table
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s0b-diag2
+          path: |
+            ${{ runner.temp }}/s0b-diag2/*.out.txt
+            ${{ runner.temp }}/s0b-diag2/steps.tsv
+            ${{ runner.temp }}/s0b-diag2/calls.log
+          retention-days: 3
