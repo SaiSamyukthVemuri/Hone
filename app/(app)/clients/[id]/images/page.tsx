@@ -43,7 +43,7 @@ export default async function ClientImagesPage({
   const supabase = await createClient();
   const { data: client, error: clientErr } = await supabase
     .from("clients")
-    .select("id, name")
+    .select("id, name, portrait_image_id")
     .eq("studio_id", studio.id)
     .eq("id", id)
     .maybeSingle();
@@ -175,6 +175,7 @@ export default async function ClientImagesPage({
       // Compute labels server-side; only labels (never raw IDs) reach the client.
       return {
         id: m.id,
+        clientScope: m.session_id == null && m.session_block_id == null,
         // Session date of the attached session (null for client-scope photos),
         // used as the human card title in place of the raw filename.
         sessionDate: session?.started_at ?? null,
@@ -277,6 +278,7 @@ export default async function ClientImagesPage({
         clientId={id}
         images={rows}
         sessionOptions={sessionOptions}
+        portraitImageId={client.portrait_image_id ?? null}
       />
     </div>
   );

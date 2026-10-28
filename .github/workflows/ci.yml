@@ -129,7 +129,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
 
       - name: Collect changed files
         run: |
@@ -338,9 +338,9 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # No .nvmrc and no engines.node in package.json today.
-          # Pin to Node 20 (LTS), matches the docs/14 fallback and
-          # is comfortably within Next 15's supported range.
-          node-version: "20"
+          # Pin to patched Node 24.22.1 (CVE-2026-111497; Node 20 is EOL
+          # with no fix), the line Vercel builds and serves (project 24.x).
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Install dependencies
@@ -453,7 +453,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Install dependencies
@@ -553,7 +553,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Set up Supabase CLI
@@ -882,7 +882,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Set up Supabase CLI
@@ -1336,7 +1336,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Generate the per-job fake-Stripe run id
@@ -1601,7 +1601,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Generate the per-job fake-Stripe run id
@@ -1862,7 +1862,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Generate the per-job fake-Google run id
@@ -2096,16 +2096,16 @@ jobs:
   storage-photos:
     name: storage photos (not required)
     needs: changes
-    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') }}
+    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') }}
     runs-on: ubuntu-latest
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
       packages: read
     # Target ~10 min: the mobile lane's setup (~6 min p90 incl. the bounded
-    # system-package install) plus storage-api, one DB file and two specs. The
+    # system-package install) plus storage-api, one DB file and the storage specs. The
     # hard timeout exceeds it (CLAUDE.md section 4).
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout repository
@@ -2116,7 +2116,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Set up Supabase CLI
@@ -2313,7 +2313,7 @@ jobs:
 
       - name: Storage photo E2E (CLN-005 + ENG-002)
         if: ${{ !cancelled() && steps.storage_up.outcome == 'success' && steps.pw_sys.outcome == 'success' }}
-        run: npx playwright test e2e/fett-photos-thumbnail-recovery.spec.ts e2e/treatment-image-upload-formats.spec.ts --project=chromium
+        run: npx playwright test e2e/fett-photos-thumbnail-recovery.spec.ts e2e/treatment-image-upload-formats.spec.ts e2e/fett-client-portrait.spec.ts --project=chromium
         env:
           HONE_E2E_FAKE_RESEND: "1"
 
@@ -2368,7 +2368,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Set up Supabase CLI
