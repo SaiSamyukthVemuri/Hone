@@ -28,7 +28,7 @@ proc fail {msg} {
   catch {close}; catch {wait}
   finish 2
 }
-proc grab {} { global expect_out; note $expect_out(buffer) }
+proc grab {} { global expect_out; if {[info exists expect_out(buffer)]} { note $expect_out(buffer) } }
 # one prompt, one answer; anything else is a STOP
 proc step {prompt val {tmo 30}} {
   global timeout expect_out
@@ -67,10 +67,13 @@ proc blind_secret {which} {
   send -- "[expr {$which eq "token" ? $tok : $pw}]\r"
 }
 # wait for the child to end; returns its exit status
-proc finish_child {{tmo 600}} {
+proc drain {tmo} {
   global timeout expect_out
   set timeout $tmo
-  expect { eof { grab } timeout { grab; fail "the child did not end within ${tmo}s" } }
+  expect { -re {.+} { grab; exp_continue } eof { return eof } timeout { return timeout } }
+}
+proc finish_child {{tmo 600}} {
+  if {[drain $tmo] eq "timeout"} { fail "the child did not end within ${tmo}s" }
   set w [wait]
   return [lindex $w 3]
 }
@@ -170,7 +173,7 @@ switch -exact -- $phase {
     }
     if {!$ready} {
       set R(STOP) PITR_STALLED
-      send -- "abort\r"; set timeout 30; expect { eof {grab} timeout {} }; catch {wait}
+      send -- "abort\r"; drain 30; catch {wait}
       note "\n\[driver\] STOP: the latest recovery point ($R(LAST_POLL_LATEST)) never reached the selection $tsel within ${limit}s; row 4 aborted, nothing pushed.\n"
       finish 4
     }
