@@ -97,6 +97,16 @@ export type MachineDb = {
           limit: (
             n: number,
           ) => Promise<{ data: unknown; error: MachineDbError }>;
+          // A THIRD `eq`: "this block, in this session, under this retry key"
+          // (`setupSubmissionExists`).
+          eq: (
+            column: string,
+            value: unknown,
+          ) => {
+            limit: (
+              n: number,
+            ) => Promise<{ data: unknown; error: MachineDbError }>;
+          };
         };
         // `in` is how a lookup names SPECIFIC units by id. Declared here
         // because the slice is deliberately narrow: a query shape this type
@@ -601,6 +611,44 @@ export async function recordSetupSubmission(
       reused: row?.reused === true,
     },
   };
+}
+
+/**
+ * Whether a save with this retry key has ALREADY committed on this block.
+ *
+ * A COMMITTED ATTEMPT WHOSE ANSWER WAS LOST must reach the command, which
+ * recognises the retained key and returns the original submission. The
+ * action's fresh-save staleness check cannot decide that: when a save revised
+ * an existing group AND added a new one, the database now holds the group the
+ * attempt itself allocated, so its own identical retry looks like a moved set
+ * (Codex, #1205 4400032918).
+ *
+ * This answers only "does a submission exist for (block, key)". It does not
+ * authorize anything and it is not a verdict on the retry: the command still
+ * scopes the block to the session and refuses the same key with different
+ * content. A failed lookup is `null`, never `false`, so the caller keeps the
+ * staleness check when the database is unhappy.
+ */
+export async function setupSubmissionExists(
+  db: MachineDb,
+  blockId: string,
+  /**
+   * The authorized session, bound IN THE QUERY through the block's own row
+   * (an inner join), like every other block consumer here: a block that is
+   * not this session's matches nothing.
+   */
+  sessionId: string,
+  idempotencyKey: string,
+): Promise<boolean | null> {
+  const { data, error } = await db
+    .from("treatment_setup_submissions")
+    .select("id, session_blocks!inner(session_id)")
+    .eq("session_block_id", blockId)
+    .eq("session_blocks.session_id", sessionId)
+    .eq("idempotency_key", idempotencyKey.trim())
+    .limit(1);
+  if (error || !Array.isArray(data)) return null;
+  return data.length > 0;
 }
 
 export type RecordedReading = {

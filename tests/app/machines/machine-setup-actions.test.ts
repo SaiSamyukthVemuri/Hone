@@ -95,6 +95,26 @@ vi.mock("@/lib/supabase/server", () => ({
       return { data: DB.rpcResult, error: DB.rpcError };
     },
     from: (table: string) => {
+      // THE RETRY-KEY LOOKUP (`setupSubmissionExists`): `.eq(block).eq(session)
+      // .eq(key).limit(1)`, answered from this table's own rows - empty unless a case
+      // says a submission already committed under the key.
+      if (table === "treatment_setup_submissions") {
+        const err = DB.errorFor[table] ?? null;
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                eq: () => ({
+                  limit: async () => ({
+                    data: err ? null : (DB.rowsFor[table] ?? []),
+                    error: err,
+                  }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
       const error = DB.errorFor[table] ?? DB.selectError;
       const rows = DB.rowsFor[table] ?? DB.rows;
       const result = async () => ({ data: error ? null : rows, error });
@@ -1784,6 +1804,77 @@ describe("the staleness refusal, narrowed to the revise path", () => {
       DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
       "the command ran anyway",
     ).toHaveLength(0);
+  });
+
+  // CODEX #1205 4400032918. A save that REVISES g1 and ADDS a group commits
+  // both; its answer is lost; the retry carries the original expectedGroupKeys
+  // (["g1"]) while the database now also holds the group the attempt allocated.
+  const REVISE_AND_ADD = {
+    ...ROUTE,
+    blockId: "block-1",
+    machineId: "dev-1",
+    modeKey: "galvanic",
+    idempotencyKey: "save-key-committed-retry",
+    expectedGroupKeys: ["g1"],
+    groups: [
+      { groupKey: "g1", newGroupRef: null, channels: [1], readings: [READING(120)] },
+      { groupKey: null, newGroupRef: "g2", channels: [2], readings: [READING(130)] },
+    ],
+  };
+
+  it("a COMMITTED retry (revise + add, answer lost) reaches the command and is reused", async () => {
+    synthDevice();
+    DB.rowsFor.treatment_setup_readings = [
+      { ...STALE_ROW, group_key: "g1" },
+      { ...STALE_ROW, group_key: "g2" },
+    ];
+    DB.rowsFor.treatment_setup_submissions = [{ id: "sub-committed" }];
+    DB.rpcResult = { submission_id: "sub-committed", groups: 2, readings: 2, reused: true };
+
+    const out = await actions.recordSetupSubmissionAction(REVISE_AND_ADD);
+
+    expect(out.ok, out.ok ? "" : out.error).toBe(true);
+    if (!out.ok) return;
+    expect(out.reused).toBe(true);
+    expect(
+      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+      "the retry never reached the command that recognises the key",
+    ).toHaveLength(1);
+  });
+
+  it("CONTROL: the same moved set with NO committed submission is still refused", async () => {
+    // Without this the test above would also pass if the staleness check had
+    // simply been removed.
+    synthDevice();
+    DB.rowsFor.treatment_setup_readings = [
+      { ...STALE_ROW, group_key: "g1" },
+      { ...STALE_ROW, group_key: "g2" },
+    ];
+    DB.rowsFor.treatment_setup_submissions = [];
+
+    const out = await actions.recordSetupSubmissionAction(REVISE_AND_ADD);
+
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toBe(SETUP_GROUPS_MOVED);
+    expect(
+      DB.calls.filter((c) => c.fn === "record_treatment_setup_submission"),
+    ).toHaveLength(0);
+  });
+
+  it("a FAILED key lookup keeps the staleness check (not 'no submission', not 'committed')", async () => {
+    synthDevice();
+    DB.rowsFor.treatment_setup_readings = [
+      { ...STALE_ROW, group_key: "g1" },
+      { ...STALE_ROW, group_key: "g2" },
+    ];
+    DB.errorFor.treatment_setup_submissions = { message: "boom" };
+
+    const out = await actions.recordSetupSubmissionAction(REVISE_AND_ADD);
+
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.error).toBe(SETUP_GROUPS_MOVED);
   });
 
   it("CONTROL: an UNCHANGED snapshot lets a revise through", async () => {

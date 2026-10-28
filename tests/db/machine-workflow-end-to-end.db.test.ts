@@ -236,6 +236,16 @@ function pgMachineDb(q: UserQuery): MachineDb {
                         [value, secondValue],
                       );
                     },
+                    // The retry-key lookup (`setupSubmissionExists`) embeds the
+                    // block's session through a PostgREST join, which raw SQL
+                    // here does not model. Nothing in this file calls it, so
+                    // refuse loudly rather than run a query that means
+                    // something else.
+                    eq() {
+                      throw new Error(
+                        "a third eq (embedded join) is not modelled by this adapter",
+                      );
+                    },
                   };
                 },
                 // `gt` is the KEYSET predicate: the page after the last id

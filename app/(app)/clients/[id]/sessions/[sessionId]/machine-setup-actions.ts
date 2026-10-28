@@ -19,6 +19,7 @@ import {
   readingsForBlock,
   recordSetupGroup,
   recordSetupSubmission,
+  setupSubmissionExists,
   registerStudioMachine,
   retireStudioMachine,
   type MachineDb,
@@ -926,16 +927,33 @@ export async function recordSetupSubmissionAction(input: {
   // to the setup she was looking at; if that set has moved, her baseline has
   // moved with it. Nothing is lost either way - captures are append-only - but
   // being told to look again is the honest answer to a stale picture.
+  //
+  // A COMMITTED RETRY IS RESOLVED BEFORE THIS CHECK, NOT BY IT (Codex, #1205
+  // 4400032918). A save that revised a group and added another has itself
+  // changed the set this compares against, so its own identical retry after a
+  // lost answer would be refused as "moved" and never reach the command that
+  // recognises the retained key - freezing the draft until a reload. When a
+  // submission already exists for this key the check is skipped and the
+  // command decides: it returns the original, or refuses the key reused with
+  // different content. A lookup that failed is not "no submission".
   if (input.expectedGroupKeys && groups.some((g) => g.groupKey !== null)) {
-    const current = await readingsForBlock(db, input.blockId, input.sessionId);
-    if (!current.ok) {
-      // A READ THAT FAILED IS NOT A SET THAT MATCHES. Treating it as "no
-      // change" would skip the guard exactly when the database is unhappy.
-      return { ok: false, code: "rejected", error: SETUP_GROUPS_MOVED };
-    }
-    const seen = current.value.map((r) => r.groupKey);
-    if (recordedGroupsMoved(input.expectedGroupKeys, seen)) {
-      return { ok: false, code: "rejected", error: SETUP_GROUPS_MOVED };
+    const committed = await setupSubmissionExists(
+      db,
+      input.blockId,
+      input.sessionId,
+      input.idempotencyKey,
+    );
+    if (committed !== true) {
+      const current = await readingsForBlock(db, input.blockId, input.sessionId);
+      if (!current.ok) {
+        // A READ THAT FAILED IS NOT A SET THAT MATCHES. Treating it as "no
+        // change" would skip the guard exactly when the database is unhappy.
+        return { ok: false, code: "rejected", error: SETUP_GROUPS_MOVED };
+      }
+      const seen = current.value.map((r) => r.groupKey);
+      if (recordedGroupsMoved(input.expectedGroupKeys, seen)) {
+        return { ok: false, code: "rejected", error: SETUP_GROUPS_MOVED };
+      }
     }
   }
 

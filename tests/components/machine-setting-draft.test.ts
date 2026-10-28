@@ -1821,6 +1821,8 @@ describe("every block/capture consumer is bound to the authorized route", () => 
     /p_session_id/,
     /sessionId:\s*input\.sessionId/,
     /readingsForBlock\(db, input\.blockId, input\.sessionId\)/,
+    // The retry-key lookup binds through the block's own row, in the query.
+    /\.eq\("session_blocks\.session_id", sessionId\)/,
   ];
 
   it("discovers the consumers, so this test cannot be silently empty", () => {
