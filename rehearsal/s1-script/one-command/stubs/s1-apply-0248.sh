@@ -13,5 +13,6 @@ sask GOWORD "Type  APPLY  to run the single push of that 1 migration (0248) now:
 mkdir -p "$S/s1-apply"; printf 'IN-FLIGHT %s head=x run=y\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$S/s1-apply/APPLY-STATE"
 echo 1 >> "$S/push.count"
 [ "${PUSH_MODE:-ok}" != killed ] || kill -9 $$
+[ "${PUSH_MODE:-ok}" != hang ] || { touch "$S/hang.flag"; sleep 120; }
 mv "$S/s1-apply/APPLY-STATE" "$S/s1-apply/APPLY-STATE.t" && printf 'APPLIED-UNVERIFIED x\n' > "$S/s1-apply/APPLY-STATE"; rm -f "$S/s1-apply/APPLY-STATE.t"
 echo "STAGE 0248 APPLIED: exactly 1 migration (0248)"

@@ -15,7 +15,7 @@ jobs:
   runner-linux:
     name: one-command runner vs stubs (Linux, fast loop)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,7 +29,7 @@ jobs:
   runner-macos:
     name: one-command runner vs stubs (macOS arm64, /bin/bash 3.2, /usr/bin/expect)
     runs-on: macos-14
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

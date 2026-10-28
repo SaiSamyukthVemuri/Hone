@@ -1,6 +1,6 @@
 #!/bin/bash
 # REHEARSAL - NEVER MERGE. Hone ONE-COMMAND STAGE RUNNER (stage 0248): one entry point on Sam's Mac, production credentials stay off the VPS.
-#   show the plan and its sha256 -> approve or decline -> credentials typed once, hidden -> the runner collects the values, verifies recovery
+#   show the plan and its sha256 -> approved or decline -> credentials typed once, hidden -> the runner collects the values, verifies recovery
 #   readiness, waits within bounded limits, applies, restores the temporary setting and verifies the outcome -> ONE result block.
 # It runs the PINNED, UNMODIFIED reviewed scripts (pitr-backups, window-s0a-0248, window-row4, d3-watchdog, s1-apply-0248, window-s1read-0248)
 # through a pty (phase.exp): their prompts are answered from the plan and from machine captures, never typed by a person. Every pin is checked
@@ -19,6 +19,7 @@ WD_SHA=1011530ffdfaddde0bb5ff54a0f0abcd19da9cf13456718f2efd9ab21f11a885
 MIN_REMAIN_START_MIN=150
 POLL_S=60
 WAIT_LIMIT_S=1500
+HB_SHA=f0db8978c0e80d47ef966cac09fd97423422ade0b817356791452908119ca523
 MAX_ATTEMPTS=2
 PINS='
 85407d0b01d11497161c1c9d0374751ecaec80faed9609f2d4f073d71fe49413  pitr-status/pitr-backups.sh
@@ -33,7 +34,7 @@ dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b  supabase-cli/s
 #CONST-END
 HERE="$(cd "$(dirname "$0")" && pwd)"
 EXP=$HERE/phase.exp
-TOK=""; PW=""; OUTCOME=""; REASON=""; RESTORE_NOTE=""; ROLE_ALTERED=0; ORIG_ROLECONF=""; RUN=""; APPLY_TYPED=0; ROLE_STATE=""
+CUR_PH=""; TOK=""; PW=""; OUTCOME=""; REASON=""; RESTORE_NOTE=""; ROLE_ALTERED=0; ORIG_ROLECONF=""; RUN=""; APPLY_TYPED=0; ROLE_STATE=""
 die_early() { REASON="$*"; echo "STOP: $*" >&2; exit 1; }
 sha() { shasum -a 256 -- "$1" | cut -d' ' -f1; }
 utcnow() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -95,28 +96,40 @@ restore_role() { # restore + verify; the credentials are still held here (cleare
   fi
 }
 result_block() {
-  echo "================================================================================" >&2
-  echo "RESULT: $OUTCOME" >&2
-  [ -n "$REASON" ] && echo "reason: $REASON" >&2
-  [ -n "$RESTORE_NOTE" ] && echo "role setting: $RESTORE_NOTE" >&2
-  [ -n "$RUN" ] && echo "evidence: $RUN (plan, phase transcripts masked, phase results)" >&2
+  local txt
+  txt="================================================================================
+RESULT: $OUTCOME"
+  [ -n "$REASON" ] && txt="$txt
+reason: $REASON"
+  [ -n "$RESTORE_NOTE" ] && txt="$txt
+role setting: $RESTORE_NOTE"
+  [ -n "$RUN" ] && txt="$txt
+evidence: $RUN (plan, phase transcripts masked, phase results)"
   case "$OUTCOME" in
-    UNKNOWN*) echo "next: do NOT rerun the push. Run window-s1read-0248.sh (read-only), then s1-reconcile-0248.sh; the marker $STATEF stays until then." >&2 ;;
+    UNKNOWN*) txt="$txt
+next: do NOT rerun the push. Run window-s1read-0248.sh (read-only), then s1-reconcile-0248.sh; the marker $STATEF stays until then." ;;
   esac
-  echo "================================================================================" >&2
+  txt="$txt
+================================================================================"
+  printf '%s\n' "$txt" >&2
+  [ -n "$RUN" ] && [ -d "$RUN" ] && printf '%s\n' "$txt" > "$RUN/RESULT.txt" 2>/dev/null
+  return 0
 }
 on_exit() {
   local rc=$?
   trap - EXIT
   restore_role
   TOK=""; PW=""
-  if [ -z "$OUTCOME" ]; then if [ "$APPLY_TYPED" = 1 ]; then OUTCOME="UNKNOWN -> reconcile"; else OUTCOME="NOT APPLIED"; fi; REASON="${REASON:-the runner exited early (status $rc)}"; fi
+  if [ -z "$OUTCOME" ]; then OUTCOME="NOT APPLIED"; REASON="${REASON:-the runner exited early (status $rc)}"; fi
+  # a marker left by THIS run (the runner refuses to start when one exists) means the apply script reached the push: never "NOT APPLIED", whatever stopped us
+  case "$OUTCOME" in APPLIED+VERIFIED*) ;; *) if [ -e "$STATEF" ] || [ -L "$STATEF" ]; then OUTCOME="UNKNOWN -> reconcile"; fi ;; esac
   case "$RESTORE_NOTE" in "SETTING NOT RESTORED"*) OUTCOME="$OUTCOME; SETTING NOT RESTORED" ;; esac
   result_block
   exit $rc
 }
 trap on_exit EXIT
-trap 'REASON="interrupted"; exit 130' INT TERM HUP
+on_signal() { REASON="interrupted by $1"; if [ -n "$CUR_PH" ]; then kill -TERM "$CUR_PH" 2>/dev/null; wait "$CUR_PH" 2>/dev/null; CUR_PH=""; fi; exit 130; }
+trap 'on_signal INT' INT; trap 'on_signal TERM' TERM; trap 'on_signal HUP' HUP
 
 stop() { REASON="$*"; echo "STOP: $*" >&2; exit 1; }
 
@@ -130,6 +143,7 @@ bad=$(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | grep -E '^(SUPABASE
 [ -r /dev/tty ] || die_early "no terminal"
 [ -d "$ROOT" ] && [ ! -L "$ROOT" ] || die_early "$ROOT is missing or a symlink"
 verify_pins || die_early "a pinned file is missing or its sha256 differs (C1: only the pinned scripts may be on this Mac)"
+[ -f "$HERE/hb-emit.sh" ] && [ "$(sha "$HERE/hb-emit.sh")" = "$HB_SHA" ] || die_early "hb-emit.sh is missing or differs from its pinned sha256"
 [ -f "$PLANF" ] && [ ! -L "$PLANF" ] || die_early "the plan file is missing"
 mkdir -p "$OC" && chmod 700 "$OC" || die_early "cannot create $OC"
 [ ! -e "$STATEF" ] && [ ! -L "$STATEF" ] || die_early "an APPLY-STATE marker exists ($STATEF): a previous push is UNKNOWN or unverified. Run s1-reconcile-0248.sh, not this."
@@ -139,6 +153,10 @@ RUN=$(mktemp -d "$OC/run.XXXXXX") || die_early "mktemp failed"; chmod 700 "$RUN"
 # ---- 1. the plan: strict fields, then the printed block and its sha256 ----
 plan_get() { sed -n "s/^$1=\(.*\)\$/\1/p" "$PLANF" | head -1; }
 for k in STAGE WSTART WEND OPERATOR MFLAG PITR_RET R6CHOICE R6TEXT R6REF ROLE_LIMIT; do eval "P_$k=\$(plan_get $k)"; done
+P_HEARTBEAT=$(plan_get HEARTBEAT); P_HB_MAX=$(plan_get HEARTBEAT_MAX); P_HB_AFTER=$(plan_get HEARTBEAT_AFTER_POLLS)
+[ -n "$P_HEARTBEAT" ] || P_HEARTBEAT=off; [ -n "$P_HB_MAX" ] || P_HB_MAX=3; [ -n "$P_HB_AFTER" ] || P_HB_AFTER=3
+case "$P_HEARTBEAT" in off|wal_message) ;; *) die_early "plan HEARTBEAT must be off or wal_message" ;; esac
+printf '%s' "$P_HB_MAX" | grep -Eq '^[1-5]$' && printf '%s' "$P_HB_AFTER" | grep -Eq '^[1-9][0-9]?$' || die_early "plan HEARTBEAT_MAX must be 1 to 5 and HEARTBEAT_AFTER_POLLS a whole number"
 [ "$P_STAGE" = 0248 ] || die_early "plan STAGE must be 0248"
 utc_ok "$P_WSTART" && utc_ok "$P_WEND" || die_early "plan window times must be YYYY-MM-DDTHH:MM:SSZ"
 text_ok "$P_OPERATOR" && text_ok "$P_R6TEXT" && text_ok "$P_R6REF" || die_early "plan text fields are empty or have unsupported characters"
@@ -163,9 +181,14 @@ PLANBLOCK=$RUN/PLAN.txt
   echo "operator: $P_OPERATOR; maintenance flag: $P_MFLAG; R-6: $P_R6CHOICE ($P_R6REF): $P_R6TEXT; PITR retention days: $P_PITR_RET"
   echo "holds (owner-confirmed below): cron-job.org reminders paused; people hold in place"
   echo "recovery: PITR range from the Management API capture (pitr-backups, read only); restore point = the time row 4 stamps at 'select'; the latest point must reach it"
-  echo "bounded waiting: poll every ${POLL_S}s up to ${WAIT_LIMIT_S}s; then STOP, nothing pushed. No heartbeat, no named restore point, no other provider write"
+  echo "bounded waiting: poll every ${POLL_S}s up to ${WAIT_LIMIT_S}s; then STOP, nothing pushed. No named restore point."
+  if [ "$P_HEARTBEAT" = wal_message ]; then
+    echo "PRODUCTION WRITE (disclosed, needs Insurance review and Sam's own approval): ONLY if the latest recovery point has not reached the selection after $P_HB_AFTER polls, up to $P_HB_MAX calls of  select pg_logical_emit_message(true, 'hone-stage-0248', '<run label>')  - one write-ahead-log record each; no table, no row, no function, no schema change, no customer data, no migration; each is followed by a poll; if the point never catches up the run STOPs and nothing is pushed"
+  else
+    echo "heartbeat: NONE (a recovery point that does not catch up STOPs the run; no write is made to move it)"
+  fi
   echo "attempts: at most $MAX_ATTEMPTS row-4 attempts for this window (this is attempt $((na+1)))"
-  echo "settings write (the only write the runner makes): ALTER ROLE postgres SET statement_timeout = '$P_ROLE_LIMIT' through the pooler, captured/verified/restored on every exit path"
+  echo "settings write: ALTER ROLE postgres SET statement_timeout = '$P_ROLE_LIMIT' through the pooler, captured/verified/restored on every exit path (production writes in this plan: that setting$( [ "$P_HEARTBEAT" = wal_message ] && echo ', and the disclosed heartbeat above' ), the migration 0248 itself, and nothing else)"
   echo "stop conditions: any pin mismatch; authentication failure (no retry); S0a or row 4 not PASS; PITR stalled; setting not verified; watchdog not armed; any unexpected prompt"
   echo "outcomes: APPLIED+VERIFIED | NOT APPLIED | UNKNOWN -> reconcile (never a rerun)"
   echo "pins (full sha256, re-checked after approval):"
@@ -175,16 +198,18 @@ PLAN_SHA=$(sha "$PLANBLOCK")
 cat "$PLANBLOCK" >&2
 echo "plan sha256: $PLAN_SHA" >&2
 echo >&2
-echo "New-route approval sentence (generated from the plan sha256 above; it is NOT given by typing approve - Sam and Insurance decide it separately):" >&2
-echo "  \"I approve ONE runner-executed hosted settings write for stage 0248 only, ALTER ROLE postgres SET statement_timeout = '$P_ROLE_LIMIT' through the session pooler, to be restored to its captured original on every exit path, under plan sha256 $PLAN_SHA; I approve no other write.\"" >&2
+HBS="I approve no other write."
+[ "$P_HEARTBEAT" = wal_message ] && HBS="I also approve, only if the recovery point has not caught up after $P_HB_AFTER polls, at most $P_HB_MAX calls of select pg_logical_emit_message(true, 'hone-stage-0248', ...) (write-ahead-log records only: no table, row, function, schema change or customer data); I approve no other write."
+echo "New-route approval sentence (generated from the plan sha256 above; typing 'approved' below is the stage approval, it is NOT Sam's approval of these new write routes - Sam and Insurance decide this sentence separately):" >&2
+echo "  \"I approve ONE runner-executed hosted settings write for stage 0248 only, ALTER ROLE postgres SET statement_timeout = '$P_ROLE_LIMIT' through the session pooler, to be restored to its captured original on every exit path, under plan sha256 $PLAN_SHA. $HBS\"" >&2
 echo >&2
 
 # ---- 2. holds (yes/no), then ONE approval prompt ----
 ans() { local _v; IFS= read -r -p "$2" _v </dev/tty || stop "could not read $1"; printf -v "$1" '%s' "$_v"; }
 ans H1 "Cron-job.org reminders paused (yes or no): "; [ "$H1" = yes ] || stop "hold 1 not confirmed (type exactly: yes)"
 ans H2 "People hold in place (yes or no): "; [ "$H2" = yes ] || stop "hold 2 not confirmed (type exactly: yes)"
-ans APPR "Type approve or decline: "
-[ "$APPR" = approve ] || stop "declined (you typed '$APPR'); nothing was run"
+ans APPR "Type approved or decline: "
+[ "$APPR" = approved ] || stop "not approved (you typed '$APPR'); nothing was run"
 echo "$PLAN_SHA  approved $(utcnow)" > "$RUN/APPROVAL.txt"
 echo "$P_WSTART $(utcnow)" >> "$AF"
 
@@ -193,6 +218,7 @@ IFS= read -rs -p "Supabase access token (not shown): " TOK </dev/tty || stop "co
 IFS= read -rs -p "Database password (not shown): " PW </dev/tty || stop "could not read the password"; echo >&2
 [ -n "$TOK" ] && [ -n "$PW" ] || stop "empty credential"
 verify_pins || stop "a pinned file changed after the approval"
+[ "$(sha "$HERE/hb-emit.sh")" = "$HB_SHA" ] || stop "hb-emit.sh differs from its pinned sha256"
 [ "$(sha "$PLANBLOCK")" = "$PLAN_SHA" ] || stop "the plan changed after the approval"
 
 # ---- 4. phases ----
@@ -200,10 +226,15 @@ vf=$RUN/values.txt
 { echo "WSTART=$P_WSTART"; echo "WEND=$P_WEND"; echo "OPERATOR=$P_OPERATOR"; echo "MFLAG=$P_MFLAG"; echo "PITR_RET=$P_PITR_RET"
   echo "R6CHOICE=$P_R6CHOICE"; echo "R6TEXT=$P_R6TEXT"; echo "R6REF=$P_R6REF"; echo "PITR_SCRIPT=$PITR"; echo "POLL_S=$POLL_S"; echo "WAIT_LIMIT_S=$WAIT_LIMIT_S"
   echo "WD_SCRIPT=$WD"; echo "WD_ENV=WD_USER=postgres.$REF WD_HOSTPORT=$POOLER:5432 WD_SSLMODE=require WD_MAX=1800 WD_PIN_WAIT=600"
-  echo "APPROVED_PLAN_SHA=$PLAN_SHA"; } > "$vf"
-run_phase() { # run_phase PHASE CHILD [ARGS]  -> exit status of the driver; result in $RUN/PHASE.result
+  echo "APPROVED_PLAN_SHA=$PLAN_SHA"
+  echo "HB_MODE=$P_HEARTBEAT"; echo "HB_MAX=$P_HB_MAX"; echo "HB_AFTER_POLLS=$P_HB_AFTER"; echo "HB_SCRIPT=$HERE/hb-emit.sh"; echo "HB_GO=$GO"; echo "HB_REF=$REF"; echo "HB_POOLER=$POOLER"; echo "RUN_LABEL=$(basename "$RUN")"; } > "$vf"
+run_phase() { # run_phase PHASE CHILD [ARGS]  -> exit status of the driver; result in $RUN/PHASE.result. Run in the background and WAITED for, so a signal reaches the trap at once
   local ph=$1; shift
-  printf '%s\n%s\n' "$TOK" "$PW" | expect -f "$EXP" "$ph" "$vf" "$RUN" "$@"
+  ( exec expect -f "$EXP" "$ph" "$vf" "$RUN" "$@" < <(printf '%s\n%s\n' "$TOK" "$PW") ) &
+  CUR_PH=$!
+  wait "$CUR_PH"; local prc=$?
+  CUR_PH=""
+  return $prc
 }
 res() { sed -n "s/^$2=\(.*\)\$/\1/p" "$RUN/$1.result" 2>/dev/null | head -1; }
 
@@ -240,5 +271,8 @@ if [ "$APPLY_TYPED" = 1 ] && [ "$rc" != 0 ]; then OUTCOME="UNKNOWN -> reconcile"
 echo "== phase 6: read-back (read only)" >&2
 run_phase s1read bash "$S1READ"; rc=$?
 if [ "$rc" != 0 ] || [ "$(res s1read VERDICT)" != PASS ]; then OUTCOME="UNKNOWN -> reconcile"; stop "the push finished but the read-back was not PASS (status $rc). Treat as UNKNOWN."; fi
-OUTCOME="APPLIED+VERIFIED"; REASON="history 246 rows, max 0248 read back by window-s1read-0248"
+REASON="history 246 rows, max 0248 read back by window-s1read-0248"
+echo "== phase 7: reconcile (clears the marker only on the read-back evidence; read only)" >&2
+( cd "$ROOT" && bash "$ROOT/s1-apply-0248/s1-reconcile-0248.sh" ) </dev/null >"$RUN/reconcile.out" 2>&1; rcr=$?
+if [ "$rcr" = 0 ] && [ ! -e "$STATEF" ]; then OUTCOME="APPLIED+VERIFIED"; else OUTCOME="APPLIED+VERIFIED (marker NOT cleared: run s1-reconcile-0248.sh, see $RUN/reconcile.out)"; fi
 exit 0

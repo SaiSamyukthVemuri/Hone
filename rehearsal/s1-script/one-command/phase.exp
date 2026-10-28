@@ -154,12 +154,14 @@ switch -exact -- $phase {
       eof { grab; fail "row 4 ended before it printed the selected restore point" }
     }
     set R(SELECTED_AT) $tsel
+    if {![info exists R(HEARTBEATS)]} { set R(HEARTBEATS) 0 }
     set timeout 30
     expect {
       -exact "Type ready when" { grab } timeout { grab; fail "row 4 did not reach its ready prompt" } eof { grab; fail "row 4 ended before its ready prompt" }
     }
     # bounded wait: poll the Management API capture at a fixed interval until latest >= selection, or STOP at the reviewed limit
-    set t0 [clock seconds]; set limit [v WAIT_LIMIT_S]; set every [v POLL_S]; set ready 0; set polls 0
+    set t0 [clock seconds]; set limit [v WAIT_LIMIT_S]; set every [v POLL_S]; set ready 0; set polls 0; set hb 0
+    set plog [open "$outdir/row4.polls" w 0600]; puts $plog "poll capture_at_utc latest_recovery_point selection heartbeats_so_far"
     while {1} {
       set dir [pitr_capture]
       set spawn_id $row4
@@ -172,10 +174,18 @@ switch -exact -- $phase {
       } $dir]
       lassign [split [string trim $js] " "] pon early late capat
       set R(LAST_POLL_LATEST) $late; set R(POLLS) $polls
+      puts $plog "$polls $capat $late $tsel $hb"; flush $plog
       if {$late ne "" && $capat ne "" && [iso_s $late] >= [iso_s $tsel] && [iso_s $capat] > [iso_s $tsel]} { set ready 1; break }
+      # the OPTIONAL disclosed heartbeat: only when the plan allows it, only after the existing activity has been given [HB_AFTER_POLLS] polls, bounded count
+      if {[v HB_MODE] eq "wal_message" && $polls >= [v HB_AFTER_POLLS] && $hb < [v HB_MAX]} {
+        incr hb
+        if {[catch {exec bash [v HB_SCRIPT] [v HB_GO] [v HB_REF] [v HB_POOLER] "[v RUN_LABEL]-$hb" << "$pw\n"} hbout]} { set R(HEARTBEATS) $hb; fail "the heartbeat statement failed (never retried): [string range $hbout 0 120]" }
+        set R(HEARTBEATS) $hb; note "\n\[driver\] heartbeat $hb of [v HB_MAX] emitted (a disclosed production write)\n"
+      }
       if {[expr {[clock seconds] - $t0}] + $every > $limit} { break }
       after [expr {$every * 1000}]
     }
+    close $plog
     if {!$ready} {
       set R(STOP) PITR_STALLED
       send -- "abort\r"; drain 30; catch {wait}

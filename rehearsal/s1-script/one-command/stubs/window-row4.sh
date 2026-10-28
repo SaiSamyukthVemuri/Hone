@@ -5,6 +5,7 @@ sask WEND "Window end (UTC): " "$X_WEND"
 sask GO "Type exactly select: " select
 T=$(date -u +%Y-%m-%dT%H:%M:%SZ); echo "$T" > "$S/stub.tsel"
 echo "Selected pre-migration restore point: $T. Write it down. Do NOT start S1 yet." >&2
+[ "${ROW4_MODE:-}" != hang ] || { touch "$S/hang.flag"; sleep 120; }
 sleep 1
 sask READY "Type ready when the newest pitr-backups capture was taken after $T and the dashboard's latest recovery point is at or after $T (or abort): "
 [ "$READY" = ready ] || sdie "aborted by the operator; S1 was not started"
