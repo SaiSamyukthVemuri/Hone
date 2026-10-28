@@ -39,7 +39,7 @@ if [ "$MODE" = supavisor ]; then
   export COUNT_FILE="$T/accepts.txt"; : > "$COUNT_FILE"
   nohup python3 -I "$S1/tlsfront-count.py" "$T/relay.crt" "$T/relay.key" 54330 54329 > "$T/relay.log" 2>&1 &
   sleep 3
-  REF="$TENANT"; DBHOST="$IP:54330"; CM=pooler; PH="$DBHOST"; TESTCA="$T/relay.crt"
+  REF="$TENANT"; DMB=8; DBHOST="$IP:54330"; CM=pooler; PH="$DBHOST"; TESTCA="$T/relay.crt"
   for _ in $(seq 1 30); do PGPASSWORD=postgres PGSSLMODE=require psql "postgresql://postgres.$TENANT@$IP:54330/postgres" -X -At -c 'select 1' 2>/dev/null | grep -qx 1 && break; sleep 2; done
   PGPASSWORD=postgres PGSSLMODE=require psql "postgresql://postgres.$TENANT@$IP:54330/postgres" -X -At -c 'select 1' | grep -qx 1 || { echo "the pooler does not answer through the relay"; exit 1; }
   : > "$COUNT_FILE"
@@ -95,9 +95,9 @@ reset_db() { psqld -c "delete from supabase_migrations.schema_migrations where v
 
 # ---- install the shipped scripts (disclosed rewrites only), the real CLI and the real launcher/sudoers
 id sam >/dev/null 2>&1 || useradd -m -s /bin/bash sam
-SRC=/root/hr-pkg-e2e; rm -rf "$SRC" /root/hr-pins-e2e.txt; mkdir -p "$SRC/scripts" "$SRC/ca"
-cp "$HR/launcher" "$HR/install.sh" "$HR/set-secret.sh" "$HR/approve-package.sh" "$HR/bind-gonogo.sh" "$HR/actions.conf" "$HR/sudoers.hone-release" "$SRC/"; cp "$HR"/scripts/*.sh "$SRC/scripts/"
-cp "$TESTCA" "$SRC/ca/supabase-prod-ca-2021.crt"
+SRC=/root/hr-pkg-e2e; rm -rf "$SRC" /root/hr-pins-e2e.txt; mkdir -p "$SRC/scripts" "$SRC/ca" "$SRC/tools"
+cp "$HR/launcher" "$HR/install.sh" "$HR/set-secret.sh" "$HR/approve-package.sh" "$HR/bind-gonogo.sh" "$HR/bind-serving.sh" "$HR/actions.conf" "$HR/sudoers.hone-release" "$SRC/"; cp "$HR"/scripts/*.sh "$SRC/scripts/"
+cp "$TESTCA" "$SRC/ca/supabase-prod-ca-2021.crt"; cp "$HR"/tools/make-verify-bundle.py "$SRC/tools/"
 TESTCA_SHA=$(sha256sum "$TESTCA" | cut -d' ' -f1)
 sed -i "s/^CA_SHA=.*/CA_SHA=$TESTCA_SHA/" "$SRC/scripts/release-apply.sh" "$SRC/scripts/heartbeat.sh"
 echo "e2e rewrites: CA_SHA in release-apply.sh and heartbeat.sh -> the sha256 of the TEST CA ($TESTCA_SHA), and the packaged CA file -> the TEST CA (the shipped pin is the Supabase Root 2021 CA, 70072358...)"
@@ -139,7 +139,7 @@ install -m 644 -o sam -g sam "$BUNDLE" /srv/hone-release-inbox/bundle.tar
 install -m 644 -o sam -g sam "$LIST" /srv/hone-release-inbox/list.sha256
 RECEIPT=$(printf 'a%.0s' $(seq 1 64))
 approve() { bash "$SRC/approve-package.sh" id="$1" bundle_sha="$(sha256sum /srv/hone-release-inbox/bundle.tar | cut -d' ' -f1)" list_sha="$(sha256sum /srv/hone-release-inbox/list.sha256 | cut -d' ' -f1)" head="$HEAD40" pr=1193 receipt_sha="$RECEIPT" first=0213 last=0246 count=34 minutes=30 \
-  window_start="$(date -u -d '-10 minutes' +%Y-%m-%dT%H:%M:%SZ)" window_end="$(date -u -d '+3 hours' +%Y-%m-%dT%H:%M:%SZ)" recovery_basis=waiver waiver_id=WAIVER-20261027-1 recovery_stamp=none s0a_writes=none history_before=211 drain_holds=yes drain_queues=yes drain_people=yes drain_max_busy=0 drain_attestation="synthetic target nothing to drain" serving_commit="$(printf 'c%.0s' $(seq 1 40))" serving_attestation="synthetic target no serving source" verify_sha=none s0a_sha="$(printf 'd%.0s' $(seq 1 64))" s0a_at="$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)" min_span_days=6 quiet_db="${QDB:-idle}" \
+  window_start="$(date -u -d '-10 minutes' +%Y-%m-%dT%H:%M:%SZ)" window_end="$(date -u -d '+3 hours' +%Y-%m-%dT%H:%M:%SZ)" recovery_basis=waiver waiver_id=WAIVER-20261027-1 recovery_stamp=none s0a_writes=none history_before=211 drain_holds=yes drain_queues=yes drain_people=yes drain_max_busy="${DMB:-0}" drain_attestation="synthetic target nothing to drain" serving_commit="$(printf 'c%.0s' $(seq 1 40))" serving_attestation="synthetic target no serving source" serving_check=attested-only heartbeat_auth="${HBAUTH:-none}" verify_sha=none s0a_sha="$(printf 'd%.0s' $(seq 1 64))" s0a_at="$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)" min_span_days=6 quiet_db="${QDB:-idle}" \
   connection_mode="$CM" pooler_host="$PH" statement_timeout_s="${STS:-120}" lock_timeout_s=5 idle_tx_timeout_s=60 max_push_seconds="${MPS:-300}" attestation="synthetic target; recovery not applicable" > "$T/approve.out" 2>&1; local rc=$?; [ $rc = 0 ] && fake_bind; return $rc; }
 # The Management API is not reachable from CI, so the preflight action (read token) is exercised in the custody job with a STUB CLI. Here the binding root would write after
 # reading a GO package is WRITTEN BY THE HARNESS (a synthetic GO package about the current approval, sha-bound) so the REAL CLI can be driven through the real apply path.
@@ -185,7 +185,7 @@ runo apply
 kill $SP 2>/dev/null; wait $SP 2>/dev/null
 c=$(( $(conns) - c0 ))
 if [ $RC = 0 ] && printf '%s' "$OUT" | grep -q "APPLIED: exactly 34" && [ "$(hist)" = 245 ] && [ "$(histmax)" = 0246 ]; then ok "34 migrations applied through the launcher with the real CLI ($MODE, verify-full against the test CA): history 245, max 0246"; else bad "real apply" "rc=$RC hist=$(hist) $OUT"; fi
-[ "$c" = 2 ] && ok "exactly 2 connection attempts (one dry run, one push)" || bad "connection attempts: $c"
+[ "$c" = 3 ] && ok "exactly 3 connection attempts (the connection-phase read-back, one dry run, one push)" || bad "connection attempts: $c"
 [ "$(state | cut -d' ' -f1)" = APPLIED-UNVERIFIED ] && [ -d $ST/consumed/E2E-GOOD ] && ok "state APPLIED-UNVERIFIED (the verify action is the only way to APPLIED) and the approval consumed" || bad "state" "$(state)"
 grep -q 'db push' "$T/ps.txt" && ok "the process sampler saw the CLI (the argv check is not vacuous)" || bad "sampler never saw the CLI"
 ! grep -Eq 'PGPASSWORD|:postgres@|assword=' "$T/ps.txt" && ok "no password in the CLI's argv" || bad "password in argv"
@@ -212,7 +212,7 @@ if [ "$MODE" = pg ]; then
   [ "$(histmax)" = 0229 ] && ok "after the kill the history stops at 0229: the open file's transaction was rolled back (the reconcile read would classify the range PARTIAL)" || bad "history after kill" "$(histmax)"
   # E4(b): the heartbeat WAL message against the real server through the real CLI, verify-full
   rm -f $ST/APPLY-STATE; install -m 644 -o sam -g sam "$BUNDLE" /srv/hone-release-inbox/bundle.tar; install -m 644 -o sam -g sam "$LIST" /srv/hone-release-inbox/list.sha256
-  QDB=heartbeat approve E2E-HB; runo heartbeat
+  HBAUTH="I authorize ONE heartbeat write to the production database: a single pg_logical_emit_message WAL message (no table, no row, no schema change) over the verify-full direct connection as the postgres role, once for approval E2E-HB." QDB=heartbeat approve E2E-HB; runo heartbeat
   [ $RC = 0 ] && grep -q '^HEARTBEAT at=' $ST/HEARTBEAT && ok "E4(b) (real CLI, local server): the heartbeat emitted a logical WAL message over verify-full and recorded HEARTBEAT" || bad "heartbeat" "rc=$RC $OUT"
 else
   # the pooler gate against the REAL 34 files: they carry no bounded set local statement_timeout, so the B2 gate refuses them (this is the finding for the 0247+ stage too)

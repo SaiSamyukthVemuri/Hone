@@ -191,6 +191,8 @@ jobs:
           uname -a; sudo -V | head -1; id; getent group docker sudo | cut -c1-80
       - name: Custody proof (as root on the disposable runner)
         run: sudo bash rehearsal/hone-release/ci/custody-test.sh 2>&1 | tee "$RUNNER_TEMP/custody.txt"; exit ${PIPESTATUS[0]}
+      - name: WAL-evidence evaluator unit tests (pure Python, no database)
+        run: python3 -I rehearsal/hone-release/ci/wal-evidence-test.py
 
   release-apply-e2e:
     name: hone-release apply with the REAL CLI and REAL 34 files through the launcher and Supavisor (Linux)
@@ -272,3 +274,15 @@ jobs:
           persist-credentials: false
       - name: Apply a synthetic package through the launcher
         run: sudo bash rehearsal/hone-release/ci/e2e-test.sh pg 2>&1 | tee "$RUNNER_TEMP/e2e-pg.txt"; exit ${PIPESTATUS[0]}
+
+  h6-real-cli:
+    name: Insurance H6 - what the REAL CLI does for db query --linked and backups list, recorded by a local fake Management API (no database)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Record the real binary's requests
+        run: sudo bash rehearsal/hone-release/ci/h6-real-cli.sh 2>&1 | tee "$RUNNER_TEMP/h6.txt"; exit ${PIPESTATUS[0]}

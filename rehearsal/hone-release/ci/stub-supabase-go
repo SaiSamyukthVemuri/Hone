@@ -21,6 +21,10 @@ case "$1" in
     if [ "$2" = query ]; then
       [ "$mode" = qfail ] && { echo "ERROR: query failed" >&2; exit 1; }
       case "$*" in
+        *"as busy"*pg_settings*) # the apply's connection-phase read-back (history, busy sessions, the four settings the endpoint applied)
+          [ "$mode" = authfail ] && { echo 'failed to connect to postgres: failed SASL auth (FATAL: password authentication failed for user "postgres.secretref" (SQLSTATE 28P01)) host=db.secretref.supabase.com' >&2; exit 1; }
+          h=$(cat "$W/stub-hist" 2>/dev/null || echo "211 0212"); s=$(cat "$W/stub-pre-settings" 2>/dev/null || echo "120000 5000 60000 5000"); set -- $s
+          printf '[{"n":%s,"mx":"%s","busy":%s,"st":"%s","lt":"%s","it":"%s","cc":"%s"}]\n' "${h%% *}" "${h#* }" "$(cat "$W/stub-busy" 2>/dev/null || echo 0)" "$1" "$2" "$3" "$4"; exit 0 ;;
         *"as n, coalesce(max(version)"*) h=$(cat "$W/stub-hist" 2>/dev/null || echo "211 0212"); printf '[{"n":%s,"mx":"%s"}]\n' "${h%% *}" "${h#* }"; exit 0 ;;
         *"count(*)::int as c from supabase_migrations"*) printf '[{"c":%s}]\n' "$(cat "$W/stub-rangec" 2>/dev/null || echo 34)"; exit 0 ;;
         *"as busy from pg_stat_activity"*) printf '[{"busy":%s}]\n' "$(cat "$W/stub-busy" 2>/dev/null || echo 0)"; exit 0 ;;

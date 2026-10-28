@@ -84,6 +84,13 @@ sha() { sha256sum -- "$1" | cut -d' ' -f1; }
 epoch() { date -u -d "$1" +%s 2>/dev/null; }
 iso='[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'
 mask() { LC_ALL=C sed -E -e 's#postgres(ql)?://[^ ]*#<url>#g' -e 's#([Uu]ser|[Hh]ost|[Hh]ostaddr|[Dd]bname)=[^ ,)]*#\1=<masked>#g' -e 's#([Uu]ser|[Rr]ole) "[^"]*"#\1 <masked>#g' -e 's#[A-Za-z0-9.-]*\.supabase\.(com|co)[:0-9]*#<host>#g'; }
+MANIFEST=/usr/local/libexec/hone-release/manifest
+mgmt() { # mgmt ID [args]   the ONE pinned read helper (mgmt-read.py): sha256-checked against the root-owned manifest; the token is only in its environment
+  local line msha mpath; line=$(awk '$1 == "mgmt-read" {print $2 " " $3}' "$MANIFEST" 2>/dev/null)
+  msha=${line% *}; mpath=${line#* }
+  [ -n "$line" ] && [ -f "$mpath" ] && [ ! -L "$mpath" ] && [ "$(sha256sum "$mpath" | cut -d' ' -f1)" = "$msha" ] || { echo "the mgmt-read helper is missing or differs from the manifest sha256" >&2; return 9; }
+  HONE_READ_TOKEN="$TOKEN" python3 -I "$mpath" "$REF" "$@"
+}
 is_auth_failure() { grep -qiE 'authenticat|28P01|28000|password|banned|circuit|SASL|tenant or user not found' "$1"; }
 write_state() { # write_state WORD [detail]: durable (fsync) replacement of the state marker
   printf '%s %s %s\n' "$1" "${APPROVAL_ID:-none}" "$(utcnow)${2:+ $2}" > "$STATE/APPLY-STATE.tmp" && sync "$STATE/APPLY-STATE.tmp" && mv -f "$STATE/APPLY-STATE.tmp" "$STATE/APPLY-STATE" && sync "$STATE" 2>/dev/null
@@ -103,6 +110,7 @@ TOKEN=""; if [ "$ACTION" = preflight ]; then TOKEN=$PW; PW=""; : > "$PFC" 2>/dev
 env | grep -E '^(PG|SUPABASE_|DATABASE_URL|GITHUB_TOKEN|GH_TOKEN|HTTPS?_PROXY|ALL_PROXY|NODE_|BASH_ENV|ENV|LD_)' >/dev/null && die "the environment holds a variable that must not be there (names withheld)"
 [ -f "$BIN" ] && [ ! -L "$BIN" ] && [ "$(sha "$BIN")" = "$GO_SHA" ] || die "supabase-go missing or sha256 mismatch"
 [ -f "$CA" ] && [ ! -L "$CA" ] && [ "$(sha "$CA")" = "$CA_SHA" ] || die "the pinned Supabase root CA is missing or its sha256 differs from the pin in this script (T5)"
+if command -v openssl >/dev/null 2>&1 && ! openssl x509 -in "$CA" -noout -checkend $((180 * 86400)) >/dev/null 2>&1; then echo "WARNING: the pinned Supabase root CA expires within 180 days (or is unreadable): plan a new reviewed package" >&2; pf_check ca-expiry PASS "WARNING: the pinned CA expires within 180 days"; fi
 pf_check tooling PASS "supabase-go sha256 and the pinned CA sha256 match the pins in this script"
 
 # ---- state and the single release lock
@@ -125,7 +133,7 @@ APPROVAL_ID=""
 for p in "$APPROVAL" /etc/hone-release /etc; do
   [ "$(stat -c %u "$p")" = 0 ] && [ $(( 8#$(stat -c %a "$p") & 8#022 )) = 0 ] || die "$p is not root-owned and private to root"
 done
-declare_keys="history_before s0a_writes drain_holds drain_queues drain_people drain_max_busy drain_attestation serving_commit serving_attestation verify_sha approval_id approved_at head bundle_sha list_sha pr pr_head receipt_sha project_ref target_url connection_mode db_host first last count expires_at window_start window_end recovery_basis waiver_id recovery_stamp s0a_sha s0a_at min_span_days quiet_db_mode autonomy statement_timeout_s lock_timeout_s idle_tx_timeout_s timeout_control max_push_seconds recovery_attestation"
+declare_keys="heartbeat_auth_sha serving_check history_before s0a_writes drain_holds drain_queues drain_people drain_max_busy drain_attestation serving_commit serving_attestation verify_sha approval_id approved_at head bundle_sha list_sha pr pr_head receipt_sha project_ref target_url connection_mode db_host first last count expires_at window_start window_end recovery_basis waiver_id recovery_stamp s0a_sha s0a_at min_span_days quiet_db_mode autonomy statement_timeout_s lock_timeout_s idle_tx_timeout_s timeout_control max_push_seconds recovery_attestation"
 seen=" "
 while IFS= read -r l || [ -n "$l" ]; do
   case "$l" in ''|'#'*) continue ;; esac
@@ -199,6 +207,7 @@ check_recovery() { # check_recovery MAXAGE   the custody-recorded provider evide
     grep -q '^IDLE-PROOF result=idle ' "$pf" || die "the idle proof says the database is NOT idle"
     pa=$(sed -n 's/.* second_at=\([^ ]*\) .*/\1/p' "$pf" | head -1); printf '%s' "$pa" | LC_ALL=C grep -Eq "^$iso\$" || die "IDLE-PROOF is malformed"
     pa=$(epoch "$pa"); [ $((now2 - pa)) -le "$maxage" ] || die "IDLE-PROOF is older than $maxage s: run idle-probe again"
+    grep -q ' wal=ok ' "$pf" || die "the idle proof carries no WAL evidence (current WAL archived, archiver not failing, archive_timeout known): a write counter alone is not accepted for the autonomous path"
     pw=$(sed -n 's/.* writes=\([0-9]*\)$/\1/p' "$pf" | head -1)
     [ -n "$pw" ] && [ "$pw" = "$A_s0a_writes" ] || die "the user-table write counter ($pw) differs from the one at S0a ($A_s0a_writes): writes happened since S0a, so the quiet-database claim fails"
   fi
@@ -208,6 +217,7 @@ for k in drain_holds drain_queues drain_people; do eval "v=\$A_$k"; [ "$v" = yes
 printf '%s' "$A_drain_max_busy" | grep -Eq '^[0-9]{1,2}$' || die "drain_max_busy must be 0..99"
 [ "${#A_drain_attestation}" -ge 12 ] && [ "${#A_serving_attestation}" -ge 12 ] || die "drain_attestation and serving_attestation must be the approver's own words (12 characters or more)"
 printf '%s' "$A_serving_commit" | grep -Eq '^[0-9a-f]{40}$' || die "serving_commit must be the 40-hex commit of the compatible application deployment"
+case "$A_serving_check" in readback|attested-only) ;; *) die "serving_check must be readback or attested-only" ;; esac
 printf '%s' "$A_verify_sha" | grep -Eq '^([0-9a-f]{64}|none)$' || die "verify_sha must be 64 hex or none"
 printf '%s' "$A_history_before" | grep -Eq '^[0-9]{1,5}$' || die "history_before must be the number of history rows before the stage"
 pf_check drain-attestations PASS "holds paused, queues drained, people hold: attested yes by the approver; max busy sessions $A_drain_max_busy"
@@ -372,14 +382,13 @@ fi
 # ---- preflight stops here: the reads that need the READ token, then the reviewable GO/NO-GO package
 if [ "$ACTION" = preflight ]; then
   STAGE=preflight
-  PFW="$RUNDIR/pf"; mkdir -p "$PFW/supabase/.temp" && printf '%s\n' v2.102.0 > "$PFW/supabase/.temp/cli-latest" && printf '%s' "$A_project_ref" > "$PFW/supabase/.temp/project-ref"
-  pq() { ( cd "$PFW" && SUPABASE_ACCESS_TOKEN="$TOKEN" SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 "$BIN" db query --linked -o json "$1" ) </dev/null 2> "$PFW/err.txt"; }
+  PFW="$RUNDIR/pf"; mkdir -p "$PFW"; REF=$A_project_ref
   pjson() { python3 -I -c 'import json,sys; j=json.load(sys.stdin); r=j if isinstance(j,list) else j.get("rows",j.get("result",[])); print(" ".join(str(r[0][k]) for k in sys.argv[1:]))' "$@"; }
-  h=$(pq "select count(*)::int as n, coalesce(max(version), '') as mx from supabase_migrations.schema_migrations" | pjson n mx) || die "the history read failed (preflight): NO-GO"
+  h=$(mgmt history 2> "$PFW/err.txt" | pjson n mx) || die "the history read failed (preflight): NO-GO"
   hn=${h%% *}; hx=${h#* }
   if [ "$hn" = "$A_history_before" ] && [ -n "$hx" ] && [ "$hx" \< "$A_first" ]; then pf_check history PASS "history rows $hn (approved $A_history_before), max version $hx is below the first approved version $A_first: no drift"
   else pf_check history FAIL "history rows $hn (approved $A_history_before), max $hx, first approved $A_first: DRIFT"; fi
-  b=$(pq "select count(*)::int as busy from pg_stat_activity where backend_type = 'client backend' and pid <> pg_backend_pid() and state <> 'idle' and datname = current_database()" | pjson busy) || die "the drain read failed (preflight): NO-GO"
+  b=$(mgmt busy 2> "$PFW/err.txt" | pjson busy) || die "the drain read failed (preflight): NO-GO"
   if [ "$b" -le "$A_drain_max_busy" ]; then pf_check drain-read PASS "$b busy client sessions (allowed $A_drain_max_busy)"; else pf_check drain-read FAIL "$b busy client sessions exceed the allowed $A_drain_max_busy"; fi
   TOKEN=""; unset TOKEN
   gonogo_write GO "all checks recorded"
@@ -394,6 +403,36 @@ DRY="$LOGS/dry-run.log"; rc=0
 mkdir "$STATE/consumed/$APPROVAL_ID" 2>/dev/null || die "approval $APPROVAL_ID was consumed by another run. Nothing was attempted."
 receipt_add bound "gonogo $GNG_SHA; approval $(sha "$APPROVAL"); bundle $A_bundle_sha; list $A_list_sha; head $A_head; pr $A_pr; receipt $A_receipt_sha; path $A_autonomy; mode $A_connection_mode"
 write_state DRYRUN-STARTED || die "cannot write the DRYRUN-STARTED state. Nothing was attempted."
+# FX2/FX4: the first login. Over the SAME connection form the push will use (direct + verify-full + startup options), ONE read-back statement returns the history
+# (rows, max), the busy client sessions and the four timeout settings the endpoint actually applied. Anything other than the approval is a refusal BEFORE the dry run.
+STAGE=precheck
+PRE="$LOGS/precheck.log"; rc=0
+SQLPRE="select (select count(*) from supabase_migrations.schema_migrations)::int as n, (select coalesce(max(version), '') from supabase_migrations.schema_migrations) as mx, (select count(*)::int from pg_stat_activity where backend_type = 'client backend' and pid <> pg_backend_pid() and state <> 'idle' and datname = current_database()) as busy, (select setting from pg_settings where name = 'statement_timeout') as st, (select setting from pg_settings where name = 'lock_timeout') as lt, (select setting from pg_settings where name = 'idle_in_transaction_session_timeout') as it, (select setting from pg_settings where name = 'client_connection_check_interval') as cc"
+run_cli "$PRE" 60 db query --db-url "$A_target_url" -o json "$SQLPRE" || rc=$?
+if [ "$rc" = 124 ]; then write_state FAILED-DRYRUN "precheck-killed-after-60s"; die "the connection-phase read-back did not finish in 60 s; the CLI was KILLED. Nothing was applied; state FAILED-DRYRUN until root clears it."; fi
+scan_log "$PRE"
+if [ "$rc" != 0 ]; then
+  tail -n 6 "$PRE" | mask >&2
+  if is_auth_failure "$PRE"; then write_state FAILED-LOGIN precheck; die "authentication failed at the first login (connection-phase read-back). NOTHING was applied; state FAILED-LOGIN blocks every further run until root clears it."; fi
+  write_state FAILED-DRYRUN "precheck-exit-$rc"; die "the connection-phase read-back failed (exit $rc). NOTHING was applied; the state stands until root clears it."
+fi
+pre=$(python3 -I - "$PRE" "$A_connection_mode" "$A_history_before" "$A_first" "$A_drain_max_busy" "$((A_statement_timeout_s * 1000))" "$((A_lock_timeout_s * 1000))" "$((A_idle_tx_timeout_s * 1000))" <<'PYP'
+import json, re, sys
+t = open(sys.argv[1], errors="replace").read(); m = re.search(r"(\[.*\])", t, re.S)
+try: r = json.loads(m.group(1)); r = r[0]
+except Exception: print("BAD:the read-back answer could not be parsed"); sys.exit(0)
+mode, hb, first, maxbusy = sys.argv[2], int(sys.argv[3]), sys.argv[4], int(sys.argv[5])
+want = [int(x) for x in sys.argv[6:9]] + [5000]
+why = []
+if int(r["n"]) != hb or not r["mx"] or not str(r["mx"]) < first: why.append("history drift: %s rows (approved %d), max %s, first approved %s" % (r["n"], hb, r["mx"], first))
+if int(r["busy"]) > maxbusy: why.append("%s busy client sessions exceed the allowed %d" % (r["busy"], maxbusy))
+got = [int(r["st"]), int(r["lt"]), int(r["it"]), int(r["cc"])]
+if mode == "direct" and got != want: why.append("the endpoint applied statement/lock/idle-in-tx/connection-check ms %s, the approval says %s (startup options not honoured)" % (got, want))
+print("BAD:" + "; ".join(why) if why else "OK:history %s rows max %s; busy %s; settings ms %s%s" % (r["n"], r["mx"], r["busy"], got, "" if mode == "direct" else " (pooler: startup options do not apply, per-file set local is the control)"))
+PYP
+)
+case "$pre" in OK:*) echo "connection-phase read-back ${pre#OK:}" >> "$RUN"; receipt_add precheck "${pre#OK:}" ;; *) write_state FAILED-DRYRUN "precheck-mismatch"; receipt_add precheck-refused "${pre#BAD:}"; die "the connection-phase read-back refuses: ${pre#BAD:}. NOTHING was applied; the state stands until root clears it." ;; esac
+STAGE=dry-run
 run_cli "$DRY" 120 db push --db-url "$A_target_url" --dry-run || rc=$?
 if [ "$rc" = 124 ]; then write_state FAILED-DRYRUN "killed-after-120s"; die "the dry run did not finish in 120 s; the CLI was KILLED (client wall clock). A dry run writes nothing. State FAILED-DRYRUN stands until root clears it. Nothing was pushed."; fi
 echo "dry run finished $(utcnow) exit $rc" >> "$RUN"

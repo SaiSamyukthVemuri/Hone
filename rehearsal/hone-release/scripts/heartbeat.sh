@@ -21,6 +21,9 @@ exec 3<&-
 [ -f "$APPROVAL" ] && [ ! -L "$APPROVAL" ] && [ "$(stat -c %u "$APPROVAL")" = 0 ] && [ $(( 8#$(stat -c %a "$APPROVAL") & 8#022 )) = 0 ] || die "no root-owned APPROVED-PACKAGE"
 g() { sed -n "s/^$1=//p" "$APPROVAL" | head -1; }
 [ "$(g quiet_db_mode)" = heartbeat ] || die "the approval does not select quiet_db_mode=heartbeat"
+HBID=$(g approval_id)
+want_auth=$(printf 'I authorize ONE heartbeat write to the production database: a single pg_logical_emit_message WAL message (no table, no row, no schema change) over the verify-full direct connection as the postgres role, once for approval %s.' "$HBID" | sha256sum | cut -d' ' -f1)
+[ "$(g heartbeat_auth_sha)" = "$want_auth" ] || die "the approval does not carry Sam's typed heartbeat authorization (the exact sentence for this approval id): a heartbeat is a HOSTED WRITE and is not implied by anything else"
 [ "$(g connection_mode)" = direct ] || die "the heartbeat is written only on the direct connection form"
 now=$(date -u +%s); exp=$(date -u -d "$(g expires_at)" +%s 2>/dev/null) || die "cannot read expires_at"
 [ "$exp" -gt "$now" ] || die "the approval has expired"
@@ -58,4 +61,5 @@ PYS
 )
 printf 'HEARTBEAT at=%s approval=%s settings=%s\n' "$t" "$ID" "$sm" > "$STATE/HEARTBEAT.tmp" && mv -f "$STATE/HEARTBEAT.tmp" "$STATE/HEARTBEAT"
 [ "$sm" = ok ] || die "the endpoint did NOT apply the approved startup options ($sm; order: statement, lock, idle-in-transaction, client-connection check, in ms). The WAL message was written, the heartbeat is recorded as settings=$sm and the autonomous apply will refuse it."
+echo "NOTE: the provider's latest recovery point is expected to advance only after the WAL segment holding this message is archived (about archive_timeout, plus the provider's own lag); run read-backups again after that, not immediately." >&2
 echo "HEARTBEAT recorded at $t; the real endpoint applied the approved statement/lock/idle-in-transaction timeouts (settings=ok). The apply will STOP unless the provider's latest recovery point reaches this time (read-backups again after it advances)."

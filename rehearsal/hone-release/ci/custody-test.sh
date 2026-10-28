@@ -23,17 +23,20 @@ chmod 440 /etc/sudoers.d/* 2>/dev/null   # a hosted runner ships /etc/sudoers.d/
 id sam >/dev/null 2>&1 || useradd -m -s /bin/bash sam
 passwd -l sam >/dev/null 2>&1
 # T1: the package is copied to a ROOT-OWNED directory outside /tmp (no world-writable ancestor); the pins are what Sam types from the reviewed record
-SRC=/root/hr-pkg; rm -rf "$SRC" /root/hr-pins.txt; mkdir -p "$SRC/scripts" "$SRC/ci" "$SRC/ca"
-cp "$HR/launcher" "$HR/install.sh" "$HR/set-secret.sh" "$HR/approve-package.sh" "$HR/bind-gonogo.sh" "$HR/actions.conf" "$HR/sudoers.hone-release" "$SRC/"; cp "$HR"/scripts/*.sh "$SRC/scripts/"; cp "$HR"/ca/* "$SRC/ca/"
+SRC=/root/hr-pkg; rm -rf "$SRC" /root/hr-pins.txt; mkdir -p "$SRC/scripts" "$SRC/ci" "$SRC/ca" "$SRC/tools"
+cp "$HR/launcher" "$HR/install.sh" "$HR/set-secret.sh" "$HR/approve-package.sh" "$HR/bind-gonogo.sh" "$HR/bind-serving.sh" "$HR/actions.conf" "$HR/sudoers.hone-release" "$SRC/"; cp "$HR"/scripts/*.sh "$HR"/scripts/mgmt-read.py "$HR"/scripts/wal-evidence.py "$HR"/scripts/pitr-wal-status.sql "$SRC/scripts/"; cp "$HR"/ca/* "$SRC/ca/"; cp "$HR"/tools/make-verify-bundle.py "$SRC/tools/"
 # STUB smoke: the real reviewed post-s3-smoke.sh makes GET requests to the production site; CI must not (its sha256 is checked against the OPS-reviewed copy below)
 [ "$(sha256sum "$SRC/scripts/post-s3-smoke.sh" | cut -d' ' -f1)" = 0c69ce828a982234d97751284514bdd9d7d3af026871e572bfd799bfe614571c ] && echo "the packaged post-s3-smoke.sh is byte-identical to the OPS-reviewed script (0c69ce82...)"
 printf '%s\n' '#!/bin/bash' 'm=$(cat /var/lib/hone-release/work/stub-smoke 2>/dev/null || echo ok)' 'if [ "$m" = ok ]; then echo "{\"total\":3,\"failed\":0}"; exit 0; fi' 'echo "{\"total\":3,\"failed\":1}"; exit 1' > "$SRC/scripts/post-s3-smoke.sh"
 cp "$HERE/stub-supabase-go" "$T/supabase-go"; chmod 755 "$T/supabase-go"
 STUBSHA=$(sha256sum "$T/supabase-go" | cut -d' ' -f1)
 sed -i "s/^GO_SHA=.*/GO_SHA=$STUBSHA/" "$SRC/scripts/release-apply.sh" "$SRC/scripts/read-backups.sh" "$SRC/scripts/reconcile.sh" "$SRC/scripts/idle-probe.sh" "$SRC/scripts/heartbeat.sh" "$SRC/scripts/verify.sh"
-sed -i "s/^IDLE_SECS=.*/IDLE_SECS=2/" "$SRC/scripts/idle-probe.sh"
-echo "test variant rewrites: GO_SHA in the five CLI-calling scripts (the stub's sha256) and IDLE_SECS 120 -> 2 in idle-probe.sh"
-diff <(sed 's/^GO_SHA=.*/GO_SHA=X/' "$HR/scripts/release-apply.sh") <(sed 's/^GO_SHA=.*/GO_SHA=X/' "$SRC/scripts/release-apply.sh") >/dev/null && ok "the installed apply script differs from the shipped one in the GO_SHA line only" || bad "variant differs elsewhere"
+sed -i "s/^SLACK=.*/SLACK=1/" "$SRC/scripts/idle-probe.sh"
+sed -i "s/N_FLOOR = 600; N_MARGIN = 180/N_FLOOR = 2; N_MARGIN = 0/" "$SRC/scripts/wal-evidence.py"
+sed -i 's#^BASE = .*#BASE = "http://127.0.0.1:18080"#' "$SRC/scripts/mgmt-read.py"
+echo "test variant rewrites: BASE in mgmt-read.py https://api.supabase.com -> a LOCAL fake Management API that records every request (fake-mgmt-api.py)"
+echo "test variant rewrites: GO_SHA in the five CLI-calling scripts (the stub's sha256) ; N_FLOOR 600 -> 2 and N_MARGIN 180 -> 0 in wal-evidence.py and SLACK 5 -> 1 in idle-probe.sh (so the proof takes seconds, not 10 minutes)"
+diff <(sed 's/^GO_SHA=.*/GO_SHA=X/; s/^CA_SHA=.*/CA_SHA=X/' "$HR/scripts/release-apply.sh") <(sed 's/^GO_SHA=.*/GO_SHA=X/; s/^CA_SHA=.*/CA_SHA=X/' "$SRC/scripts/release-apply.sh") >/dev/null && ok "the installed apply script differs from the shipped one in the GO_SHA line only" || bad "variant differs elsewhere"
 rmdir "$SRC/ci" 2>/dev/null; chown -R root:root "$SRC"; chmod -R go-w "$SRC"
 mkpins() { (cd "$SRC" && find . -type f | sed 's#^\./##' | LC_ALL=C sort | while read -r f; do printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f"; done) > /root/hr-pins.txt; chown root:root /root/hr-pins.txt; chmod 644 /root/hr-pins.txt; }
 mkpins
@@ -66,12 +69,14 @@ printf '%s\n' "$DBC" | bash "$SRC/set-secret.sh" db-password --stdin > /dev/null
 W=/var/lib/hone-release/work
 printf '%s' "$DBC" > $W/canary-db; printf '%s' "$PATC" > $W/canary-pat; chown hone-release:hone-release $W/canary-db $W/canary-pat
 echo ok > $W/stub-mode; echo "0213 0246" > $W/stub-range; chown hone-release:hone-release $W/stub-mode $W/stub-range
+: > /tmp/hr-api.log
+( setsid nohup python3 -I "$HERE/fake-mgmt-api.py" 18080 "$W" /tmp/hr-api.log > "$T/fake-api.out" 2>&1 & )   # detached: the later bare `wait` calls must not wait for it
 python3 -I "$S1/fixture.py" syn "$T/syn" --head $HEAD40 >/dev/null
 install -m 644 -o sam -g sam "$T/syn/migrations-d189768b.tar" /srv/hone-release-inbox/bundle.tar
 install -m 644 -o sam -g sam "$T/syn/MIGRATIONS-d189768b.sha256" /srv/hone-release-inbox/list.sha256
 HEAD_REVIEWED=$HEAD40; RECEIPT=$(printf 'a%.0s' $(seq 1 64))
 approve() { # approve ID [key=value overrides]   every value is "typed from the reviewed record" (computed here from the files under review)
-  local id=$1; shift; local -A K=( [id]=$id [bundle_sha]=$(sha256sum /srv/hone-release-inbox/bundle.tar | cut -d' ' -f1) [list_sha]=$(sha256sum /srv/hone-release-inbox/list.sha256 | cut -d' ' -f1) [head]=$HEAD_REVIEWED [pr]=1193 [receipt_sha]=$RECEIPT [first]=0213 [last]=0246 [count]=34 [minutes]=30 [window_start]=$(date -u -d '-10 minutes' +%Y-%m-%dT%H:%M:%SZ) [window_end]=$(date -u -d '+3 hours' +%Y-%m-%dT%H:%M:%SZ) [recovery_basis]=waiver [waiver_id]=WAIVER-20261027-1 [recovery_stamp]=none [s0a_writes]=none [history_before]=211 [drain_holds]=yes [drain_queues]=yes [drain_people]=yes [drain_max_busy]=0 [drain_attestation]="holds paused queues empty studios offline" [serving_commit]=$(printf 'c%.0s' $(seq 1 40)) [serving_attestation]="the compatible build serves the app" [verify_sha]=none [s0a_sha]=$(printf 'd%.0s' $(seq 1 64)) [s0a_at]=$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ) [min_span_days]=6 [quiet_db]=idle [connection_mode]=direct [pooler_host]=none [statement_timeout_s]=120 [lock_timeout_s]=5 [idle_tx_timeout_s]=60 [max_push_seconds]=60 [attestation]="restore point attested by the approver, not verified here" )
+  local id=$1; shift; local -A K=( [id]=$id [bundle_sha]=$(sha256sum /srv/hone-release-inbox/bundle.tar | cut -d' ' -f1) [list_sha]=$(sha256sum /srv/hone-release-inbox/list.sha256 | cut -d' ' -f1) [head]=$HEAD_REVIEWED [pr]=1193 [receipt_sha]=$RECEIPT [first]=0213 [last]=0246 [count]=34 [minutes]=30 [window_start]=$(date -u -d '-10 minutes' +%Y-%m-%dT%H:%M:%SZ) [window_end]=$(date -u -d '+3 hours' +%Y-%m-%dT%H:%M:%SZ) [recovery_basis]=waiver [waiver_id]=WAIVER-20261027-1 [recovery_stamp]=none [s0a_writes]=none [history_before]=211 [drain_holds]=yes [drain_queues]=yes [drain_people]=yes [drain_max_busy]=0 [drain_attestation]="holds paused queues empty studios offline" [serving_commit]=$(printf 'c%.0s' $(seq 1 40)) [serving_attestation]="the compatible build serves the app" [serving_check]=attested-only [heartbeat_auth]=none [verify_sha]=none [s0a_sha]=$(printf 'd%.0s' $(seq 1 64)) [s0a_at]=$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ) [min_span_days]=6 [quiet_db]=idle [connection_mode]=direct [pooler_host]=none [statement_timeout_s]=120 [lock_timeout_s]=5 [idle_tx_timeout_s]=60 [max_push_seconds]=60 [attestation]="restore point attested by the approver, not verified here" )
   local kv; for kv in "$@"; do K[${kv%%=*}]=${kv#*=}; done
   local args=() k; for k in "${!K[@]}"; do args+=("$k=${K[$k]}"); done
   bash "$SRC/approve-package.sh" "${args[@]}" > "$T/approve.out" 2>&1; local rc=$?
@@ -105,7 +110,7 @@ sl=$(sam sudo -n -l 2>&1)
 printf '%s\n' "$sl" >> "$SAMOUT"
 n=$(printf '%s\n' "$sl" | grep -o 'launcher [a-z-]*' | sort -u | wc -l)
 echo "$sl" | grep -E 'NOPASSWD|launcher|Sorry|may run' | sed 's/^/       /'
-[ "$n" -ge 8 ] && ! printf '%s\n' "$sl" | grep -Eq '\(ALL( : ALL)?\) +(NOPASSWD: +)?ALL$|\(root\)' && printf '%s' "$sl" | grep -q 'launcher apply' && printf '%s' "$sl" | grep -q 'launcher read-backups' && printf '%s' "$sl" | grep -q 'launcher status' && printf '%s' "$sl" | grep -q 'launcher reconcile' && printf '%s' "$sl" | grep -q 'launcher idle-probe' && printf '%s' "$sl" | grep -q 'launcher heartbeat' && printf '%s' "$sl" | grep -q 'launcher preflight' && printf '%s' "$sl" | grep -q 'launcher verify' && ok "sudo -l shows exactly the eight launcher lines (as hone-release), nothing else, no ALL" || bad "sudo -l" "$sl"
+[ "$n" -ge 9 ] && ! printf '%s\n' "$sl" | grep -Eq '\(ALL( : ALL)?\) +(NOPASSWD: +)?ALL$|\(root\)' && printf '%s' "$sl" | grep -q 'launcher apply' && printf '%s' "$sl" | grep -q 'launcher read-backups' && printf '%s' "$sl" | grep -q 'launcher status' && printf '%s' "$sl" | grep -q 'launcher reconcile' && printf '%s' "$sl" | grep -q 'launcher idle-probe' && printf '%s' "$sl" | grep -q 'launcher heartbeat' && printf '%s' "$sl" | grep -q 'launcher preflight' && printf '%s' "$sl" | grep -q 'launcher verify' && printf '%s' "$sl" | grep -q 'launcher wal-capture' && ok "sudo -l shows exactly the nine launcher lines (as hone-release), nothing else, no ALL" || bad "sudo -l" "$sl"
 for f in /var/lib/hone-release/secrets/db-password /var/lib/hone-release/secrets/read-pat /var/lib/hone-release/work/canary-db; do
   sam cat "$f" >/dev/null 2>&1 && bad "sam READ $f" || ok "sam cannot read $f"
 done
@@ -275,17 +280,18 @@ grep -q "TOKEN absent" $W/stub.log && ok "the apply child saw no token at all" |
 ! grep -E "argv=.*($DBC|$PATC)" $W/stub.log >/dev/null && ok "no secret in the CLI's argv" || bad "secret in argv"
 : > $W/stub.log; chown hone-release:hone-release $W/stub.log
 runo read-backups
-if [ $RC = 0 ] && printf '%s' "$OUT" | grep -q COMPLETED && grep -q "TOKEN matches the pat canary" $W/stub.log && grep -q "PGPASSWORD absent" $W/stub.log; then ok "read-backups: the child received the read token (matches) and NO database password"; else bad "read-backups routing" "rc=$RC $OUT / $(cat $W/stub.log)"; fi
-! grep -E "argv=.*($DBC|$PATC)" $W/stub.log >/dev/null && ok "no secret in the read child's argv" || bad "secret in read argv"
+if [ $RC = 0 ] && printf '%s' "$OUT" | grep -q "evidence recorded" && tail -n 1 /tmp/hr-api.log | grep -q '"method": "GET", "path": "/v1/projects/[a-z0-9]*/database/backups", "auth": "match"' && [ ! -s $W/stub.log ]; then ok "read-backups: ONE GET of the backups endpoint with the read token (matches the canary), no CLI, no database password"; else bad "read-backups routing" "rc=$RC $OUT / $(tail -n 2 /tmp/hr-api.log)"; fi
 runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -Eq "already used|consumed|expired|no APPROVED|APPLIED-UNVERIFIED" && ok "a second apply with the same (consumed) approval is refused" || bad "second apply" "rc=$RC $OUT"
 runo status; printf '%s' "$OUT" | grep -q "state: APPLIED" && ok "status reports the state without any secret" || bad "status" "$OUT"
 
 # ---------------------------------------------------------------- 7b. HON66-CONSOLIDATE: TLS environment, recovery evidence (C), the E4 selection, timeout gate (T4), reconcile
 ST=/var/lib/hone-release/state; CAP=/usr/local/libexec/hone-release/ca/supabase-prod-ca-2021.crt
 stubset() { printf '%s' "$2" > $W/$1; chown hone-release:hone-release $W/$1; }
+idle() { runo wal-capture; sleep 1; runo idle-probe; }   # the S0a WAL record, then the proof (two samples of the approved pitr-wal-status.sql)
 rec_ok() { stubset stub-writes 100; stubset stub-pitr true; stubset stub-span-days 7; stubset stub-latest-age 30; rm -f $W/stub-active; }
 clr_ev() { rm -f $ST/BACKUPS-EVIDENCE $ST/IDLE-PROOF $ST/HEARTBEAT $ST/heartbeat-done-* $ST/RECONCILE; }
 fresh() { stubset stub-hist "211 0212"; clear_state; : > $W/stub.log; chown hone-release:hone-release $W/stub.log; echo ok > $W/stub-mode; }
+HBA() { printf 'I authorize ONE heartbeat write to the production database: a single pg_logical_emit_message WAL message (no table, no row, no schema change) over the verify-full direct connection as the postgres role, once for approval %s.' "$1"; }
 stampago() { date -u -d "-$1 minutes" +%Y-%m-%dT%H:%M:%SZ; }
 AUTO=(recovery_basis=row4 waiver_id=none)
 # T5: the child gets verify-full and the pinned CA through its environment (the vendor CLI drops sslmode from the URL); the argv carries no sslmode and no password
@@ -302,14 +308,14 @@ approve CUST-N2 "${AUTO[@]}" recovery_stamp=$(stampago 8) s0a_writes=100; expect
 rec_ok; stubset stub-span-days 3; runo read-backups; approve CUST-N3 "${AUTO[@]}" recovery_stamp=$(stampago 8) s0a_writes=100; expect_refuse "C: a recovery span of 3 days under the 6-day minimum: STOP (S0-10)" apply "below the approved minimum"
 rec_ok; stubset stub-latest-age 600; runo read-backups; approve CUST-N4 "${AUTO[@]}" recovery_stamp=$(stampago 8) s0a_writes=100; expect_refuse "C: the latest recovery point is older than the stamp: STOP (row-4 latest point >= stamp)" apply "older than the recovery_stamp"
 rec_ok; runo read-backups; approve CUST-N5 "${AUTO[@]}" recovery_stamp=$(stampago 8) s0a_writes=100; expect_refuse "E4(a): evidence fine but no idle proof: STOP" apply "no IDLE-PROOF"
-touch $W/stub-active; chown hone-release:hone-release $W/stub-active; runo idle-probe; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "NOT idle" && grep -q 'result=active' $ST/IDLE-PROOF && ok "E4(a): a database whose write counters move is recorded as NOT idle" || bad "idle-probe active" "rc=$RC $OUT"
+touch $W/stub-lsn-move; chown hone-release:hone-release $W/stub-lsn-move; idle; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "NOT proven idle" && grep -q 'result=active' $ST/IDLE-PROOF && grep -q 'unchanged:lsn_write' $ST/IDLE-VERDICT.json && ok "E4(a): a WAL position that moves between the two samples is recorded as NOT idle (unchanged:lsn_write fails)" || bad "idle-probe active" "rc=$RC $OUT"; rm -f $W/stub-lsn-move
 approve CUST-N6 "${AUTO[@]}" recovery_stamp=$(stampago 8) s0a_writes=100; expect_refuse "E4(a): the idle proof says active: STOP" apply "NOT idle"
-rec_ok; runo read-backups; runo idle-probe; [ $RC = 0 ] && grep -q 'result=idle' $ST/IDLE-PROOF && ok "E4(a): two equal write-counter samples 2 s apart record IDLE-PROOF result=idle (read token only)" || bad "idle-probe" "rc=$RC $OUT"
+rec_ok; runo read-backups; idle; [ $RC = 0 ] && grep -q 'result=idle' $ST/IDLE-PROOF && ok "E4(a): two equal WAL samples (pitr-wal-status.sql, equal to the S0a record, archiver healthy) record IDLE-PROOF result=idle with wal=ok (read token only)" || bad "idle-probe" "rc=$RC $OUT"
 sed -i "s/^read_at=.*/read_at=$(stampago 20)/" $ST/BACKUPS-EVIDENCE; approve CUST-N7 "${AUTO[@]}" recovery_stamp=$(stampago 8) s0a_writes=100; expect_refuse "C: BACKUPS-EVIDENCE read 20 minutes ago: STOP (freshness 900 s)" apply "older than 900 s"
-fresh; rec_ok; runo read-backups; runo idle-probe; approve CUST-AUTO1 "${AUTO[@]}" recovery_stamp=$(stampago 8) s0a_writes=100; runo apply
+fresh; rec_ok; runo read-backups; idle; approve CUST-AUTO1 "${AUTO[@]}" recovery_stamp=$(stampago 8) s0a_writes=100; runo apply
 if [ $RC = 0 ] && printf '%s' "$OUT" | grep -q "APPLIED: exactly 34" && grep -q 'path autonomous; quiet-db mode idle' /var/lib/hone-release/logs/CUST-AUTO1/run.txt; then ok "AUTONOMOUS path, E4(a) idle: with fresh evidence (PITR on, span 7 d, latest >= stamp) and an idle proof the apply proceeds and the run record says autonomous"; else bad "autonomous idle apply" "rc=$RC $OUT"; fi
 # E4 (b) heartbeat
-fresh; clr_ev; rec_ok; runo read-backups; approve CUST-HB0 "${AUTO[@]}" recovery_stamp=none quiet_db=heartbeat; expect_refuse "E4(b): no HEARTBEAT recorded: STOP" apply "no HEARTBEAT was recorded"
+fresh; clr_ev; rec_ok; runo read-backups; approve CUST-HB0 "${AUTO[@]}" recovery_stamp=none quiet_db=heartbeat heartbeat_auth="$(HBA CUST-HB0)"; expect_refuse "E4(b): no HEARTBEAT recorded: STOP" apply "no HEARTBEAT was recorded"
 sleep 1; : > $W/stub.log; chown hone-release:hone-release $W/stub.log; runo heartbeat
 [ $RC = 0 ] && grep -q '^HEARTBEAT at=' $ST/HEARTBEAT && grep -q "PGPASSWORD matches the db canary" $W/stub.log && grep -q 'pg_logical_emit_message' $W/stub.log && grep -q "^TLS PGSSLMODE=verify-full PGSSLROOTCERT=$CAP" $W/stub.log && ok "E4(b): the heartbeat action (db password only) emitted ONE logical WAL message over verify-full and recorded HEARTBEAT" || bad "heartbeat" "rc=$RC $OUT $(tail -5 $W/stub.log)"
 expect_refuse "E4(b): the apply refuses evidence that was read BEFORE the heartbeat" apply "read before the heartbeat"
@@ -318,7 +324,7 @@ stubset stub-latest-age 600; sleep 1; runo read-backups; expect_refuse "E4(b): t
 stubset stub-latest-age 0; runo read-backups; autobind; runo apply
 [ $RC = 0 ] && printf '%s' "$OUT" | grep -q "APPLIED: exactly 34" && grep -q 'path autonomous; quiet-db mode heartbeat' /var/lib/hone-release/logs/CUST-HB0/run.txt && ok "AUTONOMOUS path, E4(b) heartbeat: recovery point advanced past the heartbeat, evidence read after it: the apply proceeds" || bad "heartbeat apply" "rc=$RC $OUT"
 fresh; rec_ok; approve CUST-HB6 "${AUTO[@]}"; runo heartbeat; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "does not select quiet_db_mode=heartbeat" && ok "E4: the heartbeat action refuses when the approval selected idle" || bad "heartbeat under idle" "$OUT"
-approve CUST-HB7 "${AUTO[@]}" recovery_stamp=none quiet_db=heartbeat; echo hbfail > $W/stub-mode; rm -f $ST/HEARTBEAT; runo heartbeat; r1=$RC; echo ok > $W/stub-mode; runo heartbeat
+approve CUST-HB7 "${AUTO[@]}" recovery_stamp=none quiet_db=heartbeat heartbeat_auth="$(HBA CUST-HB7)"; echo hbfail > $W/stub-mode; rm -f $ST/HEARTBEAT; runo heartbeat; r1=$RC; echo ok > $W/stub-mode; runo heartbeat
 [ $r1 -ne 0 ] && [ ! -e $ST/HEARTBEAT ] && [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "already written" && ok "E4(b): a failed heartbeat records nothing and is NOT retried by the action (the marker is spent)" || bad "heartbeat failure" "r1=$r1 rc=$RC $OUT"
 clear_state; clr_ev; echo ok > $W/stub-mode
 # a waiver is the ATTENDED FALLBACK and needs no provider evidence
@@ -345,7 +351,7 @@ install -m 644 -o sam -g sam "$T/bundle.keep" /srv/hone-release-inbox/bundle.tar
 # reconcile: read-only classification after an UNKNOWN outcome (token only, no password, never clears the state)
 fresh; approve CUST-REC; st0=$(state)
 stubset stub-recon ""; : > $W/stub.log; chown hone-release:hone-release $W/stub.log; runo reconcile
-[ $RC = 0 ] && printf '%s' "$OUT" | grep -q "RECONCILE NONE" && grep -q "TOKEN matches the pat canary" $W/stub.log && grep -q "PGPASSWORD absent" $W/stub.log && ok "reconcile: an empty history for the approved range -> NONE; the child got the read token and NO database password" || bad "reconcile none" "rc=$RC $OUT"
+[ $RC = 0 ] && printf '%s' "$OUT" | grep -q "RECONCILE NONE" && tail -n 1 /tmp/hr-api.log | grep -q '"auth": "match"' && [ ! -s $W/stub.log ] && ok "reconcile: an empty history for the approved range -> NONE; one read-only query with the read token, no CLI, no database password" || bad "reconcile none" "rc=$RC $OUT"
 stubset stub-recon "$(seq -f '%04g' 213 246 | tr '\n' ' ')"; runo reconcile; [ $RC = 0 ] && printf '%s' "$OUT" | grep -q "RECONCILE ALL" && ok "reconcile: all 34 approved versions present -> ALL" || bad "reconcile all" "$OUT"
 stubset stub-recon "0213 0214 0215"; runo reconcile; [ $RC = 0 ] && printf '%s' "$OUT" | grep -q "RECONCILE PARTIAL" && ok "reconcile: 3 of 34 present -> PARTIAL (never reported as a pass)" || bad "reconcile partial" "$OUT"
 echo qfail > $W/stub-mode; runo reconcile; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "stays UNKNOWN" && ok "reconcile: a failed read leaves the outcome UNKNOWN" || bad "reconcile qfail" "$OUT"
@@ -368,7 +374,7 @@ stubset stub-hist "211 0212"; stubset stub-busy 0; stubset stub-rangec 34; stubs
 # the GO/NO-GO package
 fresh; clr_ev; unbind; NOBIND=1 approve C2-GO; runo preflight
 [ $RC = 0 ] && printf '%s' "$OUT" | grep -q '"verdict": "GO"' && for c in tooling package window recovery target timeout-gate drain-attestations history drain-read; do printf '%s' "$OUT" | grep -q "\"name\": \"$c\"" || { RC=9; echo "missing check $c"; }; done; [ $RC = 0 ] && ok "preflight (read token only) writes a GO package naming tooling, package, window, recovery, target, timeout gate, drain attestations, history/drift and the drain read check" || bad "preflight GO" "rc=$RC $OUT"
-[ -z "$(grep -E '^CALL' $W/stub.log | grep -v 'argv=db query')" ] && ok "preflight made only read queries (no push, no dry run)" || bad "preflight called something else"
+[ ! -s $W/stub.log ] && ok "preflight called no CLI at all (no dry run, no push): only Management API reads" || bad "preflight called something else"
 stubset stub-hist "212 0213"; runo preflight; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q '"verdict": "NO-GO"' && printf '%s' "$OUT" | grep -q DRIFT && ok "preflight: history that differs from the manifest (212 rows, max 0213) is DRIFT -> NO-GO" || bad "preflight drift" "$OUT"
 g=$(python3 -I -c 'import json;print(json.load(open("/var/lib/hone-release/state/GONOGO.json"))["sha256"])'); bash "$SRC/bind-gonogo.sh" gonogo_sha="$g" > "$T/bind.out" 2>&1 && bad "a NO-GO package was bound" || { grep -q "verdict is NO-GO" "$T/bind.out" && ok "bind-gonogo refuses to bind a NO-GO package"; }
 stubset stub-hist "211 0212"; stubset stub-busy 3; runo preflight; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "busy client sessions" && ok "preflight: 3 busy sessions against an allowed 0 -> NO-GO (the drain read check)" || bad "preflight busy" "$OUT"
@@ -433,22 +439,94 @@ fresh; VID=C2-VS2; stubset stub-check-json '[{"x":2}]'; approve $VID verify_sha=
 stubset stub-check-json '[{"x":1}]'
 mkvb "$T/vb2" '[{"x":1}]' "insert into public.t values (1)"; install -m 644 -o sam -g sam "$T/vb2/verify.tar" /srv/hone-release-inbox/verify.tar; V2=$(sha256sum "$T/vb2/verify.tar" | cut -d' ' -f1)
 fresh; VID=C2-VS3; approve $VID verify_sha=$V2; runo apply; stubset stub-hist "245 0246"; vfail "a verify bundle SQL that is not a read-only SELECT (lexical gate)" "lexical gate"
+# serving-source READ-BACK (OPS step): the OPS read of Vercel alias -> deployment -> commit is bound as a root-owned record; verify compares it with the approved serving commit
+SVC=$(printf 'c%.0s' $(seq 1 40))
+rm -f /etc/hone-release/SERVING-READBACK; fresh; VID=C2-SR1; approve $VID serving_check=readback; runo apply; stubset stub-hist "245 0246"; vfail "serving_check=readback but OPS has not bound a read-back" "no root-written SERVING-READBACK"
+fresh; VID=C2-SR2; approve $VID serving_check=readback; runo apply; stubset stub-hist "245 0246"; sleep 1; bash "$SRC/bind-serving.sh" commit=$(printf 'd%.0s' $(seq 1 40)) deployment=dpl_AbC12345 alias_host=hone.care observed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) > "$T/sv.out" 2>&1; vfail "the alias points to a deployment of ANOTHER commit than the approved serving commit" "SERVING MISMATCH"
+fresh; VID=C2-SR3; approve $VID serving_check=readback; runo apply; stubset stub-hist "245 0246"; bash "$SRC/bind-serving.sh" commit=$SVC deployment=dpl_AbC12345 alias_host=hone.care observed_at=$(stampago 30) > "$T/sv.out" 2>&1; vfail "a serving read-back made BEFORE the push" "not made after the push"
+fresh; VID=C2-SR4; approve $VID serving_check=readback; runo apply; stubset stub-hist "245 0246"; sleep 1; bash "$SRC/bind-serving.sh" commit=$SVC deployment=dpl_AbC12345 alias_host=hone.care observed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) > "$T/sv.out" 2>&1; runo verify
+[ $RC = 0 ] && grep -q 'READ BACK by OPS' $LG/$VID/receipt.json && ok "serving source READ BACK: OPS's Vercel read (alias hone.care -> deployment -> commit) equals the approved serving commit; recorded in the receipt (not attestation)" || bad "serving readback" "rc=$RC $OUT"
+sam bash -c "echo x >> /etc/hone-release/SERVING-READBACK" 2>/dev/null && bad "sam wrote the serving read-back" || ok "the agent cannot write the serving read-back"
+rm -f /etc/hone-release/SERVING-READBACK; fresh
+# ---- HON66-OPENS-FX: guard, connection-phase read-back (FX2/FX4), WAL evidence (FX3), typed heartbeat authorization (FX5)
+bad_inst=$(grep -lE '/cli/login-role|/network-bans|--linked' $LX/scripts/* $LX/launcher 2>/dev/null); bad_q=$(grep -nE 'database/query($|[^/])' $LX/scripts/mgmt-read.py | head -1)
+[ -z "$bad_inst" ] && [ -z "$bad_q" ] && ok "FX1 guard: no installed script or the launcher contains the login-role or network-bans endpoints or the CLI's --linked mode, and the helper's only query endpoint is .../database/query/read-only" || bad "FX1 guard" "$bad_inst $bad_q"
+sam bash -c "echo x >> $LX/scripts/mgmt-read.py" 2>/dev/null && bad "sam wrote the helper" || ok "the pinned read helper is root-owned: the agent cannot change it"
+cp -a $LX/scripts/mgmt-read.py "$T/helper.orig"; echo "# edited" >> $LX/scripts/mgmt-read.py; fresh; runo reconcile; cp -a "$T/helper.orig" $LX/scripts/mgmt-read.py
+[ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "mgmt-read helper is missing or differs" && ok "FX1: a changed read helper is refused by every reader (sha256 against the root manifest)" || bad "helper tamper" "$OUT"
+# FX2/FX4: the first login reads history, busy sessions and the four settings AS APPLIED, before the dry run
+fresh; approve FX-S1; stubset stub-pre-settings "0 0 0 0"; runo apply
+[ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "startup options not honoured" && ! grep -q 'argv=db push' $W/stub.log && [ "$(state | cut -d' ' -f1)" = FAILED-DRYRUN ] && ok "FX2: settings the endpoint applied differ from the approval -> refused BEFORE the dry run (no db push call), state FAILED-DRYRUN" || bad "FX2 settings" "rc=$RC $OUT"
+stubset stub-pre-settings "120000 5000 60000 5000"
+fresh; approve FX-S2; stubset stub-hist "230 0230"; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "history drift" && ! grep -q 'argv=db push' $W/stub.log && ok "FX4: history that moved between the preflight and the apply (230 rows) -> refused before the dry run" || bad "FX4 history" "$OUT"
+fresh; approve FX-S3; stubset stub-busy 4; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "busy client sessions exceed" && ! grep -q 'argv=db push' $W/stub.log && ok "FX4: busy client sessions appeared after the preflight -> refused before the dry run" || bad "FX4 busy" "$OUT"
+stubset stub-busy 0; fresh; approve FX-S4; runo apply; [ $RC = 0 ] && grep -q '"stage": "precheck"' $LG/FX-S4/receipt.json && ok "FX2/FX4: with history, busy sessions and the four settings as approved the apply goes on, and the read-back is a link of the receipt" || bad "precheck pass" "$OUT"
+# FX3: WAL evidence for idle
+fresh; clr_ev; rec_ok; stubset stub-writes 100; touch $W/stub-wal-lag; chown hone-release:hone-release $W/stub-wal-lag; idle
+[ $RC -ne 0 ] && grep -q ' wal=no:FAIL:.*backlog' $ST/IDLE-PROOF && ok "FX3: a completed WAL segment is waiting for the archiver (backlog) -> not idle, even with an unchanged write counter" || bad "FX3 lag" "$OUT $(cat $ST/IDLE-PROOF)"
+rm -f $W/stub-wal-lag; stubset stub-archive-mode off; idle; [ $RC -ne 0 ] && grep -q ' wal=no:FAIL:.*archive_mode' $ST/IDLE-PROOF && ok "FX3: archive_mode off -> no WAL evidence" || bad "FX3 archive_mode" "$OUT"
+stubset stub-archive-mode on; stubset stub-archive-timeout 0; idle; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "CLOSED: archive_timeout is 0" && ok "FX3: archive_timeout 0/unknown -> the idle path is CLOSED (no evidence is possible)" || bad "FX3 timeout" "$OUT"
+stubset stub-archive-timeout 1; idle; [ $RC = 0 ] && grep -q ' wal=ok ' $ST/IDLE-PROOF && grep -q '"verdict": *"PASS"' $ST/IDLE-VERDICT.json && ok "FX3: archive on, timeout 1 s, LSNs and archiver counters equal across both samples and to the S0a record, no backlog, archiver healthy -> IDLE-PROOF wal=ok (verdict PASS kept in state)" || bad "FX3 ok" "$OUT"
+sed -i 's/ wal=ok / /' $ST/IDLE-PROOF; runo read-backups; unbind; approve FX-W1 "${AUTO[@]}" quiet_db=idle recovery_stamp=$(stampago 8) s0a_writes=100; expect_refuse "FX3: an idle proof WITHOUT WAL evidence (write counter alone) is not accepted for the autonomous path" apply "carries no WAL evidence"
+# FX5: the heartbeat needs Sam's typed authorization sentence, recorded by approve-package.sh
+fresh; clr_ev; NOBIND=1 approve FX-H1 "${AUTO[@]}" recovery_stamp=none quiet_db=heartbeat > /dev/null; [ ! -s "$T/approve.out" ] || true
+bash "$SRC/approve-package.sh" id=FX-H1 bundle_sha="$(sha256sum /srv/hone-release-inbox/bundle.tar | cut -d' ' -f1)" list_sha="$(sha256sum /srv/hone-release-inbox/list.sha256 | cut -d' ' -f1)" head="$HEAD_REVIEWED" pr=1193 receipt_sha="$RECEIPT" first=0213 last=0246 count=34 minutes=30 window_start="$(stampago 10)" window_end="$(date -u -d '+3 hours' +%Y-%m-%dT%H:%M:%SZ)" recovery_basis=row4 waiver_id=none recovery_stamp=none s0a_writes=none s0a_sha=$(printf 'd%.0s' $(seq 1 64)) s0a_at="$(stampago 5)" min_span_days=6 quiet_db=heartbeat heartbeat_auth=none connection_mode=direct pooler_host=none statement_timeout_s=120 lock_timeout_s=5 idle_tx_timeout_s=60 max_push_seconds=60 history_before=211 drain_holds=yes drain_queues=yes drain_people=yes drain_max_busy=0 drain_attestation="holds paused queues empty studios offline" serving_commit=$(printf 'c%.0s' $(seq 1 40)) serving_attestation="the compatible build serves the app" serving_check=attested-only verify_sha=none attestation="x" > "$T/approve.out" 2>&1 && bad "approve accepted a heartbeat without Sam's sentence" || { grep -q "HOSTED WRITE" "$T/approve.out" && ok "FX5: approve-package refuses quiet_db=heartbeat without the exact authorization sentence for this approval id (it prints the sentence to type)"; }
+NOBIND=1 approve FX-H2 "${AUTO[@]}" recovery_stamp=none quiet_db=heartbeat heartbeat_auth="$(HBA FX-OTHER)" && bad "a sentence for ANOTHER approval id was accepted" || ok "FX5: a sentence naming another approval id is refused"
+NOBIND=1 approve FX-H3 "${AUTO[@]}" recovery_stamp=none quiet_db=heartbeat heartbeat_auth="$(HBA FX-H3)"; grep -q "^heartbeat_auth_sha=[0-9a-f]\{64\}$" /etc/hone-release/APPROVED-PACKAGE && ok "FX5: the sha256 of the typed sentence is recorded in the approval" || bad "heartbeat_auth_sha not recorded"
+sed -i 's/^heartbeat_auth_sha=.*/heartbeat_auth_sha=none/' /etc/hone-release/APPROVED-PACKAGE; runo heartbeat; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "typed heartbeat authorization" && ok "FX5: a record whose authorization was stripped cannot heartbeat (the action recomputes the sentence sha itself)" || bad "FX5 stripped" "$OUT"
+fresh; clr_ev; rec_ok
+
+# the verify-bundle AUTHORING TOOL (tools/make-verify-bundle.py): derived from approved migration text, reproducible, accepted by the verify gate, and the answers it expects verify end to end
+mkdir -p "$T/mig"; cat > "$T/mig/0301_demo.sql" <<'SQLD'
+begin;
+set local lock_timeout = '5s';
+create table public.demo_t (id uuid primary key);
+alter table public.demo_t enable row level security;
+create or replace function public.demo_f(p_id uuid, p_note text default null) returns void language sql security definer set search_path = '' as $$ select 1 $$;
+revoke all on function public.demo_f(uuid, text) from public;
+revoke execute on function public.demo_f(uuid, text) from anon, authenticated;
+grant execute on function public.demo_f(uuid, text) to service_role;
+commit;
+SQLD
+python3 -I "$HR/tools/make-verify-bundle.py" --migrations "$T/mig" --first 0301 --last 0301 --out "$T/tb1" > "$T/tb1.out" && python3 -I "$HR/tools/make-verify-bundle.py" --migrations "$T/mig" --first 0301 --last 0301 --out "$T/tb2" >/dev/null && cmp -s "$T/tb1/verify.tar" "$T/tb2/verify.tar" && ok "verify-bundle tool: the same approved files give a byte-identical verify.tar (reproducible verify_sha $(cut -c1-12 $T/tb1/verify_sha.txt)...)" || bad "verify-bundle tool not reproducible" "$(cat $T/tb1.out)"
+grep -q 'public.demo_f(uuid,text)' "$T/tb1/checks.list" 2>/dev/null; grep -q "functions-exist" "$T/tb1/checks.list" && grep -q "function-acl" "$T/tb1/checks.list" && grep -q "rls-enabled" "$T/tb1/checks.list" && grep -q "function-bodies" "$T/tb1/review.md" && ok "verify-bundle tool: derived functions-exist, tables-exist, rls-enabled and function-acl checks; function bodies are listed as needing a reference database" || bad "tool checks" "$(cat $T/tb1/checks.list | cut -c1-100)"
+python3 -I - "$T/tb1" "$W/stub-answers" <<'PYA'
+import hashlib, json, os, sys
+d, out = sys.argv[1], sys.argv[2]; os.makedirs(out, exist_ok=True)
+for l in open(os.path.join(d, "checks.list")):
+    cid, fn, ssha, esha = l.rstrip("\n").split("\t")
+    q = open(os.path.join(d, fn)).read().strip()
+    open(os.path.join(out, hashlib.sha256(q.encode()).hexdigest()), "w").write(open(os.path.join(d, "expected", fn + ".json")).read())
+PYA
+chown -R hone-release:hone-release "$W/stub-answers" 2>/dev/null; chmod -R a+rX "$W/stub-answers"
+install -m 644 -o sam -g sam "$T/tb1/verify.tar" /srv/hone-release-inbox/verify.tar; TV=$(cat "$T/tb1/verify_sha.txt")
+fresh; VID=C2-TOOL; approve $VID verify_sha=$TV; runo apply; stubset stub-hist "245 0246"; runo verify
+[ $RC = 0 ] && grep -q '"stage": "V2-functions-exist"' $LG/$VID/receipt.json && grep -q '"stage": "V2-function-acl"' $LG/$VID/receipt.json && grep -q '"stage": "V2-rls-enabled"' $LG/$VID/receipt.json && ok "the tool's bundle verifies end to end: every derived check (functions, tables, RLS, function ACL) ran through the verify gate and matched, one receipt link each" || bad "tool bundle verify" "rc=$RC $OUT"
+python3 -I - "$W/stub-answers" <<'PYB'
+import os, sys, json
+d = sys.argv[1]
+for f in os.listdir(d):
+    r = json.load(open(os.path.join(d, f)))
+    if r and "fn" in r[0]: r[0]["ok"] = not r[0]["ok"]; json.dump(r, open(os.path.join(d, f), "w"))
+PYB
+fresh; VID=C2-TOOL2; approve $VID verify_sha=$TV; runo apply; stubset stub-hist "245 0246"; vfail "a derived ACL expectation does not hold on the target (a privilege is not what the migration says)" "result MISMATCH"
+rm -rf "$W/stub-answers"; install -m 644 -o sam -g sam "$T/vb/verify.tar" /srv/hone-release-inbox/verify.tar
 install -m 644 -o sam -g sam "$T/vb/verify.tar" /srv/hone-release-inbox/verify.tar; fresh; VID=C2-VS4; approve $VID verify_sha=$V2; runo apply; stubset stub-hist "245 0246"; vfail "a verify bundle other than the approved one (sha256)" "not the approved verify bundle"
 fresh
 # E4(a) for a QUIET database: the recovery point is older than the window (the case idle exists for); no writes since S0a
 fresh; clr_ev; unbind; rec_ok; stubset stub-latest-age 7200; stubset stub-writes 100; rm -f $W/stub-active
-runo read-backups; runo idle-probe; grep -q 'writes=100$' $ST/IDLE-PROOF && ok "idle-probe records the user-table write counter (writes=100)" || bad "idle proof counter" "$(cat $ST/IDLE-PROOF)"
+runo read-backups; idle; grep -q 'writes=100$' $ST/IDLE-PROOF && ok "idle-probe records the user-table write counter (writes=100)" || bad "idle proof counter" "$(cat $ST/IDLE-PROOF)"
 approve C2-Q1 "${AUTO[@]}" quiet_db=idle recovery_stamp=$(stampago 125) s0a_writes=100; runo apply
 [ $RC = 0 ] && printf '%s' "$OUT" | grep -q "APPLIED: exactly 34" && ok "E4(a) QUIET database: the latest recovery point is 2 h old (older than the window) and the apply PROCEEDS because the write counter equals S0a's and the point has not gone back past the S0a stamp" || bad "quiet database apply" "rc=$RC $OUT"
-fresh; stubset stub-writes 105; runo idle-probe; approve C2-Q2 "${AUTO[@]}" quiet_db=idle recovery_stamp=$(stampago 125) s0a_writes=100; expect_refuse "E4(a): writes happened since S0a (counter 105, S0a saw 100): the quiet claim fails" apply "differs from the one at S0a"
-stubset stub-writes 100; runo idle-probe; approve C2-Q3 "${AUTO[@]}" quiet_db=idle recovery_stamp=$(stampago 130) s0a_writes=100; stubset stub-latest-age 9000; runo read-backups; expect_refuse "E4(a): the provider's latest point went BACK past the S0a stamp" apply "went backwards"
+fresh; stubset stub-writes 105; idle; approve C2-Q2 "${AUTO[@]}" quiet_db=idle recovery_stamp=$(stampago 125) s0a_writes=100; expect_refuse "E4(a): writes happened since S0a (counter 105, S0a saw 100): the quiet claim fails" apply "differs from the one at S0a"
+stubset stub-writes 100; idle; approve C2-Q3 "${AUTO[@]}" quiet_db=idle recovery_stamp=$(stampago 130) s0a_writes=100; stubset stub-latest-age 9000; runo read-backups; expect_refuse "E4(a): the provider's latest point went BACK past the S0a stamp" apply "went backwards"
 approve C2-Q4 "${AUTO[@]}" quiet_db=idle recovery_stamp=$(stampago 2) s0a_writes=100; stubset stub-latest-age 7200; runo read-backups; expect_refuse "E4(a): a stamp after s0a_at is not a point S0a saw" apply "recovery_stamp must be the recovery point S0a saw"
 approve C2-Q5 "${AUTO[@]}" quiet_db=idle recovery_stamp=$(stampago 125) s0a_writes=none; expect_refuse "E4(a): s0a_writes missing" apply "needs s0a_writes"
 rec_ok
 # heartbeat: the target is rebuilt like the apply's, and the hosted startup-option proof is part of the heartbeat
-fresh; clr_ev; rec_ok; NOBIND=1 approve C2-H1 "${AUTO[@]}" recovery_stamp=none quiet_db=heartbeat; edit target_url "postgresql://postgres@db.otherprojectxxxxxxxx.supabase.co:5432/postgres?options=-c%20statement_timeout%3D120000%20-c%20lock_timeout%3D5000%20-c%20idle_in_transaction_session_timeout%3D60000%20-c%20client_connection_check_interval%3D5000"
+fresh; clr_ev; rec_ok; NOBIND=1 approve C2-H1 "${AUTO[@]}" recovery_stamp=none quiet_db=heartbeat heartbeat_auth="$(HBA C2-H1)"; edit target_url "postgresql://postgres@db.otherprojectxxxxxxxx.supabase.co:5432/postgres?options=-c%20statement_timeout%3D120000%20-c%20lock_timeout%3D5000%20-c%20idle_in_transaction_session_timeout%3D60000%20-c%20client_connection_check_interval%3D5000"
 runo heartbeat; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "not exactly the target rebuilt" && ok "heartbeat: a hand-edited target_url (another project's host) is refused: the same builder as the apply" || bad "heartbeat target" "$OUT"
-NOBIND=1 approve C2-H2 "${AUTO[@]}" recovery_stamp=none quiet_db=heartbeat; echo hbsettings > $W/stub-mode; runo heartbeat; echo ok > $W/stub-mode
+NOBIND=1 approve C2-H2 "${AUTO[@]}" recovery_stamp=none quiet_db=heartbeat heartbeat_auth="$(HBA C2-H2)"; echo hbsettings > $W/stub-mode; runo heartbeat; echo ok > $W/stub-mode
 [ $RC -ne 0 ] && grep -q 'settings=MISMATCH' $ST/HEARTBEAT && ok "heartbeat: when the real endpoint does NOT apply the approved startup options it records settings=MISMATCH and fails (the hosted proof)" || bad "heartbeat settings" "$OUT"
 rec_ok; runo read-backups; autobind; expect_refuse "the autonomous apply refuses a heartbeat whose settings were not confirmed" apply "did not confirm the startup options"
 fresh; clr_ev
@@ -491,7 +569,7 @@ runo apply
 [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "KILLED" && printf '%s' "$OUT" | grep -q "UNKNOWN" && [ "$(state | cut -d' ' -f1)" = UNKNOWN-KILLED ] && ok "T4: a push past the client wall clock: the CLI is KILLED, exit non-zero, state UNKNOWN-KILLED, the message says UNKNOWN / not a pass / reconcile" || bad "T4 kill" "rc=$RC state=$(state) $OUT"
 sleep 28
 ! pgrep -u hone-release -f 'bin/supabase-go' >/dev/null && ! grep -q "PUSH COMPLETED" $W/stub.log && ok "T4: the killed CLI is gone and never completed the push (no PUSH COMPLETED line)" || bad "T4: the CLI survived the kill or completed" "$(tail -3 $W/stub.log)"
-approve CUST-OVERDUE2; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "UNKNOWN-KILLED" && [ "$(grep -c '^CALL' $W/stub.log)" = 2 ] && ok "T4: with a NEW approval the agent cannot launch again: refused by the state UNKNOWN-KILLED (still the two CLI calls of the first run: one dry run, one push)" || bad "T4: not blocked" "$OUT calls=$(grep -c '^CALL' $W/stub.log)"
+approve CUST-OVERDUE2; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "UNKNOWN-KILLED" && [ "$(grep -c '^CALL' $W/stub.log)" = 3 ] && ok "T4: with a NEW approval the agent cannot launch again: refused by the state UNKNOWN-KILLED (still the two CLI calls of the first run: one dry run, one push)" || bad "T4: not blocked" "$OUT calls=$(grep -c '^CALL' $W/stub.log)"
 # the lock: two simultaneous runners, only one owns execution
 clear_state; echo slow > $W/stub-mode; approve CUST-LOCK1; : > $W/stub.log; chown hone-release:hone-release $W/stub.log
 sam bash -c "sudo -n -u hone-release $LB apply > $T/out/lock1.txt 2>&1" &
@@ -502,8 +580,8 @@ clear_state
 # T6: a non-authentication dry-run failure consumes the approval and blocks the next run
 echo dryfail > $W/stub-mode; approve CUST-DRYFAIL; : > $W/stub.log; chown hone-release:hone-release $W/stub.log
 runo apply
-[ $RC -ne 0 ] && [ "$(state | cut -d' ' -f1)" = FAILED-DRYRUN ] && [ -d /var/lib/hone-release/state/consumed/CUST-DRYFAIL ] && [ "$(grep -c '^CALL' $W/stub.log)" = 1 ] && ok "T6: a non-authentication dry-run failure: exactly one CLI call, the approval is CONSUMED and the state is FAILED-DRYRUN" || bad "T6 dryfail" "rc=$RC state=$(state) calls=$(grep -c '^CALL' $W/stub.log) $OUT"
-approve CUST-DRYFAIL2; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "FAILED-DRYRUN" && [ "$(grep -c '^CALL' $W/stub.log)" = 1 ] && ok "T6: even with a NEW approval the agent cannot launch again: refused by the state, still one CLI call in total" || bad "T6: retry possible" "$OUT calls=$(grep -c '^CALL' $W/stub.log)"
+[ $RC -ne 0 ] && [ "$(state | cut -d' ' -f1)" = FAILED-DRYRUN ] && [ -d /var/lib/hone-release/state/consumed/CUST-DRYFAIL ] && [ "$(grep -c '^CALL' $W/stub.log)" = 2 ] && ok "T6: a non-authentication dry-run failure: exactly tne CLI call, the approval is CONSUMED and the state is FAILED-DRYRUN" || bad "T6 dryfail" "rc=$RC state=$(state) calls=$(grep -c '^CALL' $W/stub.log) $OUT"
+approve CUST-DRYFAIL2; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "FAILED-DRYRUN" && [ "$(grep -c '^CALL' $W/stub.log)" = 2 ] && ok "T6: even with a NEW approval the agent cannot launch again: refused by the state, still one CLI call in total" || bad "T6: retry possible" "$OUT calls=$(grep -c '^CALL' $W/stub.log)"
 clear_state; echo ok > $W/stub-mode; echo "0213 0245" > $W/stub-range; approve CUST-MISMATCH; : > $W/stub.log; chown hone-release:hone-release $W/stub.log
 runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "does not list exactly" && [ "$(state | cut -d' ' -f1)" = DRYRUN-STARTED ] && [ -d /var/lib/hone-release/state/consumed/CUST-MISMATCH ] && ok "T6: a dry run that lists the wrong files: the approval is consumed, the state DRYRUN-STARTED blocks, nothing was pushed" || bad "T6 mismatch" "rc=$RC state=$(state) $OUT"
 ! grep -q 'Applying' $W/stub.log && ok "T6: no push was started after the mismatched dry run" || bad "a push started"
@@ -514,6 +592,34 @@ runo apply; [ $RC -ne 0 ] && [ "$(state | cut -d' ' -f1)" = FAILED-LOGIN ] && ! 
 [ "$(grep -c '^CALL' $W/stub.log)" = 1 ] && ok "one CLI call only (no retry)" || bad "calls: $(grep -c '^CALL' $W/stub.log)"
 approve CUST-AUTH2; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "FAILED-LOGIN" && ok "the next run is refused while FAILED-LOGIN stands" || bad "after authfail" "$OUT"
 clear_state; echo ok > $W/stub-mode
+
+# ---------------------------------------------------------------- 8b. Insurance H6: the recorded requests of every read action in this whole run
+for f in $T/vb/c*.sql $T/vb2/c*.sql $T/tb1/c*.sql; do [ -f "$f" ] && python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],encoding="utf-8").read().strip().encode()).hexdigest())' "$f"; done > "$T/allowed-bundle-q.txt"
+python3 -I - /tmp/hr-api.log "$T/allowed-bundle-q.txt" <<'PYH6' && ok "H6 (recorded requests, $(wc -l < /tmp/hr-api.log) in this run): ONLY GET .../database/backups and POST .../database/query/read-only; every POST body holds exactly one key `query`; every query is a fixed SELECT of the known shapes; every request carried the read token; NOTHING else was ever asked (no login-role, no network-bans, no write endpoint)" || bad "H6 recorded requests" "$(python3 -I -c 'import sys;print(open("/tmp/hr-api.log").read()[-900:])')"
+import hashlib, json, re, sys
+allowed = set(open(sys.argv[2]).read().split())
+ok = True; seen = set()
+shapes = [r"^select count\(\*\)::int as n, coalesce\(max\(version\), ''\) as mx from supabase_migrations\.schema_migrations$",
+          r"^select count\(\*\)::int as c from supabase_migrations\.schema_migrations where version >= '[0-9]{4}' and version <= '[0-9]{4}'$",
+          r"^select count\(\*\)::int as busy from pg_catalog\.pg_stat_activity where backend_type = 'client backend' and pid <> pg_catalog\.pg_backend_pid\(\) and state <> 'idle' and datname = pg_catalog\.current_database\(\)$",
+          r"^select coalesce\(sum\(n_tup_ins \+ n_tup_upd \+ n_tup_del\), 0\)::text as writes from pg_catalog\.pg_stat_user_tables$",
+          r"^select version from supabase_migrations\.schema_migrations where version >= '[0-9]{4}' and version <= '[0-9]{4}' order by version$",
+          r"^select 'stage-check' as stage_check, 1 as x$"]
+for l in open(sys.argv[1]):
+    r = json.loads(l)
+    ep = re.sub(r"/v1/projects/[a-z0-9-]+", "/v1/projects/<ref>", r["path"])
+    seen.add((r["method"], ep))
+    if r["auth"] != "match": ok = False; print("token mismatch", r)
+    if (r["method"], ep) == ("GET", "/v1/projects/<ref>/database/backups"): continue
+    if (r["method"], ep) != ("POST", "/v1/projects/<ref>/database/query/read-only") or r["body_keys"] != ["query"]: ok = False; print("unexpected request", r); continue
+    q = r["query"]
+    if hashlib.sha256(q.encode()).hexdigest() in allowed: continue   # a query of an APPROVED verify bundle (the helper's `file` id; it passed the lexical gate)
+    if hashlib.sha256(q.encode()).hexdigest() == "c91d7a497ce3b04b88aedd72c8b2729694b65c3c5cc2f051837e3f2365ad8cd5": continue   # the Insurance-approved pitr-wal-status.sql, byte-identical
+    if not any(re.match(p, q.strip()) for p in shapes): ok = False; print("query of an unknown shape", q)
+print("endpoints seen:", sorted(seen))
+sys.exit(0 if ok and seen else 1)
+PYH6
+cp /tmp/hr-api.log "$T/out/api-requests.log" 2>/dev/null
 
 # ---------------------------------------------------------------- 9. nothing secret ever reached the agent's terminal
 if grep -q -e "$DBC" -e "$PATC" "$SAMOUT" "$T"/out/*.txt 2>/dev/null; then bad "a canary secret appeared in sam's captured output"; else ok "no canary secret appears anywhere in $(wc -l < "$SAMOUT") lines of output the agent received"; fi

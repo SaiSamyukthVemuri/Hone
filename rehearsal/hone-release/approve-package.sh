@@ -6,7 +6,7 @@
 #   approve-package.sh id=<approval id> bundle_sha=<64 hex> list_sha=<64 hex> head=<40 hex> pr=<number> receipt_sha=<64 hex> first=NNNN last=NNNN count=N
 #     minutes=<1..60> window_start=<UTC> window_end=<UTC> recovery_basis=row4|waiver waiver_id=WAIVER-YYYYMMDD-N|none
 #     recovery_stamp=<UTC>|none s0a_writes=<digits>|none s0a_sha=<64 hex> s0a_at=<UTC> min_span_days=<6..99> quiet_db=idle|heartbeat   (Sam's one-word E4 selection)
-#     history_before=<rows> drain_holds=yes drain_queues=yes drain_people=yes drain_max_busy=<0..99> drain_attestation="<words>" serving_commit=<40 hex> serving_attestation="<words>" verify_sha=<64 hex>|none
+#     history_before=<rows> drain_holds=yes drain_queues=yes drain_people=yes drain_max_busy=<0..99> drain_attestation="<words>" serving_commit=<40 hex> serving_attestation="<words>" serving_check=readback|attested-only heartbeat_auth="<the exact sentence for this approval id, or none>" verify_sha=<64 hex>|none
 #     connection_mode=direct|pooler pooler_host=<aws-N-region.pooler.supabase.com:5432>|none
 #     statement_timeout_s=<1..600> lock_timeout_s=<1..30> idle_tx_timeout_s=<1..300> max_push_seconds=<10..1800> attestation="<Sam's words>"
 # recovery_basis=row4 is the AUTONOMOUS path (needs the custody-recorded provider evidence at apply time); waiver is the ATTENDED FALLBACK (a recorded waiver id).
@@ -17,11 +17,11 @@ declare -A V
 for kv in "$@"; do
   case "$kv" in *=*) ;; *) echo "arguments are key=value" >&2; exit 1 ;; esac
   k=${kv%%=*}; v=${kv#*=}
-  case " id bundle_sha list_sha head pr receipt_sha first last count minutes window_start window_end recovery_basis waiver_id recovery_stamp s0a_writes s0a_sha s0a_at min_span_days quiet_db connection_mode pooler_host history_before drain_holds drain_queues drain_people drain_max_busy drain_attestation serving_commit serving_attestation verify_sha statement_timeout_s lock_timeout_s idle_tx_timeout_s max_push_seconds attestation " in *" $k "*) ;; *) echo "unknown argument: $k" >&2; exit 1 ;; esac
+  case " id bundle_sha list_sha head pr receipt_sha first last count minutes window_start window_end recovery_basis waiver_id recovery_stamp s0a_writes s0a_sha s0a_at min_span_days quiet_db connection_mode pooler_host history_before drain_holds drain_queues drain_people drain_max_busy drain_attestation serving_commit serving_attestation serving_check heartbeat_auth verify_sha statement_timeout_s lock_timeout_s idle_tx_timeout_s max_push_seconds attestation " in *" $k "*) ;; *) echo "unknown argument: $k" >&2; exit 1 ;; esac
   [ -z "${V[$k]+x}" ] || { echo "repeated argument: $k" >&2; exit 1; }
   V[$k]=$v
 done
-for k in id bundle_sha list_sha head pr receipt_sha first last count minutes window_start window_end recovery_basis waiver_id recovery_stamp s0a_writes s0a_sha s0a_at min_span_days quiet_db connection_mode pooler_host history_before drain_holds drain_queues drain_people drain_max_busy drain_attestation serving_commit serving_attestation verify_sha statement_timeout_s lock_timeout_s idle_tx_timeout_s max_push_seconds attestation; do
+for k in id bundle_sha list_sha head pr receipt_sha first last count minutes window_start window_end recovery_basis waiver_id recovery_stamp s0a_writes s0a_sha s0a_at min_span_days quiet_db connection_mode pooler_host history_before drain_holds drain_queues drain_people drain_max_busy drain_attestation serving_commit serving_attestation serving_check heartbeat_auth verify_sha statement_timeout_s lock_timeout_s idle_tx_timeout_s max_push_seconds attestation; do
   [ -n "${V[$k]+x}" ] && [ -n "${V[$k]}" ] || { echo "missing argument: $k" >&2; exit 1; }
 done
 hex() { printf '%s' "$2" | grep -Eq "^[0-9a-f]{$1}\$"; }
@@ -32,6 +32,14 @@ case "${V[quiet_db]}" in idle|heartbeat) ;; *) echo "quiet_db must be idle or he
 case "${V[connection_mode]}" in direct|pooler) ;; *) echo "connection_mode must be direct or pooler" >&2; exit 1 ;; esac
 case "${V[recovery_basis]}" in row4) AUTON=autonomous ;; waiver) AUTON=attended-fallback ;; *) echo "recovery_basis must be row4 or waiver" >&2; exit 1 ;; esac
 if [ "${V[recovery_basis]}" = waiver ]; then printf '%s' "${V[waiver_id]}" | grep -Eq '^WAIVER-[0-9]{8}-[0-9]{1,3}$' || { echo "waiver_id must be WAIVER-YYYYMMDD-N, typed from the recorded waiver" >&2; exit 1; }; fi
+SENT_T='I authorize ONE heartbeat write to the production database: a single pg_logical_emit_message WAL message (no table, no row, no schema change) over the verify-full direct connection as the postgres role, once for approval %s.'
+if [ "${V[quiet_db]}" = heartbeat ]; then
+  want_sent=$(printf "$SENT_T" "${V[id]}"); [ "${V[heartbeat_auth]}" = "$want_sent" ] || { echo "REFUSED: quiet_db=heartbeat is a HOSTED WRITE; heartbeat_auth must be Sam's exact sentence for this approval id:" >&2; echo "  $want_sent" >&2; exit 1; }
+  HBSHA=$(printf '%s' "$want_sent" | sha256sum | cut -d' ' -f1)
+else
+  [ "${V[heartbeat_auth]}" = none ] || { echo "REFUSED: heartbeat_auth must be none unless quiet_db=heartbeat" >&2; exit 1; }
+  HBSHA=none
+fi
 IN=/srv/hone-release-inbox
 [ -f "$IN/bundle.tar" ] && [ -f "$IN/list.sha256" ] && [ ! -L "$IN/bundle.tar" ] && [ ! -L "$IN/list.sha256" ] || { echo "the inbox files are missing or symlinks" >&2; exit 1; }
 bundle=$(sha256sum "$IN/bundle.tar" | cut -d' ' -f1); list=$(sha256sum "$IN/list.sha256" | cut -d' ' -f1)
@@ -67,6 +75,6 @@ tmp=$(mktemp /etc/hone-release/.ap.XXXXXX)
   echo "quiet_db_mode=${V[quiet_db]}"; echo "autonomy=$AUTON"; echo "statement_timeout_s=$S"; echo "lock_timeout_s=$L"; echo "idle_tx_timeout_s=$I"; echo "timeout_control=$TC"
   echo "max_push_seconds=${V[max_push_seconds]}"; echo "recovery_attestation=${V[attestation]}"
   echo "s0a_writes=${V[s0a_writes]}"; echo "history_before=${V[history_before]}"; echo "drain_holds=${V[drain_holds]}"; echo "drain_queues=${V[drain_queues]}"; echo "drain_people=${V[drain_people]}"; echo "drain_max_busy=${V[drain_max_busy]}"; echo "drain_attestation=${V[drain_attestation]}"
-  echo "serving_commit=${V[serving_commit]}"; echo "serving_attestation=${V[serving_attestation]}"; echo "verify_sha=${V[verify_sha]}"; } > "$tmp"
+  echo "serving_commit=${V[serving_commit]}"; echo "serving_attestation=${V[serving_attestation]}"; echo "serving_check=${V[serving_check]}"; echo "heartbeat_auth_sha=$HBSHA"; echo "verify_sha=${V[verify_sha]}"; } > "$tmp"
 chown root:root "$tmp"; chmod 644 "$tmp"; mv -f "$tmp" /etc/hone-release/APPROVED-PACKAGE
 echo "APPROVED-PACKAGE written (single use, consumed at the first dry-run attempt)"

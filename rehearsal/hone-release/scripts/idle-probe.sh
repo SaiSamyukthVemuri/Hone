@@ -1,15 +1,16 @@
 #!/bin/bash
-# hone-release action: idle-probe (E4 option (a), "idle proof"). READ-ONLY with the read token. It samples the write counters of the user tables
-# twice, IDLE_SECS apart, and records IDLE-PROOF (result=idle only if the two samples are equal). It proves "no row was written between the two
-# samples AND records the counter. The apply requires that counter to EQUAL the one typed from S0a (s0a_writes): no write since S0a, so the provider's
-# latest recovery point (not older than the point S0a saw) still covers everything. It does not prove S0a's own reading.
+# hone-release action: idle-probe (E4 option (a), "idle proof"). READ-ONLY with the read token, through the ONE pinned helper (mgmt-read.py: provider read-only query endpoint,
+# no CLI, no database password, no login role). The proof is WAL evidence (Insurance FX3), evaluated by the pinned wal-evidence.py (a port of Machines' reviewed
+# wal-evidence.mjs) over TWO samples of the Insurance-approved pitr-wal-status.sql (byte-identical, sha256-pinned) taken max(600, archive_timeout + 180) seconds apart, and the S0a
+# record captured earlier by the wal-capture action (state/S0A-WAL.json): the LSNs, the archiver counters and the WAL position must be equal across both samples and to S0a,
+# the archiver healthy, no completed segment waiting. The user-table write counter is recorded as well (the apply also requires it to equal the one typed from S0a).
+# On the hosted provider a WAL switch is forced about every 4 minutes, so equal LSNs may never hold and this path then stays CLOSED/FAIL: heartbeat is the other option.
 set -u
 umask 077
-BIN=/usr/local/libexec/hone-release/bin/supabase-go
-GO_SHA=174a90e23b8dfe9ab4e2d2c2e91d4b6b2520fe5be968721555727f16c1bab43c
 REFFILE=/etc/hone-release/PROJECT-REF
 STATE=/var/lib/hone-release/state
-IDLE_SECS=120
+MANIFEST=/usr/local/libexec/hone-release/manifest
+SLACK=5
 die() { echo "STOP: $*" >&2; exit 1; }
 [ "${HONE_RELEASE_ACTION:-}" = idle-probe ] || die "not started by the launcher for the idle-probe action"
 { IFS= read -r TOKEN <&3; } 2>/dev/null || die "no token on fd 3"
@@ -17,18 +18,32 @@ exec 3<&-
 [ -n "$TOKEN" ] || die "empty token"
 [ -f "$REFFILE" ] && [ ! -L "$REFFILE" ] && [ "$(stat -c %u "$REFFILE")" = 0 ] && [ $(( 8#$(stat -c %a "$REFFILE") & 8#022 )) = 0 ] || die "PROJECT-REF is missing or not root-owned"
 REF=$(head -n 1 "$REFFILE"); printf '%s' "$REF" | grep -Eq '^[a-z0-9-]{10,20}$' || die "PROJECT-REF is malformed"
-[ -f "$BIN" ] && [ ! -L "$BIN" ] && [ "$(sha256sum "$BIN" | cut -d' ' -f1)" = "$GO_SHA" ] || die "supabase-go missing or sha256 mismatch"
+pinned() { # pinned NAME -> the path of a manifest-pinned file, sha256-checked
+  local line msha mpath; line=$(awk -v n="$1" '$1 == n {print $2 " " $3}' "$MANIFEST" 2>/dev/null); msha=${line% *}; mpath=${line#* }
+  [ -n "$line" ] && [ -f "$mpath" ] && [ ! -L "$mpath" ] && [ "$(sha256sum "$mpath" | cut -d' ' -f1)" = "$msha" ] || return 9
+  printf '%s' "$mpath"
+}
+HELPER=$(pinned mgmt-read) || die "the mgmt-read helper is missing or differs from the manifest sha256"
+EVAL=$(pinned wal-evidence) || die "the wal-evidence evaluator is missing or differs from the manifest sha256"
+mgmt() { HONE_READ_TOKEN="$TOKEN" python3 -I "$HELPER" "$REF" "$@"; }
+S0A="$STATE/S0A-WAL.json"
+[ -f "$S0A" ] && [ ! -L "$S0A" ] || die "no S0a WAL record: run the wal-capture action at S0a first (the proof compares the two samples with it)"
 WORK=$(mktemp -d /var/lib/hone-release/work/idle.XXXXXX) || die "no work dir"
-mkdir -p "$WORK/supabase/.temp" && printf '%s\n' v2.102.0 > "$WORK/supabase/.temp/cli-latest" && printf '%s' "$REF" > "$WORK/supabase/.temp/project-ref"
-SQL="select coalesce(sum(n_tup_ins + n_tup_upd + n_tup_del), 0)::text as writes from pg_stat_user_tables"
-sample() { ( cd "$WORK" && SUPABASE_ACCESS_TOKEN="$TOKEN" SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 "$BIN" db query --linked -o json "$SQL" ) </dev/null 2> "$WORK/err.txt" | python3 -I -c 'import json,sys; j=json.load(sys.stdin); r=j if isinstance(j,list) else j.get("rows",j.get("result",[])); print(r[0]["writes"])'; }
-t1=$(date -u +%Y-%m-%dT%H:%M:%SZ); a=$(sample) || { TOKEN=""; die "the first sample failed"; }
-sleep "$IDLE_SECS"
-t2=$(date -u +%Y-%m-%dT%H:%M:%SZ); b=$(sample) || { TOKEN=""; die "the second sample failed"; }
+t1=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+mgmt pitr-wal > "$WORK/s1.json" 2> "$WORK/err.txt" || { TOKEN=""; die "the first WAL sample failed"; }
+gap=$(python3 -I "$EVAL" --gap-for "$WORK/s1.json" 2>/dev/null) || gap=-1
+[ "$gap" -ge 1 ] 2>/dev/null || { TOKEN=""; die "CLOSED: archive_timeout is 0, unknown or above 1200 s, or the sample is unreadable: the idle path cannot be evidenced"; }
+sleep $((gap + SLACK))
+t2=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+mgmt pitr-wal > "$WORK/s2.json" 2>> "$WORK/err.txt" && mgmt writes > "$WORK/w.json" 2>> "$WORK/err.txt" || { TOKEN=""; die "the second WAL sample failed"; }
 TOKEN=""; unset TOKEN
-printf '%s%s' "$a" "$b" | grep -Eq '^[0-9]+$' || die "the samples are not numbers"
-res=active; [ "$a" = "$b" ] && res=idle
-line="IDLE-PROOF result=$res first_at=$t1 second_at=$t2 seconds=$IDLE_SECS writes=$b"
+python3 -I "$EVAL" --s1 "$WORK/s1.json" --s2 "$WORK/s2.json" --s0a "$S0A" > "$WORK/verdict.json" 2>/dev/null; vrc=$?
+w=$(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); r=r if isinstance(r,list) else r.get("rows",r.get("result",[])); print(r[0]["writes"])' "$WORK/w.json" 2>/dev/null) || w=x
+printf '%s' "$w" | grep -Eq '^[0-9]+$' || die "the write counter is unreadable"
+verdict=$(python3 -I -c 'import json,sys; v=json.load(open(sys.argv[1])); print(v["verdict"] + (":" + ",".join(v["failed"][:6]).replace(" ","") if v["failed"] else ""))' "$WORK/verdict.json" 2>/dev/null) || verdict=UNREADABLE
+res=active; wal="no:$verdict"; [ "$vrc" = 0 ] && { res=idle; wal=ok; }
+line="IDLE-PROOF result=$res first_at=$t1 second_at=$t2 seconds=$gap wal=$wal writes=$w"
 printf '%s\n' "$line" > "$STATE/IDLE-PROOF.tmp" && mv -f "$STATE/IDLE-PROOF.tmp" "$STATE/IDLE-PROOF"
+cp "$WORK/verdict.json" "$STATE/IDLE-VERDICT.json" 2>/dev/null
 echo "$line"
-[ "$res" = idle ] || die "the write counters moved between the samples: the database is NOT idle"
+[ "$res" = idle ] || die "the database is NOT proven idle by WAL evidence (verdict $verdict): the quiet-database option is closed for this stage; use quiet_db=heartbeat"

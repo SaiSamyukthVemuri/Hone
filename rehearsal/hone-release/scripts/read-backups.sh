@@ -3,8 +3,6 @@
 # fd 3. It never sees the database password and the apply action never sees this token. The token reaches only the one CLI child.
 set -u
 umask 077
-BIN=/usr/local/libexec/hone-release/bin/supabase-go
-GO_SHA=174a90e23b8dfe9ab4e2d2c2e91d4b6b2520fe5be968721555727f16c1bab43c
 REFFILE=/etc/hone-release/PROJECT-REF
 die() { echo "STOP: $*" >&2; exit 1; }
 [ "${HONE_RELEASE_ACTION:-}" = read-backups ] || die "not started by the launcher for the read-backups action"
@@ -14,13 +12,18 @@ exec 3<&-
 [ -f "$REFFILE" ] && [ ! -L "$REFFILE" ] && [ "$(stat -c %u "$REFFILE")" = 0 ] && [ $(( 8#$(stat -c %a "$REFFILE") & 8#022 )) = 0 ] || die "PROJECT-REF is missing or not root-owned"
 REF=$(head -n 1 "$REFFILE")
 printf '%s' "$REF" | grep -Eq '^[a-z0-9]{20}$' || die "PROJECT-REF is malformed"
-[ -f "$BIN" ] && [ ! -L "$BIN" ] && [ "$(sha256sum "$BIN" | cut -d' ' -f1)" = "$GO_SHA" ] || die "supabase-go missing or sha256 mismatch"
 WORK=$(mktemp -d /var/lib/hone-release/work/read.XXXXXX) || die "no work dir"
-mkdir -p "$WORK/supabase/.temp" && printf '%s\n' v2.102.0 > "$WORK/supabase/.temp/cli-latest"
+MANIFEST=/usr/local/libexec/hone-release/manifest
+mgmt() { # mgmt ID [args]   the ONE pinned read helper (mgmt-read.py): sha256-checked against the root-owned manifest; the token is only in its environment
+  local line msha mpath; line=$(awk '$1 == "mgmt-read" {print $2 " " $3}' "$MANIFEST" 2>/dev/null)
+  msha=${line% *}; mpath=${line#* }
+  [ -n "$line" ] && [ -f "$mpath" ] && [ ! -L "$mpath" ] && [ "$(sha256sum "$mpath" | cut -d' ' -f1)" = "$msha" ] || { echo "the mgmt-read helper is missing or differs from the manifest sha256" >&2; return 9; }
+  HONE_READ_TOKEN="$TOKEN" python3 -I "$mpath" "$REF" "$@"
+}
 rc=0
-( cd "$WORK" && SUPABASE_ACCESS_TOKEN="$TOKEN" SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 "$BIN" backups list --project-ref "$REF" -o json ) </dev/null > "$WORK/out.json" 2> "$WORK/err.txt" || rc=$?
+mgmt backups > "$WORK/out.json" 2> "$WORK/err.txt"
 TOKEN=""; unset TOKEN
-if [ "$rc" != 0 ]; then tail -n 5 "$WORK/err.txt" | LC_ALL=C sed -E 's#[A-Za-z0-9.-]*\.supabase\.(com|co)[:0-9]*#<host>#g; s#(sbp_)[A-Za-z0-9]+#\1<masked>#g' >&2; die "backups list failed (exit $rc)"; fi
+if [ "$rc" != 0 ]; then tail -n 5 "$WORK/err.txt" | LC_ALL=C sed -E 's#[A-Za-z0-9.-]*\.supabase\.(com|co)[:0-9]*#<host>#g; s#(sbp_)[A-Za-z0-9]+#\1<masked>#g' >&2; die "the backups read failed (exit $rc)"; fi
 cat "$WORK/out.json"
 # C: the custody layer records WHAT THE PROVIDER SAID, timestamped, in state only hone-release can write. The apply STOPs unless this
 # record shows the recovery evidence the unattended path needs. Nothing here calls the restore-point endpoint (it is never a target).

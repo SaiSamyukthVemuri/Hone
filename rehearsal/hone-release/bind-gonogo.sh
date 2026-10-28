@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run as ROOT, by the approver, AFTER reading the GO/NO-GO package that the preflight action produced. usage: bind-gonogo.sh gonogo_sha=<64 hex typed from the package you read>
+# Run as ROOT, by the approver, AFTER reading the GO/NO-GO package THEMSELVES AS ROOT (sudo cat /var/lib/hone-release/state/GONOGO.json); type the "sha256" field from THAT read, never a value copied from the agent's output. usage: bind-gonogo.sh gonogo_sha=<64 hex typed from the package you read>
 # It re-hashes state/GONOGO.json, requires verdict GO and that the package is about the CURRENT APPROVED-PACKAGE, prints the checks, and writes
 # /etc/hone-release/GONOGO-BOUND (root:root 644). The apply refuses without a fresh binding (30 minutes) that names this approval and this package sha.
 set -eu
@@ -29,4 +29,4 @@ case "$last" in OK:*) id=${last#OK:} ;; *) echo "REFUSED: ${last#BAD:}; nothing 
 tmp=$(mktemp /etc/hone-release/.gb.XXXXXX)
 { echo "gonogo_sha=$typed"; echo "approval_id=$id"; echo "bound_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"; } > "$tmp"
 chown root:root "$tmp"; chmod 644 "$tmp"; mv -f "$tmp" /etc/hone-release/GONOGO-BOUND
-echo "GONOGO-BOUND written for approval $id (valid 30 minutes)"
+echo "GONOGO-BOUND written for approval $id (valid 30 minutes). The typed sha256 matched the package on disk as read by root."
