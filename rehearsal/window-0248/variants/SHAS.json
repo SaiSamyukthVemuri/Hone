@@ -1,0 +1,24 @@
+{
+  "head_sha": "91a28fb006fdd00baff80381a52c29d0e672a633",
+  "verify_sha_with_bodies": "576ff6bc423dcb41cc4464b645abddb240683126763e8c7e105cc7d6fa5cda66",
+  "sealed_0248_sha256": "1f6f9ad0026cee66b970e9dc630f1497aa10966df2adb9433d8f8c85bbc44cc3",
+  "files": {
+    "s0a/BASELINE-W1-0248.json": "23efb170387eccb4228200469869abfb9c232133029e8b6c30d3cae7d776f85d",
+    "s0a/G3-CHECKSUMS-0248.txt": "7f555b6679bee565c7a5fe31f817c9c776db96a0c1ebe7eb2dcea9af5b332f02",
+    "s0a/MANIFEST.sha256": "df3e4e9a6d2601a67c79d7ef97c33f738ea271da2cee58f09b9fa3ed77c01f52",
+    "s0a/compare-preflight-lib.mjs": "eaae170551af68e1cb8c0a58d75308c1924afe395e9580362feb562862143c17",
+    "s0a/compare-preflight.mjs": "c9b0f102980104d5bd1d59c2127439dacc419ed1c7db235ad7f5acedf9205825",
+    "s0a/g02-history-0248.sql": "19e4e05793e5fa033921ac35cd2a7337b7a6477d0f6a25747134791f7b317cfe",
+    "s0a/g12-0243-intake-definers-0248.sql": "e4080f1d35d9c0219a27c23238451b830dd39360be11dda6561221f081a6ed79",
+    "s0a/run-window-read-macos.sh": "471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357",
+    "s0a/s1-open-transactions-0248.sql": "b110fd6052e9cc237e44c7f585ad0bcae48d75d456b29331e84fb1cf3713b207",
+    "s0a/w03-table-sizes-0248.sql": "82ff0460f682b95b20b019ab26f1458883b372d91e5329c12a3d58101f03750e",
+    "s0a/window-s0a-0248.sh": "234eb726171b4d527ee31f0ebf185d937c17715856012f4c050626d6a69b21a4",
+    "s1read/MANIFEST.sha256": "c7666befb9c7c8806d24417d404f80085fe71953bcd0ae1eba7e49d0981653f4",
+    "s1read/c01_functions-exist.sql": "3069d3e3d874fc067687a87774a2c234255fc9fe3d588e3ec25cadf091515080",
+    "s1read/c02_function-bodies.sql": "7819e34a397c488ea1e6ebfd623a6663cac9298c2dc56443684108ed3849e21f",
+    "s1read/run-window-read-macos.sh": "471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357",
+    "s1read/s1-history-0248.sql": "a4d3c5afad277cef9c720ea534309b6e6843d92e8ecf15b5232e180f03246e2a",
+    "s1read/window-s1read-0248.sh": "6c96ff3b78bc63985003fc89771643768e9aca4121fb28e10d2e2ea9ca85cfd6"
+  }
+}

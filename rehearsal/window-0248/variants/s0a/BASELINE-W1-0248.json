@@ -1,0 +1,53 @@
+{
+  "runner_sha256": "471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357",
+  "manifest_sha256": "df3e4e9a6d2601a67c79d7ef97c33f738ea271da2cee58f09b9fa3ed77c01f52",
+  "project_ref_sha256": "ca4f1421bf786a9e205e8d6f132d31657af5aa949cc7ae90d961f9f32c12d36f",
+  "planned_duration_minutes": 110,
+  "recovery_regime": "pitr",
+  "g4_pitr": {
+    "min_retention_days": 7,
+    "earliest_margin_minutes": 5,
+    "max_latest_lag_minutes": 30,
+    "max_read_age_minutes": 60,
+    "max_pre_point_age_minutes": 30
+  },
+  "g4_pitr_base": {
+    "mode": "unavailable_under_pitr"
+  },
+  "g4_pitr_api": {
+    "script_sha256": "85407d0b01d11497161c1c9d0374751ecaec80faed9609f2d4f073d71fe49413",
+    "supabase_go_sha256": "dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b",
+    "max_capture_age_minutes": 60,
+    "dashboard_tolerance_seconds": 1,
+    "min_span_days": 6
+  },
+  "g4_pitr_idle": {
+    "enabled": true,
+    "min_interval_seconds": 600,
+    "interval_margin_seconds": 180,
+    "max_timeout_seconds": 1200,
+    "max_interval_seconds": 1800,
+    "max_clock_skew_seconds": 60,
+    "horizon_after_archive_seconds": 60,
+    "horizon_before_archive_extra_seconds": 300,
+    "max_start_to_s1_seconds": 600,
+    "runner_sha256": "471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357",
+    "manifest_sha256": "089226bd6fee358c73e0ada7202362ed492e73778ca450b27ecaa625c62b371e",
+    "wal_status_sql_sha256": "c91d7a497ce3b04b88aedd72c8b2729694b65c3c5cc2f051837e3f2365ad8cd5",
+    "ready_count_sql_sha256": "339dd620685294375450206a312483165e3de938ee7eed54756ad5d33d2a523d"
+  },
+  "g4_max_age_hours": 24,
+  "g3": {
+    "head_sha": "91a28fb006fdd00baff80381a52c29d0e672a633",
+    "checksums": {
+      "0248": "1f6f9ad0026cee66b970e9dc630f1497aa10966df2adb9433d8f8c85bbc44cc3"
+    }
+  },
+  "required_checks": [],
+  "_candidate": "0248-ONLY STAGE baseline derived from W1 candidate 5 by make-window-0248.py: the PITR, recovery, window and project-ref pins are unchanged; the 1035 g09, g11 and s1 sections are dropped; g3 is the sealed 0248 file at the carrying head (OPEN while the head is forty zeros).",
+  "_decisions": [
+    "planned_duration_minutes is unchanged from candidate 5 (110): it is OPS's number and only requires that much of the window remain; OPS may lower it for a one-file stage.",
+    "S0-11 (0242 disposition) is DROPPED (OPS ruling on Team's recommendation, after re-reading its original reason): it gated S1 (apply 0213-0246), because 0242 revokes member INSERT on audit_logs and breaks the old app's archive/unarchive audit write (ROLLOUT-0213-0246-DECISION-PACKAGE, 0242 row, T-0242-1, R-3). Hosted history is already at 0246, so that apply is done; 0248 never mentions 0242 and replaces only advance_intake_revision(). Keep S0-11 for any stage that carries 0247 or later.",
+    "g10 is DROPPED: its seven names are 0213-0246 constraints, not the intake table or its trigger; Team's table marked it keep-if-defined and no such definition exists."
+  ]
+}

@@ -1,0 +1,77 @@
+# REHEARSAL - NEVER MERGE. ONE macOS execution of rehearsal/s1-script/stage-0248/check.sh at the exact head of PR #1193 (51560cf5): BSD date/find/touch/sed, bash 3.2, shasum.
+# The tree under test is #1193's, not this branch's. check.sh is a Linux CI harness: the three GNU tools it uses for ITS OWN bookkeeping (sha256sum, sed -i with no suffix) are
+# provided by shims in a directory placed on PATH, and `bash` is pinned to /bin/bash (3.2). The gate text under test is never shimmed: check.sh itself asserts that text avoids those tools.
+# No hosted access, no database, no credential.
+name: stage-0248-macos-check
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/stage-0248-macos-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: stage-0248/check.sh on macOS arm64 (/bin/bash 3.2, BSD tools) at #1193 51560cf5
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - name: Checkout the #1193 head, pinned
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 51560cf5875ac251ff8b782bdfcbde11cee18cf6
+          persist-credentials: false
+      - name: Platform facts
+        run: |
+          set -u
+          test "$(git rev-parse HEAD)" = 51560cf5875ac251ff8b782bdfcbde11cee18cf6
+          uname -sm; sw_vers -productVersion
+          /bin/bash --version | head -1
+          echo "bash on PATH: $(command -v bash) $(bash -c 'echo $BASH_VERSION')"
+          for t in sha256sum shasum python3 node date find touch sed; do printf '%-10s %s\n' "$t" "$(command -v $t || echo MISSING)"; done
+          date --version 2>&1 | head -1 || true
+      - name: Harness shims (check.sh's own bookkeeping only) and bash 3.2 first on PATH
+        run: |
+          set -eu
+          S="$RUNNER_TEMP/shims"; mkdir -p "$S"
+          ln -s /bin/bash "$S/bash"
+          printf '#!/bin/sh\nexec /usr/bin/shasum -a 256 "$@"\n' > "$S/sha256sum"
+          # GNU 'sed -i EXPR FILE' -> BSD 'sed -i "" EXPR FILE'; every other use passes through
+          printf '#!/bin/sh\nif [ "${1:-}" = "-i" ]; then shift; exec /usr/bin/sed -i "" "$@"; fi\nexec /usr/bin/sed "$@"\n' > "$S/sed"
+          chmod +x "$S/sha256sum" "$S/sed"
+          echo "$S" >> "$GITHUB_PATH"
+      - name: check.sh under /bin/bash 3.2
+        run: |
+          echo "bash now: $(command -v bash) $(bash -c 'echo $BASH_VERSION')"
+          /bin/bash rehearsal/s1-script/stage-0248/check.sh 2>&1 | tee "$RUNNER_TEMP/stage0248-macos.txt"; exit ${PIPESTATUS[0]}
+      - name: REAL pgrep on darwin for the reconcile process check (the exact line from the pinned s1-reconcile-0248.sh, not a stub)
+        run: |
+          set -u
+          command -v pgrep; ls -l "$(command -v pgrep)"
+          F=rehearsal/s1-script/stage-0248/s1-reconcile-0248.sh
+          test "$(grep -c "pgrep -f 'supabase|s1-apply-0248'" "$F")" = 1
+          LINE=$(grep -F "pgrep -f 'supabase|s1-apply-0248'" "$F")
+          echo "line under test: $LINE"
+          probe() { /bin/bash -c "$LINE; echo \$pr"; }
+          fails=0
+          expect() { # expect WANT WHAT
+            got=$(probe); if [ "$got" = "$1" ]; then echo "ok   - $2: status $got"; else echo "FAIL - $2: status $got, wanted $1"; fails=$((fails+1)); fi; }
+          expect 1 "no matching process: status 1 (the only status the reconcile accepts)"
+          # a live process whose full command line matches: bash with $0 = s1-apply-0248-decoy (pgrep -f matches argv). The trailing ': ' stops bash from exec-ing sleep, which would drop the name (the first run's decoys did that).
+          /bin/bash -c 'sleep 120; :' s1-apply-0248-decoy & D=$!
+          sleep 1
+          expect 0 "a live process named s1-apply-0248 in its command line: status 0 (the reconcile refuses)"
+          /bin/bash -c 'sleep 120; :' supabase-decoy & D2=$!
+          kill "$D" 2>/dev/null; wait "$D" 2>/dev/null || true
+          sleep 1
+          expect 0 "a live process with 'supabase' in its command line: status 0 (the reconcile refuses)"
+          kill "$D2" 2>/dev/null; wait "$D2" 2>/dev/null || true
+          sleep 1
+          expect 1 "after both decoys end: status 1 again"
+          # a pgrep error (invalid regex) is not 1: the reconcile treats it as 'cannot be ruled out'
+          bad=0; pgrep -f '(' >/dev/null 2>&1 || bad=$?
+          if [ "$bad" != 0 ] && [ "$bad" != 1 ]; then echo "ok   - pgrep error status $bad is not 1 (reconcile would refuse)"; else echo "FAIL - an invalid regex gave status $bad"; fails=$((fails+1)); fi
+          [ "$fails" = 0 ] || { echo "RESULT: $fails real-pgrep checks FAILED"; exit 1; }
+          echo "RESULT: real pgrep on darwin: 5 passed, 0 failed"
