@@ -29,7 +29,7 @@ proc fail {msg} {
   catch {close}; catch {wait}
   finish 2
 }
-proc grab {} { global expect_out; if {[info exists expect_out(buffer)]} { note $expect_out(buffer) } }
+proc grab {} { global expect_out; if {[info exists expect_out(buffer)]} { grab } }
 # one prompt, one answer; anything else is a STOP
 proc step {prompt val {tmo 30}} {
   global timeout expect_out
@@ -71,7 +71,9 @@ proc blind_secret {which} {
 proc drain {tmo} {
   global timeout expect_out
   set timeout $tmo
-  expect { -re {.+} { grab; exp_continue } eof { return eof } timeout { return timeout } }
+  expect {
+    -re {.+} { grab; exp_continue } eof { return eof } timeout { return timeout }
+  }
 }
 proc finish_child {{tmo 600}} {
   if {[drain $tmo] eq "timeout"} { fail "the child did not end within ${tmo}s" }
@@ -153,7 +155,9 @@ switch -exact -- $phase {
     }
     set R(SELECTED_AT) $tsel
     set timeout 30
-    expect { -exact "Type ready when" { grab } timeout { grab; fail "row 4 did not reach its ready prompt" } eof { grab; fail "row 4 ended before its ready prompt" } }
+    expect {
+      -exact "Type ready when" { grab } timeout { grab; fail "row 4 did not reach its ready prompt" } eof { grab; fail "row 4 ended before its ready prompt" }
+    }
     # bounded wait: poll the Management API capture at a fixed interval until latest >= selection, or STOP at the reviewed limit
     set t0 [clock seconds]; set limit [v WAIT_LIMIT_S]; set every [v POLL_S]; set ready 0; set polls 0
     while {1} {
@@ -200,9 +204,13 @@ switch -exact -- $phase {
     # the pinned apply script runs its dry run, then asks for the watchdog. The runner starts the reviewed watchdog ITSELF and answers
     # yes ONLY after reading the watchdog's own two lines (never a blind yes).
     set timeout 600
-    expect { -exact "START THE WATCHDOG NOW" { grab } timeout { grab; fail "the dry run did not reach the watchdog step" } eof { grab; fail "the apply script ended before the watchdog step" } }
+    expect {
+      -exact "START THE WATCHDOG NOW" { grab } timeout { grab; fail "the dry run did not reach the watchdog step" } eof { grab; fail "the apply script ended before the watchdog step" }
+    }
     set timeout 30
-    expect { -exact "Terminal 2 printed  WATCHDOG armed" { grab } timeout { grab; fail "no watchdog prompt" } eof { grab; fail "the apply script ended at the watchdog step" } }
+    expect {
+      -exact "Terminal 2 printed  WATCHDOG armed" { grab } timeout { grab; fail "no watchdog prompt" } eof { grab; fail "the apply script ended at the watchdog step" }
+    }
     set spawn_id $apply
     set wd_env [v WD_ENV]
     foreach kv [split $wd_env " "] { lassign [split $kv "="] ek ev; set env($ek) $ev }
@@ -210,8 +218,12 @@ switch -exact -- $phase {
     set wd $spawn_id
     blind_secret pw
     set timeout 240
-    expect { -re {WATCHDOG armed \(self-test ok\)} { note $expect_out(buffer) } timeout { fail "the watchdog never printed WATCHDOG armed" } eof { fail "the watchdog ended before it armed" } }
-    expect { -re {watching for the push session to start} { note $expect_out(buffer) } timeout { fail "the watchdog never printed 'watching for the push session to start'" } eof { fail "the watchdog ended before it was watching" } }
+    expect {
+      -re {WATCHDOG armed \(self-test ok\)} { grab } timeout { fail "the watchdog never printed WATCHDOG armed" } eof { fail "the watchdog ended before it armed" }
+    }
+    expect {
+      -re {watching for the push session to start} { grab } timeout { fail "the watchdog never printed 'watching for the push session to start'" } eof { fail "the watchdog ended before it was watching" }
+    }
     set R(WATCHDOG) armed_and_watching
     set spawn_id $apply
     send -- "yes\r"
