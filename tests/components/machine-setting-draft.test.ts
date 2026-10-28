@@ -1188,10 +1188,20 @@ describe("switching machine or mode clears the collected draft", () => {
     // freezing Save on `revisionUnresolved` slipped past a guard written
     // for exactly that trap. Pressing Save again, unchanged, is the whole
     // recovery; a freeze that includes it strands her with no way out.
+    //
+    // NARROWED, NOT RELAXED (Codex, #1205 4401466832). The CREATE-mode flags
+    // stay out: there Save again, unchanged, is the recovery. The REVISION
+    // hold is the exception, because on an existing block this button saves
+    // the area and closes the form - unmounting the entry and discarding its
+    // retry key - and the revision's recovery is the entry's own retry.
     expect(
       save![1],
-      "Save must stay live through every unresolved state — it is the recovery",
-    ).not.toMatch(/[Uu]nresolved|[Ff]rozen/);
+      "Save must stay live through every CREATE-mode unresolved state — it is the recovery",
+    ).not.toMatch(/saveUnresolved|[Ff]rozen/);
+    expect(
+      save![1],
+      "Save must be held while a machine REVISION is unresolved, or it closes the form and discards the retry key",
+    ).toMatch(/revisionUnresolved/);
   });
 
   it("previous-treatment units go through the sentinel rule", () => {

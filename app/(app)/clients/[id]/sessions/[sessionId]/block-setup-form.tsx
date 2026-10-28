@@ -2260,7 +2260,17 @@ export function BlockSetupForm({
             resume.state === "saved" ||
             resumeChoicePending ||
             resumedNeedsSettings ||
-            resumedUnconfirmed
+            resumedUnconfirmed ||
+            // HELD WHILE A MACHINE REVISION IS UNRESOLVED (Codex, #1205
+            // 4401466832). On an existing block this button saves the AREA and
+            // closes the form, which unmounts the entry and discards the
+            // retained retry key of a machine save whose answer was lost; if
+            // that save had committed, re-entering the settings appends a
+            // duplicate immutable capture. It is NOT the recovery for that
+            // save - the entry's own "Try saving again" is - so freezing it
+            // does not strand her. The create-mode flag is deliberately NOT
+            // here: there, pressing Save again unchanged IS the recovery.
+            revisionUnresolved
           }
           data-testid="save-treatment-area"
           className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
