@@ -11,6 +11,11 @@ import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 // "Reschedule appointment" to someone /reschedule will then refuse is the same
 // dead end, one screen earlier. Same decision, same server-resolved inputs.
 import { isFreeConsultWaitlistOnlyReschedule } from "@/lib/booking/free-consult-reschedule-policy";
+import {
+  clientManageDisabledMessage,
+  clientManagePageAllowed,
+} from "@/lib/booking/client-self-service-policy";
+import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
 import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Generic public-facing message for the /manage surface. Returned for
@@ -86,11 +91,19 @@ export type ManageSummary = {
   // refuse this appointment. The page withdraws the reschedule CTA rather than
   // linking into a refusal. Cancellation is unaffected and still offered.
   freeConsultationWaitlistOnly: boolean;
+  // HON-47. SERVER-DERIVED, presentation only: which follow-on paths this
+  // studio offers its clients online. The page withdraws every CTA whose
+  // flag is false; /cancel, /reschedule and /portal refuse independently.
+  cancellationEnabled: boolean;
+  rescheduleEnabled: boolean;
+  portalEnabled: boolean;
 };
 
 export type FetchManageResult =
   | { ok: true; summary: ManageSummary }
-  | { ok: false; error: string };
+  // HON-47: "manage_disabled" only for a future confirmed appointment whose
+  // studio offers none of cancel, reschedule or the portal online.
+  | { ok: false; code?: "manage_disabled"; error: string };
 
 export async function fetchAppointmentForManageAction(
   token: string,
@@ -174,6 +187,22 @@ export async function fetchAppointmentForManageAction(
   const studio = pick(row.studio);
   const service = pick(row.service);
 
+  // HON-47. Read AFTER the collapse rule above, like EMERG-01, so the policy is
+  // never visible for a token that did not resolve to a future confirmed
+  // appointment. Unreadable policy: generic collapse, never "allowed".
+  const policyRead = await loadClientSelfServicePolicy(admin, studio?.id);
+  if (!policyRead.ok) {
+    return { ok: false, error: PUBLIC_MANAGE_GENERIC_ERROR };
+  }
+  const policy = policyRead.policy;
+  if (!clientManagePageAllowed(policy)) {
+    return {
+      ok: false,
+      code: "manage_disabled",
+      error: clientManageDisabledMessage(studio?.name ?? null),
+    };
+  }
+
   return {
     ok: true,
     summary: {
@@ -192,6 +221,9 @@ export async function fetchAppointmentForManageAction(
         studioSlug: studio?.slug ?? null,
         service,
       }),
+      cancellationEnabled: policy.cancellation,
+      rescheduleEnabled: policy.reschedule,
+      portalEnabled: policy.portal,
     },
   };
 }
