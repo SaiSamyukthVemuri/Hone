@@ -11,6 +11,9 @@ const [modulePath, dir, name, hostile, at, mutant] = process.argv.slice(2);
 const target = path.join(dir, name);
 const seen = [];
 let swapped = false;
+// Captured before wrapping, so preparing a swap is neither recorded nor re-intercepted.
+const realLstat = fs.lstatSync;
+const realUnlink = fs.unlinkSync;
 for (const fn of ["openSync", "fstatSync", "readSync", "lstatSync", "statSync", "readFileSync", "readdirSync", "closeSync"]) {
   const orig = fs[fn];
   fs[fn] = function (...args) {
@@ -19,6 +22,9 @@ for (const fn of ["openSync", "fstatSync", "readSync", "lstatSync", "statSync", 
     const aboutTarget = fn === "openSync" || fn === "lstatSync" || fn === "statSync" || fn === "readFileSync" ? String(first) === target : true;
     if (!swapped && fn === at && aboutTarget) {
       swapped = true;
+      // POSIX rename cannot put a directory over an existing file (ENOTDIR), so a directory swap removes the file
+      // first. Node 22+ reaches the readSync window, which Node 20's readFileSync(fd) never called through fs.
+      if (realLstat(hostile).isDirectory()) realUnlink(target);
       fs.renameSync(hostile, target);
     }
     return orig.apply(this, args);
