@@ -1,0 +1,1 @@
+select count(*)::int as n from pg_catalog.pg_class c where c.oid = any (array[to_regclass('appointment_email_private.cohorts'), to_regclass('appointment_email_private.intake_epochs'), to_regclass('appointment_email_private.operations')]) and c.relrowsecurity
