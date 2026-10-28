@@ -131,6 +131,34 @@ describe("operation-path render parity with the legacy reminder", () => {
   });
 });
 
+describe("resolveOperationAddressVisibility", () => {
+  const miss = { code: "42703", message: "column studios.address_visibility does not exist" };
+  it("an undefined address_visibility column is the legacy default: address shown", async () => {
+    const { resolveOperationAddressVisibility } = await import("@/lib/email/send-appointment");
+    const { appointmentEmailAddress } = await import("@/lib/booking/studio-location");
+    const v = resolveOperationAddressVisibility({ data: null, error: miss });
+    expect(v).toBe("both");
+    expect(appointmentEmailAddress({ address: "1 Test St", address_visibility: v } as never)).toBe("1 Test St");
+  });
+  it("PostgREST schema-cache miss for the column is the same", async () => {
+    const { resolveOperationAddressVisibility } = await import("@/lib/email/send-appointment");
+    expect(resolveOperationAddressVisibility({ data: null, error: { code: "PGRST204", message: "Could not find the 'address_visibility' column of 'studios' in the schema cache" } })).toBe("both");
+  });
+  it("any other read failure hides the address", async () => {
+    const { resolveOperationAddressVisibility } = await import("@/lib/email/send-appointment");
+    expect(resolveOperationAddressVisibility({ data: null, error: { code: "57014", message: "statement timeout" } })).toBe("booking_page");
+    expect(resolveOperationAddressVisibility({ data: null, error: { code: "42703", message: "column studios.other does not exist" } })).toBe("booking_page");
+  });
+  it("a missing row hides; a present value passes through; an absent key is the default", async () => {
+    const { resolveOperationAddressVisibility } = await import("@/lib/email/send-appointment");
+    const { appointmentEmailAddress } = await import("@/lib/booking/studio-location");
+    expect(resolveOperationAddressVisibility({ data: null, error: null })).toBe("booking_page");
+    expect(resolveOperationAddressVisibility({ data: { address_visibility: "booking_page" }, error: null })).toBe("booking_page");
+    const absent = resolveOperationAddressVisibility({ data: {}, error: null });
+    expect(appointmentEmailAddress({ address: "1 Test St", address_visibility: absent } as never)).toBe("1 Test St");
+  });
+});
+
 describe("operation caller reads address visibility before freezing the request", () => {
   it("a failed studio read renders no address and a successful one renders per visibility (source contract)", async () => {
     const { readFileSync } = await import("node:fs");
@@ -138,7 +166,7 @@ describe("operation caller reads address visibility before freezing the request"
     const i = src.indexOf("export async function sendAppointmentReminderOperation");
     const body = src.slice(i);
     expect(body).toMatch(/from\("studios"\)\.select\("address_visibility"\)/);
-    expect(body).toMatch(/visibilityRead\.error \|\| !visibilityRead\.data \? "booking_page"/);
+    expect(body).toMatch(/resolveOperationAddressVisibility\(/);
     expect(body.indexOf('from("studios")')).toBeLessThan(body.indexOf("adapter.freeze("));
   });
 });

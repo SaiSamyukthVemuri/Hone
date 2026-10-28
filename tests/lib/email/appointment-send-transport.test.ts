@@ -470,6 +470,15 @@ describe("0247 matching RPC caller and actual renderer (offline)", () => {
     expect(payload.text.includes("/intake/")).toBe(withIntake);
     expect(await s.run()).toMatchObject({ observation: { kind: "accepted" } }); expect(s.fetchGuard).not.toHaveBeenCalled();
   });
+  it.each([
+    ["undefined address_visibility column", { code: "42703", message: "column studios.address_visibility does not exist" }, true],
+    ["any other visibility read failure", { code: "57014", message: "statement timeout" }, false],
+  ])("the sent email follows the visibility read: %s", async (_n, error, shown) => {
+    const s = await setup(reminder(false), "reminder_24h", "reminder_only", { data: null, error } as never);
+    expect(await s.run()).toMatchObject({ observation: { kind: "accepted" } });
+    const sent = s.sdk.mock.calls[0][0] as { text: string };
+    expect(sent.text.includes("Synthetic address")).toBe(shown);
+  });
   it("standalone intake has no contact Reply-To, attachments, practitioner or clinical line", async () => {
     const s = await setup(intake()); const { parseEmailOperationRender } = await import("@/lib/email/operation-state");
     const { buildAppointmentEmailOperationPayload } = await import("@/lib/email/send-appointment");

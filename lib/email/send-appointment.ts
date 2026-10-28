@@ -5,6 +5,7 @@ import { parseEmailOperationAuthority, parseEmailOperationRender, type EmailOper
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { generateIntakeLinkUrl } from "@/lib/intake/queries";
 import { buildTreatmentTimeLine } from "@/lib/treatment-time/format";
+import { isMissingColumnError } from "@/lib/db/missing-column";
 import { isE2eFakeResendEnabled } from "./e2e-fake-resend";
 import { safeLog } from "@/lib/logging/safe-log";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -906,6 +907,17 @@ function operationRuntime(transport: NonNullable<ReturnType<typeof getResendTran
       process.env.HONE_E2E_FAKE_RESEND_MODE, process.env.HONE_E2E_FAKE_RESEND_DEFAULT_MODE]) };
 }
 
+type VisibilityRead = { data: unknown; error: { code?: string | null; message?: string | null } | null };
+/** Visibility for the operation render. An undefined `address_visibility` column
+ * (before any migration creates it) is the legacy default, "both" (address shown,
+ * as addressVisibilityOf does for an absent value); every other failure or a
+ * missing row hides the address: less disclosure, never more. */
+export function resolveOperationAddressVisibility(read: VisibilityRead): unknown {
+  if (read.error) return isMissingColumnError(read.error, "address_visibility") ? "both" : "booking_page";
+  if (!read.data) return "booking_page";
+  return (read.data as { address_visibility?: unknown }).address_visibility;
+}
+
 /** Trusted renderer consumes ONLY the closed SQL projection, never a cron
  * joined row. This creates no dispatch permission; URL bytes are frozen once. */
 export function buildAppointmentEmailOperationPayload(projection: EmailOperationRender, purpose: "reminder_24h" | "reminder_2h", appointmentId: string, addressVisibility: unknown): EmailPayload | null {
@@ -967,9 +979,10 @@ export async function sendAppointmentReminderOperation(admin: SupabaseClient, st
     if (runtime.binding !== operationRuntime(transport).binding) return held;
     // Address visibility is not in the 0247 projection. Read it once, before the
     // request is frozen (the frozen bytes are what dispatch and the digest bind).
-    // A failed read renders NO address: less disclosure, never more.
-    const visibilityRead = await admin.from("studios").select("address_visibility").eq("id", studioId).maybeSingle();
-    const addressVisibility: unknown = visibilityRead.error || !visibilityRead.data ? "booking_page" : (visibilityRead.data as { address_visibility?: unknown }).address_visibility;
+    // The column does not exist in any migration yet: that specific error is
+    // today's legacy default ("both"). Any OTHER failure renders NO address.
+    const addressVisibility = resolveOperationAddressVisibility(
+      await admin.from("studios").select("address_visibility").eq("id", studioId).maybeSingle());
     const intakeOnly = "kind" in render;
     if (intakeOnly ? p.composition !== "intake_only" : p.composition !== (render.intake ? "reminder_with_intake" : "reminder_only")) return held;
     let attemptNumber = 0; let projection: "current" | "superseded" | "unverified" | "unchanged" | undefined;
