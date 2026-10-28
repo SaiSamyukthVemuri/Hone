@@ -2,7 +2,7 @@ import { test, expect, type Locator, type Page, type Route } from "@playwright/t
 import sharp from "sharp";
 import { seedE2eStudio, seedE2eClientWithPreviousAreas, sql } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
-import { E2E_SUPABASE_URL } from "./helpers/local-env";
+import { E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "./helpers/local-env";
 
 // HON-43 / 0231: distinct from B2 recovery. Real set → replace → remove via UI,
 // persisted pointer and rendered header; synthetic data on the owned local stack.
@@ -87,7 +87,14 @@ async function saveWithPending(page: Page, control: Locator, busyLabel: string) 
   }
 }
 
+// HELD (portrait policy): the app server runs with HONE_CLIENT_PORTRAIT_ENABLED
+// = "true" only when the outer process sets it (local-env passes it through),
+// so the ON case needs its own server run and the OFF case runs on the default
+// server where the variable is absent.
+const PORTRAIT_ON = E2E_WEB_SERVER_ENV.HONE_CLIENT_PORTRAIT_ENABLED === "true";
+
 test("ID photo set, replacement and removal persist without archiving the source photos", async ({ page }) => {
+  test.skip(!PORTRAIT_ON, "portrait use is OFF on this server (HONE_CLIENT_PORTRAIT_ENABLED is not true)");
   test.setTimeout(300_000);
   const seed = await seedE2eStudio();
   const { clientId, previousSessionId } = await seedE2eClientWithPreviousAreas(seed);
@@ -162,4 +169,33 @@ test("ID photo set, replacement and removal persist without archiving the source
   const remaining = await photos(clientId);
   expect(remaining.map((p) => p.id).sort()).toEqual([a.id, b.id, visit.id].sort());
   expect(remaining.every((p) => p.deleted_at === null)).toBe(true);
+});
+
+test("portrait use OFF: no control, no header portrait, the stored pointer is left alone", async ({ page }) => {
+  test.skip(PORTRAIT_ON, "this case needs the default server, where portrait use is OFF");
+  test.setTimeout(300_000);
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClientWithPreviousAreas(seed);
+  await loginAsOwner(page, seed);
+
+  await page.goto(`/clients/${clientId}/images`);
+  await page.getByRole("radio", { name: "Client photo", exact: true }).check();
+  const buffer = await sharp({ create: { width: 1600, height: 1200, channels: 3, background: "#426488" } }).png().toBuffer();
+  await page.locator('input[type="file"][name="file"]').setInputFiles({ name: "synthetic-off.png", mimeType: "image/png", buffer });
+  await page.getByRole("button", { name: /^Attach/ }).click();
+  await expect(page.getByText(/✓ Uploaded/)).toBeVisible({ timeout: 120_000 });
+  const [photo] = await photos(clientId);
+  await expect(tile(page, photo)).toHaveCount(1, { timeout: T });
+  await expect(page.getByRole("button", { name: /Use as ID photo|Remove ID photo/ })).toHaveCount(0);
+
+  // A pointer stored before the hold (set here as the table owner) is neither
+  // rendered nor cleared.
+  await sql(`update public.clients set portrait_image_id = $1 where id = $2`, [photo.id, clientId]);
+  await page.goto(`/clients/${clientId}`);
+  await page.reload();
+  await expect(page.getByTestId("client-portrait")).toHaveCount(0);
+  await page.goto(`/clients/${clientId}/images`);
+  await expect(page.getByTestId("portrait-badge")).toHaveCount(0);
+  expect(await pointer(clientId)).toBe(photo.id);
+  expect((await photos(clientId)).every((p) => p.deleted_at === null)).toBe(true);
 });

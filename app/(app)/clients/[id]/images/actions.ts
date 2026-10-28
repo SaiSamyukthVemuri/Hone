@@ -20,6 +20,7 @@ import { sanitizeTreatmentImage } from "@/lib/images/treatment-image-sanitize";
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
 import { signTreatmentImageUrl } from "./sign-treatment-image";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { clientPortraitEnabled } from "@/lib/images/portrait-policy";
 
 // PR #271. Practitioner-only secure treatment image actions.
 //
@@ -398,6 +399,10 @@ export async function setClientPortraitAction(input: {
   expectedImageId?: string | null;
 }): Promise<ImageActionResult> {
   await getCurrentPractitionerWithStudio();
+  // HELD: refuse before any RPC while portrait use is not enabled.
+  if (!clientPortraitEnabled()) {
+    return { ok: false, error: "ID photos are not available." };
+  }
   try {
     const supabase = await createClient();
     const { error } = await supabase.rpc("set_client_portrait", {

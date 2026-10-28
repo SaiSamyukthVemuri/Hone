@@ -36,10 +36,10 @@ describe("0231 portrait UI", () => {
     const page = read("page.tsx");
     expect(page).toMatch(/\.select\("id, name, portrait_image_id"\)/);
     expect(page).toMatch(/clientScope: m\.session_id == null && m\.session_block_id == null/);
-    expect(page).toMatch(/portraitImageId=\{client\.portrait_image_id \?\? null\}/);
+    expect(page).toMatch(/portraitImageId=\{portraitEnabled \? \(client\.portrait_image_id \?\? null\) : null\}/);
     const mgr = read("TreatmentImagesManager.tsx");
     expect(mgr).toMatch(
-      /<PortraitControl clientId=\{clientId\} imageId=\{img\.id\} clientScope=\{img\.clientScope\} isPortrait=\{img\.id === portraitImageId\} \/>/,
+      /\{portraitEnabled && <PortraitControl clientId=\{clientId\} imageId=\{img\.id\} clientScope=\{img\.clientScope\} isPortrait=\{img\.id === portraitImageId\} \/>\}/,
     );
   });
 

@@ -25,6 +25,7 @@ import {
 import { getPhotoConsentStateForClient } from "@/lib/consent/queries";
 import { photoConsentSummary } from "@/lib/consent/signed-record";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { clientPortraitEnabled } from "@/lib/images/portrait-policy";
 
 // PR #271. Practitioner-only treatment images. Gated by the app shell's
 // requirePractitionerWithStudio layout; data is loaded with the RLS client
@@ -39,6 +40,7 @@ export default async function ClientImagesPage({
 }) {
   const { id } = await params;
   const { studio } = await requirePractitionerWithStudio();
+  const portraitEnabled = clientPortraitEnabled();
 
   const supabase = await createClient();
   const { data: client, error: clientErr } = await supabase
@@ -278,7 +280,8 @@ export default async function ClientImagesPage({
         clientId={id}
         images={rows}
         sessionOptions={sessionOptions}
-        portraitImageId={client.portrait_image_id ?? null}
+        portraitEnabled={portraitEnabled}
+        portraitImageId={portraitEnabled ? (client.portrait_image_id ?? null) : null}
       />
     </div>
   );

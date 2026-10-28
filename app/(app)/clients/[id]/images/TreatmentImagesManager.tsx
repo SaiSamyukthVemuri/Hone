@@ -214,11 +214,14 @@ export function TreatmentImagesManager({
   images,
   sessionOptions = [],
   portraitImageId = null,
+  portraitEnabled = false,
 }: {
   clientId: string;
   images: Row[];
   sessionOptions?: SessionAttachOption[];
   portraitImageId?: string | null;
+  // HELD: false (the default) renders no PortraitControl.
+  portraitEnabled?: boolean;
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -645,7 +648,7 @@ export function TreatmentImagesManager({
                   clientId={clientId}
                   note={img.note}
                 />
-                <PortraitControl clientId={clientId} imageId={img.id} clientScope={img.clientScope} isPortrait={img.id === portraitImageId} />
+                {portraitEnabled && <PortraitControl clientId={clientId} imageId={img.id} clientScope={img.clientScope} isPortrait={img.id === portraitImageId} />}
                 <div className="flex gap-3 text-xs">
                   <Button
                     variant="quiet"
