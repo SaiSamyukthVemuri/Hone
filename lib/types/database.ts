@@ -32,13 +32,16 @@ export type Studio = {
   slug: string;
   address: string | null;
   booking_description: string | null;
-  // Migration 0119 (Clinical Record: Phase 1): studio-scoped feature flag for
-  // the "Finalize & sign" clinical-record boundary. Default OFF; opt-in per
-  // studio during supervised rollout. Optional at the type level for rows loaded
-  // via `select *` before 0119 is applied.
+  // RETIRED (migration 0159, docs/decisions/clinical-finalization-retired.md):
+  // signed clinical records are not a Hone product capability. Both columns are
+  // CHECK-locked to false on every studio, so they are not a setting and nothing
+  // may read or branch on them. They stay in this type only because
+  // `npm run check:db-types` compares the Studio column set to the database
+  // exactly; delete both fields in the same change as a migration that drops the
+  // columns (and the 0119 finalize function that still reads one of them).
+  /** @deprecated retired by 0159; always false. */
   clinical_finalization_enabled?: boolean;
-  // Migration 0120 (Clinical Record: Phase 2): studio-scoped flag for corrections
-  // & amendments. Separate from Phase 1; default OFF. Optional for pre-0120 rows.
+  /** @deprecated retired by 0159; always false. */
   clinical_corrections_enabled?: boolean;
   // Migration 0121 (Google Calendar: Phase A): studio-scoped feature flags, all
   // default OFF. Only `google_calendar_connection_enabled` is used in Phase A
