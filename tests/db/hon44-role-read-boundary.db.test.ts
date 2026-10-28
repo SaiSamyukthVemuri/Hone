@@ -164,13 +164,15 @@ describe("HON-44 database read boundaries by role", () => {
     }
   });
 
-  it("a non-owner PRACTITIONER sees shared clinical rows and NO financial rows", async () => {
-    for (const f of FAMILIES) {
+  // One case PER TABLE: a loop inside a single case stops at the first failing
+  // table, which would hide the other two financial tables behind it.
+  for (const f of FAMILIES) {
+    it(`a non-owner PRACTITIONER ${f.memberSees ? "sees shared rows of" : "sees NO rows of"} ${f.table}`, async () => {
       const n = await countAs(member.userId, f.table, S.studioId);
       if (f.memberSees) expect(n, f.table).toBeGreaterThanOrEqual(1);
       else expect(n, f.table).toBe(0);
-    }
-  });
+    });
+  }
 
   it("a RECEPTIONIST (no practitioners row) sees NO clinical and NO financial rows", async () => {
     for (const f of FAMILIES) {
