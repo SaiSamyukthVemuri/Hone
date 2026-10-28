@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { BirthdayReminderColor } from "@/lib/types/database";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { parseClientSelfServiceForm } from "@/lib/booking/client-self-service-form";
 
 function nullableString(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") return null;
@@ -143,6 +144,57 @@ export async function setStudioEmailSettingsAction(
     console.error(
       JSON.stringify({
         event: "studio_email_settings_update_failed",
+        code: dbErrorCode(error),
+        studioId: studio.id,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: "Could not save settings. Please try again." };
+  }
+
+  revalidatePath("/settings/studio");
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// setClientSelfServiceAction (HON-47)
+// ---------------------------------------------------------------------------
+// Owner-only. Writes exactly the two 0234 flags on the CALLER'S studio and
+// nothing else: the studio id comes from the signed-in owner's session, never
+// from the form. Both values must be the literal "true" or "false"; anything
+// else is refused rather than coerced, so a crafted POST cannot flip a flag by
+// omission. The RLS policy "studios: owners update" is the second wall.
+//
+// Reminders, postcare and every other studio setting are untouched: this action
+// never reads or writes them, and they never read these flags.
+
+export async function setClientSelfServiceAction(
+  formData: FormData,
+): Promise<EmailSettingsResult> {
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (practitioner.role !== "owner") {
+    return {
+      ok: false,
+      error: "Only studio owners can change client self-service settings.",
+    };
+  }
+  const parsed = parseClientSelfServiceForm(formData);
+  if (!parsed) {
+    return { ok: false, error: "Could not save settings. Please try again." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("studios")
+    .update({
+      client_cancellation_enabled: parsed.cancellation,
+      client_reschedule_enabled: parsed.reschedule,
+    })
+    .eq("id", studio.id);
+  if (error) {
+    console.error(
+      JSON.stringify({
+        event: "studio_client_self_service_update_failed",
         code: dbErrorCode(error),
         studioId: studio.id,
         timestamp: new Date().toISOString(),

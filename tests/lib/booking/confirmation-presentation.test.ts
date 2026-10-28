@@ -1,3 +1,6 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildBookingConfirmationCopy,
@@ -26,10 +29,12 @@ import {
 const EMAIL = "booker@example.test";
 const ALL: ConfirmationEmailStatus[] = ["sent", "failed", "disabled"];
 
+const ALL_ON = { cancellation: true, reschedule: true, manageLink: true } as const;
+
 describe("buildBookingConfirmationCopy — invariants across every status", () => {
   it("always offers a management action, whatever the provider did", () => {
     for (const emailStatus of ALL) {
-      const copy = buildBookingConfirmationCopy({ emailStatus, email: EMAIL });
+      const copy = buildBookingConfirmationCopy({ emailStatus, email: EMAIL, selfService: ALL_ON });
       expect(copy.manageLabel, `manageLabel missing for ${emailStatus}`).toBeTruthy();
       expect(copy.manageLabel).toBe("Manage booking");
     }
@@ -37,7 +42,7 @@ describe("buildBookingConfirmationCopy — invariants across every status", () =
 
   it("always produces at least one next-step line", () => {
     for (const emailStatus of ALL) {
-      const copy = buildBookingConfirmationCopy({ emailStatus, email: EMAIL });
+      const copy = buildBookingConfirmationCopy({ emailStatus, email: EMAIL, selfService: ALL_ON });
       expect(copy.steps.length, emailStatus).toBeGreaterThan(0);
       for (const step of copy.steps) {
         expect(step.trim(), `${emailStatus} produced a blank step`).not.toBe("");
@@ -48,7 +53,7 @@ describe("buildBookingConfirmationCopy — invariants across every status", () =
   it("claims delivery in EXACTLY ONE state — the one where the provider succeeded", () => {
     const claiming = ALL.filter(
       (emailStatus) =>
-        buildBookingConfirmationCopy({ emailStatus, email: EMAIL }).claimsEmailDelivered,
+        buildBookingConfirmationCopy({ emailStatus, email: EMAIL, selfService: ALL_ON }).claimsEmailDelivered,
     );
     expect(claiming).toEqual(["sent"]);
   });
@@ -56,7 +61,7 @@ describe("buildBookingConfirmationCopy — invariants across every status", () =
   it("only points at the email for management in that same state", () => {
     const pointing = ALL.filter(
       (emailStatus) =>
-        buildBookingConfirmationCopy({ emailStatus, email: EMAIL })
+        buildBookingConfirmationCopy({ emailStatus, email: EMAIL, selfService: ALL_ON })
           .claimsEmailCarriesManagementLinks,
     );
     expect(pointing).toEqual(["sent"]);
@@ -64,7 +69,7 @@ describe("buildBookingConfirmationCopy — invariants across every status", () =
 
   it("never leaks a provider reason, status code or internal detail", () => {
     for (const emailStatus of ALL) {
-      const joined = buildBookingConfirmationCopy({ emailStatus, email: EMAIL })
+      const joined = buildBookingConfirmationCopy({ emailStatus, email: EMAIL, selfService: ALL_ON })
         .steps.join(" ")
         .toLowerCase();
       for (const forbidden of [
@@ -85,7 +90,7 @@ describe("buildBookingConfirmationCopy — invariants across every status", () =
 });
 
 describe("buildBookingConfirmationCopy — sent", () => {
-  const copy = buildBookingConfirmationCopy({ emailStatus: "sent", email: EMAIL });
+  const copy = buildBookingConfirmationCopy({ emailStatus: "sent", email: EMAIL, selfService: ALL_ON });
 
   it("names the address it actually delivered to", () => {
     expect(copy.steps.join(" ")).toContain(EMAIL);
@@ -103,7 +108,7 @@ describe("buildBookingConfirmationCopy — sent", () => {
 });
 
 describe("buildBookingConfirmationCopy — failed", () => {
-  const copy = buildBookingConfirmationCopy({ emailStatus: "failed", email: EMAIL });
+  const copy = buildBookingConfirmationCopy({ emailStatus: "failed", email: EMAIL, selfService: ALL_ON });
 
   it("does NOT claim the confirmation was sent", () => {
     expect(copy.claimsEmailDelivered).toBe(false);
@@ -135,7 +140,7 @@ describe("buildBookingConfirmationCopy — failed", () => {
 });
 
 describe("buildBookingConfirmationCopy — disabled", () => {
-  const copy = buildBookingConfirmationCopy({ emailStatus: "disabled", email: EMAIL });
+  const copy = buildBookingConfirmationCopy({ emailStatus: "disabled", email: EMAIL, selfService: ALL_ON });
 
   it("does not mention a confirmation email at all — nothing was attempted", () => {
     expect(copy.claimsEmailDelivered).toBe(false);
@@ -154,5 +159,97 @@ describe("buildBookingConfirmationCopy — disabled", () => {
   it("still routes the client to the in-band management link", () => {
     expect(copy.urgesSavingLink).toBe(true);
     expect(copy.steps.join(" ")).toContain("Manage booking");
+  });
+});
+
+
+// Codex P2 4370339942. The copy follows what the studio offers online: no line
+// promises a link in the email, or a "Manage booking" button, that is not there.
+describe("buildBookingConfirmationCopy — studio self-service (HON-47)", () => {
+  const STATUSES = ["sent", "failed", "disabled"] as const;
+  const BOOL = [true, false] as const;
+  const EMAIL = "client@example.test";
+  const text = (steps: string[]) => steps.join("\n");
+
+  it("everything on is the studio-agnostic copy it always was", () => {
+    expect(text(buildBookingConfirmationCopy({ emailStatus: "sent", email: EMAIL, selfService: ALL_ON }).steps)).toContain(
+      "The email includes links to cancel or reschedule if your plans change.",
+    );
+  });
+
+  it("selfService is REQUIRED: no optional parameter, no permissive default, and every caller passes it", () => {
+    const lib = readFileSync(join(process.cwd(), "lib/booking/confirmation-presentation.ts"), "utf8");
+    expect(lib).toMatch(/\n  selfService: ConfirmationSelfService;\n\}\): BookingConfirmationCopy/);
+    expect(lib).not.toMatch(/ALL_SELF_SERVICE|selfService\?:|selfService \?\?/);
+    // Every call site in the product, found by scanning, passes the capabilities.
+    const callers = ["app/book/[slug]/PublicBookForm.tsx", "app/portal/PortalRebookCard.tsx"];
+    for (const file of callers) {
+      const src = readFileSync(join(process.cwd(), file), "utf8");
+      const calls = [...src.matchAll(/buildBookingConfirmationCopy\(\{([\s\S]*?)\n\s*\}\);/g)];
+      expect(calls.length, file).toBeGreaterThan(0);
+      for (const c of calls) expect(c[1], file).toContain("selfService");
+    }
+    // And no other product file calls it unscanned.
+    const found = execFileSync("grep", ["-rl", "buildBookingConfirmationCopy(", "app", "lib", "components"], { encoding: "utf8" })
+      .split("\n").filter(Boolean).filter((f) => f !== "lib/booking/confirmation-presentation.ts").sort();
+    expect(found).toEqual(callers.map((c) => c).sort());
+  });
+
+  it.each(STATUSES)("%s: cancel x reschedule x manage link — the text names only what is offered", (emailStatus) => {
+    for (const cancellation of BOOL) {
+      for (const reschedule of BOOL) {
+        for (const manageLink of BOOL) {
+          const label = `${emailStatus} c=${cancellation} r=${reschedule} m=${manageLink}`;
+          const copy = buildBookingConfirmationCopy({
+            emailStatus,
+            email: EMAIL,
+            selfService: { cancellation, reschedule, manageLink },
+          });
+          const t = text(copy.steps);
+          // The two actions are named only when offered.
+          expect(/cancel/i.test(t), `${label} cancel`).toBe(cancellation && (emailStatus === "sent" || manageLink));
+          expect(/reschedule/i.test(t), `${label} reschedule`).toBe(reschedule && (emailStatus === "sent" || manageLink));
+          // The button is promised only in the states that point at it, and only when it is rendered.
+          expect(t.includes("Manage booking below"), `${label} button`).toBe(emailStatus !== "sent" && manageLink);
+          // Nothing asks the client to save a link that is not shown.
+          expect(copy.urgesSavingLink, `${label} save`).toBe(emailStatus !== "sent" && manageLink);
+          expect(copy.claimsEmailCarriesManagementLinks, `${label} claim`).toBe(
+            emailStatus === "sent" && (cancellation || reschedule),
+          );
+          // A steps list is never empty and never carries a blank line.
+          expect(copy.steps.length).toBeGreaterThan(0);
+          expect(copy.steps.every((l) => l.trim().length > 0)).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("only one action on: the email line is singular and names that action", () => {
+    const c = buildBookingConfirmationCopy({
+      emailStatus: "sent", email: EMAIL, selfService: { cancellation: true, reschedule: false, manageLink: true },
+    });
+    expect(c.steps).toContain("The email includes a link to cancel if your plans change.");
+    const r = buildBookingConfirmationCopy({
+      emailStatus: "sent", email: EMAIL, selfService: { cancellation: false, reschedule: true, manageLink: true },
+    });
+    expect(r.steps).toContain("The email includes a link to reschedule if your plans change.");
+  });
+
+  it("everything off: the copy says nothing about links, buttons or saving", () => {
+    for (const emailStatus of STATUSES) {
+      const c = buildBookingConfirmationCopy({
+        emailStatus, email: EMAIL, selfService: { cancellation: false, reschedule: false, manageLink: false },
+      });
+      const t = text(c.steps);
+      expect(/Manage booking|bookmark|cancel|reschedule/i.test(t)).toBe(false);
+      expect(c.urgesSavingLink).toBe(false);
+    }
+  });
+
+  it("the form passes the studio's flags and whether the button renders", () => {
+    const src = readFileSync(join(process.cwd(), "app/book/[slug]/PublicBookForm.tsx"), "utf8");
+    expect(src).toMatch(/selfService: \{\s*\.\.\.confirmation\.selfService,\s*manageLink: confirmation\.manageUrl !== null,\s*\}/);
+    const actions = readFileSync(join(process.cwd(), "app/book/[slug]/actions.ts"), "utf8");
+    expect(actions).toMatch(/selfService: \{\s*cancellation: clientSelfService\.cancellation,\s*reschedule: clientSelfService\.reschedule,\s*\}/);
   });
 });

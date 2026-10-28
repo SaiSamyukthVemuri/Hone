@@ -3,6 +3,8 @@ import { resolveTimeFormat } from "@/lib/booking/tz";
 import { StudioSettingsForm } from "./StudioSettingsForm";
 import { EmailSettingsForm } from "./EmailSettingsForm";
 import { SmsSettingsForm } from "./SmsSettingsForm";
+import { ClientSelfServiceForm } from "./ClientSelfServiceForm";
+import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
 // PostcareSettingsForm intentionally NOT imported here. Postcare
 // editing moved to /settings/intake (Intake & Postcare tab) after
 // Chloe's retest; the form component itself is unchanged and is
@@ -55,6 +57,11 @@ export default async function StudioSettingsPage() {
           send_24h_sms_reminders: studio.send_24h_sms_reminders,
           send_2h_sms_reminders: studio.send_2h_sms_reminders,
         }}
+      />
+      <ClientSelfServiceForm
+        initial={(({ cancellation, reschedule }) => ({ cancellation, reschedule }))(
+          clientSelfServicePolicyFromStudio(studio),
+        )}
       />
     </section>
   );
