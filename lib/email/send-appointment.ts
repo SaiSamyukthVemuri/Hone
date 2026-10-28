@@ -964,15 +964,28 @@ export function buildAppointmentEmailOperationPayload(projection: EmailOperation
  * The original frozen projection goes to BOTH authorize and late observation. */
 export async function sendAppointmentReminderOperation(admin: SupabaseClient, studioId: string, appointmentId: string, purpose: "reminder_24h" | "reminder_2h") {
   const held = { kind: "held" as const };
+  // An authoritative "no" from the database is a hold (skip, row handled). An RPC
+  // that errored, threw or answered with something unreadable is NOT an answer:
+  // the caller must retain the candidate and not count the run a success.
+  const unavailable = { kind: "unavailable" as const };
+  const readable = (data: unknown): boolean =>
+    typeof data === "object" && data !== null && typeof (data as { kind?: unknown }).kind === "string";
+  const rpc = async (name: string, args: Record<string, unknown>) => {
+    try { return await admin.rpc(name, args); } catch { return { data: null, error: { message: "rpc_threw" } }; }
+  };
+  let authorizeUnavailable = false;
   try {
     const transport = getResendTransport(); if (!transport) return held;
     const runtime = operationRuntime(transport);
-    const inspected = await admin.rpc("inspect_appointment_email_operation", { p_studio_id: studioId, p_appointment_id: appointmentId, p_purpose: purpose });
+    const inspected = await rpc("inspect_appointment_email_operation", { p_studio_id: studioId, p_appointment_id: appointmentId, p_purpose: purpose });
     const authority = parseEmailOperationAuthority(inspected.data?.authority);
-    if (inspected.error || inspected.data?.kind !== "eligible" || !authority) return held;
-    const prepared = await admin.rpc("prepare_appointment_email_operation", { p_studio_id: studioId, p_appointment_id: appointmentId, p_purpose: purpose,
+    if (inspected.error || !readable(inspected.data)) return unavailable;
+    if (inspected.data.kind !== "eligible") return held;
+    if (!authority) return unavailable;
+    const prepared = await rpc("prepare_appointment_email_operation", { p_studio_id: studioId, p_appointment_id: appointmentId, p_purpose: purpose,
       p_provider_account: runtime.account, p_expected_authority: authority });
-    if (prepared.error || prepared.data?.kind !== "prepared") return held;
+    if (prepared.error || !readable(prepared.data)) return unavailable;
+    if (prepared.data.kind !== "prepared") return held;
     const p = prepared.data as Record<string, unknown>; const render = parseEmailOperationRender(p.render);
     const frozenAuthority = parseEmailOperationAuthority(p.authority);
     if (!render || !frozenAuthority || typeof p.operationId !== "string" || !p.operationId || typeof p.providerKey !== "string" || !p.providerKey || typeof p.leaseToken !== "string" || !p.leaseToken) return held;
@@ -993,12 +1006,13 @@ export async function sendAppointmentReminderOperation(admin: SupabaseClient, st
       render: (original) => buildAppointmentEmailOperationPayload(original, purpose, appointmentId, addressVisibility),
       currentRuntimeBinding: () => operationRuntime(transport).binding,
       authorize: async (binding, original) => {
-        const { data, error } = await admin.rpc("authorize_appointment_email_operation", {
+        const { data, error } = await rpc("authorize_appointment_email_operation", {
           p_operation_id: binding.operationId, p_lease_token: p.leaseToken, p_authority: binding.authority,
           p_provider_account: binding.providerAccount, p_provider_key: binding.providerKey,
           p_request_digest: binding.requestDigest, p_capability_digest: binding.capabilityDigest, p_expected_render: original,
         });
-        if (error || data?.kind !== "authorized" || !Number.isInteger(data.attemptNumber) || data.attemptNumber < 1 || data.attemptNumber > 3 || data.retryNotAfter !== null) return held;
+        if (error || !readable(data)) { authorizeUnavailable = true; return held; }
+        if (data.kind !== "authorized" || !Number.isInteger(data.attemptNumber) || data.attemptNumber < 1 || data.attemptNumber > 3 || data.retryNotAfter !== null) return held;
         attemptNumber = data.attemptNumber;
         return { kind: "authorized", firstPossibleAttemptAt: data.firstPossibleAttemptAt, retryNotAfter: null };
       },
@@ -1016,7 +1030,7 @@ export async function sendAppointmentReminderOperation(admin: SupabaseClient, st
     });
     const request = adapter.freeze(render, { operationId: p.operationId, studioId, appointmentId, purpose, authority: frozenAuthority, providerAccount: runtime.account, providerKey: p.providerKey });
     if (!request) return held;
-    const grant = await adapter.authorize(request); if (!grant) return held;
+    const grant = await adapter.authorize(request); if (!grant) return authorizeUnavailable ? unavailable : held;
     const result = await adapter.dispatchAndSettle(request, grant);
     return result.kind === "held" ? held : { ...result, attemptNumber, projection, intakeId: render.intake?.id ?? null };
   } catch { return held; }

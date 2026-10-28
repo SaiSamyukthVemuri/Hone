@@ -828,6 +828,20 @@ describe("0247 compatibility: email authority dispatch", () => {
     expect(race.claimRpc).not.toHaveBeenCalled();
     expect(race.send).not.toHaveBeenCalled();
     expect((await response.json()).reminder_24h).toMatchObject({ attempted: 0, skipped: 1 });
+    expect(race.heartbeat, "an authoritative hold is a normal skip: the pass completes").toHaveBeenCalledTimes(1);
+  });
+
+  it("OPERATION database: an unavailable operation RPC keeps the candidate, sends nothing and fails the run (Codex P2, PR 1219)", async () => {
+    race.authority = "operation";
+    race.op.mockResolvedValue({ kind: "unavailable" });
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(500);
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.claimRpc).not.toHaveBeenCalled();
+    expect(race.heartbeat, "a database outage is not a successful cron").not.toHaveBeenCalled();
+    const saved = race.store.get("reminder_scan:v1:checkpoint:email24h");
+    if (saved) expect(JSON.parse(saved.value).after, "the candidate is retained, the cursor is not advanced").toBeNull();
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({ reason: "claim_unavailable", attempted: 0 }) }));
   });
 
   it("LEGACY database (pre-0247): the existing claim path runs and the operation authority is never touched", async () => {

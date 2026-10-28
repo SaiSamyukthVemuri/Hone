@@ -208,9 +208,12 @@ async function sendReminderViaOperation(
   appt: Joined,
   admin: ReturnType<typeof createAdminClient>,
   stats: EmailRunStats,
-): Promise<void> {
+): Promise<"claim_unavailable" | void> {
   const emailType: ClaimableEmailType = opts.kind === "24h" ? "reminder_24h" : "reminder_2h";
   const result = await sendAppointmentReminderOperation(admin, appt.studio_id, appt.id, emailType);
+  // The database could not answer: nothing was authoritatively handled, so the
+  // coordinator keeps this candidate and the run is not a success.
+  if (result.kind === "unavailable") return "claim_unavailable";
   if (result.kind === "held") { stats.skipped += 1; return; }
   stats.attempted += 1;
   if (result.observation.kind === "accepted") {

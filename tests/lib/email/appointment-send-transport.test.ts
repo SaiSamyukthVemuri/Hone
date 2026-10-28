@@ -492,7 +492,36 @@ describe("0247 matching RPC caller and actual renderer (offline)", () => {
       if (name === "prepare_appointment_email_operation") return { data: { kind: "prepared", authority, render: intake(), operationId: "operation", leaseToken: "lease", providerKey: "key", composition: "intake_only" }, error: null };
       throw new Error("PRIVATE grant response lost");
     });
-    expect(await s.run()).toEqual({ kind: "held" }); expect(s.rpc.mock.calls).toHaveLength(3); expect(s.sdk).not.toHaveBeenCalled(); expect(s.fetchGuard).not.toHaveBeenCalled();
+    expect(await s.run()).toEqual({ kind: "unavailable" }); expect(s.rpc.mock.calls).toHaveLength(3); expect(s.sdk).not.toHaveBeenCalled(); expect(s.fetchGuard).not.toHaveBeenCalled();
+  });
+  // Codex P2 (PR 1219): a database that could not ANSWER is "unavailable" (candidate
+  // retained, run not a success); only an authoritative "no" is a "held" skip.
+  const failing = (s: Awaited<ReturnType<typeof setup>>, target: string, answer: unknown) => {
+    const impl = s.rpc.getMockImplementation()!;
+    s.rpc.mockImplementation(async (name, args) => (name === target ? (typeof answer === "function" ? (answer as () => never)() : answer) : impl(name, args)) as never);
+  };
+  const STAGES = ["inspect_appointment_email_operation", "prepare_appointment_email_operation", "authorize_appointment_email_operation"] as const;
+  it.each(STAGES)("%s: an RPC error is unavailable, with no send", async (stage) => {
+    const s = await setup(intake()); failing(s, stage, { data: null, error: { code: "57014", message: "statement timeout" } });
+    expect(await s.run()).toEqual({ kind: "unavailable" }); expect(s.sdk).not.toHaveBeenCalled();
+  });
+  it.each(STAGES)("%s: a thrown RPC is unavailable, with no send", async (stage) => {
+    const s = await setup(intake()); failing(s, stage, () => { throw new Error("PRIVATE network down"); });
+    expect(await s.run()).toEqual({ kind: "unavailable" }); expect(s.sdk).not.toHaveBeenCalled();
+  });
+  it.each(STAGES)("%s: an unreadable (null/kindless) response is unavailable, with no send", async (stage) => {
+    for (const data of [null, {}, { kind: 7 }]) {
+      const s = await setup(intake()); failing(s, stage, { data, error: null });
+      expect(await s.run()).toEqual({ kind: "unavailable" }); expect(s.sdk).not.toHaveBeenCalled();
+    }
+  });
+  it.each([
+    ["inspect_appointment_email_operation", { kind: "ineligible" }],
+    ["prepare_appointment_email_operation", { kind: "held" }],
+    ["authorize_appointment_email_operation", { kind: "refused" }],
+  ])("%s: an authoritative refusal stays held (a normal skip), with no send", async (stage, data) => {
+    const s = await setup(intake()); failing(s, stage, { data, error: null });
+    expect(await s.run()).toEqual({ kind: "held" }); expect(s.sdk).not.toHaveBeenCalled();
   });
   it("observation failure keeps actual accepted SDK evidence unconfirmed without another grant", async () => {
     const s = await setup(intake()); const impl = s.rpc.getMockImplementation()!;
