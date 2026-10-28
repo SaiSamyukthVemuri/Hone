@@ -62,4 +62,5 @@ run -- backups list --project-ref "$REF" -o json
 echo "B observed (rc=$RC):"; paths | sed 's/^/       /'
 [ "$(paths | wc -l)" -ge 1 ] && ! paths | grep -qE "login-role|network-bans|query" && ok "backups list asks only the backups endpoint (API-only command; no database config is parsed)" || bad "backups list requests" "$(paths | tr '\n' ';')"
 echo "RESULT (h6): $pass passed, $fail failed"
+EXPECT=6; [ $((pass + fail)) = $EXPECT ] || { echo "FAIL - $((pass + fail)) of $EXPECT cases ran (a skipped or vacuous case; change EXPECT only with a reviewed case change)"; exit 1; }
 [ "$fail" = 0 ]

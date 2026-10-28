@@ -223,4 +223,6 @@ else
   if [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "57014" && [ "$el" -lt 40 ] && [ "$(psqld -c "select count(*) from supabase_migrations.schema_migrations where version = '0230'")" = 0 ]; then ok "T4 B2 (real CLI, Supavisor session pooler, extended-protocol batch): the per-file 'set local statement_timeout = 2s' made the SERVER cancel a 30 s statement (SQLSTATE 57014) after ${el}s; file 0230 not applied"; else bad "T4 B2" "rc=$RC elapsed=${el}s $OUT"; fi
 fi
 echo "RESULT ($MODE): $pass passed, $fail failed"
+case "$MODE" in supavisor) EXPECT=17 ;; pg) EXPECT=26 ;; *) EXPECT=$((pass + fail)) ;; esac
+[ $((pass + fail)) = $EXPECT ] || { echo "FAIL - $((pass + fail)) of $EXPECT $MODE cases ran (a skipped or vacuous case; change EXPECT only with a reviewed case change)"; exit 1; }
 [ "$fail" = 0 ]

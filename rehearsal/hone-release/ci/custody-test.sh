@@ -699,4 +699,5 @@ echo
 echo "HEADLINE LIMIT: this custody holds ONLY IF the agent user is in neither the docker nor the sudo group. The current VPS user sam is in BOTH (id: uid=1000(sam) groups=sam,sudo(27),users(100),docker(988)). Removing sam from them, and moving the lanes' docker use elsewhere, is Sam's decision and blocks the custody claim."
 echo
 echo "RESULT: $pass passed, $fail failed"
+EXPECT=265; [ $((pass + fail)) = $EXPECT ] || { echo "FAIL - $((pass + fail)) of $EXPECT cases ran (a skipped or vacuous case; change EXPECT only with a reviewed case change)"; exit 1; }
 [ "$fail" = 0 ]

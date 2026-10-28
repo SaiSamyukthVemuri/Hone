@@ -84,7 +84,7 @@ else
     receipt_add "V2-$id" "result sha256 $got equals the expected one; sql sha256 $ssha"
     n=$((n + 1))
   done < "$W/v/checks.list"
-  [ "$n" -ge 1 ] || fail "V2: checks.list names no check although verify_sha was approved"
+  want=$(grep -c '' "$W/v/checks.list"); [ "$n" -ge 1 ] && [ "$n" = "$want" ] || fail "V2: only $n of $want checks in checks.list ran (an approved verify bundle must run every one)"
 fi
 
 # V3 the reviewed credential-free smoke, through the manifest
