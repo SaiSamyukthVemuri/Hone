@@ -1,0 +1,6 @@
+{
+  "pr": 1226,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0254_perm_hon44_role_enforcement.sql"],
+  "release_receipt": "01-ops/1226-release-receipt.json"
+}
