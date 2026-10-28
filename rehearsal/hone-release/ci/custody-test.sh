@@ -596,6 +596,10 @@ runo apply; [ $RC -ne 0 ] && [ "$(state | cut -d' ' -f1)" = FAILED-LOGIN ] && ! 
 approve CUST-AUTH2; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "FAILED-LOGIN" && ok "the next run is refused while FAILED-LOGIN stands" || bad "after authfail" "$OUT"
 clear_state; echo ok > $W/stub-mode
 
+# ---------------------------------------------------------------- 8a0. RC1: the pinned helper refuses every redirect (the read PAT is never re-sent to another URL)
+fresh; echo redirect > $W/stub-mode; n0=$(wc -l < /tmp/hr-api.log | tr -d ' '); runo read-backups; n1=$(( $(wc -l < /tmp/hr-api.log | tr -d ' ') - n0 )); echo ok > $W/stub-mode
+if [ $RC -ne 0 ] && [ "$n1" = 1 ] && ! tail -n 1 /tmp/hr-api.log | grep -q redirected; then ok "RC1: the API answers 302 -> the helper exits 1 after ONE request; the redirect target is never requested (no Authorization header re-sent)"; else bad "RC1 redirect" "rc=$RC n=$n1 $(printf '%s' "$OUT" | tail -n 2)"; fi
+fresh
 # ---------------------------------------------------------------- 8a. HON66 final batch: Machines' read gates as manifest actions, every read through mgmt-read.py (no CLI, no db query --linked)
 # test-environment rewrite (disclosed): the runner's node lives in /usr/local/bin; the launcher's sudo secure_path is /usr/bin:/bin
 [ -x /usr/bin/node ] || ln -s "$(command -v node)" /usr/bin/node

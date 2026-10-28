@@ -20,6 +20,10 @@ PITR_SQL = "pitr-wal-status.sql"   # Machines/Insurance-approved file (PEER-PITR
 PITR_SQL_SHA256 = "c91d7a497ce3b04b88aedd72c8b2729694b65c3c5cc2f051837e3f2365ad8cd5"
 BAD = r"\b(insert|update|delete|alter|create|drop|grant|revoke|truncate|copy|call|do|set|lock|vacuum|analyze|comment|reindex|refresh|listen|notify|execute|prepare|reset|begin|commit|rollback|pg_sleep|pg_terminate_backend|pg_cancel_backend|set_config|lo_import|lo_export|dblink|pg_read_file|pg_ls_dir)\b"
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):   # RC1: the default handler would re-send the Authorization header (the read PAT) to whatever host a 3xx names
+    def redirect_request(self, *a, **k): return None
+OPEN = urllib.request.build_opener(NoRedirect).open
+
 def gate(text):
     body = re.sub(r"--[^\n]*", " ", text).strip().rstrip(";").strip()
     low = body.lower()
@@ -49,7 +53,7 @@ def main():
         h["Content-Type"] = "application/json"
         req = urllib.request.Request("%s/v1/projects/%s/database/query/read-only" % (BASE, ref), data=json.dumps({"query": sql}).encode(), headers=h, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with OPEN(req, timeout=30) as r:
             if r.status not in (200, 201): sys.exit(1)
             sys.stdout.write(r.read().decode())
     except urllib.error.HTTPError as e:

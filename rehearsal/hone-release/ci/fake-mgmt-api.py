@@ -21,8 +21,11 @@ class H(BaseHTTPRequestHandler):
         with open(LOG, "a") as f: f.write(json.dumps(rec) + "\n")
     def _send(self, code, obj):
         b = json.dumps(obj).encode(); self.send_response(code); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+    def _redir(self):
+        self.send_response(302); self.send_header("Location", "http://127.0.0.1:%d/v1/projects/redirected/database/backups" % PORT); self.send_header("Content-Length", "0"); self.end_headers()
     def do_GET(self):
         self._rec(None)
+        if rd("stub-mode", "ok") == "redirect": return self._redir()
         if re.fullmatch(r"/v1/projects/[a-z0-9-]+", self.path): return self._send(200, {"id": "x", "status": "ACTIVE_HEALTHY"})
         if re.fullmatch(r"/v1/projects/[a-z0-9-]+/database/backups", self.path):
             pitr = rd("stub-pitr", "true") == "true"; days = int(rd("stub-span-days", "7")); age = int(rd("stub-latest-age", "30")); now = int(time.time())
@@ -34,6 +37,7 @@ class H(BaseHTTPRequestHandler):
         try: body = json.loads(raw)
         except ValueError: body = {"_unparsed": True}
         self._rec(body)
+        if rd("stub-mode", "ok") == "redirect": return self._redir()
         if not re.fullmatch(r"/v1/projects/[a-z0-9-]+/database/query/read-only", self.path): return self._send(404, {"message": "not found"})
         if rd("stub-mode", "ok") == "qfail": return self._send(500, {"message": "stub failure"})
         q = body.get("query", "") if isinstance(body, dict) else ""
