@@ -13,6 +13,11 @@ all=1; for f in "$TPL"/sealed/*.sql; do n=$(basename "$f"); s=$(sha256sum "$f" |
 # 2. the database holds the stage's versions
 have=$(psqld -c "select count(*) from supabase_migrations.schema_migrations where version between '$FIRST' and '$LAST'")
 [ "$have" -ge "$NSEALED" ] && ok "the fresh CI database holds the stage versions $FIRST..$LAST" || { bad "the database does not hold $FIRST..$LAST ($have rows)"; echo "RESULT: $pass passed, $fail failed"; exit 1; }
+# 2b. (optional) the hosted-equivalent base: the repository chain below the stage holds exactly the rows production holds before it (245 rows, max 0246 for the 0248 stage)
+if [ -n "${BASE_ROWS:-}" ]; then
+  br=$(psqld -c "select count(*) || ',' || max(version) from supabase_migrations.schema_migrations where version <= '$BASE_MAX'")
+  [ "$br" = "$BASE_ROWS,$BASE_MAX" ] && ok "the real chain 0001..$BASE_MAX holds $BASE_ROWS rows (the hosted history before the stage; after the stage: $((BASE_ROWS + NSEALED)) rows, max $LAST)" || bad "base rows: got $br, expected $BASE_ROWS,$BASE_MAX"
+fi
 # 3. no applied file other than the stage's own redefines the stage's functions
 fnames=$(grep -o "('public', '[a-z_0-9]*')" "$TPL/needs-reference/function-bodies.sql" | sed "s/.*, '\(.*\)')/\1/" | sort -u)
 other=0; for fn in $fnames; do

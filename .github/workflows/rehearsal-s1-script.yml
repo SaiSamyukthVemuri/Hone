@@ -211,7 +211,9 @@ jobs:
         run: |
           set -o pipefail
           DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
-          bash rehearsal/hone-release/ci/refhash-stage.sh "$DB" templates/stage-0248 0248 0248 1 1 2 2>&1 | tee "$RUNNER_TEMP/refhash-0248.txt"; exit ${PIPESTATUS[0]}
+          BASE_ROWS=245 BASE_MAX=0246 bash rehearsal/hone-release/ci/refhash-stage.sh "$DB" templates/stage-0248 0248 0248 1 1 2 2>&1 | tee "$RUNNER_TEMP/refhash-0248.txt"; exit ${PIPESTATUS[0]}
+      - name: HON66 stage 0248 apply variant - constant-only s1-apply-0248.sh; Part 1 accepts the stage bundle and refuses five wrong ones (no database)
+        run: bash rehearsal/s1-script/stage-0248/check.sh 2>&1 | tee "$RUNNER_TEMP/stage0248-check.txt"; exit ${PIPESTATUS[0]}
       - name: HON66 pinned CLI on a synthetic target - a 0248-only push, then a later --include-all resumption of 0247/0249/0250 (no hosted access)
         run: |
           set -o pipefail
