@@ -43,6 +43,23 @@ function orderedAs(paths: string[], photos: Photo[]): boolean {
   return idx.every((i) => i >= 0) && idx.every((v, i) => i === 0 || idx[i - 1] < v);
 }
 
+/** The chart must show exactly `shown` (in order) and none of `forbidden`. */
+async function assertShowsVisit(page: Page, shown: Photo[], forbidden: Photo[]) {
+  const paths = await renderedStems(page, shown);
+  expect(orderedAs(paths, shown), "visit photos in created_at order").toBe(true);
+  for (const f of forbidden) expect(paths.some((u) => u.includes(stemOf(f))), `${stemOf(f)} must not render`).toBe(false);
+}
+
+/** Nothing of the visit is rendered, served or signed for this page's user. */
+async function assertNoVisitPhotos(page: Page, clientId: string, sessionId: string, photos: Photo[]) {
+  await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
+  await expect(page.getByTestId("session-photos")).toHaveCount(0, { timeout: 5_000 });
+  const html = await page.content();
+  for (const ph of photos) expect(html).not.toContain(stemOf(ph));
+  const res = await page.request.get(`/api/clients/${clientId}/images/${photos[0].id}/signed-url`);
+  expect(res.ok(), "signed-url route refuses").toBe(false);
+}
+
 test("visit photos keep their visit, their order and their identity for another practitioner; another studio sees none", async ({ browser, page }) => {
   test.setTimeout(300_000);
   const seed = await seedE2eStudio();
@@ -83,9 +100,7 @@ test("visit photos keep their visit, their order and their identity for another 
   // Owner: the chart shows exactly the two visit photos, in order, after a reload.
   await page.goto(`/clients/${clientId}/sessions/${sessionId}`);
   await page.reload();
-  const ownerPaths = await renderedStems(page, photos);
-  expect(orderedAs(ownerPaths, photos)).toBe(true);
-  expect(ownerPaths.some((u) => u.includes(stemOf(clientScoped[0])))).toBe(false);
+  await assertShowsVisit(page, photos, clientScoped);
 
   // Another authorized practitioner of the same studio: same photos, same order.
   const ctx = await browser.newContext({ bypassCSP: true });
@@ -93,9 +108,16 @@ test("visit photos keep their visit, their order and their identity for another 
     const p2 = await ctx.newPage();
     await loginByMagicLink(p2, member.email);
     await p2.goto(`/clients/${clientId}/sessions/${sessionId}`);
-    const memberPaths = await renderedStems(p2, photos);
-    expect(orderedAs(memberPaths, photos)).toBe(true);
-    expect(memberPaths.some((u) => u.includes(stemOf(clientScoped[0])))).toBe(false);
+    await assertShowsVisit(p2, photos, clientScoped);
+
+    // NEGATIVE CONTROLS. The assertions above must be able to fail:
+    // (1) wrong visit: pretend a visit photo is the forbidden one;
+    await expect(assertShowsVisit(p2, photos, [photos[0]])).rejects.toThrow();
+    // (2) wrong order: the same photos reversed are not "in order";
+    expect(orderedAs(await renderedStems(p2, photos), [...photos].reverse())).toBe(false);
+    // (3) crossed studio: a user of the SAME studio is a fixture that crosses
+    //     into the photos' studio, so the "sees nothing" check must reject it.
+    await expect(assertNoVisitPhotos(p2, clientId, sessionId, photos)).rejects.toThrow();
   } finally {
     await ctx.close();
   }
@@ -105,12 +127,7 @@ test("visit photos keep their visit, their order and their identity for another 
   try {
     const p3 = await ctx2.newPage();
     await loginAsOwner(p3, other);
-    await p3.goto(`/clients/${clientId}/sessions/${sessionId}`);
-    await expect(p3.getByTestId("session-photos")).toHaveCount(0);
-    const html = await p3.content();
-    for (const ph of photos) expect(html).not.toContain(stemOf(ph));
-    const res = await p3.request.get(`/api/clients/${clientId}/images/${photos[0].id}/signed-url`);
-    expect(res.ok()).toBe(false);
+    await assertNoVisitPhotos(p3, clientId, sessionId, photos);
   } finally {
     await ctx2.close();
   }
