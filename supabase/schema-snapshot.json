@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 246,
-    "last": "0258_hon58_identity.sql",
-    "sha256": "17ea474f4bca33a63ce188e65a8a7f456f800bea121f46bcf58be6e8d4b3bea5"
+    "count": 247,
+    "last": "0266_legal_name_receptionist_access.sql",
+    "sha256": "1edf9980bb1b274d2b10c54907c2360b375330bfd86d505dc3e7311ea02fdc45"
   },
   "public": {
     "tables": [
@@ -26,6 +26,7 @@
       "client_consent_signatures",
       "client_intake_forms",
       "client_legal_identities",
+      "client_legal_name_access_audit",
       "client_payment_methods",
       "client_personal_notes",
       "client_pinned_notes",
@@ -98,6 +99,7 @@
       "studio_availability_overrides",
       "studio_blockouts",
       "studio_calendar_reservations",
+      "studio_legal_name_access",
       "studio_machines",
       "studio_onboarding",
       "studio_payment_jurisdiction_changes",
@@ -180,6 +182,7 @@
       "calendar_connection_outbound_ready",
       "calendar_event_link_transition",
       "calendar_required_event_scopes",
+      "can_read_client_legal_identity",
       "can_use_client_legal_identity",
       "cancel_appointment_core",
       "capture_treatment_reading_change",
@@ -210,6 +213,7 @@
       "client_clinical_notes_before_insert",
       "client_clinical_notes_no_update",
       "client_legal_identities_guard",
+      "client_legal_name_access_audit_immutable",
       "client_personal_notes_set_studio_id",
       "clients_portrait_integrity",
       "clients_sms_permission_guard",
@@ -376,6 +380,7 @@
       "receptionist_calendar_closures",
       "receptionist_cancel_appointment",
       "receptionist_client_contacts",
+      "receptionist_client_contacts_v2",
       "receptionist_create_appointment",
       "receptionist_move_appointment",
       "reconcile_bound_payment_event",
@@ -470,6 +475,7 @@
       "set_own_default_machine",
       "set_own_default_machine_frequency",
       "set_practitioner_active_locked",
+      "set_receptionist_legal_name_access",
       "set_reservation_resource_key_default",
       "set_service_practitioner_eligibility_locked",
       "set_session_aftercare_explained",
