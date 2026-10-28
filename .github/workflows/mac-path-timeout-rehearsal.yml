@@ -42,7 +42,9 @@ jobs:
     # database resets and six proxied CLI runs: well inside 60 minutes.
     timeout-minutes: 60
     env:
-      EXCLUDE: studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta
+      # This rehearsal needs only the database and the session pooler: fewer images pulled
+      # means less exposure to the registry throttle that ended runs 40705975218 and 40713792328.
+      EXCLUDE: studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta,gotrue,postgrest,storage-api,kong
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -91,6 +93,9 @@ jobs:
           # script ran. The throttle is a time window, so retry the SAME pinned-CLI start
           # up to three times, 120 s apart, and only when the log shows that signature;
           # the credential stays held across this one step only, as before.
+          # The shell runs with -e and pipefail: without this the failed start pipeline
+          # below ended the step before the loop could look at the log (run 40713792328).
+          set +e
           rc=1
           for attempt in 1 2 3; do
             { SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io supabase start -x "$EXCLUDE" \
