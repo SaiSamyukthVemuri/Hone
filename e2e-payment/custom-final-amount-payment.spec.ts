@@ -143,6 +143,14 @@ test("quick checkout: an authored $145 total is prepared, confirmed and charged 
   expect(countEffectsForAccount(seed.connectedAccountId)).toBe(1);
   const piCall = readFakeStripeCalls().find((c) => c.method === "pi_create")!;
   expect(piCall.replay).toBe(false);
+  // Object creation is separate from the one winner's money attempt.
+  const confirmations = callsForAccount(seed.connectedAccountId).filter(c => c.method === "pi_confirm");
+  expect(confirmations).toHaveLength(1);
+  expect(confirmations[0]).toMatchObject({
+    resultId: piCall.resultId, replay: false,
+    idempotencyKey: `${selector.replace(/:create$/, ":confirm")}:${piCall.resultId}`,
+  });
+
   expect(piCall.idempotencyKey).toBe(selector);
   expect(piCall.stripeAccount).toBe(`acct_test_e2e_${seed.scenario.runId}`);
   // Exactly the authored total. NOT the $120.00 booked service price.

@@ -172,9 +172,8 @@ test("two contexts charge the same attempt concurrently: one effect, one succeed
     rows.filter((r) => r.status === "ready" || r.status === "pending_stripe"),
   ).toHaveLength(0);
 
-  // --- Measurement: exactly one processor EFFECT (financial guarantee); the exact
-  //     INVOCATION count is reported (1 or 2 — both financially safe; the fake
-  //     never hides a duplicate app request).
+  // --- Exactly one confirmation invocation and unique outcome. Concurrent
+  // action requests cannot give a losing invocation permission to confirm.
   const invocations = countInvocationsForAccount(seed.connectedAccountId);
   const effects = countEffectsForAccount(seed.connectedAccountId);
   testInfo.annotations.push({
@@ -185,8 +184,7 @@ test("two contexts charge the same attempt concurrently: one effect, one succeed
     `[two-context] executeRequestsObserved=${requestsSeen} invocations=${invocations} effects=${effects} immediateA=${immediateA} immediateB=${immediateB}`,
   );
   expect(effects).toBe(1);
-  expect(invocations).toBeGreaterThanOrEqual(1);
-  expect(invocations).toBeLessThanOrEqual(2);
+  expect(invocations).toBe(1); // only the acknowledged binding winner confirms
   expect(
     callsForAccount(seed.connectedAccountId).filter((c) => c.method === "refund_create"),
   ).toHaveLength(0);

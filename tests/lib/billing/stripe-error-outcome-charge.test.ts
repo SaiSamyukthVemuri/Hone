@@ -30,6 +30,11 @@ const h = vi.hoisted(() => ({
   retrieveCalls: 0,
   claimPaymentIntentId: null as string | null,
   createKeys: [] as string[],
+  confirmKeys: [] as string[],
+  trace: [] as string[],
+  errorStage: "confirm" as "create" | "confirm",
+  bindingAck: true,
+  corruptOriginal: false,
   alerts: [] as Array<{ severity: string; event: string }>,
   alertInputs: [] as unknown[],
   updates: [] as Array<Record<string, unknown>>,
@@ -39,11 +44,43 @@ const h = vi.hoisted(() => ({
   legacyRule: false,
 }));
 
+// Both SDK stages use the actual producer identity, money and metadata.
+const originalIntent = () => ({
+  id: "pi_test_original", livemode: false, amount: AMOUNT, currency: "cad",
+  customer: "cus_test", payment_method: "pm_test",
+  status: "requires_confirmation", confirmation_method: "manual",
+  latest_charge: null, amount_received: 0, amount_capturable: 0,
+  metadata: { hone_studio_id: STUDIO, hone_client_id: CLIENT,
+    hone_session_id: SESSION, hone_appointment_id: APPOINTMENT,
+    hone_session_payment_charge_attempt_id: ATTEMPT,
+    hone_charge_reason: "session_payment", hone_card_authorization_signature_id: "sig-1",
+    hone_environment: "test" },
+});
+
 const fakeStripe = {
   paymentIntents: {
-    create: async (_params: unknown, opts: { idempotencyKey: string }) => {
+    create: async (params: Record<string, unknown>, opts: { idempotencyKey: string; stripeAccount: string }) => {
+      h.trace.push("create");
       h.createKeys.push(opts.idempotencyKey);
-      if (h.createReply) return h.createReply;
+      expect(params).toMatchObject({ amount: AMOUNT, currency: "cad", customer: "cus_test",
+        payment_method: "pm_test", confirm: false, confirmation_method: "manual",
+        metadata: originalIntent().metadata });
+      expect(opts.stripeAccount).toBe("acct_test");
+      if (h.errorStage === "create") throw h.createError;
+      return { ...originalIntent(), customer: h.corruptOriginal ? "cus_wrong" : "cus_test" };
+    },
+    confirm: async (id: string, params: unknown, opts: { idempotencyKey: string; stripeAccount: string }) => {
+      h.trace.push("confirm");
+      h.confirmKeys.push(opts.idempotencyKey);
+      expect(id).toBe(originalIntent().id);
+      expect(params).toEqual({ off_session: true });
+      expect(opts.stripeAccount).toBe("acct_test");
+      expect(h.trace).toEqual(["claim", "create", "bind", "read_bound", "confirm"]);
+      expect(h.rows.payment_charge_attempts).toMatchObject({
+        status: "pending_stripe", stripe_payment_intent_id: id,
+        stripe_status: "requires_confirmation",
+        stripe_idempotency_key: `hone:session_payment:${ATTEMPT}:v2:create`,
+      });
       throw h.createError;
     },
     retrieve: async () => {
@@ -51,9 +88,7 @@ const fakeStripe = {
       if (h.retrieveReply) return h.retrieveReply;
       throw h.retrieveError ?? new Error("retrieve must not be reached");
     },
-    cancel: async () => {
-      throw new Error("cancel must not be reached");
-    },
+    cancel: async () => { throw new Error("cancel must not be reached"); },
   },
 };
 
@@ -107,62 +142,50 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
     from(table: string) {
       const q: Record<string, unknown> = {};
-      let isUpdate = false;
       let payload: Record<string, unknown> | null = null;
-      const read = () => ({ data: h.rows[table] ?? null, error: null });
-      q.select = () => {
-        if (isUpdate) {
-          h.updates.push(payload ?? {});
-          return Promise.resolve({ data: [{ id: ATTEMPT }], error: null });
-        }
-        return q;
+      const filters: Array<[string, unknown]> = [];
+      const read = () => {
+        const row = h.rows[table] as Record<string, unknown> | undefined;
+        if (table === "payment_charge_attempts" && row?.stripe_payment_intent_id) h.trace.push("read_bound");
+        return { data: row ? { ...row } : null, error: null };
       };
-      for (const m of ["eq", "is", "in", "order", "limit"]) q[m] = () => q;
+      const execute = () => {
+        if (!payload) return read();
+        const row = h.rows[table] as Record<string, unknown>;
+        const matched = filters.every(([key, value]) => row[key] === value);
+        if (!matched) return { data: [], error: null };
+        if (payload.stripe_status === "requires_confirmation") {
+          h.trace.push("bind");
+          // Lost acknowledgement grants no confirmation, even if the write landed.
+          Object.assign(row, payload);
+          h.updates.push(payload);
+          return { data: h.bindingAck ? [{ id: ATTEMPT }] : [], error: null };
+        }
+        h.updates.push(payload);
+        Object.assign(row, payload);
+        return { data: [{ id: ATTEMPT }], error: null };
+      };
+      q.select = () => q;
+      for (const m of ["eq", "is"]) q[m] = (key: string, value: unknown) => { filters.push([key, value]); return q; };
+      for (const m of ["in", "order", "limit"]) q[m] = () => q;
       q.maybeSingle = async () => read();
       q.single = async () => read();
-      q.then = (resolve: (v: unknown) => unknown) => {
-        if (isUpdate) h.updates.push(payload ?? {});
-        return resolve(isUpdate ? { data: [{ id: ATTEMPT }], error: null } : read());
-      };
-      q.update = (p: Record<string, unknown>) => {
-        isUpdate = true;
-        payload = p;
-        return q;
-      };
-      q.insert = () => {
-        throw new Error(`unexpected insert on ${table}`);
-      };
+      q.then = (resolve: (v: unknown) => unknown) => resolve(execute());
+      q.update = (p: Record<string, unknown>) => { payload = p; return q; };
+      q.insert = () => { throw new Error(`unexpected insert on ${table}`); };
       return q;
     },
-    rpc: async (name: string) => {
+    rpc: async (name: string, args: { p_idempotency_key: string }) => {
       if (name !== "claim_session_payment_charge_attempt") return { data: null, error: null };
-      return {
-        data: [
-          {
-            result: h.claimResult,
-            attempt_id: ATTEMPT,
-            studio_id: STUDIO,
-            client_id: CLIENT,
-            session_id: SESSION,
-            appointment_id: APPOINTMENT,
-            charge_reason: "session_payment",
-            amount_cents: AMOUNT,
-            currency: "cad",
-            client_payment_method_id: "cpm-1",
-            card_authorization_signature_id: "sig-1",
-            stripe_account_id: "acct_test",
-            stripe_customer_id: "cus_test",
-            stripe_payment_method_id: "pm_test",
-            stripe_payment_intent_id: h.claimPaymentIntentId,
-            stripe_idempotency_key: null,
-            status_before_claim: h.claimResult === "claimed" ? "ready" : "pending_stripe",
-            // Recent, so an `already_pending` retry is inside the
-            // reconciliation window and reaches paymentIntents.create.
-            updated_at: new Date().toISOString(),
-          },
-        ],
-        error: null,
-      };
+      h.trace.push("claim");
+      const row = h.rows.payment_charge_attempts as Record<string, unknown>;
+      const before = row.status;
+      if (h.claimResult === "claimed") Object.assign(row, {
+        status: "pending_stripe", stripe_idempotency_key: args.p_idempotency_key,
+        updated_at: new Date().toISOString(),
+      });
+      return { data: [{ ...row, result: h.claimResult, attempt_id: ATTEMPT,
+        status_before_claim: before }], error: null };
     },
   }),
 }));
@@ -187,6 +210,8 @@ const ATTEMPT_ROW = {
   stripe_payment_method_id: "pm_test",
   stripe_payment_intent_id: null,
   stripe_idempotency_key: null,
+  stripe_charge_id: null,
+  charged_at: null,
   updated_at: "2026-08-01T00:00:00.000Z",
 };
 
@@ -198,13 +223,18 @@ beforeEach(() => {
   h.retrieveCalls = 0;
   h.claimPaymentIntentId = null;
   h.createKeys = [];
+  h.confirmKeys = [];
+  h.trace = [];
+  h.errorStage = "confirm";
+  h.bindingAck = true;
+  h.corruptOriginal = false;
   h.alerts = [];
   h.alertInputs = [];
   h.updates = [];
   h.claimResult = "claimed";
   h.legacyRule = false;
   h.rows = {
-    payment_charge_attempts: ATTEMPT_ROW,
+    payment_charge_attempts: { ...ATTEMPT_ROW },
     client_payment_methods: {
       id: "cpm-1",
       studio_id: STUDIO,
@@ -241,7 +271,16 @@ const AMBIGUOUS: Array<[string, () => unknown]> = [
   ["StripeIdempotencyError (key reused; the earlier request may have succeeded)", () => new Stripe.errors.StripeIdempotencyError(raw({ type: "idempotency_error", statusCode: 400 }))],
 ];
 
-// Stripe answered, and the answer was no. Terminal, exactly as before.
+// A definitive error alone is insufficient after staging. Attach a verified
+// bound original proving refusal: canceled, or an ordinary card decline.
+const withObservedRefusal = (err: unknown, cardDecline = false) => Object.assign(err as object, {
+  payment_intent: { ...originalIntent(),
+    status: cardDecline ? "requires_payment_method" : "canceled",
+    last_payment_error: cardDecline ? { type: "card_error", code: "card_declined" } : null,
+  },
+});
+
+// Stripe answered, and the original's full identity + terminal/refusal truth agree.
 const DEFINITIVE: Array<[string, () => unknown]> = [
   ["StripeCardError (declined)", () => new Stripe.errors.StripeCardError(raw({ code: "card_declined", type: "card_error", statusCode: 402 }))],
   ["StripeInvalidRequestError", () => new Stripe.errors.StripeInvalidRequestError(raw({ type: "invalid_request_error", statusCode: 400 }))],
@@ -262,36 +301,42 @@ describe("HON-11 #1 charge: an UNKNOWN outcome stays pending for manual review",
   }
 });
 
-describe("HON-11 #1 charge: a DEFINITIVE refusal is still terminal (unchanged)", () => {
+describe("HON-11 #1 charge: a verified bound DEFINITIVE refusal still fails the attempt", () => {
   for (const [name, make] of DEFINITIVE) {
     it(`${name}: failed, row written failed`, async () => {
-      h.createError = make();
+      h.createError = withObservedRefusal(make(), name.startsWith("StripeCardError"));
       const r = await run();
       expect(r).toMatchObject({ ok: false, outcome: "failed" });
       expect(wroteFailed()).toBe(true);
       expect(raisedManualReview()).toBe(false);
+      expect(h.createKeys).toHaveLength(1);
+      expect(h.confirmKeys).toEqual([`hone:session_payment:${ATTEMPT}:v2:confirm:pi_test_original`]);
     });
   }
 
   it("authentication_required still shows its own message", async () => {
-    h.createError = new Stripe.errors.StripeCardError(
+    h.createError = withObservedRefusal(new Stripe.errors.StripeCardError(
       raw({ code: "authentication_required", type: "card_error", statusCode: 402 }),
-    );
+    ), true);
     const r = await run();
     expect(r).toMatchObject({ outcome: "failed", failureCode: "authentication_required" });
   });
 });
 
 describe("HON-11 #1 charge: an unknown outcome can never become a second charge", () => {
-  it("a retry of the pending attempt reuses the SAME idempotency key, so Stripe cannot create a second charge", async () => {
+  it("a retry after an UNKNOWN create cannot create or confirm again", async () => {
+    h.errorStage = "create";
     h.createError = new Stripe.errors.StripeConnectionError(raw());
-    await run();
-    // The practitioner presses Run again: the claim finds the row pending.
+    expect(await run()).toMatchObject({ outcome: "needs_manual_review" });
+    // The practitioner presses Run again: the durable row is pending without an original.
     h.claimResult = "already_pending";
-    await run();
-    expect(h.createKeys).toHaveLength(2);
+    expect(await run()).toMatchObject({ outcome: "needs_manual_review" });
+    expect(h.createKeys).toHaveLength(1);
+    expect(h.confirmKeys).toHaveLength(0);
+    expect(wroteFailed()).toBe(false);
+    expect(h.rows.payment_charge_attempts).toMatchObject({ status: "pending_stripe", stripe_payment_intent_id: null });
     expect(new Set(h.createKeys).size).toBe(1);
-    expect(h.createKeys[0]).toBe(`hone:session_payment:${ATTEMPT}:v1`);
+    expect(h.createKeys[0]).toBe(`hone:session_payment:${ATTEMPT}:v2:create`);
   });
 
   // Prepare is what would mint a new attempt (and so a new key). A
@@ -324,7 +369,7 @@ describe("NEGATIVE CONTROL: the retired rule fails these tests", () => {
   for (const [name, make] of AMBIGUOUS.slice(0, 2)) {
     it(`with every StripeError terminal again, ${name} is written FAILED (the double-charge setup)`, async () => {
       h.legacyRule = true;
-      h.createError = make();
+      h.createError = withObservedRefusal(make());
       const r = await run();
       expect(r).toMatchObject({ outcome: "failed" });
       expect(wroteFailed()).toBe(true);
@@ -336,7 +381,7 @@ describe("source shape: the runner consults the classifier in its terminal branc
   const src = readFileSync(join(__dirname, "../../../lib/billing/session-payment-charge.ts"), "utf8");
   it("the terminal branch is gated on isDefinitiveStripeRefusal", () => {
     expect(src).toMatch(
-      /if \(\s*err instanceof Stripe\.errors\.StripeError &&\s*isDefinitiveStripeRefusal\(err\)\s*\) \{/,
+      /if \(boundPaymentIntentId && err instanceof Stripe\.errors\.StripeError\s*&&\s*isDefinitiveStripeRefusal\(err\)\) \{/,
     );
     expect(src.match(/instanceof Stripe\.errors\.StripeError/g)).toHaveLength(1);
   });
@@ -345,19 +390,20 @@ describe("source shape: the runner consults the classifier in its terminal branc
 
 // Runtime privacy regression: provider prose is untrusted even when its outcome
 // classification is definitive. Keep the financial state and SDK count pinned.
-describe("provider message privacy on the legacy charge producer", () => {
+describe("provider message privacy on the staged charge producer", () => {
   for (const code of ["card_declined", "authentication_required"]) {
     it(`${code}: excludes provider prose from result, ledger, alerts and diagnostics`, async () => {
       const privateText = "synthetic-private@example.invalid token=synthetic-secret";
       const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
       try {
-        h.createError = new Stripe.errors.StripeCardError(raw({
+        h.createError = withObservedRefusal(new Stripe.errors.StripeCardError(raw({
           message: privateText, code, type: "card_error", statusCode: 402,
-        }));
+        })), true);
         const result = await run();
         expect(result).toMatchObject({ ok: false, outcome: "failed", failureCode: code });
         expect(wroteFailed()).toBe(true);
         expect(h.createKeys).toHaveLength(1);
+        expect(h.confirmKeys).toHaveLength(1);
         expect(h.alerts).toContainEqual({
           severity: code === "authentication_required" ? "critical" : "warning",
           event: "session_payment_charge_failed",
@@ -370,7 +416,7 @@ describe("provider message privacy on the legacy charge producer", () => {
     });
   }
 
-  it("unknown outcome keeps pending and one SDK call without logging provider prose", async () => {
+  it("unknown outcome keeps pending and one create without logging provider prose", async () => {
     const privateText = "synthetic-private@example.invalid token=synthetic-secret";
     const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
@@ -388,7 +434,6 @@ describe("provider message privacy on the legacy charge producer", () => {
   });
 });
 
-
 it("known-original retrieve failure excludes provider prose and never creates another intent", async () => {
   const privateText = "synthetic-private@example.invalid token=synthetic-secret";
   const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -404,6 +449,7 @@ it("known-original retrieve failure excludes provider prose and never creates an
     expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
     expect(h.retrieveCalls).toBe(1);
     expect(h.createKeys).toHaveLength(0);
+    expect(h.confirmKeys).toHaveLength(0);
     expect(wroteFailed()).toBe(false);
     expect(raisedManualReview()).toBe(true);
     expect(JSON.stringify([result, h.updates, h.alertInputs, diagnostic.mock.calls]))
@@ -413,39 +459,81 @@ it("known-original retrieve failure excludes provider prose and never creates an
   }
 });
 
+it("known-original reconciliation: canceled intent excludes last_payment_error prose without changing failed state", async () => {
+  const privateText = "synthetic-private@example.invalid token=synthetic-secret";
+  const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const reply = {
+      id: "pi_synthetic_canceled", status: "canceled", amount: AMOUNT, currency: "cad",
+      customer: "cus_test", livemode: false,
+      last_payment_error: { code: "card_declined", message: privateText },
+    };
+    h.claimResult = "already_pending";
+    h.claimPaymentIntentId = reply.id;
+    h.rows.payment_charge_attempts = {
+      ...ATTEMPT_ROW, status: "pending_stripe", stripe_payment_intent_id: reply.id,
+    };
+    h.retrieveReply = reply;
+    const result = await run();
+    expect(result).toMatchObject({ ok: false, outcome: "failed", failureCode: "card_declined" });
+    expect(h.updates).toContainEqual(expect.objectContaining({
+      status: "failed", stripe_payment_intent_id: reply.id, stripe_status: "canceled",
+    }));
+    expect(h.createKeys).toHaveLength(0);
+    expect(h.confirmKeys).toHaveLength(0);
+    expect(h.retrieveCalls).toBe(1);
+    expect(h.alerts).toContainEqual({ severity: "warning", event: "session_payment_charge_failed" });
+    expect(JSON.stringify([result, h.updates, h.alertInputs, diagnostic.mock.calls]))
+      .not.toContain(privateText);
+  } finally {
+    diagnostic.mockRestore();
+  }
+});
 
-for (const path of ["create reply", "known-original reconciliation"]) {
-  it(`${path}: canceled intent excludes last_payment_error prose without changing failed state`, async () => {
-    const privateText = "synthetic-private@example.invalid token=synthetic-secret";
-    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const reply = {
-        id: "pi_synthetic_canceled", status: "canceled", amount: AMOUNT, currency: "cad",
-        customer: "cus_test", livemode: false,
-        last_payment_error: { code: "card_declined", message: privateText },
-      };
-      if (path === "create reply") {
-        h.createReply = reply;
-      } else {
-        h.claimResult = "already_pending";
-        h.claimPaymentIntentId = reply.id;
-        h.rows.payment_charge_attempts = {
-          ...ATTEMPT_ROW, status: "pending_stripe", stripe_payment_intent_id: reply.id,
-        };
-        h.retrieveReply = reply;
-      }
-      const result = await run();
-      expect(result).toMatchObject({ ok: false, outcome: "failed", failureCode: "card_declined" });
-      expect(h.updates).toContainEqual(expect.objectContaining({
-        status: "failed", stripe_payment_intent_id: reply.id, stripe_status: "canceled",
-      }));
-      expect(h.createKeys).toHaveLength(path === "create reply" ? 1 : 0);
-      expect(h.retrieveCalls).toBe(path === "create reply" ? 0 : 1);
-      expect(h.alerts).toContainEqual({ severity: "warning", event: "session_payment_charge_failed" });
-      expect(JSON.stringify([result, h.updates, h.alertInputs, diagnostic.mock.calls]))
-        .not.toContain(privateText);
-    } finally {
-      diagnostic.mockRestore();
-    }
+describe("staged refusal evidence and continuation controls", () => {
+  for (const [name, make] of AMBIGUOUS.slice(0, 2)) {
+    it(`${name}: even a refusal-shaped original cannot bypass the real classifier`, async () => {
+      h.createError = withObservedRefusal(make());
+      expect(await run()).toMatchObject({ outcome: "needs_manual_review" });
+      expect(wroteFailed()).toBe(false);
+      expect(raisedManualReview()).toBe(true);
+      expect(h.confirmKeys).toHaveLength(1);
+    });
+  }
+  for (const [name, make] of DEFINITIVE) {
+    it(`${name}: unbound create error cannot claim a terminal original`, async () => {
+      h.errorStage = "create";
+      h.createError = withObservedRefusal(make());
+      expect(await run()).toMatchObject({ outcome: "needs_manual_review" });
+      expect(wroteFailed()).toBe(false);
+      expect(raisedManualReview()).toBe(true);
+      expect(h.createKeys).toHaveLength(1);
+      expect(h.confirmKeys).toHaveLength(0);
+      expect(h.rows.payment_charge_attempts).toMatchObject({ stripe_payment_intent_id: null });
+    });
+    it(`${name}: a bound error without observed refusal stays pending`, async () => {
+      h.createError = make();
+      expect(await run()).toMatchObject({ outcome: "needs_manual_review" });
+      expect(wroteFailed()).toBe(false);
+      expect(raisedManualReview()).toBe(true);
+      expect(h.confirmKeys).toHaveLength(1);
+      expect(h.rows.payment_charge_attempts).toMatchObject({ status: "pending_stripe", stripe_payment_intent_id: "pi_test_original" });
+    });
+  }
+  it("a binding write with lost acknowledgement cannot reach confirm", async () => {
+    h.bindingAck = false;
+    h.createError = withObservedRefusal(new Stripe.errors.StripeCardError(raw({ type: "card_error" })), true);
+    expect(await run()).toMatchObject({ outcome: "needs_manual_review" });
+    expect(h.createKeys).toHaveLength(1);
+    expect(h.confirmKeys).toHaveLength(0);
+    expect(wroteFailed()).toBe(false);
+    expect(h.rows.payment_charge_attempts).toMatchObject({ status: "pending_stripe", stripe_payment_intent_id: "pi_test_original" });
   });
-}
+  it("wrong original customer refuses before binding or confirm", async () => {
+    h.corruptOriginal = true;
+    expect(await run()).toMatchObject({ outcome: "needs_manual_review" });
+    expect(h.createKeys).toHaveLength(1);
+    expect(h.confirmKeys).toHaveLength(0);
+    expect(h.updates).toEqual([]);
+  });
+});

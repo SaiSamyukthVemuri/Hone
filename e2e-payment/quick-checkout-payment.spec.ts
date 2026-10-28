@@ -201,11 +201,19 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   expect(chargedRows).toHaveLength(1);
   expect(chargedRows[0].status).toBe("succeeded");
 
-  // --- Exactly one fake paymentIntents.create: 1 invocation, 1 effect (27-28).
+  // --- One unconfirmed object and exactly one confirmation invocation/effect.
   expect(countInvocationsForAccount(seed.connectedAccountId)).toBe(1);
   expect(countEffectsForAccount(seed.connectedAccountId)).toBe(1);
   const piCall = readFakeStripeCalls().find((c) => c.method === "pi_create")!;
   expect(piCall.replay).toBe(false);
+  // Object creation is separate from the one winner's money attempt.
+  const confirmations = callsForAccount(seed.connectedAccountId).filter(c => c.method === "pi_confirm");
+  expect(confirmations).toHaveLength(1);
+  expect(confirmations[0]).toMatchObject({
+    resultId: piCall.resultId, replay: false,
+    idempotencyKey: `${selector.replace(/:create$/, ":confirm")}:${piCall.resultId}`,
+  });
+
   expect(piCall.idempotencyKey).toBe(selector);
   expect(piCall.stripeAccount).toBe(`acct_test_e2e_${seed.scenario.runId}`);
   expect(piCall.amountCents).toBe(seed.expectedAmountMinor);

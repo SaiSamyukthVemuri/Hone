@@ -122,3 +122,46 @@ describe("F: claim_session_payment_charge_attempt", () => {
     expect(row.rows[0].status).toBe("ready");
   });
 });
+
+// V2 caller. These cases hold on the CURRENT claim RPC and keep holding after
+// 0249, so they run in every lane. The cases that only hold once 0249 is
+// applied (a v1 or wrong-uuid fresh key returning not_ready, a second v2 claim
+// returning not_ready, pending-without-original refusing both versions, a ready
+// row retaining an old key or intent, the fee-reason key, the empty-original
+// refusal, the prepared-statement and EXECUTE posture probes) belong to the
+// 0249 stage, not here. They are NOT skip-gated on 0249 being present.
+describe("V2 caller: the exact v2 create key is accepted by the claim RPC", () => {
+  const v2Key = (id: string) => `hone:session_payment:${id}:v2:create`;
+
+  it("a fresh ready row is claimed with the v2 create key and the key is stored", async () => {
+    const id = await seedChargeAttempt("ready");
+    const result = await adminQuery(
+      `select result, stripe_idempotency_key, stripe_payment_intent_id, status_before_claim
+         from public.claim_session_payment_charge_attempt($1, $2, $3)`,
+      [id, s.practitionerId, v2Key(id)],
+    );
+    expect(result.rows[0]).toMatchObject({
+      result: "claimed", stripe_idempotency_key: v2Key(id),
+      stripe_payment_intent_id: null, status_before_claim: "ready",
+    });
+    const row = await adminQuery(
+      `select status, stripe_idempotency_key from public.payment_charge_attempts where id = $1`, [id],
+    );
+    expect(row.rows[0]).toEqual({ status: "pending_stripe", stripe_idempotency_key: v2Key(id) });
+  });
+
+  it("a row that already holds its original reports already_pending with that original", async () => {
+    const id = await seedChargeAttempt("pending_stripe");
+    const pi = `pi_${id.replaceAll("-", "")}`;
+    await adminQuery(
+      `update public.payment_charge_attempts
+          set stripe_payment_intent_id = $2, stripe_idempotency_key = $3 where id = $1`,
+      [id, pi, v2Key(id)],
+    );
+    const result = await adminQuery(
+      `select result, stripe_payment_intent_id from public.claim_session_payment_charge_attempt($1, $2, $3)`,
+      [id, s.practitionerId, v2Key(id)],
+    );
+    expect(result.rows[0]).toMatchObject({ result: "already_pending", stripe_payment_intent_id: pi });
+  });
+});

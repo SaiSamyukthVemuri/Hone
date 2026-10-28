@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Stripe from "stripe";
 import { readFileSync } from "node:fs";
+import { createFakeStripe, getFakeStripeCalls, resetFakeStripeState } from "@/lib/stripe/e2e-fake-stripe";
 
 // ===========================================================================
 // PAY-CCY-01 (#824) — EVERY LEDGER WRITER CHECKS THE PROVIDER'S MONEY FIRST
@@ -38,6 +39,16 @@ const h = vi.hoisted(() => ({
   claim: {} as Record<string, unknown>,
   pi: {} as Record<string, unknown>,
   createError: null as unknown,
+  useExistingAdapter: false,
+  confirmError: null as unknown,
+  beforeBind: null as null | (() => void),
+  afterBind: null as null | (() => void),
+  beforeConfirm: null as null | (() => void | Promise<void>),
+  createOverride: {} as Record<string, unknown>,
+  ackMode: "ok" as string,
+  claimDynamic: false,
+  requests: [] as Array<{ method: string; id?: string; params: Record<string, unknown>; key: string; account: string }>,
+  cache: new Map<string, { params: string; result: Record<string, unknown> }>(),
   cancelStatus: "canceled" as string,
   failedWriteZero: false,
   pendingWriteZero: false,
@@ -47,10 +58,36 @@ const h = vi.hoisted(() => ({
 
 const fakeStripe = {
   paymentIntents: {
-    create: async () => {
+    create: async (params: Record<string, unknown>, options: { stripeAccount: string; idempotencyKey: string }) => {
       h.stripeCalls.push("pi_create");
+      h.requests.push({ method: "create", params, key: options.idempotencyKey, account: options.stripeAccount });
       if (h.createError) throw h.createError;
-      return h.pi;
+      const scope = `${options.stripeAccount}:POST:/v1/payment_intents:${options.idempotencyKey}`;
+      const prior = h.cache.get(scope);
+      if (prior && prior.params !== JSON.stringify(params)) throw new Error("idempotency parameter mismatch");
+      const result = prior?.result ?? (params.confirm === false ? {
+        id: PI_ID, amount: params.amount, currency: params.currency, customer: params.customer,
+        payment_method: params.payment_method, livemode: h.livemode, status: "requires_confirmation",
+        confirmation_method: "manual", amount_received: 0, amount_capturable: 0, latest_charge: null,
+        ...h.createOverride,
+      } : h.pi);
+      h.cache.set(scope, { params: JSON.stringify(params), result });
+      h.beforeBind?.();
+      return result;
+    },
+    confirm: async (id: string, params: Record<string, unknown>, options: { stripeAccount: string; idempotencyKey: string }) => {
+      h.stripeCalls.push("pi_confirm");
+      h.requests.push({ method: "confirm", id, params, key: options.idempotencyKey, account: options.stripeAccount });
+      const row = h.rows.payment_charge_attempts as Record<string, unknown>;
+      if (row.stripe_payment_intent_id !== id || row.status !== "pending_stripe") throw new Tripwire("money before binding");
+      await h.beforeConfirm?.();
+      if (h.confirmError) throw h.confirmError;
+      const scope = `${options.stripeAccount}:POST:/v1/payment_intents/${id}/confirm:${options.idempotencyKey}`;
+      const prior = h.cache.get(scope);
+      if (prior && prior.params !== JSON.stringify(params)) throw new Error("idempotency parameter mismatch");
+      const result = prior?.result ?? { customer: "cus_test", payment_method: "pm_test", livemode: h.livemode, ...h.pi };
+      h.cache.set(scope, { params: JSON.stringify(params), result });
+      return result;
     },
     retrieve: async () => {
       h.stripeCalls.push("pi_retrieve");
@@ -77,7 +114,7 @@ vi.mock("@/lib/stripe/server", () => ({
   getStripe: () => fakeStripe,
 }));
 vi.mock("@/lib/stripe/session-payment-stripe", () => ({
-  getSessionPaymentStripe: () => fakeStripe,
+  getSessionPaymentStripe: () => h.useExistingAdapter ? createFakeStripe() : fakeStripe,
 }));
 vi.mock("@/lib/ops/alerts", () => {
   const record = async (a: {
@@ -126,7 +163,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
             h.updates.push({ table, payload: updatePayload });
             Object.assign(row!, updatePayload);
           }
-          return Promise.resolve({ data: matched ? [{ id: "row" }] : [], error: null });
+          const binding = updatePayload.stripe_status === "requires_confirmation" && updatePayload.status === undefined;
+          if (binding && matched) h.afterBind?.();
+          if (binding && h.ackMode === "throw") throw new Error("lost binding response");
+          return Promise.resolve({ data: binding && h.ackMode === "empty" ? [] : matched ? [{ id: row!.id }] : [],
+            error: binding && h.ackMode === "error" ? { code: "XX000" } : null });
         }
         return q;
       };
@@ -151,8 +192,16 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       h.rpcCalls.push(name);
       if (name === "claim_session_payment_charge_attempt") {
         const row = h.rows.payment_charge_attempts as Record<string, unknown> | undefined;
+        if (h.claimDynamic && row?.status === "pending_stripe") {
+          return { data: [{ ...h.claim, result: "already_pending", stripe_payment_intent_id: row.stripe_payment_intent_id }], error: null };
+        }
         if (row && ["claimed", "already_pending"].includes(String(h.claim.result))) {
           row.status = "pending_stripe";
+          if (h.claim.result === "claimed") {
+            h.claim.stripe_idempotency_key = args.p_idempotency_key;
+            row.stripe_idempotency_key = args.p_idempotency_key;
+            row.updated_at = h.claim.updated_at;
+          }
           if (h.claim.stripe_payment_intent_id) row.stripe_payment_intent_id = h.claim.stripe_payment_intent_id;
         }
         h.afterClaim?.();
@@ -270,6 +319,7 @@ function attemptRow(currency: "cad" | "usd", over: Record<string, unknown> = {})
     stripe_charge_id: null,
     stripe_idempotency_key: null,
     charged_at: null,
+    cancelled_at: null,
     refund_status: null,
     refund_amount_cents: null,
     refunded_at: null,
@@ -356,6 +406,16 @@ beforeEach(() => {
   h.claim = {};
   h.pi = {};
   h.createError = null;
+  h.useExistingAdapter = false;
+  h.confirmError = null;
+  h.beforeBind = null;
+  h.afterBind = null;
+  h.beforeConfirm = null;
+  h.createOverride = {};
+  h.ackMode = "ok";
+  h.claimDynamic = false;
+  h.requests = [];
+  h.cache = new Map();
   h.cancelStatus = "canceled";
   h.failedWriteZero = false;
   h.pendingWriteZero = false;
@@ -387,7 +447,7 @@ describe("synchronous charge: a succeeded PI is recorded only for the prepared m
     ["a different amount", "cad", { amount: AMOUNT + 1, currency: "cad" }, ["amount_mismatch"]],
     ["no stated money at all", "usd", {}, ["amount_unreadable", "currency_unreadable"]],
   ] as const)(
-    "%s: nothing is recorded, the row stays pending, a critical alert names it",
+    "%s: no outcome is recorded, the bound row stays pending, a critical alert names it",
     async (_label, rowCurrency, piMoney, mismatches) => {
       seedLineage(rowCurrency);
       h.claim = claimFor(rowCurrency);
@@ -467,7 +527,10 @@ describe("synchronous charge: a succeeded PI is recorded only for the prepared m
 // `failed` write. The row stays pending_stripe and a person is told. Matching
 // intents take exactly their old paths (controls).
 describe("money is checked before any status branch (P1 4253998912)", () => {
-  const attemptWrites = () => h.updates.filter((u) => u.table === "payment_charge_attempts");
+  // Binding records trusted original identity before confirmation; these
+  // assertions forbid outcome writes driven by mismatched confirmed money.
+  const attemptWrites = () => h.updates.filter((u) => u.table === "payment_charge_attempts"
+    && u.payload.stripe_status !== "requires_confirmation");
   const failedWrites = () => attemptWrites().filter((u) => u.payload.status === "failed");
   const cancels = () => h.stripeCalls.filter((c) => c === "pi_cancel");
 
@@ -482,7 +545,7 @@ describe("money is checked before any status branch (P1 4253998912)", () => {
   const STATUSES = ["succeeded", "requires_action", "requires_payment_method", "processing", "canceled"] as const;
 
   for (const [path, claim] of Object.entries(PATHS)) {
-    it.each(STATUSES)(`${path}: a mismatched %s intent writes nothing and cancels nothing`, async (status) => {
+    it.each(STATUSES)(`${path}: a mismatched %s intent writes no outcome and cancels nothing`, async (status) => {
       seedLineage("usd");
       h.claim = claim("usd");
       h.pi = { id: PI_ID, status, amount: AMOUNT, currency: "cad", latest_charge: CHARGE_ID };
@@ -778,7 +841,7 @@ describe("PAY-004 nonterminal PaymentIntents", () => {
       expect(result).toMatchObject({ ok: false, outcome: "needs_manual_review" });
       expect(h.updates.filter((write) => write.payload.status === "failed")).toEqual([]);
       expect(h.updates.some((write) => write.payload.stripe_payment_intent_id === PI_ID)).toBe(true);
-      expect(h.stripeCalls).toEqual([path === "create" ? "pi_create" : "pi_retrieve"]);
+      expect(h.stripeCalls).toEqual(path === "create" ? ["pi_create", "pi_confirm"] : ["pi_retrieve"]);
     });
   }
   it("does not call a successful cancel response terminal unless its actual status is canceled", async () => {
@@ -788,7 +851,7 @@ describe("PAY-004 nonterminal PaymentIntents", () => {
     h.cancelStatus = "processing";
     expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
     expect(h.updates.filter((write) => write.payload.status === "failed")).toEqual([]);
-    expect(h.stripeCalls).toEqual(["pi_create", "pi_cancel"]);
+    expect(h.stripeCalls).toEqual(["pi_create", "pi_confirm", "pi_cancel"]);
   });
   it("does not report terminal failure when the canceled-state write matched no row", async () => {
     seedLineage("cad");
@@ -796,7 +859,7 @@ describe("PAY-004 nonterminal PaymentIntents", () => {
     h.pi = { id: PI_ID, status: "requires_action", amount: AMOUNT, currency: "cad" };
     h.failedWriteZero = true;
     expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
-    expect(h.stripeCalls).toEqual(["pi_create", "pi_cancel"]);
+    expect(h.stripeCalls).toEqual(["pi_create", "pi_confirm", "pi_cancel"]);
     expect(critical("session_payment_failed_write_zero_rows")).toHaveLength(1);
   });
   it("the next execution retrieves the retained intent instead of creating another", async () => {
@@ -804,12 +867,12 @@ describe("PAY-004 nonterminal PaymentIntents", () => {
     h.claim = claimFor("cad");
     h.pi = { id: PI_ID, status: "processing", amount: AMOUNT, currency: "cad" };
     expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
-    const retained = h.updates.find((write) => write.payload.stripe_payment_intent_id === PI_ID);
+    const retained = h.updates.find((write) => write.payload.stripe_payment_intent_id === PI_ID && write.payload.stripe_status === "processing");
     expect(retained?.payload).toMatchObject({ stripe_payment_intent_id: PI_ID, stripe_status: "processing" });
     h.rows.payment_charge_attempts = attemptRow("cad", { status: "pending_stripe", ...retained!.payload });
     h.claim = claimFor("cad", { result: "already_pending", stripe_payment_intent_id: retained!.payload.stripe_payment_intent_id });
     expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
-    expect(h.stripeCalls).toEqual(["pi_create", "pi_retrieve"]);
+    expect(h.stripeCalls).toEqual(["pi_create", "pi_confirm", "pi_retrieve"]);
     expect(h.updates.filter((write) => write.payload.status === "failed")).toEqual([]);
   });
   it("does not cancel when the pending identity write was refused", async () => {
@@ -819,7 +882,8 @@ describe("PAY-004 nonterminal PaymentIntents", () => {
     h.pendingWriteZero = true;
     expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
     expect(h.stripeCalls).toEqual(["pi_create"]);
-    expect(critical("session_payment_nonterminal_write_refused")).toHaveLength(1);
+    expect(h.updateAttempts[0].matched).toBe(false);
+    expect(h.stripeCalls).not.toContain("pi_confirm");
   });
   it("does not cancel a retrieved intent whose ID differs from the pending claim", async () => {
     seedLineage("cad");
@@ -1324,7 +1388,7 @@ describe("G1 execution country authority before a new provider intent", () => {
   });
   it("healthy verified USD control still creates once with tenant/mode scoped reads", async () => {
     expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
-    expect(h.stripeCalls).toEqual(["pi_create"]);
+    expect(h.stripeCalls).toEqual(["pi_create", "pi_confirm"]);
     expect(h.reads).toContainEqual({ table: "studio_payment_jurisdictions", filters: [{ column: "studio_id", value: STUDIO }] });
     expect(h.reads).toContainEqual({ table: "studio_payment_settings", filters: [
       { column: "studio_id", value: STUDIO }, { column: "stripe_livemode", value: false },
@@ -1337,7 +1401,7 @@ describe("G1 execution country authority before a new provider intent", () => {
       (h.rows[table] as Record<string, unknown>).stripe_livemode = livemode;
     }
     expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
-    expect(h.stripeCalls).toEqual(["pi_create"]);
+    expect(h.stripeCalls).toEqual(["pi_create", "pi_confirm"]);
     expect(h.reads).toContainEqual({ table: "studio_payment_settings", filters: [
       { column: "studio_id", value: STUDIO }, { column: "stripe_livemode", value: livemode },
       { column: "stripe_account_id", value: "acct_test" },
@@ -1364,7 +1428,7 @@ describe("G1 execution country authority before a new provider intent", () => {
     seedLineage("cad"); settings().stripe_account_country = null; h.claim = claimFor("cad");
     h.pi = { id: PI_ID, status: "succeeded", amount: AMOUNT, currency: "cad", latest_charge: CHARGE_ID };
     expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
-    expect(h.stripeCalls).toEqual(["pi_create"]);
+    expect(h.stripeCalls).toEqual(["pi_create", "pi_confirm"]);
   });
   it("newly unavailable jurisdiction never hides a bound uncertain intent from reconciliation", async () => {
     pending(PI_ID); delete h.rows.studio_payment_jurisdictions;
@@ -1386,10 +1450,12 @@ describe("G1 execution country authority before a new provider intent", () => {
     expect(h.stripeCalls).toEqual([]); expect(h.updates).toEqual([]);
     expect((h.rows.payment_charge_attempts as Record<string, unknown>).status).toBe("pending_stripe");
   });
-  it("healthy pending no-intent retains EDF same-key create recovery", async () => {
+  // Behaviour change under the staged producer: a pending row with no original
+  // is no longer retried by same-key create+confirm; it goes to manual review.
+  it("healthy pending no-intent goes to manual review without any provider call", async () => {
     pending(null);
-    expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
-    expect(h.stripeCalls).toEqual(["pi_create"]);
+    expect(await charge()).toMatchObject({ ok: false, outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual([]); expect(h.updates).toEqual([]);
   });
   // The pre-claim read is unlocked: record_stripe_account_jurisdiction can land
   // a conflict while the claim runs. The read before create must be fresh on
@@ -1412,4 +1478,270 @@ describe("G1 execution country authority before a new provider intent", () => {
     expect(h.reads.filter((r) => r.table === "studio_payment_settings"
       && r.filters.some((f) => f.column === "stripe_account_id"))).toHaveLength(2);
   });
+});
+describe("staged producer original binding", () => {
+  const setup = () => {
+    seedLineage("usd"); h.claim = claimFor("usd");
+    h.pi = { id: PI_ID, status: "succeeded", amount: AMOUNT, currency: "usd", latest_charge: CHARGE_ID };
+  };
+  it("creates unconfirmed, positively binds and verifies before confirming the exact original", async () => {
+    setup();
+    expect(await charge()).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(h.stripeCalls).toEqual(["pi_create", "pi_confirm"]);
+    expect(h.requests[0].params).toMatchObject({ confirm: false, confirmation_method: "manual" });
+    expect(h.requests[0].params).not.toHaveProperty("off_session");
+    expect(h.requests[1]).toMatchObject({ id: PI_ID, params: { off_session: true }, account: "acct_test" });
+    expect(h.requests[0].key).not.toBe(h.requests[1].key);
+    expect(h.updateAttempts[0].filters).toContainEqual({ column: "stripe_payment_intent_id", value: null });
+    expect(h.updateAttempts[0].filters).toContainEqual({ column: "updated_at", value: h.claim.updated_at });
+    expect(h.updateAttempts.at(-1)?.filters).toContainEqual({ column: "stripe_payment_intent_id", value: PI_ID });
+  });
+  it.each(["empty", "error", "throw"])("lost binding ACK %s never confirms even when the row committed", async (mode) => {
+    setup(); h.ackMode = mode;
+    expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual(["pi_create"]);
+    expect((h.rows.payment_charge_attempts as Record<string, unknown>).stripe_payment_intent_id).toBe(PI_ID);
+  });
+  it("read failure after a positive ACK never grants confirmation", async () => {
+    setup(); h.afterBind = () => { h.recheckReadError = true; };
+    expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual(["pi_create"]);
+  });
+  it.each([
+    ["stripe_account_id", "acct_other"], ["stripe_customer_id", "cus_other"],
+    ["stripe_payment_method_id", "pm_other"], ["amount_cents", AMOUNT + 1],
+    ["currency", "cad"], ["stripe_livemode", true], ["client_id", "other"],
+    ["studio_id", "other"], ["session_id", null], ["appointment_id", null],
+    ["charge_reason", "no_show_fee"], ["card_authorization_signature_id", "sig_other"],
+    ["client_payment_method_id", "cpm_other"], ["status", "failed"],
+    ["stripe_idempotency_key", "legacy"], ["updated_at", "2026-10-21T14:00:00.000001Z"],
+    ["stripe_payment_intent_id", "pi_other"], ["stripe_charge_id", "ch_other"],
+    ["charged_at", "2026-10-21T00:00:00Z"],
+  ])("frozen %s drift refuses binding and confirmation", async (key, value) => {
+    setup(); h.beforeBind = () => { (h.rows.payment_charge_attempts as Record<string, unknown>)[key as string] = value; };
+    expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual(["pi_create"]);
+    expect(h.updateAttempts[0].matched).toBe(false);
+  });
+  it("preserves raw microsecond claim time without rounding", async () => {
+    setup(); h.claim.updated_at = new Date(Date.now() - 1000).toISOString().replace("Z", "001Z");
+    expect(await charge()).toMatchObject({ ok: true });
+    expect(h.updateAttempts[0].filters).toContainEqual({ column: "updated_at", value: h.claim.updated_at });
+  });
+  it("post-bind tuple drift refuses confirmation despite a positive ACK", async () => {
+    setup(); h.afterBind = () => { (h.rows.payment_charge_attempts as Record<string, unknown>).amount_cents = AMOUNT + 1; };
+    expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual(["pi_create"]);
+  });
+  it.each([{ status: "succeeded" }, { livemode: true }, { amount: AMOUNT + 1 },
+    { customer: "cus_other" }, { payment_method: "pm_other" }, { confirmation_method: "automatic" },
+    { latest_charge: CHARGE_ID }, { amount_received: 1 }, { amount_capturable: 1 }, { id: "" }])(
+    "untrusted or already active create result %j never binds", async (override) => {
+      setup(); h.createOverride = override;
+      expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+      expect(h.updates).toEqual([]); expect(h.stripeCalls).toEqual(["pi_create"]);
+    });
+  it("create error retains pending without binding or confirmation; retry never creates", async () => {
+    setup(); h.createError = new Error("synthetic lost create ACK"); h.claimDynamic = true;
+    expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+    h.createError = null;
+  h.useExistingAdapter = false;
+    expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual(["pi_create"]); expect(h.updates).toEqual([]);
+  });
+  it("two simultaneous claim callers obtain only one create and confirmation", async () => {
+    setup(); h.claimDynamic = true;
+    const results = await Promise.all([charge(), charge()]);
+    expect(results.some(r => r.ok)).toBe(true);
+    expect(h.stripeCalls.filter(c => c === "pi_create")).toHaveLength(1);
+    expect(h.stripeCalls.filter(c => c === "pi_confirm")).toHaveLength(1);
+  });
+  it.each(["hone:session_payment:legacy:v1", "hone:session_payment:new:v2:create"])(
+    "pending unknown %s never replays", async (key) => {
+      setup(); h.claim = claimFor("usd", { result: "already_pending", stripe_idempotency_key: key });
+      expect(await charge()).toMatchObject({ outcome: "needs_manual_review" }); expect(h.stripeCalls).toEqual([]);
+    });
+  it("lost confirm response retains bound original and never creates or confirms on retry", async () => {
+    setup(); h.confirmError = new Error("synthetic lost confirm ACK"); h.claimDynamic = true;
+    expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+    expect((h.rows.payment_charge_attempts as Record<string, unknown>).stripe_payment_intent_id).toBe(PI_ID);
+    h.confirmError = null; h.pi.status = "requires_confirmation";
+    expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual(["pi_create", "pi_confirm", "pi_retrieve"]);
+  });
+  it.each(["processing", "requires_confirmation", "requires_capture"])("active confirm result %s remains pending", async (status) => {
+    setup(); h.pi.status = status;
+    expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+    expect((h.rows.payment_charge_attempts as Record<string, unknown>).status).toBe("pending_stripe");
+  });
+  it("full verified ordinary decline fails the attempt while retaining its original", async () => {
+    setup(); h.confirmError = Object.assign(new Stripe.errors.StripeCardError({ type: "card_error", code: "card_declined", message: "private fake" }),
+      { payment_intent: { ...h.pi, customer: "cus_test", payment_method: "pm_test", livemode: false,
+        status: "requires_payment_method", last_payment_error: { type: "card_error" } } });
+    expect(await charge()).toMatchObject({ outcome: "failed" });
+    expect(h.rows.payment_charge_attempts).toMatchObject({ status: "failed", stripe_payment_intent_id: PI_ID });
+    expect(h.alerts.filter(a => a.event === "session_payment_charge_failed")).toMatchObject([{ severity: "warning" }]);
+  });
+  it.each([undefined, { id: PI_ID, status: "requires_payment_method" },
+    { id: PI_ID, status: "processing", amount: AMOUNT, currency: "usd", customer: "cus_test", payment_method: "pm_test", livemode: false }])(
+    "partial/unknown/active decline %j cannot fail the attempt", async (attached) => {
+      setup(); h.confirmError = Object.assign(new Stripe.errors.StripeCardError({ type: "card_error", code: "card_declined", message: "private fake" }), { payment_intent: attached });
+      expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+      expect(h.rows.payment_charge_attempts).toMatchObject({ status: "pending_stripe", stripe_payment_intent_id: PI_ID });
+    });
+  it.each([{ id: "pi_other" }, { livemode: true }, { amount: AMOUNT + 1 }, { currency: "cad" },
+    { customer: "cus_other" }, { payment_method: "pm_other" }])("confirm identity/money %j never writes success", async (override) => {
+      setup(); Object.assign(h.pi, override);
+      expect(await charge()).toMatchObject({ outcome: "needs_manual_review" }); expect(succeededWrites()).toEqual([]);
+    });
+  it("readback cannot invent an ACK after a losing null CAS", async () => {
+    setup(); h.beforeBind = () => { (h.rows.payment_charge_attempts as Record<string, unknown>).stripe_payment_intent_id = PI_ID; };
+    expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual(["pi_create"]); expect(h.updateAttempts[0].matched).toBe(false);
+  });
+  it("a signed success callback can win after binding without a false manual outcome", async () => {
+    setup();
+    h.beforeConfirm = async () => {
+      const result = await handlePaymentIntentSucceeded(event("payment_intent.succeeded", {
+        ...h.pi, customer: "cus_test", livemode: false, metadata: META }), CTX);
+      expect(result.reconciledFromStatus).toBe("pending_stripe");
+    };
+    expect(await charge()).toMatchObject({ ok: true, concurrentlyReconciled: true });
+    expect(h.stripeCalls).toEqual(["pi_create", "pi_confirm"]);
+    expect(critical("session_payment_succeeded_write_zero_rows")).toEqual([]);
+  });
+  it("a returned ordinary decline also fails only the bound attempt", async () => {
+    setup(); h.pi.status = "requires_payment_method"; h.pi.last_payment_error = { type: "card_error", code: "card_declined", message: "synthetic private processor diagnostic" };
+    expect(await charge()).toMatchObject({ outcome: "failed", message: "Stripe could not charge the saved card." });
+    expect(h.rows.payment_charge_attempts).toMatchObject({ status: "failed", stripe_payment_intent_id: PI_ID });
+    expect(JSON.stringify(h.updates)).not.toContain("synthetic private processor diagnostic");
+    expect(h.stripeCalls).toEqual(["pi_create", "pi_confirm"]);
+  });
+  it.each(["unknown_result", "not_ready"])("claim %s cannot fall through to any provider write", async (result) => {
+    setup(); h.claim.result = result;
+    const response = await charge(); expect(response.ok).toBe(false); expect(h.stripeCalls).toEqual([]);
+  });
+  it.each([{ client_id: "other" }, { amount_cents: AMOUNT + 1 },
+    { updated_at: "2020-01-01T00:00:00Z" }, { updated_at: "invalid" },
+    { updated_at: "2999-01-01T00:00:00Z" }, { stripe_payment_intent_id: "pi_other" }])(
+    "unverified claim %j never creates", async (override) => {
+      setup(); Object.assign(h.claim, override);
+      expect(await charge()).toMatchObject({ outcome: "needs_manual_review" }); expect(h.stripeCalls).toEqual([]);
+    });
+  it("a crash after binding leaves a known unconfirmed original and no confirm grant on retry", async () => {
+    setup(); h.claimDynamic = true; h.afterBind = () => { throw new Error("synthetic process boundary"); };
+    expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+    expect(h.rows.payment_charge_attempts).toMatchObject({ stripe_payment_intent_id: PI_ID, status: "pending_stripe" });
+    h.afterBind = null; h.pi.status = "requires_confirmation";
+    expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+    expect(h.stripeCalls).toEqual(["pi_create", "pi_retrieve"]);
+  });
+  it("the fake scopes idempotency by method path and connected account", async () => {
+    setup();
+    const params = { amount: AMOUNT, currency: "usd", customer: "cus_test", payment_method: "pm_test", confirm: false };
+    const options = { stripeAccount: "acct_test", idempotencyKey: "same-key" };
+    expect(await fakeStripe.paymentIntents.create(params, options)).toMatchObject({ status: "requires_confirmation" });
+    (h.rows.payment_charge_attempts as Record<string, unknown>).stripe_payment_intent_id = PI_ID;
+    (h.rows.payment_charge_attempts as Record<string, unknown>).status = "pending_stripe";
+    // Stripe permits the same key on a distinct endpoint; production still uses
+    // separate stable keys. Do not invent a global cross-method collision.
+    expect(await fakeStripe.paymentIntents.confirm(PI_ID, { off_session: true }, options)).toMatchObject({ status: "succeeded" });
+    await expect(fakeStripe.paymentIntents.create({ ...params, amount: AMOUNT + 1 }, options)).rejects.toThrow("parameter mismatch");
+    await expect(fakeStripe.paymentIntents.create({ ...params, amount: AMOUNT + 1 }, { ...options, stripeAccount: "acct_other" })).resolves.toMatchObject({ amount: AMOUNT + 1 });
+  });
+
+  it("even duplicate claimed snapshots and replayed create results grant only one NULL-binding winner", async () => {
+    setup();
+    const results = await Promise.all([charge(), charge()]);
+    expect(results.filter(r => r.ok)).toHaveLength(1);
+    expect(h.stripeCalls.filter(c => c === "pi_create")).toHaveLength(2);
+    expect(h.stripeCalls.filter(c => c === "pi_confirm")).toHaveLength(1);
+    expect(h.cache.size).toBe(2); // one create scope, one confirmation scope
+    expect(h.updateAttempts.filter(u => u.payload.stripe_status === "requires_confirmation").map(u => u.matched)).toEqual([true, false]);
+  });
+
+  it.each(["legacy:v1", ""])("ready rows with preexisting key %j cannot enter the new protocol", async (key) => {
+    setup(); (h.rows.payment_charge_attempts as Record<string, unknown>).stripe_idempotency_key = key;
+    expect(await charge()).toMatchObject({ outcome: "needs_manual_review" }); expect(h.stripeCalls).toEqual([]);
+  });
+
+  it("a verified canceled authentication refusal preserves its critical failure alert", async () => {
+    setup(); h.confirmError = Object.assign(new Stripe.errors.StripeCardError({ type: "card_error", code: "authentication_required", message: "private fake" }),
+      { payment_intent: { ...h.pi, customer: "cus_test", payment_method: "pm_test", livemode: false, status: "canceled" } });
+    expect(await charge()).toMatchObject({ outcome: "failed", failureCode: "authentication_required" });
+    expect(critical("session_payment_charge_failed")).toHaveLength(1);
+    expect(JSON.stringify(h.alerts)).not.toContain("private fake");
+  });
+
+});
+
+
+describe("existing E2E fake adapter through the real staged producer", () => {
+  const RUN = "run-producer-adapter-123";
+  it.each([false, true])("actual adapter preserves binding-before-money (lost ACK=%s)", async (lostAck) => {
+    const previous = process.env.HONE_E2E_RUN_ID;
+    process.env.HONE_E2E_RUN_ID = RUN; resetFakeStripeState(RUN);
+    try {
+      seedLineage("usd"); h.claim = claimFor("usd"); h.claimDynamic = true; h.useExistingAdapter = true;
+      if (lostAck) h.ackMode = "error";
+      const result = await charge();
+      if (!lostAck) {
+        expect(result).toMatchObject({ ok: true, outcome: "succeeded" });
+        expect(h.rows.payment_charge_attempts).toMatchObject({ status: "succeeded", amount_cents: AMOUNT, currency: "usd" });
+        expect(getFakeStripeCalls(RUN).map(c => c.method)).toEqual(["pi_create", "pi_confirm"]);
+      } else {
+        expect(result).toMatchObject({ outcome: "needs_manual_review" });
+        expect(h.rows.payment_charge_attempts).toMatchObject({ status: "pending_stripe", stripe_status: "requires_confirmation" });
+        expect(await charge()).toMatchObject({ outcome: "needs_manual_review" });
+        expect(getFakeStripeCalls(RUN).map(c => c.method)).toEqual(["pi_create", "pi_retrieve"]);
+        expect(getFakeStripeCalls(RUN).filter(c => c.method === "pi_confirm")).toEqual([]);
+        expect(succeededWrites()).toEqual([]);
+      }
+    } finally {
+      resetFakeStripeState(RUN);
+      if (previous === undefined) delete process.env.HONE_E2E_RUN_ID; else process.env.HONE_E2E_RUN_ID = previous;
+    }
+  });
+});
+
+
+describe("0249 recognized fence refusal keeps old runtime provider-free", () => {
+  for (const currency of ["cad", "usd"] as const) {
+    for (const status of ["ready", "pending_stripe"] as const) {
+      it(`${currency} ${status}: not_ready cannot create, confirm, reconcile or mutate`, async () => {
+        seedLineage(currency);
+        const storedKey = status === "ready" ? null : `hone:session_payment:${ATTEMPT}:v2:create`;
+        h.rows.payment_charge_attempts = attemptRow(currency, { status, stripe_idempotency_key: storedKey });
+        h.claim = claimFor(currency, { result: "not_ready", status_before_claim: status,
+          stripe_idempotency_key: storedKey, stripe_payment_intent_id: null });
+        const before = structuredClone(h.rows.payment_charge_attempts);
+        // This drives the real caller against a fake claim reply. SQL behavior itself is
+        // proved by the DB suite; this verifies the caller's refusal vocabulary.
+        expect(await charge()).toMatchObject({ ok: false, outcome: "blocked" });
+        expect(h.rpcCalls).toEqual(["claim_session_payment_charge_attempt"]);
+        expect(h.stripeCalls).toEqual([]);
+        expect(h.updates).toEqual([]);
+        expect(h.rows.payment_charge_attempts).toEqual(before);
+      });
+    }
+  }
+});
+
+
+describe("0249 empty-original fence refusal", () => {
+  for (const currency of ["cad", "usd"] as const) {
+    it(`${currency}: empty original is not a recoverable identity and cannot reach the SDK`, async () => {
+      seedLineage(currency);
+      h.rows.payment_charge_attempts = attemptRow(currency, { status: "pending_stripe",
+        stripe_idempotency_key: `hone:session_payment:${ATTEMPT}:v1`, stripe_payment_intent_id: "" });
+      h.claim = claimFor(currency, { result: "not_ready", status_before_claim: "pending_stripe",
+        stripe_idempotency_key: `hone:session_payment:${ATTEMPT}:v1`, stripe_payment_intent_id: "" });
+      const before = structuredClone(h.rows.payment_charge_attempts);
+      const result = await charge();
+      expect(h.stripeCalls).toEqual([]);
+      expect(result).toMatchObject({ ok: false, outcome: "blocked" });
+      expect(h.updates).toEqual([]);
+      expect(h.rows.payment_charge_attempts).toEqual(before);
+    });
+  }
 });
