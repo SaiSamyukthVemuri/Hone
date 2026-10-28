@@ -1,5 +1,7 @@
 "use server";
 
+import { preferredNameAvailable } from "@/lib/clients/preferred-name-read";
+import { isMissingRelationError } from "@/lib/db/missing-relation";
 import { createClient } from "@/lib/supabase/server";
 import {
   getCurrentPractitionerWithStudio,
@@ -94,8 +96,9 @@ function clientSubtitle(c: ClientSearchRow): string | undefined {
   return [legal, contact].filter(Boolean).join(" · ") || undefined;
 }
 
-const MEMORY_BLOCK_SELECT =
-  "id, session_id, primary_area, side, block_name, caution_note, reaction_notes, probe_label, probe_lot_number, created_at, session:sessions!inner(client_id, started_at, deleted_at, record_status, client:clients(name, preferred_name))";
+// `nameCols` is "name, preferred_name", or just "name" before 0258 (HON-58).
+const memoryBlockSelect = (nameCols: string) =>
+  `id, session_id, primary_area, side, block_name, caution_note, reaction_notes, probe_label, probe_lot_number, created_at, session:sessions!inner(client_id, started_at, deleted_at, record_status, client:clients(${nameCols}))`;
 
 // A treatment record is SEARCHABLE only while its parent session is active.
 // `sessions.record_status` is `text NOT NULL check (record_status in ('draft',
@@ -180,11 +183,16 @@ async function searchClientRows(
   studioId: string,
   query: string,
   like: string,
+  withPreferred: boolean,
 ): Promise<ClientSearch | null> {
+  // HON-58: before 0258 there is no preferred_name column; every select and
+  // filter below then uses the stored name only.
+  const nameColumns = withPreferred ? (["name", "preferred_name"] as const) : (["name"] as const);
+  const clientColumns: string = withPreferred ? "id, name, preferred_name, email, phone" : "id, name, email, phone";
   const base = () =>
     supabase
       .from("clients")
-      .select("id, name, preferred_name, email, phone")
+      .select(clientColumns)
       .eq("studio_id", studioId)
       .is("archived_at", null);
 
@@ -202,7 +210,7 @@ async function searchClientRows(
         .order("id")
         .range(offset, Math.min(offset + CLIENT_CANDIDATE_PAGE - 1, CLIENT_SCAN_CAP_PER_READ));
       if (error) return null;
-      const page = (data ?? []) as ClientSearchRow[];
+      const page = (data ?? []) as unknown as ClientSearchRow[];
       if (page.length === 0) return { rows: found, truncated: false };
       for (const [i, row] of page.entries()) {
         if (offset + i >= CLIENT_SCAN_CAP_PER_READ) return { rows: found, truncated: true };
@@ -234,6 +242,8 @@ async function searchClientRows(
       .or(orIlike(["legal_given_name", "legal_middle_name", "legal_family_name"], patterns[0]))
       .order("client_id")
       .range(0, CLIENT_SCAN_CAP_PER_READ - 1);
+    // Before 0258 the legal table does not exist: nothing is found by legal name.
+    if (isMissingRelationError(error, "client_legal_identities")) return { rows: [], truncated: false };
     if (error) return null;
     const legalRows = (data ?? []) as LegalIdentityRow[];
     if (legalRows.length === 0) return { rows: [], truncated: false };
@@ -247,7 +257,7 @@ async function searchClientRows(
     for (let i = 0; i < ids.length; i += 200) {
       const { data: clientData, error: clientErr } = await base().in("id", ids.slice(i, i + 200));
       if (clientErr) return null;
-      for (const row of (clientData ?? []) as ClientSearchRow[]) {
+      for (const row of (clientData ?? []) as unknown as ClientSearchRow[]) {
         const withLegal = { ...row, legal_name: legalById.get(row.id) ?? null };
         if (matchesClientSearch(withLegal, query)) found.push(withLegal);
         if (found.length >= CLIENT_CAP) return { rows: found, truncated: false };
@@ -270,11 +280,11 @@ async function searchClientRows(
     namePatterns.length > 0
       ? confirmed(() => {
           let q = base();
-          for (const pattern of namePatterns) q = q.or(orIlike(["name", "preferred_name"], pattern));
+          for (const pattern of namePatterns) q = q.or(orIlike([...nameColumns], pattern));
           return q;
         })
       : none,
-    ...(["name", "preferred_name"] as const).map((column) =>
+    ...nameColumns.map((column) =>
       hasNameQuery(query) ? confirmed(() => base().filter(column, "match", NON_ASCII_NAME_REGEX)) : none,
     ),
   ];
@@ -282,7 +292,7 @@ async function searchClientRows(
   const [direct, phoned, legalMatched, ...named] = await Promise.all([
     // The direct read is confirmed and paged like every other client read
     // (Codex P2 4367010228): no row reaches the cap unconfirmed.
-    confirmed(() => base().or(orIlike(["name", "preferred_name", "email", "phone"], like))),
+    confirmed(() => base().or(orIlike([...nameColumns, "email", "phone"], like))),
     phonePattern ? confirmed(() => base().ilike("phone", phonePattern)) : none,
     searchByLegalName(),
     ...nameReads,
@@ -355,6 +365,9 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
   }
   const like = containsPattern(query);
   const supabase = await createClient();
+  // HON-58: one probe for the whole fan-out, so the search works before 0258 too.
+  const withPreferred = await preferredNameAvailable(supabase);
+  const nameCols = withPreferred ? "name, preferred_name" : "name";
 
   const [
     clientSearch,
@@ -364,10 +377,10 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
     sterileRows,
     disinfectantRows,
   ] = await Promise.all([
-    searchClientRows(supabase, studioId, query, like),
+    searchClientRows(supabase, studioId, query, like, withPreferred),
     supabase
       .from("session_blocks")
-      .select(MEMORY_BLOCK_SELECT)
+      .select(memoryBlockSelect(nameCols))
       .eq("studio_id", studioId)
       .is("deleted_at", null)
       // The block being live is not enough: a live block can hang off a session
@@ -405,7 +418,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
       .then(rowsOrFail),
     supabase
       .from("sessions")
-      .select("id, client_id, started_at, next_session_note, client:clients(name, preferred_name)")
+      .select(`id, client_id, started_at, next_session_note, client:clients(${nameCols})`)
       .eq("studio_id", studioId)
       .is("deleted_at", null)
       // Same liveness rule as the block paths: a voided session's next-visit
@@ -467,7 +480,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
       ? supabase
           .from("appointments")
           .select(
-            "id, starts_at, status, client:clients(name, preferred_name), service:services(name)",
+            `id, starts_at, status, client:clients(${nameCols}), service:services(name)`,
           )
           .eq("studio_id", studioId)
           .in("client_id", clientIds)
@@ -479,7 +492,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
       ? supabase
           .from("appointments")
           .select(
-            "id, starts_at, status, client:clients(name, preferred_name), service:services(name)",
+            `id, starts_at, status, client:clients(${nameCols}), service:services(name)`,
           )
           .eq("studio_id", studioId)
           .eq("status", status)
@@ -490,7 +503,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
     childBlockIds.length > 0
       ? supabase
           .from("session_blocks")
-          .select(MEMORY_BLOCK_SELECT)
+          .select(memoryBlockSelect(nameCols))
           .eq("studio_id", studioId)
           .is("deleted_at", null)
           // Identical liveness rules to the direct path: a child area must not
@@ -508,7 +521,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
       ? await supabase
           .from("appointments")
           .select(
-            "id, starts_at, status, client:clients(name, preferred_name), service:services(name)",
+            `id, starts_at, status, client:clients(${nameCols}), service:services(name)`,
           )
           .eq("studio_id", studioId)
           .in("service_id", serviceRows.map((s) => s.id as string))

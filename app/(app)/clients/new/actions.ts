@@ -1,5 +1,6 @@
 "use server";
 
+import { PREFERRED_NAME_UNAVAILABLE_MESSAGE, writeWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
@@ -161,13 +162,16 @@ export async function createClientAction(
     }
   }
 
-  const { data, error } = await supabase
+  // HON-58: preferred_name is written when the database has the column (before 0258 an
+  // empty one is left out; a typed one is refused with a clear message, never dropped).
+  const { result: { data, error }, preferredUnavailable } = await writeWithPreferredName(preferred, (preferredColumns) =>
+    supabase
     .from("clients")
     .insert({
       studio_id: studio.id,
       name,
       // HON-58: the name the client goes by, on the SAME client record.
-      preferred_name: preferred.value,
+      preferred_name: preferredColumns.preferred_name, // undefined (omitted) before 0258 when empty
       pronouns: nullableString(formData.get("pronouns")),
       phone,
       email,
@@ -190,7 +194,9 @@ export async function createClientAction(
       created_by: practitioner.id,
     })
     .select("id")
-    .single();
+    .single(),
+  );
+  if (preferredUnavailable) return { ok: false, error: PREFERRED_NAME_UNAVAILABLE_MESSAGE };
 
   if (error || !data) {
     if (isClientDuplicateEmailDbError(error)) {

@@ -565,7 +565,7 @@ describe("dashboard hierarchy — no new data loading", () => {
       // four FKs from `appointments`, so the embed must name the ASSIGNMENT
       // one or PostgREST returns PGRST201 and the dashboard 500s. Valid on
       // 0173 too, which is what makes the app-first order safe.
-      /client:clients\([^)]*\), service:services\([^)]*\), practitioner:practitioners!appointments_practitioner_same_studio_fk\(/,
+      /client:clients\(.*?\), service:services\([^)]*\), practitioner:practitioners!appointments_practitioner_same_studio_fk\(/s,
     );
   });
 

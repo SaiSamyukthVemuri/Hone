@@ -100,7 +100,8 @@ describe("staff edit writes the preferred name only when the form submitted it",
   it("an older form with no preferred_name field leaves the stored preferred name alone", async () => {
     await run(updateClientAction, base);
     expect(db.updates).toHaveLength(1);
-    expect(Object.keys(db.updates[0])).not.toContain("preferred_name");
+    // undefined: JSON serialisation omits it, so nothing is written (and the column is never named).
+    expect(db.updates[0].preferred_name).toBeUndefined();
   });
 
   it("refuses a too-long preferred name and updates nothing", async () => {

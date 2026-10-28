@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
+import { preferredNameColumn, readPreferredLoose } from "@/lib/clients/preferred-name-read";
 import { clientDisplayName } from "@/lib/clients/identity";
 import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
@@ -23,7 +23,7 @@ export default async function UpcomingPage() {
 
   const supabase = await createClient();
   // HON-58: preferred_name is read when the database has it (before 0258 it does not).
-  const { data, error } = await readWithPreferredName((withPreferred) =>
+  const { data, error } = await readPreferredLoose((withPreferred) =>
     supabase
       .from("appointments")
       .select(`*, client:clients(id, name, ${preferredNameColumn(withPreferred)}email, phone), service:services(id, name)`)

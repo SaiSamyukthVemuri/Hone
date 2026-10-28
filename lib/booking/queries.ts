@@ -232,12 +232,14 @@ export async function getAppointmentsForRange(
   endIso: string,
 ): Promise<AppointmentWithPractitionerColor[]> {
   const supabase = await createClient();
-  const BASE =
-    "*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color, display_name), client:clients(id, name, preferred_name), ";
-  const runSelect = (serviceEmbed: string, afterId: string | null) => {
+  // HON-58: preferred_name is read when the database has it (before 0258 it
+  // does not); the first missing-column error drops it for the rest of the read.
+  const base = (withPreferred: boolean) =>
+    `*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color, display_name), client:clients(id, name${withPreferred ? ", preferred_name" : ""}), `;
+  const runSelect = (serviceEmbed: string, afterId: string | null, withPreferred: boolean) => {
     let query = supabase
       .from("appointments")
-      .select(`${BASE}${serviceEmbed}`)
+      .select(`${base(withPreferred)}${serviceEmbed}`)
       .eq("studio_id", studioId)
       .gte("starts_at", startIso)
       .lt("starts_at", endIso);
@@ -257,11 +259,16 @@ export async function getAppointmentsForRange(
   const seen = new Set<string>();
   let afterId: string | null = null;
   let serviceEmbed = "service:services(id, name, modality, calendar_color)";
+  let withPreferred = true;
   for (;;) {
-    let { data, error } = await runSelect(serviceEmbed, afterId);
+    let { data, error } = await runSelect(serviceEmbed, afterId, withPreferred);
+    if (error && isMissingColumnError(error, "preferred_name")) {
+      withPreferred = false;
+      ({ data, error } = await runSelect(serviceEmbed, afterId, withPreferred));
+    }
     if (error && isMissingColumnError(error, "calendar_color")) {
       serviceEmbed = "service:services(id, name, modality)";
-      ({ data, error } = await runSelect(serviceEmbed, afterId));
+      ({ data, error } = await runSelect(serviceEmbed, afterId, withPreferred));
     }
     if (error) throw new Error("Failed to load appointments");
     const rows = (data ?? []) as unknown as Array<{ id: string }>;

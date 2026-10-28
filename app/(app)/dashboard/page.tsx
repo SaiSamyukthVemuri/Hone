@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
+import { preferredNameColumn, readPreferredLoose } from "@/lib/clients/preferred-name-read";
 import { clientDisplayName, type WithPreferredName } from "@/lib/clients/identity";
 import Link from "next/link";
 import { buttonClasses } from "@/components/ui/button";
@@ -349,7 +349,7 @@ export default async function DashboardPage({
   // gets practitioner color + service modality + client allergies in
   // one trip without N+1 lookups.
   // HON-58: preferred_name is read when the database has it (before 0258 it does not).
-  const { data: apptRows, error: apptErr } = await readWithPreferredName((withPreferred) =>
+  const { data: apptRows, error: apptErr } = await readPreferredLoose((withPreferred) =>
     supabase
       .from("appointments")
       .select(

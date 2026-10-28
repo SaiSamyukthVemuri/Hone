@@ -1,5 +1,5 @@
 import { sendPostcareToClient } from "@/lib/email/send-appointment";
-import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
+import { preferredNameColumn, readPreferredLoose } from "@/lib/clients/preferred-name-read";
 import { clientCommunicationName } from "@/lib/clients/identity";
 import { timed } from "@/lib/observability/perf-timing";
 import type { Studio } from "@/lib/types/database";
@@ -144,7 +144,7 @@ export async function autoSendPostcareOnComplete(
     const send = deps?.sendPostcare ?? sendPostcareToClient;
 
     // HON-58: preferred_name is read when the database has it (before 0258 it does not).
-    const { data: appt, error: loadErr } = await readWithPreferredName((withPreferred) =>
+    const { data: appt, error: loadErr } = await readPreferredLoose((withPreferred) =>
       admin
         .from("appointments")
         .select(
