@@ -76,7 +76,8 @@ marker() { cat "$T/$1/home/hone-s1/s1-apply/APPLY-STATE" 2>/dev/null; }
 
 # 1. happy path
 mkenv happy; answers happy; variant_only_const happy && ok "the test variant differs from hone-stage-run.sh only inside the #CONST block" || bad "the variant differs outside #CONST"
-run happy
+run happy PHASE_DEBUG="$T/happy/dbg.txt"
+[ -f "$T/happy/dbg.txt" ] && { echo "--- phase debug (tail)"; grep -v "^$" "$T/happy/dbg.txt" | head -60; }
 echo "$OUT" | grep -q 'RESULT: APPLIED+VERIFIED' && [ "$(pushes happy)" = 1 ] && [ "$(rolconf happy)" = "$ORIGCONF" ] && echo "$OUT" | grep -q 'role setting restored and read back' && ok "happy path: APPLIED+VERIFIED, one push, the role setting is back to its original and read back" || bad "happy path" "rc=$RC $(echo "$OUT" | tail -12) $(dump happy)"
 echo "$LOG" | grep -q 'wd started' && [ "$(altered happy)" -ge 2 ] && ok "  the runner started the reviewed watchdog itself and the role setting was applied then restored (>= 2 ALTERs)" || bad "watchdog or alter calls" "$(cat "$T/happy/home/hone-s1/sql.log" 2>/dev/null)"
 echo "$OUT" | grep -q 'plan sha256: [0-9a-f]\{64\}' && echo "$OUT" | grep -q 'New-route approval sentence' && ok "  the plan and its sha256 and the generated new-route approval sentence were printed" || bad "plan output"

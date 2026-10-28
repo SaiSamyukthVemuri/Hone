@@ -7,6 +7,7 @@
 #   VALUES_FILE: KEY=VALUE lines (no secrets). OUT_DIR gets PHASE.transcript (masked) and PHASE.result (KEY=VALUE).
 #   exit: 0 child exited 0 and every step was answered | 2 driver STOP (unexpected/missing prompt, echo not off, auth failure) | 3 child exited non-zero | 4 clean stop: PITR stalled
 log_user 0
+if {[info exists env(PHASE_DEBUG)]} { exp_internal -f $env(PHASE_DEBUG) 0 }
 set phase [lindex $argv 0]; set vfile [lindex $argv 1]; set outdir [lindex $argv 2]; set child [lrange $argv 3 end]
 set tok ""; set pw ""
 gets stdin tok; gets stdin pw
