@@ -80,7 +80,7 @@ describe("OFF by default: every surface a receptionist can reach refuses the leg
     const find = (q: string) => asUser(aDesk, (x) => x("select * from public.receptionist_client_contacts_v2($1,$2)", [a.studioId, q]));
     const byPreferred = await find("Maggie");
     expect(byPreferred.rows.map((r) => r.display_name)).toEqual(["Maggie"]);
-    expect(Object.keys(byPreferred.rows[0]).sort()).toEqual(["client_id", "consent_accepted_at", "display_name", "email", "intake_status", "intake_submitted_at", "phone"]);
+    expect(Object.keys(byPreferred.rows[0]).sort()).toEqual(["client_id", "display_name", "email", "phone"]);
     expect((await find(TOKEN)).rowCount).toBe(0); // legal text
     expect((await find("Marguerite")).rowCount).toBe(0); // legal given name
     expect((await find("Stored")).rowCount).toBe(0); // the stored name behind a preferred one

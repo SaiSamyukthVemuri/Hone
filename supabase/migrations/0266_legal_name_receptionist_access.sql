@@ -28,7 +28,10 @@ create table public.studio_legal_name_access (
   studio_id           uuid primary key references public.studios(id) on delete cascade,
   receptionist_access boolean not null default false,
   updated_at          timestamptz not null default now(),
-  updated_by          uuid references public.practitioners(id) on delete set null
+  updated_by          uuid,
+  -- Same-studio actor attribution, RESTRICT (0179/0220 pattern); NULL = the default row.
+  constraint studio_legal_name_access_updated_by_fk
+    foreign key (updated_by, studio_id) references public.practitioners (id, studio_id) on delete restrict
 );
 
 alter table public.studio_legal_name_access enable row level security;
@@ -49,11 +52,15 @@ create table public.client_legal_name_access_audit (
   id             bigint generated always as identity primary key,
   studio_id      uuid not null references public.studios(id) on delete cascade,
   changed_at     timestamptz not null default now(),
-  changed_by     uuid references public.practitioners(id) on delete set null,
+  changed_by     uuid not null,
   changed_by_user uuid,
   old_value      boolean not null,
   new_value      boolean not null,
-  constraint client_legal_name_access_audit_changed check (old_value is distinct from new_value)
+  constraint client_legal_name_access_audit_changed check (old_value is distinct from new_value),
+  -- Same-studio actor attribution, RESTRICT (0179/0220 pattern): the record of who
+  -- changed the switch cannot be orphaned or re-pointed across studios.
+  constraint client_legal_name_access_audit_changed_by_fk
+    foreign key (changed_by, studio_id) references public.practitioners (id, studio_id) on delete restrict
 );
 
 create index client_legal_name_access_audit_studio_idx
@@ -177,25 +184,24 @@ create policy client_legal_identities_select
 
 -- Receptionist client finder, v2: the DISPLAY identity only.
 -- The 0216 projection returns and searches clients.name. Once a preferred name
--- exists that would show the stored name beside it and let a receptionist
--- match on it. v2 returns display_name = coalesce(nullif(btrim(preferred_name),''), name)
--- and matches (literally) on that, the email and the phone, and nothing else:
--- never client_legal_identities, never the stored name behind a preferred one.
+-- exists, a receptionist should be shown (and find clients by) the DISPLAY name:
+-- display_name = coalesce(nullif(btrim(preferred_name),''), name). This returns
+-- only the display name, phone and email, and matches (literally) on those and
+-- nothing else: never client_legal_identities, never the stored name behind a
+-- preferred one. It deliberately carries NO intake or consent fact, so the
+-- 0243-pinned set of definers that read intake forms is unchanged; the desk's
+-- completion facts stay on receptionist_client_contacts (0216, untouched).
 -- The fallback with no preferred name is the stored name, exactly as today.
--- The 0216 function is untouched (0243 pins its signature).
 create function public.receptionist_client_contacts_v2(
   p_studio_id uuid,
   p_query     text    default null,
   p_limit     integer default 25
 )
 returns table (
-  client_id           uuid,
-  display_name        text,
-  phone               text,
-  email               text,
-  intake_status       text,
-  intake_submitted_at timestamptz,
-  consent_accepted_at timestamptz
+  client_id    uuid,
+  display_name text,
+  phone        text,
+  email        text
 )
 language plpgsql
 stable
@@ -221,33 +227,14 @@ begin
   end if;
 
   return query
-    select d.id, d.display_name, d.phone, d.email,
-           coalesce(latest_intake.status, 'none'),
-           latest_intake.submitted_at,
-           accepted_consent.signed_at
+    select d.id, d.display_name, d.phone, d.email
       from (
-        select c.id, c.studio_id, c.phone, c.email,
+        select c.id, c.phone, c.email,
                coalesce(nullif(pg_catalog.btrim(c.preferred_name), ''), c.name) as display_name
           from public.clients c
          where c.studio_id = p_studio_id
            and c.archived_at is null
       ) d
-      left join lateral (
-        select f.status, f.submitted_at
-          from public.client_intake_forms f
-         where f.client_id = d.id
-           and f.studio_id = d.studio_id
-           and f.deleted_at is null
-         order by f.created_at desc, f.id desc
-         limit 1
-      ) latest_intake on true
-      left join lateral (
-        select max(s.signed_at) as signed_at
-          from public.client_consent_signatures s
-         where s.client_id = d.id
-           and s.studio_id = d.studio_id
-           and s.response = 'accepted'
-      ) accepted_consent on true
      where v_pattern is null
         or d.display_name ilike v_pattern
         or d.email ilike v_pattern
@@ -265,6 +252,6 @@ revoke execute on function public.receptionist_client_contacts_v2(uuid, text, in
 grant execute on function public.receptionist_client_contacts_v2(uuid, text, integer) to authenticated;
 
 comment on function public.receptionist_client_contacts_v2(uuid, text, integer) is
-  'HON-58 Q1: receptionist client finder over the display identity only (preferred name, else the stored name). Never reads or matches client_legal_identities.';
+  'HON-58 Q1: receptionist client finder over the display identity only (preferred name, else the stored name). Never reads or matches client_legal_identities, and carries no intake or consent fact.';
 
 commit;

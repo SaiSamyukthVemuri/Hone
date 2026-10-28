@@ -3,7 +3,7 @@
   "migrations": {
     "count": 247,
     "last": "0266_legal_name_receptionist_access.sql",
-    "sha256": "1edf9980bb1b274d2b10c54907c2360b375330bfd86d505dc3e7311ea02fdc45"
+    "sha256": "51291768f35681f9a43515e6774614e9fce28e410cd2404590e1f9e4f62d2400"
   },
   "public": {
     "tables": [

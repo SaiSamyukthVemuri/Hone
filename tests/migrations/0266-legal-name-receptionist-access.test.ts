@@ -69,6 +69,8 @@ describe("0266 legal-name receptionist access: source contract", () => {
   it("the receptionist finder never reads or matches the legal table or the stored name behind a preferred one", () => {
     const fn = code.match(/create function public\.receptionist_client_contacts_v2[\s\S]*?\$\$;/)![0];
     expect(fn).not.toMatch(/client_legal_identities|legal_/);
+    // no intake or consent fact: the 0243-pinned set of intake-reading definers is unchanged
+    expect(fn).not.toMatch(/client_intake_forms|client_consent_signatures/);
     expect(fn).toContain("coalesce(nullif(pg_catalog.btrim(c.preferred_name), ''), c.name) as display_name");
     expect(fn).toMatch(/d\.display_name ilike v_pattern/);
     expect(fn).not.toMatch(/\bc\.name ilike/);

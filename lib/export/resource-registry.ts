@@ -1227,6 +1227,20 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Introduced by migration 0258 (HON-58 identity). Staff-entered legal name of a client, one row per client, readable only by an owner or practitioner of the studio. Studio-owned client data with no representation in any exported file yet; the export decision (and whether it joins clients.csv) belongs with the preferred-name column and HON-46 document identity.",
   },
+  studio_legal_name_access: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Introduced by migration 0266 (HON-58 Q1). The studio's own switch for whether front desk staff may see client legal names (no row = off). Studio-owned configuration with no representation in any exported file yet.",
+  },
+  client_legal_name_access_audit: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Introduced by migration 0266 (HON-58 Q1). Append-only record of who changed the front-desk legal-name switch, when, and from what to what. Studio-owned audit history with no representation in any exported file yet.",
+  },
   client_intake_forms: {
     kind: "pending",
     ticket: "TRUTH-01B",
