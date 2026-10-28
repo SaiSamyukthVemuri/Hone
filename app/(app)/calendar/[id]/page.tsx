@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
@@ -111,14 +112,17 @@ export default async function AppointmentDetailPage({
   const isOwner = practitioner.role === "owner";
   const supabase = await createClient();
 
-  const { data, error } = await supabase
-    .from("appointments")
-    .select(
-      "*, client:clients(id, name, preferred_name, email, phone, pronouns, allergies, fitzpatrick_type, skin_notes), service:services(id, name, default_duration_minutes, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
-    )
-    .eq("id", id)
-    .eq("studio_id", studio.id)
-    .maybeSingle<Joined>();
+  // HON-58: preferred_name is read when the database has it (before 0258 it does not).
+  const { data, error } = await readWithPreferredName((withPreferred) =>
+    supabase
+      .from("appointments")
+      .select(
+        `*, client:clients(id, name, ${preferredNameColumn(withPreferred)}email, phone, pronouns, allergies, fitzpatrick_type, skin_notes), service:services(id, name, default_duration_minutes, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)`,
+      )
+      .eq("id", id)
+      .eq("studio_id", studio.id)
+      .maybeSingle<Joined>(),
+  );
   if (error) throw new Error(`db_error:${dbErrorCode(error)}`);
   if (!data) notFound();
 

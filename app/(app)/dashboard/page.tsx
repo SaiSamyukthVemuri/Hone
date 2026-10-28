@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { clientDisplayName, type WithPreferredName } from "@/lib/clients/identity";
 import Link from "next/link";
 import { buttonClasses } from "@/components/ui/button";
@@ -345,15 +346,18 @@ export default async function DashboardPage({
   // Today's appointments. Use a narrow inline SELECT so the dashboard
   // gets practitioner color + service modality + client allergies in
   // one trip without N+1 lookups.
-  const { data: apptRows, error: apptErr } = await supabase
-    .from("appointments")
-    .select(
-      "id, starts_at, ends_at, duration_minutes, status, client_id, client:clients(id, name, preferred_name, allergies, pronouns, email), service:services(id, name, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
-    )
-    .eq("studio_id", studio.id)
-    .gte("starts_at", startUtc.toISOString())
-    .lt("starts_at", endUtc.toISOString())
-    .order("starts_at", { ascending: true });
+  // HON-58: preferred_name is read when the database has it (before 0258 it does not).
+  const { data: apptRows, error: apptErr } = await readWithPreferredName((withPreferred) =>
+    supabase
+      .from("appointments")
+      .select(
+        `id, starts_at, ends_at, duration_minutes, status, client_id, client:clients(id, name, ${preferredNameColumn(withPreferred)}allergies, pronouns, email), service:services(id, name, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)`,
+      )
+      .eq("studio_id", studio.id)
+      .gte("starts_at", startUtc.toISOString())
+      .lt("starts_at", endUtc.toISOString())
+      .order("starts_at", { ascending: true }),
+  );
   if (apptErr) {
     // DAT-002 N2: a fixed message; PostgREST text can echo the statement.
     throw new Error("Failed to load today's appointments");

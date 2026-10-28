@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { clientDisplayName } from "@/lib/clients/identity";
 import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
@@ -21,14 +22,17 @@ export default async function UpcomingPage() {
   const endUtc = utcInstantFromLocal(addDays(end, 1), "00:00", studio.timezone);
 
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("appointments")
-    .select("*, client:clients(id, name, preferred_name, email, phone), service:services(id, name)")
-    .eq("studio_id", studio.id)
-    .eq("status", "confirmed")
-    .gte("starts_at", startUtc.toISOString())
-    .lt("starts_at", endUtc.toISOString())
-    .order("starts_at");
+  // HON-58: preferred_name is read when the database has it (before 0258 it does not).
+  const { data, error } = await readWithPreferredName((withPreferred) =>
+    supabase
+      .from("appointments")
+      .select(`*, client:clients(id, name, ${preferredNameColumn(withPreferred)}email, phone), service:services(id, name)`)
+      .eq("studio_id", studio.id)
+      .eq("status", "confirmed")
+      .gte("starts_at", startUtc.toISOString())
+      .lt("starts_at", endUtc.toISOString())
+      .order("starts_at"),
+  );
   if (error) throw new Error(`db_error:${dbErrorCode(error)}`);
   const rows = (data ?? []) as Row[];
 
