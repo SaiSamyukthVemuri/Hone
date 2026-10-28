@@ -1375,7 +1375,11 @@ describe("switching machine or mode clears the collected draft", () => {
     // failure note while the database kept the previous default — and a
     // reload silently restored the old machine (Codex, #860 4299408386).
     const src = read(PANEL_SRC);
-    const catches = src.match(/\} catch \(cause\) \{[\s\S]{0,900}?write = \{\s*ok: false,/g) ?? [];
+    // `catch` with or without a binding: the failure sentence is fixed text
+    // (the returned-text guard bans returning the caught error's message), so
+    // the binding is no longer used. What is pinned is that each rejection
+    // settles `write` as a failure.
+    const catches = src.match(/\} catch(?: \(cause\))? \{[\s\S]{0,900}?write = \{\s*ok: false,/g) ?? [];
     expect(
       catches.length,
       "both selection writers must settle a rejection as a failed write",
