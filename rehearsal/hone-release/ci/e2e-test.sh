@@ -96,7 +96,7 @@ reset_db() { psqld -c "delete from supabase_migrations.schema_migrations where v
 # ---- install the shipped scripts (disclosed rewrites only), the real CLI and the real launcher/sudoers
 id sam >/dev/null 2>&1 || useradd -m -s /bin/bash sam
 SRC=/root/hr-pkg-e2e; rm -rf "$SRC" /root/hr-pins-e2e.txt; mkdir -p "$SRC/scripts" "$SRC/ca" "$SRC/tools"
-cp "$HR/launcher" "$HR/install.sh" "$HR/set-secret.sh" "$HR/approve-package.sh" "$HR/bind-gonogo.sh" "$HR/bind-serving.sh" "$HR/actions.conf" "$HR/sudoers.hone-release" "$SRC/"; cp "$HR"/scripts/*.sh "$SRC/scripts/"
+cp "$HR/launcher" "$HR/install.sh" "$HR/set-secret.sh" "$HR/approve-package.sh" "$HR/bind-gonogo.sh" "$HR/bind-serving.sh" "$HR/actions.conf" "$HR/sudoers.hone-release" "$SRC/"; cp "$HR"/scripts/* "$SRC/scripts/"
 cp "$TESTCA" "$SRC/ca/supabase-prod-ca-2021.crt"; cp "$HR"/tools/make-verify-bundle.py "$SRC/tools/"
 TESTCA_SHA=$(sha256sum "$TESTCA" | cut -d' ' -f1)
 sed -i "s/^CA_SHA=.*/CA_SHA=$TESTCA_SHA/" "$SRC/scripts/release-apply.sh" "$SRC/scripts/heartbeat.sh"
