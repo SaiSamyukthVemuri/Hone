@@ -52,6 +52,18 @@ export function clientDisplayName(client: ClientIdentityFields): string {
   return clean(client.preferred_name) || clean(client.name);
 }
 
+/** The label a staff or desk surface puts on a stored name shown as the identity. */
+export const NAME_ON_FILE_LABEL = "Name on file";
+
+/**
+ * True when the displayed name IS the stored name (no preferred name), so the
+ * surface should label it "Name on file". The stored name is free text staff
+ * entered and may itself be a legal name: it is never treated as protected.
+ */
+export function isNameOnFile(client: ClientIdentityFields): boolean {
+  return clean(client.preferred_name) === "" && clean(client.name) !== "";
+}
+
 /** The name an ordinary client communication uses where a name is needed. */
 export function clientCommunicationName(client: ClientIdentityFields): string {
   return clientDisplayName(client);

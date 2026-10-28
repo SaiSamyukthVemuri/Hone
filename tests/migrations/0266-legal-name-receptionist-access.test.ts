@@ -75,4 +75,20 @@ describe("0266 legal-name receptionist access: source contract", () => {
     expect(fn).toMatch(/d\.display_name ilike v_pattern/);
     expect(fn).not.toMatch(/\bc\.name ilike/);
   });
+
+  it("closes the 0216 v1 finder by privilege (its source is pinned by 0243) and never re-creates it", () => {
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(code).toContain(`revoke execute on function public.receptionist_client_contacts(uuid, text, integer) from ${role};`);
+    }
+    expect(code).not.toMatch(/create (or replace )?function public\.receptionist_client_contacts\(/);
+  });
+
+  it("the desk calendar projection shows the display identity, keeps its grants, and v2 carries name_on_file", () => {
+    const cal = code.match(/create or replace function public\.receptionist_calendar[\s\S]*?\$\$;/)![0];
+    expect(cal).toMatch(/coalesce\(nullif\(pg_catalog\.btrim\(c\.preferred_name\), ''\), c\.name\)/);
+    expect(cal).not.toMatch(/\bc\.name\s*\n\s*from/);
+    for (const role of ["public", "anon", "service_role"]) expect(code).toContain(`revoke execute on function public.receptionist_calendar(uuid, timestamptz, timestamptz) from ${role};`);
+    expect(code).toContain("grant execute on function public.receptionist_calendar(uuid, timestamptz, timestamptz) to authenticated;");
+    expect(code.match(/create function public\.receptionist_client_contacts_v2[\s\S]*?\$\$;/)![0]).toMatch(/name_on_file\s+boolean/);
+  });
 });

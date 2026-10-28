@@ -3,6 +3,8 @@
 import { useState, useTransition } from "react";
 import { setReceptionistLegalNameAccessAction } from "./actions";
 
+export const LIMITATION =
+  "Name on file may itself be a legal name; this setting controls only the separate legal-name record.";
 const LABEL = "Let front desk staff see clients' legal names";
 
 export function LegalNameAccessForm({ initial }: { initial: boolean }) {
@@ -48,6 +50,7 @@ export function LegalNameAccessForm({ initial }: { initial: boolean }) {
           <p className="mt-1 text-xs text-neutral-500">
             When off, legal names are not sent to front desk staff and cannot be searched by them.
           </p>
+          <p className="mt-1 text-xs text-neutral-500">{LIMITATION}</p>
         </div>
         <button
           type="button"

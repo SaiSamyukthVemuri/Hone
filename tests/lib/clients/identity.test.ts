@@ -142,3 +142,14 @@ describe("document identity (OPS Q2): insurer legal only, internal clinical pack
     expect(clinicalPacketName({ name: "Jane Smith", preferred_name: "  " })).toBe("Jane Smith");
   });
 });
+
+describe("Name on file (Sam, 28 Oct): the stored name shown as the identity is labelled, never treated as protected", () => {
+  it("is labelled only when there is no preferred name", async () => {
+    const { isNameOnFile, NAME_ON_FILE_LABEL } = await import("@/lib/clients/identity");
+    expect(NAME_ON_FILE_LABEL).toBe("Name on file");
+    expect(isNameOnFile({ name: "Alex Stored", preferred_name: null })).toBe(true);
+    expect(isNameOnFile({ name: "Alex Stored", preferred_name: "   " })).toBe(true);
+    expect(isNameOnFile({ name: "Alex Stored" })).toBe(true);
+    expect(isNameOnFile({ name: "Alex Stored", preferred_name: "Lex" })).toBe(false);
+  });
+});

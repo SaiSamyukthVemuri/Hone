@@ -11,7 +11,7 @@ import { signedClientPortraitUrl } from "@/lib/images/client-portrait";
 import { clientPortraitEnabled } from "@/lib/images/portrait-policy";
 import { ClientPortrait } from "./ClientPortrait";
 import { createClient } from "@/lib/supabase/server";
-import { clientDisplayName, clientLegalName, type WithPreferredName } from "@/lib/clients/identity";
+import { clientDisplayName, clientLegalName, isNameOnFile, NAME_ON_FILE_LABEL, type WithPreferredName } from "@/lib/clients/identity";
 import { readLegalIdentityForSession } from "@/lib/clients/legal-identity";
 import {
   buildLastSessionSummary,
@@ -938,6 +938,7 @@ export default async function ClientCheatSheetPage({
               )}
             </div>
             <div className="mt-1 flex flex-col gap-y-0.5 text-sm text-neutral-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3">
+              {isNameOnFile(client as WithPreferredName & { name: string }) && <span>{NAME_ON_FILE_LABEL}</span>}
               {legalName && legalName !== displayName && <span>Legal name: {legalName}</span>}
               {client.pronouns && <span>{client.pronouns}</span>}
               {client.phone && <span>{client.phone}</span>}

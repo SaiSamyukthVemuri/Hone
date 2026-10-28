@@ -191,7 +191,10 @@ create policy client_legal_identities_select
 -- preferred one. It deliberately carries NO intake or consent fact, so the
 -- 0243-pinned set of definers that read intake forms is unchanged; the desk's
 -- completion facts stay on receptionist_client_contacts (0216, untouched).
--- The fallback with no preferred name is the stored name, exactly as today.
+-- The fallback with no preferred name is the stored name, exactly as today, and
+-- name_on_file says so (true = the stored name is being shown), so the desk can
+-- label it "Name on file": it may itself be a legal name, and this setting
+-- controls only the separate legal-name record.
 create function public.receptionist_client_contacts_v2(
   p_studio_id uuid,
   p_query     text    default null,
@@ -201,7 +204,8 @@ returns table (
   client_id    uuid,
   display_name text,
   phone        text,
-  email        text
+  email        text,
+  name_on_file boolean
 )
 language plpgsql
 stable
@@ -227,10 +231,11 @@ begin
   end if;
 
   return query
-    select d.id, d.display_name, d.phone, d.email
+    select d.id, d.display_name, d.phone, d.email, d.name_on_file
       from (
         select c.id, c.phone, c.email,
-               coalesce(nullif(pg_catalog.btrim(c.preferred_name), ''), c.name) as display_name
+               coalesce(nullif(pg_catalog.btrim(c.preferred_name), ''), c.name) as display_name,
+               nullif(pg_catalog.btrim(c.preferred_name), '') is null as name_on_file
           from public.clients c
          where c.studio_id = p_studio_id
            and c.archived_at is null
@@ -253,5 +258,88 @@ grant execute on function public.receptionist_client_contacts_v2(uuid, text, int
 
 comment on function public.receptionist_client_contacts_v2(uuid, text, integer) is
   'HON-58 Q1: receptionist client finder over the display identity only (preferred name, else the stored name). Never reads or matches client_legal_identities, and carries no intake or consent fact.';
+
+-- ---------------------------------------------------------------------------
+-- Close the two older receptionist paths to clients.name (Sam, 28 Oct: a name
+-- hidden behind a preferred name must not be retrievable or searchable by the
+-- desk). The stored name stays visible when there is NO preferred name, as
+-- "Name on file"; it is never treated as the protected legal record.
+-- ---------------------------------------------------------------------------
+
+-- 1) The 0216 v1 finder returns and searches clients.name for every client and
+--    joins intake/consent facts. No production caller exists (no desk UI is
+--    live); held desk branches use v2. Its SOURCE is pinned by the 0243 guard
+--    (sha256 of prosrc), so it is closed by privilege, not rewritten: no
+--    role but the owner can run it, which is also what a revocation test can
+--    observe.
+revoke execute on function public.receptionist_client_contacts(uuid, text, integer) from public;
+revoke execute on function public.receptionist_client_contacts(uuid, text, integer) from anon;
+revoke execute on function public.receptionist_client_contacts(uuid, text, integer) from authenticated;
+revoke execute on function public.receptionist_client_contacts(uuid, text, integer) from service_role;
+
+comment on function public.receptionist_client_contacts(uuid, text, integer) is
+  'CLOSED by 0266 (HON-58 Q1): returned and searched the stored name even behind a preferred name. Use receptionist_client_contacts_v2. Source unchanged because the 0243 guard pins it.';
+
+-- 2) The 0216 desk calendar projection shows the client's stored name on every
+--    appointment. Same columns, same grants; the name column is now the display
+--    identity (preferred name, else the stored name).
+create or replace function public.receptionist_calendar(
+  p_studio_id uuid,
+  p_from      timestamptz,
+  p_to        timestamptz
+)
+returns table (
+  appointment_id            uuid,
+  starts_at                 timestamptz,
+  ends_at                   timestamptz,
+  status                    text,
+  practitioner_id           uuid,
+  practitioner_display_name text,
+  practitioner_color        text,
+  service_id                uuid,
+  service_name              text,
+  client_id                 uuid,
+  client_display_name       text
+)
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'not_authorized' using errcode = '42501';
+  end if;
+  if public.receptionist_actor_id(p_studio_id) is null then
+    raise exception 'not_authorized' using errcode = '42501';
+  end if;
+  if p_from is null or p_to is null or p_to <= p_from or p_to - p_from > interval '93 days' then
+    raise exception 'invalid_window' using errcode = '22023';
+  end if;
+
+  return query
+    select a.id, a.starts_at, a.ends_at, a.status,
+           a.practitioner_id, pr.display_name, pr.color,
+           a.service_id, sv.name,
+           a.client_id, coalesce(nullif(pg_catalog.btrim(c.preferred_name), ''), c.name)
+      from public.appointments a
+      left join public.practitioners pr on pr.id = a.practitioner_id and pr.studio_id = a.studio_id
+      left join public.services sv on sv.id = a.service_id and sv.studio_id = a.studio_id
+      left join public.clients c on c.id = a.client_id and c.studio_id = a.studio_id
+     where a.studio_id = p_studio_id
+       and a.starts_at < p_to
+       and a.ends_at > p_from
+     order by a.starts_at, a.id;
+end;
+$$;
+
+revoke all on function public.receptionist_calendar(uuid, timestamptz, timestamptz) from public, anon, authenticated, service_role;
+revoke execute on function public.receptionist_calendar(uuid, timestamptz, timestamptz) from public;
+revoke execute on function public.receptionist_calendar(uuid, timestamptz, timestamptz) from anon;
+revoke execute on function public.receptionist_calendar(uuid, timestamptz, timestamptz) from service_role;
+grant execute on function public.receptionist_calendar(uuid, timestamptz, timestamptz) to authenticated;
+
+comment on function public.receptionist_calendar(uuid, timestamptz, timestamptz) is
+  'Desk calendar projection. client_display_name is the display identity (preferred name, else the stored name "Name on file"); 0266 stopped it from showing the stored name behind a preferred name.';
 
 commit;
