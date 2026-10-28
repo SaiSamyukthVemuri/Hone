@@ -27,7 +27,10 @@ import {
   type IntakeReminderKind,
 } from "@/lib/email/templates/intake-reminder";
 import { buildIcs } from "@/lib/booking/ical";
-import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
+import {
+  clientSelfServicePolicyFromStudio,
+  type ClientSelfServiceStudioFlags,
+} from "@/lib/booking/client-self-service-policy";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import type { Appointment, Service, Studio } from "@/lib/types/database";
 
@@ -39,7 +42,7 @@ import type { Appointment, Service, Studio } from "@/lib/types/database";
 // HON-47: also null when the studio has turned client portal access off, so no
 // email variant ever links a client to a portal that will refuse them.
 function portalLoginUrlForStudio(
-  studio: Pick<Studio, "slug" | "client_portal_enabled">,
+  studio: Pick<Studio, "slug"> & ClientSelfServiceStudioFlags,
 ): string | null {
   if (!clientSelfServicePolicyFromStudio(studio).portal) return null;
   const slug = studio.slug?.trim();

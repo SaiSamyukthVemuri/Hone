@@ -90,10 +90,6 @@ export type Studio = {
   // `select *` before 0186 is applied, so the runtime reads it as
   // `!== false` - absent means enabled, which is the shipped default.
   send_intake_reminders?: boolean;
-  // HON-47. The client-portal flag lives in 0252 (HELD, not applied). Optional
-  // here and read ONLY through clientSelfServicePolicyFromStudio, which maps an
-  // absent key to TRUE, so every studio keeps portal access until 0252 ships.
-  client_portal_enabled?: boolean;
   auto_mark_no_shows: boolean;
   send_no_show_followup: boolean;
   // Migration 0026: opt-in display of client treatment time in emails.

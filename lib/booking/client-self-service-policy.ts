@@ -39,6 +39,18 @@ export type ClientSelfServicePolicy = {
 export const DEFAULT_CLIENT_SELF_SERVICE_POLICY: ClientSelfServicePolicy =
   Object.freeze({ cancellation: true, reschedule: true, portal: true });
 
+/**
+ * A studio row as the self-service readers see it. client_portal_enabled is the
+ * HELD 0252 column: it is deliberately NOT on the generated Studio type (that
+ * type must match the hosted schema), so it rides here as an optional key that
+ * is absent until 0252 applies, and absent means TRUE.
+ */
+export type ClientSelfServiceStudioFlags = {
+  client_cancellation_enabled?: boolean;
+  client_reschedule_enabled?: boolean;
+  client_portal_enabled?: boolean;
+};
+
 export type ClientSelfServicePolicyColumns = {
   client_cancellation_enabled?: unknown;
   client_reschedule_enabled?: unknown;

@@ -5,6 +5,7 @@ import {
   clientManagePageAllowed,
   clientSelfServicePolicyFromStudio,
   type ClientSelfServicePolicyColumns,
+  type ClientSelfServiceStudioFlags,
 } from "@/lib/booking/client-self-service-policy";
 import {
   buildBookingConfirmationSms,
@@ -358,7 +359,7 @@ type SendConfirmationInput = {
   > &
     // HON-47. Required on Studio since 0234, but absent on a hand-built input and
     // then meaning today's behaviour: only clientSelfServicePolicyFromStudio reads them.
-    Partial<Pick<Studio, "client_cancellation_enabled" | "client_reschedule_enabled" | "client_portal_enabled">>;
+    ClientSelfServiceStudioFlags;
   client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
   intakeUrl: string | null;
   // Single neutral manage-appointment link the SMS carries. Resolves
@@ -435,7 +436,7 @@ export type SendReminderInput = {
   > &
     // HON-47. Required on Studio since 0234, but absent on a hand-built input and
     // then meaning today's behaviour: only clientSelfServicePolicyFromStudio reads them.
-    Partial<Pick<Studio, "client_cancellation_enabled" | "client_reschedule_enabled" | "client_portal_enabled">>;
+    ClientSelfServiceStudioFlags;
   client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
   /**
    * The neutral /manage/<token> link for a start, or null. A BUILDER rather
