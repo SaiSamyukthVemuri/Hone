@@ -85,6 +85,37 @@ describe("setStudioSmsSettingsAction", () => {
   });
 });
 
+describe("cross-studio isolation (action level)", () => {
+  it("a submitted studio id is ignored: the write targets only the session's studio", async () => {
+    const f = form({ ...ALL, studio_id: "studio-b", id: "studio-b" });
+    await setStudioSmsSettingsAction(f);
+    expect(state.updates.map((u) => u.id)).toEqual(["studio-a"]);
+    expect(Object.keys(state.updates[0].patch).sort()).toEqual([
+      "send_24h_sms_reminders",
+      "send_2h_sms_reminders",
+      "send_confirmation_sms",
+    ]);
+  });
+});
+
+describe("both states render", () => {
+  it("shows each toggle as on or off from the stored value, and nothing is pre-enabled", async () => {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { createElement } = await import("react");
+    const { SmsSettingsForm } = await import("@/app/(app)/settings/studio/SmsSettingsForm");
+    const off = renderToStaticMarkup(
+      createElement(SmsSettingsForm, { initial: { send_confirmation_sms: false, send_24h_sms_reminders: false, send_2h_sms_reminders: false } }),
+    );
+    expect(off.match(/aria-pressed="false"/g)?.length).toBe(3);
+    expect(off).not.toContain('aria-pressed="true"');
+    const mixed = renderToStaticMarkup(
+      createElement(SmsSettingsForm, { initial: { send_confirmation_sms: true, send_24h_sms_reminders: false, send_2h_sms_reminders: true } }),
+    );
+    expect(mixed.match(/aria-pressed="true"/g)?.length).toBe(2);
+    expect(mixed.match(/aria-pressed="false"/g)?.length).toBe(1);
+  });
+});
+
 describe("source contract", () => {
   const read = (p: string) => readFileSync(path.join(__dirname, "../../..", p), "utf8");
   it("the page renders the card with the stored values and the send gate is unchanged", () => {
