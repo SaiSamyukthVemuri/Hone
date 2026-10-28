@@ -467,6 +467,11 @@ export default async function DashboardPage({
       ? getBeforeTodayPreviews(
           studio.id,
           visibleAppointments.map((a) => a.client_id),
+          visibleAppointments.map((a) => ({
+            clientId: a.client_id,
+            appointmentId: a.id,
+            startsAt: a.starts_at,
+          })),
         )
       : Promise.resolve(new Map<string, BeforeTodayPreview>()),
   );
@@ -626,7 +631,7 @@ export default async function DashboardPage({
     viewingToday ? visibleAppointments : []
   ).map(
     (appt) => {
-      const preview = beforeTodayPreviews.get(appt.client_id) ?? null;
+      const preview = beforeTodayPreviews.get(appt.id) ?? null;
       const linked = sessionByAppointment.get(appt.id) ?? null;
       const charting: TodayCharting = linked
         ? linked.hasChartedArea

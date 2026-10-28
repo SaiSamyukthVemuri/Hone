@@ -1,0 +1,79 @@
+import { createClient } from "@/lib/supabase/server";
+import { dbErrorCode } from "@/lib/logging/error-class";
+
+// HON-10. The chart page's "From last visit" note: the newest earlier,
+// non-void session of THIS client in THIS studio that carries a next-visit
+// note.
+//
+// It used to be inline on the page as `const { data } = ...`, which discarded
+// the read's error: a failed read arrived as `null` and rendered as "no note",
+// the same false absence #642/#648 closed on the client profile and the
+// dashboard. `unavailable` is the difference between "nothing was written" and
+// "we did not find out".
+//
+// The order is `started_at desc, id desc`, the shared recency rule
+// (lib/sessions/charted-session.ts, migration 0157): `started_at` alone is not
+// a total order, and two sessions sharing a minute (an "Edit time" correction)
+// came back in whichever order Postgres chose.
+//
+// Classification only in the log: the SQLSTATE and the studio id. Never the
+// message, a client id or a session id.
+//
+// HON-10 F4. A BLANK NOTE IS NOT A NOTE. The amendment RPC (0120) stores the
+// note untrimmed, so an amended session can carry "" or whitespace. The read
+// takes the few newest non-null notes and the first with text wins; a window of
+// nothing but blanks proves nothing about the older history, so it is
+// `unavailable`, never "no note".
+export type PreviousVisitNote = { note: string | null; unavailable: boolean };
+
+const NOTE_WINDOW = 10;
+
+export async function loadPreviousVisitNote(input: {
+  studioId: string;
+  clientId: string;
+  before: string;
+}): Promise<PreviousVisitNote> {
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("sessions")
+      .select("id, started_at, next_session_note")
+      .eq("studio_id", input.studioId)
+      .eq("client_id", input.clientId)
+      .is("deleted_at", null)
+      // HON-10 row 1: a void session's note is never "From last visit".
+      // record_status is NOT NULL (0119), so `neq` drops nothing else.
+      .neq("record_status", "void")
+      .not("next_session_note", "is", null)
+      .lt("started_at", input.before)
+      .order("started_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(NOTE_WINDOW);
+    if (error) {
+      logFailure(input.studioId, dbErrorCode(error));
+      return { note: null, unavailable: true };
+    }
+    const rows = (Array.isArray(data) ? data : []) as Array<{
+      next_session_note?: string | null;
+    }>;
+    for (const r of rows) {
+      const text = r.next_session_note?.trim();
+      if (text) return { note: text, unavailable: false };
+    }
+    return { note: null, unavailable: rows.length >= NOTE_WINDOW };
+  } catch {
+    logFailure(input.studioId, null);
+    return { note: null, unavailable: true };
+  }
+}
+
+function logFailure(studioId: string, code: string | null): void {
+  console.error(
+    JSON.stringify({
+      event: "previous_visit_note_read_failed",
+      code,
+      studio_id: studioId,
+      at: new Date().toISOString(),
+    }),
+  );
+}
