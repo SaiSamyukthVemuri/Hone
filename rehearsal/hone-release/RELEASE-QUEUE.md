@@ -1,6 +1,6 @@
 # How OPS's release queue invokes the launcher (no new scheduler, no new platform)
 
-The package adds NO scheduler, queue, worker pool or merge/apply authority. OPS's existing ranked queue and release plan stay the only orchestration. For one stage, OPS (or an agent working the queue) runs the following. **M** marks a step that stays MANUAL on purpose (a person with the authority does it); **A** marks a step an agent may run through the nine sudoers lines, and nothing else.
+The package adds NO scheduler, queue, worker pool or merge/apply authority. OPS's existing ranked queue and release plan stay the only orchestration. For one stage, OPS (or an agent working the queue) runs the following. **M** marks a step that stays MANUAL on purpose (a person with the authority does it); **A** marks a step an agent may run through the eleven sudoers lines, and nothing else.
 
 | # | Step | Who | Command / record |
 |---|---|---|---|
@@ -24,3 +24,7 @@ For a stage that selects `quiet_db=heartbeat`, `approve-package.sh` REFUSES unle
 > I authorize ONE heartbeat write to the production database: a single pg_logical_emit_message WAL message (no table, no row, no schema change) over the verify-full direct connection as the postgres role, once for approval <ID>.
 
 The heartbeat statement also reads back the four timeout settings the real endpoint applied. Every apply on the direct form now does the same before its dry run (Insurance FX2), so the hosted startup-option proof no longer depends on the heartbeat.
+
+## Machines' read gates (window reads) in the queue
+
+`read-s1read` (after an S1 apply: the six S1 gate files, then Machines' pinned comparator; exit 0 only on `OVERALL PASS`; read-only evidence, it promotes nothing) and `read-gap` (the #1035 post-S3 gap read: 19 count rows, within 24 h of S3) are **A** steps with the read PAT only: `sudo -n -u hone-release /usr/local/libexec/hone-release/launcher read-s1read` / `read-gap`. `pitr-backups` is `read-backups` (same single GET). Each prints Machines' own verdict lines; a person reads the gap counts. Neither needs approval, a database password or the CLI.

@@ -24,7 +24,7 @@ id sam >/dev/null 2>&1 || useradd -m -s /bin/bash sam
 passwd -l sam >/dev/null 2>&1
 # T1: the package is copied to a ROOT-OWNED directory outside /tmp (no world-writable ancestor); the pins are what Sam types from the reviewed record
 SRC=/root/hr-pkg; rm -rf "$SRC" /root/hr-pins.txt; mkdir -p "$SRC/scripts" "$SRC/ci" "$SRC/ca" "$SRC/tools"
-cp "$HR/launcher" "$HR/install.sh" "$HR/set-secret.sh" "$HR/approve-package.sh" "$HR/bind-gonogo.sh" "$HR/bind-serving.sh" "$HR/actions.conf" "$HR/sudoers.hone-release" "$SRC/"; cp "$HR"/scripts/*.sh "$HR"/scripts/mgmt-read.py "$HR"/scripts/wal-evidence.py "$HR"/scripts/pitr-wal-status.sql "$SRC/scripts/"; cp "$HR"/ca/* "$SRC/ca/"; cp "$HR"/tools/make-verify-bundle.py "$SRC/tools/"
+cp "$HR/launcher" "$HR/install.sh" "$HR/set-secret.sh" "$HR/approve-package.sh" "$HR/bind-gonogo.sh" "$HR/bind-serving.sh" "$HR/actions.conf" "$HR/sudoers.hone-release" "$SRC/"; cp "$HR"/scripts/*.sh "$HR"/scripts/mgmt-read.py "$HR"/scripts/wal-evidence.py "$HR"/scripts/pitr-wal-status.sql "$HR"/scripts/w1-data.tar "$SRC/scripts/"; cp "$HR"/ca/* "$SRC/ca/"; cp "$HR"/tools/make-verify-bundle.py "$SRC/tools/"
 # STUB smoke: the real reviewed post-s3-smoke.sh makes GET requests to the production site; CI must not (its sha256 is checked against the OPS-reviewed copy below)
 [ "$(sha256sum "$SRC/scripts/post-s3-smoke.sh" | cut -d' ' -f1)" = 0c69ce828a982234d97751284514bdd9d7d3af026871e572bfd799bfe614571c ] && echo "the packaged post-s3-smoke.sh is byte-identical to the OPS-reviewed script (0c69ce82...)"
 printf '%s\n' '#!/bin/bash' 'm=$(cat /var/lib/hone-release/work/stub-smoke 2>/dev/null || echo ok)' 'if [ "$m" = ok ]; then echo "{\"total\":3,\"failed\":0}"; exit 0; fi' 'echo "{\"total\":3,\"failed\":1}"; exit 1' > "$SRC/scripts/post-s3-smoke.sh"
@@ -110,7 +110,7 @@ sl=$(sam sudo -n -l 2>&1)
 printf '%s\n' "$sl" >> "$SAMOUT"
 n=$(printf '%s\n' "$sl" | grep -o 'launcher [a-z-]*' | sort -u | wc -l)
 echo "$sl" | grep -E 'NOPASSWD|launcher|Sorry|may run' | sed 's/^/       /'
-[ "$n" -ge 9 ] && ! printf '%s\n' "$sl" | grep -Eq '\(ALL( : ALL)?\) +(NOPASSWD: +)?ALL$|\(root\)' && printf '%s' "$sl" | grep -q 'launcher apply' && printf '%s' "$sl" | grep -q 'launcher read-backups' && printf '%s' "$sl" | grep -q 'launcher status' && printf '%s' "$sl" | grep -q 'launcher reconcile' && printf '%s' "$sl" | grep -q 'launcher idle-probe' && printf '%s' "$sl" | grep -q 'launcher heartbeat' && printf '%s' "$sl" | grep -q 'launcher preflight' && printf '%s' "$sl" | grep -q 'launcher verify' && printf '%s' "$sl" | grep -q 'launcher wal-capture' && ok "sudo -l shows exactly the nine launcher lines (as hone-release), nothing else, no ALL" || bad "sudo -l" "$sl"
+[ "$n" -ge 9 ] && ! printf '%s\n' "$sl" | grep -Eq '\(ALL( : ALL)?\) +(NOPASSWD: +)?ALL$|\(root\)' && printf '%s' "$sl" | grep -q 'launcher apply' && printf '%s' "$sl" | grep -q 'launcher read-backups' && printf '%s' "$sl" | grep -q 'launcher status' && printf '%s' "$sl" | grep -q 'launcher reconcile' && printf '%s' "$sl" | grep -q 'launcher idle-probe' && printf '%s' "$sl" | grep -q 'launcher heartbeat' && printf '%s' "$sl" | grep -q 'launcher preflight' && printf '%s' "$sl" | grep -q 'launcher verify' && printf '%s' "$sl" | grep -q 'launcher wal-capture' && printf '%s' "$sl" | grep -q 'launcher read-s1read' && printf '%s' "$sl" | grep -q 'launcher read-gap' && ok "sudo -l shows exactly the eleven launcher lines (as hone-release), nothing else, no ALL" || bad "sudo -l" "$sl"
 for f in /var/lib/hone-release/secrets/db-password /var/lib/hone-release/secrets/read-pat /var/lib/hone-release/work/canary-db; do
   sam cat "$f" >/dev/null 2>&1 && bad "sam READ $f" || ok "sam cannot read $f"
 done
@@ -449,7 +449,10 @@ fresh; VID=C2-SR4; approve $VID serving_check=readback; runo apply; stubset stub
 sam bash -c "echo x >> /etc/hone-release/SERVING-READBACK" 2>/dev/null && bad "sam wrote the serving read-back" || ok "the agent cannot write the serving read-back"
 rm -f /etc/hone-release/SERVING-READBACK; fresh
 # ---- HON66-OPENS-FX: guard, connection-phase read-back (FX2/FX4), WAL evidence (FX3), typed heartbeat authorization (FX5)
-bad_inst=$(grep -lE '/cli/login-role|/network-bans|--linked' $LX/scripts/* $LX/launcher 2>/dev/null); bad_q=$(grep -nE 'database/query($|[^/])' $LX/scripts/mgmt-read.py | head -1)
+W1F="$LX/scripts/read-s1read.sh $LX/scripts/read-gap.sh $LX/scripts/w1-data.tar"   # Machines' reviewed gates: the string `--linked` appears ONLY in the shim that REFUSES it to execute and in the unchanged reviewed runner text; they are checked below for no CLI use
+bad_inst=$(for f in $LX/scripts/* $LX/launcher; do case " $W1F " in *" $f "*) grep -lE '/cli/login-role|/network-bans' "$f" 2>/dev/null;; *) grep -lE '/cli/login-role|/network-bans|--linked' "$f" 2>/dev/null;; esac; done)
+for f in $LX/scripts/read-s1read.sh $LX/scripts/read-gap.sh; do grep -v '^[[:space:]]*#' "$f" | grep -nE 'supabase-go|HONE_SUPABASE_BIN|SUPABASE_DB_PASSWORD|SUPABASE_ACCESS_TOKEN=' | grep -v 'bad=\$(env' && bad_inst="$bad_inst $f(CLI use)"; done
+ bad_q=$(grep -nE 'database/query($|[^/])' $LX/scripts/mgmt-read.py | head -1)
 [ -z "$bad_inst" ] && [ -z "$bad_q" ] && ok "FX1 guard: no installed script or the launcher contains the login-role or network-bans endpoints or the CLI's --linked mode, and the helper's only query endpoint is .../database/query/read-only" || bad "FX1 guard" "$bad_inst $bad_q"
 sam bash -c "echo x >> $LX/scripts/mgmt-read.py" 2>/dev/null && bad "sam wrote the helper" || ok "the pinned read helper is root-owned: the agent cannot change it"
 cp -a $LX/scripts/mgmt-read.py "$T/helper.orig"; echo "# edited" >> $LX/scripts/mgmt-read.py; fresh; runo reconcile; cp -a "$T/helper.orig" $LX/scripts/mgmt-read.py
@@ -593,8 +596,61 @@ runo apply; [ $RC -ne 0 ] && [ "$(state | cut -d' ' -f1)" = FAILED-LOGIN ] && ! 
 approve CUST-AUTH2; runo apply; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "FAILED-LOGIN" && ok "the next run is refused while FAILED-LOGIN stands" || bad "after authfail" "$OUT"
 clear_state; echo ok > $W/stub-mode
 
+# ---------------------------------------------------------------- 8a. HON66 final batch: Machines' read gates as manifest actions, every read through mgmt-read.py (no CLI, no db query --linked)
+# test-environment rewrite (disclosed): the runner's node lives in /usr/local/bin; the launcher's sudo secure_path is /usr/bin:/bin
+[ -x /usr/bin/node ] || ln -s "$(command -v node)" /usr/bin/node
+mkdir -p "$T/w1x" && tar -xf "$HR/scripts/w1-data.tar" -C "$T/w1x"
+W1B=$T/w1x/window-reads-s1; W1C=$T/w1x/window-reads
+api_n() { wc -l < /tmp/hr-api.log | tr -d ' '; }
+w1answers() { # w1answers DIR: stored answers keyed by the sha256 of each gate file's stripped text (what the fake API looks up)
+  rm -rf "$W/stub-answers"; mkdir -p "$W/stub-answers"
+  python3 -I - "$1" "$W1B" "$W/stub-answers" <<'PYW'
+import hashlib, json, os, sys
+res, d, out = sys.argv[1:4]
+for f in sorted(os.listdir(d)):
+    if f.endswith(".sql"):
+        h = hashlib.sha256(open(os.path.join(d, f), encoding="utf-8").read().strip().encode()).hexdigest()
+        open(os.path.join(out, h), "w").write(open(os.path.join(res, f[:-4] + ".json")).read())
+PYW
+  chmod -R a+rX "$W/stub-answers"
+}
+fresh; : > $W/stub.log; chown hone-release:hone-release $W/stub.log
+for sc in ok at0212 body_bad; do node "$HERE/gen-s1-results.mjs" "$T/s1res-$sc" "$W1C/BASELINE-W1-LINUX-CANDIDATE-3.json" "$W1B/census-0213-0246.sql" $sc || bad "s1 result generator ($sc)"; done
+rm -f "$T"/s1res-*/*.error
+w1answers "$T/s1res-ok"; n0=$(api_n); runo read-s1read
+n1=$(( $(api_n) - n0 ))
+if [ $RC = 0 ] && printf '%s' "$OUT" | grep -q "OVERALL PASS" && [ "$n1" = 6 ] && tail -n 6 /tmp/hr-api.log | python3 -I -c 'import sys,json; r=[json.loads(l) for l in sys.stdin]; sys.exit(0 if all(x["method"]=="POST" and x["path"].endswith("/database/query/read-only") and x["auth"]=="match" and x["body_keys"]==["query"] for x in r) else 1)' && [ ! -s $W/stub.log ]; then ok "read-s1read (Machines' gate, team variant): the six S1 gate files read through the read-only endpoint (6 POSTs, token matched, one key each), the pinned comparator printed OVERALL PASS, the CLI was never called"; else bad "read-s1read PASS path" "rc=$RC n=$n1 $(printf '%s' "$OUT" | tail -n 4)"; fi
+w1answers "$T/s1res-at0212"; n0=$(api_n); runo read-s1read
+n1=$(( $(api_n) - n0 ))
+[ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "S1 did not reach its end state" && [ "$n1" = 1 ] && ok "read-s1read: a history that is not the S1 end state STOPs after ONE read; nothing else is read" || bad "read-s1read at0212" "rc=$RC n=$n1 $(printf '%s' "$OUT" | tail -n 3)"
+w1answers "$T/s1res-body_bad"; runo read-s1read
+[ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "did not print OVERALL PASS" && ok "read-s1read: a replaced function body that differs from the baseline -> the comparator does not pass -> STOP (never PASS)" || bad "read-s1read body_bad" "rc=$RC $(printf '%s' "$OUT" | tail -n 3)"
+w1answers "$T/s1res-ok"; echo qfail > $W/stub-mode; n0=$(api_n); runo read-s1read; n1=$(( $(api_n) - n0 )); echo ok > $W/stub-mode
+[ $RC -ne 0 ] && [ "$n1" = 1 ] && ok "read-s1read: a provider failure is ONE request and a STOP (no retry, no CLI fallback)" || bad "read-s1read provider failure" "rc=$RC n=$n1 $(printf '%s' "$OUT" | tail -n 3)"
+rm -rf "$W/stub-answers"; mkdir -p "$W/stub-answers"
+python3 -I - "$T/w1x/gap-read-2" "$W/stub-answers" ok <<'PYG'
+import hashlib, json, os, re, sys
+d, out, mode = sys.argv[1:4]
+sql = open(os.path.join(d, "obs-1035-gap-pending-payments-v2.sql"), encoding="utf-8").read()
+pairs = re.findall(r"select '([a-z_]+)' as src, '([a-z_]+)' as state,", sql)
+rows = [{"at_hosted_0246": 1, "src": a, "state": b, "rows_in_lookback": str(i % 3)} for i, (a, b) in enumerate(pairs)]
+open(os.path.join(out, hashlib.sha256(sql.strip().encode()).hexdigest()), "w").write(json.dumps(rows))
+PYG
+chmod -R a+rX "$W/stub-answers"; n0=$(api_n); runo read-gap; n1=$(( $(api_n) - n0 ))
+if [ $RC = 0 ] && printf '%s' "$OUT" | grep -q "GAP READ: 19 rows" && [ "$n1" = 1 ] && [ ! -s $W/stub.log ]; then ok "read-gap (Machines' gate, team variant): ONE read-only POST, 19 rows validated by the reading rules, CLI never called"; else bad "read-gap PASS path" "rc=$RC n=$n1 $(printf '%s' "$OUT" | tail -n 4)"; fi
+python3 -I - "$W/stub-answers" <<'PYG'
+import glob, json, sys
+for f in glob.glob(sys.argv[1] + "/*"):
+    r = json.load(open(f)); json.dump(r[:-1], open(f, "w"))
+PYG
+runo read-gap; [ $RC -ne 0 ] && printf '%s' "$OUT" | grep -q "STOP" && ok "read-gap: 18 rows instead of 19 -> STOP" || bad "read-gap 18 rows" "rc=$RC $(printf '%s' "$OUT" | tail -n 3)"
+rm -rf "$W/stub-answers"
+cp -a /usr/local/libexec/hone-release/scripts/w1-data.tar "$T/w1.orig"; printf 'x' >> /usr/local/libexec/hone-release/scripts/w1-data.tar
+expect_refuse "the w1-data bundle changed after install (sha256 is not the manifest's)" read-gap "w1-data\|sha256"; cp -a "$T/w1.orig" /usr/local/libexec/hone-release/scripts/w1-data.tar
+fresh
+
 # ---------------------------------------------------------------- 8b. Insurance H6: the recorded requests of every read action in this whole run
-for f in $T/vb/c*.sql $T/vb2/c*.sql $T/tb1/c*.sql; do [ -f "$f" ] && python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],encoding="utf-8").read().strip().encode()).hexdigest())' "$f"; done > "$T/allowed-bundle-q.txt"
+for f in $T/vb/c*.sql $T/vb2/c*.sql $T/tb1/c*.sql $T/w1x/window-reads-s1/*.sql $T/w1x/gap-read-2/*.sql; do [ -f "$f" ] && python3 -I -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],encoding="utf-8").read().strip().encode()).hexdigest())' "$f"; done > "$T/allowed-bundle-q.txt"
 python3 -I - /tmp/hr-api.log "$T/allowed-bundle-q.txt" <<'PYH6' && ok "H6 (recorded requests, $(wc -l < /tmp/hr-api.log) in this run): ONLY GET .../database/backups and POST .../database/query/read-only; every POST body holds exactly one key `query`; every query is a fixed SELECT of the known shapes; every request carried the read token; NOTHING else was ever asked (no login-role, no network-bans, no write endpoint)" || bad "H6 recorded requests" "$(python3 -I -c 'import sys;print(open("/tmp/hr-api.log").read()[-900:])')"
 import hashlib, json, re, sys
 allowed = set(open(sys.argv[2]).read().split())

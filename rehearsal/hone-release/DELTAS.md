@@ -72,3 +72,12 @@ Unchanged on purpose: seeded `cli-latest`, `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLE
 | OPENS 2 | `tools/make-verify-bundle.py` + `templates/stage-0247-0250/` (derived expectations, reproducible `verify.tar`, `review.md` for OPS). |
 | OPENS 3 | Serving source: new `bind-serving.sh` (root) records OPS's Vercel alias -> deployment -> commit read-back; `verify` V4 compares it with the approved `serving_commit` (after the push, within 30 minutes) when `serving_check=readback`. |
 | sudoers | NINE commands now (apply, read-backs, reconcile, idle-probe, heartbeat, preflight, verify, wal-capture, status); `smoke`, `mgmt-read`, `wal-evidence` and `pitr-wal-sql` are manifest entries only (run by other actions). General's HOST-ACCESS-A procedure expects three: to be reconciled. |
+
+## HON66 final batch: Machines' read gates (read-s1read, read-gap) as team manifest actions
+
+Derived from `machines/linux-gates/window-s1read-linux.sh` and `window-gap-read-linux.sh` by a fixed replace list (every replacement asserted; the result is the reviewed file in `scripts/`):
+- `ROOT=$HOME/hone-s1` -> the custody work directory; the data (gate SQL, runners, comparator, library, baseline, manifests: byte-identical to the stage in PR #1194) travel in ONE root-pinned `scripts/w1-data.tar` (manifest entry `w1-data`), sha-checked, extracted into a fresh private directory; every inner Machines pin (RUNNER_SHA, MANIFEST_SHA, CMP_SHA, LIB_SHA, BASELINE_SHA, SQL_SHA) is kept and still checked.
+- Removed: `BIN`/`GO_SHA` (no CLI), `POOLER_URL`, the placeholder database password, `pooler-url`/`cli-latest` seeding, the tombstone functions and checks (no login can occur), the `$HOME` directory check.
+- The `npx` shim now execs `python3 -I mgmt-read.py <ref> file <gate file>` (the pinned helper, sha-checked against the manifest) instead of the supabase CLI; it still accepts only the exact reviewed invocation.
+- Credentials: the read PAT arrives on fd 3 (same `secret_from_fd3`); it reaches only the helper's environment (`HONE_READ_TOKEN`). The project ref comes from the root-owned `/etc/hone-release/PROJECT-REF`.
+- Added: the `HONE_RELEASE_ACTION` check, so a script started any other way refuses.
