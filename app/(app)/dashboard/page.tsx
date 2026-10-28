@@ -337,6 +337,7 @@ export default async function DashboardPage({
     getGettingStartedSignals(
       { id: studio.id, name: studio.name, slug: studio.slug },
       practitioner.display_name?.trim() || practitioner.email,
+      { viewerIsOwner: isOwner },
     ),
   );
 

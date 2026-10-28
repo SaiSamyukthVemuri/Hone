@@ -2,6 +2,7 @@ import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { resolveTimeFormat } from "@/lib/booking/tz";
 import { StudioSettingsForm } from "./StudioSettingsForm";
 import { EmailSettingsForm } from "./EmailSettingsForm";
+import { SmsSettingsForm } from "./SmsSettingsForm";
 import { ClientSelfServiceForm } from "./ClientSelfServiceForm";
 import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
 // PostcareSettingsForm intentionally NOT imported here. Postcare
@@ -48,6 +49,13 @@ export default async function StudioSettingsPage() {
           auto_mark_no_shows: studio.auto_mark_no_shows,
           send_no_show_followup: studio.send_no_show_followup,
           show_treatment_time_to_clients: studio.show_treatment_time_to_clients,
+        }}
+      />
+      <SmsSettingsForm
+        initial={{
+          send_confirmation_sms: studio.send_confirmation_sms,
+          send_24h_sms_reminders: studio.send_24h_sms_reminders,
+          send_2h_sms_reminders: studio.send_2h_sms_reminders,
         }}
       />
       <ClientSelfServiceForm
