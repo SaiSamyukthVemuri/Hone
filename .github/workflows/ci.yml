@@ -129,7 +129,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
 
       - name: Collect changed files
         run: |
@@ -338,9 +338,9 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # No .nvmrc and no engines.node in package.json today.
-          # Pin to Node 20 (LTS), matches the docs/14 fallback and
-          # is comfortably within Next 15's supported range.
-          node-version: "20"
+          # Pin to patched Node 24.22.1 (CVE-2026-111497; Node 20 is EOL
+          # with no fix), the line Vercel builds and serves (project 24.x).
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Install dependencies
@@ -453,7 +453,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Install dependencies
@@ -553,7 +553,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Set up Supabase CLI
@@ -859,15 +859,14 @@ jobs:
     # ENG-003/004 run39713000378: cold setup12–12.6min before150–158tests;
     # 482 observed passes/4skips/0assertion failures before cancellation.
     # Worst measured projection22.15min + finiteheadroom => hard25.
-    # Keep target <10 min per shard; targeted hard15 held until 2026-10-23 (below); investigate slow npm ci.
-    # TARGETED 15 -> 19 (2026-10-23, Codex P2 4362256407 on #1059): the
-    # Playwright system-package install is now BOUNDED at a 6 min step ceiling
-    # (scripts/ci/playwright-system-deps.sh, worst case 325 s), and every job
-    # must clear that ceiling on top of its own time. Targeted measured 11.2 min
-    # no-stall p90; 11.2 + 6 + 1 margin = 18.2 > 15. Before the bound, an apt
-    # stall (up to 11.3 min) cancelled targeted shards outright. The TARGET is
-    # unchanged; only the failure ceiling moves, by the bounded install's size.
-    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 25 || 19 }}
+    # Keep target <10 min per shard; investigate slow npm ci.
+    # TARGETED 15 -> 19 (2026-10-23, Codex P2 4362256407 on #1059): the Playwright system-package install is now BOUNDED at a 6 min step
+    # ceiling (scripts/ci/playwright-system-deps.sh, worst case 325 s) and every job must clear it on top of its own time.
+    # AUGMENTED 35 (HON-18, finite35m): an extended shard, or a shard that selects machine-create-mode-journey.spec.ts, also runs the guarded
+    # native 3G proof (a second build and six cases per runner); run 39620772010 took 15m59s before native20 (9.1m unsharded) was added.
+    # MERGE NOTE (hon8-slice, local): this combines production df33a762's 19-minute targeted ceiling with the stack's 35-minute augmented
+    # ceiling. It RAISES extended from production's 25 to 35 because extended shards run the native proof; General must confirm at push.
+    timeout-minutes: ${{ (needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')) && 35 || 19 }}
     strategy:
       fail-fast: false
       matrix:
@@ -882,7 +881,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Set up Supabase CLI
@@ -1128,6 +1127,38 @@ jobs:
           # deterministic.
           HONE_E2E_FAKE_RESEND: "1"
 
+      # Preserve ordinary flag-OFF coverage above. Only this supplemental
+      # invocation enables six synthetic identities; deployed runtimes refuse
+      # this gate. Existing config propagates it to the local server only.
+      - name: Native Senior and Junior 3G acceptance
+        id: native3g
+        if: needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.changes.outputs.browser_extended }}" = "true" ]; then
+            SHARD_TOTAL=4
+          else
+            SHARD_TOTAL="${{ needs.changes.outputs.browser_shard_total }}"
+          fi
+          npx playwright test e2e/machine-create-mode-journey.spec.ts --project=chromium --grep='native 3G (durability|text durability|uncommitted recovery)' --fully-parallel --workers=1 --shard=${{ matrix.shard }}/${SHARD_TOTAL} --retries=0 --max-failures=1 --reporter=list,json --output=test-results/native-3g-shard-${{ matrix.shard }}
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const report = JSON.parse(readFileSync(process.env.PLAYWRIGHT_JSON_OUTPUT_FILE, 'utf8'));
+          const tests = [];
+          const collect = (suite) => {
+            for (const spec of suite.specs ?? []) tests.push(...spec.tests);
+            for (const child of suite.suites ?? []) collect(child);
+          };
+          for (const suite of report.suites ?? []) collect(suite);
+          if (report.errors?.length || tests.length === 0 || tests.some((test) => test.expectedStatus !== 'passed' || test.results.length !== 1 || test.results[0].status !== 'passed')) {
+            throw new Error('Native acceptance requires actual passing cases, with no skips or retries');
+          }
+          console.log(`Native acceptance: ${tests.length} actual passes, zero skips/retries`);
+          NODE
+        env:
+          HONE_SYNTHETIC_MACHINE_PROFILE: "1"
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/native-3g-shard-${{ matrix.shard }}/results.json
+
       - name: Upload Playwright traces on failure
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1336,7 +1367,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Generate the per-job fake-Stripe run id
@@ -1601,7 +1632,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Generate the per-job fake-Stripe run id
@@ -1862,7 +1893,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Generate the per-job fake-Google run id
@@ -2096,16 +2127,16 @@ jobs:
   storage-photos:
     name: storage photos (not required)
     needs: changes
-    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') }}
+    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') }}
     runs-on: ubuntu-latest
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
       packages: read
     # Target ~10 min: the mobile lane's setup (~6 min p90 incl. the bounded
-    # system-package install) plus storage-api, one DB file and two specs. The
+    # system-package install) plus storage-api, one DB file and the storage specs. The
     # hard timeout exceeds it (CLAUDE.md section 4).
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout repository
@@ -2116,7 +2147,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Set up Supabase CLI
@@ -2313,7 +2344,7 @@ jobs:
 
       - name: Storage photo E2E (CLN-005 + ENG-002)
         if: ${{ !cancelled() && steps.storage_up.outcome == 'success' && steps.pw_sys.outcome == 'success' }}
-        run: npx playwright test e2e/fett-photos-thumbnail-recovery.spec.ts e2e/treatment-image-upload-formats.spec.ts --project=chromium
+        run: npx playwright test e2e/fett-photos-thumbnail-recovery.spec.ts e2e/treatment-image-upload-formats.spec.ts e2e/fett-client-portrait.spec.ts --project=chromium
         env:
           HONE_E2E_FAKE_RESEND: "1"
 
@@ -2368,7 +2399,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Set up Supabase CLI

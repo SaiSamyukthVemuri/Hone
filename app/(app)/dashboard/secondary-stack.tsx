@@ -67,6 +67,8 @@ type AttentionSources = readonly [
 type Props = {
   /** Started in the page BEFORE the roster query. Never started here. */
   attentionSources: Promise<AttentionSources>;
+  /** HON-65: own deferred read (never throws; false on any error). */
+  staffManaged: Promise<boolean>;
   /**
    * The canonical verdict, as a promise, resolved by the page ALONGSIDE the
    * bundle above rather than inside it.
@@ -153,6 +155,7 @@ export function SecondaryStackSkeleton() {
 
 export async function SecondaryStack({
   attentionSources,
+  staffManaged: staffManagedPromise,
   bookingReadiness,
   practiceMetrics: practiceMetricsPromise,
   clientsNeedingAttention: clientsNeedingAttentionPromise,
@@ -174,6 +177,7 @@ export async function SecondaryStack({
     paymentStatus,
     birthdaysThisMonth,
   ] = await attentionSources;
+  const staffManaged = await staffManagedPromise;
 
   // ONB-03: THE CANONICAL AUTHORITY, AWAITED INDEPENDENTLY.
   //
@@ -219,6 +223,7 @@ export async function SecondaryStack({
       intakesAwaitingReviewCount,
       activeServicesCount,
       paymentStatus,
+      staffManaged,
     },
     todayLocal,
   });
@@ -286,6 +291,7 @@ export async function SecondaryStack({
         livemode={inferStripeLivemode()}
         selectedDay={selectedDayLocal}
         todayLocal={todayLocal}
+        staffManaged={staffManaged}
       />
 
       {/* OWNER-CAP Slice 1: the owner's capacity briefing. A LINK, not a card:

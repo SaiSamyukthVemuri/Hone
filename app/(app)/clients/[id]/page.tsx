@@ -7,6 +7,9 @@ import { orderByRecency } from "@/lib/sessions/charted-session";
 import { PendingLink } from "@/components/pending-link";
 import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound } from "next/navigation";
+import { signedClientPortraitUrl } from "@/lib/images/client-portrait";
+import { clientPortraitEnabled } from "@/lib/images/portrait-policy";
+import { ClientPortrait } from "./ClientPortrait";
 import { createClient } from "@/lib/supabase/server";
 import { clientDisplayName, clientLegalName, type WithPreferredName } from "@/lib/clients/identity";
 import { readLegalIdentityForSession } from "@/lib/clients/legal-identity";
@@ -337,6 +340,7 @@ export default async function ClientCheatSheetPage({
     importedMemory,
     portalAccessEvents,
     legalIdentityRead,
+    portraitUrl,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
@@ -424,6 +428,18 @@ export default async function ClientCheatSheetPage({
     // every tab. Read with the SIGNED-IN client, so only an owner or
     // practitioner ever receives a row; a failed or thrown read omits the line, never the page.
     readLegalIdentityForSession(client.id),
+    // 0231: the identification portrait in the header (every tab), signed for
+    // 60 s; null when none is set or it cannot be signed. Depends only on
+    // (studio.id, client), so it belongs in this wave, not after it.
+    // HELD: while portrait use is not enabled nothing is signed and no
+    // portrait renders; the stored pointer is left untouched.
+    clientPortraitEnabled()
+      ? signedClientPortraitUrl({
+          studioId: studio.id,
+          clientId: client.id,
+          portraitImageId: client.portrait_image_id,
+        })
+      : Promise.resolve(null),
   ]);
   const legalName =
     legalIdentityRead.ok && legalIdentityRead.value ? clientLegalName(legalIdentityRead.value) : null;
@@ -904,6 +920,9 @@ export default async function ClientCheatSheetPage({
         <div className="mt-2 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
+              {portraitUrl && (
+                <ClientPortrait key={`${portraitUrl.url}:${portraitUrl.thumbUrl ?? ""}`} clientId={client.id} imageId={client.portrait_image_id!} url={portraitUrl.url} thumbUrl={portraitUrl.thumbUrl} clientName={client.name} />
+              )}
               <h1 className="break-words text-2xl font-semibold tracking-tight md:text-3xl">
                 {displayName}
               </h1>

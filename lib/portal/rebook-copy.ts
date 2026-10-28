@@ -1,3 +1,4 @@
+import { clientPortalDisabledMessage } from "@/lib/booking/client-self-service-policy";
 import { UNAVAILABLE_PUBLIC_BOOKING_MESSAGE } from "@/lib/booking/readiness";
 
 // EMERG-PORTAL-REBOOK-01 — the refusal vocabulary for portal-authenticated
@@ -46,7 +47,13 @@ export type PortalRebookRefusalCode =
    * studio-wide weekly day. Structural, not transient, so the copy must not
    * invite a retry in a moment.
    */
-  | "studio_unavailable";
+  | "studio_unavailable"
+  /**
+   * HON-47. The studio has turned client portal access off. Not transient and
+   * not fixed by signing in again, so the surface must not send the client to
+   * /portal/login.
+   */
+  | "portal_disabled";
 
 /**
  * Shown when the portal session is absent, expired or revoked.
@@ -94,6 +101,12 @@ export const PORTAL_REBOOK_OUTSIDE_WINDOW =
  */
 export const PORTAL_REBOOK_STUDIO_UNAVAILABLE = UNAVAILABLE_PUBLIC_BOOKING_MESSAGE;
 
+/**
+ * HON-47. The studio-name-free form of the shared portal-disabled sentence. The
+ * action returns the named form when it knows the studio.
+ */
+export const PORTAL_REBOOK_PORTAL_DISABLED = clientPortalDisabledMessage(null);
+
 /** Every refusal sentence, for tests that assert none of them leaks a code. */
 export const PORTAL_REBOOK_REFUSALS: Readonly<
   Record<PortalRebookRefusalCode, string>
@@ -104,4 +117,5 @@ export const PORTAL_REBOOK_REFUSALS: Readonly<
   slot_taken: PORTAL_REBOOK_SLOT_TAKEN,
   outside_window: PORTAL_REBOOK_OUTSIDE_WINDOW,
   studio_unavailable: PORTAL_REBOOK_STUDIO_UNAVAILABLE,
+  portal_disabled: PORTAL_REBOOK_PORTAL_DISABLED,
 });
