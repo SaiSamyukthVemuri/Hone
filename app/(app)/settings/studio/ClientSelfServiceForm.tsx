@@ -58,7 +58,7 @@ export function ClientSelfServiceForm({ initial }: { initial: Initial }) {
         </h2>
         <p className="mt-1 text-sm text-neutral-500">
           Choose what clients can change themselves from their email links. Reminders and
-          aftercare emails keep sending either way; only the cancel and reschedule options change.
+          aftercare emails keep sending either way; only the cancel and reschedule options change. The client portal and online rebooking are not affected by these switches.
         </p>
       </div>
       <ul className="flex flex-col divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
