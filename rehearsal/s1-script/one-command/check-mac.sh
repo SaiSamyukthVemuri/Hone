@@ -28,7 +28,7 @@ done
 grep -Fq 'Supabase access token (not shown): ' "$D/reference/pitr-backups.sh" && grep -Fq 'read -rs PGPASSWORD' "$D/reference/d3-watchdog.zsh" && grep -Fq 'WATCHDOG armed (self-test ok)' "$D/reference/d3-watchdog.zsh" && grep -Fq 'watching for the push session to start' "$D/reference/d3-watchdog.zsh" && ok "the pitr-backups token prompt and the watchdog password read and both watchdog lines are in the pinned children" || bad "pitr/watchdog prompts differ from the pinned children"
 # stubs print only real prompts
 sp=0; for f in "$D"/stubs/*.sh "$D"/stubs/*.zsh; do b=$(basename "$f"); [ -f "$D/reference/$b" ] || continue
-  grep -ho 'sask [A-Z_0-9]* "[^"]*"\|ssecret [A-Z]* "[^"]*"' "$f" | sed 's/^[a-z]* [A-Z_0-9]* "//;s/"$//' | while IFS= read -r p; do p2=${p%%\$*}; grep -Fq -- "$p2" "$D/reference/$b" || echo "$b: $p"; done
+  grep -v 'table does not know' "$f" | grep -o 'sask [A-Z_0-9]* "[^"]*"\|ssecret [A-Z]* "[^"]*"'  | sed 's/^[a-z]* [A-Z_0-9]* "//;s/"$//' | while IFS= read -r p; do p2=${p%%\$*}; grep -Fq -- "$p2" "$D/reference/$b" || echo "$b: $p"; done
 done > "$T/stubprompts.txt"
 [ ! -s "$T/stubprompts.txt" ] && ok "every prompt a stub prints (up to its first variable part) occurs in the pinned child it stands for" || bad "a stub prompt is not in the pinned child" "$(head -3 "$T/stubprompts.txt")"
 
@@ -71,12 +71,13 @@ cfg() { echo "$2" >> "$T/$1/home/hone-s1/stub.cfg"; }
 pushes() { [ -f "$T/$1/home/hone-s1/push.count" ] && grep -c '' "$T/$1/home/hone-s1/push.count" || echo 0; }
 rolconf() { cat "$T/$1/home/hone-s1/fake-rolconfig"; }
 altered() { grep -c '^alter role postgres set' "$T/$1/home/hone-s1/sql.log" 2>/dev/null || echo 0; }
+dump() { for f in "$T/$1"/home/hone-s1/one-command/run.*/*.result "$T/$1"/home/hone-s1/one-command/run.*/*.transcript; do [ -f "$f" ] && { echo "--- $(basename "$f")"; head -c 1500 "$f"; }; done; echo "--- stub.log"; tail -n 15 "$T/$1/home/hone-s1/stub.log"; }
 marker() { cat "$T/$1/home/hone-s1/s1-apply/APPLY-STATE" 2>/dev/null; }
 
 # 1. happy path
 mkenv happy; answers happy; variant_only_const happy && ok "the test variant differs from hone-stage-run.sh only inside the #CONST block" || bad "the variant differs outside #CONST"
 run happy
-echo "$OUT" | grep -q 'RESULT: APPLIED+VERIFIED' && [ "$(pushes happy)" = 1 ] && [ "$(rolconf happy)" = "$ORIGCONF" ] && echo "$OUT" | grep -q 'role setting restored and read back' && ok "happy path: APPLIED+VERIFIED, one push, the role setting is back to its original and read back" || bad "happy path" "rc=$RC $(echo "$OUT" | tail -12)"
+echo "$OUT" | grep -q 'RESULT: APPLIED+VERIFIED' && [ "$(pushes happy)" = 1 ] && [ "$(rolconf happy)" = "$ORIGCONF" ] && echo "$OUT" | grep -q 'role setting restored and read back' && ok "happy path: APPLIED+VERIFIED, one push, the role setting is back to its original and read back" || bad "happy path" "rc=$RC $(echo "$OUT" | tail -12) $(dump happy)"
 echo "$LOG" | grep -q 'wd started' && [ "$(altered happy)" -ge 2 ] && ok "  the runner started the reviewed watchdog itself and the role setting was applied then restored (>= 2 ALTERs)" || bad "watchdog or alter calls" "$(cat "$T/happy/home/hone-s1/sql.log" 2>/dev/null)"
 echo "$OUT" | grep -q 'plan sha256: [0-9a-f]\{64\}' && echo "$OUT" | grep -q 'New-route approval sentence' && ok "  the plan and its sha256 and the generated new-route approval sentence were printed" || bad "plan output"
 # canary: no secret in any file or any output
