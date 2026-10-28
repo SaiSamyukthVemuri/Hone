@@ -16,3 +16,5 @@ Owner actions at install (exact): (1) confirm the packaged CA file's sha256 (`70
 ## Dependencies on the host
 
 `bash`, `python3` (3.8 or newer, run as `python3 -I`), `openssl`, `sha256sum`, `tar`, `sudo` and, for `read-s1read` and `read-gap` only, a SYSTEM **Node 18 or newer at `/usr/bin/node`** (the launcher's PATH is `/usr/bin:/bin`, so a Node in a home directory or `/usr/local/bin` is not found and those two actions stop with "node not found"). Use a patched release (22.23.4 or 24.22.1). Install it before relying on those actions; the other actions do not need Node.
+
+Per-stage preparation of `verify.tar` and the S0a record: `S0A-RECORD.md`.
