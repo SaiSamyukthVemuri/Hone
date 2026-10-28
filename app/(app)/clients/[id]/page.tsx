@@ -8,6 +8,7 @@ import { PendingLink } from "@/components/pending-link";
 import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound } from "next/navigation";
 import { signedClientPortraitUrl } from "@/lib/images/client-portrait";
+import { clientPortraitEnabled } from "@/lib/images/portrait-policy";
 import { ClientPortrait } from "./ClientPortrait";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -419,11 +420,15 @@ export default async function ClientCheatSheetPage({
     // 0231: the identification portrait in the header (every tab), signed for
     // 60 s; null when none is set or it cannot be signed. Depends only on
     // (studio.id, client), so it belongs in this wave, not after it.
-    signedClientPortraitUrl({
-      studioId: studio.id,
-      clientId: client.id,
-      portraitImageId: client.portrait_image_id,
-    }),
+    // HELD: while portrait use is not enabled nothing is signed and no
+    // portrait renders; the stored pointer is left untouched.
+    clientPortraitEnabled()
+      ? signedClientPortraitUrl({
+          studioId: studio.id,
+          clientId: client.id,
+          portraitImageId: client.portrait_image_id,
+        })
+      : Promise.resolve(null),
   ]);
 
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
