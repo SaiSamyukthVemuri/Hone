@@ -1417,7 +1417,7 @@ export function BlockSetupForm({
         // same save. Null when nothing was entered, which is an ordinary save
         // of an area with no machine settings.
         initialSetup: attachedSetup,
-      }).catch((cause: unknown) => {
+      }).catch(() => {
         // THE TRANSPORT FAILED, so the server's answer is UNKNOWN - not
         // negative. The area may well have been created.
         //
@@ -1433,7 +1433,7 @@ export function BlockSetupForm({
         // being offered a retry that duplicates her treatment.
         return {
           ok: false as const,
-          error: attachedSetup ? INITIAL_SAVE_UNRESOLVED : String(cause),
+          error: attachedSetup ? INITIAL_SAVE_UNRESOLVED : "That did not save. Try again.",
           unresolved: Boolean(attachedSetup),
         };
       });

@@ -437,10 +437,19 @@ export async function rememberMachineSelectionAction(choice: {
     return { ok: true };
   } catch (e) {
     if (e instanceof PersistenceUnavailableError) {
-      return { ok: false, code: "not_persisted", error: e.message };
+      // A FIXED SENTENCE: the error's own text can carry database wording.
+      return {
+        ok: false,
+        code: "not_persisted",
+        error: "Your machine choice could not be saved just now. Try again.",
+      };
     }
     if (e instanceof ScopeMismatchError) {
-      return { ok: false, code: "rejected", error: e.message };
+      return {
+        ok: false,
+        code: "rejected",
+        error: "That machine choice could not be checked for your account.",
+      };
     }
     throw e;
   }
@@ -456,9 +465,8 @@ export async function clearMachineSelectionAction(): Promise<ActionResult> {
   try {
     await store(db).write(scope, null);
     return { ok: true };
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "Could not clear it.";
-    return { ok: false, code: "not_persisted", error: message };
+  } catch {
+    return { ok: false, code: "not_persisted", error: "Could not clear it." };
   }
 }
 

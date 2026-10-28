@@ -395,7 +395,7 @@ export function MachineFirstSetupPanel({
       write = onSelectMachine
         ? await onSelectMachine({ deviceId: next, modeKey: nextMode })
         : null;
-    } catch (cause) {
+    } catch {
       // A REJECTION IS A FAILED WRITE, not an absence of one.
       //
       // `finally` cleared the pending flag but the throw skipped
@@ -409,7 +409,7 @@ export function MachineFirstSetupPanel({
       // does: one definition of "the write did not happen", not two.
       write = {
         ok: false,
-        error: cause instanceof Error ? cause.message : "That did not save.",
+        error: "That did not save.",
       };
     } finally {
       // CLEARED EVEN ON A THROW, or one failed write leaves the picker dead
@@ -441,11 +441,11 @@ export function MachineFirstSetupPanel({
       write = onSelectMachine
         ? await onSelectMachine({ deviceId, modeKey: key })
         : null;
-    } catch (cause) {
+    } catch {
       // Same rule as the device pick: a rejection is a failed write.
       write = {
         ok: false,
-        error: cause instanceof Error ? cause.message : "That did not save.",
+        error: "That did not save.",
       };
     } finally {
       setSelectionPending(false);
