@@ -55,6 +55,7 @@ import {
   SecondaryStackSkeleton,
 } from "./secondary-stack";
 import { getPracticeDashboardMetrics } from "@/lib/dashboard/practice-metrics";
+import { loadStaffManagedClinic } from "@/lib/dashboard/staff-managed";
 import {
   isReportingPeriod,
   type ReportingPeriod,
@@ -317,6 +318,7 @@ export default async function DashboardPage({
       ? getNewClientReadiness(studio)
       : Promise.resolve(null as NewClientReadiness | null),
   );
+  const staffManagedPromise = settleLater(loadStaffManagedClinic(supabase, studio.id));
   const practiceMetricsPromise = settleLater(
     // HON-44: studio money totals are owner-only, refused at the read.
     getPracticeDashboardMetrics(studio.id, studio.timezone, period, {
@@ -468,6 +470,11 @@ export default async function DashboardPage({
       ? getBeforeTodayPreviews(
           studio.id,
           visibleAppointments.map((a) => a.client_id),
+          visibleAppointments.map((a) => ({
+            clientId: a.client_id,
+            appointmentId: a.id,
+            startsAt: a.starts_at,
+          })),
         )
       : Promise.resolve(new Map<string, BeforeTodayPreview>()),
   );
@@ -627,7 +634,7 @@ export default async function DashboardPage({
     viewingToday ? visibleAppointments : []
   ).map(
     (appt) => {
-      const preview = beforeTodayPreviews.get(appt.client_id) ?? null;
+      const preview = beforeTodayPreviews.get(appt.id) ?? null;
       const linked = sessionByAppointment.get(appt.id) ?? null;
       const charting: TodayCharting = linked
         ? linked.hasChartedArea
@@ -928,6 +935,7 @@ export default async function DashboardPage({
       >
         <SecondaryStack
           attentionSources={attentionSourcesPromise}
+          staffManaged={staffManagedPromise}
           bookingReadiness={bookingReadinessPromise}
           practiceMetrics={practiceMetricsPromise}
           clientsNeedingAttention={clientsNeedingAttentionPromise}

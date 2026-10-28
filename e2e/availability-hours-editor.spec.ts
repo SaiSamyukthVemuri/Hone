@@ -205,4 +205,110 @@ test.describe("touch", () => {
     await expect(opens).toBeFocused();
     await expect(opens).toHaveAttribute("type", "time");
   });
+
+  // The OS wheel picker is not in the DOM, so the value is set with fill(),
+  // which dispatches the input and change events the controlled field listens
+  // to. What this proves on a touch-sized viewport is the rest of the chain:
+  // the tap reaches the day, the field takes a value, Save persists it, and a
+  // reload shows it.
+  test("iPad-sized touch: an edited day saves and survives a reload", async ({ page, browserName }) => {
+    await signIn(page, browserName);
+    await page.goto("/settings/availability");
+    await page.getByRole("button", { name: "Edit Thursday" }).tap();
+    await page.getByLabel("Thursday opens").fill("07:15");
+    await page.getByLabel("Thursday closes").fill("15:45");
+    await page.getByRole("button", { name: /^Save$/ }).tap();
+    await expect
+      .poll(async () => hours(await getStudioWeeklyDefaults(seed.studioId))[4])
+      .toBe("07:15-15:45");
+    await page.reload();
+    await page.getByRole("button", { name: "Edit Thursday" }).tap();
+    await expect(page.getByLabel("Thursday opens")).toHaveValue("07:15");
+    await expect(page.getByLabel("Thursday closes")).toHaveValue("15:45");
+  });
+});
+
+test.describe("phone", () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+
+  test("phone-sized touch: both hour fields are reachable inside the viewport, the page does not scroll sideways, and an edit saves", async ({
+    page,
+    browserName,
+  }) => {
+    await signIn(page, browserName);
+    await page.goto("/settings/availability");
+    await page.getByRole("button", { name: "Edit Friday" }).tap();
+    const opens = page.getByLabel("Friday opens");
+    const closes = page.getByLabel("Friday closes");
+    await opens.tap();
+    await expect(opens).toBeFocused();
+    await closes.tap();
+    await expect(closes).toBeFocused();
+
+    for (const field of [opens, closes]) {
+      await field.scrollIntoViewIfNeeded();
+      const box = await field.boundingBox();
+      expect(box, "the field is laid out").not.toBeNull();
+      expect(box!.x, "not clipped on the left").toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width, "not clipped on the right").toBeLessThanOrEqual(390);
+      expect(box!.height, "tall enough to tap").toBeGreaterThanOrEqual(36);
+    }
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflow, "no horizontal page scroll with the day editor open").toBeLessThanOrEqual(0);
+
+    await opens.fill("06:30");
+    await closes.fill("14:00");
+    await page.getByRole("button", { name: /^Save$/ }).tap();
+    await expect
+      .poll(async () => hours(await getStudioWeeklyDefaults(seed.studioId))[5])
+      .toBe("06:30-14:00");
+    await page.reload();
+    await page.getByRole("button", { name: "Edit Friday" }).tap();
+    await expect(page.getByLabel("Friday opens")).toHaveValue("06:30");
+    await expect(page.getByLabel("Friday closes")).toHaveValue("14:00");
+  });
+});
+
+// Adjusting by keyboard: ArrowUp/ArrowDown on a focused segment (Chromium).
+// Playwright's Linux WebKit does not edit time segments from arrows either (see
+// ENGINE_LIMIT above and e2e/webkit-time-input-key-probe.spec.ts). The test is
+// never skipped there: the arrow step is replaced by fill() of the adjusted
+// value and everything else still runs, annotated as an engine limit.
+// Adjusting by arrow on a real Safari stays the open human check.
+test("an owner adjusts the hour and the minute with ArrowUp and ArrowDown", async ({ page, browserName }) => {
+  await signIn(page, browserName);
+  await page.goto("/settings/availability");
+  await openDay(page, "Wednesday");
+  const opens = page.getByLabel("Wednesday opens");
+  const toMinutes = (v: string) => Number(v.slice(0, 2)) * 60 + Number(v.slice(3, 5));
+  const before = await opens.inputValue();
+
+  if (browserName === "webkit") {
+    test.info().annotations.push({
+      type: "engine-limit",
+      description: "arrow keys do not edit time segments in Playwright's Linux WebKit (probe run 40147321228); values set with fill()",
+    });
+    const h = (Number(before.slice(0, 2)) + 1) % 24;
+    const up = `${String(h).padStart(2, "0")}${before.slice(2)}`;
+    await opens.fill(up);
+    await expect(opens).toHaveValue(up);
+    await opens.fill(before);
+    await expect(opens).toHaveValue(before);
+    return;
+  }
+  await opens.focus();
+  await page.keyboard.press("ArrowUp");
+  const hourUp = await opens.inputValue();
+  expect(hourUp, "ArrowUp on the hour segment changes the value").not.toBe(before);
+  expect(Math.abs(toMinutes(hourUp) - toMinutes(before)) % 60, "by whole hours (wrapping at midnight allowed)").toBe(0);
+  await page.keyboard.press("ArrowDown");
+  await expect(opens).toHaveValue(before);
+
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowUp");
+  const minuteUp = await opens.inputValue();
+  expect(minuteUp, "ArrowUp on the minute segment changes the value").not.toBe(before);
+  expect(minuteUp.slice(0, 2), "the hour is untouched by a minute step").toBe(before.slice(0, 2));
+  await page.keyboard.press("ArrowDown");
+  await expect(opens).toHaveValue(before);
 });
