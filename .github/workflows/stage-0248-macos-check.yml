@@ -1,4 +1,4 @@
-# REHEARSAL - NEVER MERGE. ONE macOS execution of rehearsal/s1-script/stage-0248/check.sh at the exact head of PR #1193 (80527bf5): BSD date/find/touch/sed, bash 3.2, shasum.
+# REHEARSAL - NEVER MERGE. ONE macOS execution of rehearsal/s1-script/stage-0248/check.sh at the exact head of PR #1193 (51560cf5): BSD date/find/touch/sed, bash 3.2, shasum.
 # The tree under test is #1193's, not this branch's. check.sh is a Linux CI harness: the three GNU tools it uses for ITS OWN bookkeeping (sha256sum, sed -i with no suffix) are
 # provided by shims in a directory placed on PATH, and `bash` is pinned to /bin/bash (3.2). The gate text under test is never shimmed: check.sh itself asserts that text avoids those tools.
 # No hosted access, no database, no credential.
@@ -14,19 +14,19 @@ permissions:
 
 jobs:
   macos:
-    name: stage-0248/check.sh on macOS arm64 (/bin/bash 3.2, BSD tools) at #1193 80527bf5
+    name: stage-0248/check.sh on macOS arm64 (/bin/bash 3.2, BSD tools) at #1193 51560cf5
     runs-on: macos-14
     timeout-minutes: 15
     steps:
       - name: Checkout the #1193 head, pinned
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 80527bf56e18271ed0c91ccb11b01d0961f04721
+          ref: 51560cf5875ac251ff8b782bdfcbde11cee18cf6
           persist-credentials: false
       - name: Platform facts
         run: |
           set -u
-          test "$(git rev-parse HEAD)" = 80527bf56e18271ed0c91ccb11b01d0961f04721
+          test "$(git rev-parse HEAD)" = 51560cf5875ac251ff8b782bdfcbde11cee18cf6
           uname -sm; sw_vers -productVersion
           /bin/bash --version | head -1
           echo "bash on PATH: $(command -v bash) $(bash -c 'echo $BASH_VERSION')"
