@@ -135,6 +135,73 @@ export function readCanonicalRecord(file = CANONICAL_STATE_FILE) {
 }
 
 /**
+ * OUT-OF-ORDER STAGES. A stage may apply a migration ahead of lower, still
+ * unapplied ones (0248 ahead of 0247). The canonical record declares each such
+ * migration in `hosted_out_of_order`:
+ *
+ *   [{ "version": "0248", "unhosted_below": ["0247"] }]
+ *
+ * meaning: 0248 IS hosted, and 0247 is deliberately NOT hosted yet. This is the
+ * only way a number at or below the hosted max may be absent from production.
+ *
+ * Two failures, both fatal in tests/docs/canonical-production-facts.test.ts:
+ *   undeclared_gaps       a number between the first migration and the hosted
+ *                         max that has no repo file, is not permanently
+ *                         skipped and is not named in any `unhosted_below`
+ *   invalid_declarations  an entry that cannot be true: not a four-digit
+ *                         version, above the hosted max (declared hosted but
+ *                         not hosted), no repo file, listing a version at or
+ *                         above itself, a duplicate, or one that is both
+ *                         declared hosted and declared unhosted
+ * Pure on its inputs so the negative controls can drive it directly.
+ */
+export function evaluateOutOfOrder({ numbers, hostedMaxNumber, skipped = PERMANENTLY_SKIPPED, declared = [] }) {
+  const present = new Set(numbers);
+  const invalid = [];
+  const asNumber = (v) => (typeof v === "string" && /^\d{4}$/.test(v) ? Number.parseInt(v, 10) : null);
+
+  if (!Array.isArray(declared)) {
+    return { undeclared_gaps: [], invalid_declarations: ["hosted_out_of_order must be an array"] };
+  }
+  const hostedDeclared = new Set();
+  const unhostedDeclared = new Set();
+  for (const entry of declared) {
+    const n = asNumber(entry?.version);
+    if (n === null) {
+      invalid.push(`entry has no four-digit version: ${JSON.stringify(entry)}`);
+      continue;
+    }
+    const label = pad(n);
+    if (hostedDeclared.has(n)) invalid.push(`${label} is declared twice`);
+    hostedDeclared.add(n);
+    if (n > hostedMaxNumber) invalid.push(`${label} is declared hosted but is above hosted_migration_max`);
+    if (!present.has(n)) invalid.push(`${label} is declared hosted but has no repo file`);
+    const below = entry.unhosted_below;
+    if (!Array.isArray(below) || below.length === 0) {
+      invalid.push(`${label} must list at least one unhosted_below version`);
+      continue;
+    }
+    for (const b of below) {
+      const bn = asNumber(b);
+      if (bn === null) invalid.push(`${label} lists a malformed unhosted_below version: ${JSON.stringify(b)}`);
+      else if (bn >= n) invalid.push(`${label} lists ${pad(bn)}, which is not below it`);
+      else unhostedDeclared.add(bn);
+    }
+  }
+  for (const n of unhostedDeclared) {
+    if (hostedDeclared.has(n)) invalid.push(`${pad(n)} is declared both hosted and unhosted`);
+  }
+
+  const first = Math.min(...numbers);
+  const skippedSet = new Set(skipped);
+  const gaps = [];
+  for (let n = first; n <= hostedMaxNumber; n += 1) {
+    if (!present.has(n) && !skippedSet.has(n) && !unhostedDeclared.has(n)) gaps.push(pad(n));
+  }
+  return { undeclared_gaps: gaps, invalid_declarations: invalid };
+}
+
+/**
  * Full state: repository facts DERIVED, hosted facts DECLARED.
  */
 export function getMigrationState({ dir, canonicalFile } = {}) {
@@ -152,6 +219,12 @@ export function getMigrationState({ dir, canonicalFile } = {}) {
   const pending = entries
     .filter((e) => e.number > hostedMaxNumber)
     .map((e) => e.version);
+
+  const outOfOrder = evaluateOutOfOrder({
+    numbers,
+    hostedMaxNumber,
+    declared: record.hosted_out_of_order ?? [],
+  });
 
   return {
     repo_migration_max: pad(repoMaxNumber),
@@ -173,6 +246,9 @@ export function getMigrationState({ dir, canonicalFile } = {}) {
     hosted_note: record.hosted_note,
     repo_equals_hosted: repoMaxNumber === hostedMaxNumber,
     pending_migrations: pending,
+    hosted_out_of_order: record.hosted_out_of_order ?? [],
+    undeclared_gaps: outOfOrder.undeclared_gaps,
+    invalid_out_of_order_declarations: outOfOrder.invalid_declarations,
     versions: entries.map((e) => e.version),
     files: entries.map((e) => e.file),
   };
