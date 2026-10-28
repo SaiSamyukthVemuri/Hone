@@ -29,7 +29,7 @@ proc fail {msg} {
   catch {close}; catch {wait}
   finish 2
 }
-proc grab {} { global expect_out; if {[info exists expect_out(buffer)]} { grab } }
+proc grab {} { global expect_out; if {[info exists expect_out(buffer)]} { note $expect_out(buffer) } }
 # one prompt, one answer; anything else is a STOP
 proc step {prompt val {tmo 30}} {
   global timeout expect_out
