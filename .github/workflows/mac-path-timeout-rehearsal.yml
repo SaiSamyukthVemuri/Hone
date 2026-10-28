@@ -86,8 +86,21 @@ jobs:
         # default registry. Either way the pinned CLI starts the same images.
         run: |
           set -o pipefail
-          { SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io supabase start -x "$EXCLUDE" \
-              || supabase start -x "$EXCLUDE"; } 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+          # Run 40705975218 died here on registry throttling ("toomanyrequests: Data
+          # limit exceeded" from both ghcr.io and public.ecr.aws) before the rehearsal
+          # script ran. The throttle is a time window, so retry the SAME pinned-CLI start
+          # up to three times, 120 s apart, and only when the log shows that signature;
+          # the credential stays held across this one step only, as before.
+          rc=1
+          for attempt in 1 2 3; do
+            { SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io supabase start -x "$EXCLUDE" \
+                || supabase start -x "$EXCLUDE"; } 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+            rc=${PIPESTATUS[0]}
+            [ "$rc" = 0 ] && break
+            grep -q 'toomanyrequests' "$RUNNER_TEMP/supabase-start.log" || break
+            echo "attempt $attempt throttled; waiting 120 s"; supabase stop --no-backup > /dev/null 2>&1 || true; sleep 120
+          done
+          exit "$rc"
 
       - name: Log out of ghcr.io (D7b)
         if: always()
