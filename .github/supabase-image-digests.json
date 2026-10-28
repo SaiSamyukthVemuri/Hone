@@ -1,0 +1,83 @@
+{
+  "_comment": "Digest table for the images the pinned Supabase CLI 2.102.0 starts. Each value is the manifest-list (index) digest of ghcr.io/supabase/<name>:<tag>, read once with `docker buildx imagetools inspect` on 2026-10-27 (CI-REGISTRY). The CI pre-pull (ci.yml, nightly.yml) pulls every image BY THIS DIGEST and refuses to tag anything whose digest it cannot confirm; an image not listed here is left to the stack start. Bump together with the CLI pin (tests/ci pins the CLI version and the key set).",
+  "cli": "2.102.0",
+  "generated": "2026-10-27",
+  "images": {
+    "postgres:17.6.1.131": "sha256:42088c86593e0d4f47b2b2bd3c964cee31a1bbc8e560619fd3e84e5fdd973f6d",
+    "kong:2.8.1": "sha256:1b53405d8680a09d6f44494b7990bf7da2ea43f84a258c59717d4539abf09f6d",
+    "gotrue:v2.189.0": "sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf",
+    "postgrest:v14.12": "sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c",
+    "realtime:v2.100.0": "sha256:42b38a6f5d60a1ab9e47a30ecf1b26a5ea2d3497cf16051621d0a98280f15094",
+    "storage-api:v1.60.0": "sha256:8cbdce289bf6619d6aa649eafeb451ace26158226643e6ce7bef6746be8e96b5",
+    "imgproxy:v3.8.0": "sha256:0facd355d50f3be665ebe674486f2b2e9cdaebd3f74404acd9b7fece2f661435",
+    "edge-runtime:v1.74.0": "sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120",
+    "studio:2026.05.25-sha-65c570e": "sha256:c18b922ab1afdc4f25600f5c5bba701c302823013df5388927205a472ea95a10",
+    "postgres-meta:v0.96.6": "sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300",
+    "logflare:1.42.0": "sha256:22ef089aeaabb05a3724833b60904a35a7597fe9b21b9aeb77b02c2e382931cd",
+    "vector:0.53.0-alpine": "sha256:ca92d617e905953c3f852e7e88061f7039460e733522e3f0c21bc6ae946b2558",
+    "mailpit:v1.22.3": "sha256:f7f7c31de4de59540ad6515a0ca057a77525bca2069b6e747d873ca66c10fe08",
+    "supavisor:2.9.5": "sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07"
+  },
+  "verified_equal_on": {
+    "postgres:17.6.1.131": [
+      "public.ecr.aws/supabase",
+      "docker.io/supabase"
+    ],
+    "kong:2.8.1": [
+      "public.ecr.aws/supabase",
+      "docker.io/library/kong"
+    ],
+    "gotrue:v2.189.0": [
+      "public.ecr.aws/supabase",
+      "docker.io/supabase"
+    ],
+    "postgrest:v14.12": [
+      "public.ecr.aws/supabase",
+      "docker.io/postgrest/postgrest"
+    ],
+    "realtime:v2.100.0": [
+      "public.ecr.aws/supabase",
+      "docker.io/supabase"
+    ],
+    "storage-api:v1.60.0": [
+      "public.ecr.aws/supabase",
+      "docker.io/supabase"
+    ],
+    "imgproxy:v3.8.0": [
+      "public.ecr.aws/supabase",
+      "docker.io/darthsim/imgproxy"
+    ],
+    "edge-runtime:v1.74.0": [
+      "public.ecr.aws/supabase",
+      "docker.io/supabase"
+    ],
+    "studio:2026.05.25-sha-65c570e": [
+      "public.ecr.aws/supabase",
+      "docker.io/supabase"
+    ],
+    "postgres-meta:v0.96.6": [
+      "public.ecr.aws/supabase",
+      "docker.io/supabase"
+    ],
+    "logflare:1.42.0": [
+      "public.ecr.aws/supabase",
+      "docker.io/supabase"
+    ],
+    "vector:0.53.0-alpine": [
+      "docker.io/timberio/vector"
+    ],
+    "mailpit:v1.22.3": [
+      "public.ecr.aws/supabase",
+      "docker.io/axllent/mailpit"
+    ],
+    "supavisor:2.9.5": [
+      "public.ecr.aws/supabase",
+      "docker.io/supabase"
+    ]
+  },
+  "no_fallback": [
+    "vector",
+    "logflare"
+  ],
+  "no_fallback_reason": "vector reads container logs through a bind mount of /var/run/docker.sock (seen read-only on a running local stack, docker inspect); logflare ships with it: a substituted image would be root-equivalent on the runner while the job holds the registry credential. They are pulled from the primary registry only."
+}
