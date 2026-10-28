@@ -1081,6 +1081,7 @@ export default async function SessionDetailPage({
           // the dashboard row.
           appointmentId={linkedAppointmentId}
           settledMethod={liveSettlement?.method ?? null}
+          settledId={liveSettlement?.id ?? null}
           settledAmountCents={liveSettlement?.amountCents ?? null}
           settlementQuotedAmountCents={settlementQuotedAmountCents}
           // The UI's copy of the database's own rule: only a COMPLETED
