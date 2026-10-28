@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
   adminQuery,
+  adminTx,
   closePool,
   seedStudio,
   userQuery,
@@ -10,9 +12,16 @@ import {
 
 // Migration 0118: once an intake is submitted/reviewed, an authenticated member
 // cannot directly rewrite its answers / submitted_at / status / review
-// attribution — while draft editing, legitimate review, and reissue-based
+// attribution — while phased/governed draft editing, legitimate review, and reissue-based
 // corrections still work. Proven on the REAL migrated local DB. Uses only
 // non-clinical placeholder responses.
+
+// Phase1 is exercised only in a rolled-back catalog/data savepoint. The
+// final248 guard remains installed outside it; no migration history is altered.
+const additiveMigration = readFileSync("supabase/migrations/0243_intake_revision_cas_and_profile_sync.sql", "utf8");
+const additiveStart = additiveMigration.indexOf("create function public.advance_intake_revision()");
+const additiveGuardSql = additiveMigration.slice(additiveStart, additiveMigration.indexOf("\n$$;", additiveStart) + 4)
+  .replace("create function", "create or replace function");
 
 let A: SeededStudio;
 let B: SeededStudio;
@@ -55,14 +64,45 @@ afterAll(async () => {
 });
 
 describe("0118: draft edits + approved review/amendment paths still work", () => {
-  it("1. a draft (in_progress) intake's answers CAN be updated by a member", async () => {
+  it("1a. additive0243 retains the legacy authenticated draft edit before248", async () => {
     const id = await seedIntake(A, "in_progress");
-    const r = await userQuery(
-      A.userId,
-      `update public.client_intake_forms set responses = '{"q":"draft2"}'::jsonb, current_step = 2 where id = $1`,
-      [id],
-    );
-    expect(r.rowCount).toBe(1);
+    await adminTx(async q => {
+      const { rows: [original] } = await q("select pg_catalog.pg_get_functiondef('public.advance_intake_revision()'::regprocedure) as definition");
+      await q("savepoint additive_positive");
+      try {
+        expect(additiveGuardSql).toContain("new.revision := old.revision + 1");
+        await q(additiveGuardSql);
+        await q("set local role authenticated");
+        await q("select set_config('request.jwt.claims',$1,true)", [JSON.stringify({ sub: A.userId, role: "authenticated" })]);
+        expect((await q("select current_user as role,auth.uid()::text as user_id")).rows[0])
+          .toEqual({ role: "authenticated", user_id: A.userId });
+        const res = await q(`update public.client_intake_forms set responses='{"q":"draft2"}'::jsonb,current_step=2 where id=$1`, [id]);
+        expect(res.rowCount).toBe(1);
+        expect((await q("select responses,current_step,revision::text from public.client_intake_forms where id=$1", [id])).rows[0])
+          .toEqual({ responses: { q: "draft2" }, current_step: 2, revision: "1" });
+      } finally {
+        await q("rollback to savepoint additive_positive");
+      }
+      expect((await q("select pg_catalog.pg_get_functiondef('public.advance_intake_revision()'::regprocedure) as definition")).rows[0].definition)
+        .toBe(original.definition);
+    });
+    expect((await adminQuery("select responses,current_step,revision::text from public.client_intake_forms where id=$1", [id])).rows[0])
+      .toEqual({ responses: { q: "draft" }, current_step: 1, revision: "0" });
+  });
+
+  it("1b. final248 denies direct draft replacement and permits the governed CAS edit", async () => {
+    const id = await seedIntake(A, "in_progress");
+    const before = (await adminQuery("select responses,current_step,revision::text from public.client_intake_forms where id=$1", [id])).rows[0];
+    await expect(userQuery(A.userId,`update public.client_intake_forms set responses='{"q":"draft2"}'::jsonb,current_step=2 where id=$1`,[id]))
+      .rejects.toMatchObject({ code: "42501", message: "Protected intake changes require the governed revision command." });
+    expect((await adminQuery("select responses,current_step,revision::text from public.client_intake_forms where id=$1", [id])).rows[0]).toEqual(before);
+    const saved = await adminTx(async q => {
+      await q("set local role service_role");
+      return q("select * from public.write_intake_revision($1,$2,$3,0,$4::jsonb,2,'save','{}'::jsonb)", [id,A.studioId,A.clientId,JSON.stringify({ q: "draft2" })]);
+    });
+    expect(saved.rows).toEqual([{ outcome: "saved", new_revision: "1" }]);
+    expect((await adminQuery("select responses,current_step,status,revision::text from public.client_intake_forms where id=$1", [id])).rows[0])
+      .toEqual({ responses: { q: "draft2" }, current_step: 2, status: "in_progress", revision: "1" });
   });
 
   it("9. the approved review action (submitted -> reviewed by the caller) works", async () => {
