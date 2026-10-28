@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   existsSync,
   mkdirSync,
@@ -13,6 +13,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
+
+// Real-time bound, intrinsic: these cases spawn real `git`/`node` subprocesses
+// and scan the checkout, which measured 5-11 s each on a loaded host against
+// vitest's 5 s default (FLAKE-SYSDEPS). Only the ceiling moves; no assertion does.
+vi.setConfig({ testTimeout: 60_000 });
 
 // Workflow configuration + canonical migration-state guards. These replace the
 // 18 hand-maintained migration-max pins that used to be scattered across
