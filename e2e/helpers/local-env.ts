@@ -191,6 +191,9 @@ export function withSentryEgressGuard(existing: string | undefined): string {
 // CI lane's dummy/test-safe values, with Supabase pointed at the
 // LOCAL stack. Nothing here is a real secret.
 export const E2E_WEB_SERVER_ENV: Record<string, string> = {
+  // HELD portrait policy: OFF unless the outer process explicitly enables it
+  // for a dedicated server run (e2e/fett-client-portrait.spec.ts).
+  ...(process.env.HONE_CLIENT_PORTRAIT_ENABLED === "true" ? { HONE_CLIENT_PORTRAIT_ENABLED: "true" } : {}),
   // RESCHEDULE-E2E-01: THE FAKE EMAIL TRANSPORT IS ARMED FOR EVERY RUN OF THIS
   // LANE, not only when the outer job opts in.
   //

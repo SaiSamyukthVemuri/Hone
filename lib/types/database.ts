@@ -858,6 +858,9 @@ export type Client = {
   normalized_email: string | null;
 
   // Existing finite 0213–0246 schema fields; this DTO grants no write authority.
+  //
+  // Migration 0231: the client's identification portrait, a pointer to one of
+  // their own client-scoped, unarchived treatment photos (null = none).
   portrait_image_id: string | null;
 };
 
