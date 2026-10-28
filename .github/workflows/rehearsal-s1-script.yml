@@ -207,6 +207,11 @@ jobs:
           DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
           echo "db container: $DB"
           bash rehearsal/hone-release/ci/refhash.sh "$DB" 2>&1 | tee "$RUNNER_TEMP/refhash.txt"; exit ${PIPESTATUS[0]}
+      - name: HON66 stage 0248 alone - 0248-only verify bundle with body hash (same database; later files proven not to redefine its function)
+        run: |
+          set -o pipefail
+          DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
+          bash rehearsal/hone-release/ci/refhash-stage.sh "$DB" templates/stage-0248 0248 0248 1 1 2 2>&1 | tee "$RUNNER_TEMP/refhash-0248.txt"; exit ${PIPESTATUS[0]}
 
   download-line:
     name: the one-line download command under bash 3.2 and zsh (fake scp) on macOS
