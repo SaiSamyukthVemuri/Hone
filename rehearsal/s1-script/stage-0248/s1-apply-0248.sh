@@ -1,5 +1,5 @@
 #!/bin/bash
-# Hone STAGE 0248-ONLY (variant of the #1035 S1 apply 2dfd3354; constants only): apply migration 0248 (1 file) to the hosted project through the SESSION POOLER, with the
+# Hone STAGE 0248-ONLY (variant of the #1035 S1 apply 2dfd3354; reviewed constants plus three reviewed gates: S0a age, single-flight marker, reconcile): apply migration 0248 (1 file) to the hosted project through the SESSION POOLER, with the
 # vendor supabase-go (dce26b75) and ONLY the stage bundle (0001..0246 + sealed 0248, no 0247). ONE dry run, then ONE push.
 # Fail-closed: the first failed check, refusal, authentication error or unexpected output stops. No step is retried.
 # Nothing here creates a login role, resets a password or unbans an IP. PREVENTION: --db-url never reaches those code

@@ -116,25 +116,39 @@ mkdir -p "$G/b4/s1-apply"; echo target > "$G/b4/t"; ln -s "$G/b4/t" "$G/b4/s1-ap
 mkdir -p "$G/b5"; mkfix "$G/b5" x 2026-10-28T11:30:00Z; PRECREATE=1 gate b5 $NOW $NOW 2026-10-28T11:00:00Z 2026-10-28T11:50:00Z; refuses "gate 2: a marker created after the start check (a second terminal) refuses the exclusive create; nothing applied" 'cannot create the IN-FLIGHT marker'
 [ "$(cat "$G/b5/s1-apply/APPLY-STATE")" = raced ] && ok "  and the racing marker was left untouched" || bad "racing marker was overwritten"
 # --- the reconcile script
-mkrc() { { echo 'set -u; umask 077'; grep -E '^(NONE_WAIT_S|SEALED_SHA)=' "$R"; echo 'iso="[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"; die() { echo "STOP: $*" >&2; exit 1; }'
+mkrc() { { echo 'set -u; umask 077'; grep -E '^(NONE_WAIT_S|SEALED_SHA|SQL_S1H|SQL_G02)=' "$R"; echo 'pgrep() { return ${PGREP_RC:-1}; }'; echo 'iso="[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"; die() { echo "STOP: $*" >&2; exit 1; }'
     echo 'shasum() { shift 2; sha256sum "$@"; }'; grep -E '^(sha|epoch)\(\)' "$R"; echo 'utcnow() { echo "$FAKE_NOW"; }'; echo 'ROOT=$1; STATEF="$ROOT/s1-apply/APPLY-STATE"'
     blk "$R" RECONCILE; echo 'reconcile; echo "CLASS=$RECONCILE_CLASS"'; } > "$G/rc.sh"; }
 mkrc
 rcrun() { OUT=$(FAKE_NOW=$2 bash "$G/rc.sh" "$G/$1" 2>&1); RC=$?; }
 mkmark() { mkdir -p "$G/$1/s1-apply"; echo "IN-FLIGHT 2026-10-28T11:00:00Z head=x run=y" > "$G/$1/s1-apply/APPLY-STATE"; }
+SQLPIN_S1H=a4d3c5afad277cef9c720ea534309b6e6843d92e8ecf15b5232e180f03246e2a; SQLPIN_G02=19e4e05793e5fa033921ac35cd2a7337b7a6477d0f6a25747134791f7b317cfe
+sidecar() { # sidecar DIR NAME PIN TIME : the REAL single-line sidecar shape of the read runner; SQLBAD=1 names another query, TAMPER=1 changes the result after the sidecar was written
+  local j=$1/results/$2.json pin=$3; [ "${SQLBAD:-}" = 1 ] && pin=0000000000000000000000000000000000000000000000000000000000000000
+  printf '{"file":"%s.sql","sql_sha256":"%s","result_sha256":"%s","started_at_utc":"%s","captured_at_utc":"%s","exit_code":0,"runner_sha256":"r","manifest_sha256":"m"}\n' "$2" "$pin" "$(sha256sum "$j" | cut -d' ' -f1)" "$4" "$4" > "$1/results/$2.meta.json"
+  [ "${TAMPER:-}" = 1 ] && sed -i 's/"rows_0247":"0"/"rows_0247":"0" /;s/"versions_ge_0247":"0"/"versions_ge_0247":"0" /' "$j"; return 0; }
 mks1() { local d=$G/$1/s1read.x t=$2 rows=${3:-246} mx=${4:-0248}; mkdir -p "$d/results"; chmod 700 "$d"; echo "[{\"applied_count\":\"$rows\",\"hosted_max\":\"$mx\",\"rows_0248\":\"1\",\"rows_0247\":\"0\"}]" > "$d/results/s1-history-0248.json"
-  printf '{"file":"s1-history-0248.sql","started_at_utc":"%s","captured_at_utc":"%s"}\n' "$t" "$t" > "$d/results/s1-history-0248.meta.json"; echo 'OVERALL PASS (0248 read-back: history and 2 verify-bundle checks; read-only, not a promotion)' > "$d/verdict.txt"; }
+  sidecar "$d" s1-history-0248 $SQLPIN_S1H "$t"; echo 'OVERALL PASS (0248 read-back: history and 2 verify-bundle checks; read-only, not a promotion)' > "$d/verdict.txt"; }
 mkdir -p "$G/c1"; mkmark c1; mks1 c1 2026-10-28T11:40:00Z; rcrun c1 $NOW
 [ $RC = 0 ] && echo "$OUT" | grep -q 'CLASS=ALL' && [ ! -e "$G/c1/s1-apply/APPLY-STATE" ] && ls "$G"/c1/s1-apply/APPLY-STATE.cleared.* >/dev/null 2>&1 && ls "$G"/c1/s1-apply/RECONCILE-* >/dev/null 2>&1 && ok "reconcile ALL: a passing s1read newer than the marker archives the marker (renamed, not deleted) and writes a record" || bad "reconcile ALL failed" "rc=$RC $OUT"
 mkdir -p "$G/c2"; mkmark c2; mks1 c2 2026-10-28T10:50:00Z; rcrun c2 $NOW; [ $RC != 0 ] && echo "$OUT" | grep -q 'no usable read-back evidence newer than the marker' && [ -e "$G/c2/s1-apply/APPLY-STATE" ] && ok "reconcile REFUSES evidence older than the marker and leaves the marker" || bad "old evidence accepted" "$OUT"
 mkdir -p "$G/c3"; mkmark c3; mks1 c3 2026-10-28T11:40:00Z 245 0246; rcrun c3 $NOW; [ $RC != 0 ] && echo "$OUT" | grep -q 'no usable read-back evidence' && [ -e "$G/c3/s1-apply/APPLY-STATE" ] && ok "reconcile REFUSES an s1read whose history is not the 0248 end state" || bad "wrong history accepted" "$OUT"
 mks0() { local d=$G/$1/window.x t=$2 rows=${3:-245} mx=${4:-0246}; mkdir -p "$d/results" "$d/attest"; chmod 700 "$d"; echo "[{\"applied_count\":\"$rows\",\"hosted_max\":\"$mx\",\"versions_ge_0247\":\"0\"}]" > "$d/results/g02-history-0248.json"
-  printf '{"file":"g02-history-0248.sql","started_at_utc":"%s","captured_at_utc":"%s"}\n' "$t" "$t" > "$d/results/g02-history-0248.meta.json"; echo '{"s":"1f6f9ad0026cee66b970e9dc630f1497aa10966df2adb9433d8f8c85bbc44cc3"}' > "$d/attest/attestation.json"
+  sidecar "$d" g02-history-0248 $SQLPIN_G02 "$t"; echo '{"s":"1f6f9ad0026cee66b970e9dc630f1497aa10966df2adb9433d8f8c85bbc44cc3"}' > "$d/attest/attestation.json"
   echo 'OVERALL PASS (provider range; base backup UNVERIFIED; restore not tested)' > "$d/verdict.txt"; }
 mkdir -p "$G/c4"; mkmark c4; mks0 c4 2026-10-28T11:10:00Z; rcrun c4 $NOW; [ $RC != 0 ] && echo "$OUT" | grep -q 'at least 1200 s after the marker' && [ -e "$G/c4/s1-apply/APPLY-STATE" ] && ok "reconcile NONE REFUSES a history read taken only 10 minutes after the marker (the push could still be running)" || bad "early NONE accepted" "$OUT"
 mkdir -p "$G/c5"; mkmark c5; mks0 c5 2026-10-28T11:25:00Z; rcrun c5 $NOW; [ $RC = 0 ] && echo "$OUT" | grep -q 'CLASS=NONE' && [ ! -e "$G/c5/s1-apply/APPLY-STATE" ] && ok "reconcile NONE accepts a passing S0a history read taken 25 minutes after the marker (245 rows, max 0246)" || bad "NONE refused" "$OUT"
 mkdir -p "$G/c6"; mkmark c6; mks0 c6 2026-10-28T11:25:00Z 246 0248; rcrun c6 $NOW; [ $RC != 0 ] && [ -e "$G/c6/s1-apply/APPLY-STATE" ] && ok "reconcile REFUSES an S0a-shaped read that shows 246 rows (it is not NONE; ALL needs the s1read evidence)" || bad "246-row S0a accepted as NONE" "$OUT"
 mkdir -p "$G/c7"; rcrun c7 $NOW; [ $RC != 0 ] && echo "$OUT" | grep -q 'there is no APPLY-STATE marker' && ok "reconcile REFUSES when there is no marker" || bad "no-marker case" "$OUT"
+# H1: the evidence must be BOUND: the sidecar names the pinned query and the result's own sha256
+mkdir -p "$G/h1a"; mkmark h1a; SQLBAD=1 mks1 h1a 2026-10-28T11:40:00Z; rcrun h1a $NOW; [ $RC != 0 ] && echo "$OUT" | grep -q 'no usable read-back evidence' && [ -e "$G/h1a/s1-apply/APPLY-STATE" ] && ok "reconcile ALL REFUSES an s1read sidecar that names another query (sql_sha256 is not the pinned a4d3c5af)" || bad "ALL accepted a wrong sql_sha256" "$OUT"
+mkdir -p "$G/h1b"; mkmark h1b; TAMPER=1 mks1 h1b 2026-10-28T11:40:00Z; rcrun h1b $NOW; [ $RC != 0 ] && echo "$OUT" | grep -q 'no usable read-back evidence' && [ -e "$G/h1b/s1-apply/APPLY-STATE" ] && ok "reconcile ALL REFUSES an s1read result changed after its sidecar (result_sha256 does not match the JSON)" || bad "ALL accepted a tampered result" "$OUT"
+mkdir -p "$G/h1c"; mkmark h1c; SQLBAD=1 mks0 h1c 2026-10-28T11:25:00Z; rcrun h1c $NOW; [ $RC != 0 ] && echo "$OUT" | grep -q 'no usable read-back evidence' && [ -e "$G/h1c/s1-apply/APPLY-STATE" ] && ok "reconcile NONE REFUSES a g02 sidecar that names another query (not the pinned 19e4e057)" || bad "NONE accepted a wrong sql_sha256" "$OUT"
+mkdir -p "$G/h1d"; mkmark h1d; TAMPER=1 mks0 h1d 2026-10-28T11:25:00Z; rcrun h1d $NOW; [ $RC != 0 ] && echo "$OUT" | grep -q 'no usable read-back evidence' && [ -e "$G/h1d/s1-apply/APPLY-STATE" ] && ok "reconcile NONE REFUSES a g02 result changed after its sidecar (result_sha256 does not match the JSON)" || bad "NONE accepted a tampered result" "$OUT"
+# H2: NONE is the one route that allows a second push
+mkdir -p "$G/h2a"; mkmark h2a; echo "APPLIED-UNVERIFIED 2026-10-28T11:00:00Z head=x run=y" > "$G/h2a/s1-apply/APPLY-STATE"; mks0 h2a 2026-10-28T11:25:00Z; rcrun h2a $NOW; [ $RC != 0 ] && echo "$OUT" | grep -q 'marker word is not IN-FLIGHT' && [ -e "$G/h2a/s1-apply/APPLY-STATE" ] && ok "reconcile NONE REFUSES an APPLIED-UNVERIFIED marker even with a passing 245-row read" || bad "NONE cleared APPLIED-UNVERIFIED" "$OUT"
+mkdir -p "$G/h2b"; mkmark h2b; mks0 h2b 2026-10-28T11:25:00Z; PGREP_RC=0 rcrun h2b $NOW; [ $RC != 0 ] && echo "$OUT" | grep -q 'a supabase or s1-apply-0248 process is running' && [ -e "$G/h2b/s1-apply/APPLY-STATE" ] && ok "reconcile NONE REFUSES while a supabase or s1-apply-0248 process is running" || bad "NONE cleared with a process running" "$OUT"
+mkdir -p "$G/h2c"; mkmark h2c; mks0 h2c 2026-10-28T11:25:00Z; PGREP_RC=127 rcrun h2c $NOW; [ $RC != 0 ] && echo "$OUT" | grep -q 'cannot be ruled out' && [ -e "$G/h2c/s1-apply/APPLY-STATE" ] && ok "reconcile NONE REFUSES when the process check itself cannot run (status 127)" || bad "NONE cleared with the process check broken" "$OUT"
 # --- portability of the lifted text (macOS bash 3.2 / BSD tools): none of the Linux-only or bash-4 constructs
 cat "$V" | sed -n '/^#S0AGATE-BEGIN$/,/^#S0AGATE-END$/p;/^#SINGLEFLIGHT-BEGIN$/,/^#SINGLEFLIGHT-END$/p;/^#SFWRITE-BEGIN$/,/^#SFWRITE-END$/p;/^#SFDONE-BEGIN$/,/^#SFDONE-END$/p;/^#S0ASTART-BEGIN$/,/^#S0ASTART-END$/p' > "$G/lifted.txt"; blk "$R" RECONCILE >> "$G/lifted.txt"
 if grep -nE 'flock|stat -c|sync [^2 ]|declare -A|mapfile|readarray|\[\[|\$\{[a-z_A-Z0-9]+(,,|\^\^)|date -d|sha256sum|readlink -f' "$G/lifted.txt" > "$G/port.txt"; then bad "a non-portable construct is in the gate text" "$(head -3 "$G/port.txt")"; else ok "the gate and reconcile text uses no flock, stat -c, sync FILE, bash 4 construct, GNU date -d or sha256sum"; fi
@@ -164,7 +178,7 @@ unset PRECREATE
 mg symlink 's/ || \[ -L "\$STATEF" \]//'                         'mkfix "$r" x 2026-10-28T11:30:00Z; mkdir -p "$r/s1-apply"; ln -s /nonexistent "$r/s1-apply/APPLY-STATE"' $NOW $NOW 2026-10-28T11:00:00Z 2026-10-28T11:50:00Z 'UNKNOWN or not yet verified'
 mr() { # mr ID SEDEXPR SETUP NOW PATTERN : reconcile mutation
   local id=$1 r=$MUT/rr-$1 o rc; rm -rf "$r"; mkdir -p "$r"; sed "$2" "$R" > "$MUT/$id.rvar"; cmp -s "$R" "$MUT/$id.rvar" && { bad "mutation $id did not change the text"; return; }
-  { echo 'set -u; umask 077'; grep -E '^(NONE_WAIT_S|SEALED_SHA)=' "$MUT/$id.rvar"; echo 'iso="[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"; die() { echo "STOP: $*" >&2; exit 1; }; shasum() { shift 2; sha256sum "$@"; }'
+  { echo 'set -u; umask 077'; grep -E '^(NONE_WAIT_S|SEALED_SHA|SQL_S1H|SQL_G02)=' "$MUT/$id.rvar"; echo 'pgrep() { return ${PGREP_RC:-1}; }'; echo 'iso="[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"; die() { echo "STOP: $*" >&2; exit 1; }; shasum() { shift 2; sha256sum "$@"; }'
     grep -E '^(sha|epoch)\(\)' "$R"; echo 'utcnow() { echo "$FAKE_NOW"; }; ROOT=$1; STATEF="$ROOT/s1-apply/APPLY-STATE"'; blk "$MUT/$id.rvar" RECONCILE; echo 'reconcile; echo "CLASS=$RECONCILE_CLASS"'; } > "$MUT/$id.rsh"
   G2=$G; G=$MUT; eval "$3"; G=$G2
   o=$(FAKE_NOW=$4 bash "$MUT/$id.rsh" "$r" 2>&1); rc=$?; mtotal=$((mtotal+1))
@@ -172,9 +186,14 @@ mr() { # mr ID SEDEXPR SETUP NOW PATTERN : reconcile mutation
 mr nonewait 's/^NONE_WAIT_S=1200$/NONE_WAIT_S=0/'              'mkmark "rr-$id"; mks0 "rr-$id" 2026-10-28T11:10:00Z' $NOW 'at least 1200 s after the marker'
 mr older    's/"\$at_s" -gt "\$mt_s"/"$at_s" -gt 0/'              'mkmark "rr-$id"; mks1 "rr-$id" 2026-10-28T10:50:00Z' $NOW 'no usable read-back evidence newer than the marker'
 mr hist     's/"hosted_max":"0248"/"hosted_max"/'                'mkmark "rr-$id"; mks1 "rr-$id" 2026-10-28T11:40:00Z 246 0246' $NOW 'no usable read-back evidence'
+mr nopin    's/ \&\& meta_ok "\$d\/results\/s1-history-0248.meta.json" "\$f" s1-history-0248.sql "\$SQL_S1H"//' 'mkmark "rr-$id"; SQLBAD=1 mks1 "rr-$id" 2026-10-28T11:40:00Z' $NOW 'no usable read-back evidence'
+mr norsha   's/grep -Fq -e "\\"result_sha256\\":\\"\$rs\\","/true/' 'mkmark "rr-$id"; TAMPER=1 mks1 "rr-$id" 2026-10-28T11:40:00Z' $NOW 'no usable read-back evidence'
+mr noword   's/= IN-FLIGHT \] || die/= IN-FLIGHT -o 1 = 1 ] || die/' 'mkmark "rr-$id"; echo "APPLIED-UNVERIFIED 2026-10-28T11:00:00Z head=x run=y" > "$G/rr-$id/s1-apply/APPLY-STATE"; mks0 "rr-$id" 2026-10-28T11:25:00Z' $NOW 'marker word is not IN-FLIGHT'
+mr noproc   's/\[ "\$pr" = 1 \] || die/true || die/' 'mkmark "rr-$id"; mks0 "rr-$id" 2026-10-28T11:25:00Z; export PGREP_RC=0' $NOW 'process is running'
+unset PGREP_RC
 echo "MUTATIONS: $mcaught of $mtotal caught"
 [ "$mcaught" = "$mtotal" ] && ok "every new refusal's negative control caught its mutation (N of N: $mcaught of $mtotal)" || bad "$((mtotal - mcaught)) mutation(s) survived"
 
 echo "RESULT: $pass passed, $fail failed"
-EXPECT=56; [ $((pass + fail)) = $EXPECT ] || { echo "FAIL - $((pass + fail)) of $EXPECT cases ran"; exit 1; }
+EXPECT=67; [ $((pass + fail)) = $EXPECT ] || { echo "FAIL - $((pass + fail)) of $EXPECT cases ran"; exit 1; }
 [ "$fail" = 0 ]

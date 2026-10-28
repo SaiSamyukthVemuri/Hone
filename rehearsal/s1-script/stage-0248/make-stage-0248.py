@@ -32,7 +32,7 @@ src = src.replace("# The 34 pending files and their sha256, from the GO package 
 def rep(old, new, n=1):
     global src
     assert src.count(old) == n, (src.count(old), old[:70]); src = src.replace(old, new)
-rep("# Hone #1035 S1 (row 4): apply migrations 0213..0246 (34 files) to the hosted project", "# Hone STAGE 0248-ONLY (variant of the #1035 S1 apply 2dfd3354; constants only): apply migration 0248 (1 file) to the hosted project")
+rep("# Hone #1035 S1 (row 4): apply migrations 0213..0246 (34 files) to the hosted project", "# Hone STAGE 0248-ONLY (variant of the #1035 S1 apply 2dfd3354; reviewed constants plus three reviewed gates: S0a age, single-flight marker, reconcile): apply migration 0248 (1 file) to the hosted project")
 rep("and ONLY the migration bundle committed at d189768b. ONE dry run, then ONE push.", "and ONLY the stage bundle (0001..0246 + sealed 0248, no 0247). ONE dry run, then ONE push.")
 rep('# Exit 0 ONLY after the push log shows exactly 34 "Applying migration" lines in order,', '# Exit 0 ONLY after the push log shows exactly 1 "Applying migration" line (0248),')
 rep("# and the CLI exited 0. That does NOT replace the read-back (history = 245 rows, max 0246) and the post-S1 checks.", "# and the CLI exited 0. That does NOT replace the read-back (history = 246 rows, max 0248, 0247 absent) and the stage checks.")
