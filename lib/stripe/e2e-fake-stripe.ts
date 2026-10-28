@@ -77,7 +77,11 @@ function recalledMoney(run: string, id: string | null | undefined): FakeMoney {
 // for (its create key, which selects the configured outcome, plus the customer
 // and payment method the real object would state) so confirm and retrieve can
 // answer in Stripe's shape.
-type FakeIntentShape = { createKey: string | null; customer: string | null; paymentMethod: string | null };
+type FakeIntentShape = {
+  createKey: string | null; customer: string | null; paymentMethod: string | null;
+  // Set by the first confirmation; a retrieve before it states the unconfirmed object.
+  confirmed?: boolean;
+};
 const intentShapeByRun = new Map<string, Map<string, FakeIntentShape>>();
 function rememberIntent(run: string, id: string, shape: FakeIntentShape): void {
   const m = intentShapeByRun.get(run) ?? new Map<string, FakeIntentShape>();
@@ -165,7 +169,9 @@ function synthPaymentIntent(run: string, opts: RequestOpts, params?: CreatePiPar
   // creates NO new processor effect, but it IS still an app-level invocation.
   const replay = existing !== null;
   const seq = existing ? null : nextSeq(run);
-  const id = existing ?? `pi_test_e2e_${run}_${seq}`;
+  // The producer only binds ids of the form pi_[A-Za-z0-9_]+, and a run id may
+  // contain hyphens.
+  const id = existing ?? `pi_test_e2e_${run.replace(/-/g, "_")}_${seq}`;
   if (!existing) {
     // First-seen key → THIS call is the unique processor object. Creating it
     // moves no money: it is unconfirmed until the bind winner confirms.
@@ -220,6 +226,7 @@ function synthConfirm(run: string, id: string, opts: RequestOpts) {
   const shape = recalledIntent(run, id);
   const outcome = outcomeFor(run, shape.createKey);
   const money = recalledMoney(run, id);
+  rememberIntent(run, id, { ...shape, confirmed: true });
   const chargeId = `ch_test_e2e_${run}_${id.match(/_(\d+)$/)?.[1] ?? 1}`;
   if (!replay && outcome === "success") rememberMoney(run, chargeId, money);
   record(run, {
@@ -275,6 +282,15 @@ export function createFakeStripe(): Stripe {
         const money = recalledMoney(run, id);
         rememberMoney(run, chargeId, money);
         const shape = recalledIntent(run, id);
+        if (shape.createKey !== null && !shape.confirmed) {
+          // Created but never confirmed: no money moved.
+          return {
+            id, status: "requires_confirmation", amount: money.amount, currency: money.currency,
+            latest_charge: null, amount_received: 0, amount_capturable: 0,
+            customer: shape.customer, payment_method: shape.paymentMethod,
+            confirmation_method: "manual", livemode: false,
+          };
+        }
         return {
           id,
           status: "succeeded",
