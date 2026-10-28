@@ -259,7 +259,10 @@ export function checkDirEntries(api: ReceiptsApi) {
     ["symlink to a valid receipt elsewhere", (dir) => { const other = tmp(); const rec = api.receiptFrom(report({ pr: 801 })).receipt; const w = api.writeReceipt(other, rec); fs.symlinkSync(path.join(other, w.file), path.join(dir, w.file)); }, false],
     ["dangling symlink", (dir) => fs.symlinkSync("/nonexistent/receipt.json", path.join(dir, "20261007T200000Z-pr800-1-00000000000000ff.json")), false],
     ["symlink to a directory", (dir) => fs.symlinkSync(os.tmpdir(), path.join(dir, "20261007T200000Z-pr800-1-00000000000000f1.json")), false],
-    ["socket named like a receipt", (dir) => { spawnSync(process.execPath, ["-e", `require("net").createServer().listen(${JSON.stringify(path.join(dir, "20261007T200000Z-pr800-1-00000000000000f2.json"))}, () => process.exit(0))`]); }, false],
+    // Bound by a RELATIVE name from inside dir: an absolute path under a long TMPDIR exceeds sun_path (107 bytes),
+    // which Node 20 silently truncated (a socket with a non-receipt name, so the row passed vacuously) and Node 24
+    // refuses. The entry is asserted, so a fixture that made no socket is a setup error, never a pass.
+    ["socket named like a receipt", (dir) => { const name = "20261007T200000Z-pr800-1-00000000000000f2.json"; spawnSync(process.execPath, ["-e", `require("net").createServer().listen(${JSON.stringify(name)}, () => process.exit(0))`], { cwd: dir }); if (!fs.lstatSync(path.join(dir, name), { throwIfNoEntry: false })?.isSocket()) throw new Error("fixture: no socket was created"); }, false],
     ["a valid record padded to exactly 4 KB (SPEC-SILENT: within the limit)", (dir) => { const rec = api.receiptFrom(report({ pr: 802 })).receipt; const t = JSON.stringify(rec); fs.writeFileSync(path.join(dir, "20261007T200000Z-pr802-1-00000000000000f3.json"), t + " ".repeat(4096 - t.length - 1) + "\n"); }, null],
     ["hard link to a valid receipt elsewhere (a regular file)", (dir) => { const other = tmp(); const rec = api.receiptFrom(report({ pr: 803 })).receipt; const w = api.writeReceipt(other, rec); fs.linkSync(path.join(other, w.file), path.join(dir, w.file)); }, null],
   ];
