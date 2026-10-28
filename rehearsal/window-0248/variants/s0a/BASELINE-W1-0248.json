@@ -38,7 +38,7 @@
   },
   "g4_max_age_hours": 24,
   "g3": {
-    "head_sha": "0000000000000000000000000000000000000000",
+    "head_sha": "91a28fb006fdd00baff80381a52c29d0e672a633",
     "checksums": {
       "0248": "1f6f9ad0026cee66b970e9dc630f1497aa10966df2adb9433d8f8c85bbc44cc3"
     }
@@ -47,7 +47,7 @@
   "_candidate": "0248-ONLY STAGE baseline derived from W1 candidate 5 by make-window-0248.py: the PITR, recovery, window and project-ref pins are unchanged; the 1035 g09, g11 and s1 sections are dropped; g3 is the sealed 0248 file at the carrying head (OPEN while the head is forty zeros).",
   "_decisions": [
     "planned_duration_minutes is unchanged from candidate 5 (110): it is OPS's number and only requires that much of the window remain; OPS may lower it for a one-file stage.",
-    "S0-11 (0242 disposition) is KEPT, unchanged: whether it is moot for a 0248-only stage is for Team to say; keeping it asks one extra question and removes nothing.",
+    "S0-11 (0242 disposition) is DROPPED (OPS ruling on Team's recommendation, after re-reading its original reason): it gated S1 (apply 0213-0246), because 0242 revokes member INSERT on audit_logs and breaks the old app's archive/unarchive audit write (ROLLOUT-0213-0246-DECISION-PACKAGE, 0242 row, T-0242-1, R-3). Hosted history is already at 0246, so that apply is done; 0248 never mentions 0242 and replaces only advance_intake_revision(). Keep S0-11 for any stage that carries 0247 or later.",
     "g10 is DROPPED: its seven names are 0213-0246 constraints, not the intake table or its trigger; Team's table marked it keep-if-defined and no such definition exists."
   ]
 }

@@ -241,7 +241,6 @@ def lib_variant():
         ("S0-8", "Window outside 07:45-10:00 UTC and holds in place", "attest"),
         ("S0-9", "G3 met at the carrying head: the sealed 0248 sha256", "attest"),
         ("S0-10", "G4 recorded and R-6 answered", "attest"),
-        ("S0-11", "0242 disposition recorded (bridge READY or R-3)", "attest"),
         ("S0-12", "No permission refusal recorded (DENIAL files empty)", "attest"),
         ("S0-13", "All 4 files present and readable, none refused or errored, all at hosted 0246", "data"),
     ]
@@ -280,7 +279,9 @@ def lib_variant():
            '    if (Object.keys(got).length !== 1 || got["0248"] !== SEALED_0248_SHA) return fail("g3.checksums is not exactly the sealed 0248 sha256");\n'
            '    return pass("0248 checksum equals the sealed file");\n'
            '  });\n')
-    t = block_sub(t, '  res["S0-9"] = att((a) => {', "\n  // Required set", s09, "S0-9")
+    t = block_sub(t, '  res["S0-9"] = att((a) => {', '\n  res["S0-10"] = att(', s09, "S0-9")
+    # S0-11 (0242 disposition) is DROPPED for the 0248-only stage: 0242 is already hosted (history max 0246) and 0248 never mentions it.
+    t = block_sub(t, '  res["S0-11"] = att(', '\n  res["S0-12"] = att(', "", "S0-11")
     return t
 
 # --------------------------------------------------------------------------------------------------------------------------------------
@@ -304,6 +305,13 @@ def s0a_script(pins, head):
     t = line_sub(t, "^G3_FILE=", lambda l: "G3_FILE=G3-CHECKSUMS-0248.txt", "g3 file")
     t = line_sub(t, "^G3_SHA=", lambda l: "G3_SHA=" + pins["s0a_g3"], "g3 sha")
     t = line_sub(t, "^HEAD_SHA=", lambda l: "HEAD_SHA=" + head, "head")
+    t = line_sub(t, "^ask D0242 ", lambda l: "", "S0-11 ask")
+    t = line_sub(t, "^ask D0242REF ", lambda l: "", "S0-11 ref ask")
+    t = line_sub(t, "  disposition_0242:", lambda l: "", "S0-11 attest field")
+    t = sub(t, 'A_D0242="$D0242" A_D0242REF="$D0242REF" ', "", 1, "S0-11 env")
+    t = sub(t, "for id in S0-1 S0-8 S0-9 S0-10 S0-11 S0-12; do", "for id in S0-1 S0-8 S0-9 S0-10 S0-12; do", 1, "precheck ids")
+    t = sub(t, "Attestation pre-check passed (S0-1, S0-8, S0-9, S0-10, S0-11, S0-12).", "Attestation pre-check passed (S0-1, S0-8, S0-9, S0-10, S0-12).", 1, "precheck msg")
+    t = sub(t, "G3, G4, R-6, 0242, denials", "G3, G4, R-6, denials", 1, "precheck comment")
     t = line_sub(t, "^FILES=", lambda l: 'FILES="' + " ".join(k + ".sql" for k in KEPT) + '"', "files")
     t = sub(t, "utcnow() { date -u +%Y-%m-%dT%H:%M:%SZ; }\n",
             "utcnow() { date -u +%Y-%m-%dT%H:%M:%SZ; }\n"
@@ -461,7 +469,7 @@ def main():
     b["required_checks"] = []
     b["_decisions"] = [
         "planned_duration_minutes is unchanged from candidate 5 (110): it is OPS's number and only requires that much of the window remain; OPS may lower it for a one-file stage.",
-        "S0-11 (0242 disposition) is KEPT, unchanged: whether it is moot for a 0248-only stage is for Team to say; keeping it asks one extra question and removes nothing.",
+        "S0-11 (0242 disposition) is DROPPED (OPS ruling on Team's recommendation, after re-reading its original reason): it gated S1 (apply 0213-0246), because 0242 revokes member INSERT on audit_logs and breaks the old app's archive/unarchive audit write (ROLLOUT-0213-0246-DECISION-PACKAGE, 0242 row, T-0242-1, R-3). Hosted history is already at 0246, so that apply is done; 0248 never mentions 0242 and replaces only advance_intake_revision(). Keep S0-11 for any stage that carries 0247 or later.",
         "g10 is DROPPED: its seven names are 0213-0246 constraints, not the intake table or its trigger; Team's table marked it keep-if-defined and no such definition exists.",
     ]
     files["s0a/BASELINE-W1-0248.json"] = (json.dumps(b, indent=2) + "\n").encode()

@@ -29,14 +29,14 @@ GO_SHA=dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b
 RUNNER_SHA=471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357
 MANIFEST_SHA=df3e4e9a6d2601a67c79d7ef97c33f738ea271da2cee58f09b9fa3ed77c01f52
 CMP_SHA=c9b0f102980104d5bd1d59c2127439dacc419ed1c7db235ad7f5acedf9205825
-LIB_SHA=efbca6dc80ebef1dac83627c1181d5bf53d4a4a8f323e8ddf6d8a4ecc10dbb4f
+LIB_SHA=eaae170551af68e1cb8c0a58d75308c1924afe395e9580362feb562862143c17
 BASELINE=BASELINE-W1-0248.json
-BASELINE_SHA=971b02977cdeab6963cfc8bacb8f22fc2f2d1cf244836f3036b214f6873ddfba
+BASELINE_SHA=23efb170387eccb4228200469869abfb9c232133029e8b6c30d3cae7d776f85d
 G3_FILE=G3-CHECKSUMS-0248.txt
 G3_SHA=7f555b6679bee565c7a5fe31f817c9c776db96a0c1ebe7eb2dcea9af5b332f02
 REF=alhhybgqdmcdyzpybykj
 POOLER_URL="postgresql://postgres.$REF@aws-1-us-east-1.pooler.supabase.com:5432/postgres"
-HEAD_SHA=0000000000000000000000000000000000000000
+HEAD_SHA=91a28fb006fdd00baff80381a52c29d0e672a633
 FILES="g02-history-0248.sql g12-0243-intake-definers-0248.sql s1-open-transactions-0248.sql w03-table-sizes-0248.sql"
 
 cleanup() {
@@ -162,8 +162,8 @@ ask R6ACK "Type exactly: base backup unverified, restore not tested: "; [ "$R6AC
 [ "$R6CHOICE" != accept_rpo ] || echo "With accept_rpo your answer below must contain the words: unverified base backup" >&2
 ask R6TEXT "R-6 answer (your words, one line): "; text_ok "$R6TEXT" || die "R-6 answer is empty or has unsupported characters"
 ask R6REF "R-6 decision reference: "; text_ok "$R6REF" || die "R-6 reference is empty or has unsupported characters"
-ask D0242 "0242 disposition (bridge_ready or R-3): "; case "$D0242" in bridge_ready|R-3) ;; *) die "0242 disposition must be bridge_ready or R-3" ;; esac
-ask D0242REF "0242 disposition reference: "; text_ok "$D0242REF" || die "0242 reference is empty or has unsupported characters"
+
+
 # denial_files ([]) and runner_refusals (0) are not typed: they are DERIVED below, and any refusal or permission
 # denial during capture stops the script before the comparator is reached.
 
@@ -198,7 +198,7 @@ const a = {
     latest_recovery_at_utc: e.A_P_LATE,
   },
   r6: { choice: e.A_R6CHOICE, answer_text: e.A_R6TEXT, reference: e.A_R6REF, base_backup_unverified_ack: true },
-  disposition_0242: { choice: e.A_D0242, reference: e.A_D0242REF },
+
   denial_files: [],
   runner_refusals: 0,
 };
@@ -206,20 +206,20 @@ writeFileSync(e.A_OUT, JSON.stringify(a, null, 2) + "\n");
 NODE
 ATT="$ATD/attestation.json"
 A_G3FILE="$WR/$G3_FILE" A_OPERATOR="$OPERATOR" A_REF="$REF" A_T1="$T1" A_T2="$T2" A_T3="$T3" A_MFLAG="$MFLAG" A_HEAD="$HEAD_SHA" A_PITR_ON="$PITR_ON" A_PITR_RET="$PITR_RET" A_P_EARLY="$P_EARLY" A_P_LATE="$P_LATE" \
-  A_R6CHOICE="$R6CHOICE" A_R6TEXT="$R6TEXT" A_R6REF="$R6REF" A_D0242="$D0242" A_D0242REF="$D0242REF" A_OUT="$ATT" node "$ATD/mk-attest.mjs" || die "could not build the attestation (see the line above)"
+  A_R6CHOICE="$R6CHOICE" A_R6TEXT="$R6TEXT" A_R6REF="$R6REF" A_OUT="$ATT" node "$ATD/mk-attest.mjs" || die "could not build the attestation (see the line above)"
 [ -s "$ATT" ] || die "attestation file was not written"
 
 # Pre-check, BEFORE any hosted read: the comparator on an empty results directory. Its attestation rows must already
-# PASS (operator, window and blackout, G3, G4, R-6, 0242, denials). One source of logic: the comparator itself.
+# PASS (operator, window and blackout, G3, G4, R-6, denials). One source of logic: the comparator itself.
 EMPTY="$ATD/empty"; mkdir -p "$EMPTY" || die "mkdir failed"
 pre=$(node "$WR/compare-preflight.mjs" --results "$EMPTY" --baseline "$WR/$BASELINE" --attest "$ATT" --window-start "$WSTART" --window-end "$WEND" --manifest "$WR/MANIFEST.sha256" --pitr-api "$ATD/pitr-api" $IDLE_ARGS 2>&1 </dev/null) || true
-for id in S0-1 S0-8 S0-9 S0-10 S0-11 S0-12; do
+for id in S0-1 S0-8 S0-9 S0-10 S0-12; do
   printf '%s\n' "$pre" | grep -Eq "^PASS +$id " || {
     printf '%s\n' "$pre" | grep -E " $id " >&2
     [ "$id" = S0-10 ] && echo "The PITR reading was refused. Options (none is automatic; this script does not loop or retry): (1) wait, read the recovery range again and start this script again; (2) with Sam's explicit authorization, a named restore point; (3) a recorded manual substitution decision outside the comparator." >&2
     die "attestation check $id does not pass; nothing was read from the hosted project"; }
 done
-echo "Attestation pre-check passed (S0-1, S0-8, S0-9, S0-10, S0-11, S0-12). Starting the hosted reads." >&2
+echo "Attestation pre-check passed (S0-1, S0-8, S0-9, S0-10, S0-12). Starting the hosted reads." >&2
 
 # ---------------------------------------------------------------------------------------------------------
 # credentials, privately (never echoed; cleared by the EXIT/INT/TERM/HUP trap)

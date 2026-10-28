@@ -28,22 +28,22 @@
 +  ["S0-2", "G2 hosted history is exactly 245 / max 0246 / none >= 0247 (0248-only stage)", "data"],
 +  ["S0-6c", "G12: the sealed 0248 preflight predicts a pass (context, privileges, owner authority, no unexpected callable intake definer)", "data"],
    ["S0-7", "No transaction older than 60 s (s1-open-transactions)", "data"],
-@@ -56,3 +46,3 @@
+@@ -56,7 +46,6 @@
    ["S0-8", "Window outside 07:45-10:00 UTC and holds in place", "attest"],
 -  ["S0-9", "G3 met at the exact head", "attest"],
 +  ["S0-9", "G3 met at the carrying head: the sealed 0248 sha256", "attest"],
    ["S0-10", "G4 recorded and R-6 answered", "attest"],
-@@ -60,3 +50,3 @@
+-  ["S0-11", "0242 disposition recorded (bridge READY or R-3)", "attest"],
    ["S0-12", "No permission refusal recorded (DENIAL files empty)", "attest"],
 -  ["S0-13", "All 13 files present and readable, none refused or errored, all at hosted 0212", "data"],
 +  ["S0-13", "All 4 files present and readable, none refused or errored, all at hosted 0246", "data"],
  ].map(([id, label, source]) => ({ id, label, source }));
-@@ -73,2 +63,4 @@
+@@ -73,2 +62,4 @@
  export const CHECKSUM_VERSIONS = Array.from({ length: 34 }, (_, i) => String(213 + i).padStart(4, "0"));
 +// The sealed 0248 file, pinned in the comparator so that a baseline cannot launder it (team/STAGE-0247-0250-PACKAGE.md).
 +export const SEALED_0248_SHA = "1f6f9ad0026cee66b970e9dc630f1497aa10966df2adb9433d8f8c85bbc44cc3";
  // S1 closures pinned here, not copied from the operator's expectation (PACKAGE-P2-ADDENDUM.md section 2,
-@@ -498,7 +490,7 @@
+@@ -498,7 +489,7 @@
    else {
 -    const notAt = FILES.filter((n) => n !== "g02-history" && n !== "census-0213-0246" && parsed[n].some((r) => !numEq(r.at_hosted_0212, 1)));
 -    res["S0-13"] = notAt.length ? fail(`chain guard value is not 1 in: ${notAt.join(", ")}`) : pass("13 files readable; chain guard is 1 in the 11 files that carry it (g02 and the census have none)");
@@ -56,7 +56,7 @@
 +
 +  res["S0-2"] = need(["g02-history-0248"], (rows) => {
      if (rows.length !== 1) return fail(`expected 1 row, got ${rows.length}`);
-@@ -602,8 +594,12 @@
+@@ -602,8 +593,12 @@
 
 -  res["S0-6c"] = need(["g12-0243-intake-definers"], (rows) => {
 -    const bad = rows.filter((r) => !numEq(r.callable_total, 0) || (r.signature !== null && r.signature !== undefined && isTrue(r.callable)));
@@ -75,17 +75,17 @@
 +
 +  res["S0-7"] = need(["s1-open-transactions-0248"], (rows) => {
      if (rows.length !== S1_TABLES.length) return fail(`expected ${S1_TABLES.length} rows, got ${rows.length}`);
-@@ -617,3 +613,3 @@
+@@ -617,3 +612,3 @@
 
 -  res["S0-W3"] = need(["w03-table-sizes"], (rows) => {
 +  res["S0-W3"] = need(["w03-table-sizes-0248"], (rows) => {
      if (rows.length !== W3_TABLES.length) return fail(`expected ${W3_TABLES.length} rows, got ${rows.length}`);
-@@ -660,3 +656,3 @@
+@@ -660,3 +655,3 @@
      }
 -    return problems.length ? fail(problems.join("; ")) : pass(`all 13 captured inside the window, none older than ${maxAgeMin} min`);
 +    return problems.length ? fail(problems.join("; ")) : pass(`all 4 captured inside the window, none older than ${maxAgeMin} min`);
    })();
-@@ -698,59 +694,10 @@
+@@ -698,12 +693,11 @@
      if (!g || !b) return fail("g3 attestation or baseline.g3 missing");
 -    if (!hex(g.head_sha, 40) || g.head_sha !== b.head_sha) return fail("g3.head_sha is not the pinned final head (40 hex)");
 +    if (!hex(b.head_sha, 40) || /^0{40}$/.test(b.head_sha)) return fail("baseline.g3.head_sha is the OPEN placeholder: no carrying commit is pinned yet");
@@ -99,54 +99,14 @@
 -    const diff = CHECKSUM_VERSIONS.filter((v) => got[v] !== want[v]);
 -    return diff.length ? fail(`checksum differs from the package at: ${diff.join(", ")}`) : pass("34/34 checksums equal the pinned list");
 -  });
--  res["S0-10"] = att((a) => {
--    const regime = recoveryRegime(baseline);
--    if (!RECOVERY_REGIMES.includes(regime)) return fail(`baseline.recovery_regime ${JSON.stringify(regime)} is unknown (daily or pitr)`);
--    const r = a.r6;
--    const r6ok = r && ["S0b", "accept_rpo"].includes(r.choice) && named(r.answer_text) && named(r.reference);
--    if (regime === "pitr") {
--      if (a.g4 !== undefined) return fail("g4 (the daily backup fields) is rejected under recovery_regime pitr; use g4_pitr");
--      if (a.pre_migration_restore_point !== undefined) return fail("pre_migration_restore_point is recorded at row 4, after S0a; it is rejected here and checked by --stage row4");
--      const x = pitrThresholds(baseline);
--      if (x.error) return fail(x.error);
--      const md = pitrBaseMode(baseline);
--      if (md.error) return fail(md.error);
--      if (Object.keys(a).some((k) => /idle/i.test(k))) return fail("a typed idle assertion is never accepted: idle is proven only from --pitr-idle result files");
--      const unavailable = md.mode === "unavailable_under_pitr";
--      const ac = pitrApiConfig(baseline);
--      if (unavailable && ac.status !== "PASS") return ac;
--      const ctx = { th: x.th, now, mode: md.mode, cfg: ac.cfg, api: pitrApi };
--      const quals = unavailable ? [UNVERIFIED_LABEL] : [];
--      let pr = pitrReading(a.g4_pitr, ctx), extra = "";
--      if (pr.status !== "PASS" && pr.lagFail) {
--        const ar = ac.status === "PASS" ? apiRead(pitrApi, { cfg: ac.cfg, th: x.th, now }) : ac;
--        if (ar.status !== "PASS") return fail(`${pr.detail}; the idle path needs a valid --pitr-api result: ${ar.detail}`);
--        const ip = idleWithHorizon(idle, { baseline, g: a.g4_pitr, ar, cfg: ac.cfg, th: x.th, now, stage: "s0a" });
--        if (ip.status !== "PASS") return fail(`${pr.detail}; idle proof: ${ip.detail}`);
--        pr = pitrReading(a.g4_pitr, { ...ctx, lagWaived: true });
--        quals.push(IDLE_S0_LABEL);
--        extra = `; ${ip.detail}`;
--      }
--      if (pr.status !== "PASS") return pr;
--      if (!r6ok) return fail("r6 needs choice S0b|accept_rpo, answer_text and reference");
--      if (unavailable) {
--        if (r.base_backup_unverified_ack !== true) return fail("r6.base_backup_unverified_ack must be the boolean true under mode unavailable_under_pitr (the base backup is UNVERIFIED)");
--        if (r.choice === "accept_rpo" && !/unverified base backup/i.test(r.answer_text)) return fail("under accept_rpo the r6 answer_text must name the unverified base backup");
--      } else if (r.base_backup_unverified_ack !== undefined) return fail("r6.base_backup_unverified_ack belongs to mode unavailable_under_pitr only");
--      return { ...pass(`${pr.detail}${extra}`), qualifier: quals };
--    }
--    if (a.g4_pitr !== undefined || a.pre_migration_restore_point !== undefined) return fail("g4_pitr / pre_migration_restore_point are rejected under recovery_regime daily");
--    const g = a.g4;
--    if (!g || !named(g.backup_id) || g.status !== "COMPLETED" || !Number.isFinite(when(g.backup_completed_at_utc))) return fail("g4 needs backup_id, status COMPLETED and a valid backup_completed_at_utc");
--    const maxH = baseline && baseline.g4_max_age_hours;
--    if (!Number.isInteger(maxH) || maxH <= 0) return fail("baseline.g4_max_age_hours missing");
--    if (now - when(g.backup_completed_at_utc) > maxH * 3600e3) return fail(`the backup is older than ${maxH} h`);
--    if (!r6ok) return fail("r6 needs choice S0b|accept_rpo, answer_text and reference");
--    return pass();
--  });
--  res["S0-11"] = att((a) => a.disposition_0242 && ["bridge_ready", "R-3"].includes(a.disposition_0242.choice) && named(a.disposition_0242.reference) ? pass() : fail("disposition_0242 needs choice bridge_ready|R-3 and a reference"));
--  res["S0-12"] = att((a) => Array.isArray(a.denial_files) && a.denial_files.length === 0 && numEq(a.runner_refusals, 0) ? pass() : fail("denial_files must be [] and runner_refusals 0"));
 +    if (Object.keys(want).length !== 1 || want["0248"] !== SEALED_0248_SHA) return fail("baseline.g3.checksums is not exactly the sealed 0248 sha256 pinned in the comparator");
 +    if (Object.keys(got).length !== 1 || got["0248"] !== SEALED_0248_SHA) return fail("g3.checksums is not exactly the sealed 0248 sha256");
 +    return pass("0248 checksum equals the sealed file");
 +  });
++
+   res["S0-10"] = att((a) => {
+@@ -753,3 +747,3 @@
+   });
+-  res["S0-11"] = att((a) => a.disposition_0242 && ["bridge_ready", "R-3"].includes(a.disposition_0242.choice) && named(a.disposition_0242.reference) ? pass() : fail("disposition_0242 needs choice bridge_ready|R-3 and a reference"));
++
+   res["S0-12"] = att((a) => Array.isArray(a.denial_files) && a.denial_files.length === 0 && numEq(a.runner_refusals, 0) ? pass() : fail("denial_files must be [] and runner_refusals 0"));

@@ -46,7 +46,6 @@ export const CHECKS = [
   ["S0-8", "Window outside 07:45-10:00 UTC and holds in place", "attest"],
   ["S0-9", "G3 met at the carrying head: the sealed 0248 sha256", "attest"],
   ["S0-10", "G4 recorded and R-6 answered", "attest"],
-  ["S0-11", "0242 disposition recorded (bridge READY or R-3)", "attest"],
   ["S0-12", "No permission refusal recorded (DENIAL files empty)", "attest"],
   ["S0-13", "All 4 files present and readable, none refused or errored, all at hosted 0246", "data"],
 ].map(([id, label, source]) => ({ id, label, source }));
@@ -700,6 +699,54 @@ export function evaluate({ files, metas = {}, manifest = null, baseline, attest,
     if (Object.keys(got).length !== 1 || got["0248"] !== SEALED_0248_SHA) return fail("g3.checksums is not exactly the sealed 0248 sha256");
     return pass("0248 checksum equals the sealed file");
   });
+
+  res["S0-10"] = att((a) => {
+    const regime = recoveryRegime(baseline);
+    if (!RECOVERY_REGIMES.includes(regime)) return fail(`baseline.recovery_regime ${JSON.stringify(regime)} is unknown (daily or pitr)`);
+    const r = a.r6;
+    const r6ok = r && ["S0b", "accept_rpo"].includes(r.choice) && named(r.answer_text) && named(r.reference);
+    if (regime === "pitr") {
+      if (a.g4 !== undefined) return fail("g4 (the daily backup fields) is rejected under recovery_regime pitr; use g4_pitr");
+      if (a.pre_migration_restore_point !== undefined) return fail("pre_migration_restore_point is recorded at row 4, after S0a; it is rejected here and checked by --stage row4");
+      const x = pitrThresholds(baseline);
+      if (x.error) return fail(x.error);
+      const md = pitrBaseMode(baseline);
+      if (md.error) return fail(md.error);
+      if (Object.keys(a).some((k) => /idle/i.test(k))) return fail("a typed idle assertion is never accepted: idle is proven only from --pitr-idle result files");
+      const unavailable = md.mode === "unavailable_under_pitr";
+      const ac = pitrApiConfig(baseline);
+      if (unavailable && ac.status !== "PASS") return ac;
+      const ctx = { th: x.th, now, mode: md.mode, cfg: ac.cfg, api: pitrApi };
+      const quals = unavailable ? [UNVERIFIED_LABEL] : [];
+      let pr = pitrReading(a.g4_pitr, ctx), extra = "";
+      if (pr.status !== "PASS" && pr.lagFail) {
+        const ar = ac.status === "PASS" ? apiRead(pitrApi, { cfg: ac.cfg, th: x.th, now }) : ac;
+        if (ar.status !== "PASS") return fail(`${pr.detail}; the idle path needs a valid --pitr-api result: ${ar.detail}`);
+        const ip = idleWithHorizon(idle, { baseline, g: a.g4_pitr, ar, cfg: ac.cfg, th: x.th, now, stage: "s0a" });
+        if (ip.status !== "PASS") return fail(`${pr.detail}; idle proof: ${ip.detail}`);
+        pr = pitrReading(a.g4_pitr, { ...ctx, lagWaived: true });
+        quals.push(IDLE_S0_LABEL);
+        extra = `; ${ip.detail}`;
+      }
+      if (pr.status !== "PASS") return pr;
+      if (!r6ok) return fail("r6 needs choice S0b|accept_rpo, answer_text and reference");
+      if (unavailable) {
+        if (r.base_backup_unverified_ack !== true) return fail("r6.base_backup_unverified_ack must be the boolean true under mode unavailable_under_pitr (the base backup is UNVERIFIED)");
+        if (r.choice === "accept_rpo" && !/unverified base backup/i.test(r.answer_text)) return fail("under accept_rpo the r6 answer_text must name the unverified base backup");
+      } else if (r.base_backup_unverified_ack !== undefined) return fail("r6.base_backup_unverified_ack belongs to mode unavailable_under_pitr only");
+      return { ...pass(`${pr.detail}${extra}`), qualifier: quals };
+    }
+    if (a.g4_pitr !== undefined || a.pre_migration_restore_point !== undefined) return fail("g4_pitr / pre_migration_restore_point are rejected under recovery_regime daily");
+    const g = a.g4;
+    if (!g || !named(g.backup_id) || g.status !== "COMPLETED" || !Number.isFinite(when(g.backup_completed_at_utc))) return fail("g4 needs backup_id, status COMPLETED and a valid backup_completed_at_utc");
+    const maxH = baseline && baseline.g4_max_age_hours;
+    if (!Number.isInteger(maxH) || maxH <= 0) return fail("baseline.g4_max_age_hours missing");
+    if (now - when(g.backup_completed_at_utc) > maxH * 3600e3) return fail(`the backup is older than ${maxH} h`);
+    if (!r6ok) return fail("r6 needs choice S0b|accept_rpo, answer_text and reference");
+    return pass();
+  });
+
+  res["S0-12"] = att((a) => Array.isArray(a.denial_files) && a.denial_files.length === 0 && numEq(a.runner_refusals, 0) ? pass() : fail("denial_files must be [] and runner_refusals 0"));
 
   // Required set: all known checks, plus anything named in baseline.required_checks. An unknown id fails.
   const reqIn = baseline && Array.isArray(baseline.required_checks) ? baseline.required_checks : [];

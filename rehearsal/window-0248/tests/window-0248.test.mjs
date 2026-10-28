@@ -51,7 +51,7 @@ const st = (rows, id) => rows[id].status;
 
 test("the variant checks exactly the kept set, and none of the dropped 1035-range checks can be required", () => {
   assert.deepEqual(FILES, ["g02-history-0248", "g12-0243-intake-definers-0248", "s1-open-transactions-0248", "w03-table-sizes-0248"]);
-  assert.deepEqual(CHECKS.map((c) => c.id), ["S0-1", "S0-2", "S0-6c", "S0-7", "S0-14", "S0-W3", "S0-8", "S0-9", "S0-10", "S0-11", "S0-12", "S0-13"]);
+  assert.deepEqual(CHECKS.map((c) => c.id), ["S0-1", "S0-2", "S0-6c", "S0-7", "S0-14", "S0-W3", "S0-8", "S0-9", "S0-10", "S0-12", "S0-13"]);
   const rows = run();
   for (const dropped of ["S0-3", "S0-4a", "S0-4b", "S0-5", "S0-6a", "S0-6b"]) assert.equal(rows[dropped], undefined, dropped);
   // a baseline that tries to re-require a dropped check fails closed: an unknown id cannot be treated as passed
@@ -124,7 +124,10 @@ test("S0a script: pins equal the files they pin; the OPEN head is refused; no S1
   assert.equal(pin(s0a, "G3_SHA"), sha(rd("s0a/G3-CHECKSUMS-0248.txt")));
   assert.equal(JSON.parse(rd("s0a/BASELINE-W1-0248.json")).manifest_sha256, sha(rd("s0a/MANIFEST.sha256")));
   assert.match(s0a, /\[ "\$HEAD_SHA" != 0{40} \] \|\| die "HEAD_SHA is OPEN/);
-  assert.equal(pin(s0a, "HEAD_SHA"), "0".repeat(40));
+  const shas = JSON.parse(rd("SHAS.json"));
+  assert.match(shas.head_sha, /^[0-9a-f]{40}$/);
+  assert.equal(pin(s0a, "HEAD_SHA"), shas.head_sha);
+  assert.equal(JSON.parse(rd("s0a/BASELINE-W1-0248.json")).g3.head_sha, shas.head_sha);
   assert.match(s0a, /^WR="\$ROOT\/window-reads-0248"/m);
   const code = exec(s0a);
   for (const stale of ["0212", "0213", "d189768b", "census", "g06-", "g07-", "g09", "g10-", "g11"]) assert.ok(!code.includes(stale), `stale token ${stale}`);
@@ -142,12 +145,22 @@ test("S0a attestation builder (extracted from the script) yields exactly the sea
   writeFileSync(path.join(dir, "mk.mjs"), prog);
   const env = { A_G3FILE: path.join(OUT, "s0a/G3-CHECKSUMS-0248.txt"), A_OPERATOR: "op", A_REF: "ref", A_T1: "2026-10-29T11:00:00Z", A_T2: "2026-10-29T11:00:01Z", A_T3: "2026-10-29T11:00:02Z",
     A_MFLAG: "no_flag", A_HEAD: HEAD, A_PITR_ON: "true", A_PITR_RET: "7", A_P_EARLY: "2026-10-22T00:00:00Z", A_P_LATE: "2026-10-29T11:00:00Z", A_R6CHOICE: "accept_rpo",
-    A_R6TEXT: "unverified base backup", A_R6REF: "r", A_D0242: "R-3", A_D0242REF: "r", A_OUT: path.join(dir, "a.json") };
+    A_R6TEXT: "unverified base backup", A_R6REF: "r", A_OUT: path.join(dir, "a.json") };
   const r = spawnSync("node", [path.join(dir, "mk.mjs")], { env: { ...process.env, ...env }, encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   const att = JSON.parse(readFileSync(env.A_OUT, "utf8"));
   assert.deepEqual(att.g3, { head_sha: HEAD, checksums: { "0248": SEALED_0248_SHA } });
   assert.equal(st(run(() => {}, { attest: att }), "S0-9"), "PASS");
+  // every attested row is EVALUATED (not "not evaluated"), S0-11 is gone, and the builder's own output passes the rows it can (S0-1 and S0-8 also need the project-ref and window answers the script asks for separately)
+  const all = run(() => {}, { attest: att });
+  assert.ok(!("S0-11" in all), "S0-11 is dropped for the 0248-only stage");
+  assert.ok(!JSON.stringify(att).includes("0242"), "the attestation no longer carries a 0242 disposition");
+  for (const id of ["S0-9", "S0-12"]) assert.equal(st(all, id), "PASS", `${id}: ${all[id].detail}`);
+  // S0-10 under PITR needs the Management API result (--pitr-api), which is supplied outside the attestation: here it must be judged on that, not "not evaluated"
+  assert.match(all["S0-10"].detail, /pitr-backups result/);
+  // negative controls: S0-12 really judges its input
+  const denied = clone(att); denied.denial_files = ["x"];
+  assert.equal(st(run(() => {}, { attest: denied }), "S0-12"), "FAIL");
   // negative control: the old 34-line G3 file is refused by the builder
   const old = path.join(dir, "old.txt");
   writeFileSync(old, Array.from({ length: 34 }, (_, i) => `${"a".repeat(64)}  02${String(13 + i).padStart(2, "0")}_x.sql`).join("\n") + "\n");
