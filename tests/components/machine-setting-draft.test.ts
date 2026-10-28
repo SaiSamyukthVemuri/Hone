@@ -960,6 +960,25 @@ describe("switching machine or mode clears the collected draft", () => {
     );
   });
 
+  it("the revision hold is RELEASED when the unavailable record unmounts the entry", () => {
+    // CODEX #1205 4400713832. A confirmed save whose history refresh fails sets
+    // `recordedSetupUnavailable`, the panel stops rendering the entry, and the
+    // entry's own effect - the only thing that reports the hold back to false -
+    // dies with it. The panel must release the hold itself on that edge, or the
+    // machine/mode controls and Cancel stay disabled after a confirmed save.
+    const panel = read(PANEL_SRC);
+    expect(
+      panel,
+      "the entry is unmounted by recordedSetupUnavailable (the premise of this guard)",
+    ).toMatch(/recordAndCount && mode && !recordedSetupUnavailable \?/);
+    expect(
+      panel,
+      "nothing releases the revision hold when the entry unmounts, so the controls stay frozen after a confirmed save",
+    ).toMatch(
+      /useEffect\(\(\) => \{\s*if \(recordedSetupUnavailable\) setRevisionUnresolved\(false\);\s*\}, \[recordedSetupUnavailable\]\);/,
+    );
+  });
+
   it("EVERY relayed failure on the recorder path carries the outcome code", () => {
     // THE P2 (Codex, #860 4301771498), and the fifth time in this lane that
     // a value existed, was correct, and was never forwarded.

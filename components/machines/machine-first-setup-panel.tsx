@@ -340,6 +340,20 @@ export function MachineFirstSetupPanel({
     reportUnresolved.current = revisionUnresolved;
     onRevisionUnresolved?.(revisionUnresolved);
   }, [revisionUnresolved, onRevisionUnresolved]);
+  // THE HOLD DIES WITH THE ENTRY THAT OWNED IT (Codex, #1205 4400713832).
+  //
+  // The entry reports its transport hold from an effect, and it is the only
+  // thing that ever reports it back to false. A save that is CONFIRMED but
+  // whose history refresh then fails marks the record unavailable, which
+  // unmounts the entry while its last report was still "held" - so nothing
+  // could release it, and the machine and mode pickers and the host's Cancel
+  // stayed disabled after a save the practitioner had been told succeeded.
+  // No key is left to protect once the entry is gone, so the hold is released
+  // here, where the unmount is decided, instead of relying on a child that
+  // no longer exists. A remounted entry reports afresh.
+  useEffect(() => {
+    if (recordedSetupUnavailable) setRevisionUnresolved(false);
+  }, [recordedSetupUnavailable]);
   // EITHER SAVE PATH FREEZES THE IDENTITY. The machine and the mode are
   // part of the payload both digests are bound to, and switching away can
   // unmount the component holding a retry key.
