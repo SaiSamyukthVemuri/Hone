@@ -449,9 +449,8 @@ fresh; VID=C2-SR4; approve $VID serving_check=readback; runo apply; stubset stub
 sam bash -c "echo x >> /etc/hone-release/SERVING-READBACK" 2>/dev/null && bad "sam wrote the serving read-back" || ok "the agent cannot write the serving read-back"
 rm -f /etc/hone-release/SERVING-READBACK; fresh
 # ---- HON66-OPENS-FX: guard, connection-phase read-back (FX2/FX4), WAL evidence (FX3), typed heartbeat authorization (FX5)
-W1F="$LX/scripts/read-s1read.sh $LX/scripts/read-gap.sh $LX/scripts/w1-data.tar"   # Machines' reviewed gates: the string `--linked` appears ONLY in the shim that REFUSES it to execute and in the unchanged reviewed runner text; they are checked below for no CLI use
-bad_inst=$(for f in $LX/scripts/* $LX/launcher; do case " $W1F " in *" $f "*) grep -lE '/cli/login-role|/network-bans' "$f" 2>/dev/null;; *) grep -lE '/cli/login-role|/network-bans|--linked' "$f" 2>/dev/null;; esac; done)
-for f in $LX/scripts/read-s1read.sh $LX/scripts/read-gap.sh; do grep -v '^[[:space:]]*#' "$f" | grep -nE 'supabase-go|HONE_SUPABASE_BIN|SUPABASE_DB_PASSWORD|SUPABASE_ACCESS_TOKEN=' | grep -v 'bad=\$(env' && bad_inst="$bad_inst $f(CLI use)"; done
+bad_inst=$(grep -lE '/cli/login-role|/network-bans|--linked' $LX/scripts/* $LX/launcher 2>/dev/null); tar -xOf $LX/scripts/w1-data.tar 2>/dev/null | grep -qE '/cli/login-role|/network-bans|--linked|supabase-go|npx' && bad_inst="$bad_inst w1-data.tar(contents)"   # OPS: NOTHING the package installs or invokes may name `db query --linked` or run Machines' runner
+for f in $LX/scripts/read-s1read.sh $LX/scripts/read-gap.sh; do grep -v '^[[:space:]]*#' "$f" | grep -nE 'supabase-go|HONE_SUPABASE_BIN|SUPABASE_DB_PASSWORD|SUPABASE_ACCESS_TOKEN=|run-window-read|npx' | grep -v 'bad=\$(env' && bad_inst="$bad_inst $f(CLI use)"; done
  bad_q=$(grep -nE 'database/query($|[^/])' $LX/scripts/mgmt-read.py | head -1)
 [ -z "$bad_inst" ] && [ -z "$bad_q" ] && ok "FX1 guard: no installed script or the launcher contains the login-role or network-bans endpoints or the CLI's --linked mode, and the helper's only query endpoint is .../database/query/read-only" || bad "FX1 guard" "$bad_inst $bad_q"
 sam bash -c "echo x >> $LX/scripts/mgmt-read.py" 2>/dev/null && bad "sam wrote the helper" || ok "the pinned read helper is root-owned: the agent cannot change it"

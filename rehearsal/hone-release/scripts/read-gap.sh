@@ -20,7 +20,6 @@ umask 077
 ROOT=/var/lib/hone-release
 REFFILE=/etc/hone-release/PROJECT-REF
 MANIFEST=/usr/local/libexec/hone-release/manifest
-RUNNER_SHA=ec9b7c568a69d3b776ee9c643bcb52eb567639ab9cb0c995b33f59cf6d974468
 MANIFEST_SHA=a9ea6308a113bc5de2bfe8a2519993006dd6f8e4f3b408f782aa43b1c800731c
 SQL=obs-1035-gap-pending-payments-v2.sql
 SQL_SHA=5aa510c082e0484202d90503c5266a3c534250b90952e9b0a3a9d051e51e0086
@@ -82,28 +81,15 @@ nodemajor=${nodev#v}; nodemajor=${nodemajor%%.*}
 case "$nodemajor" in ''|*[!0-9]*) die "cannot read the node version" ;; esac
 [ "$nodemajor" -ge 18 ] || die "node $nodev is older than 18"
 [ -d "$GR" ] && [ ! -L "$GR" ] || die "$GR is missing or a symlink (run the download line first)"
-[ -f "$GR/run-window-read.sh" ] && [ "$(sha "$GR/run-window-read.sh")" = "$RUNNER_SHA" ] || die "runner copy missing or sha256 mismatch"
 [ -f "$GR/MANIFEST.sha256" ] && [ "$(sha "$GR/MANIFEST.sha256")" = "$MANIFEST_SHA" ] || die "manifest missing or sha256 mismatch"
 awk -v f="$SQL" -v s="$SQL_SHA" '$2 == f && $1 == s {n++} $2 == f && $1 != s {m++} END {exit (n == 1 && m == 0) ? 0 : 1}' "$GR/MANIFEST.sha256" || die "$SQL is not listed exactly once, with the pinned sha256, in the manifest"
 [ -f "$GR/$SQL" ] && [ ! -L "$GR/$SQL" ] && [ "$(sha "$GR/$SQL")" = "$SQL_SHA" ] || die "$SQL missing or sha256 mismatch"
 bad=$(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | grep -E '^(SUPABASE_[A-Za-z0-9_]*|PG[A-Za-z0-9_]*|DATABASE_URL|E2E_SUPABASE_URL|HONE_LOCAL_DB_URL|HONE_WINDOW_[A-Z_]*|HONE_SUPABASE_BIN|GITHUB_TOKEN|GH_TOKEN|HTTPS_PROXY|HTTP_PROXY|ALL_PROXY|NO_PROXY|https_proxy|http_proxy|all_proxy|no_proxy|SSL_CERT_FILE|SSL_CERT_DIR|NODE_OPTIONS|NODE_PATH|NODE_EXTRA_CA_CERTS|BASH_ENV|ENV|DYLD_[A-Z_]*|LD_PRELOAD|LD_LIBRARY_PATH)$' | sort -u | tr '\n' ' ')
 [ -z "$bad" ] || die "unset these variables first (names only): $bad"
 
-# The ORIGINAL Linux runner (run-window-read.sh, unchanged) calls `npx --yes supabase@2.102.0 db query --linked -o json -f FILE`. This shim is first on PATH for that one child and
-# accepts ONLY that exact invocation; it does NOT run the supabase CLI: it hands the file to the pinned mgmt-read.py, which sends it to the provider's read-only query endpoint
-# (its own lexical gate applies on top of the runner's) and prints the JSON array of rows, the same shape the runner stores.
-SHIM="$WORK/shim"; mkdir -p "$SHIM" && chmod 700 "$SHIM" || die "mkdir shim failed"
-cat > "$SHIM/npx" <<'SHIMEOF'
-#!/bin/bash
-[ "$#" -eq 9 ] && [ "$1" = --yes ] && [ "$2" = supabase@2.102.0 ] && [ "$3" = db ] && [ "$4" = query ] && [ "$5" = --linked ] && [ "$6" = -o ] && [ "$7" = json ] && [ "$8" = -f ] || { echo "npx shim: REFUSED: not the reviewed invocation" >&2; exit 97; }
-[ -n "${HONE_MGMT_PATH:-}" ] && [ -n "${HONE_WINDOW_PROJECT_REF:-}" ] && [ -n "${HONE_READ_TOKEN:-}" ] || { echo "npx shim: REFUSED: the helper, ref or token is missing" >&2; exit 97; }
-exec python3 -I "$HONE_MGMT_PATH" "$HONE_WINDOW_PROJECT_REF" file "$9"
-SHIMEOF
-chmod 700 "$SHIM/npx" || die "shim write failed"
-LINK="$WORK/linked"; RES="$WORK/results"; LOGS="$WORK/logs"; TMPD="$WORK/tmp"
-mkdir -p "$LINK/supabase/.temp" "$RES" "$LOGS" "$TMPD" || die "mkdir failed"
-chmod 700 "$LINK" "$RES" "$LOGS" "$TMPD" || die "chmod failed"
-printf '%s\n' "$REF" > "$LINK/supabase/.temp/project-ref" || die "write project-ref failed"
+RES="$WORK/results"; LOGS="$WORK/logs"; TMPD="$WORK/tmp"
+mkdir -p "$RES" "$LOGS" "$TMPD" || die "mkdir failed"
+chmod 700 "$RES" "$LOGS" "$TMPD" || die "chmod failed"
 T_START=$(utcnow)
 echo "Gap read started at $T_START (UTC). The PAT arrives on fd 3; nothing is typed. It must run by 2026-10-28T02:43Z (24 h after S3); the SQL looks back a fixed 24 hours from now."  >&2
 
@@ -118,8 +104,13 @@ secret_from_fd3 TOKEN "read-only access token"
 # ---------------------------------------------------------------------------------------------------------
 f=$SQL; stem=${f%.sql}
 rc=0
-( cd "$LINK" && env HONE_WINDOW_PROJECT_REF="$REF" HONE_MGMT_PATH="$MPATH" HONE_READ_TOKEN="$TOKEN" HONE_WINDOW_RESULT_DIR="$RES" \
-    SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 PATH="$SHIM:$PATH" /bin/bash "$GR/run-window-read.sh" "$f" ) </dev/null 2>"$LOGS/$stem.err" || rc=$?
+[ "$(sha "$GR/$f")" = "$SQL_SHA" ] || die "$f: the gate file differs from its pinned sha256"
+started=$(utcnow)
+HONE_READ_TOKEN="$TOKEN" python3 -I "$MPATH" "$REF" file "$GR/$f" > "$RES/$stem.json" 2> "$LOGS/$stem.err" </dev/null || rc=$?
+captured=$(utcnow)
+if [ "$rc" = 0 ]; then
+  printf '{"file":"%s","sql_sha256":"%s","result_sha256":"%s","started_at_utc":"%s","captured_at_utc":"%s","exit_code":0,"runner_sha256":"%s","manifest_sha256":"%s"}\n' "$f" "$SQL_SHA" "$(sha "$RES/$stem.json")" "$started" "$captured" "$MSHA" "$MANIFEST_SHA" > "$RES/$stem.meta.json"
+fi
 TOKEN=""; unset TOKEN
 mask_file "$LOGS/$stem.err" || die "could not mask the log of $f"
 if grep -qiE 'login role|unban|network.?ban|reset.*password' "$LOGS/$stem.err"; then
@@ -144,7 +135,7 @@ case "$c" in "[{"*"}]") ;; *) die "$f: the result is not a non-empty JSON array 
 rs=$(sha "$r")
 [ "$(grep -c '' "$m")" = 1 ] || die "$f: the sidecar is not exactly one line"
 line=$(cat "$m")
-printf '%s\n' "$line" | grep -Eqx "\\{\"file\":\"$f\",\"sql_sha256\":\"$SQL_SHA\",\"result_sha256\":\"$rs\",\"started_at_utc\":\"$iso\",\"captured_at_utc\":\"$iso\",\"exit_code\":0,\"runner_sha256\":\"$RUNNER_SHA\",\"manifest_sha256\":\"$MANIFEST_SHA\"\\}" \
+printf '%s\n' "$line" | grep -Eqx "\\{\"file\":\"$f\",\"sql_sha256\":\"$SQL_SHA\",\"result_sha256\":\"$rs\",\"started_at_utc\":\"$iso\",\"captured_at_utc\":\"$iso\",\"exit_code\":0,\"runner_sha256\":\"$MSHA\",\"manifest_sha256\":\"$MANIFEST_SHA\"\\}" \
   || die "$f: the sidecar does not bind this result (file, sql, result hash, exit code, runner or manifest)"
 st=$(printf '%s' "$line" | sed -E 's/.*"started_at_utc":"([^"]*)".*/\1/'); ca=$(printf '%s' "$line" | sed -E 's/.*"captured_at_utc":"([^"]*)".*/\1/')
 [ "$st" \< "$ca" ] || [ "$st" = "$ca" ] || die "$f: capture time precedes start time"
