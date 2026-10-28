@@ -411,6 +411,74 @@ describe("0247 original projection capability", () => {
       expect(s.send).toHaveBeenCalledTimes(1);
     } finally { vi.useRealTimers(); }
   });
+
+  // Codex P2 (PR 1219, second): persistence is bounded separately from the send timeout.
+  describe("observation persistence is bounded separately", () => {
+    const stall = (s: Awaited<ReturnType<typeof setup>>) => {
+      let release!: () => void; let settledLate = false;
+      s.observe.mockImplementationOnce(() => new Promise<void>((resolve) => { release = () => { settledLate = true; resolve(); }; }));
+      return { release: () => release(), settled: () => settledLate };
+    };
+    it("a stalled persist after an ACCEPTED send returns within the bound with the real message id, unconfirmed, no resend, and the late settlement still lands", async () => {
+      vi.useFakeTimers();
+      try {
+        const { OBSERVATION_PERSIST_BOUND_MS } = await import("@/lib/email/operation-dispatch");
+        const s = await setup(); const st = stall(s);
+        const h = s.adapter.freeze(projection(), context)!; const g = (await s.adapter.authorize(h))!;
+        let done: unknown; void s.adapter.dispatchAndSettle(h, g).then((r) => { done = r; });
+        await vi.advanceTimersByTimeAsync(OBSERVATION_PERSIST_BOUND_MS - 1); expect(done).toBeUndefined();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(done).toMatchObject({ kind: "observed", persistence: "unconfirmed", observation: { kind: "accepted", messageId: FAKE_MESSAGE_ID } });
+        expect(OBSERVATION_PERSIST_BOUND_MS).toBeLessThan(15_000);
+        expect(s.send).toHaveBeenCalledTimes(1); expect(s.observe).toHaveBeenCalledTimes(1);
+        expect(st.settled()).toBe(false); st.release(); await vi.advanceTimersByTimeAsync(0);
+        expect(st.settled()).toBe(true); // the same RPC settles late; nothing was repeated
+        expect(s.send).toHaveBeenCalledTimes(1); expect(s.observe).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(60_000); expect(s.send).toHaveBeenCalledTimes(1);
+      } finally { vi.useRealTimers(); }
+    });
+    it("a stalled persist after the 15 s send timeout is bounded too (unknown/timeout, unconfirmed), still one send", async () => {
+      vi.useFakeTimers();
+      try {
+        const { OBSERVATION_PERSIST_BOUND_MS } = await import("@/lib/email/operation-dispatch");
+        const s = await setup(); s.send.mockImplementationOnce(() => new Promise(() => {})); stall(s);
+        const h = s.adapter.freeze(projection(), context)!; const g = (await s.adapter.authorize(h))!;
+        let done: unknown; void s.adapter.dispatchAndSettle(h, g).then((r) => { done = r; });
+        await vi.advanceTimersByTimeAsync(15_000); expect(done).toBeUndefined();
+        await vi.advanceTimersByTimeAsync(OBSERVATION_PERSIST_BOUND_MS);
+        expect(done).toMatchObject({ persistence: "unconfirmed", observation: { kind: "unknown", reason: "timeout" } });
+        expect(s.send).toHaveBeenCalledTimes(1);
+      } finally { vi.useRealTimers(); }
+    });
+    it("a fast persist is unchanged: recorded, immediately, no timer left running", async () => {
+      vi.useFakeTimers();
+      try {
+        const s = await setup(); const h = s.adapter.freeze(projection(), context)!; const g = (await s.adapter.authorize(h))!;
+        expect(await s.adapter.dispatchAndSettle(h, g)).toMatchObject({ persistence: "recorded", observation: { kind: "accepted" } });
+        expect(vi.getTimerCount()).toBe(0);
+      } finally { vi.useRealTimers(); }
+    });
+    it("a persist that REJECTS is still unconfirmed at once (unchanged)", async () => {
+      const s = await setup(); s.observe.mockRejectedValueOnce(new Error("PRIVATE unavailable"));
+      const h = s.adapter.freeze(projection(), context)!; const g = (await s.adapter.authorize(h))!;
+      expect(await s.adapter.dispatchAndSettle(h, g)).toMatchObject({ persistence: "unconfirmed", observation: { kind: "accepted" } });
+    });
+    it("one stalled persist does not hold the next candidate past the bound: the later send happens by +bound", async () => {
+      vi.useFakeTimers();
+      try {
+        const { OBSERVATION_PERSIST_BOUND_MS } = await import("@/lib/email/operation-dispatch");
+        const s = await setup(); stall(s);
+        const handle = async () => { const h = s.adapter.freeze(projection(), context)!; const g = (await s.adapter.authorize(h))!; return s.adapter.dispatchAndSettle(h, g); };
+        const first = handle();
+        const second = first.then(() => handle());
+        await vi.advanceTimersByTimeAsync(OBSERVATION_PERSIST_BOUND_MS);
+        expect(await first).toMatchObject({ persistence: "unconfirmed" });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(await second).toMatchObject({ persistence: "recorded" });
+        expect(s.send).toHaveBeenCalledTimes(2); // two different candidates, one send each
+      } finally { vi.useRealTimers(); }
+    });
+  });
 });
 
 

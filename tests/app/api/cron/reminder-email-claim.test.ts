@@ -844,6 +844,17 @@ describe("0247 compatibility: email authority dispatch", () => {
     expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({ reason: "claim_unavailable", attempted: 0 }) }));
   });
 
+  it("OPERATION database: an accepted send whose persistence is unconfirmed still completes the pass, alerts, and lets the heartbeat land", async () => {
+    race.authority = "operation";
+    race.op.mockResolvedValue({ ...accepted, persistence: "unconfirmed" });
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(200);
+    expect(race.send).not.toHaveBeenCalled();
+    expect((await response.json()).reminder_24h).toMatchObject({ attempted: 1, succeeded: 1 });
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ event: "reminder_email_accounting_failed" }));
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
   it("LEGACY database (pre-0247): the existing claim path runs and the operation authority is never touched", async () => {
     race.authority = "legacy";
     const response = await GET(new Request("https://example.invalid"));

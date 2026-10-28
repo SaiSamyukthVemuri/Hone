@@ -3,6 +3,9 @@ import { createHash, randomBytes } from "node:crypto";
 import type { MinimalEmailTransport } from "./e2e-fake-resend";
 import { classifyEmailOperationObservation, isClosedEmailOperationPayload, type EmailOperationObservation, parseEmailOperationRender, type EmailOperationRender } from "./operation-state";
 
+/** Longest the handler waits for the observation RPC after the provider answered. */
+export const OBSERVATION_PERSIST_BOUND_MS = 5_000;
+
 // SOURCE PREPARATION ONLY: no production caller or SQL adapter. The injected
 // authority must persist the capability binding and possible-attempt boundary
 // before returning authorized. It must never reauthorize UNKNOWN work.
@@ -88,7 +91,13 @@ export function createEmailOperationDispatchAdapter(ports: {
       // branded-looking object or passing another adapter's handle cannot win.
       grant.consumed = true;
       if (requests.get(requestHandle) !== grant.request) return { kind: "held" };
-      const persist = async (observation: EmailOperationObservation): Promise<Result> => {
+      // Persistence is bounded SEPARATELY from the 15 s send timeout. A stalled
+      // observation RPC must not hold the handler (and so the scan batch and its
+      // checkpoint) past the budget after the provider already answered. Past
+      // the bound the real SDK observation is returned as "unconfirmed"; the RPC
+      // itself is never cancelled or repeated, so a late settlement still
+      // records against the ORIGINAL capability. Neither outcome grants replay.
+      const settle = async (observation: EmailOperationObservation): Promise<Result> => {
         try {
           await ports.observe(grant.binding, grant.capability, observation);
           return { kind: "observed", observation, persistence: "recorded" };
@@ -97,6 +106,13 @@ export function createEmailOperationDispatchAdapter(ports: {
           // grants replay; the original possible-effect fence must persist.
           return { kind: "observed", observation, persistence: "unconfirmed" };
         }
+      };
+      const persist = (observation: EmailOperationObservation): Promise<Result> => {
+        const settled = settle(observation);
+        return new Promise<Result>((resolve) => {
+          const bound = setTimeout(() => resolve({ kind: "observed", observation, persistence: "unconfirmed" }), OBSERVATION_PERSIST_BOUND_MS);
+          void settled.then((result) => { clearTimeout(bound); resolve(result); });
+        });
       };
       const completion = (async () => {
         try {
