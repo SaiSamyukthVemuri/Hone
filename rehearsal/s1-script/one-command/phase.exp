@@ -85,7 +85,7 @@ proc iso_s {t} { return [clock scan $t -format %Y-%m-%dT%H:%M:%SZ -gmt 1] }
 
 # ---- pitr-backups: ONE 'backups list' call; an authentication failure is a STOP and is never retried ----
 proc run_pitr {} {
-  global V R
+  global V R spawn_id
   spawn -noecho bash [v PITR_SCRIPT]
   set sid $spawn_id
   secret_step "Supabase access token (not shown): " token

@@ -141,6 +141,47 @@ echo "$OUT" | grep -q 'already had 2 row-4 attempts' && ok "two stalled attempts
 mkenv short; sed -i.bak "s/^WEND=.*/WEND=$(date -u -r $(( $(date -u +%s) + 3600 )) +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ)/" "$T/short/plan.env"; answers short; run short
 echo "$OUT" | grep -q 'fewer than 150 minutes' && [ ! -s "$T/short/home/hone-s1/stub.log" ] && ok "fewer than 150 minutes of window left: refused before anything runs" || bad "short window" "$OUT"
 
+# 14. the restore itself fails: flagged on the outcome, never folded into APPLIED+VERIFIED; the next run refuses to start
+mkenv rb; cfg rb "RESTORE_BROKEN=1"; answers rb; run rb
+echo "$OUT" | grep -q 'RESULT: APPLIED+VERIFIED; SETTING NOT RESTORED' && echo "$OUT" | grep -q 'SETTING NOT RESTORED: the role configuration reads' && [ -f "$T/rb/home/hone-s1/one-command/ROLE-STATE" ] && ok "a restore that does not read back is reported as SETTING NOT RESTORED on the outcome, and the ROLE-STATE record is kept" || bad "restore failure" "$(echo "$OUT" | tail -8)"
+answers rb; run rb
+echo "$OUT" | grep -q 'left the role setting captured' && ok "  and the next run refuses to start while that record exists" || bad "next run after failed restore" "$OUT"
+
+# ---- mutation pass: each protective line is changed once; the scenario that guards it must then FAIL its expectation
+MUT=$T/mut; mkdir -p "$MUT"; mcaught=0; mtotal=0
+mutate() { # mutate ID SEDEXPR SCENARIO : SCENARIO is hold|kill|left|marker|att|pin|short|restore|stalled ; caught = the protective expectation no longer holds
+  local id=$1 expr=$2 sc=$3 held=1
+  mkenv "m_$id"; local n=m_$id
+  sed "$expr" "$T/$n/runner.sh" > "$T/$n/runner.mut"; cmp -s "$T/$n/runner.sh" "$T/$n/runner.mut" && { bad "mutation $id did not change the runner"; return; }
+  mv "$T/$n/runner.mut" "$T/$n/runner.sh"
+  case $sc in
+    hold) answers $n no yes; run $n; [ ! -s "$T/$n/home/hone-s1/stub.log" ] || held=0 ;;
+    kill) cfg $n "PUSH_MODE=killed"; answers $n; run $n; { echo "$OUT" | grep -q 'RESULT: UNKNOWN -> reconcile' && [ "$(rolconf $n)" = "$ORIGCONF" ]; } || held=0 ;;
+    left) mkdir -p "$T/$n/home/hone-s1/one-command"; echo x > "$T/$n/home/hone-s1/one-command/ROLE-STATE"; answers $n; run $n; [ ! -s "$T/$n/home/hone-s1/stub.log" ] || held=0 ;;
+    marker) echo "IN-FLIGHT 2026-10-28T11:00:00Z x" > "$T/$n/home/hone-s1/s1-apply/APPLY-STATE"; answers $n; run $n; [ ! -s "$T/$n/home/hone-s1/stub.log" ] || held=0 ;;
+    pin) echo "# t" >> "$T/$n/home/hone-s1/window-reads-0248/window-s0a-0248.sh"; answers $n; run $n; [ ! -s "$T/$n/home/hone-s1/stub.log" ] || held=0 ;;
+    short) sed -i.bak "s/^WEND=.*/WEND=$(date -u -r $(( $(date -u +%s) + 3600 )) +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ)/" "$T/$n/plan.env"; answers $n; run $n; [ ! -s "$T/$n/home/hone-s1/stub.log" ] || held=0 ;;
+    att) mkdir -p "$T/$n/home/hone-s1/one-command"; printf 'a\nb\n' > "$T/$n/home/hone-s1/one-command/ATTEMPTS-$(sed -n 's/^WSTART=//p' "$T/$n/plan.env" | tr -d ':-')"; answers $n; run $n; [ ! -s "$T/$n/home/hone-s1/stub.log" ] || held=0 ;;
+    restore) cfg $n "RESTORE_BROKEN=1"; answers $n; run $n; echo "$OUT" | grep -q 'SETTING NOT RESTORED' || held=0 ;;
+    alter) cfg $n "ALTER_MODE=refused"; answers $n; run $n; { [ "$(pushes $n)" = 0 ] && echo "$OUT" | grep -q 'the ALTER ROLE was refused'; } || held=0 ;;
+    stalled) cfg $n "PITR_MODE=stalled"; answers $n; run $n; { [ "$(pushes $n)" = 0 ] && echo "$OUT" | grep -q 'PITR stalled'; } || held=0 ;;
+  esac
+  mtotal=$((mtotal+1))
+  if [ "$held" = 1 ]; then bad "mutation $id SURVIVED (the control still holds)" "$expr"; else mcaught=$((mcaught+1)); ok "mutation $id caught"; fi
+}
+mutate hold   's/\[ "\$H1" = yes \] || stop/true || stop/'                                       hold
+mutate kill   's/^  restore_role$/  :/'                                                             kill
+mutate left   's/^\[ ! -e "\$ROLE_STATE" \] || die_early/true || die_early/'                          left
+mutate marker 's/^\[ ! -e "\$STATEF" \] && \[ ! -L "\$STATEF" \] || die_early/true || die_early/'    marker
+mutate pin    's/^verify_pins || die_early/true || die_early/'                                        pin
+mutate short  's/-ge "\$MIN_REMAIN_START_MIN" \] || die_early/-ge 0 ] || die_early/'                  short
+mutate att    's/\[ "\$na" -lt "\$MAX_ATTEMPTS" \] || die_early/true || die_early/'                   att
+mutate rest   's/if \[ "\$cur" = "\$ORIG_ROLECONF" \]; then/if true; then/'                         restore
+mutate alter  's/ || stop "the ALTER ROLE was refused or failed; restoring"/ ; true/'                alter
+mutate stall  's/if \[ "\$rc" = 4 \]; then stop/if false; then stop/'                               stalled
+echo "MUTATIONS: $mcaught of $mtotal caught"
+[ "$mcaught" = "$mtotal" ] && ok "every protective line's negative control caught its mutation (N of N: $mcaught of $mtotal)" || bad "$((mtotal - mcaught)) mutation(s) survived"
+
 echo "RESULT: $pass passed, $fail failed"
 EXPECT=${EXPECT_N:-0}; if [ "$EXPECT" != 0 ]; then [ $((pass + fail)) = "$EXPECT" ] || { echo "FAIL - $((pass + fail)) of $EXPECT cases ran"; exit 1; }; fi
 [ "$fail" = 0 ]
