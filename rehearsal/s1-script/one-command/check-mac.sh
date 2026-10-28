@@ -43,7 +43,7 @@ mkenv() { # mkenv NAME -> H (fake HOME) with stubs installed, pins, plan, a test
   WS=$(fmt $((NOWS - 600))); WE=$(fmt $((NOWS + 18000)))
   printf 'STAGE=0248\nWSTART=%s\nWEND=%s\nOPERATOR=ci\nMFLAG=no_flag\nPITR_RET=7\nR6CHOICE=accept_rpo\nR6TEXT=accepted for the rehearsal\nR6REF=CI-1\nROLE_LIMIT=120s\n' "$WS" "$WE" > "$T/$NAME/plan.env"
   { echo "TOKH=$(hs "$TOKC")"; echo "PWH=$(hs "$PWC")"; echo "X_OPERATOR=ci"; echo "X_WSTART=$WS"; echo "X_WEND=$WE"; echo "X_MFLAG=no_flag"; echo "X_PITR_RET=7"; echo "X_R6CHOICE=accept_rpo"
-    echo "X_R6TEXT=accepted for the rehearsal"; echo "X_R6REF=CI-1"; } > "$R/stub.cfg"
+    echo "X_R6TEXT=\"accepted for the rehearsal\""; echo "X_R6REF=CI-1"; } > "$R/stub.cfg"
   : > "$R/stub.log"; echo "statement_timeout=0" > "$R/fake-rolconfig"; echo "other=1" >> "$R/fake-rolconfig"; echo "other=1,statement_timeout=0" > "$R/fake-rolconfig"
   ORIGCONF=$(cat "$R/fake-rolconfig")
   # the TEST VARIANT: only the #CONST block differs
