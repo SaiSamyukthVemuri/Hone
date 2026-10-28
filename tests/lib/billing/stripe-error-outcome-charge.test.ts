@@ -25,6 +25,7 @@ import Stripe from "stripe";
 const h = vi.hoisted(() => ({
   createError: null as unknown,
   createReply: null as Record<string, unknown> | null,
+  confirmReply: null as Record<string, unknown> | null,
   retrieveReply: null as Record<string, unknown> | null,
   retrieveError: null as unknown,
   retrieveCalls: 0,
@@ -81,6 +82,7 @@ const fakeStripe = {
         stripe_status: "requires_confirmation",
         stripe_idempotency_key: `hone:session_payment:${ATTEMPT}:v2:create`,
       });
+      if (h.confirmReply) return h.confirmReply;
       throw h.createError;
     },
     retrieve: async () => {
@@ -218,6 +220,7 @@ const ATTEMPT_ROW = {
 beforeEach(() => {
   h.createError = null;
   h.createReply = null;
+  h.confirmReply = null;
   h.retrieveReply = null;
   h.retrieveError = null;
   h.retrieveCalls = 0;
@@ -458,6 +461,26 @@ it("known-original retrieve failure excludes provider prose and never creates an
     diagnostic.mockRestore();
   }
 });
+
+it.each(["canceled", "requires_payment_method"])(
+  "confirm reply %s: last_payment_error prose stays out of result, ledger, alerts and diagnostics", async (status) => {
+    const privateText = "synthetic-private@example.invalid token=synthetic-secret";
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      h.confirmReply = { ...originalIntent(), status,
+        last_payment_error: { type: "card_error", code: "card_declined", message: privateText } };
+      const result = await run();
+      expect(result).toMatchObject({ ok: false, outcome: "failed", failureCode: "card_declined" });
+      expect(wroteFailed()).toBe(true);
+      expect(h.createKeys).toHaveLength(1);
+      expect(h.confirmKeys).toHaveLength(1);
+      expect(h.alerts).toContainEqual({ severity: "warning", event: "session_payment_charge_failed" });
+      expect(JSON.stringify([result, h.updates, h.alertInputs, diagnostic.mock.calls]))
+        .not.toContain(privateText);
+    } finally {
+      diagnostic.mockRestore();
+    }
+  });
 
 it("known-original reconciliation: canceled intent excludes last_payment_error prose without changing failed state", async () => {
   const privateText = "synthetic-private@example.invalid token=synthetic-secret";
