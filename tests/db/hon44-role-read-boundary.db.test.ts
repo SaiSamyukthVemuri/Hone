@@ -28,6 +28,8 @@ import {
 //   clinical   sessions                    rows    rows (shared)  none
 //   clinical   client_intake_forms         rows    rows (shared)  none
 //   financial  payment_charge_attempts     rows    none           none
+//   financial  manual_fee_charge_attempts  rows    none           none
+//   financial  appointment_settlements     rows    none           none
 //
 // Each row is also checked from a SECOND studio's owner (tenant isolation).
 //
@@ -47,12 +49,15 @@ let owner: { userId: string };
 let member: { userId: string };
 let receptionist: { userId: string };
 let other: SeededStudio;
+let fixtureErrors: Record<string, string> = {};
 
 type Family = { table: string; ownerSees: boolean; memberSees: boolean };
 const FAMILIES: Family[] = [
   { table: "sessions", ownerSees: true, memberSees: true },
   { table: "client_intake_forms", ownerSees: true, memberSees: true },
   { table: "payment_charge_attempts", ownerSees: true, memberSees: false },
+  { table: "manual_fee_charge_attempts", ownerSees: true, memberSees: false },
+  { table: "appointment_settlements", ownerSees: true, memberSees: false },
 ];
 
 async function countAs(userId: string, table: string, studioId: string): Promise<number> {
@@ -89,6 +94,51 @@ beforeAll(async () => {
     [S.studioId, S.clientId],
   );
   other = await seedStudio("hon44-other");
+
+  // The two seeds below are isolated so a fixture error is reported by name in
+  // the non-vacuity test instead of failing every case in the file with a
+  // beforeAll error that reads like the policy refusal this file exists to prove.
+  const seedErrors: Record<string, string> = {};
+  fixtureErrors = seedErrors;
+  // manual_fee_charge_attempts: reuse the scenario's own card, template and
+  // card-authorization signature; only the policy acknowledgement is added.
+  try {
+    const refs = await adminQuery(
+      `select
+         (select id from public.client_payment_methods where studio_id = $1 limit 1) as pm_id,
+         (select id from public.client_consent_signatures where studio_id = $1 limit 1) as sig_id`,
+      [S.studioId],
+    );
+    const { pm_id: pmId, sig_id: sigId } = refs.rows[0] as { pm_id: string; sig_id: string };
+    const ackId = randomUUID();
+    await adminQuery(
+      `insert into public.appointment_policy_acknowledgements
+         (id, studio_id, appointment_id, client_id, action, policy_snapshot_hash)
+       values ($1, $2, $3, $4, 'cancel', 'policy-hash-hon44')`,
+      [ackId, S.studioId, S.appointmentId, S.clientId],
+    );
+    await adminQuery(
+      `insert into public.manual_fee_charge_attempts
+         (studio_id, appointment_id, client_id, confirmed_by_practitioner_id,
+          charge_type, amount_cents, client_payment_method_id,
+          card_authorization_signature_id, appointment_policy_acknowledgement_id,
+          policy_snapshot_hash, internal_note)
+       values ($1, $2, $3, $4, 'no_show', 5000, $5, $6, $7, 'policy-hash-hon44', 'synthetic')`,
+      [S.studioId, S.appointmentId, S.clientId, S.practitionerId, pmId, sigId, ackId],
+    );
+  } catch (e) {
+    seedErrors.manual_fee_charge_attempts = String(e);
+  }
+  try {
+    await adminQuery(
+      `insert into public.appointment_settlements
+         (studio_id, appointment_id, method, amount_cents, recorded_by_practitioner_id)
+       values ($1, $2, 'paid_cash', 5000, $3)`,
+      [S.studioId, S.appointmentId, S.practitionerId],
+    );
+  } catch (e) {
+    seedErrors.appointment_settlements = String(e);
+  }
 });
 
 afterAll(async () => {
@@ -98,6 +148,7 @@ afterAll(async () => {
 
 describe("HON-44 database read boundaries by role", () => {
   it("the fixture is non-vacuous: every table holds a row in the studio under test", async () => {
+    expect(fixtureErrors, "fixture seeding failed (not a policy result)").toEqual({});
     for (const f of FAMILIES) {
       const r = await adminQuery(
         `select count(*)::int as n from public.${f.table} where studio_id = $1`,
