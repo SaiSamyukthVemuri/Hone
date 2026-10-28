@@ -1,0 +1,1 @@
+1f6f9ad0026cee66b970e9dc630f1497aa10966df2adb9433d8f8c85bbc44cc3  0248_intake_protected_write_enforcement.sql
