@@ -212,6 +212,10 @@ jobs:
           set -o pipefail
           DB="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -1)"
           bash rehearsal/hone-release/ci/refhash-stage.sh "$DB" templates/stage-0248 0248 0248 1 1 2 2>&1 | tee "$RUNNER_TEMP/refhash-0248.txt"; exit ${PIPESTATUS[0]}
+      - name: HON66 pinned CLI on a synthetic target - a 0248-only push, then a later --include-all resumption of 0247/0249/0250 (no hosted access)
+        run: |
+          set -o pipefail
+          bash rehearsal/hone-release/ci/cli-resume-0248.sh 2>&1 | tee "$RUNNER_TEMP/cli-resume.txt"; exit ${PIPESTATUS[0]}
 
   download-line:
     name: the one-line download command under bash 3.2 and zsh (fake scp) on macOS
