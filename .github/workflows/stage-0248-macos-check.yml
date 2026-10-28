@@ -46,3 +46,32 @@ jobs:
         run: |
           echo "bash now: $(command -v bash) $(bash -c 'echo $BASH_VERSION')"
           /bin/bash rehearsal/s1-script/stage-0248/check.sh 2>&1 | tee "$RUNNER_TEMP/stage0248-macos.txt"; exit ${PIPESTATUS[0]}
+      - name: REAL pgrep on darwin for the reconcile process check (the exact line from the pinned s1-reconcile-0248.sh, not a stub)
+        run: |
+          set -u
+          command -v pgrep; ls -l "$(command -v pgrep)"
+          F=rehearsal/s1-script/stage-0248/s1-reconcile-0248.sh
+          test "$(grep -c "pgrep -f 'supabase|s1-apply-0248'" "$F")" = 1
+          LINE=$(grep -F "pgrep -f 'supabase|s1-apply-0248'" "$F")
+          echo "line under test: $LINE"
+          probe() { /bin/bash -c "$LINE; echo \$pr"; }
+          fails=0
+          expect() { # expect WANT WHAT
+            got=$(probe); if [ "$got" = "$1" ]; then echo "ok   - $2: status $got"; else echo "FAIL - $2: status $got, wanted $1"; fails=$((fails+1)); fi; }
+          expect 1 "no matching process: status 1 (the only status the reconcile accepts)"
+          # a live process whose full command line matches: bash with $0 = s1-apply-0248-decoy (pgrep -f matches argv)
+          /bin/bash -c 'sleep 120' s1-apply-0248-decoy & D=$!
+          sleep 1
+          expect 0 "a live process named s1-apply-0248 in its command line: status 0 (the reconcile refuses)"
+          /bin/bash -c 'sleep 120' supabase-decoy & D2=$!
+          kill "$D" 2>/dev/null; wait "$D" 2>/dev/null || true
+          sleep 1
+          expect 0 "a live process with 'supabase' in its command line: status 0 (the reconcile refuses)"
+          kill "$D2" 2>/dev/null; wait "$D2" 2>/dev/null || true
+          sleep 1
+          expect 1 "after both decoys end: status 1 again"
+          # a pgrep error (invalid regex) is not 1: the reconcile treats it as 'cannot be ruled out'
+          bad=0; pgrep -f '(' >/dev/null 2>&1 || bad=$?
+          if [ "$bad" != 0 ] && [ "$bad" != 1 ]; then echo "ok   - pgrep error status $bad is not 1 (reconcile would refuse)"; else echo "FAIL - an invalid regex gave status $bad"; fails=$((fails+1)); fi
+          [ "$fails" = 0 ] || { echo "RESULT: $fails real-pgrep checks FAILED"; exit 1; }
+          echo "RESULT: real pgrep on darwin: 5 passed, 0 failed"
