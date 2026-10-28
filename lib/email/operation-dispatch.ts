@@ -114,17 +114,30 @@ export function createEmailOperationDispatchAdapter(ports: {
           void settled.then((result) => { clearTimeout(bound); resolve(result); });
         });
       };
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      // The send timer exists only to answer for an SDK that has not settled.
+      // Once the SDK settles (accepted OR rejected) it is cleared at that
+      // instant, so it can never submit a competing "unknown" observation while
+      // the real outcome is still persisting. The first settled SDK outcome is
+      // the only one persisted and returned.
+      let sdkSettled = false;
       const completion = (async () => {
+        let observation: EmailOperationObservation;
         try {
           const reply = await ports.send(grant.request.payload, { idempotencyKey: grant.binding.providerKey });
-          return classifyEmailOperationObservation({ kind: "reply", reply });
+          observation = classifyEmailOperationObservation({ kind: "reply", reply });
         } catch {
-          return classifyEmailOperationObservation({ kind: "transport" });
+          observation = classifyEmailOperationObservation({ kind: "transport" });
         }
+        sdkSettled = true;
+        clearTimeout(timer);
+        return observation;
       })().then(persist);
-      let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<Result>((resolve) => {
-        timer = setTimeout(() => { void persist({ kind: "unknown", reason: "timeout" }).then(resolve); }, 15_000);
+        timer = setTimeout(() => {
+          if (sdkSettled) return;
+          void persist({ kind: "unknown", reason: "timeout" }).then(resolve);
+        }, 15_000);
       });
       try { return await Promise.race([completion, timeout]); } finally {
         clearTimeout(timer);

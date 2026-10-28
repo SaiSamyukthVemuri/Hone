@@ -478,6 +478,39 @@ describe("0247 original projection capability", () => {
         expect(s.send).toHaveBeenCalledTimes(2); // two different candidates, one send each
       } finally { vi.useRealTimers(); }
     });
+    // Codex P2 (PR 1219, third): the 15 s timer must die when the SDK settles.
+    it("accept at 14 s with persistence pending past 15 s: the timer cannot submit a competing unknown; result is accepted with the message id, one observation, one send", async () => {
+      vi.useFakeTimers();
+      try {
+        const s = await setup(); let release!: () => void;
+        s.send.mockImplementationOnce(() => new Promise((resolve) => { setTimeout(() => resolve({ data: { id: FAKE_MESSAGE_ID }, error: null }), 14_000); }));
+        s.observe.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+        const h = s.adapter.freeze(projection(), context)!; const g = (await s.adapter.authorize(h))!;
+        let done: unknown; void s.adapter.dispatchAndSettle(h, g).then((r) => { done = r; });
+        await vi.advanceTimersByTimeAsync(14_000); expect(s.observe).toHaveBeenCalledTimes(1); expect(done).toBeUndefined();
+        await vi.advanceTimersByTimeAsync(2_000); // past the 15 s mark, persistence still pending
+        expect(s.observe).toHaveBeenCalledTimes(1); // no competing "unknown" observation
+        release(); await vi.advanceTimersByTimeAsync(0);
+        expect(done).toMatchObject({ kind: "observed", persistence: "recorded", observation: { kind: "accepted", messageId: FAKE_MESSAGE_ID } });
+        expect(s.observe).toHaveBeenCalledTimes(1); expect(s.send).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(60_000); expect(s.observe).toHaveBeenCalledTimes(1); expect(s.send).toHaveBeenCalledTimes(1);
+      } finally { vi.useRealTimers(); }
+    });
+    it("a REJECTED send at 14 s likewise clears the timer: one transport observation, no timeout observation", async () => {
+      vi.useFakeTimers();
+      try {
+        const s = await setup(); let release!: () => void;
+        s.send.mockImplementationOnce(() => new Promise((_, reject) => { setTimeout(() => reject(new Error("PRIVATE")), 14_000); }));
+        s.observe.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+        const h = s.adapter.freeze(projection(), context)!; const g = (await s.adapter.authorize(h))!;
+        let done: unknown; void s.adapter.dispatchAndSettle(h, g).then((r) => { done = r; });
+        await vi.advanceTimersByTimeAsync(16_000); expect(s.observe).toHaveBeenCalledTimes(1);
+        release(); await vi.advanceTimersByTimeAsync(0);
+        expect(done).toMatchObject({ kind: "observed", persistence: "recorded" });
+        expect((done as { observation: { reason?: string } }).observation.reason).not.toBe("timeout");
+        expect(s.observe).toHaveBeenCalledTimes(1); expect(s.send).toHaveBeenCalledTimes(1);
+      } finally { vi.useRealTimers(); }
+    });
   });
 });
 
