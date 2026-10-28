@@ -6,7 +6,7 @@
 set -u
 HR="$(cd "$(dirname "$0")/.." && pwd)"; DB=$1; T=${RUNNER_TEMP:-/tmp}/refhash; rm -rf "$T"; mkdir -p "$T"
 pass=0; fail=0; ok() { pass=$((pass+1)); echo "ok   - $1"; }; bad() { fail=$((fail+1)); echo "FAIL - $1"; [ -n "${2:-}" ] && echo "       $2"; }
-psqld() { docker exec -i "$DB" psql -U postgres -X -q -A -t -v ON_ERROR_STOP=1 "$@"; }
+psqld() { docker exec "$DB" psql -U postgres -X -q -A -t -v ON_ERROR_STOP=1 "$@"; }
 TPL=$HR/templates/stage-0247-0250
 # 1. the sealed files are exactly the ones the reviewed template lists
 all=1; for f in "$TPL"/sealed/*.sql; do n=$(basename "$f"); s=$(sha256sum "$f" | cut -d' ' -f1); grep -q "\`$n\` $s" "$TPL/review.md" || { all=0; echo "sealed file differs from review.md: $n"; }; done
@@ -33,6 +33,7 @@ while IFS=$'\t' read -r cid fn ssha esha; do
   if [ "$got" = "$esha" ]; then m=$((m+1)); ok "check $cid: the database result equals the bundle's expectation (sha256 ${got:0:16}...)"; else bad "check $cid: MISMATCH" "got ${got:0:16} expected ${esha:0:16}; rows $(head -c 400 "$T/r-$cid.json")"; fi
 done < "$T/a/checks.list"
 echo "CHECKS: $m of $n match the bundle"
+want=$(grep -c . "$T/a/checks.list"); [ "$n" = "$want" ] && [ "$n" = 5 ] && [ "$m" = "$n" ] && ok "all $n checks of the bundle (the four derived ones and the captured function-bodies) were run and match" || bad "checks run: $n of $want, matched $m (expected 5 of 5)"
 echo "VERIFY_SHA_WITH_BODY_HASHES=$(cat "$T/a/verify_sha.txt")"
 echo "CAPTURE_JSON=$(cat "$T/capture.json")"
 echo "RESULT: $pass passed, $fail failed"
