@@ -9,7 +9,7 @@ import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { clientDisplayName, clientLegalName, type WithPreferredName } from "@/lib/clients/identity";
-import { readLegalIdentity } from "@/lib/clients/legal-identity";
+import { readLegalIdentityForSession } from "@/lib/clients/legal-identity";
 import {
   buildLastSessionSummary,
   pickLastTreatment,
@@ -422,8 +422,8 @@ export default async function ClientCheatSheetPage({
       : Promise.resolve([] as Awaited<ReturnType<typeof getRecentPortalAccessEvents>>),
     // HON-58: the legal name, shown beside the display name in the heading on
     // every tab. Read with the SIGNED-IN client, so only an owner or
-    // practitioner ever receives a row; a failed read omits the line.
-    createClient().then((supabase) => readLegalIdentity(supabase, client.id)),
+    // practitioner ever receives a row; a failed or thrown read omits the line, never the page.
+    readLegalIdentityForSession(client.id),
   ]);
   const legalName =
     legalIdentityRead.ok && legalIdentityRead.value ? clientLegalName(legalIdentityRead.value) : null;

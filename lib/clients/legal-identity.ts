@@ -9,6 +9,7 @@
 //
 // Nothing here logs a name, and no legal name is inferred from anything.
 
+import { createClient } from "@/lib/supabase/server";
 import { clientLegalName, type ClientIdentityFields } from "@/lib/clients/identity";
 
 export const LEGAL_IDENTITY_COLUMNS =
@@ -50,6 +51,21 @@ export async function readLegalIdentity(
   const { data, error } = await q.eq("client_id", clientId).maybeSingle();
   if (error) return { ok: false };
   return { ok: true, value: (data as LegalIdentityRow | null) ?? null };
+}
+
+/**
+ * `readLegalIdentity` with the signed-in client created here, for a page that
+ * must not open another client of its own. Any throw (client creation included)
+ * reads as unavailable: a legal-name line is never worth the page.
+ */
+export async function readLegalIdentityForSession(
+  clientId: string,
+): Promise<ReadResult<LegalIdentityRow | null>> {
+  try {
+    return await readLegalIdentity((await createClient()) as unknown as SupabaseLike, clientId);
+  } catch {
+    return { ok: false };
+  }
 }
 
 /**
