@@ -1,5 +1,14 @@
 const privacyAlerts = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: async (input: Record<string, unknown>) => { privacyAlerts.push(input); } }));
+import type { EmailOperationBinding } from "@/lib/email/operation-dispatch";
+import type { EmailOperationRender, EmailOperationObservation } from "@/lib/email/operation-state";
+// 0247 caller: address visibility is not in the SQL projection, so the caller reads it
+// from the studio row. `visibility` undefined reads as the column default ("both").
+type VisibilityRead = { data: { address_visibility?: unknown } | null; error: { code: string } | null };
+function operationAdmin(rpc: unknown, read: VisibilityRead = { data: { address_visibility: "both" }, error: null }) {
+  return { rpc, from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => read }) }) }) } as unknown as import("@supabase/supabase-js").SupabaseClient;
+}
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -330,5 +339,209 @@ describe("MSG-007 best-effort diagnostic sink and no-error controls", () => {
       expect(privacyAlerts[0]).toMatchObject({ event: "email_send_gave_up", appointmentId: id, safeDetails: { attempt_number: 3 } });
       expect(JSON.stringify([log.mock.calls, privacyAlerts])).not.toContain("SYNTHETIC_PRIVATE");
     } finally { log.mockRestore(); }
+  });
+});
+
+
+// 0247 reviewed current-render contract: existing fake, no provider/DB.
+describe("0247 original projection capability", () => {
+  const projection = () => ({ kind: "reminder_24h", clientEmail: "client@harness.local", studioName: "Studio", timezone: "America/Toronto", startsAt: "2026-10-23T12:00:00.000Z", intake: { id: "intake-original", status: "in_progress" }, replyTo: null, attachments: null });
+  const context = { operationId: "original-operation", studioId: "studio", appointmentId: "appointment", purpose: "reminder_24h" as const, authority: { appointment: "1", client: "2", studio: "3", intake: "4", service: "unassigned", practitioner: "unassigned" }, providerAccount: "fake-account", providerKey: "original-key" };
+  async function setup() {
+    const { createProjectedEmailOperationDispatchAdapter } = await import("@/lib/email/operation-dispatch");
+    let config = "original-runtime";
+    const authorize = vi.fn(async (_binding: EmailOperationBinding, _projection: EmailOperationRender) => { void [_binding, _projection]; return { kind: "authorized" as const, firstPossibleAttemptAt: new Date().toISOString(), retryNotAfter: null }; });
+    const observe = vi.fn(async (_binding: EmailOperationBinding, _capability: string, _observation: EmailOperationObservation, _projection: EmailOperationRender) => { void [_binding, _capability, _observation, _projection]; });
+    const send = vi.fn(async (_payload: { html: string }, _options: { idempotencyKey: string }) => { void [_payload, _options]; return { data: { id: FAKE_MESSAGE_ID }, error: null }; });
+    const render = vi.fn((dto: EmailOperationRender) => { if (!("kind" in dto)) return null; return ({ from: "Hone <hello@hone.care>", to: dto.clientEmail, subject: "Intake", html: `<p>${dto.studioName}</p>`, text: dto.studioName }); });
+    const adapter = createProjectedEmailOperationDispatchAdapter({ authorize, observe, send, render, currentRuntimeBinding: () => config });
+    return { adapter, authorize, observe, send, render, changeConfig: () => { config = "replacement-runtime"; } };
+  }
+  it("rejects intake DTOs carrying unrequested clinical or contact fields", async () => {
+    const { parseEmailOperationRender } = await import("@/lib/email/operation-state");
+    expect(parseEmailOperationRender(projection())).not.toBeNull();
+    expect(parseEmailOperationRender({ ...projection(), treatmentTime: { totalMinutes: 10, sessionCount: 1 } })).toBeNull();
+    expect(parseEmailOperationRender({ ...projection(), owner_email: "private@harness.local" })).toBeNull();
+    expect(parseEmailOperationRender({ ...projection(), replyTo: "private@harness.local" })).toBeNull();
+  });
+  it("renders only the detached original DTO and observes that same frozen object", async () => {
+    const s = await setup(); const original = projection(); const handle = s.adapter.freeze(original, context)!;
+    original.studioName = "replacement"; original.intake.id = "replacement-intake";
+    const grant = (await s.adapter.authorize(handle))!;
+    await s.adapter.dispatchAndSettle(handle, grant);
+    expect(s.send.mock.calls[0][0].html).toBe("<p>Studio</p>");
+    const frozen = s.authorize.mock.calls[0][1] as ReturnType<typeof projection>;
+    expect(frozen.intake.id).toBe("intake-original");
+    expect(Object.isFrozen(frozen.intake)).toBe(true);
+    expect(s.observe.mock.calls[0][3]).toBe(frozen);
+    expect(JSON.stringify([handle, grant])).toBe("[{},{}]");
+  });
+  it("holds config changes before authorize without any authority or SDK call", async () => {
+    const s = await setup(); const h = s.adapter.freeze(projection(), context)!; s.changeConfig();
+    expect(await s.adapter.authorize(h)).toBeNull(); expect(s.authorize).not.toHaveBeenCalled(); expect(s.send).not.toHaveBeenCalled();
+  });
+  it("a config change after grant cannot dispatch and cannot refund the possible effect", async () => {
+    const s = await setup(); const h = s.adapter.freeze(projection(), context)!; const g = (await s.adapter.authorize(h))!; s.changeConfig();
+    expect(await s.adapter.dispatchAndSettle(h, g)).toMatchObject({ observation: { kind: "unknown" } });
+    expect(s.send).not.toHaveBeenCalled(); expect(s.observe).toHaveBeenCalledTimes(1);
+    expect(await s.adapter.dispatchAndSettle(h, g)).toEqual({ kind: "held" });
+  });
+  it("lost authorization stays held without a new request/grant/SDK attempt", async () => {
+    const s = await setup(); s.authorize.mockRejectedValueOnce(new Error("PRIVATE lost grant")); const h = s.adapter.freeze(projection(), context)!;
+    expect(await s.adapter.authorize(h)).toBeNull(); expect(await s.adapter.authorize(h)).toBeNull(); expect(s.authorize).toHaveBeenCalledTimes(1); expect(s.send).not.toHaveBeenCalled();
+  });
+  it("rejects forged and cross-request capabilities without substituting the current DTO", async () => {
+    const s = await setup(); const a = s.adapter.freeze(projection(), context)!; const b = s.adapter.freeze({ ...projection(), studioName: "current" }, context)!;
+    const grant = (await s.adapter.authorize(a))!;
+    expect(await s.adapter.authorize({})).toBeNull();
+    expect(await s.adapter.dispatchAndSettle(b, grant)).toEqual({ kind: "held" }); expect(s.send).not.toHaveBeenCalled();
+    expect(await s.adapter.dispatchAndSettle(a, grant)).toEqual({ kind: "held" });
+  });
+  it("late acceptance uses the ORIGINAL projection and capability after timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const s = await setup(); let finish!: (v: { data: { id: string }; error: null }) => void;
+      s.send.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+      const original = projection(); const h = s.adapter.freeze(original, context)!; const g = (await s.adapter.authorize(h))!;
+      const pending = s.adapter.dispatchAndSettle(h, g); await vi.advanceTimersByTimeAsync(15_000);
+      expect(await pending).toMatchObject({ observation: { kind: "unknown", reason: "timeout" } });
+      original.intake.id = "current-intake"; finish({ data: { id: FAKE_MESSAGE_ID }, error: null }); await vi.advanceTimersByTimeAsync(0);
+      expect(s.observe).toHaveBeenCalledTimes(2); expect(s.observe.mock.calls[1][3]).toBe(s.observe.mock.calls[0][3]);
+      expect(s.observe.mock.calls[1][3].intake!.id).toBe("intake-original"); expect(s.observe.mock.calls[1][1]).toBe(s.observe.mock.calls[0][1]);
+      expect(s.send).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+
+describe("0247 matching RPC caller and actual renderer (offline)", () => {
+  const authority = { appointment: "1", client: "2", studio: "3", intake: "4", service: "unassigned", practitioner: "5" };
+  const intake = (purpose = "reminder_24h") => ({ kind: purpose, clientEmail: "client@harness.local", studioName: "Original studio", timezone: "America/Toronto", startsAt: "2026-10-23T12:00:00.000Z", intake: { id: "original-intake", status: "in_progress" }, replyTo: null, attachments: null });
+  const reminder = (withIntake: boolean) => ({
+    appointment: { id: "appointment", studio_id: "studio", client_id: "client", status: "confirmed", starts_at: "2026-10-23T12:00:00.000Z", ends_at: "2026-10-23T13:00:00.000Z", duration_minutes: 60, service_id: null, practitioner_id: "practitioner" },
+    client: { id: "client", name: "Synthetic Client", email: "client@harness.local" },
+    studio: { id: "studio", name: "Original studio", address: "Synthetic address", slug: "original-studio", timezone: "America/Toronto", owner_email: "owner@harness.local", postcare_contact_email: null, show_treatment_time_to_clients: true, send_24h_reminders: true, send_2h_reminders: true, send_intake_reminders: true, client_cancellation_enabled: true, client_reschedule_enabled: true },
+    service: null, practitioner: { id: "practitioner", display_name: "Practitioner", email: null },
+    treatmentTime: { totalMinutes: 10, sessionCount: 1 }, intake: withIntake ? { id: "original-intake", status: "in_progress" } : null, attachments: null,
+  });
+  async function setup(render: unknown, purpose: "reminder_24h" | "reminder_2h" = "reminder_24h", composition = "intake_only", visibilityRead?: VisibilityRead) {
+    vi.resetModules(); // Clear the earlier intentional deployed-import rejection, never weaken its guard.
+    vi.stubEnv("HONE_E2E_FAKE_RESEND", "1"); vi.stubEnv("NEXT_PUBLIC_APP_ORIGIN", "https://example.invalid");
+    vi.stubEnv("APPOINTMENT_SIGNING_SECRET", "synthetic-appointment-secret-32-bytes"); vi.stubEnv("INTAKE_SIGNING_SECRET", "synthetic-intake-secret-32-bytes");
+    const fetchGuard = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("EGRESS_FORBIDDEN"));
+    const rpc = vi.fn(async (name: string, _args: Record<string, unknown>) => {
+      void _args;
+      if (name === "inspect_appointment_email_operation") return { data: { kind: "eligible", authority }, error: null };
+      if (name === "prepare_appointment_email_operation") return { data: { kind: "prepared", authority, render, operationId: "operation", leaseToken: "original-lease", providerKey: "original-key", composition }, error: null };
+      if (name === "authorize_appointment_email_operation") return { data: { kind: "authorized", firstPossibleAttemptAt: new Date().toISOString(), retryNotAfter: null, attemptNumber: 1 }, error: null };
+      if (name === "observe_appointment_email_operation") return { data: { kind: "accepted_retained", projection: "current" }, error: null };
+      throw new Error("UNEXPECTED_RPC");
+    });
+    const client = await import("@/lib/email/client");
+    const fakeTransport = client.getResendTransport()!;
+    const sdk = vi.spyOn(fakeTransport.emails, "send");
+    vi.spyOn(client, "getResendTransport").mockReturnValue(fakeTransport);
+    const { sendAppointmentReminderOperation } = await import("@/lib/email/send-appointment");
+    const admin = operationAdmin(rpc, visibilityRead);
+    return { rpc, sdk, fetchGuard, run: () => sendAppointmentReminderOperation(admin, "studio", "appointment", purpose) };
+  }
+  afterEach(() => { vi.restoreAllMocks(); });
+  it.each(["reminder_24h", "reminder_2h"] as const)("binds %s original DTO to exact eight/ten argument commands", async (purpose) => {
+    const s = await setup(intake(purpose), purpose); const result = await s.run();
+    expect(result).toMatchObject({ kind: "observed", observation: { kind: "accepted" }, persistence: "recorded", projection: "current", intakeId: "original-intake" });
+    const auth = s.rpc.mock.calls.find(([name]) => name === "authorize_appointment_email_operation")![1];
+    const obs = s.rpc.mock.calls.find(([name]) => name === "observe_appointment_email_operation")![1];
+    expect(Object.keys(auth)).toHaveLength(8); expect(Object.keys(obs)).toHaveLength(10);
+    expect(obs.p_original_render).toBe(auth.p_expected_render); expect(Object.isFrozen(obs.p_original_render)).toBe(true);
+    expect(obs.p_original_lease).toBe("original-lease"); expect(obs.p_request_digest).toBe(auth.p_request_digest);
+    expect(createHash("sha256").update(obs.p_capability as string).digest("hex")).toBe(auth.p_capability_digest);
+    expect(auth.p_authority).toEqual(authority); expect(JSON.stringify(auth.p_authority)).not.toMatch(/treatmentTime|totalMinutes/);
+    expect(s.sdk).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ to: "client@harness.local" }), { idempotencyKey: "original-key" });
+    expect(s.rpc.mock.calls.map(([name]) => name)).toEqual(["inspect_appointment_email_operation", "prepare_appointment_email_operation", "authorize_appointment_email_operation", "observe_appointment_email_operation"]);
+    expect(s.fetchGuard).not.toHaveBeenCalled();
+  });
+  it.each([false, true])("renders enabled clinical line from the exact projection, intake CTA %s", async (withIntake) => {
+    const dto = reminder(withIntake); const s = await setup(dto, "reminder_24h", withIntake ? "reminder_with_intake" : "reminder_only");
+    const { parseEmailOperationRender } = await import("@/lib/email/operation-state");
+    const { buildAppointmentEmailOperationPayload } = await import("@/lib/email/send-appointment");
+    const closed = parseEmailOperationRender(dto)!; const payload = buildAppointmentEmailOperationPayload(closed, "reminder_24h", "appointment", "both")!;
+    expect(payload.text).toContain("10m"); expect(payload.text).toContain("session 2"); expect(payload.text).toContain("Synthetic address");
+    expect(payload.replyTo).toBe("owner@harness.local"); expect(payload.attachments).toBeUndefined();
+    expect(payload.text.includes("/intake/")).toBe(withIntake);
+    expect(await s.run()).toMatchObject({ observation: { kind: "accepted" } }); expect(s.fetchGuard).not.toHaveBeenCalled();
+  });
+  it("standalone intake has no contact Reply-To, attachments, practitioner or clinical line", async () => {
+    const s = await setup(intake()); const { parseEmailOperationRender } = await import("@/lib/email/operation-state");
+    const { buildAppointmentEmailOperationPayload } = await import("@/lib/email/send-appointment");
+    const payload = buildAppointmentEmailOperationPayload(parseEmailOperationRender(intake())!, "reminder_24h", "appointment", "both")!;
+    expect(payload.replyTo).toBeUndefined(); expect(payload.attachments).toBeUndefined(); expect(payload.text).not.toContain("Treatment time");
+    expect(await s.run()).toMatchObject({ kind: "observed" }); expect(s.fetchGuard).not.toHaveBeenCalled();
+  });
+  it("an unreadable/lost grant has no observation, SDK effect or legacy RPC fallback", async () => {
+    const s = await setup(intake()); s.rpc.mockImplementation(async (name) => {
+      if (name === "inspect_appointment_email_operation") return { data: { kind: "eligible", authority }, error: null };
+      if (name === "prepare_appointment_email_operation") return { data: { kind: "prepared", authority, render: intake(), operationId: "operation", leaseToken: "lease", providerKey: "key", composition: "intake_only" }, error: null };
+      throw new Error("PRIVATE grant response lost");
+    });
+    expect(await s.run()).toEqual({ kind: "held" }); expect(s.rpc.mock.calls).toHaveLength(3); expect(s.sdk).not.toHaveBeenCalled(); expect(s.fetchGuard).not.toHaveBeenCalled();
+  });
+  it("observation failure keeps actual accepted SDK evidence unconfirmed without another grant", async () => {
+    const s = await setup(intake()); const impl = s.rpc.getMockImplementation()!;
+    s.rpc.mockImplementation((name, args) => name === "observe_appointment_email_operation" ? Promise.reject(new Error("PRIVATE unavailable")) : impl(name, args));
+    expect(await s.run()).toMatchObject({ observation: { kind: "accepted" }, persistence: "unconfirmed" });
+    expect(s.rpc.mock.calls.filter(([name]) => name === "authorize_appointment_email_operation")).toHaveLength(1); expect(s.sdk).toHaveBeenCalledTimes(1); expect(s.fetchGuard).not.toHaveBeenCalled();
+  });
+  it("does not replace original clinical projection with post-authorization caller mutations", async () => {
+    const dto = reminder(false); const s = await setup(dto, "reminder_24h", "reminder_only"); const impl = s.rpc.getMockImplementation()!;
+    s.rpc.mockImplementation(async (name, args) => { const result = await impl(name, args); if (name === "authorize_appointment_email_operation") dto.treatmentTime.totalMinutes = 20; return result; });
+    expect(await s.run()).toMatchObject({ observation: { kind: "accepted" } });
+    const obs = s.rpc.mock.calls.find(([name]) => name === "observe_appointment_email_operation")![1];
+    expect((obs.p_original_render as ReturnType<typeof reminder>).treatmentTime.totalMinutes).toBe(10); expect(s.fetchGuard).not.toHaveBeenCalled();
+  });
+  it("holds account/config changes across prepare before minting a grant", async () => {
+    const s = await setup(intake()); const impl = s.rpc.getMockImplementation()!;
+    s.rpc.mockImplementation(async (name, args) => { const result = await impl(name, args); if (name === "prepare_appointment_email_operation") vi.stubEnv("INTAKE_SIGNING_SECRET", "changed-synthetic-secret-32-bytes"); return result; });
+    expect(await s.run()).toEqual({ kind: "held" }); expect(s.rpc.mock.calls).toHaveLength(2); expect(s.sdk).not.toHaveBeenCalled(); expect(s.fetchGuard).not.toHaveBeenCalled();
+  });
+
+});
+
+
+describe("0247 actual transport account capture", () => {
+  async function importOrder(changeKey: boolean) {
+    vi.resetModules();
+    vi.stubEnv("HONE_E2E_FAKE_RESEND", ""); vi.stubEnv("RESEND_API_KEY", "synthetic-capture-K1");
+    vi.stubEnv("NEXT_PUBLIC_APP_ORIGIN", "https://example.invalid"); vi.stubEnv("INTAKE_SIGNING_SECRET", "synthetic-intake-signing-secret-32bytes");
+    // Exercise the EXISTING client module capture; never construct a second
+    // SDK. Its send is mocked before any caller runs, and fetch is forbidden.
+    const client = await import("@/lib/email/client");
+    expect(client.resend?.key).toBe("synthetic-capture-K1");
+    const sdk = vi.spyOn(client.resend!.emails, "send").mockResolvedValue({ data: { id: "synthetic-accepted" }, error: null, headers: null });
+    const egress = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("EGRESS_FORBIDDEN"));
+    if (changeKey) vi.stubEnv("RESEND_API_KEY", "synthetic-capture-K2");
+    const { sendAppointmentReminderOperation } = await import("@/lib/email/send-appointment");
+    const authority = { appointment: "1", client: "2", studio: "3", intake: "4", service: "unassigned", practitioner: "unassigned" };
+    const render = { kind: "reminder_24h", clientEmail: "client@harness.local", studioName: "Synthetic", timezone: "UTC", startsAt: "2026-10-23T12:00:00Z", intake: { id: "synthetic-intake", status: "in_progress" }, replyTo: null, attachments: null };
+    const rpc = vi.fn(async (name: string, _args: Record<string, unknown>) => {
+      void _args;
+      if (name === "inspect_appointment_email_operation") return { data: { kind: "eligible", authority }, error: null };
+      if (name === "prepare_appointment_email_operation") return { data: { kind: "prepared", authority, render, operationId: "operation", leaseToken: "lease", providerKey: "key", composition: "intake_only" }, error: null };
+      if (name === "authorize_appointment_email_operation") return { data: { kind: "authorized", firstPossibleAttemptAt: new Date().toISOString(), retryNotAfter: null, attemptNumber: 1 }, error: null };
+      if (name === "observe_appointment_email_operation") return { data: { kind: "accepted_retained", projection: "current" }, error: null };
+      throw new Error("UNEXPECTED_RPC");
+    });
+    const admin = operationAdmin(rpc);
+    return { rpc, sdk, egress, run: () => sendAppointmentReminderOperation(admin, "studio", "appointment", "reminder_24h") };
+  }
+  afterEach(() => { vi.restoreAllMocks(); });
+  it("holds K1 client / K2 later caller import BEFORE any RPC, grant or SDK send", async () => {
+    const s = await importOrder(true); expect(await s.run()).toEqual({ kind: "held" });
+    expect(s.rpc).not.toHaveBeenCalled(); expect(s.sdk).not.toHaveBeenCalled(); expect(s.egress).not.toHaveBeenCalled();
+  });
+  it("matched K1 uses the exact existing SDK capture account, with one mocked send", async () => {
+    const s = await importOrder(false); expect(await s.run()).toMatchObject({ observation: { kind: "accepted" } });
+    const account = `resend:${createHash("sha256").update(JSON.stringify("synthetic-capture-K1")).digest("hex")}`;
+    const prepare = s.rpc.mock.calls.find(([name]) => name === "prepare_appointment_email_operation")![1];
+    expect(prepare.p_provider_account).toBe(account); expect(s.sdk).toHaveBeenCalledTimes(1); expect(s.egress).not.toHaveBeenCalled();
   });
 });

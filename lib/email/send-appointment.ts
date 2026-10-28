@@ -1,7 +1,15 @@
+import { createHash } from "node:crypto";
+import { Resend } from "resend";
+import { createProjectedEmailOperationDispatchAdapter } from "./operation-dispatch";
+import { parseEmailOperationAuthority, parseEmailOperationRender, type EmailOperationRender } from "./operation-state";
+import { generateCancellationToken } from "@/lib/booking/tokens";
+import { generateIntakeLinkUrl } from "@/lib/intake/queries";
+import { buildTreatmentTimeLine } from "@/lib/treatment-time/format";
+import { isE2eFakeResendEnabled } from "./e2e-fake-resend";
 import { safeLog } from "@/lib/logging/safe-log";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FROM_ADDRESS, getResendTransport } from "@/lib/email/client";
-import { forAppointmentEmail } from "@/lib/booking/studio-location";
+import { appointmentEmailAddress, forAppointmentEmail } from "@/lib/booking/studio-location";
 import {
   buildFromHeader,
   resolveReplyTo,
@@ -58,7 +66,7 @@ type AnyAppointment = Appointment;
 // cron) inherits it and a future caller cannot forget it. Default policy, all
 // TRUE, passes every URL through unchanged.
 function selfServiceLinksFor(
-  studio: Studio,
+  studio: ClientSelfServiceStudioFlags,
   urls: { cancellationUrl: string; rescheduleUrl: string | null },
 ): { cancellationUrl: string | null; rescheduleUrl: string | null } {
   const policy = clientSelfServicePolicyFromStudio(studio);
@@ -878,4 +886,125 @@ export async function sendIntakeUpdateRequestToClient(params: {
     intakeUrl: params.intakeUrl,
   });
   return sendEmailSafely({ studioIdentity: { displayName: params.studioName, replyTo: null }, to: params.clientEmail, subject, html, text });
+}
+
+// Pinned Resend exposes its captured credential as a public readonly key;
+// its constructor builds Authorization from THAT same capture. Account
+// identity must come from the exact resolved SDK, never a second env capture.
+const operationHash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
+function operationRuntime(transport: NonNullable<ReturnType<typeof getResendTransport>>) {
+  const fake = isE2eFakeResendEnabled();
+  const actualSdk = transport instanceof Resend;
+  const capturedKey = actualSdk ? transport.key : null;
+  if (fake ? actualSdk : (!actualSdk || !capturedKey || capturedKey !== process.env.RESEND_API_KEY)) {
+    throw new Error("email_operation_account_unbound");
+  }
+  const origin = getRequiredAppOrigin();
+  return { origin, account: fake ? "resend:offline-fake" : `resend:${operationHash(capturedKey)}`,
+    binding: operationHash(["0247-render-v1", FROM_ADDRESS, origin, fake, capturedKey,
+      process.env.APPOINTMENT_SIGNING_SECRET, process.env.INTAKE_SIGNING_SECRET,
+      process.env.HONE_E2E_FAKE_RESEND_MODE, process.env.HONE_E2E_FAKE_RESEND_DEFAULT_MODE]) };
+}
+
+/** Trusted renderer consumes ONLY the closed SQL projection, never a cron
+ * joined row. This creates no dispatch permission; URL bytes are frozen once. */
+export function buildAppointmentEmailOperationPayload(projection: EmailOperationRender, purpose: "reminder_24h" | "reminder_2h", appointmentId: string, addressVisibility: unknown): EmailPayload | null {
+  const origin = getRequiredAppOrigin();
+  const kind = purpose === "reminder_24h" ? "24h" : "2h";
+  const intakeUrl = projection.intake ? generateIntakeLinkUrl(projection.intake.id, origin) : null;
+  if ("kind" in projection) {
+    if (projection.kind !== purpose || !intakeUrl) return null;
+    const content = buildIntakeReminderEmail({ kind, studioName: projection.studioName,
+      startsAt: new Date(projection.startsAt), timezone: projection.timezone, intakeUrl,
+      bookingReference: emailBookingReference(appointmentId) });
+    return { from: buildFromHeader(projection.studioName), to: projection.clientEmail, ...content };
+  }
+  const p = projection;
+  const token = generateCancellationToken(p.appointment.id, new Date(p.appointment.starts_at));
+  if (!token) return null;
+  const content = (kind === "24h" ? build24hReminderEmail : build2hReminderEmail)({
+    clientName: p.client.name, studioName: p.studio.name,
+    // HON-50: address per visibility, as the legacy reminder renders it. The SQL
+    // projection carries the raw address only, so visibility is read separately
+    // and an unreadable value hides the address.
+    studioAddress: appointmentEmailAddress({ address: p.studio.address, address_visibility: addressVisibility }),
+    practitionerName: p.practitioner?.display_name?.trim() || p.practitioner?.email || null,
+    serviceName: p.service?.name ?? "Appointment", preCareInstructions: p.service?.pre_care_instructions ?? null,
+    durationMinutes: p.appointment.duration_minutes, startsAt: new Date(p.appointment.starts_at), endsAt: new Date(p.appointment.ends_at),
+    timezone: p.studio.timezone,
+    // HON-47: the same self-service decision every other client email makes.
+    ...selfServiceLinksFor(
+      { client_cancellation_enabled: p.studio.client_cancellation_enabled ?? undefined, client_reschedule_enabled: p.studio.client_reschedule_enabled ?? undefined },
+      { cancellationUrl: `${origin}/cancel/${token}`, rescheduleUrl: `${origin}/reschedule/${token}` },
+    ),
+    portalLoginUrl: p.studio.slug?.trim() ? portalLoginUrlForStudio({ slug: p.studio.slug.trim() }) : null,
+    treatmentTimeLine: p.treatmentTime ? buildTreatmentTimeLine({ enabled: true, clientFirstName: p.client.name.split(/\s+/)[0] || p.client.name, context: p.treatmentTime }) : null,
+    intakeUrl,
+    bookingReference: emailBookingReference(appointmentId),
+  });
+  const identity = identityFor(p.studio);
+  return { from: buildFromHeader(identity.displayName), to: p.client.email, ...content,
+    ...(identity.replyTo ? { replyTo: identity.replyTo } : {}) };
+}
+
+/** Matching 0247 source caller. No legacy RPC fallback. Not rollout approval.
+ * RPC JSON carries the render transiently; durable authority has epochs only.
+ * The original frozen projection goes to BOTH authorize and late observation. */
+export async function sendAppointmentReminderOperation(admin: SupabaseClient, studioId: string, appointmentId: string, purpose: "reminder_24h" | "reminder_2h") {
+  const held = { kind: "held" as const };
+  try {
+    const transport = getResendTransport(); if (!transport) return held;
+    const runtime = operationRuntime(transport);
+    const inspected = await admin.rpc("inspect_appointment_email_operation", { p_studio_id: studioId, p_appointment_id: appointmentId, p_purpose: purpose });
+    const authority = parseEmailOperationAuthority(inspected.data?.authority);
+    if (inspected.error || inspected.data?.kind !== "eligible" || !authority) return held;
+    const prepared = await admin.rpc("prepare_appointment_email_operation", { p_studio_id: studioId, p_appointment_id: appointmentId, p_purpose: purpose,
+      p_provider_account: runtime.account, p_expected_authority: authority });
+    if (prepared.error || prepared.data?.kind !== "prepared") return held;
+    const p = prepared.data as Record<string, unknown>; const render = parseEmailOperationRender(p.render);
+    const frozenAuthority = parseEmailOperationAuthority(p.authority);
+    if (!render || !frozenAuthority || typeof p.operationId !== "string" || !p.operationId || typeof p.providerKey !== "string" || !p.providerKey || typeof p.leaseToken !== "string" || !p.leaseToken) return held;
+    if (runtime.binding !== operationRuntime(transport).binding) return held;
+    // Address visibility is not in the 0247 projection. Read it once, before the
+    // request is frozen (the frozen bytes are what dispatch and the digest bind).
+    // A failed read renders NO address: less disclosure, never more.
+    const visibilityRead = await admin.from("studios").select("address_visibility").eq("id", studioId).maybeSingle();
+    const addressVisibility: unknown = visibilityRead.error || !visibilityRead.data ? "booking_page" : (visibilityRead.data as { address_visibility?: unknown }).address_visibility;
+    const intakeOnly = "kind" in render;
+    if (intakeOnly ? p.composition !== "intake_only" : p.composition !== (render.intake ? "reminder_with_intake" : "reminder_only")) return held;
+    let attemptNumber = 0; let projection: "current" | "superseded" | "unverified" | "unchanged" | undefined;
+    // Installed Resend accepts the second idempotency option. The existing
+    // minimal fake accepts one argument and safely ignores the second.
+    const sendWithIdempotency: (payload: EmailPayload, options: Readonly<{ idempotencyKey: string }>) => Promise<unknown> = transport.emails.send.bind(transport.emails);
+    const adapter = createProjectedEmailOperationDispatchAdapter({
+      render: (original) => buildAppointmentEmailOperationPayload(original, purpose, appointmentId, addressVisibility),
+      currentRuntimeBinding: () => operationRuntime(transport).binding,
+      authorize: async (binding, original) => {
+        const { data, error } = await admin.rpc("authorize_appointment_email_operation", {
+          p_operation_id: binding.operationId, p_lease_token: p.leaseToken, p_authority: binding.authority,
+          p_provider_account: binding.providerAccount, p_provider_key: binding.providerKey,
+          p_request_digest: binding.requestDigest, p_capability_digest: binding.capabilityDigest, p_expected_render: original,
+        });
+        if (error || data?.kind !== "authorized" || !Number.isInteger(data.attemptNumber) || data.attemptNumber < 1 || data.attemptNumber > 3 || data.retryNotAfter !== null) return held;
+        attemptNumber = data.attemptNumber;
+        return { kind: "authorized", firstPossibleAttemptAt: data.firstPossibleAttemptAt, retryNotAfter: null };
+      },
+      observe: async (binding, capability, observation, original) => {
+        const { data, error } = await admin.rpc("observe_appointment_email_operation", {
+          p_operation_id: binding.operationId, p_original_lease: p.leaseToken, p_authority: binding.authority,
+          p_provider_account: binding.providerAccount, p_provider_key: binding.providerKey,
+          p_request_digest: binding.requestDigest, p_capability: capability, p_outcome: observation.kind,
+          p_provider_message_id: observation.kind === "accepted" ? observation.messageId : null, p_original_render: original,
+        });
+        if (error || !["accepted_retained", "unknown_held", "refusal_recorded"].includes(data?.kind)) throw new Error("email_operation_observation_unconfirmed");
+        projection = ["current", "superseded", "unverified", "unchanged"].includes(data.projection) ? data.projection : undefined;
+      },
+      send: (payload, options) => sendWithIdempotency(payload, options),
+    });
+    const request = adapter.freeze(render, { operationId: p.operationId, studioId, appointmentId, purpose, authority: frozenAuthority, providerAccount: runtime.account, providerKey: p.providerKey });
+    if (!request) return held;
+    const grant = await adapter.authorize(request); if (!grant) return held;
+    const result = await adapter.dispatchAndSettle(request, grant);
+    return result.kind === "held" ? held : { ...result, attemptNumber, projection, intakeId: render.intake?.id ?? null };
+  } catch { return held; }
 }
