@@ -59,11 +59,11 @@ jobs:
           expect() { # expect WANT WHAT
             got=$(probe); if [ "$got" = "$1" ]; then echo "ok   - $2: status $got"; else echo "FAIL - $2: status $got, wanted $1"; fails=$((fails+1)); fi; }
           expect 1 "no matching process: status 1 (the only status the reconcile accepts)"
-          # a live process whose full command line matches: bash with $0 = s1-apply-0248-decoy (pgrep -f matches argv)
-          /bin/bash -c 'sleep 120' s1-apply-0248-decoy & D=$!
+          # a live process whose full command line matches: bash with $0 = s1-apply-0248-decoy (pgrep -f matches argv). The trailing ': ' stops bash from exec-ing sleep, which would drop the name (the first run's decoys did that).
+          /bin/bash -c 'sleep 120; :' s1-apply-0248-decoy & D=$!
           sleep 1
           expect 0 "a live process named s1-apply-0248 in its command line: status 0 (the reconcile refuses)"
-          /bin/bash -c 'sleep 120' supabase-decoy & D2=$!
+          /bin/bash -c 'sleep 120; :' supabase-decoy & D2=$!
           kill "$D" 2>/dev/null; wait "$D" 2>/dev/null || true
           sleep 1
           expect 0 "a live process with 'supabase' in its command line: status 0 (the reconcile refuses)"
