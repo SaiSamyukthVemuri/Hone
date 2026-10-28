@@ -1,0 +1,14 @@
+#!/bin/bash
+# fake pinned CLI: only 'db query'; logs the SQL (never the password); the password must be the canary
+S="$HOME/hone-s1"; . "$S/stub.cfg"
+[ "$(printf '%s' "${PGPASSWORD:-}" | shasum -a 256 | cut -d' ' -f1)" = "$PWH" ] || { echo "password authentication failed" >&2; exit 1; }
+sql="${@: -1}"; echo "$sql" >> "$S/sql.log"
+RC="$S/fake-rolconfig"; [ -f "$RC" ] || : > "$RC"
+case "$sql" in
+  "alter role postgres set statement_timeout = "*) [ "${ALTER_MODE:-ok}" != refused ] || { echo "permission denied to alter role" >&2; exit 1; }
+     v=${sql#*= \'}; v=${v%\'}; if grep -q 'statement_timeout=' "$RC"; then sed -i.bak "s/statement_timeout=[^,]*/statement_timeout=$v/" "$RC"; rm -f "$RC.bak"; else [ -s "$RC" ] && printf ',' >> "$RC"; printf 'statement_timeout=%s' "$v" >> "$RC"; fi; echo '[]' ;;
+  "alter role postgres reset statement_timeout") sed -i.bak 's/statement_timeout=[^,]*//;s/^,//;s/,$//' "$RC"; rm -f "$RC.bak"; echo '[]' ;;
+  "select coalesce"*) printf '[{"v":"%s"}]\n' "$(cat "$RC")" ;;
+  "show statement_timeout") v=$(sed -n 's/.*statement_timeout=\([^,]*\).*/\1/p' "$RC"); printf '[{"statement_timeout":"%s"}]\n' "${v:-0}" ;;
+  *) echo "unexpected sql" >&2; exit 1 ;;
+esac

@@ -1,0 +1,234 @@
+#!/usr/bin/expect -f
+# REHEARSAL - NEVER MERGE. Hone ONE-COMMAND STAGE: drives ONE pinned, unmodified child script through a pty, the way a person at the terminal would.
+# The pinned children read every answer from /dev/tty, so the runner cannot change them; it answers each prompt by EXACT TEXT and in ORDER.
+# A prompt that is not in the table, or arrives out of order, is a STOP (no answer is guessed). Secrets arrive on STDIN of this process (never an
+# argument, never the environment), are sent only after the child has turned terminal echo OFF, and are masked out of the transcript.
+#   usage: phase.exp PHASE VALUES_FILE OUT_DIR CHILD [ARGS...]      stdin: line 1 = access token, line 2 = database password
+#   VALUES_FILE: KEY=VALUE lines (no secrets). OUT_DIR gets PHASE.transcript (masked) and PHASE.result (KEY=VALUE).
+#   exit: 0 child exited 0 and every step was answered | 2 driver STOP (unexpected/missing prompt, echo not off, auth failure) | 3 child exited non-zero | 4 clean stop: PITR stalled
+log_user 0
+set phase [lindex $argv 0]; set vfile [lindex $argv 1]; set outdir [lindex $argv 2]; set child [lrange $argv 3 end]
+set tok ""; set pw ""
+gets stdin tok; gets stdin pw
+array set V {}
+set fh [open $vfile r]; while {[gets $fh l] >= 0} { if {[regexp {^([A-Z0-9_]+)=(.*)$} $l -> k val]} { set V($k) $val } }; close $fh
+set transcript ""; array set R {}
+proc mask {s} { global tok pw; set m $s; if {$tok ne ""} { set m [string map [list $tok "<secret>"] $m] }; if {$pw ne ""} { set m [string map [list $pw "<secret>"] $m] }; return $m }
+proc note {s} { global transcript; append transcript [mask $s] }
+proc v {k} { global V; if {![info exists V($k)] || $V($k) eq ""} { fail "value $k is missing from the plan or the capture" }; return $V($k) }
+proc finish {code} {
+  global transcript R phase outdir
+  set f [open "$outdir/$phase.transcript" w 0600]; puts -nonewline $f $transcript; close $f
+  set f [open "$outdir/$phase.result" w 0600]; foreach k [lsort [array names R]] { puts $f "$k=$R($k)" }; close $f
+  exit $code
+}
+proc fail {msg} {
+  global R
+  set R(DRIVER_STOP) $msg; note "\n\[driver STOP\] $msg\n"
+  catch {close}; catch {wait}
+  finish 2
+}
+proc grab {} { global expect_out; note $expect_out(buffer) }
+# one prompt, one answer; anything else is a STOP
+proc step {prompt val {tmo 30}} {
+  global timeout expect_out
+  set timeout $tmo
+  expect {
+    -exact $prompt { grab; send -- "$val\r" }
+    timeout { grab; fail "prompt not seen within ${tmo}s: $prompt" }
+    eof { grab; fail "the child ended before the prompt: $prompt" }
+  }
+}
+proc echo_off {} {
+  global spawn_out
+  for {set i 0} {$i < 50} {incr i} {
+    if {![catch {exec stty -a < $spawn_out(slave,name)} s] && [regexp {(^|[ \t;])-echo([ \t;]|$)} $s]} { return 1 }
+    after 100
+  }
+  return 0
+}
+proc secret_step {prompt which {tmo 60}} {
+  global timeout expect_out tok pw
+  set timeout $tmo
+  expect {
+    -exact $prompt {
+      grab
+      if {![echo_off]} { fail "terminal echo did not turn off at: $prompt (the secret was NOT sent)" }
+      send -- "[expr {$which eq "token" ? $tok : $pw}]\r"
+    }
+    timeout { grab; fail "prompt not seen within ${tmo}s: $prompt" }
+    eof { grab; fail "the child ended before the prompt: $prompt" }
+  }
+}
+# a prompt with no text of its own (the reviewed watchdog's 'read -rs'): the secret goes only once echo is off
+proc blind_secret {which} {
+  global tok pw
+  if {![echo_off]} { fail "terminal echo did not turn off at the watchdog password prompt (the secret was NOT sent)" }
+  send -- "[expr {$which eq "token" ? $tok : $pw}]\r"
+}
+# wait for the child to end; returns its exit status
+proc finish_child {{tmo 600}} {
+  global timeout expect_out
+  set timeout $tmo
+  expect { eof { grab } timeout { grab; fail "the child did not end within ${tmo}s" } }
+  set w [wait]
+  return [lindex $w 3]
+}
+proc iso_now {} { return [clock format [clock seconds] -format %Y-%m-%dT%H:%M:%SZ -gmt 1] }
+proc iso_s {t} { return [clock scan $t -format %Y-%m-%dT%H:%M:%SZ -gmt 1] }
+
+# ---- pitr-backups: ONE 'backups list' call; an authentication failure is a STOP and is never retried ----
+proc run_pitr {} {
+  global V R
+  spawn -noecho bash [v PITR_SCRIPT]
+  set sid $spawn_id
+  secret_step "Supabase access token (not shown): " token
+  set rc [finish_child 120]
+  if {$rc != 0} { fail "pitr-backups ended with status $rc (an authentication failure is never retried)" }
+  return $sid
+}
+proc pitr_dir_from {buf} {
+  if {[regexp {saved \(private, mode 0700\): ([^ ]+)/backups\.json} $buf -> d]} { return $d }
+  return ""
+}
+proc pitr_capture {} { ;# returns the capture directory
+  global transcript
+  set before [string length $transcript]
+  run_pitr
+  set d [pitr_dir_from [string range $transcript $before end]]
+  if {$d eq ""} { fail "pitr-backups printed no capture directory" }
+  return $d
+}
+
+switch -exact -- $phase {
+  pitr {
+    spawn -noecho {*}$child
+    secret_step "Supabase access token (not shown): " token
+    set rc [finish_child 120]
+    set R(PITR_DIR) [pitr_dir_from $transcript]
+    set R(CHILD_RC) $rc
+    if {$rc != 0} { finish 3 }
+    finish 0
+  }
+  s0a {
+    spawn -noecho {*}$child
+    step "Operator label (your initials or a short label, no names of customers): " [v OPERATOR]
+    step "Window start (UTC): " [v WSTART]
+    step "Window end (UTC): " [v WEND]
+    step "Cron-job.org reminders paused: " yes
+    step "People hold in place (no archive/export/charges/manual fee/portal card setup): " yes
+    step "Maintenance flag decision (no_flag or flag_on): " [v MFLAG]
+    step "PITR enabled on the dashboard (type exactly true): " [v PITR_ON]
+    step "PITR retention in days (a whole number, no unit): " [v PITR_RET]
+    step "Earliest recovery point on the dashboard (UTC): " [v P_EARLY]
+    step "Latest recovery point on the dashboard (UTC): " [v P_LATE]
+    step "Use the idle proof (yes or no): " no
+    step "R-6 choice (S0b or accept_rpo): " [v R6CHOICE]
+    step "Type exactly: base backup unverified, restore not tested: " "base backup unverified, restore not tested"
+    step "R-6 answer (your words, one line): " [v R6TEXT]
+    step "R-6 decision reference: " [v R6REF]
+    secret_step "Supabase access token (not shown): " token 300
+    secret_step "Database password (not shown; only its presence is used here): " pw 60
+    set rc [finish_child 900]
+    set R(CHILD_RC) $rc
+    if {$rc == 0 && [string first "OVERALL PASS (provider range; base backup UNVERIFIED; restore not tested)" $transcript] >= 0} { set R(VERDICT) PASS } else { set R(VERDICT) NOT_PASS }
+    if {$R(VERDICT) ne "PASS"} { finish 3 }
+    finish 0
+  }
+  row4 {
+    spawn -noecho {*}$child
+    set row4 $spawn_id
+    step "Window start (UTC): " [v WSTART]
+    step "Window end (UTC): " [v WEND]
+    step "Type exactly select: " select
+    set timeout 30
+    expect {
+      -re {Selected pre-migration restore point: ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)\.} { grab; set tsel $expect_out(1,string) }
+      timeout { grab; fail "row 4 printed no selected restore point" }
+      eof { grab; fail "row 4 ended before it printed the selected restore point" }
+    }
+    set R(SELECTED_AT) $tsel
+    set timeout 30
+    expect { -exact "Type ready when" { grab } timeout { grab; fail "row 4 did not reach its ready prompt" } eof { grab; fail "row 4 ended before its ready prompt" } }
+    # bounded wait: poll the Management API capture at a fixed interval until latest >= selection, or STOP at the reviewed limit
+    set t0 [clock seconds]; set limit [v WAIT_LIMIT_S]; set every [v POLL_S]; set ready 0; set polls 0
+    while {1} {
+      set dir [pitr_capture]
+      set spawn_id $row4
+      incr polls
+      set js [exec node -e {
+        const fs=require("fs"); const d=process.argv[1];
+        const j=JSON.parse(fs.readFileSync(d+"/backups.json","utf8")); const m=JSON.parse(fs.readFileSync(d+"/backups.meta.json","utf8"));
+        const p=j.physical_backup_data||{}; const u=s=>typeof s==="number"?new Date(s*1000).toISOString().replace(".000Z","Z"):"";
+        console.log([j.pitr_enabled===true?"true":"false",u(p.earliest_physical_backup_date_unix),u(p.latest_physical_backup_date_unix),m.captured_at_utc].join(" "));
+      } $dir]
+      lassign [split [string trim $js] " "] pon early late capat
+      set R(LAST_POLL_LATEST) $late; set R(POLLS) $polls
+      if {$late ne "" && $capat ne "" && [iso_s $late] >= [iso_s $tsel] && [iso_s $capat] > [iso_s $tsel]} { set ready 1; break }
+      if {[expr {[clock seconds] - $t0}] + $every > $limit} { break }
+      after [expr {$every * 1000}]
+    }
+    if {!$ready} {
+      set R(STOP) PITR_STALLED
+      send -- "abort\r"; set timeout 30; expect { eof {grab} timeout {} }; catch {wait}
+      note "\n\[driver\] STOP: the latest recovery point ($R(LAST_POLL_LATEST)) never reached the selection $tsel within ${limit}s; row 4 aborted, nothing pushed.\n"
+      finish 4
+    }
+    set spawn_id $row4
+    send -- "ready\r"
+    step "Basis (latest_at_or_after, named_restore_point or idle_proven_latest): " latest_at_or_after
+    step "PITR enabled on the dashboard (type exactly true): " $pon
+    step "PITR retention in days (a whole number, no unit): " [v PITR_RET]
+    step "Earliest recovery point on the dashboard (UTC): " $early
+    step "Latest recovery point on the dashboard (UTC): " $late
+    set rc [finish_child 300]
+    set R(CHILD_RC) $rc
+    if {$rc == 0 && [regexp {WINDOW ROW 4: OVERALL PASS} $transcript]} { set R(VERDICT) PASS; finish 0 }
+    set R(VERDICT) NOT_PASS; finish 3
+  }
+  apply {
+    spawn -noecho {*}$child
+    set apply $spawn_id
+    step "Window start (UTC): " [v WSTART]
+    step "Window end (UTC): " [v WEND]
+    step "Type the selected restore point exactly as row 4 printed it (UTC): " [v SELECTED_AT]
+    secret_step "Database password (not shown): " pw 60
+    # the pinned apply script runs its dry run, then asks for the watchdog. The runner starts the reviewed watchdog ITSELF and answers
+    # yes ONLY after reading the watchdog's own two lines (never a blind yes).
+    set timeout 600
+    expect { -exact "START THE WATCHDOG NOW" { grab } timeout { grab; fail "the dry run did not reach the watchdog step" } eof { grab; fail "the apply script ended before the watchdog step" } }
+    set timeout 30
+    expect { -exact "Terminal 2 printed  WATCHDOG armed" { grab } timeout { grab; fail "no watchdog prompt" } eof { grab; fail "the apply script ended at the watchdog step" } }
+    set spawn_id $apply
+    set wd_env [v WD_ENV]
+    foreach kv [split $wd_env " "] { lassign [split $kv "="] ek ev; set env($ek) $ev }
+    spawn -noecho zsh [v WD_SCRIPT]
+    set wd $spawn_id
+    blind_secret pw
+    set timeout 240
+    expect { -re {WATCHDOG armed \(self-test ok\)} { note $expect_out(buffer) } timeout { fail "the watchdog never printed WATCHDOG armed" } eof { fail "the watchdog ended before it armed" } }
+    expect { -re {watching for the push session to start} { note $expect_out(buffer) } timeout { fail "the watchdog never printed 'watching for the push session to start'" } eof { fail "the watchdog ended before it was watching" } }
+    set R(WATCHDOG) armed_and_watching
+    set spawn_id $apply
+    send -- "yes\r"
+    step "Terminal 2 printed  watching for the push session to start  (type yes): " yes
+    if {[v APPROVED_PLAN_SHA] eq ""} { fail "no approved plan sha" }
+    step "Type  APPLY  to run the single push of that 1 migration (0248) now: " APPLY 120
+    set R(APPLY_TYPED) 1
+    set rc [finish_child 1800]
+    set R(CHILD_RC) $rc
+    catch {close -i $wd}; catch {wait -i $wd}
+    if {$rc == 0} { finish 0 }
+    finish 3
+  }
+  s1read {
+    spawn -noecho {*}$child
+    secret_step "Supabase access token (not shown): " token 120
+    secret_step "Database password (not shown; only its presence is used here): " pw 60
+    set rc [finish_child 600]
+    set R(CHILD_RC) $rc
+    if {$rc == 0 && [string first "OVERALL PASS (0248 read-back: history and 2 verify-bundle checks; read-only, not a promotion)" $transcript] >= 0} { set R(VERDICT) PASS; finish 0 }
+    set R(VERDICT) NOT_PASS; finish 3
+  }
+  default { fail "unknown phase $phase" }
+}

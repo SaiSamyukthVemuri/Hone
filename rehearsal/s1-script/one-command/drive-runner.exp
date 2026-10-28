@@ -1,0 +1,28 @@
+#!/usr/bin/expect -f
+# REHEARSAL TEST HARNESS (not the runner): plays Sam at the terminal for the runner. usage: drive-runner.exp ANSWERS TRANSCRIPT RUNNER PLAN
+# ANSWERS lines: prompt<TAB>answer<TAB>hidden(0|1). A hidden prompt is answered only after echo is OFF. Exit = the runner's status (99 = harness timeout).
+log_user 0
+set af [lindex $argv 0]; set out [lindex $argv 1]; set runner [lindex $argv 2]; set plan [lindex $argv 3]
+set fh [open $af r]; set rows {}; while {[gets $fh l] >= 0} { if {$l ne ""} { lappend rows [split $l "\t"] } }; close $fh
+set buf ""
+spawn -noecho bash $runner $plan
+set i 0; set timeout 180
+while {1} {
+  if {$i < [llength $rows]} { set pr [lindex [lindex $rows $i] 0] } else { set pr "\x00never" }
+  expect {
+    -exact $pr {
+      append buf $expect_out(buffer)
+      set row [lindex $rows $i]
+      if {[lindex $row 2] eq "1"} {
+        set ok 0; for {set k 0} {$k < 50} {incr k} { if {![catch {exec stty -a < $spawn_out(slave,name)} s] && [regexp {(^|[ \t;])-echo([ \t;]|$)} $s]} { set ok 1; break }; after 100 }
+        if {!$ok} { append buf "\n\[harness\] echo did not turn off\n"; exit 97 }
+      }
+      send -- "[lindex $row 1]\r"; incr i
+    }
+    eof { append buf $expect_out(buffer); break }
+    timeout { append buf "\n\[harness\] timeout\n"; set f [open $out w]; puts -nonewline $f $buf; close $f; exit 99 }
+  }
+}
+set w [wait]
+set f [open $out w]; puts -nonewline $f $buf; close $f
+exit [lindex $w 3]

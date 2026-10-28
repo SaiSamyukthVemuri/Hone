@@ -1,0 +1,42 @@
+# REHEARSAL - NEVER MERGE. ONE-COMMAND STAGE: the runner (rehearsal/s1-script/one-command) against STUB children and a fake CLI, with negative controls.
+# No hosted call, no database, canary credentials only.
+name: rehearsal-one-command
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/s1-script/one-command/**"
+      - ".github/workflows/rehearsal-one-command.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  runner-linux:
+    name: one-command runner vs stubs (Linux, fast loop)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq expect zsh >/dev/null && expect -v && node --version
+      - name: check-mac.sh
+        run: EXPECT_N="${EXPECT_N:-0}" /bin/bash rehearsal/s1-script/one-command/check-mac.sh 2>&1 | tee "$RUNNER_TEMP/oc.txt"; exit ${PIPESTATUS[0]}
+
+  runner-macos:
+    name: one-command runner vs stubs (macOS arm64, /bin/bash 3.2, /usr/bin/expect)
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts
+        run: uname -sm; /bin/bash --version | head -1; command -v expect; expect -v; command -v zsh; node --version
+      - name: check-mac.sh under /bin/bash 3.2, launched from zsh like the operator's terminal
+        shell: /bin/zsh {0}
+        run: /bin/bash rehearsal/s1-script/one-command/check-mac.sh 2>&1 | tee "$RUNNER_TEMP/oc.txt"; exit ${pipestatus[1]}
