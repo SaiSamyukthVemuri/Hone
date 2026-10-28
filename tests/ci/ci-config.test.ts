@@ -1079,19 +1079,166 @@ describe("D7b: Supabase-starting jobs pull ghcr.io images authenticated, read-on
       // Codex P2 4354172124: that start is a DIRECT pinned-CLI call, never a
       // checked-out script; its failure falls through to ONE retry step that
       // runs the repo's wrapper only AFTER the logout.
-      const start = steps[at + 1];
+      // CI-REGISTRY (OPS 2026-10-27): the one step allowed between the login and
+      // the start is the image pre-pull, inline and credential-neutral (see the
+      // CI-REGISTRY describe below for its exact contract).
+      expect(steps[at + 1]).toMatch(/^      - name: Pre-pull Supabase images \(bounded back-off; ghcr, then ECR or Docker Hub, by digest\)\n/);
+      const start = steps[at + 2];
       expect(start).toMatch(/^      - name: (Start local Supabase|Bring up the database)/);
       expect(start).toMatch(/\n        id: sb_start\n/);
       expect(start).toMatch(/\n        continue-on-error: true\n        shell: bash\n        run: supabase start\b[^\n]* 2>&1 \| tee "\$RUNNER_TEMP\/supabase-start\.log"\n/);
       expect(start.replace(/^\s*#.*$/gm, "")).not.toMatch(/scripts\/|\bbash scripts|\bnpm |\bnode |\.sh\b/);
       const cond = _n === "ci.yml" ? "always()" : "always() && matrix.needs_supabase";
-      expect(steps[at + 2]).toMatch(new RegExp(`^      - name: Log out of ghcr\\.io \\(D7b\\)\\n        if: ${cond.replace(/[()&.]/g, "\\$&")}\\n        run: docker logout ghcr\\.io\\n`));
+      expect(steps[at + 3]).toMatch(new RegExp(`^      - name: Log out of ghcr\\.io \\(D7b\\)\\n        if: ${cond.replace(/[()&.]/g, "\\$&")}\\n        run: docker logout ghcr\\.io\\n`));
       const retryIf = _n === "ci.yml" ? "steps.sb_start.outcome == 'failure'" : "matrix.needs_supabase && steps.sb_start.outcome == 'failure'";
-      expect(steps[at + 3]).toContain(`      - name: Retry Supabase start once on a port-bind collision (no credential)\n        if: ${retryIf}\n        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start`);
+      expect(steps[at + 4]).toContain(`      - name: Retry Supabase start once on a port-bind collision (no credential)\n        if: ${retryIf}\n        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start`);
     }
     expect((body().match(/uses: docker\/login-action@/g) ?? []).length).toBe(setups.length);
     expect((body().match(/run: docker logout ghcr\.io/g) ?? []).length).toBe(setups.length);
     expect(body()).not.toMatch(/SUPABASE_INTERNAL_IMAGE_REGISTRY/);
+  });
+});
+
+describe("CI-REGISTRY: every Supabase-starting job pre-pulls its images BY DIGEST with a bounded back-off and a verified registry fallback", () => {
+  // Run 40540979643 (and 40524759962): after a successful D7b login the start
+  // pulled ~10 images in a burst and ghcr.io answered `toomanyrequests ...
+  // allowed: 44000/minute`; docker and the CLI do not retry and the bind-retry
+  // step (correctly) refuses. The pre-pull (Team's #1193 mechanism) pulls each
+  // image ahead of the start. Insurance PEER-1200-SUPPLY: a tag-only fallback
+  // re-tagged as the expected image is a substitution, so EVERY pull is by the
+  // digest in a committed, reviewed table, and nothing is tagged unverified.
+  const stepsOf = (body: string) => body.split(/\n(?=      - )/);
+  const NAME = /^      - name: Pre-pull Supabase images \(bounded back-off; ghcr, then ECR or Docker Hub, by digest\)\n/;
+  const prepulls = (body: string) => stepsOf(body).filter((s) => NAME.test(s));
+  const code = (s: string) => s.replace(/^\s*#.*$/gm, "");
+  const excludeOf = (s: string) => s.match(/\n          EXCLUDE='([^']*)'\n/)?.[1];
+  const startExclude = (s: string) => s.match(/\n        run: supabase start(?: -x ([^ \n]+))? 2>&1/)?.[1] ?? "";
+  const TABLE = JSON.parse(readFileSync(".github/supabase-image-digests.json", "utf8")) as {
+    cli: string; images: Record<string, string>; no_fallback: string[]; verified_equal_on: Record<string, string[]>;
+  };
+  const FIXTURE = readFileSync("tests/ci/fixtures/supabase-cli-2.102.0-embedded-images.txt", "utf8").trim().split("\n");
+
+  /** The supply-chain contract of one pre-pull step; [] means it holds. */
+  function violations(step: string): string[] {
+    const v: string[] = [];
+    const c = code(step);
+    if (!/\n        continue-on-error: true\n        timeout-minutes: 20\n        shell: bash\n        run: \|\n/.test(step)) v.push("not non-fatal/bounded (continue-on-error + 20 min + bash)");
+    if (!c.includes("set +e")) v.push("missing set +e");
+    // Every pull is by digest from the table.
+    const pulls = c.split("\n").filter((l) => /\bdocker pull\b/.test(l));
+    if (pulls.length !== 2) v.push(`expected exactly 2 pull sites (primary, fallback), found ${pulls.length}`);
+    for (const l of pulls) if (!/@\$D"/.test(l)) v.push(`pull not by digest: ${l.trim()}`);
+    if (!c.includes(`D="$(jq -r --arg k "$IMG" '.images[$k] // empty' "$TABLE")"`)) v.push("digest not read from the table");
+    if (!c.includes("is not in the digest table; left to the stack start")) v.push("an image missing from the table is not left to the start");
+    // The fallback is verified before it can be tagged, and a failed check removes it.
+    if (!c.includes(`docker image inspect --format '{{json .RepoDigests}}' "$base@$D" 2> /dev/null | grep -q "@$D"`)) v.push("no digest comparison of the fallback");
+    if (!c.includes('docker rmi "$base@$D"')) v.push("a mismatching fallback is not removed");
+    const tags = c.match(/\bdocker tag\b/g) ?? [];
+    if (tags.length !== 1) v.push(`expected exactly 1 docker tag, found ${tags.length}`);
+    if (!c.includes('if [ -n "$ref" ] && docker tag "$ref" "ghcr.io/supabase/$IMG"; then')) v.push("the tag is not guarded by a verified reference");
+    if (c.indexOf("docker tag") < c.indexOf(`grep -q "@$D"`)) v.push("tag before the digest comparison");
+    // Sources: exactly ECR, Docker Hub supabase, and the CLI's own upstream reference (all pulled BY DIGEST).
+    const src = c.match(/for base in ([^;]+); do/)?.[1];
+    if (src !== "public.ecr.aws/supabase/$NAME docker.io/supabase/$NAME ${ORIG:+docker.io/${ORIG%%:*}}") v.push(`unexpected fallback sources: ${src}`);
+    // Images started with the Docker socket never use a fallback.
+    if (!c.includes('vector|logflare) echo "no fallback for $NAME')) v.push("vector/logflare are not excluded from the fallback");
+    // The table only applies to the CLI it was generated for.
+    if (!c.includes(`[ "$cli_v" != "$(jq -r '.cli' "$TABLE")" ]`)) v.push("no CLI version check against the table");
+    // The credential is held: no checked-out script, package manager, repo code or credential use.
+    if (/scripts\/|\bbash scripts|\bnpm |\bnpx |\bnode |\.sh\b|docker login|secrets\.|GITHUB_TOKEN/.test(c)) v.push("repo code or a credential reference in a credential-holding step");
+    return v;
+  }
+
+  const real = [...prepulls(CI), ...prepulls(NIGHTLY)];
+
+  it.each([["ci.yml", () => CI, 7], ["nightly.yml", () => NIGHTLY, 1]])("%s: one pre-pull per setup-cli, directly after the login, with the same exclusions as the start that follows it", (_n, body, count) => {
+    const all = stepsOf(body());
+    const pre = prepulls(body());
+    expect(pre.length).toBe(count);
+    expect(pre.length).toBe(all.filter((s) => /uses: supabase\/setup-cli@/.test(s)).length);
+    for (const p of pre) {
+      const at = all.indexOf(p);
+      expect(all[at - 1], "directly after the login").toMatch(/uses: docker\/login-action@/);
+      expect(excludeOf(p), "EXCLUDE equals the following start's -x list").toBe(startExclude(all[at + 1]));
+    }
+  });
+
+  it("the pre-pull bodies are identical across jobs except the exclusion list (and nightly's condition)", () => {
+    const norm = (s: string) => s.replace(/EXCLUDE='[^']*'/, "EXCLUDE='…'").replace(/\n        if: matrix\.needs_supabase/, "");
+    expect(new Set(real.map(norm)).size).toBe(1);
+  });
+
+  it("every real pre-pull satisfies the supply-chain contract", () => {
+    expect(real.length).toBe(8);
+    for (const s of real) expect(violations(s)).toEqual([]);
+  });
+
+  describe("negative controls: each weakening of the contract is caught", () => {
+    const base = real[0];
+    const mutate = (from: string, to: string) => {
+      expect(base, `fixture anchor present: ${from}`).toContain(from);
+      return base.replace(from, to);
+    };
+    it.each([
+      ["a fallback pull by mutable tag", () => mutate('docker pull -q "$base@$D"', 'docker pull -q "$base:${IMG#*:}"')],
+      ["no digest comparison before tagging", () => mutate('2> /dev/null | grep -q "@$D"; then ref=', "2> /dev/null | cat; then ref=")],
+      ["a mismatching fallback is kept", () => mutate('docker rmi "$base@$D"', "true")],
+      ["an unconditional re-tag", () => mutate('if [ -n "$ref" ] && docker tag "$ref" "ghcr.io/supabase/$IMG"; then', 'if docker tag "$base" "ghcr.io/supabase/$IMG"; then')],
+      ["an extra, unreviewed source", () => mutate("${ORIG:+docker.io/${ORIG%%:*}}", "${ORIG:+docker.io/${ORIG%%:*}} registry.example/evil/$NAME")],
+      ["a cross-publisher source in a different form", () => mutate("docker.io/supabase/$NAME ${ORIG", "docker.io/supabase/$NAME docker.io/$ORIG ${ORIG")],
+      ["vector/logflare allowed a fallback", () => mutate('vector|logflare) echo "no fallback for $NAME', 'nothing) echo "no fallback for $NAME')],
+      ["no check that the table matches the CLI", () => mutate(`[ "$cli_v" != "$(jq -r '.cli' "$TABLE")" ]`, "false")],
+      ["a digest not read from the table", () => mutate(`D="$(jq -r --arg k "$IMG" '.images[$k] // empty' "$TABLE")"`, `D="$IMG"`)],
+      ["a checked-out script in the credential-holding step", () => mutate("set +e", "set +e\n          bash scripts/ci/x.sh")],
+    ])("%s", (_label, make) => {
+      expect(violations(make()).length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("the digest table", () => {
+    it("is valid, for the pinned CLI, lists exactly the images the CLI's embedded list names, and every digest is a sha256", () => {
+      const keys = FIXTURE.map((l) => {
+        const m = l.match(/^FROM (\S+) AS (\w+)$/);
+        expect(m, l).not.toBeNull();
+        return m![1].split("/").pop()!;
+      }).sort();
+      expect(Object.keys(TABLE.images).sort()).toEqual(keys);
+      for (const [k, d] of Object.entries(TABLE.images)) expect(d, k).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(TABLE.cli).toBe("2.102.0");
+      for (const body of [CI, NIGHTLY]) {
+        const versions = [...body.matchAll(/uses: supabase\/setup-cli@[^\n]*\n        with:\n(?:\s+#[^\n]*\n)*\s+version: ([0-9.]+)/g)].map((m) => m[1]);
+        expect(versions.length).toBeGreaterThan(0);
+        for (const ver of versions) expect(ver, "setup-cli version equals the table's CLI").toBe(TABLE.cli);
+      }
+    });
+
+    it("the workflow's alias list equals the aliases of the CLI's embedded list (drift check)", () => {
+      const fixtureAliases = FIXTURE.map((l) => l.match(/ AS (\w+)$/)![1]).sort();
+      for (const s of real) {
+        const alt = code(s).match(/AS \(([a-z|]+)\)\$'/)?.[1].split("|").sort();
+        expect(alt).toEqual(fixtureAliases);
+      }
+    });
+
+    it("vector and logflare are listed as never-fallback, matching the step", () => {
+      expect([...TABLE.no_fallback].sort()).toEqual(["logflare", "vector"]);
+      for (const s of real) expect(code(s)).toContain('vector|logflare) echo "no fallback for $NAME');
+    });
+
+    it("every image that may use a fallback has at least one independent source recorded as byte-identical", () => {
+      for (const [k, srcs] of Object.entries(TABLE.verified_equal_on)) {
+        if (TABLE.no_fallback.includes(k.split(":")[0])) continue;
+        expect(srcs.length, k).toBeGreaterThanOrEqual(1);
+      }
+    });
+  });
+
+  it("the bind-retry step, the logout and the direct start are unchanged", () => {
+    for (const body of [CI, NIGHTLY]) {
+      const n = (body.match(/uses: supabase\/setup-cli@/g) ?? []).length;
+      expect((body.match(/run: docker logout ghcr\.io/g) ?? []).length).toBe(n);
+      expect((body.match(/scripts\/ci\/supabase-start-bind-retry\.sh --after-failed-start/g) ?? []).length).toBe(n);
+    }
   });
 });
 
