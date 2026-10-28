@@ -76,9 +76,10 @@ function localOnlyEnv(): NodeJS.ProcessEnv {
 }
 
 /** Every test id Playwright would run for `specs`, optionally sharded. */
-function listTests(specs: string[], shard?: string): string[] {
+function listTests(specs: string[], shard?: string, extraArgs: string[] = []): string[] {
   const args = ["playwright", "test", ...specs, "--list", "--reporter=list"];
   if (shard) args.push(`--shard=${shard}`);
+  args.push(...extraArgs);
   const out = execFileSync("npx", args, {
     cwd: ROOT,
     encoding: "utf8",
@@ -159,11 +160,11 @@ describe("the targeted browser lane's shard count is stated consistently", () =>
     expect(specsForGroups(Object.keys(BROWSER_GROUPS)).length).toBeGreaterThanOrEqual(4);
   });
 
-  it("only measured cold setup ceilings change, with targeted coverage unchanged", () => {
+  it("measured cold setup and augmented native ceilings keep targeted coverage unchanged", () => {
     // run39713000378: setup12–12.6min, zero observed browser assertions failed.
     // Ceilings are not performance targets; retain all four shards and tests.
     expect(CI_YML).toContain(
-      "timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 25 || 19 }}",
+      "timeout-minutes: ${{ (needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')) && 35 || 19 }}",
     );
     expect(CI_YML).toContain("run39713000378");
     expect(CI_YML).toContain("mobile:3 observed passes");
@@ -323,4 +324,24 @@ describe("the split covers the same specs, once and only once", () => {
       expect(shards.reduce((n, sh) => n + sh.length, 0)).toBe(all.length);
     },
   );
+});
+
+
+describe("native-only case-level sharding preserves both 3G models", () => {
+  it("all24 native cases are disjoint and exhaustive across the four existing runners", { timeout: 120_000 }, () => {
+    const specs = ["e2e/machine-create-mode-journey.spec.ts"];
+    const args = ["--grep=native 3G (durability|text durability|uncommitted recovery)", "--fully-parallel", "--workers=1"];
+    const all = listTests(specs, undefined, args);
+    const shards = ["1/4", "2/4", "3/4", "4/4"].map((shard) => listTests(specs, shard, args));
+    expect(all).toHaveLength(24);
+    expect(all.some((name) => name.includes("Senior 3G"))).toBe(true);
+    expect(all.some((name) => name.includes("Junior 3G"))).toBe(true);
+    const desktopReload = all.filter((name) => name.includes("native 3G text durability desktop initial reload"));
+    expect(desktopReload).toHaveLength(2);
+    expect(desktopReload.filter((name) => name.includes("Senior 3G") && name.includes(" / blend:"))).toHaveLength(1);
+    expect(desktopReload.filter((name) => name.includes("Junior 3G") && name.includes(" / blend:"))).toHaveLength(1);
+    expect(shards.map((shard) => shard.length)).toEqual([6, 6, 6, 6]);
+    expect(shards.flat().sort()).toEqual(all);
+    expect(new Set(shards.flat()).size).toBe(all.length);
+  });
 });

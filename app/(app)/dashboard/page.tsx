@@ -54,6 +54,7 @@ import {
   SecondaryStackSkeleton,
 } from "./secondary-stack";
 import { getPracticeDashboardMetrics } from "@/lib/dashboard/practice-metrics";
+import { loadStaffManagedClinic } from "@/lib/dashboard/staff-managed";
 import {
   isReportingPeriod,
   type ReportingPeriod,
@@ -316,6 +317,7 @@ export default async function DashboardPage({
       ? getNewClientReadiness(studio)
       : Promise.resolve(null as NewClientReadiness | null),
   );
+  const staffManagedPromise = settleLater(loadStaffManagedClinic(supabase, studio.id));
   const practiceMetricsPromise = settleLater(
     // HON-44: studio money totals are owner-only, refused at the read.
     getPracticeDashboardMetrics(studio.id, studio.timezone, period, {
@@ -932,6 +934,7 @@ export default async function DashboardPage({
       >
         <SecondaryStack
           attentionSources={attentionSourcesPromise}
+          staffManaged={staffManagedPromise}
           bookingReadiness={bookingReadinessPromise}
           practiceMetrics={practiceMetricsPromise}
           clientsNeedingAttention={clientsNeedingAttentionPromise}

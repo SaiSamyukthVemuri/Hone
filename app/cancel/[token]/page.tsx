@@ -166,8 +166,19 @@ export default async function CancelAppointmentPage({
                   result.summary.freeConsultationWaitlistOnly
                 }
                 waitlistBookingSlug={result.summary.waitlistBookingSlug}
+                rescheduleEnabled={result.summary.rescheduleEnabled}
               />
             </>
+          ) : result.code === "cancellation_disabled" ? (
+            // HON-47. The studio does not offer online cancellation. Only a
+            // future confirmed appointment reaches this branch, so it is not a
+            // token-state signal; the copy says the booking still stands and
+            // how to change it.
+            <UnavailableMessage
+              eyebrow="Cancel appointment"
+              headline="Online cancellation isn't available."
+              body={result.error}
+            />
           ) : (
             // Public collapse surface: a single generic message is
             // shown for unknown / expired / cancelled / completed /

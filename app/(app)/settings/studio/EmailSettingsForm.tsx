@@ -146,7 +146,7 @@ export function EmailSettingsForm({ initial }: Props) {
         </h2>
         <p className="mt-1 text-sm text-neutral-500">
           All emails are sent from hello@hone.care and appear as your studio.
-          Clients can cancel or reschedule directly from any of these emails.
+          Clients can cancel or reschedule from these emails unless you turn that off under Client self-service below.
         </p>
       </div>
       <ul className="flex flex-col divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">

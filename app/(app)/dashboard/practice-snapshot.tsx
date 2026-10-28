@@ -52,6 +52,7 @@ export function PracticeSnapshot({
   livemode = false,
   selectedDay,
   todayLocal,
+  staffManaged = false,
 }: {
   metrics: PracticeDashboardMetrics;
   // PR #323: deployment mode. Gates the factual "Live payments On/Off" +
@@ -60,6 +61,8 @@ export function PracticeSnapshot({
   /** Studio-local selected day, so period links preserve it. */
   selectedDay: string;
   todayLocal: string;
+  /** HON-65: both HON-47 client self-service settings are off. Hides "Late cancellations" (nothing sets that reason on a staff cancel). */
+  staffManaged?: boolean;
 }) {
   const a = metrics.appointments;
   // HON-44: null for a non-owner. The loader never read the prices or payment
@@ -118,7 +121,9 @@ export function PracticeSnapshot({
           <Stat label="Upcoming" value={a.upcoming} />
           <Stat label="Cancelled" value={a.cancelled} />
           <Stat label="No-shows" value={a.noShows} />
-          <Stat label="Late cancellations" value={a.lateCancellations} />
+          {!staffManaged && (
+            <Stat label="Late cancellations" value={a.lateCancellations} />
+          )}
         </Card>
 
         {money && (
