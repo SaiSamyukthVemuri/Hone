@@ -77,7 +77,7 @@ cli() { # cli <label> <args...>  -> $OUT/<label>.log, sets RC and LOG; every cal
   ( cd "$PROJ" && perl -e 'alarm 180; exec @ARGV' "$GOBIN" db push --db-url "$PGURL" --workdir "$PROJ" "$@" ) < /dev/null > "$LOG" 2>&1
   RC=$?
   say "RUN   $label: db push $* -> rc=$RC"
-  sed 's/^/   | /' "$LOG" | head -30 >> "$RES"
+  head -30 "$LOG" | sed 's/^/   | /' >> "$RES"
 }
 hist() { pg -c "select count(*) || ' rows, max ' || coalesce(max(version), '-') from supabase_migrations.schema_migrations" 2> /dev/null; }
 rows_of() { pg -c "select count(*) from supabase_migrations.schema_migrations where version = '$1'" 2> /dev/null; }
@@ -87,6 +87,9 @@ has_col() { pg -c "select count(*) from information_schema.columns where table_n
 snap() { echo "$(hist) | $(hist_digest) | fn=$(has_fn) col=$(has_col)"; }
 
 fresh() { # fresh : the synthetic hosted database: roles, then the 246 hosted-name files pushed by the CLI itself
+  # The sealed 0257 declares a plpgsql function whose body names six tables the one-column stand-in schema does not have. The server validates plpgsql bodies at CREATE time,
+  # so the DISPOSABLE database turns that validation off; the body itself is checked on the real chain by #1267's CI and, here, byte for byte by md5(prosrc).
+  pg -c "alter database postgres set check_function_bodies = off" > /dev/null 2>&1
   pg -c "drop schema if exists public cascade; create schema public; drop schema if exists supabase_migrations cascade;" > /dev/null 2>&1
   for r in anon authenticated service_role; do pg -c "do \$\$ begin if not exists (select 1 from pg_roles where rolname = '$r') then create role $r nologin; end if; end \$\$" > /dev/null 2>&1; done
   rm -rf "$MIG"; mkdir -p "$MIG"; hosted_files
@@ -148,7 +151,8 @@ runq "$D/reads-s1/s1-history-0257.sql" s1-history-0257
 runq "$D/reads-s1/c01_functions-exist.sql" c01_functions-exist
 runq "$D/reads-s1/c02_function-bodies.sql" c02_function-bodies
 runq "$D/reads-s1/c03_shape-and-grants.sql" c03_shape-and-grants
-expect "the four read-back queries ran against the applied database and returned rows" "$([ -s "$RES_DIR/s1-history-0257.json" ] && [ -s "$RES_DIR/c01_functions-exist.json" ] && [ -s "$RES_DIR/c02_function-bodies.json" ] && [ -s "$RES_DIR/c03_shape-and-grants.json" ] && echo 0 || echo 1)" "$(cat "$RES_DIR"/*.err | head -2 | tr '\n' ' ')"
+nonempty() { [ -s "$1" ] && [ "$(cat "$1")" != "[]" ] && echo 0 || echo 1; }
+expect "the four read-back queries ran against the applied database and returned a row each" "$([ "$(nonempty "$RES_DIR/s1-history-0257.json")$(nonempty "$RES_DIR/c01_functions-exist.json")$(nonempty "$RES_DIR/c02_function-bodies.json")$(nonempty "$RES_DIR/c03_shape-and-grants.json")" = 0000 ] && echo 0 || echo 1)" "$(cat "$RES_DIR"/*.err | head -2 | tr '\n' ' ')"
 PGMD5=$(pg -c "select md5(prosrc) from pg_proc where proname = 'initialize_studio_payment_jurisdiction_from_history_v2'")
 SCRIPT_MD5=$(sed -n 's/^const BODY_MD5 = "\([0-9a-f]*\)";$/\1/p' "$D/reads-s1/window-s1read-0257.sh" | head -1)
 say "INFO  PostgreSQL md5(prosrc) of the applied v2 command: $PGMD5; the read-back script's BODY_MD5: $SCRIPT_MD5"

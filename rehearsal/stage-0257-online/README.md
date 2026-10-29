@@ -29,5 +29,5 @@ the apply script has exactly the declared stage data (`DELTA-NONCONSTANT-*.txt`)
 
 ## What this does not prove
 
-The synthetic database holds a one-column stand-in for the one table 0257 alters, not the real hosted schema, so the preflight read (`g12`) and the real lock behaviour
+The rehearsal database turns `check_function_bodies` off (the sealed plpgsql body names six tables the stand-in schema lacks; PostgreSQL would refuse to create it otherwise), and it holds a one-column stand-in for the one table 0257 alters, not the real hosted schema, so the preflight read (`g12`) and the real lock behaviour
 are not exercised here; they are the apply script's pre-push reads against the hosted database. The sealed file's own behaviour on the full chain is #1267's CI.
