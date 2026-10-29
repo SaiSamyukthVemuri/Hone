@@ -36,7 +36,7 @@ chmod +x "$GOBIN"
 GOSHA=174a90e23b8dfe9ab4e2d2c2e91d4b6b2520fe5be968721555727f16c1bab43c
 expect "the extracted supabase-go has the recorded inner sha256 (linux; the macOS inner binary is dce26b75, same source tag)" \
   "$(yes0 "$(sha256sum "$GOBIN" | cut -d' ' -f1)" "$GOSHA")" "$(sha256sum "$GOBIN" | cut -c1-16)"
-expect "supabase-go prints $VER" "$(yes0 "$("$GOBIN" --version 2>&1 | tail -1)" "$VER")" "$("$GOBIN" --version 2>&1 | tail -1)"
+expect "supabase-go prints $VER" "$(yes0 "$("$GOBIN" --version 2>&1 | head -1)" "$VER")" "$("$GOBIN" --version 2>&1 | head -1)"
 say "INFO  psql: $(psql --version); server: $(pg -c 'show server_version')"
 
 # ---- the scratch project ------------------------------------------------------------------------
@@ -223,6 +223,7 @@ say "=================== N7: --include-all WITHOUT --yes and with no terminal"
 fresh n7
 mig 0251 fifth
 cli n7-no-yes --include-all
+expect "N7 with no --yes and no terminal the CLI PROCEEDS (stdin EOF answers the default, yes): the apply script must pass --yes explicitly and never rely on this" "$([ "$RC" = 0 ] && [ "$(has_table ooo_0251)" = 1 ] && echo 0 || echo 1)" "rc=$RC applied=$(has_table ooo_0251)"
 say "INFO  N7 rc=$RC; applied 0251: $(has_table ooo_0251); history: $(hist); output tail: $(tail -n 3 "$LOG" | tr '\n' '/' | cut -c1-200)"
 
 say "=================== N8: a plain in-order push needs no --include-all (the flag is only for the gap)"
