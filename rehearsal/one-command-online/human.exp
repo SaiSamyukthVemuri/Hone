@@ -23,7 +23,7 @@ while {1} {
     eof { append buf $expect_out(buffer); break }
     timeout {
       if {$flag ne "" && !$sent && [file exists $flag]} { set sent 1; after 1500; append buf "\n\[harness\] sent Ctrl-C\n"; send -- "\003" }
-      if {[clock seconds] - $t0 > 150} {
+      if {[clock seconds] - $t0 > 60} {
         set timeout 1; expect { -re {(?s).+} { append buf $expect_out(0,string) } timeout {} eof {} }
         append buf "\n\[harness\] timeout waiting for: $pr\n"; set f [open $out w]; puts -nonewline $f $buf; close $f; exit 99
       }
