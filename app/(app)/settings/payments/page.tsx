@@ -17,6 +17,8 @@ import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction
 import { currencyLabel } from "@/lib/billing/payment-jurisdiction";
 import { ownerJurisdictionConfirmationEnabled } from "@/lib/billing/jurisdiction-owner-confirmation";
 import { JurisdictionCard } from "./JurisdictionCard";
+import { JurisdictionStatusPanel } from "./JurisdictionStatusPanel";
+import { getJurisdictionSetupVerdict } from "@/lib/billing/jurisdiction-setup-status";
 import { dbErrorCode } from "@/lib/logging/error-class";
 
 export const dynamic = "force-dynamic";
@@ -145,6 +147,9 @@ export default async function PaymentsSettingsPage() {
       !feeJurisdiction.ok &&
       feeJurisdiction.reason === "missing" ? (
         <JurisdictionCard />
+      ) : null}
+      {ownerJurisdictionConfirmationEnabled() ? (
+        <JurisdictionStatusPanel verdict={await getJurisdictionSetupVerdict(studio.id)} />
       ) : null}
       <PaymentsSettings
         status={status}
