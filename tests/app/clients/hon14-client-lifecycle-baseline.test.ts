@@ -41,10 +41,16 @@ describe("HON-14 current client lifecycle", () => {
     expect(archive).not.toMatch(/isOwner/);
   });
 
-  it("each change is audited as client_archived / client_unarchived", () => {
+  it("each change is audited through the governed writer, once per change, with the change named", () => {
     const src = read(ACTIONS);
-    expect(src).toContain('action: "client_archived"');
-    expect(src).toContain('action: "client_unarchived"');
+    // Direct audit_logs inserts are revoked for user roles (0242); the app calls
+    // the governed command, which writes client_archived / client_unarchived.
+    expect(src).toContain('import { recordClientArchiveAudit } from "@/lib/audit/governed-writes"');
+    expect(src).toMatch(/recordClientArchiveAudit\(\{\s*expectedStudioId: studio\.id, clientId, change: "archive"/);
+    expect(src).toMatch(/recordClientArchiveAudit\(\{\s*expectedStudioId: studio\.id, clientId, change: "unarchive"/);
+    expect(src.match(/recordClientArchiveAudit\(\{/g)?.length).toBe(2);
+    const governed = read("lib/audit/governed-writes.ts");
+    expect(governed).toContain('"record_client_archive_audit_governed"');
   });
 
   it("the clients list has exactly two views, and an unknown ?view= is the active view", () => {
@@ -67,11 +73,17 @@ describe("HON-14 current client lifecycle", () => {
     expect(read("app/portal/verify/[token]/actions.ts")).toMatch(/clientRow\.archived_at != null/);
   });
 
-  it("next-visit behaviour: archive does not cancel upcoming appointments, and GAP, pinned: the reminder cron does not read archived_at", () => {
+  it("next-visit behaviour: archive does not cancel upcoming appointments, and the reminder cron excludes archived clients (MSG-ARCH-01, #1185)", () => {
     const archive = read(ACTIONS);
     const body = archive.slice(archive.indexOf("export async function archiveClientAction"), archive.indexOf("export async function unarchiveClientAction"));
     expect(body).not.toMatch(/appointments/);
-    expect(read("app/api/cron/appointment-reminders/route.ts")).not.toMatch(/archived/);
+    const cron = read("app/api/cron/appointment-reminders/route.ts");
+    // Selection skips an archived client on the email and the SMS path, and the
+    // send re-reads archived_at after the claim, so an archive between discovery
+    // and send also holds. An unavailable read is not evidence of "not archived".
+    expect(cron.match(/if \(appt\.client\.archived_at\) return;/g)?.length).toBe(2);
+    expect(cron).toContain('.select("archived_at")');
+    expect(cron).toMatch(/if \(liveClient\?\.archived_at\) \{/);
   });
 
   it("public booking and quick-book exclude archived clients", () => {
