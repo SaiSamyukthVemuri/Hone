@@ -105,6 +105,7 @@ import {
 } from "@/lib/payment-methods/card-on-file";
 import { CardOnFilePill, CurrentPill } from "./today-status-pills";
 import { TodayPortalLinkButton } from "./TodayPortalLinkButton";
+import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
 import { getExpiringSterileItems } from "@/lib/record-keeping/queries";
 import { getGettingStartedSignals } from "@/lib/onboarding/getting-started";
 import { buildOnboardingModel } from "@/lib/onboarding/steps";
@@ -871,6 +872,7 @@ export default async function DashboardPage({
                   linkedSession={sessionByAppointment.get(appt.id) ?? null}
                   paymentState={paymentStates.get(appt.id) ?? "unavailable"}
                   isOwner={isOwner}
+                  portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
                   historyAsked={viewingToday}
                   isCurrent={currentAppointmentIdSet.has(appt.id)}
                   cardOnFile={resolveCardOnFileStatus(
@@ -986,6 +988,7 @@ function AppointmentRow({
   linkedSession,
   paymentState,
   isOwner,
+  portalEnabled,
   prepSummary,
   historyAsked,
   isCurrent,
@@ -1027,6 +1030,7 @@ function AppointmentRow({
   // question at all: no pill, no nudge. Distinct from `unavailable`, which
   // means the question applies but the read failed.
   cardOnFile: CardOnFileStatus | null;
+  portalEnabled: boolean;
   tz: string;
   timeFormat: TimeFormat;
 }) {
@@ -1489,6 +1493,7 @@ function AppointmentRow({
             <TodayPortalLinkButton
               clientId={appt.client_id}
               clientHasEmail={!!appt.client?.email?.trim()}
+              portalEnabled={portalEnabled}
             />
           )}
         </div>

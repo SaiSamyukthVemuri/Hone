@@ -1,5 +1,7 @@
 "use client";
 
+import { PORTAL_OFF_STAFF_MESSAGE } from "@/lib/booking/client-self-service-policy";
+
 import { useState, useTransition } from "react";
 import { setClientSelfServiceAction } from "./actions";
 
@@ -24,7 +26,14 @@ const ROWS: ReadonlyArray<{
   },
 ];
 
-export function ClientSelfServiceForm({ initial }: { initial: Initial }) {
+export function ClientSelfServiceForm({
+  initial,
+  portalEnabled = true,
+}: {
+  initial: Initial;
+  // HON-47. Read-only status; the portal switch itself is not on this page.
+  portalEnabled?: boolean;
+}) {
   const [state, setState] = useState(initial);
   const [pending, startTransition] = useTransition();
   const [hint, setHint] = useState<string | null>(null);
@@ -61,6 +70,14 @@ export function ClientSelfServiceForm({ initial }: { initial: Initial }) {
           aftercare emails keep sending either way; only the cancel and reschedule options change. The client portal and online rebooking are not affected by these switches.
         </p>
       </div>
+      {!portalEnabled && (
+        <p
+          data-testid="client-portal-off-status"
+          className="rounded-md bg-neutral-50 p-3 text-sm text-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+        >
+          {PORTAL_OFF_STAFF_MESSAGE}
+        </p>
+      )}
       <ul className="flex flex-col divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
         {ROWS.map((r) => (
           <li key={r.key} className="flex items-start justify-between gap-4 p-4">
