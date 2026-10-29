@@ -37,6 +37,7 @@ import {
 } from "./QuickBookDrawer";
 import { DragActionChooser } from "./DragActionChooser";
 import { TimedBlockEditDrawer } from "./TimedBlockEditDrawer";
+import { reconcileEditingBlock } from "@/lib/calendar/reconcile-editing-block";
 import { QuickBlockDrawer } from "./QuickBlockDrawer";
 import { AppointmentPreviewDrawer } from "./AppointmentPreviewDrawer";
 import { AppointmentOverlapChooser, OverlapAppointmentSummary } from "./AppointmentOverlapChooser";
@@ -266,6 +267,11 @@ export function DayColumn({
   const [draft, setDraft] = useState<QuickBookDraft | null>(null);
   // PR C: the timed block whose edit/detail drawer is open (null = closed).
   const [editingBlock, setEditingBlock] = useState<StudioTimedBlock | null>(null);
+  // HON-48: a refresh that brings in a colleague's change to the open block
+  // replaces the drawer's copy (or closes it if the block is gone).
+  useEffect(() => {
+    setEditingBlock((cur) => reconcileEditingBlock(cur, timedBlocks));
+  }, [timedBlocks]);
   // PR C-lite: the appointment whose in-context preview drawer is open. Holds
   // the appointment object already in this column's props, no new query.
   const [preview, setPreview] = useState<AppointmentWithPractitionerColor | null>(
