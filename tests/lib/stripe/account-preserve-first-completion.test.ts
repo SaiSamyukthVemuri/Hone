@@ -113,6 +113,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     },
     rpc: async (name: string, args: Record<string, unknown>) => {
       h.rpcCalls.push({ name, args });
+      // #1035 P2: a jurisdiction reply that stored nothing fails the refresh,
+      // so answer as the real RPC does for a bound account.
+      if (name === "record_stripe_account_jurisdiction") {
+        return { data: [{ out_result: "recorded", out_matches: true }], error: null };
+      }
       return { data: null, error: h.syncErr };
     },
   }),
@@ -271,7 +276,11 @@ describe("owner refresh verifies retrieved account identity before any local sta
     const result = await refreshAccountStatusFromStripe({ studioId: STUDIO, stripeAccountId: "acct_test" });
     expect(result.chargesEnabled).toBe(true);
     expect(h.retrieveCalls).toEqual(["acct_test"]);
-    expect(h.rpcCalls).toHaveLength(1);
+    // #1035 P1-B: the sync is followed by exactly one jurisdiction record.
+    expect(h.rpcCalls.map((c) => c.name)).toEqual([
+      "sync_studio_account_status",
+      "record_stripe_account_jurisdiction",
+    ]);
     expect(h.rpcCalls[0]).toMatchObject({ name: "sync_studio_account_status", args: {
       p_studio_id: STUDIO, p_stripe_account_id: "acct_test", p_stripe_livemode: h.livemode,
     } });

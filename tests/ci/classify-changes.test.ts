@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { REPO_ROOT, classify, dependenciesFor, highestTier, isDocsPath } from "../../scripts/classify-changes.mjs";
 import {
@@ -16,6 +16,11 @@ import {
 } from "../../scripts/browser-groups.mjs";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { scanTestDependencies } from "../../scripts/test-dependencies.mjs";
+
+// Real-time bound, intrinsic: these cases spawn real `git`/`node` subprocesses
+// and scan the checkout, which measured 5-11 s each on a loaded host against
+// vitest's 5 s default (FLAKE-SYSDEPS). Only the ceiling moves; no assertion does.
+vi.setConfig({ testTimeout: 60_000 });
 
 // Path-classification is proved here rather than by pushing fake commits to
 // trigger every CI lane. These cases ARE the acceptance criteria.

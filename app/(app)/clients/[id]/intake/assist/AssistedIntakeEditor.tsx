@@ -1,11 +1,10 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { questionnaireForRow, QUESTIONNAIRE_UNAVAILABLE } from "@/lib/intake/questionnaire";
 import { useRouter } from "next/navigation";
 import {
-  isClientOwnedResponseKey,
-  PRACTITIONER_ENTERABLE_STEPS,
-  stepById,
+  stepById, type Step,
   validateVisibleAnswers,
   visibleQuestionsForStep,
 } from "@/lib/intake/questions";
@@ -18,36 +17,40 @@ import {
 type Responses = Record<string, unknown>;
 
 type Props = {
+  questionnaireSnapshot: unknown;
   clientId: string;
   clientName: string;
   intakeId: string;
   initialStep: number;
   initialResponses: Responses;
-  initialUpdatedAt: string;
+  initialRevision: string;
 };
 
-const STEP_IDS = PRACTITIONER_ENTERABLE_STEPS.map((s) => s.id);
 
 // Drop every key the client alone may author before sending. Defence in
 // depth, not the control: lib/intake/responses.ts strips them server-side and
 // the action refuses any that would change a stored client answer.
-function withoutClientOwnedKeys(responses: Responses): Responses {
+function withoutClientOwnedKeys(responses: Responses, ownedKeys: ReadonlySet<string>): Responses {
   const out: Responses = {};
   for (const [key, value] of Object.entries(responses)) {
-    if (!isClientOwnedResponseKey(key)) out[key] = value;
+    if (!ownedKeys.has(key)) out[key] = value;
   }
   return out;
 }
-const LAST_STEP_ID = STEP_IDS[STEP_IDS.length - 1] ?? 1;
 
 export function AssistedIntakeEditor({
+  questionnaireSnapshot,
   clientId,
   clientName,
   intakeId,
   initialStep,
   initialResponses,
-  initialUpdatedAt,
+  initialRevision,
 }: Props) {
+  const catalogue = useMemo(() => questionnaireForRow(questionnaireSnapshot), [questionnaireSnapshot]);
+  const PRACTITIONER_ENTERABLE_STEPS = catalogue.steps.slice(0, -1);
+  const STEP_IDS = PRACTITIONER_ENTERABLE_STEPS.map((s) => s.id);
+  const LAST_STEP_ID = STEP_IDS[STEP_IDS.length - 1] ?? 1;
   const router = useRouter();
   const [step, setStep] = useState(initialStep);
   const [responses, setResponses] = useState<Responses>(initialResponses);
@@ -57,19 +60,20 @@ export function AssistedIntakeEditor({
   // Optimistic-concurrency token. Refreshed from every successful save so a
   // long assisted session keeps working, and used to refuse a save that would
   // clobber a write made through the client's own link in the meantime.
-  const [updatedAt, setUpdatedAt] = useState(initialUpdatedAt);
+  const [revision, setRevision] = useState(initialRevision);
   const [atHandoff, setAtHandoff] = useState(false);
   const [isPending, startTransition] = useTransition();
 
-  const current = stepById(step);
+  const current = stepById(step, catalogue.steps);
 
   // Same conditional-visibility authority the client's wizard uses. Not a
   // copy of it: the same exported function.
   const visibleQuestions = useMemo(
-    () => visibleQuestionsForStep(step, responses),
-    [step, responses],
+    () => visibleQuestionsForStep(step, responses, catalogue.steps),
+    [step, responses, catalogue.steps],
   );
 
+  if (catalogue.kind === "invalid") return <p>{QUESTIONNAIRE_UNAVAILABLE}</p>;
   if (!current) return null;
 
   function setValue(key: string, value: unknown) {
@@ -101,14 +105,14 @@ export function AssistedIntakeEditor({
         // them back is pointless and makes the server work harder to prove
         // they are unchanged. The server remains the authority: it strips
         // these keys and refuses any that would CHANGE a client answer.
-        responses: withoutClientOwnedKeys(responses),
-        expectedUpdatedAt: updatedAt,
+        responses: withoutClientOwnedKeys(responses, catalogue.clientOwnedKeys),
+        expectedRevision: revision,
       });
       if (!res.ok) {
         setActionError(res.error);
         return;
       }
-      setUpdatedAt(res.updatedAt);
+      setRevision(res.revision);
       setSavedAt(new Date().toISOString());
       onDone?.();
     });
@@ -149,6 +153,7 @@ export function AssistedIntakeEditor({
       const fd = new FormData();
       fd.set("intake_id", intakeId);
       fd.set("client_id", clientId);
+      fd.set("expected_revision", revision);
       const res = await handOffAssistedIntakeAction(fd);
       if (!res.ok) {
         setActionError(res.error);
@@ -164,6 +169,11 @@ export function AssistedIntakeEditor({
   return (
     <div className="flex flex-col gap-6">
       <AssistedBanner clientName={clientName} />
+      {actionError && (
+        <button type="button" className="text-sm underline" onClick={() => window.location.reload()}>
+          Discard my unsaved draft and reload saved answers
+        </button>
+      )}
 
       {atHandoff ? (
         <HandoffPanel
@@ -175,7 +185,7 @@ export function AssistedIntakeEditor({
         />
       ) : (
         <>
-          <AssistedStepIndicator currentStep={step} />
+          <AssistedStepIndicator steps={PRACTITIONER_ENTERABLE_STEPS} currentStep={step} />
 
           <div>
             <h2 className="text-[22px] font-semibold leading-tight tracking-tight">
@@ -191,6 +201,7 @@ export function AssistedIntakeEditor({
           <div className="flex flex-col gap-5">
             {visibleQuestions.map((q) => (
               <IntakeQuestionField
+                noneValue={catalogue.noneValue}
                 key={q.key}
                 q={q}
                 value={responses[q.key]}
@@ -283,7 +294,8 @@ function AssistedBanner({ clientName }: { clientName: string }) {
   );
 }
 
-function AssistedStepIndicator({ currentStep }: { currentStep: number }) {
+function AssistedStepIndicator({ currentStep, steps: PRACTITIONER_ENTERABLE_STEPS }: { currentStep: number; steps: ReadonlyArray<Step> }) {
+  const STEP_IDS = PRACTITIONER_ENTERABLE_STEPS.map(s => s.id);
   return (
     <ol
       className="grid gap-2"

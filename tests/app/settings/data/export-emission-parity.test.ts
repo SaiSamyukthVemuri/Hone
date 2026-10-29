@@ -62,6 +62,11 @@ const BASE_CSV_HEADERS: Readonly<Record<string, readonly string[]>> = {
 type StubResult = { data: unknown[] | null; error: unknown; count?: number | null };
 
 let auditInsert: Record<string, unknown> | null = null;
+let auditFailure: "error" | "throw" | null = null;
+let freshOwnerActive = true;
+let revokeAtAtomicCommand = false;
+let adminConstructed = 0;
+let completedExportReads = 0;
 /**
  * The column list the action ACTUALLY asks PostgREST for, per table. Recorded
  * from the real `.select()` call rather than read out of the source, so this is
@@ -84,11 +89,17 @@ function builder(
 ): unknown {
   const target = {
     url,
-    then: (resolve: (v: StubResult) => unknown) => Promise.resolve(result).then(resolve),
+    then: (resolve: (v: StubResult) => unknown) => {
+      completedExportReads++;
+      return Promise.resolve(result).then(resolve);
+    },
   };
   return new Proxy(target, {
     get(t, prop) {
       if (prop === "then") return t.then;
+      if (prop === "maybeSingle" && table === "practitioners") return async () => ({
+        data: { id: "prac-1", user_id: "user-1", studio_id: "studio-1", active: freshOwnerActive, role: "owner" }, error: null,
+      });
       // postgrest-js keeps the selection in the REQUEST URL, and a later
       // .select() on the same builder REPLACES it. The stub models that
       // exactly, because that replacement is the behaviour the export's
@@ -110,10 +121,26 @@ function builder(
 
 function makeClient() {
   return {
+    auth: { getUser: async () => ({ data: { user: { id: "user-1" } }, error: null }) },
+    // Synthetic atomic-command adapter, not SQL/concurrency proof.
+    async rpc(name: string, args: Record<string, unknown>) {
+      expect(name).toBe("record_studio_export_audit_governed");
+      expect(args).toMatchObject({ p_actor_id: "prac-1", p_user_id: "user-1", p_studio_id: "studio-1" });
+      if (revokeAtAtomicCommand) freshOwnerActive = false;
+      if (!freshOwnerActive) return { data: false, error: null };
+      if (auditFailure === "throw") throw new Error("PRIVATE AUDIT FAILURE");
+      if (auditFailure === "error") return { data: null, error: { code: "42501", message: "PRIVATE AUDIT FAILURE" } };
+      auditInsert = { studio_id: args.p_studio_id, actor_id: args.p_actor_id,
+        action: "studio_export", entity_type: "studio", entity_id: args.p_studio_id,
+        metadata: { filename: args.p_filename, files: args.p_files, row_counts: args.p_row_counts } };
+      return { data: true, error: null };
+    },
     from(table: string) {
       if (table === "audit_logs") {
         return {
           insert(row: Record<string, unknown>) {
+            if (auditFailure === "throw") throw new Error("PRIVATE AUDIT FAILURE");
+            if (auditFailure === "error") return Promise.resolve({ error: { code: "42501", message: "PRIVATE AUDIT FAILURE" } });
             auditInsert = row;
             return Promise.resolve({ error: null });
           },
@@ -128,6 +155,8 @@ function makeClient() {
     },
   };
 }
+
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => { adminConstructed++; return makeClient(); } }));
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => makeClient(),
@@ -598,5 +627,70 @@ describe("a failed session_block_areas read fails closed", () => {
     const zip = await buildArchive();
     expect(csvNames(zip)).toEqual([...expectedCsvFiles()].sort());
     expect(auditInsert).not.toBeNull();
+  });
+});
+
+
+describe("SEC-003 actual export withholds bytes on trusted audit failure", () => {
+  beforeEach(() => { auditInsert = null; failingTables = new Set(); auditFailure = null; });
+  it.each(["error", "throw"] as const)("%s never returns a downloadable archive", async (mode) => {
+    auditFailure = mode;
+    try {
+      const { exportStudioDataAction } = await import("@/app/(app)/settings/data/actions");
+      const result = await exportStudioDataAction();
+      expect(result).toEqual({ ok: false, error: "Could not record the export audit entry. Try again." });
+      expect(result).not.toHaveProperty("base64");
+      expect(result).not.toHaveProperty("filename");
+      expect(auditInsert).toBeNull();
+    } finally { auditFailure = null; }
+  });
+});
+
+
+describe("SEC-003 cached owner revocation after export reads", () => {
+  it("withholds real archive bytes when the cached owner is revoked before the uncached audit check", async () => {
+    auditInsert = null; failingTables = new Set(); auditFailure = null;
+    freshOwnerActive = true; adminConstructed = 0; completedExportReads = 0;
+    const generate = JSZip.prototype.generateAsync;
+    let readsAtRevocation = 0;
+    const revoke = vi.spyOn(JSZip.prototype, "generateAsync").mockImplementation(function (this: JSZip, ...args) {
+      // The actual caller has completed all RLS reads and is now assembling
+      // real ZIP bytes. The cached resolver above STILL returns active owner.
+      readsAtRevocation = completedExportReads;
+      freshOwnerActive = false;
+      return generate.apply(this, args);
+    } as typeof generate);
+    try {
+      const { exportStudioDataAction } = await import("@/app/(app)/settings/data/actions");
+      const result = await exportStudioDataAction();
+      expect(readsAtRevocation).toBeGreaterThan(0);
+      expect(revoke).toHaveBeenCalledOnce();
+      const { getCurrentPractitionerWithStudio } = await import("@/lib/supabase/queries");
+      expect((await getCurrentPractitionerWithStudio()).practitioner).toMatchObject({ active: true, role: "owner" });
+      expect(freshOwnerActive).toBe(false);
+      expect(result).toEqual({ ok: false, error: "Could not record the export audit entry. Try again." });
+      expect(result).not.toHaveProperty("base64");
+      expect(result).not.toHaveProperty("filename");
+      expect(adminConstructed).toBe(0);
+      expect(auditInsert).toBeNull();
+    } finally { revoke.mockRestore(); freshOwnerActive = true; }
+  });
+});
+
+// Stronger race oracle, preserving cached/fresh precheck proof.
+describe("SEC-003 atomic write-time owner check", () => {
+  it("withholds ZIP when membership is revoked AFTER the fresh app check", async () => {
+    auditInsert = null; failingTables = new Set(); auditFailure = null;
+    freshOwnerActive = true; adminConstructed = 0; revokeAtAtomicCommand = true;
+    try {
+      const { exportStudioDataAction } = await import("@/app/(app)/settings/data/actions");
+      const result = await exportStudioDataAction();
+      expect(freshOwnerActive).toBe(false); // Only the command mock revoked it.
+      expect(adminConstructed).toBe(1); // App precheck passed; this exercises RPC denial.
+      expect(auditInsert).toBeNull();
+      expect(result).toEqual({ ok: false, error: "Could not record the export audit entry. Try again." });
+      expect(result).not.toHaveProperty("base64");
+      expect(result).not.toHaveProperty("filename");
+    } finally { revokeAtAtomicCommand = false; freshOwnerActive = true; }
   });
 });

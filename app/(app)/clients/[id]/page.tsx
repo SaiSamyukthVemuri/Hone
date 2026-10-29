@@ -7,6 +7,9 @@ import { orderByRecency } from "@/lib/sessions/charted-session";
 import { PendingLink } from "@/components/pending-link";
 import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound } from "next/navigation";
+import { signedClientPortraitUrl } from "@/lib/images/client-portrait";
+import { clientPortraitEnabled } from "@/lib/images/portrait-policy";
+import { ClientPortrait } from "./ClientPortrait";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
@@ -67,6 +70,7 @@ import {
   INTAKE_LINK_TTL_DAYS,
 } from "@/lib/intake/queries";
 import { computeFitzpatrickEstimate } from "@/lib/intake/fitzpatrick";
+import { questionnaireForRow } from "@/lib/intake/questionnaire";
 import { IntakeResendCard } from "./intake/IntakeResendCard";
 import { StartAssistedIntakeButton } from "./intake/StartAssistedIntakeButton";
 import { PortalAccessCard } from "./PortalAccessCard";
@@ -329,6 +333,7 @@ export default async function ClientCheatSheetPage({
     activeCard,
     importedMemory,
     portalAccessEvents,
+    portraitUrl,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
@@ -412,9 +417,27 @@ export default async function ClientCheatSheetPage({
     isOverview
       ? getRecentPortalAccessEvents(studio.id, client.id, 5)
       : Promise.resolve([] as Awaited<ReturnType<typeof getRecentPortalAccessEvents>>),
+    // 0231: the identification portrait in the header (every tab), signed for
+    // 60 s; null when none is set or it cannot be signed. Depends only on
+    // (studio.id, client), so it belongs in this wave, not after it.
+    // HELD: while portrait use is not enabled nothing is signed and no
+    // portrait renders; the stored pointer is left untouched.
+    clientPortraitEnabled()
+      ? signedClientPortraitUrl({
+          studioId: studio.id,
+          clientId: client.id,
+          portraitImageId: client.portrait_image_id,
+        })
+      : Promise.resolve(null),
   ]);
 
-  const selfReportedFitzpatrick = submittedIntake
+  // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
+  // shape uses legacy decoding; a present undefined/malformed snapshot refuses
+  // the derived summary just as the intake review page does.
+  const selfReportedFitzpatrick = submittedIntake &&
+    questionnaireForRow(Object.hasOwn(submittedIntake, "questionnaire_snapshot")
+      ? submittedIntake.questionnaire_snapshot
+      : null).kind !== "invalid"
     ? computeFitzpatrickEstimate(
         (submittedIntake.responses ?? {}) as Record<string, unknown>,
       )
@@ -884,6 +907,9 @@ export default async function ClientCheatSheetPage({
         <div className="mt-2 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
+              {portraitUrl && (
+                <ClientPortrait key={`${portraitUrl.url}:${portraitUrl.thumbUrl ?? ""}`} clientId={client.id} imageId={client.portrait_image_id!} url={portraitUrl.url} thumbUrl={portraitUrl.thumbUrl} clientName={client.name} />
+              )}
               <h1 className="break-words text-2xl font-semibold tracking-tight md:text-3xl">
                 {client.name}
               </h1>
