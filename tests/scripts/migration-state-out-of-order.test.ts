@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -94,11 +94,13 @@ describe("pending migrations include declared-unhosted versions with a repo file
 });
 
 // PEER-1264 C3: drive getMigrationState itself (scan + record + wiring), not only
-// the pure helper, using the REAL declaration from the canonical record.
-describe("getMigrationState wiring: a 0247 file with the real declaration", () => {
+// the pure helper, using the 0248-stage declaration as a literal.
+describe("getMigrationState wiring: a 0247 file with the 0248-stage declaration", () => {
   const tmp = mkdtempSync(join(tmpdir(), "mstate-"));
   afterAll(() => rmSync(tmp, { recursive: true, force: true }));
-  const real = JSON.parse(readFileSync("docs/production/migration-state.json", "utf8"));
+  // A literal, so the test does not move when the live record does: the shape the
+  // 0248 stage declared (0248 hosted, 0247 deliberately not).
+  const declaration = [{ version: "0248", unhosted_below: ["0247"] }];
 
   const fixture = (name: string, files: string[], record: Record<string, unknown>) => {
     const dir = join(tmp, name, "migrations");
@@ -112,12 +114,9 @@ describe("getMigrationState wiring: a 0247 file with the real declaration", () =
     hosted_migration_max: "0248",
     hosted_applied_at: null,
     hosted_note: "fixture",
-    hosted_out_of_order: real.hosted_out_of_order,
+    hosted_out_of_order: declaration,
   };
 
-  it("the real declaration is 0248 hosted with 0247 unhosted (premise of the fixture)", () => {
-    expect(real.hosted_out_of_order).toEqual([{ version: "0248", unhosted_below: ["0247"] }]);
-  });
   it("with the 0247 file present, pending is [0247] and the declaration stays valid", () => {
     const st = fixture("with-0247", ["0246_a.sql", "0247_b.sql", "0248_c.sql"], record);
     expect(st.pending_migrations).toEqual(["0247"]);
