@@ -4,6 +4,8 @@ import { sendEmailSafely } from "@/lib/email/send-appointment";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { safeLog } from "@/lib/logging/safe-log";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { studioPortalAccess } from "@/lib/portal/portal-access-gate";
+import { clientPortalDisabledMessage } from "@/lib/booking/client-self-service-policy";
 
 // Shared client-portal magic-link issuance. Used by the new practitioner
 // "Send portal link" action; mirrors the public self-request issuance
@@ -38,6 +40,16 @@ export async function issuePortalMagicLink(
     ttlMs?: number;
   },
 ): Promise<IssuePortalMagicLinkResult> {
+  // HON-47. No link for a studio whose client portal access is off or unreadable.
+  const access = await studioPortalAccess(admin, input.studioId);
+  if (!access.allowed) {
+    return {
+      ok: false,
+      error: access.studioName
+        ? clientPortalDisabledMessage(access.studioName)
+        : "Client portal access is off for this studio, or could not be confirmed. No link was sent.",
+    };
+  }
   const rawToken = generateRawToken();
   const tokenHash = hashToken(rawToken);
   const expiresAt = new Date(
