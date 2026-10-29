@@ -218,7 +218,7 @@ mutate() { # mutate NAME 'sed script' : a broken copy of the runner must make th
   RUNNER=$D/hone-stage-run.sh
 }
 mutate "reconcile runs even though the push was not verified" 's/if \[ "\$DRC" = 0 \] \&\& \[ "\$VER" = 1 \] \&\& \[ "\$word" = APPLIED-UNVERIFIED \]; then/if [ -n "$word" ]; then/'
-mutate "an unverified push is reported as not applied" 's/^  OUTCOME="UNKNOWN -> reconcile"; REASON=/  OUTCOME="NOT APPLIED"; REASON=/'
+mutate "an unverified push is reported as not applied" 's/OUTCOME="UNKNOWN -> reconcile"; REASON=/OUTCOME="NOT APPLIED"; REASON=/'
 
 echo
 echo "RESULT: $pass passed, $fail failed"
