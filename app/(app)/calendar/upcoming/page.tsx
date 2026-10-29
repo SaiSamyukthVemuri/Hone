@@ -5,9 +5,11 @@ import { FormattedDateTime } from "@/components/formatted-date-time";
 import { addDays, todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
 import type { Appointment, Client, Service } from "@/lib/types/database";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { clientDisplayName } from "@/lib/clients/identity";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 
 type Row = Appointment & {
-  client: Pick<Client, "id" | "name" | "email" | "phone"> | null;
+  client: (Pick<Client, "id" | "name" | "email" | "phone"> & { preferred_name?: string | null }) | null;
   service: Pick<Service, "id" | "name"> | null;
 };
 
@@ -20,16 +22,20 @@ export default async function UpcomingPage() {
   const endUtc = utcInstantFromLocal(addDays(end, 1), "00:00", studio.timezone);
 
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("appointments")
-    .select("*, client:clients(id, name, email, phone), service:services(id, name)")
-    .eq("studio_id", studio.id)
-    .eq("status", "confirmed")
-    .gte("starts_at", startUtc.toISOString())
-    .lt("starts_at", endUtc.toISOString())
-    .order("starts_at");
+  // HON-58: show the preferred name where one exists. Fails soft to the stored
+  // name on a database that does not have the column yet.
+  const { data, error } = await readWithPreferredName((includePreferred) =>
+    supabase
+      .from("appointments")
+      .select(`*, client:clients(id, name, ${preferredNameColumn(includePreferred)}email, phone), service:services(id, name)`)
+      .eq("studio_id", studio.id)
+      .eq("status", "confirmed")
+      .gte("starts_at", startUtc.toISOString())
+      .lt("starts_at", endUtc.toISOString())
+      .order("starts_at"),
+  );
   if (error) throw new Error(`db_error:${dbErrorCode(error)}`);
-  const rows = (data ?? []) as Row[];
+  const rows = (data ?? []) as unknown as Row[];
 
   return (
     <div className="flex flex-col gap-6">
@@ -62,7 +68,7 @@ export default async function UpcomingPage() {
               >
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">
-                    {a.client?.name ?? "Client"} · {a.service?.name ?? "Appointment"}
+                    {a.client ? clientDisplayName(a.client) : "Client"} · {a.service?.name ?? "Appointment"}
                   </div>
                   <div className="text-xs text-neutral-500">
                     <FormattedDateTime iso={a.starts_at} /> · {a.duration_minutes} min
