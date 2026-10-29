@@ -275,6 +275,15 @@ describe("once chosen, the panel shows that model's native fields", () => {
     expect(html).toContain("Galvanic");
   });
 
+  it("shows the profile's provenance and the studio confirmation status (DEFAULT-PROFILES item 6)", () => {
+    expect(html).toContain('data-testid="profile-provenance"');
+    expect(html).toContain("Profile version 1");
+    // The fixture is device-confirmed; a manufacturer-documented profile reads
+    // "Pending studio confirmation" (see tests/lib/machines/profile-provenance).
+    expect(html).toContain("Confirmed against this studio");
+    expect(html).toContain('data-state="confirmed"');
+  });
+
   it("offers a visible way to change machine - the dropdown itself", () => {
     // THE LINK IS GONE ON PURPOSE. A separate "Change machine" control existed
     // because the pill picker DISAPPEARED once something was chosen, so there

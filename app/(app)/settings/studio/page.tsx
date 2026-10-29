@@ -62,6 +62,7 @@ export default async function StudioSettingsPage() {
         initial={(({ cancellation, reschedule }) => ({ cancellation, reschedule }))(
           clientSelfServicePolicyFromStudio(studio),
         )}
+        portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
       />
     </section>
   );
