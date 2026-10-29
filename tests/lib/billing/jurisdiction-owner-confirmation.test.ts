@@ -96,6 +96,20 @@ describe("owner jurisdiction confirmation (Gate A)", () => {
     expect((await confirmStudioJurisdictionAsOwner(base)).ok).toBe(false);
   });
 
+  it("PEER C2: refused_priced_configuration names prices, not payment history or a Stripe account", async () => {
+    reply("refused_priced_configuration");
+    const r = await confirmStudioJurisdictionAsOwner(base);
+    expect(r.ok).toBe(false);
+    const msg = (r as { error: string }).error;
+    expect(msg).toMatch(/prices/i);
+    expect(msg).not.toMatch(/payment history|Stripe account/i);
+    // the account / history refusals keep their own message
+    for (const code of ["refused_payment_account", "refused_monetary_history"]) {
+      reply(code);
+      expect(((await confirmStudioJurisdictionAsOwner(base)) as { error: string }).error).toMatch(/payment history or a Stripe account/);
+    }
+  });
+
   it("unchanged from the command is already confirmed", async () => {
     reply("unchanged");
     expect(await confirmStudioJurisdictionAsOwner(base)).toEqual({ ok: true, outcome: "already_confirmed" });

@@ -26,6 +26,8 @@ const UNAVAILABLE = "Confirming your business country is not available yet.";
 const GENERIC = "Hone could not save that. Nothing was changed. Please try again.";
 const CONTACT =
   "This studio already has payment history or a Stripe account that this cannot change. Contact Hone support to correct it.";
+const PRICED =
+  "This studio already has prices set up, so its country and currency cannot be set here. Contact Hone support to confirm them.";
 
 export async function confirmStudioJurisdictionAsOwner(input: {
   studioId: string;
@@ -77,6 +79,7 @@ export async function confirmStudioJurisdictionAsOwner(input: {
   const result = row && typeof row === "object" ? (row as { out_result?: unknown }).out_result : null;
   if (result === "initialized") return { ok: true, outcome: "confirmed" };
   if (result === "unchanged") return { ok: true, outcome: "already_confirmed" };
+  if (result === "refused_priced_configuration") return { ok: false, error: PRICED };
   if (typeof result === "string" && result.startsWith("refused_")) return { ok: false, error: CONTACT };
   return { ok: false, error: GENERIC };
 }
