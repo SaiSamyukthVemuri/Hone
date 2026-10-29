@@ -84,13 +84,13 @@ const EXPLAIN: Record<Exclude<SetupState, "ready">, string> = {
   awaiting_stripe_account:
     "Connect your Stripe account. Your confirmed country is used to create it, and it cannot be changed afterwards.",
   awaiting_stripe_country:
-    "Stripe has not yet reported your account's country. Refresh your Stripe status; payments stay off until it does.",
+    "Stripe has not yet reported your account's country. Refresh your Stripe status; this check cannot finish until it does.",
   country_mismatch:
-    "Your Stripe account is registered in a different country than the one you confirmed. Payments stay off until Hone support resolves it.",
+    "Your Stripe account is registered in a different country than the one you confirmed. Contact Hone support to resolve it.",
   country_conflict:
-    "Stripe has reported conflicting countries for your account. Payments stay off until Hone support resolves it.",
+    "Stripe has reported conflicting countries for your account. Contact Hone support to resolve it.",
   price_currency_mismatch:
-    "Some of your prices or recorded payments are in a different currency than the one you confirmed. Payments stay off until Hone support reviews it.",
+    "Some of your prices or recorded payments are in a different currency than the one you confirmed. Contact Hone support to review it.",
 };
 
 const blocked = (state: Exclude<SetupState, "ready">): SetupVerdict =>

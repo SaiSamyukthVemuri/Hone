@@ -103,3 +103,14 @@ describe("NEGATIVE CONTROL and source guard", () => {
     expect(src).not.toMatch(/\.rpc\(|\.insert\(|\.update\(|createAdminClient/);
   });
 });
+
+describe("Codex P2: the advisory check never claims payments are off", () => {
+  it("no explanation and no panel text says payments are off or disabled", () => {
+    const src = readFileSync("lib/billing/jurisdiction-setup.ts", "utf8");
+    const panel = readFileSync("app/(app)/settings/payments/JurisdictionStatusPanel.tsx", "utf8");
+    const claim = /payments?\s+(stay|stays|are|is|remain|remains)\s+(off|disabled|blocked)/i;
+    expect(src).not.toMatch(claim);
+    expect(panel).not.toMatch(claim);
+    expect(panel).not.toMatch(/stay off/i);
+  });
+});
