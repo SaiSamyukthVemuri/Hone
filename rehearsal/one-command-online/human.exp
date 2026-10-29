@@ -1,0 +1,33 @@
+#!/usr/bin/expect -f
+# REHEARSAL TEST HARNESS (not the runner): plays the person at the terminal for hone-stage-run.sh through a REAL pty.
+# usage: human.exp ANSWERS TRANSCRIPT RUNNER MANIFEST HOME [FLAGFILE]   ANSWERS lines: prompt<TAB>answer<TAB>hidden(0|1)   (a hidden prompt is answered only once echo is OFF)
+# If FLAGFILE is given: when it appears, send Ctrl-C (the terminal's interrupt character: SIGINT to the foreground group, as a real Ctrl-C). Exit = the runner's status (99 = harness timeout, 97 = echo).
+log_user 0
+set af [lindex $argv 0]; set out [lindex $argv 1]; set runner [lindex $argv 2]; set manifest [lindex $argv 3]; set home [lindex $argv 4]; set flag [lindex $argv 5]; set sent 0; set t0 [clock seconds]
+set fh [open $af r]; set rows {}; while {[gets $fh l] >= 0} { if {$l ne ""} { lappend rows [split $l "\t"] } }; close $fh
+set buf ""
+spawn -noecho env -i HOME=$home PATH=$env(PATH) LC_ALL=C /bin/bash $runner $manifest
+set i 0; set timeout 1
+while {1} {
+  if {$i < [llength $rows]} { set pr [lindex [lindex $rows $i] 0] } else { set pr "\x00never" }
+  expect {
+    -exact $pr {
+      append buf $expect_out(buffer)
+      set row [lindex $rows $i]
+      if {[lindex $row 2] eq "1"} {
+        set ok 0; for {set k 0} {$k < 50} {incr k} { if {![catch {exec stty -a < $spawn_out(slave,name)} s] && [regexp {(^|[ \t;])-echo([ \t;]|$)} $s]} { set ok 1; break }; after 100 }
+        if {!$ok} { append buf "\n\[harness\] echo did not turn off\n"; set f [open $out w]; puts -nonewline $f $buf; close $f; exit 97 }
+      }
+      send -- "[lindex $row 1]\r"; incr i
+    }
+    eof { append buf $expect_out(buffer); break }
+    timeout {
+      append buf $expect_out(buffer)
+      if {$flag ne "" && !$sent && [file exists $flag]} { set sent 1; after 1500; append buf "\n\[harness\] sent Ctrl-C\n"; send -- "\003" }
+      if {[clock seconds] - $t0 > 150} { append buf "\n\[harness\] timeout\n"; set f [open $out w]; puts -nonewline $f $buf; close $f; exit 99 }
+    }
+  }
+}
+set w [wait]
+set f [open $out w]; puts -nonewline $f $buf; close $f
+exit [lindex $w 3]
