@@ -90,11 +90,11 @@ describe("at most one email per appointment per window", () => {
 describe("the six-case law", () => {
   it("reads the two settings independently", () => {
     expect(PASS).toMatch(
-      /const wantsReminder =\s*\n?\s*\(appt\.studio as unknown as Record<string, boolean>\)\[studioToggle\] === true;/,
+      /(?:const|let) wantsReminder =\s*\n?\s*\(appt\.studio as unknown as Record<string, boolean>\)\[studioToggle\] === true;/,
     );
     // Absent column (pre-0186 row) must read as ENABLED: the column defaults true.
     expect(PASS).toMatch(
-      /const intakeEnabled = appt\.studio\.send_intake_reminders !== false;/,
+      /(?:const|let) intakeEnabled = appt\.studio\.send_intake_reminders !== false;/,
     );
   });
 

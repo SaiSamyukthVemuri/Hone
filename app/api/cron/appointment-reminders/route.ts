@@ -245,11 +245,11 @@ async function sendReminderPass(opts: {
   // is only a snapshot; the live re-read after the claim below is the fence.
   if (appt.client.archived_at) return;
 
-  const wantsReminder =
+  let wantsReminder =
     (appt.studio as unknown as Record<string, boolean>)[studioToggle] === true;
   // Absent only on a studios row read before 0186 is applied. The column
   // defaults true, so absent must mean ENABLED, never disabled.
-  const intakeEnabled = appt.studio.send_intake_reminders !== false;
+  let intakeEnabled = appt.studio.send_intake_reminders !== false;
 
   // CASE 6: nothing to send. No intake read, no claim, no attempt.
   if (!wantsReminder && !intakeEnabled) return;
@@ -325,6 +325,41 @@ async function sendReminderPass(opts: {
   ) {
     // No send occurred. Preserve the counted claim and existing TTL; do not
     // settle, clear, refund or create a retry from this unfenced observation.
+    stats.skipped += 1;
+    return;
+  }
+
+  // HON-13: the studio's switches are read LIVE at the send decision too. The
+  // row was selected at the start of the run with the studio's settings as they
+  // were then; a studio that switched this reminder (or intake reminders) off
+  // while the batch was running must not have it sent anyway. The SMS pass
+  // already refreshes its switches before dispatch. A reminder the live switch
+  // forbids is released exactly like the CASE 4 -> 5 flip below: the claim is
+  // cleared, nothing is sent, and the next fire re-evaluates from a fresh read.
+  const { data: liveStudio, error: liveStudioError } = await admin
+    .from("studios")
+    .select(`${studioToggle}, send_intake_reminders`)
+    .eq("id", appt.studio.id)
+    .maybeSingle();
+  // An unavailable read is not evidence that the switch is still on.
+  if (liveStudioError || !liveStudio) {
+    throw new Error("reminder studio switches unavailable");
+  }
+  const liveSwitches = liveStudio as unknown as Record<string, boolean | null>;
+  const liveWantsReminder = liveSwitches[studioToggle] === true;
+  const liveIntakeEnabled = liveSwitches.send_intake_reminders !== false;
+  // The message is composed from the LIVE switches, never discarded wholesale:
+  // a reminder switched off after the scan downgrades to the standalone intake
+  // reminder when intake reminders are still on and the intake is incomplete
+  // (the claim already counted an attempt, and a third attempt is never
+  // re-scanned). Only a downgrade is considered: a reminder switched ON after
+  // the scan is left to the next fire.
+  if (wantsReminder && !liveWantsReminder) {
+    wantsReminder = false;
+    intakeEnabled = liveIntakeEnabled;
+  }
+  if (!wantsReminder && !liveIntakeEnabled) {
+    await recordEmailResult(admin, appt.id, emailType, false);
     stats.skipped += 1;
     return;
   }

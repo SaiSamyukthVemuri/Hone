@@ -125,6 +125,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           return b;
         },
         maybeSingle: async () => {
+          // HON-13: the email pass re-reads the studio's switches at send time.
+          if (table === "studios") {
+            return { data: { send_24h_reminders: h.emailOn, send_2h_reminders: h.emailOn, send_intake_reminders: false }, error: null };
+          }
           if (table !== "appointments") return { data: null, error: null };
           const id = f.eq.find(([c]) => c === "id")?.[1];
           const r = h.rows.find((x) => x.id === id);

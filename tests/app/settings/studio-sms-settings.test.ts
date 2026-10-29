@@ -124,7 +124,7 @@ describe("source contract", () => {
     for (const k of ["send_confirmation_sms", "send_24h_sms_reminders", "send_2h_sms_reminders"]) {
       expect(page).toContain(`${k}: studio.${k}`);
     }
-    const gate = read("lib/sms/send-appointment.ts");
+    const gate = read("lib/sms/consent-gate.ts");
     expect(gate).toContain("client_no_consent");
     expect(gate).toContain("client_opted_out");
   });
