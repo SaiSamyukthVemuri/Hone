@@ -3,11 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 const rpc = vi.fn();
-const read = vi.fn();
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc }) }));
-vi.mock("@/lib/billing/payment-jurisdiction-server", () => ({
-  getStudioPaymentJurisdiction: (...a: unknown[]) => read(...a),
-}));
 
 import {
   confirmStudioJurisdictionAsOwner,
@@ -18,8 +14,6 @@ const base = { studioId: "s1", practitionerId: "p1", country: "US", currency: "u
 
 beforeEach(() => {
   rpc.mockReset();
-  read.mockReset();
-  read.mockResolvedValue({ ok: false, reason: "missing" });
   process.env[OWNER_CONFIRMATION_ENV] = "true";
 });
 afterEach(() => {
@@ -29,25 +23,23 @@ afterEach(() => {
 const reply = (out_result: string) => rpc.mockResolvedValue({ data: [{ out_result }], error: null });
 
 describe("owner jurisdiction confirmation (Gate A)", () => {
-  it("is default-off: no read, no write", async () => {
+  it("is default-off: no write", async () => {
     delete process.env[OWNER_CONFIRMATION_ENV];
     const r = await confirmStudioJurisdictionAsOwner(base);
     expect(r.ok).toBe(false);
-    expect(read).not.toHaveBeenCalled();
     expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("saves through the existing command with owner actor, reason and reference", async () => {
+  it("saves through the initialize-only command (0270) with owner actor, reason and reference", async () => {
     reply("initialized");
     const r = await confirmStudioJurisdictionAsOwner({ ...base, now: new Date("2026-11-01T00:00:00Z") });
     expect(r).toEqual({ ok: true, outcome: "confirmed" });
-    expect(rpc).toHaveBeenCalledWith("set_studio_payment_jurisdiction", {
+    expect(rpc).toHaveBeenCalledWith("initialize_studio_payment_jurisdiction_owner", {
       p_studio_id: "s1",
       p_payment_country: "US",
       p_payment_currency: "usd",
       p_actor: "owner:p1",
       p_reason: "owner onboarding confirmation",
-      p_acknowledge_configured_prices: false,
       p_verification_reference: "owner-confirmed:p1:2026-11-01T00:00:00.000Z:US/usd",
     });
   });
@@ -64,23 +56,26 @@ describe("owner jurisdiction confirmation (Gate A)", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("an identical stored pair is already confirmed and writes nothing", async () => {
-    read.mockResolvedValue({ ok: true, jurisdiction: { country: "US", currency: "usd" } });
-    expect(await confirmStudioJurisdictionAsOwner(base)).toEqual({ ok: true, outcome: "already_confirmed" });
-    expect(rpc).not.toHaveBeenCalled();
+  it("never calls the 0214 set command", async () => {
+    reply("initialized");
+    await confirmStudioJurisdictionAsOwner(base);
+    expect(rpc.mock.calls.map((c) => c[0])).toEqual(["initialize_studio_payment_jurisdiction_owner"]);
   });
 
-  it("a different stored pair is never overwritten", async () => {
-    read.mockResolvedValue({ ok: true, jurisdiction: { country: "CA", currency: "cad" } });
+  it("already_set (a different pair is stored, e.g. a racing confirmation) is a refusal that says so", async () => {
+    reply("already_set");
     const r = await confirmStudioJurisdictionAsOwner(base);
     expect(r.ok).toBe(false);
-    expect(rpc).not.toHaveBeenCalled();
+    expect((r as { error: string }).error).toMatch(/already confirmed/i);
+    expect((r as { error: string }).error).not.toMatch(/nothing was changed/i);
   });
 
-  it.each(["read_failed", "invalid"])("an unreadable stored row (%s) writes nothing", async (reason) => {
-    read.mockResolvedValue({ ok: false, reason });
-    expect((await confirmStudioJurisdictionAsOwner(base)).ok).toBe(false);
-    expect(rpc).not.toHaveBeenCalled();
+  it("changed (should be impossible) is reported as changed, never as 'Nothing was changed'", async () => {
+    reply("changed");
+    const r = await confirmStudioJurisdictionAsOwner(base);
+    expect(r.ok).toBe(false);
+    expect((r as { error: string }).error).toMatch(/changed by another request/i);
+    expect((r as { error: string }).error).not.toMatch(/nothing was changed/i);
   });
 
   it.each([
@@ -90,7 +85,6 @@ describe("owner jurisdiction confirmation (Gate A)", () => {
     "invalid_input",
     "verification_required",
     "not_found",
-    "changed",
   ])("command result %s is a refusal, not success", async (code) => {
     reply(code);
     expect((await confirmStudioJurisdictionAsOwner(base)).ok).toBe(false);
