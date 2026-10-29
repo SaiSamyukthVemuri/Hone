@@ -27,6 +27,7 @@ import {
   nameCandidatePatterns,
   NON_ASCII_NAME_REGEX,
   phoneCandidatePattern,
+  sortByMatchRank,
 } from "@/lib/clients/name-search";
 
 // Global Search server action (V1: PR #232 · V2-A: settings + navigation).
@@ -180,7 +181,10 @@ async function searchClientRows(
   const confirmed = async (
     read: () => ReturnType<typeof base>,
   ): Promise<ClientSearch | null> => {
-    const found: ClientSearchRow[] = [];
+    // Best CLIENT_CAP confirmed rows so far, by match rank. The scan does NOT stop
+    // at the fifth match in name order: a better match (an exact name) can sort
+    // after it alphabetically, and ranking only the first five would drop it.
+    let found: ClientSearchRow[] = [];
     for (let offset = 0; ; ) {
       // The last request reaches one row PAST the bound (index
       // CLIENT_SCAN_CAP_PER_READ), never scanned: it only tells "stopped at
@@ -196,10 +200,8 @@ async function searchClientRows(
         if (offset + i >= CLIENT_SCAN_CAP_PER_READ) return { rows: found, truncated: true };
         if (!matchesClientSearch(row, query)) continue;
         found.push(row);
-        // The first CLIENT_CAP confirmed rows in name order are all the
-        // final, name-sorted and capped result can use from this read.
-        if (found.length >= CLIENT_CAP) return { rows: found, truncated: false };
       }
+      found = sortByMatchRank(found, query).slice(0, CLIENT_CAP);
       // A server row cap can shorten a page, so advance by what arrived.
       offset += page.length;
     }
@@ -238,7 +240,7 @@ async function searchClientRows(
     rows.push(row);
   }
   return {
-    rows: rows.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "")).slice(0, CLIENT_CAP),
+    rows: sortByMatchRank(rows, query).slice(0, CLIENT_CAP),
     truncated: [direct, asciiNamed, otherNamed, phoned].some((r) => r.truncated),
   };
 }
