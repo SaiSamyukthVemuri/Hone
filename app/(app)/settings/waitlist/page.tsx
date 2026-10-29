@@ -34,6 +34,7 @@ import {
   UNKNOWN_JOINED_AT_COPY,
 } from "@/lib/waitlist/entry-provenance";
 import { EntryAvailability } from "@/components/waitlist/entry-availability";
+import { WaitlistTextsSetting } from "@/components/waitlist/waitlist-texts-setting";
 import { EntrySmsConsent, type SmsConsentView } from "@/components/waitlist/entry-sms-consent";
 import { AddToWaitlistPanel } from "@/components/waitlist/add-to-waitlist-panel";
 import {
@@ -795,6 +796,9 @@ export default async function WaitlistSettingsPage({
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Absent only on a row read before 0206; the column defaults FALSE, so
+          absent displays as OFF. */}
+      <WaitlistTextsSetting initial={studio.send_waitlist_invitation_sms === true} />
       <InvitationCapacityPanel
         capacity={capacity}
         startAction={startInvitingFormAction}

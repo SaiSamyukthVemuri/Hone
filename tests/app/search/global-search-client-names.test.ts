@@ -449,14 +449,14 @@ describe("global search: the client scan is bounded and says so", () => {
     expect(res.ok && res.clientsTruncated).toBe(true);
   });
 
-  it("no signal when CLIENT_CAP matches are confirmed before the cap", async () => {
+  it("CLIENT_CAP matches held but the scan reached its bound: the signal stays, a better match may lie beyond it", async () => {
     tables.clients.push(
       ...Array.from({ length: 5 }, (_, i) => client(`c-a${i}`, `Aaron (Janie) Smith ${i}`)),
       ...decoys(CAP + 10),
     );
     const res = await globalSearchAction("janie smith");
     expect(res.ok && res.results.filter((r) => r.type === "client")).toHaveLength(5);
-    expect(res.ok && res.clientsTruncated).toBeFalsy();
+    expect(res.ok && res.clientsTruncated).toBe(true);
   });
 
   it("the bound holds under a server row cap smaller than the page", async () => {
@@ -476,5 +476,30 @@ describe("global search panel: a bounded client scan is never shown as complete"
   it("says the client list is partial, and never says No results found. while it is", () => {
     expect(panel).toContain("Showing the first client matches. Refine your search to find more.");
     expect(panel).toMatch(/groups\.length === 0 && !clientsTruncated \? \(/);
+  });
+});
+
+
+// Codex P2 on #1242: the scan used to stop at the fifth match in NAME order, so a
+// better-ranked match that sorts later (an exact name) never reached the ranking.
+describe("global search: ranking sees every candidate in the scan, not the first five", () => {
+  beforeEach(() => {
+    tables.clients = [
+      ...["A", "B", "C", "D", "E"].map((l) => client(`c-${l}`, `${l} Jane`)),
+      client("c-exact", "Jane"),
+    ];
+  });
+  it("six candidates: the exact match is returned first, not cut off by the alphabet", async () => {
+    const ids = await clientIdsFor("jane");
+    expect(ids[0]).toBe("c-exact");
+    expect(ids).toHaveLength(5);
+    expect(new Set(ids).size).toBe(5);
+  });
+  it("ties keep name order and the result stays capped at five", async () => {
+    expect(await clientIdsFor("jane")).toEqual(["c-exact", "c-A", "c-B", "c-C", "c-D"]);
+  });
+  it("a complete small scan is not reported as truncated", async () => {
+    const res = await globalSearchAction("jane");
+    expect(res.ok && res.clientsTruncated).toBeFalsy();
   });
 });
