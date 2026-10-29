@@ -32,6 +32,7 @@ import type { GroupSubmission } from "@/lib/machines/setting-groups";
 import type { PendingSetupIdentity } from "@/lib/machines/pending-setup";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import { nativeFieldGroups } from "@/lib/machines/charting";
+import { profileProvenance } from "@/lib/machines/profile-provenance";
 import {
   selectableDevices,
   supportedModes,
@@ -598,6 +599,13 @@ export function MachineFirstSetupPanel({
         </FieldLabel>
       )}
 
+      {/* PROVENANCE (DEFAULT-PROFILES item 6): which manufacturer source and
+          profile version these fields come from, and whether the studio's own
+          unit has been confirmed against it. Display only. */}
+      {chosen && (
+        <ProfileProvenanceNote profile={chosen.profile} />
+      )}
+
       {/* Selection. An empty list is a legitimate answer and says why. */}
       {/*
         THE FAILURE NOTE LIVES ABOVE THE BRANCH, deliberately.
@@ -990,5 +998,25 @@ function PersistenceStatus({
         </dd>
       </div>
     </dl>
+  );
+}
+
+function ProfileProvenanceNote({ profile }: { profile: MachineProfile }) {
+  const p = profileProvenance(profile);
+  return (
+    <div
+      className="flex flex-col gap-0.5 text-xs text-neutral-600 dark:text-neutral-400"
+      data-testid="profile-provenance"
+    >
+      <p>
+        {p.title} · {p.versionLabel} ·{" "}
+        <span data-testid="profile-confirmation" data-state={p.confirmation}>
+          {p.confirmationLabel}
+        </span>
+      </p>
+      {p.sources.map((line) => (
+        <p key={line}>{line}</p>
+      ))}
+    </div>
   );
 }
