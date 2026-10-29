@@ -74,6 +74,7 @@ export default async function GettingStartedPage() {
   const signals = await getGettingStartedSignals(
     { id: studio.id, name: studio.name, slug: studio.slug },
     practitioner.display_name?.trim() || practitioner.email,
+    { viewerIsOwner: practitioner.role === "owner" },
   );
   const checklist = buildGettingStarted(signals);
   // The CTA needs BOTH gates to clear: the operator must be an OWNER (the
