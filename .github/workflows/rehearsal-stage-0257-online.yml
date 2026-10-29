@@ -1,0 +1,125 @@
+# REHEARSAL - NEVER MERGE. STAGE-0257-ONLINE: the 0254-online scripts re-pinned for the sealed 0257. (1) check: the scripts run as REAL TEXT against a stub supabase-go, a stub read-back
+# script and a FIFO terminal, with canary secrets and a fake HOME (macOS bash 3.2 launched from zsh, and Linux). (2) push: the real pinned CLI v2.102.0 against a disposable PostgreSQL
+# holding exactly the hosted prefix (246 rows, max 0248): a PLAIN dry run lists only 0257, a plain push applies it, a re-run is idempotent, stray files are refused. No hosted call,
+# no customer data, no credential beyond a throwaway canary password. No Supabase images are pulled, so no registry login is used.
+name: rehearsal-stage-0257-online
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/stage-0257-online/**"
+      - "scripts/ci/stage-0257-push-rehearsal.sh"
+      - ".github/workflows/rehearsal-stage-0257-online.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  online-macos:
+    name: STAGE-0257-ONLINE scripts on macOS arm64 (/bin/bash 3.2, launched from zsh like the operator's terminal)
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts and file pins
+        run: |
+          uname -sm; /bin/bash --version | head -1; node --version; python3 --version
+          shasum -a 256 rehearsal/stage-0257-online/*.sh
+      - name: Package cases, negative controls and mutation pass (N of N)
+        shell: /bin/zsh {0}
+        env:
+          EXPECT_N: "164"
+        run: |
+          /bin/bash rehearsal/stage-0257-online/check.sh 2>&1 | tee "$RUNNER_TEMP/online-macos.txt"; rc=${pipestatus[1]}
+          echo "----- the summary exactly as the operator sees it (shipped text, real constants) -----"; cat "$RUNNER_TEMP/online0257/summary-real.txt"
+          exit $rc
+
+  online-linux:
+    name: STAGE-0257-ONLINE scripts on Linux (same cases, bash 5)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Package cases, negative controls and mutation pass (N of N)
+        env:
+          EXPECT_N: "164"
+        run: |
+          set -o pipefail
+          bash rehearsal/stage-0257-online/check.sh 2>&1 | tee "$RUNNER_TEMP/online-linux.txt"
+
+  push-linux:
+    name: STAGE-0257 plain push, real CLI v2.102.0, disposable PostgreSQL (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Start the runner's PostgreSQL with a throwaway canary password
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo systemctl start postgresql.service
+          for _ in $(seq 1 30); do sudo -u postgres psql -Atc 'select 1' > /dev/null 2>&1 && break; sleep 1; done
+          sudo -u postgres psql -c "alter user postgres with password 'postgres'"
+          PGPASSWORD=postgres psql "postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable" -Atc 'select version()'
+      - name: Rehearse the 0257-only plain push
+        shell: bash
+        env:
+          REHEARSAL_OUT: ${{ runner.temp }}/stage-0257-push-out
+        run: bash scripts/ci/stage-0257-push-rehearsal.sh
+      - name: Upload rehearsal logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stage-0257-push-linux-logs
+          path: ${{ runner.temp }}/stage-0257-push-out/
+          retention-days: 7
+
+  push-macos:
+    name: STAGE-0257 plain push, the macOS CLI binary the operator runs, disposable PostgreSQL (macOS arm64)
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Start a local PostgreSQL with a throwaway canary password
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install postgresql@16
+          brew services start postgresql@16
+          PGBIN="$(brew --prefix postgresql@16)/bin"; echo "$PGBIN" >> "$GITHUB_PATH"
+          for _ in $(seq 1 40); do "$PGBIN/psql" -d postgres -Atc 'select 1' > /dev/null 2>&1 && break; sleep 1; done
+          "$PGBIN/psql" -d postgres -c "create role postgres superuser login password 'postgres'"
+          # the CLI's connection insists on TLS here: give the throwaway server a self-signed certificate
+          PGDATA="$("$PGBIN/psql" -d postgres -Atc 'show data_directory')"
+          openssl req -new -x509 -days 2 -nodes -text -out "$PGDATA/server.crt" -keyout "$PGDATA/server.key" -subj "/CN=localhost"
+          chmod 600 "$PGDATA/server.key"
+          "$PGBIN/psql" -d postgres -c "alter system set ssl = on"
+          brew services restart postgresql@16
+          for _ in $(seq 1 40); do "$PGBIN/psql" -d postgres -Atc 'select 1' > /dev/null 2>&1 && break; sleep 1; done
+          "$PGBIN/psql" -d postgres -Atc 'show ssl'
+          PGPASSWORD=postgres "$PGBIN/psql" "postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable" -Atc 'select version()'
+      - name: Rehearse the 0257-only plain push
+        shell: bash
+        env:
+          REHEARSAL_OUT: ${{ runner.temp }}/stage-0257-push-out
+        run: bash scripts/ci/stage-0257-push-rehearsal.sh
+      - name: Upload rehearsal logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stage-0257-push-macos-logs
+          path: ${{ runner.temp }}/stage-0257-push-out/
+          retention-days: 7

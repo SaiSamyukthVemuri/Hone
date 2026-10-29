@@ -1,0 +1,32 @@
+<   done(bad.length === #, bad.length ? "the sealed NNNN preflight is predicted to refuse or to replace the wrong thing: " + bad.join(", ") : "the sealed NNNN preflight passes");
+<   done(old.length === #, old.length ? "a transaction older than # s on " + old.length + " scanned table(s)" : "no transaction older than # s on the NUM scanned tables");
+<   done(true, "NUM tables under # MiB; statement_timeout=" + s + " lock_timeout=" + [...lt][#]);
+<   echo "     no transaction older than # s on the NUM scanned tables; the NUM table sizes and the statement_timeout"
+<   echo "  #. ONE push of NNNN (a write to the production database: it makes three payment tables owner-readable only and owner-gates price and settlement writes)"
+<   echo "  #. the read-back (window-s#read-NNNN.sh): history # rows, max NNNN, NNNN and NNNN..NNNN absent, the owner-only read-policy proof"
+<   echo "Migration: NNNN_perm_hon#_role_enforcement.sql, sealed sha# $SEALED_SHA"
+<   for (const k of ["tables_present", "helpers_ok", "replaced_ok", "new_objects_absent", "columns_ok"]) if (!isTrue(r[k])) bad.push(k);
+<   if (!exact(S#)) done(false, "the table set is not exactly the NUM scanned tables (" + rows.length + " rows)");
+<   if (!exact(W#)) done(false, "the table set is not exactly the NUM named tables (" + rows.length + " rows)");
+< GOPEND='H#  NNNN_perm_hon#_role_enforcement.sql'
+< const S# = ["appointment_settlements", "client_pinned_notes", "client_pricing", "manual_fee_charge_attempts", "payment_charge_attempts"];
+< const W# = ["appointment_settlements", "client_pinned_notes", "client_pricing", "manual_fee_charge_attempts", "payment_charge_attempts"];
+< grep -Eq '^[#-#a-f]{#}  (NNNN|NNNN|NNNN|NNNN|NNNN|NNNN)_' "$SELF/$LIST" && die "$LIST names NNNN or NNNN..NNNN: they are not part of the NNNN-only stage"
+< if [ "$rc" = # ] && [ -n "$S#DIR" ] && [ -f "$S#DIR/verdict.txt" ] && grep -Fxq 'OVERALL PASS (NNNN read-back: history, # verify checks and the owner-only read-policy proof; read-only, not a promotion)' "$S#DIR/verdict.txt" \
+< tar -tf "$SELF/$BUNDLE" #>/dev/null | grep -Eq 'supabase/migrations/(NNNN|NNNN|NNNN|NNNN|NNNN|NNNN)_' && die "$BUNDLE holds NNNN or NNNN..NNNN: they are not part of the NNNN-only stage"
+>   done(bad.length === #, bad.length ? "the sealed NNNN preflight is predicted to refuse, to clash or to run against the wrong shape: " + bad.join(", ") : "the sealed NNNN preflight passes");
+>   done(old.length === #, old.length ? "a transaction older than # s on " + old.length + " scanned table(s)" : "no transaction older than # s on the scanned table");
+>   done(true, "the table is under # MiB; statement_timeout=" + s + " lock_timeout=" + [...lt][#]);
+>   echo "     no transaction older than # s on the one table it alters; that table's size and the statement_timeout"
+>   echo "  #. ONE plain push of NNNN (a write to the production database: it adds two audit columns and a CHECK to the payment-jurisdiction audit table and creates one new command, executable by service_role only; no data is changed)"
+>   echo "  #. the read-back (window-s#read-NNNN.sh): history # rows, max NNNN, NNNN and NNNN..NNNN absent, the v# body and shape-and-grants proof"
+>   echo "Migration: NNNN_studio_payment_jurisdiction_failed_attempt_ack.sql, sealed sha# $SEALED_SHA"
+>   for (const k of ["tables_present", "helpers_ok", "v#_ok", "attempt_columns_ok", "new_objects_absent"]) if (!isTrue(r[k])) bad.push(k);
+>   if (!exact(S#)) done(false, "the table set is not exactly the one scanned table (" + rows.length + " rows)");
+>   if (!exact(W#)) done(false, "the table set is not exactly the one named table (" + rows.length + " rows)");
+> GOPEND='H#  NNNN_studio_payment_jurisdiction_failed_attempt_ack.sql'
+> const S# = ["studio_payment_jurisdiction_changes"];
+> const W# = ["studio_payment_jurisdiction_changes"];
+> grep -Eq '^[#-#a-f]{#}  (NNNN|NNNN|NNNN|NNNN|NNNN|NNNN|NNNN|NNNN|NNNN)_' "$SELF/$LIST" && die "$LIST names NNNN or NNNN..NNNN: they are not part of the NNNN-only stage"
+> if [ "$rc" = # ] && [ -n "$S#DIR" ] && [ -f "$S#DIR/verdict.txt" ] && grep -Fxq 'OVERALL PASS (NNNN read-back: history, # verify checks and the shape-and-grants proof; read-only, not a promotion)' "$S#DIR/verdict.txt" \
+> tar -tf "$SELF/$BUNDLE" #>/dev/null | grep -Eq 'supabase/migrations/(NNNN|NNNN|NNNN|NNNN|NNNN|NNNN|NNNN|NNNN|NNNN)_' && die "$BUNDLE holds NNNN or NNNN..NNNN: they are not part of the NNNN-only stage"

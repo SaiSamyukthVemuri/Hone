@@ -1,0 +1,1 @@
+select count(*)::int as n from (values ('public', 'initialize_studio_payment_jurisdiction_from_history_v2')) v(s, f) where exists (select 1 from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace where n.nspname = v.s and p.proname = v.f)
