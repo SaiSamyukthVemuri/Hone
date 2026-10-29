@@ -34,7 +34,7 @@ grep -q "^SQL_G02=$P_G02\$" "$R" && grep -q "^RUNNER_SHA=$P_RUNNER\$" "$R" && gr
 
 # ------------------------------------------------------------------ the delta against the 0248 online originals (3f2fac3f, b9bd0dc4, ac9c866a): constants and stage data only
 O=$REF/s1-apply-0248-online.3f2fac3f.sh
-norm() { sed -E 's/[0-9a-f]{64}/H64/g; s/(^|[^0-9a-f])[0-9a-f]{8}([^0-9a-f]|$)/\1H8\2/g; s/0(24[0-9]|25[0-9])/NNNN/g; s/[0-9]+/#/g; s/\b(five|ten|nine|four)\b/NUM/g; s/(0248|0254)//g; s/(g12|g02|w03)[-a-z0-9]*\.sql/GATE.sql/g'; }
+norm() { sed -E 's/[0-9a-f]{64}/H64/g; s/(^|[^0-9a-f])[0-9a-f]{8}([^0-9a-f]|$)/\1H8\2/g; s/0(24[0-9]|25[0-9])/NNNN/g; s/[0-9]+/#/g; s/(^|[^A-Za-z])(five|ten|nine|four)([^A-Za-z]|$)/\1NUM\3/g; s/(0248|0254)//g; s/(g12|g02|w03)[-a-z0-9]*\.sql/GATE.sql/g'; }
 unexplained() { diff <(grep -Ev '^ *#' "$1" | norm) <(grep -Ev '^ *#' "$2" | norm) | grep '^[<>]' | LC_ALL=C sort; }
 UA=$(unexplained "$O" "$A"); UR=$(unexplained "$REF/s1-reconcile-0248-online.b9bd0dc4.sh" "$R"); UG=$(unexplained "$REF/g02-read-0248-online.ac9c866a.sh" "$G")
 echo "$UA" > "$T/delta-apply.txt"; echo "$UR" > "$T/delta-reconcile.txt"; echo "$UG" > "$T/delta-g02.txt"
