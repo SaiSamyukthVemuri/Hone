@@ -312,3 +312,92 @@ test("an owner adjusts the hour and the minute with ArrowUp and ArrowDown", asyn
   await page.keyboard.press("ArrowDown");
   await expect(opens).toHaveValue(before);
 });
+
+// HON-62 reproduction (NOV-PHOTOS-2). WebKit only: types into and scrolls over
+// the weekly-hours hour fields the way an owner on desktop Safari and on an
+// iPad would. Every case also drives a BARE <input type="time"> appended to the
+// same page with the same keys and wheel, so a red result is attributable:
+//   app == control, both wrong -> ENGINE_LIMIT (Playwright Linux WebKit)
+//   app != control             -> APP_DEFECT, the editor loses what a bare input keeps
+// Each case prints one machine-readable line: HON62-REPRO {...}.
+const REPRO_VIEWPORTS = [
+  { name: "desktop Safari", viewport: { width: 1280, height: 560 }, hasTouch: false },
+  { name: "iPad", viewport: { width: 834, height: 1194 }, hasTouch: true },
+] as const;
+
+for (const vp of REPRO_VIEWPORTS) {
+  test.describe(`webkit hour fields: ${vp.name}`, () => {
+    test.skip(({ browserName }) => browserName !== "webkit", "WebKit-only reproduction for HON-62");
+    test.use({ viewport: vp.viewport, hasTouch: vp.hasTouch });
+
+    test("typing and scrolling over the hour field behave like a bare time input", async ({ page, browserName }) => {
+      await signIn(page, browserName);
+      await page.goto("/settings/availability");
+      await openDay(page, "Monday");
+
+      const opens = page.getByLabel("Monday opens");
+      await opens.scrollIntoViewIfNeeded();
+      await page.evaluate(() => {
+        const c = document.createElement("input");
+        c.type = "time";
+        c.value = "06:00";
+        c.id = "hon62-control";
+        c.setAttribute("aria-label", "bare control");
+        c.style.cssText = "position:fixed;top:4px;right:4px;z-index:2147483647;width:140px";
+        document.body.appendChild(c);
+      });
+      const control = page.locator("#hon62-control");
+
+      const startApp = await opens.inputValue();
+      await control.fill(startApp);
+
+      // Typing: the same keys into both.
+      for (const field of [opens, control]) {
+        await field.focus();
+        await page.keyboard.type("08");
+        await page.keyboard.press("ArrowRight");
+        await page.keyboard.type("30");
+      }
+      const typedApp = await opens.inputValue();
+      const typedControl = await control.inputValue();
+
+      // Scrolling: wheel over the focused field, then over the page. The field
+      // must not trap the wheel, and the wheel must not edit the value.
+      const scrollable = await page.evaluate(
+        () => document.scrollingElement!.scrollHeight > window.innerHeight + 8,
+      );
+      await opens.focus();
+      const box = (await opens.boundingBox())!;
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      const y0 = await page.evaluate(() => window.scrollY);
+      const valueBeforeWheel = await opens.inputValue();
+      await page.mouse.wheel(0, 300);
+      await page.waitForTimeout(300);
+      const y1 = await page.evaluate(() => window.scrollY);
+      const valueAfterWheel = await opens.inputValue();
+      const stillAttached = await opens.isVisible();
+
+      console.log(
+        "HON62-REPRO " +
+          JSON.stringify({
+            viewport: vp.name,
+            start: startApp,
+            typed: { app: typedApp, control: typedControl },
+            scrollable,
+            scrollY: [y0, y1],
+            valueBeforeWheel,
+            valueAfterWheel,
+            fieldStillVisible: stillAttached,
+          }),
+      );
+
+      // Scroll behaviour (the part that does not depend on key delivery).
+      expect.soft(valueAfterWheel, "the wheel over the field must not edit it").toBe(valueBeforeWheel);
+      if (scrollable) expect.soft(y1, "the wheel over the field scrolls the page").toBeGreaterThan(y0);
+      // Typing: the app field must end up where a bare input does, and at the
+      // value an owner typed.
+      expect.soft(typedApp, "the editor keeps what a bare time input keeps").toBe(typedControl);
+      expect.soft(typedApp, "typed 08 then 30 gives 08:30").toBe("08:30");
+    });
+  });
+}
