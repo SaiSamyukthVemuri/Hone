@@ -20,6 +20,7 @@ const SETTLED_LABEL: Partial<Record<AppointmentPaymentState, string>> = {
   settled_other_part: "Part paid \u00b7 other",
   settled_waived: "Fee waived",
   settled_owing: "Still owes",
+  settled_collected_none: "Still owes",
 };
 
 export function AppointmentCheckoutCell({

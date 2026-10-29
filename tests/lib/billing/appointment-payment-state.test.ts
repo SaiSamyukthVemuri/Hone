@@ -386,7 +386,7 @@ describe("HON-45: settlementDisplayState carries part payments", () => {
   it("PEER C2: a collected method with amount 0 and a known quote is still owed, never 'Part paid'", async () => {
     const { settlementDisplayState } = await import("@/lib/billing/appointment-payment-state");
     for (const method of ["paid_cash", "paid_e_transfer", "paid_other_external"] as const) {
-      expect(settlementDisplayState({ method, amountCents: 0, ...base })).toBe("settled_owing");
+      expect(settlementDisplayState({ method, amountCents: 0, ...base })).toBe("settled_collected_none");
     }
     // one cent is money that came in: still a part payment
     expect(settlementDisplayState({ method: "paid_cash", amountCents: 1, ...base })).toBe("settled_cash_part");

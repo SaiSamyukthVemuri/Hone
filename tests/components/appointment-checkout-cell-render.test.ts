@@ -80,6 +80,17 @@ describe("attested outcomes that are SETTLED offer no Checkout", () => {
   });
 });
 
+describe("a collected outcome of $0 reads unpaid and offers no Checkout (Codex P2)", () => {
+  it("settlementDisplayState -> the row shows Still owes and NO Checkout", async () => {
+    const { settlementDisplayState } = await import("@/lib/billing/appointment-payment-state");
+    const state = settlementDisplayState({ method: "paid_cash", amountCents: 0, quotedAmountCents: 10000 });
+    const html = render(state);
+    expect(html).toContain("Still owes");
+    expect(html).not.toContain("Paid");
+    expect(hasCheckout(html)).toBe(false);
+  });
+});
+
 describe("still_owes states BOTH facts: unpaid, and still collectable", () => {
   it("renders the neutral Still owes badge AND a Checkout entry", () => {
     const html = render("settled_owing");

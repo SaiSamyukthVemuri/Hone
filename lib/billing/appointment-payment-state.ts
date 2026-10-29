@@ -49,6 +49,10 @@ export type AppointmentPaymentState =
   | "settled_other_part"
   | "settled_waived"
   | "settled_owing"
+  // A collected method recorded with 0 against a known quote: unpaid, so it
+  // reads "Still owes", but 0187 blocks Checkout for every collected method
+  // whatever the amount, so unlike `settled_owing` it offers no Checkout.
+  | "settled_collected_none"
   // PAY-SETTLE / 0187. A refund that PROVABLY returned the whole charge.
   //
   // Split from `refunded` because the two differ in exactly one consequence:
@@ -81,8 +85,10 @@ export function settlementDisplayState(s: {
 }): AppointmentPaymentState {
   const cover = settlementCoverage(s.method, s.amountCents, s.quotedAmountCents);
   // A collected method recorded with 0 against a known quote brought no money
-  // in: that is still owed, not "part paid" (peer review C2).
-  if (cover.kind === "part" && s.amountCents <= 0) return "settled_owing";
+  // in: that is still owed, not "part paid" (peer review C2). It is NOT
+  // `settled_owing`: that state offers Checkout, which appointment_has_blocking_
+  // settlement rejects for any collected method (Codex P2).
+  if (cover.kind === "part" && s.amountCents <= 0) return "settled_collected_none";
   if (cover.kind === "part") return PART_STATE_BY_METHOD[s.method] ?? SETTLEMENT_STATE_BY_METHOD[s.method];
   return SETTLEMENT_STATE_BY_METHOD[s.method];
 }
