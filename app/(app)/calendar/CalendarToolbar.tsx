@@ -1,5 +1,6 @@
 import { PendingLink } from "@/components/pending-link";
 import { CalendarViewToggle } from "./ViewToggle";
+import { CalendarAutoRefresh } from "./CalendarAutoRefresh";
 
 // Google/Apple-style desktop calendar toolbar (PR A). Presentational only: it
 // renders navigation LINKS using the calendar's existing query params
@@ -53,6 +54,8 @@ export function CalendarToolbar({
 }: Props) {
   return (
     <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {/* HON-48: keeps this screen current for the other people on the calendar. */}
+      <CalendarAutoRefresh />
       <div>
         {/* The visible date range IS the heading, Google-style. */}
         <h1 className="text-2xl font-semibold tracking-tight">{rangeLabel}</h1>

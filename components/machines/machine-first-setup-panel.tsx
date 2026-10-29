@@ -8,6 +8,7 @@ import { SectionLabel } from "@/components/ui/section-label";
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
 import {
   initialSelection,
+  restoredSelection,
   selectionRequested,
   selectionSettled,
   unusableSelection,
@@ -32,6 +33,7 @@ import type { GroupSubmission } from "@/lib/machines/setting-groups";
 import type { PendingSetupIdentity } from "@/lib/machines/pending-setup";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import { nativeFieldGroups } from "@/lib/machines/charting";
+import { profileProvenance } from "@/lib/machines/profile-provenance";
 import {
   selectableDevices,
   supportedModes,
@@ -95,6 +97,17 @@ export type MachineFirstSetupPanelProps = {
    * machine is remembered (Codex, 1a39a51f).
    */
   unavailableSelection?: { deviceId: string; reason: string } | null;
+  /**
+   * The unit this client's last recorded setup used, offered when nothing is
+   * chosen. An OFFER: nothing is selected or remembered until she accepts it.
+   */
+  suggestedMachine?: { deviceId: string; displayName: string } | null;
+  /**
+   * The unit and mode the block's last saved capture used, for a reopened
+   * visit. Seeds the selection and the mode; the STORED fact stays whatever the
+   * practitioner remembered, so reopening never claims or changes it.
+   */
+  restoredSelection?: { deviceId: string; modeKey: string } | null;
   /**
    * Recorded unit id -> the studio's name for it, for next-visit guidance.
    * Resolved on the server, where retired units are visible.
@@ -275,6 +288,8 @@ export function MachineFirstSetupPanel({
   settingDraftFrozen = false,
   onRevisionUnresolved,
   unavailableSelection = null,
+  suggestedMachine = null,
+  restoredSelection: restored = null,
   unitNames = {},
   onSelectMachine,
   onRecord,
@@ -359,6 +374,12 @@ export function MachineFirstSetupPanel({
   // unmount the component holding a retry key.
   const identityFrozen = settingDraftFrozen || revisionUnresolved;
   const [selection, setSelection] = useState<SelectionState>(() =>
+    restored
+      ? restoredSelection(
+          restored.deviceId,
+          unavailableSelection?.deviceId ?? initialDeviceId,
+        )
+      :
     // A stored machine that cannot be charted on is NOT a selection, but it is
     // still stored, and the reason has to be visible. `unusableSelection`
     // keeps all three facts straight; see lib/machines/selection-state.
@@ -370,7 +391,9 @@ export function MachineFirstSetupPanel({
   const selectionNote = selection.note;
   // THE MODE IN FORCE. Seeded from the remembered one; falls back to the
   // profile's first active mode, which is all this used to do.
-  const [modeKey, setModeKey] = useState<string | null>(initialModeKey);
+  const [modeKey, setModeKey] = useState<string | null>(
+    restored ? restored.modeKey : initialModeKey,
+  );
   // How many readings this panel has actually saved in this mount. Drives the
   // "Recorded:" line, which previously claimed "nothing" even after a save.
   const [savedCount, setSavedCount] = useState(0);
@@ -596,6 +619,41 @@ export function MachineFirstSetupPanel({
             ))}
           </select>
         </FieldLabel>
+      )}
+
+      {/*
+        THE OFFER FROM THE LAST VISIT. Shown only while nothing is chosen and
+        only for a unit the picker itself lists, so accepting it goes through
+        the ordinary `chooseDevice` path (validation, persistence, failure
+        note). It never selects on its own.
+      */}
+      {scope &&
+        suggestedMachine &&
+        !deviceId &&
+        !unavailableSelection &&
+        selectable.some((s) => s.device.deviceId === suggestedMachine.deviceId) && (
+          <div
+            className="flex flex-wrap items-center gap-2 text-sm"
+            data-testid="machine-suggestion"
+          >
+            <span>Last used for this client: {suggestedMachine.displayName}</span>
+            <button
+              type="button"
+              className="min-h-11 rounded-md border px-3 text-sm"
+              disabled={selectionPending || identityFrozen}
+              onClick={() => void chooseDevice(suggestedMachine.deviceId)}
+              data-testid="machine-suggestion-use"
+            >
+              Use this machine
+            </button>
+          </div>
+        )}
+
+      {/* PROVENANCE (DEFAULT-PROFILES item 6): which manufacturer source and
+          profile version these fields come from, and whether the studio's own
+          unit has been confirmed against it. Display only. */}
+      {chosen && (
+        <ProfileProvenanceNote profile={chosen.profile} />
       )}
 
       {/* Selection. An empty list is a legitimate answer and says why. */}
@@ -990,5 +1048,25 @@ function PersistenceStatus({
         </dd>
       </div>
     </dl>
+  );
+}
+
+function ProfileProvenanceNote({ profile }: { profile: MachineProfile }) {
+  const p = profileProvenance(profile);
+  return (
+    <div
+      className="flex flex-col gap-0.5 text-xs text-neutral-600 dark:text-neutral-400"
+      data-testid="profile-provenance"
+    >
+      <p>
+        {p.title} · {p.versionLabel} ·{" "}
+        <span data-testid="profile-confirmation" data-state={p.confirmation}>
+          {p.confirmationLabel}
+        </span>
+      </p>
+      {p.sources.map((line) => (
+        <p key={line}>{line}</p>
+      ))}
+    </div>
   );
 }

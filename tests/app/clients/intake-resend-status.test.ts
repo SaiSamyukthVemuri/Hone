@@ -119,7 +119,8 @@ describe("stamping helper + every mint path stamps metadata", () => {
   });
 
   it("booking/reschedule (ensureIntakeForClient) stamps emailed", () => {
-    expect(QUERIES).toMatch(/stampIntakeLinkIssued\(admin, intakeId, \{ emailed: true \}\)/);
+    // Email is the default carrier; an SMS-only caller (1181-F1) passes false.
+    expect(QUERIES).toMatch(/stampIntakeLinkIssued\(admin, intakeId, \{ emailed: params\.emailed \?\? true \}\)/);
   });
 
   it("resend email stamps emailed=true; copy link stamps emailed=false", () => {
