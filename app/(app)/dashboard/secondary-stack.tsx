@@ -330,7 +330,7 @@ export async function SecondaryStack({
           null itself for "ready", so the contract holds for any future caller
           and not only for this call site. */}
       {isOwner && readiness && readiness.status !== "ready" && (
-        <BookingSetupCard readiness={readiness} />
+        <BookingSetupCard readiness={readiness} staffManaged={staffManaged} />
       )}
 
       {/* PR #215: setup/readiness checklist entry point. A normal

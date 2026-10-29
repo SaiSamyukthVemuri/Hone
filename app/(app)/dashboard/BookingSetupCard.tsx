@@ -66,6 +66,8 @@ import type {
 
 type Props = {
   readiness: NewClientReadiness;
+  /** HON-65: both HON-47 client self-service settings are off (lib/dashboard/staff-managed.ts). Heading wording only. */
+  staffManaged?: boolean;
 };
 
 /** Owner-facing names for an authority this card could not read. */
@@ -76,7 +78,7 @@ const AUTHORITY_LABEL: Record<ReadinessAuthority, string> = {
   admission: "new-client admission",
 };
 
-export function BookingSetupCard({ readiness }: Props) {
+export function BookingSetupCard({ readiness, staffManaged = false }: Props) {
   // READY IS THE ONLY STATE THAT RENDERS NOTHING, and the guard lives here
   // rather than at the call site so the contract holds for any caller.
   if (readiness.status === "ready") return null;
@@ -94,7 +96,13 @@ export function BookingSetupCard({ readiness }: Props) {
   }
 
   return (
-    <Shell heading="Before you can take a new client">
+    <Shell
+      heading={
+        // The readiness rule is the online booking page's. A clinic whose staff
+        // book everything should not read it as "you cannot take a new client".
+        staffManaged ? "Before clients can book online" : "Before you can take a new client"
+      }
+    >
       {readiness.unavailable.length > 0 && (
         // THE LIST IS NOT EXHAUSTIVE and the owner is told so, rather than
         // being left to read a short list as a complete one.
