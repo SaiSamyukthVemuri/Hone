@@ -167,7 +167,7 @@ nopush "STALL before the push (a read hangs): idle limit -> STOP, child told to 
 home1 "S1READ=hang"; answers approve tok pw; hrun
 unknown "STALL after the push (the read-back hangs): STOP -> UNKNOWN, marker stays, ONE push, NO automatic reconcile" "no output for 6 s"
 # an unexpected prompt: the child asks something the manifest does not know
-sed 's/^IFS= read -rs -p "Supabase access token (not shown): " TOK/IFS= read -r -p "Unexpected extra question: " XQ <"$TTY"\n&/' "$A" > "$T/a-extra.sh"
+awk '/^IFS= read -rs -p "Supabase access token \(not shown\): " TOK/ { print "echo \"Unexpected extra question: type something\" >&2"; print "IFS= read -r XQ <\"$TTY\"" } { print }' "$A" > "$T/a-extra.sh"
 grep -q 'Unexpected extra question' "$T/a-extra.sh" || bad "mutated apply script was not built"
 home1; mkapply "$T/a-extra.sh"; mkmanifest; answers approve tok pw; hrun
 nopush "an UNEXPECTED PROMPT is never answered: the run STOPs (no output limit), no credential reaches the child, nothing called, NOT APPLIED" "Unexpected extra question" ""
