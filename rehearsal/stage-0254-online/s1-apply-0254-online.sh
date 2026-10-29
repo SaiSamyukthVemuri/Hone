@@ -1,0 +1,492 @@
+#!/bin/bash
+# Hone STAGE 0254-ONLINE (constants-only sibling of s1-apply-0248-online.sh 3f2fac3f; the logic is the 0248 online logic): apply migration 0254 (1 file) to the hosted project through the SESSION POOLER, with the
+# vendor supabase-go (dce26b75) and ONLY the stage bundle (0001..0248 + sealed 0254; 0247 and 0249..0253 absent). ONE dry run, then ONE push, then the read-back.
+# REMOVED against a31e048b (as in 0248-online): window start/end, the S0a record and its age gate, the row-4 restore point, the 75-minute and 120-minute timers, the watchdog prompts.
+# KEPT: bundle/list/binary pins, the pinned REF and session-pooler URL, the FAILED-LOGIN tombstone, the APPLY-STATE single-flight marker (same path, any marker refuses),
+#   the dry run that must list exactly 0254, exactly one push, UNKNOWN handling (marker stays, no retry), credentials read once, hidden and cleared.
+# ADDED: before any push, four PINNED read-only queries through the verified runner run-window-read-macos.sh (history 246 rows max 0248; the sealed 0254's own preflight;
+#   no open transaction over 60 s on the five scanned tables; the five table sizes and the statement_timeout, which must be 1 ms..2 min and never 0); after a clean push, the pinned
+#   read-back window-s1read-0254.sh; ONE receipt: APPLIED+VERIFIED, NOT APPLIED or UNKNOWN -> reconcile.
+# NO settings write: this script never runs ALTER ROLE, SET or any write other than the single migration push. No heartbeat, no restore point, no watchdog, no cron pause.
+# Fail-closed: the first failed check, refusal, authentication error or unexpected output stops. No step is retried.
+# Nothing here creates a login role, resets a password or unbans an IP. PREVENTION: --db-url never reaches those code
+# paths in CLI v2.102.0, and the database password is always present. The log scan below is only a detector after the
+# fact (a hit must be REPORTED, never retried). The password and the access token are typed with read -rs from the terminal, never echoed, never
+# on a command line, never written, and handed only to the child that needs each.
+# Exit 0 ONLY after the push log shows exactly 1 "Applying migration" line (0254), then "Finished supabase db push.",
+# and the CLI exited 0. That does NOT replace the read-back (history = 247 rows, max 0254, 0247 and 0249..0253 absent) and the stage checks.
+set -u
+umask 077
+
+ROOT="$HOME/hone-s1"
+BIN="$ROOT/supabase-cli/supabase-go"
+#CONST-BEGIN
+PLAT_OS=Darwin
+PLAT_ARCH=arm64
+TTY=/dev/tty
+GO_SHA=dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b
+BUNDLE=migrations-stage0254.tar
+BUNDLE_SHA=ca45aa3b94b3e8f64be419fff6ae26fd00ed18a8c24856f5ac65cb9751f88534
+LIST=MIGRATIONS-stage0254.sha256
+LIST_SHA=841e8dca1b797feb10b167db42abd78e091331b71f60ae6cd4383f48661baaaf
+SEALED_SHA=77f34d5c9b677faad344b5b1afc2c3f26321f9060db5653a2176d9a239bbba23
+RUNNER_SHA=471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357
+RMANIFEST_SHA=50047991f0495403a4fc0d7635bff72fb4749769e6e3389bd9100a1aacb77fbf
+S1READ_SHA=7f85cb804cc66ff119279fb5ec4ff8aa6aa68eea7a0ec9570e00a14d85e2b862
+S1RUNNER_SHA=471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357
+S1MANIFEST_SHA=a4892e374e6f7af473b6d97311de8f76c54dfb95f12dad14e213e3ac4637ea18
+SQL_S1H=412456d394829670f8cfe1c111dc29a62e56fd6b15c9cd4ccb2a470813f6d205
+SQL_G02=98b86eff60b3905418950ac6d090a810dac6b4ac0b500de83813f0a92120c8f3
+SQL_G12=a8cab3cfe11e818f72464b54dbcfeb946a255b049d3d900c2412fb0652be41af
+SQL_OPEN=c35d09584f3a34fa48145826a5fbb0555e5addcd1a1231365c812f1669daba81
+SQL_W03=a15b47e82a0b30610cea31a2728b2cac0fe5face50f5e872ae5e18476ac24dbf
+#CONST-END
+REF=alhhybgqdmcdyzpybykj
+URL="postgresql://postgres.$REF@aws-1-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
+POOLER_URL="postgresql://postgres.$REF@aws-1-us-east-1.pooler.supabase.com:5432/postgres"
+HEAD_SHA=81f1695a9f179c2a8e5fb7efdb52402ade4ef4eb  # the apply head: #1226 (production chain + hosted 0248 + sealed 0254 only)
+TOMB="$ROOT/s1-apply/FAILED-LOGIN"
+NFILES=247
+MAXV=254
+STATEF="$ROOT/s1-apply/APPLY-STATE"
+WR="$ROOT/window-reads-0254"
+WR1="$ROOT/window-reads-s1-0254"
+
+# The ONE pending file and its sha256 (sealed 0254, #1226 draft 4e4b9be0). 0247 and 0249..0253 are NOT in this stage; 0248 is already hosted.
+#GOPEND-BEGIN
+GOPEND='77f34d5c9b677faad344b5b1afc2c3f26321f9060db5653a2176d9a239bbba23  0254_perm_hon44_role_enforcement.sql'
+#GOPEND-END
+
+PW=""
+TOK=""
+STAGE=start
+PUSHSTATE=none   # none (nothing pushed), inflight (the marker exists), done (the push finished cleanly)
+VERIFIED=no
+REASON=""
+WORK=""; ONLINE=""; S1DIR=""
+cleanup() {
+  PW=""; TOK=""
+  unset PW TOK PGPASSWORD SUPABASE_DB_PASSWORD SUPABASE_ACCESS_TOKEN
+  { [ ! -c "$TTY" ] || stty echo <"$TTY" >/dev/null 2>&1; } || true
+}
+receipt() { # ONE receipt, printed from the EXIT trap whatever the exit path; it never claims more than was proven
+  local res detail
+  if [ "$VERIFIED" = yes ]; then res="APPLIED+VERIFIED"; detail="The push applied exactly 0254 and the read-back shows 247 rows, max 0254, 0247 and 0249..0253 absent. The APPLY-STATE marker stays (APPLIED-UNVERIFIED) until s1-reconcile-0254-online.sh archives it; that script makes no connection."
+  elif [ "$PUSHSTATE" = none ]; then res="NOT APPLIED"; detail="Nothing was pushed (the IN-FLIGHT marker was never written). ${REASON:-stopped before the push}"
+  else res="UNKNOWN -> reconcile"; detail="A push was started (marker $STATEF stays). The outcome is not confirmed by a passing read-back. Do NOT rerun this script. ${REASON:-}"; fi
+  {
+    echo "=================== STAGE 0254 ONLINE RECEIPT ==================="
+    echo "RESULT: $res"
+    echo "$detail"
+    echo "settings write: none (this script never runs ALTER ROLE or SET)"
+    [ -z "$WORK" ] || echo "run record and logs: $WORK"
+    [ -z "$ONLINE" ] || echo "pre-push reads (4 results + 4 sidecars): $ONLINE"
+    [ -z "$S1DIR" ] || echo "read-back: $S1DIR"
+    echo "marker: $( [ -e "$STATEF" ] && head -c 120 "$STATEF" | tr -d '\n' || echo none )"
+    echo "=================================================================="
+  } >&2
+  [ -z "$WORK" ] || [ ! -d "$WORK" ] || { echo "RESULT: $res"; echo "$detail"; } > "$WORK/RECEIPT.txt" 2>/dev/null || true
+}
+on_exit() { cleanup; receipt; }
+trap on_exit EXIT
+trap 'echo >&2; echo "STOP: interrupted at stage $STAGE; credentials cleared. If the stage was the push or later, the database state is UNKNOWN: do NOT rerun this script; the receipt below names the next step." >&2; exit 130' INT TERM HUP
+die() { echo "STOP: $*" >&2; [ -n "$REASON" ] || REASON="$*"; exit 1; }
+sha() { shasum -a 256 -- "$1" | cut -d' ' -f1; }
+utcnow() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+iso='[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'
+epoch() { date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null || date -u -d "$1" +%s 2>/dev/null; }
+strip() { LC_ALL=C sed $'s/\033\\[[0-9;]*[A-Za-z]//g' "$1"; }
+
+[ $# -eq 0 ] || die "this script takes no arguments"
+mask() { LC_ALL=C sed -E -e 's#postgres(ql)?://[^ ]*#<url>#g' -e 's#([Uu]ser|[Hh]ost|[Hh]ostaddr|[Dd]bname)=[^ ,)]*#\1=<masked>#g' -e 's#([Uu]ser|[Rr]ole) "[^"]*"#\1 <masked>#g' -e 's#[A-Za-z0-9.-]*\.supabase\.com[:0-9]*#<host>#g'; }
+is_auth_failure() { strip "$1" | grep -qiE 'authenticat|28P01|28000|password|banned|circuit|SASL|tenant or user not found'; }
+tombstone() { # tombstone PHASE: written BEFORE dying on an authentication failure; holds the UTC time and the phase, no secret
+  mkdir -p "$ROOT/s1-apply" 2>/dev/null
+  printf 'failed login at %s in phase %s\n' "$(utcnow)" "$1" > "$TOMB" 2>/dev/null || echo "WARNING: could not write $TOMB; do not re-run anyway." >&2
+}
+
+# ---------------------------------------------------------------------------------------------------------
+# Part 0: this Mac, the verified binary, a clean environment (NAMES only, never values)
+# ---------------------------------------------------------------------------------------------------------
+[ "$(uname -s)" = "$PLAT_OS" ] && [ "$(uname -m)" = "$PLAT_ARCH" ] || die "not macOS arm64"
+for t in shasum tar awk sed grep find mktemp cut sort diff wc tr node; do command -v "$t" >/dev/null 2>&1 || die "$t not found"; done
+nodev=$(node --version 2>/dev/null) || die "node --version failed"
+nodemajor=${nodev#v}; nodemajor=${nodemajor%%.*}
+case "$nodemajor" in ''|*[!0-9]*) die "cannot read the node version" ;; esac
+[ "$nodemajor" -ge 18 ] || die "node $nodev is older than 18"
+[ -r "$TTY" ] || die "no terminal for private entry"
+SELF=$(cd "$(dirname "$0")" && pwd -P) || die "cannot resolve the script directory"
+[ -d "$ROOT" ] && [ ! -L "$ROOT" ] || die "$ROOT is missing or a symlink (run the Mac installer check first)"
+[ -n "$(find "$ROOT" -maxdepth 0 -user "$(id -un)" ! -perm -020 ! -perm -002 2>/dev/null)" ] || die "$ROOT must be owned by you and not writable by group or others"
+[ -f "$BIN" ] && [ ! -L "$BIN" ] && [ "$(sha "$BIN")" = "$GO_SHA" ] || die "supabase-go missing or sha256 mismatch (run the Mac check first)"
+[ -n "$(find "$BIN" -maxdepth 0 -user "$(id -un)" ! -perm -020 ! -perm -002 2>/dev/null)" ] || die "supabase-go must be owned by you and not writable by group or others"
+# the pinned read machinery (installed by install-0254-online.sh): the runner, its manifest and the four gate files; the read-back script and its runner and manifest
+for d in "$WR" "$WR1"; do
+  [ -d "$d" ] && [ ! -L "$d" ] && [ -n "$(find "$d" -maxdepth 0 -user "$(id -un)" ! -perm -020 ! -perm -002 2>/dev/null)" ] || die "$d is missing, a symlink, or not a private directory of yours (run the Mac installer check first)"
+done
+[ -f "$WR/run-window-read-macos.sh" ] && [ ! -L "$WR/run-window-read-macos.sh" ] && [ "$(sha "$WR/run-window-read-macos.sh")" = "$RUNNER_SHA" ] || die "runner missing or sha256 mismatch"
+[ -f "$WR/MANIFEST.sha256" ] && [ ! -L "$WR/MANIFEST.sha256" ] && [ "$(sha "$WR/MANIFEST.sha256")" = "$RMANIFEST_SHA" ] || die "manifest missing or sha256 mismatch"
+oks=$(cd "$WR" && shasum -a 256 -c MANIFEST.sha256) || die "a gate file does not match MANIFEST.sha256"
+[ "$(printf '%s\n' "$oks" | grep -c ': OK$')" = 4 ] || die "MANIFEST.sha256 did not verify exactly 4 gate files"
+for pair in "g02-history-0254.sql:$SQL_G02" "g12-0254-preflight-0254.sql:$SQL_G12" "s1-open-transactions-0254.sql:$SQL_OPEN" "w03-table-sizes-0254.sql:$SQL_W03"; do
+  [ -f "$WR/${pair%%:*}" ] && [ ! -L "$WR/${pair%%:*}" ] && [ "$(sha "$WR/${pair%%:*}")" = "${pair#*:}" ] || die "gate file ${pair%%:*} is missing or is not the pinned query"
+done
+[ -f "$WR1/window-s1read-0254.sh" ] && [ ! -L "$WR1/window-s1read-0254.sh" ] && [ "$(sha "$WR1/window-s1read-0254.sh")" = "$S1READ_SHA" ] || die "the read-back script is missing or is not the pinned window-s1read-0254.sh"
+[ -f "$WR1/run-window-read-macos.sh" ] && [ "$(sha "$WR1/run-window-read-macos.sh")" = "$S1RUNNER_SHA" ] || die "the read-back runner copy is missing or sha256 mismatch"
+[ -f "$WR1/MANIFEST.sha256" ] && [ "$(sha "$WR1/MANIFEST.sha256")" = "$S1MANIFEST_SHA" ] || die "the read-back manifest is missing or sha256 mismatch"
+bad=$(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | grep -E '^(SUPABASE_[A-Za-z0-9_]*|PG[A-Za-z0-9_]*|DATABASE_URL|E2E_SUPABASE_URL|HONE_LOCAL_DB_URL|HONE_WINDOW_[A-Z_]*|HONE_SUPABASE_BIN|GITHUB_TOKEN|GH_TOKEN|HTTPS_PROXY|HTTP_PROXY|ALL_PROXY|NO_PROXY|https_proxy|http_proxy|all_proxy|no_proxy|SSL_CERT_FILE|SSL_CERT_DIR|NODE_OPTIONS|NODE_PATH|NODE_EXTRA_CA_CERTS|BASH_ENV|ENV|DYLD_[A-Z_]*|LD_PRELOAD|LD_LIBRARY_PATH)$' | sort -u | tr '\n' ' ')
+[ -z "$bad" ] || die "unset these variables first (names only): $bad"
+if [ -e "$TOMB" ] || [ -L "$TOMB" ]; then
+  die "a previous run failed a login ($TOMB exists): report it to OPS; do not re-run; delete the file only after Sam decides. Nothing was attempted."
+fi
+#SINGLEFLIGHT-BEGIN
+# GATE 2 (single flight): ANY marker refuses a start. This script never clears it and no trap does: an UNKNOWN push can never be rerun.
+# Only s1-reconcile-0254-online.sh clears it, with read-back evidence newer than the marker, and it archives the marker rather than deleting it.
+if [ -e "$STATEF" ] || [ -L "$STATEF" ]; then
+  die "a previous run left $STATEF ($(head -c 160 "$STATEF" 2>/dev/null | tr -d '\n')): the outcome of that push is UNKNOWN or not yet verified, so this script will not start. Read back the migration history (window-s1read-0254.sh), then clear the marker ONLY with s1-reconcile-0254-online.sh. Nothing was attempted."
+fi
+#SINGLEFLIGHT-END
+case "$URL" in postgresql://*) ;; *) die "internal: the URL is not a postgresql:// URL" ;; esac
+userinfo=${URL#postgresql://}; userinfo=${userinfo%%@*}
+case "$userinfo" in *:*|*%*) die "internal: the URL carries a password-like userinfo" ;; esac
+case "$URL" in *password=*|*Password=*) die "internal: the URL carries a password parameter" ;; esac
+case "$URL" in *:6543/*) die "internal: the transaction pooler (6543) is never used" ;; esac
+case "$URL" in *sslmode=require*) ;; *) die "internal: the URL does not require TLS" ;; esac
+
+mkdir -p "$ROOT" || die "mkdir failed"
+WORK=$(mktemp -d "$ROOT/s1apply.XXXXXX") || die "mktemp failed"
+chmod 700 "$WORK" || die "chmod failed"
+
+# ---------------------------------------------------------------------------------------------------------
+# Part 1: the bundle. Both files are pinned by sha256; the tar is checked entry by entry BEFORE extraction.
+# 0249 and above (other than 0254) cannot be in the bundle, and any extra, missing or altered file stops here.
+# ---------------------------------------------------------------------------------------------------------
+[ -f "$SELF/$BUNDLE" ] && [ ! -L "$SELF/$BUNDLE" ] || die "$BUNDLE is not next to this script"
+[ -f "$SELF/$LIST" ] && [ ! -L "$SELF/$LIST" ] || die "$LIST is not next to this script"
+[ "$(sha "$SELF/$BUNDLE")" = "$BUNDLE_SHA" ] || die "$BUNDLE sha256 mismatch (tampered or wrong file)"
+[ "$(sha "$SELF/$LIST")" = "$LIST_SHA" ] || die "$LIST sha256 mismatch (tampered or wrong file)"
+grep -Eqv '^[0-9a-f]{64}  [0-9]{4}_[A-Za-z0-9_]+\.sql$' "$SELF/$LIST" && die "$LIST has a malformed line"
+prev=0
+while IFS= read -r l; do
+  v=${l#*  }; v=${v%%_*}
+  case "$v" in [0-9][0-9][0-9][0-9]) ;; *) die "$LIST: a malformed version" ;; esac
+  vn=$((10#$v))
+  [ "$vn" -le "$MAXV" ] || die "$LIST names a file above $(printf '%04d' "$MAXV"): $v"
+  [ "$vn" -gt "$prev" ] || die "$LIST is not strictly ascending at $v"
+  prev=$vn
+done < "$SELF/$LIST"
+[ "$prev" = "$MAXV" ] || die "$LIST does not end at $(printf '%04d' "$MAXV")"
+n=$(grep -c '' "$SELF/$LIST"); [ "$n" = "$NFILES" ] || die "$LIST has $n lines, expected $NFILES"
+# the pending file equals the sealed 0254, byte for byte (name and hash)
+awk '{v=substr($2,1,4)+0; if (v>=249 && v<=254) print}' "$SELF/$LIST" > "$WORK/pending-from-list.txt" || die "cannot derive the pending list"
+printf '%s\n' "$GOPEND" | diff -q - "$WORK/pending-from-list.txt" >/dev/null 2>&1 || die "the pending file in $LIST differs from the sealed 0254"
+[ "$(printf '%s\n' "$GOPEND" | grep -c '')" = 1 ] || die "internal: the embedded pending list is not 1 line"
+# STAGE 0254-ONLY: 0247 and 0249..0253 must be ABSENT from the list and the tar. Left in the directory, the same push would apply them with 0254 (the 0248 stage hit this with 0247, CI run 40710819431).
+grep -Eq '^[0-9a-f]{64}  (0247|0249|0250|0251|0252|0253)_' "$SELF/$LIST" && die "$LIST names 0247 or 0249..0253: they are not part of the 0254-only stage"
+tar -tf "$SELF/$BUNDLE" 2>/dev/null | grep -Eq 'supabase/migrations/(0247|0249|0250|0251|0252|0253)_' && die "$BUNDLE holds 0247 or 0249..0253: they are not part of the 0254-only stage"
+grep -Eq '^[0-9a-f]{64}  0254_' "$SELF/$LIST" || die "$LIST does not name 0254"
+# tar entries: names, types, nothing else
+tar -tf "$SELF/$BUNDLE" > /dev/null 2>&1 || die "$BUNDLE is not a readable tar"
+ents=$(tar -tf "$SELF/$BUNDLE" 2>/dev/null | sed 's#/$##') || die "cannot list $BUNDLE"
+printf '%s\n' "$ents" | grep -Evx 'supabase|supabase/migrations|supabase/migrations/[0-9]{4}_[A-Za-z0-9_]+\.sql' | head -3 | grep -q . && die "$BUNDLE holds an entry that is not supabase/migrations/NNNN_name.sql"
+tar -tvf "$SELF/$BUNDLE" 2>/dev/null | cut -c1 | grep -Evx '[-d]' | head -1 | grep -q . && die "$BUNDLE holds a link or special entry"
+over=$(printf '%s\n' "$ents" | sed -n 's#^supabase/migrations/\([0-9][0-9][0-9][0-9]\)_.*#\1#p' | awk -v m="$MAXV" '$1+0>m' | head -1)
+[ -z "$over" ] || die "$BUNDLE holds a file above $(printf '%04d' "$MAXV"): version $over"
+printf '%s\n' "$ents" | sed -n 's#^supabase/migrations/##p' | LC_ALL=C sort > "$WORK/names-from-tar.txt"
+awk '{print $2}' "$SELF/$LIST" | LC_ALL=C sort > "$WORK/names-from-list.txt"
+extra=$(LC_ALL=C comm -23 "$WORK/names-from-tar.txt" "$WORK/names-from-list.txt" | head -3 | tr '\n' ' ')
+missing=$(LC_ALL=C comm -13 "$WORK/names-from-tar.txt" "$WORK/names-from-list.txt" | head -3 | tr '\n' ' ')
+[ -z "$extra" ] || die "$BUNDLE has files that $LIST does not list: $extra"
+[ -z "$missing" ] || die "$BUNDLE is missing files that $LIST lists: $missing"
+
+# a fresh private project dir made from the bundle ONLY (no config.toml, no .env, no pooler-url, no linked project)
+PROJ="$WORK/project"; LOGS="$WORK/logs"
+mkdir "$PROJ" "$LOGS" || die "mkdir failed"
+chmod 700 "$PROJ" "$LOGS" || die "chmod failed"
+tar -xf "$SELF/$BUNDLE" -C "$PROJ" || die "could not extract $BUNDLE"
+[ -z "$(find "$PROJ" -type l | head -1)" ] || die "the extracted bundle contains a link"
+[ "$(find "$PROJ" -type f | wc -l | tr -d ' ')" = "$NFILES" ] || die "the extracted bundle does not hold exactly $NFILES files"
+[ -z "$(find "$PROJ" -type f ! -path "$PROJ/supabase/migrations/*" | head -1)" ] || die "the extracted bundle holds a file outside supabase/migrations"
+vout=$(cd "$PROJ/supabase/migrations" && shasum -a 256 -c "$SELF/$LIST" 2>&1) || die "an extracted migration differs from $LIST"
+[ "$(printf '%s\n' "$vout" | grep -c ': OK$')" = "$NFILES" ] || die "the extracted migrations did not verify $NFILES files"
+mkdir -p "$PROJ/supabase/.temp" || die "mkdir failed"
+printf '%s\n' v2.102.0 > "$PROJ/supabase/.temp/cli-latest" || die "write cli-latest failed"
+[ ! -e "$PROJ/supabase/config.toml" ] && [ ! -e "$PROJ/supabase/.temp/pooler-url" ] && [ ! -e "$PROJ/supabase/.temp/project-ref" ] || die "internal: the project dir has linked-project files"
+RUN="$WORK/run.txt"
+{
+  echo "S1 online apply run started $(utcnow)"
+  echo "script sha256 $(sha "$0")"
+  echo "bundle sha256 $BUNDLE_SHA ($BUNDLE) list sha256 $LIST_SHA"
+  echo "head $HEAD_SHA; files $NFILES; pending 1 (0254; 0247 and 0249..0253 absent)"
+  echo "supabase-go sha256 $GO_SHA"
+  echo "target pooler URL (no password): $URL"
+} > "$RUN" || die "cannot write the run record"
+echo "Bundle verified: $NFILES files, 0001..$(printf '%04d' "$MAXV"), the pending file equals the sealed 0254, 0247 and 0249..0253 absent. Working directory: $WORK" >&2
+
+# ---------------------------------------------------------------------------------------------------------
+# Part 2: the summary (BEFORE any credential), then APPLY. Nothing has connected to anything yet.
+# ---------------------------------------------------------------------------------------------------------
+STAGE=summary
+ask() { # ask VAR "prompt"
+  local _v
+  IFS= read -r -p "$2" _v <"$TTY" || die "could not read $1"
+  printf -v "$1" '%s' "$_v"
+}
+{
+  echo
+  echo "=========== STAGE 0254 ONLINE APPLY: what this run does ==========="
+  echo "Target:    Hone project $REF, session pooler aws-1-us-east-1 port 5432 (never the transaction pooler)"
+  echo "Migration: 0254_perm_hon44_role_enforcement.sql, sealed sha256 $SEALED_SHA"
+  echo "Bundle:    $BUNDLE sha256 $BUNDLE_SHA ($NFILES files, 0001..$(printf '%04d' "$MAXV"), 0247 and 0249..0253 absent; verified just now)"
+  echo "Tool:      supabase-go sha256 $GO_SHA (v2.102.0)"
+  echo "Runs, in this order, with no retry:"
+  echo "  1. four READ-ONLY queries (pinned): history is 246 rows with max 0248 and nothing at 0249 or above; the sealed 0254's own preflight passes;"
+  echo "     no transaction older than 60 s on the five scanned tables; the five table sizes and the statement_timeout"
+  echo "  2. one dry run that must list exactly 0254"
+  echo "  3. ONE push of 0254 (a write to the production database: it makes three payment tables owner-readable only and owner-gates price and settlement writes)"
+  echo "  4. the read-back (window-s1read-0254.sh): history 247 rows, max 0254, 0247 and 0249..0253 absent, the owner-only read-policy proof"
+  echo "STOP (nothing is pushed) if: any pinned file or sha differs; history is not exactly 246 rows, max 0248, nothing at 0249+; the preflight read fails;"
+  echo "  any scanned table has an open transaction over 60 s; a table is over 512 MiB; the statement_timeout is 0, over 2 min or unreadable;"
+  echo "  a login fails (then a FAILED-LOGIN tombstone blocks every rerun); the dry run lists anything but 0254; an APPLY-STATE marker or tombstone already exists."
+  echo "After the push starts, any failure or interruption leaves the APPLY-STATE marker: the result is UNKNOWN, there is NO retry, and the next step is the read-back and s1-reconcile-0254-online.sh."
+  echo "NO settings write: this script never runs ALTER ROLE or SET. No heartbeat, no restore point, no watchdog, no cron pause, no staff hold, no fixed window."
+  echo "Credentials: the access token (used only by the four read-only queries) and the database password, typed hidden, once, and cleared before the push."
+  echo "The read-back script then asks for the token and password itself (a second entry; the pinned script is not changed)."
+  echo "===================================================================="
+} >&2
+ask GOWORD "Type  APPLY  to run this now (nothing has connected yet): "
+[ "$GOWORD" = APPLY ] || die "not confirmed (type exactly: APPLY). NOTHING was applied."
+echo "APPLY typed $(utcnow)" >> "$RUN"
+
+# ---------------------------------------------------------------------------------------------------------
+# Part 3: credentials, once and hidden, then the four pinned read-only queries (access token + password) into a new online.* directory
+# ---------------------------------------------------------------------------------------------------------
+STAGE=credentials
+IFS= read -rs -p "Supabase access token (not shown): " TOK <"$TTY" || die "could not read the access token"
+echo >&2
+[ -n "$TOK" ] || die "empty access token; nothing was attempted"
+IFS= read -rs -p "Database password (not shown): " PW <"$TTY" || die "could not read the password"
+echo >&2
+[ -n "$PW" ] || die "empty password; nothing was attempted"
+
+STAGE=reads
+ONLINE=$(mktemp -d "$ROOT/online.XXXXXX") || die "mktemp failed"
+chmod 700 "$ONLINE" || die "chmod failed"
+LINK="$ONLINE/linked"; RES="$ONLINE/results"; RLOGS="$ONLINE/logs"
+mkdir -p "$LINK/supabase/.temp" "$RES" "$RLOGS" || die "mkdir failed"
+chmod 700 "$LINK" "$RES" "$RLOGS" || die "chmod failed"
+printf '%s\n' "$REF" > "$LINK/supabase/.temp/project-ref" || die "write project-ref failed"
+# pooler-url WITHOUT a trailing newline: supabase-go v2.102.0 reads this file verbatim; a newline makes the URL
+# unparsable and it silently falls back to the direct IPv6 host (incident 2026-10-25, reproduced).
+printf '%s' "$POOLER_URL" > "$LINK/supabase/.temp/pooler-url" || die "write pooler-url failed"
+[ "$(cat "$LINK/supabase/.temp/pooler-url")" = "$POOLER_URL" ] && [ "$(wc -c < "$LINK/supabase/.temp/pooler-url" | tr -d ' ')" = "${#POOLER_URL}" ] || die "pooler-url is not byte-exact (no trailing newline)"
+printf '%s\n' v2.102.0 > "$LINK/supabase/.temp/cli-latest" || die "write cli-latest failed"
+echo "online read directory $ONLINE" >> "$RUN"
+
+# The rules are the comparator's own (compare-preflight-lib.mjs: S0-6c g12, S0-7 open transactions, S0-W3 sizes and settings) plus g02 as window-s0a-0248.sh checks it (same rule, 0254 values),
+# and ONE addition: the statement_timeout must be 1 ms .. 2 min (never 0, never longer, never unreadable). Prints PASS or FAIL and the reason.
+cat > "$ONLINE/rule.js" <<'JS'
+const fs = require("fs");
+const [rule, file] = process.argv.slice(2);
+const done = (ok, msg) => { console.log((ok ? "PASS " : "FAIL ") + msg); process.exit(ok ? 0 : 1); };
+const numEq = (v, n) => (typeof v === "number" ? v === n : typeof v === "string" && /^-?\d+$/.test(v) && Number(v) === n);
+const isTrue = (v) => v === true || v === "true" || v === "t";
+const int = (v) => (typeof v === "number" && Number.isInteger(v) ? v : typeof v === "string" && /^-?\d+$/.test(v) ? Number(v) : NaN);
+let rows;
+try { rows = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { done(false, "the result is not JSON"); }
+if (!Array.isArray(rows) || rows.length === 0 || rows.some((r) => r === null || typeof r !== "object" || Array.isArray(r))) done(false, "the result is not a non-empty array of objects");
+const S1 = ["appointment_settlements", "client_pinned_notes", "client_pricing", "manual_fee_charge_attempts", "payment_charge_attempts"];
+const W3 = ["appointment_settlements", "client_pinned_notes", "client_pricing", "manual_fee_charge_attempts", "payment_charge_attempts"];
+const exact = (list) => rows.length === list.length && list.every((t) => rows.filter((r) => r.table_name === t).length === 1) && rows.every((r) => list.includes(r.table_name));
+if (rule === "g02") {
+  if (rows.length !== 1) done(false, "expected 1 row, got " + rows.length);
+  const r = rows[0];
+  if (!numEq(r.applied_count, 246)) done(false, "the hosted history is not 246 rows (applied_count " + r.applied_count + ")");
+  if (r.hosted_max !== "0248") done(false, "hosted history max is not 0248 (" + r.hosted_max + ")");
+  if (!numEq(r.versions_ge_0249, 0)) done(false, "versions at or above 0249 exist (" + r.versions_ge_0249 + ")");
+  done(true, "history is 246 rows, max 0248, nothing at 0249 or above");
+} else if (rule === "g12") {
+  if (rows.length !== 1) done(false, "expected 1 row, got " + rows.length);
+  const r = rows[0], bad = [];
+  if (!numEq(r.at_hosted_0248, 1)) bad.push("at_hosted_0248");
+  for (const k of ["tables_present", "helpers_ok", "replaced_ok", "new_objects_absent", "columns_ok"]) if (!isTrue(r[k])) bad.push(k);
+  done(bad.length === 0, bad.length ? "the sealed 0254 preflight is predicted to refuse or to replace the wrong thing: " + bad.join(", ") : "the sealed 0254 preflight passes");
+} else if (rule === "open") {
+  if (!exact(S1)) done(false, "the table set is not exactly the five scanned tables (" + rows.length + " rows)");
+  const absent = rows.filter((r) => !isTrue(r.table_present)).map((r) => r.table_name);
+  if (absent.length) done(false, "table_present is not true for " + absent.join(", "));
+  const old = rows.filter((r) => !numEq(r.old_xact_backends, 0));
+  done(old.length === 0, old.length ? "a transaction older than 60 s on " + old.length + " scanned table(s)" : "no transaction older than 60 s on the five scanned tables");
+} else if (rule === "w03") {
+  if (!exact(W3)) done(false, "the table set is not exactly the five named tables (" + rows.length + " rows)");
+  const absent = rows.filter((r) => !isTrue(r.present)).map((r) => r.table_name);
+  if (absent.length) done(false, "table missing: " + absent.join(", "));
+  if (rows.some((r) => !(int(r.total_bytes) >= 0))) done(false, "total_bytes unreadable");
+  const over = rows.filter((r) => int(r.total_bytes) > 512 * 1024 * 1024).map((r) => r.table_name);
+  if (over.length) done(false, "over 512 MiB: " + over.join(", "));
+  const st = new Set(rows.map((r) => r.statement_timeout)), lt = new Set(rows.map((r) => r.lock_timeout));
+  if (st.has(undefined) || lt.has(undefined) || st.size !== 1 || lt.size !== 1) done(false, "settings missing or inconsistent");
+  const s = String([...st][0]).trim(), m = /^(\d+)(ms|s|min|h|d)?$/.exec(s);
+  if (!m) done(false, "the statement_timeout is not a readable duration (" + s + ")");
+  const ms = Number(m[1]) * ({ ms: 1, s: 1000, min: 60000, h: 3600000, d: 86400000 })[m[2] || "ms"];
+  if (ms === 0) done(false, "the statement_timeout is 0 (unbounded)");
+  if (ms > 120000) done(false, "the statement_timeout is " + s + ", longer than 2 min");
+  done(true, "five tables under 512 MiB; statement_timeout=" + s + " lock_timeout=" + [...lt][0]);
+} else done(false, "unknown rule");
+JS
+read_gate() { # read_gate FILE SQLSHA RULE
+  local f="$1" want="$2" rname="$3" stem rc=0 r m line rs st ca out
+  stem=${f%.sql}
+  ( export SUPABASE_ACCESS_TOKEN="$TOK" SUPABASE_DB_PASSWORD="$PW"; cd "$LINK" && env HONE_WINDOW_PROJECT_REF="$REF" HONE_SUPABASE_BIN="$BIN" HONE_WINDOW_RESULT_DIR="$RES" \
+      SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 /bin/bash "$WR/run-window-read-macos.sh" "$f" ) </dev/null 2>"$RLOGS/$stem.err" || rc=$?
+  mask < "$RLOGS/$stem.err" > "$RLOGS/$stem.err.m" 2>/dev/null && mv -f "$RLOGS/$stem.err.m" "$RLOGS/$stem.err"
+  if grep -qiE 'login role|unban|network.?ban|reset.*password' "$RLOGS/$stem.err"; then
+    tombstone reads; die "$f: the CLI reported a login-role / ban / password path; recorded in $TOMB and stopped; REPORT it (log: $RLOGS/$stem.err). NOTHING was applied."
+  fi
+  if grep -qiE 'permission denied|42501' "$RLOGS/$stem.err"; then
+    die "$f: a permission refusal was reported (denial); stopped (log: $RLOGS/$stem.err). NOTHING was applied."
+  fi
+  if [ "$rc" != 0 ]; then
+    tail -n 5 "$RLOGS/$stem.err" >&2
+    if is_auth_failure "$RLOGS/$stem.err"; then tombstone reads; echo "An authentication failure was recorded in $TOMB: no further run is allowed until Sam decides." >&2; fi
+    die "$f failed (exit $rc): an authentication error, a refusal or an invalid result. Nothing after it was run. NOTHING was applied."
+  fi
+  r="$RES/$stem.json"; m="$RES/$stem.meta.json"
+  [ -f "$r" ] && [ ! -L "$r" ] && [ -f "$m" ] && [ ! -L "$m" ] || die "$f: result or sidecar missing. NOTHING was applied."
+  rs=$(sha "$r")
+  [ "$(grep -c '' "$m")" = 1 ] || die "$f: the sidecar is not exactly one line"
+  line=$(cat "$m")
+  printf '%s\n' "$line" | grep -Eqx "\\{\"file\":\"$f\",\"sql_sha256\":\"$want\",\"result_sha256\":\"$rs\",\"started_at_utc\":\"$iso\",\"captured_at_utc\":\"$iso\",\"exit_code\":0,\"runner_sha256\":\"$RUNNER_SHA\",\"manifest_sha256\":\"$RMANIFEST_SHA\"\\}" \
+    || die "$f: the sidecar does not bind this result (file, sql, result hash, exit code, runner or manifest). NOTHING was applied."
+  st=$(printf '%s' "$line" | sed -E 's/.*"started_at_utc":"([^"]*)".*/\1/'); ca=$(printf '%s' "$line" | sed -E 's/.*"captured_at_utc":"([^"]*)".*/\1/')
+  [ "$st" \< "$ca" ] || [ "$st" = "$ca" ] || die "$f: capture time precedes start time"
+  out=$(node "$ONLINE/rule.js" "$rname" "$r" 2>&1 </dev/null) || die "$f: ${out#FAIL }. NOTHING was applied."
+  echo "ok $f (result sha256 $rs): ${out#PASS }" >&2
+  echo "read $f result sha256 $rs: ${out#PASS }" >> "$RUN"
+}
+read_gate g02-history-0254.sql "$SQL_G02" g02
+read_gate g12-0254-preflight-0254.sql "$SQL_G12" g12
+read_gate s1-open-transactions-0254.sql "$SQL_OPEN" open
+read_gate w03-table-sizes-0254.sql "$SQL_W03" w03
+[ "$(cd "$RES" && ls -A | wc -l | tr -d ' ')" = 8 ] || die "the online results directory does not hold exactly the 4 results and 4 sidecars. NOTHING was applied."
+TOK=""; unset SUPABASE_ACCESS_TOKEN
+echo "All 4 pre-push reads passed; the access token is cleared." >&2
+
+# ---------------------------------------------------------------------------------------------------------
+# Part 4: ONE dry run. No retry: a failed login stops the script.
+# ---------------------------------------------------------------------------------------------------------
+run_cli() { # run_cli LOGFILE args...  (the password is in the child's environment only)
+  local lf="$1"; shift
+  ( cd "$PROJ" && PGPASSWORD="$PW" SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false SUPABASE_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 "$BIN" "$@" ) </dev/null >"$lf" 2>&1
+}
+scan_log() { # scan_log FILE: a login-role / ban / password-reset path means the CLI left the plan
+  if strip "$1" | grep -qiE 'login role|initialising|unban|network.?ban|reset.*password|api\.supabase\.com'; then
+    if [ "$STAGE" = push ]; then
+      die "the CLI reported a login-role / ban / password / Management API path DURING the push. The push may already have applied: do the S1 read-back before anything else. REPORT it (log: $1). Do not retry."
+    fi
+    die "the CLI reported a login-role / ban / password / Management API path. Stopped; REPORT it (log: $1). Do not retry."
+  fi
+}
+WANT=$(printf '%s\n' "$GOPEND" | awk '{print $2}')
+
+STAGE=dry-run
+echo "dry run started $(utcnow)" >> "$RUN"
+echo "Running the dry run (one connection attempt)..." >&2
+DRY="$LOGS/dry-run.log"
+rc=0; run_cli "$DRY" db push --db-url "$URL" --dry-run || rc=$?
+echo "dry run finished $(utcnow) exit $rc" >> "$RUN"
+scan_log "$DRY"
+if [ "$rc" != 0 ]; then
+  strip "$DRY" | tail -n 6 | mask >&2
+  if is_auth_failure "$DRY"; then tombstone dry-run; echo "An authentication failure was recorded in $TOMB: no further run is allowed until Sam decides." >&2; fi
+  die "the dry run failed (exit $rc), for example a connection or authentication error. NOTHING was applied. Do not retry from this script; report the log: $DRY"
+fi
+dsum=$(strip "$DRY")
+printf '%s\n' "$dsum" | grep -qx 'DRY RUN: migrations will \*not\* be pushed to the database.' || die "the dry run did not announce itself as a dry run"
+printf '%s\n' "$dsum" | grep -qx 'Would push these migrations:' || die "the dry run did not print 'Would push these migrations:'"
+printf '%s\n' "$dsum" | grep -q 'Applying migration' && die "the dry run printed 'Applying migration': stopped"
+got=$(printf '%s\n' "$dsum" | LC_ALL=C grep -E '^ *[^ ]+ +[0-9]{4}_[A-Za-z0-9_]+\.sql *$' | LC_ALL=C sed -E 's/^.* ([0-9]{4}_[A-Za-z0-9_]+\.sql) *$/\1/')
+ngot=$(printf '%s\n' "$got" | grep -c '.')
+[ "$ngot" = 1 ] || die "the dry run lists $ngot migrations, expected exactly 1. NOTHING was applied (log: $DRY)"
+[ "$got" = "$WANT" ] || die "the dry run lists 1 migration but not the expected 0254. NOTHING was applied (log: $DRY)"
+echo "Dry run OK: exactly 1 migration, 0254." >&2
+echo "dry run listed exactly the 1 expected version" >> "$RUN"
+
+# ---------------------------------------------------------------------------------------------------------
+# Part 5: ONE push (APPLY was typed in Part 2). The log must show 1 "Applying migration" line, then the
+# finish line, and the CLI must exit 0. The marker is written first and only the reconcile script ever clears it.
+# ---------------------------------------------------------------------------------------------------------
+STAGE=confirm
+echo "Do not press Ctrl-C or close this window from here until the receipt is printed." >&2
+#SFWRITE-BEGIN
+mkdir -p "$ROOT/s1-apply" 2>/dev/null
+( set -C; printf 'IN-FLIGHT %s head=%s run=%s\n' "$(utcnow)" "$HEAD_SHA" "$WORK" > "$STATEF" ) 2>/dev/null || die "cannot create the IN-FLIGHT marker $STATEF (it already exists, or the directory is not writable). NOTHING was applied."
+sync 2>/dev/null || true
+PUSHSTATE=inflight
+echo "IN-FLIGHT marker written $(utcnow)" >> "$RUN"
+#SFWRITE-END
+STAGE=push
+echo "push started $(utcnow)" >> "$RUN"
+echo "Running the push (one connection attempt)..." >&2
+PUSH="$LOGS/push.log"
+rc=0; run_cli "$PUSH" db push --db-url "$URL" --yes || rc=$?
+echo "push finished $(utcnow) exit $rc" >> "$RUN"
+PW=""; unset PW
+psum=$(strip "$PUSH")
+napp=$(printf '%s\n' "$psum" | grep -c '^Applying migration ')
+scan_log "$PUSH"
+fail_report() {
+  strip "$PUSH" | tail -n 12 | mask >&2
+  if [ "$rc" != 0 ] && is_auth_failure "$PUSH"; then tombstone push; echo "An authentication failure was recorded in $TOMB: no further run is allowed until Sam decides." >&2; fi
+  echo "Applying-migration lines seen: $napp of 1." >&2
+  if strip "$PUSH" | grep -qE '57014|canceling statement due to user request'; then
+    echo "A statement was cancelled (SQLSTATE 57014): the database state is UNKNOWN until the read-back." >&2
+  fi
+  die "$1 The push may already have applied: do the S1 read-back before anything else. Files before the failing one are recorded and the failing file did not commit, but verify by reading the migration history. Do NOT rerun this script. Report the log: $PUSH"
+}
+[ "$rc" = 0 ] || fail_report "the push failed (exit $rc)."
+[ "$napp" = 1 ] || fail_report "the push logged $napp 'Applying migration' lines, expected 1."
+applied=$(printf '%s\n' "$psum" | LC_ALL=C grep -E '^Applying migration [0-9]{4}_[A-Za-z0-9_]+\.sql\.\.\.$' | LC_ALL=C sed -E 's/^Applying migration ([0-9]{4}_[A-Za-z0-9_]+\.sql)\.\.\.$/\1/')
+[ "$applied" = "$WANT" ] || fail_report "the applied migration is not exactly 0254."
+printf '%s\n' "$psum" | grep -qx 'Finished supabase db push.' || fail_report "the 'Finished supabase db push.' line is missing."
+
+#SFDONE-BEGIN
+# the push passed every check: the marker moves to APPLIED-UNVERIFIED (still refuses a start). If this write fails it stays IN-FLIGHT, which is also safe.
+{ printf 'APPLIED-UNVERIFIED %s head=%s run=%s\n' "$(utcnow)" "$HEAD_SHA" "$WORK" > "$STATEF.tmp" && mv -f "$STATEF.tmp" "$STATEF"; } 2>/dev/null || echo "WARNING: could not move $STATEF to APPLIED-UNVERIFIED; it stays IN-FLIGHT, which also refuses a rerun." >&2
+#SFDONE-END
+PUSHSTATE=done
+{ echo "STAGE 0254 APPLIED $(utcnow): 1 migration (0254), finish line present, exit 0"; echo "dry-run log sha256 $(sha "$DRY")"; echo "push log sha256 $(sha "$PUSH")"; } >> "$RUN"
+echo "STAGE 0254 PUSHED: exactly 1 migration (0254); 'Finished supabase db push.'; exit 0. Not yet verified: the read-back runs next." >&2
+
+# ---------------------------------------------------------------------------------------------------------
+# Part 6: the pinned read-back, automatically. It asks for the access token and database password itself. The result is judged here from its own files.
+# ---------------------------------------------------------------------------------------------------------
+STAGE=readback
+mt=$(sed -n 's/^APPLIED-UNVERIFIED \([^ ]*\) .*/\1/p;s/^IN-FLIGHT \([^ ]*\) .*/\1/p' "$STATEF" | head -1)
+before=$(ls -dt "$ROOT"/s1read.* 2>/dev/null | head -1)
+echo "Read-back: running the pinned window-s1read-0254.sh. It will ask for the access token and database password." >&2
+rc=0; /bin/bash "$WR1/window-s1read-0254.sh" || rc=$?
+echo "read-back script finished $(utcnow) exit $rc" >> "$RUN"
+d=$(ls -dt "$ROOT"/s1read.* 2>/dev/null | head -1)
+[ -n "$d" ] && [ "$d" != "$before" ] && S1DIR=$d
+if [ "$rc" = 0 ] && [ -n "$S1DIR" ] && [ -f "$S1DIR/verdict.txt" ] && grep -Fxq 'OVERALL PASS (0254 read-back: history, 2 verify checks and the owner-only read-policy proof; read-only, not a promotion)' "$S1DIR/verdict.txt" \
+   && [ "$(grep -c '^OVERALL PASS' "$S1DIR/verdict.txt")" = 1 ]; then
+  hf="$S1DIR/results/s1-history-0254.json"; hm="$S1DIR/results/s1-history-0254.meta.json"
+  if [ -f "$hf" ] && [ ! -L "$hf" ] && [ -f "$hm" ] && [ ! -L "$hm" ] && [ "$(grep -c '' "$hm")" = 1 ]; then
+    ca=$(sed -n 's/.*"captured_at_utc":"\([^"]*\)".*/\1/p' "$hm")
+    c=$(LC_ALL=C tr -d '[:space:]' < "$hf")
+    if printf '%s' "$ca" | LC_ALL=C grep -Eq "^$iso\$" && [ "$(epoch "$ca")" -gt "$(epoch "$mt")" ] \
+       && printf '%s\n' "$(cat "$hm")" | grep -Fq "\"result_sha256\":\"$(sha "$hf")\"," && printf '%s\n' "$(cat "$hm")" | grep -Fq "\"sql_sha256\":\"$SQL_S1H\"," \
+       && printf '%s' "$c" | grep -Eq '"applied_count":"?247"?[,}]' && printf '%s' "$c" | grep -q '"hosted_max":"0254"' \
+       && printf '%s' "$c" | grep -Eq '"rows_0254":"?1"?[,}]' && printf '%s' "$c" | grep -Eq '"rows_0247":"?0"?[,}]'; then
+      VERIFIED=yes
+    fi
+  fi
+fi
+if [ "$VERIFIED" = yes ]; then
+  echo "read-back verified $(utcnow): 247 rows, max 0254, 0247 absent" >> "$RUN"
+  exit 0
+fi
+REASON="The push finished cleanly but the read-back did not confirm it (read-back exit $rc). Run window-s1read-0254.sh, then s1-reconcile-0254-online.sh."
+echo "read-back verified: no" >> "$RUN"
+exit 1

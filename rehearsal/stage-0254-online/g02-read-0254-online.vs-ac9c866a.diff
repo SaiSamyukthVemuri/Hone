@@ -1,0 +1,41 @@
+--- reference/g02-read-0248-online.ac9c866a.sh	2026-10-29 01:50:40.676767243 +0000
++++ g02-read-0254-online.sh	2026-10-29 01:49:50.581785944 +0000
+@@ -1,6 +1,6 @@
+ #!/bin/bash
+-# Hone STAGE 0248-ONLINE: ONE standalone READ of the pinned g02-history-0248.sql (19e4e057) through the verified runner run-window-read-macos.sh (471ecb9d), saved with its sidecar
+-# in a new $HOME/hone-s1/online.* directory. It is the fresh history read that s1-reconcile-0248-online.sh accepts on the NONE route when it was taken at least 1200 s after the APPLY-STATE marker.
++# Hone STAGE 0254-ONLINE: ONE standalone READ of the pinned g02-history-0254.sql (98b86eff) through the verified runner run-window-read-macos.sh (471ecb9d), saved with its sidecar
++# in a new $HOME/hone-s1/online.* directory. It is the fresh history read that s1-reconcile-0254-online.sh accepts on the NONE route when it was taken at least 1200 s after the APPLY-STATE marker.
+ # READ-ONLY: one SELECT over supabase_migrations.schema_migrations. No push, no settings write, no marker change. It may run while a marker exists (that is its purpose).
+ # Fail-closed: no retry; a failed login writes the FAILED-LOGIN tombstone. The access token and database password are typed hidden, once, and cleared.
+ set -u
+@@ -14,15 +14,15 @@
+ TTY=/dev/tty
+ GO_SHA=dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b
+ RUNNER_SHA=471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357
+-RMANIFEST_SHA=df3e4e9a6d2601a67c79d7ef97c33f738ea271da2cee58f09b9fa3ed77c01f52
+-SQL_G02=19e4e05793e5fa033921ac35cd2a7337b7a6477d0f6a25747134791f7b317cfe
++RMANIFEST_SHA=50047991f0495403a4fc0d7635bff72fb4749769e6e3389bd9100a1aacb77fbf
++SQL_G02=98b86eff60b3905418950ac6d090a810dac6b4ac0b500de83813f0a92120c8f3
+ #CONST-END
+ REF=alhhybgqdmcdyzpybykj
+ POOLER_URL="postgresql://postgres.$REF@aws-1-us-east-1.pooler.supabase.com:5432/postgres"
+ TOMB="$ROOT/s1-apply/FAILED-LOGIN"
+-WR="$ROOT/window-reads-0248"
+-F=g02-history-0248.sql
+-STEM=g02-history-0248
++WR="$ROOT/window-reads-0254"
++F=g02-history-0254.sql
++STEM=g02-history-0254
+
+ TOK=""; PW=""
+ cleanup() { TOK=""; PW=""; unset TOK PW SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD; { [ ! -c "$TTY" ] || stty echo <"$TTY" >/dev/null 2>&1; } || true; }
+@@ -86,6 +86,6 @@
+ c=$(LC_ALL=C tr -d '[:space:]' < "$r")
+ case "$c" in "[{"*"}]") ;; *) die "the result is not a non-empty JSON array of objects" ;; esac
+ echo "g02 history read saved: $D (result sha256 $rs, captured $(sed -E 's/.*"captured_at_utc":"([^"]*)".*/\1/' "$m"))." >&2
+-printf '%s' "$c" | grep -Eo '"(applied_count|hosted_max|versions_ge_0247)":"?[0-9]+"?' | tr '\n' ' ' >&2; echo >&2
+-echo "This read is evidence for s1-reconcile-0248-online.sh only if it was taken at least 1200 s after the marker. Next: run s1-reconcile-0248-online.sh (no connection, no credentials)." >&2
++printf '%s' "$c" | grep -Eo '"(applied_count|hosted_max|versions_ge_0249)":"?[0-9]+"?' | tr '\n' ' ' >&2; echo >&2
++echo "This read is evidence for s1-reconcile-0254-online.sh only if it was taken at least 1200 s after the marker. Next: run s1-reconcile-0254-online.sh (no connection, no credentials)." >&2
+ exit 0

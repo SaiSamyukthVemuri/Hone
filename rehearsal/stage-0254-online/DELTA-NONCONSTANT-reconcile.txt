@@ -1,0 +1,2 @@
+<   if [ -n "$d" ] && mine "$d" && [ -f "$d/verdict.txt" ] && grep -Fxq 'OVERALL PASS (NNNN read-back: history and # verify-bundle checks; read-only, not a promotion)' "$d/verdict.txt" \
+>   if [ -n "$d" ] && mine "$d" && [ -f "$d/verdict.txt" ] && grep -Fxq 'OVERALL PASS (NNNN read-back: history, # verify checks and the owner-only read-policy proof; read-only, not a promotion)' "$d/verdict.txt" \

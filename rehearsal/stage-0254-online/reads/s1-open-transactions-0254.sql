@@ -1,45 +1,24 @@
--- 0248-ONLY STAGE SIBLING of s1-open-transactions.sql (derived by make-window-0248.py): the chain guard moved from hosted 0212 to hosted 0246 and its column
--- is named at_hosted_0246. Every other line, INCLUDING the comments that describe 0212, is the original text.
 -- ===========================================================================
--- OPEN TRANSACTIONS: pg_stat_activity read at S1 start (rollout 0213-0246)
--- W-2 (1035-ROLLOUT-PACKAGE-FINAL.md 5.1, A4 "Open transactions"): no
--- transaction older than 60 s on the lock-scanned tables. Table list from
--- ROLLOUT-0213-0246-DECISION-PACKAGE.md Part II section 5 "Locks" (which says
--- "these include"; the owner extends the list if a file scans another table).
---
--- RUN ONLY VIA: run-window-read.sh <this file>
--- One SELECT over pg_stat_activity, pg_locks and pg_catalog only. Returns
--- counts and ages per table. It never returns a pid, user, role, address,
--- application name or query text. The read's own backend is excluded.
---
--- A transaction is matched to a table by any lock it holds or awaits on that
--- table, or on an index of it. pg_stat_activity alone cannot say which tables
--- a transaction touches.
---
--- Guarded like the other S0a files: refuses (division by zero) unless hosted
--- history max is 0212, because it is read at S1 START, before any apply.
---
--- EXPECTED PASS: 10 rows, at_hosted_0246 = 1, old_xact_backends = 0 on every
---   row. Other columns are information for the operator.
--- STOP CONDITION: old_xact_backends > 0 on any row. Do not start S1. Each file
---   also carries a 5 s lock_timeout, so a missed blocker rolls back that file.
+-- OPEN TRANSACTIONS (0254 ONLINE STAGE): pg_stat_activity at the start of the 0254 apply.
+-- Derived from s1-open-transactions-0248.sql (b110fd60): the chain guard is hosted 0248 (column at_hosted_0248) and the scanned set is the five tables
+-- the sealed 0254 takes ACCESS EXCLUSIVE locks on (policy DROP/CREATE) or SHARE ROW EXCLUSIVE (CREATE TRIGGER):
+--   payment_charge_attempts, manual_fee_charge_attempts, appointment_settlements, client_pricing, client_pinned_notes.
+-- Rule: no transaction older than 60 s touching any of them (a long reader would queue the policy DDL and, behind it, every new read, until the
+-- sealed lock_timeout of 5 s aborts the whole transaction). RUN ONLY VIA: run-window-read-macos.sh s1-open-transactions-0254.sql
+-- One SELECT over pg_stat_activity, pg_locks and pg_catalog. Counts and ages only; no pid, user, address or query text. Nothing is written.
+-- EXPECTED PASS: 5 rows, at_hosted_0248 = 1, table_present true, old_xact_backends = 0 on every row.
 -- ===========================================================================
 with chain_guard as (
-  select 1 / (case when (select max(version) from supabase_migrations.schema_migrations) = '0246'
-                   then 1 else 0 end) as at_hosted_0246
+  select 1 / (case when (select max(version) from supabase_migrations.schema_migrations) = '0248'
+                   then 1 else 0 end) as at_hosted_0248
 ),
 scanned(table_name) as (
   values
     ('payment_charge_attempts'),
+    ('manual_fee_charge_attempts'),
     ('appointment_settlements'),
-    ('sessions'),
-    ('practitioners'),
-    ('appointments'),
-    ('appointment_audit'),
-    ('email_outbound_messages'),
-    ('sms_outbound_messages'),
-    ('clients'),
-    ('client_intake_forms')
+    ('client_pricing'),
+    ('client_pinned_notes')
 ),
 backends as (
   select a.pid,
@@ -63,7 +42,7 @@ holders as (
     join backends b on b.pid = l.pid
 )
 select
-  g.at_hosted_0246,
+  g.at_hosted_0248,
   s.table_name,
   exists (select 1 from pg_catalog.pg_class t join pg_catalog.pg_namespace n on n.oid = t.relnamespace
            where n.nspname = 'public' and t.relname = s.table_name)                      as table_present,
