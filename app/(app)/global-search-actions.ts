@@ -27,6 +27,7 @@ import {
   nameCandidatePatterns,
   NON_ASCII_NAME_REGEX,
   phoneCandidatePattern,
+  sortByMatchRank,
 } from "@/lib/clients/name-search";
 
 // Global Search server action (V1: PR #232 · V2-A: settings + navigation).
@@ -238,7 +239,7 @@ async function searchClientRows(
     rows.push(row);
   }
   return {
-    rows: rows.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "")).slice(0, CLIENT_CAP),
+    rows: sortByMatchRank(rows, query).slice(0, CLIENT_CAP),
     truncated: [direct, asciiNamed, otherNamed, phoned].some((r) => r.truncated),
   };
 }
