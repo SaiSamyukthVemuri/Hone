@@ -640,6 +640,20 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id", studioId)',
   },
   {
+    path: "lib/billing/jurisdiction-owner-confirmation.ts",
+    purpose:
+      "Owner confirmation of the studio's payment country and currency (default-off switch), saved through the initialize-only 0270 command.",
+    why: "initialize_studio_payment_jurisdiction_owner (0270) grants EXECUTE to service_role ONLY (revoked from public, anon, authenticated and service_role by name, then granted to service_role), and studio_payment_jurisdictions has no browser-role path, so the session client cannot call it. The only caller is confirmStudioJurisdictionAsOwner, reached from the settings server action after getCurrentPractitionerWithStudio resolves the studio server-side and the practitioner role is checked to be owner; the studio id is never taken from the form. It never updates a stored pair (the command is initialize-only and audited), and does nothing unless OWNER_JURISDICTION_CONFIRMATION_ENABLED is true.",
+    scopeGuard: "p_studio_id: input.studioId",
+  },
+  {
+    path: "lib/billing/jurisdiction-setup-status.ts",
+    purpose:
+      "Advisory Gate B panel: reads the entered jurisdiction and the Stripe-observed account country for one studio (default-off switch).",
+    why: "studio_payment_jurisdictions grants SELECT to service_role ONLY with no RLS policy (0214), so the entered pair has no browser-role path. Both reads are single SELECTs of a few columns scoped by .eq(\"studio_id\", studioId), and the studio_payment_settings read is also pinned to the deployment mode (stripe_livemode). The only caller is the payments settings page, which resolves the studio server-side and renders the panel for the owner role only and only while OWNER_JURISDICTION_CONFIRMATION_ENABLED is true. It writes nothing and enables nothing; a failed read returns null (unconfirmed), never ready.",
+    scopeGuard: '.eq("studio_id", studioId)',
+  },
+  {
     path: "lib/booking/public-slot-range.ts",
     purpose: "Public availability read across a DATE RANGE, resolved once.",
     why:

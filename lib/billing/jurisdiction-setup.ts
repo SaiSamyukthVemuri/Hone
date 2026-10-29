@@ -72,8 +72,13 @@ export type SetupInput = {
 
 export type SetupVerdict = {
   state: SetupState;
-  /** True only in "ready". Every other state keeps payment activation blocked. */
-  paymentsMayBeEnabled: boolean;
+  /**
+   * True only in "ready": the stricter standard for a NEW setup (observed
+   * Stripe country required). It is advisory and NOT the charge gate: a legacy
+   * Canadian studio that is not "ready" here can still charge. The database
+   * guard on payment_charge_attempts remains the only authority.
+   */
+  meetsNewSetupStandard: boolean;
   /** Owner-facing correction. No raw codes. */
   explanation: string;
 };
@@ -84,17 +89,17 @@ const EXPLAIN: Record<Exclude<SetupState, "ready">, string> = {
   awaiting_stripe_account:
     "Connect your Stripe account. Your confirmed country is used to create it, and it cannot be changed afterwards.",
   awaiting_stripe_country:
-    "Stripe has not yet reported your account's country. Refresh your Stripe status; payments stay off until it does.",
+    "Stripe has not yet reported your account's country. Refresh your Stripe status; this check cannot finish until it does.",
   country_mismatch:
-    "Your Stripe account is registered in a different country than the one you confirmed. Payments stay off until Hone support resolves it.",
+    "Your Stripe account is registered in a different country than the one you confirmed. Contact Hone support to resolve it.",
   country_conflict:
-    "Stripe has reported conflicting countries for your account. Payments stay off until Hone support resolves it.",
+    "Stripe has reported conflicting countries for your account. Contact Hone support to resolve it.",
   price_currency_mismatch:
-    "Some of your prices or recorded payments are in a different currency than the one you confirmed. Payments stay off until Hone support reviews it.",
+    "Some of your prices or recorded payments are in a different currency than the one you confirmed. Contact Hone support to review it.",
 };
 
 const blocked = (state: Exclude<SetupState, "ready">): SetupVerdict =>
-  ({ state, paymentsMayBeEnabled: false, explanation: EXPLAIN[state] });
+  ({ state, meetsNewSetupStandard: false, explanation: EXPLAIN[state] });
 
 /**
  * A new studio is "ready" only when the owner has confirmed a supported pair,
@@ -122,9 +127,14 @@ export function evaluateSetup(input: SetupInput): SetupVerdict {
   );
   if (disagreeing) return blocked("price_currency_mismatch");
 
+  // Say only what was compared: the country always, a currency only when a
+  // stated price currency was actually checked against the confirmed one.
+  const currencyCompared = input.statedCurrencies.some((c) => c != null);
   return {
     state: "ready",
-    paymentsMayBeEnabled: true,
-    explanation: "Your confirmed country and currency match your Stripe account.",
+    meetsNewSetupStandard: true,
+    explanation: currencyCompared
+      ? "Your confirmed country matches your Stripe account, and your stated price currencies agree with your confirmed currency."
+      : "Your confirmed country matches your Stripe account. Price currencies were not checked here.",
   };
 }

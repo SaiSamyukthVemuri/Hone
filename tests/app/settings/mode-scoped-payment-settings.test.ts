@@ -34,6 +34,7 @@ const TABLE_READERS = [
   "app/(app)/settings/payments/actions.ts",
   "app/(app)/settings/payments/return/page.tsx",
   "app/api/stripe/webhook/route.ts",
+  "lib/billing/jurisdiction-setup-status.ts",
   "lib/billing/session-payment-charge.ts",
   "lib/billing/session-payment-eligibility.ts",
   "lib/stripe/account.ts",
