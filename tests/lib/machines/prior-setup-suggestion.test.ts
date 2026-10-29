@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
+import { SYNTHETIC_DEMO_PROFILE } from "@/lib/machines/synthetic-profile";
 import { suggestMachineFromPriorSetup } from "@/lib/machines/prior-setup-suggestion";
 import type { StudioDevice } from "@/lib/machines/selection";
 
@@ -12,14 +12,17 @@ import type { StudioDevice } from "@/lib/machines/selection";
 // already carries, so no migration is involved.
 
 const scope = { studioId: "studio-1", practitionerId: "pract-1" };
-const profile = MACHINE_CATALOGUE.find((p) => p.availability === "active");
+// The shipped catalogue has no active profile yet, so the usability rule is
+// exercised through an injected one (the synthetic demo profile).
+const profile = SYNTHETIC_DEMO_PROFILE;
+const catalogue = [profile];
 
 function device(over: Partial<StudioDevice> = {}): StudioDevice {
   return {
     deviceId: "dev-a",
     studioId: "studio-1",
-    profileId: profile?.id ?? "synthetic",
-    profileVersion: profile?.version ?? 1,
+    profileId: profile.profileId,
+    profileVersion: profile.version,
     displayName: "Room 1 unit",
     installedOptions: [],
     retiredAt: null,
@@ -34,6 +37,7 @@ describe("suggestMachineFromPriorSetup", () => {
       remembered: "none",
       priorDeviceIds: ["dev-a", "dev-a"],
       devices: [device()],
+      catalogue,
     });
     expect(out).toEqual({ deviceId: "dev-a", displayName: "Room 1 unit" });
   });
@@ -46,6 +50,7 @@ describe("suggestMachineFromPriorSetup", () => {
           remembered,
           priorDeviceIds: ["dev-a"],
           devices: [device()],
+          catalogue,
         }),
       ).toBeNull();
     }
@@ -58,6 +63,7 @@ describe("suggestMachineFromPriorSetup", () => {
         remembered: "none",
         priorDeviceIds: ["dev-a", "dev-b"],
         devices: [device(), device({ deviceId: "dev-b", displayName: "Room 2 unit" })],
+        catalogue,
       }),
     ).toBeNull();
   });
@@ -69,6 +75,7 @@ describe("suggestMachineFromPriorSetup", () => {
         remembered: "none",
         priorDeviceIds: ["dev-a"],
         devices: [device({ retiredAt: "2026-10-01T00:00:00Z" })],
+        catalogue,
       }),
     ).toBeNull();
     expect(
@@ -77,16 +84,17 @@ describe("suggestMachineFromPriorSetup", () => {
         remembered: "none",
         priorDeviceIds: ["dev-a"],
         devices: [device({ studioId: "studio-2" })],
+        catalogue,
       }),
     ).toBeNull();
   });
 
   it("offers nothing when there is no prior setup or the unit is unknown", () => {
     expect(
-      suggestMachineFromPriorSetup({ scope, remembered: "none", priorDeviceIds: [], devices: [device()] }),
+      suggestMachineFromPriorSetup({ scope, remembered: "none", priorDeviceIds: [], devices: [device()], catalogue }),
     ).toBeNull();
     expect(
-      suggestMachineFromPriorSetup({ scope, remembered: "none", priorDeviceIds: ["dev-zzz"], devices: [device()] }),
+      suggestMachineFromPriorSetup({ scope, remembered: "none", priorDeviceIds: ["dev-zzz"], devices: [device()], catalogue }),
     ).toBeNull();
   });
 });

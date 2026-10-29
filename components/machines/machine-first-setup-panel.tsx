@@ -96,6 +96,11 @@ export type MachineFirstSetupPanelProps = {
    */
   unavailableSelection?: { deviceId: string; reason: string } | null;
   /**
+   * The unit this client's last recorded setup used, offered when nothing is
+   * chosen. An OFFER: nothing is selected or remembered until she accepts it.
+   */
+  suggestedMachine?: { deviceId: string; displayName: string } | null;
+  /**
    * Recorded unit id -> the studio's name for it, for next-visit guidance.
    * Resolved on the server, where retired units are visible.
    */
@@ -275,6 +280,7 @@ export function MachineFirstSetupPanel({
   settingDraftFrozen = false,
   onRevisionUnresolved,
   unavailableSelection = null,
+  suggestedMachine = null,
   unitNames = {},
   onSelectMachine,
   onRecord,
@@ -597,6 +603,34 @@ export function MachineFirstSetupPanel({
           </select>
         </FieldLabel>
       )}
+
+      {/*
+        THE OFFER FROM THE LAST VISIT. Shown only while nothing is chosen and
+        only for a unit the picker itself lists, so accepting it goes through
+        the ordinary `chooseDevice` path (validation, persistence, failure
+        note). It never selects on its own.
+      */}
+      {scope &&
+        suggestedMachine &&
+        !deviceId &&
+        !unavailableSelection &&
+        selectable.some((s) => s.device.deviceId === suggestedMachine.deviceId) && (
+          <div
+            className="flex flex-wrap items-center gap-2 text-sm"
+            data-testid="machine-suggestion"
+          >
+            <span>Last used for this client: {suggestedMachine.displayName}</span>
+            <button
+              type="button"
+              className="min-h-11 rounded-md border px-3 text-sm"
+              disabled={selectionPending || identityFrozen}
+              onClick={() => void chooseDevice(suggestedMachine.deviceId)}
+              data-testid="machine-suggestion-use"
+            >
+              Use this machine
+            </button>
+          </div>
+        )}
 
       {/* Selection. An empty list is a legitimate answer and says why. */}
       {/*

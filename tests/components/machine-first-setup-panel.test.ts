@@ -1745,3 +1745,50 @@ describe("the panel shows what is already recorded on this block", () => {
     expect(section).toContain("Room 9 unit");
   });
 });
+
+// ---------------------------------------------------------------------------
+// HON-8 next-visit continuity: the last visit's unit is OFFERED, never chosen.
+// ---------------------------------------------------------------------------
+describe("the unit used at the last visit is offered, not selected", () => {
+  const base = {
+    scope: SCOPE,
+    devices: [DEVICE],
+    catalogue: CAT,
+    persistence: DATABASE_PERSISTENCE,
+  };
+  const OFFER = { deviceId: DEVICE.deviceId, displayName: DEVICE.displayName };
+
+  it("shows the offer and a button, with nothing chosen", () => {
+    const html = render({ ...base, suggestedMachine: OFFER });
+    expect(html).toContain('data-testid="machine-suggestion"');
+    expect(html).toContain("Last used for this client: Room 9 unit");
+    expect(html).toContain('data-testid="machine-suggestion-use"');
+    expect(html).not.toContain('data-testid="machine-chosen"');
+  });
+
+  it("is hidden once a machine is chosen", () => {
+    const html = render({ ...base, suggestedMachine: OFFER, initialDeviceId: DEVICE.deviceId });
+    expect(html).not.toContain('data-testid="machine-suggestion"');
+  });
+
+  it("is hidden beside an unusable stored machine", () => {
+    const html = render({
+      ...base,
+      suggestedMachine: OFFER,
+      unavailableSelection: { deviceId: "device-gone", reason: "taken out of service" },
+    });
+    expect(html).not.toContain('data-testid="machine-suggestion"');
+  });
+
+  it("is hidden when the picker would not list that unit", () => {
+    const html = render({
+      ...base,
+      suggestedMachine: { deviceId: "not-listed", displayName: "Ghost" },
+    });
+    expect(html).not.toContain('data-testid="machine-suggestion"');
+  });
+
+  it("CONTROL: without an offer nothing is shown", () => {
+    expect(render(base)).not.toContain('data-testid="machine-suggestion"');
+  });
+});

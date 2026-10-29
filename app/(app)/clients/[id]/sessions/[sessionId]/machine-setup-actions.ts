@@ -12,6 +12,10 @@ import {
 } from "@/lib/machines/profile-contract";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
+import {
+  suggestMachineFromPriorSetup,
+  type SuggestedMachine,
+} from "@/lib/machines/prior-setup-suggestion";
 import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
 import {
   latestRecordedSetup,
@@ -176,6 +180,13 @@ export type MachineSetupContext = {
    * misleading field name on a clinical surface is worth a mechanical rename.
    */
   unitNames: Record<string, string>;
+  /**
+   * The unit this client's last recorded setup used, OFFERED when nothing is
+   * remembered for the practitioner. Never a selection: the panel shows it and
+   * she accepts it. Null whenever the rule in prior-setup-suggestion offers
+   * nothing.
+   */
+  suggestedMachine: SuggestedMachine | null;
 };
 
 const ANONYMOUS: MachineSetupContext = {
@@ -192,6 +203,7 @@ const ANONYMOUS: MachineSetupContext = {
   priorSetupUnavailable: false,
   recordedSetupUnavailable: false,
   unitNames: {},
+  suggestedMachine: null,
 };
 
 /** Everything the panel needs, derived entirely on the server. */
@@ -313,6 +325,22 @@ export async function loadMachineSetupContext(input: {
   // saying "the surface could not answer" rather than two.
   const priorSetupUnavailable = !prior.ok;
 
+  // OFFERED ONLY WHEN NOTHING IS REMEMBERED OR UNUSABLE, so it can never sit
+  // beside a stored choice or its "taken out of service" explanation. A failed
+  // prior read yields an empty list and so offers nothing.
+  const suggestedMachine = suggestMachineFromPriorSetup({
+    scope,
+    remembered:
+      remembered === null && rememberedUnavailable === null
+        ? "none"
+        : remembered === null
+          ? "unavailable"
+          : "selected",
+    priorDeviceIds: priorSetup.map((r) => r.deviceId),
+    devices: inventory.devices,
+    catalogue,
+  });
+
   // ONE LOOKUP, for the two things that need to see a RETIRED unit.
   //
   // Both were unreachable before, for the same reason: every existing query
@@ -397,6 +425,7 @@ export async function loadMachineSetupContext(input: {
     priorSetupUnavailable,
     recordedSetupUnavailable,
     unitNames,
+    suggestedMachine,
   };
 }
 
