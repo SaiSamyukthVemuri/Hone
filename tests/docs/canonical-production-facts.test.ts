@@ -1042,6 +1042,15 @@ describe("canonical production docs: the ledger's current block agrees with the 
     }
   });
 
+  it("no UNDECLARED gap below the hosted head, and every out-of-order declaration is true", () => {
+    // The only way a number at or below the hosted max may be absent from
+    // production is a declared stage in migration-state.json
+    // (`hosted_out_of_order`). See evaluateOutOfOrder() and its negative
+    // controls in tests/scripts/migration-state-out-of-order.test.ts.
+    expect(DERIVED.undeclared_gaps, "a migration number below the hosted head is missing and undeclared").toEqual([]);
+    expect(DERIVED.invalid_out_of_order_declarations).toEqual([]);
+  });
+
   it("the ledger's current block never claims parity while something is pending", () => {
     // THE LEDGER HALF. The derived state can be honest while the prose still
     // says "hosted == repo. Nothing pending." from a previous release — the
