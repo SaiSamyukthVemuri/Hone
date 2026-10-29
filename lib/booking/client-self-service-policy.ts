@@ -113,6 +113,14 @@ export function clientManageDisabledMessage(studioName?: string | null): string 
   return `Appointments are managed directly by ${contact(studioName)}. Your appointment is unchanged. Please contact the studio for any changes.`;
 }
 
+/**
+ * What the OWNER and staff see where the portal would be offered (client page,
+ * Today roster, settings) when client portal access is off. Says what changed
+ * and what still works, instead of leaving a button that only refuses.
+ */
+export const PORTAL_OFF_STAFF_MESSAGE =
+  "Client portal access is off for your studio. Clients cannot sign in, and no portal links are sent. Reminders and appointment emails are unaffected.";
+
 export function clientPortalDisabledMessage(studioName?: string | null): string {
   return `Online client access isn't available for ${contact(studioName)}. Please contact the studio directly about your appointments, forms or care instructions.`;
 }
