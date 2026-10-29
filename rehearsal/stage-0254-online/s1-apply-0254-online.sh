@@ -44,7 +44,7 @@ SQL_W03=a15b47e82a0b30610cea31a2728b2cac0fe5face50f5e872ae5e18476ac24dbf
 REF=alhhybgqdmcdyzpybykj
 URL="postgresql://postgres.$REF@aws-1-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
 POOLER_URL="postgresql://postgres.$REF@aws-1-us-east-1.pooler.supabase.com:5432/postgres"
-HEAD_SHA=81f1695a9f179c2a8e5fb7efdb52402ade4ef4eb  # the apply head: #1226 (production chain + hosted 0248 + sealed 0254 only)
+HEAD_SHA=4e15b595576525e9ad74278669732f5dde6f6c48  # the apply head: #1226 (production chain + hosted 0248 + sealed 0254 only)
 TOMB="$ROOT/s1-apply/FAILED-LOGIN"
 NFILES=247
 MAXV=254
