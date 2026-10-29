@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   seedLegacyRecordStatus,
   adminQuery,
+  adminTx,
   asRole,
   asUser,
   closePool,
@@ -296,17 +297,29 @@ describe("copy_session_setup — galvanic intensity retired + exact PicoBlend ro
     const fp1 = await fingerprintOf(source);
 
     // Change ONLY the retired field on the source entry → fingerprint UNCHANGED.
-    await adminQuery(
-      "update public.electrolysis_entries set galvanic_intensity_percent = 42 where block_id = $1",
-      [blockId],
-    );
+    await adminTx(async q => {
+      // Owner-only fixture edit with the real synthetic practitioner attribution.
+      await q("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: a.userId, role: "authenticated" }),
+      ]);
+      await q(
+        "update public.electrolysis_entries set galvanic_intensity_percent = 42 where block_id = $1",
+        [blockId],
+      );
+    });
     expect(await fingerprintOf(source)).toBe(fp1);
 
     // Change a VALID reusable reading (galvanic mA) → fingerprint CHANGES.
-    await adminQuery(
-      "update public.electrolysis_entries set galvanic_ma = 0.9 where block_id = $1",
-      [blockId],
-    );
+    await adminTx(async q => {
+      // Owner-only fixture edit with the real synthetic practitioner attribution.
+      await q("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: a.userId, role: "authenticated" }),
+      ]);
+      await q(
+        "update public.electrolysis_entries set galvanic_ma = 0.9 where block_id = $1",
+        [blockId],
+      );
+    });
     expect(await fingerprintOf(source)).not.toBe(fp1);
   });
 
@@ -397,7 +410,13 @@ describe("copy_session_setup — source authority & stale detection", () => {
   it("rejects when the source changed since the preview (edited source block → HN005)", async () => {
     const { source, target, fp } = await seedPair();
     // Edit the source AFTER capturing fp.
-    await adminQuery("update public.session_blocks set energy_level=99 where session_id=$1", [source]);
+    await adminTx(async q => {
+      // Owner-only fixture edit with the real synthetic practitioner attribution.
+      await q("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: a.userId, role: "authenticated" }),
+      ]);
+      await q("update public.session_blocks set energy_level=99 where session_id=$1", [source]);
+    });
     await expect(callCopy({ target, specs: validSpec(), key: "k-changed", fp, sourceId: source })).rejects.toMatchObject({ code: "HN005" });
   });
 

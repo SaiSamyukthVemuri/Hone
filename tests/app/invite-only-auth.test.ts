@@ -65,7 +65,21 @@ describe("server-side guards: no-studio users are gated", () => {
   it("getCurrentPractitionerWithStudio remains the throwing backstop for actions", () => {
     const start = QUERIES.indexOf("export async function getCurrentPractitionerWithStudio");
     const fn = QUERIES.slice(start, QUERIES.indexOf("\n// Route-guard variant", start));
-    expect(fn).toMatch(/throw new Error\("No active practitioner/);
+    // THE CLAIM IS THROW-VERSUS-REDIRECT, which is what this guard is named
+    // for: a redirect raised inside an action's try/catch is swallowed into
+    // that action's generic denial, so the action backstop must THROW while
+    // every server-rendered module uses the redirecting variant.
+    //
+    // PINNED ON THE CLAIM, NOT ON ONE CONSTRUCTOR. It used to match
+    // `throw new Error("No active practitioner`, and #860 4308620484 made the
+    // refusal a TYPED error so a caller holding a retry key can tell a
+    // pre-write refusal from a lost answer. That still throws — only the
+    // spelling moved — and a guard about redirects should not go red for it.
+    expect(fn).toMatch(/throw new IdentityRefusalError\(/);
+    expect(fn).toMatch(/"No active practitioner/);
+    // AND IT STILL DOES NOT REDIRECT, which is the half that would be a real
+    // regression.
+    expect(fn).not.toMatch(/redirect\("\/no-access"\)/);
   });
 
   it("middleware redirects an authenticated no-studio user to /no-access before any render", () => {

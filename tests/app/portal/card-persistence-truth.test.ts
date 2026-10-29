@@ -287,8 +287,8 @@ describe("card replacement is one transaction", () => {
     expect(WEBHOOK_EXEC).not.toMatch(/\.from\("client_payment_methods"\)\s*\n?\s*\.insert\(/);
   });
 
-  it("persists through the 0180 governed command instead", () => {
-    expect(WEBHOOK_EXEC).toMatch(/admin\.rpc\(\s*\n?\s*"save_client_card_on_file"/);
+  it("persists through the ordered successor of the 0180 governed command", () => {
+    expect(WEBHOOK_EXEC).toMatch(/admin\.rpc\(\s*\n?\s*"save_client_card_on_file_ordered"/);
     expect(WEBHOOK_EXEC).toMatch(/save_client_card_on_file_failed/);
     // A lineage refusal from the command is terminal but still alerted.
     expect(WEBHOOK_EXEC).toMatch(/saveErr\.code === "22023"/);

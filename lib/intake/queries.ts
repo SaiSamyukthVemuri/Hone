@@ -148,6 +148,8 @@ export async function ensureIntakeForClient(params: {
     const { data: created, error: insertErr } = await admin
       .from("client_intake_forms")
       .insert({
+        // Decoder-first rollout: new rows remain explicitly unverified.
+        questionnaire_snapshot: null,
         studio_id: params.studioId,
         client_id: params.clientId,
       })
@@ -190,6 +192,8 @@ export async function createIntakeRequestForClient(params: {
   const { data: created, error: insertErr } = await admin
     .from("client_intake_forms")
     .insert({
+      // Decoder-first rollout: new rows remain explicitly unverified.
+      questionnaire_snapshot: null,
       studio_id: params.studioId,
       client_id: params.clientId,
       // status, current_step, responses default to in_progress / 1 / {}.

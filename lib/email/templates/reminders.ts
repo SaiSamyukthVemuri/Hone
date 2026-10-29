@@ -48,7 +48,9 @@ type ReminderProps = {
   startsAt: Date;
   endsAt: Date;
   timezone: string;
-  cancellationUrl: string;
+  // HON-47. Null when the studio has turned client self-service cancellation
+  // off: the Cancel link is withdrawn and the contact line takes its place.
+  cancellationUrl: string | null;
   rescheduleUrl: string | null;
   // Token-FREE studio portal login URL (/portal/login?studio=slug). NOT a
   // one-time magic link. Optional so non-sender callers can omit it.
@@ -74,6 +76,12 @@ type ReminderProps = {
 // tests/lib/email/preheader-minimum-necessary.test.ts.
 function reminderLead(studioName: string): string {
   return `This is a reminder from ${studioName} about your upcoming appointment. The details are below.`;
+}
+
+// HON-47. Shown in place of the Reschedule / Cancel links when the studio
+// offers neither online, so the reminder still says how a change is made.
+function reminderContactLine(studioName: string): string {
+  return `To change or cancel this appointment, please contact ${studioName} directly.`;
 }
 
 function reminderHtml(opts: {
@@ -163,16 +171,26 @@ function reminderHtml(opts: {
               </td></tr>`
             : ""
         }
-        <tr><td style="padding:24px 0 32px 0;">
+        ${
+          p.rescheduleUrl || p.cancellationUrl
+            ? `<tr><td style="padding:24px 0 32px 0;">
           ${
             p.rescheduleUrl
               ? `<a href="${p.rescheduleUrl}" style="display:inline-block; padding:12px 20px; margin-right:12px; background:#0A0A0A; color:#FFFFFF; font-family:-apple-system, system-ui, sans-serif; font-size:14px; font-weight:500; text-decoration:none; border-radius:6px;">Reschedule</a>`
               : ""
           }
-          <a href="${p.cancellationUrl}" style="font-family:-apple-system, system-ui, sans-serif; font-size:13px; color:#0A0A0A; letter-spacing:0.1em; text-transform:uppercase;">
+          ${
+            p.cancellationUrl
+              ? `<a href="${p.cancellationUrl}" style="font-family:-apple-system, system-ui, sans-serif; font-size:13px; color:#0A0A0A; letter-spacing:0.1em; text-transform:uppercase;">
             Cancel
-          </a>
-        </td></tr>
+          </a>`
+              : ""
+          }
+        </td></tr>`
+            : `<tr><td style="padding:24px 0 32px 0; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.6;">
+          ${escapeHtml(reminderContactLine(p.studioName))}
+        </td></tr>`
+        }
         ${
           p.portalLoginUrl
             ? `<tr><td style="padding:20px 0; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:14px; line-height:1.6; color:#0A0A0A;">
@@ -216,8 +234,7 @@ ${p.treatmentTimeLine ? `\n${p.treatmentTimeLine}\n` : ""}
 ${intake && p.intakeUrl ? `\n${intake.heading}\n\n${intake.body}\n\n${INTAKE_CTA_LABEL}: ${p.intakeUrl}\n\n${INTAKE_IGNORE_LINE}\n` : ""}
 ${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\n` : ""}
 ${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}
-Cancel: ${p.cancellationUrl}
-Booking reference: ${p.bookingReference.trim()}
+${p.cancellationUrl ? `Cancel: ${p.cancellationUrl}\n` : ""}${p.rescheduleUrl || p.cancellationUrl ? "" : `${reminderContactLine(p.studioName)}\n`}Booking reference: ${p.bookingReference.trim()}
 ${p.portalLoginUrl ? `\nView your forms, appointments, and care instructions in your secure client portal:\n${p.portalLoginUrl}\n` : ""}`;
 }
 

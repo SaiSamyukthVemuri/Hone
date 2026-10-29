@@ -182,8 +182,12 @@ describe("prepare action: the inserted row shape", () => {
     expect(ACTION).toMatch(/status:\s*"ready"/);
   });
 
-  it("stamps currency='cad'", () => {
-    expect(ACTION).toMatch(/currency:\s*"cad"/);
+  // #1035 P1-C replaced the hard-coded "cad", which the 0214 insert guard
+  // refuses for every US studio. The behavioural proof (usd for a US studio,
+  // cad for a CA one) is in prepare-final-amount-authority.test.ts.
+  it("stamps currency from the eligibility jurisdiction, never a literal", () => {
+    expect(ACTION).toMatch(/currency: eligibility\.jurisdiction\.currency,/);
+    expect(ACTION).not.toMatch(/currency:\s*"(cad|usd)"/);
   });
 
   it("stamps stripe_livemode from the deployment mode (PR #323; false in test env)", () => {

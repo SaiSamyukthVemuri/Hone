@@ -48,12 +48,22 @@ function definition(sql: string, fn: string): string {
 describe("0210 sits correctly in the migration sequence", () => {
   it("is no longer the repository maximum", () => {
     // HANDED OFF, per CLAUDE.md §2: only the CURRENT max may assert
-    // `isRepoMax`, and that claim now lives in the current max's own test.
-    // It reached this file from 0209's test when production, carrying WAIT
-    // #820's 0209, was merged into the SMS-04 branch, and left for 0211's own
-    // test (tests/migrations/0211-client-sms-permission-guard.test.ts).
+    // `isRepoMax`, and that claim lives in the current max's own test.
+    //
+    // RESOLVED AT THE PRODUCTION SYNC, keeping BOTH lineages rather than
+    // picking a side, because both are true and neither is this file's
+    // opinion: the claim reached 0210 from 0209's test when production
+    // (carrying WAIT #820's 0209) was merged into the SMS-04 branch, left
+    // here for 0211's test on the SMS line, and the repository maximum after
+    // this merge is 0223, so it now lives in
+    // tests/migrations/0223-machine-inventory-and-setup-readings.test.ts.
+    // 0211's test hands off in the same change and for the same reason.
+    //
+    // The ASSERTIONS never differed - both sides already said exactly this -
+    // so the conflict was two lanes writing one fact in one place.
     expect(isRepoMax(VERSION)).toBe(false);
-    // DERIVED, NOT PINNED: something sits above it, and everything above it is
+    // DERIVED, NOT PINNED. Two facts about an older migration hold for every
+    // future head: something sits above it, and everything above it is
     // greater. A literal list would be the forbidden pin in other clothes.
     const above = versionsAbove(VERSION);
     expect(above.length, "nothing sits above this older migration").toBeGreaterThan(0);

@@ -84,6 +84,9 @@ export default defineConfig({
     // shared port 3111 and reported green about code it never loaded. Hone
     // evidence never reuses a running server: an occupied port fails loudly.
     reuseExistingServer: false,
-    timeout: 300_000,
+    // A preserved-stack cold build exceeded five minutes before any browser
+    // case started (HON-18 f7d7, 2026-10-21). Allow compilation/typechecking
+    // and server startup to finish; the selected test deadlines stay intact.
+    timeout: 600_000,
   },
 });

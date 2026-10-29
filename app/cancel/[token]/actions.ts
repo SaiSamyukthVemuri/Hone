@@ -19,6 +19,9 @@ import {
 // the cancel page can WARN about a restriction it does not itself impose:
 // nothing about cancellation changes here, only what the visitor is told.
 import { isFreeConsultWaitlistOnlyReschedule } from "@/lib/booking/free-consult-reschedule-policy";
+import { clientCancellationDisabledMessage } from "@/lib/booking/client-self-service-policy";
+import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
+import { loadAppointmentSelfServiceGate } from "@/lib/booking/client-self-service-gate";
 
 const POLICY_ACK_REQUIRED_ERROR =
   "Please review and acknowledge the appointment policies before cancelling.";
@@ -105,7 +108,9 @@ export type PublicCancelResult =
   // treat specially: the studio's policy changed while the client was reading
   // it. Everything else keeps the public collapse rule, so `code` is absent and
   // no bearer-token state is distinguishable from the outside.
-  | { ok: false; code?: "policy_changed"; error: string };
+  // HON-47: "cancellation_disabled" is returned only for a future confirmed
+  // appointment, so it is not a token-state signal either.
+  | { ok: false; code?: "policy_changed" | "cancellation_disabled"; error: string };
 
 export async function publicCancelAppointmentAction(
   formData: FormData,
@@ -184,6 +189,25 @@ export async function publicCancelAppointmentAction(
   }
 
   const admin = createAdminClient();
+
+  // HON-47. The studio may have turned client self-service cancellation off.
+  // Checked BEFORE the command so nothing is mutated on a database where 0234
+  // (which enforces the same flag inside the command) has not applied yet. An
+  // unreadable policy refuses with the generic copy: a read failure never opens
+  // a path the owner closed.
+  const selfService = await loadAppointmentSelfServiceGate(admin, resolved.appointment_id);
+  if (!selfService.ok) {
+    return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
+  }
+  if (!selfService.policy.cancellation) {
+    return selfService.live
+      ? {
+          ok: false,
+          code: "cancellation_disabled",
+          error: clientCancellationDisabledMessage(selfService.studioName),
+        }
+      : { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
+  }
 
   // B7 / 0176, THE PRE-RPC POLICY LOOKUP AND ack GATE USED TO LIVE HERE.
   //
@@ -294,6 +318,15 @@ export async function publicCancelAppointmentAction(
   }
   if (outcome.result === "ack_required") {
     return { ok: false, error: POLICY_ACK_REQUIRED_ERROR };
+  }
+  // HON-47 / 0234. The command's own refusal, for a flag flipped between the
+  // check above and the studio lock the command takes. Nothing was mutated.
+  if (outcome.result === "cancellation_disabled") {
+    return {
+      ok: false,
+      code: "cancellation_disabled",
+      error: clientCancellationDisabledMessage(selfService.studioName),
+    };
   }
   if (outcome.result !== "cancelled") {
     // Public-facing collapse rule (Blocker 2): 'invalid_token',
@@ -507,11 +540,19 @@ export type AppointmentSummary = {
   // a closed studio into the waitlist experience. Null otherwise, so this
   // never becomes a general studio-slug disclosure on a public token route.
   waitlistBookingSlug: string | null;
+  // HON-47. SERVER-DERIVED, presentation only: whether the studio offers online
+  // rescheduling. The form's "reschedule instead" nudge is withdrawn when false,
+  // because /reschedule refuses. Cancellation is already known to be enabled
+  // here (a disabled studio never reaches this summary).
+  rescheduleEnabled: boolean;
 };
 
 export async function fetchAppointmentForCancelAction(
   token: string,
-): Promise<{ ok: true; summary: AppointmentSummary } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; summary: AppointmentSummary }
+  | { ok: false; code?: "cancellation_disabled"; error: string }
+> {
   // Rate limit the view fetch (looser than submit). Token never consumed.
   const gate = await limitTokenRoute({
     routeClass: "cancel_view",
@@ -590,6 +631,21 @@ export async function fetchAppointmentForCancelAction(
   const studio = pick(row.studio);
   const service = pick(row.service);
 
+  // HON-47. Read AFTER the collapse rule, so only a future confirmed
+  // appointment can learn the studio's policy. The page shows this message in
+  // place of the form; it never offers a Cancel button the action would refuse.
+  const policyRead = await loadClientSelfServicePolicy(admin, studio?.id);
+  if (!policyRead.ok) {
+    return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
+  }
+  if (!policyRead.policy.cancellation) {
+    return {
+      ok: false,
+      code: "cancellation_disabled",
+      error: clientCancellationDisabledMessage(studio?.name ?? null),
+    };
+  }
+
   // EMERG-01. Derived from the rows just read, never from anything the browser
   // sent. The slug is returned ONLY alongside a true verdict, so it cannot be
   // read off this public surface for a studio the policy does not cover.
@@ -612,6 +668,7 @@ export async function fetchAppointmentForCancelAction(
       waitlistBookingSlug: freeConsultationWaitlistOnly
         ? (studio?.slug ?? null)
         : null,
+      rescheduleEnabled: policyRead.policy.reschedule,
     },
   };
 }

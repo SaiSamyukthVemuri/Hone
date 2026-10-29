@@ -69,6 +69,9 @@ vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
     },
   }) };
 });
+// 0247 compatibility: these suites drive the PRE-0247 (legacy claim) email path. The
+// operation-authority path and the mode choice are proved in reminder-authority-dispatch.test.ts.
+vi.mock("@/lib/email/reminder-authority-mode", () => ({ detectReminderAuthorityMode: async () => "legacy" }));
 vi.mock("@/lib/cron/auth", () => ({ isAuthorizedCronRequest: () => true }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://example.invalid" }));
 vi.mock("@/lib/intake/queries", () => ({ generateIntakeLinkUrl: () => "https://example.invalid/intake/synthetic", stampIntakeLinkIssued: async () => undefined }));

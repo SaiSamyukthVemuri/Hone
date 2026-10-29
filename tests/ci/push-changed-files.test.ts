@@ -1,8 +1,13 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+
+// Real-time bound, intrinsic: these cases spawn real `git`/`node` subprocesses
+// and scan the checkout, which measured 5-11 s each on a loaded host against
+// vitest's 5 s default (FLAKE-SYSDEPS). Only the ceiling moves; no assertion does.
+vi.setConfig({ testTimeout: 60_000 });
 
 // The PUSH branch of ci.yml's "Collect changed files" step must list what a
 // production MERGE shipped, not the merge's combined diff.

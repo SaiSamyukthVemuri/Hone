@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -181,5 +181,79 @@ describe("smart status UI on the resend card", () => {
     // Legacy linkMaybeExpired prop is still computed (unchanged behavior).
     expect(PAGE).toMatch(/linkMaybeExpired=/);
     expect(OVERVIEW).toMatch(/linkMaybeExpired=/);
+  });
+});
+
+// Exercise the existing real creation helpers through the unit DB facade.
+// No live Supabase, mail transport or provider is used.
+const issue = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>>, inserts: [] as Array<Record<string, unknown>> }));
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ from: () => {
+  let inserted: Record<string, unknown> | null = null;
+  let patch: Record<string, unknown> | null = null;
+  let id: unknown;
+  const q = {
+    select: () => q, eq: (key: string, value: unknown) => { if (key === "id") id = value; return q; },
+    is: () => q, order: () => q, limit: () => q,
+    insert: (value: Record<string, unknown>) => { inserted = { id: `issued-${issue.inserts.length}`, revision: 0, ...value }; issue.inserts.push(inserted); issue.rows.push(inserted); return q; },
+    update: (value: Record<string, unknown>) => { patch = value; return q; },
+    single: async () => ({ data: inserted, error: null }),
+    maybeSingle: async () => ({ data: issue.rows.find(r => id === undefined || r.id === id) ?? null, error: null }),
+    then: (resolve: (value: unknown) => unknown) => { const row = issue.rows.find(r => r.id === id); if (row && patch) { const priorRevision = Number(row.revision); Object.assign(row, patch); row.revision = priorRevision + 1; } return Promise.resolve(resolve({ data: null, error: null })); },
+  }; return q;
+} }) }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
+vi.mock("@/lib/intake/tokens", () => ({ generateIntakeToken: () => "synthetic-token" }));
+
+describe("0246 CAS decoder-first issuance remains unverified", () => {
+  it("both real creation helpers explicitly issue NULL, never a known catalogue", async () => {
+    const { ensureIntakeForClient, createIntakeRequestForClient } = await import("@/lib/intake/queries");
+    const { questionnaireForRow } = await import("@/lib/intake/questionnaire");
+    issue.rows = []; issue.inserts = [];
+    const context = { studioId: "studio-A", clientId: "client-A", appOrigin: "https://example.test" };
+    expect(await ensureIntakeForClient(context)).not.toBeNull();
+    expect(await createIntakeRequestForClient({ ...context, requestedBy: "derived-practitioner" })).not.toBeNull();
+    expect(issue.inserts).toHaveLength(2);
+    for (const row of issue.inserts) {
+      expect(row).toHaveProperty("questionnaire_snapshot", null);
+      expect(questionnaireForRow(row.questionnaire_snapshot).kind).toBe("legacy");
+      expect(row.studio_id).toBe(context.studioId);
+      expect(row.client_id).toBe(context.clientId);
+    }
+    expect(issue.inserts[1].requested_by).toBe("derived-practitioner");
+    expect(issue.inserts[0].intake_link_send_count).toBe(1);
+    expect(issue.inserts[0].revision).toBe(1);
+    expect(issue.inserts[1].revision).toBe(0);
+  });
+
+  it.each(["legacy", "known"])("reusing a %s in-progress row preserves its snapshot and answers", async (kind) => {
+    const { ensureIntakeForClient } = await import("@/lib/intake/queries");
+    const { ISSUED_QUESTIONNAIRE, questionnaireForRow } = await import("@/lib/intake/questionnaire");
+    const snapshot = kind === "legacy" ? null : structuredClone(ISSUED_QUESTIONNAIRE);
+    const row = { id: "existing", status: "in_progress", questionnaire_snapshot: snapshot, responses: { legal_name: "Synthetic" }, revision: 7 };
+    const original = structuredClone(row);
+    issue.rows = [row]; issue.inserts = [];
+    expect(await ensureIntakeForClient({ studioId: "studio-A", clientId: "client-A", appOrigin: "https://example.test" })).not.toBeNull();
+    expect(issue.inserts).toHaveLength(0);
+    expect(row.questionnaire_snapshot).toEqual(original.questionnaire_snapshot);
+    expect(row.responses).toEqual(original.responses);
+    // 0243/0248 advance revision on metadata UPDATE too.
+    expect(row.revision).toBe(8);
+    expect(questionnaireForRow(row.questionnaire_snapshot).kind).toBe(kind);
+    expect(issue.rows[0].intake_link_send_count).toBe(1);
+  });
+
+  it("reissue leaves a known submitted history row intact while issuing NULL", async () => {
+    const { createIntakeRequestForClient, ensureIntakeForClient } = await import("@/lib/intake/queries");
+    const { ISSUED_QUESTIONNAIRE } = await import("@/lib/intake/questionnaire");
+    const history = { id: "history", status: "submitted", questionnaire_snapshot: structuredClone(ISSUED_QUESTIONNAIRE), responses: { legal_name: "Synthetic" }, revision: 9 };
+    const before = structuredClone(history);
+    issue.rows = [history]; issue.inserts = [];
+    const context = { studioId: "studio-A", clientId: "client-A", appOrigin: "https://example.test" };
+    expect(await ensureIntakeForClient(context)).toBeNull();
+    expect(issue.inserts).toHaveLength(0);
+    expect(await createIntakeRequestForClient({ ...context, requestedBy: "derived-practitioner" })).not.toBeNull();
+    expect(issue.inserts).toHaveLength(1);
+    expect(issue.inserts[0]).toHaveProperty("questionnaire_snapshot", null);
+    expect(history).toEqual(before);
   });
 });
