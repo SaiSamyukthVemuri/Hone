@@ -26,9 +26,9 @@ describe("blockPurpose", () => {
     expect(blockPurpose("personal").group).toBe("away");
     expect(blockPurpose("emergency").group).toBe("away");
     expect(blockPurpose("other").group).toBe("away");
-    const marks = new Set(["rest", "work", "away"].map((g) => CATEGORIES.map(blockPurpose).find((p) => p.group === g)!.glyph));
+    const marks = new Set(["rest", "work", "away"].map((g) => CATEGORIES.map((c) => blockPurpose(c)).find((p) => p.group === g)!.glyph));
     expect(marks.size).toBe(3);
-    const accents = new Set(["rest", "work", "away"].map((g) => CATEGORIES.map(blockPurpose).find((p) => p.group === g)!.accent));
+    const accents = new Set(["rest", "work", "away"].map((g) => CATEGORIES.map((c) => blockPurpose(c)).find((p) => p.group === g)!.accent));
     expect(accents.size).toBe(3);
   });
   it("an unknown category falls back to the neutral 'away' mark, never throws", () => {
