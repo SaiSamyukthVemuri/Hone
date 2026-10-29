@@ -1,0 +1,52 @@
+# REHEARSAL - NEVER MERGE. STAGE-0254-ONLINE: the delta scripts s1-apply-0254-online.sh, s1-reconcile-0254-online.sh and g02-read-0254-online.sh run as REAL TEXT against a stub supabase-go,
+# a stub read-back script and a FIFO terminal, with canary secrets and a fake HOME. No hosted call, no database, no customer data. The macOS job is the one Machines dispatches (bash 3.2, zsh-launched).
+name: rehearsal-stage-0254-online
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/stage-0254-online/**"
+      - ".github/workflows/rehearsal-stage-0254-online.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  online-macos:
+    name: STAGE-0254-ONLINE delta on macOS arm64 (/bin/bash 3.2, launched from zsh like the operator's terminal)
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts and file pins
+        run: |
+          uname -sm; /bin/bash --version | head -1; node --version; python3 --version
+          shasum -a 256 rehearsal/stage-0254-online/*.sh
+      - name: Delta cases, negative controls and mutation pass (N of N)
+        shell: /bin/zsh {0}
+        env:
+          EXPECT_N: "142"
+        run: |
+          /bin/bash rehearsal/stage-0254-online/check.sh 2>&1 | tee "$RUNNER_TEMP/online-macos.txt"; rc=${pipestatus[1]}
+          echo "----- the summary exactly as the operator sees it (shipped text, real constants) -----"; cat "$RUNNER_TEMP/online0254/summary-real.txt"
+          exit $rc
+
+  online-linux:
+    name: STAGE-0254-ONLINE delta on Linux (same cases, bash 5)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Delta cases, negative controls and mutation pass (N of N)
+        env:
+          EXPECT_N: "142"
+        run: |
+          set -o pipefail
+          bash rehearsal/stage-0254-online/check.sh 2>&1 | tee "$RUNNER_TEMP/online-linux.txt"

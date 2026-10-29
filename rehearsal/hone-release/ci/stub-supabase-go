@@ -1,0 +1,60 @@
+#!/bin/bash
+# REHEARSAL STUB for the vendor CLI (custody tests only). It records, WITHOUT printing any secret, what the launcher gave it:
+# the environment variable NAMES, whether PGPASSWORD / SUPABASE_ACCESS_TOKEN equal the canaries (match/no-match), and argv.
+W=/var/lib/hone-release/work
+mode=$(cat "$W/stub-mode" 2>/dev/null || echo ok)
+read -r FIRST LAST < "$W/stub-range" 2>/dev/null || { FIRST=0213; LAST=0246; }
+{
+  echo "CALL $(date -u +%H:%M:%S) mode=$mode argv=$*"
+  echo "ENVNAMES $(env | cut -d= -f1 | sort | tr '\n' ' ')"
+  if [ -n "${PGPASSWORD:-}" ]; then [ "$PGPASSWORD" = "$(cat "$W/canary-db" 2>/dev/null)" ] && echo "PGPASSWORD matches the db canary" || echo "PGPASSWORD present, NOT the canary"; else echo "PGPASSWORD absent"; fi
+  echo "TLS PGSSLMODE=${PGSSLMODE:-unset} PGSSLROOTCERT=${PGSSLROOTCERT:-unset} PGOPTIONS=${PGOPTIONS:-unset}"
+  if [ -n "${SUPABASE_ACCESS_TOKEN:-}" ]; then [ "$SUPABASE_ACCESS_TOKEN" = "$(cat "$W/canary-pat" 2>/dev/null)" ] && echo "TOKEN matches the pat canary" || echo "TOKEN present, NOT the canary"; else echo "TOKEN absent"; fi
+} >> "$W/stub.log"
+case "$1" in
+  backups)
+    pitr=$(cat "$W/stub-pitr" 2>/dev/null || echo true); days=$(cat "$W/stub-span-days" 2>/dev/null || echo 7); age=$(cat "$W/stub-latest-age" 2>/dev/null || echo 30)
+    now=$(date -u +%s)
+    printf '{"region":"stub","walg_enabled":true,"pitr_enabled":%s,"backups":[{"id":1,"status":"COMPLETED","is_physical_backup":true,"inserted_at":"x"}],"physical_backup_data":{"earliest_physical_backup_date_unix":%d,"latest_physical_backup_date_unix":%d}}\n' "$pitr" $((now - days*86400)) $((now - age))
+    exit 0 ;;
+  db)
+    if [ "$2" = query ]; then
+      [ "$mode" = qfail ] && { echo "ERROR: query failed" >&2; exit 1; }
+      case "$*" in
+        *"as busy"*pg_settings*) # the apply's connection-phase read-back (history, busy sessions, the four settings the endpoint applied)
+          [ "$mode" = authfail ] && { echo 'failed to connect to postgres: failed SASL auth (FATAL: password authentication failed for user "postgres.secretref" (SQLSTATE 28P01)) host=db.secretref.supabase.com' >&2; exit 1; }
+          h=$(cat "$W/stub-hist" 2>/dev/null || echo "211 0212"); s=$(cat "$W/stub-pre-settings" 2>/dev/null || echo "120000 5000 60000 5000"); set -- $s
+          printf '[{"n":%s,"mx":"%s","busy":%s,"st":"%s","lt":"%s","it":"%s","cc":"%s"}]\n' "${h%% *}" "${h#* }" "$(cat "$W/stub-busy" 2>/dev/null || echo 0)" "$1" "$2" "$3" "$4"; exit 0 ;;
+        *"as n, coalesce(max(version)"*) h=$(cat "$W/stub-hist" 2>/dev/null || echo "211 0212"); printf '[{"n":%s,"mx":"%s"}]\n' "${h%% *}" "${h#* }"; exit 0 ;;
+        *"count(*)::int as c from supabase_migrations"*) printf '[{"c":%s}]\n' "$(cat "$W/stub-rangec" 2>/dev/null || echo 34)"; exit 0 ;;
+        *"as busy from pg_stat_activity"*) printf '[{"busy":%s}]\n' "$(cat "$W/stub-busy" 2>/dev/null || echo 0)"; exit 0 ;;
+        *"select 'stage-check'"*|*"stage_check"*) cat "$W/stub-check-json" 2>/dev/null || echo '[{"x":1}]'; exit 0 ;;
+        *schema_migrations*) printf '['; sep=; for v in $(cat "$W/stub-recon" 2>/dev/null); do printf '%s{"version":"%s"}' "$sep" "$v"; sep=,; done; printf ']\n'; exit 0 ;;
+        *pg_stat_user_tables*) n=$(cat "$W/stub-writes" 2>/dev/null || echo 100); if [ -e "$W/stub-active" ]; then n=$((n+1)); echo $n > "$W/stub-writes"; fi; printf '[{"writes":"%s"}]\n' "$n"; exit 0 ;;
+        *pg_logical_emit_message*) [ "$mode" = hbfail ] && { echo "ERROR: permission denied for function pg_logical_emit_message" >&2; exit 1; }
+          if [ "$mode" = hbsettings ]; then echo '[{"heartbeat_lsn":"0/1","st":"0","lt":"0","it":"0","cc":"0"}]'; else echo '[{"heartbeat_lsn":"0/1","st":"120000","lt":"5000","it":"60000","cc":"5000"}]'; fi; exit 0 ;;
+      esac
+    fi ;;
+esac
+names=$(ls supabase/migrations | awk -v f="$((10#$FIRST))" -v l="$((10#$LAST))" '{v=substr($1,1,4)+0; if (v>=f && v<=l) print $1}')
+case " $* " in
+  *" --dry-run "*)
+    [ "$mode" = dryfail ] && { echo "ERROR: unexpected failure while planning (SQLSTATE XX000)" >&2; exit 1; }
+    [ "$mode" = authfail ] && { echo 'failed to connect to postgres: failed SASL auth (FATAL: password authentication failed for user "postgres.secretref" (SQLSTATE 28P01)) host=db.secretref.supabase.com' >&2; exit 1; }
+    echo "DRY RUN: migrations will *not* be pushed to the database." >&2; echo "Connecting to remote database..." >&2; echo "Would push these migrations:" >&2
+    printf '%s\n' "$names" | while read -r n; do printf ' \xe2\x80\xa2 %s\n' "$n" >&2; done
+    echo "Finished supabase db push."; exit 0 ;;
+esac
+echo "Connecting to remote database..." >&2
+i=0
+printf '%s\n' "$names" | while read -r n; do
+  i=$((i+1)); echo "Applying migration $n..." >&2
+  [ "$mode" = slow ] && [ "$i" = 3 ] && sleep 8
+  [ "$mode" = veryslow ] && [ "$i" = 3 ] && sleep 25
+  [ "$mode" = failmid ] && [ "$i" = 3 ] && { echo "ERROR: boom (SQLSTATE XX000)" >&2; exit 3; }
+done
+rc=$?
+[ "$mode" = failmid ] && exit 1
+echo "PUSH COMPLETED $(date -u +%H:%M:%S)" >> "$W/stub.log"
+echo "Finished supabase db push."
+exit 0

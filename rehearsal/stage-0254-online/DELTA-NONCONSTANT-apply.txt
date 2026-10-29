@@ -1,0 +1,43 @@
+<   done(bad.length === #, bad.length ? "the sealed NNNN preflight is predicted to refuse: " + bad.join(", ") : "the sealed NNNN preflight passes");
+<   echo "  #. ONE push of NNNN (a write to the production database: it changes the intake write paths)"
+<   echo "  #. the read-back (window-s#read-NNNN.sh): history # rows, max NNNN, NNNN absent"
+<   echo "Bundle:    $BUNDLE sha# $BUNDLE_SHA ($NFILES files, #..$(printf '%#d' "$MAXV"), NNNN absent; verified just now)"
+<   echo "Migration: NNNN_intake_protected_write_enforcement.sql, sealed sha# $SEALED_SHA"
+<   echo "head $HEAD_SHA; files $NFILES; pending # (NNNN; NNNN absent)"
+<   for (const k of ["context_ok", "owner_not_assumable", "writer_privileges_ok", "owner_authority_ok"]) if (!isTrue(r[k])) bad.push(k);
+<   if (!NUM(S#)) done(false, "the table set is not exactly the NUM scanned tables (" + rows.length + " rows)");
+<   if (!NUM(W#)) done(false, "the table set is not exactly the NUM named tables (" + rows.length + " rows)");
+<   if (!numEq(r.unexpected_callable_definers, #)) bad.push("unexpected_callable_definers");
+<   if [ "$VERIFIED" = yes ]; then res="APPLIED+VERIFIED"; detail="The push applied exactly NNNN and the read-back shows # rows, max NNNN, NNNN absent. The APPLY-STATE marker stays (APPLIED-UNVERIFIED) until s#-reconcile-NNNN-online.sh archives it; that script makes no connection."
+< GOPEND='H#  NNNN_intake_protected_write_enforcement.sql'
+< HEAD_SHA=H#  # the apply head: ## (production chain + sealed NNNN only)
+< const NUM = (list) => rows.length === list.length && list.every((t) => rows.filter((r) => r.table_name === t).length === #) && rows.every((r) => list.includes(r.table_name));
+< const S# = ["appointment_audit", "appointment_settlements", "appointments", "client_intake_forms", "clients", "email_outbound_messages", "payment_charge_attempts", "practitioners", "sessions", "sms_outbound_messages"];
+< const W# = ["appointments", "appointment_audit", "email_outbound_messages", "payment_charge_attempts", "appointment_settlements", "studio_payment_settings", "clients", "client_intake_forms", "treatment_images", "client_payment_methods"];
+< echo "Bundle verified: $NFILES files, #..$(printf '%#d' "$MAXV"), the pending file equals the sealed NNNN, NNNN absent. Working directory: $WORK" >&#
+< for pair in "g#-history-NNNN.sql:$SQL_G#" "g#-NNNN-intake-definers-NNNN.sql:$SQL_G#" "s#-open-transactions-NNNN.sql:$SQL_OPEN" "w#-table-sizes-NNNN.sql:$SQL_W#"; do
+< grep -Eq '^[#-#a-f]{#}  (NNNN|NNNN|NNNN)_' "$SELF/$LIST" && die "$LIST names NNNN, NNNN or NNNN: they are not part of the NNNN-only stage"
+< if [ "$rc" = # ] && [ -n "$S#DIR" ] && [ -f "$S#DIR/verdict.txt" ] && grep -Fxq 'OVERALL PASS (NNNN read-back: history and # verify-bundle checks; read-only, not a promotion)' "$S#DIR/verdict.txt" \
+< read_gate g#-NNNN-intake-definers-NNNN.sql "$SQL_G#" g#
+< tar -tf "$SELF/$BUNDLE" #>/dev/null | grep -Eq 'supabase/migrations/(NNNN|NNNN|NNNN)_' && die "$BUNDLE holds NNNN, NNNN or NNNN: they are not part of the NNNN-only stage"
+>   done(bad.length === #, bad.length ? "the sealed NNNN preflight is predicted to refuse or to replace the wrong thing: " + bad.join(", ") : "the sealed NNNN preflight passes");
+>   echo "  #. ONE push of NNNN (a write to the production database: it makes three payment tables owner-readable only and owner-gates price and settlement writes)"
+>   echo "  #. the read-back (window-s#read-NNNN.sh): history # rows, max NNNN, NNNN and NNNN..NNNN absent, the owner-only read-policy proof"
+>   echo "Bundle:    $BUNDLE sha# $BUNDLE_SHA ($NFILES files, #..$(printf '%#d' "$MAXV"), NNNN and NNNN..NNNN absent; verified just now)"
+>   echo "Migration: NNNN_perm_hon#_role_enforcement.sql, sealed sha# $SEALED_SHA"
+>   echo "head $HEAD_SHA; files $NFILES; pending # (NNNN; NNNN and NNNN..NNNN absent)"
+>   for (const k of ["tables_present", "helpers_ok", "replaced_ok", "new_objects_absent", "columns_ok"]) if (!isTrue(r[k])) bad.push(k);
+>   if (!exact(S#)) done(false, "the table set is not exactly the NUM scanned tables (" + rows.length + " rows)");
+>   if (!exact(W#)) done(false, "the table set is not exactly the NUM named tables (" + rows.length + " rows)");
+>   if [ "$VERIFIED" = yes ]; then res="APPLIED+VERIFIED"; detail="The push applied exactly NNNN and the read-back shows # rows, max NNNN, NNNN and NNNN..NNNN absent. The APPLY-STATE marker stays (APPLIED-UNVERIFIED) until s#-reconcile-NNNN-online.sh archives it; that script makes no connection."
+> GOPEND='H#  NNNN_perm_hon#_role_enforcement.sql'
+> HEAD_SHA=H#  # the apply head: ## (production chain + hosted NNNN + sealed NNNN only)
+> const S# = ["appointment_settlements", "client_pinned_notes", "client_pricing", "manual_fee_charge_attempts", "payment_charge_attempts"];
+> const W# = ["appointment_settlements", "client_pinned_notes", "client_pricing", "manual_fee_charge_attempts", "payment_charge_attempts"];
+> const exact = (list) => rows.length === list.length && list.every((t) => rows.filter((r) => r.table_name === t).length === #) && rows.every((r) => list.includes(r.table_name));
+> echo "Bundle verified: $NFILES files, #..$(printf '%#d' "$MAXV"), the pending file equals the sealed NNNN, NNNN and NNNN..NNNN absent. Working directory: $WORK" >&#
+> for pair in "g#-history-NNNN.sql:$SQL_G#" "g#-NNNN-preflight-NNNN.sql:$SQL_G#" "s#-open-transactions-NNNN.sql:$SQL_OPEN" "w#-table-sizes-NNNN.sql:$SQL_W#"; do
+> grep -Eq '^[#-#a-f]{#}  (NNNN|NNNN|NNNN|NNNN|NNNN|NNNN)_' "$SELF/$LIST" && die "$LIST names NNNN or NNNN..NNNN: they are not part of the NNNN-only stage"
+> if [ "$rc" = # ] && [ -n "$S#DIR" ] && [ -f "$S#DIR/verdict.txt" ] && grep -Fxq 'OVERALL PASS (NNNN read-back: history, # verify checks and the owner-only read-policy proof; read-only, not a promotion)' "$S#DIR/verdict.txt" \
+> read_gate g#-NNNN-preflight-NNNN.sql "$SQL_G#" g#
+> tar -tf "$SELF/$BUNDLE" #>/dev/null | grep -Eq 'supabase/migrations/(NNNN|NNNN|NNNN|NNNN|NNNN|NNNN)_' && die "$BUNDLE holds NNNN or NNNN..NNNN: they are not part of the NNNN-only stage"
