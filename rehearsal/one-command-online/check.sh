@@ -127,7 +127,7 @@ home1; answers approve tok pw; hrun
 w="$READS4 dry push"
 if [ $RC = 0 ] && [ "$(result_of)" = "APPLIED+VERIFIED" ] && [ "$(calls)" = "$w" ] && [ "$(pushes)" = 1 ] && [ "$(marker)" = none ] && [ "$(nrec)" = 1 ] && [ -f "$H/s1read-called" ] && [ -z "$(leaks)" ]; then
   ok "HAPPY: summary -> approve -> credentials ONCE -> four reads, one dry run, ONE push, read-back -> automatic reconcile -> ONE result APPLIED+VERIFIED (marker archived, 1 record)"
-else bad "happy path" "rc=$RC result=$(result_of) calls=[$(calls)] marker=$(marker) rec=$(nrec) leaks=$(leaks) $(echo "$OUT" | tail -12)"; fi
+else bad "happy path" "rc=$RC result=$(result_of) calls=[$(calls)] marker=$(marker) rec=$(nrec) leaks=$(leaks) $(echo "$OUT" | tail -12)"; echo "--- driver.debug:"; cat "$H"/hone-s1/one-command/run.*/driver.debug 2>&1 | head -30; fi
 ls "$H"/hone-s1/s1-apply/APPLY-STATE.cleared.* >/dev/null 2>&1 && echo "$OUT" | grep -q 'reconcile: done: ALL' && ok "the marker was archived by the automatic reconcile on read-back evidence (class ALL)" || bad "reconcile ALL"
 [ "$(grep -c "typed ONCE" <<<"$OUT")" = 2 ] && [ "$(wc -l < "$H/ans" | tr -d ' ')" = 3 ] && ok "the person typed exactly three lines (approval, token, password); the read-back's own token/password prompts were answered by the runner (the harness would have hung on a fourth prompt)" || bad "credentials entered more than once"
 echo "$OUT" | grep -q 'STAGE 0254 ONLINE APPLY: what this run does' && echo "$OUT" | grep -q 'NO settings write' && ok "the reviewed script's own summary is shown to the person before the approval prompt" || bad "summary not shown"

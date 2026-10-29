@@ -16,6 +16,7 @@ set fh [open $cfgf r]; while {[gets $fh l] >= 0} { if {[regexp {^([A-Z0-9_]+)=(.
 set tok ""; set pw ""; set transcript ""; array set R {}; set R(VERIFIED_SEEN) 0; set R(CHILD_RC) ""; set done_prompts 0; set t0 [clock seconds]
 set kinds {}; set texts {}
 set ph [open $C(PROMPTS) r]; while {[gets $ph l] >= 0} { if {[regexp {^([a-z-]+)\|(.*)$} $l -> k t]} { lappend kinds $k; lappend texts $t } }; close $ph
+proc dbg {m} { global C; catch { set f [open "$C(RUN)/driver.debug" a 0600]; puts $f "[clock format [clock seconds] -format %H:%M:%S] $m"; close $f } }
 proc mask {s} { global tok pw; set m $s; if {$tok ne ""} { set m [string map [list $tok "<secret>"] $m] }; if {$pw ne ""} { set m [string map [list $pw "<secret>"] $m] }; return $m }
 proc show {s} { set m [mask $s]; global transcript; append transcript $m; send_user -- [string map [list "\r\n" "\n"] $m] }
 proc note {s} { global transcript; append transcript [mask $s] }
@@ -80,6 +81,7 @@ proc ask_plain {label} {
 set env(LC_ALL) C
 spawn -noecho /bin/bash $C(APPLY)
 set sid $spawn_id
+dbg "spawned"
 set creds 0
 set vline $C(VERIFIED_LINE)
 while {1} {
@@ -91,8 +93,10 @@ while {1} {
     expect {
       -exact $want {
         show $expect_out(buffer)
+        dbg "matched prompt $idx kind $wk"
         if {$wk eq "approve"} {
           set w [ask_plain "\n>>> To run this stage now, type exactly $C(APPROVE_WORD) (anything else cancels, nothing has connected): "]
+          dbg "approval typed (length [string length $w])"
           if {$w ne $C(APPROVE_WORD)} {
             send -- "no\r"; set R(STOP_REASON) "not approved (the person typed something other than $C(APPROVE_WORD))"
             set timeout 30; expect { -re {.+} { show $expect_out(buffer); exp_continue } eof {} timeout {} }
@@ -103,8 +107,10 @@ while {1} {
             set pw [ask_hidden ">>> Database password (typed ONCE, not shown): "]
             if {$tok eq "" || $pw eq ""} { fail "an empty credential was typed; nothing was sent" }
             set creds 1
+            dbg "credentials collected"
           }
           send -- "$w\r"
+          dbg "approval sent to child"
         } else {
           if {!$creds} { fail "a secret prompt arrived before the approval" }
           if {![echo_off]} { fail "terminal echo did not turn off at: $want (the secret was NOT sent)" }
