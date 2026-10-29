@@ -131,3 +131,55 @@ describe("confirmation", () => {
     expect(unconfirmedWarnings(w, confirmed)).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// INITIAL SETUP SAVES (Codex, #1259 4408870613). Creating a treatment area
+// saves its settings in the same press of Save, through MachineSettingDraft,
+// which reports `blocking` to the host. The gate must live there too.
+// ---------------------------------------------------------------------------
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import {
+  pruneConfirmations,
+  rangeConfirmationBlocking,
+} from "@/lib/machines/range-warnings";
+
+describe("the create-mode draft is blocked until each out-of-range value is confirmed", () => {
+  it("blocks with a sentence while any warning is unconfirmed, and says how many", () => {
+    const profile = withRanges(PUBLISHED);
+    const { mode, groups } = draftWith(profile, "g1", "250");
+    const w = rangeWarningsForDraft(profile, mode, groups);
+    const msg = rangeConfirmationBlocking(w, new Set());
+    expect(msg).toMatch(/confirm/i);
+    expect(msg).toContain("1");
+  });
+
+  it("does not block once every warning is confirmed, nor when there are none", () => {
+    const profile = withRanges(PUBLISHED);
+    const { mode, groups } = draftWith(profile, "g1", "250");
+    const w = rangeWarningsForDraft(profile, mode, groups);
+    expect(rangeConfirmationBlocking(w, new Set(w.map(warningKey)))).toBeNull();
+    expect(rangeConfirmationBlocking([], new Set())).toBeNull();
+  });
+
+  it("drops a confirmation whose value is no longer in the draft, so 250 -> 300 -> 250 needs a fresh tick", () => {
+    const profile = withRanges(PUBLISHED);
+    const a = draftWith(profile, "g1", "250");
+    const confirmed = new Set(rangeWarningsForDraft(profile, a.mode, a.groups).map(warningKey));
+    const b = draftWith(profile, "g1", "100"); // back in range: no warnings
+    expect(pruneConfirmations(confirmed, rangeWarningsForDraft(profile, b.mode, b.groups)).size).toBe(0);
+  });
+
+  it("the create-mode component reports that blocking to its host (source contract)", () => {
+    const src = readFileSync(
+      path.resolve(__dirname, "../../../components/machines/machine-setting-draft.tsx"),
+      "utf8",
+    );
+    const code = src
+      .split("\n")
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .join("\n");
+    expect(code).toContain("rangeConfirmationBlocking(");
+    expect(code).toContain("<RangeConfirmationList");
+  });
+});
