@@ -1,5 +1,6 @@
 {
   "pr": 1252,
   "runtime": true,
-  "migrations": []
+  "migrations": [],
+  "release_receipt": "01-ops/1252-release-receipt.json"
 }
