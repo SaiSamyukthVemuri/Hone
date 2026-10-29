@@ -70,7 +70,8 @@ const PART_STATE_BY_METHOD: Partial<Record<SettlementMethod, AppointmentPaymentS
 
 /**
  * The display state for a live settlement: the method's state, except that a
- * collected amount BELOW the quote is the "part" state. A missing quote is
+ * collected amount BELOW the quote is the "part" state (a collected 0 is
+ * still owed). A missing quote is
  * never assumed short or full: it keeps the method's state.
  */
 export function settlementDisplayState(s: {
@@ -79,6 +80,9 @@ export function settlementDisplayState(s: {
   quotedAmountCents: number | null;
 }): AppointmentPaymentState {
   const cover = settlementCoverage(s.method, s.amountCents, s.quotedAmountCents);
+  // A collected method recorded with 0 against a known quote brought no money
+  // in: that is still owed, not "part paid" (peer review C2).
+  if (cover.kind === "part" && s.amountCents <= 0) return "settled_owing";
   if (cover.kind === "part") return PART_STATE_BY_METHOD[s.method] ?? SETTLEMENT_STATE_BY_METHOD[s.method];
   return SETTLEMENT_STATE_BY_METHOD[s.method];
 }
