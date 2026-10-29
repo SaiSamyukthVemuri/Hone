@@ -30,7 +30,7 @@ jobs:
       - name: Runner cases, negative controls and mutation pass (N of N)
         shell: /bin/zsh {0}
         env:
-          EXPECT_N: ""
+          EXPECT_N: "37"
         run: |
           /bin/bash rehearsal/one-command-online/check.sh 2>&1 | tee "$RUNNER_TEMP/oc-macos.txt"; exit ${pipestatus[1]}
 
@@ -47,7 +47,7 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq expect
       - name: Runner cases, negative controls and mutation pass (N of N)
         env:
-          EXPECT_N: ""
+          EXPECT_N: "37"
         run: |
           set -o pipefail
           bash rehearsal/one-command-online/check.sh 2>&1 | tee "$RUNNER_TEMP/oc-linux.txt"
