@@ -329,6 +329,8 @@ for (const vp of REPRO_VIEWPORTS) {
   test.describe(`webkit hour fields: ${vp.name}`, () => {
     test.skip(({ browserName }) => browserName !== "webkit", "WebKit-only reproduction for HON-62");
     test.use({ viewport: vp.viewport, hasTouch: vp.hasTouch });
+    // The file is serial; a failure here must not skip the other viewport.
+    test.describe.configure({ mode: "default" });
 
     test("typing and scrolling over the hour field behave like a bare time input", async ({ page, browserName }) => {
       await signIn(page, browserName);
@@ -397,7 +399,14 @@ for (const vp of REPRO_VIEWPORTS) {
       // Typing: the app field must end up where a bare input does, and at the
       // value an owner typed.
       expect.soft(typedApp, "the editor keeps what a bare time input keeps").toBe(typedControl);
-      expect.soft(typedApp, "typed 08 then 30 gives 08:30").toBe("08:30");
+      if (typedControl === "08:30") {
+        expect.soft(typedApp, "typed 08 then 30 gives 08:30").toBe("08:30");
+      } else {
+        test.info().annotations.push({
+          type: "engine-limit",
+          description: "a bare time input did not take the typed digits either, so typed entry is not an app result here",
+        });
+      }
     });
   });
 }
