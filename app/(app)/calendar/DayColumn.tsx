@@ -63,6 +63,7 @@ import {
 import { NowLine } from "./NowLine";
 import { calendarBlockScopeLabel, type BlockScopeNames } from "@/lib/calendar/block-scope";
 import { appointmentCardClasses } from "@/lib/calendar/service-colors";
+import { ARRIVED_GLYPH, ARRIVED_TAG, isCheckedIn } from "@/lib/calendar/arrival";
 import {
   displayBlockoutLabel,
   displayRecurringBreakLabel,
@@ -856,7 +857,10 @@ export function DayColumn({
         const statusTag = appointmentStatusTag(ds);
         const noShow = ds === "no_show";
         // No-show leads the line instead (see NO_SHOW_CARD_CLASS).
-        const trailingTag = noShow ? null : statusTag;
+        // HON-48: a checked-in client reads with a glyph AND words, beside (not
+        // instead of) the practitioner colour and the appointment status.
+        const arrivedTag = isCheckedIn(a) ? `${ARRIVED_GLYPH} ${ARRIVED_TAG}` : null;
+        const trailingTag = [noShow ? null : statusTag, arrivedTag].filter(Boolean).join(" · ") || null;
         return (
           <button
             key={a.id}
@@ -872,7 +876,7 @@ export function DayColumn({
               "--appointment-lane-left": `calc(${100 * lane.column / lane.columns}% + 4px)`,
               "--appointment-lane-right": `calc(${100 * (lane.columns - lane.column - 1) / lane.columns}% + 4px)`,
             } as CSSProperties}
-            title={[...titleParts, statusTag].filter(Boolean).join(" · ")}
+            title={[...titleParts, statusTag, arrivedTag].filter(Boolean).join(" · ")}
             // Card color is service-based (Chloe feedback: "I want
             // different colors on the calendar for different
             // services"). Deterministic on service.id with name

@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 245,
-    "last": "0246_intake_questionnaire_snapshot.sql",
-    "sha256": "2f329cd91a92feef717fb2b7d49cb6ee4a7986881363dac460784fc6aae07cfd"
+    "count": 246,
+    "last": "0268_appointment_arrival.sql",
+    "sha256": "61c00f5c6c13fd85f8ee7617c07cc2085b70fc2ab6c8565eee4ee5b65178ba04"
   },
   "public": {
     "tables": [
@@ -150,6 +150,7 @@
       "amend_finalized_session_with_image",
       "apply_block_extra_fields",
       "appointment_actor_role",
+      "appointment_arrival_actor",
       "appointment_audit_derive_trusted_fields",
       "appointment_buffer_conflict",
       "appointment_has_blocking_dependents",
@@ -165,6 +166,7 @@
       "appointment_settlements_server_timestamps",
       "appointment_transition_allowed",
       "archive_treatment_image",
+      "arrival_receptionist_allowed",
       "assert_block_in_session",
       "assert_new_client_admission",
       "assert_session_studio_for_actor",
@@ -202,6 +204,7 @@
       "claim_waitlist_invitation_sms",
       "claim_waitlist_join_ack_sms",
       "claim_welcome_email_attempt",
+      "clear_arrival_on_close",
       "client_budget_context_immutable_fields",
       "client_budget_context_server_timestamps",
       "client_budget_context_set_studio_id",
@@ -458,6 +461,7 @@
       "session_actor_practitioner",
       "session_block_areas_derive_studio",
       "session_is_visible",
+      "set_appointment_arrived",
       "set_appointment_capacity_enabled",
       "set_appointment_notes",
       "set_client_portrait",

@@ -872,6 +872,9 @@ describe("0172 — no trigger or function drift", () => {
         order by g.tgname`,
     );
     expect(apptTriggers.rows.map((x) => x.tgname as string)).toEqual([
+      // HON-48 / 0268: clears arrived_at when an appointment is cancelled or
+      // marked no-show. Writes no audit row.
+      "appointments_clear_arrival_on_close_trg",
       "appointments_enforce_buffer_trg",
       // B6 / 0175: refuses illegal lifecycle edges. Writes no audit row.
       "appointments_enforce_transition_trg",
@@ -884,7 +887,7 @@ describe("0172 — no trigger or function drift", () => {
       "appointments_zzz_outbound_enqueue_delete_trg",
       "appointments_zzz_outbound_enqueue_trg",
     ]);
-    expect(byTable.appointments, "appointments non-internal triggers").toBe(9);
+    expect(byTable.appointments, "appointments non-internal triggers").toBe(10);
     // B5/0174 added EXACTLY TWO triggers to appointment_audit, and they are
     // named here rather than counted loosely so a third one cannot arrive
     // unnoticed. Neither writes an audit EVENT — one derives trusted FIELDS at

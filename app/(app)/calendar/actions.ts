@@ -29,6 +29,7 @@ import { localDateString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { safeLog } from "@/lib/logging/safe-log";
 import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
+import { checkInOutcomeFor } from "@/lib/calendar/arrival";
 
 export type BookResult =
   | { ok: true; appointmentId: string }
@@ -714,6 +715,46 @@ export async function markAppointmentNoShowAction(
       error: "Only confirmed appointments can be marked as no-show.",
     };
   }
+
+  revalidatePath("/calendar");
+  revalidatePath("/calendar/upcoming");
+  revalidatePath(`/calendar/${appointmentId}`);
+  return { ok: true };
+}
+
+// HON-48 (migration 0268): front-desk check-in. The command decides who may do
+// it (owner and practitioner; a receptionist only if the one predicate is later
+// changed) from the signed-in user, so this passes no actor and uses the user's
+// own session, not the service role. Before 0268 is applied the function does not
+// exist; that is reported as "not available", never as success.
+export async function setAppointmentArrivedAction(
+  formData: FormData,
+): Promise<AppointmentStateActionResult> {
+  const appointmentId = formDataStr(formData, "appointment_id");
+  if (!appointmentId) return { ok: false, error: "Missing appointment id." };
+  const flag = formDataStr(formData, "arrived");
+  if (flag !== "true" && flag !== "false") return { ok: false, error: "Missing check-in choice." };
+  const arrived = flag === "true";
+
+  const { studio } = await getCurrentPractitionerWithStudio();
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("set_appointment_arrived", {
+    p_studio_id: studio.id,
+    p_appointment_id: appointmentId,
+    p_arrived: arrived,
+  });
+  if (error) {
+    console.error(
+      JSON.stringify({
+        event: "set_appointment_arrived_rpc_error",
+        code: dbErrorCode(error),
+        appointmentId,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  const outcome = checkInOutcomeFor(arrived, data, error);
+  if (!outcome.ok) return { ok: false, error: outcome.error };
 
   revalidatePath("/calendar");
   revalidatePath("/calendar/upcoming");

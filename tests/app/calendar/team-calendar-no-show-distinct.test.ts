@@ -156,7 +156,7 @@ describe("desktop team week column: the same cues", () => {
     expect(DAYCOL).toContain('${terminal ? "opacity-60" : ""} ${noShow ? NO_SHOW_CARD_CLASS : ""}');
     expect(DAYCOL).toContain('{noShow && <span className="shrink-0">No-show ·</span>}');
     expect(DAYCOL).toContain('{noShow && "No-show · "}');
-    expect(DAYCOL).toContain("title={[...titleParts, statusTag].filter(Boolean).join(\" · \")}");
+    expect(DAYCOL).toContain("title={[...titleParts, statusTag, arrivedTag].filter(Boolean).join(\" · \")}");
     expect(DAYCOL.match(/\{trailingTag \? ` · \$\{trailingTag\}` : ""\}/g)).toHaveLength(2);
     expect(DAYCOL).not.toContain("{statusTag ? ` · ${statusTag}` : \"\"}");
   });

@@ -5,6 +5,8 @@ import { useEffect } from "react";
 import type { AppointmentWithPractitionerColor } from "@/lib/booking/queries";
 import { formatTimeForStudio, type TimeFormat } from "@/lib/booking/tz";
 import { appointmentDisplayStatus } from "./appointment-display-status";
+import { canOfferCheckIn, isCheckedIn, ARRIVED_TAG, ARRIVED_GLYPH } from "@/lib/calendar/arrival";
+import { CheckInButton } from "./CheckInButton";
 import { timeRangeLabel, weekdayLabel, monthDayLabel } from "./calendar-format";
 import { MoveAppointmentButton } from "./MoveAppointmentButton";
 import { PractitionerTag } from "./PractitionerTag";
@@ -151,9 +153,16 @@ export function AppointmentPreviewDrawer({
           )}
           <div className="flex justify-between gap-3">
             <dt className="text-neutral-500">Status</dt>
-            <dd className="text-right font-medium">{statusLabel}</dd>
+            <dd className="text-right font-medium">
+              {statusLabel}
+              {isCheckedIn(a) && <span data-testid="checked-in-tag"> · {ARRIVED_GLYPH} {ARRIVED_TAG}</span>}
+            </dd>
           </div>
         </dl>
+
+        {canOfferCheckIn(a) && (
+          <CheckInButton appointmentId={a.id} checkedIn={isCheckedIn(a)} onChanged={onClose} />
+        )}
 
         {/* Move appointment: the single shared workflow, gated to confirmed +
             future. On success the drawer closes and the calendar refreshes. */}
