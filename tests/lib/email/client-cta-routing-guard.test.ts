@@ -13,36 +13,70 @@ const SOURCE = readFileSync("lib/email/send-appointment.ts", "utf8");
 // The gates' own definitions are the only place raw values may appear.
 const BODY = SOURCE.slice(SOURCE.indexOf("// Typed delivery result"));
 
-function assignments(prop: string): string[] {
+/** Remove every selfServiceLinksFor( ... ) call, balanced: its argument object is the ONLY place raw URLs may be built. */
+function withoutGateCalls(source: string): string {
+  let out = "";
+  for (let i = 0; i < source.length; ) {
+    const at = source.indexOf("selfServiceLinksFor(", i);
+    if (at === -1) { out += source.slice(i); break; }
+    out += source.slice(i, at);
+    let depth = 0; let j = at + "selfServiceLinksFor".length;
+    do { const c = source[j++]; if (c === "(") depth++; else if (c === ")") depth--; } while (depth > 0 && j < source.length);
+    out += "selfServiceLinksFor(GATED)";
+    i = j;
+  }
+  return out;
+}
+
+function assignments(source: string, prop: string): string[] {
   const re = new RegExp(`\\b${prop}:\\s*([^\\n]*)`, "g");
-  return [...BODY.matchAll(re)].map((m) => m[1]);
+  return [...source.matchAll(re)].map((m) => m[1]);
+}
+
+/** Every way a template argument can reach a client CTA other than through its gate. */
+export function ctaGateViolations(source: string): string[] {
+  const out: string[] = [];
+  const outside = withoutGateCalls(source);
+  for (const u of assignments(source, "portalLoginUrl")) if (!u.includes("portalLoginUrlForStudio(")) out.push(`portalLoginUrl: ${u}`);
+  for (const u of assignments(source, "rebookUrl")) {
+    if (/^(string|undefined)/.test(u)) continue; // type declarations
+    if (!u.includes("rebookUrlFor(")) out.push(`rebookUrl: ${u}`);
+  }
+  // Outside a gate call, a Cancel/Reschedule value may only be the gate's own output.
+  for (const prop of ["cancellationUrl", "rescheduleUrl"]) {
+    for (const u of assignments(outside, prop)) {
+      if (/^(string|null)/.test(u)) continue; // type declarations
+      if (!/^links\.(cancellationUrl|rescheduleUrl),?$/.test(u.trim())) out.push(`${prop}: ${u}`);
+    }
+  }
+  if (/\/(cancel|reschedule)\/\$\{|\/(cancel|reschedule)\/`/.test(outside)) out.push("raw cancel/reschedule path outside a gate call");
+  return out;
 }
 
 describe("client email CTA routing", () => {
-  it("every portal link goes through portalLoginUrlForStudio", () => {
-    const uses = assignments("portalLoginUrl");
-    expect(uses.length).toBeGreaterThanOrEqual(4);
-    for (const u of uses) expect(u).toContain("portalLoginUrlForStudio(");
-  });
-
-  it("every 'book another' link goes through rebookUrlFor", () => {
-    const uses = assignments("rebookUrl").filter((u) => !/^(string|undefined)/.test(u) && !u.startsWith("string"));
-    expect(uses.length).toBeGreaterThanOrEqual(2);
-    for (const u of uses) expect(u).toContain("rebookUrlFor(");
-  });
-
-  it("Cancel and Reschedule reach a template only as selfServiceLinksFor output", () => {
-    for (const prop of ["cancellationUrl", "rescheduleUrl"]) {
-      const uses = assignments(prop).filter((u) => !/^(string|null)/.test(u));
-      // type declarations are filtered; what remains are call-site values
-      for (const u of uses) {
-        const ok = /^links\.(cancellationUrl|rescheduleUrl),?$/.test(u.trim()) || /^`\$\{origin\}\/(cancel|reschedule)\//.test(u.trim());
-        expect(ok, `${prop}: ${u}`).toBe(true);
-      }
-    }
-    // The template-facing spreads all name the gate; none passes params/p straight through.
-    expect(BODY).not.toMatch(/cancellationUrl:\s*(params|p)\.cancellationUrl/);
-    expect(BODY).not.toMatch(/rescheduleUrl:\s*(params|p)\.rescheduleUrl/);
+  it("the real source has no ungated CTA", () => {
+    expect(ctaGateViolations(BODY)).toEqual([]);
+    expect(assignments(BODY, "portalLoginUrl").length).toBeGreaterThanOrEqual(4);
     expect((BODY.match(/\.\.\.selfServiceLinksFor\(/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
+
+  // Negative controls: the guard must see each bypass, including the one that
+  // overrides the policy-filtered values AFTER the spread (Codex P2 on #1238).
+  const mutate = (from: string, to: string) => { expect(BODY).toContain(from); return BODY.replace(from, to); };
+  it("catches raw Cancel/Reschedule URLs placed after the spread (override)", () => {
+    const spread = "...selfServiceLinksFor(p.studio, p),";
+    const mutated = mutate(spread, `${spread}\n    cancellationUrl: \`\${origin}/cancel/\${token}\`,\n    rescheduleUrl: \`\${origin}/reschedule/\${token}\`,`);
+    expect(ctaGateViolations(mutated).join("\n")).toMatch(/cancellationUrl/);
+    expect(ctaGateViolations(mutated).join("\n")).toMatch(/rescheduleUrl/);
+  });
+  it("catches a template argument passed straight through", () => {
+    expect(ctaGateViolations(mutate("...selfServiceLinksFor(p.studio, p),", "cancellationUrl: p.cancellationUrl,")).length).toBeGreaterThan(0);
+  });
+  it("catches an ungated portal link and an ungated rebook link", () => {
+    expect(ctaGateViolations(mutate("portalLoginUrl: portalLoginUrlForStudio(p.studio),", "portalLoginUrl: `${origin}/portal/login`,")).join()).toMatch(/portalLoginUrl/);
+    expect(ctaGateViolations(mutate("rebookUrl: rebookUrlFor(params.studio, params.rebookUrl),", "rebookUrl: params.rebookUrl,")).join()).toMatch(/rebookUrl/);
+  });
+  it("still allows raw URLs inside the gate call's own argument", () => {
+    expect(ctaGateViolations(BODY)).toEqual([]);
   });
 });
