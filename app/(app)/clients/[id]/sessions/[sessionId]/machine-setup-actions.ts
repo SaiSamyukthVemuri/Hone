@@ -13,6 +13,10 @@ import {
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import {
+  restoreSelectionFromRecordedSetup,
+  type RestoredSelection,
+} from "@/lib/machines/restore-recorded-selection";
+import {
   suggestMachineFromPriorSetup,
   type SuggestedMachine,
 } from "@/lib/machines/prior-setup-suggestion";
@@ -187,6 +191,13 @@ export type MachineSetupContext = {
    * nothing.
    */
   suggestedMachine: SuggestedMachine | null;
+  /**
+   * The unit and mode the block's LAST SAVED capture used, so a reopened visit
+   * comes back as it was saved. Selection only: it is never written to the
+   * remembered default. Null when there is no block or the rule in
+   * restore-recorded-selection restores nothing.
+   */
+  restoredSelection: RestoredSelection | null;
 };
 
 const ANONYMOUS: MachineSetupContext = {
@@ -204,6 +215,7 @@ const ANONYMOUS: MachineSetupContext = {
   recordedSetupUnavailable: false,
   unitNames: {},
   suggestedMachine: null,
+  restoredSelection: null,
 };
 
 /** Everything the panel needs, derived entirely on the server. */
@@ -383,6 +395,13 @@ export async function loadMachineSetupContext(input: {
   const recordedSetup = recorded?.ok ? recorded.value : [];
   const recordedSetupUnavailable = recorded !== null && !recorded.ok;
 
+  const restoredSelection = restoreSelectionFromRecordedSetup({
+    scope,
+    recordedSetup,
+    devices: inventory.devices,
+    catalogue,
+  });
+
   const unitNames: Record<string, string> = {};
   const needNames = [
     ...priorSetup.map((r) => r.deviceId),
@@ -426,6 +445,7 @@ export async function loadMachineSetupContext(input: {
     recordedSetupUnavailable,
     unitNames,
     suggestedMachine,
+    restoredSelection,
   };
 }
 

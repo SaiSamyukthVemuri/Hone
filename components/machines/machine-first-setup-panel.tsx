@@ -8,6 +8,7 @@ import { SectionLabel } from "@/components/ui/section-label";
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
 import {
   initialSelection,
+  restoredSelection,
   selectionRequested,
   selectionSettled,
   unusableSelection,
@@ -100,6 +101,12 @@ export type MachineFirstSetupPanelProps = {
    * chosen. An OFFER: nothing is selected or remembered until she accepts it.
    */
   suggestedMachine?: { deviceId: string; displayName: string } | null;
+  /**
+   * The unit and mode the block's last saved capture used, for a reopened
+   * visit. Seeds the selection and the mode; the STORED fact stays whatever the
+   * practitioner remembered, so reopening never claims or changes it.
+   */
+  restoredSelection?: { deviceId: string; modeKey: string } | null;
   /**
    * Recorded unit id -> the studio's name for it, for next-visit guidance.
    * Resolved on the server, where retired units are visible.
@@ -281,6 +288,7 @@ export function MachineFirstSetupPanel({
   onRevisionUnresolved,
   unavailableSelection = null,
   suggestedMachine = null,
+  restoredSelection: restored = null,
   unitNames = {},
   onSelectMachine,
   onRecord,
@@ -365,6 +373,12 @@ export function MachineFirstSetupPanel({
   // unmount the component holding a retry key.
   const identityFrozen = settingDraftFrozen || revisionUnresolved;
   const [selection, setSelection] = useState<SelectionState>(() =>
+    restored
+      ? restoredSelection(
+          restored.deviceId,
+          unavailableSelection?.deviceId ?? initialDeviceId,
+        )
+      :
     // A stored machine that cannot be charted on is NOT a selection, but it is
     // still stored, and the reason has to be visible. `unusableSelection`
     // keeps all three facts straight; see lib/machines/selection-state.
@@ -376,7 +390,9 @@ export function MachineFirstSetupPanel({
   const selectionNote = selection.note;
   // THE MODE IN FORCE. Seeded from the remembered one; falls back to the
   // profile's first active mode, which is all this used to do.
-  const [modeKey, setModeKey] = useState<string | null>(initialModeKey);
+  const [modeKey, setModeKey] = useState<string | null>(
+    restored ? restored.modeKey : initialModeKey,
+  );
   // How many readings this panel has actually saved in this mount. Drives the
   // "Recorded:" line, which previously claimed "nothing" even after a save.
   const [savedCount, setSavedCount] = useState(0);
