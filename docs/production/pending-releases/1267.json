@@ -1,0 +1,6 @@
+{
+  "pr": 1267,
+  "runtime": false,
+  "migrations": ["supabase/migrations/0257_studio_payment_jurisdiction_failed_attempt_ack.sql"],
+  "release_receipt": "01-ops/1267-release-receipt.json"
+}
