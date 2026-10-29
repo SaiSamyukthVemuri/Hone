@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
+import { detectReminderAuthorityMode, type ReminderAuthorityMode } from "@/lib/email/reminder-authority-mode";
 import {
+  sendAppointmentReminderOperation,
   claimEmailSendOutcome,
   logEmailFailure,
   recordEmailResult,
@@ -159,6 +161,46 @@ async function readLatestIntake(
     .maybeSingle();
   if (requireKnown && error) throw new Error("reminder intake state unavailable");
   return (data as { id: string; status: string } | null) ?? null;
+}
+
+// 0247 AUTHORITY PATH. Used only when the database has the operation authority.
+// The candidate row discovers an id and nothing else: every eligibility,
+// composition and render fact comes from the governed operation snapshot, and no
+// legacy claim can authorize the email. A held or unreadable operation is
+// skipped, never sent from the cached join.
+async function sendReminderViaOperation(
+  opts: { kind: "24h" | "2h" },
+  appt: Joined,
+  admin: ReturnType<typeof createAdminClient>,
+  stats: EmailRunStats,
+): Promise<"claim_unavailable" | void> {
+  const emailType: ClaimableEmailType = opts.kind === "24h" ? "reminder_24h" : "reminder_2h";
+  const result = await sendAppointmentReminderOperation(admin, appt.studio_id, appt.id, emailType);
+  // The database could not answer: nothing was authoritatively handled, so the
+  // coordinator keeps this candidate and the run is not a success.
+  if (result.kind === "unavailable") return "claim_unavailable";
+  if (result.kind === "held") { stats.skipped += 1; return; }
+  stats.attempted += 1;
+  if (result.observation.kind === "accepted") {
+    stats.succeeded += 1; // SDK acceptance, not delivery or current projection.
+    if (result.persistence === "recorded" && result.projection === "current" && result.intakeId) {
+      await stampIntakeLinkIssued(admin, result.intakeId, { emailed: true });
+      stats.intakeCtaIncluded += 1;
+    }
+  } else {
+    stats.failed += 1;
+    logEmailFailure({ appointmentId: appt.id, studioId: appt.studio_id, emailType,
+      error: "email_operation_not_accepted", retryable: false, attemptNumber: result.attemptNumber });
+    if (result.observation.kind === "definite_refusal") await alertIfReminderExhausted({
+      studioId: appt.studio_id, appointmentId: appt.id, emailType, attemptNumber: result.attemptNumber,
+      retryable: false, reason: "send_failed", intakeCtaIncluded: result.intakeId !== null });
+  }
+  if (result.persistence === "unconfirmed") await recordOpsAlert({
+    severity: "warning", event: "reminder_email_accounting_failed",
+    message: "Reminder outcome accounting is unconfirmed; automatic replay remains held.",
+    studioId: appt.studio_id, appointmentId: appt.id, route: "/api/cron/appointment-reminders",
+    safeDetails: { reminder_type: emailType },
+  });
 }
 
 // The ~24h and ~2h window email, composed.
@@ -623,6 +665,25 @@ export async function GET(req: Request) {
     const admin = createAdminClient();
     const appOrigin = getRequiredAppOrigin();
     const ledgerBudget = createLedgerBudget();
+    // 0247 compatibility: which email authority does this database have? Decided
+    // at most ONCE per run, on the first email candidate (a run with no email work
+    // never probes). See lib/email/reminder-authority-mode.ts.
+    let emailAuthorityRead: Promise<ReminderAuthorityMode> | null = null;
+    const emailAuthority = (): Promise<ReminderAuthorityMode> => {
+      emailAuthorityRead ??= detectReminderAuthorityMode(admin).then(async (mode) => {
+        if (mode === "unavailable") {
+          try {
+            await recordOpsAlert({
+              severity: "warning", event: "reminder_email_authority_unavailable",
+              message: "The reminder email authority could not be determined; email reminders are held this run.",
+              route: "/api/cron/appointment-reminders", safeDetails: { reason: "authority_probe_inconclusive" },
+            });
+          } catch { /* The run still reports claim_unavailable per row. */ }
+        }
+        return mode;
+      });
+      return emailAuthorityRead;
+    };
     failureStage = "scan";
     const batch = await runReminderScanBatch({
       coordinator: createUpstashReminderScanCoordinator(),
@@ -642,7 +703,14 @@ export async function GET(req: Request) {
         const opts = { kind, windowStartIso: window.startIso, windowEndIso: window.endIso } as const;
         const unavailable = pass.startsWith("sms")
           ? await sendSmsReminderPass({ ...opts, ledgerBudget }, appt, admin, stats, appOrigin)
-          : await sendReminderPass(opts, appt, admin, stats, appOrigin);
+          : await (async () => {
+              const mode = await emailAuthority();
+              return mode === "operation"
+                ? sendReminderViaOperation(opts, appt, admin, stats)
+                : mode === "legacy"
+                  ? sendReminderPass(opts, appt, admin, stats, appOrigin)
+                  : "claim_unavailable" as const;
+            })();
         return {
           kind: unavailable === "claim_unavailable" ? "claim_unavailable" : stats.attempted > attemptedBefore ? "processed" : "skipped",
           attempted: stats.attempted > attemptedBefore,

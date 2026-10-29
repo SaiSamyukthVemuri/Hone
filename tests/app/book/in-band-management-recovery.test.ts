@@ -397,7 +397,7 @@ describe("BOOK-01 T1 — a committed booking returns an in-band management path"
     expect(r.ok, `action failed: ${r.ok ? "" : r.error}`).toBe(true);
     if (!r.ok) return;
     expect(r.appointmentId).toBe(APPT_ID);
-    expect(r.manageUrl.startsWith(`${ORIGIN}/manage/`)).toBe(true);
+    expect(String(r.manageUrl).startsWith(`${ORIGIN}/manage/`)).toBe(true);
     expect(r.confirmationEmailStatus).toBe("sent");
     expect(emailAttempts).toEqual([
       { appointmentId: APPT_ID, emailType: "confirmation", success: true },
@@ -409,7 +409,7 @@ describe("BOOK-01 T1 — a committed booking returns an in-band management path"
     const r = await book();
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.manageUrl.startsWith(`${ORIGIN}/manage/`)).toBe(true);
+    expect(String(r.manageUrl).startsWith(`${ORIGIN}/manage/`)).toBe(true);
     expect(r.confirmationEmailStatus).toBe("failed");
     // The truthful-bookkeeping contract is unchanged: the attempt is recorded
     // as a failure, so `confirmation_sent_at` is never stamped.
@@ -424,7 +424,7 @@ describe("BOOK-01 T1 — a committed booking returns an in-band management path"
     const r = await book();
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.manageUrl.startsWith(`${ORIGIN}/manage/`)).toBe(true);
+    expect(String(r.manageUrl).startsWith(`${ORIGIN}/manage/`)).toBe(true);
     expect(r.confirmationEmailStatus).toBe("disabled");
     // Nothing was attempted, so nothing may be recorded or reported.
     expect(confirmationEmails).toEqual([]);
@@ -471,7 +471,7 @@ describe("BOOK-01 T1 — the returned URL is a real, route-shaped capability", (
     expect(r.ok).toBe(true);
     if (!r.ok) return;
 
-    const raw = r.manageUrl.slice(`${ORIGIN}/manage/`.length);
+    const raw = String(r.manageUrl).slice(`${ORIGIN}/manage/`.length);
     // 24 random bytes, base64url — the shape /manage/[token] resolves by
     // hashing and matching appointments.cancellation_token_hash.
     expect(raw).toMatch(/^[A-Za-z0-9_-]{32}$/);
@@ -499,7 +499,7 @@ describe("BOOK-01 T1 — the secrecy wall", () => {
       const r = await book();
       expect(r.ok, `action failed: ${r.ok ? "" : r.error}`).toBe(true);
       if (!r.ok) return;
-      const raw = r.manageUrl.slice(`${ORIGIN}/manage/`.length);
+      const raw = String(r.manageUrl).slice(`${ORIGIN}/manage/`.length);
       const emitted = allEmittedPayloads();
 
       expect(emitted, "raw token leaked into an emitted payload").not.toContain(raw);
@@ -522,7 +522,7 @@ describe("BOOK-01 T1 — the secrecy wall", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const payload = JSON.stringify(practitionerNotifications);
-    expect(payload).not.toContain(r.manageUrl.slice(`${ORIGIN}/manage/`.length));
+    expect(payload).not.toContain(String(r.manageUrl).slice(`${ORIGIN}/manage/`.length));
     expect(payload).not.toContain("/manage/");
   });
 
@@ -530,7 +530,7 @@ describe("BOOK-01 T1 — the secrecy wall", () => {
     const r = await book();
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const raw = r.manageUrl.slice(`${ORIGIN}/manage/`.length);
+    const raw = String(r.manageUrl).slice(`${ORIGIN}/manage/`.length);
     // Positive control for the sweep above: prove the token really is present
     // somewhere, so a passing secrecy assertion cannot be vacuous.
     expect(JSON.stringify(confirmationEmails)).toContain(raw);
@@ -620,8 +620,8 @@ async function expectSettledSuccess(overrides?: Record<string, string>) {
   expect(r.ok, `committed booking reported failure: ${r.ok ? "" : r.error}`).toBe(true);
   if (!r.ok) throw new Error("unreachable");
   expect(r.appointmentId).toBe(APPT_ID);
-  expect(r.manageUrl.startsWith(`${ORIGIN}/manage/`)).toBe(true);
-  expect(manageToken(r.manageUrl)).toMatch(/^[A-Za-z0-9_-]{32}$/);
+  expect(String(r.manageUrl).startsWith(`${ORIGIN}/manage/`)).toBe(true);
+  expect(manageToken(String(r.manageUrl))).toMatch(/^[A-Za-z0-9_-]{32}$/);
   return r;
 }
 
@@ -766,7 +766,7 @@ describe("BOOK-01 P2-A — a committed booking survives every post-commit failur
       expect(consoleErrors.join(" "), `missing evidence: ${event}`).toContain(event);
     }
     // ...and none of it carried a secret, a message, or the management path.
-    const raw = manageToken(r.manageUrl);
+    const raw = manageToken(String(r.manageUrl));
     const logs = consoleErrors.join(" ");
     expect(logs).not.toContain(POISON);
     expect(logs).not.toContain(raw);

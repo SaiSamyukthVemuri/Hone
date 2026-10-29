@@ -11,6 +11,10 @@ import { updateStudioFeeAmountsAction } from "./fee-amounts-actions";
 type Props = {
   initialLateCancelCents: number | null;
   initialNoShowCents: number | null;
+  // "CAD" | "USD" from the studio's verified payment jurisdiction, resolved on
+  // the server. null = not confirmed: the card says so instead of printing a
+  // currency it does not know.
+  currencyLabel: "CAD" | "USD" | null;
 };
 
 function centsToDollarsInput(cents: number | null): string {
@@ -21,6 +25,7 @@ function centsToDollarsInput(cents: number | null): string {
 export function FeeAmountsCard({
   initialLateCancelCents,
   initialNoShowCents,
+  currencyLabel,
 }: Props) {
   const [lateCancel, setLateCancel] = useState(
     centsToDollarsInput(initialLateCancelCents),
@@ -83,7 +88,9 @@ export function FeeAmountsCard({
               placeholder="0.00"
               className="w-32 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950"
             />
-            <span className="text-neutral-500">CAD</span>
+            <span className="text-neutral-500" data-testid="fee-currency">
+              {currencyLabel ?? "currency not confirmed"}
+            </span>
           </div>
         </label>
 
@@ -101,7 +108,9 @@ export function FeeAmountsCard({
               placeholder="0.00"
               className="w-32 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950"
             />
-            <span className="text-neutral-500">CAD</span>
+            <span className="text-neutral-500" data-testid="fee-currency">
+              {currencyLabel ?? "currency not confirmed"}
+            </span>
           </div>
         </label>
 
