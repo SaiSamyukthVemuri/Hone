@@ -15,7 +15,29 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
 
-## Current state (verified 2026-10-27, post-S1 apply; `0213`–`0246` APPLIED, repo == hosted)
+## Current state (verified 2026-10-29, post-0248 online apply; `0248` APPLIED out of order, `0247` NOT applied, repo == hosted)
+
+> **CURRENT RELATIONSHIP: repo == hosted at `0248`, with `0247` declared unhosted.** The single sealed migration `0248_intake_protected_write_enforcement.sql` (sha256 `1f6f9ad0026cee66b970e9dc630f1497aa10966df2adb9433d8f8c85bbc44cc3`, bytes unchanged) was APPLIED to production by ONE push on 2026-10-29, by Sam under explicit per-change online authorization (`01-ops/sam-0248-online-authorization.txt`, sha256 prefix `40aad6a5`). It is an **out-of-order** apply: `0247` is allocated to Willow, separately held, and **absent from hosted history**; that is declared in `docs/production/migration-state.json` as `hosted_out_of_order: [{version 0248, unhosted_below [0247]}]`. **Do not reapply `0248`, and do not apply `0247` as part of this record.**
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0248**, declared in `docs/production/migration-state.json`. Read back 2026-10-29T01:21:48Z–01:22:11Z (`window-s1read-0248.sh`): 246 history rows, max `0248`, `0248` present exactly once, `0247` absent. **No server apply timestamp was captured**, so `hosted_applied_at` stays null; see the client-side marker below. |
+| **Repo migration max** | **0248** (`0248_intake_protected_write_enforcement.sql`), derived from the source files on this tree. |
+| **Remote-only migrations** | **None.** The repository and production agree. |
+| **Pending migrations** | **None** above the hosted head. `0247` is a declared unhosted gap below it, not a pending suffix. |
+| **Next free number** | Next free number is **0249** by this tree's derived filenames, **not claimed** or reallocated here. Willow `0247` is already allocated and separately held; availability in a finite source tree is not allocation authority. |
+| **Project ref** | Canonical Hone production project. |
+
+### The 0248 apply (facts as recorded by OPS, 2026-10-29)
+
+- **Tool.** Sam ran `s1-apply-0248-online.sh` (sha256 prefix `3f2fac3f`) from the operator Mac: the reviewed online delta of `s1-apply-0248.sh` (`a31e048b`). Pre-push pinned reads (history, intake definers, open transactions and `statement_timeout`), a dry run that listed exactly `0248`, then ONE push. **No settings write** (no `ALTER ROLE`).
+- **Rollout.** Under the online authorization there was no row-4/PITR prerequisite, no cron pause, no staff hold and no fixed window. The sealed SQL, the target, the migration-history checks and bounded execution were kept.
+- **Client push marker (operator Mac clock; NOT a server time; never copy into `hosted_applied_at`).** Push marker 2026-10-29T01:21:47Z.
+- **Read-back.** `s1read` 2026-10-29T01:21:48Z–01:22:11Z: OVERALL PASS. History 246 rows, max `0248`, `0248` exactly once, `0247` absent. The expected functions exist, and the `advance_intake_revision` body md5 `48669dd8dba82d0d15984631ea8af739` equals the verify bundle.
+- **Reconcile.** RECONCILED ALL at 2026-10-29T01:23:24Z (`s1-reconcile-0248-online.sh`).
+- **Not captured.** Any server-side apply instant, statement-level timing, and any independent confirmation of the client clock. Migration history is not table-content evidence.
+
+## Previous state (verified 2026-10-27, post-S1 apply; `0213`–`0246` APPLIED, repo == hosted)
 
 > **CURRENT RELATIONSHIP: repo == hosted at `0246`.** The 34 migrations `0213`–`0246` were APPLIED to production by ONE push on 2026-10-27 (migration-first), by Sam under explicit per-change authorization, inside the window 2026-10-27T01:11:00Z–04:30:00Z. Migration history went from 211 rows (max `0212`) to **245 rows (max `0246`)**, read back at 2026-10-27T02:37:56Z–02:38:28Z (`window-s1read.sh` `dc930b6a0c74ab5a50998b6667ff3839085687e404d416e28828be9d3ca7136a`): OVERALL PASS — 34 new versions, nothing above `0246`, the object census, the privilege closures (`0239`/`0242`/`0245`) and the function-body hashes. Migration history is not table-content evidence. **Do not reapply any of `0213`–`0246`.** `0247` and above are not applied and remain separately held.
 >

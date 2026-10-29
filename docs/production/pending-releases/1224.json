@@ -1,0 +1,6 @@
+{
+  "pr": 1224,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0248_intake_protected_write_enforcement.sql"],
+  "release_receipt": "01-ops/1224-release-receipt.json"
+}
