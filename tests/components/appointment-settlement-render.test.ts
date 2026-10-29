@@ -127,3 +127,21 @@ describe("a SETTLED visit shows the outcome and offers nothing further", () => {
     expect(seen.size).toBe(5);
   });
 });
+
+describe("HON-45: a part payment is not shown as the visit paid", () => {
+  it("names the shortfall when the amount collected is below the quoted price", () => {
+    const html = render({ settledMethod: "paid_cash", settledAmountCents: 2000, settledQuotedCents: 10000 });
+    expect(html).toContain("Part paid");
+    expect(html).toContain("$80.00");
+    expect(html).toContain("still owed");
+  });
+  it("a full payment keeps the existing wording and shows no shortfall", () => {
+    const html = render({ settledMethod: "paid_cash", settledAmountCents: 10000, settledQuotedCents: 10000 });
+    expect(html).not.toContain("Part paid");
+    expect(html).not.toContain("still owed");
+  });
+  it("no quote on record shows no claim either way", () => {
+    const html = render({ settledMethod: "paid_cash", settledAmountCents: 2000 });
+    expect(html).not.toContain("Part paid");
+  });
+});
