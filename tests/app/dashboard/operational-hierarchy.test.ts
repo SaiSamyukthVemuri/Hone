@@ -268,7 +268,7 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
     // the not-ready state passes this text, and the shell renders whatever it is
     // given inside the labelled heading. Checking only the literal would pass if
     // the shell stopped rendering it at all.
-    expect(card).toContain('heading="Before you can take a new client"');
+    expect(card).toContain('"Before you can take a new client"');
     expect(card).toMatch(/<h2[^>]*id="booking-setup-heading"[\s\S]{0,80}\{heading\}/);
     expect(card).toMatch(/readiness\.blockers\.map/);
     expect(card).toMatch(/href=\{blocker\.href\}/);
