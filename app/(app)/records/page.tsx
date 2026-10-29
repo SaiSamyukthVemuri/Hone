@@ -17,6 +17,7 @@ import {
   getLotTraceability,
   normalizeLotSearch,
   getClientProcedureRecords,
+  getDisinfectantRecordForNotice,
   getDisinfectantRecords,
   getExposureIncidentRecords,
   getProcedureAuditEvents,
@@ -53,6 +54,11 @@ import {
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import { recoverRecordsRead } from "@/lib/record-keeping/section-recovery";
+import {
+  disinfectantRecordAnchor,
+  placeFocusedRecord,
+  resolveFocusedDisinfectantId,
+} from "@/lib/record-keeping/disinfectant-focus";
 import { RefreshRetryButton } from "./refresh-retry-button";
 
 // PR #205 (migration 0085): Record Keeping. Hone's health-inspection
@@ -166,16 +172,19 @@ function AuditHistoryList({
 
 function RowTools({
   editForm,
+  editOpen = false,
   events,
   historyUnavailable = false,
 }: {
   editForm: React.ReactNode;
+  // HON-12: render the Edit form already open (the overdue notice's target row).
+  editOpen?: boolean;
   events: RecordKeepingAuditEvent[] | undefined;
   historyUnavailable?: boolean;
 }) {
   return (
     <div className="mt-1 flex flex-col gap-1">
-      <details>
+      <details open={editOpen}>
         <summary className="cursor-pointer text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
           Edit
         </summary>
@@ -219,6 +228,7 @@ export default async function RecordKeepingPage({
   searchParams: Promise<{
     section?: string;
     lot?: string;
+    record?: string;
     clientId?: string;
     from?: string;
     to?: string;
@@ -265,6 +275,7 @@ export default async function RecordKeepingPage({
       case "disinfectants":
         return DisinfectantsSection({
           studioId: studio.id,
+          focusRecordId: sp.record,
           currentPractitionerId: practitioner.id,
           timezone: studio.timezone,
         });
@@ -580,15 +591,29 @@ async function SterileItemsSection({
 
 async function DisinfectantsSection({
   studioId,
+  focusRecordId,
   currentPractitionerId,
   timezone,
 }: {
   studioId: string;
+  // HON-12: the record the overdue notice points at (opened for editing).
+  focusRecordId?: string;
   currentPractitionerId: string;
   timezone: string;
 }) {
   const domain = startPerfSpan("records.domain");
-  const records = await getDisinfectantRecords(studioId);
+  const newest = await getDisinfectantRecords(studioId);
+  // The notice's record can be older than the newest 200 rows: fetch that ONE
+  // record (studio-scoped, RLS client) and place it first. Compare-only; an
+  // unknown or other-studio id changes nothing.
+  const records =
+    focusRecordId && !newest.some((r) => r.id === focusRecordId)
+      ? placeFocusedRecord(
+          newest,
+          focusRecordId,
+          await getDisinfectantRecordForNotice(studioId, focusRecordId),
+        )
+      : newest;
   const audit = await getAuditEventsByRecord(
     studioId,
     "disinfectant",
@@ -601,6 +626,10 @@ async function DisinfectantsSection({
     name: p.display_name?.trim() || p.email,
   }));
   const today = todayInTz(timezone);
+  const focusId = resolveFocusedDisinfectantId(
+    focusRecordId,
+    records.map((r) => r.id),
+  );
   domain.end();
   return (
     <div className="flex flex-col gap-5">
@@ -636,7 +665,11 @@ async function DisinfectantsSection({
               const status = disinfectantDueStatus(r, today);
               const alert = isDisinfectantAlert(status);
               return (
-              <li key={r.id} className="flex flex-col gap-1 p-4 text-sm">
+              <li
+                key={r.id}
+                id={disinfectantRecordAnchor(r.id)}
+                className={`flex scroll-mt-20 flex-col gap-1 p-4 text-sm ${r.id === focusId ? "bg-amber-50/60 dark:bg-amber-950/20" : ""}`}
+              >
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="font-medium">
                     {r.disinfectant_name}
@@ -688,6 +721,7 @@ async function DisinfectantsSection({
                   <p className="text-xs text-neutral-500">{r.notes}</p>
                 )}
                 <RowTools
+                  editOpen={r.id === focusId}
                   editForm={
                     <EditDisinfectantForm
                       record={r}
