@@ -1801,3 +1801,44 @@ describe("the unit used at the last visit is offered, not selected", () => {
     expect(render(base)).not.toContain('data-testid="machine-suggestion"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// HON-8 reload continuity: a reopened visit comes back on its last saved unit.
+// ---------------------------------------------------------------------------
+describe("a reopened visit restores its last saved machine", () => {
+  const OTHER: StudioDevice = { ...DEVICE, deviceId: "room-2", displayName: "Room 2 unit" };
+  const base = {
+    scope: SCOPE,
+    devices: [DEVICE, OTHER],
+    catalogue: CAT,
+    persistence: DATABASE_PERSISTENCE,
+  };
+
+  it("selects the restored unit over the practitioner's remembered one", () => {
+    const html = render({
+      ...base,
+      initialDeviceId: "room-2",
+      restoredSelection: { deviceId: "room-9", modeKey: "galvanic" },
+    });
+    expect(html).toContain('data-testid="machine-chosen"');
+    expect(html).toContain("Room 9 unit");
+    expect(html).toMatch(/<option value="room-9" selected/);
+  });
+
+  it("does not claim the restored unit is what is remembered", () => {
+    const html = render({
+      ...base,
+      initialDeviceId: "room-2",
+      restoredSelection: { deviceId: "room-9", modeKey: "galvanic" },
+    });
+    // The remembered fact is room-2's; restoring must not rewrite the status.
+    const status = html.slice(html.indexOf('data-testid="machine-first-status"'));
+    expect(status).not.toContain("Room 9 unit");
+  });
+
+  it("CONTROL: without a restored selection the remembered unit applies", () => {
+    const html = render({ ...base, initialDeviceId: "room-2" });
+    expect(html).toMatch(/<option value="room-2" selected/);
+    expect(html).not.toMatch(/<option value="room-9" selected/);
+  });
+});
