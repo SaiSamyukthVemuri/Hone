@@ -59,23 +59,24 @@ proc echo_off {} {
   }
   return 0
 }
-# one hidden line from the person's terminal (never echoed, never in an argument or the environment)
-proc ask_hidden {label} {
-  global timeout expect_out
-  send_user -- $label
-  stty -echo
-  set timeout 600; set v ""
-  expect_user { -re "(\[^\n\]*)\n" { set v $expect_out(1,string) } timeout { stty echo; fail "no input for 600 s at: $label" } eof { stty echo; fail "the terminal closed at: $label" } }
-  stty echo
-  send_user "\n"
+# one line from the person's terminal (a hidden one is never echoed, never in an argument or the environment)
+proc read_line {label} {
+  set v ""
+  if {[gets stdin v] < 0} { catch {stty echo}; fail "the terminal closed at: $label" }
+  dbg "read a line at: $label (length [string length $v])"
   return [string trimright $v "\r"]
 }
-proc ask_plain {label} {
-  global timeout expect_out
+proc ask_hidden {label} {
   send_user -- $label
-  set timeout 600; set v ""
-  expect_user { -re "(\[^\n\]*)\n" { set v $expect_out(1,string) } timeout { fail "no input for 600 s at: $label" } eof { fail "the terminal closed at: $label" } }
-  return [string trimright $v "\r"]
+  stty -echo
+  set v [read_line $label]
+  stty echo
+  send_user "\n"
+  return $v
+}
+proc ask_plain {label} {
+  send_user -- $label
+  return [read_line $label]
 }
 
 set env(LC_ALL) C
