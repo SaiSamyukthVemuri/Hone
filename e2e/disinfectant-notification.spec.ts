@@ -24,6 +24,14 @@ test("overdue disinfectant surfaces in Notification Centre and resolves on repla
 
   const studio = await seedE2eStudio();
   await seedE2eOverdueDisinfectant(studio, { name: "Barbicide E2E jar" });
+  // HON-12: a NEWER in-use batch is listed first, so a notice that only opens the
+  // section leaves the overdue row below it and the old `.first()` Edit would hit
+  // the wrong record.
+  await seedE2eOverdueDisinfectant(studio, {
+    name: "Newer in-use jar",
+    datePrepared: "2099-01-01",
+    discardDueDate: "2099-02-01",
+  });
 
   // A DIFFERENT studio's overdue item must never appear for this owner (tenancy).
   const otherStudio = await seedE2eStudio();
@@ -53,15 +61,17 @@ test("overdue disinfectant surfaces in Notification Centre and resolves on repla
 
   // Opening the alert navigates to the authorized disinfectants records section.
   await alerts.getByRole("link", { name: "Review disinfectant records" }).click();
-  await expect(page).toHaveURL(/\/records\?section=disinfectants/);
+  await expect(page).toHaveURL(/\/records\?section=disinfectants&record=/);
   await expect(page.getByText("Barbicide E2E jar").first()).toBeVisible();
   await expect(page.getByText(/Overdue: replace now/i)).toBeVisible();
 
-  // Record a replacement through the REAL edit form: set the actual discard date.
-  await page.getByText("Edit", { exact: true }).first().click();
-  const editForm = page.locator("form", {
+  // HON-12: the notice opened THE overdue record's own edit form (no hunting for
+  // the row, no clicking "Edit"). Record the replacement through the REAL form.
+  const overdueRow = page.locator("li", { hasText: "Barbicide E2E jar" });
+  const editForm = overdueRow.locator("form", {
     has: page.getByRole("button", { name: "Save changes" }),
   });
+  await expect(editForm.getByLabel("Actual date discarded")).toBeVisible();
   await editForm.getByLabel("Actual date discarded").fill("2020-02-01");
   await editForm.getByRole("button", { name: "Save changes" }).click();
 

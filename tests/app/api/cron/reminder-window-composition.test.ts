@@ -214,8 +214,10 @@ describe("intake link minting and stamping", () => {
 // ---------------------------------------------------------------------------
 describe("retry and exhaustion semantics are preserved", () => {
   it("keeps the 3-strike cap on the window query", () => {
-    expect(ROUTE).toMatch(/const MAX_ATTEMPTS = 3;/);
-    expect(CODE).toMatch(/\.lt\(opts\.attemptsColumn, MAX_ATTEMPTS\)/);
+    // MSG-ARCH-01: the window query lives in lib/cron/reminder-candidate-query.ts.
+    const query = readFileSync(path.resolve(__dirname, "../../../../lib/cron/reminder-candidate-query.ts"), "utf8");
+    expect(query).toMatch(/const MAX_ATTEMPTS = 3;/);
+    expect(query).toMatch(/\.lt\(opts\.attemptsColumn, MAX_ATTEMPTS\)/);
   });
 
   it("records the provider outcome and alerts on exhaustion", () => {
