@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 // ===========================================================================
@@ -29,7 +30,38 @@ import { describe, expect, it } from "vitest";
 const REPO_ROOT = path.resolve(__dirname, "../..");
 const APP_SHELL = "app/(app)";
 
-const GATE = /\b(getCurrentPractitionerWithStudio|requirePractitionerWithStudio)\b/;
+const RESOLVERS = new Set(["getCurrentPractitionerWithStudio", "requirePractitionerWithStudio"]);
+
+// A resolver must be CALLED. A name in an import or a comment is not a gate
+// (Codex P2 4407711582): removing every call while keeping the import must fail.
+// Import-aware like server-render-identity-guard: the callee must be the imported
+// binding (or its alias) from lib/supabase/queries, and a call is any
+// CallExpression whose callee is that identifier.
+export function hasResolverCall(src: string): boolean {
+  const sf = ts.createSourceFile("m.ts", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const bound = new Set<string>();
+  for (const st of sf.statements) {
+    if (!ts.isImportDeclaration(st) || !st.importClause?.namedBindings) continue;
+    if (!ts.isStringLiteral(st.moduleSpecifier) || !/lib\/supabase\/queries$/.test(st.moduleSpecifier.text)) continue;
+    const nb = st.importClause.namedBindings;
+    if (!ts.isNamedImports(nb)) continue;
+    for (const el of nb.elements) {
+      if (RESOLVERS.has((el.propertyName ?? el.name).text)) bound.add(el.name.text);
+    }
+  }
+  if (bound.size === 0) return false;
+  let called = false;
+  const visit = (n: ts.Node): void => {
+    if (called) return;
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && bound.has(n.expression.text)) {
+      called = true;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return called;
+}
 
 // Files with no gate call, and why that is acceptable. A stale entry (file gone,
 // or now gated) fails the guard, so this list can only shrink or be justified.
@@ -65,7 +97,7 @@ describe("HON-44: every app-shell server action module resolves the practitioner
 
   it("each one calls a practitioner resolver, or is a documented exception", () => {
     const ungated = actionModules
-      .filter((m) => !GATE.test(m.src))
+      .filter((m) => !hasResolverCall(m.src))
       .map((m) => m.rel)
       .filter((rel) => !(rel in NO_GATE_EXCEPTIONS));
     expect(ungated, "server action modules under app/(app) with no identity gate").toEqual([]);
@@ -76,7 +108,26 @@ describe("HON-44: every app-shell server action module resolves the practitioner
       expect(existsSync(path.join(REPO_ROOT, rel)), `${rel} no longer exists; remove the exception`).toBe(true);
       const m = actionModules.find((a) => a.rel === rel);
       expect(m, `${rel} is no longer a server action module; remove the exception`).toBeDefined();
-      expect(GATE.test(m!.src), `${rel} now has a gate call; remove the exception`).toBe(false);
+      expect(hasResolverCall(m!.src), `${rel} now has a gate call; remove the exception`).toBe(false);
     }
+  });
+});
+
+describe("hasResolverCall: a call counts, a name does not", () => {
+  const IMPORT = 'import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";\n';
+  it("a real call is a gate", () => {
+    expect(hasResolverCall(IMPORT + "export async function a() { const { practitioner } = await getCurrentPractitionerWithStudio(); return practitioner; }")).toBe(true);
+  });
+  it("NEGATIVE CONTROL: an unused import is not a gate", () => {
+    expect(hasResolverCall(IMPORT + "export async function a() { return 1; }")).toBe(false);
+  });
+  it("NEGATIVE CONTROL: the name in a comment or a string is not a gate", () => {
+    expect(hasResolverCall(IMPORT + "// getCurrentPractitionerWithStudio()\nexport async function a() { return \"getCurrentPractitionerWithStudio()\"; }")).toBe(false);
+  });
+  it("NEGATIVE CONTROL: a same-named function that is not the imported resolver is not a gate", () => {
+    expect(hasResolverCall("function getCurrentPractitionerWithStudio() {}\nexport async function a() { getCurrentPractitionerWithStudio(); }")).toBe(false);
+  });
+  it("an aliased import that is called is a gate", () => {
+    expect(hasResolverCall('import { requirePractitionerWithStudio as who } from "@/lib/supabase/queries";\nexport async function a() { await who(); }')).toBe(true);
   });
 });
