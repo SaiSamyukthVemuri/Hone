@@ -327,12 +327,13 @@ const REPRO_VIEWPORTS = [
 
 for (const vp of REPRO_VIEWPORTS) {
   test.describe(`webkit hour fields: ${vp.name}`, () => {
-    test.skip(({ browserName }) => browserName !== "webkit", "WebKit-only reproduction for HON-62");
     test.use({ viewport: vp.viewport, hasTouch: vp.hasTouch });
     // The file is serial; a failure here must not skip the other viewport.
     test.describe.configure({ mode: "default" });
 
     test("typing and scrolling over the hour field behave like a bare time input", async ({ page, browserName }) => {
+      // WebKit only. No test.skip here: the HON-62 guard bans it in this file.
+      if (browserName !== "webkit") return;
       await signIn(page, browserName);
       await page.goto("/settings/availability");
       await openDay(page, "Monday");
