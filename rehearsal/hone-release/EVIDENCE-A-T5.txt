@@ -1,0 +1,23 @@
+HON66-CONSOLIDATE evidence A (T5, certificate verification), 2026-10-27 ~21:10Z. Project ref masked as <ref>. No login, no credential.
+
+CLI SOURCE (github.com/supabase/cli tag v2.102.0, commit 0ad9687266c7b690f18edffaa9dd63dc1204c8a8; Go module paths under apps/cli-go):
+ 1. internal/utils/flags/db_url.go:42-43,59-68  --db-url => connType direct; pgconn.ParseConfig(flag) -> DbConfig (parsed sslmode/sslrootcert live only in its TLSConfig).
+ 2. internal/db/push/push.go:29  utils.ConnectByConfig(ctx, config)  -> internal/utils/connect.go:226-228 -> ConnectByConfigStream:223
+    ConnectByUrl(ctx, ToPostgresURL(config), ...): the connection is made from a REBUILT URL.
+ 3. internal/utils/connect.go:23-45  ToPostgresURL emits only user:password@host:port/db?connect_timeout=N&<RuntimeParams>. sslmode, sslrootcert and the parsed TLSConfig are DROPPED.
+    => sslmode=verify-full / sslrootcert in the --db-url are NOT honoured. (Matches the earlier CI probe: valid-wrong CA connected.)
+ 4. internal/utils/connect.go:157-168 ConnectByUrl removes non-TLS fallbacks; pkg/pgxv5/connect.go:17 pgx.ParseConfig(rebuilt url).
+ 5. pgconn v1.14.3 config.go:425,429  parseEnvSettings maps PGSSLMODE->sslmode and PGSSLROOTCERT->sslrootcert as DEFAULTS for any setting the URL does not carry;
+    config.go:619-690 configTLS: sslmode=verify-full => tlsConfig.ServerName=host and RootCAs from sslrootcert (config.go:~700+, ReadFile of the CA).
+    => verify-full IS reachable through the child process environment (PGSSLMODE=verify-full, PGSSLROOTCERT=<pinned CA file>), because the rebuilt URL has no sslmode.
+    Needs a CI proof against the real CLI (not just the source reading): wrong CA refuses, right CA + exact host accepts.
+ 6. config.go:287-321  "options" is not in notRuntimeParams => it lands in RuntimeParams and ToPostgresURL:29-31 re-emits it (relevant to B1; the pooler ignores it).
+
+NON-CREDENTIALED TLS HANDSHAKES from this VPS (openssl s_client -starttls postgres = SSLRequest + TLS, then closed; -CAfile pinned CA; -verify_hostname):
+ pinned CA file: prod-ca-2021.crt  sha256 700723581420dd1ac98fd7e9ac529f0ef210eadcaf87fc868a3ad7d114c2f3b7
+   subject "Supabase Root 2021 CA", self-signed, notAfter 2031-04-26, cert fingerprint-sha256 80:70:25:AD:...:CA:FA
+   (downloaded from supabase-downloads.s3-ap-southeast-1.amazonaws.com/prod/ssl/prod-ca-2021.crt; sha is for the pin, to be re-confirmed by the owner against Supabase's dashboard copy)
+ pooler  aws-1-us-east-1.pooler.supabase.com:5432 : Verification OK, peername *.pooler.supabase.com (WILDCARD; chain Root 2021 CA > Intermediate 2021 CA > leaf). 3 IPv4 addresses.
+ direct  db.<ref>.supabase.co:5432            : Verification OK, peername db.<ref>.supabase.co (EXACT per-project name). 1 IPv6 address only (no IPv4).
+ This VPS: global IPv6 address present; TLS to the direct host completed => the direct host IS reachable from this VPS (TCP + TLS only; no login).
+READING: verify-full on the pooler proves "a Supabase pooler" (any tenant), so the exact pooler host in the approval stays a control; on the direct host it proves this project's database.

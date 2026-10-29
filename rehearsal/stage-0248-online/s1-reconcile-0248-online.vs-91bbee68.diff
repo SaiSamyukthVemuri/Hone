@@ -1,0 +1,73 @@
+--- reference/s1-reconcile-0248.91bbee68.sh	2026-10-29 00:04:37.061208367 +0000
++++ s1-reconcile-0248-online.sh	2026-10-29 00:40:39.358420606 +0000
+@@ -1,5 +1,8 @@
+ #!/bin/bash
+-# REHEARSAL - NEVER MERGE. Hone STAGE 0248-ONLY: clear the s1-apply-0248.sh APPLY-STATE marker, and ONLY by a recorded reconcile.
++# REHEARSAL - NEVER MERGE. Hone STAGE 0248-ONLINE (delta of s1-reconcile-0248.sh 91bbee68): clear the s1-apply-0248-online.sh APPLY-STATE marker, and ONLY by a recorded reconcile.
++# The ALL route is unchanged. The NONE route reads its history evidence from the newest window.* S0a run (as before) OR the newest online.* directory
++# (the results of this stage's own pre-push reads, or of g02-read-0248-online.sh); the 1200 s rule is the SAME for every source, so a pre-push read (always older
++# than the marker) can never clear a marker.
+ # READ-ONLY on the database (it makes no connection at all): it classifies the marker from READ-BACK EVIDENCE that already exists on this Mac,
+ # written by the reviewed read scripts, and only when that evidence is newer than the marker:
+ #   ALL   the newest s1read.* run printed its OVERALL PASS and its history is exactly 246 rows, max 0248, 0248 once, 0247 absent
+@@ -19,6 +22,9 @@
+ # the pinned read queries: a sidecar must name exactly these (a4d3c5af = s1-history-0248.sql, 19e4e057 = g02-history-0248.sql)
+ SQL_S1H=a4d3c5afad277cef9c720ea534309b6e6843d92e8ecf15b5232e180f03246e2a
+ SQL_G02=19e4e05793e5fa033921ac35cd2a7337b7a6477d0f6a25747134791f7b317cfe
++#CONST-BEGIN
++RUNNER_SHA=471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357
++#CONST-END
+ die() { echo "STOP: $*" >&2; exit 1; }
+ sha() { shasum -a 256 -- "$1" | cut -d' ' -f1; }
+ utcnow() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+@@ -36,11 +42,22 @@
+   l=$(cat "$1"); rs=$(sha "$2") || return 1
+   printf '%s\n' "$l" | grep -Fq -e "\"file\":\"$3\"," && printf '%s\n' "$l" | grep -Fq -e "\"sql_sha256\":\"$4\"," && printf '%s\n' "$l" | grep -Fq -e "\"result_sha256\":\"$rs\","
+ }
++none_evidence() { # none_evidence DIR window|online : the g02 history read in DIR/results is bound, was taken at least NONE_WAIT_S after the marker, and shows exactly 245 rows, max 0246, nothing at 0247+
++  local d="$1" kind="$2" f at at_s c
++  f="$d/results/g02-history-0248.json"; at=$(sidecar_at "$d/results/g02-history-0248.meta.json" captured_at_utc) || at=""
++  [ -n "$at" ] && [ -f "$f" ] && [ ! -L "$f" ] && meta_ok "$d/results/g02-history-0248.meta.json" "$f" g02-history-0248.sql "$SQL_G02" || return 1
++  if [ "$kind" = online ]; then
++    grep -Fq -e '"exit_code":0,' "$d/results/g02-history-0248.meta.json" && grep -Fq -e "\"runner_sha256\":\"$RUNNER_SHA\"," "$d/results/g02-history-0248.meta.json" || return 1
++  fi
++  at_s=$(epoch "$at"); c=$(LC_ALL=C tr -d '[:space:]' < "$f")
++  [ "$at_s" -ge $((mt_s + NONE_WAIT_S)) ] && printf '%s' "$c" | grep -Eq '"applied_count":"?245"?[,}]' && printf '%s' "$c" | grep -q '"hosted_max":"0246"' \
++    && printf '%s' "$c" | grep -Eq '"versions_ge_0247":"?0"?[,}]'
++}
+ reconcile() {
+   [ -f "$STATEF" ] && [ ! -L "$STATEF" ] || die "there is no APPLY-STATE marker at $STATEF: nothing to reconcile."
+-  local mk mt mt_s d f cls="" ev="" at at_s r pr
++  local mk mt d f cls="" ev="" at at_s r pr
+   mk=$(cat "$STATEF"); mt=$(printf '%s' "$mk" | awk '{print $2}')
+-  printf '%s' "$mt" | LC_ALL=C grep -Eq "^$iso\$" || die "the marker has no readable time ($mk): it is not a marker of the s1-apply-0248.sh script. Report it to OPS."
++  printf '%s' "$mt" | LC_ALL=C grep -Eq "^$iso\$" || die "the marker has no readable time ($mk): it is not a marker of the s1-apply-0248 scripts. Report it to OPS."
+   mt_s=$(epoch "$mt"); case "$mt_s" in ''|*[!0-9]*) die "cannot read the marker time" ;; esac
+   # ALL
+   d=$(ls -dt "$ROOT"/s1read.* 2>/dev/null | head -1)
+@@ -59,18 +76,17 @@
+     if [ -n "$d" ] && mine "$d" && [ -f "$d/verdict.txt" ] && [ -f "$d/attest/attestation.json" ] && grep -q "$SEALED_SHA" "$d/attest/attestation.json" \
+        && [ "$(grep -cFx -e 'OVERALL PASS (provider range; base backup UNVERIFIED; restore not tested)' -e 'OVERALL PASS (provider range; base backup UNVERIFIED; restore not tested; idle path)' "$d/verdict.txt")" = 1 ] \
+        && ! grep -qx 'OVERALL PASS' "$d/verdict.txt"; then
+-      f="$d/results/g02-history-0248.json"; at=$(sidecar_at "$d/results/g02-history-0248.meta.json" captured_at_utc) || at=""
+-      if [ -n "$at" ] && [ -f "$f" ] && [ ! -L "$f" ] && meta_ok "$d/results/g02-history-0248.meta.json" "$f" g02-history-0248.sql "$SQL_G02"; then
+-        at_s=$(epoch "$at"); c=$(LC_ALL=C tr -d '[:space:]' < "$f")
+-        if [ "$at_s" -ge $((mt_s + NONE_WAIT_S)) ] && printf '%s' "$c" | grep -Eq '"applied_count":"?245"?[,}]' && printf '%s' "$c" | grep -q '"hosted_max":"0246"' \
+-           && printf '%s' "$c" | grep -Eq '"versions_ge_0247":"?0"?[,}]'; then cls=NONE; ev=$d; fi
+-      fi
++      none_evidence "$d" window && { cls=NONE; ev=$d; }
+     fi
+   fi
+-  [ -n "$cls" ] || die "no usable read-back evidence newer than the marker ($mk). ALL needs a passing s1read run captured after the marker; NONE needs a passing S0a run whose history read was taken at least $NONE_WAIT_S s after the marker. The marker stays. Nothing was changed."
++  if [ -z "$cls" ]; then # ONLINE: the newest online.* directory; its g02 sidecar must also be an exit-0 capture by the pinned runner
++    d=$(ls -dt "$ROOT"/online.* 2>/dev/null | head -1)
++    if [ -n "$d" ] && mine "$d"; then none_evidence "$d" online && { cls=NONE; ev=$d; }; fi
++  fi
++  [ -n "$cls" ] || die "no usable read-back evidence newer than the marker ($mk). ALL needs a passing s1read run captured after the marker; NONE needs a history read (a passing S0a run, or an online.* directory from g02-read-0248-online.sh) taken at least $NONE_WAIT_S s after the marker. The marker stays. Nothing was changed."
+   if [ "$cls" = NONE ]; then # the one route that allows a second push: it must be an IN-FLIGHT marker and no first push may still be alive
+     [ "$(printf '%s' "$mk" | awk '{print $1}')" = IN-FLIGHT ] || die "the marker word is not IN-FLIGHT ($mk): a push finished or the marker is not this script's, so a 245-row read means a restore or a wrong read, not 'nothing applied'. Report it to OPS. The marker stays."
+-    pgrep -f 'supabase|s1-apply-0248' >/dev/null 2>&1; pr=$?
++    pgrep -f 'supabase|s1-apply-0248|g02-read-0248' >/dev/null 2>&1; pr=$?
+     [ "$pr" = 1 ] || die "a supabase or s1-apply-0248 process is running (or cannot be ruled out, pgrep status $pr): the first push may still be alive. Wait until it has ended, then run this again. The marker stays."
+   fi
+   r="$ROOT/s1-apply/RECONCILE-$(utcnow)"
