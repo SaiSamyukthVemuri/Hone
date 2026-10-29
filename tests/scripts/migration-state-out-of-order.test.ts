@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
 // @ts-expect-error plain .mjs utility without type declarations
-import { evaluateOutOfOrder, PERMANENTLY_SKIPPED } from "../../scripts/migration-state.mjs";
+import { evaluateOutOfOrder, getMigrationState, pendingMigrationVersions, PERMANENTLY_SKIPPED } from "../../scripts/migration-state.mjs";
 
 // The out-of-order stage rule (0248 hosted ahead of 0247) must admit EXACTLY
 // the declared shape. Every case drives the pure evaluator so the controls do
@@ -64,5 +67,69 @@ describe("out-of-order stage declaration", () => {
 
   it("permanently skipped slots are still not gaps", () => {
     expect(run(range(1, 246), 246).undeclared_gaps).toEqual([]);
+  });
+});
+
+// F-OOO-1: a declared-unhosted version WITH a repo file is pending, even though it
+// sits below the hosted max.
+describe("pending migrations include declared-unhosted versions with a repo file", () => {
+  const entries = (nums: number[]) => nums.map((n) => ({ number: n, version: String(n).padStart(4, "0") }));
+  const declared = [{ version: "0248", unhosted_below: ["0247"] }];
+
+  it("0247 file present, hosted max 0248, declared unhosted: pending is 0247", () => {
+    expect(pendingMigrationVersions({ entries: entries(range(1, 248)), hostedMaxNumber: 248, declared })).toEqual(["0247"]);
+  });
+  it("0247 file present AND something above the max: both are pending", () => {
+    expect(pendingMigrationVersions({ entries: entries(range(1, 248).concat(250)), hostedMaxNumber: 248, declared })).toEqual(["0247", "0250"]);
+  });
+  it("NEGATIVE CONTROL: with no declaration, the below-max 0247 is invisible (the pre-fix behaviour)", () => {
+    expect(pendingMigrationVersions({ entries: entries(range(1, 248)), hostedMaxNumber: 248, declared: [] })).toEqual([]);
+  });
+  it("a declared version with no repo file adds nothing", () => {
+    expect(pendingMigrationVersions({ entries: entries(range(1, 246).concat(248)), hostedMaxNumber: 248, declared })).toEqual([]);
+  });
+  it("a malformed declaration adds nothing and does not throw", () => {
+    expect(pendingMigrationVersions({ entries: entries(range(1, 248)), hostedMaxNumber: 248, declared: [{ version: "0248", unhosted_below: ["x", 247, null] }] })).toEqual([]);
+  });
+});
+
+// PEER-1264 C3: drive getMigrationState itself (scan + record + wiring), not only
+// the pure helper, using the 0248-stage declaration as a literal.
+describe("getMigrationState wiring: a 0247 file with the 0248-stage declaration", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "mstate-"));
+  afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+  // A literal, so the test does not move when the live record does: the shape the
+  // 0248 stage declared (0248 hosted, 0247 deliberately not).
+  const declaration = [{ version: "0248", unhosted_below: ["0247"] }];
+
+  const fixture = (name: string, files: string[], record: Record<string, unknown>) => {
+    const dir = join(tmp, name, "migrations");
+    mkdirSync(dir, { recursive: true });
+    for (const f of files) writeFileSync(join(dir, f), "-- fixture\n");
+    const canonicalFile = join(tmp, name, "state.json");
+    writeFileSync(canonicalFile, JSON.stringify(record));
+    return getMigrationState({ dir, canonicalFile });
+  };
+  const record = {
+    hosted_migration_max: "0248",
+    hosted_applied_at: null,
+    hosted_note: "fixture",
+    hosted_out_of_order: declaration,
+  };
+
+  it("with the 0247 file present, pending is [0247] and the declaration stays valid", () => {
+    const st = fixture("with-0247", ["0246_a.sql", "0247_b.sql", "0248_c.sql"], record);
+    expect(st.pending_migrations).toEqual(["0247"]);
+    expect(st.undeclared_gaps).toEqual([]);
+    expect(st.invalid_out_of_order_declarations).toEqual([]);
+    expect(st.repo_migration_max).toBe("0248");
+  });
+  it("without the 0247 file, pending is empty (today's state)", () => {
+    const st = fixture("without-0247", ["0246_a.sql", "0248_c.sql"], record);
+    expect(st.pending_migrations).toEqual([]);
+  });
+  it("NEGATIVE CONTROL: the same files with no declaration lose 0247 (pre-fix) and report the gap-free repo as parity", () => {
+    const st = fixture("undeclared", ["0246_a.sql", "0247_b.sql", "0248_c.sql"], { ...record, hosted_out_of_order: [] });
+    expect(st.pending_migrations).toEqual([]);
   });
 });
