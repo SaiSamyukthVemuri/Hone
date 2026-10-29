@@ -88,4 +88,30 @@ describe("attributeVisit", () => {
     const r = attributeVisit(VISIT, [session("A", [block(30)])]);
     expect(Object.keys(r).join(",")).not.toMatch(/bill|unit|charge|price|amount/i);
   });
+
+  // Codex P2 4408020900: a partly recorded contribution is a floor, not a total.
+  it("one session with a recorded and an unrecorded block keeps the unknown indicator", () => {
+    const r = attributeVisit(VISIT, [session("A", [block(20), block(null)])]);
+    expect(r.practitioners[0].recordedMinutes).toBe(20);
+    expect(r.practitioners[0].incomplete).toBe(true);
+    expect(r.summedMinutes).toBe(20);
+    expect(r.hasUnknown).toBe(true);
+  });
+
+  it("merging a practitioner's known and unknown sessions keeps the unknown indicator", () => {
+    const r = attributeVisit(VISIT, [
+      { id: "s1", practitionerId: "A", appointmentId: VISIT, blocks: [block(30)] },
+      { id: "s2", practitionerId: "A", appointmentId: VISIT, blocks: [block(null)] },
+    ]);
+    expect(r.practitioners).toHaveLength(1);
+    expect(r.practitioners[0].recordedMinutes).toBe(30);
+    expect(r.practitioners[0].incomplete).toBe(true);
+    expect(r.hasUnknown).toBe(true);
+  });
+
+  it("a fully recorded contribution is not incomplete, and deleted blocks do not count", () => {
+    const r = attributeVisit(VISIT, [session("A", [block(20), block(null, undefined, undefined, true)])]);
+    expect(r.practitioners[0].incomplete).toBe(false);
+    expect(r.hasUnknown).toBe(false);
+  });
 });

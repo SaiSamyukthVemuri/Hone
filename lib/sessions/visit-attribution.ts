@@ -29,6 +29,8 @@ export type PractitionerContribution = {
   areaCount: number;
   /** null: no area of theirs carries minutes (unknown, not zero). */
   recordedMinutes: number | null;
+  /** Some live area of theirs has no minutes: recordedMinutes is a floor. */
+  incomplete: boolean;
 };
 
 export type VisitAttribution = {
@@ -39,7 +41,7 @@ export type VisitAttribution = {
   recordedSpanMinutes: number | null;
   /** True only when two different practitioners' recorded intervals overlap. */
   concurrentRecorded: boolean;
-  /** Some contribution has no recorded minutes, so the sum is a floor. */
+  /** Some contribution has no, or only partly recorded, minutes: the sum is a floor. */
   hasUnknown: boolean;
   /** Sessions refused because they belong to another visit or none. */
   excludedSessionCount: number;
@@ -68,9 +70,13 @@ export function attributeVisit(
       sessionIds: [],
       areaCount: 0,
       recordedMinutes: null,
+      incomplete: false,
     };
     c.sessionIds.push(s.id);
     c.areaCount += sum.areaCount;
+    // Coverage is judged per session BEFORE aggregation: once the minutes are
+    // summed, a partly recorded contribution looks like a complete one.
+    if (sum.areasWithMinutes < sum.areaCount) c.incomplete = true;
     if (sum.areasWithMinutes > 0) c.recordedMinutes = (c.recordedMinutes ?? 0) + sum.recordedMinutes;
     byPractitioner.set(s.practitionerId, c);
 
@@ -111,7 +117,7 @@ export function attributeVisit(
     summedMinutes,
     recordedSpanMinutes: anyLive && allLiveBlocksTimed ? Math.round(covered / 60_000) : null,
     concurrentRecorded: concurrent,
-    hasUnknown: practitioners.some((p) => p.recordedMinutes === null),
+    hasUnknown: practitioners.some((p) => p.recordedMinutes === null || p.incomplete),
     excludedSessionCount: excluded,
   };
 }
