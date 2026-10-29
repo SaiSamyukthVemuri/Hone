@@ -640,6 +640,13 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id", studioId)',
   },
   {
+    path: "lib/billing/jurisdiction-owner-confirmation.ts",
+    purpose:
+      "Owner confirmation of the studio's payment country and currency (default-off switch), saved through the initialize-only 0270 command.",
+    why: "initialize_studio_payment_jurisdiction_owner (0270) grants EXECUTE to service_role ONLY (revoked from public, anon, authenticated and service_role by name, then granted to service_role), and studio_payment_jurisdictions has no browser-role path, so the session client cannot call it. The only caller is confirmStudioJurisdictionAsOwner, reached from the settings server action after getCurrentPractitionerWithStudio resolves the studio server-side and the practitioner role is checked to be owner; the studio id is never taken from the form. It never updates a stored pair (the command is initialize-only and audited), and does nothing unless OWNER_JURISDICTION_CONFIRMATION_ENABLED is true.",
+    scopeGuard: "p_studio_id: input.studioId",
+  },
+  {
     path: "lib/booking/public-slot-range.ts",
     purpose: "Public availability read across a DATE RANGE, resolved once.",
     why:
