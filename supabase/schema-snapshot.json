@@ -3,7 +3,7 @@
   "migrations": {
     "count": 247,
     "last": "0257_studio_payment_jurisdiction_failed_attempt_ack.sql",
-    "sha256": "ee0c30d2accc67cc18fc7f803b0ed3fdd1c38e0a74b1313320371b40aca0d9fe"
+    "sha256": "91bacac918d4ac70cdcf9e0f11f9199fe86162d01766231a9ecf9593f5ab0c85"
   },
   "public": {
     "tables": [

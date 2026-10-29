@@ -23,7 +23,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 |---|---|
 | **Hosted (production) migration max** | **0248**, declared in `docs/production/migration-state.json`. Read back 2026-10-29T01:21:48Z–01:22:11Z (`window-s1read-0248.sh`): 246 history rows, max `0248`, `0248` present exactly once, `0247` absent. **No server apply timestamp was captured**, so `hosted_applied_at` stays null; see the client-side marker below. |
 | **Repo migration max** | **0257** (`0257_studio_payment_jurisdiction_failed_attempt_ack.sql`), derived from the source files on this tree. |
-| **Remote-only migrations** | **None.** The repository and production agree. |
+| **Remote-only migrations** | **None.** Production has nothing the repository lacks; the repository is ahead by the pending 0257. |
 | **Pending migrations** | **`0257`** (additive: two audit columns and a v2 jurisdiction command; unapplied, held until Sam approves the exact package). `0249`-`0256` are absent from this tree and `0247` is a declared unhosted gap below the hosted head. Applying `0257` follows the 0248 out-of-order precedent: plain push of the production prefix plus `0257` only, then record `0257` with `unhosted_below` `0247`, `0249`-`0256` in `hosted_out_of_order`. |
 | **Next free number** | Next free number is **0258** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file; availability in a finite source tree is not allocation authority. |
 | **Project ref** | Canonical Hone production project. |

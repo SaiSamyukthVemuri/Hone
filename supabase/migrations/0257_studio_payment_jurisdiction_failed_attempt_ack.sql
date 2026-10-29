@@ -12,8 +12,9 @@
 --
 -- This migration is additive:
 --   1. two audit columns on studio_payment_jurisdiction_changes;
---   2. a v2 command whose body is 0214's body with ONE behavioural difference,
---      in F6 and the check right after it (marked "0257" below).
+--   2. a v2 command whose body is 0214's body with the only behavioural change
+--      to F6 (and the set check right after it), plus the new arguments, their
+--      validation and the audit fields (marked "0257" below).
 -- 0214's command, its helpers and every grant on them are untouched. The v2
 -- command calls the two 0214 helpers as its owner; no role holds EXECUTE on
 -- them, and none is granted here.
@@ -48,6 +49,8 @@ alter table public.studio_payment_jurisdiction_changes
   add constraint studio_payment_jurisdiction_changes_failed_evidence_check check (
     (cardinality(failed_attempts_acknowledged) = 0 and failed_attempts_evidence is null)
     or (cardinality(failed_attempts_acknowledged) > 0
+        -- NOT NULL stated explicitly: a CHECK that evaluates to NULL passes.
+        and failed_attempts_evidence is not null
         and failed_attempts_evidence = 'stripe_live_account_census_by_studio_metadata')
   );
 
@@ -213,7 +216,7 @@ begin
   -- bound and observed; a test-mode row must name a test-mode bound account
   -- (observed as this country, or never observed); only a test-mode
   -- provisioning attempt may name no account at all.
-  -- 0257 (the ONLY difference from 0214): a live or unknown-mode attempt that
+  -- 0257 (the only behavioural change to F6): a live or unknown-mode attempt that
   -- named no account is not a refusal here when it is failed, terminal and
   -- holds no claim token; whether the operator acknowledged exactly those is
   -- decided just below. A pending or processing one still refuses.

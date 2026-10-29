@@ -283,7 +283,7 @@ describe("J10-C test mode and other countries", () => {
     }]);
   });
 
-  it("C4 v1 behaves as before: a studio with a failed live null-account attempt stays refused and v1 has no knowledge of the new fields", async () => {
+  it("C4 v1 still refuses a failed live null-account attempt, even given its id as a test attempt, and writes nothing", async () => {
     const s = await activeCa("c4");
     const id = await attempt(s);
     expect(await v1(s.studioId, { testAttempts: [id] })).toBe("refused_account_unverified");
