@@ -136,7 +136,7 @@ SUMLN=$(echo "$OUT" | grep -n 'what this run does' | head -1 | cut -d: -f1); APL
 [ -z "$(grep -vE '^query:(g02-history-0254|g12-0254-preflight-0254|s1-open-transactions-0254|w03-table-sizes-0254) |^(dry|push)$' "$H/calls.log")" ] && ! grep -qiE 'alter|role|set ' "$H/calls.log" && ok "settings untouched: the only calls the CLI saw were the four pinned reads, one dry run and one push" || bad "unexpected CLI call"
 RUNDIR=$(ls -d "$H"/hone-s1/one-command/run.* | head -1)
 [ -f "$RUNDIR/RESULT.txt" ] && [ -f "$RUNDIR/driver.transcript" ] && ! grep -rqF -e "$CTOK" -e "$CPW" "$RUNDIR" && ok "the evidence directory has the result and a masked transcript; no canary secret in any file" || bad "evidence directory"
-[ "$(stat -f %Lp "$RUNDIR" 2>/dev/null || stat -c %a "$RUNDIR")" = 700 ] && ok "the run directory is mode 700" || bad "run dir mode"
+[ "$(stat -c %a "$RUNDIR" 2>/dev/null || stat -f %Lp "$RUNDIR")" = 700 ] && ok "the run directory is mode 700" || bad "run dir mode"
 
 # ------------------------------------------------------------------ D. the person does not approve
 home1; answers no; hrun
