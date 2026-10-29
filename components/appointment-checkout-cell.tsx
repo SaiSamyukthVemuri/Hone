@@ -14,6 +14,10 @@ const SETTLED_LABEL: Partial<Record<AppointmentPaymentState, string>> = {
   settled_cash: "Paid \u00b7 cash",
   settled_e_transfer: "Paid \u00b7 e-transfer",
   settled_other: "Paid \u00b7 other",
+  // HON-45: collected, but less than the quoted price.
+  settled_cash_part: "Part paid \u00b7 cash",
+  settled_e_transfer_part: "Part paid \u00b7 e-transfer",
+  settled_other_part: "Part paid \u00b7 other",
   settled_waived: "Fee waived",
   settled_owing: "Still owes",
 };

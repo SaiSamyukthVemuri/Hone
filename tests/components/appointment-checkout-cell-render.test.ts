@@ -184,3 +184,20 @@ describe("there is exactly ONE checkout implementation", () => {
     expect(opens.length).toBeGreaterThanOrEqual(3);
   });
 });
+
+describe("HON-45: a part payment is never badged as the visit paid", () => {
+  it.each([
+    ["settled_cash_part", "Part paid \u00b7 cash"],
+    ["settled_e_transfer_part", "Part paid \u00b7 e-transfer"],
+    ["settled_other_part", "Part paid \u00b7 other"],
+  ])("%s renders %s, neutral, with no Checkout", (state, label) => {
+    const html = render(state);
+    expect(html).toContain(`appointment-${state}`);
+    expect(html).toContain(label);
+    expect(html).not.toMatch(/>\s*Paid/);
+    expect(hasCheckout(html)).toBe(false);
+    expect(html).toContain("bg-neutral-100");
+    expect(html).not.toContain("emerald");
+  });
+});
+
