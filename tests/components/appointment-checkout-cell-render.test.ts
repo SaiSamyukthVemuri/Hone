@@ -91,6 +91,51 @@ describe("a collected outcome of $0 reads unpaid and offers no Checkout (Codex P
   });
 });
 
+describe("PARITY with 0187: Checkout is offered only for methods OUTSIDE appointment_has_blocking_settlement", () => {
+  // The blocking set is read from the migration, not copied by hand, so the
+  // cell and the SQL cannot drift apart again (Insurance PEER-1248-DELTA-3 C2).
+  const sql = readFileSync(
+    path.resolve(__dirname, "../../supabase/migrations/0187_appointment_settlement.sql"),
+    "utf8",
+  );
+  const fn = sql.slice(sql.indexOf("create or replace function public.appointment_has_blocking_settlement("));
+  const blocking = [...fn.slice(0, fn.indexOf("$$;", fn.indexOf("$$") + 2)).matchAll(/t\.method in \(([^)]*)\)/g)]
+    .flatMap((m) => [...m[1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]));
+
+  it("the blocking set was actually extracted from the SQL", () => {
+    expect(blocking.length).toBeGreaterThanOrEqual(4);
+    expect(blocking).not.toContain("still_owes");
+  });
+
+  it("every settlement method, at every amount against a quote, renders Checkout only if it is not blocking", async () => {
+    const { SETTLEMENT_STATE_BY_METHOD, settlementDisplayState } = await import(
+      "@/lib/billing/appointment-payment-state"
+    );
+    const methods = Object.keys(SETTLEMENT_STATE_BY_METHOD) as Array<keyof typeof SETTLEMENT_STATE_BY_METHOD>;
+    // Every method the display layer knows is classified by the SQL one way or the other.
+    expect(methods.filter((m) => !blocking.includes(m))).toEqual(["still_owes"]);
+    for (const method of methods) {
+      for (const quotedAmountCents of [null, 10000]) {
+        for (const amountCents of [0, 1, 9999, 10000, 12000]) {
+          const state = settlementDisplayState({ method, amountCents, quotedAmountCents });
+          if (hasCheckout(render(state))) {
+            expect(
+              blocking.includes(method),
+              `${method} (${amountCents}/${quotedAmountCents}) -> ${state} offers Checkout but 0187 blocks it`,
+            ).toBe(false);
+          }
+        }
+      }
+    }
+  });
+
+  it("and a blocking method never reaches a Checkout-offering state (negative control: still_owes does)", async () => {
+    const { settlementDisplayState } = await import("@/lib/billing/appointment-payment-state");
+    expect(hasCheckout(render(settlementDisplayState({ method: "still_owes", amountCents: 0, quotedAmountCents: 10000 })))).toBe(true);
+    expect(hasCheckout(render(settlementDisplayState({ method: "paid_cash", amountCents: 0, quotedAmountCents: 10000 })))).toBe(false);
+  });
+});
+
 describe("still_owes states BOTH facts: unpaid, and still collectable", () => {
   it("renders the neutral Still owes badge AND a Checkout entry", () => {
     const html = render("settled_owing");
