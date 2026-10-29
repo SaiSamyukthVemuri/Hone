@@ -277,11 +277,11 @@ async function sendReminderPass(opts: {
   if (!appt.studio) return;
   if (!appt.client?.email) return;
 
-  const wantsReminder =
+  let wantsReminder =
     (appt.studio as unknown as Record<string, boolean>)[studioToggle] === true;
   // Absent only on a studios row read before 0186 is applied. The column
   // defaults true, so absent must mean ENABLED, never disabled.
-  const intakeEnabled = appt.studio.send_intake_reminders !== false;
+  let intakeEnabled = appt.studio.send_intake_reminders !== false;
 
   // CASE 6: nothing to send. No intake read, no claim, no attempt.
   if (!wantsReminder && !intakeEnabled) return;
@@ -363,7 +363,17 @@ async function sendReminderPass(opts: {
   const liveSwitches = liveStudio as unknown as Record<string, boolean | null>;
   const liveWantsReminder = liveSwitches[studioToggle] === true;
   const liveIntakeEnabled = liveSwitches.send_intake_reminders !== false;
-  if (wantsReminder ? !liveWantsReminder : !liveIntakeEnabled) {
+  // The message is composed from the LIVE switches, never discarded wholesale:
+  // a reminder switched off after the scan downgrades to the standalone intake
+  // reminder when intake reminders are still on and the intake is incomplete
+  // (the claim already counted an attempt, and a third attempt is never
+  // re-scanned). Only a downgrade is considered: a reminder switched ON after
+  // the scan is left to the next fire.
+  if (wantsReminder && !liveWantsReminder) {
+    wantsReminder = false;
+    intakeEnabled = liveIntakeEnabled;
+  }
+  if (!wantsReminder && !liveIntakeEnabled) {
     await recordEmailResult(admin, appt.id, emailType, false);
     stats.skipped += 1;
     return;

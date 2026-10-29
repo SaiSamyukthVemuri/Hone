@@ -22,6 +22,7 @@ const h = vi.hoisted(() => {
     intakeOnly: 0,
     results: [] as boolean[],
     heartbeat: [] as Array<Record<string, unknown>>,
+    intake: null as { id: string; status: string } | null,
   };
   // The scan snapshot: everything on.
   const APPT = {
@@ -52,7 +53,7 @@ const h = vi.hoisted(() => {
   function query(table: string) {
     const filters: Filter[] = [];
     const b: Record<string, unknown> = {};
-    for (const m of ["select", "order", "limit", "abortSignal"]) b[m] = () => b;
+    for (const m of ["select", "order", "limit", "abortSignal", "update"]) b[m] = () => b;
     for (const op of ["eq", "is", "lt", "gte", "lte"]) {
       b[op] = (column: string, value: unknown) => {
         filters.push([op, column, value]);
@@ -61,7 +62,12 @@ const h = vi.hoisted(() => {
     }
     b.maybeSingle = () =>
       Promise.resolve({
-        data: table === "studios" ? { ...APPT.studio, ...state.live } : APPT,
+        data:
+          table === "studios"
+            ? { ...APPT.studio, ...state.live }
+            : table === "client_intake_forms"
+              ? state.intake
+              : APPT,
         error: null,
       });
     b.then = (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) => {
@@ -116,6 +122,7 @@ vi.mock("@/lib/email/send-appointment", () => ({
 import { GET } from "@/app/api/cron/appointment-reminders/route";
 
 beforeEach(() => {
+  vi.stubEnv("INTAKE_SIGNING_SECRET", "synthetic-intake-secret-for-tests-only-0123456789");
   vi.stubEnv("APPOINTMENT_SIGNING_SECRET", "synthetic-signing-secret-for-tests-only-0123456789");
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-10-08T17:00:00.000Z"));
@@ -125,6 +132,7 @@ beforeEach(() => {
   h.state.intakeOnly = 0;
   h.state.results = [];
   h.state.heartbeat = [];
+  h.state.intake = null;
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
@@ -158,5 +166,31 @@ describe("HON-13: the 24h reminder email honours the switch as it is when the ro
     await run();
     // No success is ever recorded for an email that was not sent.
     expect(h.state.results).not.toContain(true);
+  });
+
+  // Codex P2 (1181): turning only the reminder off must not discard an intake
+  // reminder that is still enabled and still needed.
+  it("reminder OFF after the scan, intake reminders ON and incomplete: the standalone intake reminder goes out", async () => {
+    h.state.live = { send_24h_reminders: false, send_2h_reminders: true, send_intake_reminders: true };
+    h.state.intake = { id: "intake-1", status: "in_progress" };
+    await run();
+    expect(h.state.sent24).toBe(0);
+    expect(h.state.intakeOnly).toBe(1);
+    expect(h.state.results).toContain(true);
+  });
+
+  it("reminder OFF after the scan, intake ON but complete: nothing is sent and the claim is cleared", async () => {
+    h.state.live = { send_24h_reminders: false, send_2h_reminders: true, send_intake_reminders: true };
+    h.state.intake = { id: "intake-1", status: "submitted" };
+    await run();
+    expect(h.state.sent24 + h.state.intakeOnly).toBe(0);
+    expect(h.state.results).not.toContain(true);
+  });
+
+  it("both OFF after the scan: nothing is sent", async () => {
+    h.state.live = { send_24h_reminders: false, send_2h_reminders: true, send_intake_reminders: false };
+    h.state.intake = { id: "intake-1", status: "in_progress" };
+    await run();
+    expect(h.state.sent24 + h.state.intakeOnly).toBe(0);
   });
 });
