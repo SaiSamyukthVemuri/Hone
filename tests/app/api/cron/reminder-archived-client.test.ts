@@ -217,6 +217,9 @@ vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
   }) };
 });
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => h.admin }));
+// 0247 compatibility: this suite drives the PRE-0247 (legacy claim) email path; the mode choice
+// is proved in reminder-authority-dispatch.test.ts.
+vi.mock("@/lib/email/reminder-authority-mode", () => ({ detectReminderAuthorityMode: async () => "legacy" }));
 vi.mock("@/lib/cron/auth", () => ({ isAuthorizedCronRequest: () => true }));
 vi.mock("@/lib/cron/reminder-heartbeat", () => ({ recordReminderRunSuccess: () => Promise.resolve() }));
 vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: () => Promise.resolve() }));
