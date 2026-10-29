@@ -78,6 +78,9 @@ mkapply() { # mkapply [SRC] : the variant of the apply script inside the fake HO
 }
 
 
+# the reviewed reconcile script insists on macOS and uses pgrep only on the NONE route: shims for Linux (as in the 0254 rehearsal)
+printf '%s\n' '#!/bin/bash' 'if [ "${1:-}" = -s ]; then echo Darwin; else exec "$(PATH=/usr/bin:/bin command -v uname)" "$@"; fi' > "$T/shim/uname"; chmod 755 "$T/shim/uname"
+printf '%s\n' '#!/bin/bash' 'exit 1' > "$T/shim/pgrep"; chmod 755 "$T/shim/pgrep"; export PATH="$T/shim:$PATH"
 # ------------------------------------------------------------------ harness pieces
 mkrecv() { echo "RUNNER_SHA=$TRUN" > "$H/rconst.txt"; mkvar "$R" "$H/hone-s1/s1-apply-0254-online/s1-reconcile-0254-online.sh" "$H/rconst.txt"; }
 mkmanifest() { # mkmanifest [IDLE_S] : the shipped manifest with test pins (the variants installed in this fake HOME) and a short idle limit
@@ -96,7 +99,7 @@ calls() { [ -f "$H/calls.log" ] && sed -E 's/ sql=.*//' "$H/calls.log" | tr '\n'
 marker() { [ -f "$H/hone-s1/s1-apply/APPLY-STATE" ] && awk '{print $1}' "$H/hone-s1/s1-apply/APPLY-STATE" || echo none; }
 result_of() { echo "$OUT" | sed -n 's/^ONE-COMMAND RESULT: //p' | head -1; }
 nrec() { ls "$H"/hone-s1/s1-apply/RECONCILE-* 2>/dev/null | wc -l | tr -d ' '; }
-pushes() { [ -f "$H/calls.log" ] && grep -c '^push$' "$H/calls.log" || echo 0; }
+pushes() { local n=0; [ -f "$H/calls.log" ] && n=$(grep -c '^push$' "$H/calls.log"); echo "${n:-0}"; }
 leaks() { { [ -f "$H/leak.log" ] && cat "$H/leak.log"; grep -rIl -e "$CTOK" -e "$CPW" "$H" 2>/dev/null | grep -v -e '/stubcfg$' -e '/supabase-cli/supabase-go$' -e '/ans$'; echo "$OUT" | grep -e "$CTOK" -e "$CPW"; } | head -3; }
 READS4="query:g02-history-0254 query:g12-0254-preflight-0254 query:s1-open-transactions-0254 query:w03-table-sizes-0254"
 dumpdbg() { echo "--- driver.debug / reconcile.out of $H:"; cat "$H"/hone-s1/one-command/run.*/driver.debug 2>&1 | tail -12; cat "$H"/hone-s1/one-command/run.*/reconcile.out 2>&1 | tail -6; }
@@ -206,7 +209,7 @@ XE
   echo "APPROVE_WORD=GONOW"; echo "VERIFIED_LINE=RESULT: APPLIED+VERIFIED"; echo "IDLE_S=6"; echo "HARD_S=60"
   echo "PIN=$(sha "$G/hone-s1/stage-x/apply-x.sh")  stage-x/apply-x.sh"; echo "PIN=$(sha "$G/hone-s1/stage-x/reconcile-x.sh")  stage-x/reconcile-x.sh"
   echo "PROMPT=approve|Go ahead with X? <END>"; echo "PROMPT=secret-token|Access token: <END>"; echo "PROMPT=secret-password|Password: <END>"; } > "$G/stage.conf"
-H=$G; RUNNER=$D/hone-stage-run.sh; printf '%s\t%s\t0\n' ">>> To run this stage now, type exactly GONOW (anything else cancels, nothing has connected): " GO > "$H/ans"; printf '%s\t%s\t1\n' "$Q_TOK" "$CTOK" >> "$H/ans"; printf '%s\t%s\t1\n' "$Q_PW" "$CPW" >> "$H/ans"
+H=$G; RUNNER=$D/hone-stage-run.sh; printf '%s\t%s\t0\n' ">>> To run this stage now, type exactly GONOW (anything else cancels, nothing has connected): " GONOW > "$H/ans"; printf '%s\t%s\t1\n' "$Q_TOK" "$CTOK" >> "$H/ans"; printf '%s\t%s\t1\n' "$Q_PW" "$CPW" >> "$H/ans"
 hrun
 if [ $RC = 0 ] && [ "$(result_of)" = "APPLIED+VERIFIED" ] && [ "$(marker)" = none ] && echo "$OUT" | grep -q 'stage: X1'; then ok "GENERIC: the same runner runs a different stage (other approval word, paths and prompt table) from its manifest alone"; else bad "generic stage" "rc=$RC result=$(result_of) $(echo "$OUT" | tail -6)"; fi
 

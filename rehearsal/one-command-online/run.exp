@@ -39,7 +39,7 @@ proc stop_child {} {
   catch {close}; catch {wait}
 }
 proc pending_tail {} { ;# whatever the child printed that no pattern consumed (an unflushed prompt)
-  global timeout expect_out
+  global timeout expect_out spawn_id
   set timeout 1; set p ""
   catch { expect { -re {(?s).+} { set p $expect_out(0,string) } timeout {} eof {} } }
   return [tail_of $p]

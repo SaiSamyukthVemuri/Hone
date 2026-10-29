@@ -113,7 +113,9 @@ reconcile. Nothing is retried. No settings are changed. Ctrl-C at any point stop
 EOF
 { echo "APPLY=$ROOT/$M_APPLY"; echo "IDLE_S=$M_IDLE"; echo "HARD_S=$M_HARD"; echo "RUN=$RUN"; echo "PROMPTS=$RUN/prompts.txt"; echo "ROOT=$ROOT"; echo "APPROVE_WORD=$M_WORD"; echo "VERIFIED_LINE=$M_VERIFIED"; } > "$RUN/driver.cfg"
 echo "started $(utcnow)" > "$RUN/run.log"
+INTSEEN=""; trap 'INTSEEN=1' INT TERM HUP   # from here the driver handles the signal (it is in our foreground group too); we classify from disk afterwards
 expect -f "$EXP" "$RUN/driver.cfg"; DRC=$?
+trap 'REASON="interrupted"; exit 130' INT TERM HUP
 echo "driver exit $DRC $(utcnow)" >> "$RUN/run.log"
 res() { sed -n "s/^$1=\(.*\)\$/\1/p" "$RUN/driver.result" 2>/dev/null | head -1; }
 REASON=$(res STOP_REASON)
