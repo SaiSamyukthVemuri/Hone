@@ -1322,6 +1322,14 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "HON-18 / CLN-007: 0244 routine clinical reading correction diffs and actor snapshots. PENDING field review under TRUTH-01B, NOT EXPORTED: old/new values are clinical data; this registry entry grants no new export authority or retention policy. Retired signed-record ledgers and native setup captures remain separate.",
   },
+  treatment_setup_range_confirmations: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    fieldReviewRequired: true,
+    reason:
+      "HON-8 / 0267 (prepare-only, not applied): a practitioner's recorded confirmation that a numeric machine reading outside a documented range was seen and accepted, keyed to the capture it belongs to. PENDING field review under TRUTH-01B, NOT EXPORTED. Clinical and studio-owned; it carries the confirmed value and the practitioner who confirmed, and its disposition must follow whatever treatment_setup_captures and treatment_setup_readings are given. This registry entry grants no export authority.",
+  },
   imported_treatment_memories: {
     kind: "pending",
     ticket: "TRUTH-01B",
