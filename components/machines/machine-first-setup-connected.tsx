@@ -338,6 +338,12 @@ export function MachineFirstSetupConnected({
       // panel shows nothing chosen and states the reason, rather than an
       // empty picker beside a claim that a machine is remembered.
       unavailableSelection={ctx.rememberedUnavailable}
+      // The unit this client's last setup used, offered (not selected) when
+      // nothing is remembered. Forwarded here or it is inert in the real route.
+      suggestedMachine={ctx.suggestedMachine}
+      // A reopened visit's last saved unit and mode. Forwarded here or it is
+      // inert in the real route.
+      restoredSelection={ctx.restoredSelection}
       inventoryReason={ctx.inventoryReason}
       persistence={ctx.persistence ?? NO_PERSISTENCE}
       // The catalogue is whatever the SERVER resolved, so the synthetic demo

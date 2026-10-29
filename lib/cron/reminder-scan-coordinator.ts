@@ -13,6 +13,12 @@ export const REMINDER_SCAN_LEASE_SECONDS = 120;
 export const REMINDER_SCAN_MAX_CANDIDATES = 200;
 export const REMINDER_SCAN_MAX_QUERIES = 8;
 const PAGE_SIZE = 50;
+// The single read retry asks for a lighter page after a short pause. The first
+// timeout is evidence that a full page (appointments plus four embeds) did not
+// answer inside its 1 s budget; repeating the identical request immediately
+// fails the same way. Resume is keyset-based, so a smaller page loses nothing.
+const RETRY_PAGE_SIZE = 10;
+const RETRY_BACKOFF_MS = 250;
 const ATTEMPTS_PER_PASS = 50;
 // Four pass records plus rotation metadata fit the approved 2 KiB ceiling.
 const MAX_PASS_BYTES = 448;
@@ -211,8 +217,10 @@ export async function runReminderScanBatch<T extends Candidate>(ports: {
   readPage: (pass: ReminderScanPass, query: Window & { after: ReminderScanCursor | null; limit: number }, signal: AbortSignal) => Promise<readonly T[]>;
   handle: (pass: ReminderScanPass, candidate: T, window: Window, deadline: number) => Promise<Handling>;
   now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
 }): Promise<BatchResult> {
   const now = ports.now ?? Date.now;
+  const sleep = ports.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }));
   const deadline = now() + 45_000;
   const result: BatchResult = { kind: "partial", reason: "work_budget", scanned: 0, attempted: 0, queries: 0, coverageUnconfirmed: false };
   let stage: ScanFailureStage = "acquire";
@@ -279,8 +287,8 @@ export async function runReminderScanBatch<T extends Candidate>(ports: {
         state.lower = window.startIso;
       }
       const endIso = Date.parse(state.upper) < Date.parse(window.endIso) ? state.upper : window.endIso;
-      const limit = Math.min(PAGE_SIZE, REMINDER_SCAN_MAX_CANDIDATES - result.scanned);
-      const query = { startIso: window.startIso, endIso, after: state.after, limit };
+      let limit = Math.min(PAGE_SIZE, REMINDER_SCAN_MAX_CANDIDATES - result.scanned);
+      let query = { startIso: window.startIso, endIso, after: state.after, limit };
       result.queries++;
       stage = "read";
       let rows: readonly T[];
@@ -297,8 +305,16 @@ export async function runReminderScanBatch<T extends Candidate>(ports: {
         if (result.queries >= REMINDER_SCAN_MAX_QUERIES || now() + 22_000 >= deadline) throw error;
         stage = "renew";
         if (!await ports.coordinator.renew(token)) return unavailable("coordination", "coordination_unavailable");
+        // The backoff is spent BEFORE the reserve check below, so the check
+        // still bounds the retry's end at the same 25 s and the handler
+        // reserve (20 s) is untouched.
+        await sleep(RETRY_BACKOFF_MS);
         stage = "read";
         if (now() + 21_000 >= deadline) throw error;
+        // `limit` follows the retry page so the exhausted test below compares
+        // against the size actually asked for.
+        limit = Math.min(limit, RETRY_PAGE_SIZE);
+        query = { ...query, limit };
         result.queries++;
         result.readRetry.attempted = true;
         try {

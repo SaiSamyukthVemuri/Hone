@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -1485,6 +1485,69 @@ describe("a failed recorded-captures read is reported, not flattened", () => {
     signIn("studio-fett", "pract-sabrina", "owner");
     const ctx = await actions.loadMachineSetupContext(ROUTE);
     expect(ctx.recordedSetupUnavailable).toBe(false);
+  });
+});
+
+describe("the prior-unit suggestion fails CLOSED when the remembered-machine read fails", () => {
+  // THE DEFECT (Codex, #1240 4408610747): a failed read of the practitioner's
+  // remembered machine was caught into `persistence`, leaving `remembered` and
+  // `rememberedUnavailable` both null - which the suggestion reads as "nothing
+  // is remembered" and so offered the previous visit's unit beside a choice
+  // that may well exist. A failed read is "could not tell", not "none".
+  const DEVICE = {
+    id: "room-9",
+    studio_id: "studio-1",
+    machine_profile_id: synthetic.SYNTHETIC_DEMO_PROFILE.profileId,
+    machine_profile_version: synthetic.SYNTHETIC_DEMO_PROFILE.version,
+    display_name: "Room 9",
+    installed_options: [],
+    retired_at: null,
+  };
+  const PRIOR = [
+    {
+      session_block_id: "block-0",
+      machine_profile_id: synthetic.SYNTHETIC_DEMO_PROFILE.profileId,
+      machine_profile_version: synthetic.SYNTHETIC_DEMO_PROFILE.version,
+      mode_key: "galvanic",
+      group_key: "g1",
+      channels: [],
+      stage_key: null,
+      field_key: "current",
+      value_numeric: 100,
+      absence_reason: null,
+      native_unit: "µA",
+      decimals: 0,
+      revision: 1,
+      capture_id: "cap-0",
+      studio_machine_id: "room-9",
+      observation_source: "practitioner-entered",
+      recorded_at: "2026-10-01T10:00:00Z",
+    },
+  ];
+
+  function arrange() {
+    vi.stubEnv("HONE_SYNTHETIC_MACHINE_PROFILE", "1");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
+    signIn("studio-1", "pract-1");
+    DB.rowsFor.studio_machines = [DEVICE];
+    DB.rpcResult = PRIOR;
+  }
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("CONTROL: with the read answering 'nothing remembered', the previous unit IS offered", async () => {
+    arrange();
+    DB.rowsFor.practitioners = [{ default_machine_id: null, default_machine_mode: null }];
+    const ctx = await actions.loadMachineSetupContext(ROUTE);
+    expect(ctx.suggestedMachine?.deviceId).toBe("room-9");
+  });
+
+  it("offers NOTHING when the remembered-machine read fails", async () => {
+    arrange();
+    DB.errorFor.practitioners = { message: "connection reset" };
+    const ctx = await actions.loadMachineSetupContext(ROUTE);
+    expect(ctx.suggestedMachine).toBeNull();
+    // and the existing honest statement stays: nothing is claimed as kept
+    expect(ctx.remembered).toBeNull();
   });
 });
 

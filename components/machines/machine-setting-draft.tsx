@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { RangeConfirmationList } from "./range-confirmation-list";
 import { SettingDraftFields } from "./setting-draft-fields";
+import {
+  pruneConfirmations,
+  rangeConfirmationBlocking,
+  rangeWarningsForDraft,
+} from "@/lib/machines/range-warnings";
 import {
   assembleGroupSubmissions,
   draftBlocking,
@@ -130,7 +136,22 @@ export function MachineSettingDraft({
    * applied yet when this runs - reporting from state would always be one
    * keystroke behind, and the host would save the previous values.
    */
-  const report = (next: SettingGroupDraft[]) => {
+  // OUT-OF-RANGE VALUES NEED THE SAME EXPLICIT TICK AS THE ENTRY FORM (Codex,
+  // #1259 4408870613): the area's Save carries these settings, so a value
+  // outside a documented range must not ride through unconfirmed here. The
+  // gate is reported upward as `blocking`; nothing records the tick until 0267
+  // is applied and wired.
+  const [confirmed, setConfirmed] = useState<ReadonlySet<string>>(new Set());
+  const confirmedRef = useRef(confirmed);
+  confirmedRef.current = confirmed;
+  const warnings = rangeWarningsForDraft(profile, mode, groups);
+
+  const report = (
+    next: SettingGroupDraft[],
+    ticks: ReadonlySet<string> = confirmedRef.current,
+  ) => {
+    const nextWarnings = rangeWarningsForDraft(profile, mode, next);
+    const live = pruneConfirmations(ticks, nextWarnings);
     // THE RULE LIVES IN lib/, not here. A negative control caught it inline:
     // "a half-finished draft is reported as ready" could be mutated in and
     // every test stayed green, because a static render cannot type into a
@@ -138,7 +159,9 @@ export function MachineSettingDraft({
     // where only a mounted browser can reach it.
     onDraftChange({
       groups: assembleGroupSubmissions(fieldGroups, next),
-      blocking: draftBlocking(profile, fieldGroups, next),
+      blocking:
+        draftBlocking(profile, fieldGroups, next) ??
+        rangeConfirmationBlocking(nextWarnings, live),
     });
   };
 
@@ -160,7 +183,13 @@ export function MachineSettingDraft({
     if (frozen) return;
     setGroups((prev) => {
       const next = f(prev);
-      report(next);
+      // A tick belongs to the value it was given for.
+      const live = pruneConfirmations(
+        confirmedRef.current,
+        rangeWarningsForDraft(profile, mode, next),
+      );
+      if (live !== confirmedRef.current) setConfirmed(live);
+      report(next, live);
       return next;
     });
   };
@@ -199,6 +228,26 @@ export function MachineSettingDraft({
         onAdvanceOrdinal={() => setGroupOrdinal((n) => n + 1)}
         setValue={setValue}
         flipChannel={flipChannel}
+      />
+
+      <RangeConfirmationList
+        warnings={warnings}
+        confirmed={confirmed}
+        disabled={frozen}
+        labelFor={(w) =>
+          fieldGroups
+            .flatMap((fg) => fg.fields)
+            .find((f) => f.key === w.fieldKey && f.stageKey === w.stageKey)?.label ??
+          w.fieldKey
+        }
+        onToggle={(key, next) => {
+          if (frozen) return;
+          const out = new Set(confirmed);
+          if (next) out.add(key);
+          else out.delete(key);
+          setConfirmed(out);
+          report(groups, out);
+        }}
       />
     </div>
   );

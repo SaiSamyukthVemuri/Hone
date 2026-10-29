@@ -79,6 +79,7 @@ import {
   getRecentPortalAccessEvents,
 } from "@/lib/portal/queries";
 import { computePortalPendingTasks } from "@/lib/portal/pending-tasks";
+import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { computeIntakeLinkStatus } from "@/lib/intake/link-status";
 // getClientTags import removed: tags no longer render on the main
@@ -1145,6 +1146,7 @@ export default async function ClientCheatSheetPage({
             lastSeenAt={portalAccess.lastSeenAt}
             pendingTasks={portalPendingTasks}
             recentEvents={portalAccessEvents}
+            portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
           />
 
           {/* PR #134. Consent / e-sign per-template signed status for
