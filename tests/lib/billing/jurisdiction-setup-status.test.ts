@@ -46,7 +46,7 @@ describe("Gate B status", () => {
   });
   it("match is ready", async () => {
     set(US, { stripe_account_id: "acct_x", stripe_account_country: "US", stripe_account_country_conflict: null });
-    expect((await getJurisdictionSetupVerdict("s"))?.paymentsMayBeEnabled).toBe(true);
+    expect((await getJurisdictionSetupVerdict("s"))?.meetsNewSetupStandard).toBe(true);
   });
   it("an unreadable table is null, never ready", async () => {
     set(US, null, null, { code: "x" });

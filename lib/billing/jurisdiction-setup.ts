@@ -72,8 +72,13 @@ export type SetupInput = {
 
 export type SetupVerdict = {
   state: SetupState;
-  /** True only in "ready". Every other state keeps payment activation blocked. */
-  paymentsMayBeEnabled: boolean;
+  /**
+   * True only in "ready": the stricter standard for a NEW setup (observed
+   * Stripe country required). It is advisory and NOT the charge gate: a legacy
+   * Canadian studio that is not "ready" here can still charge. The database
+   * guard on payment_charge_attempts remains the only authority.
+   */
+  meetsNewSetupStandard: boolean;
   /** Owner-facing correction. No raw codes. */
   explanation: string;
 };
@@ -94,7 +99,7 @@ const EXPLAIN: Record<Exclude<SetupState, "ready">, string> = {
 };
 
 const blocked = (state: Exclude<SetupState, "ready">): SetupVerdict =>
-  ({ state, paymentsMayBeEnabled: false, explanation: EXPLAIN[state] });
+  ({ state, meetsNewSetupStandard: false, explanation: EXPLAIN[state] });
 
 /**
  * A new studio is "ready" only when the owner has confirmed a supported pair,
@@ -127,7 +132,7 @@ export function evaluateSetup(input: SetupInput): SetupVerdict {
   const currencyCompared = input.statedCurrencies.some((c) => c != null);
   return {
     state: "ready",
-    paymentsMayBeEnabled: true,
+    meetsNewSetupStandard: true,
     explanation: currencyCompared
       ? "Your confirmed country matches your Stripe account, and your stated price currencies agree with your confirmed currency."
       : "Your confirmed country matches your Stripe account. Price currencies were not checked here.",

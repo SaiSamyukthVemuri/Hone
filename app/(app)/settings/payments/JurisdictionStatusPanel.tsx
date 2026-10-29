@@ -3,7 +3,7 @@ import type { SetupVerdict } from "@/lib/billing/jurisdiction-setup";
 // Gate B. Server-rendered, read-only. A null verdict (unreadable) says so
 // instead of implying all is well.
 export function JurisdictionStatusPanel({ verdict }: { verdict: SetupVerdict | null }) {
-  const unresolved = verdict === null || !verdict.paymentsMayBeEnabled;
+  const unresolved = verdict === null || !verdict.meetsNewSetupStandard;
   return (
     <div role="status" className="rounded border border-neutral-200 p-4 text-sm">
       <h3 className="text-base font-medium">Country and currency check</h3>
