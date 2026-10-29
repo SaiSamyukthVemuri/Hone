@@ -38,6 +38,9 @@ type Props = {
   // true. Builds the post-cancellation "Join the waitlist" link into the
   // studio's existing public booking surface.
   waitlistBookingSlug: string | null;
+  // HON-47. SERVER-DERIVED. False when the studio offers no online rescheduling:
+  // the "reschedule instead" nudge is then not shown, since /reschedule refuses.
+  rescheduleEnabled: boolean;
 };
 
 export function CancelForm({
@@ -46,6 +49,7 @@ export function CancelForm({
   presentedPolicyHash,
   freeConsultationWaitlistOnly,
   waitlistBookingSlug,
+  rescheduleEnabled,
 }: Props) {
   const router = useRouter();
   // PR #144. The free-form textarea has been replaced with a
@@ -201,6 +205,7 @@ export function CancelForm({
         <CancellationNudge
           reason={reason}
           freeConsultationWaitlistOnly={freeConsultationWaitlistOnly}
+          rescheduleEnabled={rescheduleEnabled}
           rescheduleHref={rescheduleHref}
         />
 
@@ -314,10 +319,12 @@ export function CancelForm({
 export function CancellationNudge({
   reason,
   freeConsultationWaitlistOnly,
+  rescheduleEnabled,
   rescheduleHref,
 }: {
   reason: string;
   freeConsultationWaitlistOnly: boolean;
+  rescheduleEnabled: boolean;
   rescheduleHref: string;
 }) {
   const triggered =
@@ -347,6 +354,10 @@ export function CancellationNudge({
       </div>
     );
   }
+
+  // HON-47. The studio offers no online rescheduling, so there is nothing to
+  // pivot to and no link that would not refuse. The cancel button stays.
+  if (!rescheduleEnabled) return null;
 
   // Unchanged from PR #144 for every other studio and service.
   return (

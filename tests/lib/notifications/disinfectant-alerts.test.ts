@@ -81,10 +81,24 @@ describe("computeOverdueDisinfectantAlerts — identity / severity / action / pr
   it("is a warning-severity operational alert linking to the disinfectants records section", () => {
     const [alert] = computeOverdueDisinfectantAlerts([rec({ discard_due_date: "2026-07-01" })], TODAY);
     expect(alert.severity).toBe("warning");
-    expect(alert.href).toBe("/records?section=disinfectants");
+    // HON-12: the notice opens THE overdue record's own edit action, not just the section.
+    expect(alert.href).toBe("/records?section=disinfectants&record=rec-1#disinfectant-rec-1");
     expect(alert.actionLabel).toBe("Review disinfectant records");
     expect(alert.title).toBe("Replace disinfectant now");
     expect(alert.body).toBe("A disinfectant record is overdue for replacement.");
+  });
+  it("HON-12: each alert deep-links to its OWN record, so two overdue batches open two different rows", () => {
+    const alerts = computeOverdueDisinfectantAlerts(
+      [
+        rec({ id: "older", discard_due_date: "2026-06-01" }),
+        rec({ id: "newer", discard_due_date: "2026-07-01" }),
+      ],
+      TODAY,
+    );
+    expect(alerts.map((a) => a.href)).toEqual([
+      "/records?section=disinfectants&record=older#disinfectant-older",
+      "/records?section=disinfectants&record=newer#disinfectant-newer",
+    ]);
   });
   it("carries only non-sensitive operational context — no client/PHI/db-id in title or body", () => {
     const [alert] = computeOverdueDisinfectantAlerts(

@@ -93,6 +93,21 @@ function makeFakeSupabase(state: DbState) {
   }
 
   return {
+    // Existing unit facade: only the governed CAS command, not a generic admin
+    // write. Actual PostgreSQL locks/ACLs/profile atomicity remain DB proof.
+    async rpc(fn: string, args: Record<string, unknown>) {
+      if (fn !== "write_intake_revision") throw new Error("unexpected writer");
+      const matched = state.intakes.filter((r) => r.id === args.p_intake_id && r.studio_id === args.p_studio_id && r.client_id === args.p_client_id && !r.deleted_at);
+      if (matched.length !== 1) return { data: [{ outcome: "not_available", new_revision: null }], error: null };
+      const row = matched[0];
+      if (row.status !== "in_progress") return { data: [{ outcome: "terminal", new_revision: null }], error: null };
+      if (String(row.revision) !== args.p_expected_revision) return { data: [{ outcome: "conflict", new_revision: null }], error: null };
+      const patch = { responses: args.p_responses, current_step: args.p_step };
+      Object.assign(row, patch); row.revision = Number(row.revision) + 1;
+      row.updated_at = new Date(Date.parse(String(row.updated_at)) + 1000).toISOString();
+      state.updates.push({ patch, matched: 1 });
+      return { data: [{ outcome: "saved", new_revision: String(row.revision) }], error: null };
+    },
     from(table: string) {
       return {
         select: (cols: string) => selectChain(table, cols),
@@ -173,6 +188,8 @@ function intakeRow(over: Partial<Row> = {}): Row {
     reviewed_by: null,
     deleted_at: null,
     updated_at: T0,
+    revision: 0,
+    questionnaire_snapshot: null,
     ...over,
   };
 }
@@ -191,7 +208,7 @@ async function save(responses: Record<string, unknown>) {
     clientId: CLIENT,
     step: MEDICAL_STEP,
     responses,
-    expectedUpdatedAt: String(currentIntake().updated_at),
+    expectedRevision: String(currentIntake().revision),
   });
 }
 
@@ -201,7 +218,7 @@ beforeEach(() => {
   state.updates = [];
   revalidatePath.mockClear();
   createAdminClientSpy.mockReset();
-  createAdminClientSpy.mockReturnValue({});
+  createAdminClientSpy.mockImplementation(() => makeFakeSupabase(state));
   createClientSpy.mockReset();
   createClientSpy.mockResolvedValue(makeFakeSupabase(state));
   getCurrentPractitionerWithStudio.mockResolvedValue({

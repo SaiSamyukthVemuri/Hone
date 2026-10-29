@@ -118,7 +118,8 @@ describe("export wiring: client_clinical_notes reaches the ZIP", () => {
     expect(spec.description).toMatch(/clinical narrative/i);
     expect(spec.description).toMatch(/FULL HISTORY/);
     expect(ACTIONS).toMatch(/\$\{disposition\.file\}: \$\{disposition\.description\}/);
-    expect(CODE).toMatch(/row_counts: Object\.fromEntries\(/);
+    expect(CODE).toMatch(/rowCounts: Object\.fromEntries\(/);
+    expect(readFileSync(path.resolve(__dirname, "../../../../lib/audit/governed-writes.ts"), "utf8")).toContain("p_row_counts: { ...input.rowCounts }");
   });
 
   it("(10) the pre-existing export files are all still written", () => {

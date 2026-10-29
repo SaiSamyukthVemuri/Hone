@@ -1,5 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
+import { JURISDICTION_UNVERIFIED_REASON } from "@/lib/billing/payment-jurisdiction";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
 import {
@@ -64,8 +66,10 @@ export {
 // * No Stripe call. No PaymentMethod retrieve. No PaymentIntent create.
 //   The helper reads only Hone's own tables.
 // * No row writes. The prepare action does the writes.
-// * No fee currency lookup beyond the launch ceiling. Sam's policy
-//   pegs launch currency at 'cad' (also enforced by the table CHECK).
+// * The fee's currency is the studio's VERIFIED payment jurisdiction currency
+//   (0214), read here and never a constant (Codex P1 #4369182087 on #1035). An
+//   unknown or unreadable jurisdiction blocks with JURISDICTION_UNVERIFIED_REASON;
+//   it is never Canada by default.
 // * No middleware allowlist changes.
 
 type Args = {
@@ -389,7 +393,17 @@ export async function getManualFeeChargeEligibility(
       reasons.push("Configured fee amount is outside the allowed range.");
     } else {
       amountCents = cents;
-      currency = "cad";
+    }
+  }
+
+  // Currency: the verified jurisdiction, never a constant. A US studio is shown
+  // and prepared USD fees; an unknown or failed jurisdiction read blocks.
+  {
+    const jurisdictionRead = await getStudioPaymentJurisdiction(args.studioId);
+    if (!jurisdictionRead.ok) {
+      reasons.push(JURISDICTION_UNVERIFIED_REASON);
+    } else if (amountCents != null) {
+      currency = jurisdictionRead.jurisdiction.currency;
     }
   }
 

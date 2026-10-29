@@ -104,7 +104,22 @@ function makeBuilder(table: keyof typeof db) {
 
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("@/lib/supabase/admin-server", () => ({
-  createAdminClient: () => ({ from: (t: keyof typeof db) => makeBuilder(t) }),
+  createAdminClient: () => ({
+    from: (t: keyof typeof db) => makeBuilder(t),
+    // Unit facade for the one governed command. Real locking/profile rollback
+    // and ACLs are separately prepared in the existing DB suite, not proved here.
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      if (fn !== "write_intake_revision") throw new Error("unexpected writer");
+      if (failNextUpdateWith.value) { const error = failNextUpdateWith.value; failNextUpdateWith.value = null; return { data: null, error }; }
+      const row = db.client_intake_forms.find((r) => r.id === args.p_intake_id && r.studio_id === args.p_studio_id && r.client_id === args.p_client_id && !r.deleted_at);
+      if (!row) return { data: [{ outcome: "not_available", new_revision: null }], error: null };
+      if (row.status !== "in_progress") return { data: [{ outcome: "terminal", new_revision: null }], error: null };
+      if (String(row.revision) !== args.p_expected_revision) return { data: [{ outcome: "conflict", new_revision: null }], error: null };
+      row.responses = args.p_responses; row.current_step = args.p_step; row.revision = Number(row.revision) + 1;
+      if (args.p_operation === "submit") { row.status = "submitted"; row.submitted_at = new Date().toISOString(); }
+      return { data: [{ outcome: args.p_operation === "submit" ? "submitted" : "saved", new_revision: String(row.revision) }], error: null };
+    },
+  }),
 }));
 vi.mock("@/lib/intake/tokens", () => ({
   verifyIntakeToken: (t: string) =>
@@ -146,6 +161,8 @@ function seed(overrides: Row = {}) {
     {
       id: INTAKE_ID,
       status: "in_progress",
+      revision: 0,
+    questionnaire_snapshot: null,
       responses: {},
       studio_id: STUDIO_ID,
       client_id: CLIENT_ID,
@@ -304,10 +321,10 @@ describe("17. Session 1D surfaces are not involved", () => {
 describe("retirement — a new intake collects no acknowledgement", () => {
   it("submits with NO acknowledgement, and creates neither legacy key", async () => {
     const res = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(row().revision),
       responses: completeAnswers(),
     });
-    expect(res).toEqual({ ok: true });
+    expect(res).toEqual({ ok: true, revision: "1" });
     expect(row().status).toBe("submitted");
     expect(storedResponses()).not.toHaveProperty(CANON.id);
     expect(storedResponses()).not.toHaveProperty(CANON.questionKey);
@@ -317,7 +334,7 @@ describe("retirement — a new intake collects no acknowledgement", () => {
     // The sanitizer carve-out that used to admit this key is gone, so the
     // value never reaches storage — there is no gate left to validate it.
     await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(row().revision),
       responses: {
         ...completeAnswers(),
         [CANON.id]: {
@@ -335,7 +352,7 @@ describe("retirement — a new intake collects no acknowledgement", () => {
 
   it("a forged checkbox answer cannot re-enable legacy collection", async () => {
     await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(row().revision),
       responses: { ...completeAnswers(), [CANON.questionKey]: true },
     });
     // Not a question any more, so the whitelist drops it.
@@ -344,7 +361,7 @@ describe("retirement — a new intake collects no acknowledgement", () => {
 
   it("a DRAFT save also refuses to author either key", async () => {
     await saveIntakeStepAction({
-      token: "good",
+      token: "good", expectedRevision: String(row().revision),
       step: 1,
       responses: {
         legal_name: "Dana",
@@ -371,7 +388,7 @@ describe("retirement — a new intake collects no acknowledgement", () => {
     storedResponses()[CANON.questionKey] = true;
 
     await saveIntakeStepAction({
-      token: "good",
+      token: "good", expectedRevision: String(row().revision),
       step: 2,
       responses: {
         pronouns: "they/them",
@@ -399,10 +416,10 @@ describe("retirement — a new intake collects no acknowledgement", () => {
     seed({ responses: { [CANON.id]: unticked, [CANON.questionKey]: false } });
 
     const res = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(row().revision),
       responses: completeAnswers(),
     });
-    expect(res).toEqual({ ok: true });
+    expect(res).toEqual({ ok: true, revision: "1" });
     expect(row().status).toBe("submitted");
     // The historical record is neither rewritten nor promoted to accepted.
     expect(storedAck()).toEqual(unticked);
@@ -428,10 +445,10 @@ describe("retirement — a new intake collects no acknowledgement", () => {
     // the studio has nothing to complete, which is the pre-existing
     // no-live-forms behaviour and must remain unblocked.
     const res = await submitIntakeAction({
-      token: "good",
+      token: "good", expectedRevision: String(row().revision),
       responses: completeAnswers(),
     });
-    expect(res).toEqual({ ok: true });
+    expect(res).toEqual({ ok: true, revision: "1" });
     expect(INTAKE_CONSENT_RESPONSES.id).toBe("intake_consent_responses");
   });
 });

@@ -24,6 +24,10 @@ function codeOnly(src: string): string {
     .join("\n");
 }
 const CODE = codeOnly(ROUTE);
+// MSG-ARCH-01: the selection query lives in lib/cron/reminder-candidate-query.ts.
+const QUERY_CODE = codeOnly(
+  readFileSync(path.resolve(__dirname, "../../../../lib/cron/reminder-candidate-query.ts"), "utf8"),
+);
 
 // The appointment email pass is sendReminderPass only; scope assertions there
 // so the SMS pass (which has its own claim_sms_send slot) cannot satisfy them.
@@ -97,8 +101,8 @@ describe("email reminder pass: claim before send", () => {
 
 describe("email reminder pass: preserved behavior", () => {
   it("the selection query is unchanged (sent-is-null + attempts cap + window)", () => {
-    expect(CODE).toMatch(/\.is\(opts\.notSentColumn, null\)/);
-    expect(CODE).toMatch(/\.lt\(opts\.attemptsColumn, MAX_ATTEMPTS\)/);
+    expect(QUERY_CODE).toMatch(/\.is\(opts\.notSentColumn, null\)/);
+    expect(QUERY_CODE).toMatch(/\.lt\(opts\.attemptsColumn, MAX_ATTEMPTS\)/);
   });
 
   it("attempt numbering for failure logs is unchanged", () => {
@@ -160,6 +164,9 @@ const race = vi.hoisted(() => ({
   intakeReads: [] as Array<{ data: { id: string; status: string } | null; error: { message: string } | null }>,
   freshMissing: false,
   readErrorWithData: false,
+  authority: "legacy" as "legacy" | "operation" | "unavailable",
+  probe: vi.fn(),
+  op: vi.fn(),
   claimRpcMode: "normal" as "normal" | "error" | "throw" | "malformed",
   claimRpc: vi.fn(),
   incidentRead: "none" as "none" | "db_error" | "timeout" | "invalid_row" | "throw" | "timeout_once",
@@ -209,6 +216,9 @@ vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
     },
   }) };
 });
+// 0247 compatibility: these suites drive the PRE-0247 (legacy claim) email path. The
+// operation-authority path and the mode choice are proved in reminder-authority-dispatch.test.ts.
+vi.mock("@/lib/email/reminder-authority-mode", () => ({ detectReminderAuthorityMode: async () => { race.probe(); return race.authority; } }));
 vi.mock("@/lib/cron/auth", () => ({ isAuthorizedCronRequest: () => true }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => { if (race.originThrown !== undefined) throw race.originThrown; return "https://example.invalid"; } }));
 vi.mock("@/lib/intake/queries", () => ({ generateIntakeLinkUrl: () => "https://example.invalid/intake/synthetic", stampIntakeLinkIssued: async () => undefined }));
@@ -229,6 +239,7 @@ vi.mock("@/lib/email/send-appointment", async (importOriginal) => {
   };
   return { claimEmailSend: (...args: Parameters<typeof actual.claimEmailSend>) => invokeClaim(args),
     claimEmailSendOutcome: (...args: Parameters<typeof actual.claimEmailSend>) => invokeClaim(args, true),
+    sendAppointmentReminderOperation: race.op,
     recordEmailResult: race.record, logEmailFailure: vi.fn(),
     send24hReminderToClient: race.send, send2hReminderToClient: race.send, sendIntakeReminderToClient: race.send };
 });
@@ -317,6 +328,7 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     race.store.clear(); race.store.set("reminder_scan:v1:rotation", { value: JSON.stringify({version:1,next:"email24h",known:[]}), expiry: Date.now() + 10800000 }); race.failStore = false; race.heartbeat.mockClear(); race.alerts.mockClear();
     race.start = "2026-10-22T12:00:00.000Z"; race.freshStart = race.start;
     race.claimRpcMode = "normal"; race.claimRpc.mockClear();
+    race.authority = "legacy"; race.probe.mockReset(); race.op.mockReset().mockResolvedValue({ kind: "held" });
     race.intakeEnabled = false;
     race.intakeOnly = false; race.intakeReads = [];
     race.readError = false; race.freshMissing = false; race.readErrorWithData = false; race.incidentRead = "none"; race.incidentSqlState = "42703"; race.incidentThrown = undefined; race.incidentCoordinationError = undefined;
@@ -776,4 +788,99 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     expect(JSON.parse(saved!.value).after.id).toBe("00000000-0000-4000-8000-000000000001");
   });
 
+});
+
+// ---------------------------------------------------------------------------
+// 0247 COMPATIBILITY: the route picks ONE email authority per run from what the
+// database actually has, and never mixes the two.
+// ---------------------------------------------------------------------------
+describe("0247 compatibility: email authority dispatch", () => {
+  const accepted = { kind: "dispatched", observation: { kind: "accepted", messageId: "m1" }, persistence: "recorded", projection: "current", attemptNumber: 1, intakeId: null };
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-21T12:00:00.000Z"));
+    race.store.clear(); race.store.set("reminder_scan:v1:rotation", { value: JSON.stringify({ version: 1, next: "email24h", known: [] }), expiry: Date.now() + 10800000 });
+    race.start = "2026-10-22T12:00:00.000Z"; race.freshStart = race.start;
+    race.sent.clear(); race.pages = []; race.backlog = null; race.incidentRead = "none"; race.intakeEnabled = false; race.intakeOnly = false; race.intakeReads = [];
+    race.heartbeat.mockReset().mockResolvedValue(undefined); race.alerts.mockReset().mockResolvedValue(undefined);
+    race.send.mockClear(); race.smsSend.mockClear(); race.claimRpc.mockClear();
+    race.claim.mockReset().mockResolvedValue(true); race.record.mockClear();
+    race.claimRpcMode = "normal"; race.readError = false; race.freshMissing = false; race.readErrorWithData = false; race.failStore = false;
+    race.incidentThrown = undefined; race.incidentCoordinationError = undefined; race.setupThrown = undefined; race.originThrown = undefined;
+    race.authority = "legacy"; race.probe.mockReset(); race.op.mockReset().mockResolvedValue(accepted);
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("OPERATION database: the operation authority serves the row and no legacy RPC is ever called", async () => {
+    race.authority = "operation";
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(200);
+    expect(race.op).toHaveBeenCalledTimes(1);
+    expect(race.op).toHaveBeenCalledWith(expect.anything(), "synthetic-studio", "00000000-0000-4000-8000-000000000001", "reminder_24h");
+    expect(race.claimRpc, "claim_email_send must not be attempted after 0247").not.toHaveBeenCalled();
+    expect(race.record, "record_email_result must not be attempted after 0247").not.toHaveBeenCalled();
+    expect(race.send, "the legacy sender must not run").not.toHaveBeenCalled();
+    const body = await response.json();
+    expect(body.reminder_24h).toMatchObject({ attempted: 1, succeeded: 1, failed: 0 });
+  });
+
+  it("OPERATION database: a held operation sends nothing and counts as skipped", async () => {
+    race.authority = "operation";
+    race.op.mockResolvedValue({ kind: "held" });
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(200);
+    expect(race.claimRpc).not.toHaveBeenCalled();
+    expect(race.send).not.toHaveBeenCalled();
+    expect((await response.json()).reminder_24h).toMatchObject({ attempted: 0, skipped: 1 });
+    expect(race.heartbeat, "an authoritative hold is a normal skip: the pass completes").toHaveBeenCalledTimes(1);
+  });
+
+  it("OPERATION database: an unavailable operation RPC keeps the candidate, sends nothing and fails the run (Codex P2, PR 1219)", async () => {
+    race.authority = "operation";
+    race.op.mockResolvedValue({ kind: "unavailable" });
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(500);
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.claimRpc).not.toHaveBeenCalled();
+    expect(race.heartbeat, "a database outage is not a successful cron").not.toHaveBeenCalled();
+    const saved = race.store.get("reminder_scan:v1:checkpoint:email24h");
+    if (saved) expect(JSON.parse(saved.value).after, "the candidate is retained, the cursor is not advanced").toBeNull();
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ safeDetails: expect.objectContaining({ reason: "claim_unavailable", attempted: 0 }) }));
+  });
+
+  it("OPERATION database: an accepted send whose persistence is unconfirmed still completes the pass, alerts, and lets the heartbeat land", async () => {
+    race.authority = "operation";
+    race.op.mockResolvedValue({ ...accepted, persistence: "unconfirmed" });
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(200);
+    expect(race.send).not.toHaveBeenCalled();
+    expect((await response.json()).reminder_24h).toMatchObject({ attempted: 1, succeeded: 1 });
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ event: "reminder_email_accounting_failed" }));
+    expect(race.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
+  it("LEGACY database (pre-0247): the existing claim path runs and the operation authority is never touched", async () => {
+    race.authority = "legacy";
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(200);
+    expect(race.claimRpc).toHaveBeenCalledTimes(1);
+    expect(race.send).toHaveBeenCalledTimes(1);
+    expect(race.op).not.toHaveBeenCalled();
+  });
+
+  it("UNAVAILABLE (inconclusive probe): nothing is sent from either path, the run is incomplete, and an alert names it", async () => {
+    race.authority = "unavailable";
+    const response = await GET(new Request("https://example.invalid"));
+    expect(response.status).toBe(500);
+    expect(race.claimRpc).not.toHaveBeenCalled();
+    expect(race.op).not.toHaveBeenCalled();
+    expect(race.send).not.toHaveBeenCalled();
+    expect(race.alerts).toHaveBeenCalledWith(expect.objectContaining({ event: "reminder_email_authority_unavailable" }));
+  });
+
+  it("the probe runs at most once per run", async () => {
+    race.authority = "operation";
+    await GET(new Request("https://example.invalid"));
+    expect(race.probe.mock.calls.length).toBeLessThanOrEqual(1);
+  });
 });

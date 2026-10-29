@@ -64,7 +64,7 @@ describe("the reference is displayed; the FINAL charge is the editable total", (
 
   it("the final charge is a real, named, enabled control", () => {
     expect(CARD).toMatch(/name="final_amount_dollars"/);
-    expect(CARD).toMatch(/aria-label="Final charge in Canadian dollars"/);
+    expect(CARD).toMatch(/aria-label=\{`Final charge in \$\{currencyName\(eligibility\.jurisdiction\.currency\)\}`\}/);
     // Bounded to the ONE `<input …/>` element, not a fixed character window:
     // a window wide enough to reach the className is also wide enough to reach
     // the NEXT field's attributes and answer this question with them.

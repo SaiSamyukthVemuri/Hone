@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
   adminQuery,
+  adminTx,
   asRole,
   asUser,
   closePool,
@@ -211,10 +212,16 @@ describe("0160 — recorded passes and photos stay with their encounter", () => 
         [entryId, sessionId]);
     } catch (e) { contentCode = (e as { code?: string }).code; }
     expect(contentCode).toBe("42501");
-    await adminQuery(
-      "update public.electrolysis_entries set hairs_treated=42 where id=$1 and session_id=$2",
-      [entryId, sessionId],
-    );
+    await adminTx(async q => {
+      // Owner-only fixture edit with the real synthetic practitioner attribution.
+      await q("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: a.userId, role: "authenticated" }),
+      ]);
+      await q(
+        "update public.electrolysis_entries set hairs_treated=42 where id=$1 and session_id=$2",
+        [entryId, sessionId],
+      );
+    });
     expect(
       (await adminQuery("select hairs_treated from public.electrolysis_entries where id=$1", [entryId]))
         .rows[0].hairs_treated,
