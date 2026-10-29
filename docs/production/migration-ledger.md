@@ -15,17 +15,17 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
 
-## Current state (verified 2026-10-29, post-0248 online apply; `0248` APPLIED out of order, `0247` NOT applied, repo == hosted)
+## Current state (verified 2026-10-29, post-0248 online apply; `0248` APPLIED out of order, `0247` NOT applied; `0257` PENDING above the hosted head, migration-first)
 
-> **CURRENT RELATIONSHIP: repo == hosted at `0248`, with `0247` declared unhosted.** The single sealed migration `0248_intake_protected_write_enforcement.sql` (sha256 `1f6f9ad0026cee66b970e9dc630f1497aa10966df2adb9433d8f8c85bbc44cc3`, bytes unchanged) was APPLIED to production by ONE push on 2026-10-29, by Sam under explicit per-change online authorization (`01-ops/sam-0248-online-authorization.txt`, sha256 prefix `40aad6a5`). It is an **out-of-order** apply: `0247` is allocated to Willow, separately held, and **absent from hosted history**; that is declared in `docs/production/migration-state.json` as `hosted_out_of_order: [{version 0248, unhosted_below [0247]}]`. **Do not reapply `0248`, and do not apply `0247` as part of this record.**
+> **CURRENT RELATIONSHIP: repo > hosted.** Hosted is `0248` (with `0247` declared unhosted); this branch adds ONE pending migration, `0257`, above it. The single sealed migration `0248_intake_protected_write_enforcement.sql` (sha256 `1f6f9ad0026cee66b970e9dc630f1497aa10966df2adb9433d8f8c85bbc44cc3`, bytes unchanged) was APPLIED to production by ONE push on 2026-10-29, by Sam under explicit per-change online authorization (`01-ops/sam-0248-online-authorization.txt`, sha256 prefix `40aad6a5`). It is an **out-of-order** apply: `0247` is allocated to Willow, separately held, and **absent from hosted history**; that is declared in `docs/production/migration-state.json` as `hosted_out_of_order: [{version 0248, unhosted_below [0247]}]`. **Do not reapply `0248`, and do not apply `0247` as part of this record.**
 
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0248**, declared in `docs/production/migration-state.json`. Read back 2026-10-29T01:21:48Z–01:22:11Z (`window-s1read-0248.sh`): 246 history rows, max `0248`, `0248` present exactly once, `0247` absent. **No server apply timestamp was captured**, so `hosted_applied_at` stays null; see the client-side marker below. |
-| **Repo migration max** | **0248** (`0248_intake_protected_write_enforcement.sql`), derived from the source files on this tree. |
+| **Repo migration max** | **0257** (`0257_studio_payment_jurisdiction_failed_attempt_ack.sql`), derived from the source files on this tree. |
 | **Remote-only migrations** | **None.** The repository and production agree. |
-| **Pending migrations** | **None** above the hosted head. `0247` is a declared unhosted gap below it, not a pending suffix. |
-| **Next free number** | Next free number is **0249** by this tree's derived filenames, **not claimed** or reallocated here. Willow `0247` is already allocated and separately held; availability in a finite source tree is not allocation authority. |
+| **Pending migrations** | **`0257`** (additive: two audit columns and a v2 jurisdiction command; unapplied, held until Sam approves the exact package). `0249`-`0256` are absent from this tree and `0247` is a declared unhosted gap below the hosted head. Applying `0257` follows the 0248 out-of-order precedent: plain push of the production prefix plus `0257` only, then record `0257` with `unhosted_below` `0247`, `0249`-`0256` in `hosted_out_of_order`. |
+| **Next free number** | Next free number is **0258** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file; availability in a finite source tree is not allocation authority. |
 | **Project ref** | Canonical Hone production project. |
 
 ### The 0248 apply (facts as recorded by OPS, 2026-10-29)
