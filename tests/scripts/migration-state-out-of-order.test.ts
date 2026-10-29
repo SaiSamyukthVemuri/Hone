@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 // @ts-expect-error plain .mjs utility without type declarations
-import { evaluateOutOfOrder, PERMANENTLY_SKIPPED } from "../../scripts/migration-state.mjs";
+import { evaluateOutOfOrder, pendingMigrationVersions, PERMANENTLY_SKIPPED } from "../../scripts/migration-state.mjs";
 
 // The out-of-order stage rule (0248 hosted ahead of 0247) must admit EXACTLY
 // the declared shape. Every case drives the pure evaluator so the controls do
@@ -64,5 +64,28 @@ describe("out-of-order stage declaration", () => {
 
   it("permanently skipped slots are still not gaps", () => {
     expect(run(range(1, 246), 246).undeclared_gaps).toEqual([]);
+  });
+});
+
+// F-OOO-1: a declared-unhosted version WITH a repo file is pending, even though it
+// sits below the hosted max.
+describe("pending migrations include declared-unhosted versions with a repo file", () => {
+  const entries = (nums: number[]) => nums.map((n) => ({ number: n, version: String(n).padStart(4, "0") }));
+  const declared = [{ version: "0248", unhosted_below: ["0247"] }];
+
+  it("0247 file present, hosted max 0248, declared unhosted: pending is 0247", () => {
+    expect(pendingMigrationVersions({ entries: entries(range(1, 248)), hostedMaxNumber: 248, declared })).toEqual(["0247"]);
+  });
+  it("0247 file present AND something above the max: both are pending", () => {
+    expect(pendingMigrationVersions({ entries: entries(range(1, 248).concat(250)), hostedMaxNumber: 248, declared })).toEqual(["0247", "0250"]);
+  });
+  it("NEGATIVE CONTROL: with no declaration, the below-max 0247 is invisible (the pre-fix behaviour)", () => {
+    expect(pendingMigrationVersions({ entries: entries(range(1, 248)), hostedMaxNumber: 248, declared: [] })).toEqual([]);
+  });
+  it("a declared version with no repo file adds nothing", () => {
+    expect(pendingMigrationVersions({ entries: entries(range(1, 246).concat(248)), hostedMaxNumber: 248, declared })).toEqual([]);
+  });
+  it("a malformed declaration adds nothing and does not throw", () => {
+    expect(pendingMigrationVersions({ entries: entries(range(1, 248)), hostedMaxNumber: 248, declared: [{ version: "0248", unhosted_below: ["x", 247, null] }] })).toEqual([]);
   });
 });
