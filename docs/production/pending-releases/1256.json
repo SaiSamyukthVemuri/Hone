@@ -1,0 +1,5 @@
+{
+  "pr": 1256,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0269_appointment_participants.sql"]
+}
