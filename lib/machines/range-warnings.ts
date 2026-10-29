@@ -95,3 +95,29 @@ export function unconfirmedWarnings(
 ): RangeWarning[] {
   return warnings.filter((w) => !confirmed.has(warningKey(w)));
 }
+
+/** A confirmation only counts for the warnings still in the draft. */
+export function pruneConfirmations(
+  confirmed: ReadonlySet<string>,
+  warnings: readonly RangeWarning[],
+): ReadonlySet<string> {
+  const live = new Set(warnings.map(warningKey));
+  const kept = [...confirmed].filter((k) => live.has(k));
+  return kept.length === confirmed.size ? confirmed : new Set(kept);
+}
+
+/**
+ * The sentence a host form shows while its draft cannot be saved for want of a
+ * confirmation, or null. Shared by the entry form and the create-mode collector
+ * so a treatment area cannot be saved past a warning the entry form would hold.
+ */
+export function rangeConfirmationBlocking(
+  warnings: readonly RangeWarning[],
+  confirmed: ReadonlySet<string>,
+): string | null {
+  const n = unconfirmedWarnings(warnings, confirmed).length;
+  if (n === 0) return null;
+  return n === 1
+    ? "Confirm the value that is outside the documented range before saving."
+    : `Confirm the ${n} values that are outside the documented range before saving.`;
+}

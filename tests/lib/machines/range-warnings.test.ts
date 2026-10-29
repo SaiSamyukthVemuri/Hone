@@ -150,8 +150,9 @@ describe("the create-mode draft is blocked until each out-of-range value is conf
     const { mode, groups } = draftWith(profile, "g1", "250");
     const w = rangeWarningsForDraft(profile, mode, groups);
     const msg = rangeConfirmationBlocking(w, new Set());
-    expect(msg).toMatch(/confirm/i);
-    expect(msg).toContain("1");
+    expect(msg).toMatch(/confirm the value/i);
+    const two = [...w, { ...w[0]!, groupId: "g2" }];
+    expect(rangeConfirmationBlocking(two, new Set())).toContain("2 values");
   });
 
   it("does not block once every warning is confirmed, nor when there are none", () => {
