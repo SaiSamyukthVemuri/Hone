@@ -4,7 +4,13 @@ import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { nativeFieldGroups } from "@/lib/machines/charting";
+import { RangeConfirmationList } from "./range-confirmation-list";
 import { SettingDraftFields } from "./setting-draft-fields";
+import {
+  rangeWarningsForDraft,
+  unconfirmedWarnings,
+  warningKey,
+} from "@/lib/machines/range-warnings";
 import {
   assembleGroupSubmissions,
   groupIssues,
@@ -276,10 +282,27 @@ export function MachineReadingEntry({
   // kept because warning her before a round trip is better than refusing her
   // after one, not because the database would otherwise miss it.
   const issues = groupIssues(profile, groups);
+  // A VALUE OUTSIDE A DOCUMENTED RANGE WARNS AND NEEDS HER TICK, never a clamp
+  // and never a refusal. The tick is a client gate only: nothing records it
+  // until the range-confirmation command (0267) is applied and wired.
+  const warnings = rangeWarningsForDraft(profile, mode, groups);
+  const [confirmed, setConfirmed] = useState<ReadonlySet<string>>(new Set());
+  // A confirmation belongs to the value it was given for: when that value
+  // changes or goes, so does the tick (a key binds group, field, value, code).
+  const warningKeys = warnings.map(warningKey).join("|");
+  useEffect(() => {
+    setConfirmed((prev) => {
+      const live = new Set(warningKeys === "" ? [] : warningKeys.split("|"));
+      const kept = [...prev].filter((k) => live.has(k));
+      return kept.length === prev.size ? prev : new Set(kept);
+    });
+  }, [warningKeys]);
+  const awaitingConfirmation = unconfirmedWarnings(warnings, confirmed);
   const ready =
     readiness.some((r) => r === "complete") &&
     partial.length === 0 &&
     issues.length === 0 &&
+    awaitingConfirmation.length === 0 &&
     canSubmit(save);
 
   // WHILE AN OUTCOME IS UNKNOWN, THE PAYLOAD IS FROZEN.
@@ -516,6 +539,26 @@ export function MachineReadingEntry({
         frozen={frozen}
       />
 
+      <RangeConfirmationList
+        warnings={warnings}
+        confirmed={confirmed}
+        disabled={frozen || pending}
+        labelFor={(w) =>
+          fieldGroups
+            .flatMap((fg) => fg.fields)
+            .find((f) => f.key === w.fieldKey && f.stageKey === w.stageKey)?.label ??
+          w.fieldKey
+        }
+        onToggle={(key, next) =>
+          setConfirmed((prev) => {
+            const out = new Set(prev);
+            if (next) out.add(key);
+            else out.delete(key);
+            return out;
+          })
+        }
+      />
+
       <div className="flex items-center gap-3">
         <Button
           type="button"
@@ -536,7 +579,7 @@ export function MachineReadingEntry({
           */}
           {save.unresolved ? "Try saving again" : "Save these settings"}
         </Button>
-        {!ready && partial.length === 0 && (
+        {!ready && partial.length === 0 && awaitingConfirmation.length === 0 && (
           <span className="text-xs text-neutral-500">
             Enter every required field before saving.
           </span>
