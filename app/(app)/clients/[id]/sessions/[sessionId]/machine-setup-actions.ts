@@ -249,6 +249,11 @@ export async function loadMachineSetupContext(input: {
   let remembered: MachineSetupContext["remembered"] = null;
   let rememberedUnavailable: MachineSetupContext["rememberedUnavailable"] = null;
   let persistence = DATABASE_PERSISTENCE;
+  // A FAILED READ IS "COULD NOT TELL", NOT "NOTHING REMEMBERED" (Codex, #1240
+  // 4408610747). Both leave `remembered` and `rememberedUnavailable` null, so
+  // without this the next-visit suggestion below read a failure as "none" and
+  // offered the previous visit's unit beside a choice that may exist.
+  let rememberedReadFailed = false;
   try {
     if (inventoryUnavailable(inventory)) {
       // AN UNREADABLE INVENTORY IS NOT A DEREGISTRATION.
@@ -297,6 +302,7 @@ export async function loadMachineSetupContext(input: {
   } catch {
     // A failed read must not claim the choice is kept. The panel then says so.
     persistence = NO_PERSISTENCE;
+    rememberedReadFailed = true;
   }
 
   // THE SESSION ON SCREEN IS EXCLUDED, and `input.sessionId` is safe to pass
@@ -327,11 +333,13 @@ export async function loadMachineSetupContext(input: {
 
   // OFFERED ONLY WHEN NOTHING IS REMEMBERED OR UNUSABLE, so it can never sit
   // beside a stored choice or its "taken out of service" explanation. A failed
-  // prior read yields an empty list and so offers nothing.
+  // prior read yields an empty list and so offers nothing; a failed
+  // remembered-machine read is "not-verified" and offers nothing either.
   const suggestedMachine = suggestMachineFromPriorSetup({
     scope,
-    remembered:
-      remembered === null && rememberedUnavailable === null
+    remembered: rememberedReadFailed
+      ? "not-verified"
+      : remembered === null && rememberedUnavailable === null
         ? "none"
         : remembered === null
           ? "unavailable"
