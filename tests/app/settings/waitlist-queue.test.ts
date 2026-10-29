@@ -708,7 +708,12 @@ describe("rendered rows", () => {
     const html = await render();
 
     const controls = [
-      ...[...html.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((m) => m[1]),
+      // A page-level switch (aria-pressed) has no text of its own, so it is
+      // enumerated by its accessible name: the owner's waitlist-texts switch.
+      ...[...html.matchAll(/<button([^>]*)>(.*?)<\/button>/g)].map((m) => {
+        const label = /aria-pressed/.test(m[1]) ? /aria-label="([^"]*)"/.exec(m[1])?.[1] : undefined;
+        return label ? `switch: ${label}` : m[2];
+      }),
       ...[...html.matchAll(/<summary[^>]*>(.*?)<\/summary>/g)].map((m) => m[1]),
     ];
     // CLAIMING IS INTERNAL AND IS NOT OFFERED. A waiting row's only control is
@@ -763,6 +768,7 @@ describe("rendered rows", () => {
       "Start inviting",
       "They asked today",
       "They were already waiting",
+      "switch: Waitlist texts",
     ]);
     // Stated as its own claim so a future control named something else cannot
     // reintroduce claiming past the equality above.
