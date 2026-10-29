@@ -19,10 +19,16 @@ const ilikeCalls: Array<{ table: string; col: string; pattern: string }> = [];
 // to prove a short page does not end a read early.
 // failClientsAt, when set, makes a clients read whose page starts at that
 // offset answer with an error instead of rows.
-const server: { maxRows: number; failClientsAt: ((offset: number) => boolean) | null } = {
+const server: { maxRows: number; failClientsAt: ((offset: number) => boolean) | null; hasPreferredColumn: boolean } = {
   maxRows: 1000,
   failClientsAt: null,
+  // false = a database before 0258: any clients read that names preferred_name
+  // answers 42703, as Postgres does.
+  hasPreferredColumn: true,
 };
+const clientSelects: string[] = [];
+// arity: how many columns the .or() spans (4 = the direct read, 2 = a name/preferred candidate word)
+const orCalls: Array<{ table: string; col: string; pattern: string; arity: number }> = [];
 
 const RE_METACHARS = /[.*+?^${}()|[\]\\]/g;
 
@@ -45,7 +51,8 @@ function matchesIlike(value: unknown, pattern: string): boolean {
   return typeof value === "string" && likeToRegExp(pattern).test(value);
 }
 
-function builder(table: string) {
+function builder(table: string, selectList = "") {
+  let namesPreferred = selectList.includes("preferred_name");
   const predicates: Array<(r: Row) => boolean> = [];
   const orderCols: string[] = [];
   let limit: number | null = null;
@@ -73,11 +80,16 @@ function builder(table: string) {
         if (c.op !== "ilike") throw new Error(`fake supabase: unsupported .or operator ${c.op}`);
         return c;
       });
+      for (const c of clauses) {
+        orCalls.push({ table, col: c.col, pattern: c.value, arity: clauses.length });
+        if (c.col === "preferred_name") namesPreferred = true;
+      }
       predicates.push((r) => clauses.some((c) => matchesIlike(r[c.col], c.value)));
       return chain;
     },
     filter(col: string, op: string, value: string) {
       if (op !== "match") throw new Error(`fake supabase: unsupported filter operator ${op}`);
+      if (col === "preferred_name") namesPreferred = true;
       const re = new RegExp(value, "u");
       predicates.push((r) => typeof r[col] === "string" && re.test(r[col] as string));
       return chain;
@@ -99,6 +111,12 @@ function builder(table: string) {
       return chain;
     },
     then(resolve: (v: { data: Row[] | null; error: { message: string } | null }) => unknown) {
+      if (table === "clients" && namesPreferred && !server.hasPreferredColumn) {
+        return Promise.resolve({
+          data: null,
+          error: { code: "42703", message: "column clients.preferred_name does not exist" },
+        }).then(resolve as never);
+      }
       if (table === "clients" && server.failClientsAt?.(range?.[0] ?? 0)) {
         return Promise.resolve({ data: null, error: { message: "fake read failure" } }).then(
           resolve as never,
@@ -125,7 +143,12 @@ function builder(table: string) {
 
 const fakeSupabase = {
   from(table: string) {
-    return { select: () => builder(table) };
+    return {
+      select: (list?: string) => {
+        if (table === "clients") clientSelects.push(String(list ?? ""));
+        return builder(table, String(list ?? ""));
+      },
+    };
   },
 };
 
@@ -168,6 +191,9 @@ function client(id: string, name: string, extra: Partial<Row> = {}): Row {
 beforeEach(() => {
   for (const key of Object.keys(tables)) delete tables[key];
   ilikeCalls.length = 0;
+  clientSelects.length = 0;
+  orCalls.length = 0;
+  server.hasPreferredColumn = true;
   server.maxRows = 1000;
   server.failClientsAt = null;
   tables.clients = [
@@ -237,7 +263,10 @@ describe("global search: one record, many ways in", () => {
 
   it("builds candidate patterns from folded letters only", async () => {
     await clientIdsFor("O'Brien, (x%_)");
-    const nameCandidates = ilikeCalls.filter((c) => c.table === "clients" && c.col === "name");
+    const nameCandidates = [
+      ...ilikeCalls.filter((c) => c.table === "clients" && c.col === "name"),
+      ...orCalls.filter((c) => c.table === "clients" && c.col === "name" && c.arity === 2),
+    ];
     expect(nameCandidates.length).toBeGreaterThan(0);
     for (const { pattern } of nameCandidates) {
       expect(pattern).toMatch(/^%(?:[\p{L}\p{N}_]%)+$/u);
@@ -476,5 +505,65 @@ describe("global search panel: a bounded client scan is never shown as complete"
   it("says the client list is partial, and never says No results found. while it is", () => {
     expect(panel).toContain("Showing the first client matches. Refine your search to find more.");
     expect(panel).toMatch(/groups\.length === 0 && !clientsTruncated \? \(/);
+  });
+});
+
+
+// HON-58 names slice, current schema: the preferred name is searched and shown
+// where the database has it, and the search runs unchanged where it does not.
+describe("global search: preferred name (fails soft before 0258)", () => {
+  beforeEach(() => {
+    tables.clients = [
+      client("c-jane", "Jane Smith", { preferred_name: "Janie" }),
+      client("c-simon", "Simon Novak", { preferred_name: "Šimon" }),
+      client("c-plain", "Robin Hart"),
+      client("c-foreign", "Jane Smith", { preferred_name: "Janie", studio_id: STUDIO_B }),
+    ];
+  });
+
+  it("the preferred-name candidate patterns are built from folded letters only", async () => {
+    await clientIdsFor("Janie, (x%_)");
+    const pref = orCalls.filter((c) => c.table === "clients" && c.col === "preferred_name" && c.arity === 2);
+    for (const { pattern } of pref) expect(pattern).toMatch(/^%(?:[\p{L}\p{N}_]%)+$/u);
+    expect(pref.length).toBeGreaterThan(0);
+  });
+  it("finds a client by preferred name alone", async () => {
+    expect(await clientIdsFor("janie")).toEqual(["c-jane"]);
+  });
+  it("finds a client by preferred name plus stored surname (the words span both fields)", async () => {
+    expect(await clientIdsFor("janie smith")).toEqual(["c-jane"]);
+  });
+  it("finds a client by a non-ASCII preferred name, folded", async () => {
+    expect(await clientIdsFor("simon")).toEqual(["c-simon"]);
+  });
+  it("shows the preferred name as the result title and never another studio's client", async () => {
+    const res = await globalSearchAction("janie");
+    if (!res.ok) throw new Error("search failed");
+    const hit = res.results.filter((r) => r.type === "client");
+    expect(hit.map((r) => r.title)).toEqual(["Janie"]);
+  });
+
+  describe("on a database without clients.preferred_name", () => {
+    beforeEach(() => { server.hasPreferredColumn = false; });
+    it("retries once without the column and finds by the stored name exactly as before", async () => {
+      expect(await clientIdsFor("jane smith")).toEqual(["c-jane"]);
+      const attempts = clientSelects.filter((s) => s.includes("preferred_name"));
+      const plain = clientSelects.filter((s) => !s.includes("preferred_name"));
+      expect(attempts.length).toBeGreaterThan(0); // the first attempt hit the missing column: not vacuous
+      expect(plain.length).toBeGreaterThan(0);
+      // after the fallback no read names the column again
+      expect(clientSelects.lastIndexOf(attempts[attempts.length - 1])).toBeLessThan(clientSelects.indexOf(plain[0]) + clientSelects.length);
+    });
+    it("the preferred name simply is not searchable there (no error, no false hit)", async () => {
+      expect(await clientIdsFor("janie")).toEqual([]);
+    });
+    it("a different read error is NOT mistaken for the missing column: no retry, search fails closed", async () => {
+      server.hasPreferredColumn = true;
+      server.failClientsAt = () => true;
+      const res = await globalSearchAction("janie");
+      const results = res.ok ? res.results.filter((r) => r.type === "client") : [];
+      expect(results).toEqual([]);
+      expect(clientSelects.every((s) => s.includes("preferred_name"))).toBe(true);
+    });
   });
 });
