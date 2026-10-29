@@ -102,7 +102,7 @@ nrec() { ls "$H"/hone-s1/s1-apply/RECONCILE-* 2>/dev/null | wc -l | tr -d ' '; }
 pushes() { local n=0; [ -f "$H/calls.log" ] && n=$(grep -c '^push$' "$H/calls.log"); echo "${n:-0}"; }
 leaks() { { [ -f "$H/leak.log" ] && cat "$H/leak.log"; grep -rIl -e "$CTOK" -e "$CPW" "$H" 2>/dev/null | grep -v -e '/stubcfg$' -e '/supabase-cli/supabase-go$' -e '/ans$'; echo "$OUT" | grep -e "$CTOK" -e "$CPW"; } | head -3; }
 READS4="query:g02-history-0254 query:g12-0254-preflight-0254 query:s1-open-transactions-0254 query:w03-table-sizes-0254"
-dumpdbg() { echo "--- driver.debug / reconcile.out of $H:"; cat "$H"/hone-s1/one-command/run.*/driver.debug 2>&1 | tail -12; cat "$H"/hone-s1/one-command/run.*/reconcile.out 2>&1 | tail -6; }
+dumpdbg() { echo "--- tail of what the person saw:"; echo "$OUT" | tail -14 | cut -c1-200; echo "--- driver.debug / reconcile.out of $H:"; cat "$H"/hone-s1/one-command/run.*/driver.debug 2>&1 | tail -12; cat "$H"/hone-s1/one-command/run.*/reconcile.out 2>&1 | tail -6; }
 # expectations for a run that must end without a push
 nopush() { # nopush NAME REASONPAT WANTCALLS : NOT APPLIED, marker none, no push, no reconcile, no secret anywhere
   local g; g=$(calls)
