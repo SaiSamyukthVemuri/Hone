@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { hashToken } from "@/lib/portal/tokens";
 import { createPortalSession } from "@/lib/portal/session";
+import { studioPortalAccess } from "@/lib/portal/portal-access-gate";
 import { logPortalAccessEvent } from "@/lib/portal/access-events";
 import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
@@ -79,6 +80,14 @@ export async function verifyPortalMagicLinkAction(
     .eq("studio_id", link.studio_id)
     .maybeSingle();
   if (!clientRow || clientRow.archived_at != null) {
+    redirect(`/portal/verify/${token}`);
+  }
+
+  // HON-47. Check the studio's portal flag BEFORE the single-use stamp so a
+  // portal-off studio does not burn the client's link; the verify page then
+  // explains why. Unreadable policy is a refusal too.
+  const portalAccess = await studioPortalAccess(admin, link.studio_id);
+  if (!portalAccess.allowed) {
     redirect(`/portal/verify/${token}`);
   }
 
