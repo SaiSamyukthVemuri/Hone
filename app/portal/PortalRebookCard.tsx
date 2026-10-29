@@ -53,6 +53,7 @@ type Confirmation = {
   manageUrl: string;
   email: string | null;
   emailStatus: ConfirmationEmailStatus;
+  selfService: { cancellation: boolean; reschedule: boolean };
 };
 
 export function PortalRebookCard({
@@ -322,6 +323,7 @@ export function PortalRebookCard({
         manageUrl: res.manageUrl,
         email: res.confirmationEmail,
         emailStatus: res.confirmationEmailStatus,
+        selfService: res.selfService,
       });
       // NO `router.refresh()` HERE, AND THAT IS MEASURED RATHER THAN ASSUMED.
       //
@@ -356,6 +358,9 @@ export function PortalRebookCard({
     const copy = buildBookingConfirmationCopy({
       emailStatus: done.emailStatus,
       email: done.email ?? "the address on file",
+      // The card links to /manage (manageUrl is always present here), and the
+      // studio's own flags decide which email links exist.
+      selfService: { ...done.selfService, manageLink: true },
     });
     return (
       <div data-testid="portal-rebook-confirmed" className="flex flex-col gap-3">

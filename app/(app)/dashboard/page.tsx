@@ -35,6 +35,8 @@ import {
 } from "@/lib/dashboard/day-navigation";
 import { resolveDayNextAction } from "@/lib/dashboard/day-next-action";
 import { getClientBirthdaysForMonth } from "@/lib/clients/birthday-queries";
+import { clientDisplayName } from "@/lib/clients/identity";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import {
   addDays,
   formatTimeForStudio,
@@ -54,6 +56,7 @@ import {
   SecondaryStackSkeleton,
 } from "./secondary-stack";
 import { getPracticeDashboardMetrics } from "@/lib/dashboard/practice-metrics";
+import { loadStaffManagedClinic } from "@/lib/dashboard/staff-managed";
 import {
   isReportingPeriod,
   type ReportingPeriod,
@@ -316,6 +319,7 @@ export default async function DashboardPage({
       ? getNewClientReadiness(studio)
       : Promise.resolve(null as NewClientReadiness | null),
   );
+  const staffManagedPromise = settleLater(loadStaffManagedClinic(supabase, studio.id));
   const practiceMetricsPromise = settleLater(
     // HON-44: studio money totals are owner-only, refused at the read.
     getPracticeDashboardMetrics(studio.id, studio.timezone, period, {
@@ -335,6 +339,7 @@ export default async function DashboardPage({
     getGettingStartedSignals(
       { id: studio.id, name: studio.name, slug: studio.slug },
       practitioner.display_name?.trim() || practitioner.email,
+      { viewerIsOwner: isOwner },
     ),
   );
 
@@ -344,15 +349,19 @@ export default async function DashboardPage({
   // Today's appointments. Use a narrow inline SELECT so the dashboard
   // gets practitioner color + service modality + client allergies in
   // one trip without N+1 lookups.
-  const { data: apptRows, error: apptErr } = await supabase
-    .from("appointments")
-    .select(
-      "id, starts_at, ends_at, duration_minutes, status, client_id, client:clients(id, name, allergies, pronouns, email), service:services(id, name, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
-    )
-    .eq("studio_id", studio.id)
-    .gte("starts_at", startUtc.toISOString())
-    .lt("starts_at", endUtc.toISOString())
-    .order("starts_at", { ascending: true });
+  // HON-58: preferred name where one exists; fails soft to the stored name on a
+  // database without the column (before 0258).
+  const { data: apptRows, error: apptErr } = await readWithPreferredName((includePreferred) =>
+    supabase
+      .from("appointments")
+      .select(
+        `id, starts_at, ends_at, duration_minutes, status, client_id, client:clients(id, name, ${preferredNameColumn(includePreferred)}allergies, pronouns, email), service:services(id, name, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)`,
+      )
+      .eq("studio_id", studio.id)
+      .gte("starts_at", startUtc.toISOString())
+      .lt("starts_at", endUtc.toISOString())
+      .order("starts_at", { ascending: true }),
+  );
   if (apptErr) {
     // DAT-002 N2: a fixed message; PostgREST text can echo the statement.
     throw new Error("Failed to load today's appointments");
@@ -369,8 +378,8 @@ export default async function DashboardPage({
     status: AppointmentStatus;
     client_id: string;
     client:
-      | Pick<Client, "id" | "name" | "allergies" | "pronouns" | "email">
-      | Pick<Client, "id" | "name" | "allergies" | "pronouns" | "email">[]
+      | (Pick<Client, "id" | "name" | "allergies" | "pronouns" | "email"> & { preferred_name?: string | null })
+      | (Pick<Client, "id" | "name" | "allergies" | "pronouns" | "email"> & { preferred_name?: string | null })[]
       | null;
     service:
       | Pick<Service, "id" | "name" | "modality">
@@ -382,7 +391,7 @@ export default async function DashboardPage({
       | null;
   };
   const dayAppointments: TodayAppointment[] = (
-    (apptRows ?? []) as RawAppt[]
+    (apptRows ?? []) as unknown as RawAppt[]
   ).map((r) => ({
     id: r.id,
     starts_at: r.starts_at,
@@ -467,6 +476,11 @@ export default async function DashboardPage({
       ? getBeforeTodayPreviews(
           studio.id,
           visibleAppointments.map((a) => a.client_id),
+          visibleAppointments.map((a) => ({
+            clientId: a.client_id,
+            appointmentId: a.id,
+            startsAt: a.starts_at,
+          })),
         )
       : Promise.resolve(new Map<string, BeforeTodayPreview>()),
   );
@@ -626,7 +640,7 @@ export default async function DashboardPage({
     viewingToday ? visibleAppointments : []
   ).map(
     (appt) => {
-      const preview = beforeTodayPreviews.get(appt.client_id) ?? null;
+      const preview = beforeTodayPreviews.get(appt.id) ?? null;
       const linked = sessionByAppointment.get(appt.id) ?? null;
       const charting: TodayCharting = linked
         ? linked.hasChartedArea
@@ -640,7 +654,7 @@ export default async function DashboardPage({
       return {
         appointmentId: appt.id,
         clientId: appt.client_id,
-        clientName: appt.client?.name ?? "Client",
+        clientName: appt.client ? clientDisplayName(appt.client) : "Client",
         timeLabel: localTimeString12h(new Date(appt.starts_at), studio.timezone),
         status: appt.status,
         serviceName: appt.service?.name ?? null,
@@ -927,6 +941,7 @@ export default async function DashboardPage({
       >
         <SecondaryStack
           attentionSources={attentionSourcesPromise}
+          staffManaged={staffManagedPromise}
           bookingReadiness={bookingReadinessPromise}
           practiceMetrics={practiceMetricsPromise}
           clientsNeedingAttention={clientsNeedingAttentionPromise}
@@ -1151,7 +1166,7 @@ function AppointmentRow({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-baseline gap-x-2">
               <span className="truncate font-medium">
-                {appt.client?.name ?? "Client deleted"}
+                {appt.client ? clientDisplayName(appt.client) : "Client deleted"}
               </span>
               {isCurrent && <CurrentPill />}
               <AppointmentStatusPill status={appt.status} />
@@ -1391,7 +1406,7 @@ function AppointmentRow({
             <DashboardTreatmentMemory
               appointmentId={appt.id}
               clientId={appt.client_id}
-              clientName={appt.client?.name ?? "this client"}
+              clientName={appt.client ? clientDisplayName(appt.client) : "this client"}
               /* The NARROW projection. `prepSummary` also carries the plan
                  note, which the server renders itself and only off Today —
                  passing the whole object crossed that note to the browser on

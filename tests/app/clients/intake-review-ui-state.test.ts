@@ -1,4 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { IntakeReviewForm } from "@/app/(app)/clients/[id]/intake/IntakeReviewForm";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("@/app/(app)/clients/[id]/intake/actions", () => ({
+  markIntakeReviewedAction: vi.fn(), saveIntakeNotesAction: vi.fn(),
+}));
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -355,5 +363,35 @@ describe("F-CLIN-004 — the open database boundary is recorded in source", () =
 
   it("does not claim the finding is closed / remediated / fully fixed", () => {
     expect(ACTIONS).not.toMatch(/F-CLIN-004[^\n]*\b(closed|remediated|fully fixed)\b/i);
+  });
+});
+
+
+describe("0246 unavailable catalogue holds review without blocking notes", () => {
+  function render(reviewAvailable?: boolean) {
+    return renderToStaticMarkup(createElement(IntakeReviewForm, {
+      intakeId: "intake-1", clientId: "client-1", initialNotes: "Existing notes",
+      status: "submitted", reviewAvailable,
+    }));
+  }
+  function button(html: string, id: string) {
+    const tag = html.match(new RegExp(`<button[^>]*data-testid="${id}"[^>]*>`))?.[0];
+    expect(tag, `${id} must actually render`).toBeDefined();
+    return tag!;
+  }
+  it("the server page derives availability from the actual saved catalogue decoder", () => {
+    expect(PAGE_CODE).toContain('reviewAvailable={catalogue.kind !== "invalid"}');
+    expect(FORM_CODE).toContain("if (!reviewAvailable) return;");
+  });
+  it("renders a disabled review control but leaves notes enabled for an invalid catalogue", () => {
+    const html = render(false);
+    expect(button(html, "intake-mark-reviewed")).toMatch(/\bdisabled=/);
+    expect(button(html, "intake-save-notes")).not.toMatch(/\bdisabled=/);
+    expect(html).toContain("Existing notes");
+  });
+  it.each([true, undefined])("CONTROL: readable/legacy default %s still renders an enabled review control", (value) => {
+    const html = render(value);
+    expect(button(html, "intake-mark-reviewed")).not.toMatch(/\bdisabled=/);
+    expect(button(html, "intake-save-notes")).not.toMatch(/\bdisabled=/);
   });
 });

@@ -236,6 +236,8 @@ function PreparePanel({
     fd.set("appointment_id", appointmentId);
     fd.set("charge_type", chargeType);
     fd.set("internal_note", note);
+    // The currency printed in the preview; the server refuses on a mismatch.
+    fd.set("expected_currency", eligibility.currency.toLowerCase());
     startTransition(async () => {
       const r = await prepareManualFeeChargeAction(fd);
       if (!r.ok) {
@@ -389,6 +391,8 @@ function ReadyPanel({
     const fd = new FormData();
     fd.set("attempt_id", attempt.id);
     fd.set("confirm_charge", "true");
+    // The persisted attempt currency printed on this card; refused on mismatch.
+    fd.set("expected_currency", String(attempt.currency ?? "").toLowerCase());
     startCharge(async () => {
       const r = await chargeManualFeeAttemptAction(fd);
       if (!r.ok) {
@@ -528,6 +532,8 @@ function PendingPanel({
     const fd = new FormData();
     fd.set("attempt_id", attempt.id);
     fd.set("confirm_charge", "true");
+    // The persisted attempt currency printed on this card; refused on mismatch.
+    fd.set("expected_currency", String(attempt.currency ?? "").toLowerCase());
     startTransition(async () => {
       const r = await chargeManualFeeAttemptAction(fd);
       if (!r.ok) {
@@ -604,6 +610,7 @@ function FeeReceiptRefundControls({
     startTransition(async () => {
       const fd = new FormData();
       fd.set("attempt_id", attempt.id);
+      fd.set("expected_currency", String(attempt.currency ?? "").toLowerCase());
       const apptId = window.location.pathname.split("/").pop() ?? "";
       fd.set("appointment_id", apptId);
       const r = await action(fd);

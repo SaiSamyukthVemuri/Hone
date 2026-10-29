@@ -223,7 +223,12 @@ describe("real ensureCardChangeNotification against the local DB", () => {
   it("never mutates or undoes a card row", async () => {
     const beforeTest = await cardCount(false);
     const beforeLive = await cardCount(true);
-    await call(false, "seti_replace"); // a deduped call
+    const beforeRemovedNotification = await notifCount(key(false, "seti_replace"));
+    // This old card was retired by later fixtures. It cannot authorize a new
+    // saved-card notification, even if its prior notification already exists.
+    await expect(call(false, "seti_replace")).rejects.toThrow("card_change_card_row_missing");
+    expect(await notifCount(key(false, "seti_replace"))).toBe(beforeRemovedNotification);
+    await call(false, "seti_modemix"); // current active card: existing dedupe retained
     expect(await cardCount(false)).toBe(beforeTest);
     expect(await cardCount(true)).toBe(beforeLive);
   });

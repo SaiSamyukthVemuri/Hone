@@ -16,6 +16,8 @@ type Props = {
   // submitted into one "not yet reviewed" state, which is exactly why the
   // review CTA was rendered for an intake the client had never submitted.
   status: IntakeStatus;
+  // The server already shows the unavailable-catalogue warning. Notes remain editable.
+  reviewAvailable?: boolean;
   // Server-rendered reviewed attribution, shown as the durable Reviewed
   // state. Never inferred from a transient toast.
   reviewedAtIso?: string | null;
@@ -30,6 +32,7 @@ export function IntakeReviewForm({
   clientId,
   initialNotes,
   status,
+  reviewAvailable = true,
   reviewedAtIso = null,
   reviewedByName = null,
 }: Props) {
@@ -89,6 +92,7 @@ export function IntakeReviewForm({
   }
 
   function confirmReview() {
+    if (!reviewAvailable) return;
     if (inFlight.current) return;
     inFlight.current = true;
     setError(null);
@@ -214,7 +218,7 @@ export function IntakeReviewForm({
               setSavedHint(null);
               setConfirmOpen(true);
             }}
-            disabled={isPending}
+            disabled={isPending || !reviewAvailable}
             data-testid="intake-mark-reviewed"
             className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-neutral-900 px-3 py-2 text-sm text-white hover:bg-neutral-800 disabled:opacity-60 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
           >

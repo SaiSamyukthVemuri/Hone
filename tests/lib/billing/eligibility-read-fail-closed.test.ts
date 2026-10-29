@@ -153,6 +153,7 @@ function empty(table: string) {
 // because some unrelated fixture was unsatisfiable.
 // ---------------------------------------------------------------------------
 function healthySession() {
+  rows("studio_payment_jurisdictions", { payment_country: "CA", payment_currency: "cad" });
   rows("sessions", {
     id: SESSION,
     studio_id: STUDIO,
@@ -180,6 +181,8 @@ function healthySession() {
   rows("studio_payment_settings", {
     stripe_account_id: "acct_test",
     stripe_account_status: "enabled",
+    stripe_account_country: "CA",
+    stripe_account_country_conflict: null,
     stripe_livemode: false,
   });
   empty("payment_charge_attempts");
@@ -231,6 +234,8 @@ function healthyManualFee() {
   });
   empty("payment_charge_attempts");
   empty("manual_fee_charge_attempts");
+  // The fee's currency is the studio's verified jurisdiction currency.
+  rows("studio_payment_jurisdictions", { payment_country: "CA", payment_currency: "cad" });
 }
 
 function sessionArgs() {
@@ -549,4 +554,126 @@ describe("scoping survives the change", () => {
       expect(read?.filters).toContainEqual(["stripe_livemode", false]);
     }
   });
+});
+
+
+describe("G1 guard-only eligibility country authority", () => {
+  const setCountry = (country: "CA" | "US", currency: "cad" | "usd", observed: string | null, conflict: string | null = null) => {
+    rows("studio_payment_jurisdictions", { payment_country: country, payment_currency: currency });
+    const o = h.outcomes.studio_payment_settings;
+    rows("studio_payment_settings", { ...(o.data as Record<string, unknown>),
+      stripe_account_country: observed, stripe_account_country_conflict: conflict });
+  };
+  const refused = async (reason: RegExp) => {
+    const result = await getSessionPaymentEligibility(sessionArgs());
+    expect(result.eligible).toBe(false);
+    if (result.eligible) throw new Error("guard did not refuse");
+    expect(result.blockingReasons.join(" | ")).toMatch(reason);
+  };
+  beforeEach(() => healthySession());
+  it("UNKNOWN jurisdiction cannot present eligibility", async () => {
+    delete h.outcomes.studio_payment_jurisdictions; await refused(/could not be verified/i);
+  });
+  it("failed jurisdiction read is not a Canada default", async () => {
+    err("studio_payment_jurisdictions"); await refused(/could not be verified/i);
+  });
+  it("invalid jurisdiction pair cannot present eligibility", async () => {
+    rows("studio_payment_jurisdictions", { payment_country: "US", payment_currency: "cad" });
+    await refused(/could not be verified/i);
+  });
+  it("observed account mismatch refuses preparation readiness", async () => {
+    setCountry("US", "usd", "CA"); await refused(/different country/i);
+  });
+  it.each([["US", "usd", "US", "CA"], ["CA", "cad", "CA", "US"]] as const)(
+    "%s matching original observation does not clear a persisted conflict", async (country, currency, observed, conflict) => {
+      setCountry(country, currency, observed, conflict); await refused(/conflicting countries/i);
+    });
+  it("US unobserved account refuses", async () => {
+    setCountry("US", "usd", null); await refused(/not yet confirmed/i);
+  });
+  it.each([["CA", "cad", "CA"], ["US", "usd", "US"], ["CA", "cad", null]] as const)(
+    "%s healthy existing verdict remains eligible without a new currency interface", async (country, currency, observed) => {
+      setCountry(country, currency, observed);
+      const result = await getSessionPaymentEligibility(sessionArgs());
+      expect(result.eligible).toBe(true);
+      expect(result).not.toHaveProperty("paymentCurrency");
+      expect(h.reads).toContainEqual({ table: "studio_payment_jurisdictions", filters: [["studio_id", STUDIO]] });
+      expect(h.reads).toContainEqual({ table: "studio_payment_settings", filters: [["studio_id", STUDIO], ["stripe_livemode", false]] });
+    });
+  // #1035 Codex P1 4352197754 (P1-C): the prepare writer needs the currency
+  // this read decided, so the eligible result carries the jurisdiction.
+  it.each([["CA", "cad", "CA"], ["US", "usd", "US"], ["CA", "cad", null]] as const)(
+    "%s eligible result carries the jurisdiction it was decided on", async (country, currency, observed) => {
+      setCountry(country, currency, observed);
+      const result = await getSessionPaymentEligibility(sessionArgs());
+      if (!result.eligible) throw new Error("expected eligible");
+      expect(result.jurisdiction).toEqual({ country, currency });
+    });
+  it("settings read failure keeps the existing generic retryable reason", async () => {
+    err("studio_payment_settings"); await refused(/could not be verified/i);
+  });
+  it("unavailable attempt history still refuses despite valid country", async () => {
+    err("payment_charge_attempts"); await refused(/could not be verified/i);
+  });
+});
+
+
+// #1035 Codex P1 #4369182087. The manual / no-show fee is prepared and labelled
+// in the studio's VERIFIED jurisdiction currency, never a constant.
+describe("MANUAL FEE currency comes from the verified jurisdiction", () => {
+  it("US studio: the eligible fee is usd (no CAD label for a US studio)", async () => {
+    healthyManualFee();
+    rows("studio_payment_jurisdictions", { payment_country: "US", payment_currency: "usd" });
+    const e = await getManualFeeChargeEligibility(feeArgs());
+    expect(e.eligible).toBe(true);
+    if (e.eligible) expect(e.currency).toBe("usd");
+  });
+  it("CA studio: the eligible fee is cad", async () => {
+    healthyManualFee();
+    const e = await getManualFeeChargeEligibility(feeArgs());
+    expect(e.eligible).toBe(true);
+    if (e.eligible) expect(e.currency).toBe("cad");
+  });
+  it("no jurisdiction row (UNKNOWN): blocked with the unverified reason, never defaulted to cad", async () => {
+    healthyManualFee();
+    delete h.outcomes.studio_payment_jurisdictions;
+    const e = await getManualFeeChargeEligibility(feeArgs());
+    expect(e.eligible).toBe(false);
+    if (!e.eligible) {
+      expect(e.blockingReasons.join(" | ")).toMatch(/payment country and currency could not be verified/i);
+      expect(e.currency).toBeNull();
+    }
+  });
+  it("jurisdiction read ERROR: blocked, not Canada", async () => {
+    healthyManualFee();
+    err("studio_payment_jurisdictions");
+    const e = await getManualFeeChargeEligibility(feeArgs());
+    expect(e.eligible).toBe(false);
+    if (!e.eligible) expect(e.currency).toBeNull();
+  });
+  it("an unsupported stored pair (eur) is UNKNOWN: blocked", async () => {
+    healthyManualFee();
+    rows("studio_payment_jurisdictions", { payment_country: "CA", payment_currency: "eur" });
+    const e = await getManualFeeChargeEligibility(feeArgs());
+    expect(e.eligible).toBe(false);
+  });
+});
+
+
+// #1035 Codex P1 #4369182087. Existing attempts carry the PERSISTED currency,
+// parsed (cad|usd), through the real getSessionPaymentEligibility.
+describe("SESSION PAYMENT: existing attempts carry the persisted currency", () => {
+  const attemptRow = (currency: unknown) => ({
+    id: "att-1", status: "ready", amount_cents: 12000, currency, created_at: "2026-08-01T00:00:00.000Z",
+  });
+  it.each([["usd", "usd"], ["cad", "cad"], ["eur", null], ["USD", null], [null, null]] as const)(
+    "stored %j -> card sees %j",
+    async (stored, shown) => {
+      healthySession();
+      rows("payment_charge_attempts", [attemptRow(stored)]);
+      const e = await getSessionPaymentEligibility(sessionArgs());
+      expect(e.existingAttempts).toHaveLength(1);
+      expect(e.existingAttempts[0].currency).toBe(shown);
+    },
+  );
 });
