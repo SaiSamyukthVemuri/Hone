@@ -93,6 +93,11 @@ describe("/portal/login page", () => {
     expect(out).toContain("portal-login-off");
     expect(out).toContain("Online client access isn&#x27;t available for Synthetic Studio");
     expect(out).not.toContain("The link expires in 1 hour");
+    // Codex P2 4407884608: no sign-in instructions or promise of an email anywhere.
+    expect(out).not.toContain("Enter the email");
+    expect(out).not.toContain("one-time link");
+    expect(out).not.toContain("Sign in to your");
+    expect(out).not.toMatch(/<form/);
   });
   it("an unknown studio slug looks like the default page (no studio probing)", async () => {
     const out = await render(null, "nope");
