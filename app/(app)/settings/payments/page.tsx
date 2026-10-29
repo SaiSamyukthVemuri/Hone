@@ -15,6 +15,8 @@ import { PaymentsSettings, type StripeStatusView } from "./PaymentsSettings";
 import { FeeAmountsCard } from "./FeeAmountsCard";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { currencyLabel } from "@/lib/billing/payment-jurisdiction";
+import { ownerJurisdictionConfirmationEnabled } from "@/lib/billing/jurisdiction-owner-confirmation";
+import { JurisdictionCard } from "./JurisdictionCard";
 import { dbErrorCode } from "@/lib/logging/error-class";
 
 export const dynamic = "force-dynamic";
@@ -138,6 +140,12 @@ export default async function PaymentsSettingsPage() {
           {bookingCardCopy(bookingCardCollection())}
         </p>
       </div>
+      {ownerJurisdictionConfirmationEnabled() &&
+      practitioner.role === "owner" &&
+      !feeJurisdiction.ok &&
+      feeJurisdiction.reason === "missing" ? (
+        <JurisdictionCard />
+      ) : null}
       <PaymentsSettings
         status={status}
         runtimeMode={runtimeMode}
