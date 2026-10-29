@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { isRecordUuid } from "@/lib/record-keeping/disinfectant-focus";
 import { getSessionBlockAreasByBlockIds } from "@/lib/supabase/queries";
 import { blockAreasLabel } from "@/lib/sessions/block-areas";
 import {
@@ -441,6 +442,33 @@ export async function getDisinfectantRecords(
   // DAT-002 (the #981 pattern): a failed read must not render as "no records".
   if (error) throw new Error("Failed to load disinfectant records");
   return (data ?? []) as RecordKeepingDisinfectant[];
+}
+
+// HON-12 / #1172 Codex P2: the overdue notice's ONE record, for when it is older
+// than the newest 200 rows getDisinfectantRecords returns. Same RLS-scoped server
+// client, scoped to this studio and to the notice's own condition (not yet
+// discarded). A malformed id never reaches the database; an unknown id, another
+// studio's id or a failed read is null, so the page renders as before. Optional
+// convenience read: its failure must not take the section down.
+export async function getDisinfectantRecordForNotice(
+  studioId: string,
+  recordId: string,
+): Promise<RecordKeepingDisinfectant | null> {
+  if (!isRecordUuid(recordId)) return null;
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("record_keeping_disinfectants")
+      .select("*")
+      .eq("studio_id", studioId)
+      .eq("id", recordId)
+      .is("date_discarded", null)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data as RecordKeepingDisinfectant;
+  } catch {
+    return null;
+  }
 }
 
 export async function getExposureIncidentRecords(

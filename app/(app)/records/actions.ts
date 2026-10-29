@@ -343,7 +343,10 @@ export async function updateDisinfectantRecordAction(
     formData,
     operatorFallback,
   );
-  const { error } = await supabase
+  // #1172: select the matched row so a save that matched NOTHING (another
+  // studio's id under RLS, or an unknown id) is reported as a failure, not as
+  // "Record saved." for a no-op. The result names nothing about any other row.
+  const { data: updated, error } = await supabase
     .from("record_keeping_disinfectants")
     .update({
       date_prepared: datePrepared,
@@ -356,8 +359,11 @@ export async function updateDisinfectantRecordAction(
       notes: str(formData.get("notes")) || null,
     })
     .eq("id", recordId)
-    .eq("studio_id", studioId);
-  if (error) return { ok: false, error: GENERIC_ERROR };
+    .eq("studio_id", studioId)
+    .select("id");
+  if (error || !updated || updated.length === 0) {
+    return { ok: false, error: GENERIC_ERROR };
+  }
   revalidatePath("/records");
   return { ok: true };
 }
