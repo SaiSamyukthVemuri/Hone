@@ -1,0 +1,59 @@
+# OOO-PUSH-REHEARSAL. REHEARSAL - NEVER MERGE. How the pinned supabase CLI v2.102.0 (the inner Go
+# binary, "supabase-go") behaves when the local bundle has a pending migration version LOWER than
+# the remote maximum: plain push, --dry-run, --include-all, and negative controls. A disposable
+# PostgreSQL on the runner and synthetic ooo_* migrations only. No hosted project, no credential.
+#
+# Supply chain as the other workflows: actions pinned by SHA, contents: read,
+# persist-credentials: false. No Supabase images are pulled, so no registry login is used.
+
+name: ooo-push-rehearsal
+
+on:
+  pull_request:
+    paths:
+      - "scripts/ci/ooo-push-rehearsal.sh"
+      - ".github/workflows/ooo-push-rehearsal.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hone-ooo-push-rehearsal-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rehearse:
+    name: OOO push rehearsal (not required)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Start the runner's PostgreSQL with a throwaway canary password
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo systemctl start postgresql.service
+          for _ in $(seq 1 30); do sudo -u postgres psql -Atc 'select 1' > /dev/null 2>&1 && break; sleep 1; done
+          sudo -u postgres psql -c "alter user postgres with password 'postgres'"
+          PGPASSWORD=postgres psql "postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable" -Atc 'select version()'
+
+      - name: Rehearse db push with a version below the remote maximum
+        shell: bash
+        env:
+          REHEARSAL_OUT: ${{ runner.temp }}/ooo-push-out
+        run: bash scripts/ci/ooo-push-rehearsal.sh
+
+      - name: Upload rehearsal logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ooo-push-rehearsal-logs
+          path: ${{ runner.temp }}/ooo-push-out/
+          retention-days: 7
