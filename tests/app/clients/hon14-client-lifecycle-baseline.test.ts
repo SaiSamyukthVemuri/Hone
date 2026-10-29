@@ -48,10 +48,13 @@ describe("HON-14 current client lifecycle", () => {
   });
 
   it("the clients list has exactly two views, and an unknown ?view= is the active view", () => {
-    const src = read("app/(app)/clients/page.tsx");
-    expect(src).toContain('type View = "active" | "archived"');
-    expect(src).toContain('return value === "archived" ? "archived" : "active"');
-    expect(src).toContain("/clients?view=archived");
+    // Moved by the list-view slice: the decision now lives in lib/clients/list-view.ts
+    // (tests/lib/clients/list-view.test.ts pins its behaviour); the page only uses it.
+    const mod = read("lib/clients/list-view.ts");
+    expect(mod).toContain('export type ClientListView = "active" | "archived"');
+    expect(mod).toContain('return value === "archived" ? "archived" : "active"');
+    expect(mod).toContain("/clients?view=${view}");
+    expect(read("app/(app)/clients/page.tsx")).toContain("parseClientListView(params.view)");
   });
 
   it("the directory reads split on archived_at only (active = null, archived = not null)", () => {
