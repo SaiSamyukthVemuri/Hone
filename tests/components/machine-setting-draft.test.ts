@@ -1204,6 +1204,76 @@ describe("switching machine or mode clears the collected draft", () => {
     ).toMatch(/revisionUnresolved/);
   });
 
+  // INSURANCE #1205 R1. The guard above forbids create-mode flags by NAME
+  // (`saveUnresolved`, "frozen"), so a future create-mode flag spelled any other
+  // way would slip past it. This lists what the host Save MAY observe, positively:
+  // any other identifier in its disabled expression fails here, and whoever adds
+  // it has to decide - on purpose - whether it is a create-mode flag (which must
+  // stay OFF this button, because Save again unchanged is that recovery) or a
+  // revision hold (which belongs here).
+  const SAVE_DISABLED_ALLOWED = [
+    "pending",
+    "resume",
+    "state",
+    "resumeChoicePending",
+    "resumedNeedsSettings",
+    "resumedUnconfirmed",
+    "revisionUnresolved",
+  ];
+  const saveDisabledIdentifiers = (expr: string) =>
+    [
+      ...new Set(
+        expr
+          .replace(/\/\*[\s\S]*?\*\//g, "")
+          .replace(/\/\/[^\n]*/g, "")
+          .replace(/"[^"]*"|'[^']*'/g, "")
+          .match(/[A-Za-z_]\w*/g) ?? [],
+      ),
+    ].filter((id) => !["true", "false", "null", "undefined"].includes(id));
+
+  it("the host Save observes ONLY a listed set of flags (R1: create-mode flags are listed positively)", () => {
+    const save = read(FORM_SRC).match(/onClick=\{submit\}\s*\n\s*disabled=\{([\s\S]*?)\}\s*\n\s*data-testid="save-treatment-area"/);
+    expect(save, "the Save button's disabled expression was not found - this guard would be blind").toBeTruthy();
+    const ids = saveDisabledIdentifiers(save![1]!);
+    expect(ids.length, "the identifier scan found nothing").toBeGreaterThanOrEqual(5);
+    expect(
+      ids.filter((id) => !SAVE_DISABLED_ALLOWED.includes(id)),
+      "Save observes a flag this list does not know: decide whether it is a create-mode flag (keep it OFF Save) or a revision hold, then add it here",
+    ).toEqual([]);
+  });
+
+  it("CONTROL: the scan catches a new, differently named flag", () => {
+    const ids = saveDisabledIdentifiers('pending || resume.state === "saved" || newSaveHeld || revisionUnresolved');
+    expect(ids.filter((id) => !SAVE_DISABLED_ALLOWED.includes(id))).toEqual(["newSaveHeld"]);
+  });
+
+  // INSURANCE #1205 R2. The host's `revisionUnresolved` is cleared only by the
+  // panel reporting false. If the panel (or the connected wrapper around it)
+  // could unmount for another reason while a revision is unresolved, Save and
+  // Cancel would stay disabled until a reload. Pinned here: the wrapper is
+  // rendered UNCONDITIONALLY by the form, and the wrapper never clears its own
+  // context after the first load, so the panel unmounts only through
+  // `recordedSetupUnavailable` - which releases the hold.
+  const stripComments = (t: string) => t.replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  it("the form renders the connected panel unconditionally (R2)", () => {
+    const form = stripComments(read(FORM_SRC));
+    const at = form.indexOf("<MachineFirstSetupConnected");
+    expect(at, "the connected panel is no longer rendered by the form").toBeGreaterThan(-1);
+    const before = form.slice(Math.max(0, at - 200), at).trimEnd();
+    expect(
+      before,
+      "the connected panel is now rendered under a condition; it could unmount while a revision is unresolved and leave Save and Cancel disabled",
+    ).not.toMatch(/(&&|\?|:)\s*\(?$/);
+  });
+
+  it("the connected wrapper never clears its context after the first load (R2)", () => {
+    const conn = stripComments(read(CONN_SRC));
+    expect(conn, "the wrapper can null its context, which unmounts the panel").not.toMatch(
+      /setCtx\(\s*(null|\(\)\s*=>\s*null)\s*\)/,
+    );
+    expect(conn, "the wrapper's own reset path is gone - this guard would be blind").toMatch(/setCtx\(/);
+  });
+
   it("previous-treatment units go through the sentinel rule", () => {
     // THE DEFECT (Codex, #860 4296709059). `device-display` and `none` are
     // not units. Rendering them literally put "1.25 device-display" in
