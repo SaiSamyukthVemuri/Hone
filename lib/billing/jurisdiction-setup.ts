@@ -122,9 +122,14 @@ export function evaluateSetup(input: SetupInput): SetupVerdict {
   );
   if (disagreeing) return blocked("price_currency_mismatch");
 
+  // Say only what was compared: the country always, a currency only when a
+  // stated price currency was actually checked against the confirmed one.
+  const currencyCompared = input.statedCurrencies.some((c) => c != null);
   return {
     state: "ready",
     paymentsMayBeEnabled: true,
-    explanation: "Your confirmed country and currency match your Stripe account.",
+    explanation: currencyCompared
+      ? "Your confirmed country matches your Stripe account, and your stated price currencies agree with your confirmed currency."
+      : "Your confirmed country matches your Stripe account. Price currencies were not checked here.",
   };
 }

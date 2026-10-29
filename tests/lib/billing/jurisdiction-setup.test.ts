@@ -75,6 +75,21 @@ describe("evaluateSetup: payments stay blocked until all three facts agree", () 
 });
 
 describe("NEGATIVE CONTROL and source guard", () => {
+  it("PEER C2: the ready text claims only what was compared", () => {
+    // no price currency is read: only the country was compared with Stripe
+    const noCurrencies = evaluateSetup(base());
+    expect(noCurrencies.state).toBe("ready");
+    expect(noCurrencies.explanation).toMatch(/country/i);
+    expect(noCurrencies.explanation).not.toMatch(/match[^.]*currenc/i);
+    expect(noCurrencies.explanation).toMatch(/not checked/i);
+    // only nulls were stated: still nothing compared
+    expect(evaluateSetup(base({ statedCurrencies: [null] })).explanation).toMatch(/not checked/i);
+    // a stated currency that agrees WAS compared, so the text may say so
+    const compared = evaluateSetup(base({ statedCurrencies: ["usd"] }));
+    expect(compared.explanation).toMatch(/currenc/i);
+    expect(compared.explanation).not.toMatch(/not checked/i);
+  });
+
   it("a rule that trusted the account country alone would call a mismatched price currency ready", () => {
     const naive = (i: SetupInput) => i.observedAccountCountry === "US";
     const input = base({ statedCurrencies: ["cad"] });
