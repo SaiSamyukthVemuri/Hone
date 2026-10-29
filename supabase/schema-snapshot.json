@@ -1,14 +1,15 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 245,
-    "last": "0246_intake_questionnaire_snapshot.sql",
-    "sha256": "2f329cd91a92feef717fb2b7d49cb6ee4a7986881363dac460784fc6aae07cfd"
+    "count": 246,
+    "last": "0269_appointment_participants.sql",
+    "sha256": "66d644535a7b4a757a1ac9b8079151db2e9f90a112f73948b61234e45a69adb5"
   },
   "public": {
     "tables": [
       "admin_action_events",
       "appointment_audit",
+      "appointment_participants",
       "appointment_payments",
       "appointment_policy_acknowledgements",
       "appointment_settlements",
@@ -139,6 +140,7 @@
       "_whole_session_copy_fingerprint",
       "_whole_session_copy_source_id",
       "acquire_studio_capacity_lock",
+      "add_appointment_participant",
       "add_electrolysis_pass",
       "add_studio_receptionist",
       "admin_accept_pending_invitation",
