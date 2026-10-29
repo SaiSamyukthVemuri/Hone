@@ -99,15 +99,16 @@ nrec() { ls "$H"/hone-s1/s1-apply/RECONCILE-* 2>/dev/null | wc -l | tr -d ' '; }
 pushes() { [ -f "$H/calls.log" ] && grep -c '^push$' "$H/calls.log" || echo 0; }
 leaks() { { [ -f "$H/leak.log" ] && cat "$H/leak.log"; grep -rIl -e "$CTOK" -e "$CPW" "$H" 2>/dev/null | grep -v -e '/stubcfg$' -e '/supabase-cli/supabase-go$' -e '/ans$'; echo "$OUT" | grep -e "$CTOK" -e "$CPW"; } | head -3; }
 READS4="query:g02-history-0254 query:g12-0254-preflight-0254 query:s1-open-transactions-0254 query:w03-table-sizes-0254"
+dumpdbg() { echo "--- driver.debug / reconcile.out of $H:"; cat "$H"/hone-s1/one-command/run.*/driver.debug 2>&1 | tail -12; cat "$H"/hone-s1/one-command/run.*/reconcile.out 2>&1 | tail -6; }
 # expectations for a run that must end without a push
 nopush() { # nopush NAME REASONPAT WANTCALLS : NOT APPLIED, marker none, no push, no reconcile, no secret anywhere
   local g; g=$(calls)
   if [ $RC != 0 ] && [ "$(result_of)" = "NOT APPLIED" ] && [ "$(marker)" = none ] && [ "$(pushes)" = 0 ] && [ "$(nrec)" = 0 ] && echo "$OUT" | grep -Eq "$2" && [ "$g" = "$3" ] && [ -z "$(leaks)" ]; then ok "$1"
-  else bad "$1" "rc=$RC result=$(result_of) marker=$(marker) pushes=$(pushes) calls=[$g] want=[$3] leaks=$(leaks) $(echo "$OUT" | grep -E 'STOP|reason' | head -3)"; fi
+  else dumpdbg; bad "$1" "rc=$RC result=$(result_of) marker=$(marker) pushes=$(pushes) calls=[$g] want=[$3] leaks=$(leaks) $(echo "$OUT" | grep -E 'STOP|reason' | head -3)"; fi
 }
 unknown() { # unknown NAME REASONPAT : UNKNOWN, the marker stays, ONE push at most, the reconcile did NOT run by itself
   if [ $RC != 0 ] && echo "$(result_of)" | grep -q '^UNKNOWN' && [ "$(marker)" != none ] && [ "$(pushes)" = 1 ] && [ "$(nrec)" = 0 ] && echo "$OUT" | grep -Eq "$2" && [ -z "$(leaks)" ]; then ok "$1"
-  else bad "$1" "rc=$RC result=$(result_of) marker=$(marker) pushes=$(pushes) rec=$(nrec) leaks=$(leaks) $(echo "$OUT" | grep -E 'STOP|reason' | head -3)"; fi
+  else dumpdbg; bad "$1" "rc=$RC result=$(result_of) marker=$(marker) pushes=$(pushes) rec=$(nrec) leaks=$(leaks) $(echo "$OUT" | grep -E 'STOP|reason' | head -3)"; fi
 }
 
 # ------------------------------------------------------------------ static facts
@@ -127,7 +128,7 @@ home1; answers approve tok pw; hrun
 w="$READS4 dry push"
 if [ $RC = 0 ] && [ "$(result_of)" = "APPLIED+VERIFIED" ] && [ "$(calls)" = "$w" ] && [ "$(pushes)" = 1 ] && [ "$(marker)" = none ] && [ "$(nrec)" = 1 ] && [ -f "$H/s1read-called" ] && [ -z "$(leaks)" ]; then
   ok "HAPPY: summary -> approve -> credentials ONCE -> four reads, one dry run, ONE push, read-back -> automatic reconcile -> ONE result APPLIED+VERIFIED (marker archived, 1 record)"
-else bad "happy path" "rc=$RC result=$(result_of) calls=[$(calls)] marker=$(marker) rec=$(nrec) leaks=$(leaks) $(echo "$OUT" | tail -12)"; echo "--- driver.debug:"; cat "$H"/hone-s1/one-command/run.*/driver.debug 2>&1 | head -30; fi
+else bad "happy path" "rc=$RC result=$(result_of) calls=[$(calls)] marker=$(marker) rec=$(nrec) leaks=$(leaks) $(echo "$OUT" | tail -12)"; dumpdbg; fi
 ls "$H"/hone-s1/s1-apply/APPLY-STATE.cleared.* >/dev/null 2>&1 && echo "$OUT" | grep -q 'reconcile: done: ALL' && ok "the marker was archived by the automatic reconcile on read-back evidence (class ALL)" || bad "reconcile ALL"
 [ "$(grep -c "typed ONCE" <<<"$OUT")" = 2 ] && [ "$(wc -l < "$H/ans" | tr -d ' ')" = 3 ] && ok "the person typed exactly three lines (approval, token, password); the read-back's own token/password prompts were answered by the runner (the harness would have hung on a fourth prompt)" || bad "credentials entered more than once"
 echo "$OUT" | grep -q 'STAGE 0254 ONLINE APPLY: what this run does' && echo "$OUT" | grep -q 'NO settings write' && ok "the reviewed script's own summary is shown to the person before the approval prompt" || bad "summary not shown"
@@ -171,7 +172,7 @@ nopush "an UNEXPECTED PROMPT is never answered: the run STOPs (no output limit),
 # ------------------------------------------------------------------ authentication failures: one attempt, no retry
 home1 "READ_AUTH=fail"; answers approve tok pw; hrun
 n=$(grep -c '^query:' "$H/calls.log" 2>/dev/null)
-if [ $RC != 0 ] && [ "$(result_of)" = "NOT APPLIED" ] && [ "$n" = 1 ] && [ "$(pushes)" = 0 ] && [ -f "$H/hone-s1/s1-apply/FAILED-LOGIN" ] && [ "$(nrec)" = 0 ] && [ -z "$(leaks)" ]; then ok "AUTH FAILURE on the first read: ONE attempt, FAILED-LOGIN tombstone, nothing pushed, no retry, NOT APPLIED"; else bad "auth failure" "rc=$RC result=$(result_of) queries=$n tomb=$(ls $H/hone-s1/s1-apply 2>/dev/null | tr '\n' ' ')"; fi
+if [ $RC != 0 ] && [ "$(result_of)" = "NOT APPLIED" ] && [ "$n" = 1 ] && [ "$(pushes)" = 0 ] && [ -f "$H/hone-s1/s1-apply/FAILED-LOGIN" ] && [ "$(nrec)" = 0 ] && [ -z "$(leaks)" ]; then ok "AUTH FAILURE on the first read: ONE attempt, FAILED-LOGIN tombstone, nothing pushed, no retry, NOT APPLIED"; else dumpdbg; bad "auth failure" "leaks=[$(leaks)] rc=$RC result=$(result_of) queries=$n tomb=$(ls $H/hone-s1/s1-apply 2>/dev/null | tr '\n' ' ')"; fi
 home1 "PUSH=authfail"; answers approve tok pw; hrun
 if [ $RC != 0 ] && [ "$(pushes)" = 1 ] && [ ! -f "$H/s1read-called" ] && [ "$(nrec)" = 0 ] && ! echo "$(result_of)" | grep -q '^APPLIED'; then ok "AUTH FAILURE at the push: ONE push attempt, no read-back, no automatic reconcile, never reported applied ($(result_of))"; else bad "push auth failure" "rc=$RC result=$(result_of) pushes=$(pushes)"; fi
 home1 "PUSH=killed"; answers approve tok pw; hrun
@@ -190,7 +191,7 @@ G=$T/gen; rm -rf "$G"; mkdir -p "$G/hone-s1/stage-x" "$G/hone-s1/s1-apply"; chmo
 cat > "$G/hone-s1/stage-x/apply-x.sh" <<'XE'
 #!/bin/bash
 IFS= read -r -p "Go ahead with X? " W </dev/tty
-[ "$W" = GO ] || { echo "RESULT: NOT APPLIED"; exit 1; }
+[ "$W" = GONOW ] || { echo "RESULT: NOT APPLIED"; exit 1; }
 IFS= read -rs -p "Access token: " T </dev/tty; echo
 IFS= read -rs -p "Password: " P </dev/tty; echo
 [ -n "$T" ] && [ -n "$P" ] || exit 1
@@ -202,10 +203,10 @@ cat > "$G/hone-s1/stage-x/reconcile-x.sh" <<'XE'
 mv "$HOME/hone-s1/s1-apply/APPLY-STATE" "$HOME/hone-s1/s1-apply/APPLY-STATE.cleared.x" && echo "RECONCILED ALL: archived" >&2
 XE
 { echo "STAGE=X1"; echo "PLATFORM=any"; echo "APPLY=stage-x/apply-x.sh"; echo "RECONCILE=stage-x/reconcile-x.sh"; echo "MARKER=s1-apply/APPLY-STATE"; echo "TOMBSTONE=s1-apply/FAILED-LOGIN"
-  echo "APPROVE_WORD=GO"; echo "VERIFIED_LINE=RESULT: APPLIED+VERIFIED"; echo "IDLE_S=6"; echo "HARD_S=60"
+  echo "APPROVE_WORD=GONOW"; echo "VERIFIED_LINE=RESULT: APPLIED+VERIFIED"; echo "IDLE_S=6"; echo "HARD_S=60"
   echo "PIN=$(sha "$G/hone-s1/stage-x/apply-x.sh")  stage-x/apply-x.sh"; echo "PIN=$(sha "$G/hone-s1/stage-x/reconcile-x.sh")  stage-x/reconcile-x.sh"
   echo "PROMPT=approve|Go ahead with X? <END>"; echo "PROMPT=secret-token|Access token: <END>"; echo "PROMPT=secret-password|Password: <END>"; } > "$G/stage.conf"
-H=$G; RUNNER=$D/hone-stage-run.sh; printf '%s\t%s\t0\n' ">>> To run this stage now, type exactly GO (anything else cancels, nothing has connected): " GO > "$H/ans"; printf '%s\t%s\t1\n' "$Q_TOK" "$CTOK" >> "$H/ans"; printf '%s\t%s\t1\n' "$Q_PW" "$CPW" >> "$H/ans"
+H=$G; RUNNER=$D/hone-stage-run.sh; printf '%s\t%s\t0\n' ">>> To run this stage now, type exactly GONOW (anything else cancels, nothing has connected): " GO > "$H/ans"; printf '%s\t%s\t1\n' "$Q_TOK" "$CTOK" >> "$H/ans"; printf '%s\t%s\t1\n' "$Q_PW" "$CPW" >> "$H/ans"
 hrun
 if [ $RC = 0 ] && [ "$(result_of)" = "APPLIED+VERIFIED" ] && [ "$(marker)" = none ] && echo "$OUT" | grep -q 'stage: X1'; then ok "GENERIC: the same runner runs a different stage (other approval word, paths and prompt table) from its manifest alone"; else bad "generic stage" "rc=$RC result=$(result_of) $(echo "$OUT" | tail -6)"; fi
 

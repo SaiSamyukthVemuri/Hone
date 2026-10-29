@@ -31,10 +31,18 @@ proc tail_of {s} { set m [mask $s]; set n [string length $m]; if {$n > 160} { se
 # stop the child politely (its own trap prints its receipt and keeps the marker if the push began), then hard
 proc stop_child {} {
   global spawn_id timeout expect_out
-  catch {exec kill -TERM [exp_pid]}
+  set pid [exp_pid]
+  catch {exec kill -TERM -- -$pid}
+  catch {exec kill -TERM $pid}
   set timeout 25
-  catch { expect { -re {.+} { show $expect_out(buffer); exp_continue } eof {} timeout { catch {exec kill -KILL [exp_pid]} } } }
+  catch { expect { -re {.+} { show $expect_out(buffer); exp_continue } eof {} timeout { catch {exec kill -KILL -- -$pid}; catch {exec kill -KILL $pid} } } }
   catch {close}; catch {wait}
+}
+proc pending_tail {} { ;# whatever the child printed that no pattern consumed (an unflushed prompt)
+  global timeout expect_out
+  set timeout 1; set p ""
+  catch { expect { -re {(?s).+} { set p $expect_out(0,string) } timeout {} eof {} } }
+  return [tail_of $p]
 }
 proc fail {msg} {
   global R
@@ -124,7 +132,7 @@ while {1} {
         if {[string first $vline $b] >= 0} { set R(VERIFIED_SEEN) 1 }
         exp_continue
       }
-      timeout { fail "no output for $C(IDLE_S) s while waiting for the prompt: $want (last output: [tail_of $expect_out(buffer)]). An unexpected prompt or a stall; nothing was answered." }
+      timeout { fail "no output for $C(IDLE_S) s while waiting for the prompt: $want (last output: [pending_tail]). An unexpected prompt or a stall; nothing was answered." }
       eof { show $expect_out(buffer); fail "the child ended before the prompt: $want (last output: [tail_of $expect_out(buffer)])" }
     }
   } else {
@@ -134,7 +142,7 @@ while {1} {
         if {[string first $vline $b] >= 0} { set R(VERIFIED_SEEN) 1 }
         exp_continue
       }
-      timeout { fail "no output for $C(IDLE_S) s after the last expected prompt (last output: [tail_of $expect_out(buffer)]). An unexpected prompt or a stall; nothing was answered." }
+      timeout { fail "no output for $C(IDLE_S) s after the last expected prompt (last output: [pending_tail]). An unexpected prompt or a stall; nothing was answered." }
       eof { show $expect_out(buffer); break }
     }
   }
