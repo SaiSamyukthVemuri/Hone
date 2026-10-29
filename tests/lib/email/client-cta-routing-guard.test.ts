@@ -76,6 +76,19 @@ describe("client email CTA routing", () => {
     expect(ctaGateViolations(mutate("portalLoginUrl: portalLoginUrlForStudio(p.studio),", "portalLoginUrl: `${origin}/portal/login`,")).join()).toMatch(/portalLoginUrl/);
     expect(ctaGateViolations(mutate("rebookUrl: rebookUrlFor(params.studio, params.rebookUrl),", "rebookUrl: params.rebookUrl,")).join()).toMatch(/rebookUrl/);
   });
+  // Codex P2 (4407749090): the raw-URL exception is the gate call's OWN argument
+  // object, nothing broader. Raw URLs handed straight to the template, to any
+  // other call, or in place of the spread must all be seen.
+  it("catches raw URLs passed directly to the template in place of the gate", () => {
+    const raw = "cancellationUrl: `${origin}/cancel/${token}`,\n    rescheduleUrl: `${origin}/reschedule/${token}`,";
+    const v = ctaGateViolations(mutate("...selfServiceLinksFor(p.studio, p),", raw)).join("\n");
+    expect(v).toMatch(/cancellationUrl/);
+    expect(v).toMatch(/rescheduleUrl/);
+  });
+  it("catches a raw cancel path inside some OTHER call's argument", () => {
+    const mutated = mutate("...selfServiceLinksFor(p.studio, p),", "...selfServiceLinksFor(p.studio, p),\n    extra: String(`${origin}/reschedule/${token}`),");
+    expect(ctaGateViolations(mutated).join("\n")).toMatch(/raw cancel\/reschedule path/);
+  });
   it("still allows raw URLs inside the gate call's own argument", () => {
     expect(ctaGateViolations(BODY)).toEqual([]);
   });
