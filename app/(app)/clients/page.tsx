@@ -10,6 +10,13 @@ import { ArchivedClientsList } from "./ArchivedClientsList";
 import { createClient } from "@/lib/supabase/server";
 import { readLegalNamesForStudio } from "@/lib/clients/legal-identity";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
+import {
+  CLIENT_LIST_VIEWS,
+  clientListViewHref,
+  clientListViewSummary,
+  parseClientListView,
+  type ClientListView,
+} from "@/lib/clients/list-view";
 
 // Clients page. Two views: active (default) and archived. Selected
 // via ?view=archived; anything else (missing, "active", garbage)
@@ -23,12 +30,8 @@ import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 // interaction (the practitioner is there to find a specific row they
 // just archived, ordered most-recently-archived first).
 
-type View = "active" | "archived";
-
-function parseView(raw: string | string[] | undefined): View {
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  return value === "archived" ? "archived" : "active";
-}
+// The view decision lives in lib/clients/list-view.ts (HON-14).
+type View = ClientListView;
 
 export default async function ClientsPage({
   searchParams,
@@ -37,7 +40,7 @@ export default async function ClientsPage({
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = (await searchParams) ?? {};
-  const view = parseView(params.view);
+  const view = parseClientListView(params.view);
 
   // Measurement only (perf/route-timing-baseline). This is the page's OWN
   // identity resolution, separate from the two the shell layout already
@@ -76,15 +79,10 @@ export default async function ClientsPage({
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Clients</h1>
           <p className="mt-1 text-sm text-neutral-500">
-            {view === "active"
-              ? activeClients.length === 0
-                ? "No clients yet."
-                : `${activeClients.length} ${
-                    activeClients.length === 1 ? "client" : "clients"
-                  }`
-              : archivedClients.length === 0
-                ? "No archived clients."
-                : `${archivedClients.length} archived`}
+            {clientListViewSummary(
+              view,
+              view === "active" ? activeClients.length : archivedClients.length,
+            )}
           </p>
         </div>
         <Link
@@ -118,14 +116,10 @@ export default async function ClientsPage({
 // link is heavier; inactive link is muted; both share the same touch
 // target so a phone tap lands cleanly.
 function ViewTabs({ current }: { current: View }) {
-  const tabs: ReadonlyArray<{ value: View; label: string; href: string }> = [
-    { value: "active", label: "Active clients", href: "/clients?view=active" },
-    {
-      value: "archived",
-      label: "Archived clients",
-      href: "/clients?view=archived",
-    },
-  ];
+  const tabs = CLIENT_LIST_VIEWS.map((v) => ({
+    ...v,
+    href: clientListViewHref(v.value),
+  }));
   return (
     <nav
       aria-label="Client list view"

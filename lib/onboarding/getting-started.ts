@@ -64,7 +64,13 @@ export type GettingStartedSignals = {
   // CURRENT-mode payment attempt count (scoped by inferStripeLivemode();
   // pre-PR-A this was an unscoped count, so a live attempt ticked the
   // "test-mode payments" item).
-  paymentAttempts: number;
+  //
+  // NULL = NOT ESTABLISHED FOR THIS VIEWER. Payment ledger rows are readable by
+  // the studio owner only (HON-44, migration 0254), so a non-owner's read would
+  // return 0 with no error, indistinguishable from "no payments yet". The read
+  // is therefore not issued for a non-owner and the item renders as
+  // informational rather than as a false "to do". Unknown is never pessimism.
+  paymentAttempts: number | null;
   runtimeLivemode: boolean;
   /**
    * Did EVERY read that next-step selection depends on actually succeed?
@@ -447,17 +453,26 @@ export function buildGettingStarted(
       // once live billing shipped. Mode comes from the deployment runtime;
       // the attempts count is CURRENT-mode scoped.
       items: [
-        auto(
-          s.runtimeLivemode ? "payments-used" : "test-payments",
-          s.runtimeLivemode
-            ? "Payments available (live)"
-            : "Test-mode payments available",
-          s.runtimeLivemode
-            ? "Prepare and run charges from a session against a saved, authorized card."
-            : "Prepare and run test charges from a session.",
-          s.paymentAttempts > 0,
-          null,
-        ),
+        s.paymentAttempts === null
+          ? review(
+              s.runtimeLivemode ? "payments-used" : "test-payments",
+              s.runtimeLivemode
+                ? "Payments available (live)"
+                : "Test-mode payments available",
+              "Payment activity is shown to the studio owner only.",
+              null,
+            )
+          : auto(
+              s.runtimeLivemode ? "payments-used" : "test-payments",
+              s.runtimeLivemode
+                ? "Payments available (live)"
+                : "Test-mode payments available",
+              s.runtimeLivemode
+                ? "Prepare and run charges from a session against a saved, authorized card."
+                : "Prepare and run test charges from a session.",
+              s.paymentAttempts > 0,
+              null,
+            ),
         // Live runtime: a done auto item. Test runtime: an informational
         // review item (an environment fact, not a completable task: it
         // must not sit as an eternal todo or skew auto progress).
@@ -539,6 +554,7 @@ const EMBEDDED_ROW_CEILING = 1_000;
 export async function getGettingStartedSignals(
   studio: { id: string; name: string; slug: string | null },
   practitionerName: string,
+  opts: { viewerIsOwner: boolean },
 ): Promise<GettingStartedSignals> {
   const supabase = await createClient();
   const count = (table: string) =>
@@ -565,11 +581,14 @@ export async function getGettingStartedSignals(
     count("clients"),
     count("record_keeping_sterile_items"),
     count("record_keeping_disinfectants"),
-    supabase
-      .from("payment_charge_attempts")
-      .select("id", { count: "exact", head: true })
-      .eq("studio_id", studio.id)
-      .eq("stripe_livemode", inferStripeLivemode()),
+    // HON-44: the payment ledger is owner-only. A non-owner issues no read.
+    opts.viewerIsOwner
+      ? supabase
+          .from("payment_charge_attempts")
+          .select("id", { count: "exact", head: true })
+          .eq("studio_id", studio.id)
+          .eq("stripe_livemode", inferStripeLivemode())
+      : Promise.resolve(null),
     getTreatmentConsentReadiness(studio.id),
     supabase
       .from("session_blocks")
@@ -634,7 +653,7 @@ export async function getGettingStartedSignals(
     !clients.error &&
     !sterile.error &&
     !disinfectants.error &&
-    !payments.error &&
+    (payments === null || !payments.error) &&
     !blocksRes.error &&
     !notesRes.error &&
     !blocksTruncated &&
@@ -673,7 +692,7 @@ export async function getGettingStartedSignals(
     liveTreatmentConsent: treatmentConsent.ok ? treatmentConsent.ready : null,
     sterileItems: sterile.count ?? 0,
     disinfectants: disinfectants.count ?? 0,
-    paymentAttempts: payments.count ?? 0,
+    paymentAttempts: payments === null ? null : (payments.count ?? 0),
     runtimeLivemode: inferStripeLivemode(),
     nextStepSignalsAvailable,
   };

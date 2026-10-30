@@ -11,10 +11,14 @@ import {
 } from "@/lib/email/studio-identity";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import {
-  buildPaymentReceiptEmail,
+  renderReceiptEmail,
   toReceiptFacts,
   chargeReasonLabel,
 } from "@/lib/email/templates/payment-receipt";
+import { createClient as createSignedInClient } from "@/lib/supabase/server";
+import { clientCommunicationName, clientLegalName } from "@/lib/clients/identity";
+import { readLegalIdentity } from "@/lib/clients/legal-identity";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
 // ---------------------------------------------------------------------------
@@ -437,8 +441,29 @@ type ClientRow = {
   id: string;
   studio_id: string;
   name: string;
+  /** HON-58: the name the client goes by; absent before migration 0258. */
+  preferred_name?: string | null;
   email: string | null;
 };
+
+// HON-58 (OPS Q2b): the legal name for the receipt block, read with the
+// SIGNED-IN session. client_legal_identities is readable by an active owner or
+// practitioner and by no server role (no service_role grant, by design), and
+// this function runs on the admin client, so the legal name has to come from
+// the practitioner's own session. Display-only and FAIL-CLOSED: any failure
+// (no request scope after the response has ended, no row, a read error, the
+// table not existing yet) is "no legal name", and the receipt is exactly what
+// it was before HON-58. It never blocks, retries or alerts, and logs nothing
+// (a name must not reach a log).
+async function readSignedInLegalName(clientId: string): Promise<string | null> {
+  try {
+    const read = await readLegalIdentity(await createSignedInClient(), clientId);
+    if (!read.ok || !read.value) return null;
+    return clientLegalName(read.value);
+  } catch {
+    return null;
+  }
+}
 
 // Resolve the studio's reply-to address using the same fallback
 // chain the postcare email uses: postcare_contact_email beats
@@ -479,6 +504,11 @@ export async function sendPaymentChargeReceipt(args: {
    * the automatic sender passes `automatic` explicitly.
    */
   claimPolicy?: ReceiptClaimPolicy;
+  /**
+   * HON-58: how to read the client's legal name. Injectable for tests; the
+   * default is the signed-in read above. Must never throw.
+   */
+  legalNameReader?: (clientId: string) => Promise<string | null>;
 }): Promise<SendPaymentChargeReceiptResult> {
   const claimPolicy: ReceiptClaimPolicy = args.claimPolicy ?? "manual";
   const admin = createAdminClient();
@@ -568,12 +598,17 @@ export async function sendPaymentChargeReceipt(args: {
   }
 
   // 2) Load the client + studio rows. Both are studio-scoped.
-  const { data: clientRow } = await admin
-    .from("clients")
-    .select("id, studio_id, name, email")
-    .eq("id", attempt.client_id)
-    .eq("studio_id", args.studioId)
-    .maybeSingle();
+  // HON-58: preferred_name for the greeting; read through readWithPreferredName
+  // so this keeps working before 0258 exists. Any other read error is ignored
+  // exactly as it was (the row simply does not load).
+  const { data: clientRow } = await readWithPreferredName((withPreferred) =>
+    admin
+      .from("clients")
+      .select(`id, studio_id, name, ${preferredNameColumn(withPreferred)}email`)
+      .eq("id", attempt.client_id)
+      .eq("studio_id", args.studioId)
+      .maybeSingle(),
+  );
   if (!clientRow) {
     return {
       ok: false,
@@ -581,7 +616,7 @@ export async function sendPaymentChargeReceipt(args: {
       message: CLIENT_EMAIL_MISSING_MESSAGE,
     };
   }
-  const client = clientRow as ClientRow;
+  const client = clientRow as unknown as ClientRow;
   const clientEmail = client.email?.trim() ?? "";
   if (clientEmail.length === 0) {
     return {
@@ -761,8 +796,28 @@ export async function sendPaymentChargeReceipt(args: {
     cardLast4 = raw ? raw : null;
   }
 
-  // 5) Build the email + send.
-  const { subject, html, text } = buildPaymentReceiptEmail({
+  // 4b) HON-58 (OPS Q2b): the GREETING may use the preferred name; the receipt
+  //     block names the client by the LEGAL name when one is recorded. No legal
+  //     identity (or a failed read) adds no row: the receipt is unchanged.
+  const greetingName = clientCommunicationName({
+    name: client.name,
+    preferred_name: client.preferred_name,
+  });
+  const legalName = await (args.legalNameReader ?? readSignedInLegalName)(attempt.client_id);
+
+  // 5) Build the receipt ONE time as a canonical document, then render it as
+  //    the PDF below and as the email, so the two can never disagree (HON-58:
+  //    that includes the Client row).
+  //
+  //    FAIL CLOSED ON THE NEW NAMES. The bundled fonts cannot draw every
+  //    character. A preferred or legal name with one they cannot draw (an emoji
+  //    in "Maggie" , a script the fonts lack) must not turn a receipt that used
+  //    to go out into one that cannot: the PDF is tried with the HON-58 names
+  //    first and, ONLY on UnsupportedReceiptCharacterError and ONLY when an
+  //    HON-58 name was in play, rebuilt with exactly the pre-HON-58 facts (the
+  //    stored name, no Client row). A stored name the fonts cannot draw keeps
+  //    failing as it always did.
+  const baseFacts = toReceiptFacts({
     studioName: studio.name,
     studioContactEmail: resolveStudioContactEmail(studio),
     clientName: client.name,
@@ -778,9 +833,11 @@ export async function sendPaymentChargeReceipt(args: {
     // stripe_livemode=false, so this stays the test-mode receipt today.
     livemode: attempt.stripe_livemode,
   });
+  const hon58Facts = { ...baseFacts, clientName: greetingName, documentClientName: legalName };
+  const hon58NamesInPlay = greetingName !== client.name || legalName !== null;
 
   // 5b) PAY-RECEIPT-PDF. The PDF is rendered from the SAME canonical document
-  //     the email above rendered, so the attachment cannot disagree with the
+  //     the email is rendered from, so the attachment cannot disagree with the
   //     body it arrives with.
   //
   //     ONE EMAIL OR NONE. A receipt is not release-complete without its PDF,
@@ -790,24 +847,17 @@ export async function sendPaymentChargeReceipt(args: {
   //     move is to release the claim and let a practitioner retry by hand.
   let receiptPdf: Buffer;
   let pdfFileName: string;
+  let receiptDoc: ReturnType<typeof buildReceiptDocument>;
   try {
-    const doc = buildReceiptDocument(
-      toReceiptFacts({
-        studioName: studio.name,
-        studioContactEmail: resolveStudioContactEmail(studio),
-        clientName: client.name,
-        chargeReasonLabel: chargeReasonLabel(attempt.charge_reason),
-        amountCents: attempt.amount_cents,
-        currencyCode: attempt.currency,
-        chargedAt: new Date(attempt.charged_at),
-        stripePaymentIntentId: attempt.stripe_payment_intent_id,
-        stripeChargeId: attempt.stripe_charge_id,
-        last4: cardLast4,
-        livemode: attempt.stripe_livemode,
-      }),
-    );
-    pdfFileName = doc.pdfFileName;
-    receiptPdf = Buffer.from(await renderReceiptPdf(doc));
+    try {
+      receiptDoc = buildReceiptDocument(hon58Facts);
+      receiptPdf = Buffer.from(await renderReceiptPdf(receiptDoc));
+    } catch (err) {
+      if (!(hon58NamesInPlay && err instanceof UnsupportedReceiptCharacterError)) throw err;
+      receiptDoc = buildReceiptDocument(baseFacts);
+      receiptPdf = Buffer.from(await renderReceiptPdf(receiptDoc));
+    }
+    pdfFileName = receiptDoc.pdfFileName;
   } catch (err) {
     return await releaseAfterPdfFailure({
       attempt,
@@ -816,6 +866,7 @@ export async function sendPaymentChargeReceipt(args: {
       error: err,
     });
   }
+  const { subject, html, text } = renderReceiptEmail(receiptDoc);
 
   const sendResult = await sendEmailSafely({
     studioIdentity: {

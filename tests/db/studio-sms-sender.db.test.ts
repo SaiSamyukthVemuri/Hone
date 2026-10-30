@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { makeNumberAllocator } from "./helpers/sms-numbers";
 import {
   adminQuery,
   adminTx,
@@ -39,12 +40,12 @@ type ClaimRow = {
 // PER-STUDIO numbers. 0226 reserves a claimed number atomically across all
 // live rows (Codex P2 4252928398), so two studios can no longer hold live
 // claims on one number -- which is the point. Each studio here therefore
-// claims its own pair, derived from its id.
+// claims its own pair. They are ALLOCATED, not hashed: a hash folded into 7000
+// slots let two random studios collide, and the colliding claim comes back
+// `not_claimable` with no key rather than raising (prod run 40716437947).
+const allocateNumber = makeNumberAllocator();
 function numFor(studioId: string, slot: "A" | "B"): string {
-  let h = 0x811c9dc5;
-  for (const ch of `${studioId}:${slot}`) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193) >>> 0;
-  // Exchange 556: never overlaps the fixed 555-xxxx numbers other SMS DB tests use.
-  return `+1416556${String(2000 + (h % 7000)).padStart(4, "0")}`;
+  return allocateNumber(studioId, slot);
 }
 
 async function claim(

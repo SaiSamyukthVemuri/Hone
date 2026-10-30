@@ -40,8 +40,14 @@ describe("sendPaymentChargeReceipt: server boundary + dependencies", () => {
     );
   });
 
-  it("uses the new buildPaymentReceiptEmail template + chargeReasonLabel helper", () => {
-    expect(HELPER).toMatch(/buildPaymentReceiptEmail/);
+  it("renders the email from the ONE canonical receipt document (renderReceiptEmail, the same builder the template wraps) + chargeReasonLabel helper", () => {
+    // HON-58: the sender builds the document once and renders it as the email and
+    // as the PDF, so a Client row can never appear in one and not the other.
+    // renderReceiptEmail(buildReceiptDocument(toReceiptFacts(x))) is exactly what
+    // buildPaymentReceiptEmail(x) returns.
+    expect(HELPER).toMatch(/renderReceiptEmail\(receiptDoc\)/);
+    expect(HELPER).toMatch(/receiptDoc = buildReceiptDocument\(hon58Facts\)/);
+    expect(HELPER).toMatch(/receiptDoc = buildReceiptDocument\(baseFacts\)/);
     expect(HELPER).toMatch(/chargeReasonLabel/);
   });
 

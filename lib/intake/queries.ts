@@ -113,6 +113,12 @@ export async function ensureIntakeForClient(params: {
   studioId: string;
   clientId: string;
   appOrigin: string;
+  /**
+   * Whether the link travels by EMAIL (the default, as every booking surface
+   * has always done). A caller whose only carrier is an SMS passes false so the
+   * stamp never says an email went out.
+   */
+  emailed?: boolean;
 }): Promise<{ id: string; url: string } | null> {
   const admin = createAdminClient();
 
@@ -162,7 +168,7 @@ export async function ensureIntakeForClient(params: {
   // The booking/reschedule confirmation email carries this link, so it counts
   // as an emailed send. Stamp the display metadata (best-effort; never blocks
   // the booking flow if it fails).
-  await stampIntakeLinkIssued(admin, intakeId, { emailed: true });
+  await stampIntakeLinkIssued(admin, intakeId, { emailed: params.emailed ?? true });
   return { id: intakeId, url };
 }
 

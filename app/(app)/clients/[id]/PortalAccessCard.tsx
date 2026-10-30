@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { sendPortalLinkAction } from "./portal-link-actions";
+import { PORTAL_OFF_STAFF_MESSAGE } from "@/lib/booking/client-self-service-policy";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import type { PortalPendingTasks } from "@/lib/portal/pending-tasks";
 
@@ -34,6 +35,7 @@ export function PortalAccessCard({
   lastSeenAt,
   pendingTasks,
   recentEvents = [],
+  portalEnabled = true,
 }: {
   clientId: string;
   portalLoginUrl: string; // /portal/login?studio=SLUG, no token
@@ -42,6 +44,9 @@ export function PortalAccessCard({
   lastSeenAt: string | null;
   pendingTasks?: PortalPendingTasks;
   recentEvents?: RecentPortalEvent[];
+  // HON-47. False when the studio turned client portal access off. Absent means
+  // on, so a caller that predates the flag is unchanged.
+  portalEnabled?: boolean;
 }) {
   const [pending, startTransition] = useTransition();
   const [hint, setHint] = useState<
@@ -83,25 +88,35 @@ export function PortalAccessCard({
         </p>
       </div>
 
+      {portalEnabled ? (
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={handleSend}
-          disabled={pending || !clientHasEmail}
-          className="rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-        >
-          {pending ? "Sending…" : "Send portal link"}
-        </button>
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-900"
-        >
-          Copy login URL
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={pending || !clientHasEmail}
+            className="rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+          >
+            {pending ? "Sending…" : "Send portal link"}
+          </button>
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-900"
+          >
+            Copy login URL
+          </button>
+        </div>
 
-      {!clientHasEmail && (
+      ) : (
+        <p
+          data-testid="portal-off-status"
+          className="rounded-md bg-neutral-50 p-3 text-xs text-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+        >
+          {PORTAL_OFF_STAFF_MESSAGE}
+        </p>
+      )}
+
+      {portalEnabled && !clientHasEmail && (
         <p className="text-xs text-amber-600 dark:text-amber-400">
           Add an email to this client to send a portal link.
         </p>

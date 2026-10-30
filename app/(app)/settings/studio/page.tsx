@@ -68,6 +68,7 @@ export default async function StudioSettingsPage() {
         initial={(({ cancellation, reschedule }) => ({ cancellation, reschedule }))(
           clientSelfServicePolicyFromStudio(studio),
         )}
+        portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
       />
       {legalNameAccess.available && <LegalNameAccessForm initial={legalNameAccess.receptionistAccess} />}
     </section>
