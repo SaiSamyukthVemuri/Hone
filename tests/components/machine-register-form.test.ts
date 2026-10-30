@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { vi } from "vitest";
+import { OWNER_INPUT_REQUEST } from "@/lib/machines/owner-input-copy";
 import path from "node:path";
 import { activeProfiles } from "@/lib/machines/profile-contract";
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
@@ -58,7 +60,7 @@ describe("the owner route stays reviewed-only and owner-only", () => {
   });
 
   it("registers through the existing action, which re-checks the model and the contract", () => {
-    expect(page).toMatch(/registerMachineAction\(input\)/);
+    expect(page).toMatch(/registerMachineAction\(\{\s*profileId: input\.profileId,\s*displayName: input\.displayName,?\s*\}\)/);
     expect(page).not.toMatch(/register_studio_machine|\.rpc\(/);
   });
 
@@ -91,5 +93,56 @@ describe("Global Search finds the Machines page for an owner only", () => {
 
   it("a practitioner does not get the owner-only page", () => {
     expect(hrefs("register a machine", staff)).not.toContain("/settings/machines");
+  });
+});
+
+describe("R5: one shared owner-input wording", () => {
+  const squash = (t: string) => t.replace(/\s+/g, " ");
+
+  it("carries the screen-photo and review caveats", () => {
+    expect(OWNER_INPUT_REQUEST).toContain("a photo of the screen with no client on screen");
+    expect(OWNER_INPUT_REQUEST).toContain("Never include client details");
+    expect(OWNER_INPUT_REQUEST).toContain("Sending this starts a review; it does not add the model.");
+    expect(OWNER_INPUT_REQUEST).toContain("Today only models that have passed their evidence review can be registered.");
+  });
+
+  it("the Machines page renders the constant, not its own copy", () => {
+    expect(read("app/(app)/settings/machines/page.tsx")).toMatch(/\{OWNER_INPUT_REQUEST\}/);
+  });
+
+  it("the charting panel hint, once it carries the review caveat, carries this exact text", () => {
+    const panel = squash(read("components/machines/machine-first-setup-panel.tsx"));
+    if (!panel.includes("Sending this starts a review")) return; // #1272 not merged yet
+    expect(panel).toContain(OWNER_INPUT_REQUEST);
+  });
+});
+
+describe("R3: a non-owner gets the refusal and nothing else", () => {
+  it("renders only the refusal, reads no machines and registers nothing", async () => {
+    vi.resetModules();
+    const listStudioMachines = vi.fn();
+    const registerMachineAction = vi.fn();
+    const createClient = vi.fn();
+    vi.doMock("@/lib/supabase/queries", () => ({
+      requirePractitionerWithStudio: async () => ({
+        practitioner: { role: "practitioner" },
+        studio: { id: "studio-synthetic" },
+      }),
+    }));
+    vi.doMock("@/lib/supabase/server", () => ({ createClient }));
+    vi.doMock("@/lib/machines/machine-queries", () => ({ listStudioMachines }));
+    vi.doMock(
+      "../../app/(app)/clients/[id]/sessions/[sessionId]/machine-setup-actions",
+      () => ({ registerMachineAction }),
+    );
+    const { default: Page } = await import("../../app/(app)/settings/machines/page");
+    const html = renderToStaticMarkup(await Page());
+    expect(html).toContain("Only studio owners can register machines.");
+    expect(html).not.toContain("machine-register");
+    expect(html).not.toContain("Register machine");
+    expect(createClient).not.toHaveBeenCalled();
+    expect(listStudioMachines).not.toHaveBeenCalled();
+    expect(registerMachineAction).not.toHaveBeenCalled();
+    vi.doUnmock("@/lib/supabase/queries");
   });
 });

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { listStudioMachines, type MachineDb } from "@/lib/machines/machine-queries";
 import { activeProfiles } from "@/lib/machines/profile-contract";
+import { OWNER_INPUT_REQUEST } from "@/lib/machines/owner-input-copy";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import { registerMachineAction } from "../../clients/[id]/sessions/[sessionId]/machine-setup-actions";
 import {
@@ -38,7 +39,12 @@ export default async function MachineSettingsPage() {
     displayName: string;
   }): Promise<RegisterResult> {
     "use server";
-    const res = await registerMachineAction(input);
+    // Only the two fields the action takes: this function is callable from the
+    // browser, so nothing else a client sends is forwarded.
+    const res = await registerMachineAction({
+      profileId: input.profileId,
+      displayName: input.displayName,
+    });
     if (res.ok) revalidatePath("/settings/machines");
     return { ok: res.ok, error: res.ok ? undefined : res.error };
   }
@@ -48,12 +54,8 @@ export default async function MachineSettingsPage() {
       <section>
         <h2 className="text-lg font-semibold">Machines</h2>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-          Register the machines in your studio so they appear when you chart.
-          Today only models that have passed their evidence review can be
-          registered. If yours is not listed, send Hone the manufacturer, the
-          exact model and variant, the label on your unit, its modes, and the
-          field names and units the machine shows, with the manual page or a
-          photo of the screen. Never include client details.
+          Register the machines in your studio so they appear when you chart.{" "}
+          {OWNER_INPUT_REQUEST}
         </p>
       </section>
 
