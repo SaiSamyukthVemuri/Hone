@@ -23,6 +23,17 @@ import { describe, expect, it } from "vitest";
 // not just the list, is exercised against the database). The DB test's own
 // outcome is its CI lane's business; this guard only keeps the pairing from
 // being skipped.
+//
+// KNOWN LIMITS. The guard reads text, not a program. It sees an extension of a
+// list only as `NAME.add(`, `.push(`, `.concat(`, `.unshift(` or `.splice(` (also
+// across a line break) and as a reassignment of NAME. It does NOT see:
+//   - optional chaining:  EXEMPT?.add("x")
+//   - a bracket call:     EXEMPT["add"]("x")
+//   - an alias:           const alias = EXEMPT; alias.add("x")
+//   - an index write:     EXEMPT[3] = "x"
+//   - a mutating callee:  addTo(EXEMPT, "x"), where the function mutates its argument
+// A list extended that way can pass. Review such a change by eye; the guard
+// keeps the pairing from being skipped, it does not prove a list is closed.
 
 const ROOT = path.resolve(__dirname, "../..");
 
