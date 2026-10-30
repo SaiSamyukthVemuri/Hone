@@ -1878,6 +1878,11 @@ describe("the owner hint says what to send for an unlisted model", () => {
 
   it("asks for no client details, and says so", () => {
     expect(owner).toContain("Never include client details");
+    expect(owner).toContain("no client on screen");
+  });
+
+  it("says sending starts a review and does not add the model", () => {
+    expect(owner).toContain("starts a review; it does not add the model");
   });
 
   it("is shown to the owner only", () => {

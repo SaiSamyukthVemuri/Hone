@@ -7,9 +7,7 @@ review a model; it does not register or activate anything.
 
 - Only models that have passed Hone's evidence review can be registered and charted.
 - Sending the details below starts that review. It does not add the model to your studio.
-- A shared default for Senior/Junior units, versioned studio overrides and a clearly labelled
-  Other/custom entry are agreed in principle (28 Oct product decision) but not built; custom
-  entries and overrides wait on their own reviewed change.
+- Custom entries are not available and have no date.
 
 ## Send, per machine
 
@@ -18,7 +16,7 @@ review a model; it does not register or activate anything.
 3. The label on your physical unit (for example the room name you call it).
 4. Every treatment mode the unit offers.
 5. For each mode, the field names the machine shows and their units, exactly as displayed.
-6. Source evidence: the manual page or a photo of the screen showing those fields.
+6. Source evidence: the manual page, or a photo of the screen showing those fields with no client on screen.
 
 ## Never send
 

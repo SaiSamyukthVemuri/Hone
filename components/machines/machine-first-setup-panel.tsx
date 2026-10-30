@@ -941,7 +941,8 @@ export function MachineFirstSetupPanel({
           yours is not listed, send Hone the manufacturer, the exact model and
           variant, the label on your unit, its modes, and the field names and
           units the machine shows, with the manual page or a photo of the
-          screen. Never include client details.
+          screen with no client on screen. Never include client details.
+          Sending this starts a review; it does not add the model.
         </p>
       )}
 
