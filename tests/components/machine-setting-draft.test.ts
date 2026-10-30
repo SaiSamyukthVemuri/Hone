@@ -148,8 +148,11 @@ describe("the handoff's shape, pinned on source", () => {
     // state would always be one keystroke behind and the host would save the
     // previous values. The report is computed from the candidate.
     const src = read(DRAFT);
-    expect(src).toMatch(/const report = \(next: SettingGroupDraft\[\]\)/);
-    expect(src).toMatch(/const next = f\(prev\);\s*\n\s*report\(next\);/);
+    // UPDATED with #1259's initial-save gate: `report` takes the candidate's
+    // confirmations as a second argument, and the edit path passes the
+    // CANDIDATE's pruned ticks. Both still derive from `next`, not from state.
+    expect(src).toMatch(/const report = \(\s*next: SettingGroupDraft\[\],/);
+    expect(src).toMatch(/const next = f\(prev\);[\s\S]*?report\(next, live\);/);
   });
 
   it("assembles the groups so the host does not reimplement it", () => {

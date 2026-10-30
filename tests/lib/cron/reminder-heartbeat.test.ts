@@ -1502,7 +1502,11 @@ describe("bounded timeout READ retry", () => {
     f.readPage.mockRejectedValueOnce(new ReminderScanReadFailure(undefined, true));
     expect(await f.run()).toMatchObject({ kind: "complete", queries: 5, scanned: 1, attempted: 1,
       readRetry: { attempted: true, recovered: true, timeouts: 1 } });
-    expect(f.readPage.mock.calls[0].slice(0, 2)).toEqual(f.readPage.mock.calls[1].slice(0, 2));
+    // Same pass, window and cursor; only the page size differs (HON-50 light retry).
+    const [first, second] = f.readPage.mock.calls as unknown as [ReminderScanPass, Record<string, unknown>][];
+    expect(second[0]).toBe(first[0]);
+    expect({ ...second[1], limit: undefined }).toEqual({ ...first[1], limit: undefined });
+    expect(second[1].limit).toBe(10);
     const calls = f.readPage.mock.calls as unknown as [ReminderScanPass, unknown, AbortSignal][];
     expect(calls[0][2]).not.toBe(calls[1][2]);
     expect(f.handle).toHaveBeenCalledTimes(1); expect(f.sent.size).toBe(1);
@@ -1511,7 +1515,7 @@ describe("bounded timeout READ retry", () => {
     vi.useFakeTimers(); const f = scanFixture(); f.populate("email24h", 1, 0);
     let resolve!: (rows: ScanRow[]) => void; let reject!: (error: Error) => void;
     f.readPage.mockImplementationOnce(() => new Promise((yes, no) => { resolve = yes; reject = no; }));
-    const pending = f.run(); await vi.advanceTimersByTimeAsync(1000);
+    const pending = f.run(); await vi.advanceTimersByTimeAsync(1250); // 1 s read budget + 250 ms retry backoff
     expect(await pending).toMatchObject({ kind: "complete", readRetry: { recovered: true } });
     expect(f.handle).toHaveBeenCalledTimes(1);
     if (late === "resolve") resolve(f.rows.email24h); else reject(new Error("SYNTHETIC_PRIVATE late loser"));
@@ -1553,13 +1557,46 @@ describe("bounded timeout READ retry", () => {
       failure: { stage: "read", category: "read_timeout" }, readRetry: { attempted: false } });
     expect(f.readPage).toHaveBeenCalledTimes(1); expect(f.handle).not.toHaveBeenCalled();
   });
+  it("HON-50: the single retry uses a smaller page after a bounded backoff when a full-size page is correlated-slow", async () => {
+    const f = scanFixture(); f.populate("email24h", 3, 0);
+    const original = f.readPage.getMockImplementation()!;
+    // A heavy full-size page stalls past the 1 s budget both times; a light one answers.
+    let reads = 0;
+    f.readPage.mockImplementation(async (...args) => {
+      if (++reads <= 2 && (args[1] as { limit: number }).limit > 10) throw new ReminderScanReadFailure(undefined, true);
+      return original(...args);
+    });
+    const sleeps: number[] = [];
+    const result = await runReminderScanBatch({ coordinator: f.coordinator, readPage: f.readPage, handle: f.handle,
+      now: f.now, sleep: async (ms: number) => { sleeps.push(ms); } } as never);
+    expect(result).toMatchObject({ kind: "complete", readRetry: { attempted: true, recovered: true, timeouts: 1 } });
+    const limits = (f.readPage.mock.calls as unknown as [unknown, { limit: number }][]).map((c) => c[1].limit);
+    expect(limits[0]).toBe(50); expect(limits[1]).toBeLessThanOrEqual(10);
+    expect(sleeps).toHaveLength(1); expect(sleeps[0]).toBeGreaterThan(0); expect(sleeps[0]).toBeLessThanOrEqual(300);
+    expect(f.handle).toHaveBeenCalledTimes(3); expect(f.sent.size).toBe(1);
+  });
+  it("HON-50: a light retry that returns a full light page does not mark the pass exhausted", async () => {
+    const f = scanFixture(); f.populate("email24h", 25);
+    const original = f.readPage.getMockImplementation()!;
+    let calls = 0;
+    f.readPage.mockImplementation(async (...args) => {
+      if (++calls === 1) throw new ReminderScanReadFailure(undefined, true);
+      return original(...args);
+    });
+    const result = await runReminderScanBatch({ coordinator: f.coordinator, readPage: f.readPage, handle: f.handle,
+      now: f.now, sleep: async () => {} } as never);
+    // 10 rows (== retry limit) must not be read as "fewer than a page, done".
+    expect(result.scanned).toBe(25);
+    expect(f.readPage.mock.calls.length).toBeGreaterThanOrEqual(4);
+  });
   it("counts retry within eight reads while retaining the candidate cap and fair rotation", async () => {
     const f = scanFixture(); f.populate("email24h", 1001);
     f.readPage.mockRejectedValueOnce(new ReminderScanReadFailure(undefined, true));
-    const result = await f.run(); expect(result).toMatchObject({ kind: "partial", queries: 8, scanned: 200 });
+    const result = await f.run(); // The 10-row light retry page (not 50) leaves 40 fewer candidates inside the eight-read cap.
+    expect(result).toMatchObject({ kind: "partial", queries: 8, scanned: 160 });
     expect(f.readPage).toHaveBeenCalledTimes(8);
     expect(new Set(f.readPage.mock.calls.map(c => c[0])).size).toBe(4);
-    expect(f.handle).toHaveBeenCalledTimes(200);
+    expect(f.handle).toHaveBeenCalledTimes(160);
   });
   it("does not issue a ninth query when the eighth read times out", async () => {
     const f = scanFixture(); f.populate("email24h", 1001);
@@ -1568,9 +1605,9 @@ describe("bounded timeout READ retry", () => {
       if (++calls === 1 || calls === 8) throw new ReminderScanReadFailure(undefined, true);
       return original(...args);
     });
-    expect(await f.run()).toMatchObject({ kind: "unavailable", queries: 8, scanned: 150,
+    expect(await f.run()).toMatchObject({ kind: "unavailable", queries: 8, scanned: 110,
       readRetry: { attempted: true, timeouts: 2 }, failure: { stage: "read", category: "read_timeout" } });
-    expect(f.readPage).toHaveBeenCalledTimes(8); expect(f.handle).toHaveBeenCalledTimes(150);
+    expect(f.readPage).toHaveBeenCalledTimes(8); expect(f.handle).toHaveBeenCalledTimes(110);
   });
   it.each(["query", "validation", "handler", "coordination"] as const)("never retries a %s failure", async (failure) => {
     const f = scanFixture(); f.populate("email24h", 1, 0);
