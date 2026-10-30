@@ -372,6 +372,23 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
       "Per-service editor field inside a repeated accordion row; no stable anchor exists. Reached via the Services entry, whose keywords carry this vocabulary.",
   },
 
+  // --------------------------------------------------------------- machines
+  {
+    page: "/settings/machines",
+    label: "Register a machine",
+    role: "owner",
+    decision: "searchable",
+    entryId: "settings-machines",
+  },
+  {
+    page: "/settings/machines",
+    label: "Registered machines",
+    role: "owner",
+    decision: "excluded",
+    reason:
+      "A read-only list of units already registered, with nothing to configure. Reached through the Machines entry, so a second destination would only duplicate it.",
+  },
+
   // ------------------------------------------------------------------- team
   {
     page: "/settings/team",

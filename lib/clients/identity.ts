@@ -27,6 +27,8 @@ export type ClientIdentityFields = {
   legal_given_name?: string | null;
   legal_middle_name?: string | null;
   legal_family_name?: string | null;
+  /** The legal name as one string, for a caller that already holds it joined. */
+  legal_name?: string | null;
 };
 
 function clean(value: string | null | undefined): string {
@@ -41,7 +43,8 @@ export function clientLegalName(client: ClientIdentityFields): string | null {
   const parts = [client.legal_given_name, client.legal_middle_name, client.legal_family_name]
     .map(clean)
     .filter((part) => part.length > 0);
-  return parts.length === 0 ? null : parts.join(" ");
+  if (parts.length > 0) return parts.join(" ");
+  return clean(client.legal_name) || null;
 }
 
 /**

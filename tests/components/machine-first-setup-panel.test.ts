@@ -275,6 +275,15 @@ describe("once chosen, the panel shows that model's native fields", () => {
     expect(html).toContain("Galvanic");
   });
 
+  it("shows the profile's provenance and the studio confirmation status (DEFAULT-PROFILES item 6)", () => {
+    expect(html).toContain('data-testid="profile-provenance"');
+    expect(html).toContain("Profile version 1");
+    // The fixture is device-confirmed; a manufacturer-documented profile reads
+    // "Pending studio confirmation" (see tests/lib/machines/profile-provenance).
+    expect(html).toContain("Confirmed against this studio");
+    expect(html).toContain('data-state="confirmed"');
+  });
+
   it("offers a visible way to change machine - the dropdown itself", () => {
     // THE LINK IS GONE ON PURPOSE. A separate "Change machine" control existed
     // because the pill picker DISAPPEARED once something was chosen, so there
@@ -1743,5 +1752,140 @@ describe("the panel shows what is already recorded on this block", () => {
       html.indexOf('data-testid="machine-recorded-setups"'),
     );
     expect(section).toContain("Room 9 unit");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HON-8 next-visit continuity: the last visit's unit is OFFERED, never chosen.
+// ---------------------------------------------------------------------------
+describe("the unit used at the last visit is offered, not selected", () => {
+  const base = {
+    scope: SCOPE,
+    devices: [DEVICE],
+    catalogue: CAT,
+    persistence: DATABASE_PERSISTENCE,
+  };
+  const OFFER = { deviceId: DEVICE.deviceId, displayName: DEVICE.displayName };
+
+  it("shows the offer and a button, with nothing chosen", () => {
+    const html = render({ ...base, suggestedMachine: OFFER });
+    expect(html).toContain('data-testid="machine-suggestion"');
+    expect(html).toContain("Last used for this client: Room 9 unit");
+    expect(html).toContain('data-testid="machine-suggestion-use"');
+    expect(html).not.toContain('data-testid="machine-chosen"');
+  });
+
+  it("is hidden once a machine is chosen", () => {
+    const html = render({ ...base, suggestedMachine: OFFER, initialDeviceId: DEVICE.deviceId });
+    expect(html).not.toContain('data-testid="machine-suggestion"');
+  });
+
+  it("is hidden beside an unusable stored machine", () => {
+    const html = render({
+      ...base,
+      suggestedMachine: OFFER,
+      unavailableSelection: { deviceId: "device-gone", reason: "taken out of service" },
+    });
+    expect(html).not.toContain('data-testid="machine-suggestion"');
+  });
+
+  it("is hidden when the picker would not list that unit", () => {
+    const html = render({
+      ...base,
+      suggestedMachine: { deviceId: "not-listed", displayName: "Ghost" },
+    });
+    expect(html).not.toContain('data-testid="machine-suggestion"');
+  });
+
+  it("CONTROL: without an offer nothing is shown", () => {
+    expect(render(base)).not.toContain('data-testid="machine-suggestion"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HON-8 reload continuity: a reopened visit comes back on its last saved unit.
+// ---------------------------------------------------------------------------
+describe("a reopened visit restores its last saved machine", () => {
+  const OTHER: StudioDevice = { ...DEVICE, deviceId: "room-2", displayName: "Room 2 unit" };
+  const base = {
+    scope: SCOPE,
+    devices: [DEVICE, OTHER],
+    catalogue: CAT,
+    persistence: DATABASE_PERSISTENCE,
+  };
+
+  it("selects the restored unit over the practitioner's remembered one", () => {
+    const html = render({
+      ...base,
+      initialDeviceId: "room-2",
+      restoredSelection: { deviceId: "room-9", modeKey: "galvanic" },
+    });
+    expect(html).toContain('data-testid="machine-chosen"');
+    expect(html).toContain("Room 9 unit");
+    expect(html).toMatch(/<option value="room-9" selected/);
+  });
+
+  it("does not claim the restored unit is what is remembered", () => {
+    const html = render({
+      ...base,
+      initialDeviceId: "room-2",
+      restoredSelection: { deviceId: "room-9", modeKey: "galvanic" },
+    });
+    // The remembered fact is room-2's; restoring must not rewrite the status.
+    const status = html.slice(html.indexOf('data-testid="machine-first-status"'));
+    expect(status).not.toContain("Room 9 unit");
+  });
+
+  it("CONTROL: without a restored selection the remembered unit applies", () => {
+    const html = render({ ...base, initialDeviceId: "room-2" });
+    expect(html).toMatch(/<option value="room-2" selected/);
+    expect(html).not.toMatch(/<option value="room-9" selected/);
+  });
+});
+
+describe("the owner hint says what to send for an unlisted model", () => {
+  const owner = renderToStaticMarkup(
+    createElement(MachineFirstSetupPanel, {
+      scope: SCOPE,
+      devices: [],
+      catalogue: CAT,
+      canManageMachines: true,
+    } as never),
+  );
+  const staff = renderToStaticMarkup(
+    createElement(MachineFirstSetupPanel, {
+      scope: SCOPE,
+      devices: [],
+      catalogue: CAT,
+    } as never),
+  );
+
+  it("lists every input the sheet asks for, and keeps the reviewed-only truth", () => {
+    expect(owner).toContain('data-testid="machine-owner-hint"');
+    for (const need of [
+      "manufacturer",
+      "exact model",
+      "variant",
+      "label on your unit",
+      "modes",
+      "field names and units",
+      "manual page or a photo",
+    ]) {
+      expect(owner, need).toContain(need);
+    }
+    expect(owner).toContain("only models that have passed their evidence review");
+  });
+
+  it("asks for no client details, and says so", () => {
+    expect(owner).toContain("Never include client details");
+    expect(owner).toContain("no client on screen");
+  });
+
+  it("says sending starts a review and does not add the model", () => {
+    expect(owner).toContain("starts a review; it does not add the model");
+  });
+
+  it("is shown to the owner only", () => {
+    expect(staff).not.toContain("machine-owner-hint");
   });
 });

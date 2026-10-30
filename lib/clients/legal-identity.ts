@@ -11,6 +11,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { clientLegalName, type ClientIdentityFields } from "@/lib/clients/identity";
+import { isMissingRelationError } from "@/lib/supabase/missing-relation";
 
 export const LEGAL_IDENTITY_COLUMNS =
   "client_id, legal_given_name, legal_middle_name, legal_family_name";
@@ -107,6 +108,10 @@ export async function readLegalNamesForClients(
     const chunk = unique.slice(i, i + 200);
     const q = (supabase.from("client_legal_identities") as Table).select(LEGAL_IDENTITY_COLUMNS);
     const { data, error } = (await q.in("client_id", chunk)) as { data: LegalIdentityRow[] | null; error: unknown };
+    // Before migration 0258 the table does not exist, so NO client has a legal
+    // identity: that is an empty answer, not a failure. Only this table's
+    // missing-relation error is tolerated; every other error stays unavailable.
+    if (isMissingRelationError(error, "client_legal_identities")) return { ok: true, value: new Map() };
     if (error) return { ok: false };
     for (const row of data ?? []) {
       const legal = clientLegalName(row);

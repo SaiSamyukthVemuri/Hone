@@ -688,4 +688,21 @@ describe("J9-G the money-table universe fails closed (F5)", () => {
     }
     expect(await init(s.studioId)).toBe("initialized");
   });
+
+  // THE NAMED EXEMPTION, EXERCISED AGAINST THE REAL COMMAND. The source-contract
+  // test (tests/migrations/0214-history-init-source-contract.test.ts) exempts
+  // `stripe_events` from the checked tables by reading text; that proves what the
+  // list says, not what the function does. stripe_events carries a
+  // stripe_account_id column, so it is money-SHAPED, and the claim is that a
+  // provider report naming an account the studio holds no binding for neither
+  // refuses nor changes the outcome. Only the database can show that.
+  it("a stripe_events row naming an unrelated account does not refuse (the exemption is real)", async () => {
+    const { s } = await activeCa("g-stripe-events");
+    await adminQuery(
+      `insert into public.stripe_events
+         (stripe_event_id, event_type, stripe_account_id, stripe_livemode, studio_id)
+       values ('evt_j9_${rid()}', 'account.updated', 'acct_j9_unbound_${rid()}', true, '${s.studioId}')`,
+    );
+    expect(await init(s.studioId)).toBe("initialized");
+  });
 });
