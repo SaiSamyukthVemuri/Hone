@@ -22,6 +22,10 @@ import { CalendarAutoRefresh } from "./CalendarAutoRefresh";
 // every href below is the one that was already there.
 
 type Props = {
+  // HON-48 Q7: the studio whose private schedule-signal topic this screen listens to.
+  studioId?: string;
+  // HON-48 Q7: fingerprint of the schedule shown, for degraded-signal detection only.
+  scheduleFingerprint?: string;
   view: "day" | "week" | "month";
   rangeLabel: string;
   timezone: string;
@@ -40,6 +44,8 @@ const STEP_LINK =
   "flex h-9 w-9 items-center justify-center text-lg leading-none hover:bg-neutral-50 dark:hover:bg-neutral-900";
 
 export function CalendarToolbar({
+  studioId,
+  scheduleFingerprint,
   view,
   rangeLabel,
   timezone,
@@ -55,7 +61,7 @@ export function CalendarToolbar({
   return (
     <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       {/* HON-48: keeps this screen current for the other people on the calendar. */}
-      <CalendarAutoRefresh />
+      <CalendarAutoRefresh studioId={studioId} scheduleFingerprint={scheduleFingerprint} />
       <div>
         {/* The visible date range IS the heading, Google-style. */}
         <h1 className="text-2xl font-semibold tracking-tight">{rangeLabel}</h1>

@@ -2,16 +2,29 @@
 
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import * as Sentry from "@sentry/nextjs";
 import {
   AUTO_REFRESH_INTERVAL_MS,
   shouldAutoRefresh,
   type AutoRefreshTrigger,
 } from "@/lib/calendar/refresh-policy";
+import {
+  SCHEDULE_SIGNAL_EVENT,
+  createScheduleSignalController,
+  isUnannouncedFind,
+  scheduleSignalEnabled,
+  scheduleSignalTopic,
+  type RefreshCause,
+  type SignalController,
+} from "@/lib/calendar/schedule-signal";
+import { createClient } from "@/lib/supabase/client";
 
-// HON-48: keeps a passive calendar screen current for the other four people
-// using it. See lib/calendar/refresh-policy.ts for the rules and why. Renders
-// nothing. It asks the existing server render for a refresh; it opens no
-// connection and reads no data itself.
+// HON-48: keeps a passive calendar screen current for the other people using it.
+// See lib/calendar/refresh-policy.ts for the rules and why, and
+// lib/calendar/schedule-signal.ts for the live signal (migration 0271). Renders
+// nothing. It asks the existing server render for a refresh; the live signal is a
+// data-free private Realtime message that only sets a flag, and it reads no data.
+// The 60 s interval and the focus refresh stay as the floor for anything lost.
 
 function isEditing(): boolean {
   const el = document.activeElement as HTMLElement | null;
@@ -20,42 +33,142 @@ function isEditing(): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable === true;
 }
 
-export function CalendarAutoRefresh() {
+function readGuards() {
+  return {
+    visible: document.visibilityState === "visible",
+    online: navigator.onLine,
+    dialogOpen: document.querySelector('[role="dialog"][aria-modal="true"]') !== null,
+    editing: isEditing(),
+  };
+}
+
+// At most once per page load: a stuck signal path must be visible, not a flood.
+let degradedReported = false;
+
+export function CalendarAutoRefresh({
+  studioId,
+  scheduleFingerprint,
+}: {
+  studioId?: string;
+  scheduleFingerprint?: string;
+}) {
   const router = useRouter();
   const lastRefreshMs = useRef<number>(Date.now());
+  const controllerRef = useRef<SignalController | null>(null);
+  const hiddenAtMs = useRef<number | null>(null);
+  const channelStatus = useRef<string>("none");
+  // What started the last refresh, and whether a live signal had announced a change.
+  const lastCause = useRef<{ cause: RefreshCause; announced: boolean } | null>(null);
+  const previousFingerprint = useRef<string | undefined>(scheduleFingerprint);
+
+  // A fingerprint that changed after a fallback refresh no signal announced = degraded.
+  useEffect(() => {
+    const changed =
+      previousFingerprint.current !== undefined &&
+      scheduleFingerprint !== undefined &&
+      previousFingerprint.current !== scheduleFingerprint;
+    previousFingerprint.current = scheduleFingerprint;
+    const last = lastCause.current;
+    if (changed) lastCause.current = null;
+    if (
+      !changed ||
+      !last ||
+      controllerRef.current === null ||
+      !isUnannouncedFind({ cause: last.cause, announced: last.announced, fingerprintChanged: true })
+    ) {
+      return;
+    }
+    if (degradedReported) return;
+    degradedReported = true;
+    const detail = { cause: last.cause, channel: channelStatus.current };
+    console.warn("calendar.schedule_signal.degraded", detail);
+    Sentry.captureMessage("calendar.schedule_signal.degraded", { level: "warning", tags: detail });
+  }, [scheduleFingerprint]);
 
   useEffect(() => {
     function maybeRefresh(trigger: AutoRefreshTrigger) {
       const nowMs = Date.now();
       const ok = shouldAutoRefresh({
         trigger,
-        visible: document.visibilityState === "visible",
-        online: navigator.onLine,
-        dialogOpen: document.querySelector('[role="dialog"][aria-modal="true"]') !== null,
-        editing: isEditing(),
+        ...readGuards(),
         nowMs,
         lastRefreshMs: lastRefreshMs.current,
       });
       if (!ok) return;
       lastRefreshMs.current = nowMs;
+      const announced = controllerRef.current?.markRefresh() ?? false;
+      lastCause.current = { cause: trigger === "signal" ? "signal" : trigger, announced };
       router.refresh();
     }
 
     // Poll at a fraction of the interval so a held-off refresh (a drawer was
     // open) happens soon after it closes instead of up to a full interval later.
     const timer = window.setInterval(() => maybeRefresh("interval"), AUTO_REFRESH_INTERVAL_MS / 4);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") maybeRefresh("focus");
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAtMs.current = Date.now();
+        return;
+      }
+      const hiddenFor = hiddenAtMs.current === null ? 0 : Date.now() - hiddenAtMs.current;
+      hiddenAtMs.current = null;
+      // Catch-up first (a long hide may have slept through signals); the focus
+      // refresh then sees the fresh refresh time and does not double it.
+      controllerRef.current?.resume(hiddenFor);
+      maybeRefresh("focus");
     };
     const onFocus = () => maybeRefresh("focus");
-    document.addEventListener("visibilitychange", onVisible);
+    const onOnline = () => controllerRef.current?.resume(Number.POSITIVE_INFINITY);
+    document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", onFocus);
+    window.addEventListener("online", onOnline);
     return () => {
       window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
+      document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", onOnline);
     };
   }, [router]);
+
+  useEffect(() => {
+    const topic = scheduleSignalTopic(studioId);
+    if (!topic || !scheduleSignalEnabled(process.env.NEXT_PUBLIC_CALENDAR_SCHEDULE_SIGNAL)) return;
+    const supabase = createClient();
+    const controller = createScheduleSignalController({
+      now: () => Date.now(),
+      setTimer: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimer: (h) => window.clearTimeout(h as number),
+      guards: readGuards,
+      lastRefreshMs: () => lastRefreshMs.current,
+      refresh: () => {
+        lastRefreshMs.current = Date.now();
+        controller.markRefresh();
+        lastCause.current = { cause: "signal", announced: true };
+        router.refresh();
+      },
+    });
+    controllerRef.current = controller;
+    let cancelled = false;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    void (async () => {
+      // A private channel authorizes with the user's token: hand it over before joining.
+      // supabase-js re-sends it on every token refresh by itself.
+      await supabase.realtime.setAuth();
+      if (cancelled) return;
+      channel = supabase
+        .channel(topic, { config: { private: true } })
+        .on("broadcast", { event: SCHEDULE_SIGNAL_EVENT }, () => controller.signal())
+        .subscribe((status) => {
+          channelStatus.current = status;
+          controller.status(status);
+        });
+    })();
+    return () => {
+      cancelled = true;
+      controllerRef.current = null;
+      controller.dispose();
+      if (channel) void supabase.removeChannel(channel);
+    };
+  }, [studioId, router]);
 
   return null;
 }

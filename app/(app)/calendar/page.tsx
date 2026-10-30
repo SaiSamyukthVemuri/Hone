@@ -26,6 +26,7 @@ import type {
 import type { StudioTimedBlock } from "@/lib/types/database";
 import { DayColumn } from "./DayColumn";
 import { resolveCalendarDayAvailability } from "@/lib/calendar/day-availability";
+import { scheduleFingerprint } from "@/lib/calendar/schedule-fingerprint";
 import { buildCalendarReturnParams } from "./calendar-return";
 // Grid constants + formatters MUST come from plain (non-"use client")
 // modules. Importing them from the "use client" DayColumn turned them
@@ -283,6 +284,8 @@ export default async function CalendarPage({
           desktop-only: on mobile the PR #380 day view owns day navigation, so
           these week controls would be redundant. */}
       <CalendarToolbar
+        studioId={studio.id}
+        scheduleFingerprint={scheduleFingerprint({ appointments, timedBlocks, blockouts, recurringOccurrences })}
         view="week"
         rangeLabel={weekRangeLabel(weekStart, weekEnd)}
         timezone={studio.timezone}
@@ -578,6 +581,8 @@ async function renderMonthView(opts: {
           switching. Month step nav stays visible on all sizes (mobile month
           has no separate day-nav). */}
       <CalendarToolbar
+        studioId={studio.id}
+        scheduleFingerprint={scheduleFingerprint({ appointments, timedBlocks, blockouts, recurringOccurrences })}
         view="month"
         rangeLabel={monthYearLabel(monthAnchor)}
         timezone={studio.timezone}
@@ -709,6 +714,8 @@ async function renderTeamDayView(opts: {
   return (
     <div className="flex flex-col gap-6">
       <CalendarToolbar
+        studioId={studio.id}
+        scheduleFingerprint={scheduleFingerprint({ appointments, timedBlocks, blockouts, recurringOccurrences })}
         view="day"
         rangeLabel={`${weekdayLabel(dayOfWeek)}, ${monthDayLabel(date)}, ${y}`}
         timezone={studio.timezone}
