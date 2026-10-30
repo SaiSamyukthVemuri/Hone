@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 246,
-    "last": "0248_intake_protected_write_enforcement.sql",
-    "sha256": "f2c399db0b30a7508a5a4eff2658e1e9613bda8c3fba10018e69fac056f18cca"
+    "count": 247,
+    "last": "0257_studio_payment_jurisdiction_failed_attempt_ack.sql",
+    "sha256": "91bacac918d4ac70cdcf9e0f11f9199fe86162d01766231a9ecf9593f5ab0c85"
   },
   "public": {
     "tables": [
@@ -303,6 +303,7 @@
       "import_legacy_waitlist_entry",
       "imported_treatment_memory_audit_row",
       "initialize_studio_payment_jurisdiction_from_history",
+      "initialize_studio_payment_jurisdiction_from_history_v2",
       "invalidate_waitlist_invitation_proof",
       "is_studio_member",
       "is_studio_owner",
