@@ -56,8 +56,19 @@ async function assertNoVisitPhotos(page: Page, clientId: string, sessionId: stri
   await expect(page.getByTestId("session-photos")).toHaveCount(0, { timeout: 5_000 });
   const html = await page.content();
   for (const ph of photos) expect(html).not.toContain(stemOf(ph));
-  const res = await page.request.get(`/api/clients/${clientId}/images/${photos[0].id}/signed-url`);
-  expect(res.ok(), "signed-url route refuses").toBe(false);
+  await assertSignedUrlRefused(page, clientId, photos[0].id);
+}
+
+/**
+ * The signing route answers 400 BEFORE it looks at the user when `variant` is
+ * missing, so a probe without it would "refuse" for the wrong reason. This one
+ * sends a valid variant and requires the route's own refusal of an image the
+ * caller may not see: 404 with the uniform body.
+ */
+async function assertSignedUrlRefused(page: Page, clientId: string, imageId: string) {
+  const res = await page.request.get(`/api/clients/${clientId}/images/${imageId}/signed-url?variant=thumb`);
+  expect(res.status(), "signed-url route refuses with the uniform 404").toBe(404);
+  expect(await res.json()).toEqual({ error: "Image not available." });
 }
 
 test("visit photos keep their visit, their order and their identity for another practitioner; another studio sees none", async ({ browser, page }) => {
@@ -102,6 +113,13 @@ test("visit photos keep their visit, their order and their identity for another 
   await page.reload();
   await assertShowsVisit(page, photos, clientScoped);
 
+  // CONTROL for the refusal probe below: the same request, same variant, from a
+  // user who may see the photo, signs it (200 with a url). Without this the
+  // later 404 could be any failure of the request itself.
+  const signed = await page.request.get(`/api/clients/${clientId}/images/${photos[0].id}/signed-url?variant=thumb`);
+  expect(signed.status(), "same studio: the route signs the photo").toBe(200);
+  expect(typeof (await signed.json()).url).toBe("string");
+
   // Another authorized practitioner of the same studio: same photos, same order.
   const ctx = await browser.newContext({ bypassCSP: true });
   try {
@@ -118,6 +136,8 @@ test("visit photos keep their visit, their order and their identity for another 
     // (3) crossed studio: a user of the SAME studio is a fixture that crosses
     //     into the photos' studio, so the "sees nothing" check must reject it.
     await expect(assertNoVisitPhotos(p2, clientId, sessionId, photos)).rejects.toThrow();
+    //     and the route probe alone must reject the same user (it gets a 200).
+    await expect(assertSignedUrlRefused(p2, clientId, photos[0].id)).rejects.toThrow();
   } finally {
     await ctx.close();
   }
