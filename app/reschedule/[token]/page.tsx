@@ -5,6 +5,7 @@ import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PublicPolicyReminderCard } from "@/app/_components/PublicPolicyReminderCard";
 import { hasAnyPolicy } from "@/lib/booking/policy-acknowledgement";
+import { CLIENT_RESCHEDULE_DISABLED_CODE } from "@/lib/booking/client-self-service-policy";
 import {
   FREE_CONSULT_WAITLIST_ONLY_BODY,
   FREE_CONSULT_WAITLIST_ONLY_CODE,
@@ -61,6 +62,11 @@ export default async function ReschedulePage({
   // and the only way forward the visitor is offered is one they have to choose.
   const waitlistOnly =
     !result.ok && result.code === FREE_CONSULT_WAITLIST_ONLY_CODE;
+  // HON-47. Same contract as EMERG-01 above: the code is attached only after
+  // the token resolved to a confirmed, future appointment, and nothing on this
+  // branch fetches slots or renders the form.
+  const rescheduleDisabled =
+    !result.ok && result.code === CLIENT_RESCHEDULE_DISABLED_CODE;
 
   return (
     <main
@@ -152,6 +158,19 @@ export default async function ReschedulePage({
                 presentedPolicyHash={result.summary.presentedPolicyHash}
               />
             </>
+          ) : rescheduleDisabled && !result.ok ? (
+            <div>
+              <EyebrowCaption>Reschedule appointment</EyebrowCaption>
+              <h1
+                className="font-[var(--font-fraunces)] mt-8 text-[28px] font-bold leading-tight md:text-[36px]"
+                style={{ letterSpacing: "-0.02em" }}
+              >
+                Online rescheduling isn&rsquo;t available.
+              </h1>
+              <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
+                {result.error}
+              </p>
+            </div>
           ) : waitlistOnly ? (
             // EMERG-01 policy surface. Deliberate, not apologetic: the
             // appointment is fine, it simply cannot be moved from here.

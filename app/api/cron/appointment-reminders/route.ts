@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
+import { detectReminderAuthorityMode, type ReminderAuthorityMode } from "@/lib/email/reminder-authority-mode";
 import {
+  sendAppointmentReminderOperation,
   claimEmailSendOutcome,
   logEmailFailure,
   recordEmailResult,
@@ -31,9 +33,8 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import { createUpstashReminderScanCoordinator, runReminderScanBatch, ReminderScanReadFailure, type ReminderScanPass, type ReminderScanCursor } from "@/lib/cron/reminder-scan-coordinator";
 import { recordReminderRunSuccess } from "@/lib/cron/reminder-heartbeat";
+import { buildReminderCandidateQuery, MAX_ATTEMPTS, type SentColumn, type AttemptsColumn } from "@/lib/cron/reminder-candidate-query";
 
-const PER_RUN_LIMIT = 50;
-const MAX_ATTEMPTS = 3;
 
 type Joined = Appointment & {
   service: Pick<Service, "name" | "default_duration_minutes" | "pre_care_instructions"> | null;
@@ -42,7 +43,7 @@ type Joined = Appointment & {
   // the existing email name/email. Selected in loadAppointmentsForWindow.
   client: Pick<
     Client,
-    "name" | "email" | "phone" | "sms_consent_at" | "sms_opted_out_at"
+    "name" | "email" | "phone" | "sms_consent_at" | "sms_opted_out_at" | "archived_at"
   > | null;
   practitioner: { display_name: string | null; email: string | null } | null;
 };
@@ -50,20 +51,6 @@ type Joined = Appointment & {
 function pickRel<T>(v: T | T[] | null): T | null {
   return Array.isArray(v) ? (v[0] ?? null) : v;
 }
-
-// Widened to accept SMS column names too. The same join shape works
-// for both email and SMS passes; the difference is purely which
-// _sent_at / _send_attempts columns we filter on.
-type SentColumn =
-  | "reminder_24h_sent_at"
-  | "reminder_2h_sent_at"
-  | "sms_reminder_24h_sent_at"
-  | "sms_reminder_2h_sent_at";
-type AttemptsColumn =
-  | "reminder_24h_send_attempts"
-  | "reminder_2h_send_attempts"
-  | "sms_reminder_24h_send_attempts"
-  | "sms_reminder_2h_send_attempts";
 
 async function loadAppointmentsForWindow(opts: {
   startIso: string;
@@ -75,27 +62,7 @@ async function loadAppointmentsForWindow(opts: {
   signal: AbortSignal;
 }): Promise<Joined[]> {
   const admin = createAdminClient();
-  let query = admin
-    .from("appointments")
-    .select(
-      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email, phone, sms_consent_at, sms_opted_out_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
-    )
-    .eq("status", "confirmed")
-    .is(opts.notSentColumn, null)
-    .lt(opts.attemptsColumn, MAX_ATTEMPTS)
-    .gte("starts_at", opts.startIso)
-    .lte("starts_at", opts.endIso)
-    .order("starts_at", { ascending: true })
-    .order("id", { ascending: true })
-    .limit(Math.min(PER_RUN_LIMIT, opts.limit))
-    .abortSignal(opts.signal);
-  if (opts.after) {
-    // A total keyset order survives rows leaving the candidate set as this
-    // pass records results. OFFSET would skip unsent work after those writes.
-    const time = JSON.stringify(opts.after.startsAt);
-    const id = JSON.stringify(opts.after.id);
-    query = query.or(`starts_at.gt.${time},and(starts_at.eq.${time},id.gt.${id})`);
-  }
+  const query = buildReminderCandidateQuery(admin, opts);
   const { data, error } = await query;
   if (error) throw new ReminderScanReadFailure(error.code, opts.signal.aborted);
 
@@ -196,6 +163,46 @@ async function readLatestIntake(
   return (data as { id: string; status: string } | null) ?? null;
 }
 
+// 0247 AUTHORITY PATH. Used only when the database has the operation authority.
+// The candidate row discovers an id and nothing else: every eligibility,
+// composition and render fact comes from the governed operation snapshot, and no
+// legacy claim can authorize the email. A held or unreadable operation is
+// skipped, never sent from the cached join.
+async function sendReminderViaOperation(
+  opts: { kind: "24h" | "2h" },
+  appt: Joined,
+  admin: ReturnType<typeof createAdminClient>,
+  stats: EmailRunStats,
+): Promise<"claim_unavailable" | void> {
+  const emailType: ClaimableEmailType = opts.kind === "24h" ? "reminder_24h" : "reminder_2h";
+  const result = await sendAppointmentReminderOperation(admin, appt.studio_id, appt.id, emailType);
+  // The database could not answer: nothing was authoritatively handled, so the
+  // coordinator keeps this candidate and the run is not a success.
+  if (result.kind === "unavailable") return "claim_unavailable";
+  if (result.kind === "held") { stats.skipped += 1; return; }
+  stats.attempted += 1;
+  if (result.observation.kind === "accepted") {
+    stats.succeeded += 1; // SDK acceptance, not delivery or current projection.
+    if (result.persistence === "recorded" && result.projection === "current" && result.intakeId) {
+      await stampIntakeLinkIssued(admin, result.intakeId, { emailed: true });
+      stats.intakeCtaIncluded += 1;
+    }
+  } else {
+    stats.failed += 1;
+    logEmailFailure({ appointmentId: appt.id, studioId: appt.studio_id, emailType,
+      error: "email_operation_not_accepted", retryable: false, attemptNumber: result.attemptNumber });
+    if (result.observation.kind === "definite_refusal") await alertIfReminderExhausted({
+      studioId: appt.studio_id, appointmentId: appt.id, emailType, attemptNumber: result.attemptNumber,
+      retryable: false, reason: "send_failed", intakeCtaIncluded: result.intakeId !== null });
+  }
+  if (result.persistence === "unconfirmed") await recordOpsAlert({
+    severity: "warning", event: "reminder_email_accounting_failed",
+    message: "Reminder outcome accounting is unconfirmed; automatic replay remains held.",
+    studioId: appt.studio_id, appointmentId: appt.id, route: "/api/cron/appointment-reminders",
+    safeDetails: { reminder_type: emailType },
+  });
+}
+
 // The ~24h and ~2h window email, composed.
 //
 // ONE CLAIM OWNS THE WINDOW. Appointment reminders and intake reminders are
@@ -234,12 +241,15 @@ async function sendReminderPass(opts: {
 
   if (!appt.studio) return;
   if (!appt.client?.email) return;
+  // MSG-ARCH-01: an archived client is not messaged automatically. Selection
+  // is only a snapshot; the live re-read after the claim below is the fence.
+  if (appt.client.archived_at) return;
 
-  const wantsReminder =
+  let wantsReminder =
     (appt.studio as unknown as Record<string, boolean>)[studioToggle] === true;
   // Absent only on a studios row read before 0186 is applied. The column
   // defaults true, so absent must mean ENABLED, never disabled.
-  const intakeEnabled = appt.studio.send_intake_reminders !== false;
+  let intakeEnabled = appt.studio.send_intake_reminders !== false;
 
   // CASE 6: nothing to send. No intake read, no claim, no attempt.
   if (!wantsReminder && !intakeEnabled) return;
@@ -289,6 +299,23 @@ async function sendReminderPass(opts: {
     return;
   }
 
+  // MSG-ARCH-01: archived since discovery. Its own live read, after the claim,
+  // so the status/start select above stays exactly as it was. Nothing is sent
+  // and nothing is recorded as sent; the claim is cleared the way CASE 4 -> 5
+  // clears it. An unavailable read is not evidence of "not archived".
+  const { data: liveClient, error: liveClientError } = await admin
+    .from("clients")
+    .select("archived_at")
+    .eq("id", appt.client_id)
+    .eq("studio_id", appt.studio.id)
+    .maybeSingle();
+  if (liveClientError) throw new Error("reminder client state unavailable");
+  if (liveClient?.archived_at) {
+    await recordEmailResult(admin, appt.id, emailType, false);
+    stats.skipped += 1;
+    return;
+  }
+
   const currentStart = Date.parse(fresh.starts_at);
   if (
     !Number.isFinite(currentStart) ||
@@ -298,6 +325,41 @@ async function sendReminderPass(opts: {
   ) {
     // No send occurred. Preserve the counted claim and existing TTL; do not
     // settle, clear, refund or create a retry from this unfenced observation.
+    stats.skipped += 1;
+    return;
+  }
+
+  // HON-13: the studio's switches are read LIVE at the send decision too. The
+  // row was selected at the start of the run with the studio's settings as they
+  // were then; a studio that switched this reminder (or intake reminders) off
+  // while the batch was running must not have it sent anyway. The SMS pass
+  // already refreshes its switches before dispatch. A reminder the live switch
+  // forbids is released exactly like the CASE 4 -> 5 flip below: the claim is
+  // cleared, nothing is sent, and the next fire re-evaluates from a fresh read.
+  const { data: liveStudio, error: liveStudioError } = await admin
+    .from("studios")
+    .select(`${studioToggle}, send_intake_reminders`)
+    .eq("id", appt.studio.id)
+    .maybeSingle();
+  // An unavailable read is not evidence that the switch is still on.
+  if (liveStudioError || !liveStudio) {
+    throw new Error("reminder studio switches unavailable");
+  }
+  const liveSwitches = liveStudio as unknown as Record<string, boolean | null>;
+  const liveWantsReminder = liveSwitches[studioToggle] === true;
+  const liveIntakeEnabled = liveSwitches.send_intake_reminders !== false;
+  // The message is composed from the LIVE switches, never discarded wholesale:
+  // a reminder switched off after the scan downgrades to the standalone intake
+  // reminder when intake reminders are still on and the intake is incomplete
+  // (the claim already counted an attempt, and a third attempt is never
+  // re-scanned). Only a downgrade is considered: a reminder switched ON after
+  // the scan is left to the next fire.
+  if (wantsReminder && !liveWantsReminder) {
+    wantsReminder = false;
+    intakeEnabled = liveIntakeEnabled;
+  }
+  if (!wantsReminder && !liveIntakeEnabled) {
+    await recordEmailResult(admin, appt.id, emailType, false);
     stats.skipped += 1;
     return;
   }
@@ -480,6 +542,8 @@ async function sendSmsReminderPass(opts: {
     return;
   }
   if (!appt.client) return;
+  // MSG-ARCH-01: an archived client is not texted automatically.
+  if (appt.client.archived_at) return;
   // Hard prerequisites for the SMS helper. Skipping early avoids a
   // claim roundtrip when there is no point.
   if (!appt.client.phone) return;
@@ -546,21 +610,24 @@ async function sendSmsReminderPass(opts: {
   // while the row was queued reach the real sender's consent gate.
   const { data: recipient, error: recipientError } = await admin
     .from("appointments")
-    .select("status, client_id, client:clients(phone, sms_consent_at, sms_opted_out_at), studio:studios(send_24h_sms_reminders, send_2h_sms_reminders)")
+    .select("status, client_id, client:clients(phone, sms_consent_at, sms_opted_out_at, archived_at), studio:studios(send_24h_sms_reminders, send_2h_sms_reminders)")
     .eq("id", appt.id)
     .eq("studio_id", appt.studio.id)
     .maybeSingle();
   const current = recipient as unknown as {
     status: string;
     client_id: string;
-    client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at"> | Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">[] | null;
+    client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at" | "archived_at"> | Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at" | "archived_at">[] | null;
     studio: Pick<Studio, "send_24h_sms_reminders" | "send_2h_sms_reminders"> | Pick<Studio, "send_24h_sms_reminders" | "send_2h_sms_reminders">[] | null;
   } | null;
   const currentClient = pickRel(current?.client ?? null);
   const currentStudio = pickRel(current?.studio ?? null);
   if (
     recipientError || !currentClient || !currentStudio ||
-    current?.status !== "confirmed" || current.client_id !== appt.client_id
+    current?.status !== "confirmed" || current.client_id !== appt.client_id ||
+    // MSG-ARCH-01: archived since discovery. Refused before the helper, so no
+    // claim exists to release and nothing can be recorded as sent.
+    currentClient.archived_at
   ) {
     // Do not attach the queued client's intake link to a reassigned client.
     // A later run can select that appointment with its new context.
@@ -633,6 +700,25 @@ export async function GET(req: Request) {
     const admin = createAdminClient();
     const appOrigin = getRequiredAppOrigin();
     const ledgerBudget = createLedgerBudget();
+    // 0247 compatibility: which email authority does this database have? Decided
+    // at most ONCE per run, on the first email candidate (a run with no email work
+    // never probes). See lib/email/reminder-authority-mode.ts.
+    let emailAuthorityRead: Promise<ReminderAuthorityMode> | null = null;
+    const emailAuthority = (): Promise<ReminderAuthorityMode> => {
+      emailAuthorityRead ??= detectReminderAuthorityMode(admin).then(async (mode) => {
+        if (mode === "unavailable") {
+          try {
+            await recordOpsAlert({
+              severity: "warning", event: "reminder_email_authority_unavailable",
+              message: "The reminder email authority could not be determined; email reminders are held this run.",
+              route: "/api/cron/appointment-reminders", safeDetails: { reason: "authority_probe_inconclusive" },
+            });
+          } catch { /* The run still reports claim_unavailable per row. */ }
+        }
+        return mode;
+      });
+      return emailAuthorityRead;
+    };
     failureStage = "scan";
     const batch = await runReminderScanBatch({
       coordinator: createUpstashReminderScanCoordinator(),
@@ -652,7 +738,14 @@ export async function GET(req: Request) {
         const opts = { kind, windowStartIso: window.startIso, windowEndIso: window.endIso } as const;
         const unavailable = pass.startsWith("sms")
           ? await sendSmsReminderPass({ ...opts, ledgerBudget }, appt, admin, stats, appOrigin)
-          : await sendReminderPass(opts, appt, admin, stats, appOrigin);
+          : await (async () => {
+              const mode = await emailAuthority();
+              return mode === "operation"
+                ? sendReminderViaOperation(opts, appt, admin, stats)
+                : mode === "legacy"
+                  ? sendReminderPass(opts, appt, admin, stats, appOrigin)
+                  : "claim_unavailable" as const;
+            })();
         return {
           kind: unavailable === "claim_unavailable" ? "claim_unavailable" : stats.attempted > attemptedBefore ? "processed" : "skipped",
           attempted: stats.attempted > attemptedBefore,

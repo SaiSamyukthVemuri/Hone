@@ -29,3 +29,12 @@ describe("client search surfaces share one matcher", () => {
     expect(read(rel)).not.toMatch(/\.name \?\? ""\)\.toLowerCase\(\)\.includes\(/);
   });
 });
+
+describe("global search orders client matches best-first (HON-58)", () => {
+  it("sorts the merged candidates with sortByMatchRank, not by name alone", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/(app)/global-search-actions.ts", "utf8");
+    expect(src).toMatch(/sortByMatchRank\(rows, query\)\.slice\(0, CLIENT_CAP\)/);
+    expect(src).not.toMatch(/rows\.sort\(\(a, b\) => \(a\.name \?\? ""\)/);
+  });
+});

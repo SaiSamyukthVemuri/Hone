@@ -167,6 +167,8 @@ export type TodoStudioSignals = {
   isOwner: boolean;
   intakesAwaitingReviewCount: number;
   activeServicesCount: number;
+  /** HON-65: both HON-47 client self-service settings are off (lib/dashboard/staff-managed.ts). Wording only; omitted = false. */
+  staffManaged?: boolean;
   paymentStatus: {
     hasAccount: boolean;
     onboardingCompleted: boolean;
@@ -291,7 +293,9 @@ export function buildDashboardTodo(
       kind: "no_services",
       subject: { kind: "studio", id: "studio", label: "Booking" },
       reason: "No services yet",
-      detail: "Clients can't book until at least one active service exists.",
+      detail: studio.staffManaged
+        ? "Add at least one active service so appointments can be booked."
+        : "Clients can't book until at least one active service exists.",
       action: { href: "/settings/services", label: "Add a service" },
       priority: TODO_PRIORITY.no_services,
       occurredAt: null,
@@ -306,8 +310,9 @@ export function buildDashboardTodo(
     const nudge = !p.hasAccount
       ? {
           reason: "Stripe not connected yet",
-          detail:
-            "Public booking still works without it. Connect when you're ready to accept payments.",
+          detail: studio.staffManaged
+            ? "Connect when you're ready to accept payments."
+            : "Public booking still works without it. Connect when you're ready to accept payments.",
           label: "Open Payments",
         }
       : !p.onboardingCompleted

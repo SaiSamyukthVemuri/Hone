@@ -132,6 +132,9 @@ function makeQuery(table: string) {
           error: null,
         };
       }
+      // HON-47: the studio policy read. No policy column, so the studio has
+      // today's defaults and every existing assertion keeps its meaning.
+      if (table === "studios") return { data: studioRow(), error: null };
       if (table === "practitioners") {
         if (scenario.ownerLookupThrows) throw new Error("PRIVATE owner lookup");
         return { data: scenario.ownerMissing ? null : { display_name: "Synthetic owner", email: "owner@example.invalid" }, error: null };
@@ -230,6 +233,7 @@ function renderNudge(
       createElement(CancellationNudge, {
         reason,
         freeConsultationWaitlistOnly,
+        rescheduleEnabled: true,
         rescheduleHref: `/reschedule/${TOKEN}`,
       }),
     ),

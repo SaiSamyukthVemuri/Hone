@@ -2,12 +2,17 @@ import { safeLog } from "@/lib/logging/safe-log";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Client, Studio, SmsType } from "@/lib/types/database";
 import {
+  clientManagePageAllowed,
+  clientSelfServicePolicyFromStudio,
+  type ClientSelfServicePolicyColumns,
+  type ClientSelfServiceStudioFlags,
+} from "@/lib/booking/client-self-service-policy";
+import {
   buildBookingConfirmationSms,
   build24hReminderSms,
   build2hReminderSms,
 } from "./templates";
 import {
-  normalizePhoneForSms,
   outboundSmsFence,
   sendSmsSafely,
   type SendSmsResult,
@@ -19,6 +24,10 @@ import {
   smsStatusCallbackUrl,
   type AppointmentSmsPurpose,
 } from "./delivery-ledger";
+import {
+  passesConsentGate,
+  type ConsentGateInput,
+} from "./consent-gate";
 
 // SMS send helpers used by the booking, reschedule, and reminder cron
 // paths. Each top-level function follows the strict claim-then-send-
@@ -280,59 +289,6 @@ export function logSmsFailure(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// Shared consent gate
-// ---------------------------------------------------------------------------
-
-type ConsentGateInput = {
-  studio: Pick<
-    Studio,
-    // PR #155: "id" is included on the studio Pick so the SMS failure
-    // path can stamp studio_id on the ops_alerts row without a second
-    // DB roundtrip. The consent-gate logic itself only consults the
-    // three send_*_sms toggles; "id" is metadata for downstream
-    // logSmsFailure / recordOpsAlert calls.
-    | "id"
-    | "send_confirmation_sms"
-    | "send_24h_sms_reminders"
-    | "send_2h_sms_reminders"
-  >;
-  client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
-  smsType: SmsType;
-};
-
-type ConsentGateResult =
-  | { ok: true; normalizedPhone: string }
-  | { ok: false; reason: string };
-
-/**
- * Centralizes the gate every SMS send must clear before we even
- * attempt to claim. Returns the normalized phone on success so the
- * caller does not have to re-normalize.
- */
-function passesConsentGate(input: ConsentGateInput): ConsentGateResult {
-  const { studio, client, smsType } = input;
-
-  const toggleOn =
-    smsType === "confirmation"
-      ? studio.send_confirmation_sms
-      : smsType === "reminder_24h"
-        ? studio.send_24h_sms_reminders
-        : studio.send_2h_sms_reminders;
-  if (!toggleOn) return { ok: false, reason: "studio_toggle_off" };
-
-  if (client.sms_opted_out_at) {
-    return { ok: false, reason: "client_opted_out" };
-  }
-  if (!client.sms_consent_at) {
-    return { ok: false, reason: "client_no_consent" };
-  }
-  const normalized = normalizePhoneForSms(client.phone ?? null);
-  if (!normalized) return { ok: false, reason: "invalid_phone" };
-
-  return { ok: true, normalizedPhone: normalized };
-}
-
-// ---------------------------------------------------------------------------
 // Public send helpers
 // ---------------------------------------------------------------------------
 
@@ -350,7 +306,10 @@ type SendConfirmationInput = {
     | "send_confirmation_sms"
     | "send_24h_sms_reminders"
     | "send_2h_sms_reminders"
-  >;
+  > &
+    // HON-47. Required on Studio since 0234, but absent on a hand-built input and
+    // then meaning today's behaviour: only clientSelfServicePolicyFromStudio reads them.
+    ClientSelfServiceStudioFlags;
   client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
   intakeUrl: string | null;
   // Single neutral manage-appointment link the SMS carries. Resolves
@@ -361,6 +320,19 @@ type SendConfirmationInput = {
   // the manage line entirely.
   manageUrl: string | null;
 };
+
+// HON-47. The SMS carries one link, /manage, which exists to reach cancel,
+// reschedule or the portal. When the studio offers none of them online the line
+// is dropped and the message still sends. Decided here, in the sender, so every
+// caller inherits it. Exported for its unit test.
+export function smsManageUrlFor(
+  studio: ClientSelfServicePolicyColumns,
+  manageUrl: string | null,
+): string | null {
+  return clientManagePageAllowed(clientSelfServicePolicyFromStudio(studio))
+    ? manageUrl
+    : null;
+}
 
 export async function sendBookingConfirmationSmsToClient(
   input: SendConfirmationInput,
@@ -379,7 +351,7 @@ export async function sendBookingConfirmationSmsToClient(
         startsAt: input.startsAt,
         timezone: input.timezone,
         intakeUrl: input.intakeUrl,
-        manageUrl: input.manageUrl,
+        manageUrl: smsManageUrlFor(input.studio, input.manageUrl),
       }),
     to: (normalizedPhone) => normalizedPhone,
   });
@@ -411,7 +383,10 @@ export type SendReminderInput = {
     | "send_confirmation_sms"
     | "send_24h_sms_reminders"
     | "send_2h_sms_reminders"
-  >;
+  > &
+    // HON-47. Required on Studio since 0234, but absent on a hand-built input and
+    // then meaning today's behaviour: only clientSelfServicePolicyFromStudio reads them.
+    ClientSelfServiceStudioFlags;
   client: Pick<Client, "phone" | "sms_consent_at" | "sms_opted_out_at">;
   /**
    * The neutral /manage/<token> link for a start, or null. A BUILDER rather
@@ -584,7 +559,7 @@ async function sendReminder(
       studioName: args.studio.name,
       startsAt,
       timezone: args.timezone,
-      manageUrl: args.manageUrlFor(startsAt),
+      manageUrl: smsManageUrlFor(args.studio, args.manageUrlFor(startsAt)),
       intakeUrl: args.intakeUrl ?? null,
     });
     // What this message carries, read from the message itself.
