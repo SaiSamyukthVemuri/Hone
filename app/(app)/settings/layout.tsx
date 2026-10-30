@@ -83,6 +83,7 @@ export default async function SettingsLayout({
             : NO_TABS),
           { href: "/settings/availability", label: "Availability" },
           { href: "/settings/services", label: "Services" },
+          { href: "/settings/machines", label: "Machines" },
           { href: "/settings/consent", label: "Consent forms" },
           { href: "/settings/payments", label: "Payments" },
           { href: "/settings/integrations", label: "Integrations" },
