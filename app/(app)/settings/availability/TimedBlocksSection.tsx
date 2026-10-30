@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import type { StudioTimedBlock } from "@/lib/types/database";
 import {
   formatTimeForStudio,
@@ -106,6 +107,10 @@ export function TimedBlocksSection({
   const defaultScope =
     viewScope.kind === "practitioner" ? viewScope.practitionerId : "";
   const [editingId, setEditingId] = useState<string | null>(null);
+  // HON-48: the updated_at the block was loaded with; the save is refused if
+  // someone else changed or deleted it since (see lib/booking/timed-block-version.ts).
+  const [editingVersion, setEditingVersion] = useState<string | null>(null);
+  const router = useRouter();
   const [date, setDate] = useState(todayLocal);
   const [startLocal, setStartLocal] = useState(DEFAULT_START);
   const [endLocal, setEndLocal] = useState(DEFAULT_END);
@@ -122,6 +127,7 @@ export function TimedBlocksSection({
 
   function resetForm() {
     setEditingId(null);
+    setEditingVersion(null);
     setDate(todayLocal);
     setStartLocal(DEFAULT_START);
     setEndLocal(DEFAULT_END);
@@ -154,6 +160,7 @@ export function TimedBlocksSection({
 
     if (editingId) {
       fd.set("id", editingId);
+      if (editingVersion) fd.set("expected_updated_at", editingVersion);
     }
     startTransition(async () => {
       try {
@@ -167,6 +174,13 @@ export function TimedBlocksSection({
           // thrown Server Action exception, which Next.js masks
           // to a generic error in production.
           setError(result.error);
+          // Changed or deleted elsewhere: refetch the list, and drop the stale
+          // form so the next edit starts from what is really stored.
+          if ("stale" in result && result.stale) {
+            router.refresh();
+            resetForm();
+            setError(result.error);
+          }
           return;
         }
         resetForm();
@@ -187,6 +201,7 @@ export function TimedBlocksSection({
 
   function onEdit(b: StudioTimedBlock) {
     setEditingId(b.id);
+    setEditingVersion(b.updated_at);
     setDate(formatDateForInput(b.starts_at, studioTimezone));
     // Detect all-day by the stored local-midnight boundaries (never by 24h
     // duration), so editing an all-day block PRESERVES all-day mode. A timed
@@ -204,11 +219,15 @@ export function TimedBlocksSection({
   function onDelete(id: string) {
     const fd = new FormData();
     fd.set("id", id);
+    // The version of the block as listed here; a block edited elsewhere is not deleted.
+    const listed = blocks.find((b) => b.id === id);
+    if (listed) fd.set("expected_updated_at", listed.updated_at);
     startTransition(async () => {
       try {
         const result = await deleteTimedBlockAction(fd);
         if (!result.ok) {
           setError(result.error);
+          if ("stale" in result && result.stale) router.refresh();
           return;
         }
         if (editingId === id) {

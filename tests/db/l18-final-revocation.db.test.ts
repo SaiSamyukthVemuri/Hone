@@ -231,8 +231,18 @@ describe("0169 — the command surface is untouched", () => {
         group by c.relname order by c.relname`,
     );
     const byTable = Object.fromEntries(r.rows.map((x) => [x.t, x.n]));
-    // 0214 adds the jurisdiction write guard alongside the four clinical guards.
+    // 0214 adds the jurisdiction lock; preserve every prior clinical guard.
     expect(byTable.sessions).toBe(5);
+    const sessionTriggers = await adminQuery(
+      "select tgname from pg_trigger where tgrelid='public.sessions'::regclass and not tgisinternal order by tgname",
+    );
+    expect(sessionTriggers.rows.map(x => x.tgname)).toEqual([
+      "sessions_aftercare_audit",
+      "sessions_guard_finalized",
+      "sessions_guard_retired_finalization",
+      "sessions_immutable_lineage",
+      "sessions_price_jurisdiction_lock",
+    ]);
     // 0232 adds treatment_images_clear_stage_without_session to the three existing guards.
     expect(byTable.treatment_images).toBe(4);
     // The remaining tables keep whatever guards they had; assert non-zero so a

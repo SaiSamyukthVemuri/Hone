@@ -137,3 +137,63 @@ describe("server prefilter patterns", () => {
     expect(nameCandidatePatterns(" (),. ")).toEqual([]);
   });
 });
+
+// HON-58 names slice, current schema: country-code-insensitive phone matching and
+// best-match-first ordering. Synthetic data only.
+import { clientMatchRank, nationalDigits, sortByMatchRank } from "@/lib/clients/name-search";
+
+describe("phone: the country code does not hide a number", () => {
+  const stored = { name: "A", phone: "(416) 555-0100" };
+  const storedIntl = { name: "B", phone: "+1 416 555 0100" };
+  it("a query with the leading 1 finds a number stored without it, and the reverse", () => {
+    expect(matchesClientSearch(stored, "+1 416 555 0100")).toBe(true);
+    expect(matchesClientSearch(stored, "1-416-555-0100")).toBe(true);
+    expect(matchesClientSearch(storedIntl, "416 555 0100")).toBe(true);
+    expect(matchesClientSearch(storedIntl, "(416) 555-0100")).toBe(true);
+  });
+  it("a different number is still not found", () => {
+    expect(matchesClientSearch(stored, "+1 416 555 0199")).toBe(false);
+    expect(matchesClientSearch(storedIntl, "416 555 0199")).toBe(false);
+  });
+  it("only an 11-digit 1-prefixed string is reduced", () => {
+    expect(nationalDigits("+1 (416) 555-0100")).toBe("4165550100");
+    expect(nationalDigits("416-555-0100")).toBe("4165550100");
+    expect(nationalDigits("+44 20 7946 0958")).toBe("442079460958");
+  });
+  it("the server prefilter admits what the matcher accepts, with or without the 1", () => {
+    const re = (p: string) => new RegExp("^" + p.replace(/%/g, ".*") + "$");
+    const pattern = re(phoneCandidatePattern("+1 416 555 0100")!);
+    expect(pattern.test("4165550100")).toBe(true);
+    expect(pattern.test("14165550100")).toBe(true);
+  });
+});
+
+describe("ranking: the best match first", () => {
+  const rows = [
+    { id: "4", name: "Zed Janet", email: "x@e.test" },
+    { id: "3", name: "Mary Janeway", email: null },
+    { id: "2", name: "Jane Doe", email: null },
+    { id: "1", name: "Jane", email: null },
+    { id: "5", name: "Other", email: "jane@e.test" },
+  ];
+  it("exact, then starts-with, then word-start, then email", () => {
+    const ranked = sortByMatchRank(rows, "jane").map((r) => r.id);
+    expect(ranked).toEqual(["1", "2", "3", "4", "5"]);
+    expect(clientMatchRank(rows[3], "jane")).toBe(0);
+    expect(clientMatchRank(rows[2], "jane")).toBe(1);
+    expect(clientMatchRank(rows[1], "jane")).toBe(2);
+    expect(clientMatchRank(rows[4], "jane")).toBe(4);
+  });
+  it("the preferred name counts as the name", () => {
+    expect(clientMatchRank({ name: "Janet Smith", preferred_name: "Jan" }, "jan")).toBe(0);
+  });
+  it("ties break by name then id, so the order is stable", () => {
+    const tied = [{ id: "b", name: "Sam A" }, { id: "a", name: "Sam A" }, { id: "c", name: "Sam" }];
+    expect(sortByMatchRank(tied, "sam").map((r) => r.id)).toEqual(["c", "a", "b"]);
+  });
+  it("does not mutate its input", () => {
+    const copy = [...rows];
+    sortByMatchRank(rows, "jane");
+    expect(rows).toEqual(copy);
+  });
+});

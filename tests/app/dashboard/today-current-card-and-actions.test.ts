@@ -295,7 +295,7 @@ describe("D — Send portal link", () => {
 
   it("the email flag comes from the row's EXISTING client projection", () => {
     // One widened column, not a second client query.
-    expect(PAGE_BODY).toMatch(/client:clients\(id, name, allergies, pronouns, email\)/);
+    expect(PAGE_BODY).toMatch(/client:clients\(id, name, \$\{preferredNameColumn\(includePreferred\)\}allergies, pronouns, email\)/);
     expect(ROW).toMatch(/clientHasEmail=\{!!appt\.client\?\.email\?\.trim\(\)\}/);
   });
 });

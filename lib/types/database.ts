@@ -32,13 +32,16 @@ export type Studio = {
   slug: string;
   address: string | null;
   booking_description: string | null;
-  // Migration 0119 (Clinical Record: Phase 1): studio-scoped feature flag for
-  // the "Finalize & sign" clinical-record boundary. Default OFF; opt-in per
-  // studio during supervised rollout. Optional at the type level for rows loaded
-  // via `select *` before 0119 is applied.
+  // RETIRED (migration 0159, docs/decisions/clinical-finalization-retired.md):
+  // signed clinical records are not a Hone product capability. Both columns are
+  // CHECK-locked to false on every studio, so they are not a setting and nothing
+  // may read or branch on them. They stay in this type only because
+  // `npm run check:db-types` compares the Studio column set to the database
+  // exactly; delete both fields in the same change as a migration that drops the
+  // columns (and the 0119 finalize function that still reads one of them).
+  /** @deprecated retired by 0159; always false. */
   clinical_finalization_enabled?: boolean;
-  // Migration 0120 (Clinical Record: Phase 2): studio-scoped flag for corrections
-  // & amendments. Separate from Phase 1; default OFF. Optional for pre-0120 rows.
+  /** @deprecated retired by 0159; always false. */
   clinical_corrections_enabled?: boolean;
   // Migration 0121 (Google Calendar: Phase A): studio-scoped feature flags, all
   // default OFF. Only `google_calendar_connection_enabled` is used in Phase A
@@ -788,11 +791,20 @@ export type Practitioner = {
   // seeds NEW treatment-area drafts. UI default only; the value
   // actually used stays on session_blocks.machine_frequency.
   default_machine_frequency: MachineFrequency | null;
-  created_at: string;
-
-  // Existing finite 0213–0246 schema fields; this DTO grants no write authority.
+  // Migration 0223: the practitioner's remembered machine IN THIS STUDIO, and
+  // the mode she last worked in on it. One practitioners row is one
+  // (studio_id, user_id), so this is already per-practitioner-per-studio with
+  // no extra keying.
+  //
+  // A UI DEFAULT ONLY, never the clinical record: what was actually used lives
+  // on treatment_setup_readings. default_machine_id is cleared to null by the
+  // retire command when the unit goes out of service, so a stale remembered
+  // selection cannot outlive its machine.
   default_machine_id: string | null;
   default_machine_mode: string | null;
+  created_at: string;
+
+  // Existing finite 0222 assignment timestamp; this DTO grants no write authority.
   last_public_assignment_at: string | null;
 };
 

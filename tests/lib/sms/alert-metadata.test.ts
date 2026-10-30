@@ -31,8 +31,14 @@ describe("SMS appointment failure path stamps studio_id on ops alerts", () => {
     // PR #155 added "id" to the Pick so the SMS failure path has access
     // to studio.id without a second DB roundtrip. Catch a future refactor
     // that drops it.
+    // The gate moved to lib/sms/consent-gate.ts (1181-F1) so the calendar can
+    // ask the same question before issuing an intake link.
+    const GATE = readFileSync(
+      path.resolve(__dirname, "../../../lib/sms/consent-gate.ts"),
+      "utf8",
+    );
     const consentGateBlock =
-      SOURCE.match(/type ConsentGateInput[\s\S]*?\};/)?.[0] ?? "";
+      GATE.match(/type ConsentGateInput[\s\S]*?\};/)?.[0] ?? "";
     expect(consentGateBlock).toMatch(/\|\s*"id"/);
   });
 

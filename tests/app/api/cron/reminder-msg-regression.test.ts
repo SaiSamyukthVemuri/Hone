@@ -69,6 +69,9 @@ vi.mock("@/lib/cron/reminder-scan-coordinator", async (importOriginal) => {
     },
   }) };
 });
+// 0247 compatibility: these suites drive the PRE-0247 (legacy claim) email path. The
+// operation-authority path and the mode choice are proved in reminder-authority-dispatch.test.ts.
+vi.mock("@/lib/email/reminder-authority-mode", () => ({ detectReminderAuthorityMode: async () => "legacy" }));
 vi.mock("@/lib/cron/auth", () => ({ isAuthorizedCronRequest: () => true }));
 vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://example.invalid" }));
 vi.mock("@/lib/intake/queries", () => ({ generateIntakeLinkUrl: () => "https://example.invalid/intake/synthetic", stampIntakeLinkIssued: async () => undefined }));
@@ -122,6 +125,10 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           return b;
         },
         maybeSingle: async () => {
+          // HON-13: the email pass re-reads the studio's switches at send time.
+          if (table === "studios") {
+            return { data: { send_24h_reminders: h.emailOn, send_2h_reminders: h.emailOn, send_intake_reminders: false }, error: null };
+          }
           if (table !== "appointments") return { data: null, error: null };
           const id = f.eq.find(([c]) => c === "id")?.[1];
           const r = h.rows.find((x) => x.id === id);
@@ -135,7 +142,11 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           const t = (iso: string) => Date.parse(iso);
           const data = h.rows
             .filter((r) => f.eq.every(([c, v]) => (r as Record<string, unknown>)[c] === v))
-            .filter((r) => f.is.every(([c, v]) => (r as Record<string, unknown>)[c] === v))
+            // MSG-ARCH-01: the joined-client filter (client.archived_at is null)
+            // is answered from the row's client; every other `is` is a row column.
+            .filter((r) => f.is.every(([c, v]) => c === "client.archived_at"
+              ? ((r as { client?: { archived_at?: string | null } }).client?.archived_at ?? null) === v
+              : (r as Record<string, unknown>)[c] === v))
             .filter((r) => f.lt.every(([c, v]) => ((r as Record<string, unknown>)[c] as number) < v))
             .filter((r) => f.gte.every(([, v]) => t(r.starts_at) >= t(v)))
             .filter((r) => f.lte.every(([, v]) => t(r.starts_at) <= t(v)))
@@ -254,9 +265,11 @@ describe("retries are bounded by the three-attempt cap", () => {
       expect(q.lt).toHaveLength(1);
       expect(q.lt[0][1]).toBe(3);
       expect(q.eq).toContainEqual(["status", "confirmed"]);
-      expect(q.is).toHaveLength(1);
-      expect(q.is[0][0]).toBe(q.lt[0][0].replace("_send_attempts", "_sent_at"));
-      expect(q.is[0][1]).toBeNull();
+      // Two `is null` filters: the window's unsent column, and (MSG-ARCH-01) the
+      // joined client's archived_at, so archived visits never enter the scan.
+      expect(q.is).toHaveLength(2);
+      expect(q.is).toContainEqual([q.lt[0][0].replace("_send_attempts", "_sent_at"), null]);
+      expect(q.is).toContainEqual(["client.archived_at", null]);
     }
   });
 
