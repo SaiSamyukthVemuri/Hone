@@ -221,7 +221,7 @@ describe("4 — nothing about what renders changed", () => {
     expect(STACK_CODE).toContain("<BirthdaysThisMonth");
     expect(STACK_CODE).toContain("<PracticeSnapshot");
     expect(STACK_CODE).toContain("livemode={inferStripeLivemode()}");
-    expect(STACK_CODE).toContain("<BookingSetupCard readiness={readiness} />");
+    expect(STACK_CODE).toContain("<BookingSetupCard readiness={readiness} staffManaged={staffManaged} />");
     expect(STACK_CODE).toContain('href="/dashboard/capacity"');
     expect(STACK_CODE).toContain('href="/getting-started"');
   });

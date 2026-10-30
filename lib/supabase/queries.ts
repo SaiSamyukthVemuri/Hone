@@ -2,6 +2,7 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "./server";
 import { readSelectedStudioId } from "./selected-studio";
+import { IdentityRefusalError } from "@/lib/supabase/identity-refusal";
 import { authorLabel } from "@/lib/attribution";
 import type { BlockArea } from "@/lib/sessions/block-areas";
 import type {
@@ -23,6 +24,11 @@ import type {
   Studio,
 } from "@/lib/types/database";
 import { dbErrorCode } from "@/lib/logging/error-class";
+
+export {
+  IdentityRefusalError,
+  type IdentityRefusalKind,
+} from "@/lib/supabase/identity-refusal";
 
 export type PractitionerWithStudio = {
   practitioner: Practitioner;
@@ -218,14 +224,18 @@ export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWi
     selectedStudioId,
   );
   if (membership.kind === "none") {
-    throw new Error("No active practitioner found for the signed-in user.");
+    throw new IdentityRefusalError(
+      "no-active-practitioner",
+      "No active practitioner found for the signed-in user.",
+    );
   }
   if (membership.kind === "choose") {
     // Controlled (not raw-DB) error, and never an auto-picked studio. Only a
     // server action reaches this branch: a server-rendered module never calls
     // this function, so its multi-membership user is redirected to the chooser
     // instead.
-    throw new Error(
+    throw new IdentityRefusalError(
+      "studio-choice-required",
       `Multiple active studio memberships (${membership.options.length}) with no valid studio selection; choose a studio first.`,
     );
   }

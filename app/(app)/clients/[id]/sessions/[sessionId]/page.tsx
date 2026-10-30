@@ -57,6 +57,7 @@ import {
   updateSessionPerformerAction,
 } from "./actions";
 import { createClient } from "@/lib/supabase/server";
+import { loadPreviousVisitNote } from "@/lib/sessions/previous-visit-note";
 import {
   attachChartEntryToPlanAction,
   detachChartEntryFromPlanAction,
@@ -458,23 +459,13 @@ export default async function SessionDetailPage({
   // rendered when a note exists, so historical clients see nothing.
   const supabaseForNote = await createClient();
   const prevNoteSpan = startPerfSpan("session-chart.previous-note");
-  const { data: previousWithNote } = await supabaseForNote
-    .from("sessions")
-    .select("id, started_at, next_session_note")
-    .eq("studio_id", studio.id)
-    .eq("client_id", id)
-    .is("deleted_at", null)
-    // HON-10 row 1: a void session's note is never "From last visit".
-    // record_status is NOT NULL (0119), so `neq` drops nothing else.
-    .neq("record_status", "void")
-    .not("next_session_note", "is", null)
-    .lt("started_at", session.started_at)
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const previousVisit = await loadPreviousVisitNote({
+    studioId: studio.id,
+    clientId: id,
+    before: session.started_at,
+  });
   prevNoteSpan.end();
-  const fromLastVisit =
-    previousWithNote?.next_session_note?.trim() || null;
+  const fromLastVisit = previousVisit.note;
 
   // POINT-OF-CARE TREATMENT MEMORY (Chloe). Everything she needs to reproduce
   // last time's treatment: areas + laterality, frequency, probe and lot, mode
@@ -717,6 +708,14 @@ export default async function SessionDetailPage({
       {/* PR #190 (clinical memory): the plan written at the previous
           visit, surfaced where Chloe starts working. Renders only
           when a note exists. */}
+      {previousVisit.unavailable && (
+        <section
+          role="status"
+          className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+        >
+          Could not load the note from the last visit. Reload to try again.
+        </section>
+      )}
       {fromLastVisit && (
         <section className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm dark:border-blue-900 dark:bg-blue-950/40">
           <h2 className="text-xs font-medium uppercase tracking-wider text-blue-800 dark:text-blue-300">
@@ -1082,7 +1081,9 @@ export default async function SessionDetailPage({
           // the dashboard row.
           appointmentId={linkedAppointmentId}
           settledMethod={liveSettlement?.method ?? null}
+          settledId={liveSettlement?.id ?? null}
           settledAmountCents={liveSettlement?.amountCents ?? null}
+          settledQuotedCents={liveSettlement?.quotedAmountCents ?? null}
           settlementQuotedAmountCents={settlementQuotedAmountCents}
           // The UI's copy of the database's own rule: only a COMPLETED
           // appointment can carry a disposition (0187 answers anything else

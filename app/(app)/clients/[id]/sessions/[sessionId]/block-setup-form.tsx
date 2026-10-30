@@ -21,6 +21,7 @@
 // change.
 
 import { useEffect, useId, useMemo, useState, useTransition } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   APILUS_MODALITIES_BY_MODE,
   ELECTROLYSIS_MODES,
@@ -82,14 +83,39 @@ import {
   ADDITIONAL_NOTES_HELPER,
 } from "@/lib/sessions/charting-labels";
 import { SESSION_BLOCK_SIDE_OPTIONS } from "@/lib/sessions/side-labels";
+import {
+  readAreaOperationIdAtMount,
+  settledAreaOperationHref,
+  clearAreaOperationParamIfOwned,
+  syncAreaOperationParam,
+} from "@/lib/machines/area-operation";
 import { AreaPicker } from "@/components/area-picker";
 import { isCanonicalTreatmentArea } from "@/lib/sessions/area-validation";
 import { BodyMapAreaPicker } from "@/components/body-map-area-picker";
 import { MultiAreaEditor } from "@/components/multi-area-editor";
 import { resolveBlockAreas, type BlockArea } from "@/lib/sessions/block-areas";
+import { MachineFirstSetupConnected } from "@/components/machines/machine-first-setup-connected";
 import { ProbePicker } from "@/components/probe-picker";
 import { READING_INPUT_CLS } from "@/lib/sessions/charting-input-styles";
 import { resolveModeSections } from "@/lib/sessions/mode-sections";
+import {
+  INITIAL_SAVE_ALREADY_SAVED,
+  INITIAL_SAVE_RESUME_NEEDS_SETTINGS,
+  INITIAL_SAVE_RESUME_UNKNOWN,
+  RESUME_RECONSTRUCT_CONFIRM,
+  RESUME_RECONSTRUCT_NOTICE,
+  RESUME_CHOICE_NEW,
+  RESUME_CHOICE_PROMPT,
+  RESUME_CHOICE_RESUME,
+  INITIAL_SAVE_UNRESOLVED,
+  prepareHandoff,
+  type PendingSetupIdentity,
+} from "@/lib/machines/pending-setup";
+import {
+  lookupAreaCreateClaimAction,
+  type AreaCreateClaimLookup,
+} from "./machine-setup-actions";
+import type { GroupSubmission } from "@/lib/machines/setting-groups";
 import {
   createTreatmentAreaWithEntryAction,
   updateTreatmentAreaWithEntryAction,
@@ -398,7 +424,7 @@ export function BlockSetupForm({
   onCancel,
 }: Props) {
   const isEdit = !!block;
-  const [draft, setDraft] = useState<Draft>(() =>
+  const [draft, setDraftRaw] = useState<Draft>(() =>
     initialDraft(block, firstEntry, defaultPrimaryArea, defaultMachineFrequency, initialAreas),
   );
   // A lot/batch belongs to ONE probe. Provenance is therefore tracked PER PROBE
@@ -415,10 +441,605 @@ export function BlockSetupForm({
     () => draft.probeKey,
   );
   const [error, setError] = useState<string | null>(null);
+  /**
+   * The machine settings the panel is collecting, in CREATE mode only.
+   *
+   * HELD HERE BECAUSE THIS FORM'S SAVE CARRIES THEM. With no block there is
+   * nothing to record against, so the panel cannot save them itself - and
+   * `create_block_with_initial_setup` writes the area and the settings in one
+   * transaction, so there is exactly one Save for both.
+   *
+   * `blocking` is non-null when the draft is half-finished - a group with
+   * some values and a missing required field, or two groups claiming the same
+   * probe - and `submit` refuses rather than discarding her numbers.
+   */
+  /**
+   * An initial save whose answer was lost.
+   *
+   * RETRYABLE NOW, and it was not when this state was added: 0223's create
+   * claim anchors the retry key to the SESSION, so pressing Save again returns
+   * the original area instead of creating a second one. The flag survives
+   * because it still has a job - it keeps the key alive across attempts and
+   * puts the instruction on screen. See `INITIAL_SAVE_UNRESOLVED`.
+   */
+  /**
+   * THE OPEN SAVE THIS PAGE LOAD IS RESUMING, read from the URL exactly once.
+   *
+   * `syncAreaOperationParam` writes through `history.replaceState`, which
+   * deliberately does NOT notify the router — so `useSearchParams()` never
+   * reports our own writes back, and re-reading it later would be reading a
+   * stale value. Held in state so it is the value this mount resumed from,
+   * whatever the address bar says afterwards.
+   *
+   * AND THAT IS WHY IT READS `readAreaOperationIdAtMount` AND NOT
+   * `useSearchParams()` (found by journey (ii) on #922). The comment above
+   * was right about the WRITE and wrong about this READ: reading the router's
+   * params here reported the value from the last real NAVIGATION, so after a
+   * reload carrying `area_op=A` every later mount resumed A no matter how
+   * many times it had since been released or replaced. The address bar is the
+   * one surface; the helper consults the router only on the server, where
+   * there is no address bar and its params are the request's own.
+   *
+   * ONLY AN ID WE MINTED: `readAreaOperationId` returns null for anything
+   * missing, malformed, repeated or not v4-shaped, and a null simply mints a
+   * fresh one. Honouring a value we did not mint could have 0223 hand her
+   * ANOTHER save's treatment area, which is far worse than one extra area.
+   *
+   * AND ONLY IN CREATE MODE (Codex, #922 4305312335). This component is
+   * dual-mode: the same file renders the EDIT form for an existing area. With
+   * a stale `area_op` still in the URL, opening Edit consumed the create
+   * operation's key, froze her edits and disabled Cancel — and the edit
+   * success path never cleared the parameter, so every subsequent edit stayed
+   * poisoned until she navigated away. An edit is not that save, so in edit
+   * mode this reads nothing and touches nothing: a genuine unresolved create's
+   * key has to survive her editing something else.
+   */
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [resumedSaveKey] = useState<string | null>(() =>
+    isEdit ? null : readAreaOperationIdAtMount(searchParams),
+  );
+
+  /**
+   * An initial save whose answer was lost.
+   *
+   * RETRYABLE NOW, and it was not when this state was added: 0223's create
+   * claim anchors the retry key to the SESSION, so pressing Save again returns
+   * the original area instead of creating a second one. The flag survives
+   * because it still has a job - it keeps the key alive across attempts and
+   * puts the instruction on screen. See `INITIAL_SAVE_UNRESOLVED`.
+   *
+   * IT IS NOT SEEDED FROM THE URL, and an earlier spelling of this change
+   * made that mistake (Codex, #922 4305312331). Seeding it true on a resumed
+   * key froze a draft that had just been initialised from FRESH DEFAULTS, so
+   * the practitioner could not reconstruct the original payload — and the key
+   * only reaches `create_block_with_initial_setup` inside `initialSetup`, so
+   * saving with that empty draft sent NO key, took the ordinary create path,
+   * and made the very duplicate the mechanism exists to prevent.
+   *
+   * A reload does not resume a RETRY. It resumes a QUESTION — "did my save
+   * commit?" — and `resolvedResume` below answers it by reading the claim
+   * instead of asking her to re-enter anything.
+   */
+  const [saveUnresolved, setSaveUnresolved] = useState(false);
+
+  /**
+   * THE ANSWER TO THE RESUMED SAVE'S QUESTION, or null while it is unknown.
+   *
+   *   * `checking` — the claim read is in flight. Save is held, because
+   *     committing a second save before the answer lands is the one thing
+   *     this must not allow.
+   *   * `saved` — the claim exists: the first attempt DID commit. She is told
+   *     so, the parameter is cleared, and nothing is re-entered.
+   *   * `absent` — no claim: nothing committed. The key is adopted so another
+   *     reload is still reconcilable, and she saves normally.
+   *   * `unknown` — the read itself failed. It FAILS SAFE: it does not claim
+   *     the save completed and does not silently permit a duplicate. She
+   *     keeps the "check the chart before saving again" instruction and the
+   *     choice.
+   */
+  const [resume, setResume] = useState<
+    | { state: "idle" }
+    | { state: "checking" }
+    | { state: "saved"; blockId: string }
+    | { state: "absent" }
+    | { state: "unknown" }
+  >(() => (resumedSaveKey === null ? { state: "idle" } : { state: "checking" }));
+
+  // DECLARED ABOVE `resumeOwnsKey`, WHICH READS IT. The ownership rule ends
+  // when she starts a new area (Codex, #922 4307763147), so the choice has to
+  // exist by then - and TypeScript says so rather than leaving it to reading
+  // order.
+  /**
+   * WHAT SHE DECIDED ABOUT AN UNSETTLED EARLIER SAVE, or null while unasked.
+   *
+   * WHY THERE IS A CHOICE AT ALL (ops01's ruling on #922 4307515255). The
+   * retained key is what lets a resumed save be ABSORBED instead of
+   * duplicated - and absorption is only correct if this really is the same
+   * save. If she has come back to create a genuinely SECOND area with the
+   * same values, absorbing it suppresses an area she meant to make. Sam's
+   * standing requirement is that recovery must preserve the ability to create
+   * an identical second area deliberately, so the ambiguity is resolved by
+   * ASKING rather than by guessing from the values.
+   *
+   * NOTHING HERE ASKS HER TO CHANGE A CLINICAL VALUE to get a second area,
+   * which is the rule this exists to honour.
+   *
+   * ONLY MEANINGFUL WHILE THE ANSWER IS UNSETTLED. `saved` is settled and
+   * closes the form; `idle` is the ordinary non-resumed form.
+   */
+  const [resumeChoice, setResumeChoice] = useState<null | "resume" | "new">(
+    null,
+  );
+  const resumeUnsettled =
+    resume.state === "absent" || resume.state === "unknown";
+  /** The choice is open: unsettled, and not yet answered. */
+  const resumeChoicePending = resumeUnsettled && resumeChoice === null;
+
+  /**
+   * THE RESUMED OPERATION STILL OWNS THE KEY, and nothing else may discard it.
+   *
+   * True while the claim read is in flight, and true when it FAILED — because
+   * an unanswerable question is not a settled one. Last round adopted the key
+   * on a failed read precisely so a later save could not silently duplicate an
+   * operation that may have committed, and then two paths undid that:
+   *
+   *   * entering any machine reading fires `onSettingDraftChanged`, whose drop
+   *     rule saw an ordinary completed draft change and cleared the key — so
+   *     the reconstructed save minted a fresh uuid, bypassed the claim, and
+   *     duplicated if the original had committed (4305431332, P1);
+   *   * Cancel was live while the lookup was still in flight, and clearing the
+   *     parameter discarded the answer before it arrived, leaving the next Add
+   *     with nothing to reconcile against (4305431336).
+   *
+   * So the ownership is named once here and both paths defer to it, rather
+   * than each re-deriving which states count as open.
+   *
+   * AND "ABSENT" IS NOT SETTLED EITHER (Codex, #922 4305501015, P1).
+   * `create_block_with_initial_setup` takes its advisory lock BEFORE looking
+   * for a claim and inserts the claim at the very END
+   * (0223: `pg_advisory_xact_lock` then the lookup; the insert ~140 lines
+   * later). The reconciliation read does not hold that lock, so a reload
+   * landing while the original transaction is still committing sees NO ROW for
+   * a save that is about to succeed. Treating that as settled let the next
+   * keystroke clear the key, and the retry then minted a fresh uuid and
+   * duplicated the area the moment the first transaction committed.
+   *
+   * SO THE KEY IS OWNED FOR THE WHOLE LIFE OF A RESUMED OPERATION, and the
+   * only state that releases it is `saved` — the one answer that is
+   * positively true, and the one where the form closes anyway. `idle` is the
+   * ordinary non-resumed form, where a changed draft still mints a new key as
+   * it always did.
+   *
+   * KEEPING THE KEY IS SAFE IN EVERY BRANCH, which is why this is the whole
+   * fix and no lock is needed on the read. If the original committed and her
+   * reconstruction differs, 0223 refuses the reused key and SAYS so; if it
+   * matches, the save is absorbed and she gets the original area; if the
+   * original never committed, the key is unused and the save proceeds. A
+   * fresh key is the only option that duplicates silently.
+   */
+  const resumeOwnsKey =
+    resume.state !== "idle" &&
+    resume.state !== "saved" &&
+    // AND NOT ONCE SHE HAS STARTED A NEW AREA (Codex, #922 4307763147).
+    //
+    // THE DEFECT. `chooseStartNew` released the retained key, but the resumed
+    // operation still OWNED the key slot - so the fresh key minted for the new
+    // area inherited that protection and survived Cancel after a definitive
+    // error. The next Add then resumed an operation that had already been
+    // abandoned, which is the trap 4305701038 reported from the other side.
+    //
+    // "START NEW" IS A SETTLED ANSWER. She has told us this is not the earlier
+    // save, so the earlier save's claim on the key ends there - and the new
+    // one is an ordinary mint, with the ordinary rules.
+    resumeChoice !== "new";
+
+
+  /**
+   * A REVISION save inside the machine panel has an unknown outcome.
+   *
+   * SEPARATE FROM `saveUnresolved`, which is THIS form's own create-mode
+   * save. They are owned by different components and either can be true
+   * alone; merging them would make clearing one clear the other. They are
+   * combined only where a control has to be frozen.
+   */
+  const [revisionUnresolved, setRevisionUnresolved] = useState(false);
+
+  /**
+   * WHILE THE INITIAL SAVE'S OUTCOME IS UNKNOWN, ITS PAYLOAD IS FROZEN.
+   *
+   * `create_block_with_initial_setup` binds the retry key to a digest of the
+   * WHOLE payload - all 27 parameters - so the preserved key only makes the
+   * retry safe while the thing being retried is identical. Editing any field
+   * first turns a committed first attempt's safe retry into a mismatch
+   * refusal, which leaves her unable to recover the original result and
+   * pushes toward cancel-and-recreate: a duplicate area
+   * (Codex, #860 4296029608).
+   *
+   * FROZEN AT THE SETTER, not control by control. This form has five
+   * user-driven writers across 1,700 lines and more fields than any of them
+   * touches; disabling inputs one at a time is a list that goes stale the
+   * next time a field is added, and a missed one is a duplicated clinical
+   * record. Shadowing the setter makes the payload immutable no matter which
+   * control is wired, and the controls are disabled as well so the screen
+   * says what is happening rather than silently ignoring her.
+   *
+   * The SAVE button stays live: pressing it again, unchanged, is the whole
+   * recovery.
+   */
+  const [pending, startTransition] = useTransition();
+  /**
+   * THE FREEZE COVERS THE REQUEST ITSELF, NOT ONLY ITS AFTERMATH
+   * (Codex, #860 4305022475).
+   *
+   * `saveUnresolved` alone starts the freeze when the answer comes back, and
+   * the whole payload — `attachedSetup` and every other action input — was
+   * snapshotted before `startTransition`. So an edit made during a slow save
+   * was already outside the thing being saved: a success discarded it
+   * silently and showed a confirmation for values she had changed, and a lost
+   * response retried the retained key with the NEW payload, which the create
+   * claim refuses as a digest mismatch.
+   *
+   * `pending` is why the transition is declared here rather than beside the
+   * other submit state below.
+   */
+  const draftFrozen = pending || saveUnresolved;
+
+  /**
+   * CLOSING THE FORM ABANDONS THE OPEN SAVE, so the parameter goes with it
+   * (Codex, #922 4305312340).
+   *
+   * A definitive server error leaves `saveUnresolved` false and Cancel
+   * enabled, and Cancel unmounted the form without going through the syncing
+   * setter — so `area_op` stayed in the URL and the next Add treated an
+   * abandoned attempt as an open save. Every exit routes through here, which
+   * is the same reason the key is mirrored at its setter rather than at its
+   * call sites.
+   *
+   * IN EDIT MODE IT CLEARS NOTHING, because the parameter is not this form's:
+   * a genuine unresolved create must survive her editing another area.
+   */
+  const closeForm = () => {
+    // IN EDIT MODE the parameter is not this form's to discard.
+    //
+    // OTHERWISE CLOSING IS AN EXPLICIT ABANDONMENT and it clears the key
+    // (Codex, #922 4305701038). The previous round preserved it whenever the
+    // resumed operation still owned it, and that turned my own instruction
+    // into a trap: the on-screen line tells her to close the form when the
+    // settings did not survive the reload, and closing then left `area_op`
+    // behind — so EVERY later Add resumed the abandoned operation, re-ran the
+    // lookup, and `resumedNeedsSettings` blocked an ordinary settings-free
+    // save. There was no way back to a fresh area short of editing the URL.
+    //
+    // SETTLED STATES CLEAR IT; UNSETTLED STATES KEEP IT (Codex, #922
+    // 4307515255, and ops01's scoped ruling).
+    //
+    // `checking` was the only exception, and that was too narrow. `absent` is
+    // not settled either: `create_block_with_initial_setup` takes its
+    // advisory lock BEFORE looking for a claim and writes the claim at the
+    // very END, and the reconciliation read holds no lock - so a read landing
+    // mid-commit sees NO ROW for a save that is about to succeed. Clearing on
+    // that answer discarded the only identity that could absorb the original,
+    // and a later Add then duplicated the area once the first transaction
+    // committed. `unknown` is unsettled by definition.
+    //
+    // SO THIS DEFERS TO `resumeOwnsKey`, which the comment on that constant
+    // already claimed both paths did. They did not: that one governed the
+    // draft-change drop rule while this kept its own narrower test, and the
+    // gap between them was the defect.
+    //
+    // AND KEEPING THE KEY IS NOT THE WHOLE ANSWER. A key kept silently would
+    // make a later Add whose values happen to match the abandoned save get
+    // ABSORBED, which suppresses an intentionally identical second area -
+    // Sam's standing requirement is that recovery preserve the ability to
+    // make one deliberately. So the next Add does not resume silently: it
+    // ASKS. See `resumeChoice` below.
+    // A completed lookup may belong to an older operation than the URL now
+    // carries. Closing its banner only retires that form's own identity.
+    if (!isEdit && !resumeOwnsKey) {
+      clearAreaOperationParamIfOwned(resume.state === "saved" ? resumedSaveKey : pendingSaveKey);
+    }
+    onCancel();
+  };
+
+  /**
+   * RESUME: keep the retained key, so the original is absorbed or refused
+   * rather than duplicated. A settings-free resume still carries it, through
+   * `create_block_with_initial_setup` with null groups - which 0223 declares
+   * a valid save and for which it still writes the claim.
+   */
+  const chooseResume = () => {
+    setResumeChoice("resume");
+    adoptResumedKey();
+  };
+
+  /**
+   * START NEW: a fresh key, and the retained one is released.
+   *
+   * THIS IS THE ANSWER THAT PRESERVES INTENT. She is telling us this is not
+   * the earlier save, so it must not be absorbed by it - and a fresh key is
+   * exactly what makes an identical second area possible without touching a
+   * single recorded value.
+   */
+  const chooseStartNew = () => {
+    setResumeChoice("new");
+    setPendingSaveKey(null);
+  };
+
+  /**
+   * Take the resumed key as this form's open save.
+   *
+   * Through the SHADOW setter, like every other write: the URL already holds
+   * this value so the mirror is a no-op, and routing it here keeps "nothing
+   * reaches the raw setter but the shadow" true.
+   */
+  const adoptResumedKey = () => {
+    if (resumedSaveKey !== null) setPendingSaveKey(resumedSaveKey);
+  };
+
+  /**
+   * ANSWER THE RESUMED SAVE'S QUESTION BY READING THE CLAIM.
+   *
+   * Runs once per mount, only when the URL carried a key we minted. The three
+   * outcomes are handled where they are decided rather than being collapsed:
+   * a read that FAILED is not an empty result, and treating it as one would
+   * turn "we could not check" into "nothing was saved".
+   */
+  useEffect(() => {
+    if (resumedSaveKey === null) return;
+    let live = true;
+    void (async () => {
+      const res = await lookupAreaCreateClaimAction({
+        clientId,
+        sessionId,
+        idempotencyKey: resumedSaveKey,
+      }).catch(
+        (): AreaCreateClaimLookup => ({
+          // A THROW IS THE UNKNOWN CASE, not a refusal. The action returns its
+          // own refusals; reaching here means the call itself did not complete.
+          ok: false,
+          error: INITIAL_SAVE_RESUME_UNKNOWN,
+        }),
+      );
+      if (!live) return;
+
+      if (!res.ok) {
+        // ADOPTED EVEN THOUGH THE ANSWER IS UNKNOWN, and this is the safer
+        // direction rather than the tidier one. If she decides to save anyway
+        // and the first attempt HAD committed, a save carrying the original
+        // key is REFUSED by 0223 as a used key with a different payload — she
+        // is told. A freshly minted key would silently create the duplicate
+        // instead.
+        adoptResumedKey();
+        setResume({ state: "unknown" });
+        setError(INITIAL_SAVE_RESUME_UNKNOWN);
+        return;
+      }
+      if (res.found) {
+        // IT COMMITTED — BUT THE CHART MAY NOT SHOW IT YET (Codex, #922
+        // 4305501020, P1). If the server page read `blocks` before the
+        // original transaction committed and this read ran after, the claim is
+        // found while `SessionBlocksView` still holds the pre-commit prop. The
+        // message then said the area was "on the chart below" when it was not,
+        // and after Close she would reopen Add and create a second one.
+        //
+        // Fetch the chart and retire this settled URL key in one router
+        // navigation. refresh() uses the router's old canonical URL, so a
+        // history-only clear can be overwritten by its response. Derive the
+        // destination from the address bar and preserve any newer operation.
+        const settledHref = settledAreaOperationHref(resumedSaveKey);
+        if (settledHref !== null) router.replace(settledHref, { scroll: false });
+        setResume({ state: "saved", blockId: res.blockId });
+        return;
+      }
+      // NOTHING COMMITTED. Adopt the key so another reload is still
+      // reconcilable, and let her save normally — the draft is untouched and
+      // unfrozen, which is the whole difference from the first spelling.
+      adoptResumedKey();
+      setResume({ state: "absent" });
+    })();
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumedSaveKey, clientId, sessionId]);
+  const setDraft: typeof setDraftRaw = (...args) => {
+    if (draftFrozen) return;
+    setDraftRaw(...args);
+  };
+  /**
+   * The retry key of the save in progress, or null when none is open.
+   *
+   * THIS IS THE WHOLE MECHANISM, and its lifetime is the subtle part - the
+   * same rule `save-attempt.ts` states for the edit path. The key identifies a
+   * SAVE, not an attempt:
+   *
+   *   * minted when a save starts and there is none;
+   *   * REUSED by every retry of that save, which is what makes the retry
+   *     safe - if the first attempt committed and only its answer was lost,
+   *     the command returns the original area;
+   *   * dropped when she changes the draft, because a changed draft is a
+   *     DIFFERENT save - EXCEPT while an attempt is unresolved, where dropping
+   *     it would turn the retry into a second area.
+   *
+   * A key minted per attempt makes idempotence useless while every test still
+   * passes, which is precisely why it is held here rather than inside
+   * `machineSetupForSave`.
+   */
+  /**
+   * THE KEY SURVIVES A RELOAD, because it is carried in the URL.
+   *
+   * It used to live only here, so a reload, a tab close or browser Back
+   * discarded it — and a save that had COMMITTED and only lost its answer
+   * then became a second treatment area when she re-entered the same
+   * settings (Codex #860 4302218408). 0223 already dedupes on
+   * `(session_id, idempotency_key)` alone, so nothing about the command or
+   * the schema changes here; the key simply has to outlive the page.
+   *
+   * NOT SEEDED FROM THE URL. A resumed key is ADOPTED by the claim read
+   * below, once it knows what happened, because a key whose claim may already
+   * exist must not be live on a save before anything has checked.
+   */
+  const [pendingSaveKey, setPendingSaveKeyRaw] = useState<string | null>(null);
+  /**
+   * MIRRORED AT THE SETTER, not at the call sites.
+   *
+   * The key is dropped in two places and minted in a third, and the whole
+   * mechanism fails silently if any one of them forgets the URL. Shadowing
+   * the setter is the same answer this file already uses for `setDraft`, and
+   * the same answer `canEditDraft(state, inFlight)` reached by a different
+   * route: make the structure carry the rule instead of asking every caller
+   * to remember it.
+   */
+  const setPendingSaveKey = (next: string | null) => {
+    setPendingSaveKeyRaw(next);
+    syncAreaOperationParam(next);
+  };
+  const [machineDraft, setMachineDraft] = useState<{
+    groups: GroupSubmission[];
+    blocking: string | null;
+    identity: PendingSetupIdentity;
+  } | null>(null);
+
+  /**
+   * The collector's report, plus the key's lifetime rule.
+   *
+   * A CHANGED DRAFT IS A DIFFERENT SAVE, so the open key is dropped and the
+   * next attempt mints a new one. WHILE AN ATTEMPT IS UNRESOLVED it is kept
+   * instead: that key is the retry's safety, and dropping it because a
+   * remount reported an empty draft would turn the retry into a second area.
+   */
+  /**
+   * A RESUMED SAVE WITH NOTHING TO SEND (Codex, #922 4305550889, P1).
+   *
+   * The retry key reaches `create_block_with_initial_setup` only inside
+   * `initialSetup`, and a freshly reloaded form has an EMPTY machine draft —
+   * so pressing Save here sent no key at all, took the ordinary
+   * `create_block_with_entry` path, and created the second area this whole
+   * mechanism exists to prevent. Keeping the key through draft changes, which
+   * is what the previous round fixed, does not help when there is no
+   * `initialSetup` for it to travel in.
+   *
+   * REQUIRING SETTINGS IS NOT A CONVENIENCE, it follows from what the
+   * parameter means: `area_op` is only ever minted inside
+   * `machineSetupForSave`, so a resumed operation ALWAYS had settings. A bare
+   * save in this state is therefore a DIFFERENT save, and it is the one that
+   * must not proceed unkeyed while the original may still be committing.
+   *
+   * AND THAT WAS NOT THE REAL REASON, which I had wrong until a browser test
+   * would not write (ops01's ruling on #922 4307515255). Carrying the key on a
+   * settings-free save is possible - 0223's settings half is nullable and it
+   * still writes the claim - so "unkeyed" was fixable and would not have
+   * justified a hold on its own.
+   *
+   * THE REASON THAT SURVIVES IS THAT A SETTINGS-FREE SAVE CANNOT REPRODUCE
+   * THE SETTINGS SHE ENTERED. If the original committed, a keyed bare save is
+   * absorbed and she gets the original with its settings - fine. If it never
+   * committed, which is what `absent` usually means, it would create an area
+   * with NO machine settings and silently discard what she typed before the
+   * reload. That is data loss dressed as recovery, and we cannot tell the two
+   * cases apart at save time - which is the whole premise of the finding.
+   *
+   * SO RESUME MEANS RE-ENTER, and the retained key then decides it: identical
+   * values are absorbed, different values are refused by name, and a save
+   * whose original never committed proceeds once. None of the three loses a
+   * setting.
+   *
+   * THE WAY BACK IS THE CHOICE, NOT A BARE SAVE. 4305701038's trap - a
+   * retained key blocking an ordinary settings-free save for ever - is closed
+   * by "Start a new area as well", which releases the key. There is no dead
+   * end: unsettled with nothing entered offers Start New, or Resume plus her
+   * settings.
+   *
+   * Derived from `machineDraft` directly rather than from
+   * `machineSetupForSave()`, because that function MINTS AND STORES a key —
+   * calling it during render would set state from a render pass.
+   */
+  const hasSettingsToSend =
+    machineDraft !== null && machineDraft.groups.length > 0;
+
+
+  const resumedNeedsSettings =
+    resumeUnsettled && resumeChoice === "resume" && !hasSettingsToSend;
+
+  /**
+   * SHE HAS CONFIRMED THAT THE WHOLE DRAFT IS BACK, not just the settings.
+   *
+   * THE DEFECT THIS CLOSES (Codex, #922 4307763145). A reload resets the
+   * ENTIRE draft - area, minutes, readings, observations, numbing, notes - and
+   * the recovery gate treated only `machineDraft.groups` as the lost payload.
+   * So Save enabled on one re-entered machine group, and a resume whose
+   * original never committed recorded null and default values for everything
+   * else: a record quietly thinner than the treatment.
+   *
+   * A CONFIRMATION RATHER THAN A VALIDATION RULE, deliberately. A blank note
+   * or no numbing detail is LEGAL - she may have none - so there is no
+   * "required" to lean on, and inventing one would be deciding clinical
+   * completeness, which is not this file's to decide. What is wrong is not
+   * that fields are empty but that they are empty BY ACCIDENT while she
+   * believes she is restoring. This makes the emptiness deliberate.
+   *
+   * ONLY ON A CHOSEN RESUME. "Start a new area" is authoring a fresh area and
+   * already knows it; an ordinary create never had anything to lose.
+   */
+  const [resumedReconstructed, setResumedReconstructed] = useState(false);
+  const resumedUnconfirmed =
+    resumeUnsettled && resumeChoice === "resume" && !resumedReconstructed;
+
+  const onSettingDraftChanged = (
+    next: {
+      groups: GroupSubmission[];
+      blocking: string | null;
+      identity: PendingSetupIdentity;
+    } | null,
+  ) => {
+    setMachineDraft(next);
+    // NOT WHILE THE RESUMED QUESTION IS OPEN. The collector reports an EMPTY
+    // draft on mount, which arrives BEFORE the claim read resolves — so
+    // without this the mount report would clear the parameter out of the URL
+    // for the width of the round trip, and a reload inside that window would
+    // lose the save's identity. The in-flight read owns the key until it has
+    // an answer.
+    if (!saveUnresolved && !resumeOwnsKey) setPendingSaveKey(null);
+  };
+
+  /**
+   * The settings to send with the area, or null.
+   *
+   * THE RETRY KEY IS MINTED HERE, ONCE PER SAVE, through `prepareHandoff` -
+   * which also COPIES the groups, so a keystroke landing after the save began
+   * cannot change what is recorded while the key still claims it is the same
+   * save. A key minted per attempt would make every retry a new save; a key
+   * that never changed would make a deliberate second capture impossible.
+   */
+  const machineSetupForSave = () => {
+    const chosen = machineDraft;
+    if (!chosen || chosen.groups.length === 0) return null;
+    // THE IDENTITY COMES WITH THE DRAFT, from the report that produced it.
+    //
+    // That is safe only because every change of identity REPORTS - the
+    // collector announces its remount with an empty draft, and the panel
+    // clears this when no collector renders at all. Without those, a draft
+    // typed under one machine could still be live after a switch and would be
+    // saved under its own stale identity (Codex, db3373bc P1).
+    const identity = chosen.identity;
+    // ONE KEY PER SAVE, reused by every attempt at it. `prepareHandoff` still
+    // mints through an injected function, so the module stays pure and a test
+    // can pin the key; what changed is that the function returns the HELD one.
+    const key = pendingSaveKey ?? crypto.randomUUID();
+    if (key !== pendingSaveKey) setPendingSaveKey(key);
+    const pending = prepareHandoff(identity, chosen.groups, () => key);
+    if (!pending) return null;
+    return {
+      machineId: identity.deviceId,
+      modeKey: identity.modeKey,
+      idempotencyKey: pending.idempotencyKey,
+      groups: pending.groups,
+    };
+  };
   // PR #191: inline feedback after "Copy settings" so the
   // practitioner knows what was copied and from where.
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
   // 0156: stable id so the numbing-notes helper text is programmatically
   // connected to the textarea via aria-describedby.
   const numbingNotesHelpId = useId();
@@ -576,6 +1197,17 @@ export function BlockSetupForm({
 
   function submit() {
     setError(null);
+    // THE MACHINE DRAFT BLOCKS THE SAVE WHEN IT IS HALF-FINISHED, and says
+    // which group and why. Skipping it would discard numbers she typed;
+    // sending it would be refused by the command after a round trip.
+    if (machineDraft?.blocking) {
+      setError(machineDraft.blocking);
+      return;
+    }
+    // AN UNRESOLVED INITIAL SAVE IS RETRYABLE, and this is where it used to be
+    // refused: the form returned early and told her to reload the chart,
+    // because a second attempt created a second treatment area. 0223's create
+    // claim closed that, so the retry now proceeds and carries the same key.
     const el = draft.energyLevel.trim();
     const elNum = el === "" ? null : Number(el);
     if (el !== "" && (!Number.isFinite(elNum) || (elNum as number) < 0)) {
@@ -708,6 +1340,10 @@ export function BlockSetupForm({
       observationChips: draft.observationChips,
     };
 
+    // COMPUTED ONCE PER ATTEMPT. Calling `machineSetupForSave()` again in
+    // the catch would mint a SECOND retry key for the same save, which is the
+    // defect the key exists to prevent.
+    const attachedSetup = machineSetupForSave();
     startTransition(async () => {
       if (block) {
         // Edit: update the treatment area + its first entry's readings.
@@ -747,7 +1383,7 @@ export function BlockSetupForm({
           setError(res.error);
           return;
         }
-        onCancel();
+        closeForm();
         return;
       }
       // Create: one save → treatment area + first entry. block_name omitted
@@ -775,12 +1411,43 @@ export function BlockSetupForm({
         areas: draft.areas,
         readings,
         ...clinicalResponse,
+        // THE SETTINGS, WHEN THERE ARE ANY. `prepareHandoff` mints the retry
+        // key ONCE and copies the groups, so a keystroke after the save began
+        // cannot change what is recorded while the key still claims it is the
+        // same save. Null when nothing was entered, which is an ordinary save
+        // of an area with no machine settings.
+        initialSetup: attachedSetup,
+      }).catch(() => {
+        // THE TRANSPORT FAILED, so the server's answer is UNKNOWN - not
+        // negative. The area may well have been created.
+        //
+        // AND HERE THE ADVICE IS THE OPPOSITE OF THE EDIT PATH'S. A save
+        // against an existing block is safely retryable, because the
+        // submission command recognises its retry key. This one creates the
+        // block FIRST, so the key is scoped to a block that did not exist on
+        // the first attempt: pressing Save again produces a SECOND treatment
+        // area with a second copy of the settings. Proved against a real
+        // database in tests/db/machine-initial-save.db.test.ts.
+        //
+        // So she is told to LOOK, and the control is held closed, rather than
+        // being offered a retry that duplicates her treatment.
+        return {
+          ok: false as const,
+          error: attachedSetup ? INITIAL_SAVE_UNRESOLVED : "That did not save. Try again.",
+          unresolved: Boolean(attachedSetup),
+        };
       });
       if (!res.ok) {
         setError(res.error);
+        if ("unresolved" in res && res.unresolved) setSaveUnresolved(true);
         return;
       }
-      onCancel();
+      // THE SAVE IS CLOSED. The next one is a different save and mints its own
+      // key; keeping this one would make a deliberate second area look like a
+      // retry of the first and be answered with it.
+      setPendingSaveKey(null);
+      setSaveUnresolved(false);
+      closeForm();
     });
   }
 
@@ -987,13 +1654,50 @@ export function BlockSetupForm({
           <button
             type="button"
             onClick={copySettings}
-            disabled={pending}
+            // Copying another area's settings REPLACES most of the payload,
+            // so it is the largest possible edit under a held retry key.
+            disabled={pending || draftFrozen}
             className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
             Copy settings from another area in this session
           </button>
         )}
       </div>
+
+      {/* MPX-03. Machine first: the exact model is chosen before the settings
+          it governs, and the panel then shows that model's own fields under the
+          machine's labels and units. It is a DISPLAY surface - it records
+          nothing, and says so - so every field below remains the record and is
+          untouched by it. No studio or practitioner id reaches this form, so
+          identity is derived on the SERVER by machine-setup-actions.ts, which
+          takes no studio or practitioner argument at all - so the client cannot
+          name an owner, and cannot name the wrong one. See
+          components/machines/machine-first-setup-connected.tsx.
+
+          The block id is passed only when one EXISTS: a new settings block has
+          no row yet, so there is nothing to record readings against and the
+          panel shows the field contract read-only instead of inviting a value
+          it would have to discard. */}
+      <MachineFirstSetupConnected
+        blockId={block?.id ?? null}
+        clientId={clientId}
+        sessionId={sessionId}
+        // CREATE MODE ONLY. With no block there is nothing to record against,
+        // so the panel hands its draft here and THIS form's Save carries it:
+        // `create_block_with_initial_setup` writes the area and the settings
+        // in one transaction. On an EXISTING block the panel records directly
+        // and this is not supplied, so the two paths never both run.
+        onSettingDraft={block ? undefined : onSettingDraftChanged}
+        // THE MACHINE SETTINGS ARE PART OF THE SAME PAYLOAD. In create mode
+        // the panel's draft is carried into THIS form's save, so the digest
+        // covers it too and it has to freeze with everything else - the same
+        // flag, not a second rule that could disagree.
+        settingDraftFrozen={draftFrozen}
+        // THE PANEL'S REVISION SAVE REACHES THIS FORM, so the Cancel button
+        // below can be frozen by it (Codex, #860 4302176844).
+        onRevisionUnresolved={setRevisionUnresolved}
+      />
+
       {copyMessage && (
         <p className="text-xs text-neutral-600 dark:text-neutral-400" role="status">
           {copyMessage}
@@ -1435,6 +2139,102 @@ export function BlockSetupForm({
           data is never lost and keeps rendering in the From last
           visit summaries. */}
 
+      {/* THE RESUMED SAVE'S ANSWER (A1b, Codex #922 4305312331). A reload
+          raises a question, not a retry: this is where it is answered, and
+          "already saved" is a plain statement rather than an error. */}
+      {resume.state === "saved" && (
+        <div
+          className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"
+          role="status"
+          data-testid="initial-save-already-saved"
+          data-block-id={resume.blockId}
+        >
+          <p>{INITIAL_SAVE_ALREADY_SAVED}</p>
+          <button
+            type="button"
+            onClick={closeForm}
+            className="mt-2 underline"
+            data-testid="initial-save-already-saved-close"
+          >
+            Close
+          </button>
+        </div>
+      )}
+
+      {/* THE RECOVERY CHOICE (ops01's ruling on #922 4307515255).
+
+          A key kept silently would let a later Add whose values happen to
+          match the abandoned save be ABSORBED, suppressing an area she meant
+          to create. So the unsettled answer is not resolved by guessing from
+          the values - it is put to her, and neither option asks her to change
+          one. */}
+      {resumeChoicePending && (
+        <div
+          className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"
+          role="status"
+          data-testid="initial-save-resume-choice"
+        >
+          <p>{RESUME_CHOICE_PROMPT}</p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={chooseResume}
+              data-testid="initial-save-resume-choice-resume"
+              className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+            >
+              {RESUME_CHOICE_RESUME}
+            </button>
+            <button
+              type="button"
+              onClick={chooseStartNew}
+              data-testid="initial-save-resume-choice-new"
+              className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+            >
+              {RESUME_CHOICE_NEW}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {resumeUnsettled && resumeChoice === "resume" && (
+        <div
+          className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"
+          data-testid="initial-save-resume-reconstruct"
+        >
+          <p>{RESUME_RECONSTRUCT_NOTICE}</p>
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              checked={resumedReconstructed}
+              onChange={(e) => setResumedReconstructed(e.target.checked)}
+              data-testid="initial-save-resume-reconstructed"
+              className="mt-0.5 h-4 w-4"
+            />
+            <span>{RESUME_RECONSTRUCT_CONFIRM}</span>
+          </label>
+        </div>
+      )}
+
+      {resumedNeedsSettings && (
+        <p
+          className="text-sm text-neutral-700 dark:text-neutral-300"
+          role="status"
+          data-testid="initial-save-resume-needs-settings"
+        >
+          {INITIAL_SAVE_RESUME_NEEDS_SETTINGS}
+        </p>
+      )}
+
+      {resume.state === "checking" && (
+        <p
+          className="text-sm text-neutral-600 dark:text-neutral-400"
+          role="status"
+          data-testid="initial-save-resume-checking"
+        >
+          Checking whether this treatment area was already saved…
+        </p>
+      )}
+
       {error && (
         <p className="text-sm text-red-600 dark:text-red-400" role="alert">
           {error}
@@ -1445,16 +2245,77 @@ export function BlockSetupForm({
         <button
           type="button"
           onClick={submit}
-          disabled={pending}
+          // HELD WHILE THE RESUMED QUESTION IS OPEN. Committing a second save
+          // before the claim read lands is the one outcome this must not
+          // allow, and once the answer is "saved" there is nothing to save.
+          //
+          // AND WHILE THE RECOVERY CHOICE IS UNANSWERED. Saving before she
+          // has said whether this is the earlier save or a new area would
+          // decide it for her - either absorbing an area she meant to create,
+          // or duplicating one she did not (ops01's ruling on #922
+          // 4307515255).
+          disabled={
+            pending ||
+            resume.state === "checking" ||
+            resume.state === "saved" ||
+            resumeChoicePending ||
+            resumedNeedsSettings ||
+            resumedUnconfirmed ||
+            // HELD WHILE A MACHINE REVISION IS UNRESOLVED (Codex, #1205
+            // 4401466832). On an existing block this button saves the AREA and
+            // closes the form, which unmounts the entry and discards the
+            // retained retry key of a machine save whose answer was lost; if
+            // that save had committed, re-entering the settings appends a
+            // duplicate immutable capture. It is NOT the recovery for that
+            // save - the entry's own "Try saving again" is - so freezing it
+            // does not strand her. The create-mode flag is deliberately NOT
+            // here: there, pressing Save again unchanged IS the recovery.
+            revisionUnresolved
+          }
           data-testid="save-treatment-area"
           className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
           {pending ? "Saving…" : "Save settings block"}
         </button>
+        {/*
+          CANCEL IS FROZEN WHILE THE SAVE'S OUTCOME IS UNKNOWN
+          (Codex, #860 4301633049).
+          It was disabled only on `pending`, so the moment the lost response
+          cleared `pending` this button was live again - and it is the one
+          control that destroys the retry key rather than changing the
+          payload. `onCancel` closes the form, `saveUnresolved` and
+          `pendingSaveKey` go with it, and the next save mints a NEW key: if
+          the first attempt had committed, that is a second immutable
+          treatment area for one treatment.
+
+          THIRD CONTROL, SAME INVARIANT. The draft setter was frozen in round
+          5, the machine and mode pickers in round 12, and this is the
+          dismissal. A control that can discard the key belongs inside the
+          freeze the key depends on, whether it edits the payload or not.
+
+          THE SAVE BUTTON STAYS LIVE, which is what keeps this from being a
+          trap: pressing Save again, unchanged, is the recovery, and the
+          message above says so.
+        */}
         <button
           type="button"
-          onClick={onCancel}
-          disabled={pending}
+          onClick={closeForm}
+          // EITHER unresolved save freezes dismissal. Round 14 wired this
+          // to `saveUnresolved` alone — the CREATE-mode flag — so on an
+          // existing block, where the panel records directly, Cancel stayed
+          // live through an unresolved REVISION save and unmounting the
+          // entry discarded its retry key (Codex, #860 4302176844).
+          // AND IT WAITS FOR A LOOKUP THAT IS ALREADY IN FLIGHT. Dismissing
+          // the form mid-read would discard the answer; the read is one round
+          // trip, so waiting costs her nothing and protects the identity
+          // (Codex, #922 4305431336).
+          disabled={
+            pending ||
+            saveUnresolved ||
+            revisionUnresolved ||
+            resume.state === "checking"
+          }
+          data-testid="cancel-treatment-area"
           className="rounded-md border border-neutral-300 px-5 py-3 text-sm hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
         >
           Cancel

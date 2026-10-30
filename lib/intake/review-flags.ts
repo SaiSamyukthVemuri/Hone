@@ -1,7 +1,7 @@
 import {
   NONE_VALUE,
   getOptionLabel,
-  getQuestionLabel,
+  getQuestionLabel, INTAKE_STEPS, type Step,
 } from "@/lib/intake/questions";
 
 // ---------------------------------------------------------------------------
@@ -231,8 +231,8 @@ function multiHas(value: unknown, optionValue: string): boolean {
   );
 }
 
-function basisLine(questionKey: string, answerLabel: string): string {
-  return `Based on intake response: ${getQuestionLabel(questionKey)}, ${answerLabel}`;
+function basisLine(questionKey: string, answerLabel: string, steps: ReadonlyArray<Step>): string {
+  return `Based on intake response: ${getQuestionLabel(questionKey, steps)}, ${answerLabel}`;
 }
 
 // Pure. Derives the practitioner review flags from a single intake's
@@ -242,6 +242,7 @@ function basisLine(questionKey: string, answerLabel: string): string {
 // within a level.
 export function deriveIntakeReviewFlags(
   responses: Record<string, unknown> | null | undefined,
+  steps: ReadonlyArray<Step> = INTAKE_STEPS,
 ): IntakeReviewFlag[] {
   if (!responses || typeof responses !== "object") return [];
   const flags: Array<Omit<IntakeReviewFlag, "badges">> = [];
@@ -249,23 +250,23 @@ export function deriveIntakeReviewFlags(
   for (const rule of RULES) {
     if (rule.kind === "multi") {
       if (!multiHas(responses[rule.questionKey], rule.optionValue)) continue;
-      const answerLabel = getOptionLabel(rule.questionKey, rule.optionValue);
+      const answerLabel = getOptionLabel(rule.questionKey, rule.optionValue, steps);
       flags.push({
         id: `${rule.questionKey}:${rule.optionValue}`,
         level: rule.level,
         wording: LEVEL_WORDING[rule.level],
         category: rule.label ?? answerLabel,
-        basis: basisLine(rule.questionKey, answerLabel),
+        basis: basisLine(rule.questionKey, answerLabel, steps),
       });
     } else if (rule.kind === "single") {
       if (responses[rule.questionKey] !== rule.optionValue) continue;
-      const answerLabel = getOptionLabel(rule.questionKey, rule.optionValue);
+      const answerLabel = getOptionLabel(rule.questionKey, rule.optionValue, steps);
       flags.push({
         id: `${rule.questionKey}:${rule.optionValue}`,
         level: rule.level,
         wording: LEVEL_WORDING[rule.level],
         category: rule.label ?? answerLabel,
-        basis: basisLine(rule.questionKey, answerLabel),
+        basis: basisLine(rule.questionKey, answerLabel, steps),
       });
     } else {
       if (responses[rule.questionKey] !== "yes") continue;
@@ -274,7 +275,7 @@ export function deriveIntakeReviewFlags(
         level: rule.level,
         wording: LEVEL_WORDING[rule.level],
         category: rule.label,
-        basis: basisLine(rule.questionKey, "Yes"),
+        basis: basisLine(rule.questionKey, "Yes", steps),
       });
     }
   }

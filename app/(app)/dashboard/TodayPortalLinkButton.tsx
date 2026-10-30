@@ -67,12 +67,36 @@ export function PortalSendStatus({ hint }: { hint: PortalSendHint }) {
 export function TodayPortalLinkButton({
   clientId,
   clientHasEmail,
+  portalEnabled = true,
 }: {
   clientId: string;
   clientHasEmail: boolean;
+  // HON-47. False when the studio turned client portal access off.
+  portalEnabled?: boolean;
 }) {
   const [pending, startTransition] = useTransition();
   const [hint, setHint] = useState<PortalSendHint>({ kind: "idle" });
+
+  if (!portalEnabled) {
+    return (
+      <span className="flex flex-col items-end">
+        <button
+          type="button"
+          disabled
+          data-testid="today-send-portal-link"
+          className="inline-flex min-h-[44px] items-center rounded-md px-3 py-1.5 text-xs font-medium text-neutral-400 opacity-60 dark:text-neutral-500"
+        >
+          Send portal link
+        </button>
+        <span
+          data-testid="today-portal-off"
+          className="text-right text-[11px] text-neutral-500 dark:text-neutral-400"
+        >
+          Client portal is off for your studio
+        </span>
+      </span>
+    );
+  }
 
   // No email on file means there is no send to offer. The control stays visible
   // and DISABLED with a truthful reason, rather than vanishing and leaving the

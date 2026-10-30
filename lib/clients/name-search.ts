@@ -51,13 +51,32 @@ function digitsOf(value: string | null | undefined): string {
   return (value ?? "").replace(/\D/g, "");
 }
 
+/**
+ * Digits as compared for a phone match. A North American number is the same
+ * number with or without its leading country code ("+1 416 555 0100" and
+ * "416-555-0100"), so an 11-digit string starting with 1 is compared by its
+ * ten national digits.
+ */
+export function nationalDigits(value: string | null | undefined): string {
+  const digits = digitsOf(value);
+  return digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+}
+
 function isPhoneShaped(query: string): boolean {
   return PHONE_SHAPED_RE.test(query) && digitsOf(query).length >= MIN_PHONE_DIGITS;
 }
 
-/** The fields a client search reads. Extra fields are ignored. */
+/**
+ * The fields a client search reads. Extra fields are ignored. `preferred_name`
+ * and the legal parts (HON-58) are matched only when the caller selected them,
+ * so a surface that is not allowed legal identity never searches it.
+ */
 export type SearchableClient = {
   name?: string | null;
+  preferred_name?: string | null;
+  legal_given_name?: string | null;
+  legal_middle_name?: string | null;
+  legal_family_name?: string | null;
   email?: string | null;
   phone?: string | null;
 };
@@ -80,12 +99,63 @@ export function nameMatchesQuery(name: string | null | undefined, rawQuery: stri
 export function matchesClientSearch(client: SearchableClient, rawQuery: string): boolean {
   const query = rawQuery.trim();
   if (query.length === 0) return true;
-  if (nameMatchesQuery(client.name, query)) return true;
+  // One identity, several names: the stored name, the preferred name and the
+  // legal parts are searched as ONE word set, so "janie smith" finds a record
+  // stored as "Jane Smith" with preferred name "Janie", and a legal surname
+  // finds it too. With only `name` set this is exactly the old rule.
+  const allNames = [
+    client.name,
+    client.preferred_name,
+    client.legal_given_name,
+    client.legal_middle_name,
+    client.legal_family_name,
+  ]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .join(" ");
+  if (nameMatchesQuery(allNames, query)) return true;
 
   const lower = query.toLowerCase();
   if ((client.email ?? "").toLowerCase().includes(lower)) return true;
   if ((client.phone ?? "").toLowerCase().includes(lower)) return true;
-  return isPhoneShaped(query) && digitsOf(client.phone).includes(digitsOf(query));
+  if (!isPhoneShaped(query)) return false;
+  return (
+    digitsOf(client.phone).includes(digitsOf(query)) ||
+    nationalDigits(client.phone).includes(nationalDigits(query))
+  );
+}
+
+/**
+ * Where a matching client sorts: lower is better. Exact name first, then a name
+ * that starts with the query, then a word-start match, then the looser name
+ * match, then email, then phone. Ties break by name, then id, so the order is
+ * stable. Only meaningful for a client that matchesClientSearch accepted.
+ */
+export function clientMatchRank(client: SearchableClient, rawQuery: string): number {
+  const query = foldForSearch(rawQuery);
+  if (query.length === 0) return 0;
+  const names = [client.name, client.preferred_name].map(foldForSearch).filter((n) => n.length > 0);
+  if (names.some((n) => n === query)) return 0;
+  if (names.some((n) => n.startsWith(query))) return 1;
+  const tokens = searchTokens(rawQuery);
+  if (names.some((n) => { const words = n.split(" "); return tokens.every((t) => words.some((w) => w.startsWith(t))); })) return 2;
+  if (names.some((n) => nameMatchesQuery(n, rawQuery))) return 3;
+  const lower = rawQuery.trim().toLowerCase();
+  if ((client.email ?? "").toLowerCase().startsWith(lower)) return 4;
+  if ((client.email ?? "").toLowerCase().includes(lower)) return 5;
+  return 6;
+}
+
+/** Stable best-match-first order for a list of matches. */
+export function sortByMatchRank<T extends SearchableClient & { id?: string }>(rows: readonly T[], rawQuery: string): T[] {
+  return rows
+    .map((row) => ({ row, rank: clientMatchRank(row, rawQuery) }))
+    .sort(
+      (a, b) =>
+        a.rank - b.rank ||
+        (a.row.name ?? "").localeCompare(b.row.name ?? "") ||
+        (a.row.id ?? "").localeCompare(b.row.id ?? ""),
+    )
+    .map((x) => x.row);
 }
 
 // ---------------------------------------------------------------------------
@@ -134,5 +204,7 @@ export function hasNameQuery(rawQuery: string): boolean {
 export function phoneCandidatePattern(rawQuery: string): string | null {
   const query = rawQuery.trim();
   if (!isPhoneShaped(query)) return null;
-  return `%${[...digitsOf(query)].join("%")}%`;
+  // National digits: a subsequence of them admits the stored number with or
+  // without its leading country code, a superset of what the matcher accepts.
+  return `%${[...nationalDigits(query)].join("%")}%`;
 }

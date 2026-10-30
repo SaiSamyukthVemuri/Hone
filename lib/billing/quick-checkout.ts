@@ -53,7 +53,10 @@ export type AppointmentSettlementContext = {
   canRecord: boolean;
   /** The live attested disposition, when one exists. */
   settledMethod: SettlementMethod | null;
+  /** The LIVE record's id, so an owner's correction targets exactly it (stale_target if it moved). */
+  settledId: string | null;
   settledAmountCents: number | null;
+  settledQuotedCents: number | null;
   /**
    * The authoritative price, resolved from the APPOINTMENT so it is available
    * with no session. Pre-fills the amount; the action re-resolves and snapshots
@@ -159,7 +162,9 @@ export async function resolveQuickCheckoutContext(
     // The UI's copy of the database's own rule (`not_completed`).
     canRecord: apptStatus === "completed",
     settledMethod: live?.method ?? null,
+    settledId: live?.id ?? null,
     settledAmountCents: live?.amountCents ?? null,
+    settledQuotedCents: live?.quotedAmountCents ?? null,
     quotedAmountCents: await resolveAppointmentQuotedAmountCents(
       args.studioId,
       args.appointmentId,

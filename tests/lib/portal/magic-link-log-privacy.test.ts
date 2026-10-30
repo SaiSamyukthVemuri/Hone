@@ -16,6 +16,15 @@ const input = { studioId: STUDIO, clientId: CLIENT, email: "patient@example.test
 beforeEach(() => { mocks.send.mockReset(); mocks.send.mockResolvedValue({ ok: true }); });
 afterEach(() => { vi.restoreAllMocks(); });
 
+// HON-47: issuing a link first reads the studio's portal policy. A studio row
+// with no flag column is today's schema and allows the link.
+function studiosOr(links: Record<string, unknown>) {
+  return (table: string) =>
+    table === "studios"
+      ? { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { id: STUDIO }, error: null }) }) }) }
+      : links;
+}
+
 function captureLogs() {
   // Both console levels are captured so the prior console.log path cannot
   // escape the oracle when the implementation uses safeLog.info.
@@ -40,7 +49,7 @@ describe("portal magic-link operational logs withhold record ids", () => {
   it("redacts studio/client ids on success while preserving issuance", async () => {
     const logs = captureLogs();
     const insert = vi.fn(async () => ({ error: null }));
-    expect(await issuePortalMagicLink({ from: () => ({ insert }) }, input)).toEqual({ ok: true });
+    expect(await issuePortalMagicLink({ from: studiosOr({ insert }) }, input)).toEqual({ ok: true });
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ studio_id: STUDIO, client_id: CLIENT, token_hash: "synthetic-token-hash" }));
     expect(mocks.send).toHaveBeenCalledOnce();
     expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ to: input.email }));
@@ -52,7 +61,7 @@ describe("portal magic-link operational logs withhold record ids", () => {
   it("omits raw and encoded ids in a database failure, without sending", async () => {
     const logs = captureLogs();
     const error = { code: "23503", message: `client=${CLIENT},studio=${STUDIO.replace(/-/g, "%2D")}` };
-    expect(await issuePortalMagicLink({ from: () => ({ insert: async () => ({ error }) }) }, input)).toMatchObject({ ok: false });
+    expect(await issuePortalMagicLink({ from: studiosOr({ insert: async () => ({ error }) }) }, input)).toMatchObject({ ok: false });
     expect(mocks.send).not.toHaveBeenCalled();
     const event = payload(logs);
     expect(event).toEqual({ event: "portal_magic_link_insert_failed", code: "23503", timestamp: expect.any(String) });
@@ -63,7 +72,7 @@ describe("portal magic-link operational logs withhold record ids", () => {
     const logs = captureLogs();
     const sentinel = `${input.email} clinical-private-sentinel synthetic-raw-secret synthetic-token-hash`;
     const error = { code: "23514", message: `Rejected row: ${sentinel}` };
-    expect(await issuePortalMagicLink({ from: () => ({ insert: async () => ({ error }) }) }, input))
+    expect(await issuePortalMagicLink({ from: studiosOr({ insert: async () => ({ error }) }) }, input))
       .toEqual({ ok: false, error: "Could not create the portal link. Please try again." });
     expect(mocks.send).not.toHaveBeenCalled();
     const event = payload(logs);
@@ -76,7 +85,7 @@ describe("portal magic-link operational logs withhold record ids", () => {
   it("preserves the send-refusal marker and retryability without identifiers", async () => {
     const logs = captureLogs();
     mocks.send.mockResolvedValue({ ok: false, retryable: true });
-    expect(await issuePortalMagicLink({ from: () => ({ insert: async () => ({ error: null }) }) }, input)).toMatchObject({ ok: false });
+    expect(await issuePortalMagicLink({ from: studiosOr({ insert: async () => ({ error: null }) }) }, input)).toMatchObject({ ok: false });
     const event = payload(logs);
     expect(event).toMatchObject({ event: "portal_magic_link_email_failed", retryable: true });
     noIds(event);

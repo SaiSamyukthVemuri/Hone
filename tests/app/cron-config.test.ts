@@ -29,6 +29,10 @@ const VERCEL = JSON.parse(read("vercel.json")) as {
 };
 const ROUTE = read("app/api/cron/appointment-reminders/route.ts");
 const ROUTE_CODE = codeOnly(ROUTE);
+// MSG-ARCH-01: the candidate query moved to a lib module (so a database test can
+// run the route's exact builder); its pins read it there, the route imports it.
+const QUERY = read("lib/cron/reminder-candidate-query.ts");
+const QUERY_CODE = codeOnly(QUERY);
 const NO_SHOW = read("app/api/cron/no-show-check/route.ts");
 
 describe("vercel.json cron config (fixes the reported empty-crons bug)", () => {
@@ -153,30 +157,30 @@ describe("reminder route preserves claim-before-send, idempotency, and auth", ()
 // ---------------------------------------------------------------------------
 describe("reminder route stays bounded per run (PR OPS-01)", () => {
   it("declares an explicit per-run cap of 50", () => {
-    expect(ROUTE).toMatch(/const PER_RUN_LIMIT = 50;/);
+    expect(QUERY).toMatch(/const PER_RUN_LIMIT = 50;/);
   });
 
   it("actually applies the cap to the window query (not just declares it)", () => {
-    expect(ROUTE_CODE).toMatch(/\.limit\(Math\.min\(PER_RUN_LIMIT, opts\.limit\)\)/);
+    expect(QUERY_CODE).toMatch(/\.limit\(Math\.min\(PER_RUN_LIMIT, opts\.limit\)\)/);
   });
 
   it("the only numeric-literal limits are single-row lookups, never the window cap", () => {
     // The window query must use the named constant. Elsewhere the route
     // legitimately calls .limit(1) to fetch one latest intake row, so the rule
     // is: every numeric .limit() in this file is exactly .limit(1).
-    const numericLimits = ROUTE_CODE.match(/\.limit\(\s*\d+\s*\)/g) ?? [];
+    const numericLimits = (ROUTE_CODE + QUERY_CODE).match(/\.limit\(\s*\d+\s*\)/g) ?? [];
     for (const call of numericLimits) {
       expect(call.replace(/\s+/g, "")).toBe(".limit(1)");
     }
   });
 
   it("keeps the 3-strike attempt cap and applies it to the query", () => {
-    expect(ROUTE).toMatch(/const MAX_ATTEMPTS = 3;/);
-    expect(ROUTE_CODE).toMatch(/\.lt\(opts\.attemptsColumn, MAX_ATTEMPTS\)/);
+    expect(QUERY).toMatch(/const MAX_ATTEMPTS = 3;/);
+    expect(QUERY_CODE).toMatch(/\.lt\(opts\.attemptsColumn, MAX_ATTEMPTS\)/);
   });
 
   it("orders the window by starts_at so the cap takes the soonest appointments", () => {
-    expect(ROUTE_CODE).toMatch(/\.order\("starts_at", \{ ascending: true \}\)/);
+    expect(QUERY_CODE).toMatch(/\.order\("starts_at", \{ ascending: true \}\)/);
   });
 });
 

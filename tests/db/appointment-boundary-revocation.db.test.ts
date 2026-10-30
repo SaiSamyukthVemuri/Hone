@@ -712,6 +712,9 @@ describe("0172 — the boundary's known edge: FK referential actions still reach
       appointments_created_by_practitioner_same_studio_fk: "r",
       appointments_cancelled_by_practitioner_same_studio_fk: "r",
       appointments_outside_availability_authorizer_same_studio_fk: "r",
+      // 0220: the receptionist twins, RESTRICT for the same reason.
+      appointments_created_by_receptionist_same_studio_fk: "r",
+      appointments_cancelled_by_receptionist_same_studio_fk: "r",
     });
   });
 

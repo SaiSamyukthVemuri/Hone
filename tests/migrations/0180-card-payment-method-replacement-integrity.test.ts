@@ -265,7 +265,7 @@ describe("0180 — DB-FIRST rollout contract (deployment skew)", () => {
   it("THE TRIPWIRE: the app calls the new command unconditionally, so the DB must go first", () => {
     // If this ever stops being true — i.e. someone adds a feature flag or a
     // fallback — the rollout order below must be re-derived, not assumed.
-    expect(ROUTE).toMatch(/admin\.rpc\(\s*\n?\s*"save_client_card_on_file"/);
+    expect(ROUTE).toMatch(/admin\.rpc\(\s*\n?\s*"save_client_card_on_file_ordered"/);
     // No conditional guarding the call, and no fallback to the old two writes.
     expect(ROUTE).not.toMatch(/if\s*\([^)]*save_client_card_on_file/);
     expect(ROUTE).not.toMatch(/\.update\(\{ status: "removed"/);
