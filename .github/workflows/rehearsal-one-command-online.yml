@@ -1,0 +1,53 @@
+# REHEARSAL - NEVER MERGE. HON66 ONE-COMMAND STAGE (online flow): the runner is driven through a real pty against the REAL 0254 online apply/reconcile scripts with stubs for the CLI and the
+# read-back. No hosted call, no database, canary secrets only. The macOS job is the one the operator's Mac matches (bash 3.2, /usr/bin/expect, launched from zsh).
+name: rehearsal-one-command-online
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/one-command-online/**"
+      - "rehearsal/stage-0254-online/**"
+      - ".github/workflows/rehearsal-one-command-online.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  oc-macos:
+    name: one-command runner vs stubs (macOS arm64, /bin/bash 3.2, /usr/bin/expect)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts
+        run: |
+          uname -sm; /bin/bash --version | head -1; /usr/bin/expect -v; python3 --version
+          shasum -a 256 rehearsal/one-command-online/*.sh rehearsal/one-command-online/*.exp rehearsal/one-command-online/stages/*.conf
+      - name: Runner cases, negative controls and mutation pass (N of N)
+        shell: /bin/zsh {0}
+        env:
+          EXPECT_N: "40"
+        run: |
+          /bin/bash rehearsal/one-command-online/check.sh 2>&1 | tee "$RUNNER_TEMP/oc-macos.txt"; exit ${pipestatus[1]}
+
+  oc-linux:
+    name: one-command runner vs stubs (Linux, fast loop)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install expect
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq expect
+      - name: Runner cases, negative controls and mutation pass (N of N)
+        env:
+          EXPECT_N: "40"
+        run: |
+          set -o pipefail
+          bash rehearsal/one-command-online/check.sh 2>&1 | tee "$RUNNER_TEMP/oc-linux.txt"
