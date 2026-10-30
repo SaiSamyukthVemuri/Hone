@@ -24,10 +24,11 @@ const TOP_LEVEL = CODE.replace(/\$\$[\s\S]*?\$\$/g, " ");
 const FN = "public.member_owns_scoped_timed_block(uuid, uuid)";
 
 describe("0253 — migration state", () => {
-  it("is the repository maximum, and nothing sits above it", () => {
-    // Only the CURRENT maximum migration's own test may assert this — CLAUDE.md §2.
-    expect(isRepoMax(VERSION), "0253 is no longer the repo max").toBe(true);
-    expect(versionsAbove(VERSION), "something was added above 0253").toEqual([]);
+  it("sits below the repository maximum: the tripwire belongs to the current maximum's own test", () => {
+    // Production carried 0254+ above 0253 (it is an out-of-order pending number), so — CLAUDE.md §2 —
+    // only the CURRENT maximum's own test asserts isRepoMax.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION).length).toBeGreaterThan(0);
   });
   it("is allocated exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);
