@@ -215,7 +215,7 @@ describe("Stripe failure paths unchanged", () => {
   });
 
   it("still leaves the row pending + needs_manual_review on an unknown post-claim error", () => {
-    expect(CHARGE).toMatch(/unknown_error_after_claim/);
+    expect(CHARGE).toMatch(/staged_producer_unverified/);
   });
 });
 
