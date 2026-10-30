@@ -34,23 +34,32 @@ const MARKER = /^\s*\/\/\s*exemption-db-pair:\s*(.+)$/gm;
 export type Source = { path: string; text: string };
 
 /**
- * The string entries a declaration ACTUALLY lists, read from its initializer
- * (Codex, #1213 4401356805: a marker alone can go stale when an entry is
- * appended to the list). Scans from the `=` to the end of the statement,
- * skipping over string literals and comments, and returns every string literal
- * in it. Returns null when the initializer cannot be read as literals (no `=`,
- * or no string entry at all), which the caller reports instead of passing.
+ * What a declaration ACTUALLY lists, read from its initializer (Codex, #1213
+ * 4401356805: a marker alone can go stale when an entry is appended; Insurance
+ * PEER-1213-P2 E1: a list read only in part can pass). Scans from the `=` to the
+ * end of the statement, skipping comments, and returns every string literal plus
+ * `foreign`: any other text in the initializer. Only brackets, parentheses,
+ * commas, comments, `new Set`, an optional `<...>` generic and `as const` are
+ * permitted around the literals. A spread, an identifier element, `.concat`,
+ * `.add` or `.push` (including a chained call on the next line) leaves foreign
+ * text, which the caller reports because it can add entries the guard cannot
+ * see. Returns null when the initializer cannot be read at all (no `=`, no
+ * string entry, or an unterminated block comment).
  */
-export function declaredEntries(text: string, declAt: number): string[] | null {
+export function declaredEntries(
+  text: string,
+  declAt: number,
+): { entries: string[]; foreign: string } | null {
   const eq = text.indexOf("=", declAt);
   if (eq < 0) return null;
   const entries: string[] = [];
+  let residue = "";
   let depth = 0;
-  let i = eq + 1;
-  for (; i < text.length; i++) {
+  for (let i = eq + 1; i < text.length; i++) {
     const ch = text[i]!;
     if (ch === "/" && text[i + 1] === "/") {
       while (i < text.length && text[i] !== "\n") i++;
+      i--;
       continue;
     }
     if (ch === "/" && text[i + 1] === "*") {
@@ -71,12 +80,29 @@ export function declaredEntries(text: string, declAt: number): string[] | null {
       i = j;
       continue;
     }
-    if (ch === "[" || ch === "(" || ch === "{") depth++;
-    else if (ch === "]" || ch === ")" || ch === "}") depth--;
+    if (ch === "[" || ch === "(") depth++;
+    else if (ch === "]" || ch === ")") depth--;
     else if (ch === ";" && depth <= 0) break;
-    else if (ch === "\n" && depth <= 0 && entries.length > 0) break;
+    else if (ch === "\n" && depth <= 0 && entries.length > 0) {
+      // The statement ends at a newline unless the next code character
+      // continues it (a chained call, an operator).
+      let k = i + 1;
+      for (;;) {
+        while (k < text.length && /\s/.test(text[k]!)) k++;
+        if (text[k] === "/" && text[k + 1] === "/") {
+          while (k < text.length && text[k] !== "\n") k++;
+        } else if (text[k] === "/" && text[k + 1] === "*") {
+          const end = text.indexOf("*/", k + 2);
+          if (end < 0) return null;
+          k = end + 2;
+        } else break;
+      }
+      if (!/[.+?|&]/.test(text[k] ?? "")) break;
+    } else if (!/[\s,]/.test(ch)) residue += ch;
   }
-  return entries.length > 0 ? entries : null;
+  if (entries.length === 0) return null;
+  const foreign = residue.replace(/newSet(?:<\w+>)?|asconst/g, "");
+  return { entries, foreign };
 }
 
 /** Violations of the pairing rule over a set of test sources. Pure, so it can be proved. */
@@ -119,11 +145,18 @@ export function pairingViolations(
         out.push(`${src.path}: ${name}: ${dbPath} never names the real function ${fn}`);
       }
       const marked = entries.split(",").map((e) => e.trim()).filter(Boolean);
-      const listed = declaredEntries(src.text, at);
-      if (listed === null) {
+      const declared = declaredEntries(src.text, at);
+      if (declared === null) {
         out.push(`${src.path}: ${name}: the guard cannot read its entries as string literals, so it cannot prove the pairing`);
         continue;
       }
+      if (declared.foreign) {
+        out.push(
+          `${src.path}: ${name}: the initializer holds more than string literals (${declared.foreign}), so the guard cannot see every entry`,
+        );
+        continue;
+      }
+      const listed = declared.entries;
       // The LIST is the truth. An entry appended without updating the marker,
       // or a marker entry the list no longer holds, is a violation either way.
       for (const entry of listed) {
@@ -238,6 +271,27 @@ describe("G6(a) every migration-test exemption list is paired with a real-functi
       text: `${MARK}\nconst EXEMPT = new Set([\n  "widgets", // why\n  'sneaky',\n]);`,
     };
     expect(pairingViolations([multi], () => DB_OK).join()).toMatch(/list holds sneaky/);
+  });
+
+  it.each([
+    ["a spread", `const EXEMPT = ["widgets", ...OTHER];`],
+    ["an identifier element", `const EXEMPT = ["widgets", OTHER];`],
+    ["a .concat", `const EXEMPT = ["widgets"].concat(OTHER);`],
+    ["a .add on the same line", `const EXEMPT = new Set(["widgets"]).add("sneaky");`],
+    ["a .add chained on the next line", `const EXEMPT = new Set(["widgets"])\n  .add("sneaky");`],
+    ["a .push chained past a comment", `const EXEMPT = ["widgets"]\n  // why\n  .push("sneaky");`],
+  ])("CONTROL: a list extended by %s is not read partially", (_form, init) => {
+    const src = { path: "tests/migrations/x.test.ts", text: `${MARK}\n${init}` };
+    expect(pairingViolations([src], () => DB_OK).join()).toMatch(/more than string literals/);
+  });
+
+  it.each([
+    ["new Set with a generic", `const EXEMPT = new Set<string>(["widgets"]);`],
+    ["as const", `const EXEMPT = ["widgets"] as const;`],
+    ["comments between entries", `const EXEMPT = [\n  "widgets", // why\n  /* more */\n];`],
+  ])("CONTROL: %s stays readable", (_form, init) => {
+    const src = { path: "tests/migrations/x.test.ts", text: `${MARK}\n${init}` };
+    expect(pairingViolations([src], () => DB_OK)).toEqual([]);
   });
 
   it("CONTROL: a list the guard cannot read as string literals fails instead of passing", () => {
