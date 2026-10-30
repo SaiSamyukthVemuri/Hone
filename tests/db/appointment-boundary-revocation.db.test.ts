@@ -873,8 +873,9 @@ describe("0172 — no trigger or function drift", () => {
         order by g.tgname`,
     );
     // Pending carriers add triggers to appointments. Each is named under the migration that adds it and
-    // counts ONLY when that file is in the tree, so the census stays right for any subset of carriers
-    // that has landed (0271 and 0268 share it). One entry per carrier, never a bare count.
+    // counts ONLY when that file is in the tree, so the census is right for any subset of carriers that
+    // has landed (0268 and 0271 share it). One entry per carrier, never a bare count. This block is
+    // byte-identical on every carrier branch so the carriers merge without a census conflict.
     const BASE_TRIGGERS = [
       "appointments_enforce_buffer_trg",
       // B6 / 0175: refuses illegal lifecycle edges. Writes no audit row.
@@ -889,6 +890,8 @@ describe("0172 — no trigger or function drift", () => {
       "appointments_zzz_outbound_enqueue_trg",
     ];
     const ADDED_BY_MIGRATION: Record<string, string[]> = {
+      // 0268 (HON-48): clears arrived_at when an appointment is cancelled or marked no-show. Writes no audit row.
+      "0268_appointment_arrival.sql": ["appointments_clear_arrival_on_close_trg"],
       // 0271 (HON-48): statement-level schedule-change signal, data-free, writes no audit row.
       "0271_schedule_change_signal.sql": [
         "appointments_schedule_signal_del_trg",
