@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 247,
-    "last": "0257_studio_payment_jurisdiction_failed_attempt_ack.sql",
-    "sha256": "91bacac918d4ac70cdcf9e0f11f9199fe86162d01766231a9ecf9593f5ab0c85"
+    "count": 248,
+    "last": "0267_range_confirmation_recorded_with_capture.sql",
+    "sha256": "ac0ab1645f3f3c977943fffa23fdb18bf0b0fae7b4218c5122d70f47aee78d68"
   },
   "public": {
     "tables": [
@@ -121,6 +121,7 @@
       "treatment_plans",
       "treatment_reading_change_events",
       "treatment_setup_captures",
+      "treatment_setup_range_confirmations",
       "treatment_setup_readings",
       "treatment_setup_submissions",
       "waitlist"
@@ -403,6 +404,7 @@
       "record_platform_early_access_signup",
       "record_platform_lead_alerts_unconfigured",
       "record_setup_group_in_scope",
+      "record_setup_range_confirmations",
       "record_sms_delivery_status",
       "record_sms_result",
       "record_stripe_account_jurisdiction",
@@ -419,6 +421,7 @@
       "redeem_new_client_waitlist_invitation",
       "redeem_new_client_waitlist_invitation_verified",
       "redeem_waitlist_preference_grant",
+      "refuse_range_confirmation_update",
       "refuse_treatment_setup_capture_update",
       "refuse_treatment_setup_reading_update",
       "register_studio_machine",
