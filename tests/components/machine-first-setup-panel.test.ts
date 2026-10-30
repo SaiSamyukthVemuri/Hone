@@ -1842,3 +1842,45 @@ describe("a reopened visit restores its last saved machine", () => {
     expect(html).not.toMatch(/<option value="room-9" selected/);
   });
 });
+
+describe("the owner hint says what to send for an unlisted model", () => {
+  const owner = renderToStaticMarkup(
+    createElement(MachineFirstSetupPanel, {
+      scope: SCOPE,
+      devices: [],
+      catalogue: CAT,
+      canManageMachines: true,
+    } as never),
+  );
+  const staff = renderToStaticMarkup(
+    createElement(MachineFirstSetupPanel, {
+      scope: SCOPE,
+      devices: [],
+      catalogue: CAT,
+    } as never),
+  );
+
+  it("lists every input the sheet asks for, and keeps the reviewed-only truth", () => {
+    expect(owner).toContain('data-testid="machine-owner-hint"');
+    for (const need of [
+      "manufacturer",
+      "exact model",
+      "variant",
+      "label on your unit",
+      "modes",
+      "field names and units",
+      "manual page or a photo",
+    ]) {
+      expect(owner, need).toContain(need);
+    }
+    expect(owner).toContain("only models that have passed their evidence review");
+  });
+
+  it("asks for no client details, and says so", () => {
+    expect(owner).toContain("Never include client details");
+  });
+
+  it("is shown to the owner only", () => {
+    expect(staff).not.toContain("machine-owner-hint");
+  });
+});
