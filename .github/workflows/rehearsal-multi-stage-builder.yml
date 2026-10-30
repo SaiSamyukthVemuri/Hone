@@ -1,0 +1,164 @@
+# REHEARSAL - NEVER MERGE. PREPARATION ONLY / HELD: MULTI-STAGE-BUILDER. rehearsal/multi-stage/build.py turns an ORDERED list of migration files into one reviewed online stage package
+# per step (package P1: 0254, 0258, 0272, 0266, 0271) and every valid drop of a step, pre-built (stage-drop rules). (1) seq: the GENERATED apply, reconcile and read-back scripts run as REAL TEXT, stage after stage, against a STATEFUL stub supabase-go
+# (a file-backed remote history that follows the real CLI's --include-all rule), a FIFO terminal, canary secrets and a fake HOME, with negative controls (extra file, missing file, wrong sha,
+# out-of-order step, failure injected at step k: history stops at k-1 and the next step refuses). (2) push: the real pinned CLI v2.102.0 against a disposable PostgreSQL, one invocation per
+# migration, the same negative controls, and a two-file push that cannot be rolled back. No hosted call, no customer data, no credential beyond a throwaway canary password.
+name: rehearsal-multi-stage-builder
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/multi-stage/**"
+      - "scripts/ci/multi-stage-push-rehearsal.sh"
+      - ".github/workflows/rehearsal-multi-stage-builder.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  seq-macos:
+    name: MULTI-STAGE sequence on macOS arm64 (/bin/bash 3.2, launched from zsh like the operator's terminal)
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build package P1 (0254, 0258, 0272, 0266, 0271 and every valid drop)
+        shell: bash
+        run: |
+          python3 --version
+          python3 rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p1.json "$RUNNER_TEMP/ms-pkg"
+          cat "$RUNNER_TEMP/ms-pkg/SEQUENCE.md"
+      - name: Sequence, negative controls and failure injection (N of N)
+        shell: /bin/zsh {0}
+        run: |
+          /bin/bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$PWD/supabase/migrations" full 2>&1 | tee "$RUNNER_TEMP/seq-macos.txt"; rc=${pipestatus[1]}
+          exit $rc
+      - name: A dropped step (0266 dropped), the whole sequence, no rebuild
+        shell: /bin/zsh {0}
+        run: |
+          ONLY_A=1 /bin/bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$PWD/supabase/migrations" drop-0266 2>&1 | tee "$RUNNER_TEMP/seq-macos-drop.txt"; rc=${pipestatus[1]}
+          exit $rc
+
+  seq-linux:
+    name: MULTI-STAGE builder checks and sequence on Linux (bash 5)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build package P1 (0254, 0258, 0272, 0266, 0271 and every valid drop)
+        shell: bash
+        run: |
+          python3 --version
+          python3 rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p1.json "$RUNNER_TEMP/ms-pkg"
+          cat "$RUNNER_TEMP/ms-pkg/SEQUENCE.md"
+      - name: Builder checks (refusals, determinism, content-gate flags)
+        run: |
+          set -o pipefail
+          bash rehearsal/multi-stage/builder-check.sh rehearsal/multi-stage/spec/p1.json 2>&1 | tee "$RUNNER_TEMP/builder-linux.txt"
+      - name: Sequence, negative controls and failure injection (N of N)
+        run: |
+          set -o pipefail
+          bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$PWD/supabase/migrations" full 2>&1 | tee "$RUNNER_TEMP/seq-linux.txt"
+      - name: Every other valid plan (a step dropped without a rebuild)
+        run: |
+          set -o pipefail
+          for q in $(python3 -c "import json,sys;print(' '.join(k for k in json.load(open(sys.argv[1]))['sequences'] if k != 'full'))" "$RUNNER_TEMP/ms-pkg/PLAN.json"); do
+            echo "=========== sequence $q"
+            ONLY_A=1 bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$PWD/supabase/migrations" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-linux-drops.txt" | tail -3
+          done
+          ! grep -q "^FAIL" "$RUNNER_TEMP/seq-linux-drops.txt"
+
+  push-linux:
+    name: MULTI-STAGE push, real CLI v2.102.0, disposable PostgreSQL (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build package P1 (0254, 0258, 0272, 0266, 0271 and every valid drop)
+        shell: bash
+        run: |
+          python3 --version
+          python3 rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p1.json "$RUNNER_TEMP/ms-pkg"
+          cat "$RUNNER_TEMP/ms-pkg/SEQUENCE.md"
+      - name: Start the runner's PostgreSQL with a throwaway canary password
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo systemctl start postgresql.service
+          for _ in $(seq 1 30); do sudo -u postgres psql -Atc 'select 1' > /dev/null 2>&1 && break; sleep 1; done
+          sudo -u postgres psql -c "alter user postgres with password 'postgres'"
+          PGPASSWORD=postgres psql "postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable" -Atc 'select version()'
+      - name: Rehearse the ordered pushes
+        shell: bash
+        env:
+          REHEARSAL_OUT: ${{ runner.temp }}/ms-push-out
+        run: |
+          bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" full
+          for q in $(python3 -c "import json,sys;print(' '.join(k for k in json.load(open(sys.argv[1]))['sequences'] if k != 'full'))" "$RUNNER_TEMP/ms-pkg/PLAN.json"); do
+            REHEARSAL_OUT="$RUNNER_TEMP/ms-push-out/$q" ONLY_A=1 bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" "$q" | tail -2
+          done
+      - name: Upload rehearsal logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: multi-stage-push-linux-logs
+          path: ${{ runner.temp }}/ms-push-out/
+          retention-days: 7
+
+  push-macos:
+    name: MULTI-STAGE push, the macOS CLI binary the operator runs, disposable PostgreSQL (macOS arm64)
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build package P1 (0254, 0258, 0272, 0266, 0271 and every valid drop)
+        shell: bash
+        run: |
+          python3 --version
+          python3 rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p1.json "$RUNNER_TEMP/ms-pkg"
+          cat "$RUNNER_TEMP/ms-pkg/SEQUENCE.md"
+      - name: Start a local PostgreSQL with a throwaway canary password
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install postgresql@16
+          brew services start postgresql@16
+          PGBIN="$(brew --prefix postgresql@16)/bin"; echo "$PGBIN" >> "$GITHUB_PATH"
+          for _ in $(seq 1 40); do "$PGBIN/psql" -d postgres -Atc 'select 1' > /dev/null 2>&1 && break; sleep 1; done
+          "$PGBIN/psql" -d postgres -c "create role postgres superuser login password 'postgres'"
+          # the CLI's connection insists on TLS here: give the throwaway server a self-signed certificate
+          PGDATA="$("$PGBIN/psql" -d postgres -Atc 'show data_directory')"
+          openssl req -new -x509 -days 2 -nodes -text -out "$PGDATA/server.crt" -keyout "$PGDATA/server.key" -subj "/CN=localhost"
+          chmod 600 "$PGDATA/server.key"
+          "$PGBIN/psql" -d postgres -c "alter system set ssl = on"
+          brew services restart postgresql@16
+          for _ in $(seq 1 40); do "$PGBIN/psql" -d postgres -Atc 'select 1' > /dev/null 2>&1 && break; sleep 1; done
+          "$PGBIN/psql" -d postgres -Atc 'show ssl'
+          PGPASSWORD=postgres "$PGBIN/psql" "postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable" -Atc 'select version()'
+      - name: Rehearse the ordered pushes
+        shell: bash
+        env:
+          REHEARSAL_OUT: ${{ runner.temp }}/ms-push-out
+        run: |
+          bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" full
+          REHEARSAL_OUT="$RUNNER_TEMP/ms-push-out/drop-0266" ONLY_A=1 bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" drop-0266
+      - name: Upload rehearsal logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: multi-stage-push-macos-logs
+          path: ${{ runner.temp }}/ms-push-out/
+          retention-days: 7

@@ -1,0 +1,66 @@
+#!/bin/bash
+# TEST STUB of supabase-go (CI only), STATEFUL: the remote migration history is the file $HOME/remote-history (one version per line).
+# `db push` reads the local files from ./supabase/migrations (the extracted stage bundle, the CLI's working directory), and follows the real CLI's rule:
+# a file BELOW the remote max is refused unless --include-all; with --include-all EVERY unapplied local file is applied. Behaviour knobs come from
+# $HOME/stubcfg (key=value), never from the environment. Every call is logged to $HOME/calls.log.
+H=$HOME; CFG=$H/stubcfg; HIST=$H/remote-history
+cfg() { sed -n "s/^$1=//p" "$CFG" 2>/dev/null | head -1; }
+CANARY_TOK=canary-token-4f1c; CANARY_PW=canary-pw-9d2e
+args="$*"
+case "$args" in *"$CANARY_PW"*|*"$CANARY_TOK"*) echo "LEAK argv" >> "$H/leak.log" ;; esac
+md5() { if command -v md5sum >/dev/null 2>&1; then md5sum | cut -d' ' -f1; else md5 -q; fi; }
+sorted() { LC_ALL=C sort "$HIST"; }
+hist_json() { # hist_json VER : the generic history row
+  local n mx md r
+  n=$(grep -c . "$HIST"); mx=$(sorted | tail -1); md=$(sorted | tr '\n' ',' | sed 's/,$//' | tr -d '\n' | md5)
+  r=$(grep -c "^$1\$" "$HIST")
+  printf '[{"applied_count":%s,"hosted_max":"%s","list_md5":"%s","rows_%s":%s}]\n' "$n" "$mx" "$md" "$1" "$r"
+}
+if [ "${1:-}" = --agent ] && [ "${4:-}" = query ]; then
+  f=""; while [ $# -gt 0 ]; do [ "$1" = -f ] && f=$2; shift; done
+  b=$(basename "$f" .sql)
+  printf 'query:%s sql=%s\n' "$b" "$(shasum -a 256 "$f" | cut -d' ' -f1)" >> "$H/calls.log"
+  if [ "${SUPABASE_ACCESS_TOKEN:-}" != "$CANARY_TOK" ] || [ "${SUPABASE_DB_PASSWORD:-}" != "$CANARY_PW" ]; then echo "401 unauthorized" >&2; exit 1; fi
+  [ "$(cfg FAIL_QUERY)" = "$b" ] && { echo "ERROR: relation does not exist (42P01)" >&2; exit 1; }
+  ver=$(cfg S_VER)
+  case "$b" in
+    g02-history-*|s1-history-*) hist_json "$ver" ;;
+    g12-*) at=$(cfg G12_AT); echo "[{\"at_hosted_$at\":1,\"tables_present\":true,\"helpers_ok\":true,\"replaced_ok\":true,\"new_objects_absent\":true,\"columns_ok\":true}]" ;;
+    s1-open-transactions-*) at=$(cfg G12_AT); n=0; printf '['; for x in appointment_settlements client_pinned_notes client_pricing manual_fee_charge_attempts payment_charge_attempts; do n=$((n+1)); [ $n -gt 1 ] && printf ','
+        printf '{"at_hosted_%s":1,"table_name":"%s","table_present":true,"old_xact_backends":0,"old_idle_in_xact_backends":0,"waiting_backends":0,"any_xact_backends":0,"oldest_xact_age_seconds":0,"old_xact_backends_database_wide":0}' "$at" "$x"; done; echo ']' ;;
+    w03-table-sizes-*) at=$(cfg G12_AT); n=0; printf '['; for x in appointment_settlements client_pinned_notes client_pricing manual_fee_charge_attempts payment_charge_attempts; do n=$((n+1)); [ $n -gt 1 ] && printf ','
+        printf '{"at_hosted_%s":1,"table_name":"%s","present":true,"total_bytes":1048576,"approx_rows":10,"statement_timeout":"2min","lock_timeout":"0"}' "$at" "$x"; done; echo ']' ;;
+    *) echo "unknown query $b" >&2; exit 1 ;;
+  esac
+  exit 0
+fi
+if [ "${1:-}" = db ] && [ "${2:-}" = push ]; then
+  mode=push; case "$args" in *--dry-run*) mode=dry ;; esac
+  ia=no; case "$args" in *--include-all*) ia=yes ;; esac
+  printf '%s%s\n' "$mode" "$([ $ia = yes ] && echo +ia)" >> "$H/calls.log"
+  [ -z "${SUPABASE_ACCESS_TOKEN:-}" ] || echo "LEAK token-in-env $mode" >> "$H/leak.log"
+  [ "${PGPASSWORD:-}" = "$CANARY_PW" ] || { echo "password authentication failed (28P01)" >&2; exit 1; }
+  mx=$(sorted | tail -1)
+  todo=""; below=0
+  for p in supabase/migrations/*.sql; do
+    fn=$(basename "$p"); v=${fn%%_*}
+    grep -q "^$v\$" "$HIST" && continue
+    todo="$todo $fn"; [ "$v" \< "$mx" ] && below=1
+  done
+  if [ $ia = no ] && [ $below = 1 ]; then
+    echo "Found local migration files to be inserted before the last migration on remote database." >&2
+    echo "Rerun the command with --include-all flag to apply these migrations:" >&2; exit 1
+  fi
+  if [ "$mode" = dry ]; then
+    echo 'DRY RUN: migrations will *not* be pushed to the database.'; echo 'Would push these migrations:'
+    for fn in $todo; do echo " • $fn"; done; exit 0
+  fi
+  for fn in $todo; do
+    v=${fn%%_*}
+    echo "Applying migration $fn..."
+    if [ "$(cfg FAIL_PUSH_VER)" = "$v" ]; then echo "ERROR: statement failed (XX000)" >&2; exit 1; fi
+    echo "$v" >> "$HIST"
+  done
+  echo "Finished supabase db push."; exit 0
+fi
+echo "stub: unexpected call: $args" >&2; echo "UNEXPECTED $args" >> "$H/leak.log"; exit 2

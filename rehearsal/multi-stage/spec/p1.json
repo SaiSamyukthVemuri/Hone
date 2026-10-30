@@ -1,0 +1,102 @@
+{
+  "hosted": {
+    "dir": "../../../supabase/migrations",
+    "skipped": [
+      158
+    ],
+    "pin": [
+      "0257"
+    ],
+    "expect_rows": 247,
+    "expect_max": "0257"
+  },
+  "steps": [
+    {
+      "file": "sealed/0254_perm_hon44_role_enforcement.sql",
+      "sha256": "77f34d5c9b677faad344b5b1afc2c3f26321f9060db5653a2176d9a239bbba23",
+      "head_sha": "4e15b595576525e9ad74278669732f5dde6f6c48",
+      "gate_pack": "../gate-packs/0254",
+      "ready": {
+        "status": "sealed; Team finishing Z1-Z4 before approval",
+        "carrier": "#1226 4e15b595",
+        "class": "3 (+2)",
+        "carrier_db_lane": "pass at the carrier head",
+        "content_gates": "yes: preflight, table/lock reads, content read-back (reviewed at hosted max 0257)",
+        "blocker": "Sam must approve 0254's exact changes; carrier is 158 behind production with a schema-snapshot conflict"
+      }
+    },
+    {
+      "file": "sealed/0258_hon58_identity.sql",
+      "sha256": "12c8109d41059e78fbc7df2af3a5a15b5bfcd3c17e0a5453e385cff0cc1cfd78",
+      "ready": {
+        "status": "sealed",
+        "carrier": "#1227 28120e55 (+ callers #1199 700539e3)",
+        "class": "2",
+        "carrier_db_lane": "pass at the carrier head",
+        "content_gates": "MISSING (history-only gate)",
+        "blocker": "carrier is 233 behind production, 7 conflicted files; needs a refresh and a gate pack"
+      }
+    },
+    {
+      "file": "placeholder/0272_general_hardening_placeholder.sql",
+      "ready": {
+        "status": "PLACEHOLDER: the file does not exist yet (General hardening)",
+        "carrier": "none",
+        "class": "unknown",
+        "content_gates": "MISSING",
+        "blocker": "General must supply the sealed file; replacing the placeholder and re-running the builder adds its stages"
+      }
+    },
+    {
+      "file": "sealed/0266_legal_name_receptionist_access.sql",
+      "sha256": "15d48a3e460a0a38a98387ee9be135304821f9a53cca91f63a4de6f05a3135dd",
+      "requires": [
+        "0258"
+      ],
+      "ready": {
+        "status": "sealed per records; waits on 0258",
+        "carrier": "#1227 28120e55",
+        "class": "2",
+        "carrier_db_lane": "pass at the carrier head",
+        "content_gates": "MISSING (history-only gate)",
+        "blocker": "hard dependency 0258; same carrier refresh as 0258"
+      }
+    },
+    {
+      "file": "sealed/0271_schedule_change_signal.sql",
+      "sha256": "c8f3e4d6f061ec8c2c20b94577865fbf8d98d559d85ebf6621cbcac90b129f8b",
+      "ready": {
+        "status": "NOT SEALED (in review)",
+        "carrier": "#1275 4703920d",
+        "class": "3 (+2)",
+        "carrier_db_lane": "FAIL: appointment-boundary-revocation trigger census lacks the 0271 triggers",
+        "content_gates": "MISSING (history-only gate)",
+        "blocker": "review, a census fix, and the realtime job not yet run"
+      }
+    }
+  ],
+  "rules": {
+    "closure": {
+      "0258": [
+        "0272",
+        "0266"
+      ]
+    },
+    "adjacent": [
+      [
+        "0258",
+        "0272"
+      ]
+    ],
+    "requires_earlier": {
+      "0266": [
+        "0258",
+        "0272"
+      ]
+    },
+    "independent": [
+      "0254",
+      "0271"
+    ]
+  }
+}
