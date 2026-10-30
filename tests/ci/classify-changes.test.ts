@@ -582,7 +582,9 @@ describe("dependency-aware selection — G4: documents read by unit tests", () =
     const r = c("docs/no-test-reads-this-document.md");
     expect(r.docs_only).toBe(true);
     expect(r.docs_consistency).toBe(true);
-    expect(r.docs_reader_tests).toEqual([...new Set([...scanned.docWildcard, "tests/ci/pr-release-receipt.test.ts"])].sort());
+    const wildcard = scanned.docWildcard;
+    expect(Array.isArray(wildcard), "the scan must report docWildcard").toBe(true);
+    expect(r.docs_reader_tests).toEqual([...new Set([...(wildcard as string[]), "tests/ci/pr-release-receipt.test.ts"])].sort());
     expect(r.database).toBe(false);
     expect(r.full_matrix_required).toBe(false);
   });
