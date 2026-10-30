@@ -32,6 +32,9 @@ import { hashAppointmentToken } from "@/lib/booking/appointment-token";
 // HMAC management token from the appointment id), not by this response.
 
 const STUDIO_ID = "22222222-2222-4222-8222-222222222222";
+// SEC-004: a public booking never attaches to an existing client, so the commit
+// these cases exercise is the NEW-client command; the client lookup finds nobody.
+const COMMIT_FN = "create_public_appointment_for_new_client";
 const CLIENT_ID = "33333333-3333-4333-8333-333333333333";
 const SERVICE_ID = "55555555-5555-4555-8555-555555555555";
 const APPT_ID = "66666666-6666-4666-8666-666666666666";
@@ -140,25 +143,13 @@ function makeChain(table: string) {
             active: true,
             name: "Consultation",
             default_duration_minutes: 45,
-            modality: "electrolysis",
+            modality: "consultation",
             pre_care_instructions: null,
           },
           error: null,
         };
       }
-      if (table === "clients") {
-        return {
-          data: {
-            id: CLIENT_ID,
-            name: "Booker",
-            email: EMAIL,
-            phone: "+15555550123",
-            sms_consent_at: null,
-            sms_opted_out_at: null,
-          },
-          error: null,
-        };
-      }
+      if (table === "clients") return { data: null, error: null };
       if (table === "practitioners") {
         return {
           data: { id: "44444444-4444-4444-8444-444444444444", display_name: "Pract", email: "p@example.test" },
@@ -179,7 +170,7 @@ const admin = {
   },
   async rpc(fn: string, args: Record<string, unknown>) {
     rpcCalls.push({ fn, args });
-    if (fn === "create_public_appointment") {
+    if (fn === COMMIT_FN) {
       if (scenario.commandError) return { data: null, error: scenario.commandError };
       if (scenario.commandRefuses) {
         return { data: [{ result: "time_unavailable" }], error: null };
@@ -188,6 +179,7 @@ const admin = {
         data: [
           {
             result: "created",
+            client_id: CLIENT_ID,
             appointment_id: APPT_ID,
             created_at: new Date().toISOString(),
             starts_at: START_ISO,
@@ -203,6 +195,12 @@ const admin = {
   },
 };
 
+// SEC-004: the commit under test is the new-client command, which is gated on
+// admission; hold it OPEN so these cases keep exercising the post-commit paths.
+vi.mock("@/lib/booking/new-client-admission", async (orig) => ({
+  ...(await orig<typeof import("@/lib/booking/new-client-admission")>()),
+  getNewClientAdmissionMode: vi.fn(async () => ({ ok: true, mode: "open", source: "persisted" })),
+}));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => admin }));
 vi.mock("next/cache", () => ({
   revalidatePath: () => {
@@ -322,7 +320,7 @@ function form(overrides: Record<string, string> = {}): FormData {
   // Required for every public submission (actions.ts:433). The existing-client
   // path deliberately never writes it back onto the stored row.
   fd.set("phone", "+15555550123");
-  fd.set("client_type", "existing");
+  fd.set("client_type", "new");
   fd.set("referral_source", "");
   for (const [k, v] of Object.entries(overrides)) fd.set(k, v);
   return fd;
@@ -399,7 +397,7 @@ describe("BOOK-01 T1 — a committed booking returns an in-band management path"
     expect(r.ok, `action failed: ${r.ok ? "" : r.error}`).toBe(true);
     if (!r.ok) return;
     expect(r.appointmentId).toBe(APPT_ID);
-    expect(r.manageUrl.startsWith(`${ORIGIN}/manage/`)).toBe(true);
+    expect(String(r.manageUrl).startsWith(`${ORIGIN}/manage/`)).toBe(true);
     expect(r.confirmationEmailStatus).toBe("sent");
     expect(emailAttempts).toEqual([
       { appointmentId: APPT_ID, emailType: "confirmation", success: true },
@@ -411,7 +409,7 @@ describe("BOOK-01 T1 — a committed booking returns an in-band management path"
     const r = await book();
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.manageUrl.startsWith(`${ORIGIN}/manage/`)).toBe(true);
+    expect(String(r.manageUrl).startsWith(`${ORIGIN}/manage/`)).toBe(true);
     expect(r.confirmationEmailStatus).toBe("failed");
     // The truthful-bookkeeping contract is unchanged: the attempt is recorded
     // as a failure, so `confirmation_sent_at` is never stamped.
@@ -426,7 +424,7 @@ describe("BOOK-01 T1 — a committed booking returns an in-band management path"
     const r = await book();
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.manageUrl.startsWith(`${ORIGIN}/manage/`)).toBe(true);
+    expect(String(r.manageUrl).startsWith(`${ORIGIN}/manage/`)).toBe(true);
     expect(r.confirmationEmailStatus).toBe("disabled");
     // Nothing was attempted, so nothing may be recorded or reported.
     expect(confirmationEmails).toEqual([]);
@@ -463,7 +461,7 @@ describe("BOOK-01 T1 — a committed booking returns an in-band management path"
     expect(Object.keys(r)).not.toContain("manageUrl");
     expect(Object.keys(r)).not.toContain("confirmationEmailStatus");
     // Nothing was committed, so no command ran.
-    expect(rpcCalls.filter((c) => c.fn === "create_public_appointment")).toEqual([]);
+    expect(rpcCalls.filter((c) => c.fn === COMMIT_FN)).toEqual([]);
   });
 });
 
@@ -473,12 +471,12 @@ describe("BOOK-01 T1 — the returned URL is a real, route-shaped capability", (
     expect(r.ok).toBe(true);
     if (!r.ok) return;
 
-    const raw = r.manageUrl.slice(`${ORIGIN}/manage/`.length);
+    const raw = String(r.manageUrl).slice(`${ORIGIN}/manage/`.length);
     // 24 random bytes, base64url — the shape /manage/[token] resolves by
     // hashing and matching appointments.cancellation_token_hash.
     expect(raw).toMatch(/^[A-Za-z0-9_-]{32}$/);
 
-    const create = rpcCalls.find((c) => c.fn === "create_public_appointment");
+    const create = rpcCalls.find((c) => c.fn === COMMIT_FN);
     expect(create).toBeDefined();
     const storedHash = create!.args.p_cancellation_token_hash as string;
     // The command received the HASH, and it is genuinely the hash of the raw
@@ -501,7 +499,7 @@ describe("BOOK-01 T1 — the secrecy wall", () => {
       const r = await book();
       expect(r.ok, `action failed: ${r.ok ? "" : r.error}`).toBe(true);
       if (!r.ok) return;
-      const raw = r.manageUrl.slice(`${ORIGIN}/manage/`.length);
+      const raw = String(r.manageUrl).slice(`${ORIGIN}/manage/`.length);
       const emitted = allEmittedPayloads();
 
       expect(emitted, "raw token leaked into an emitted payload").not.toContain(raw);
@@ -524,7 +522,7 @@ describe("BOOK-01 T1 — the secrecy wall", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const payload = JSON.stringify(practitionerNotifications);
-    expect(payload).not.toContain(r.manageUrl.slice(`${ORIGIN}/manage/`.length));
+    expect(payload).not.toContain(String(r.manageUrl).slice(`${ORIGIN}/manage/`.length));
     expect(payload).not.toContain("/manage/");
   });
 
@@ -532,7 +530,7 @@ describe("BOOK-01 T1 — the secrecy wall", () => {
     const r = await book();
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const raw = r.manageUrl.slice(`${ORIGIN}/manage/`.length);
+    const raw = String(r.manageUrl).slice(`${ORIGIN}/manage/`.length);
     // Positive control for the sweep above: prove the token really is present
     // somewhere, so a passing secrecy assertion cannot be vacuous.
     expect(JSON.stringify(confirmationEmails)).toContain(raw);
@@ -622,14 +620,14 @@ async function expectSettledSuccess(overrides?: Record<string, string>) {
   expect(r.ok, `committed booking reported failure: ${r.ok ? "" : r.error}`).toBe(true);
   if (!r.ok) throw new Error("unreachable");
   expect(r.appointmentId).toBe(APPT_ID);
-  expect(r.manageUrl.startsWith(`${ORIGIN}/manage/`)).toBe(true);
-  expect(manageToken(r.manageUrl)).toMatch(/^[A-Za-z0-9_-]{32}$/);
+  expect(String(r.manageUrl).startsWith(`${ORIGIN}/manage/`)).toBe(true);
+  expect(manageToken(String(r.manageUrl))).toMatch(/^[A-Za-z0-9_-]{32}$/);
   return r;
 }
 
 /** The command ran exactly once and committed. */
 function expectCommitted() {
-  expect(rpcCalls.filter((c) => c.fn === "create_public_appointment").length).toBe(1);
+  expect(rpcCalls.filter((c) => c.fn === COMMIT_FN).length).toBe(1);
 }
 
 /** Safe evidence for `event` exists, and no POISON anywhere in the logs. */
@@ -768,7 +766,7 @@ describe("BOOK-01 P2-A — a committed booking survives every post-commit failur
       expect(consoleErrors.join(" "), `missing evidence: ${event}`).toContain(event);
     }
     // ...and none of it carried a secret, a message, or the management path.
-    const raw = manageToken(r.manageUrl);
+    const raw = manageToken(String(r.manageUrl));
     const logs = consoleErrors.join(" ");
     expect(logs).not.toContain(POISON);
     expect(logs).not.toContain(raw);
@@ -791,7 +789,7 @@ describe("BOOK-01 P2-B — required configuration resolves BEFORE the durability
     expect(Object.keys(r)).not.toContain("manageUrl");
     expect(Object.keys(r)).not.toContain("confirmationEmailStatus");
     // THE POINT: no appointment, no audit row, no token hash persisted.
-    expect(rpcCalls.filter((c) => c.fn === "create_public_appointment")).toEqual([]);
+    expect(rpcCalls.filter((c) => c.fn === COMMIT_FN)).toEqual([]);
     // No client-facing delivery was attempted either.
     expect(confirmationEmails).toEqual([]);
     expect(smsCalls).toEqual([]);
@@ -830,7 +828,7 @@ describe("BOOK-01 P2-B — required configuration resolves BEFORE the durability
       .filter((l) => !l.trimStart().startsWith("//"))
       .join("\n");
     const originAt = src.indexOf("getRequiredAppOrigin()");
-    const commandAt = src.indexOf('"create_public_appointment"');
+    const commandAt = src.indexOf('"create_public_appointment_for_new_client"');
     expect(originAt).toBeGreaterThan(-1);
     expect(commandAt).toBeGreaterThan(-1);
     expect(originAt).toBeLessThan(commandAt);
@@ -844,19 +842,19 @@ describe("SCH-002 public submit advisory availability failures", () => {
   it.each(["blockouts", "reservations", "window", "defaults"])("still reaches the locked command after %s read failure", async (stage) => {
     scenario.slotError = new Error(`availability_read_failed:${stage}`);
     expect(await book()).toMatchObject({ ok: true, appointmentId: APPT_ID });
-    expect(rpcCalls.filter((c) => c.fn === "create_public_appointment")).toEqual([expect.objectContaining({ args: expect.objectContaining({ p_studio_id: STUDIO_ID, p_client_id: CLIENT_ID, p_service_id: SERVICE_ID, p_starts_at: START_ISO }) })]);
+    expect(rpcCalls.filter((c) => c.fn === COMMIT_FN)).toEqual([expect.objectContaining({ args: expect.objectContaining({ p_studio_id: STUDIO_ID, p_client_id: null, p_service_id: SERVICE_ID, p_starts_at: START_ISO }) })]);
     expect(consoleErrors.join(" ")).not.toContain(`availability_read_failed:${stage}`);
   });
   it("preserves authoritative command refusal after advisory failure", async () => {
     scenario.slotError = new Error("availability_read_failed:blockouts"); scenario.commandRefuses = true;
     expect(await book()).toMatchObject({ ok: false });
-    expect(rpcCalls.some((c) => c.fn === "create_public_appointment")).toBe(true);
+    expect(rpcCalls.some((c) => c.fn === COMMIT_FN)).toBe(true);
     expect(confirmationEmails).toEqual([]);
   });
   it.each(["23514", "42501"])("does not turn command error %s into success", async (code) => {
     scenario.slotError = new Error("availability_read_failed:reservations"); scenario.commandError = { code };
     expect(await book()).toMatchObject({ ok: false });
-    expect(rpcCalls.some((c) => c.fn === "create_public_appointment")).toBe(true);
+    expect(rpcCalls.some((c) => c.fn === COMMIT_FN)).toBe(true);
     expect(confirmationEmails).toEqual([]);
   });
   it.each(["blockouts", "window", "reservations"])("returns a sanitized typed refusal for discovery %s failures, never empty slots", async (stage) => {

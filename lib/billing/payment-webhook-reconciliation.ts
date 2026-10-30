@@ -7,6 +7,7 @@ import {
   compareProviderMoney,
   providerMoneyMismatchDetails,
 } from "@/lib/billing/provider-money-facts";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // ---------------------------------------------------------------------------
 // PR #179. Stripe webhook reconciliation for payment_charge_attempts.
@@ -191,7 +192,7 @@ async function resolveAttemptByMetadataOrId(args: {
       return {
         ok: false,
         reason: "database_error",
-        detail: `${error.code}:${error.message}`,
+        detail: dbErrorCode(error),
       };
     }
     if (data) {
@@ -213,7 +214,7 @@ async function resolveAttemptByMetadataOrId(args: {
       return {
         ok: false,
         reason: "database_error",
-        detail: `${error.code}:${error.message}`,
+        detail: dbErrorCode(error),
       };
     }
     if (data) {
@@ -235,7 +236,7 @@ async function resolveAttemptByMetadataOrId(args: {
       return {
         ok: false,
         reason: "database_error",
-        detail: `${error.code}:${error.message}`,
+        detail: dbErrorCode(error),
       };
     }
     if (data) {
@@ -255,7 +256,7 @@ async function resolveAttemptByMetadataOrId(args: {
       return {
         ok: false,
         reason: "database_error",
-        detail: `${error.code}:${error.message}`,
+        detail: dbErrorCode(error),
       };
     }
     if (data) {
@@ -586,7 +587,8 @@ async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt
       await recordOpsAlert(alert);
     }
   }
-  return { data, error };
+  // Callers only test the error and log its code, so only the code leaves.
+  return { data, error: error ? { code: dbErrorCode(error) } : null };
 }
 
 // ---------------------------------------------------------------------------
@@ -749,7 +751,7 @@ export async function handlePaymentIntentSucceeded(
   const { data: rpcRows, error: rpcErr } = await reconcileBoundEvent(event, ctx, attempt);
   if (rpcErr) {
     throw new Error(
-      `payment_intent_succeeded_update_failed:${rpcErr.code}:${rpcErr.message}`,
+      `payment_intent_succeeded_update_failed:${dbErrorCode(rpcErr)}`,
     );
   }
   const outcome = (Array.isArray(rpcRows) ? rpcRows[0] : rpcRows) as
@@ -1110,7 +1112,7 @@ export async function handlePaymentIntentPaymentFailed(
 
   if (updateErr) {
     throw new Error(
-      `payment_intent_failed_update_failed:${updateErr.code}:${updateErr.message}`,
+      `payment_intent_failed_update_failed:${dbErrorCode(updateErr)}`,
     );
   }
   // PR #263: zero-row detection (see handlePaymentIntentSucceeded).
@@ -1332,7 +1334,7 @@ export async function handleChargeRefunded(
 
     if (updateErr) {
       throw new Error(
-        `charge_refunded_pending_update_failed:${updateErr.code}:${updateErr.message}`,
+        `charge_refunded_pending_update_failed:${dbErrorCode(updateErr)}`,
       );
     }
     // PR #263: zero-row detection. refund_status left pending_stripe
@@ -1378,7 +1380,7 @@ export async function handleChargeRefunded(
 
   if (updateErr) {
     throw new Error(
-      `charge_refunded_out_of_band_update_failed:${updateErr.code}:${updateErr.message}`,
+      `charge_refunded_out_of_band_update_failed:${dbErrorCode(updateErr)}`,
     );
   }
   // PR #263: zero-row detection. The conditional matched no row

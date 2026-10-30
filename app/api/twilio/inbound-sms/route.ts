@@ -14,6 +14,7 @@ import {
   readClientSuppressionCandidates,
   readProspectSuppressionCandidates,
 } from "@/lib/sms/suppression-candidates";
+import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
 // Twilio inbound SMS webhook (PR Twilio v1).
 //
@@ -108,7 +109,7 @@ export async function POST(req: Request): Promise<Response> {
     rawBody = await req.text();
   } catch (err) {
     logError("twilio_inbound_body_read_failed", {
-      error: err instanceof Error ? err.message : String(err),
+      errorClass: thrownErrorClass(err),
     });
     return NextResponse.json({ ok: false }, { status: 400 });
   }
@@ -235,7 +236,7 @@ export async function POST(req: Request): Promise<Response> {
     // passes have had their turn.
     clientScanFailed = true;
     logError("twilio_inbound_client_scan_failed", {
-      error: err instanceof Error ? err.message : String(err),
+      errorClass: thrownErrorClass(err),
       messageSid,
     });
   }
@@ -271,8 +272,7 @@ export async function POST(req: Request): Promise<Response> {
       optOutErrors += 1;
       logError("twilio_inbound_client_optout_failed", {
         clientId: matched.id,
-        code: updateErr.code,
-        message: updateErr.message,
+        code: dbErrorCode(updateErr),
         messageSid,
       });
     } else {
@@ -328,7 +328,7 @@ export async function POST(req: Request): Promise<Response> {
     // the client rows already stamped above are not re-attempted needlessly.
     prospectScanFailed = true;
     logError("twilio_inbound_prospect_scan_failed", {
-      error: err instanceof Error ? err.message : String(err),
+      errorClass: thrownErrorClass(err),
       messageSid,
     });
   }
@@ -347,8 +347,7 @@ export async function POST(req: Request): Promise<Response> {
       prospectOptOutErrors += 1;
       logError("twilio_inbound_prospect_optout_failed", {
         matchedCount: matchedProspects.length,
-        code: suppressErr.code,
-        message: suppressErr.message,
+        code: dbErrorCode(suppressErr),
         messageSid,
       });
     } else {
@@ -398,8 +397,7 @@ export async function POST(req: Request): Promise<Response> {
     if (auditErr) {
       logError("twilio_inbound_audit_insert_failed", {
         successfulCount: successfullyOptedOutClients.length,
-        code: auditErr.code,
-        message: auditErr.message,
+        code: dbErrorCode(auditErr),
         messageSid,
       });
     }
@@ -433,8 +431,7 @@ export async function POST(req: Request): Promise<Response> {
       // a suppression that already happened; losing it must not un-suppress.
       logError("twilio_inbound_prospect_audit_insert_failed", {
         successfulCount: successfullyOptedOutProspects.length,
-        code: prospectAuditErr.code,
-        message: prospectAuditErr.message,
+        code: dbErrorCode(prospectAuditErr),
         messageSid,
       });
     }

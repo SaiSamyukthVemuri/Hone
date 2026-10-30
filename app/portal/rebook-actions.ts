@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { getCurrentPortalSession } from "@/lib/portal/session";
+import { requirePortalSessionForAction } from "@/lib/portal/session";
 import {
   getPortalBookableServices,
   getPortalBookingReadiness,
@@ -23,6 +23,7 @@ import {
   hashAppointmentToken,
 } from "@/lib/booking/appointment-token";
 import type { ConfirmationEmailStatus } from "@/lib/booking/confirmation-presentation";
+import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { ensureIntakeForClient } from "@/lib/intake/queries";
 import {
@@ -46,6 +47,7 @@ import {
   type PortalRebookRefusalCode,
 } from "@/lib/portal/rebook-copy";
 import type { Studio } from "@/lib/types/database";
+import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 
 // ===========================================================================
 // EMERG-PORTAL-REBOOK-01 — a returning client can book again, from the portal.
@@ -151,6 +153,12 @@ export type PortalRebookResult =
        * ever reported as `sent`.
        */
       confirmationEmailStatus: ConfirmationEmailStatus;
+      /**
+       * HON-47. Which email links the studio offers, so the portal confirmation
+       * never promises a cancel or reschedule link the email withdrew. Read from
+       * the studio row this action already loaded, never from the browser.
+       */
+      selfService: { cancellation: boolean; reschedule: boolean };
     }
   | Refusal;
 
@@ -205,8 +213,12 @@ type PortalBookingContext = {
 async function resolvePortalBookingContext(): Promise<
   { ok: true; ctx: PortalBookingContext } | Refusal
 > {
-  const session = await getCurrentPortalSession();
-  if (!session) return refuse("session_expired", PORTAL_REBOOK_SESSION_EXPIRED);
+  // HON-47: a studio with client portal access off answers portal_disabled,
+  // which the card shows in place, instead of session_expired, which would
+  // send the client to a sign-in that can never succeed.
+  const access = await requirePortalSessionForAction(PORTAL_REBOOK_SESSION_EXPIRED);
+  if (!access.ok) return refuse(access.code, access.error);
+  const session = access.session;
 
   // THE TWO VALUES THE WHOLE UNIT RESTS ON. Both come from the session, which
   // resolved them from a hashed cookie against a non-expired, non-revoked row.
@@ -226,7 +238,7 @@ async function resolvePortalBookingContext(): Promise<
     .maybeSingle();
   if (clientErr) {
     logRebookError("portal_rebook_client_lookup_failed", {
-      code: clientErr.code,
+      code: dbErrorCode(clientErr),
       studioId,
     });
     return refuse("unavailable", PORTAL_REBOOK_GENERIC_REFUSAL);
@@ -244,7 +256,7 @@ async function resolvePortalBookingContext(): Promise<
   // reported as "this studio has nothing available".
   if (studioErr || !studioRow) {
     logRebookError("portal_rebook_studio_lookup_failed", {
-      code: studioErr?.code ?? null,
+      code: studioErr ? dbErrorCode(studioErr) : null,
       studioId,
     });
     return refuse("unavailable", PORTAL_REBOOK_GENERIC_REFUSAL);
@@ -615,7 +627,7 @@ export async function bookAnotherAppointmentAction(
     if (collided || (commandResult != null && SLOT_CODES.has(commandResult))) {
       logRebookError("portal_rebook_slot_rejected", {
         studioId: studio.id,
-        code: rpcErr?.code ?? commandResult,
+        code: failureCode(rpcErr, commandResult),
       });
       return refuse("slot_taken", PORTAL_REBOOK_SLOT_TAKEN);
     }
@@ -631,7 +643,7 @@ export async function bookAnotherAppointmentAction(
     // command's vocabulary never becomes a probe.
     logRebookError("portal_rebook_commit_refused", {
       studioId: studio.id,
-      code: rpcErr?.code ?? commandResult ?? "no_result",
+      code: failureCode(rpcErr, commandResult, "no_result"),
     });
     return refuse("unavailable", PORTAL_REBOOK_GENERIC_REFUSAL);
   }
@@ -697,7 +709,7 @@ export async function bookAnotherAppointmentAction(
             .maybeSingle();
           if (prErr || !pr) {
             logRebookError("portal_rebook_practitioner_lookup_failed", {
-              code: prErr?.code ?? null,
+              code: prErr ? dbErrorCode(prErr) : null,
               studioId: studio.id,
             });
             return null;
@@ -879,6 +891,7 @@ export async function bookAnotherAppointmentAction(
     revalidatePath("/calendar/upcoming");
   });
 
+  const selfServicePolicy = clientSelfServicePolicyFromStudio(studio);
   return {
     ok: true,
     appointmentId: createdId,
@@ -887,6 +900,10 @@ export async function bookAnotherAppointmentAction(
     serviceName: service.service.name,
     confirmationEmail: clientEmail,
     confirmationEmailStatus,
+    selfService: {
+      cancellation: selfServicePolicy.cancellation,
+      reschedule: selfServicePolicy.reschedule,
+    },
   };
 }
 

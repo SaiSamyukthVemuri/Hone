@@ -241,6 +241,7 @@ function healthyFee() {
     policy_snapshot_hash: "hash-1",
   });
   rows("studios", { id: STUDIO, no_show_fee_cents: 5000, late_cancel_fee_cents: 5000 });
+  rows("studio_payment_jurisdictions", { payment_country: "CA", payment_currency: "cad" });
   empty("payment_charge_attempts");
   empty("manual_fee_charge_attempts");
 }
@@ -278,6 +279,7 @@ function sessionForm() {
   // "zero money" assertion in this file pass without ever reaching eligibility.
   fd.set("session_id", SESSION);
   fd.set("expected_amount_cents", "12000");
+  fd.set("expected_currency", "cad");
   // F-PAY-002. The operator-confirmed final charge, equal to the reference
   // here so this fixture exercises the ordinary path. Omitting it would make
   // the action refuse on a blank amount and, exactly as the note above warns,
@@ -292,6 +294,7 @@ function feeForm() {
   fd.set("appointment_id", APPT);
   fd.set("charge_type", "no_show");
   fd.set("internal_note", "note");
+  fd.set("expected_currency", "cad");
   return fd;
 }
 

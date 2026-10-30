@@ -5,6 +5,7 @@ import {
   getCardAuthorizationCapability,
   type CardAuthorizationCapability,
 } from "@/lib/consent/queries";
+import { dbErrorCode, thrownErrorClass, type ThrownErrorClass } from "@/lib/logging/error-class";
 
 // Chloe production feedback: "tell me on the dashboard next to my upcoming
 // clients names if they have a card on file or not, so i can remind them if
@@ -76,7 +77,8 @@ export async function getCardOnFileStatuses(
   // degrades to "unavailable", and a construction failure is a failed read.
   // Without this, one missing env turns a per-row pill into a dead dashboard.
   let data: Array<{ client_id: string }> | null = null;
-  let error: { code?: string; message?: string } | null = null;
+  let error: { code?: string } | null = null;
+  let thrownClass: ThrownErrorClass | null = null;
   try {
     const admin = createAdminClient();
     const res = await admin
@@ -89,18 +91,16 @@ export async function getCardOnFileStatuses(
     data = res.data as Array<{ client_id: string }> | null;
     error = res.error;
   } catch (thrown) {
-    error = {
-      code: "card_on_file_client_unavailable",
-      message: thrown instanceof Error ? thrown.message : "unknown",
-    };
+    thrownClass = thrownErrorClass(thrown);
+    error = { code: "card_on_file_client_unavailable" };
   }
 
   if (error) {
     console.error(
       JSON.stringify({
         event: "card_on_file_batch_lookup_failed",
-        code: error.code,
-        message: error.message,
+        code: thrownClass ? "card_on_file_client_unavailable" : dbErrorCode(error),
+        ...(thrownClass ? { errorClass: thrownClass } : {}),
         client_count: uniqueClientIds.length,
         timestamp: new Date().toISOString(),
       }),

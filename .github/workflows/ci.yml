@@ -129,7 +129,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
 
       - name: Collect changed files
         run: |
@@ -338,9 +338,9 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # No .nvmrc and no engines.node in package.json today.
-          # Pin to Node 20 (LTS), matches the docs/14 fallback and
-          # is comfortably within Next 15's supported range.
-          node-version: "20"
+          # Pin to patched Node 24.22.1 (CVE-2026-111497; Node 20 is EOL
+          # with no fix), the line Vercel builds and serves (project 24.x).
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Install dependencies
@@ -453,7 +453,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Install dependencies
@@ -553,7 +553,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Set up Supabase CLI
@@ -590,6 +590,97 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # CI-REGISTRY (OPS, 2026-10-27; supply-chain fixes from Insurance PEER-1200-SUPPLY).
+      # The D7b login succeeds, then the stack start pulls ~10 images at once and
+      # ghcr.io answers "toomanyrequests ... allowed: 44000/minute" (a short burst
+      # throttle across parallel jobs); docker and the CLI do not retry, and the
+      # bind-retry step correctly refuses (not a port collision). Mechanism from
+      # Team's proven rehearsal (#1193, run 40552718991): pull each image ahead of
+      # the start with a bounded back-off and a registry fallback, so the start finds
+      # it locally. The list is the pinned CLI's OWN image list (the embedded
+      # Dockerfile, sibling supabase-go), for this job's exact -x set plus
+      # postgres, realtime and storage-api, which the start pulls while initialising
+      # the database even when excluded (runs 40557844633, 40559826388, 40562452255).
+      # EVERY pull is BY DIGEST from the committed, reviewed table
+      # .github/supabase-image-digests.json (generated from ghcr.io/supabase for CLI
+      # 2.102.0); an image is tagged ghcr.io/supabase/<name>:<tag> only after its
+      # digest is confirmed, an unverified pull is removed and never tagged, an image
+      # missing from the table (or a CLI version other than the table's) is left to
+      # the start, and vector/logflare (vector mounts the Docker socket) never use a
+      # fallback. Inline, never a checked-out script, because the credential is held
+      # (Codex P2 4354172124); the table is read as data. Non-fatal: the start still
+      # pulls what is missing, and a start that fails still fails the job.
+      - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, by digest)
+        continue-on-error: true
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set +e
+          EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
+          TABLE=.github/supabase-image-digests.json
+          cli_v="$(supabase --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"
+          if ! command -v jq > /dev/null 2>&1 || [ ! -r "$TABLE" ] || [ "$cli_v" != "$(jq -r '.cli' "$TABLE")" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::no digest table for CLI '$cli_v' (or no jq); the stack start pulls as before."
+            exit 0
+          fi
+          pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
+          BIN="$(command -v supabase || true)"
+          : > "$RUNNER_TEMP/cli-images.txt"
+          for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do
+            [ -r "$cand" ] || continue
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
+          done
+          : > "$RUNNER_TEMP/pull-list.txt"
+          if [ ! -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::the CLI's embedded image list was not readable; the stack start pulls as before."
+            exit 0
+          fi
+          while read -r _from image _as alias; do
+            case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
+            case "$svc" in
+              postgres|realtime|storage-api) ;;
+              supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+              *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+            esac
+            printf '%s %s\n' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"
+          done < "$RUNNER_TEMP/cli-images.txt"
+          echo "images: $(awk '{print $1}' "$RUNNER_TEMP/pull-list.txt" | tr '\n' ' ')"
+          from_ghcr=0; from_fallback=""; missing=""
+          while read -r IMG ORIG; do
+            NAME="${IMG%%:*}"
+            D="$(jq -r --arg k "$IMG" '.images[$k] // empty' "$TABLE")"
+            if [ -z "$D" ]; then
+              echo "::warning title=Supabase image pre-pull::$IMG is not in the digest table; left to the stack start."
+              missing="$missing $IMG"; continue
+            fi
+            ref=""; via=""
+            for i in 1 2; do
+              if docker pull -q "ghcr.io/supabase/$NAME@$D" > /dev/null 2>&1; then ref="ghcr.io/supabase/$NAME@$D"; via=ghcr; break; fi
+              echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
+            done
+            if [ -z "$ref" ]; then
+              case "$NAME" in
+                vector|logflare) echo "no fallback for $NAME: it runs with the Docker socket; left to the stack start" ;;
+                *)
+                  for base in public.ecr.aws/supabase/$NAME docker.io/supabase/$NAME ${ORIG:+docker.io/${ORIG%%:*}}; do
+                    if docker pull -q "$base@$D" > /dev/null 2>&1; then
+                      if docker image inspect --format '{{json .RepoDigests}}' "$base@$D" 2> /dev/null | grep -q "@$D"; then ref="$base@$D"; via="$base"; break; fi
+                      echo "::warning title=Supabase image pre-pull::$base@$D did not report digest $D; discarded, not tagged."
+                      docker rmi "$base@$D" > /dev/null 2>&1
+                    fi
+                  done ;;
+              esac
+            fi
+            if [ -n "$ref" ] && docker tag "$ref" "ghcr.io/supabase/$IMG"; then
+              if [ "$via" = ghcr ]; then from_ghcr=$((from_ghcr + 1)); else from_fallback="$from_fallback $IMG($via)"; echo "using $via for $IMG by digest $D, re-tagged locally"; fi
+            else
+              echo "::warning title=Supabase image pre-pull::$IMG could not be pulled and verified from ghcr, ECR or Docker Hub; left to the stack start."
+              missing="$missing $IMG"
+            fi
+          done < "$RUNNER_TEMP/pull-list.txt"
+          echo "pre-pull summary: $from_ghcr from ghcr; fallback by digest:${from_fallback:- none}; left to the start:${missing:- none}"
 
       - name: Start local Supabase (DB + REST API)
         id: sb_start
@@ -768,15 +859,14 @@ jobs:
     # ENG-003/004 run39713000378: cold setup12–12.6min before150–158tests;
     # 482 observed passes/4skips/0assertion failures before cancellation.
     # Worst measured projection22.15min + finiteheadroom => hard25.
-    # Keep target <10 min per shard; targeted hard15 held until 2026-10-23 (below); investigate slow npm ci.
-    # TARGETED 15 -> 19 (2026-10-23, Codex P2 4362256407 on #1059): the
-    # Playwright system-package install is now BOUNDED at a 6 min step ceiling
-    # (scripts/ci/playwright-system-deps.sh, worst case 325 s), and every job
-    # must clear that ceiling on top of its own time. Targeted measured 11.2 min
-    # no-stall p90; 11.2 + 6 + 1 margin = 18.2 > 15. Before the bound, an apt
-    # stall (up to 11.3 min) cancelled targeted shards outright. The TARGET is
-    # unchanged; only the failure ceiling moves, by the bounded install's size.
-    timeout-minutes: ${{ needs.changes.outputs.browser_extended == 'true' && 25 || 19 }}
+    # Keep target <10 min per shard; investigate slow npm ci.
+    # TARGETED 15 -> 19 (2026-10-23, Codex P2 4362256407 on #1059): the Playwright system-package install is now BOUNDED at a 6 min step
+    # ceiling (scripts/ci/playwright-system-deps.sh, worst case 325 s) and every job must clear it on top of its own time.
+    # AUGMENTED 35 (HON-18, finite35m): an extended shard, or a shard that selects machine-create-mode-journey.spec.ts, also runs the guarded
+    # native 3G proof (a second build and six cases per runner); run 39620772010 took 15m59s before native20 (9.1m unsharded) was added.
+    # MERGE NOTE (hon8-slice, local): this combines production df33a762's 19-minute targeted ceiling with the stack's 35-minute augmented
+    # ceiling. It RAISES extended from production's 25 to 35 because extended shards run the native proof; General must confirm at push.
+    timeout-minutes: ${{ (needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')) && 35 || 19 }}
     strategy:
       fail-fast: false
       matrix:
@@ -791,7 +881,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Set up Supabase CLI
@@ -823,6 +913,97 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # CI-REGISTRY (OPS, 2026-10-27; supply-chain fixes from Insurance PEER-1200-SUPPLY).
+      # The D7b login succeeds, then the stack start pulls ~10 images at once and
+      # ghcr.io answers "toomanyrequests ... allowed: 44000/minute" (a short burst
+      # throttle across parallel jobs); docker and the CLI do not retry, and the
+      # bind-retry step correctly refuses (not a port collision). Mechanism from
+      # Team's proven rehearsal (#1193, run 40552718991): pull each image ahead of
+      # the start with a bounded back-off and a registry fallback, so the start finds
+      # it locally. The list is the pinned CLI's OWN image list (the embedded
+      # Dockerfile, sibling supabase-go), for this job's exact -x set plus
+      # postgres, realtime and storage-api, which the start pulls while initialising
+      # the database even when excluded (runs 40557844633, 40559826388, 40562452255).
+      # EVERY pull is BY DIGEST from the committed, reviewed table
+      # .github/supabase-image-digests.json (generated from ghcr.io/supabase for CLI
+      # 2.102.0); an image is tagged ghcr.io/supabase/<name>:<tag> only after its
+      # digest is confirmed, an unverified pull is removed and never tagged, an image
+      # missing from the table (or a CLI version other than the table's) is left to
+      # the start, and vector/logflare (vector mounts the Docker socket) never use a
+      # fallback. Inline, never a checked-out script, because the credential is held
+      # (Codex P2 4354172124); the table is read as data. Non-fatal: the start still
+      # pulls what is missing, and a start that fails still fails the job.
+      - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, by digest)
+        continue-on-error: true
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set +e
+          EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
+          TABLE=.github/supabase-image-digests.json
+          cli_v="$(supabase --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"
+          if ! command -v jq > /dev/null 2>&1 || [ ! -r "$TABLE" ] || [ "$cli_v" != "$(jq -r '.cli' "$TABLE")" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::no digest table for CLI '$cli_v' (or no jq); the stack start pulls as before."
+            exit 0
+          fi
+          pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
+          BIN="$(command -v supabase || true)"
+          : > "$RUNNER_TEMP/cli-images.txt"
+          for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do
+            [ -r "$cand" ] || continue
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
+          done
+          : > "$RUNNER_TEMP/pull-list.txt"
+          if [ ! -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::the CLI's embedded image list was not readable; the stack start pulls as before."
+            exit 0
+          fi
+          while read -r _from image _as alias; do
+            case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
+            case "$svc" in
+              postgres|realtime|storage-api) ;;
+              supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+              *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+            esac
+            printf '%s %s\n' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"
+          done < "$RUNNER_TEMP/cli-images.txt"
+          echo "images: $(awk '{print $1}' "$RUNNER_TEMP/pull-list.txt" | tr '\n' ' ')"
+          from_ghcr=0; from_fallback=""; missing=""
+          while read -r IMG ORIG; do
+            NAME="${IMG%%:*}"
+            D="$(jq -r --arg k "$IMG" '.images[$k] // empty' "$TABLE")"
+            if [ -z "$D" ]; then
+              echo "::warning title=Supabase image pre-pull::$IMG is not in the digest table; left to the stack start."
+              missing="$missing $IMG"; continue
+            fi
+            ref=""; via=""
+            for i in 1 2; do
+              if docker pull -q "ghcr.io/supabase/$NAME@$D" > /dev/null 2>&1; then ref="ghcr.io/supabase/$NAME@$D"; via=ghcr; break; fi
+              echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
+            done
+            if [ -z "$ref" ]; then
+              case "$NAME" in
+                vector|logflare) echo "no fallback for $NAME: it runs with the Docker socket; left to the stack start" ;;
+                *)
+                  for base in public.ecr.aws/supabase/$NAME docker.io/supabase/$NAME ${ORIG:+docker.io/${ORIG%%:*}}; do
+                    if docker pull -q "$base@$D" > /dev/null 2>&1; then
+                      if docker image inspect --format '{{json .RepoDigests}}' "$base@$D" 2> /dev/null | grep -q "@$D"; then ref="$base@$D"; via="$base"; break; fi
+                      echo "::warning title=Supabase image pre-pull::$base@$D did not report digest $D; discarded, not tagged."
+                      docker rmi "$base@$D" > /dev/null 2>&1
+                    fi
+                  done ;;
+              esac
+            fi
+            if [ -n "$ref" ] && docker tag "$ref" "ghcr.io/supabase/$IMG"; then
+              if [ "$via" = ghcr ]; then from_ghcr=$((from_ghcr + 1)); else from_fallback="$from_fallback $IMG($via)"; echo "using $via for $IMG by digest $D, re-tagged locally"; fi
+            else
+              echo "::warning title=Supabase image pre-pull::$IMG could not be pulled and verified from ghcr, ECR or Docker Hub; left to the stack start."
+              missing="$missing $IMG"
+            fi
+          done < "$RUNNER_TEMP/pull-list.txt"
+          echo "pre-pull summary: $from_ghcr from ghcr; fallback by digest:${from_fallback:- none}; left to the start:${missing:- none}"
 
       - name: Start local Supabase stack (db + auth + mail capture)
         id: sb_start
@@ -945,6 +1126,38 @@ jobs:
           # resolver, which is what made the reschedule confirmation
           # deterministic.
           HONE_E2E_FAKE_RESEND: "1"
+
+      # Preserve ordinary flag-OFF coverage above. Only this supplemental
+      # invocation enables six synthetic identities; deployed runtimes refuse
+      # this gate. Existing config propagates it to the local server only.
+      - name: Native Senior and Junior 3G acceptance
+        id: native3g
+        if: needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.changes.outputs.browser_extended }}" = "true" ]; then
+            SHARD_TOTAL=4
+          else
+            SHARD_TOTAL="${{ needs.changes.outputs.browser_shard_total }}"
+          fi
+          npx playwright test e2e/machine-create-mode-journey.spec.ts --project=chromium --grep='native 3G (durability|text durability|uncommitted recovery)' --fully-parallel --workers=1 --shard=${{ matrix.shard }}/${SHARD_TOTAL} --retries=0 --max-failures=1 --reporter=list,json --output=test-results/native-3g-shard-${{ matrix.shard }}
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const report = JSON.parse(readFileSync(process.env.PLAYWRIGHT_JSON_OUTPUT_FILE, 'utf8'));
+          const tests = [];
+          const collect = (suite) => {
+            for (const spec of suite.specs ?? []) tests.push(...spec.tests);
+            for (const child of suite.suites ?? []) collect(child);
+          };
+          for (const suite of report.suites ?? []) collect(suite);
+          if (report.errors?.length || tests.length === 0 || tests.some((test) => test.expectedStatus !== 'passed' || test.results.length !== 1 || test.results[0].status !== 'passed')) {
+            throw new Error('Native acceptance requires actual passing cases, with no skips or retries');
+          }
+          console.log(`Native acceptance: ${tests.length} actual passes, zero skips/retries`);
+          NODE
+        env:
+          HONE_SYNTHETIC_MACHINE_PROFILE: "1"
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/native-3g-shard-${{ matrix.shard }}/results.json
 
       - name: Upload Playwright traces on failure
         if: ${{ !cancelled() }}
@@ -1154,7 +1367,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Generate the per-job fake-Stripe run id
@@ -1192,6 +1405,97 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # CI-REGISTRY (OPS, 2026-10-27; supply-chain fixes from Insurance PEER-1200-SUPPLY).
+      # The D7b login succeeds, then the stack start pulls ~10 images at once and
+      # ghcr.io answers "toomanyrequests ... allowed: 44000/minute" (a short burst
+      # throttle across parallel jobs); docker and the CLI do not retry, and the
+      # bind-retry step correctly refuses (not a port collision). Mechanism from
+      # Team's proven rehearsal (#1193, run 40552718991): pull each image ahead of
+      # the start with a bounded back-off and a registry fallback, so the start finds
+      # it locally. The list is the pinned CLI's OWN image list (the embedded
+      # Dockerfile, sibling supabase-go), for this job's exact -x set plus
+      # postgres, realtime and storage-api, which the start pulls while initialising
+      # the database even when excluded (runs 40557844633, 40559826388, 40562452255).
+      # EVERY pull is BY DIGEST from the committed, reviewed table
+      # .github/supabase-image-digests.json (generated from ghcr.io/supabase for CLI
+      # 2.102.0); an image is tagged ghcr.io/supabase/<name>:<tag> only after its
+      # digest is confirmed, an unverified pull is removed and never tagged, an image
+      # missing from the table (or a CLI version other than the table's) is left to
+      # the start, and vector/logflare (vector mounts the Docker socket) never use a
+      # fallback. Inline, never a checked-out script, because the credential is held
+      # (Codex P2 4354172124); the table is read as data. Non-fatal: the start still
+      # pulls what is missing, and a start that fails still fails the job.
+      - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, by digest)
+        continue-on-error: true
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set +e
+          EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
+          TABLE=.github/supabase-image-digests.json
+          cli_v="$(supabase --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"
+          if ! command -v jq > /dev/null 2>&1 || [ ! -r "$TABLE" ] || [ "$cli_v" != "$(jq -r '.cli' "$TABLE")" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::no digest table for CLI '$cli_v' (or no jq); the stack start pulls as before."
+            exit 0
+          fi
+          pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
+          BIN="$(command -v supabase || true)"
+          : > "$RUNNER_TEMP/cli-images.txt"
+          for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do
+            [ -r "$cand" ] || continue
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
+          done
+          : > "$RUNNER_TEMP/pull-list.txt"
+          if [ ! -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::the CLI's embedded image list was not readable; the stack start pulls as before."
+            exit 0
+          fi
+          while read -r _from image _as alias; do
+            case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
+            case "$svc" in
+              postgres|realtime|storage-api) ;;
+              supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+              *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+            esac
+            printf '%s %s\n' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"
+          done < "$RUNNER_TEMP/cli-images.txt"
+          echo "images: $(awk '{print $1}' "$RUNNER_TEMP/pull-list.txt" | tr '\n' ' ')"
+          from_ghcr=0; from_fallback=""; missing=""
+          while read -r IMG ORIG; do
+            NAME="${IMG%%:*}"
+            D="$(jq -r --arg k "$IMG" '.images[$k] // empty' "$TABLE")"
+            if [ -z "$D" ]; then
+              echo "::warning title=Supabase image pre-pull::$IMG is not in the digest table; left to the stack start."
+              missing="$missing $IMG"; continue
+            fi
+            ref=""; via=""
+            for i in 1 2; do
+              if docker pull -q "ghcr.io/supabase/$NAME@$D" > /dev/null 2>&1; then ref="ghcr.io/supabase/$NAME@$D"; via=ghcr; break; fi
+              echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
+            done
+            if [ -z "$ref" ]; then
+              case "$NAME" in
+                vector|logflare) echo "no fallback for $NAME: it runs with the Docker socket; left to the stack start" ;;
+                *)
+                  for base in public.ecr.aws/supabase/$NAME docker.io/supabase/$NAME ${ORIG:+docker.io/${ORIG%%:*}}; do
+                    if docker pull -q "$base@$D" > /dev/null 2>&1; then
+                      if docker image inspect --format '{{json .RepoDigests}}' "$base@$D" 2> /dev/null | grep -q "@$D"; then ref="$base@$D"; via="$base"; break; fi
+                      echo "::warning title=Supabase image pre-pull::$base@$D did not report digest $D; discarded, not tagged."
+                      docker rmi "$base@$D" > /dev/null 2>&1
+                    fi
+                  done ;;
+              esac
+            fi
+            if [ -n "$ref" ] && docker tag "$ref" "ghcr.io/supabase/$IMG"; then
+              if [ "$via" = ghcr ]; then from_ghcr=$((from_ghcr + 1)); else from_fallback="$from_fallback $IMG($via)"; echo "using $via for $IMG by digest $D, re-tagged locally"; fi
+            else
+              echo "::warning title=Supabase image pre-pull::$IMG could not be pulled and verified from ghcr, ECR or Docker Hub; left to the stack start."
+              missing="$missing $IMG"
+            fi
+          done < "$RUNNER_TEMP/pull-list.txt"
+          echo "pre-pull summary: $from_ghcr from ghcr; fallback by digest:${from_fallback:- none}; left to the start:${missing:- none}"
 
       - name: Start local Supabase stack (db + auth + mail capture)
         id: sb_start
@@ -1328,7 +1632,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Generate the per-job fake-Stripe run id
@@ -1364,6 +1668,97 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # CI-REGISTRY (OPS, 2026-10-27; supply-chain fixes from Insurance PEER-1200-SUPPLY).
+      # The D7b login succeeds, then the stack start pulls ~10 images at once and
+      # ghcr.io answers "toomanyrequests ... allowed: 44000/minute" (a short burst
+      # throttle across parallel jobs); docker and the CLI do not retry, and the
+      # bind-retry step correctly refuses (not a port collision). Mechanism from
+      # Team's proven rehearsal (#1193, run 40552718991): pull each image ahead of
+      # the start with a bounded back-off and a registry fallback, so the start finds
+      # it locally. The list is the pinned CLI's OWN image list (the embedded
+      # Dockerfile, sibling supabase-go), for this job's exact -x set plus
+      # postgres, realtime and storage-api, which the start pulls while initialising
+      # the database even when excluded (runs 40557844633, 40559826388, 40562452255).
+      # EVERY pull is BY DIGEST from the committed, reviewed table
+      # .github/supabase-image-digests.json (generated from ghcr.io/supabase for CLI
+      # 2.102.0); an image is tagged ghcr.io/supabase/<name>:<tag> only after its
+      # digest is confirmed, an unverified pull is removed and never tagged, an image
+      # missing from the table (or a CLI version other than the table's) is left to
+      # the start, and vector/logflare (vector mounts the Docker socket) never use a
+      # fallback. Inline, never a checked-out script, because the credential is held
+      # (Codex P2 4354172124); the table is read as data. Non-fatal: the start still
+      # pulls what is missing, and a start that fails still fails the job.
+      - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, by digest)
+        continue-on-error: true
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set +e
+          EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
+          TABLE=.github/supabase-image-digests.json
+          cli_v="$(supabase --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"
+          if ! command -v jq > /dev/null 2>&1 || [ ! -r "$TABLE" ] || [ "$cli_v" != "$(jq -r '.cli' "$TABLE")" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::no digest table for CLI '$cli_v' (or no jq); the stack start pulls as before."
+            exit 0
+          fi
+          pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
+          BIN="$(command -v supabase || true)"
+          : > "$RUNNER_TEMP/cli-images.txt"
+          for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do
+            [ -r "$cand" ] || continue
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
+          done
+          : > "$RUNNER_TEMP/pull-list.txt"
+          if [ ! -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::the CLI's embedded image list was not readable; the stack start pulls as before."
+            exit 0
+          fi
+          while read -r _from image _as alias; do
+            case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
+            case "$svc" in
+              postgres|realtime|storage-api) ;;
+              supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+              *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+            esac
+            printf '%s %s\n' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"
+          done < "$RUNNER_TEMP/cli-images.txt"
+          echo "images: $(awk '{print $1}' "$RUNNER_TEMP/pull-list.txt" | tr '\n' ' ')"
+          from_ghcr=0; from_fallback=""; missing=""
+          while read -r IMG ORIG; do
+            NAME="${IMG%%:*}"
+            D="$(jq -r --arg k "$IMG" '.images[$k] // empty' "$TABLE")"
+            if [ -z "$D" ]; then
+              echo "::warning title=Supabase image pre-pull::$IMG is not in the digest table; left to the stack start."
+              missing="$missing $IMG"; continue
+            fi
+            ref=""; via=""
+            for i in 1 2; do
+              if docker pull -q "ghcr.io/supabase/$NAME@$D" > /dev/null 2>&1; then ref="ghcr.io/supabase/$NAME@$D"; via=ghcr; break; fi
+              echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
+            done
+            if [ -z "$ref" ]; then
+              case "$NAME" in
+                vector|logflare) echo "no fallback for $NAME: it runs with the Docker socket; left to the stack start" ;;
+                *)
+                  for base in public.ecr.aws/supabase/$NAME docker.io/supabase/$NAME ${ORIG:+docker.io/${ORIG%%:*}}; do
+                    if docker pull -q "$base@$D" > /dev/null 2>&1; then
+                      if docker image inspect --format '{{json .RepoDigests}}' "$base@$D" 2> /dev/null | grep -q "@$D"; then ref="$base@$D"; via="$base"; break; fi
+                      echo "::warning title=Supabase image pre-pull::$base@$D did not report digest $D; discarded, not tagged."
+                      docker rmi "$base@$D" > /dev/null 2>&1
+                    fi
+                  done ;;
+              esac
+            fi
+            if [ -n "$ref" ] && docker tag "$ref" "ghcr.io/supabase/$IMG"; then
+              if [ "$via" = ghcr ]; then from_ghcr=$((from_ghcr + 1)); else from_fallback="$from_fallback $IMG($via)"; echo "using $via for $IMG by digest $D, re-tagged locally"; fi
+            else
+              echo "::warning title=Supabase image pre-pull::$IMG could not be pulled and verified from ghcr, ECR or Docker Hub; left to the stack start."
+              missing="$missing $IMG"
+            fi
+          done < "$RUNNER_TEMP/pull-list.txt"
+          echo "pre-pull summary: $from_ghcr from ghcr; fallback by digest:${from_fallback:- none}; left to the start:${missing:- none}"
 
       - name: Start local Supabase stack (db + auth + mail capture)
         id: sb_start
@@ -1498,7 +1893,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Generate the per-job fake-Google run id
@@ -1533,6 +1928,97 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # CI-REGISTRY (OPS, 2026-10-27; supply-chain fixes from Insurance PEER-1200-SUPPLY).
+      # The D7b login succeeds, then the stack start pulls ~10 images at once and
+      # ghcr.io answers "toomanyrequests ... allowed: 44000/minute" (a short burst
+      # throttle across parallel jobs); docker and the CLI do not retry, and the
+      # bind-retry step correctly refuses (not a port collision). Mechanism from
+      # Team's proven rehearsal (#1193, run 40552718991): pull each image ahead of
+      # the start with a bounded back-off and a registry fallback, so the start finds
+      # it locally. The list is the pinned CLI's OWN image list (the embedded
+      # Dockerfile, sibling supabase-go), for this job's exact -x set plus
+      # postgres, realtime and storage-api, which the start pulls while initialising
+      # the database even when excluded (runs 40557844633, 40559826388, 40562452255).
+      # EVERY pull is BY DIGEST from the committed, reviewed table
+      # .github/supabase-image-digests.json (generated from ghcr.io/supabase for CLI
+      # 2.102.0); an image is tagged ghcr.io/supabase/<name>:<tag> only after its
+      # digest is confirmed, an unverified pull is removed and never tagged, an image
+      # missing from the table (or a CLI version other than the table's) is left to
+      # the start, and vector/logflare (vector mounts the Docker socket) never use a
+      # fallback. Inline, never a checked-out script, because the credential is held
+      # (Codex P2 4354172124); the table is read as data. Non-fatal: the start still
+      # pulls what is missing, and a start that fails still fails the job.
+      - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, by digest)
+        continue-on-error: true
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set +e
+          EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
+          TABLE=.github/supabase-image-digests.json
+          cli_v="$(supabase --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"
+          if ! command -v jq > /dev/null 2>&1 || [ ! -r "$TABLE" ] || [ "$cli_v" != "$(jq -r '.cli' "$TABLE")" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::no digest table for CLI '$cli_v' (or no jq); the stack start pulls as before."
+            exit 0
+          fi
+          pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
+          BIN="$(command -v supabase || true)"
+          : > "$RUNNER_TEMP/cli-images.txt"
+          for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do
+            [ -r "$cand" ] || continue
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
+          done
+          : > "$RUNNER_TEMP/pull-list.txt"
+          if [ ! -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::the CLI's embedded image list was not readable; the stack start pulls as before."
+            exit 0
+          fi
+          while read -r _from image _as alias; do
+            case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
+            case "$svc" in
+              postgres|realtime|storage-api) ;;
+              supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+              *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+            esac
+            printf '%s %s\n' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"
+          done < "$RUNNER_TEMP/cli-images.txt"
+          echo "images: $(awk '{print $1}' "$RUNNER_TEMP/pull-list.txt" | tr '\n' ' ')"
+          from_ghcr=0; from_fallback=""; missing=""
+          while read -r IMG ORIG; do
+            NAME="${IMG%%:*}"
+            D="$(jq -r --arg k "$IMG" '.images[$k] // empty' "$TABLE")"
+            if [ -z "$D" ]; then
+              echo "::warning title=Supabase image pre-pull::$IMG is not in the digest table; left to the stack start."
+              missing="$missing $IMG"; continue
+            fi
+            ref=""; via=""
+            for i in 1 2; do
+              if docker pull -q "ghcr.io/supabase/$NAME@$D" > /dev/null 2>&1; then ref="ghcr.io/supabase/$NAME@$D"; via=ghcr; break; fi
+              echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
+            done
+            if [ -z "$ref" ]; then
+              case "$NAME" in
+                vector|logflare) echo "no fallback for $NAME: it runs with the Docker socket; left to the stack start" ;;
+                *)
+                  for base in public.ecr.aws/supabase/$NAME docker.io/supabase/$NAME ${ORIG:+docker.io/${ORIG%%:*}}; do
+                    if docker pull -q "$base@$D" > /dev/null 2>&1; then
+                      if docker image inspect --format '{{json .RepoDigests}}' "$base@$D" 2> /dev/null | grep -q "@$D"; then ref="$base@$D"; via="$base"; break; fi
+                      echo "::warning title=Supabase image pre-pull::$base@$D did not report digest $D; discarded, not tagged."
+                      docker rmi "$base@$D" > /dev/null 2>&1
+                    fi
+                  done ;;
+              esac
+            fi
+            if [ -n "$ref" ] && docker tag "$ref" "ghcr.io/supabase/$IMG"; then
+              if [ "$via" = ghcr ]; then from_ghcr=$((from_ghcr + 1)); else from_fallback="$from_fallback $IMG($via)"; echo "using $via for $IMG by digest $D, re-tagged locally"; fi
+            else
+              echo "::warning title=Supabase image pre-pull::$IMG could not be pulled and verified from ghcr, ECR or Docker Hub; left to the stack start."
+              missing="$missing $IMG"
+            fi
+          done < "$RUNNER_TEMP/pull-list.txt"
+          echo "pre-pull summary: $from_ghcr from ghcr; fallback by digest:${from_fallback:- none}; left to the start:${missing:- none}"
 
       - name: Start local Supabase stack (db + auth + mail capture)
         id: sb_start
@@ -1641,16 +2127,16 @@ jobs:
   storage-photos:
     name: storage photos (not required)
     needs: changes
-    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') }}
+    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') }}
     runs-on: ubuntu-latest
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
       packages: read
     # Target ~10 min: the mobile lane's setup (~6 min p90 incl. the bounded
-    # system-package install) plus storage-api, one DB file and two specs. The
+    # system-package install) plus storage-api, one DB file and the storage specs. The
     # hard timeout exceeds it (CLAUDE.md section 4).
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout repository
@@ -1661,7 +2147,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Set up Supabase CLI
@@ -1686,6 +2172,97 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # CI-REGISTRY (OPS, 2026-10-27; supply-chain fixes from Insurance PEER-1200-SUPPLY).
+      # The D7b login succeeds, then the stack start pulls ~10 images at once and
+      # ghcr.io answers "toomanyrequests ... allowed: 44000/minute" (a short burst
+      # throttle across parallel jobs); docker and the CLI do not retry, and the
+      # bind-retry step correctly refuses (not a port collision). Mechanism from
+      # Team's proven rehearsal (#1193, run 40552718991): pull each image ahead of
+      # the start with a bounded back-off and a registry fallback, so the start finds
+      # it locally. The list is the pinned CLI's OWN image list (the embedded
+      # Dockerfile, sibling supabase-go), for this job's exact -x set plus
+      # postgres, realtime and storage-api, which the start pulls while initialising
+      # the database even when excluded (runs 40557844633, 40559826388, 40562452255).
+      # EVERY pull is BY DIGEST from the committed, reviewed table
+      # .github/supabase-image-digests.json (generated from ghcr.io/supabase for CLI
+      # 2.102.0); an image is tagged ghcr.io/supabase/<name>:<tag> only after its
+      # digest is confirmed, an unverified pull is removed and never tagged, an image
+      # missing from the table (or a CLI version other than the table's) is left to
+      # the start, and vector/logflare (vector mounts the Docker socket) never use a
+      # fallback. Inline, never a checked-out script, because the credential is held
+      # (Codex P2 4354172124); the table is read as data. Non-fatal: the start still
+      # pulls what is missing, and a start that fails still fails the job.
+      - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, by digest)
+        continue-on-error: true
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set +e
+          EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector'
+          TABLE=.github/supabase-image-digests.json
+          cli_v="$(supabase --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"
+          if ! command -v jq > /dev/null 2>&1 || [ ! -r "$TABLE" ] || [ "$cli_v" != "$(jq -r '.cli' "$TABLE")" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::no digest table for CLI '$cli_v' (or no jq); the stack start pulls as before."
+            exit 0
+          fi
+          pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
+          BIN="$(command -v supabase || true)"
+          : > "$RUNNER_TEMP/cli-images.txt"
+          for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do
+            [ -r "$cand" ] || continue
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
+          done
+          : > "$RUNNER_TEMP/pull-list.txt"
+          if [ ! -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::the CLI's embedded image list was not readable; the stack start pulls as before."
+            exit 0
+          fi
+          while read -r _from image _as alias; do
+            case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
+            case "$svc" in
+              postgres|realtime|storage-api) ;;
+              supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+              *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+            esac
+            printf '%s %s\n' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"
+          done < "$RUNNER_TEMP/cli-images.txt"
+          echo "images: $(awk '{print $1}' "$RUNNER_TEMP/pull-list.txt" | tr '\n' ' ')"
+          from_ghcr=0; from_fallback=""; missing=""
+          while read -r IMG ORIG; do
+            NAME="${IMG%%:*}"
+            D="$(jq -r --arg k "$IMG" '.images[$k] // empty' "$TABLE")"
+            if [ -z "$D" ]; then
+              echo "::warning title=Supabase image pre-pull::$IMG is not in the digest table; left to the stack start."
+              missing="$missing $IMG"; continue
+            fi
+            ref=""; via=""
+            for i in 1 2; do
+              if docker pull -q "ghcr.io/supabase/$NAME@$D" > /dev/null 2>&1; then ref="ghcr.io/supabase/$NAME@$D"; via=ghcr; break; fi
+              echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
+            done
+            if [ -z "$ref" ]; then
+              case "$NAME" in
+                vector|logflare) echo "no fallback for $NAME: it runs with the Docker socket; left to the stack start" ;;
+                *)
+                  for base in public.ecr.aws/supabase/$NAME docker.io/supabase/$NAME ${ORIG:+docker.io/${ORIG%%:*}}; do
+                    if docker pull -q "$base@$D" > /dev/null 2>&1; then
+                      if docker image inspect --format '{{json .RepoDigests}}' "$base@$D" 2> /dev/null | grep -q "@$D"; then ref="$base@$D"; via="$base"; break; fi
+                      echo "::warning title=Supabase image pre-pull::$base@$D did not report digest $D; discarded, not tagged."
+                      docker rmi "$base@$D" > /dev/null 2>&1
+                    fi
+                  done ;;
+              esac
+            fi
+            if [ -n "$ref" ] && docker tag "$ref" "ghcr.io/supabase/$IMG"; then
+              if [ "$via" = ghcr ]; then from_ghcr=$((from_ghcr + 1)); else from_fallback="$from_fallback $IMG($via)"; echo "using $via for $IMG by digest $D, re-tagged locally"; fi
+            else
+              echo "::warning title=Supabase image pre-pull::$IMG could not be pulled and verified from ghcr, ECR or Docker Hub; left to the stack start."
+              missing="$missing $IMG"
+            fi
+          done < "$RUNNER_TEMP/pull-list.txt"
+          echo "pre-pull summary: $from_ghcr from ghcr; fallback by digest:${from_fallback:- none}; left to the start:${missing:- none}"
 
       - name: Start local Supabase stack (db + auth + mail capture + storage)
         id: sb_start
@@ -1767,7 +2344,7 @@ jobs:
 
       - name: Storage photo E2E (CLN-005 + ENG-002)
         if: ${{ !cancelled() && steps.storage_up.outcome == 'success' && steps.pw_sys.outcome == 'success' }}
-        run: npx playwright test e2e/fett-photos-thumbnail-recovery.spec.ts e2e/treatment-image-upload-formats.spec.ts --project=chromium
+        run: npx playwright test e2e/fett-photos-thumbnail-recovery.spec.ts e2e/treatment-image-upload-formats.spec.ts e2e/fett-client-portrait.spec.ts --project=chromium
         env:
           HONE_E2E_FAKE_RESEND: "1"
 
@@ -1779,8 +2356,11 @@ jobs:
           path: test-results/
           retention-days: 7
 
-  # HON-62: the weekly-hours editor's native <input type="time"> in WebKit, the
-  # engine behind iPad Safari. NOT REQUIRED and NOT AGGREGATED: no branch
+  # HON-62 and CLN-006: the weekly-hours editor's native <input type="time"> and
+  # the mounted-keyboard/focus cases for the three modal dialogs (photo preview,
+  # DoneCharting warning, quick checkout) in WebKit, the engine behind iPad
+  # Safari. Playwright's Linux WebKit is not Safari: a case that hits an engine
+  # limit is annotated in its spec, never silently skipped. NOT REQUIRED and NOT AGGREGATED: no branch
   # protection rule names it and `browser-e2e` does not need it, so a WebKit
   # failure is evidence for the HON-62 owner, never a merge block. A separate
   # job rather than a step in the targeted shards, so the required lane's
@@ -1795,18 +2375,20 @@ jobs:
   # be restored by the Chromium jobs as a hit with no Chromium in it. The .debs
   # use their own key for the same reason.
   #
-  #   target <10 min; hard timeout 20 min = target + the 6 min bounded
-  #   system-package step + margin (CLAUDE.md section 4).
+  #   target ~15 min (setup, then TWO webServer builds: the ordinary config for
+  #   the HON-62 and CLN-006 specs, the payment config for quick checkout); hard
+  #   timeout 30 min = target + the 6 min bounded system-package step + margin
+  #   (CLAUDE.md section 4).
   webkit-hon-62:
     name: webkit time inputs (HON-62, not required)
     needs: changes
-    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') }}
+    if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' }}
     runs-on: ubuntu-latest
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
       contents: read
       packages: read
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -1817,7 +2399,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "24.22.1"
           cache: "npm"
 
       - name: Set up Supabase CLI
@@ -1842,6 +2424,97 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # CI-REGISTRY (OPS, 2026-10-27; supply-chain fixes from Insurance PEER-1200-SUPPLY).
+      # The D7b login succeeds, then the stack start pulls ~10 images at once and
+      # ghcr.io answers "toomanyrequests ... allowed: 44000/minute" (a short burst
+      # throttle across parallel jobs); docker and the CLI do not retry, and the
+      # bind-retry step correctly refuses (not a port collision). Mechanism from
+      # Team's proven rehearsal (#1193, run 40552718991): pull each image ahead of
+      # the start with a bounded back-off and a registry fallback, so the start finds
+      # it locally. The list is the pinned CLI's OWN image list (the embedded
+      # Dockerfile, sibling supabase-go), for this job's exact -x set plus
+      # postgres, realtime and storage-api, which the start pulls while initialising
+      # the database even when excluded (runs 40557844633, 40559826388, 40562452255).
+      # EVERY pull is BY DIGEST from the committed, reviewed table
+      # .github/supabase-image-digests.json (generated from ghcr.io/supabase for CLI
+      # 2.102.0); an image is tagged ghcr.io/supabase/<name>:<tag> only after its
+      # digest is confirmed, an unverified pull is removed and never tagged, an image
+      # missing from the table (or a CLI version other than the table's) is left to
+      # the start, and vector/logflare (vector mounts the Docker socket) never use a
+      # fallback. Inline, never a checked-out script, because the credential is held
+      # (Codex P2 4354172124); the table is read as data. Non-fatal: the start still
+      # pulls what is missing, and a start that fails still fails the job.
+      - name: Pre-pull Supabase images (bounded back-off; ghcr, then ECR or Docker Hub, by digest)
+        continue-on-error: true
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set +e
+          EXCLUDE='studio,imgproxy,realtime,edge-runtime,logflare,vector,storage-api'
+          TABLE=.github/supabase-image-digests.json
+          cli_v="$(supabase --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"
+          if ! command -v jq > /dev/null 2>&1 || [ ! -r "$TABLE" ] || [ "$cli_v" != "$(jq -r '.cli' "$TABLE")" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::no digest table for CLI '$cli_v' (or no jq); the stack start pulls as before."
+            exit 0
+          fi
+          pooler_on="$(awk '/^\[db\.pooler\]/{f=1;next} /^\[/{f=0} f && /^enabled *= *true/{print "yes"}' supabase/config.toml 2>/dev/null)"
+          BIN="$(command -v supabase || true)"
+          : > "$RUNNER_TEMP/cli-images.txt"
+          for cand in "$(dirname "$(readlink -f "$BIN")")/supabase-go" "$BIN"; do
+            [ -r "$cand" ] || continue
+            grep -a -oE '^FROM [A-Za-z0-9_./:-]+ AS (pg|kong|gotrue|postgrest|realtime|storage|imgproxy|edgeruntime|studio|pgmeta|logflare|vector|mailpit|supavisor)$' "$cand" | sort -u > "$RUNNER_TEMP/cli-images.txt"
+            [ -s "$RUNNER_TEMP/cli-images.txt" ] && break
+          done
+          : > "$RUNNER_TEMP/pull-list.txt"
+          if [ ! -s "$RUNNER_TEMP/cli-images.txt" ]; then
+            echo "::warning title=Supabase image pre-pull skipped::the CLI's embedded image list was not readable; the stack start pulls as before."
+            exit 0
+          fi
+          while read -r _from image _as alias; do
+            case "$alias" in pg) svc=postgres ;; storage) svc=storage-api ;; edgeruntime) svc=edge-runtime ;; pgmeta) svc=postgres-meta ;; *) svc="$alias" ;; esac
+            case "$svc" in
+              postgres|realtime|storage-api) ;;
+              supavisor) [ -n "$pooler_on" ] || continue; case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+              *) case ",$EXCLUDE," in *",$svc,"*) continue ;; esac ;;
+            esac
+            printf '%s %s\n' "${image##*/}" "$image" >> "$RUNNER_TEMP/pull-list.txt"
+          done < "$RUNNER_TEMP/cli-images.txt"
+          echo "images: $(awk '{print $1}' "$RUNNER_TEMP/pull-list.txt" | tr '\n' ' ')"
+          from_ghcr=0; from_fallback=""; missing=""
+          while read -r IMG ORIG; do
+            NAME="${IMG%%:*}"
+            D="$(jq -r --arg k "$IMG" '.images[$k] // empty' "$TABLE")"
+            if [ -z "$D" ]; then
+              echo "::warning title=Supabase image pre-pull::$IMG is not in the digest table; left to the stack start."
+              missing="$missing $IMG"; continue
+            fi
+            ref=""; via=""
+            for i in 1 2; do
+              if docker pull -q "ghcr.io/supabase/$NAME@$D" > /dev/null 2>&1; then ref="ghcr.io/supabase/$NAME@$D"; via=ghcr; break; fi
+              echo "ghcr pull of $IMG refused (attempt $i)"; sleep $((i*15))
+            done
+            if [ -z "$ref" ]; then
+              case "$NAME" in
+                vector|logflare) echo "no fallback for $NAME: it runs with the Docker socket; left to the stack start" ;;
+                *)
+                  for base in public.ecr.aws/supabase/$NAME docker.io/supabase/$NAME ${ORIG:+docker.io/${ORIG%%:*}}; do
+                    if docker pull -q "$base@$D" > /dev/null 2>&1; then
+                      if docker image inspect --format '{{json .RepoDigests}}' "$base@$D" 2> /dev/null | grep -q "@$D"; then ref="$base@$D"; via="$base"; break; fi
+                      echo "::warning title=Supabase image pre-pull::$base@$D did not report digest $D; discarded, not tagged."
+                      docker rmi "$base@$D" > /dev/null 2>&1
+                    fi
+                  done ;;
+              esac
+            fi
+            if [ -n "$ref" ] && docker tag "$ref" "ghcr.io/supabase/$IMG"; then
+              if [ "$via" = ghcr ]; then from_ghcr=$((from_ghcr + 1)); else from_fallback="$from_fallback $IMG($via)"; echo "using $via for $IMG by digest $D, re-tagged locally"; fi
+            else
+              echo "::warning title=Supabase image pre-pull::$IMG could not be pulled and verified from ghcr, ECR or Docker Hub; left to the stack start."
+              missing="$missing $IMG"
+            fi
+          done < "$RUNNER_TEMP/pull-list.txt"
+          echo "pre-pull summary: $from_ghcr from ghcr; fallback by digest:${from_fallback:- none}; left to the start:${missing:- none}"
 
       - name: Start local Supabase stack (db + auth + mail capture)
         id: sb_start
@@ -1892,8 +2565,19 @@ jobs:
           path: ~/apt-debs
           key: pw-webkit-debs-${{ steps.img.outputs.id }}-${{ steps.pw.outputs.version }}
 
-      - name: WebKit E2E (HON-62 time inputs)
-        run: npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts --project=webkit-hon-62
+      - name: WebKit E2E (HON-62 time inputs, CLN-006 dialogs)
+        run: npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts e2e/finish-appointment-mobile.spec.ts e2e/fett-photos-touch-floor.spec.ts --project=webkit-hon-62 --project=webkit-cln-006
+        env:
+          HONE_E2E_WEBKIT: "1"
+          HONE_E2E_FAKE_RESEND: "1"
+
+      # Quick checkout lives in the payment lane's testDir and needs its fake-
+      # Stripe server (set by that config alone, never by this workflow). Its own
+      # --output keeps this run's traces from being cleaned by, or cleaning, the
+      # step above. Runs whatever the step above did (the mirror rule).
+      - name: WebKit E2E (CLN-006 quick checkout)
+        if: ${{ !cancelled() }}
+        run: npx playwright test --config playwright.payment.config.ts e2e-payment/quick-checkout-payment.spec.ts --project=webkit-cln-006-payment --output=test-results-payment
         env:
           HONE_E2E_WEBKIT: "1"
           HONE_E2E_FAKE_RESEND: "1"
@@ -1903,5 +2587,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-traces-webkit-hon-62
-          path: test-results/
+          path: |
+            test-results/
+            test-results-payment/
           retention-days: 7

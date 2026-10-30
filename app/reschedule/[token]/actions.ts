@@ -46,6 +46,13 @@ import {
   isFreeConsultWaitlistOnlyReschedule,
   type FreeConsultWaitlistOnlyCode,
 } from "@/lib/booking/free-consult-reschedule-policy";
+import {
+  CLIENT_RESCHEDULE_DISABLED_CODE,
+  clientRescheduleDisabledMessage,
+  type ClientRescheduleDisabledCode,
+} from "@/lib/booking/client-self-service-policy";
+import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
+import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 
 const POLICY_ACK_REQUIRED_ERROR =
   "Please review and acknowledge the appointment policies before rescheduling.";
@@ -229,7 +236,7 @@ type ReschedulableOriginal = {
 export type RescheduleRefusal = {
   ok: false;
   error: string;
-  code?: FreeConsultWaitlistOnlyCode;
+  code?: FreeConsultWaitlistOnlyCode | ClientRescheduleDisabledCode;
 };
 
 // The joined shape the policy needs. PostgREST types an embedded relation as
@@ -275,8 +282,7 @@ async function assertReschedulableOriginal(
     .maybeSingle();
   if (error) {
     logInternal("public_reschedule_assert_lookup_failed", {
-      code: error.code,
-      message: error.message,
+      code: dbErrorCode(error),
       appointmentId: resolved.appointment_id,
     });
     return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
@@ -289,6 +295,25 @@ async function assertReschedulableOriginal(
   }
   if (new Date(data.starts_at).getTime() <= Date.now()) {
     return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
+
+  // HON-47. The studio may have turned client self-service rescheduling off.
+  // Same ordering contract as EMERG-01 below: only a real token on a confirmed,
+  // future appointment reaches this, so the coded refusal discloses nothing a
+  // token holder does not already hold. Checked before EMERG-01 because it is
+  // the broader rule. Every one of the four entry points calls this helper, so
+  // the page, both slot reads and the submit all refuse together. An unreadable
+  // policy collapses to the generic refusal; it never allows.
+  const selfService = await loadClientSelfServicePolicy(admin, data.studio_id);
+  if (!selfService.ok) {
+    return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
+  }
+  if (!selfService.policy.reschedule) {
+    return {
+      ok: false,
+      error: clientRescheduleDisabledMessage(selfService.studioName),
+      code: CLIENT_RESCHEDULE_DISABLED_CODE,
+    };
   }
 
   // EMERG-01. Only now — a real token, a confirmed appointment, a future start
@@ -459,8 +484,7 @@ export async function fetchAppointmentForRescheduleAction(
   if (error) {
     // PR #149: never surface raw DB error text to the public client.
     logInternal("public_reschedule_fetch_summary_failed", {
-      code: error.code,
-      message: error.message,
+      code: dbErrorCode(error),
       appointmentId: asserted.original.appointment_id,
     });
     return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
@@ -709,7 +733,11 @@ export type RescheduleResult =
   // EMERG-01 adds one more bounded code. A refusal carrying it means the
   // command was NEVER called: no cancellation of the original, no successor, no
   // reservation change, no token rotation.
-  | { ok: false; error: string; code?: "slot_taken" | FreeConsultWaitlistOnlyCode };
+  | {
+      ok: false;
+      error: string;
+      code?: "slot_taken" | FreeConsultWaitlistOnlyCode | ClientRescheduleDisabledCode;
+    };
 
 export async function rescheduleAppointmentViaTokenAction(formData: FormData): Promise<
   RescheduleResult
@@ -779,7 +807,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     .maybeSingle();
   if (studioErr || !studioRow) {
     logInternal("public_reschedule_studio_lookup_failed", {
-      code: studioErr?.code,
+      code: dbErrorCode(studioErr),
       studioId: asserted.original.studio_id,
       appointmentId: asserted.original.appointment_id,
     });
@@ -821,7 +849,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     // Safe operator signal only: no name, no email, no phone, no token, no raw
     // Postgres message (which can echo row values on a public surface).
     logInternal("public_reschedule_client_metadata_unavailable", {
-      code: clientErr?.code,
+      code: dbErrorCode(clientErr),
       studioId: asserted.original.studio_id,
       appointmentId: asserted.original.appointment_id,
       reason: clientErr ? "lookup_failed" : !clientRow ? "missing_row" : "missing_email",
@@ -901,8 +929,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
     // generic so a token-bearing public route cannot reveal
     // internal function names or Postgres error strings.
     logInternal("public_reschedule_rpc_failed", {
-      code: rpcErr.code,
-      message: rpcErr.message,
+      code: dbErrorCode(rpcErr),
       studioId: asserted.original.studio_id,
       appointmentId: asserted.original.appointment_id,
     });
@@ -945,11 +972,19 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
         };
       case "payment_state_requires_studio":
         return { ok: false, error: PAYMENT_STATE_ERROR };
+      // HON-47 / 0234. The command's own refusal for a flag flipped after the
+      // check in assertReschedulableOriginal. Nothing was mutated.
+      case "reschedule_disabled":
+        return {
+          ok: false,
+          error: clientRescheduleDisabledMessage(null),
+          code: CLIENT_RESCHEDULE_DISABLED_CODE,
+        };
       case "practitioner_unavailable":
         return { ok: false, error: PRACTITIONER_UNAVAILABLE_ERROR };
       default:
         logInternal("public_reschedule_command_unmapped_code", {
-          code: row.result,
+          code: failureCode(null, row.result),
           studioId: asserted.original.studio_id,
         });
         return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
@@ -1071,7 +1106,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
             .maybeSingle();
           if (prErr || !pr) {
             logInternal("public_reschedule_practitioner_lookup_failed", {
-              code: prErr?.code,
+              code: dbErrorCode(prErr),
               studioId: asserted.original.studio_id,
             });
             return null;

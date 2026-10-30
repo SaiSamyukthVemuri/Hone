@@ -36,6 +36,46 @@ export function currencyLabel(currency: PaymentCurrency): "CAD" | "USD" {
   return currency === "usd" ? "USD" : "CAD";
 }
 
+/** "Canadian dollars" / "US dollars": the spoken name, for accessible labels. */
+export function currencyName(currency: PaymentCurrency): "Canadian dollars" | "US dollars" {
+  return currency === "usd" ? "US dollars" : "Canadian dollars";
+}
+
+/**
+ * Exactly cad or usd, or null. A stored or posted value outside the two allowed
+ * currencies is UNKNOWN, never a default: callers refuse on null.
+ */
+export function parsePaymentCurrency(value: unknown): PaymentCurrency | null {
+  return value === "cad" || value === "usd" ? value : null;
+}
+
+/**
+ * Compare what a card DISPLAYED (posted as expected_currency) with the currency
+ * the server holds. "unverified": the server's own value is not cad/usd.
+ * "changed": the posted value is absent, unsupported, or differs. Callers
+ * refuse on anything but "ok"; the posted value is never used as a currency.
+ */
+export function checkDisplayedCurrency(
+  serverCurrency: unknown,
+  postedCurrency: unknown,
+): "ok" | "unverified" | "changed" {
+  const server = parsePaymentCurrency(serverCurrency);
+  if (server === null) return "unverified";
+  return parsePaymentCurrency(postedCurrency) === server ? "ok" : "changed";
+}
+
+/**
+ * "$50.00 USD". The code is always printed so what a person reads is the
+ * currency the charge is denominated in. A null currency is printed as unknown
+ * rather than guessed.
+ */
+export function formatMoney(cents: number, currency: PaymentCurrency | null): string {
+  const sign = cents < 0 ? "-" : "";
+  const abs = Math.abs(cents);
+  const amount = `${sign}$${Math.trunc(abs / 100)}.${String(abs % 100).padStart(2, "0")}`;
+  return currency === null ? `${amount} (currency unknown)` : `${amount} ${currencyLabel(currency)}`;
+}
+
 export type AccountCountryVerdict =
   // Stripe reported the account's country and it is the studio's.
   | "match"

@@ -6,6 +6,7 @@ import {
   formatServiceLabel,
   groupServicesByModality,
 } from "@/lib/booking/format";
+import { clientOnlineBookingDisabledMessage } from "@/lib/booking/client-self-service-policy";
 import { UNAVAILABLE_PUBLIC_BOOKING_MESSAGE } from "@/lib/booking/readiness";
 // The CLIENT-SAFE module: new-client-admission.ts is `server-only`, and this
 // is a "use client" component. Same function, same canonical decision.
@@ -75,6 +76,13 @@ type Props = {
    * the EXISTING-client branch keeps the answer it always gave.
    */
   structurallyBookable?: boolean;
+  /**
+   * HON-47. PRESENTATION ONLY: whether the studio offers its clients the portal
+   * and returning-client online booking. Defaults TRUE so every existing call
+   * site renders exactly as before. The server action re-derives the policy
+   * from the studio row before any booking.
+   */
+  clientPortalEnabled?: boolean;
 };
 
 // BOOK-01 Tranche 1. The success state carries the appointment's MANAGEMENT URL
@@ -86,8 +94,11 @@ type Confirmation = {
   dateLocal: string;
   service: Service | null;
   email: string;
-  manageUrl: string;
+  // HON-47: null when the studio offers no online self-service at all.
+  manageUrl: string | null;
   emailStatus: ConfirmationEmailStatus;
+  // HON-47. What the studio offers online; the copy never promises more.
+  selfService: { cancellation: boolean; reschedule: boolean };
 };
 
 // Render a local YYYY-MM-DD as "Tuesday, May 26" (or, with year, "Tuesday, May 26, 2026"
@@ -151,6 +162,7 @@ export function PublicBookForm({
   maxDate,
   newClientAdmission = "open",
   structurallyBookable = true,
+  clientPortalEnabled = true,
 }: Props) {
   // Pre-compute the service buckets each path needs. Done once at
   // mount and re-runs only if `services` actually changes (which
@@ -211,6 +223,11 @@ export function PublicBookForm({
   const [serviceId, setServiceId] = useState(firstServiceId);
   const [date, setDate] = useState(defaultDate);
   const [slots, setSlots] = useState<Slot[]>([]);
+  // SCH-002: a slot READ that failed or was refused is not an empty day. Kept
+  // apart from `slots` so the panel can say "could not load" instead of "No
+  // availability", and bumped by Try again to re-run the fetch effect.
+  const [slotsFailed, setSlotsFailed] = useState(false);
+  const [slotsRetry, setSlotsRetry] = useState(0);
   const [picked, setPicked] = useState<Slot | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -295,12 +312,14 @@ export function PublicBookForm({
       setSlots([]);
       setPicked(null);
       setError(null);
+      setSlotsFailed(false);
       setNextSearched(false);
       setNoneInHorizon(false);
       return;
     }
     let cancelled = false;
     setError(null);
+    setSlotsFailed(false);
     setPicked(null);
     // Reset next-available state when the underlying query changes.
     // A previous "no availability in horizon" verdict was specific to the
@@ -313,6 +332,7 @@ export function PublicBookForm({
       if (!r.ok) {
         setError(r.error);
         setSlots([]);
+        setSlotsFailed(true);
         return;
       }
       setSlots(r.slots);
@@ -320,7 +340,7 @@ export function PublicBookForm({
     return () => {
       cancelled = true;
     };
-  }, [slug, serviceId, date, clientType, newClientBlocked]);
+  }, [slug, serviceId, date, clientType, newClientBlocked, slotsRetry]);
 
   // Availability is service-specific, so a prior service's "next available"
   // history is meaningless after a service switch: reset it. (Runs on mount
@@ -469,6 +489,7 @@ export function PublicBookForm({
         email,
         manageUrl: r.manageUrl,
         emailStatus: r.confirmationEmailStatus,
+        selfService: r.selfService,
       });
     });
   }
@@ -480,6 +501,7 @@ export function PublicBookForm({
         studioName={studioName}
         studioAddress={studioAddress}
         studioSlug={slug}
+        clientPortalEnabled={clientPortalEnabled}
       />
     );
   }
@@ -546,6 +568,38 @@ export function PublicBookForm({
       <p className="text-sm text-neutral-700">
         {UNAVAILABLE_PUBLIC_BOOKING_MESSAGE}
       </p>
+    );
+  }
+
+  // HON-47. The existing-client surface IS the portal sign-in. With client
+  // portal access off it says how returning clients book instead.
+  if (surface === "existing_portal" && !clientPortalEnabled) {
+    return (
+      <div className="flex flex-col gap-6">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="text-[13px]" style={{ color: "#6B6B6B" }}>
+            Booking as an{" "}
+            <strong className="font-medium text-[#0A0A0A]">
+              existing client
+            </strong>
+            .
+          </p>
+          <button
+            type="button"
+            onClick={() => setClientType(null)}
+            className="text-[13px] underline"
+            style={{ color: "#6B6B6B" }}
+          >
+            Change
+          </button>
+        </div>
+        <p
+          className="text-[15px] leading-relaxed text-[#0A0A0A]"
+          data-testid="returning-client-booking-disabled"
+        >
+          {clientOnlineBookingDisabledMessage(studioName)}
+        </p>
+      </div>
     );
   }
 
@@ -773,6 +827,25 @@ export function PublicBookForm({
         </span>
         {loadingSlots ? (
           <p className="text-sm text-[#6B6B6B]">Loading slots…</p>
+        ) : slotsFailed ? (
+          <div className="flex flex-col gap-3" role="alert" data-testid="slots-load-failed">
+            <p className="text-sm text-[#6B6B6B]">
+              {`Times for ${formatLocalDate(date)} could not be loaded. This is not the same as no availability.`}
+            </p>
+            <button
+              type="button"
+              onClick={() => setSlotsRetry((n) => n + 1)}
+              className="self-start px-3 py-1.5 text-xs font-medium uppercase"
+              style={{
+                border: "1px solid #0A0A0A",
+                backgroundColor: "transparent",
+                color: "#0A0A0A",
+                letterSpacing: "0.1em",
+              }}
+            >
+              Try again
+            </button>
+          </div>
         ) : slots.length === 0 ? (
           <div className="flex flex-col gap-3">
             <p className="text-sm text-[#6B6B6B]">
@@ -1211,11 +1284,13 @@ function ConfirmationView({
   studioName,
   studioAddress,
   studioSlug,
+  clientPortalEnabled,
 }: {
   confirmation: Confirmation;
   studioName: string;
   studioAddress: string | null;
   studioSlug: string;
+  clientPortalEnabled: boolean;
 }) {
   const formattedDate = formatLocalDate(confirmation.dateLocal);
   const serviceName = confirmation.service?.name ?? null;
@@ -1228,6 +1303,10 @@ function ConfirmationView({
   const copy = buildBookingConfirmationCopy({
     emailStatus: confirmation.emailStatus,
     email: confirmation.email,
+    selfService: {
+      ...confirmation.selfService,
+      manageLink: confirmation.manageUrl !== null,
+    },
   });
   return (
     <div className="flex flex-col gap-8">
@@ -1299,6 +1378,7 @@ function ConfirmationView({
           it carries the raw token this request minted, of which only the
           SHA-256 was ever stored. /manage surfaces reschedule and cancel
           behind the studio's policies, so one link covers every action. */}
+      {confirmation.manageUrl ? (
       <div className="flex flex-col gap-3">
         <a
           href={confirmation.manageUrl}
@@ -1320,6 +1400,14 @@ function ConfirmationView({
           </p>
         )}
       </div>
+      ) : (
+        // HON-47. The studio offers no online self-service, so the card says
+        // how a change is made instead of offering a link that would refuse.
+        <p className="text-[15px] leading-relaxed text-[#0A0A0A]">
+          To change or cancel this appointment, please contact {studioName}{" "}
+          directly.
+        </p>
+      )}
 
       {/* SECONDARY, durable fallback. Existing route, unchanged: the portal
           login page reads ?studio=<slug> to scope the sign-in to THIS studio
@@ -1327,6 +1415,7 @@ function ConfirmationView({
           management token per upcoming appointment. Deliberately quiet and
           deliberately not required: the in-band link above is primary, and
           nothing here asks the client to sign in to manage this booking. */}
+      {clientPortalEnabled && (
       <div className="flex flex-col gap-2">
         <a
           href={`/portal/login?studio=${encodeURIComponent(studioSlug)}`}
@@ -1340,6 +1429,7 @@ function ConfirmationView({
           there.
         </p>
       </div>
+      )}
 
       {/* Subtle payment reassurance. Phase 1 booking does not collect
           cards; making this explicit prevents the "did I miss a step?"

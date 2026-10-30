@@ -6,7 +6,7 @@
 //
 // The session payment v1 model lives in docs/16 §12 + docs/02
 // payment domain section:
-//   * Practitioner-confirmed amount in CAD
+//   * Practitioner-confirmed amount in the studio's verified currency (cad or usd, 0214)
 //   * Charge AFTER the session is completed
 //   * Off-session against the saved card
 //   * Test mode only in this PR (no Stripe call; row only)
@@ -16,9 +16,9 @@
 // status='ready', stripe_livemode=false. No PaymentIntent is
 // created here; that is a future PR.
 
-import type { StudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction";
+import type { PaymentCurrency, StudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction";
 
-// Same $2,000 CAD ceiling enforced by the
+// Same $2,000 ceiling (either currency) enforced by the
 // payment_charge_attempts.amount_cents CHECK
 // (amount_cents > 0 and amount_cents <= 200000). The application
 // layer also enforces the ceiling so the practitioner sees a
@@ -96,6 +96,10 @@ export type SessionPaymentExistingAttemptSummary = {
   id: string;
   status: string;
   amountCents: number;
+  // The PERSISTED attempt currency (payment_charge_attempts.currency), parsed to
+  // cad|usd. null = the stored value was not one of the two allowed currencies:
+  // the card refuses to run or refund it rather than guess.
+  currency: PaymentCurrency | null;
   createdAt: string;
   stripePaymentIntentId: string | null;
   stripeChargeId: string | null;

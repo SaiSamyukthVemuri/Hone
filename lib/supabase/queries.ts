@@ -2,6 +2,7 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "./server";
 import { readSelectedStudioId } from "./selected-studio";
+import { IdentityRefusalError } from "@/lib/supabase/identity-refusal";
 import { authorLabel } from "@/lib/attribution";
 import type { BlockArea } from "@/lib/sessions/block-areas";
 import type {
@@ -22,6 +23,12 @@ import type {
   SessionBlockArea,
   Studio,
 } from "@/lib/types/database";
+import { dbErrorCode } from "@/lib/logging/error-class";
+
+export {
+  IdentityRefusalError,
+  type IdentityRefusalKind,
+} from "@/lib/supabase/identity-refusal";
 
 export type PractitionerWithStudio = {
   practitioner: Practitioner;
@@ -73,7 +80,7 @@ async function loadActiveMembershipRows(
     .eq("user_id", userId)
     .eq("active", true);
   if (error) {
-    throw new Error(`Failed to load practitioner: ${error.message}`);
+    throw new Error(`Failed to load practitioner: ${dbErrorCode(error)}`);
   }
   return (data ?? []) as Array<Practitioner & { studio: Studio }>;
 }
@@ -217,14 +224,18 @@ export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWi
     selectedStudioId,
   );
   if (membership.kind === "none") {
-    throw new Error("No active practitioner found for the signed-in user.");
+    throw new IdentityRefusalError(
+      "no-active-practitioner",
+      "No active practitioner found for the signed-in user.",
+    );
   }
   if (membership.kind === "choose") {
     // Controlled (not raw-DB) error, and never an auto-picked studio. Only a
     // server action reaches this branch: a server-rendered module never calls
     // this function, so its multi-membership user is redirected to the chooser
     // instead.
-    throw new Error(
+    throw new IdentityRefusalError(
+      "studio-choice-required",
       `Multiple active studio memberships (${membership.options.length}) with no valid studio selection; choose a studio first.`,
     );
   }
@@ -288,7 +299,7 @@ export async function getPractitionersForStudio(
     .eq("studio_id", studioId)
     .eq("active", true)
     .order("display_name", { ascending: true });
-  if (error) throw new Error(`Failed to load practitioners: ${error.message}`);
+  if (error) throw new Error(`Failed to load practitioners: ${dbErrorCode(error)}`);
   return (data ?? []) as Practitioner[];
 }
 
@@ -438,7 +449,7 @@ async function getStudioRosters(studioId: string): Promise<{
     .select("*")
     .eq("studio_id", studioId)
     .order("display_name", { ascending: true });
-  if (error) throw new Error(`Failed to load practitioners: ${error.message}`);
+  if (error) throw new Error(`Failed to load practitioners: ${dbErrorCode(error)}`);
   const rows = (data ?? []) as Practitioner[];
   return {
     practitioners: rows.filter((p) => p.active === true),
@@ -473,7 +484,7 @@ export async function getClientById(
     .eq("id", clientId)
     .maybeSingle();
 
-  if (clientErr) throw new Error(`Failed to load client: ${clientErr.message}`);
+  if (clientErr) throw new Error(`Failed to load client: ${dbErrorCode(clientErr)}`);
   if (!client) return null;
 
   const [pricingRes, sessionsRes, { practitioners, attributionRoster }] = await Promise.all([
@@ -494,9 +505,9 @@ export async function getClientById(
   ]);
 
   if (pricingRes.error)
-    throw new Error(`Failed to load pricing: ${pricingRes.error.message}`);
+    throw new Error(`Failed to load pricing: ${dbErrorCode(pricingRes.error)}`);
   if (sessionsRes.error)
-    throw new Error(`Failed to load sessions: ${sessionsRes.error.message}`);
+    throw new Error(`Failed to load sessions: ${dbErrorCode(sessionsRes.error)}`);
 
   return {
     client: client as Client,
@@ -569,7 +580,7 @@ export async function getPastConfirmedAppointmentsForClient(
     .limit(50);
   if (error) {
     throw new Error(
-      `Failed to load past appointments: ${error.message}`,
+      `Failed to load past appointments: ${dbErrorCode(error)}`,
     );
   }
   const rows = (data ?? []) as Appointment[];
@@ -672,7 +683,7 @@ export async function getAppointmentsForClientProfile(
     .limit(CLIENT_APPOINTMENT_TIMELINE_LIMIT);
   if (apptErr) {
     throw new Error(
-      `Failed to load client appointments: ${apptErr.message}`,
+      `Failed to load client appointments: ${dbErrorCode(apptErr)}`,
     );
   }
   const appts = (rawAppts ?? []) as Array<{
@@ -709,7 +720,7 @@ export async function getAppointmentsForClientProfile(
     .order("started_at", { ascending: false });
   if (sessErr) {
     throw new Error(
-      `Failed to load linked sessions: ${sessErr.message}`,
+      `Failed to load linked sessions: ${dbErrorCode(sessErr)}`,
     );
   }
   const sessions = (rawSessions ?? []) as Array<{
@@ -766,7 +777,7 @@ export async function getSessionForClient(
     .is("deleted_at", null)
     .maybeSingle();
 
-  if (error) throw new Error(`Failed to load session: ${error.message}`);
+  if (error) throw new Error(`Failed to load session: ${dbErrorCode(error)}`);
   return data ? stripDeletedEntries(data as SessionWithEntries) : null;
 }
 
@@ -790,7 +801,7 @@ export async function getRecentEntryForClient(
     .order("started_at", { ascending: false })
     .limit(10);
 
-  if (sessErr) throw new Error(`Failed to load recent session: ${sessErr.message}`);
+  if (sessErr) throw new Error(`Failed to load recent session: ${dbErrorCode(sessErr)}`);
 
   for (const row of sessionRows ?? []) {
     // Migration 0114: never suggest defaults from a voided pass.
@@ -827,7 +838,7 @@ export async function getLaserTreatmentCountsForClient(
     .is("deleted_at", null);
 
   if (error)
-    throw new Error(`Failed to load laser treatment counts: ${error.message}`);
+    throw new Error(`Failed to load laser treatment counts: ${dbErrorCode(error)}`);
 
   const counts: Record<string, number> = {};
   for (const row of data ?? []) {
@@ -865,7 +876,7 @@ export async function getPriorLaserSessionCount(
     .is("deleted_at", null)
     .lt("started_at", beforeIso);
   if (error) {
-    throw new Error(`Failed to count prior laser sessions: ${error.message}`);
+    throw new Error(`Failed to count prior laser sessions: ${dbErrorCode(error)}`);
   }
   return count ?? 0;
 }
@@ -879,7 +890,7 @@ export async function getSessionAudit(
     .select("*")
     .eq("session_id", sessionId)
     .order("edited_at", { ascending: true });
-  if (error) throw new Error(`Failed to load session audit: ${error.message}`);
+  if (error) throw new Error(`Failed to load session audit: ${dbErrorCode(error)}`);
   return (data ?? []) as import("@/lib/types/database").SessionAudit[];
 }
 
@@ -892,7 +903,7 @@ export async function getActiveProbeLots(studioId: string): Promise<ProbeLot[]> 
     .eq("active", true)
     .order("probe_size", { ascending: true });
 
-  if (error) throw new Error(`Failed to load probe lots: ${error.message}`);
+  if (error) throw new Error(`Failed to load probe lots: ${dbErrorCode(error)}`);
   return (data ?? []) as ProbeLot[];
 }
 
@@ -915,7 +926,7 @@ export async function getTodayRosterForStudio(studioId: string): Promise<
     .lte("started_at", end.toISOString())
     .order("started_at", { ascending: true });
 
-  if (error) throw new Error(`Failed to load today's roster: ${error.message}`);
+  if (error) throw new Error(`Failed to load today's roster: ${dbErrorCode(error)}`);
 
   const grouped = new Map<string, { client: Client; sessions: Session[] }>();
   for (const row of data ?? []) {
@@ -963,7 +974,7 @@ export async function getSessionBlocks(
     .eq("session_id", sessionId)
     .is("deleted_at", null)
     .order("sort_order", { ascending: true });
-  if (error) throw new Error(`Failed to load session blocks: ${error.message}`);
+  if (error) throw new Error(`Failed to load session blocks: ${dbErrorCode(error)}`);
   return (data ?? []) as SessionBlock[];
 }
 
@@ -977,7 +988,7 @@ export async function getSessionBlockById(
     .eq("id", blockId)
     .is("deleted_at", null)
     .maybeSingle();
-  if (error) throw new Error(`Failed to load block: ${error.message}`);
+  if (error) throw new Error(`Failed to load block: ${dbErrorCode(error)}`);
   return (data ?? null) as SessionBlock | null;
 }
 
@@ -1075,7 +1086,7 @@ export async function getSessionBlockAreasByBlockIds(
         .order("display_order", { ascending: true })
         .order("created_at", { ascending: true })
         .limit(SESSION_BLOCK_AREA_ROW_LIMIT);
-      if (error) throw new Error(`Failed to load block areas: ${error.message}`);
+      if (error) throw new Error(`Failed to load block areas: ${dbErrorCode(error)}`);
       const rows = (data ?? []) as SessionBlockArea[];
       if (rows.length >= SESSION_BLOCK_AREA_ROW_LIMIT) {
         // Complete-result semantics: a response at the ceiling may have been
@@ -1148,11 +1159,11 @@ export async function getSessionWithBlocks(
   ]);
 
   if (sessionRes.error)
-    throw new Error(`Failed to load session: ${sessionRes.error.message}`);
+    throw new Error(`Failed to load session: ${dbErrorCode(sessionRes.error)}`);
   if (blocksRes.error)
-    throw new Error(`Failed to load blocks: ${blocksRes.error.message}`);
+    throw new Error(`Failed to load blocks: ${dbErrorCode(blocksRes.error)}`);
   if (entriesRes.error)
-    throw new Error(`Failed to load entries: ${entriesRes.error.message}`);
+    throw new Error(`Failed to load entries: ${dbErrorCode(entriesRes.error)}`);
   if (!sessionRes.data) return null;
 
   const session = sessionRes.data as Session;
@@ -1170,7 +1181,7 @@ export async function getSessionWithBlocks(
       .order("display_order", { ascending: true })
       .order("created_at", { ascending: true });
     if (areasRes.error)
-      throw new Error(`Failed to load block areas: ${areasRes.error.message}`);
+      throw new Error(`Failed to load block areas: ${dbErrorCode(areasRes.error)}`);
     for (const a of (areasRes.data ?? []) as SessionBlockArea[]) {
       const bucket = areasByBlock.get(a.session_block_id) ?? [];
       bucket.push(a);

@@ -4,6 +4,9 @@ import {
   getIntakeTokenForClient,
   getClientIdByEmail,
   getAppointmentsForClient,
+  getOwnerPractitionerId,
+  getStudioTimezone,
+  seedFutureAppointmentAt,
   type E2eSeed,
 } from "./helpers/seed";
 import { bookAppointment, loginAsOwner } from "./helpers/flows";
@@ -181,9 +184,17 @@ test("core memory loop: booking to next-appointment memory", async ({
   });
 
   await test.step("book a second appointment for the same client", async () => {
-    const bookingPage = await browser.newPage();
-    await bookAppointment(bookingPage, seed);
-    await bookingPage.close();
+    // SEC-004: a public booking never attaches to an existing client by email
+    // (knowing the address is not proof of owning it), so the returning client's
+    // second visit is created the way staff would: a confirmed appointment on the
+    // same client, later today in the studio's timezone.
+    await seedFutureAppointmentAt(
+      seed.studioId,
+      await getOwnerPractitionerId(seed.studioId),
+      clientId,
+      await getStudioTimezone(seed.studioId),
+      "23:00",
+    );
     const appointments = await getAppointmentsForClient(seed.studioId, clientId);
     expect(appointments.length).toBeGreaterThanOrEqual(2);
   });

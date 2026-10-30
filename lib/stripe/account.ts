@@ -11,6 +11,7 @@ import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import type { PaymentCountry } from "@/lib/billing/payment-jurisdiction";
 import { getStripe, inferStripeLivemode } from "./server";
+import { dbErrorCode, stripeErrorFields, thrownErrorClass } from "@/lib/logging/error-class";
 
 function logInternalStripeError(event: string, detail: unknown) {
   try {
@@ -58,8 +59,7 @@ export async function createOrLoadConnectedAccountForStudio(
   );
   if (claimErr) {
     logInternalStripeError("create_or_claim_provisioning_failed", {
-      code: claimErr.code,
-      message: claimErr.message,
+      code: dbErrorCode(claimErr),
       studioId,
     });
     throw new Error("Could not start Stripe onboarding. Please try again.");
@@ -159,8 +159,7 @@ export async function createOrLoadConnectedAccountForStudio(
   );
   if (completeErr) {
     logInternalStripeError("complete_provisioning_failed", {
-      code: completeErr.code,
-      message: completeErr.message,
+      code: dbErrorCode(completeErr),
       studioId,
       stripeAccountId: account.id,
     });
@@ -190,7 +189,7 @@ export async function createOrLoadConnectedAccountForStudio(
     logInternalStripeError("record_account_jurisdiction_after_create_failed", {
       studioId,
       stripeAccountId: account.id,
-      message: recordErr instanceof Error ? recordErr.message : String(recordErr),
+      errorClass: thrownErrorClass(recordErr),
     });
   }
 
@@ -222,8 +221,7 @@ async function readStampedPaymentCountry(
     .maybeSingle();
   if (error) {
     logInternalStripeError("provisioning_payment_country_read_failed", {
-      code: error.code,
-      message: error.message,
+      code: dbErrorCode(error),
       attemptId: claim.attempt_id,
     });
     return null;
@@ -254,10 +252,15 @@ async function markProvisioningFailed(
       },
     );
     if (markErr) {
-      logInternalStripeError("mark_provisioning_failed_failed", { markErr });
+      logInternalStripeError("mark_provisioning_failed_failed", {
+        code: dbErrorCode(markErr),
+      });
     }
   } catch (markErr) {
-    logInternalStripeError("mark_provisioning_failed_threw", { markErr });
+    logInternalStripeError("mark_provisioning_failed_threw", {
+      errorClass: thrownErrorClass(markErr),
+      ...stripeErrorFields(markErr),
+    });
   }
 }
 
@@ -311,7 +314,7 @@ export async function recordAccountJurisdiction(
     p_default_currency: params.account.default_currency ?? null,
   });
   if (error) {
-    throw new Error(`record_stripe_account_jurisdiction failed: ${error.message}`);
+    throw new Error(`record_stripe_account_jurisdiction failed: ${dbErrorCode(error)}`);
   }
   const row = (Array.isArray(data) ? data[0] : data) as
     | { out_result?: unknown; out_matches?: unknown }
@@ -482,8 +485,7 @@ export async function refreshAccountStatusFromStripe(params: {
   // does for the two sibling throws in this function.
   if (existingSettingsErr) {
     logInternalStripeError("studio_payment_settings_preserve_read_failed", {
-      code: existingSettingsErr.code,
-      message: existingSettingsErr.message,
+      code: dbErrorCode(existingSettingsErr),
       studioId: params.studioId,
     });
     throw new Error(
@@ -506,8 +508,7 @@ export async function refreshAccountStatusFromStripe(params: {
   });
   if (syncErr) {
     logInternalStripeError("sync_studio_account_status_failed", {
-      code: syncErr.code,
-      message: syncErr.message,
+      code: dbErrorCode(syncErr),
       studioId: params.studioId,
     });
     throw new Error("Stripe status refresh succeeded but local sync failed.");
@@ -526,7 +527,7 @@ export async function refreshAccountStatusFromStripe(params: {
   } catch (recordErr) {
     logInternalStripeError("record_account_jurisdiction_after_refresh_failed", {
       studioId: params.studioId,
-      message: recordErr instanceof Error ? recordErr.message : String(recordErr),
+      errorClass: thrownErrorClass(recordErr),
     });
     throw new Error("Stripe status refresh succeeded but local sync failed.");
   }

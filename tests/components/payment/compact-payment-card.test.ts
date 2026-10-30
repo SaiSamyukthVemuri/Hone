@@ -55,7 +55,7 @@ describe("ReceiptStatus — success separate from delivery; never the full email
 describe("PaymentSummaryCard — compact, status not by colour alone", () => {
   it("shows the headline text + amount (not just a colour dot)", () => {
     expect(SUMMARY).toMatch(/summary\.headline/);
-    expect(SUMMARY).toMatch(/formatCadFromCents\(summary\.amountCents\)/);
+    expect(SUMMARY).toMatch(/formatMoney\(summary\.amountCents, summary\.currency\)/);
     expect(SUMMARY).toMatch(/aria-hidden/); // the dot is decorative
   });
 });

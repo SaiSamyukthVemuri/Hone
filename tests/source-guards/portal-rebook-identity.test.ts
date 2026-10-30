@@ -292,7 +292,9 @@ describe("identity comes from the session, never from the form", () => {
   }
 
   it("resolves the session before it reads anything submitted", () => {
-    const session = CODE.indexOf("getCurrentPortalSession");
+    // HON-47: the session is resolved through requirePortalSessionForAction,
+    // the wrapper that also refuses a studio with client portal access off.
+    const session = CODE.search(/getCurrentPortalSession|requirePortalSessionForAction/);
     const firstForm = CODE.indexOf("formData.get");
     expect(session).toBeGreaterThan(-1);
     expect(firstForm).toBeGreaterThan(-1);

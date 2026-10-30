@@ -8,6 +8,7 @@ import {
   generateCalendarFeedToken,
   hashCalendarFeedToken,
 } from "@/lib/calendar-feed/token";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 function trimmedOrThrow(
   value: FormDataEntryValue | null,
@@ -35,7 +36,7 @@ export async function updateOwnProfileAction(formData: FormData): Promise<void> 
     { p_studio_id: studio.id, p_display_name: displayName, p_color: null },
   );
   if (error) {
-    throw new Error(`Failed to save your name: ${error.message}`);
+    throw new Error(`Failed to save your name: ${dbErrorCode(error)}`);
   }
   // NULL = no ACTIVE membership in that studio. Before 0178 the owner-only RLS
   // policy made this a SILENT zero-row write for every non-owner; reporting
@@ -65,7 +66,7 @@ export async function updatePractitionerColorAction(
     { p_studio_id: studio.id, p_display_name: null, p_color: token },
   );
   if (error) {
-    throw new Error(`Failed to save your color: ${error.message}`);
+    throw new Error(`Failed to save your color: ${dbErrorCode(error)}`);
   }
   if (!updatedId) {
     throw new Error("Failed to save your color: no active membership.");

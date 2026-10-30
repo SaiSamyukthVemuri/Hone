@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ensurePractitionerNotification } from "@/lib/notifications/practitioner-notifications";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Card-on-file change notification (Chloe's ask): when a client adds or
 // replaces a card through the portal, the studio should see a practitioner-
@@ -96,7 +97,7 @@ export async function ensureCardChangeNotification(
     .maybeSingle();
   if (cardErr) {
     throw new Error(
-      `card_change_card_lookup_failed:${cardErr.code}:${cardErr.message}`,
+      `card_change_card_lookup_failed:${dbErrorCode(cardErr)}`,
     );
   }
   if (!card) {
@@ -114,7 +115,7 @@ export async function ensureCardChangeNotification(
     .eq("stripe_livemode", livemode);
   if (countErr) {
     throw new Error(
-      `card_change_history_count_failed:${countErr.code}:${countErr.message}`,
+      `card_change_history_count_failed:${dbErrorCode(countErr)}`,
     );
   }
   const isReplacement = (count ?? 0) > 1;
@@ -129,7 +130,7 @@ export async function ensureCardChangeNotification(
     .maybeSingle();
   if (clientErr) {
     throw new Error(
-      `card_change_client_lookup_failed:${clientErr.code}:${clientErr.message}`,
+      `card_change_client_lookup_failed:${dbErrorCode(clientErr)}`,
     );
   }
   const clientName =

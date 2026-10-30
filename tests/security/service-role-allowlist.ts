@@ -160,6 +160,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "lib/images/client-portrait.ts",
+    purpose: "Sign the client identification portrait (0231) for the profile header.",
+    why: "Signing a private-bucket object needs the service role (storage is service-role only since 0093). The row is first read through the RLS client scoped to the caller's studio + client + client-scope + unarchived, and its path must pass validateTreatmentImagePath before the admin client signs it with the shared 60 s TTL: the Photos tab's own trust boundary.",
+    scopeGuard: "validateTreatmentImagePath",
+  },
+  {
     path: "app/(app)/clients/[id]/images/sign-treatment-image.ts",
     purpose:
       "FETT photos (HON-43): the ONE treatment-photo URL signer, shared by getTreatmentImageSignedUrlAction (View larger) and GET /api/clients/[clientId]/images/[imageId]/signed-url (photo-cell re-mint).",

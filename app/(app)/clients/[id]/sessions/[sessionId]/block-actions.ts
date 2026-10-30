@@ -3,9 +3,26 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+// TWO STATEMENTS, AND THE FIRST ONE'S SHAPE IS PINNED. PR #286's lineage
+// guard matches `import { assertSessionForClient } from ".../session-lineage"`
+// as a single line, so folding these together — the tidier spelling — silently
+// breaks a security guard. Left split deliberately; do not merge them.
 import { assertSessionForClient } from "@/lib/sessions/session-lineage";
+import { SessionLineageError } from "@/lib/sessions/session-lineage";
 import { findProbeOptionByKey } from "@/lib/probes";
 import { normalizeChips } from "@/lib/observation-chips";
+import { INITIAL_SAVE_UNRESOLVED } from "@/lib/machines/pending-setup";
+import { isDefinitiveDatabaseAnswer } from "@/lib/machines/save-attempt";
+import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
+import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
+import { currentProfile } from "@/lib/machines/profile-contract";
+import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
+import { listStudioDevices } from "@/lib/machines/studio-devices";
+import type {
+  MachineDb,
+  ReadingSubmission,
+  SetupSubmissionGroup,
+} from "@/lib/machines/machine-queries";
 import { resolveProbeInventorySelection } from "@/lib/record-keeping/probe-inventory-validation";
 import { validateTreatmentArea } from "@/lib/sessions/area-validation";
 import {
@@ -277,7 +294,37 @@ function resolveStructuredProbe(
 
 export type BlockResult =
   | { ok: true; block: SessionBlock }
-  | { ok: false; error: string };
+  /**
+   * `unresolved` means THE SAVE MAY HAVE COMMITTED, and the caller must treat
+   * it as a held retry rather than a failure: freeze the payload, keep the
+   * key, and offer Save again unchanged.
+   *
+   * It is set when the command returned a block id and a LATER step failed -
+   * a lost answer rather than a failed save. Without it the form reported an
+   * ordinary error, dropped the key and left the fields editable, so the
+   * retry met the digest as a mismatch and the way out looked like
+   * cancel-and-recreate: a duplicate area (Codex, #860 4296709051).
+   *
+   * Optional, because only the withSetup path binds a retry key; a create
+   * without settings has no safe retry to offer.
+   */
+  | { ok: false; error: string; unresolved?: boolean };
+
+/**
+ * Does this `setup` value confirm that a settings submission exists?
+ *
+ * THE SUBMISSION ID IS THE CONFIRMATION (Codex, #860 4309128376). `groups` and
+ * `readings` are counts and may legitimately be absent from a shape this code
+ * does not recognise; the id is what says a submission row is there to point
+ * at. Anything else - null, a non-object, an object without a usable id - is a
+ * response this caller cannot confirm, and on the `withSetup` path that must
+ * be reported as unresolved rather than as a success that closes the form.
+ */
+function hasSetupReceipt(setup: unknown): boolean {
+  if (typeof setup !== "object" || setup === null) return false;
+  const id = (setup as { submission_id?: unknown }).submission_id;
+  return typeof id === "string" && id.trim().length > 0;
+}
 
 export type CreateBlockInput = {
   clientId: string;
@@ -778,6 +825,13 @@ export type RemoveSessionAreaResult =
 // ONE trusted transaction with a mandatory reason and full actor/time
 // attribution; finalized/void records are rejected by the RPC. Unlike the
 // block-only softDeleteSessionBlockAction above, this does NOT orphan children.
+const AREA_REMOVE_OWN_MESSAGES: ReadonlyArray<string> = [
+  "Treatment area not found or not editable",
+  "Caller is not an active practitioner in this studio",
+  "Finalized records cannot be edited",
+  "A reason of at least 10 characters is required",
+];
+
 export async function removeSessionAreaAction(
   input: SoftDeleteBlockInput,
 ): Promise<RemoveSessionAreaResult> {
@@ -803,11 +857,14 @@ export async function removeSessionAreaAction(
     p_reason: reason,
   });
   if (error) {
-    // A plpgsql check_violation (23514) carries a safe, human message.
-    const business = error.code === "23514";
+    // soft_delete_session_area (0123) raises these four sentences itself with
+    // errcode check_violation (23514). A table CHECK failure shares that code but
+    // carries the database's own text, so only an EXACT match of the function's
+    // own sentences is shown; anything else is the generic message.
+    const own = error.code === "23514" ? AREA_REMOVE_OWN_MESSAGES.find((m) => m === error.message) : undefined;
     return {
       ok: false,
-      error: business ? error.message : "Couldn't remove the area right now. Please try again.",
+      error: own ?? "Couldn't remove the area right now. Please try again.",
     };
   }
   const row = Array.isArray(data) ? data[0] : data;
@@ -1063,14 +1120,101 @@ export type CreateAreaWithEntryInput = {
 // `create_block_with_entry` (migration 0166) now owns the block, its area rows
 // and the first entry in ONE transaction, so the application-side compensating
 // soft delete that used to follow a failed entry write is gone with it.
+/**
+ * The machine settings recorded WITH the treatment area, when there are any.
+ *
+ * OPTIONAL, AND THE OPTIONALITY IS THE POINT. An area saved with no machine
+ * settings is an ordinary state - she sets the area up and charts later - so
+ * this must never be required. When it IS present, the area and the settings
+ * are written by ONE command in ONE transaction: either both exist or neither
+ * does.
+ */
+export type InitialSetupInput = {
+  machineId: string;
+  modeKey: string;
+  /**
+   * The retry key for this save, minted ONCE by
+   * `lib/machines/pending-setup.ts` and reused by every retry of it. That is
+   * what makes a retry safe after a lost response: the database recognises
+   * the repeat and returns the original submission.
+   */
+  idempotencyKey: string;
+  /**
+   * The groups, carrying only what a CALLER may assert.
+   *
+   * NO `nativeUnit` AND NO `decimals`, and the omission is the point: those
+   * are properties of the MACHINE, derived on the server from the published
+   * contract. An earlier shape of this type required them, which would have
+   * let a crafted request persist a permanent row claiming the wrong unit -
+   * the defect `ReadingSubmission` was narrowed for (Codex, 9c6fbbe5). The
+   * TYPE CHECKER caught it here, which is the only reason it is not in this
+   * commit.
+   */
+  groups: Array<{
+    /**
+     * EXACTLY ONE OF THE TWO IS SET (Codex, #860 4305780322). `groupKey`
+     * revises the group it names; `newGroupRef` is the caller's own local
+     * placeholder for a group the DATABASE will name. A caller cannot choose
+     * a new identity, because two callers choosing independently is how two
+     * probe sets came to merge into one timeline.
+     */
+    groupKey: string | null;
+    newGroupRef: string | null;
+    channels: number[];
+    readings: ReadingSubmission[];
+  }>;
+};
+
 export async function createTreatmentAreaWithEntryAction(
-  input: CreateAreaWithEntryInput,
-): Promise<BlockResult> {
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  input: CreateAreaWithEntryInput & { initialSetup?: InitialSetupInput | null },
+): Promise<BlockResult & { setup?: unknown }> {
+  // AN IDENTITY REFUSAL IS A REFUSAL TOO (Codex, #860 4308620484). This call
+  // THROWS on a removed membership or an invalid studio selection, before any
+  // RPC, and the throw escaped the action — so the form's catch called it
+  // `unresolved`, froze everything and kept a key whose every retry meets the
+  // same pre-write refusal. `resolveWritingIdentity` converts exactly that one
+  // error TYPE and re-throws everything else, so redirect signals still work.
+  const who = await resolveWritingIdentity();
+  if (!who.ok) {
+    return { ok: false, error: who.error, unresolved: false };
+  }
+  const { practitioner, studio } = who.value;
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot log sessions." };
   }
-  await assertSessionForClient(studio.id, input.clientId, input.sessionId);
+  // A pre-write refusal is a refusal, not an unknown outcome (Codex, #860
+  // 4305702526). Full reasoning below the catch — it is kept there so this
+  // assertion stays inside the 1400-character window PR #286's lineage guard
+  // slices from the start of each action.
+  try {
+    await assertSessionForClient(studio.id, input.clientId, input.sessionId);
+  } catch (cause) {
+    if (cause instanceof SessionLineageError) {
+      return {
+        ok: false,
+        error:
+          "This treatment could not be confirmed as this client's. Reload " +
+          "the chart before saving again - nothing was recorded.",
+      };
+    }
+    throw cause;
+  }
+  // WHY THAT CATCH EXISTS (Codex, #860 4305702526). `assertSessionForClient`
+  // THROWS, and the create form's catch labels anything thrown as unresolved
+  // whenever settings are attached - so a stale session froze the draft, the
+  // machine controls and Cancel, and every retry repeated the same error.
+  // Nothing had been written, so there was nothing ambiguous to protect and
+  // she had no way out.
+  //
+  // Converted HERE rather than in the form, because only this side knows the
+  // RPC was never reached. Same fix as the setup action's (4304930968), which
+  // is the other half of this pair.
+  //
+  // ONLY `SessionLineageError` IS CONVERTED; anything else is rethrown.
+  // `getCurrentPractitionerWithStudio` above calls Next's `redirect()` for an
+  // anonymous session, and a redirect PROPAGATES BY THROWING - swallowing it
+  // to report a "definitive failure" would leave her on a dead form instead of
+  // the login page.
 
   const areaCheck = normalizeStructuredArea({
     primaryArea: input.primaryArea ?? null,
@@ -1179,9 +1323,12 @@ export async function createTreatmentAreaWithEntryAction(
     (input.mode ?? null) as SessionMode | null,
     readings,
   );
-  const { data: createdRows, error: cmdErr } = await supabase.rpc(
-    "create_block_with_entry",
-    {
+  // THE BLOCK ARGUMENTS ARE BUILT ONCE, whichever command runs.
+  //
+  // Two call sites with their own copies of twenty-six arguments is how the
+  // settings path and the no-settings path would silently come to create
+  // DIFFERENT blocks. One object, two destinations.
+  const blockArgs = {
       p_session_id: input.sessionId,
       p_client_id: input.clientId,
       p_block: blockFields,
@@ -1225,14 +1372,206 @@ export async function createTreatmentAreaWithEntryAction(
       p_thermolysis_intensity_percent: readingCols.thermolysis_intensity_percent,
       p_thermolysis_duration_seconds: readingCols.thermolysis_duration_seconds,
       p_units_of_lye: readingCols.units_of_lye,
-    },
-  );
-  if (cmdErr) return { ok: false, error: mapBlockCommandError(cmdErr) };
+  } as const;
 
-  const createdBlockId = Array.isArray(createdRows)
-    ? (createdRows[0] as { block_id?: string } | undefined)?.block_id
-    : (createdRows as { block_id?: string } | null)?.block_id;
-  if (!createdBlockId) return { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+  // WHICH COMMAND, AND WHY IT IS A BRANCH RATHER THAN ALWAYS THE NEW ONE.
+  //
+  // `create_block_with_initial_setup` (0223) writes the area AND the settings
+  // in one transaction, which closes the window where the area commits and
+  // the settings do not - an area that silently has no machine settings while
+  // the practitioner believes she entered them.
+  //
+  // It is PENDING and UNEXECUTED. Routing every treatment-area creation
+  // through it would put the whole charting flow behind SQL no database has
+  // run; a twenty-six parameter forwarding wrapper is exactly the class where
+  // one wrong parameter name fails only at runtime. So the proven path stays
+  // the default and the new command is taken ONLY when there are settings to
+  // record with the area - which is the case it exists for, and the case that
+  // did not work at all before.
+  //
+  // A KEY ALONE IS NOT ENOUGH TO COME HERE, and a `withClaim` arm that let it
+  // was removed before it ever ran (ops01's ruling on #922 4307515255). It
+  // existed to let a resumed SETTINGS-FREE save carry its retry key, which
+  // 0223 permits - but such a save creates an area with NO settings whenever
+  // the original never committed, silently discarding what she entered. The
+  // form therefore holds a settings-free resume and asks her to re-enter,
+  // and nothing reaches here without settings.
+  const withSetup =
+    input.initialSetup != null && input.initialSetup.groups.length > 0;
+
+  // EVERY READING IS VALIDATED BEFORE ANY OF IT IS SENT, through the SAME
+  // validator the other two recording paths use.
+  //
+  // This path had none at all until the type checker exposed the input shape,
+  // and the database would not have covered it: the command validates against
+  // the UNIT'S OWN registered contract version, so a reading derived under a
+  // newer catalogue version is recorded under the older one and permanently
+  // mislabelled - `stale_profile_version` is the check that catches it and it
+  // can only run here. Also malformed values (a negative current has no
+  // database constraint), unknown fields, channel bounds and the mode's
+  // installed-option requirement.
+  const setupGroups: SetupSubmissionGroup[] = [];
+  if (withSetup) {
+    const setup = input.initialSetup!;
+    // THE SAME AUTHENTICATED CLIENT this action already holds, narrowed to
+    // the two capabilities the machine queries use rather than passed whole.
+    // One cast, at the seam, exactly as machine-setup-actions does it.
+    const db = supabase as unknown as MachineDb;
+    const inventory = await listStudioDevices(db, studio.id);
+    const device = inventory.devices.find((d) => d.deviceId === setup.machineId);
+    if (!device) {
+      return {
+        ok: false,
+        error: "That machine is not registered to this studio.",
+      };
+    }
+    // THE CURRENT VERSION (Codex, #860 4308488012), and here it decides
+    // whether a CLINICAL VALUE is accepted: `validateSubmittedReadings` below
+    // checks each reading against this profile's field contract, so a
+    // first-match v1 validates her readings by the wrong version's rules -
+    // refusing a legal value, or admitting one the current contract bounds.
+    const profile = currentProfile(catalogueForRuntime(), device.profileId);
+    if (!profile) {
+      return { ok: false, error: "That machine does not offer that mode." };
+    }
+    for (const g of setup.groups) {
+      const checked = validateSubmittedReadings(
+        device,
+        profile,
+        setup.modeKey,
+        g.readings,
+        g.channels,
+      );
+      if ("error" in checked) return { ok: false, error: checked.error };
+      setupGroups.push({
+        // PASSED THROUGH, NOT RE-DERIVED. Which kind of group this is was
+        // decided by the form that built the draft; this action validates
+        // readings and must not reinterpret identity.
+        groupKey: g.groupKey,
+        newGroupRef: g.newGroupRef,
+        channels: g.channels,
+        readings: checked.rows,
+      });
+    }
+  }
+
+  const { data: createdRows, error: cmdErr } = withSetup
+    ? await supabase.rpc("create_block_with_initial_setup", {
+        ...blockArgs,
+        p_studio_machine_id: input.initialSetup!.machineId,
+        p_setup_mode_key: input.initialSetup!.modeKey,
+        p_setup_idempotency_key: input.initialSetup!.idempotencyKey,
+        // THE DERIVED ROWS, never the caller's: unit and precision come from
+        // the contract the validator resolved.
+        p_setup_groups: setupGroups.map((g) => ({
+          // SPREAD, NOT BOTH KEYS WITH A NULL (Codex, #860 4307426212).
+          //
+          // THE DEFECT THIS FIXES was the whole create journey: on this path
+          // EVERY group is new - the block does not exist yet - so
+          // `assembleGroupSubmissions` sets `groupKey: null` and a non-null
+          // `newGroupRef`. Emitting `group_key: g.groupKey` sent
+          // `{"group_key": null}`, and a JSON null is PRESENT to the `?`
+          // operator: the command's exactly-one check passed, then the group
+          // fell through to "A settings group must be named." because
+          // `->>'group_key'` on a JSON null is SQL NULL. The command refused
+          // and the atomic create rolled the area back with it.
+          //
+          // SAME SHAPE AS `recordSetupSubmission`, deliberately. I had written
+          // this exact warning there and then left this call site - the one
+          // where every group is necessarily new - emitting the wrong form.
+          ...(g.groupKey === null
+            ? { new_group_ref: g.newGroupRef }
+            : { group_key: g.groupKey }),
+          channels: g.channels,
+          readings: g.readings.map((r) => ({
+            stage_key: r.stageKey,
+            field_key: r.fieldKey,
+            // A STRING, so a recorded zero and the machine's own precision
+            // survive JSON - identical to the other two write paths, because
+            // it is the same rule and not a new one.
+            ...(r.value.kind === "value"
+              ? { value: String(r.value.value) }
+              : r.value.kind === "text" ? { value_text: r.value.value } : { absence_reason: r.value.reason }),
+            native_unit: r.nativeUnit,
+            decimals: r.decimals,
+            observation_source: r.observationSource,
+          })),
+        })),
+      })
+    : await supabase.rpc("create_block_with_entry", blockArgs);
+  if (cmdErr) {
+    // A TRANSPORT FAILURE HERE IS A LOST ANSWER TOO (Codex, #860 4301722740).
+    //
+    // If the connection to PostgREST drops after
+    // `create_block_with_initial_setup` commits, supabase-js can return the
+    // failure in `cmdErr` rather than throw. Treating it as definitive told
+    // the form the save had FAILED, so it neither froze the payload nor kept
+    // the retry key - and the area may exist. That is the same hole the
+    // post-commit READ failure below already closes, reached one statement
+    // earlier.
+    //
+    // ONLY ON THE withSetup PATH, for the same reason as below: that command
+    // binds a retry key, so pressing Save again unchanged is answered with
+    // the original result. `create_block_with_entry` binds none, so there is
+    // no safe retry to offer.
+    if (withSetup && !isDefinitiveDatabaseAnswer(cmdErr)) {
+      return {
+        ok: false as const,
+        error: INITIAL_SAVE_UNRESOLVED,
+        unresolved: true as const,
+      };
+    }
+    return { ok: false, error: mapBlockCommandError(cmdErr) };
+  }
+
+  // THE TWO COMMANDS RETURN DIFFERENT SHAPES, and both are read rather than
+  // one being assumed: `create_block_with_entry` returns a table, so PostgREST
+  // gives an array of rows; `create_block_with_initial_setup` returns a single
+  // jsonb object carrying the settings result as well.
+  const asRow = Array.isArray(createdRows)
+    ? (createdRows[0] as { block_id?: string } | undefined)
+    : (createdRows as { block_id?: string; setup?: unknown } | null);
+  /**
+   * The outcome for a response this call cannot interpret.
+   *
+   * ONE DEFINITION FOR THREE SITES (the missing block, the failed read-back,
+   * and the missing setup receipt). They are the same event to the
+   * practitioner - the command may have committed and the answer is not
+   * trustworthy - so they must be reported identically, and a third hand-made
+   * copy of this ternary is a third place for it to drift.
+   *
+   * `withSetup` is what makes the retry safe: that command binds a retry key,
+   * so pressing Save again unchanged is answered with the original result.
+   * `create_block_with_entry` binds none, so there is no safe retry to offer
+   * and it keeps the plain failure it had.
+   */
+  const unresolvableResponse = (): BlockResult =>
+    withSetup
+      ? {
+          ok: false as const,
+          error: INITIAL_SAVE_UNRESOLVED,
+          unresolved: true as const,
+        }
+      : { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+
+  const createdBlockId = asRow?.block_id;
+  const setupResult = Array.isArray(createdRows)
+    ? undefined
+    : (createdRows as { setup?: unknown } | null)?.setup;
+  if (!createdBlockId) {
+    // THE COMMAND REPORTED NO ERROR AND NO BLOCK (Codex, #860 4305702528).
+    // It may already have committed the area and its settings: nothing in this
+    // response says otherwise, and the shape check exists precisely because a
+    // stale function or an unexpected reply is possible. Reporting a plain
+    // failure left the form editable and dismissible, so an edit or a remount
+    // discarded the held key and a later save created a DUPLICATE area.
+    //
+    // Treated exactly like the failed read-back below, and for the same
+    // reason: this is the `withSetup` path's retry key that makes pressing
+    // Save again safe, and `create_block_with_entry` binds none, so it keeps
+    // the plain failure it had.
+    return unresolvableResponse();
+  }
 
   const { data: blockRow, error: blockReadErr } = await supabase
     .from("session_blocks")
@@ -1240,7 +1579,50 @@ export async function createTreatmentAreaWithEntryAction(
     .eq("id", createdBlockId)
     .single();
   if (blockReadErr || !blockRow) {
-    return { ok: false, error: GENERIC_BLOCK_COMMAND_ERROR };
+    // THE COMMAND ALREADY COMMITTED, so this is a lost ANSWER, not a failed
+    // save - and it has to be reported as one (Codex, #860 4296709051).
+    //
+    // `createdBlockId` came back, so the area and its settings are in the
+    // database and only this read-back failed. Returning a plain {ok:false}
+    // told the form the save had FAILED, so it neither froze the payload nor
+    // kept the retry key. An edit-and-retry then meets
+    // `create_block_with_initial_setup`'s digest as a mismatch, and the way
+    // out of a mismatch looks like cancel-and-recreate: a duplicate area
+    // carrying a duplicate copy of the settings.
+    //
+    // The outcome returned here is the same one a genuinely lost response
+    // produces, which is the point - the two are indistinguishable to the
+    // practitioner and must be handled identically.
+    //
+    // ONLY ON THE withSetup PATH. That command binds a retry key, so
+    // pressing Save again unchanged is answered with the original result.
+    // `create_block_with_entry` binds none, so there is no safe retry to
+    // offer and it keeps the plain failure it had.
+    return unresolvableResponse();
+  }
+
+  // THE SETTINGS NEED THEIR RECEIPT BEFORE THIS IS A SUCCESS (Codex, #860
+  // 4309128376).
+  //
+  // Reporting `ok: true` closes the form and discards the draft, so a response
+  // carrying a block but no usable `setup` loses every entered setting
+  // SILENTLY - with nothing on screen to retry and no confirmation the
+  // submission exists.
+  //
+  // NULL IS ANOMALOUS ON THIS PATH, verified in 0223 rather than assumed: the
+  // fresh path builds the receipt only when the groups array is non-empty,
+  // which is exactly when `withSetup` is true, and the one place a null
+  // receipt is legitimate is an absorbed retry whose original recorded NO
+  // settings - which cannot be a same-digest retry of a save that carried
+  // them.
+  //
+  // UNRESOLVED, NOT FAILED, because the block id came back: the area and
+  // perhaps the settings may be committed, so unfreezing the draft and
+  // dropping the key would let a later save append a second area with a second
+  // copy of the settings. Same law as #860 4308887493 - only an authoritative
+  // answer for the same key may settle this.
+  if (withSetup && !hasSetupReceipt(setupResult)) {
+    return unresolvableResponse();
   }
   const block = blockRow as SessionBlock;
 
@@ -1250,7 +1632,10 @@ export async function createTreatmentAreaWithEntryAction(
   );
   revalidatePath(`/clients/${input.clientId}/sessions/${input.sessionId}`);
   revalidatePath(`/clients/${input.clientId}`);
-  return { ok: true, block: block as SessionBlock };
+  // `setup` is UNDEFINED on the proven path and null when the atomic command
+  // recorded nothing, which the caller must be able to tell apart from a
+  // submission result. It is passed through rather than interpreted here.
+  return { ok: true, block: block as SessionBlock, setup: setupResult };
 }
 
 export type UpdateAreaWithEntryInput = {

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { MANUAL_FEE_AMOUNT_CEILING_CENTS } from "@/lib/billing/manual-fee-types";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Server action for the owner-only Cancellation/no-show fee amount
 // settings (PR #145). Owners enter dollar amounts; the server converts
@@ -67,8 +68,7 @@ export async function updateStudioFeeAmountsAction(
     console.error(
       JSON.stringify({
         event: "update_studio_fee_amounts_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         studioId: studio.id,
         timestamp: new Date().toISOString(),
       }),

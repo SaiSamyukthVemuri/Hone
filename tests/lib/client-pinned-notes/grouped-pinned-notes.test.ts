@@ -191,7 +191,7 @@ describe("failure is never partial success", () => {
     failOnPage = 1;   // the SECOND page fails; the first already succeeded
 
     await expect(getPinnedNotesByClient(STUDIO, [A])).rejects.toThrow(
-      /Failed to load pinned notes: page read failed/,
+      /Failed to load pinned notes: unknown/,
     );
   });
 

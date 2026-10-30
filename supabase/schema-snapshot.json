@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 246,
-    "last": "0255_lint_hardening_anon_surface.sql",
-    "sha256": "6b35c5e7f4a92d44ec94a6a0bce33ab9ac262515605ad64a64bde01fd4981163"
+    "count": 248,
+    "last": "0257_studio_payment_jurisdiction_failed_attempt_ack.sql",
+    "sha256": "0705d463f4c371dfb212b68dc4862b75836c1d4c14b20d45785a23bf05f90f07"
   },
   "public": {
     "tables": [
@@ -302,6 +302,8 @@
       "handle_new_user",
       "import_legacy_waitlist_entry",
       "imported_treatment_memory_audit_row",
+      "initialize_studio_payment_jurisdiction_from_history",
+      "initialize_studio_payment_jurisdiction_from_history_v2",
       "invalidate_waitlist_invitation_proof",
       "is_studio_member",
       "is_studio_owner",
@@ -500,8 +502,10 @@
       "soft_delete_session_block",
       "start_session",
       "stripe_account_provisioning_payment_country",
+      "studio_account_acceptable_for_jurisdiction",
       "studio_capacity_enabled",
       "studio_membership_kind_lock",
+      "studio_named_stripe_accounts",
       "studio_price_write_jurisdiction_lock",
       "studio_receptionists_membership_guard",
       "studio_sms_lease_window",

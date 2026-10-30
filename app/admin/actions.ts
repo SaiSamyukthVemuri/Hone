@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAdmin } from "@/lib/admin";
 import { logAdminAction } from "@/lib/audit/admin-actions";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 export async function markDemoContactedAction(formData: FormData): Promise<void> {
   const supabase = await createClient();
@@ -41,7 +42,7 @@ export async function markDemoContactedAction(formData: FormData): Promise<void>
       action: "demo_request_contacted",
       outcome: "failed",
     });
-    throw new Error(`Failed to update demo request: ${error.message}`);
+    throw new Error(`Failed to update demo request: ${dbErrorCode(error)}`);
   }
   await logAdminAction({
     actorUserId: user.id,

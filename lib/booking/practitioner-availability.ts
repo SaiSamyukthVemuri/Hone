@@ -7,6 +7,7 @@ import {
   getStudioWideDefaultsSafe,
   getStudioWideOverridesSafe,
 } from "@/lib/booking/studio-wide-availability";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Server-side per-practitioner availability model (PR B Part 2). Everything
 // here is reached ONLY when studio.practitioner_capacity_enabled === true; the
@@ -62,7 +63,7 @@ export async function getActivePractitioners(
     .eq("active", true)
     .order("role", { ascending: true }) // 'owner' < 'practitioner'
     .order("display_name", { ascending: true });
-  if (error) throw new Error(`Failed to load practitioners: ${error.message}`);
+  if (error) throw new Error(`Failed to load practitioners: ${dbErrorCode(error)}`);
   return (data ?? []) as ScopePractitioner[];
 }
 
@@ -107,7 +108,7 @@ async function practitionerDefaults(
     .eq("practitioner_id", practitionerId)
     .order("day_of_week");
   if (error)
-    throw new Error(`Failed to load practitioner hours: ${error.message}`);
+    throw new Error(`Failed to load practitioner hours: ${dbErrorCode(error)}`);
   return (data ?? []) as StudioAvailabilityDefault[];
 }
 
@@ -136,7 +137,7 @@ async function practitionerOverrides(
     .lte("effective_date", endDate)
     .order("effective_date");
   if (error)
-    throw new Error(`Failed to load practitioner overrides: ${error.message}`);
+    throw new Error(`Failed to load practitioner overrides: ${dbErrorCode(error)}`);
   return (data ?? []) as StudioAvailabilityOverride[];
 }
 

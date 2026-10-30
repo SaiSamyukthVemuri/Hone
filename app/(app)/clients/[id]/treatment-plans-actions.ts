@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { mapSessionCommandError } from "@/lib/sessions/session-command-errors";
 import { createClient } from "@/lib/supabase/server";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type {
   TreatmentPlanStageHowOftenUnit,
@@ -216,7 +217,9 @@ export async function createTreatmentPlanAction(
     .eq("id", clientId)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (clientErr) return { ok: false, error: clientErr.message };
+  if (clientErr) {
+    return { ok: false, error: userFacingDbFailure("check the client", clientErr, "treatment_plan_client_lookup_failed") };
+  }
   if (!client) return { ok: false, error: "Client not found." };
 
   const { data: createdPlan, error } = await supabase
@@ -238,7 +241,7 @@ export async function createTreatmentPlanAction(
   if (error || !createdPlan) {
     return {
       ok: false,
-      error: `Failed to create plan: ${error?.message ?? "unknown error"}`,
+      error: userFacingDbFailure("create the plan", error, "treatment_plan_create_failed"),
     };
   }
 
@@ -275,7 +278,7 @@ export async function createTreatmentPlanAction(
       .eq("id", createdPlan.id);
     return {
       ok: false,
-      error: `Failed to set up plan stages: ${stagesErr.message}`,
+      error: userFacingDbFailure("set up the plan stages", stagesErr, "treatment_plan_stages_setup_failed"),
     };
   }
 
@@ -328,7 +331,9 @@ export async function closeTreatmentPlanAction(
     .eq("client_id", clientId)
     .eq("status", "active")
     .select("id");
-  if (error) return { ok: false, error: `Failed to close plan: ${error.message}` };
+  if (error) {
+    return { ok: false, error: userFacingDbFailure("close the plan", error, "treatment_plan_close_failed") };
+  }
   if (!data || data.length === 0) {
     // Nothing was closed. Reached only when the plan stopped being an open plan
     // of this client between the check and the write; the ordinary refusals are
@@ -475,7 +480,9 @@ async function verifyPlanForCurrentStudio(
     .eq("id", planId)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    return { ok: false, error: userFacingDbFailure("load the plan", error, "treatment_plan_lookup_failed") };
+  }
   if (!plan) return { ok: false, error: "Plan not found." };
   if (plan.client_id !== clientId) {
     return { ok: false, error: "Plan does not belong to this client." };
@@ -637,7 +644,7 @@ export async function updateTreatmentPlanNotesAction(
     .eq("id", planId)
     .eq("studio_id", check.studioId);
   if (error) {
-    return { ok: false, error: `Failed to save notes: ${error.message}` };
+    return { ok: false, error: userFacingDbFailure("save the plan notes", error, "treatment_plan_notes_save_failed") };
   }
 
   revalidatePath(`/clients/${clientId}`);
@@ -725,7 +732,7 @@ export async function createTreatmentPlanStageAction(
     notes,
   });
   if (error) {
-    return { ok: false, error: `Failed to add stage: ${error.message}` };
+    return { ok: false, error: userFacingDbFailure("add the stage", error, "treatment_plan_stage_add_failed") };
   }
 
   revalidatePath(`/clients/${clientId}`);
@@ -804,7 +811,7 @@ export async function updateTreatmentPlanStageAction(
     .eq("plan_id", planId)
     .eq("studio_id", check.studioId);
   if (error) {
-    return { ok: false, error: `Failed to update stage: ${error.message}` };
+    return { ok: false, error: userFacingDbFailure("update the stage", error, "treatment_plan_stage_update_failed") };
   }
 
   revalidatePath(`/clients/${clientId}`);
@@ -830,7 +837,7 @@ export async function deleteTreatmentPlanStageAction(
     .eq("plan_id", planId)
     .eq("studio_id", check.studioId);
   if (error) {
-    return { ok: false, error: `Failed to remove stage: ${error.message}` };
+    return { ok: false, error: userFacingDbFailure("remove the stage", error, "treatment_plan_stage_remove_failed") };
   }
 
   revalidatePath(`/clients/${clientId}`);
