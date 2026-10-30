@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 247,
-    "last": "0257_studio_payment_jurisdiction_failed_attempt_ack.sql",
-    "sha256": "91bacac918d4ac70cdcf9e0f11f9199fe86162d01766231a9ecf9593f5ab0c85"
+    "count": 248,
+    "last": "0271_schedule_change_signal.sql",
+    "sha256": "d0917cbe92cb9387a81562a94e15fca2ab0d8db0c8f932e4c9dccc5955bcb81a"
   },
   "public": {
     "tables": [
@@ -256,6 +256,7 @@
       "email_outbound_messages_server_timestamps",
       "email_provider_events_identity_guard",
       "email_provider_events_server_defaults",
+      "emit_schedule_signal",
       "enforce_appointment_buffer",
       "enforce_appointment_transition",
       "enforce_intake_terminal_immutability",
@@ -455,6 +456,7 @@
       "save_client_card_on_file",
       "save_client_card_on_file_ordered",
       "save_weekly_availability",
+      "schedule_signal_send",
       "service_is_bookable_by_new_client",
       "session_actor_practitioner",
       "session_block_areas_derive_studio",

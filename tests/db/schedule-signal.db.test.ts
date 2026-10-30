@@ -473,6 +473,21 @@ describe("forged publishing through realtime.send and the hosted-shaped grants",
     expect(pol.rows).toEqual([{ polname: "schedule_signal_member_read", polcmd: "r", roles: "authenticated" }]);
   });
 
+  it("the policy was created by the migration role through supautils policy_grants, with no ownership change (real surface)", async () => {
+    if (!real()) return;
+    const g = await adminQuery(`select current_setting('supautils.policy_grants', true) as v`);
+    const v = (g.rows[0] as { v: string | null }).v;
+    // Present locally and the supported mechanism; hosted value is confirmed separately by the owner.
+    expect(v ?? "").toContain("realtime.messages");
+    const who = await adminQuery(`select current_user as u, (select relowner::regrole::text from pg_class where oid='realtime.messages'::regclass) as owner`);
+    expect((who.rows[0] as { u: string }).u).toBe("postgres");
+    // Replaying the migration as that role leaves the table's owner exactly as it was.
+    const before = (who.rows[0] as { owner: string }).owner;
+    await adminQuery(MIGRATION);
+    const after = await adminQuery(`select relowner::regrole::text as owner from pg_class where oid='realtime.messages'::regclass`);
+    expect((after.rows[0] as { owner: string }).owner).toBe(before);
+  });
+
   it("the emitter's own path: postgres (the migration role that owns the emitter) can insert through realtime.send", async () => {
     if (!real()) return;
     const r = await adminQuery(

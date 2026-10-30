@@ -105,4 +105,16 @@ describe("0271: who may listen", () => {
     expect(code).not.toMatch(/for (?:insert|update|delete|all)\b/);
     expect(code).not.toMatch(/to (?:anon|public|service_role)/);
   });
+
+  it("touches realtime only through ONE plain create policy: no owner change, no grant, no role switch, no non-SELECT policy", () => {
+    // The policy is created by the migration role through Supabase's supported path for
+    // realtime.messages (supautils policy_grants), not by taking ownership of the table.
+    expect(code.match(/create policy/gi) ?? []).toHaveLength(1);
+    expect(code).toMatch(/create policy schedule_signal_member_read\s+on realtime\.messages\s+for select\s+to authenticated/);
+    expect(code).not.toMatch(/alter\s+(?:table|function|schema)\s+realtime\b/i);
+    expect(code).not.toMatch(/\bowner\s+to\b/i);
+    expect(code).not.toMatch(/\bgrant\b[^;]*realtime/i);
+    expect(code).not.toMatch(/\bset\s+(?:local\s+|session\s+)?role\b|\bset\s+session\s+authorization\b/i);
+    expect(code).not.toMatch(/\balter\s+policy\b/i);
+  });
 });
