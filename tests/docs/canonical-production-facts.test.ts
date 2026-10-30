@@ -881,6 +881,48 @@ function changelogPreamble(): string {
 
 // ===========================================================================
 
+/** Versions any hosted_out_of_order entry lists as unhosted_below. */
+function declaredUnhostedVersions(declared: unknown): Set<string> {
+  const out = new Set<string>();
+  if (!Array.isArray(declared)) return out;
+  for (const e of declared) {
+    for (const v of Array.isArray(e?.unhosted_below) ? e.unhosted_below : []) {
+      if (typeof v === "string" && /^\d{4}$/.test(v)) out.add(v);
+    }
+  }
+  return out;
+}
+
+/** Why the repo/hosted pair is not a legal shape; [] when it is. */
+function repoHostedShapeViolations(i: {
+  repo: number; hosted: number; pending: string[]; versions: string[];
+  skipped: number[]; declaredUnhosted: Set<string>;
+}): string[] {
+  const out: string[] = [];
+  if (i.hosted > i.repo) {
+    out.push("hosted is AHEAD of the repository: production holds a migration this repo does not contain, which no review can reach");
+  }
+  const below = i.pending.filter((v) => Number(v) <= i.hosted);
+  const above = i.pending.filter((v) => Number(v) > i.hosted);
+  for (const v of below) {
+    if (!i.declaredUnhosted.has(v)) out.push(`${v} is pending below the hosted head but is not declared in hosted_out_of_order`);
+  }
+  if (above.length === 0) {
+    if (i.repo !== i.hosted) out.push("PARITY expected (nothing pending above hosted) but repo max differs from hosted max");
+    return out;
+  }
+  // MIGRATION-FIRST PENDING suffix above the hosted head.
+  if (!(i.repo > i.hosted)) out.push("pending above hosted but the repo max is not above hosted");
+  const expectedSuffix = i.versions.filter((v) => Number(v) > i.hosted);
+  if (JSON.stringify(above) !== JSON.stringify(expectedSuffix)) out.push(`pending above hosted is not exactly the suffix ${expectedSuffix.join(",")}`);
+  const skipped = new Set(i.skipped);
+  const contiguous: string[] = [];
+  for (let n = i.hosted + 1; n <= i.repo; n += 1) if (!skipped.has(n)) contiguous.push(String(n).padStart(4, "0"));
+  if (JSON.stringify(above) !== JSON.stringify(contiguous)) out.push("the pending suffix has a HOLE in it: a migration between the hosted head and the repo max is missing from the repository");
+  if (above[above.length - 1] !== String(i.repo).padStart(4, "0")) out.push("the repo max is not the last pending entry");
+  return out;
+}
+
 describe("canonical production docs: no independently hardcoded CURRENT migration state", () => {
   it("current-state, capability-register and known-limitations assert no current migration max", () => {
     for (const [name, doc] of NO_CURRENT_MAX_DOCS) {
@@ -1002,44 +1044,68 @@ describe("canonical production docs: the ledger's current block agrees with the 
   });
 
   it("repo/hosted is either PARITY or MIGRATION-FIRST PENDING, never anything else", () => {
-    const repo = Number(DERIVED.repo_migration_max);
-    const hosted = Number(DERIVED.hosted_migration_max);
-    const pending: string[] = DERIVED.pending_migrations;
-
-    // NEVER a remote-only migration. Production holding something the
-    // repository does not is unreviewable and unreproducible, and it is the
-    // one shape neither mode admits.
     expect(
-      hosted,
-      "hosted is AHEAD of the repository: production holds a migration this " +
-        "repo does not contain, which no review can reach",
-    ).toBeLessThanOrEqual(repo);
+      repoHostedShapeViolations({
+        repo: Number(DERIVED.repo_migration_max),
+        hosted: Number(DERIVED.hosted_migration_max),
+        pending: DERIVED.pending_migrations,
+        versions: DERIVED.versions,
+        skipped: DERIVED.permanently_skipped.map((v: string) => Number(v)),
+        declaredUnhosted: declaredUnhostedVersions(DERIVED.hosted_out_of_order),
+      }),
+    ).toEqual([]);
+  });
 
-    if (pending.length === 0) {
-      // PARITY.
-      expect(repo).toBe(hosted);
-    } else {
-      // MIGRATION-FIRST PENDING.
-      expect(repo).toBeGreaterThan(hosted);
-      // `pending_migrations` must name the suffix EXACTLY — every version
-      // above hosted, in order, and nothing else. A pending list that is
-      // merely non-empty would let a gap or a stale entry through.
-      const expectedSuffix = DERIVED.versions.filter((v: string) => Number(v) > hosted);
-      expect(pending).toEqual(expectedSuffix);
-      // CONTIGUOUS: hosted + 1 … repo, allowing for permanently-skipped slots.
-      const skipped = new Set(DERIVED.permanently_skipped.map((v: string) => Number(v)));
-      const contiguous: string[] = [];
-      for (let n = hosted + 1; n <= repo; n += 1) {
-        if (!skipped.has(n)) contiguous.push(String(n).padStart(4, "0"));
-      }
-      expect(
-        pending,
-        "the pending suffix has a HOLE in it: a migration between the hosted " +
-          "head and the repo max is missing from the repository",
-      ).toEqual(contiguous);
-      // The repo max is itself the last pending entry.
-      expect(pending[pending.length - 1]).toBe(DERIVED.repo_migration_max);
-    }
+  // F-OOO-1 / PEER-1264 C1. The shape rule, as a pure function so its negative
+  // controls can drive it directly. Pending versions ABOVE the hosted max keep
+  // the original contract (exact contiguous suffix ending at the repo max).
+  // Pending versions AT OR BELOW the hosted max are admitted ONLY when a
+  // hosted_out_of_order entry declares them unhosted (and, being pending, they
+  // have a repo file). Anything else below hosted is not a legal shape.
+  describe("repo/hosted shape rule (pure)", () => {
+    const base = {
+      repo: 248, hosted: 248,
+      versions: ["0245", "0246", "0247", "0248"], skipped: [158],
+    };
+    const shape = (o: Partial<Parameters<typeof repoHostedShapeViolations>[0]>) =>
+      repoHostedShapeViolations({ ...base, pending: [], declaredUnhosted: new Set<string>(), ...o });
+
+    it("PARITY: nothing pending, repo == hosted", () => {
+      expect(shape({})).toEqual([]);
+    });
+    it("a DECLARED unhosted version with a repo file below hosted is admitted (repo == hosted)", () => {
+      expect(shape({ pending: ["0247"], declaredUnhosted: new Set(["0247"]) })).toEqual([]);
+    });
+    it("a declared-below version AND a contiguous suffix above hosted are admitted together", () => {
+      expect(shape({
+        repo: 250, versions: ["0246", "0247", "0248", "0249", "0250"], skipped: [],
+        pending: ["0247", "0249", "0250"], declaredUnhosted: new Set(["0247"]),
+      })).toEqual([]);
+    });
+    it("NEGATIVE CONTROL: an UNDECLARED version below hosted still fails", () => {
+      expect(shape({ pending: ["0247"] }).join(" ")).toMatch(/0247.*not declared/);
+    });
+    it("NEGATIVE CONTROL: the suffix above hosted keeps its contiguity check (a hole fails)", () => {
+      expect(shape({
+        repo: 251, versions: ["0248", "0250", "0251"], skipped: [],
+        pending: ["0250", "0251"],
+      }).join(" ")).toMatch(/HOLE/);
+    });
+    it("NEGATIVE CONTROL: hosted ahead of the repo fails", () => {
+      expect(shape({ repo: 246, hosted: 248 }).join(" ")).toMatch(/AHEAD/);
+    });
+    it("NEGATIVE CONTROL: nothing pending but repo ahead of hosted fails", () => {
+      expect(shape({ repo: 249, versions: ["0248", "0249"] }).join(" ")).toMatch(/PARITY/);
+    });
+  });
+
+  it("no UNDECLARED gap below the hosted head, and every out-of-order declaration is true", () => {
+    // The only way a number at or below the hosted max may be absent from
+    // production is a declared stage in migration-state.json
+    // (`hosted_out_of_order`). See evaluateOutOfOrder() and its negative
+    // controls in tests/scripts/migration-state-out-of-order.test.ts.
+    expect(DERIVED.undeclared_gaps, "a migration number below the hosted head is missing and undeclared").toEqual([]);
+    expect(DERIVED.invalid_out_of_order_declarations).toEqual([]);
   });
 
   it("the ledger's current block never claims parity while something is pending", () => {
@@ -1815,9 +1881,9 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
   });
 });
 
-const APPLY_HISTORY_ENTRIES = 14;
+const APPLY_HISTORY_ENTRIES = 15;
 const APPLY_HISTORY_DIGEST =
-  "d09380012a3bcec89f6bbdbb5efd4e9047f76bbe4a109474964d11c8bb92df56";
+  "1b8dce2202a73e289a0dd9a78cbfe4bbd85a6250170a6bd997a377cecc57a448";
 
 describe("canonical production docs: the apply history is append-only", () => {
   /**

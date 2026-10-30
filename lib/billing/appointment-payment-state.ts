@@ -5,6 +5,7 @@ import { resolveAuthoritativeSessionPaymentAmount } from "@/lib/billing/session-
 import { todayInTz } from "@/lib/booking/tz";
 import { getAppointmentSettlements } from "@/lib/billing/appointment-settlement";
 import type { SettlementMethod } from "@/lib/billing/settlement-types";
+import { settlementCoverage } from "@/lib/billing/settlement-coverage";
 
 // Bounded, tenant-scoped batch loader for the dashboard/calendar checkout cell:
 // given the visible appointment ids, return each appointment's coarse
@@ -41,8 +42,17 @@ export type AppointmentPaymentState =
   | "settled_cash"
   | "settled_e_transfer"
   | "settled_other"
+  // HON-45. A collected outcome whose amount is BELOW the quoted price. The
+  // badge must not say the visit is paid; display only, no Checkout, no total.
+  | "settled_cash_part"
+  | "settled_e_transfer_part"
+  | "settled_other_part"
   | "settled_waived"
   | "settled_owing"
+  // A collected method recorded with 0 against a known quote: unpaid, so it
+  // reads "Still owes", but 0187 blocks Checkout for every collected method
+  // whatever the amount, so unlike `settled_owing` it offers no Checkout.
+  | "settled_collected_none"
   // PAY-SETTLE / 0187. A refund that PROVABLY returned the whole charge.
   //
   // Split from `refunded` because the two differ in exactly one consequence:
@@ -55,6 +65,33 @@ export type AppointmentPaymentState =
   // DONE next, not about what happened, and the card fact and the refund fact
   // are unchanged either way.
   | "refunded_full";
+
+const PART_STATE_BY_METHOD: Partial<Record<SettlementMethod, AppointmentPaymentState>> = {
+  paid_cash: "settled_cash_part",
+  paid_e_transfer: "settled_e_transfer_part",
+  paid_other_external: "settled_other_part",
+};
+
+/**
+ * The display state for a live settlement: the method's state, except that a
+ * collected amount BELOW the quote is the "part" state (a collected 0 is
+ * still owed). A missing quote is
+ * never assumed short or full: it keeps the method's state.
+ */
+export function settlementDisplayState(s: {
+  method: SettlementMethod;
+  amountCents: number;
+  quotedAmountCents: number | null;
+}): AppointmentPaymentState {
+  const cover = settlementCoverage(s.method, s.amountCents, s.quotedAmountCents);
+  // A collected method recorded with 0 against a known quote brought no money
+  // in: that is still owed, not "part paid" (peer review C2). It is NOT
+  // `settled_owing`: that state offers Checkout, which appointment_has_blocking_
+  // settlement rejects for any collected method (Codex P2).
+  if (cover.kind === "part" && s.amountCents <= 0) return "settled_collected_none";
+  if (cover.kind === "part") return PART_STATE_BY_METHOD[s.method] ?? SETTLEMENT_STATE_BY_METHOD[s.method];
+  return SETTLEMENT_STATE_BY_METHOD[s.method];
+}
 
 /** The one place the DB vocabulary maps onto the display vocabulary. */
 export const SETTLEMENT_STATE_BY_METHOD: Record<
@@ -399,7 +436,7 @@ export async function getAppointmentPaymentStates(
       out.set(
         apptId,
         settlement && settlement.method !== "still_owes"
-          ? SETTLEMENT_STATE_BY_METHOD[settlement.method]
+          ? settlementDisplayState(settlement)
           : "refunded_full",
       );
       continue;
@@ -415,7 +452,7 @@ export async function getAppointmentPaymentStates(
     }
     const settlement = settlementLoad.byAppointmentId.get(apptId);
     if (settlement) {
-      out.set(apptId, SETTLEMENT_STATE_BY_METHOD[settlement.method]);
+      out.set(apptId, settlementDisplayState(settlement));
       continue;
     }
     // Stage 3: everything left depends on the current price.

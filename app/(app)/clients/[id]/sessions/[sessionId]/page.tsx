@@ -1083,6 +1083,7 @@ export default async function SessionDetailPage({
           settledMethod={liveSettlement?.method ?? null}
           settledId={liveSettlement?.id ?? null}
           settledAmountCents={liveSettlement?.amountCents ?? null}
+          settledQuotedCents={liveSettlement?.quotedAmountCents ?? null}
           settlementQuotedAmountCents={settlementQuotedAmountCents}
           // The UI's copy of the database's own rule: only a COMPLETED
           // appointment can carry a disposition (0187 answers anything else

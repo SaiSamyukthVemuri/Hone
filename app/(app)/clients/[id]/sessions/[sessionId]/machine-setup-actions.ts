@@ -12,6 +12,14 @@ import {
 } from "@/lib/machines/profile-contract";
 import { validateSubmittedReadings } from "@/lib/machines/validate-submitted-readings";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
+import {
+  restoreSelectionFromRecordedSetup,
+  type RestoredSelection,
+} from "@/lib/machines/restore-recorded-selection";
+import {
+  suggestMachineFromPriorSetup,
+  type SuggestedMachine,
+} from "@/lib/machines/prior-setup-suggestion";
 import { resolveWritingIdentity } from "@/lib/supabase/writing-identity";
 import {
   latestRecordedSetup,
@@ -176,6 +184,20 @@ export type MachineSetupContext = {
    * misleading field name on a clinical surface is worth a mechanical rename.
    */
   unitNames: Record<string, string>;
+  /**
+   * The unit this client's last recorded setup used, OFFERED when nothing is
+   * remembered for the practitioner. Never a selection: the panel shows it and
+   * she accepts it. Null whenever the rule in prior-setup-suggestion offers
+   * nothing.
+   */
+  suggestedMachine: SuggestedMachine | null;
+  /**
+   * The unit and mode the block's LAST SAVED capture used, so a reopened visit
+   * comes back as it was saved. Selection only: it is never written to the
+   * remembered default. Null when there is no block or the rule in
+   * restore-recorded-selection restores nothing.
+   */
+  restoredSelection: RestoredSelection | null;
 };
 
 const ANONYMOUS: MachineSetupContext = {
@@ -192,6 +214,8 @@ const ANONYMOUS: MachineSetupContext = {
   priorSetupUnavailable: false,
   recordedSetupUnavailable: false,
   unitNames: {},
+  suggestedMachine: null,
+  restoredSelection: null,
 };
 
 /** Everything the panel needs, derived entirely on the server. */
@@ -237,6 +261,11 @@ export async function loadMachineSetupContext(input: {
   let remembered: MachineSetupContext["remembered"] = null;
   let rememberedUnavailable: MachineSetupContext["rememberedUnavailable"] = null;
   let persistence = DATABASE_PERSISTENCE;
+  // A FAILED READ IS "COULD NOT TELL", NOT "NOTHING REMEMBERED" (Codex, #1240
+  // 4408610747). Both leave `remembered` and `rememberedUnavailable` null, so
+  // without this the next-visit suggestion below read a failure as "none" and
+  // offered the previous visit's unit beside a choice that may exist.
+  let rememberedReadFailed = false;
   try {
     if (inventoryUnavailable(inventory)) {
       // AN UNREADABLE INVENTORY IS NOT A DEREGISTRATION.
@@ -285,6 +314,7 @@ export async function loadMachineSetupContext(input: {
   } catch {
     // A failed read must not claim the choice is kept. The panel then says so.
     persistence = NO_PERSISTENCE;
+    rememberedReadFailed = true;
   }
 
   // THE SESSION ON SCREEN IS EXCLUDED, and `input.sessionId` is safe to pass
@@ -312,6 +342,24 @@ export async function loadMachineSetupContext(input: {
   // Same shape as `recordedSetupUnavailable`, deliberately: one way of
   // saying "the surface could not answer" rather than two.
   const priorSetupUnavailable = !prior.ok;
+
+  // OFFERED ONLY WHEN NOTHING IS REMEMBERED OR UNUSABLE, so it can never sit
+  // beside a stored choice or its "taken out of service" explanation. A failed
+  // prior read yields an empty list and so offers nothing; a failed
+  // remembered-machine read is "not-verified" and offers nothing either.
+  const suggestedMachine = suggestMachineFromPriorSetup({
+    scope,
+    remembered: rememberedReadFailed
+      ? "not-verified"
+      : remembered === null && rememberedUnavailable === null
+        ? "none"
+        : remembered === null
+          ? "unavailable"
+          : "selected",
+    priorDeviceIds: priorSetup.map((r) => r.deviceId),
+    devices: inventory.devices,
+    catalogue,
+  });
 
   // ONE LOOKUP, for the two things that need to see a RETIRED unit.
   //
@@ -355,6 +403,13 @@ export async function loadMachineSetupContext(input: {
   const recordedSetup = recorded?.ok ? recorded.value : [];
   const recordedSetupUnavailable = recorded !== null && !recorded.ok;
 
+  const restoredSelection = restoreSelectionFromRecordedSetup({
+    scope,
+    recordedSetup,
+    devices: inventory.devices,
+    catalogue,
+  });
+
   const unitNames: Record<string, string> = {};
   const needNames = [
     ...priorSetup.map((r) => r.deviceId),
@@ -397,6 +452,8 @@ export async function loadMachineSetupContext(input: {
     priorSetupUnavailable,
     recordedSetupUnavailable,
     unitNames,
+    suggestedMachine,
+    restoredSelection,
   };
 }
 
