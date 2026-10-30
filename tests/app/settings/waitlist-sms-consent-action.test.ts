@@ -471,7 +471,9 @@ describe("result mapping and log hygiene", () => {
       const parsed = JSON.parse(line);
       expect(parsed.event).toBe("waitlist_sms_consent_record_failed");
       expect(parsed.studioId).toBe(STUDIO);
-      expect(line).not.toMatch(/555|0100|Owner confirmation|2026-03-01/);
+      // Log lines carry an ISO timestamp (".555Z"), which is not a phone number.
+      const withoutTimes = line.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g, "");
+      expect(withoutTimes).not.toMatch(/555|0100|Owner confirmation|2026-03-01/);
     }
     expect(JSON.parse(errors[0]).outcome).toBe("phone_suppressed");
     expect(JSON.parse(errors[1]).outcome).toBe("already_consented");
