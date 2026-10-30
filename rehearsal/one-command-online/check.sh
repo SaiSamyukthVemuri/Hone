@@ -213,6 +213,35 @@ H=$G; RUNNER=$D/hone-stage-run.sh; printf '%s\t%s\t0\n' ">>> To run this stage n
 hrun
 if [ $RC = 0 ] && [ "$(result_of)" = "APPLIED+VERIFIED" ] && [ "$(marker)" = none ] && echo "$OUT" | grep -q 'stage: X1'; then ok "GENERIC: the same runner runs a different stage (other approval word, paths and prompt table) from its manifest alone"; else bad "generic stage" "rc=$RC result=$(result_of) $(echo "$OUT" | tail -6)"; fi
 
+# ------------------------------------------------------------------ two confirmations: a second APPLY after the stage's own dry-run listing (Z4)
+Y=$T/two; rm -rf "$Y"; mkdir -p "$Y/hone-s1/stage-y" "$Y/hone-s1/s1-apply"; chmod 700 "$Y/hone-s1"
+cat > "$Y/hone-s1/stage-y/apply-y.sh" <<'XE'
+#!/bin/bash
+IFS= read -r -p "Go ahead with Y? " W </dev/tty
+[ "$W" = GONOW ] || { echo "RESULT: NOT APPLIED"; exit 1; }
+IFS= read -rs -p "Access token: " T </dev/tty; echo
+IFS= read -rs -p "Password: " P </dev/tty; echo
+[ -n "$T" ] && [ -n "$P" ] || exit 1
+echo "DRY RUN LISTING: exactly one migration"
+IFS= read -r -p "Push it now? " W2 </dev/tty
+[ "$W2" = GONOW ] || { echo "RESULT: NOT APPLIED (push not confirmed)"; exit 1; }
+printf 'APPLIED-UNVERIFIED 2026-10-29T10:00:00Z head=y run=y\n' > "$HOME/hone-s1/s1-apply/APPLY-STATE"
+echo "RESULT: APPLIED+VERIFIED"
+XE
+cp "$G/hone-s1/stage-x/reconcile-x.sh" "$Y/hone-s1/stage-y/reconcile-y.sh"
+{ echo "STAGE=Y1"; echo "PLATFORM=any"; echo "APPLY=stage-y/apply-y.sh"; echo "RECONCILE=stage-y/reconcile-y.sh"; echo "MARKER=s1-apply/APPLY-STATE"; echo "TOMBSTONE=s1-apply/FAILED-LOGIN"
+  echo "APPROVE_WORD=GONOW"; echo "VERIFIED_LINE=RESULT: APPLIED+VERIFIED"; echo "IDLE_S=6"; echo "HARD_S=60"
+  echo "PIN=$(sha "$Y/hone-s1/stage-y/apply-y.sh")  stage-y/apply-y.sh"; echo "PIN=$(sha "$Y/hone-s1/stage-y/reconcile-y.sh")  stage-y/reconcile-y.sh"
+  echo "PROMPT=approve|Go ahead with Y? <END>"; echo "PROMPT=secret-token|Access token: <END>"; echo "PROMPT=secret-password|Password: <END>"; echo "PROMPT=approve|Push it now? <END>"; } > "$Y/stage.conf"
+Q_FIRST=">>> To run this stage now, type exactly GONOW (anything else cancels, nothing has connected): "
+Q_SECOND=">>> Second confirmation. Read what the stage showed above. Type exactly GONOW to continue (anything else cancels): "
+twoans() { H=$Y; RUNNER=$D/hone-stage-run.sh; printf '%s\t%s\t0\n' "$Q_FIRST" GONOW > "$H/ans"; printf '%s\t%s\t1\n' "$Q_TOK" "$CTOK" >> "$H/ans"; printf '%s\t%s\t1\n' "$Q_PW" "$CPW" >> "$H/ans"; printf '%s\t%s\t0\n' "$Q_SECOND" "$1" >> "$H/ans"; }
+twoans GONOW; hrun
+if [ $RC = 0 ] && [ "$(result_of)" = "APPLIED+VERIFIED" ] && [ "$(marker)" = none ] && [ "$(wc -l < "$H/ans" | tr -d ' ')" = 4 ] && [ -z "$(leaks)" ]; then ok "TWO CONFIRMATIONS: the second approval is asked after the listing, credentials are NOT asked twice (4 lines typed), the stage applies"; else bad "two confirmations" "rc=$RC result=$(result_of) $(echo "$OUT" | tail -8)"; fi
+rm -rf "$Y/hone-s1/s1-apply" "$Y/hone-s1/one-command"; mkdir -p "$Y/hone-s1/s1-apply"; chmod 700 "$Y/hone-s1"
+twoans no; hrun
+if [ $RC != 0 ] && [ "$(result_of)" = "NOT APPLIED" ] && [ "$(marker)" = none ] && [ ! -e "$H/hone-s1/s1-apply/APPLY-STATE" ] && [ -z "$(leaks)" ]; then ok "TWO CONFIRMATIONS: declining the second leaves NOTHING applied (no marker, NOT APPLIED), and no secret anywhere"; else bad "second confirmation declined" "rc=$RC result=$(result_of) marker=$(marker) $(echo "$OUT" | tail -8)"; fi
+
 # ------------------------------------------------------------------ mutation pass: the checks above must FAIL on a broken runner
 mutate() { # mutate NAME 'sed script' : a broken copy of the runner must make the targeted scenario fail
   local name=$1 sedx=$2; sed "$sedx" "$D/hone-stage-run.sh" > "$T/mut-runner.sh"; cp "$D/run.exp" "$T/run.exp"; chmod 755 "$T/mut-runner.sh"
