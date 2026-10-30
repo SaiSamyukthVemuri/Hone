@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
@@ -871,7 +872,10 @@ describe("0172 — no trigger or function drift", () => {
         where g.tgrelid = 'public.appointments'::regclass and not g.tgisinternal
         order by g.tgname`,
     );
-    expect(apptTriggers.rows.map((x) => x.tgname as string)).toEqual([
+    // Pending carriers add triggers to appointments. Each is named under the migration that adds it and
+    // counts ONLY when that file is in the tree, so the census stays right for any subset of carriers
+    // that has landed (0271 and 0268 share it). One entry per carrier, never a bare count.
+    const BASE_TRIGGERS = [
       "appointments_enforce_buffer_trg",
       // B6 / 0175: refuses illegal lifecycle edges. Writes no audit row.
       "appointments_enforce_transition_trg",
@@ -883,8 +887,23 @@ describe("0172 — no trigger or function drift", () => {
       "appointments_sync_version_bump_trg",
       "appointments_zzz_outbound_enqueue_delete_trg",
       "appointments_zzz_outbound_enqueue_trg",
-    ]);
-    expect(byTable.appointments, "appointments non-internal triggers").toBe(9);
+    ];
+    const ADDED_BY_MIGRATION: Record<string, string[]> = {
+      // 0271 (HON-48): statement-level schedule-change signal, data-free, writes no audit row.
+      "0271_schedule_change_signal.sql": [
+        "appointments_schedule_signal_del_trg",
+        "appointments_schedule_signal_ins_trg",
+        "appointments_schedule_signal_upd_trg",
+      ],
+    };
+    const expectedAppt = [
+      ...BASE_TRIGGERS,
+      ...Object.entries(ADDED_BY_MIGRATION).flatMap(([file, names]) =>
+        existsSync(`supabase/migrations/${file}`) ? names : [],
+      ),
+    ].sort();
+    expect(apptTriggers.rows.map((x) => x.tgname as string).sort()).toEqual(expectedAppt);
+    expect(byTable.appointments, "appointments non-internal triggers").toBe(expectedAppt.length);
     // B5/0174 added EXACTLY TWO triggers to appointment_audit, and they are
     // named here rather than counted loosely so a third one cannot arrive
     // unnoticed. Neither writes an audit EVENT — one derives trusted FIELDS at

@@ -1,6 +1,6 @@
 {
   "pr": 1275,
   "runtime": true,
-  "migrations": ["0271"],
+  "migrations": ["supabase/migrations/0271_schedule_change_signal.sql"],
   "release_receipt": "01-ops/1275-release-receipt.json"
 }
