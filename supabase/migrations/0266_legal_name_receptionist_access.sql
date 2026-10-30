@@ -19,6 +19,14 @@
 -- forms (which carry a "Full legal name" answer), clinical records or anything
 -- else; tests/db/legal-name-access.db.test.ts pins that. No backfill, no data
 -- change, no default flip: every studio stays OFF.
+--
+-- WHAT OFF DOES NOT DO (Privacy G4). The switch governs only the SEPARATE
+-- client_legal_identities record. A client without a preferred name still shows
+-- the desk the stored clients.name (labelled "name on file"), and that stored name
+-- may itself be the legal name. OFF therefore does not mean the desk cannot see
+-- any legal name, and no owner-facing text may say so. With the switch ON the
+-- desk can read the legal identity of EVERY client of the studio, not one at a
+-- time (Privacy G3).
 -- ===========================================================================
 
 begin;
@@ -62,6 +70,11 @@ create table public.client_legal_name_access_audit (
   constraint client_legal_name_access_audit_changed_by_fk
     foreign key (changed_by, studio_id) references public.practitioners (id, studio_id) on delete restrict
 );
+
+-- Supabase's default privileges grant USAGE on a new sequence to the API roles.
+-- The identity column is only ever advanced by the SECURITY DEFINER command
+-- (running as the owner), so no API role needs the sequence (Privacy G6).
+revoke all on sequence public.client_legal_name_access_audit_id_seq from public, anon, authenticated, service_role;
 
 create index client_legal_name_access_audit_studio_idx
   on public.client_legal_name_access_audit (studio_id, changed_at desc);
@@ -157,7 +170,7 @@ returns boolean
 language sql
 stable
 security definer
-set search_path = pg_catalog, public, pg_temp
+set search_path = pg_catalog, pg_temp
 as $$
   select public.is_studio_member(target_studio_id)
       or (

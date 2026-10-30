@@ -38,7 +38,7 @@ describe("0266 legal-name receptionist access: source contract", () => {
   it("the read predicate is owner/practitioner OR an ACTIVE receptionist of that studio with the switch ON, defaulting to false", () => {
     const fn = code.match(/create function public\.can_read_client_legal_identity[\s\S]*?\$\$;/)![0];
     expect(fn).toMatch(/security definer/);
-    expect(fn).toMatch(/set search_path = pg_catalog, public, pg_temp/);
+    expect(fn).toMatch(/set search_path = pg_catalog, pg_temp\n/);
     expect(fn).toContain("public.is_studio_member(target_studio_id)");
     expect(fn).toContain("public.receptionist_actor_id(target_studio_id) is not null");
     expect(fn).toMatch(/coalesce\(\s*\(select s\.receptionist_access[\s\S]*?false\)/);
@@ -64,6 +64,10 @@ describe("0266 legal-name receptionist access: source contract", () => {
     expect(code).toContain("grant select on public.client_legal_name_access_audit to authenticated;");
     expect(code).not.toMatch(/grant[^;]*\b(service_role|anon)\b/i);
     expect(code).not.toMatch(/grant[^;]*\b(insert|update|delete)\b[^;]*studio_legal_name_access/i);
+  });
+
+  it("the audit's identity sequence is revoked from every API role by name (Privacy G6)", () => {
+    expect(code).toContain("revoke all on sequence public.client_legal_name_access_audit_id_seq from public, anon, authenticated, service_role;");
   });
 
   it("the receptionist finder never reads or matches the legal table or the stored name behind a preferred one", () => {

@@ -50,8 +50,18 @@ describe("no path reads the legal table with a privileged client", () => {
   it("none of them imports an admin or service-role client, so the RLS predicate always applies", () => {
     for (const f of readers) {
       if (f.endsWith("resource-registry.ts")) continue; // a registry entry, not a reader
+      // The receipt sender runs on the admin client for its own tables; its legal
+      // read is a separate signed-in read, pinned by the next test.
+      if (f === "lib/billing/payment-receipt.ts") continue;
       expect(code(f), f).not.toMatch(/createAdminClient|service_role|SUPABASE_SERVICE_ROLE|@\/lib\/supabase\/admin/);
     }
+  });
+  it("the receipt sender's legal read goes through the SIGNED-IN session, never the admin client", () => {
+    const f = code("lib/billing/payment-receipt.ts");
+    const reader = f.match(/async function readSignedInLegalName[\s\S]*?\n}\n/)![0];
+    expect(reader).toMatch(/readLegalIdentity\(await createSignedInClient\(\), clientId\)/);
+    expect(reader).not.toMatch(/admin/i);
+    expect([...f.matchAll(/readLegalIdentity\(/g)]).toHaveLength(1);
   });
   it("legal reads are never cached across requests", () => {
     for (const f of readers) expect(text(f), f).not.toMatch(/unstable_cache|\bcache\(|"use cache"|revalidate\s*=\s*[1-9]/);

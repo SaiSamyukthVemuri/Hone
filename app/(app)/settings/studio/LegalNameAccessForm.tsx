@@ -48,7 +48,8 @@ export function LegalNameAccessForm({ initial }: { initial: boolean }) {
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">{LABEL}</p>
           <p className="mt-1 text-xs text-neutral-500">
-            When off, legal names are not sent to front desk staff and cannot be searched by them.
+            When off, the separate legal-name record is not sent to front desk staff and cannot be searched by them. When
+            on, they can see the legal name of every client in the studio.
           </p>
           <p className="mt-1 text-xs text-neutral-500">{LIMITATION}</p>
         </div>
