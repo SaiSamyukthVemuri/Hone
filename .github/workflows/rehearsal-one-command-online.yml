@@ -16,7 +16,7 @@ permissions:
 jobs:
   oc-macos:
     name: one-command runner vs stubs (macOS arm64, /bin/bash 3.2, /usr/bin/expect)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - name: Checkout
