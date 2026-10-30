@@ -267,6 +267,9 @@ export { isDocsPath };
  * Callers pass only `files` and get the scan of this checkout; tests pass
  * fixtures, and any part a fixture omits is empty.
  */
+/** The G1 receipt check, run for EVERY docs-only diff (see classify). */
+export const RECEIPT_CHECK_TEST = "tests/ci/pr-release-receipt.test.ts";
+
 export function classify(files, deps = dependenciesFor()) {
   const list = (files ?? []).map((f) => f.trim()).filter(Boolean);
   const dbDeps = deps?.db ?? {};
@@ -332,11 +335,17 @@ export function classify(files, deps = dependenciesFor()) {
       ...(isDocsPath(f) ? [...underDirs(docReaderDirs, f), ...docWildcard] : []),
     ]),
   );
-  out.docs_consistency = readers.size > 0;
-  out.docs_reader_tests = [...readers].sort();
-
   // Docs-only when EVERY changed file is documentation.
   out.docs_only = list.every((f) => match(f, DOCS));
+
+  // G1. The pending-release receipt check is a live check inside a unit test.
+  // It is not a reader of any document, so a docs-only PR outside
+  // docs/production/ selected it only by accident (Codex, #1216 4401470996).
+  // Every docs-only diff runs it; it passes at once for a record-only diff.
+  // Outside docs-only the unit lane already runs it.
+  if (out.docs_only) readers.add(RECEIPT_CHECK_TEST);
+  out.docs_consistency = readers.size > 0;
+  out.docs_reader_tests = [...readers].sort();
   Object.assign(out, baselineRisk(list, rawLanes, out.docs_only));
   if (out.docs_only) {
     for (const k of ["application", "database", "security", "payment", "google_calendar", "browser_core", "mobile", "ci_workflows"]) {

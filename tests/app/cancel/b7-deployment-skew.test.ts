@@ -58,8 +58,18 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       // either returns null the action collapses before the RPC and the test
       // would prove nothing — which is why the first test asserts that exactly
       // one RPC call actually happened.
+      // HON-47: the same generic row also answers the self-service gate's
+      // appointment read (studio_id, status, starts_at) and the studio policy
+      // read (select *). It carries NO policy column, so the studio has
+      // today's defaults and the action must still reach the command.
       q.maybeSingle = async () => ({
-        data: { id: "appt-1", cancellation_token_hash: "b".repeat(64) },
+        data: {
+          id: "appt-1",
+          cancellation_token_hash: "b".repeat(64),
+          studio_id: "studio-1",
+          status: "confirmed",
+          starts_at: new Date(Date.now() + 86_400_000).toISOString(),
+        },
         error: null,
       });
       q.insert = async () => {

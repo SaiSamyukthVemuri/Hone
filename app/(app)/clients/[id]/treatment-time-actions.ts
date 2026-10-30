@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { TreatmentGoalStatus } from "@/lib/types/database";
 
@@ -49,7 +50,9 @@ export async function upsertTreatmentGoalAction(
     .eq("id", clientId)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (clientErr) return { ok: false, error: clientErr.message };
+  if (clientErr) {
+    return { ok: false, error: userFacingDbFailure("check the client", clientErr, "treatment_goal_client_lookup_failed") };
+  }
   if (!client) return { ok: false, error: "Client not found." };
 
   // Upsert by client_id (unique constraint). On conflict, update in place
@@ -68,7 +71,9 @@ export async function upsertTreatmentGoalAction(
       },
       { onConflict: "client_id" },
     );
-  if (error) return { ok: false, error: `Failed to save goal: ${error.message}` };
+  if (error) {
+    return { ok: false, error: userFacingDbFailure("save the goal", error, "treatment_goal_save_failed") };
+  }
 
   revalidatePath(`/clients/${clientId}`);
   return { ok: true };

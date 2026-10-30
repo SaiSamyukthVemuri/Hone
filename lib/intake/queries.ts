@@ -113,6 +113,12 @@ export async function ensureIntakeForClient(params: {
   studioId: string;
   clientId: string;
   appOrigin: string;
+  /**
+   * Whether the link travels by EMAIL (the default, as every booking surface
+   * has always done). A caller whose only carrier is an SMS passes false so the
+   * stamp never says an email went out.
+   */
+  emailed?: boolean;
 }): Promise<{ id: string; url: string } | null> {
   const admin = createAdminClient();
 
@@ -142,6 +148,8 @@ export async function ensureIntakeForClient(params: {
     const { data: created, error: insertErr } = await admin
       .from("client_intake_forms")
       .insert({
+        // Decoder-first rollout: new rows remain explicitly unverified.
+        questionnaire_snapshot: null,
         studio_id: params.studioId,
         client_id: params.clientId,
       })
@@ -160,7 +168,7 @@ export async function ensureIntakeForClient(params: {
   // The booking/reschedule confirmation email carries this link, so it counts
   // as an emailed send. Stamp the display metadata (best-effort; never blocks
   // the booking flow if it fails).
-  await stampIntakeLinkIssued(admin, intakeId, { emailed: true });
+  await stampIntakeLinkIssued(admin, intakeId, { emailed: params.emailed ?? true });
   return { id: intakeId, url };
 }
 
@@ -184,6 +192,8 @@ export async function createIntakeRequestForClient(params: {
   const { data: created, error: insertErr } = await admin
     .from("client_intake_forms")
     .insert({
+      // Decoder-first rollout: new rows remain explicitly unverified.
+      questionnaire_snapshot: null,
       studio_id: params.studioId,
       client_id: params.clientId,
       // status, current_step, responses default to in_progress / 1 / {}.

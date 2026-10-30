@@ -37,6 +37,8 @@ import {
 } from "./QuickBookDrawer";
 import { DragActionChooser } from "./DragActionChooser";
 import { TimedBlockEditDrawer } from "./TimedBlockEditDrawer";
+import { blockPurpose, type BlockPurpose } from "@/lib/calendar/block-purpose";
+import { reconcileEditingBlock } from "@/lib/calendar/reconcile-editing-block";
 import { QuickBlockDrawer } from "./QuickBlockDrawer";
 import { AppointmentPreviewDrawer } from "./AppointmentPreviewDrawer";
 import { AppointmentOverlapChooser, OverlapAppointmentSummary } from "./AppointmentOverlapChooser";
@@ -266,6 +268,11 @@ export function DayColumn({
   const [draft, setDraft] = useState<QuickBookDraft | null>(null);
   // PR C: the timed block whose edit/detail drawer is open (null = closed).
   const [editingBlock, setEditingBlock] = useState<StudioTimedBlock | null>(null);
+  // HON-48: a refresh that brings in a colleague's change to the open block
+  // replaces the drawer's copy (or closes it if the block is gone).
+  useEffect(() => {
+    setEditingBlock((cur) => reconcileEditingBlock(cur, timedBlocks));
+  }, [timedBlocks]);
   // PR C-lite: the appointment whose in-context preview drawer is open. Holds
   // the appointment object already in this column's props, no new query.
   const [preview, setPreview] = useState<AppointmentWithPractitionerColor | null>(
@@ -758,6 +765,7 @@ export function DayColumn({
           <BlockoutCard
             key={occ.id}
             label={label}
+            purpose={blockPurpose(occ.rule?.label, { recurring: true })}
             scope={scope}
             title={scope ? `${label} · ${scope}` : label}
             startLocal={dispStart}
@@ -803,6 +811,7 @@ export function DayColumn({
           <BlockoutCard
             key={tb.id}
             label={label}
+            purpose={blockPurpose(tb.category)}
             scope={scope}
             title={titleNote}
             startLocal={dispStart}
@@ -1058,6 +1067,7 @@ export function DayColumn({
 // internal piece from page.tsx.
 function BlockoutCard({
   label,
+  purpose,
   scope = null,
   title,
   startLocal,
@@ -1068,6 +1078,9 @@ function BlockoutCard({
   onClick,
 }: {
   label: string;
+  // HON-48: what the block is for (rest / work / away): a glyph and a left-edge
+  // accent, additional to the written label, never instead of it.
+  purpose?: BlockPurpose;
   // BLOCK-SCOPE F3: "All practitioners" / "Only <name>"; null = no label.
   scope?: string | null;
   title: string;
@@ -1111,9 +1124,11 @@ function BlockoutCard({
     <div
       title={title}
       {...interactive}
+      data-block-purpose={purpose?.group}
       style={{
         top,
         height,
+        ...(purpose ? { borderLeftColor: purpose.accent } : {}),
         backgroundColor: "#F4F1EA",
         backgroundImage:
           "repeating-linear-gradient(135deg, transparent 0, transparent 6px, rgba(140, 133, 121, 0.18) 6px, rgba(140, 133, 121, 0.18) 8px)",
@@ -1129,7 +1144,7 @@ function BlockoutCard({
         {twoLine ? (
           <>
             <div className="truncate font-medium">
-              {label}
+              {purpose && <span aria-hidden="true" className="mr-1">{purpose.glyph}</span>}{label}
               {scope && <span data-block-scope="" className="font-normal"> · {scope}</span>}
             </div>
             <div className="truncate text-[10px] opacity-80">
@@ -1138,7 +1153,7 @@ function BlockoutCard({
           </>
         ) : (
           <div className="truncate font-medium">
-            {label}
+            {purpose && <span aria-hidden="true" className="mr-1">{purpose.glyph}</span>}{label}
             {scope && <span data-block-scope="" className="font-normal"> · {scope}</span>}{" "}
             <span className="opacity-70">· {startLocal}–{endLocal}</span>
           </div>

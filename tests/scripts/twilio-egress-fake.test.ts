@@ -395,13 +395,13 @@ describe("runs on CI's Node, and survives Next's NODE_OPTIONS re-formatting (#11
     return withNodeOptions(value, () => utils.getFormattedNodeOptionsWithoutInspect());
   }
 
-  it("CI pins Node 20, and on CI this suite runs on that Node", () => {
+  it("CI pins patched Node 24 (CVE-2026-111497), and on CI this suite runs on that Node", () => {
     const pinned = new Set(
       [...readFileSync(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8").matchAll(/node-version:\s*"?(\d+)/g)].map((m) => m[1]),
     );
-    expect([...pinned]).toEqual(["20"]);
+    expect([...pinned]).toEqual(["24"]);
     if (process.env.GITHUB_ACTIONS === "true") {
-      expect(process.versions.node.split(".")[0]).toBe("20");
+      expect(process.versions.node.split(".")[0]).toBe("24");
     }
   });
 

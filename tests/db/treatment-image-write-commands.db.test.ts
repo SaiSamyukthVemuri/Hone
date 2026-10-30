@@ -368,13 +368,15 @@ describe("0168 — archive_treatment_image", () => {
 // --------------------------------------------------------------------------
 
 describe("0168 — preserved protections and privileges", () => {
-  it("24. the 0093 integrity trigger and the finalized guard are intact", async () => {
+  it("24. the exact trigger inventory retains integrity, finalized and sessionless-stage guards", async () => {
     const r = await adminQuery(
       `select tgname from pg_trigger
         where tgrelid='public.treatment_images'::regclass and not tgisinternal
         order by tgname`,
     );
+    // 0232 adds the sessionless INSERT/UPDATE cleanup; keep this census closed.
     expect(r.rows.map((x) => x.tgname)).toEqual([
+      "treatment_images_clear_stage_without_session",
       "treatment_images_enforce_integrity",
       "treatment_images_guard_finalized",
       "treatment_images_set_updated_at",

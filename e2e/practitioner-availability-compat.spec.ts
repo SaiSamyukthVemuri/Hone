@@ -43,6 +43,11 @@ test("flag-OFF owner can save AND update weekly studio hours (0135 upsert compat
   await expect
     .poll(async () => weekdayHours(await getStudioWeeklyDefaults(seed.studioId)).sort())
     .toEqual(["09:00-17:00", "09:00-17:00", "09:00-17:00", "09:00-17:00", "09:00-17:00"]);
+  // The database row is committed BEFORE the action returns, so polling it is
+  // not "the save has settled". Wait for the UI: the confirmation panel is
+  // removed only when the save's transition ends. (Not the Replace button: while
+  // pending its name is "Applying…", so /^Replace$/ already has count 0.)
+  await expect(page.getByText(/Replace current hours with/)).toHaveCount(0);
 
   // Studio-wide rows carry a NULL practitioner_id (no per-practitioner rows on OFF).
   const afterFirst = await getStudioWeeklyDefaults(seed.studioId);
@@ -62,4 +67,55 @@ test("flag-OFF owner can save AND update weekly studio hours (0135 upsert compat
   expect(afterSecond.filter((r) => r.practitioner_id === null).length).toBe(
     afterSecond.length,
   );
+});
+
+// AVAIL-PRESET-01. A preset chosen while the previous save is still finishing
+// must not be wiped when that save completes. Deterministic, no sleeps: the
+// first save's server-action POST is HELD by the test until the second preset
+// has been chosen, then released.
+test("a preset chosen while the previous save is finishing survives that save", async ({
+  page,
+}) => {
+  expect(E2E_APP_ORIGIN).toMatch(/^https?:\/\/(localhost|127\.0\.0\.1)/);
+  seed = await seedE2eStudio();
+  await loginAsOwner(page, seed);
+  await page.goto("/settings/availability");
+  await expect(page.getByRole("heading", { name: /availability/i })).toBeVisible();
+
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let heldOne = false;
+  await page.route("**/settings/availability", async (route) => {
+    const req = route.request();
+    if (req.method() === "POST" && req.headers()["next-action"] && !heldOne) {
+      heldOne = true;
+      await held;
+    }
+    await route.continue();
+  });
+
+  await page.getByRole("button", { name: /Weekdays 9/ }).click();
+  await page.getByRole("button", { name: /^Replace$/ }).click();
+  // The first save is in flight (held): the panel shows its pending label.
+  await expect(page.getByRole("button", { name: "Applying…" })).toBeVisible();
+
+  // Choose the second preset while the first save is still finishing.
+  await page.getByRole("button", { name: /Weekdays 10/ }).click();
+  await expect(page.getByText(/Replace current hours with/)).toContainText("Weekdays 10");
+  // The in-flight label belongs to the FIRST preset, not to the panel's: the
+  // panel for the second preset offers "Replace" but waits for the first save.
+  await expect(page.getByRole("button", { name: /^Replace$/ })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Applying…" })).toHaveCount(0);
+
+  release();
+  // The first save settles (its pending label goes away) ...
+  await expect(page.getByRole("button", { name: /^Replace$/ })).toBeEnabled();
+  // ... and the panel for the second preset is still there, then applies.
+  await expect(page.getByText(/Replace current hours with/)).toContainText("Weekdays 10");
+  await page.getByRole("button", { name: /^Replace$/ }).click();
+  await expect
+    .poll(async () => weekdayHours(await getStudioWeeklyDefaults(seed.studioId)).sort())
+    .toEqual(["10:00-18:00", "10:00-18:00", "10:00-18:00", "10:00-18:00", "10:00-18:00"]);
 });

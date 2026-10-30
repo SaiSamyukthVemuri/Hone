@@ -90,11 +90,11 @@ describe("at most one email per appointment per window", () => {
 describe("the six-case law", () => {
   it("reads the two settings independently", () => {
     expect(PASS).toMatch(
-      /const wantsReminder =\s*\n?\s*\(appt\.studio as unknown as Record<string, boolean>\)\[studioToggle\] === true;/,
+      /(?:const|let) wantsReminder =\s*\n?\s*\(appt\.studio as unknown as Record<string, boolean>\)\[studioToggle\] === true;/,
     );
     // Absent column (pre-0186 row) must read as ENABLED: the column defaults true.
     expect(PASS).toMatch(
-      /const intakeEnabled = appt\.studio\.send_intake_reminders !== false;/,
+      /(?:const|let) intakeEnabled = appt\.studio\.send_intake_reminders !== false;/,
     );
   });
 
@@ -214,8 +214,10 @@ describe("intake link minting and stamping", () => {
 // ---------------------------------------------------------------------------
 describe("retry and exhaustion semantics are preserved", () => {
   it("keeps the 3-strike cap on the window query", () => {
-    expect(ROUTE).toMatch(/const MAX_ATTEMPTS = 3;/);
-    expect(CODE).toMatch(/\.lt\(opts\.attemptsColumn, MAX_ATTEMPTS\)/);
+    // MSG-ARCH-01: the window query lives in lib/cron/reminder-candidate-query.ts.
+    const query = readFileSync(path.resolve(__dirname, "../../../../lib/cron/reminder-candidate-query.ts"), "utf8");
+    expect(query).toMatch(/const MAX_ATTEMPTS = 3;/);
+    expect(query).toMatch(/\.lt\(opts\.attemptsColumn, MAX_ATTEMPTS\)/);
   });
 
   it("records the provider outcome and alerts on exhaustion", () => {

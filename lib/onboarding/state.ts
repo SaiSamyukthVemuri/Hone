@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import type {
   StudioOnboarding,
@@ -72,7 +73,9 @@ async function upsertOwner(
   const { error } = await supabase
     .from(TABLE)
     .upsert({ studio_id: studioId, ...patch }, { onConflict: "studio_id" });
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    return { ok: false, error: userFacingDbFailure("save your setup progress", error, "onboarding_state_save_failed") };
+  }
   return { ok: true };
 }
 

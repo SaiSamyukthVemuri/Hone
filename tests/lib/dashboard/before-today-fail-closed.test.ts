@@ -206,7 +206,7 @@ async function load(
       ReturnType<typeof createClient>
     >,
   );
-  const previews = await getBeforeTodayPreviews(STUDIO, [RETURNING]);
+  const previews = await getBeforeTodayPreviews(STUDIO, [RETURNING], []);
   const preview = previews.get(RETURNING) ?? null;
   // Through the REAL row derivation, exactly as the dashboard builds it, so
   // these assertions are about what the row holds and not about an

@@ -16,6 +16,10 @@ import {
   upsertOverrideAction,
 } from "./actions";
 import { SectionLabel } from "@/components/ui/section-label";
+import {
+  presetConfirmControl,
+  settlePendingPreset,
+} from "@/lib/availability/preset-state";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const DAY_NAMES_LONG = [
@@ -232,6 +236,12 @@ export function AvailabilityClient({
     (typeof PRESETS)[number] | null
   >(null);
   const [presetPending, startPresetTransition] = useTransition();
+  // The preset whose save is in flight. The confirmation panel can show a
+  // DIFFERENT preset meanwhile (AVAIL-PRESET-01), so "Applying…" must follow
+  // this, not the panel.
+  const [applyingPreset, setApplyingPreset] = useState<
+    (typeof PRESETS)[number] | null
+  >(null);
 
   // Keep local map in sync if server props change after a revalidation.
   useEffect(() => {
@@ -324,6 +334,7 @@ export function AvailabilityClient({
   function confirmApplyPreset() {
     if (!pendingPreset) return;
     const preset = pendingPreset;
+    setApplyingPreset(preset);
     startPresetTransition(async () => {
       try {
         const fd = new FormData();
@@ -344,13 +355,23 @@ export function AvailabilityClient({
           });
         }
         setDays(next);
-        setPendingPreset(null);
+        // Clear the panel only if it is still THIS preset's: one the owner
+        // picked while this save was finishing must survive it.
+        setPendingPreset((cur) => settlePendingPreset(cur, preset));
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not apply preset.");
-        setPendingPreset(null);
+        setPendingPreset((cur) => settlePendingPreset(cur, preset));
+      } finally {
+        setApplyingPreset((cur) => settlePendingPreset(cur, preset));
       }
     });
   }
+
+  const replaceControl = presetConfirmControl(
+    pendingPreset,
+    applyingPreset,
+    savingDow !== null,
+  );
 
   const openDaysForCopy = useMemo(() => {
     const out: { dow: number; label: string; range: string }[] = [];
@@ -456,7 +477,7 @@ export function AvailabilityClient({
           <DayEditor
             dow={editingDow}
             draft={draft}
-            saving={savingDow === editingDow}
+            saving={savingDow === editingDow || presetPending}
             error={error}
             openDaysForCopy={openDaysForCopy}
             onChangeOpen={(v) => setDraft({ ...draft, open_time: v })}
@@ -507,10 +528,10 @@ export function AvailabilityClient({
                 <button
                   type="button"
                   onClick={confirmApplyPreset}
-                  disabled={presetPending}
+                  disabled={replaceControl.disabled}
                   className="rounded-md bg-neutral-900 px-3 py-1 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
                 >
-                  {presetPending ? "Applying…" : "Replace"}
+                  {replaceControl.label}
                 </button>
                 <button
                   type="button"

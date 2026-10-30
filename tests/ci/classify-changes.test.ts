@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { REPO_ROOT, classify, dependenciesFor, highestTier, isDocsPath } from "../../scripts/classify-changes.mjs";
 import {
@@ -16,6 +16,11 @@ import {
 } from "../../scripts/browser-groups.mjs";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { scanTestDependencies } from "../../scripts/test-dependencies.mjs";
+
+// Real-time bound, intrinsic: these cases spawn real `git`/`node` subprocesses
+// and scan the checkout, which measured 5-11 s each on a loaded host against
+// vitest's 5 s default (FLAKE-SYSDEPS). Only the ceiling moves; no assertion does.
+vi.setConfig({ testTimeout: 60_000 });
 
 // Path-classification is proved here rather than by pushing fake commits to
 // trigger every CI lane. These cases ARE the acceptance criteria.
@@ -577,9 +582,25 @@ describe("dependency-aware selection — G4: documents read by unit tests", () =
     const r = c("docs/no-test-reads-this-document.md");
     expect(r.docs_only).toBe(true);
     expect(r.docs_consistency).toBe(true);
-    expect(r.docs_reader_tests).toEqual(scanned.docWildcard);
+    const wildcard = scanned.docWildcard;
+    expect(Array.isArray(wildcard), "the scan must report docWildcard").toBe(true);
+    expect(r.docs_reader_tests).toEqual([...new Set([...(wildcard as string[]), "tests/ci/pr-release-receipt.test.ts"])].sort());
     expect(r.database).toBe(false);
     expect(r.full_matrix_required).toBe(false);
+  });
+
+  it("G1: every docs-only diff runs the receipt check, record or not (Codex #1216 4401470996)", () => {
+    for (const f of ["docs/20_NEW_STUDIO_SETUP_RUNBOOK.md", "docs/production/current-state.md", "README.md"]) {
+      const r = c(f);
+      expect(r.docs_only, f).toBe(true);
+      expect(r.docs_consistency, f).toBe(true);
+      expect(r.docs_reader_tests, f).toContain("tests/ci/pr-release-receipt.test.ts");
+    }
+    // Injected deps with no reader at all still select it.
+    const empty = classify(["docs/x.md"], { db: {}, dbDirs: {}, docReaders: {}, docReaderDirs: {}, docWildcard: [] }) as Result;
+    expect(empty.docs_reader_tests).toEqual(["tests/ci/pr-release-receipt.test.ts"]);
+    // A mixed diff is not docs-only: the unit lane runs it, so it is not added here.
+    expect(c("docs/20_NEW_STUDIO_SETUP_RUNBOOK.md", "lib/x.ts").docs_only).toBe(false);
   });
 
   it("a non-document change is never a document-reader selection", () => {
@@ -664,7 +685,7 @@ describe("dependency-aware selection — deleting a file a test still reads (435
       const r = classify(["docs/production/gone.md"], deps) as Result;
       expect(r.docs_only).toBe(true);
       expect(r.docs_consistency).toBe(true);
-      expect(r.docs_reader_tests).toEqual(["tests/docs/reads-gone.test.ts"]);
+      expect(r.docs_reader_tests).toEqual(["tests/ci/pr-release-receipt.test.ts", "tests/docs/reads-gone.test.ts"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -740,7 +761,7 @@ describe("dependency-aware selection — reads through a DIRECTORY CONSTANT (Cod
       const deps = scan(root);
       expect(deps.docReaderDirs).toEqual({ "docs/guides": ["tests/docs/reads-guides.test.ts"] });
       const r = classify(["docs/guides/brand-new.md"], deps) as Result;
-      expect(r.docs_reader_tests).toEqual(["tests/docs/reads-guides.test.ts"]);
+      expect(r.docs_reader_tests).toEqual(["tests/ci/pr-release-receipt.test.ts", "tests/docs/reads-guides.test.ts"]);
       expect((classify(["docs/other/x.md"], deps) as Result).docs_reader_tests ?? []).not.toContain("tests/docs/reads-guides.test.ts");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -836,7 +857,7 @@ describe("dependency-aware selection — directory readers (4355527598)", () => 
       const deps = scan(root);
       expect(deps.docReaderDirs).toEqual({ "docs/runbooks": ["tests/docs/walks-runbooks.test.ts"] });
       expect(deps.dbDirs).toEqual({ "lib/billing": ["tests/db/walks-billing.db.test.ts"] });
-      expect((classify(["docs/runbooks/added-later.md"], deps) as Result).docs_reader_tests).toEqual(["tests/docs/walks-runbooks.test.ts"]);
+      expect((classify(["docs/runbooks/added-later.md"], deps) as Result).docs_reader_tests).toEqual(["tests/ci/pr-release-receipt.test.ts", "tests/docs/walks-runbooks.test.ts"]);
       expect((classify(["lib/billing/added-later.ts"], deps) as Result).database).toBe(true);
       expect((classify(["lib/elsewhere/added-later.ts"], deps) as Result).database).toBe(false);
     } finally {
@@ -851,7 +872,7 @@ describe("dependency-aware selection — directory readers (4355527598)", () => 
     try {
       const deps = scan(root);
       expect(deps.docWildcard).toEqual(["tests/docs/root-docs.test.ts"]);
-      expect((classify(["SOMETHING.md"], deps) as Result).docs_reader_tests).toEqual(["tests/docs/root-docs.test.ts"]);
+      expect((classify(["SOMETHING.md"], deps) as Result).docs_reader_tests).toEqual(["tests/ci/pr-release-receipt.test.ts", "tests/docs/root-docs.test.ts"]);
       expect((classify(["lib/keep.ts"], deps) as Result).docs_reader_tests).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });

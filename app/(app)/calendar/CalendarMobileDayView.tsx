@@ -13,6 +13,7 @@ import { QuickBookDrawer, type QuickBookClient } from "./QuickBookDrawer";
 import { QuickBlockDrawer, type QuickBlockDraft } from "./QuickBlockDrawer";
 import { DragActionChooser, type DragRangeDraft } from "./DragActionChooser";
 import { TimedBlockEditDrawer } from "./TimedBlockEditDrawer";
+import { reconcileEditingBlock } from "@/lib/calendar/reconcile-editing-block";
 import { MobileDayTimeline } from "./MobileDayTimeline";
 import { quickBlockScopeFor, type BlockScopeNames } from "@/lib/calendar/block-scope";
 import type { DayAvailability } from "./DayColumn";
@@ -88,6 +89,12 @@ export function CalendarMobileDayView({
   const [editingBlock, setEditingBlock] = useState<StudioTimedBlock | null>(
     null,
   );
+  // HON-48: a refresh that brings in a colleague's change to the open block
+  // replaces the drawer's copy (or closes it if the block is gone).
+  useEffect(() => {
+    const all = days.flatMap((d) => d.timedBlocks);
+    setEditingBlock((cur) => reconcileEditingBlock(cur, all));
+  }, [days]);
   // "+" opens a chooser (Book appointment / Block time); the chosen action then
   // opens the existing QuickBook / QuickBlock drawers: same model as desktop
   // DayColumn (no mobile-only model). Block-time create mirrors the desktop
