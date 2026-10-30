@@ -75,7 +75,17 @@ export type ReceiptSettlement =
 export type ReceiptFacts = {
   studioName: string;
   studioContactEmail: string | null;
+  /** The name in the GREETING line ("Hi {name},"): the preferred name when the client has one. */
   clientName: string;
+  /**
+   * HON-58 (OPS Q2b): a receipt is a document a client may submit for
+   * reimbursement, so when a LEGAL identity is recorded the receipt block names
+   * the client by it, in a "Client" row. Absent (no legal identity, or the
+   * legal read failed closed) adds NO row, so the document is exactly what it
+   * was before HON-58: the only name on it is the greeting. Never the preferred
+   * name alone, and never inferred from anything.
+   */
+  documentClientName?: string | null;
   reasonLabel: string;
   amountCents: number;
   /** ISO currency code; uppercased for display. */
@@ -230,6 +240,7 @@ export function buildReceiptDocument(facts: ReceiptFacts): ReceiptDocument {
 
   const studio = facts.studioName.trim() || "your studio";
   const client = facts.clientName.trim() || "there";
+  const documentClient = facts.documentClientName?.replace(/\s+/g, " ").trim() || null;
   const amount = formatReceiptAmount(facts.amountCents, facts.currencyCode);
   const reason = facts.reasonLabel.trim() || "Payment";
   const when = formatReceiptTimestamp(facts.paidAt);
@@ -246,16 +257,18 @@ export function buildReceiptDocument(facts: ReceiptFacts): ReceiptDocument {
             // a full card number.
             "Card on file"
         : SETTLEMENT_BADGE_LABEL[facts.settlement.method];
+    detailRows.push({ label: "Studio", value: studio, monospace: false });
+    if (documentClient) detailRows.push({ label: "Client", value: documentClient, monospace: false });
     detailRows.push(
-      { label: "Studio", value: studio, monospace: false },
       { label: "Amount", value: amount, monospace: false },
       { label: "Reason", value: reason, monospace: false },
       { label: "Date", value: when, monospace: false },
       { label: "Payment method", value: paymentMethod, monospace: false },
     );
   } else {
+    detailRows.push({ label: "Studio", value: studio, monospace: false });
+    if (documentClient) detailRows.push({ label: "Client", value: documentClient, monospace: false });
     detailRows.push(
-      { label: "Studio", value: studio, monospace: false },
       { label: "Reason", value: reason, monospace: false },
       { label: "Amount", value: amount, monospace: false },
       { label: "Charged", value: when, monospace: false },
