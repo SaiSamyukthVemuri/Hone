@@ -28,7 +28,12 @@ const ROOT = path.resolve(__dirname, "../..");
 
 /** A declaration that is an exemption by NAME. */
 const EXEMPTION_DECL =
-  /^\s*(?:export\s+)?const\s+((?=[A-Z0-9_]*(?:EXEMPT|WAIVE|NOT_[A-Z]+_(?:MONEY|PAYMENT|CLINICAL)))[A-Z][A-Z0-9_]*)\b/gm;
+  /^\s*(?:export\s+)?(?:const|let|var)\s+((?=[A-Z0-9_]*(?:EXEMPT|WAIVE|NOT_[A-Z]+_(?:MONEY|PAYMENT|CLINICAL)))[A-Z][A-Z0-9_]*)\b/gm;
+/** Mutating methods: any of these on the declared name extends the list after its initializer. */
+const MUTATORS = ["add", "push", "concat", "unshift", "splice"] as const;
+const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Whole-token match, so a longer identifier or a prefix cannot satisfy the check (Insurance E2). */
+const names = (haystack: string, token: string) => new RegExp(`(?<![\\w$])${escapeRe(token)}(?![\\w$])`).test(haystack);
 const MARKER = /^\s*\/\/\s*exemption-db-pair:\s*(.+)$/gm;
 
 export type Source = { path: string; text: string };
@@ -141,10 +146,23 @@ export function pairingViolations(
         out.push(`${src.path}: ${name} pairs with ${dbPath}, which does not exist`);
         continue;
       }
-      if (!db.includes(fn)) {
+      if (!names(db, fn)) {
         out.push(`${src.path}: ${name}: ${dbPath} never names the real function ${fn}`);
       }
       const marked = entries.split(",").map((e) => e.trim()).filter(Boolean);
+      // The list may also be extended OUTSIDE its initializer (Insurance F1):
+      // a later `NAME.add(...)`, `.push`, `.concat`, `.unshift`, `.splice`, or a
+      // reassignment of the name, adds entries the initializer scan cannot see.
+      const n = escapeRe(name);
+      for (const method of MUTATORS) {
+        if (new RegExp(`(?<![\\w$])${n}\\s*\\.\\s*${method}\\s*\\(`).test(src.text)) {
+          out.push(`${src.path}: ${name}: .${method}() is called on it, so the list can grow after its initializer where the guard cannot see`);
+        }
+      }
+      const later = src.text.slice(at + d[0].length);
+      if (new RegExp(`(?<![\\w$.])${n}\\s*(?:\\+|\\|\\||&&|\\?\\?)?=(?![=>])`).test(later)) {
+        out.push(`${src.path}: ${name}: is reassigned after its declaration, so the list can change where the guard cannot see`);
+      }
       const declared = declaredEntries(src.text, at);
       if (declared === null) {
         out.push(`${src.path}: ${name}: the guard cannot read its entries as string literals, so it cannot prove the pairing`);
@@ -170,7 +188,7 @@ export function pairingViolations(
         }
       }
       for (const entry of new Set([...listed, ...marked])) {
-        if (!db.includes(entry)) {
+        if (!names(db, entry)) {
           out.push(`${src.path}: ${name}: ${dbPath} never exercises the exempted entry ${entry}`);
         }
       }
@@ -292,6 +310,29 @@ describe("G6(a) every migration-test exemption list is paired with a real-functi
   ])("CONTROL: %s stays readable", (_form, init) => {
     const src = { path: "tests/migrations/x.test.ts", text: `${MARK}\n${init}` };
     expect(pairingViolations([src], () => DB_OK)).toEqual([]);
+  });
+
+  it.each([
+    ["add", `EXEMPT.add("sneaky");`],
+    ["push", `EXEMPT.push("sneaky");`],
+    ["concat", `const MORE = EXEMPT.concat(["sneaky"]);`],
+    ["unshift", `EXEMPT.unshift("sneaky");`],
+    ["splice", `EXEMPT.splice(0, 0, "sneaky");`],
+    ["spaced add", `EXEMPT\n  .add("sneaky");`],
+  ])("CONTROL: a later statement calling .%s on the list is a violation", (_m, stmt) => {
+    const src = { path: "tests/migrations/x.test.ts", text: `${MARK}\nconst EXEMPT = new Set(["widgets"]);\n${stmt}` };
+    expect(pairingViolations([src], () => DB_OK).join()).toMatch(/can grow after its initializer/);
+  });
+
+  it("CONTROL: a reassigned let list is a violation, and an unrelated longer name is not", () => {
+    const re = { path: "tests/migrations/x.test.ts", text: `${MARK}\nlet EXEMPT = ["widgets"];\nEXEMPT = [...EXEMPT, "sneaky"];` };
+    expect(pairingViolations([re], () => DB_OK).join()).toMatch(/reassigned after its declaration/);
+    const other = { path: "tests/migrations/x.test.ts", text: `${MARK}\nlet EXEMPT = ["widgets"];\nEXEMPT_NOTE.add("y");` };
+    expect(pairingViolations([other], () => DB_OK)).toEqual([]);
+  });
+
+  it("CONTROL: the DB test must name the entry as a whole token, not as part of a longer one", () => {
+    expect(pairingViolations([decl(MARK)], () => "initialize_thing\nmy_widgetsy").join()).toMatch(/never exercises the exempted entry widgets/);
   });
 
   it("CONTROL: a list the guard cannot read as string literals fails instead of passing", () => {
