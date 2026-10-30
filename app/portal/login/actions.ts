@@ -19,6 +19,8 @@ import {
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { buildPortalMagicLinkEmail } from "@/lib/email/templates/portal-magic-link";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { dbErrorCode } from "@/lib/logging/error-class";
+import { studioPortalAccess } from "@/lib/portal/portal-access-gate";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // PR #166. Magic-link TTL was 30 minutes in PR #129 and survived
@@ -217,6 +219,15 @@ export async function requestPortalMagicLinkAction(
   // retained for diff cleanliness but executes exactly once.
   let successfulSends = 0;
   for (const match of matches) {
+    // HON-47. A studio that turned client portal access off (or whose policy
+    // cannot be read) issues no link and sends no email. The visitor still gets
+    // the same generic success, so this reveals nothing about the studio or the
+    // address.
+    const access = await studioPortalAccess(admin, match.studioId);
+    if (!access.allowed) {
+      logSanitized("portal_login_portal_off", {});
+      continue;
+    }
     const rawToken = generateRawToken();
     const tokenHash = hashToken(rawToken);
     const expiresAt = new Date(Date.now() + MAGIC_LINK_TTL_MS);
@@ -234,8 +245,7 @@ export async function requestPortalMagicLinkAction(
       });
     if (insertErr) {
       logSanitized("portal_login_magic_insert_failed", {
-        code: insertErr.code,
-        message: insertErr.message,
+        code: dbErrorCode(insertErr),
       });
       continue;
     }

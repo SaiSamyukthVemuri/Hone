@@ -1,5 +1,6 @@
 "use server";
 
+import { STALE_BLOCK_MESSAGE, readExpectedBlockVersion } from "@/lib/booking/timed-block-version";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
@@ -15,6 +16,7 @@ import {
 } from "@/lib/booking/tz";
 import { maxPublicBookingHorizonDays } from "@/lib/booking/horizon";
 import type { Practitioner, Studio } from "@/lib/types/database";
+import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 
 // Typed result used by every action that can hit the unified shadow's
 // gist exclusion (sqlstate 23P01). Owner-facing UI displays
@@ -22,7 +24,9 @@ import type { Practitioner, Studio } from "@/lib/types/database";
 // exception, which Next.js production masks to a generic message.
 export type BlockActionResult =
   | { ok: true }
-  | { ok: false; error: string };
+  // `stale` (HON-48): the block was changed or deleted by someone else after
+  // this form loaded it; the caller should refetch and show the latest.
+  | { ok: false; error: string; stale?: true };
 
 const FALLBACK_CONFLICT_MESSAGE =
   "This time overlaps an existing appointment or blocked period. Choose another time or resolve the existing calendar item first.";
@@ -256,7 +260,7 @@ export async function upsertDayDefaultAction(formData: FormData): Promise<void> 
     p_close_time: isOpen ? close : null,
   });
   if (error || data !== "ok") {
-    logAvailabilityDbError("upsert_day_default", "rpc", error?.code ?? (typeof data === "string" ? data : "unknown"));
+    logAvailabilityDbError("upsert_day_default", "rpc", failureCode(error, data));
     throw new Error("Could not save these hours. Please try again.");
   }
   revalidatePath("/settings/availability");
@@ -304,7 +308,7 @@ export async function saveWeeklyDefaultsAction(formData: FormData): Promise<void
     p_days: days,
   });
   if (error) {
-    logAvailabilityDbError("save_weekly_defaults", "rpc", error.code);
+    logAvailabilityDbError("save_weekly_defaults", "rpc", dbErrorCode(error));
     throw new Error("Could not save these hours. Please try again.");
   }
   if (data !== "ok") {
@@ -343,7 +347,7 @@ export async function upsertOverrideAction(formData: FormData): Promise<void> {
     p_note: note,
   });
   if (error || data !== "ok") {
-    logAvailabilityDbError("upsert_override", "rpc", error?.code ?? (typeof data === "string" ? data : "unknown"));
+    logAvailabilityDbError("upsert_override", "rpc", failureCode(error, data));
     throw new Error("Could not save this date override. Please try again.");
   }
   revalidatePath("/settings/availability");
@@ -362,7 +366,7 @@ export async function deleteOverrideAction(formData: FormData): Promise<void> {
     p_effective_date: null,
   });
   if (error || data !== "ok") {
-    logAvailabilityDbError("delete_override", "rpc", error?.code ?? (typeof data === "string" ? data : "unknown"));
+    logAvailabilityDbError("delete_override", "rpc", failureCode(error, data));
     throw new Error("Could not delete this date override. Please try again.");
   }
   revalidatePath("/settings/availability");
@@ -686,7 +690,7 @@ export async function createBlockoutAction(
       });
       return { ok: false, error: message };
     }
-    logAvailabilityDbError("create_blockout", "insert", error.code);
+    logAvailabilityDbError("create_blockout", "insert", dbErrorCode(error));
     return { ok: false, error: "Could not add this full-day blockout. Please try again." };
   }
   revalidatePath("/settings/availability");
@@ -713,7 +717,7 @@ export async function deleteBlockoutAction(formData: FormData): Promise<void> {
     .eq("id", id)
     .eq("studio_id", studioId);
   if (error) {
-    logAvailabilityDbError("delete_blockout", "delete", error.code);
+    logAvailabilityDbError("delete_blockout", "delete", dbErrorCode(error));
     throw new Error("Could not delete this full-day blockout. Please try again.");
   }
   revalidatePath("/settings/availability");
@@ -859,7 +863,7 @@ export async function createTimedBlockAction(
     }
     const scopeMsg = scopeGuardMessage(error.code);
     if (scopeMsg) return { ok: false, error: scopeMsg };
-    logAvailabilityDbError("create_block", "insert", error.code);
+    logAvailabilityDbError("create_block", "insert", dbErrorCode(error));
     return { ok: false, error: "Could not add this block. Please try again." };
   }
   revalidatePath("/settings/availability");
@@ -882,6 +886,11 @@ export async function updateTimedBlockAction(
   const endLocal = trimmed(formData.get("end_local"));
   const category = trimmed(formData.get("category")).toLowerCase();
   const privateNote = nullable(formData.get("private_note"));
+  // HON-48: the version the form loaded this block at (absent = legacy form).
+  const expected = readExpectedBlockVersion(formData.get("expected_updated_at"));
+  if (expected.kind === "invalid") {
+    return { ok: false, error: "This edit could not be checked against the latest version. Reload and try again." };
+  }
 
   if (!id) return { ok: false, error: "Missing block id." };
   if (!dateStr) return { ok: false, error: "Date is required." };
@@ -919,18 +928,29 @@ export async function updateTimedBlockAction(
   // the request omits practitioner_id (a Legacy form, or a tampered request).
   const { data: existing, error: loadErr } = await supabase
     .from("studio_timed_blocks")
-    .select("practitioner_id")
+    .select("practitioner_id, updated_at")
     .eq("id", id)
     .eq("studio_id", studio.id)
     .maybeSingle();
   if (loadErr) {
-    logAvailabilityDbError("update_block", "load", loadErr.code);
+    logAvailabilityDbError("update_block", "load", dbErrorCode(loadErr));
     return { ok: false, error: "Could not update this block. Please try again." };
   }
-  if (!existing) return { ok: false, error: "Block not found." };
+  if (!existing) {
+    // With a version the form HAD this block, so "gone" means someone deleted it.
+    return expected.kind === "present"
+      ? { ok: false, error: STALE_BLOCK_MESSAGE, stale: true }
+      : { ok: false, error: "Block not found." };
+  }
+  if (expected.kind === "present" && existing.updated_at !== expected.value) {
+    return { ok: false, error: STALE_BLOCK_MESSAGE, stale: true };
+  }
   const scope = resolveSubmittedScope(formData, existing.practitioner_id);
 
-  const { error } = await supabase
+  // The write itself is conditional on the version too: the check above can be
+  // overtaken by another save between the read and this statement, and only a
+  // conditional UPDATE is atomic. Zero rows back means someone else won.
+  let update = supabase
     .from("studio_timed_blocks")
     .update({
       starts_at: startsAt,
@@ -942,6 +962,11 @@ export async function updateTimedBlockAction(
     })
     .eq("id", id)
     .eq("studio_id", studio.id);
+  if (expected.kind === "present") update = update.eq("updated_at", expected.value);
+  const { data: written, error } = await update.select("id");
+  if (!error && expected.kind === "present" && (written ?? []).length === 0) {
+    return { ok: false, error: STALE_BLOCK_MESSAGE, stale: true };
+  }
   if (error) {
     if (error.code === "23P01") {
       // Exclude the block we are editing from the conflict lookup
@@ -962,7 +987,7 @@ export async function updateTimedBlockAction(
     }
     const scopeMsg = scopeGuardMessage(error.code);
     if (scopeMsg) return { ok: false, error: scopeMsg };
-    logAvailabilityDbError("update_block", "update", error.code);
+    logAvailabilityDbError("update_block", "update", dbErrorCode(error));
     return { ok: false, error: "Could not update this block. Please try again." };
   }
   revalidatePath("/settings/availability");
@@ -981,15 +1006,38 @@ export async function deleteTimedBlockAction(
   const { studio } = await assertOwnerWithStudio();
   const id = trimmed(formData.get("id"));
   if (!id) return { ok: false, error: "Missing block id." };
+  const expected = readExpectedBlockVersion(formData.get("expected_updated_at"));
+  if (expected.kind === "invalid") {
+    return { ok: false, error: "This delete could not be checked against the latest version. Reload and try again." };
+  }
   const supabase = await createClient();
-  const { error } = await supabase
+  // HON-48: with a version the delete only applies to the block the person was
+  // looking at; a block edited by someone else since is NOT deleted (they may
+  // not have meant that one), and one already deleted is simply done.
+  let del = supabase
     .from("studio_timed_blocks")
     .delete()
     .eq("id", id)
     .eq("studio_id", studio.id);
+  if (expected.kind === "present") del = del.eq("updated_at", expected.value);
+  const { data: deleted, error } = await del.select("id");
   if (error) {
-    logAvailabilityDbError("delete_block", "delete", error.code);
+    logAvailabilityDbError("delete_block", "delete", dbErrorCode(error));
     return { ok: false, error: "Could not delete this block. Please try again." };
+  }
+  if (expected.kind === "present" && (deleted ?? []).length === 0) {
+    const { data: still, error: checkErr } = await supabase
+      .from("studio_timed_blocks")
+      .select("id")
+      .eq("id", id)
+      .eq("studio_id", studio.id)
+      .maybeSingle();
+    if (checkErr) {
+      logAvailabilityDbError("delete_block", "recheck", dbErrorCode(checkErr));
+      return { ok: false, error: "Could not delete this block. Please try again." };
+    }
+    if (still) return { ok: false, error: STALE_BLOCK_MESSAGE, stale: true };
+    // Already gone: the outcome the person wanted. Fall through to success.
   }
   revalidatePath("/settings/availability");
   revalidatePath("/calendar");
@@ -1128,7 +1176,7 @@ export async function createRecurringBreakRuleAction(
     }
     const scopeMsg = scopeGuardMessage(error.code);
     if (scopeMsg) return { ok: false, error: scopeMsg };
-    logAvailabilityDbError("create_recurring", "rpc", error.code);
+    logAvailabilityDbError("create_recurring", "rpc", dbErrorCode(error));
     return { ok: false, error: "Could not add this recurring break. Please try again." };
   }
   revalidatePath("/settings/availability");
@@ -1181,7 +1229,7 @@ export async function updateRecurringBreakRuleAction(
     .eq("studio_id", studio.id)
     .maybeSingle();
   if (loadErr) {
-    logAvailabilityDbError("update_recurring", "load", loadErr.code);
+    logAvailabilityDbError("update_recurring", "load", dbErrorCode(loadErr));
     return { ok: false, error: "Could not update this recurring break. Please try again." };
   }
   if (!existing) return { ok: false, error: "Rule not found." };
@@ -1232,7 +1280,7 @@ export async function updateRecurringBreakRuleAction(
     }
     const scopeMsg = scopeGuardMessage(error.code);
     if (scopeMsg) return { ok: false, error: scopeMsg };
-    logAvailabilityDbError("update_recurring", "rpc", error.code);
+    logAvailabilityDbError("update_recurring", "rpc", dbErrorCode(error));
     return { ok: false, error: "Could not update this recurring break. Please try again." };
   }
   revalidatePath("/settings/availability");
@@ -1261,7 +1309,7 @@ export async function toggleRecurringBreakRuleActiveAction(
     .eq("studio_id", studio.id)
     .maybeSingle();
   if (lookupErr) {
-    logAvailabilityDbError("toggle_recurring", "load", lookupErr.code);
+    logAvailabilityDbError("toggle_recurring", "load", dbErrorCode(lookupErr));
     return { ok: false, error: "Could not update this recurring break. Please try again." };
   }
   if (!rule) return { ok: false, error: "Rule not found." };
@@ -1307,7 +1355,7 @@ export async function toggleRecurringBreakRuleActiveAction(
           "This break is assigned to a practitioner who is no longer active. Reassign it before enabling it.",
       };
     }
-    logAvailabilityDbError("toggle_recurring", "rpc", error.code);
+    logAvailabilityDbError("toggle_recurring", "rpc", dbErrorCode(error));
     return { ok: false, error: "Could not update this recurring break. Please try again." };
   }
   revalidatePath("/settings/availability");
@@ -1328,7 +1376,7 @@ export async function deleteRecurringBreakRuleAction(
     p_studio_id: studio.id,
   });
   if (error) {
-    logAvailabilityDbError("delete_recurring", "rpc", error.code);
+    logAvailabilityDbError("delete_recurring", "rpc", dbErrorCode(error));
     return { ok: false, error: "Could not delete this recurring break. Please try again." };
   }
   revalidatePath("/settings/availability");

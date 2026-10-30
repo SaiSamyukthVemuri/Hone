@@ -13,6 +13,7 @@ import {
   compareProviderMoney,
   providerMoneyMismatchDetails,
 } from "@/lib/billing/provider-money-facts";
+import { dbErrorCode, thrownErrorClass, stripeErrorFields } from "@/lib/logging/error-class";
 
 // ---------------------------------------------------------------------------
 // runSessionPaymentCharge (PR #173).
@@ -658,8 +659,7 @@ async function writeSucceededOutcome(args: {
     // (PR #179) remains the eventual-consistency backstop; the row stays
     // 'pending_stripe' for it to reconcile.
     logInternal("session_payment_succeeded_write_failed", {
-      code: error.code,
-      message: error.message,
+      code: dbErrorCode(error),
       attemptId: args.attemptId,
     });
     await recordOpsAlert({
@@ -828,8 +828,7 @@ async function writeFailedOutcome(args: {
     // failures are as observable as success-persistence failures. Alerting
     // only; callers now return manual review unless persistence is proved.
     logInternal("session_payment_failed_write_failed", {
-      code: error.code,
-      message: error.message,
+      code: dbErrorCode(error),
       attemptId: args.attemptId,
     });
     await recordOpsAlert({
@@ -1021,7 +1020,8 @@ async function finalizeRequiresActionPaymentIntent(args: {
     logInternal("session_payment_requires_action_cancel_failed", {
       attemptId: args.attemptId,
       paymentIntentId: args.pi.id,
-      message: cancelErr instanceof Error ? cancelErr.message : String(cancelErr),
+      errorClass: thrownErrorClass(cancelErr),
+      ...stripeErrorFields(cancelErr),
     });
     await recordOpsAlert({
       severity: "critical",
@@ -1537,8 +1537,7 @@ export async function runSessionPaymentCharge(args: {
   );
   if (claimErr) {
     logInternal("session_payment_claim_rpc_failed", {
-      code: claimErr.code,
-      message: claimErr.message,
+      code: dbErrorCode(claimErr),
       attemptId: attemptRow.id,
     });
     return {
@@ -1764,8 +1763,7 @@ export async function runSessionPaymentCharge(args: {
       if (!failedPersisted) return { ok: false, outcome: "needs_manual_review", message: NEEDS_MANUAL_REVIEW_MESSAGE };
       logInternal("session_payment_stripe_error", {
         attemptId: attemptRow.id,
-        type: err.type,
-        code: err.code,
+        ...stripeErrorFields(err),
       });
       await recordOpsAlert({
         severity:

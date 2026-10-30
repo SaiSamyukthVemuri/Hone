@@ -32,6 +32,7 @@ import type {
   ClinicalNoteKind,
 } from "@/lib/types/database";
 import { safeLog } from "@/lib/logging/safe-log";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 const MAX_BODY_LENGTH = 20000;
 const MAX_AREAS = 40;
@@ -181,7 +182,7 @@ async function insertClinicalNote(params: {
     .maybeSingle();
   if (clientErr) {
     logNoteFailure("clinical_note_client_lookup_failed", {
-      code: clientErr.code,
+      code: dbErrorCode(clientErr),
       kind,
       clientId,
       studioId: studio.id,
@@ -222,7 +223,7 @@ async function insertClinicalNote(params: {
       };
     }
     logNoteFailure("clinical_note_insert_failed", {
-      code: error.code,
+      code: dbErrorCode(error),
       kind,
       clientId,
       studioId: studio.id,
@@ -245,7 +246,7 @@ async function insertClinicalNote(params: {
     .maybeSingle();
   if (verifyErr) {
     logNoteFailure("clinical_note_readback_failed", {
-      code: verifyErr.code,
+      code: dbErrorCode(verifyErr),
       kind,
       clientId,
       studioId: studio.id,

@@ -1,4 +1,6 @@
 import { TODO_DISCLOSURE_LIMIT } from "@/lib/dashboard/todo-model";
+import { clientDisplayName } from "@/lib/clients/identity";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { createClient } from "@/lib/supabase/server";
 
 // Missing Records / Follow-up Assistant V1 (PR #249). The SECOND
@@ -241,8 +243,8 @@ type SessionScanRow = {
   started_at: string;
   aftercare_and_risks_explained_at: string | null;
   client:
-    | { id: string; name: string; archived_at: string | null }
-    | { id: string; name: string; archived_at: string | null }[]
+    | { id: string; name: string; preferred_name?: string | null; archived_at: string | null }
+    | { id: string; name: string; preferred_name?: string | null; archived_at: string | null }[]
     | null;
 };
 
@@ -256,7 +258,7 @@ type BlockScanRow = {
 
 function joinedClient(
   raw: SessionScanRow["client"],
-): { id: string; name: string; archived_at: string | null } | null {
+): { id: string; name: string; preferred_name?: string | null; archived_at: string | null } | null {
   return Array.isArray(raw) ? raw[0] ?? null : raw;
 }
 
@@ -270,21 +272,25 @@ export async function getMissingRecordsAssistant(
   const supabase = await createClient();
 
   // 1) Recent sessions (newest first), capped.
-  const { data: sessRows, error: sessError } = await supabase
-    .from("sessions")
-    .select(
-      "id, client_id, started_at, aftercare_and_risks_explained_at, client:clients(id, name, archived_at)",
-    )
-    .eq("studio_id", studioId)
-    .is("deleted_at", null)
-    .order("started_at", { ascending: false })
-    .limit(SESSION_SCAN_CAP);
+  // HON-58: the staff-facing name is the display name (preferred, else stored);
+  // readWithPreferredName keeps this read working before 0258 exists.
+  const { data: sessRows, error: sessError } = await readWithPreferredName((withPreferred) =>
+    supabase
+      .from("sessions")
+      .select(
+        `id, client_id, started_at, aftercare_and_risks_explained_at, client:clients(id, name, ${preferredNameColumn(withPreferred)}archived_at)`,
+      )
+      .eq("studio_id", studioId)
+      .is("deleted_at", null)
+      .order("started_at", { ascending: false })
+      .limit(SESSION_SCAN_CAP),
+  );
   // DAT-002 (the #981 pattern): every read below refuses through the route
   // error boundary on failure. Read as empty, a failure would say nothing is
   // missing, and a failed charted read would flag charted visits as uncharted.
   if (sessError) throw new Error("Failed to load missing records");
 
-  const sessions = ((sessRows ?? []) as SessionScanRow[])
+  const sessions = ((sessRows ?? []) as unknown as SessionScanRow[])
     .map((r) => ({ row: r, client: joinedClient(r.client) }))
     .filter((s) => s.client && !s.client.archived_at);
   const sessionIds = sessions.map((s) => s.row.id);
@@ -315,15 +321,17 @@ export async function getMissingRecordsAssistant(
   const windowStartIso = new Date(
     Date.parse(nowUtcIso) - COMPLETED_WINDOW_DAYS * 86_400_000,
   ).toISOString();
-  const { data: apptRows, error: apptError } = await supabase
-    .from("appointments")
-    .select("id, client_id, starts_at, client:clients(id, name, archived_at)")
-    .eq("studio_id", studioId)
-    .eq("status", "completed")
-    .gte("starts_at", windowStartIso)
-    .lte("starts_at", nowUtcIso)
-    .order("starts_at", { ascending: false })
-    .limit(COMPLETED_APPT_CAP);
+  const { data: apptRows, error: apptError } = await readWithPreferredName((withPreferred) =>
+    supabase
+      .from("appointments")
+      .select(`id, client_id, starts_at, client:clients(id, name, ${preferredNameColumn(withPreferred)}archived_at)`)
+      .eq("studio_id", studioId)
+      .eq("status", "completed")
+      .gte("starts_at", windowStartIso)
+      .lte("starts_at", nowUtcIso)
+      .order("starts_at", { ascending: false })
+      .limit(COMPLETED_APPT_CAP),
+  );
   if (apptError) throw new Error("Failed to load missing records");
   type CompletedApptRow = {
     id: string;
@@ -331,7 +339,7 @@ export async function getMissingRecordsAssistant(
     starts_at: string;
     client: SessionScanRow["client"];
   };
-  const completedAppts = ((apptRows ?? []) as CompletedApptRow[])
+  const completedAppts = ((apptRows ?? []) as unknown as CompletedApptRow[])
     .map((r) => ({ row: r, client: joinedClient(r.client) }))
     .filter((a) => a.client && !a.client.archived_at);
   const completedApptIds = completedAppts.map((a) => a.row.id);
@@ -400,7 +408,7 @@ export async function getMissingRecordsAssistant(
     .map((a) => ({
       appointmentId: a.row.id,
       clientId: a.row.client_id,
-      clientName: a.client?.name ?? "Client",
+      clientName: a.client ? clientDisplayName(a.client) : "Client",
       startedAt: a.row.starts_at,
     }));
 
@@ -410,7 +418,7 @@ export async function getMissingRecordsAssistant(
     return {
       sessionId: s.row.id,
       clientId: s.row.client_id,
-      clientName: s.client?.name ?? "Client",
+      clientName: s.client ? clientDisplayName(s.client) : "Client",
       startedAt: s.row.started_at,
       hasTreatmentArea: blocks.length > 0,
       aftercareMarked: s.row.aftercare_and_risks_explained_at != null,
@@ -420,7 +428,7 @@ export async function getMissingRecordsAssistant(
 
   const nameByClient = new Map<string, string>();
   for (const s of sessions) {
-    if (s.client) nameByClient.set(s.row.client_id, s.client.name);
+    if (s.client) nameByClient.set(s.row.client_id, clientDisplayName(s.client));
   }
   const incompleteIntakes: IncompleteIntake[] = [
     ...incompleteIntakeClientIds,

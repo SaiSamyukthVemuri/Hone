@@ -43,6 +43,25 @@ export const BROWSER_GROUPS = {
       "client-budget-context.spec.ts",
       "clinical-notes.spec.ts",
       "conditional-numbing-notes.spec.ts",
+      // MPX-03: the machine-first panel lives in the settings-block form,
+      // the same surface conditional-numbing-notes and
+      // repeat-client-fast-charting drive.
+      "machine-first-charting.spec.ts",
+      // MPX-03: the CREATE-mode journey through the same surface — the panel
+      // before a block exists, then the one atomic save that follows. Same
+      // group as its sibling for the same reason.
+      "machine-create-mode-journey.spec.ts",
+      // MPX-03: changing the machine or the mode UNDER a typed draft, and the
+      // unit going out of service mid-draft. Same surface again - the panel
+      // inside the settings-block form - so the same group: a diff to that
+      // form must run this spec, and filing it elsewhere would hide it from
+      // the only lane its subject can regress in.
+      "machine-switch-discards-draft.spec.ts",
+      // MPX-03: the LOST RESPONSE on the initial save, and pressing Save
+      // again. Same surface once more, so the same group - and this one most
+      // of all, because what it proves is that the FORM reuses its retry key,
+      // which no database test can see.
+      "machine-initial-save-retry.spec.ts",
       "copy-settings-machine-readings.spec.ts",
       "custom-area-commit.spec.ts",
       "galvanic-intensity-retirement.spec.ts",
@@ -197,7 +216,12 @@ export const BROWSER_GROUPS = {
       // SENTRY-BOOKING-ERR-01: the /book/[slug] error boundary contains a failed
       // or stale Server Action and recovers. A diff to app/book/** selects this
       // group, which is the diff that can break it.
+      // F2: /settings/booking shows a fixed sentence for any ?error= value, never
+      // the query's own text. Here because settings/booking/actions.ts selects
+      // this group.
+      "settings-booking-error-param.spec.ts",
       "public-booking-error-containment.spec.ts",
+      "public-booking-slot-read-failure.spec.ts",
       // TWILIO-EGRESS-FAKE (MSG-006): a public booking with SMS consent reaches
       // the confirmation SMS, and the lane's Twilio egress fake answers it
       // in-process. The booking surface is what drives the send.
@@ -239,6 +263,11 @@ export const BROWSER_GROUPS = {
       // Same placement and same self-skip as the spec above; both run for real
       // in the non-required `storage photos` job, which has storage-api.
       "treatment-image-upload-formats.spec.ts",
+      // ID photo set/replace/remove on the client profile/Photos surface:
+      // same group as thumbnail recovery, with the same real-storage
+      // requirement (self-skips in CI without storage-api). Does not add to
+      // the sessions targeted-lane cost pin.
+      "fett-client-portrait.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the
@@ -347,6 +376,9 @@ export const BROWSER_GROUPS = {
       // non-required WebKit project, so it is a no-op wherever this group runs.
       "webkit-time-input-key-probe.spec.ts",
       "practitioner-availability-compat.spec.ts",
+      // SCH-001: an owner booking for another practitioner emails that
+      // practitioner (fake Resend capture ledger) and the detail page names them.
+      "assigned-practitioner-mail.spec.ts",
       "practitioner-booking-studio-b.spec.ts",
       "practitioner-quick-book-studio-b.spec.ts",
       "practitioner-reassignment-studio-b.spec.ts",
@@ -438,6 +470,52 @@ const SHARED_PATTERNS = [
   /^next\.config\./,
 ];
 
+/**
+ * SPECS THAT BOOK THROUGH THE PUBLIC FORM (/book/<slug>) or call the public
+ * booking action and commands. Found by auditing e2e/ and e2e-payment/ for the
+ * bookAppointment helper, navigation to /book or /b/, and the action/command
+ * names (1132-COVERAGE-AUDIT). A diff to the public booking action or its
+ * booking helpers selects EVERY GROUP that holds one of these.
+ *
+ * WHY THIS EXISTS. Group membership files a spec under the surface it proves,
+ * and PATH_TO_GROUP maps a path to its own surface. The public booking action
+ * matched only `booking`, so appointment-token-hash and public-cancel-policy-
+ * change (`portal`) and mobile-ux (`responsive`) - which book through that very
+ * form - were never selected for a change to it (#1132 ran 44 specs and none of
+ * the three). A runtime change to a surface many workflows book through needs
+ * every one of them, not the ones whose FILENAME is nearby. The #1131 miss was
+ * the same class.
+ *
+ * tests/ci/classify-changes.test.ts pins the list against a scan of e2e/, so a
+ * new spec that books publicly cannot be left out.
+ */
+export const PUBLIC_BOOKING_SPECS = [
+  "appointment-token-hash.spec.ts",
+  "book-next-available-fast.spec.ts",
+  "core-memory-loop.spec.ts",
+  "dashboard-treatment-memory-inline.spec.ts",
+  "mobile-ux.spec.ts",
+  "move-appointment-custom-time.spec.ts",
+  "move-appointment-mobile-submit.spec.ts",
+  "move-appointment-responsive.spec.ts",
+  "new-client-waitlist.spec.ts",
+  "new-studio-wizard.spec.ts",
+  "onboarding.spec.ts",
+  "perceived-speed.spec.ts",
+  "public-booking-error-containment.spec.ts",
+  "public-booking-slot-read-failure.spec.ts",
+  "public-cancel-policy-change.spec.ts",
+  "public-reschedule-v2.spec.ts",
+  "safe-willow-appointment-lifecycle.spec.ts",
+  "safe-willow-contract.spec.ts",
+  "twilio-egress-fake.spec.ts",
+  "ui-r01-interaction-foundations.spec.ts",
+  "ui03-blocked-reason.spec.ts",
+];
+
+/** Source paths that ARE the public booking surface: the action and the booking helpers. */
+export const PUBLIC_BOOKING_PATTERNS = [/^app\/book\//, /^lib\/booking\//];
+
 const PATH_TO_GROUP = [
   { group: "intake", patterns: [/intake/i] },
   { group: "portal", patterns: [/portal/i, /pinned[-_]?note/i, /personal[-_]?note/i] },
@@ -521,6 +599,17 @@ export function selectBrowserGroups(files) {
       if (rule.patterns.some((re) => re.test(f))) {
         if (!groups.has(rule.group)) why.push(`${rule.group} <- ${f}`);
         groups.add(rule.group);
+      }
+    }
+  }
+
+  // PUBLIC BOOKING: every group that holds a spec booking through the form.
+  const publicBookingChanged = list.find((f) => PUBLIC_BOOKING_PATTERNS.some((re) => re.test(f)));
+  if (publicBookingChanged) {
+    for (const [g, def] of Object.entries(BROWSER_GROUPS)) {
+      if (def.specs.some((spec) => PUBLIC_BOOKING_SPECS.includes(spec))) {
+        if (!groups.has(g)) why.push(`${g} <- ${publicBookingChanged} (public booking surface)`);
+        groups.add(g);
       }
     }
   }

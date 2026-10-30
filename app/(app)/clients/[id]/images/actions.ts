@@ -19,6 +19,8 @@ import {
 import { sanitizeTreatmentImage } from "@/lib/images/treatment-image-sanitize";
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
 import { signTreatmentImageUrl } from "./sign-treatment-image";
+import { dbErrorCode } from "@/lib/logging/error-class";
+import { clientPortraitEnabled } from "@/lib/images/portrait-policy";
 
 // PR #271. Practitioner-only secure treatment image actions.
 //
@@ -75,7 +77,7 @@ export async function uploadTreatmentImageAction(
       .eq("studio_id", studio.id)
       .eq("id", clientId)
       .maybeSingle();
-    if (clientErr) throw new Error(clientErr.message);
+    if (clientErr) throw new Error(`db_error:${dbErrorCode(clientErr)}`);
     if (!client) return { ok: false, error: "Client not found." };
 
     // PR #284: resolve + VALIDATE the attach context server-side. The 0093
@@ -98,7 +100,7 @@ export async function uploadTreatmentImageAction(
         .eq("id", requestedSessionBlockId)
         .eq("studio_id", studio.id)
         .maybeSingle();
-      if (blockErr) throw new Error(blockErr.message);
+      if (blockErr) throw new Error(`db_error:${dbErrorCode(blockErr)}`);
       const parent = block
         ? (Array.isArray(block.sessions) ? block.sessions[0] : block.sessions)
         : null;
@@ -124,7 +126,7 @@ export async function uploadTreatmentImageAction(
         .eq("studio_id", studio.id)
         .eq("client_id", clientId)
         .maybeSingle();
-      if (sessErr) throw new Error(sessErr.message);
+      if (sessErr) throw new Error(`db_error:${dbErrorCode(sessErr)}`);
       if (!session) {
         return { ok: false, error: "That session is not available for this client." };
       }
@@ -335,7 +337,7 @@ export async function updateTreatmentImageNoteAction(input: {
       p_client_id: input.clientId,
       p_note: value,
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(`db_error:${dbErrorCode(error)}`);
     if (!data) {
       return { ok: false, error: "Treatment photo not found." };
     }
@@ -374,7 +376,7 @@ export async function archiveTreatmentImageAction(input: {
       p_image_id: input.imageId,
       p_client_id: input.clientId,
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(`db_error:${dbErrorCode(error)}`);
     if (!data) {
       return { ok: false, error: "Treatment photo not found." };
     }
@@ -382,5 +384,42 @@ export async function archiveTreatmentImageAction(input: {
     return { ok: true };
   } catch {
     return { ok: false, error: "Could not archive the image." };
+  }
+}
+
+// FETT photos (HON-43), 0231: mark one of a client's own CLIENT-SCOPED photos
+// as their identification portrait, or clear it with imageId=null. The command
+// resolves the actor from auth.uid() per studio and the database refuses any
+// photo that is not a current client photo of the same client, so this action
+// only gates auth and maps the outcome. Errors stay generic: they never reveal
+// whether another client's or studio's photo exists.
+export async function setClientPortraitAction(input: {
+  clientId: string;
+  imageId: string | null;
+  expectedImageId?: string | null;
+}): Promise<ImageActionResult> {
+  await getCurrentPractitionerWithStudio();
+  // HELD: refuse before any RPC while portrait use is not enabled.
+  if (!clientPortraitEnabled()) {
+    return { ok: false, error: "ID photos are not available." };
+  }
+  try {
+    const supabase = await createClient();
+    const { error } = await supabase.rpc("set_client_portrait", {
+      p_client_id: input.clientId,
+      p_image_id: input.imageId,
+      p_expected_image_id: input.expectedImageId ?? null,
+    });
+    if (error) {
+      if (error.code === "P0231") {
+        return { ok: false, error: "The ID photo changed. Reload and try again." };
+      }
+      return { ok: false, error: "Could not update the ID photo." };
+    }
+    revalidatePath(`/clients/${input.clientId}/images`);
+    revalidatePath(`/clients/${input.clientId}`);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Could not update the ID photo." };
   }
 }

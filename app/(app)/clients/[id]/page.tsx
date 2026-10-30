@@ -7,6 +7,9 @@ import { orderByRecency } from "@/lib/sessions/charted-session";
 import { PendingLink } from "@/components/pending-link";
 import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
 import { notFound } from "next/navigation";
+import { signedClientPortraitUrl } from "@/lib/images/client-portrait";
+import { clientPortraitEnabled } from "@/lib/images/portrait-policy";
+import { ClientPortrait } from "./ClientPortrait";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildLastSessionSummary,
@@ -28,6 +31,7 @@ import { ClinicalUnavailableNotice } from "@/components/clinical-unavailable-not
 import { buildBeforeToday } from "@/lib/sessions/before-today";
 import { getImportedTreatmentMemoriesForClient } from "@/lib/imported-treatment-memory";
 import { attachStructuredAreas } from "@/lib/supabase/queries";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // PR #259: display cap for imported treatment memory in Before Today: show
 // the latest few so the briefing stays scannable; "Showing the latest N of M"
@@ -75,6 +79,7 @@ import {
   getRecentPortalAccessEvents,
 } from "@/lib/portal/queries";
 import { computePortalPendingTasks } from "@/lib/portal/pending-tasks";
+import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { computeIntakeLinkStatus } from "@/lib/intake/link-status";
 // getClientTags import removed: tags no longer render on the main
@@ -329,6 +334,7 @@ export default async function ClientCheatSheetPage({
     activeCard,
     importedMemory,
     portalAccessEvents,
+    portraitUrl,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
@@ -412,6 +418,18 @@ export default async function ClientCheatSheetPage({
     isOverview
       ? getRecentPortalAccessEvents(studio.id, client.id, 5)
       : Promise.resolve([] as Awaited<ReturnType<typeof getRecentPortalAccessEvents>>),
+    // 0231: the identification portrait in the header (every tab), signed for
+    // 60 s; null when none is set or it cannot be signed. Depends only on
+    // (studio.id, client), so it belongs in this wave, not after it.
+    // HELD: while portrait use is not enabled nothing is signed and no
+    // portrait renders; the stored pointer is left untouched.
+    clientPortraitEnabled()
+      ? signedClientPortraitUrl({
+          studioId: studio.id,
+          clientId: client.id,
+          portraitImageId: client.portrait_image_id,
+        })
+      : Promise.resolve(null),
   ]);
 
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
@@ -630,7 +648,7 @@ export default async function ClientCheatSheetPage({
           logClinicalReadFailure(
             "client_profile_recent_blocks_read_failed",
             studio.id,
-            recentBlocksError.code,
+            dbErrorCode(recentBlocksError),
             recentSessions.length,
           );
           clinicalHistoryUnavailable = true;
@@ -642,7 +660,7 @@ export default async function ClientCheatSheetPage({
       logClinicalReadFailure(
         "client_profile_recent_blocks_read_failed",
         studio.id,
-        (err as { code?: unknown } | null)?.code,
+        dbErrorCode(err),
         recentSessions.length,
       );
       clinicalHistoryUnavailable = true;
@@ -665,7 +683,7 @@ export default async function ClientCheatSheetPage({
           logClinicalReadFailure(
             "client_profile_intelligence_blocks_read_failed",
             studio.id,
-            intelBlocksError.code,
+            dbErrorCode(intelBlocksError),
             Math.min(sessions.length, 200),
           );
           intelligenceUnavailable = true;
@@ -677,7 +695,7 @@ export default async function ClientCheatSheetPage({
       logClinicalReadFailure(
         "client_profile_intelligence_blocks_read_failed",
         studio.id,
-        (err as { code?: unknown } | null)?.code,
+        dbErrorCode(err),
         Math.min(sessions.length, 200),
       );
       intelligenceUnavailable = true;
@@ -890,6 +908,9 @@ export default async function ClientCheatSheetPage({
         <div className="mt-2 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
+              {portraitUrl && (
+                <ClientPortrait key={`${portraitUrl.url}:${portraitUrl.thumbUrl ?? ""}`} clientId={client.id} imageId={client.portrait_image_id!} url={portraitUrl.url} thumbUrl={portraitUrl.thumbUrl} clientName={client.name} />
+              )}
               <h1 className="break-words text-2xl font-semibold tracking-tight md:text-3xl">
                 {client.name}
               </h1>
@@ -972,6 +993,7 @@ export default async function ClientCheatSheetPage({
               that could change how today's treatment is delivered. */}
           <ClientPinnedNotesCard
             clientId={client.id}
+            viewer={{ isOwner: practitioner.role === "owner", practitionerId: practitioner.id }}
             notes={pinnedNotes}
             addAction={addClientPinnedNoteAction}
             editAction={editClientPinnedNoteAction}
@@ -1124,6 +1146,7 @@ export default async function ClientCheatSheetPage({
             lastSeenAt={portalAccess.lastSeenAt}
             pendingTasks={portalPendingTasks}
             recentEvents={portalAccessEvents}
+            portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
           />
 
           {/* PR #134. Consent / e-sign per-template signed status for
@@ -1351,27 +1374,33 @@ export default async function ClientCheatSheetPage({
                         <div className="text-xs text-neutral-500">{p.notes}</div>
                       )}
                     </div>
-                    <form action={deleteClientPricingAction}>
-                      <input type="hidden" name="id" value={p.id} />
-                      <input type="hidden" name="client_id" value={client.id} />
-                      <button
-                        type="submit"
-                        aria-label={`Delete ${p.service_name} pricing`}
-                        className="rounded-md border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 dark:border-neutral-700 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
-                      >
-                        ✕
-                      </button>
-                    </form>
+                    {/* HON-44: price changes are owner-only (the action refuses
+                        a non-owner too); the control is withdrawn, not disabled. */}
+                    {practitioner.role === "owner" && (
+                      <form action={deleteClientPricingAction}>
+                        <input type="hidden" name="id" value={p.id} />
+                        <input type="hidden" name="client_id" value={client.id} />
+                        <button
+                          type="submit"
+                          aria-label={`Delete ${p.service_name} pricing`}
+                          className="rounded-md border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 dark:border-neutral-700 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
+                        >
+                          ✕
+                        </button>
+                      </form>
+                    )}
                   </li>
                 ))}
               </ul>
             )}
-            <div className="border-t border-neutral-200 pt-3 dark:border-neutral-800">
-              <AddPricingForm
-                clientId={client.id}
-                action={addClientPricingAction}
-              />
-            </div>
+            {practitioner.role === "owner" && (
+              <div className="border-t border-neutral-200 pt-3 dark:border-neutral-800">
+                <AddPricingForm
+                  clientId={client.id}
+                  action={addClientPricingAction}
+                />
+              </div>
+            )}
           </section>
         </>
       )}

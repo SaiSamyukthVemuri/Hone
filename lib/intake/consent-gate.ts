@@ -19,6 +19,7 @@ import {
   type IntakeConsentFormType,
   type IntakeConsentResponsesRecord,
 } from "@/lib/intake/consent-forms";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Server-side authority for live consent forms inside the intake.
 //
@@ -87,8 +88,7 @@ async function loadLiveIntakeConsentTemplates(
     console.error(
       JSON.stringify({
         event: "intake_consent_templates_load_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -167,8 +167,7 @@ async function loadCurrentPortalCompletions(input: {
     console.error(
       JSON.stringify({
         event: "intake_consent_portal_completions_load_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         timestamp: new Date().toISOString(),
       }),
     );

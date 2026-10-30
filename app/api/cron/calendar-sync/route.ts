@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { handleWorkerRoute } from "@/lib/google-calendar/sync/worker-runtime";
 import { recordReminderSchedulerHealthAlert } from "@/lib/cron/reminder-heartbeat";
+import { thrownErrorClass } from "@/lib/logging/error-class";
 
 // Google Calendar: Phase B2.3-c2: the authenticated, bounded worker-drain route.
 //
@@ -55,8 +56,7 @@ export async function GET(req: Request) {
         JSON.stringify({
           event: "reminder_scheduler_health_check_threw",
           route: "/api/cron/calendar-sync",
-          err_message:
-            healthErr instanceof Error ? healthErr.message : String(healthErr),
+          err_class: thrownErrorClass(healthErr),
           timestamp: new Date().toISOString(),
         }),
       );

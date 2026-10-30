@@ -10,6 +10,7 @@ import {
 } from "@/lib/rate-limit/public";
 import { getStudioBySlug } from "@/lib/booking/queries";
 import { loadPublicSlotsByDate } from "@/lib/booking/public-slot-range";
+import { throwIfSlotReadFaulted } from "@/lib/booking/e2e-slot-read-fault";
 import {
   filterFutureSlots,
   getAvailableSlots,
@@ -60,6 +61,11 @@ import {
   newClientMayBook,
 } from "@/lib/booking/new-client-admission";
 import {
+  clientManagePageAllowed,
+  clientOnlineBookingDisabledMessage,
+  clientSelfServicePolicyFromStudio,
+} from "@/lib/booking/client-self-service-policy";
+import {
   NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
   NEW_CLIENT_WAITLIST_REFUSAL_CODE,
 } from "@/lib/booking/new-client-waitlist";
@@ -83,6 +89,7 @@ import { captureServerEvent } from "@/lib/analytics/server";
 // magic-link logs already use (app/portal/login/actions.ts), so the
 // same email yields the same fingerprint across surfaces.
 import { hashFingerprint } from "@/lib/portal/tokens";
+import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -203,7 +210,7 @@ export async function fetchPublicSlotsAction(params: {
     // for correlation; drop the raw Postgres message (can echo
     // submitted values on a public surface).
     logInternalBookingError("public_slots_service_lookup_failed", {
-      code: error.code,
+      code: dbErrorCode(error),
       studioId: studio.id,
     });
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
@@ -212,6 +219,7 @@ export async function fetchPublicSlotsAction(params: {
 
   // Discovery has a structured retryable refusal, never fabricated availability.
   try {
+    throwIfSlotReadFaulted(params.slug);
     const slots = await getAvailableSlots(
       admin,
       {
@@ -334,7 +342,7 @@ export async function fetchNextAvailableDateAction(params: {
   if (svcErr) {
     // PR #261: sqlstate code + studioId only; drop raw DB message.
     logInternalBookingError("public_next_available_service_lookup_failed", {
-      code: svcErr.code,
+      code: dbErrorCode(svcErr),
       studioId: studio.id,
     });
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
@@ -431,8 +439,14 @@ export type PublicBookResult =
   | {
       ok: true;
       appointmentId: string;
-      manageUrl: string;
+      // HON-47: null when the studio offers none of cancel, reschedule or the
+      // portal online, so the card never links into a refusal.
+      manageUrl: string | null;
       confirmationEmailStatus: ConfirmationEmailStatus;
+      // HON-47. Which email links and card actions the studio offers, so the
+      // confirmation copy never promises one it withdrew. Required: no caller
+      // may leave the studio's policy to a permissive default.
+      selfService: { cancellation: boolean; reschedule: boolean };
     }
   | {
       ok: false;
@@ -554,6 +568,16 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
 
   const studio = await getStudioBySlug(slug);
   if (!studio) return { ok: false, error: "Studio not found." };
+
+  // HON-47. RETURNING-CLIENT ONLINE BOOKING follows the studio's client portal
+  // flag. It is NOT new-client admission: new_client_admission_mode below stays
+  // the only authority for people who are not yet clients, and is not read
+  // here. Refused before any read or write, so nothing is mutated. The
+  // existing-email case under client_type=new is caught after the lookup below.
+  const clientSelfService = clientSelfServicePolicyFromStudio(studio);
+  if (clientType === "existing" && !clientSelfService.portal) {
+    return { ok: false, error: clientOnlineBookingDisabledMessage(studio.name) };
+  }
 
   // =====================================================================
   // P0 NEW-CLIENT WAITLIST ADMISSION GATE — SERVER AUTHORITY
@@ -823,11 +847,57 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // drop raw DB message. The fingerprint correlates repeated
     // failures for one booker without writing their raw email.
     logInternalBookingError("public_booking_client_lookup_failed", {
-      code: lookupErr.code,
+      code: dbErrorCode(lookupErr),
       studioId: studio.id,
       emailFingerprint: hashFingerprint(normalizedEmail),
     });
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
+  }
+
+  // SEC-004. KNOWING AN EMAIL IS NOT PROOF OF OWNING IT.
+  //
+  // Nothing on this public surface proves the booker controls the address they
+  // typed. An active client matched by that address used to be adopted as the
+  // appointment's client (client_type=existing by design, client_type=new
+  // because the lookup above did not look at the type), so anyone who knew a
+  // client's email could put appointments on their record, stamp SMS consent
+  // against it and have their reminders sent to that client.
+  //
+  // So this ACTION never attaches a public submission to an existing client.
+  // (The database command still re-resolves the email under its own lock: an
+  // ACTIVE client that appears between this lookup and that commit is adopted,
+  // a narrow residual that needs the DB-side refusal requested as 0256 and is
+  // pinned by tests/app/book/sec-004-public-booking-no-attach.test.ts.) Ownership is
+  // proved where it already is: the secure client portal's emailed single-use
+  // link, from which a returning client books (app/portal/rebook-actions.ts).
+  // The one exception is an AUTHORIZED invitation, whose recipient hash already
+  // proves control of the invited address.
+  //
+  // PRIVACY. The refusal is the archived-client collision copy, verbatim, so an
+  // active match, an archived match and (for client_type=existing) no match at
+  // all are the SAME answer; the booker never learns a client exists. It
+  // returns before anything is written, consent included, and before any
+  // invitation is spent. The residual, stated rather than hidden: client_type=new
+  // with an UNMATCHED email still books, so new-vs-matched stays distinguishable
+  // by outcome, bounded by the per-IP and per-email limits above. Closing that
+  // would mean confirming every public booking.
+  if (invitationAuth?.kind !== "authorized" && (existingClient || clientType === "existing")) {
+    logInternalBookingError("public_booking_identity_unconfirmed", {
+      studioId: studio.id,
+      emailFingerprint: hashFingerprint(normalizedEmail),
+    });
+    return { ok: false, error: archivedClientCollisionError(studio.name) };
+  }
+
+  // HON-47. After the SEC-004 gate above, only an AUTHORIZED invitation reaches
+  // here with a matched email. A visitor who chose "new" but whose email matches an ACTIVE client
+  // would take the existing-client branch below and book as that client, so
+  // the returning-client rule applies here too. Placed BEFORE the invitation is
+  // consumed and before any write. The copy is the same neutral sentence used
+  // above, which does not say "returning client" and so does not confirm that
+  // the email is on file.
+  if (existingClient && !clientSelfService.portal) {
+    return { ok: false, error: clientOnlineBookingDisabledMessage(studio.name) };
   }
 
   // WAIT-03B B2 / P3-A. CONSUME THE INVITATION HERE -- before the client
@@ -1237,7 +1307,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     logInternalBookingError("public_booking_client_not_resolved", {
       studioId: studio.id,
       emailFingerprint: hashFingerprint(normalizedEmail),
-      code: rawCommandResult ?? undefined,
+      code: failureCode(null, rawCommandResult, "none"),
     });
     if (consumedInvitationId) {
       return invitationConsumedWithoutBooking("client_not_created");
@@ -1382,7 +1452,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // studio_not_found are all operator-visible states, never the visitor's
     // fault to fix, and must not distinguish "wrong studio" from "no such row".
     logInternalBookingError("public_booking_command_refused", {
-      code: commandResult,
+      code: failureCode(null, commandResult),
       studioId: studio.id,
       emailFingerprint: hashFingerprint(normalizedEmail),
     });
@@ -1417,7 +1487,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     // drop raw DB message (the appointments row carries free-text notes,
     // so its error text must never reach logs on a public surface).
     logInternalBookingError("public_booking_insert_failed", {
-      code: rpcErr?.code,
+      code: dbErrorCode(rpcErr),
       studioId: studio.id,
       emailFingerprint: hashFingerprint(normalizedEmail),
     });
@@ -1599,7 +1669,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
             // studio-name fallback and skips the practitioner-specific email
             // rather than risking a stale recipient.
             logInternalBookingError("public_booking_practitioner_lookup_failed", {
-              code: prErr?.code,
+              code: dbErrorCode(prErr),
               studioId: studio.id,
             });
             return null;
@@ -1658,7 +1728,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
         );
       if (consentErr) {
         logInternalBookingError("public_booking_marketing_consent_insert_failed", {
-          code: consentErr.code,
+          code: dbErrorCode(consentErr),
           studioId: studio.id,
         });
       }
@@ -1903,8 +1973,12 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   return {
     ok: true,
     appointmentId: createdId,
-    manageUrl,
+    manageUrl: clientManagePageAllowed(clientSelfService) ? manageUrl : null,
     confirmationEmailStatus,
+    selfService: {
+      cancellation: clientSelfService.cancellation,
+      reschedule: clientSelfService.reschedule,
+    },
   };
 }
 

@@ -13,6 +13,7 @@ import {
   expectPreparedDurable,
   sessionPaymentRegion,
 } from "./helpers/checkout-flow";
+import { captureActionPosts, replayAction } from "./helpers/action-replay";
 
 // ===========================================================================
 // Checkout default amount + optional internal note (Chloe production feedback)
@@ -529,10 +530,22 @@ test.describe("an operator-authored final charge", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 6. F-PAY-002. A non-owner practitioner may still take payment at the booked
-//    price, and may not author a different total. Enforced SERVER-side.
+// 6. HON-44 (Sam decision 12, 2026-10-25). Card charges are OWNER-ONLY. This
+//    section used to prove F-PAY-002's "a non-owner may still take payment at
+//    the booked price, and may not author a different total". The first half of
+//    that sentence is the behaviour decision 12 removed, so the contract is now:
+//    a practitioner is offered no way to charge, and a request for it is refused
+//    by the server with nothing created. (The "may not author a different total"
+//    half is subsumed: a practitioner cannot prepare at ALL.) The owner's own
+//    prepare, final-amount and adjustment flows are sections 1-5 and are untouched.
+//
+//    The owner-only amount hint and the masked-receipt branches inside
+//    SessionPaymentPrepareCard are now unreachable for a practitioner. They are
+//    KEPT, as a second render-level gate should the card ever be rendered for a
+//    non-owner by a future edit; they have no browser path any more, so their
+//    guard is a source pin in tests/app/hon-44-owner-only-surfaces.test.ts.
 // ---------------------------------------------------------------------------
-test.describe("a non-owner practitioner", () => {
+test.describe("a non-owner practitioner (card charges are owner-only)", () => {
   let seed: PaymentSeed;
   let memberEmail: string;
 
@@ -556,35 +569,74 @@ test.describe("a non-owner practitioner", () => {
     await closePool();
   });
 
-  test("is refused a changed total, then prepares at the booked price", async ({
+  test("is offered NO Session payment region, no way to prepare, and nothing is created", async ({
     page,
   }) => {
     await loginByMagicLink(page, memberEmail);
-    await openSessionDetail(page, seed);
-    const region = sessionPaymentRegion(page);
-    const finalCharge = finalChargeField(page);
-    const prepare = page.getByRole("button", { name: /prepare session payment/i });
+    await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
+    // The chart page itself rendered for her (so an empty payment area is not a
+    // blank page): the exit control every practitioner gets is there.
+    await expect(page.getByText(/done, back to client|back to sessions/i).first()).toBeVisible({
+      timeout: 20_000,
+    });
 
-    // The field is offered — preparing at the booked price is her job — but a
-    // changed total tells her the truth instead of a reason box.
-    await expect(finalCharge).toBeEnabled();
-    await finalCharge.fill("120.00");
-    await expect(page.getByTestId("owner-only-amount-hint")).toBeVisible();
-    await expect(reasonField(page)).toHaveCount(0);
-
-    // The UI hint is courtesy; the gate is the server's. Submit anyway.
-    await prepare.click();
-    await expect(region.getByRole("alert")).toContainText(
-      /Only the studio owner can change the final charge/i,
-    );
+    await expect(sessionPaymentRegion(page)).toHaveCount(0);
+    await expect(page.getByLabel("Session payment")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /prepare session payment/i })).toHaveCount(0);
+    await expect(finalChargeField(page)).toHaveCount(0);
+    await expect(referenceField(page)).toHaveCount(0);
+    await expect(page.getByTestId("owner-only-amount-hint")).toHaveCount(0);
     expect(await attemptsFor(seed.sessionId)).toHaveLength(0);
+  });
 
-    // ...and her ordinary checkout still works, unchanged.
-    await finalCharge.fill("145.00");
-    await prepare.click();
-    await expectPreparedDurable(region);
-    const rows = await attemptsFor(seed.sessionId);
-    expect(rows).toHaveLength(1);
-    expect(Number(rows[0].amount_cents)).toBe(SERVICE_PRICE_CENTS);
+  test("a prepare request replayed from the owner's own browser is refused: zero attempt rows", async ({
+    browser,
+  }) => {
+    // 1. The OWNER prepares through the real UI; capture the real action POST.
+    const ownerContext = await browser.newContext();
+    const ownerPage = await ownerContext.newPage();
+    const memberContext = await browser.newContext();
+    const memberPage = await memberContext.newPage();
+    try {
+      await loginAsOwner(ownerPage, seed);
+      await openSessionDetail(ownerPage, seed);
+      const captured = captureActionPosts(ownerPage);
+      await ownerPage.getByRole("button", { name: /prepare session payment/i }).click();
+      await expectPreparedDurable(sessionPaymentRegion(ownerPage));
+      const prepare = captured.find((c) => c.body.toString("utf8").includes(seed.sessionId));
+      expect(prepare, "the owner's prepare POST was not captured").toBeDefined();
+      expect(await attemptsFor(seed.sessionId)).toHaveLength(1);
+
+      // 2. POSITIVE CONTROL. Reset, then replay the same bytes as the OWNER from
+      //    a request context: it must create the row again. Without this, a
+      //    malformed replay would be refused for the wrong reason and "zero rows"
+      //    below would prove nothing.
+      await adminQuery(`delete from public.payment_charge_attempts where session_id = $1`, [
+        seed.sessionId,
+      ]);
+      expect(await attemptsFor(seed.sessionId)).toHaveLength(0);
+      await replayAction(ownerContext.request, prepare!);
+      await expect
+        .poll(async () => (await attemptsFor(seed.sessionId)).length, {
+          timeout: 20_000,
+          message: "the replay mechanism did not reach the prepare action as the owner",
+        })
+        .toBe(1);
+      await adminQuery(`delete from public.payment_charge_attempts where session_id = $1`, [
+        seed.sessionId,
+      ]);
+
+      // 3. THE REFUSAL. The same bytes, from a signed-in PRACTITIONER of the same
+      //    studio, for the same session.
+      await loginByMagicLink(memberPage, memberEmail);
+      const response = await replayAction(memberContext.request, prepare!);
+      expect(response.status(), "the server must answer, not crash").toBeLessThan(500);
+      // The server has had time to act on it; nothing was created, then or later.
+      await memberPage.waitForTimeout(2_000);
+      expect(await attemptsFor(seed.sessionId)).toHaveLength(0);
+    } finally {
+      await ownerContext.close();
+      await memberContext.close();
+    }
   });
 });

@@ -57,6 +57,7 @@ import {
   updateSessionPerformerAction,
 } from "./actions";
 import { createClient } from "@/lib/supabase/server";
+import { loadPreviousVisitNote } from "@/lib/sessions/previous-visit-note";
 import {
   attachChartEntryToPlanAction,
   detachChartEntryFromPlanAction,
@@ -87,6 +88,7 @@ import {
 import { SectionLabel } from "@/components/ui/section-label";
 import { SessionPhotos } from "./SessionPhotos";
 import { signedSessionPhotos } from "./session-photos";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 export default async function SessionDetailPage({
   params,
@@ -140,6 +142,7 @@ export default async function SessionDetailPage({
   // join the wave. It is `session.appointment_id ?? null` — a pure derivation,
   // no I/O, no behaviour.
   const linkedAppointmentId = session.appointment_id ?? null;
+  const isOwner = practitioner.role === "owner";
 
   const [
     sessionPhotos,
@@ -170,17 +173,24 @@ export default async function SessionDetailPage({
     timed("session-chart.clinical-notes", () =>
       buildClinicalNoteSections(id, { historyLimit: 10 }),
     ),
-    timed("session-chart.payment-eligibility", () =>
-      getSessionPaymentEligibility({ studioId: studio.id, sessionId: session.id }),
-    ),
-    timed("session-chart.payment-amount", () =>
-      getAuthoritativeSessionPaymentAmount({
-        studioId: studio.id,
-        sessionId: session.id,
-        studioTimezone: studio.timezone,
-      }),
-    ),
-    linkedAppointmentId
+    // HON-44 (Sam decision 12): the payment card is owner-only, so its three
+    // loaders run for the owner ALONE. A non-owner's request issues none of these
+    // reads, and nothing payment-shaped exists to be passed to a rendered element.
+    isOwner
+      ? timed("session-chart.payment-eligibility", () =>
+          getSessionPaymentEligibility({ studioId: studio.id, sessionId: session.id }),
+        )
+      : Promise.resolve(null),
+    isOwner
+      ? timed("session-chart.payment-amount", () =>
+          getAuthoritativeSessionPaymentAmount({
+            studioId: studio.id,
+            sessionId: session.id,
+            studioTimezone: studio.timezone,
+          }),
+        )
+      : Promise.resolve(null),
+    isOwner && linkedAppointmentId
       ? timed("session-chart.settlements", () =>
           getAppointmentSettlements(studio.id, [linkedAppointmentId]),
         )
@@ -195,7 +205,7 @@ export default async function SessionDetailPage({
   ]);
   const lastEntryNotFromThisSession =
     lastEntry && !sessionEntryIds.has(lastEntry.id) ? lastEntry : null;
-  const sessionPaymentAmount = pricedForPage.ok ? pricedForPage.result : null;
+  const sessionPaymentAmount = pricedForPage?.ok ? pricedForPage.result : null;
   // HON-11: the quoted price that prefills the cash/e-transfer amount when the
   // prepare form is hidden (no card on file). Quick checkout passes the same
   // fact; without it this page showed a blank box for the visit the dashboard
@@ -277,8 +287,7 @@ export default async function SessionDetailPage({
         JSON.stringify({
           event: "session_payment_default_amount_read_failed",
           appointment_id: linkedAppointmentId,
-          code: apptErr.code ?? null,
-          message: apptErr.message ?? null,
+          code: dbErrorCode(apptErr),
         }),
       );
     }
@@ -450,23 +459,13 @@ export default async function SessionDetailPage({
   // rendered when a note exists, so historical clients see nothing.
   const supabaseForNote = await createClient();
   const prevNoteSpan = startPerfSpan("session-chart.previous-note");
-  const { data: previousWithNote } = await supabaseForNote
-    .from("sessions")
-    .select("id, started_at, next_session_note")
-    .eq("studio_id", studio.id)
-    .eq("client_id", id)
-    .is("deleted_at", null)
-    // HON-10 row 1: a void session's note is never "From last visit".
-    // record_status is NOT NULL (0119), so `neq` drops nothing else.
-    .neq("record_status", "void")
-    .not("next_session_note", "is", null)
-    .lt("started_at", session.started_at)
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const previousVisit = await loadPreviousVisitNote({
+    studioId: studio.id,
+    clientId: id,
+    before: session.started_at,
+  });
   prevNoteSpan.end();
-  const fromLastVisit =
-    previousWithNote?.next_session_note?.trim() || null;
+  const fromLastVisit = previousVisit.note;
 
   // POINT-OF-CARE TREATMENT MEMORY (Chloe). Everything she needs to reproduce
   // last time's treatment: areas + laterality, frequency, probe and lot, mode
@@ -709,6 +708,14 @@ export default async function SessionDetailPage({
       {/* PR #190 (clinical memory): the plan written at the previous
           visit, surfaced where Chloe starts working. Renders only
           when a note exists. */}
+      {previousVisit.unavailable && (
+        <section
+          role="status"
+          className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
+        >
+          Could not load the note from the last visit. Reload to try again.
+        </section>
+      )}
       {fromLastVisit && (
         <section className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm dark:border-blue-900 dark:bg-blue-950/40">
           <h2 className="text-xs font-medium uppercase tracking-wider text-blue-800 dark:text-blue-300">
@@ -1057,6 +1064,10 @@ export default async function SessionDetailPage({
           NextStepCard's "Go to billing" link deep-scrolls into the
           payment card. The wrapper is a noop visually; the anchor
           is the entire surface the practitioner is looking for. */}
+      {/* HON-44 (Sam decision 12): charging, recording payment and the amount are
+          owner-only; the server actions refuse a non-owner, and the whole card is
+          withdrawn for one. */}
+      {isOwner && sessionPaymentEligibility && (
       <div id="session-payment">
         <SessionPaymentPrepareCard
           sessionId={session.id}
@@ -1070,7 +1081,9 @@ export default async function SessionDetailPage({
           // the dashboard row.
           appointmentId={linkedAppointmentId}
           settledMethod={liveSettlement?.method ?? null}
+          settledId={liveSettlement?.id ?? null}
           settledAmountCents={liveSettlement?.amountCents ?? null}
+          settledQuotedCents={liveSettlement?.quotedAmountCents ?? null}
           settlementQuotedAmountCents={settlementQuotedAmountCents}
           // The UI's copy of the database's own rule: only a COMPLETED
           // appointment can carry a disposition (0187 answers anything else
@@ -1087,6 +1100,7 @@ export default async function SessionDetailPage({
           refundAction={refundPaymentChargeAttemptAction}
         />
       </div>
+      )}
 
       {/* An archived (legacy finalized) record cannot be soft-deleted, the DB
           guard from 0119 still enforces that, so the destructive control is

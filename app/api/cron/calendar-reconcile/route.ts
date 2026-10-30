@@ -22,6 +22,7 @@ import {
   sweepCalendarDeadRowAlerts,
   type DeadRowSweepResult,
 } from "@/lib/google-calendar/sync/reconcile-heartbeat";
+import { thrownErrorClass } from "@/lib/logging/error-class";
 
 // Google Calendar: Phase B2.3-b: the reconciliation-sweep route.
 //
@@ -215,8 +216,7 @@ export async function GET(req: Request) {
         JSON.stringify({
           event: "reminder_scheduler_health_check_threw",
           route: "/api/cron/calendar-reconcile",
-          err_message:
-            healthErr instanceof Error ? healthErr.message : String(healthErr),
+          err_class: thrownErrorClass(healthErr),
           timestamp: new Date().toISOString(),
         }),
       );

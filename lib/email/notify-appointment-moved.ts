@@ -3,6 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmailSafely } from "./send-appointment";
 import { resolveReplyTo, studioClientContactEmail } from "@/lib/email/studio-identity";
 import { generateCancellationToken } from "@/lib/booking/tokens";
+import { clientManagePageAllowed } from "@/lib/booking/client-self-service-policy";
+import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
 import { localLongDate, formatTimeForStudio } from "@/lib/booking/tz";
 import { clientPreheader, withPreheader, withTextPreheader } from "@/lib/email/preheader";
 import { emailBookingReference } from "@/lib/email/booking-reference";
@@ -70,8 +72,10 @@ export function buildAppointmentMovedEmail(p: {
   startsAt: Date;
   timezone: string;
   practitionerName: string | null;
-  manageUrl: string;
-  rescheduleUrl: string;
+  // HON-47. Null when the studio does not offer that path online; the line
+  // then names only what IS offered, or how to reach the studio.
+  manageUrl: string | null;
+  rescheduleUrl: string | null;
   bookingReference: string;
 }): { subject: string; html: string; text: string } {
   const { kind, studioName, serviceName, practitionerName, manageUrl, rescheduleUrl } = p;
@@ -119,6 +123,18 @@ export function buildAppointmentMovedEmail(p: {
   // names only the studio. The client's name is not repeated; the service and
   // the new time follow the lead.
   const lead = `${studioName} has updated your appointment. The details are below.`;
+  const changeHtml =
+    manageUrl && rescheduleUrl
+      ? `Need to make a change? <a href="${esc(rescheduleUrl)}">Reschedule</a> or <a href="${esc(manageUrl)}">manage your appointment</a>.`
+      : manageUrl
+        ? `Need to make a change? <a href="${esc(manageUrl)}">Manage your appointment</a>.`
+        : `Need to make a change? Please contact ${esc(studioName)} directly.`;
+  const changeText =
+    manageUrl && rescheduleUrl
+      ? `Manage or reschedule: ${manageUrl}`
+      : manageUrl
+        ? `Manage your appointment: ${manageUrl}`
+        : `Need to make a change? Please contact ${studioName} directly.`;
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8" /><title>${esc(subject)}</title></head>
 <body style="margin:0;padding:0;background:#FAFAF7;color:#0A0A0A;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FAFAF7;padding:40px 20px;"><tr><td align="center">
@@ -129,7 +145,7 @@ export function buildAppointmentMovedEmail(p: {
     <tr><td style="padding-bottom:24px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">
       ${bodyHtml}</td></tr>
     <tr><td style="padding-bottom:16px;font-family:-apple-system,system-ui,sans-serif;font-size:16px;line-height:1.6;">
-      Need to make a change? <a href="${esc(rescheduleUrl)}">Reschedule</a> or <a href="${esc(manageUrl)}">manage your appointment</a>.</td></tr>
+      ${changeHtml}</td></tr>
   </table>
   </td></tr></table>
 </body></html>`;
@@ -137,7 +153,7 @@ export function buildAppointmentMovedEmail(p: {
     subject,
     html: withPreheader(html, clientPreheader(studioName)),
     text: withTextPreheader(
-      `${lead}\n\n${bodyText}\n\nBooking reference: ${p.bookingReference.trim()}\nManage or reschedule: ${manageUrl}\n`,
+      `${lead}\n\n${bodyText}\n\nBooking reference: ${p.bookingReference.trim()}\n${changeText}\n`,
       clientPreheader(studioName),
     ),
   };
@@ -190,8 +206,14 @@ export async function notifyAppointmentMoved(
 
     // Stateless HMAC token (no stored raw token) → the neutral manage + reschedule links.
     const token = generateCancellationToken(row.id, start);
-    const manageUrl = `${input.appOrigin}/manage/${token}`;
-    const rescheduleUrl = `${input.appOrigin}/reschedule/${token}`;
+    // HON-47. The studio's client self-service policy decides which links this
+    // email may carry. An unreadable policy withdraws them all: the email still
+    // delivers, with the contact line, rather than linking into a refusal.
+    const policyRead = await loadClientSelfServicePolicy(admin, input.studioId);
+    const policy = policyRead.ok ? policyRead.policy : null;
+    const manageUrl =
+      policy && clientManagePageAllowed(policy) ? `${input.appOrigin}/manage/${token}` : null;
+    const rescheduleUrl = policy?.reschedule ? `${input.appOrigin}/reschedule/${token}` : null;
 
     const { subject, html: htmlWithPreheader, text } = buildAppointmentMovedEmail({
       kind: input.resultKind ?? "moved",

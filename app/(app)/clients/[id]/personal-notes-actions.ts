@@ -23,6 +23,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 
 const MAX_NOTE_LENGTH = 20000;
@@ -74,7 +75,9 @@ export async function updateClientPersonalNotesAction(
     .eq("id", clientId)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (clientErr) return { ok: false, error: clientErr.message };
+  if (clientErr) {
+    return { ok: false, error: userFacingDbFailure("check the client", clientErr, "personal_notes_client_lookup_failed") };
+  }
   if (!client) return { ok: false, error: "Client not found." };
 
   // Upsert keyed on the unique(client_id) constraint from migration
@@ -93,7 +96,7 @@ export async function updateClientPersonalNotesAction(
       { onConflict: "client_id" },
     );
   if (error) {
-    return { ok: false, error: `Failed to save notes: ${error.message}` };
+    return { ok: false, error: userFacingDbFailure("save the notes", error, "personal_notes_save_failed") };
   }
 
   revalidatePath(`/clients/${clientId}`);

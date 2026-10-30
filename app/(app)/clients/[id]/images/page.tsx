@@ -24,6 +24,8 @@ import {
 } from "./TreatmentImagesManager";
 import { getPhotoConsentStateForClient } from "@/lib/consent/queries";
 import { photoConsentSummary } from "@/lib/consent/signed-record";
+import { dbErrorCode } from "@/lib/logging/error-class";
+import { clientPortraitEnabled } from "@/lib/images/portrait-policy";
 
 // PR #271. Practitioner-only treatment images. Gated by the app shell's
 // requirePractitionerWithStudio layout; data is loaded with the RLS client
@@ -38,15 +40,16 @@ export default async function ClientImagesPage({
 }) {
   const { id } = await params;
   const { studio } = await requirePractitionerWithStudio();
+  const portraitEnabled = clientPortraitEnabled();
 
   const supabase = await createClient();
   const { data: client, error: clientErr } = await supabase
     .from("clients")
-    .select("id, name")
+    .select("id, name, portrait_image_id")
     .eq("studio_id", studio.id)
     .eq("id", id)
     .maybeSingle();
-  if (clientErr) throw new Error(clientErr.message);
+  if (clientErr) throw new Error(`db_error:${dbErrorCode(clientErr)}`);
   if (!client) notFound();
 
   // PR #274: also select the existing context links (session_id /
@@ -66,7 +69,7 @@ export default async function ClientImagesPage({
     .eq("client_id", id)
     .is("deleted_at", null)
     .order("created_at", { ascending: false });
-  if (imgErr) throw new Error(imgErr.message);
+  if (imgErr) throw new Error(`db_error:${dbErrorCode(imgErr)}`);
 
   // PR #273: server-side preview signing. Ownership is already verified (the
   // RLS client load above is scoped to this studio + client). Short-TTL signed
@@ -174,6 +177,7 @@ export default async function ClientImagesPage({
       // Compute labels server-side; only labels (never raw IDs) reach the client.
       return {
         id: m.id,
+        clientScope: m.session_id == null && m.session_block_id == null,
         // Session date of the attached session (null for client-scope photos),
         // used as the human card title in place of the raw filename.
         sessionDate: session?.started_at ?? null,
@@ -207,7 +211,7 @@ export default async function ClientImagesPage({
     .eq("client_id", id)
     .order("started_at", { ascending: false })
     .limit(12);
-  if (sessErr) throw new Error(sessErr.message);
+  if (sessErr) throw new Error(`db_error:${dbErrorCode(sessErr)}`);
   type EmbeddedBlock = { id: string } & NonNullable<SessionBlockAreaInput>;
   // Migration 0128: batch-load structured areas for every block in the selector
   // so each option shows the full multi-area set + laterality.
@@ -276,6 +280,8 @@ export default async function ClientImagesPage({
         clientId={id}
         images={rows}
         sessionOptions={sessionOptions}
+        portraitEnabled={portraitEnabled}
+        portraitImageId={portraitEnabled ? (client.portrait_image_id ?? null) : null}
       />
     </div>
   );

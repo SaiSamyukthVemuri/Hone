@@ -125,7 +125,7 @@ describe("public_booking_client_not_resolved logs no raw PII", () => {
   it("keeps the sqlstate code, studioId, and a salted emailFingerprint", () => {
     // The successor carries the COMMAND's outcome rather than a PostgREST
     // error code, because the command answers instead of failing.
-    expect(block).toContain("code: rawCommandResult");
+    expect(block).toContain('code: failureCode(null, rawCommandResult, "none")');
     expect(block).toContain("studioId: studio.id");
     expect(block).toContain(
       "emailFingerprint: hashFingerprint(normalizedEmail)",

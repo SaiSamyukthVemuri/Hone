@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   existsSync,
   mkdirSync,
@@ -13,6 +13,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
+
+// Real-time bound, intrinsic: these cases spawn real `git`/`node` subprocesses
+// and scan the checkout, which measured 5-11 s each on a loaded host against
+// vitest's 5 s default (FLAKE-SYSDEPS). Only the ceiling moves; no assertion does.
+vi.setConfig({ testTimeout: 60_000 });
 
 // Workflow configuration + canonical migration-state guards. These replace the
 // 18 hand-maintained migration-max pins that used to be scattered across
@@ -380,20 +385,12 @@ function jobNames(yaml: string): string[] {
   return out;
 }
 
-/**
- * Parse the browser shard's conditional `timeout-minutes` into its two
- * branches. Parsing beats matching a literal expression: the guard then
- * survives whitespace and formatting changes, and states the two budgets as
- * NUMBERS rather than as one brittle regex.
- *
- *   timeout-minutes: ${{ ... browser_extended == 'true' && <extended> || <targeted> }}
- */
+/** Parse the actual browser job's finite augmented-proof / ordinary budgets. */
 function shardTimeoutBudgets(): { extended: number; targeted: number } {
-  const m =
-    /timeout-minutes:\s*\$\{\{\s*needs\.changes\.outputs\.browser_extended\s*==\s*'true'\s*&&\s*(\d+)\s*\|\|\s*(\d+)\s*\}\}/.exec(
-      CI,
-    );
-  if (!m) throw new Error("browser shard timeout-minutes expression not found in ci.yml");
+  const doc = yaml.load(CI) as { jobs: Record<string, Record<string, unknown>> };
+  const expression = String(doc.jobs["browser-e2e-shard"]["timeout-minutes"]);
+  const m = /&&\s*(\d+)\s*\|\|\s*(\d+)\s*\}\}$/.exec(expression);
+  if (!m) throw new Error("browser shard finite timeout branches missing in ci.yml");
   return { extended: Number(m[1]), targeted: Number(m[2]) };
 }
 
@@ -551,9 +548,9 @@ describe("PR CI — path-aware lane selection", () => {
     // 30767725631 (extended) and later run 30814919019 (targeted) were both
     // misreported as test failures.
     const b = shardTimeoutBudgets();
-    // 15 -> 19 (2026-10-23): + the bounded 6 min Playwright install step.
+    // targeted 15 -> 19 (2026-10-23, production): + the bounded 6 min Playwright install step. extended 35: HON-18 augmented native proof.
     expect(b.targeted, "targeted hard timeout").toBe(19);
-    expect(b.extended, "measured cold-setup hard timeout").toBe(25);
+    expect(b.extended, "augmented native proof hard timeout").toBe(35);
     expect(CI).toMatch(/hard timeout 19 min/i);
     expect(CI).toMatch(/hard timeout 25 min/i);
     expect(CI).toMatch(/target <10 min per shard/i);
@@ -1017,13 +1014,15 @@ describe("PR CI — path-aware lane selection", () => {
     // The upper bounds here are a brake on ceilings drifting upward instead of
     // slow lanes being investigated, so they stay tight enough to notice: a
     // run39713000378 cold setup took12–12.6min before150–158tests.
-    // 25 clears the measured~22min projection with finite headroom; the
+    // The existing25min ordinary projection plus supplemental native work has a
+    // reviewed finite35min ceiling. The
     // <10min performance target stays, and slow dependency installs need investigation.
     const b = shardTimeoutBudgets();
     expect(b.targeted).toBeGreaterThan(10);
     expect(b.extended).toBeGreaterThan(10);
     expect(b.targeted).toBeLessThanOrEqual(19);
-    expect(b.extended).toBe(25);
+    expect(b.extended).toBeGreaterThan(25);
+    expect(b.extended).toBeLessThanOrEqual(35);
   });
 
   it("every job declares an explicit timeout", () => {
@@ -1079,19 +1078,166 @@ describe("D7b: Supabase-starting jobs pull ghcr.io images authenticated, read-on
       // Codex P2 4354172124: that start is a DIRECT pinned-CLI call, never a
       // checked-out script; its failure falls through to ONE retry step that
       // runs the repo's wrapper only AFTER the logout.
-      const start = steps[at + 1];
+      // CI-REGISTRY (OPS 2026-10-27): the one step allowed between the login and
+      // the start is the image pre-pull, inline and credential-neutral (see the
+      // CI-REGISTRY describe below for its exact contract).
+      expect(steps[at + 1]).toMatch(/^      - name: Pre-pull Supabase images \(bounded back-off; ghcr, then ECR or Docker Hub, by digest\)\n/);
+      const start = steps[at + 2];
       expect(start).toMatch(/^      - name: (Start local Supabase|Bring up the database)/);
       expect(start).toMatch(/\n        id: sb_start\n/);
       expect(start).toMatch(/\n        continue-on-error: true\n        shell: bash\n        run: supabase start\b[^\n]* 2>&1 \| tee "\$RUNNER_TEMP\/supabase-start\.log"\n/);
       expect(start.replace(/^\s*#.*$/gm, "")).not.toMatch(/scripts\/|\bbash scripts|\bnpm |\bnode |\.sh\b/);
       const cond = _n === "ci.yml" ? "always()" : "always() && matrix.needs_supabase";
-      expect(steps[at + 2]).toMatch(new RegExp(`^      - name: Log out of ghcr\\.io \\(D7b\\)\\n        if: ${cond.replace(/[()&.]/g, "\\$&")}\\n        run: docker logout ghcr\\.io\\n`));
+      expect(steps[at + 3]).toMatch(new RegExp(`^      - name: Log out of ghcr\\.io \\(D7b\\)\\n        if: ${cond.replace(/[()&.]/g, "\\$&")}\\n        run: docker logout ghcr\\.io\\n`));
       const retryIf = _n === "ci.yml" ? "steps.sb_start.outcome == 'failure'" : "matrix.needs_supabase && steps.sb_start.outcome == 'failure'";
-      expect(steps[at + 3]).toContain(`      - name: Retry Supabase start once on a port-bind collision (no credential)\n        if: ${retryIf}\n        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start`);
+      expect(steps[at + 4]).toContain(`      - name: Retry Supabase start once on a port-bind collision (no credential)\n        if: ${retryIf}\n        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start`);
     }
     expect((body().match(/uses: docker\/login-action@/g) ?? []).length).toBe(setups.length);
     expect((body().match(/run: docker logout ghcr\.io/g) ?? []).length).toBe(setups.length);
     expect(body()).not.toMatch(/SUPABASE_INTERNAL_IMAGE_REGISTRY/);
+  });
+});
+
+describe("CI-REGISTRY: every Supabase-starting job pre-pulls its images BY DIGEST with a bounded back-off and a verified registry fallback", () => {
+  // Run 40540979643 (and 40524759962): after a successful D7b login the start
+  // pulled ~10 images in a burst and ghcr.io answered `toomanyrequests ...
+  // allowed: 44000/minute`; docker and the CLI do not retry and the bind-retry
+  // step (correctly) refuses. The pre-pull (Team's #1193 mechanism) pulls each
+  // image ahead of the start. Insurance PEER-1200-SUPPLY: a tag-only fallback
+  // re-tagged as the expected image is a substitution, so EVERY pull is by the
+  // digest in a committed, reviewed table, and nothing is tagged unverified.
+  const stepsOf = (body: string) => body.split(/\n(?=      - )/);
+  const NAME = /^      - name: Pre-pull Supabase images \(bounded back-off; ghcr, then ECR or Docker Hub, by digest\)\n/;
+  const prepulls = (body: string) => stepsOf(body).filter((s) => NAME.test(s));
+  const code = (s: string) => s.replace(/^\s*#.*$/gm, "");
+  const excludeOf = (s: string) => s.match(/\n          EXCLUDE='([^']*)'\n/)?.[1];
+  const startExclude = (s: string) => s.match(/\n        run: supabase start(?: -x ([^ \n]+))? 2>&1/)?.[1] ?? "";
+  const TABLE = JSON.parse(readFileSync(".github/supabase-image-digests.json", "utf8")) as {
+    cli: string; images: Record<string, string>; no_fallback: string[]; verified_equal_on: Record<string, string[]>;
+  };
+  const FIXTURE = readFileSync("tests/ci/fixtures/supabase-cli-2.102.0-embedded-images.txt", "utf8").trim().split("\n");
+
+  /** The supply-chain contract of one pre-pull step; [] means it holds. */
+  function violations(step: string): string[] {
+    const v: string[] = [];
+    const c = code(step);
+    if (!/\n        continue-on-error: true\n        timeout-minutes: 20\n        shell: bash\n        run: \|\n/.test(step)) v.push("not non-fatal/bounded (continue-on-error + 20 min + bash)");
+    if (!c.includes("set +e")) v.push("missing set +e");
+    // Every pull is by digest from the table.
+    const pulls = c.split("\n").filter((l) => /\bdocker pull\b/.test(l));
+    if (pulls.length !== 2) v.push(`expected exactly 2 pull sites (primary, fallback), found ${pulls.length}`);
+    for (const l of pulls) if (!/@\$D"/.test(l)) v.push(`pull not by digest: ${l.trim()}`);
+    if (!c.includes(`D="$(jq -r --arg k "$IMG" '.images[$k] // empty' "$TABLE")"`)) v.push("digest not read from the table");
+    if (!c.includes("is not in the digest table; left to the stack start")) v.push("an image missing from the table is not left to the start");
+    // The fallback is verified before it can be tagged, and a failed check removes it.
+    if (!c.includes(`docker image inspect --format '{{json .RepoDigests}}' "$base@$D" 2> /dev/null | grep -q "@$D"`)) v.push("no digest comparison of the fallback");
+    if (!c.includes('docker rmi "$base@$D"')) v.push("a mismatching fallback is not removed");
+    const tags = c.match(/\bdocker tag\b/g) ?? [];
+    if (tags.length !== 1) v.push(`expected exactly 1 docker tag, found ${tags.length}`);
+    if (!c.includes('if [ -n "$ref" ] && docker tag "$ref" "ghcr.io/supabase/$IMG"; then')) v.push("the tag is not guarded by a verified reference");
+    if (c.indexOf("docker tag") < c.indexOf(`grep -q "@$D"`)) v.push("tag before the digest comparison");
+    // Sources: exactly ECR, Docker Hub supabase, and the CLI's own upstream reference (all pulled BY DIGEST).
+    const src = c.match(/for base in ([^;]+); do/)?.[1];
+    if (src !== "public.ecr.aws/supabase/$NAME docker.io/supabase/$NAME ${ORIG:+docker.io/${ORIG%%:*}}") v.push(`unexpected fallback sources: ${src}`);
+    // Images started with the Docker socket never use a fallback.
+    if (!c.includes('vector|logflare) echo "no fallback for $NAME')) v.push("vector/logflare are not excluded from the fallback");
+    // The table only applies to the CLI it was generated for.
+    if (!c.includes(`[ "$cli_v" != "$(jq -r '.cli' "$TABLE")" ]`)) v.push("no CLI version check against the table");
+    // The credential is held: no checked-out script, package manager, repo code or credential use.
+    if (/scripts\/|\bbash scripts|\bnpm |\bnpx |\bnode |\.sh\b|docker login|secrets\.|GITHUB_TOKEN/.test(c)) v.push("repo code or a credential reference in a credential-holding step");
+    return v;
+  }
+
+  const real = [...prepulls(CI), ...prepulls(NIGHTLY)];
+
+  it.each([["ci.yml", () => CI, 7], ["nightly.yml", () => NIGHTLY, 1]])("%s: one pre-pull per setup-cli, directly after the login, with the same exclusions as the start that follows it", (_n, body, count) => {
+    const all = stepsOf(body());
+    const pre = prepulls(body());
+    expect(pre.length).toBe(count);
+    expect(pre.length).toBe(all.filter((s) => /uses: supabase\/setup-cli@/.test(s)).length);
+    for (const p of pre) {
+      const at = all.indexOf(p);
+      expect(all[at - 1], "directly after the login").toMatch(/uses: docker\/login-action@/);
+      expect(excludeOf(p), "EXCLUDE equals the following start's -x list").toBe(startExclude(all[at + 1]));
+    }
+  });
+
+  it("the pre-pull bodies are identical across jobs except the exclusion list (and nightly's condition)", () => {
+    const norm = (s: string) => s.replace(/EXCLUDE='[^']*'/, "EXCLUDE='…'").replace(/\n        if: matrix\.needs_supabase/, "");
+    expect(new Set(real.map(norm)).size).toBe(1);
+  });
+
+  it("every real pre-pull satisfies the supply-chain contract", () => {
+    expect(real.length).toBe(8);
+    for (const s of real) expect(violations(s)).toEqual([]);
+  });
+
+  describe("negative controls: each weakening of the contract is caught", () => {
+    const base = real[0];
+    const mutate = (from: string, to: string) => {
+      expect(base, `fixture anchor present: ${from}`).toContain(from);
+      return base.replace(from, to);
+    };
+    it.each([
+      ["a fallback pull by mutable tag", () => mutate('docker pull -q "$base@$D"', 'docker pull -q "$base:${IMG#*:}"')],
+      ["no digest comparison before tagging", () => mutate('2> /dev/null | grep -q "@$D"; then ref=', "2> /dev/null | cat; then ref=")],
+      ["a mismatching fallback is kept", () => mutate('docker rmi "$base@$D"', "true")],
+      ["an unconditional re-tag", () => mutate('if [ -n "$ref" ] && docker tag "$ref" "ghcr.io/supabase/$IMG"; then', 'if docker tag "$base" "ghcr.io/supabase/$IMG"; then')],
+      ["an extra, unreviewed source", () => mutate("${ORIG:+docker.io/${ORIG%%:*}}", "${ORIG:+docker.io/${ORIG%%:*}} registry.example/evil/$NAME")],
+      ["a cross-publisher source in a different form", () => mutate("docker.io/supabase/$NAME ${ORIG", "docker.io/supabase/$NAME docker.io/$ORIG ${ORIG")],
+      ["vector/logflare allowed a fallback", () => mutate('vector|logflare) echo "no fallback for $NAME', 'nothing) echo "no fallback for $NAME')],
+      ["no check that the table matches the CLI", () => mutate(`[ "$cli_v" != "$(jq -r '.cli' "$TABLE")" ]`, "false")],
+      ["a digest not read from the table", () => mutate(`D="$(jq -r --arg k "$IMG" '.images[$k] // empty' "$TABLE")"`, `D="$IMG"`)],
+      ["a checked-out script in the credential-holding step", () => mutate("set +e", "set +e\n          bash scripts/ci/x.sh")],
+    ])("%s", (_label, make) => {
+      expect(violations(make()).length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("the digest table", () => {
+    it("is valid, for the pinned CLI, lists exactly the images the CLI's embedded list names, and every digest is a sha256", () => {
+      const keys = FIXTURE.map((l) => {
+        const m = l.match(/^FROM (\S+) AS (\w+)$/);
+        expect(m, l).not.toBeNull();
+        return m![1].split("/").pop()!;
+      }).sort();
+      expect(Object.keys(TABLE.images).sort()).toEqual(keys);
+      for (const [k, d] of Object.entries(TABLE.images)) expect(d, k).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(TABLE.cli).toBe("2.102.0");
+      for (const body of [CI, NIGHTLY]) {
+        const versions = [...body.matchAll(/uses: supabase\/setup-cli@[^\n]*\n        with:\n(?:\s+#[^\n]*\n)*\s+version: ([0-9.]+)/g)].map((m) => m[1]);
+        expect(versions.length).toBeGreaterThan(0);
+        for (const ver of versions) expect(ver, "setup-cli version equals the table's CLI").toBe(TABLE.cli);
+      }
+    });
+
+    it("the workflow's alias list equals the aliases of the CLI's embedded list (drift check)", () => {
+      const fixtureAliases = FIXTURE.map((l) => l.match(/ AS (\w+)$/)![1]).sort();
+      for (const s of real) {
+        const alt = code(s).match(/AS \(([a-z|]+)\)\$'/)?.[1].split("|").sort();
+        expect(alt).toEqual(fixtureAliases);
+      }
+    });
+
+    it("vector and logflare are listed as never-fallback, matching the step", () => {
+      expect([...TABLE.no_fallback].sort()).toEqual(["logflare", "vector"]);
+      for (const s of real) expect(code(s)).toContain('vector|logflare) echo "no fallback for $NAME');
+    });
+
+    it("every image that may use a fallback has at least one independent source recorded as byte-identical", () => {
+      for (const [k, srcs] of Object.entries(TABLE.verified_equal_on)) {
+        if (TABLE.no_fallback.includes(k.split(":")[0])) continue;
+        expect(srcs.length, k).toBeGreaterThanOrEqual(1);
+      }
+    });
+  });
+
+  it("the bind-retry step, the logout and the direct start are unchanged", () => {
+    for (const body of [CI, NIGHTLY]) {
+      const n = (body.match(/uses: supabase\/setup-cli@/g) ?? []).length;
+      expect((body.match(/run: docker logout ghcr\.io/g) ?? []).length).toBe(n);
+      expect((body.match(/scripts\/ci\/supabase-start-bind-retry\.sh --after-failed-start/g) ?? []).length).toBe(n);
+    }
   });
 });
 
@@ -1118,18 +1264,76 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     expect(job.if).toContain("needs.changes.outputs.full_matrix_required == 'true'");
   });
 
-  it("runs only the scoped WebKit project, which exists only under HONE_E2E_WEBKIT=1", () => {
+  it("runs for a payment-spec-only change (Codex P2: browser groups map only e2e/ specs), and not for an unrelated path", async () => {
+    // @ts-expect-error - .mjs utility ships without type declarations
+    const { classify } = await import("../../scripts/classify-changes.mjs");
+    const paymentSpec = classify(["e2e-payment/quick-checkout-payment.spec.ts"]) as Record<string, unknown>;
+    // The classifier signal the job's `if:` consumes, with no wider trigger.
+    expect(paymentSpec.payment).toBe(true);
+    expect(paymentSpec.full_matrix_required).toBe(false);
+    expect(job.if).toContain("needs.changes.outputs.payment == 'true'");
+    // Negative control: a path that touches neither payment nor the specs.
+    const unrelated = classify(["docs/README.md"]) as Record<string, unknown>;
+    expect(unrelated.payment).toBe(false);
+    expect(unrelated.full_matrix_required).toBe(false);
+    // The signal is wired from the classifier's own output, not a literal.
+    expect(CI).toMatch(/payment: \$\{\{ steps\.classify\.outputs\.payment \}\}/);
+  });
+
+  it("runs only the scoped WebKit projects, which exist only under HONE_E2E_WEBKIT=1", () => {
     const e2e = job.steps.filter((st) => /npx playwright test\b/.test(st.run ?? ""));
-    expect(e2e).toHaveLength(1);
-    expect(e2e[0].run).toBe("npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts --project=webkit-hon-62");
-    expect(e2e[0].env?.HONE_E2E_WEBKIT).toBe("1");
-    // Nothing else in any workflow arms the WebKit project.
+    expect(e2e).toHaveLength(2);
+    expect(e2e[0].run).toBe("npx playwright test e2e/availability-hours-editor.spec.ts e2e/webkit-time-input-key-probe.spec.ts e2e/finish-appointment-mobile.spec.ts e2e/fett-photos-touch-floor.spec.ts --project=webkit-hon-62 --project=webkit-cln-006");
+    expect(e2e[1].run).toBe("npx playwright test --config playwright.payment.config.ts e2e-payment/quick-checkout-payment.spec.ts --project=webkit-cln-006-payment --output=test-results-payment");
+    // The payment step reports whatever the first step did, and arms only the
+    // WebKit marker: the fake-Stripe markers come from the payment config alone.
+    expect(e2e[1].if).toBe("${{ !cancelled() }}");
+    for (const st of e2e) expect(st.env?.HONE_E2E_WEBKIT).toBe("1");
+    expect(JSON.stringify(e2e[1].env)).not.toMatch(/STRIPE|RUN_ID/);
+    // Nothing else in any workflow arms the WebKit projects.
     const code = CI.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
-    expect((code.match(/HONE_E2E_WEBKIT/g) ?? []).length).toBe(1);
+    expect((code.match(/HONE_E2E_WEBKIT/g) ?? []).length).toBe(2);
     expect(NIGHTLY).not.toMatch(/HONE_E2E_WEBKIT/);
     expect(CONFIG).toContain('{ name: "chromium", use: { ...devices["Desktop Chrome"] } },');
     expect(CONFIG).toContain('use: { ...devices["Desktop Safari"], bypassCSP: true },');
     expect(CONFIG).toMatch(/process\.env\.HONE_E2E_WEBKIT === "1"\s*\?\s*\[\s*\{\s*name: "webkit-hon-62",\s*testMatch: \/\(availability-hours-editor\|webkit-time-input-key-probe\)\\\.spec\\\.ts\$\/,/);
+    // CLN-006: scoped by file AND by title, so the rest of those specs (which
+    // Chromium runs in full) is not repeated here.
+    expect(CONFIG).toContain('name: "webkit-cln-006",');
+    expect(CONFIG).toContain("testMatch: /(finish-appointment-mobile|fett-photos-touch-floor)\\.spec\\.ts$/,");
+    expect(CONFIG).toContain("grep: /aftercare warning keyboard stays contained|every photo control measures at least 44px/,");
+    // The payment config gains a `projects` key ONLY under the marker, so the
+    // ordinary payment lane stays the single implicit project.
+    const PAY = readFileSync("playwright.payment.config.ts", "utf8");
+    expect(PAY).toMatch(/\.\.\.\(process\.env\.HONE_E2E_WEBKIT === "1"\s*\?\s*\{\s*projects: \[[\s\S]*?\]\s*,?\s*\}\s*:\s*\{\}\)/);
+    expect((PAY.match(/projects:/g) ?? []).length).toBe(1);
+    expect(PAY).toContain('name: "webkit-cln-006-payment",');
+    expect(PAY).toContain("grep: /keyboard reaches native details and wraps/,");
+  });
+
+  it("the shared WebKit helper is used only on the WebKit path, and its handler is the availability spec's, byte for byte", () => {
+    const HELPER = readFileSync("e2e/helpers/webkit-localhost.ts", "utf8");
+    const SPEC = readFileSync("e2e/availability-hours-editor.spec.ts", "utf8");
+    const fn = (text: string) => text.slice(text.indexOf("async function withoutHttpsUpgrade("), text.indexOf("\n}\n", text.indexOf("async function withoutHttpsUpgrade(")) + 3);
+    expect(fn(HELPER).length).toBeGreaterThan(300);
+    expect(fn(HELPER)).toBe(fn(SPEC));
+    const FLOWS = readFileSync("e2e/helpers/flows.ts", "utf8");
+    // Chromium reaches the original two lines through the else branch only.
+    expect(FLOWS).toContain("const webkit = isWebKit(page);\n  if (webkit) await installWebkitLocalhostFix(page.context());\n  await page.goto(\"/login\");");
+    expect(FLOWS).toContain("if (webkit) await followMagicLinkWebkit(page, link);\n  else await page.goto(link);");
+    expect(HELPER).toContain('page.context().browser()?.browserType().name() === "webkit"');
+    expect(HELPER).toContain("await page.context().request.get(link);");
+    expect(HELPER).not.toMatch(/page\.goto\(link\)/);
+  });
+
+  it("the CLN-006 cases the WebKit projects select exist on production and still carry the keyboard assertions", () => {
+    const finish = readFileSync("e2e/finish-appointment-mobile.spec.ts", "utf8");
+    const touch = readFileSync("e2e/fett-photos-touch-floor.spec.ts", "utf8");
+    const pay = readFileSync("e2e-payment/quick-checkout-payment.spec.ts", "utf8");
+    expect(finish).toContain("aftercare warning keyboard stays contained and Escape restores opener without side effects");
+    expect(touch).toContain("every photo control measures at least 44px, upload panel through preview");
+    expect(pay).toContain("keyboard reaches native details and wraps");
+    for (const src of [finish, touch, pay]) expect(src).toContain("focusOutsideDialog(");
   });
 
   it("installs WebKit's system packages through the bounded script, under its own .deb key", () => {
@@ -1161,11 +1365,11 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     expect(SPEC).not.toContain("route.fulfill({ response })");
     // A route handler never sees a redirect TARGET, so in WebKit the magic
     // link is followed by the context's request API, never navigated; Chromium
-    // keeps the shared helper, and every test signs in through signIn().
+    // keeps the shared helper, and every test signs in through signIn() (6 call sites: 3 original + iPad save, phone, arrow keys).
     expect(SPEC).toContain('if (browserName !== "webkit") return loginAsOwner(page, seed);');
     expect(SPEC).toContain("await page.context().request.get(link);");
     expect(SPEC).not.toMatch(/page\.goto\(link\)/);
-    expect((SPEC.match(/await signIn\(page, browserName\);/g) ?? []).length).toBe(3);
+    expect((SPEC.match(/await signIn\(page, browserName\);/g) ?? []).length).toBe(7);
     expect((SPEC.match(/loginAsOwner\(/g) ?? []).length).toBe(1);
     // HON-62-R6-CLASSIFY: WebKit does not auto-advance time segments, so it
     // gets its own keystrokes; the Chromium keystrokes are the original
@@ -1226,6 +1430,7 @@ describe("E-GAPS: the storage photo job is separate, storage-backed and never re
   const STORAGE_SPECS = [
     "e2e/fett-photos-thumbnail-recovery.spec.ts",
     "e2e/treatment-image-upload-formats.spec.ts",
+    "e2e/fett-client-portrait.spec.ts",
   ];
   const DB_FILE = "tests/db/treatment-image-signed-url-route.db.test.ts";
   const start = CI.indexOf("\n  storage-photos:\n");
@@ -1259,7 +1464,7 @@ describe("E-GAPS: the storage photo job is separate, storage-backed and never re
     expect(pre).toBeLessThan(JOB.indexOf("npx playwright test"));
   });
 
-  it("runs exactly the storage-dependent DB file and the two storage specs, each spec bypassing CSP in the test browser only", () => {
+  it("runs exactly the storage-dependent DB file and the storage specs, each spec bypassing CSP in the test browser only", () => {
     expect(code(JOB).match(/npx vitest run[^\n]*/g) ?? []).toEqual([
       `npx vitest run --config vitest.db.config.ts ${DB_FILE}`,
     ]);
@@ -1789,7 +1994,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   const SETUP_CLI_SHA = "ab058987d8d6c725971f6cf9d0b5c98467e30bd1";
   const SETUP_CLI_TAG = "v1.7.1";
   const SETUP_CLI_VERSION = "2.102.0";
-  const SETUP_CLI_USES = 8; // 7 in ci.yml (incl. storage-photos and webkit-hon-62) + 1 in nightly.yml
+  const SETUP_CLI_USES = 9; // 7 in ci.yml (incl. storage-photos and webkit-hon-62) + 1 in nightly.yml + 1 in restore-drill.yml (DR-01A)
 
   const SETUP_CLI_ACTION = "supabase/setup-cli";
 
@@ -1921,8 +2126,8 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   it("the checkout count across the workflow directory is the reviewed one", () => {
     expect(
       checkoutCount(WORKFLOWS),
-      "9 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089; storage-photos by E-GAPS; webkit-hon-62 by HON-62) + 1 in nightly.yml",
-    ).toBe(11);
+      "9 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089; storage-photos by E-GAPS; webkit-hon-62 by HON-62) + 1 in nightly.yml + 1 in restore-drill.yml (DR-01A)",
+    ).toBe(12);
   });
 
   // -------------------------------------------------------------------------
@@ -2414,7 +2619,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
     const violations = setupCliViolations([...WORKFLOWS, cased]).join("\n");
     // Recognised at all — the reviewed count moves, which it could not do while
     // the identifier was compared case-sensitively...
-    expect(violations).toMatch(/9 setup-cli uses, expected 8/);
+    expect(violations).toMatch(/10 setup-cli uses, expected 9/);
     // ...and, being recognised, it is subject to the grants-parity pin.
     expect(violations).toMatch(/cli\.yaml jobs\.scan\.steps\[0\]\.uses: CLI version 2\.103\.0 is not the grants-parity pin 2\.102\.0/);
   });
@@ -2556,6 +2761,56 @@ describe("browser timing diagnostic truthfulness", () => {
   });
   it.each(["", "malformed", "1700000001", "999999999999999999999999"])("rejects invalid timestamp %j even when a browser outcome exists", timestamp => {
     expect(runTiming(timestamp, "failure", "failure")).toContain("test duration (s)  : unavailable");
+  });
+});
+
+
+describe("HON-18 existing browser job executes guarded native proof", () => {
+  const doc = yaml.load(CI) as { env?: Record<string, string>; jobs: Record<string, { env?: Record<string, string>; steps: Array<Record<string, unknown>>; "timeout-minutes": string }> };
+  const job = doc.jobs["browser-e2e-shard"];
+  const native = job.steps.find((step) => step.id === "native3g") ?? {};
+
+  it("keeps the synthetic gate step-local and only supplements the ordinary pass", () => {
+    expect(doc.env?.HONE_SYNTHETIC_MACHINE_PROFILE).toBeUndefined();
+    expect(job.env?.HONE_SYNTHETIC_MACHINE_PROFILE).toBeUndefined();
+    expect((native.env as Record<string, string>).HONE_SYNTHETIC_MACHINE_PROFILE).toBe("1");
+    expect(job.steps.findIndex((step) => step.id === "e2e")).toBeLessThan(job.steps.indexOf(native));
+    expect(native.if).toBe("needs.changes.outputs.browser_extended == 'true' || contains(needs.changes.outputs.browser_specs, 'machine-create-mode-journey.spec.ts')");
+    const budget = job["timeout-minutes"].replace(/\s+/g, "");
+    expect(budget).toBe("${{(" + String(native.if).replace(/\s+/g, "") + ")&&35||19}}");
+    expect(native.run).toContain("--workers=1");
+    expect(native.run).toContain("--fully-parallel");
+    expect(native.run).toContain("--retries=0");
+    expect(native.run).toContain("--shard=${{ matrix.shard }}/${SHARD_TOTAL}");
+    expect(native.run).toContain('SHARD_TOTAL="${{ needs.changes.outputs.browser_shard_total }}"');
+  });
+
+
+  const verification = String(native.run).match(/node --input-type=module <<'NODE'\n([\s\S]*?)\nNODE/)!;
+  function check(report: unknown): string {
+    if (!verification) throw new Error("native verification program missing");
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-native-report-"));
+    const file = path.join(dir, "results.json");
+    try {
+      writeFileSync(file, JSON.stringify(report));
+      return execFileSync(process.execPath, ["--input-type=module", "-e", verification[1]], {
+        encoding: "utf8", env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_FILE: file }, stdio: "pipe",
+      });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  const report = (results: Array<{ status: string }>, errors: unknown[] = []) => ({
+    suites: [{ suites: [{ specs: [{ tests: [{ expectedStatus: "passed", results }] }] }] }], errors,
+  });
+  it("accepts a real nested passing case", () => {
+    expect(check(report([{ status: "passed" }]))).toContain("1 actual passes, zero skips/retries");
+  });
+  it.each(["skipped", "failed", "interrupted"])("refuses a %s native result", (status) => {
+    expect(() => check(report([{ status }]))).toThrow();
+  });
+  it("refuses empty selection, retries and runner errors", () => {
+    expect(() => check({ suites: [], errors: [] })).toThrow();
+    expect(() => check(report([{ status: "failed" }, { status: "passed" }]))).toThrow();
+    expect(() => check(report([{ status: "passed" }], [{ message: "synthetic runner error" }]))).toThrow();
   });
 });
 

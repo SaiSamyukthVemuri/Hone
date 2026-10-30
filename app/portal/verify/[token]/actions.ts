@@ -4,7 +4,9 @@ import { redirect } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { hashToken } from "@/lib/portal/tokens";
 import { createPortalSession } from "@/lib/portal/session";
+import { studioPortalAccess } from "@/lib/portal/portal-access-gate";
 import { logPortalAccessEvent } from "@/lib/portal/access-events";
+import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 
 // Server action that actually consumes a portal magic-link token and
 // creates the portal session. Split out from the verify page so the
@@ -59,8 +61,7 @@ export async function verifyPortalMagicLinkAction(
     console.error(
       JSON.stringify({
         event: "portal_verify_post_lookup_failed",
-        code: lookupErr.code,
-        message: lookupErr.message,
+        code: dbErrorCode(lookupErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -82,6 +83,14 @@ export async function verifyPortalMagicLinkAction(
     redirect(`/portal/verify/${token}`);
   }
 
+  // HON-47. Check the studio's portal flag BEFORE the single-use stamp so a
+  // portal-off studio does not burn the client's link; the verify page then
+  // explains why. Unreadable policy is a refusal too.
+  const portalAccess = await studioPortalAccess(admin, link.studio_id);
+  if (!portalAccess.allowed) {
+    redirect(`/portal/verify/${token}`);
+  }
+
   // Atomic single-use stamp. The conditional .is("consumed_at",
   // null) means a concurrent POST of the same token races on this
   // UPDATE and only one side wins; the other observes a zero-row
@@ -97,8 +106,7 @@ export async function verifyPortalMagicLinkAction(
     console.error(
       JSON.stringify({
         event: "portal_verify_post_consume_failed",
-        code: consumeErr.code,
-        message: consumeErr.message,
+        code: dbErrorCode(consumeErr),
         timestamp: new Date().toISOString(),
       }),
     );
@@ -127,7 +135,7 @@ export async function verifyPortalMagicLinkAction(
     console.error(
       JSON.stringify({
         event: "portal_verify_post_session_create_failed",
-        message: err instanceof Error ? err.message : "unknown",
+        errorClass: thrownErrorClass(err),
         timestamp: new Date().toISOString(),
       }),
     );

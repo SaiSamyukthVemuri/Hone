@@ -337,6 +337,16 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     priority: 310,
   },
   {
+    id: "settings-sms",
+    title: "Text message settings",
+    category: "Settings",
+    href: "/settings/studio#sms-notifications",
+    description: "Turn text confirmations and 24-hour or 2-hour text reminders on or off",
+    keywords: ["text message settings", "text confirmation", "text reminders", "sms reminders", "sms confirmation", "text a confirmation when an appointment is booked", "send 24 hour text reminders", "send 2 hour text reminders"],
+    visibility: "owner",
+    priority: 305,
+  },
+  {
     id: "settings-booking",
     title: "Booking",
     category: "Settings",
@@ -407,6 +417,16 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     keywords: ["services", "service", "treatments", "price", "prices", "pricing", "cost", "duration", "consultation", "menu", "offerings"],
     visibility: "owner",
     priority: 360,
+  },
+  {
+    id: "settings-machines",
+    title: "Machines",
+    category: "Settings",
+    href: "/settings/machines",
+    description: "Register the machines in your studio so they appear when you chart",
+    keywords: ["machines", "machine", "register a machine", "register machine", "equipment", "device", "devices", "laser", "model", "unit", "add machine", "my machines"],
+    visibility: "owner",
+    priority: 365,
   },
   {
     id: "settings-team",

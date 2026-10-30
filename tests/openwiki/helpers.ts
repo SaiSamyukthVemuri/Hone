@@ -29,9 +29,26 @@ export function makeTmp(label: string): string {
  * no fixture git command leaves a process behind. The retries cover a writer
  * that releases what it holds; one that leaves new files would still fail, and
  * loudly, which is the right outcome.
+ *
+ * The retry loop is ours because Node 24's rmSync does not keep its own: under
+ * a concurrent writer it returns WITHOUT an error and leaves the tree behind,
+ * ignoring maxRetries (measured on 24.22.1: 7 of 30 trials; 22.23.4: 0).
+ * So removal is verified, not assumed, and a tree that survives every attempt
+ * throws.
  */
 export function cleanupTmp(): void {
-  for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  for (const dir of tmpDirs.splice(0)) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      } catch (e) {
+        if (attempt >= 5) throw e;
+      }
+      if (!existsSync(dir)) break;
+      if (attempt >= 5) throw new Error(`cleanupTmp: ${dir} survived ${attempt + 1} removals`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  }
 }
 
 /**

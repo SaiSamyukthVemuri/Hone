@@ -59,6 +59,15 @@ export default defineConfig({
             // exercising it.
             use: { ...devices["Desktop Safari"], bypassCSP: true },
           },
+          // CLN-006 mounted-keyboard and focus cases in WebKit (non-required
+          // job only). Scoped by file AND by title so the rest of these two
+          // specs, which Chromium already runs in full, is not repeated here.
+          {
+            name: "webkit-cln-006",
+            testMatch: /(finish-appointment-mobile|fett-photos-touch-floor)\.spec\.ts$/,
+            grep: /aftercare warning keyboard stays contained|every photo control measures at least 44px/,
+            use: { ...devices["Desktop Safari"], bypassCSP: true },
+          },
         ]
       : []),
   ],
@@ -75,6 +84,9 @@ export default defineConfig({
     // shared port 3111 and reported green about code it never loaded. Hone
     // evidence never reuses a running server: an occupied port fails loudly.
     reuseExistingServer: false,
-    timeout: 300_000,
+    // A preserved-stack cold build exceeded five minutes before any browser
+    // case started (HON-18 f7d7, 2026-10-21). Allow compilation/typechecking
+    // and server startup to finish; the selected test deadlines stay intact.
+    timeout: 600_000,
   },
 });

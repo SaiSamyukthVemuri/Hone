@@ -15,6 +15,7 @@ import { PaymentsSettings, type StripeStatusView } from "./PaymentsSettings";
 import { FeeAmountsCard } from "./FeeAmountsCard";
 import { getStudioPaymentJurisdiction } from "@/lib/billing/payment-jurisdiction-server";
 import { currencyLabel } from "@/lib/billing/payment-jurisdiction";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 export const dynamic = "force-dynamic";
 
@@ -46,8 +47,7 @@ export default async function PaymentsSettingsPage() {
     console.error(
       JSON.stringify({
         event: "get_studio_payment_settings_display_failed",
-        code: error.code,
-        message: error.message,
+        code: dbErrorCode(error),
         studioId: studio.id,
         timestamp: new Date().toISOString(),
       }),

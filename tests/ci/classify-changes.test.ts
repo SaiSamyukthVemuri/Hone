@@ -1,14 +1,26 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { REPO_ROOT, classify, dependenciesFor, highestTier, isDocsPath } from "../../scripts/classify-changes.mjs";
+import {
+  selectBrowserGroups,
+  specsForGroups,
+  EXTENDED,
+  BROWSER_GROUPS,
+  PUBLIC_BOOKING_SPECS,
+  PUBLIC_BOOKING_PATTERNS,
 // @ts-expect-error - .mjs utility ships without type declarations
-import { selectBrowserGroups, EXTENDED } from "../../scripts/browser-groups.mjs";
+} from "../../scripts/browser-groups.mjs";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { scanTestDependencies } from "../../scripts/test-dependencies.mjs";
+
+// Real-time bound, intrinsic: these cases spawn real `git`/`node` subprocesses
+// and scan the checkout, which measured 5-11 s each on a loaded host against
+// vitest's 5 s default (FLAKE-SYSDEPS). Only the ceiling moves; no assertion does.
+vi.setConfig({ testTimeout: 60_000 });
 
 // Path-classification is proved here rather than by pushing fake commits to
 // trigger every CI lane. These cases ARE the acceptance criteria.
@@ -570,9 +582,25 @@ describe("dependency-aware selection — G4: documents read by unit tests", () =
     const r = c("docs/no-test-reads-this-document.md");
     expect(r.docs_only).toBe(true);
     expect(r.docs_consistency).toBe(true);
-    expect(r.docs_reader_tests).toEqual(scanned.docWildcard);
+    const wildcard = scanned.docWildcard;
+    expect(Array.isArray(wildcard), "the scan must report docWildcard").toBe(true);
+    expect(r.docs_reader_tests).toEqual([...new Set([...(wildcard as string[]), "tests/ci/pr-release-receipt.test.ts"])].sort());
     expect(r.database).toBe(false);
     expect(r.full_matrix_required).toBe(false);
+  });
+
+  it("G1: every docs-only diff runs the receipt check, record or not (Codex #1216 4401470996)", () => {
+    for (const f of ["docs/20_NEW_STUDIO_SETUP_RUNBOOK.md", "docs/production/current-state.md", "README.md"]) {
+      const r = c(f);
+      expect(r.docs_only, f).toBe(true);
+      expect(r.docs_consistency, f).toBe(true);
+      expect(r.docs_reader_tests, f).toContain("tests/ci/pr-release-receipt.test.ts");
+    }
+    // Injected deps with no reader at all still select it.
+    const empty = classify(["docs/x.md"], { db: {}, dbDirs: {}, docReaders: {}, docReaderDirs: {}, docWildcard: [] }) as Result;
+    expect(empty.docs_reader_tests).toEqual(["tests/ci/pr-release-receipt.test.ts"]);
+    // A mixed diff is not docs-only: the unit lane runs it, so it is not added here.
+    expect(c("docs/20_NEW_STUDIO_SETUP_RUNBOOK.md", "lib/x.ts").docs_only).toBe(false);
   });
 
   it("a non-document change is never a document-reader selection", () => {
@@ -657,7 +685,7 @@ describe("dependency-aware selection — deleting a file a test still reads (435
       const r = classify(["docs/production/gone.md"], deps) as Result;
       expect(r.docs_only).toBe(true);
       expect(r.docs_consistency).toBe(true);
-      expect(r.docs_reader_tests).toEqual(["tests/docs/reads-gone.test.ts"]);
+      expect(r.docs_reader_tests).toEqual(["tests/ci/pr-release-receipt.test.ts", "tests/docs/reads-gone.test.ts"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -733,7 +761,7 @@ describe("dependency-aware selection — reads through a DIRECTORY CONSTANT (Cod
       const deps = scan(root);
       expect(deps.docReaderDirs).toEqual({ "docs/guides": ["tests/docs/reads-guides.test.ts"] });
       const r = classify(["docs/guides/brand-new.md"], deps) as Result;
-      expect(r.docs_reader_tests).toEqual(["tests/docs/reads-guides.test.ts"]);
+      expect(r.docs_reader_tests).toEqual(["tests/ci/pr-release-receipt.test.ts", "tests/docs/reads-guides.test.ts"]);
       expect((classify(["docs/other/x.md"], deps) as Result).docs_reader_tests ?? []).not.toContain("tests/docs/reads-guides.test.ts");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -829,7 +857,7 @@ describe("dependency-aware selection — directory readers (4355527598)", () => 
       const deps = scan(root);
       expect(deps.docReaderDirs).toEqual({ "docs/runbooks": ["tests/docs/walks-runbooks.test.ts"] });
       expect(deps.dbDirs).toEqual({ "lib/billing": ["tests/db/walks-billing.db.test.ts"] });
-      expect((classify(["docs/runbooks/added-later.md"], deps) as Result).docs_reader_tests).toEqual(["tests/docs/walks-runbooks.test.ts"]);
+      expect((classify(["docs/runbooks/added-later.md"], deps) as Result).docs_reader_tests).toEqual(["tests/ci/pr-release-receipt.test.ts", "tests/docs/walks-runbooks.test.ts"]);
       expect((classify(["lib/billing/added-later.ts"], deps) as Result).database).toBe(true);
       expect((classify(["lib/elsewhere/added-later.ts"], deps) as Result).database).toBe(false);
     } finally {
@@ -844,7 +872,7 @@ describe("dependency-aware selection — directory readers (4355527598)", () => 
     try {
       const deps = scan(root);
       expect(deps.docWildcard).toEqual(["tests/docs/root-docs.test.ts"]);
-      expect((classify(["SOMETHING.md"], deps) as Result).docs_reader_tests).toEqual(["tests/docs/root-docs.test.ts"]);
+      expect((classify(["SOMETHING.md"], deps) as Result).docs_reader_tests).toEqual(["tests/ci/pr-release-receipt.test.ts", "tests/docs/root-docs.test.ts"]);
       expect((classify(["lib/keep.ts"], deps) as Result).docs_reader_tests).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -883,4 +911,85 @@ describe("the scanner's own CLI", () => {
     const map = JSON.parse(run.stdout) as Deps;
     expect(map).toEqual(scanned);
   }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// 1132-CLASSIFIER-GAP. A change to the public booking surface must select every
+// spec that books through the public form, not only the `booking` group's.
+// #1132 changed app/book/[slug]/actions.ts and ran 44 specs; three that book
+// through that form (two in `portal`, one in `responsive`) were never selected.
+// ---------------------------------------------------------------------------
+describe("classifier - the public booking surface selects every spec that books through it", () => {
+  const specsFor = (...files: string[]): string[] => {
+    const r = selectBrowserGroups(files) as { groups: string[]; extended: boolean };
+    expect(r.extended, "a targeted selection, so the proof is about groups, not 'everything'").toBe(false);
+    return specsForGroups(r.groups) as string[];
+  };
+
+  it("a change to the public booking ACTION selects all 21 audited public-booking specs", () => {
+    expect(PUBLIC_BOOKING_SPECS).toHaveLength(21);
+    const selected = new Set(specsFor("app/book/[slug]/actions.ts"));
+    const missing = PUBLIC_BOOKING_SPECS.filter((s: string) => !selected.has(s));
+    expect(missing, "public-booking specs not selected for a change to the action").toEqual([]);
+  });
+
+  it.each([
+    "app/book/[slug]/actions.ts",
+    "app/book/[slug]/PublicBookForm.tsx",
+    "lib/booking/slots.ts",
+    "lib/booking/new-client-admission.ts",
+  ])("%s selects the three specs the #1132 run missed", (file) => {
+    const selected = new Set(specsFor(file));
+    for (const s of ["appointment-token-hash.spec.ts", "public-cancel-policy-change.spec.ts", "mobile-ux.spec.ts"]) {
+      expect(selected.has(s), `${s} not selected for ${file}`).toBe(true);
+    }
+  });
+
+  it("the responsive group is selected, which is where mobile-ux lives", () => {
+    const r = selectBrowserGroups(["app/book/[slug]/actions.ts"]) as { groups: string[] };
+    expect(r.groups).toContain("responsive");
+    expect(r.groups).toContain("portal");
+  });
+
+  it("NEGATIVE CONTROL: a path outside the public booking surface does not pull the three in", () => {
+    const selected = new Set(specsFor("app/(app)/calendar/DayColumn.tsx"));
+    expect(selected.has("appointment-token-hash.spec.ts")).toBe(false);
+    expect(selected.has("mobile-ux.spec.ts")).toBe(false);
+  });
+
+  it("every listed spec exists and is filed in a group (so naming it selects something real)", () => {
+    const filed = new Set(
+      Object.values(BROWSER_GROUPS as Record<string, { specs: string[] }>).flatMap((g) => g.specs),
+    );
+    for (const s of PUBLIC_BOOKING_SPECS as string[]) {
+      expect(existsSync(path.join(REPO_ROOT, "e2e", s)), `${s} is not on disk`).toBe(true);
+      expect(filed.has(s), `${s} is in no browser group`).toBe(true);
+    }
+  });
+
+  it("DRIFT GUARD: every spec that books through the public form is listed", () => {
+    // The audit's detector, comment lines stripped: the booking helper, a goto to
+    // /book or /b/, or the public booking action and commands by name.
+    const code = (t: string) =>
+      t.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    const books =
+      /(bookAppointment\(|goto\([^)]*(\/book\/|\/b\/)|publicBookAppointmentAction|create_public_appointment|create_waitlist_public_appointment)/;
+    const found: string[] = [];
+    for (const dir of ["e2e", "e2e-payment"]) {
+      for (const f of readdirSync(path.join(REPO_ROOT, dir))) {
+        if (!f.endsWith(".spec.ts")) continue;
+        if (books.test(code(readFileSync(path.join(REPO_ROOT, dir, f), "utf8")))) found.push(f);
+      }
+    }
+    expect(found.length, "the detector found nothing: it is broken, not clean").toBeGreaterThan(10);
+    const listed = new Set(PUBLIC_BOOKING_SPECS as string[]);
+    expect(
+      found.filter((f) => !listed.has(f)),
+      "specs that book through the public form but are not in PUBLIC_BOOKING_SPECS",
+    ).toEqual([]);
+  });
+
+  it("the patterns are the action and the booking helpers, and nothing broader", () => {
+    expect((PUBLIC_BOOKING_PATTERNS as RegExp[]).map(String)).toEqual([String(/^app\/book\//), String(/^lib\/booking\//)]);
+  });
 });

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 const MAX_PINNED_NOTE_LENGTH = 200;
 
@@ -36,7 +37,7 @@ export async function addClientPinnedNoteAction(
     .eq("id", clientId)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (clientErr) throw new Error(`Failed to load client: ${clientErr.message}`);
+  if (clientErr) throw new Error(`Failed to load client: ${dbErrorCode(clientErr)}`);
   if (!client) throw new Error("Client not found.");
 
   const { error } = await supabase.from("client_pinned_notes").insert({
@@ -45,7 +46,7 @@ export async function addClientPinnedNoteAction(
     text,
     created_by_practitioner_id: practitioner.id,
   });
-  if (error) throw new Error(`Failed to pin note: ${error.message}`);
+  if (error) throw new Error(`Failed to pin note: ${dbErrorCode(error)}`);
 
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");
@@ -72,7 +73,7 @@ export async function editClientPinnedNoteAction(
 
   // Authorization: an active practitioner of the CURRENT studio (throws /
   // redirects otherwise). The studio is derived from the session, NEVER the form.
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
 
   // client_pinned_notes carries SELECT/INSERT/DELETE RLS policies but no UPDATE
   // policy (0022), so the RLS-scoped user client cannot UPDATE and this PR does
@@ -84,16 +85,24 @@ export async function editClientPinnedNoteAction(
   // later save never silently overwrites the earlier one. `text` is the ONLY
   // mutated column; id, pinned state (row existence), studio_id, client_id,
   // created_by_practitioner_id, and created_at are all preserved.
+  //
+  // HON-44 (Sam decision 12): a practitioner edits only the cautions THEY added;
+  // the owner may edit any. A non-owner's update is additionally scoped to
+  // created_by_practitioner_id = themselves, so someone else's caution (or an
+  // author-less legacy one) matches zero rows and gets the same "changed or no
+  // longer available" refusal, revealing nothing about who wrote it.
   const admin = createAdminClient();
-  const { data, error } = await admin
+  let update = admin
     .from("client_pinned_notes")
     .update({ text })
     .eq("id", noteId)
     .eq("studio_id", studio.id)
     .eq("client_id", clientId)
-    .eq("text", originalText)
-    .select("id")
-    .maybeSingle();
+    .eq("text", originalText);
+  if (practitioner.role !== "owner") {
+    update = update.eq("created_by_practitioner_id", practitioner.id);
+  }
+  const { data, error } = await update.select("id").maybeSingle();
   if (error) throw new Error("Could not update the note. Please try again.");
   if (!data) {
     throw new Error(
@@ -113,7 +122,12 @@ export async function removeClientPinnedNoteAction(
   if (!noteId) throw new Error("Missing note id.");
   if (!clientId) throw new Error("Missing client id.");
 
-  const { studio } = await getCurrentPractitionerWithStudio();
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // HON-44 (Sam decision 12): only the owner deletes a pinned caution. APP half;
+  // the client_pinned_notes DELETE policy admits any member until 0254.
+  if (practitioner.role !== "owner") {
+    throw new Error("Only the studio owner can remove a pinned note.");
+  }
 
   const supabase = await createClient();
   const { error } = await supabase
@@ -122,7 +136,7 @@ export async function removeClientPinnedNoteAction(
     .eq("id", noteId)
     .eq("studio_id", studio.id)
     .eq("client_id", clientId);
-  if (error) throw new Error(`Failed to remove note: ${error.message}`);
+  if (error) throw new Error(`Failed to remove note: ${dbErrorCode(error)}`);
 
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");

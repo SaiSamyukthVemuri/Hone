@@ -9,6 +9,7 @@ import {
   createOrLoadConnectedAccountForStudio,
 } from "@/lib/stripe/account";
 import { getAppOrigin } from "@/lib/stripe/server";
+import { thrownErrorClass, stripeErrorFields } from "@/lib/logging/error-class";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +40,8 @@ export default async function StripeOnboardingRefreshPage() {
     console.error(
       JSON.stringify({
         event: "stripe_refresh_page_failed",
-        err: err instanceof Error ? err.message : String(err),
+        errorClass: thrownErrorClass(err),
+        ...stripeErrorFields(err),
         studioId: studio.id,
         timestamp: new Date().toISOString(),
       }),
