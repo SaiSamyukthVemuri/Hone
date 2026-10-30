@@ -302,6 +302,8 @@ vi.mock("@/lib/supabase/admin-server", () => ({
             if (!answer) throw new Error("Synthetic intake fixture exhausted");
             return answer;
           }
+          // HON-13: the email pass re-reads the studio's switches at send time.
+          if (table === "studios") return { data: row("00000000-0000-4000-8000-000000000001").studio, error: null };
           return ({
           data: race.freshMissing || (race.readError && !race.readErrorWithData) ? null : { ...row("00000000-0000-4000-8000-000000000001"), starts_at: race.freshStart },
           error: race.readError ? { message: "synthetic read failure" } : null,
@@ -610,7 +612,7 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
   it.each(["db_error", "timeout"] as const)("16:15 incident signature: first-page %s fails before any claim/SDK and a later healthy fake run recovers without resets", async (failure) => {
     race.incidentRead = failure;
     const pending = GET(new Request("https://example.invalid/api/cron/appointment-reminders"));
-    if (failure === "timeout") await vi.advanceTimersByTimeAsync(2000);
+    if (failure === "timeout") await vi.advanceTimersByTimeAsync(2250);
     const response = await pending;
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ ok: false, error: "cron_failed" });
@@ -749,7 +751,7 @@ describe("MSG-001 candidate eligibility and keyset paging", () => {
     race.incidentRead = "timeout_once";
     if (writerRejects) race.alerts.mockRejectedValueOnce(new Error("SYNTHETIC_PRIVATE diagnostic writer"));
     const pending = GET(new Request("https://example.invalid"));
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1250);
     expect((await pending).status).toBe(200);
     expect(race.alerts).toHaveBeenCalledExactlyOnceWith({ severity: "warning", event: "reminder_read_timeout",
       message: "A reminder candidate read timed out before a bounded retry recovered. Check scheduler progress.",

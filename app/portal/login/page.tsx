@@ -4,6 +4,10 @@ import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { getCurrentPortalSession } from "@/lib/portal/session";
 import { getStudioBySlug } from "@/lib/booking/queries";
+import {
+  clientPortalDisabledMessage,
+  clientSelfServicePolicyFromStudio,
+} from "@/lib/booking/client-self-service-policy";
 import { PortalLoginForm } from "./LoginForm";
 
 // Public client portal login page. Renders the email form that
@@ -37,6 +41,9 @@ export default async function PortalLoginPage({
   const slug = (params.studio ?? "").trim();
   const studio = slug.length > 0 ? await getStudioBySlug(slug) : null;
   const studioName = studio?.name ?? null;
+  // HON-47. A resolved studio with client portal access off gets the explanation
+  // instead of a form that could only promise an email that will not come.
+  const portalOff = studio != null && !clientSelfServicePolicyFromStudio(studio).portal;
   // The hidden form value passes the slug through to the action even
   // when the studio lookup did not resolve (the action does its own
   // resolve + no-enumeration generic-success fallback). We only pass
@@ -44,12 +51,18 @@ export default async function PortalLoginPage({
   // path (no slug in URL) keeps using the global lookup.
   const studioSlugForForm = slug.length > 0 ? slug : null;
 
-  const heading = studioName
-    ? `Sign in to your ${studioName} portal`
-    : "Sign in to your secure portal";
-  const body = studioName
-    ? `Enter the email ${studioName} has on file. We will send you a secure one-time link to sign in.`
-    : "Enter the email your studio has on file. We will send you a secure one-time link to sign in.";
+  // A portal-off studio gets neither the sign-in heading nor the sign-in
+  // instructions (Codex P2 4407884608): the explanation below is the whole page.
+  const heading = portalOff
+    ? "Online access isn\u2019t available"
+    : studioName
+      ? `Sign in to your ${studioName} portal`
+      : "Sign in to your secure portal";
+  const body = portalOff
+    ? null
+    : studioName
+      ? `Enter the email ${studioName} has on file. We will send you a secure one-time link to sign in.`
+      : "Enter the email your studio has on file. We will send you a secure one-time link to sign in.";
 
   return (
     <main
@@ -70,16 +83,26 @@ export default async function PortalLoginPage({
             >
               {heading}
             </h1>
-            <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
-              {body}
-            </p>
+            {body && (
+              <p className="mt-4 text-[16px] leading-relaxed text-[#0A0A0A]">
+                {body}
+              </p>
+            )}
+            {!portalOff && (
             <p className="mt-2 text-[13px]" style={{ color: "#6B6B6B" }}>
               The link expires in 1 hour. After you sign in, your portal
               session may stay active on this device for a short time.
             </p>
+            )}
           </div>
 
-          <PortalLoginForm studioSlug={studioSlugForForm} />
+          {portalOff ? (
+            <p data-testid="portal-login-off" className="text-[15px] leading-relaxed text-[#0A0A0A]">
+              {clientPortalDisabledMessage(studioName)}
+            </p>
+          ) : (
+            <PortalLoginForm studioSlug={studioSlugForForm} />
+          )}
         </div>
       </section>
       <MarketingFooter />

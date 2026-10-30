@@ -54,6 +54,18 @@ export function initialSelection(deviceId: string | null): SelectionState {
 }
 
 /**
+ * A reopened visit selected the unit its last saved capture used. The stored
+ * fact stays the practitioner's own default (possibly a different unit, or
+ * none): restoring a visit must not claim, or change, what is remembered.
+ */
+export function restoredSelection(
+  selected: string,
+  persisted: string | null,
+): SelectionState {
+  return { selected, persisted, note: null };
+}
+
+/**
  * The store holds a machine that CANNOT BE USED: retired, removed from the
  * studio, pointing at an unknown or inactive profile, or registered against a
  * contract version the catalogue has moved past.

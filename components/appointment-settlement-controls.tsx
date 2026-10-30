@@ -15,6 +15,7 @@ import {
   type SettlementMethod,
 } from "@/lib/billing/settlement-types";
 import { formatCadFromCents } from "@/lib/billing/cad-amount";
+import { settlementCoverage } from "@/lib/billing/settlement-coverage";
 
 // PAY-SETTLE. The outcome controls, rendered UNDER the existing Charge path
 // inside SessionPaymentPrepareCard.
@@ -40,6 +41,8 @@ type Props = {
   /** The live record's id. Present only so an owner can correct exactly that record. */
   settledId?: string | null;
   settledAmountCents?: number | null;
+  /** The quoted price at record time, so a part payment is not shown as the visit paid. */
+  settledQuotedCents?: number | null;
   /** Hidden entirely once Hone has verified card money — see the card. */
   defaultAmountCents?: number | null;
   /**
@@ -66,6 +69,7 @@ export function AppointmentSettlementControls({
   settledMethod = null,
   settledId = null,
   settledAmountCents = null,
+  settledQuotedCents = null,
   defaultAmountCents = null,
   onRecorded,
 }: Props) {
@@ -95,6 +99,16 @@ export function AppointmentSettlementControls({
         {typeof settledAmountCents === "number" && (
           <> {"·"} {formatCadFromCents(settledAmountCents)}</>
         )}
+        {typeof settledAmountCents === "number" &&
+          (() => {
+            const cover = settlementCoverage(settledMethod, settledAmountCents, settledQuotedCents);
+            return cover.kind === "part" ? (
+              <p className="mt-1 font-medium">
+                Part paid {"·"} {formatCadFromCents(cover.shortfallCents)} still owed of{" "}
+                {formatCadFromCents(cover.quotedCents)}
+              </p>
+            ) : null;
+          })()}
         <p className="mt-1 text-neutral-500 dark:text-neutral-400">
           Recorded by the studio, not verified by Hone.
           {isOwner

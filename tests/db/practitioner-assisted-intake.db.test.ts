@@ -120,6 +120,9 @@ describe("1. authorized assisted entry uses the governed draft command", () => {
       `select updated_at from public.client_intake_forms where id = $1`,
       [id],
     );
+    // now() is the transaction start and getTime() is millisecond-grained:
+    // without a gap the seed and the update can land in one millisecond.
+    await adminQuery(`select pg_sleep(0.02)`, []);
     await userQuery(
       A.userId,
       `update public.client_intake_forms set practitioner_notes = 'Allowed note' where id = $1`,

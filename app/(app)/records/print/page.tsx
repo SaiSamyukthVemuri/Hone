@@ -27,6 +27,9 @@ import {
 import { todayInTz } from "@/lib/booking/tz";
 import type { RecordKeepingAuditEvent } from "@/lib/types/database";
 import { PrintButton } from "./print-button";
+import { createClient } from "@/lib/supabase/server";
+import { clinicalPacketName } from "@/lib/clients/identity";
+import { readPrintIdentities } from "@/lib/clients/print-identity";
 import { recoverRecordsRead } from "@/lib/record-keeping/section-recovery";
 import { RefreshRetryButton } from "../refresh-retry-button";
 import {
@@ -514,6 +517,14 @@ async function ProceduresPrint({
   // HON-46 (photos): on a per-client pull, say on SCREEN how many photos are
   // linked to each visit. Never printed, never an image: whether photo consent
   // covers an insurer packet is not decided (lib/images/linked-photo-counts.ts).
+  // HON-58 (OPS Q2): this register is a clinical record, so each client prints
+  // as the LEGAL name with the preferred name in parentheses; a client with no
+  // legal identity prints the name on file, exactly as before. Signed-in read.
+  const identities = await readPrintIdentities(await createClient(), records.map((r) => r.clientId));
+  const printedName = (r: { clientId: string; clientName: string }) => {
+    const id = identities.byClient.get(r.clientId);
+    return clinicalPacketName({ name: r.clientName, preferred_name: id?.preferred_name, legal_name: id?.legal_name });
+  };
   const photoCounts = filter.clientId
     ? await loadLinkedPhotoCounts(
         studioId,
@@ -536,6 +547,11 @@ async function ProceduresPrint({
     !filter.clientId && records.length >= UNFILTERED_PROCEDURE_RECORD_LIMIT;
   return (
     <>
+      {!identities.ok && (
+        <p className="mb-2 text-xs text-neutral-600">
+          Legal names could not be loaded; this printout shows the names on file.
+        </p>
+      )}
       {cappedUnfiltered && (
         <p className="mb-2 text-sm font-medium text-neutral-700">
           Showing the most recent {UNFILTERED_PROCEDURE_RECORD_LIMIT} records.
@@ -549,7 +565,7 @@ async function ProceduresPrint({
             label="Date of service"
             value={utcStamp(new Date(r.startedAt))}
           />
-          <FieldLine label="Client" value={notRecorded(r.clientName)} />
+          <FieldLine label="Client" value={notRecorded(printedName(r))} />
           <FieldLine label="Date of birth" value={notRecorded(r.dateOfBirth)} />
           <FieldLine label="Phone" value={notRecorded(r.phone)} />
           <FieldLine label="Email" value={notRecorded(r.email)} />

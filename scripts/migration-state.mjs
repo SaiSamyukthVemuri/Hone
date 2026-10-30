@@ -202,6 +202,27 @@ export function evaluateOutOfOrder({ numbers, hostedMaxNumber, skipped = PERMANE
 }
 
 /**
+ * Repo migration files that hosted has NOT applied. Everything above the hosted
+ * max, PLUS every version a declaration lists as unhosted_below that has a repo
+ * file (F-OOO-1): a stage that put 0248 ahead of 0247 leaves 0247 BELOW the
+ * hosted max, where "number > hosted max" alone would never call it pending even
+ * after its file lands in the repo. Pure on its inputs.
+ */
+export function pendingMigrationVersions({ entries, hostedMaxNumber, declared = [] }) {
+  const unhosted = new Set();
+  if (Array.isArray(declared)) {
+    for (const entry of declared) {
+      for (const b of Array.isArray(entry?.unhosted_below) ? entry.unhosted_below : []) {
+        if (typeof b === "string" && /^\d{4}$/.test(b)) unhosted.add(Number.parseInt(b, 10));
+      }
+    }
+  }
+  return entries
+    .filter((e) => e.number > hostedMaxNumber || unhosted.has(e.number))
+    .map((e) => e.version);
+}
+
+/**
  * Full state: repository facts DERIVED, hosted facts DECLARED.
  */
 export function getMigrationState({ dir, canonicalFile } = {}) {
@@ -216,9 +237,11 @@ export function getMigrationState({ dir, canonicalFile } = {}) {
   const record = readCanonicalRecord(canonicalFile);
   const hostedMaxNumber = Number.parseInt(record.hosted_migration_max, 10);
 
-  const pending = entries
-    .filter((e) => e.number > hostedMaxNumber)
-    .map((e) => e.version);
+  const pending = pendingMigrationVersions({
+    entries,
+    hostedMaxNumber,
+    declared: record.hosted_out_of_order ?? [],
+  });
 
   const outOfOrder = evaluateOutOfOrder({
     numbers,
