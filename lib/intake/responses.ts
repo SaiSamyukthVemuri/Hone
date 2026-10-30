@@ -27,8 +27,7 @@
 // pins that this file never references the provenance key.
 
 import {
-  ALL_QUESTION_KEYS,
-  isClientOwnedResponseKey,
+  INTAKE_STEPS, CLIENT_OWNED_RESPONSE_KEYS, type Step,
 } from "@/lib/intake/questions";
 
 function whitelist(
@@ -49,8 +48,9 @@ function whitelist(
 // rather than maintaining a second copy.
 export function sanitizeQuestionResponses(
   input: unknown,
+  steps: ReadonlyArray<Step> = INTAKE_STEPS,
 ): Record<string, unknown> {
-  const allowed = new Set(ALL_QUESTION_KEYS);
+  const allowed = new Set(steps.flatMap(s => s.questions.flatMap(q => [q.key, `${q.key}_notes`])));
   return whitelist(input, (key) => allowed.has(key));
 }
 
@@ -67,11 +67,13 @@ export function sanitizeQuestionResponses(
 // forbidden key would be CHANGED (see assistedKeysChanged).
 export function sanitizePractitionerAssistedAnswers(
   input: unknown,
+  steps: ReadonlyArray<Step> = INTAKE_STEPS,
+  ownedKeys: ReadonlySet<string> = CLIENT_OWNED_RESPONSE_KEYS,
 ): Record<string, unknown> {
-  const allowed = new Set(ALL_QUESTION_KEYS);
+  const allowed = new Set(steps.flatMap(s => s.questions.flatMap(q => [q.key, `${q.key}_notes`])));
   return whitelist(
     input,
-    (key) => allowed.has(key) && !isClientOwnedResponseKey(key),
+    (key) => allowed.has(key) && !ownedKeys.has(key),
   );
 }
 
@@ -92,11 +94,12 @@ export function sanitizePractitionerAssistedAnswers(
 export function assistedKeysChanged(
   input: unknown,
   stored: Record<string, unknown>,
+  ownedKeys: ReadonlySet<string> = CLIENT_OWNED_RESPONSE_KEYS,
 ): string[] {
   if (!input || typeof input !== "object" || Array.isArray(input)) return [];
   const incoming = input as Record<string, unknown>;
   return Object.keys(incoming).filter((key) => {
-    if (!isClientOwnedResponseKey(key)) return false;
+    if (!ownedKeys.has(key)) return false;
     return !sameJsonValue(incoming[key], stored[key]);
   });
 }

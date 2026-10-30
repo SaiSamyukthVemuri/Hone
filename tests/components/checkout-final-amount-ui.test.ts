@@ -54,6 +54,7 @@ const ELIGIBILITY = {
   stripeCustomerId: "cus_1",
   stripePaymentMethodId: "pm_1",
   existingAttempts: [],
+  jurisdiction: { country: "CA" as const, currency: "cad" as const },
 };
 
 const REFERENCE = {

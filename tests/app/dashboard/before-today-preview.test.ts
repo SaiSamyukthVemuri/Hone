@@ -122,7 +122,8 @@ describe("placement + reuse", () => {
     // The preview now feeds the combined workflow model (keyed by APPOINTMENT
     // id) instead of being handed to the row directly, so the same facts can no
     // longer be rendered twice from two sources.
-    expect(PAGE).toMatch(/beforeTodayPreviews\.get\(appt\.client_id\)/);
+    // HON-10: the preview is per VISIT (keyed by appointment id), not per client.
+    expect(PAGE).toMatch(/beforeTodayPreviews\.get\(appt\.id\)/);
     expect(PAGE).toMatch(/workflow=\{workflowByAppointment\.get\(appt\.id\) \?\? null\}/);
     expect(PAGE).toMatch(/Before today/);
     // Chloe dashboard-memory fix: the Remember note is rendered WHOLE — the

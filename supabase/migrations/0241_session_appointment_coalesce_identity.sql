@@ -1,0 +1,199 @@
+-- 0241 / HON-18 CLN-002: appointment identity in session coalescing.
+-- Additive replacement of 0181's five-argument body. Authority, signature,
+-- coarse advisory serialization, time window, dimensions, NULL promotion and
+-- plan attachment stay unchanged. The four-argument compatibility wrapper is
+-- untouched and delegates to this body. No data rewrite or uniqueness redesign.
+--
+-- Rollout: migration-first is compatible with both existing app signatures.
+-- The action containment can precede this apply and refuses mismatched charts
+-- from an older database. Reverting that containment does not undo this repair;
+-- reversing SQL would reintroduce the bug. No historic links are rewritten.
+-- No-appointment starts deliberately retain 0181's recent-chart behavior,
+-- including reuse of an already-linked chart; they never relink it.
+
+begin;
+set local lock_timeout = '5s';
+
+create or replace function public.start_session(
+  p_client_id        uuid,
+  p_modality         text,
+  p_appointment_id   uuid,
+  p_coalesce_minutes integer,
+  p_studio_id        uuid
+)
+returns table (session_id uuid, reused boolean)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_studio_id      uuid;
+  v_practitioner   uuid;
+  v_session_id     uuid;
+  v_existing_appt  uuid;
+  v_appt_client    uuid;
+  v_appt_studio    uuid;
+  v_appt_pract     uuid;
+  v_auto_plan      uuid;
+  v_plan_count     integer;
+  v_reused         boolean := false;
+begin
+  if p_modality is null or p_modality not in ('electrolysis', 'laser') then
+    raise exception 'Unsupported session modality.' using errcode = 'check_violation';
+  end if;
+
+  -- The studio is NAMED by the caller and PROVEN here. A missing value is an
+  -- unresolvable actor context, not a licence to pick one.
+  if p_studio_id is null then
+    raise exception 'No active practitioner found for the signed-in user.'
+      using errcode = 'check_violation';
+  end if;
+  v_studio_id := p_studio_id;
+
+  -- THE TRUST BOUNDARY. session_actor_practitioner re-reads
+  -- practitioners WHERE studio_id = <named> AND user_id = auth.uid() AND
+  -- active, so a studio the caller does not actively belong to yields no row
+  -- and is refused ('Inactive practitioners cannot edit sessions.', already a
+  -- mapped safe message). The practitioner id used for attribution, coalescing
+  -- and appointment lineage therefore comes from the NAMED studio's own
+  -- membership row — never from another tenant's.
+  v_practitioner := public.session_actor_practitioner(v_studio_id);
+
+  -- The client must belong to the same studio.
+  perform 1 from public.clients c
+    where c.id = p_client_id and c.studio_id = v_studio_id;
+  if not found then
+    raise exception 'Client not found in this studio.' using errcode = 'check_violation';
+  end if;
+
+  -- Appointment linkage is validated exactly as the application did: same
+  -- studio, same client, and either unassigned or assigned to this actor.
+  if p_appointment_id is not null then
+    select a.studio_id, a.client_id, a.practitioner_id
+      into v_appt_studio, v_appt_client, v_appt_pract
+      from public.appointments a
+     where a.id = p_appointment_id;
+
+    if v_appt_studio is null or v_appt_studio <> v_studio_id then
+      raise exception 'Appointment is not in your studio.' using errcode = 'check_violation';
+    end if;
+    if v_appt_client <> p_client_id then
+      raise exception 'Appointment is for a different client.' using errcode = 'check_violation';
+    end if;
+    if v_appt_pract is not null and v_appt_pract <> v_practitioner then
+      raise exception 'Appointment is assigned to a different practitioner.'
+        using errcode = 'check_violation';
+    end if;
+  end if;
+
+  -- SERIALIZE THE COALESCE IDENTITY BEFORE LOOKING.
+  --
+  -- 0167 claimed "FOR UPDATE closes the read-then-insert race that could
+  -- produce two sessions for one visit". That claim is only true when the
+  -- window already CONTAINS a row: `for update` locks rows, and an empty
+  -- result set locks nothing. Two overlapping first taps therefore both saw an
+  -- empty window and both inserted, and no unique constraint stops them — i.e.
+  -- the guarantee failed in exactly the double-tap case the coalescing exists
+  -- to prevent. Carried into this file verbatim, so the false claim is fixed
+  -- here rather than re-published.
+  --
+  -- A transaction-scoped advisory lock keyed on the COALESCE DIMENSIONS
+  -- (studio, client, practitioner, modality) makes the lookup-then-insert
+  -- atomic for one visit while leaving every other start unblocked. Taken
+  -- AFTER authority is proven, so an unauthenticated or non-member caller can
+  -- never make the database take a lock on its behalf; released automatically
+  -- at commit or rollback. It is the only advisory lock in the session command
+  -- surface and it is taken before any row lock, so it introduces no ordering
+  -- cycle. pg_catalog-qualified because search_path is empty.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      v_studio_id::text || ':' || p_client_id::text || ':' ||
+      v_practitioner::text || ':' || p_modality,
+      0
+    )
+  );
+
+  -- Coalesce window. Under the lock above, the read and the insert below are
+  -- one atomic decision for this visit: a concurrent caller blocks here and
+  -- then finds — and reuses — the row the first one created. Keyed on the
+  -- PROVEN studio, so a reuse can never cross tenants.
+  select s.id, s.appointment_id
+    into v_session_id, v_existing_appt
+    from public.sessions s
+   where s.studio_id = v_studio_id
+     and s.client_id = p_client_id
+     and s.practitioner_id = v_practitioner
+     and s.modality = p_modality
+     and s.deleted_at is null
+     and s.started_at >= (now() - make_interval(mins => coalesce(p_coalesce_minutes, 90)))
+     -- A requested appointment may use its own chart or promote a NULL link,
+     -- never another appointment's chart. No appointment context retains the
+     -- existing recent-chart lookup without changing any existing link.
+     and (p_appointment_id is null
+          or s.appointment_id = p_appointment_id
+          or s.appointment_id is null)
+   -- Prefer an exact appointment match even when an unlinked chart is newer.
+   -- Otherwise repeated/concurrent B starts could consume a different NULL
+   -- chart despite an eligible B chart already existing under this same lock.
+   order by case when p_appointment_id is not null
+                      and s.appointment_id = p_appointment_id then 0 else 1 end,
+            s.started_at desc
+   limit 1
+     for update;
+
+  if v_session_id is not null then
+    v_reused := true;
+    -- Promote a NULL link only. An existing different link is never overwritten.
+    if p_appointment_id is not null and v_existing_appt is null then
+      update public.sessions s
+         set appointment_id = p_appointment_id
+       where s.id = v_session_id
+         and s.appointment_id is null;
+    end if;
+  else
+    -- Auto-attach (electrolysis only) when the client has EXACTLY one active
+    -- plan. Zero or multiple → unattached, same as the application helper.
+    -- Scoped to the PROVEN studio.
+    if p_modality = 'electrolysis' then
+      select count(*) into v_plan_count
+        from public.treatment_plans tp
+       where tp.studio_id = v_studio_id
+         and tp.client_id = p_client_id
+         and tp.status = 'active';
+      -- EXACTLY one active plan auto-attaches; zero or several leave the
+      -- session unattached, matching getActiveTreatmentPlansForClient.
+      if v_plan_count = 1 then
+        select tp.id into v_auto_plan
+          from public.treatment_plans tp
+         where tp.studio_id = v_studio_id
+           and tp.client_id = p_client_id
+           and tp.status = 'active'
+         limit 1;
+      end if;
+    end if;
+
+    insert into public.sessions (
+      studio_id, client_id, practitioner_id, performed_by_practitioner_id,
+      modality, treatment_plan_id, appointment_id
+    ) values (
+      v_studio_id, p_client_id, v_practitioner, v_practitioner,
+      p_modality, v_auto_plan, p_appointment_id
+    )
+    returning id into v_session_id;
+  end if;
+
+  return query select v_session_id, v_reused;
+end;
+$$;
+
+-- Re-close every default grantee; retain authenticated-only command authority.
+revoke execute on function public.start_session(uuid, text, uuid, integer, uuid) from public;
+revoke execute on function public.start_session(uuid, text, uuid, integer, uuid) from anon;
+revoke execute on function public.start_session(uuid, text, uuid, integer, uuid) from authenticated;
+revoke execute on function public.start_session(uuid, text, uuid, integer, uuid) from service_role;
+grant execute on function public.start_session(uuid, text, uuid, integer, uuid) to authenticated;
+
+comment on function public.start_session(uuid, text, uuid, integer, uuid) is
+  '0241: start/reuse within the existing studio/client/practitioner/modality/time window, under the existing advisory lock. Requested appointment prefers an exact match, otherwise an eligible NULL link is promoted; a different appointment is excluded. No-appointment starts retain recent-chart behavior without relinking. Authority and four-argument compatibility remain 0181.';
+
+commit;
