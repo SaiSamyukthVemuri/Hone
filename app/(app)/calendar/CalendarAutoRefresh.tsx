@@ -11,7 +11,9 @@ import {
 import {
   SCHEDULE_SIGNAL_EVENT,
   createScheduleSignalController,
+  REJOIN_MAX_ATTEMPTS,
   isUnannouncedFind,
+  rejoinDelayMs,
   scheduleSignalEnabled,
   scheduleSignalTopic,
   type RefreshCause,
@@ -149,23 +151,45 @@ export function CalendarAutoRefresh({
     controllerRef.current = controller;
     let cancelled = false;
     let channel: ReturnType<typeof supabase.channel> | null = null;
-    void (async () => {
+    let rejoinTimer: number | null = null;
+    let attempt = 0;
+    // A refused or queued join (project at its client ceiling, authorization queue) is NOT an
+    // error for the user: nothing is shown, nothing blocks render, the 60 s and focus refresh
+    // stay the floor. The join is retried a bounded number of times with jitter.
+    async function join() {
       // A private channel authorizes with the user's token: hand it over before joining.
       // supabase-js re-sends it on every token refresh by itself.
       await supabase.realtime.setAuth();
       if (cancelled) return;
-      channel = supabase
-        .channel(topic, { config: { private: true } })
+      const ch = supabase
+        .channel(topic as string, { config: { private: true } })
         .on("broadcast", { event: SCHEDULE_SIGNAL_EVENT }, () => controller.signal())
         .subscribe((status) => {
+          if (cancelled) return;
           channelStatus.current = status;
           controller.status(status);
+          if (status === "SUBSCRIBED") {
+            attempt = 0;
+            return;
+          }
+          if ((status === "CHANNEL_ERROR" || status === "TIMED_OUT") && rejoinTimer === null && attempt < REJOIN_MAX_ATTEMPTS) {
+            const delay = rejoinDelayMs(attempt, Math.random);
+            attempt += 1;
+            void supabase.removeChannel(ch);
+            rejoinTimer = window.setTimeout(() => {
+              rejoinTimer = null;
+              if (!cancelled) void join();
+            }, delay);
+          }
         });
-    })();
+      channel = ch;
+    }
+    void join();
     return () => {
       cancelled = true;
       controllerRef.current = null;
       controller.dispose();
+      if (rejoinTimer !== null) window.clearTimeout(rejoinTimer);
       if (channel) void supabase.removeChannel(channel);
     };
   }, [studioId, router]);

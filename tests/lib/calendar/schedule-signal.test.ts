@@ -7,6 +7,8 @@ import {
   createScheduleSignalController,
   isUnannouncedFind,
   scheduleSignalEnabled,
+  rejoinDelayMs,
+  REJOIN_MAX_ATTEMPTS,
   scheduleSignalTopic,
   type SignalGuards,
 } from "@/lib/calendar/schedule-signal";
@@ -66,9 +68,12 @@ describe("topic and switch", () => {
     }
   });
   it("is on unless explicitly switched off", () => {
-    expect(scheduleSignalEnabled(undefined)).toBe(true);
-    expect(scheduleSignalEnabled("on")).toBe(true);
+    // Ships dark: only "on" enables it.
+    expect(scheduleSignalEnabled(undefined)).toBe(false);
+    expect(scheduleSignalEnabled("")).toBe(false);
     expect(scheduleSignalEnabled("off")).toBe(false);
+    expect(scheduleSignalEnabled("true")).toBe(false);
+    expect(scheduleSignalEnabled("on")).toBe(true);
   });
 });
 
@@ -302,5 +307,27 @@ describe("the schedule fingerprint", () => {
   });
   it("contains no row content (a short hex digest)", () => {
     expect(scheduleFingerprint({ appointments: [a] })).toMatch(/^[0-9a-f]{8}$/);
+  });
+});
+
+
+describe("a refused or queued join backs off with jitter and then stops", () => {
+  it("is bounded, grows, and is spread across the equal-jitter window", () => {
+    for (let a = 0; a < REJOIN_MAX_ATTEMPTS; a++) {
+      const lo = rejoinDelayMs(a, () => 0);
+      const hi = rejoinDelayMs(a, () => 1);
+      const ceiling = Math.min(60_000, 2_000 * 2 ** a);
+      expect(lo).toBe(Math.round(ceiling / 2));
+      expect(hi).toBe(ceiling);
+      expect(rejoinDelayMs(a, () => 0.5)).toBeGreaterThan(lo - 1);
+    }
+    expect(rejoinDelayMs(0, () => 0)).toBeGreaterThanOrEqual(1_000);
+    expect(rejoinDelayMs(99, () => 1)).toBe(60_000);
+    expect(REJOIN_MAX_ATTEMPTS).toBeLessThanOrEqual(8);
+  });
+  it("two clients that fail together do not retry together", () => {
+    const a = rejoinDelayMs(2, () => 0.1);
+    const b = rejoinDelayMs(2, () => 0.9);
+    expect(Math.abs(a - b)).toBeGreaterThan(2_000);
   });
 });

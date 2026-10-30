@@ -36,9 +36,25 @@ export function scheduleSignalTopic(studioId: string | null | undefined): string
   return typeof studioId === "string" && UUID.test(studioId) ? `schedule:${studioId}` : null;
 }
 
-/** Operational kill switch (build-time public env). Anything but "off" leaves it on. */
+/**
+ * Operational switch (build-time public env). DEFAULT OFF: the client ships dark and only
+ * "on" enables it, so the triggers may land first. Anything else, including unset, is off.
+ */
 export function scheduleSignalEnabled(flag: string | undefined): boolean {
-  return flag !== "off";
+  return flag === "on";
+}
+
+/** Rejoin attempts after a refused, queued or errored join before giving up to the 60 s floor. */
+export const REJOIN_MAX_ATTEMPTS = 6;
+
+/**
+ * Jittered, bounded back-off for re-joining after CHANNEL_ERROR / TIMED_OUT (a refused or
+ * queued join, a project at its client ceiling). Equal jitter, so a reconnect storm after an
+ * outage does not re-queue itself in lockstep. `random` is injected for tests.
+ */
+export function rejoinDelayMs(attempt: number, random: () => number): number {
+  const ceiling = Math.min(60_000, 2_000 * 2 ** Math.max(0, attempt));
+  return Math.round(ceiling / 2 + random() * (ceiling / 2));
 }
 
 export type SignalGuards = { visible: boolean; online: boolean; dialogOpen: boolean; editing: boolean };

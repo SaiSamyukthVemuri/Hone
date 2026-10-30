@@ -97,8 +97,24 @@ async function insertBlock(s: SeededStudio): Promise<string> {
   return r.rows[0].id as string;
 }
 
+const POLICIES = ["schedule_signal_member_read", "schedule_signal_no_client_insert"];
+let tableOwnerBefore = "";
+
 beforeAll(async () => {
   surface = await realtimeSurface();
+  if (surface === "real") {
+    const o = await adminQuery(`select relowner::regrole::text as owner from pg_class where oid='realtime.messages'::regclass`);
+    tableOwnerBefore = (o.rows[0] as { owner: string }).owner;
+    // The migration is a PLAIN create (no drop), so a replay on a stack that already ran it first
+    // removes the policies. Dropping them as postgres is the rollback path, and it must work: if the
+    // role cannot drop, this hook fails loudly instead of the file silently skipping the proof.
+    for (const name of POLICIES) await adminQuery(`drop policy if exists ${name} on realtime.messages`);
+  } else {
+    // The stub is rebuilt per run; a stale policy set from a previous run would fail the plain create.
+    await adminQuery(`do $$ begin if to_regclass('realtime.messages') is not null then
+      drop policy if exists schedule_signal_member_read on realtime.messages;
+      drop policy if exists schedule_signal_no_client_insert on realtime.messages; end if; end $$`);
+  }
   await adminQuery(MIGRATION);
   console.log(`SCHEDULE_SIGNAL_SURFACE ${surface}`);
   A = await seedStudio("sig-A");
@@ -465,12 +481,17 @@ describe("forged publishing through realtime.send and the hosted-shaped grants",
     expect([row.anon_x, row.auth_x, row.svc_x]).toEqual([true, true, true]);
   });
 
-  it("hosted shape: RLS is on for realtime.messages and the ONLY policy is 0271's SELECT policy (no INSERT/UPDATE/DELETE policy for anyone)", async () => {
+  it("hosted shape: RLS is on for realtime.messages and the ONLY policies are 0271's SELECT policy and its RESTRICTIVE insert deny (no permissive INSERT/ALL/UPDATE/DELETE policy for anyone)", async () => {
     if (!real()) return;
     const t = await adminQuery(`select relrowsecurity as rls, pg_get_userbyid(relowner) as owner from pg_class where oid = 'realtime.messages'::regclass`);
     expect((t.rows[0] as { rls: boolean }).rls).toBe(true);
-    const pol = await adminQuery(`select polname, polcmd, (select array_to_string(array_agg(rolname), ',') from pg_roles r where r.oid = any(polroles)) as roles from pg_policy where polrelid = 'realtime.messages'::regclass order by polname`);
-    expect(pol.rows).toEqual([{ polname: "schedule_signal_member_read", polcmd: "r", roles: "authenticated" }]);
+    const pol = await adminQuery(`select polname, polcmd, polpermissive, (select array_to_string(array_agg(rolname order by rolname), ',') from pg_roles r where r.oid = any(polroles)) as roles from pg_policy where polrelid = 'realtime.messages'::regclass order by polname`);
+    expect(pol.rows).toEqual([
+      { polname: "schedule_signal_member_read", polcmd: "r", polpermissive: true, roles: "authenticated" },
+      { polname: "schedule_signal_no_client_insert", polcmd: "a", polpermissive: false, roles: "anon,authenticated" },
+    ]);
+    const permissiveWrite = await adminQuery(`select count(*)::int as n from pg_policy where polrelid = 'realtime.messages'::regclass and polpermissive and polcmd in ('a','*','w','d')`);
+    expect((permissiveWrite.rows[0] as { n: number }).n).toBe(0);
   });
 
   it("the policy was created by the migration role through supautils policy_grants, with no ownership change (real surface)", async () => {
@@ -481,11 +502,10 @@ describe("forged publishing through realtime.send and the hosted-shaped grants",
     expect(v ?? "").toContain("realtime.messages");
     const who = await adminQuery(`select current_user as u, (select relowner::regrole::text from pg_class where oid='realtime.messages'::regclass) as owner`);
     expect((who.rows[0] as { u: string }).u).toBe("postgres");
-    // Replaying the migration as that role leaves the table's owner exactly as it was.
-    const before = (who.rows[0] as { owner: string }).owner;
-    await adminQuery(MIGRATION);
-    const after = await adminQuery(`select relowner::regrole::text as owner from pg_class where oid='realtime.messages'::regclass`);
-    expect((after.rows[0] as { owner: string }).owner).toBe(before);
+    // The drop-and-replay in beforeAll ran as postgres: the table's owner is exactly what it was.
+    expect((who.rows[0] as { owner: string }).owner).toBe(tableOwnerBefore);
+    const made = await adminQuery(`select count(*)::int as n from pg_policy where polrelid = 'realtime.messages'::regclass and polname = any($1)`, [POLICIES]);
+    expect((made.rows[0] as { n: number }).n).toBe(2);
   });
 
   it("the emitter's own path: postgres (the migration role that owns the emitter) can insert through realtime.send", async () => {
@@ -507,27 +527,116 @@ describe("forged publishing through realtime.send and the hosted-shaped grants",
     expect((await signals(A)) - before).toBe(1);
   });
 
-  it("a member, an outsider and anon who CALL realtime.send directly are refused by RLS: nothing is published", async () => {
+  it("hosted-shaped grants: anon and authenticated hold INSERT on realtime.messages and neither bypasses RLS, so refusal below is RLS and not a missing grant", async () => {
+    if (!real()) return;
+    const r = await adminQuery(
+      `select has_table_privilege('anon','realtime.messages','insert') as anon_ins,
+              has_table_privilege('authenticated','realtime.messages','insert') as auth_ins,
+              (select rolbypassrls from pg_roles where rolname='anon') as anon_bypass,
+              (select rolbypassrls from pg_roles where rolname='authenticated') as auth_bypass,
+              (select array_to_string(array_agg(rolname order by rolname), ',') from pg_roles where rolbypassrls) as bypass_roles`,
+    );
+    const row = r.rows[0] as { anon_ins: boolean; auth_ins: boolean; anon_bypass: boolean; auth_bypass: boolean; bypass_roles: string };
+    expect([row.anon_ins, row.auth_ins]).toEqual([true, true]);
+    expect([row.anon_bypass, row.auth_bypass]).toEqual([false, false]);
+    console.log("BYPASSRLS roles (local):", row.bypass_roles);
+    expect(row.bypass_roles.split(",")).not.toContain("anon");
+    expect(row.bypass_roles.split(",")).not.toContain("authenticated");
+  });
+
+  it("direct realtime.send callers (member, owner, outsider, anon) leave no row and the postgres control leaves exactly one; the same under a permissive INSERT policy added later", async () => {
     const forged = (topic: string) => `select realtime.send('{"forged":true}'::jsonb, 'changed', '${topic}', true)`;
-    const before = await signals(A);
-    for (const who of [A.userId, member.userId, B.userId]) {
-      let refused = false;
-      try {
-        await asUser(who, async (q) => q(forged(topicOf(A))));
-      } catch {
-        refused = true;
+    // Positive control, same topic, same call shape: postgres (BYPASSRLS) is accepted.
+    const c0 = await signals(A);
+    await adminQuery(forged(topicOf(A)).replace('{"forged":true}', "{}"));
+    expect((await signals(A)) - c0, "control: the call shape works for postgres").toBe(1);
+    const run = async () => {
+      const before = await signals(A);
+      for (const who of [A.userId, member.userId, B.userId]) {
+        try { await asUser(who, async (q) => q(forged(topicOf(A)))); } catch { /* an error or a swallowed warning: both are "not published" */ }
       }
-      // Either the call errors (RLS violation) or, if a stack swallows it, nothing lands: both are "not published".
-      void refused;
-    }
-    const anonOutcome = await adminTx(async (q) => {
-      await q(`set local role anon`);
-      try { await q(forged(topicOf(A))); return "ok"; } catch { return "refused"; }
-    }).catch(() => "refused");
-    void anonOutcome;
-    expect(await signals(A)).toBe(before);
+      await adminTx(async (q) => {
+        await q(`set local role anon`);
+        try { await q(forged(topicOf(A))); } catch { /* same */ }
+      }).catch(() => undefined);
+      return (await signals(A)) - before;
+    };
+    expect(await run()).toBe(0);
     const forgedRows = await adminQuery(`select count(*)::int as n from realtime.messages where payload ? 'forged'`);
     expect((forgedRows.rows[0] as { n: number }).n).toBe(0);
+    if (!real()) return;
+    // Defence in depth: someone later adds a PERMISSIVE insert policy (say in the dashboard). The
+    // RESTRICTIVE deny still refuses every browser role; rolled back at the end.
+    const attempt = async (q: (sql: string) => Promise<{ rowCount?: number | null }>) => {
+      let n = 0;
+      for (const role of ["authenticated", "anon"]) {
+        await q(`savepoint forged_try`);
+        await q(`set local role ${role}`);
+        try {
+          const r = await q(`insert into realtime.messages (topic, extension, payload, event, private) values ('${topicOf(A)}','broadcast','{"forged":true}','changed',true)`);
+          n += r.rowCount ?? 0;
+        } catch { /* refused by RLS: the failed statement aborts the subtransaction */ }
+        await q(`rollback to savepoint forged_try`);
+        await q(`reset role`);
+      }
+      return n;
+    };
+    const out = await adminTx(async (q) => {
+      await q(`create policy tmp_permissive_insert on realtime.messages for insert to authenticated, anon with check (true)`);
+      const withDeny = await attempt(q as never);
+      // Control: with the restrictive deny gone, the same permissive policy lets both roles in. Without
+      // this the zero above could be a broken harness rather than the deny doing its job.
+      await q(`drop policy schedule_signal_no_client_insert on realtime.messages`);
+      const withoutDeny = await attempt(q as never);
+      throw Object.assign(new Error("rollback-permissive"), { withDeny, withoutDeny });
+    }).catch((e: { withDeny?: number; withoutDeny?: number }) => e);
+    expect(out.withDeny, `harness ran: ${(out as unknown as Error).message}`).toBeDefined();
+    expect(out.withDeny).toBe(0);
+    expect(out.withoutDeny, "control: the permissive policy alone does admit browser inserts").toBe(2);
+    const still = await adminQuery(`select count(*)::int as n from pg_policy where polrelid='realtime.messages'::regclass and polname = any($1)`, [POLICIES]);
+    expect((still.rows[0] as { n: number }).n, "rolled back: both policies remain").toBe(2);
+  });
+
+  it("rollback path: both policies drop as postgres (the migration role), with no ownership needed; rolled back here", async () => {
+    if (!real()) return;
+    const out = await adminTx(async (q) => {
+      for (const name of POLICIES) await q(`drop policy ${name} on realtime.messages`);
+      const left = await q(`select count(*)::int as n from pg_policy where polrelid='realtime.messages'::regclass and polname = any($1)`, [POLICIES]);
+      throw Object.assign(new Error("rollback-drop"), { left: (left.rows[0] as { n: number }).n });
+    }).catch((e: { left?: number; message?: string }) => e);
+    expect(out.left, `drop ran: ${out.message}`).toBe(0);
+    const still = await adminQuery(`select count(*)::int as n from pg_policy where polrelid='realtime.messages'::regclass and polname = any($1)`, [POLICIES]);
+    expect((still.rows[0] as { n: number }).n).toBe(2);
+  });
+
+  it("a delivered row is exactly what the emitter should send: topic, event changed, private true, broadcast, data-free; the emitter is a postgres-owned definer", async () => {
+    const before = await adminQuery(`select count(*)::int as n from realtime.messages where topic = $1`, [topicOf(A)]);
+    await insertAppt(A, serviceA);
+    const r = await adminQuery(`select topic, event, private, extension, payload from realtime.messages where topic = $1 order by inserted_at desc limit 1`, [topicOf(A)]);
+    expect((before.rows[0] as { n: number }).n + 1).toBe((await signals(A)));
+    expect(r.rows[0]).toMatchObject({ topic: topicOf(A), event: "changed", private: true, extension: "broadcast" });
+    const keys = Object.keys((r.rows[0] as { payload: Record<string, unknown> }).payload ?? {}).filter((k) => k !== "id");
+    expect(keys).toEqual([]);
+    const f = await adminQuery(`select p.prosecdef, pg_get_userbyid(p.proowner) as owner, p.proconfig::text as cfg from pg_proc p where p.oid = 'public.emit_schedule_signal()'::regprocedure`);
+    expect(f.rows[0]).toMatchObject({ prosecdef: true, owner: "postgres" });
+    expect((f.rows[0] as { cfg: string }).cfg).toContain("search_path=pg_catalog, pg_temp");
+  });
+
+  it("realtime.messages ids are random uuids, not a sequence (a global sequence would leak other studios' volume)", async () => {
+    if (!real()) return;
+    const c = await adminQuery(`select data_type from information_schema.columns where table_schema='realtime' and table_name='messages' and column_name='id'`);
+    expect((c.rows[0] as { data_type: string }).data_type).toBe("uuid");
+    const d = await adminQuery(`select column_default as d from information_schema.columns where table_schema='realtime' and table_name='messages' and column_name='id'`);
+    expect((d.rows[0] as { d: string | null }).d ?? "").toMatch(/gen_random_uuid|uuid_generate_v4/);
+    const ids = await adminQuery(`select id::text as id from realtime.messages order by inserted_at desc limit 20`);
+    expect(ids.rows.length).toBeGreaterThan(3);
+    for (const r of ids.rows as { id: string }[]) expect(r.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+
+  it("outside a Realtime session realtime.topic() is null and a direct SQL select as a member sees nothing", async () => {
+    await insertAppt(A, serviceA);
+    const r = await asUser(A.userId, async (q) => q(`select count(*)::int as n from realtime.messages`));
+    expect((r.rows[0] as { n: number }).n).toBe(0);
   });
 
   it("the realtime schema is not exposed through PostgREST (config) so no API call reaches realtime.send", async () => {

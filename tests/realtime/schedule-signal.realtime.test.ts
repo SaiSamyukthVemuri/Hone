@@ -1,6 +1,7 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from "@supabase/supabase-js";
+import { Client as PgClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "@/e2e/helpers/local-env";
+import { E2E_DB_URL, E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "@/e2e/helpers/local-env";
 import { seedE2eMember, seedE2eStudio, sql, type E2eSeed } from "@/e2e/helpers/seed";
 
 // HON-48 / 0271: the schedule-change signal at the PROTOCOL level, on a stack that runs the
@@ -113,7 +114,23 @@ beforeAll(async () => {
   // Removed AFTER the token was issued: the token stays valid until it expires (L1), membership does not.
   await sql(`update public.practitioners set active = false where studio_id = $1 and user_id = $2`, [A.studioId, removed.userId]);
   anonOnly = true;
-}, 120_000);
+  // Cold start. On a freshly started tenant the first private subscriber can be SUBSCRIBED while the
+  // service's message-replication slot is still coming up, so the first commits land in
+  // realtime.messages but are not delivered (measured: a row existed, no delivery within 5 s). The
+  // client's catch-up on every SUBSCRIBED and the 60 s floor cover exactly this. Warm the tenant
+  // here and record how long it took, so the timed proofs below measure steady state and the
+  // cold-start gap is reported instead of hidden.
+  const warm = await join(topicA(), { token: ownerA.token, isPrivate: true });
+  const t0 = Date.now();
+  let warmed = false;
+  while (!warmed && Date.now() - t0 < 60_000) {
+    const n = warm.got.length;
+    await commitChange(A.studioId);
+    warmed = await waitFor(() => warm.got.length > n, 4_000);
+  }
+  console.log("PROOF cold-start warm-up", JSON.stringify({ delivered: warmed, ms: Date.now() - t0 }));
+  if (!warmed) throw new Error("the Realtime tenant never delivered a private broadcast within 60 s");
+}, 180_000);
 
 afterAll(async () => {
   for (const c of clients) { try { await c.removeAllChannels(); } catch { /* best effort */ } }
@@ -217,6 +234,41 @@ describe("0271 protocol proofs (real Realtime)", () => {
     const delivered = listener.got.length - before;
     if (!/^http:(2\d\d)$/.test(memberRest ?? "")) expect(delivered).toBe(0);
     else expect(delivered).toBeLessThanOrEqual(1);
+  });
+
+  it("SQL-level forged realtime.send as authenticated and anon: no new row AND no delivery to a private subscriber; the postgres control row is delivered", async () => {
+    const listener = await join(topicA(), { token: memberA.token, isPrivate: true });
+    expect(listener.status).toBe("SUBSCRIBED");
+    const rows = async () => (await sql<{ n: number }>(`select count(*)::int as n from realtime.messages where topic = $1`, [topicA()]))[0].n;
+    const forgedAs = async (role: "authenticated" | "anon", sub: string | null) => {
+      const c = new PgClient({ connectionString: E2E_DB_URL });
+      await c.connect();
+      try {
+        await c.query("begin");
+        await c.query(`set local role ${role}`);
+        if (sub) await c.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify({ sub, role })]);
+        try { await c.query(`select realtime.send('{"forged":true}'::jsonb, 'changed', $1, true)`, [topicA()]); } catch { /* refused */ }
+        await c.query("commit").catch(() => undefined);
+      } finally { await c.end(); }
+    };
+    // Control first, on the same topic, through the same function: postgres (BYPASSRLS) lands one row and is delivered.
+    const r0 = await rows();
+    const h0 = listener.got.length;
+    await sql(`select realtime.send('{}'::jsonb, 'changed', $1, true)`, [topicA()]);
+    expect(await waitFor(() => listener.got.length > h0, 5_000)).toBe(true);
+    expect((await rows()) - r0).toBe(1);
+    // Forged calls: neither a row nor a delivery.
+    const r1 = await rows();
+    const h1 = listener.got.length;
+    await forgedAs("authenticated", memberA.userId);
+    await forgedAs("authenticated", ownerB.userId);
+    await forgedAs("anon", null);
+    await sleep(2_500);
+    const forgedRows = (await sql<{ n: number }>(`select count(*)::int as n from realtime.messages where payload ? 'forged'`))[0].n;
+    console.log("PROOF sql-forged-send", JSON.stringify({ newRows: (await rows()) - r1, delivered: listener.got.length - h1, forgedRows }));
+    expect((await rows()) - r1).toBe(0);
+    expect(forgedRows).toBe(0);
+    expect(listener.got.length - h1).toBe(0);
   });
 
   it("realtime.messages is not writable by a browser role through the policy (no INSERT/UPDATE/DELETE clause)", async () => {

@@ -93,8 +93,8 @@ describe("0271: who may listen", () => {
     expect([...code.matchAll(/raise notice/g)].length).toBeGreaterThanOrEqual(2);
   });
 
-  it("creates exactly one SELECT-only policy for authenticated, gated by topic shape and membership", () => {
-    expect([...code.matchAll(/create policy/g)]).toHaveLength(1);
+  it("creates a SELECT-only permissive policy for authenticated, gated by topic shape and membership", () => {
+    expect([...code.matchAll(/create policy/g)]).toHaveLength(2);
     expect(code).toContain("create policy schedule_signal_member_read");
     expect(code).toContain("for select");
     expect(code).toContain("to authenticated");
@@ -102,15 +102,25 @@ describe("0271: who may listen", () => {
     expect(code).toContain("'^schedule:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'");
     expect(code).toContain("public.is_studio_member(substr((select realtime.topic()), 10)::uuid)");
     expect(code).toMatch(/else false/);
-    expect(code).not.toMatch(/for (?:insert|update|delete|all)\b/);
-    expect(code).not.toMatch(/to (?:anon|public|service_role)/);
+    // The only other policy is the RESTRICTIVE client-insert deny, pinned below.
+    expect(code).not.toMatch(/for (?:update|delete|all)\b/);
+    expect(code).not.toMatch(/to (?:public|service_role)/);
   });
 
-  it("touches realtime only through ONE plain create policy: no owner change, no grant, no role switch, no non-SELECT policy", () => {
+  it("adds a RESTRICTIVE insert deny for anon and authenticated (defence in depth), and never DROPs a policy", () => {
+    expect(code).toMatch(
+      /create policy schedule_signal_no_client_insert\s+on realtime\.messages\s+as restrictive\s+for insert\s+to anon, authenticated\s+with check \(false\)/,
+    );
+    // A plain CREATE only: DROP POLICY on realtime.messages is not provably allowed for the migration role.
+    expect(code).not.toMatch(/drop\s+policy/i);
+  });
+
+  it("touches realtime only through two plain create policy statements: no owner change, no grant, no role switch, no non-SELECT policy", () => {
     // The policy is created by the migration role through Supabase's supported path for
     // realtime.messages (supautils policy_grants), not by taking ownership of the table.
-    expect(code.match(/create policy/gi) ?? []).toHaveLength(1);
+    expect(code.match(/create policy/gi) ?? []).toHaveLength(2);
     expect(code).toMatch(/create policy schedule_signal_member_read\s+on realtime\.messages\s+for select\s+to authenticated/);
+    expect(code).not.toMatch(/(?:disable|force)\s+row\s+level\s+security/i);
     expect(code).not.toMatch(/alter\s+(?:table|function|schema)\s+realtime\b/i);
     expect(code).not.toMatch(/\bowner\s+to\b/i);
     expect(code).not.toMatch(/\bgrant\b[^;]*realtime/i);

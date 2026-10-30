@@ -224,7 +224,6 @@ begin
     raise notice '0271: realtime.messages / realtime.topic() are absent; the listen policy was NOT created. Re-run this file after Realtime has initialised.';
     return;
   end if;
-  execute 'drop policy if exists schedule_signal_member_read on realtime.messages';
   execute $p$
     create policy schedule_signal_member_read
       on realtime.messages
@@ -238,6 +237,18 @@ begin
           else false
         end
       )
+  $p$;
+  -- Defence in depth: anon and authenticated hold INSERT on realtime.messages, so the only
+  -- thing keeping a browser from publishing a row is that no permissive INSERT policy
+  -- exists. A RESTRICTIVE policy keeps that true even if someone later adds a permissive
+  -- one (for example in the dashboard). The emitter (postgres, BYPASSRLS) ignores policies.
+  execute $p$
+    create policy schedule_signal_no_client_insert
+      on realtime.messages
+      as restrictive
+      for insert
+      to anon, authenticated
+      with check (false)
   $p$;
 end;
 $guard$;

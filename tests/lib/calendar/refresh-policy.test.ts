@@ -94,6 +94,10 @@ describe("the component and where it is mounted", () => {
     expect(component).toMatch(/config: \{ private: true \}/);
     expect(component).toMatch(/\.on\("broadcast", \{ event: SCHEDULE_SIGNAL_EVENT \}, \(\) => controller\.signal\(\)\)/);
     expect(component).toMatch(/removeChannel\(channel\)/);
+    // A refused or queued join is silent and retried with jitter; it never surfaces an error.
+    expect(component).toMatch(/rejoinDelayMs\(attempt, Math\.random\)/);
+    expect(component).toMatch(/REJOIN_MAX_ATTEMPTS/);
+    expect(component).not.toMatch(/console\.error|throw new Error/);
   });
 
   it("removes every listener and the timer when it unmounts", () => {
