@@ -375,3 +375,37 @@ describe("R-05: read-failure handling is untouched", () => {
     expect(await state()).toBe("unavailable");
   });
 });
+
+describe("HON-45: settlementDisplayState carries part payments", () => {
+  const base = { quotedAmountCents: 10000 };
+  it("collected below the quote is the part state of its method", async () => {
+    const { settlementDisplayState } = await import("@/lib/billing/appointment-payment-state");
+    expect(settlementDisplayState({ method: "paid_cash", amountCents: 2000, ...base })).toBe("settled_cash_part");
+    expect(settlementDisplayState({ method: "paid_other_external", amountCents: 9999, ...base })).toBe("settled_other_part");
+  });
+  it("PEER C2: a collected method with amount 0 and a known quote is still owed, never 'Part paid'", async () => {
+    const { settlementDisplayState } = await import("@/lib/billing/appointment-payment-state");
+    for (const method of ["paid_cash", "paid_e_transfer", "paid_other_external"] as const) {
+      expect(settlementDisplayState({ method, amountCents: 0, ...base })).toBe("settled_collected_none");
+    }
+    // one cent is money that came in: still a part payment
+    expect(settlementDisplayState({ method: "paid_cash", amountCents: 1, ...base })).toBe("settled_cash_part");
+    // an unknown quote is never assumed short: unchanged
+    expect(settlementDisplayState({ method: "paid_cash", amountCents: 0, quotedAmountCents: null })).toBe("settled_cash");
+  });
+  it("full, over, unknown quote, still_owes and waived keep their existing state", async () => {
+    const { settlementDisplayState } = await import("@/lib/billing/appointment-payment-state");
+    expect(settlementDisplayState({ method: "paid_cash", amountCents: 10000, ...base })).toBe("settled_cash");
+    expect(settlementDisplayState({ method: "paid_cash", amountCents: 12000, ...base })).toBe("settled_cash");
+    expect(settlementDisplayState({ method: "paid_cash", amountCents: 2000, quotedAmountCents: null })).toBe("settled_cash");
+    expect(settlementDisplayState({ method: "still_owes", amountCents: 100, ...base })).toBe("settled_owing");
+    expect(settlementDisplayState({ method: "waived", amountCents: 0, ...base })).toBe("settled_waived");
+  });
+  it("both loader branches that map a settlement use it, never the bare method map", () => {
+    const src = readFileSync(join(process.cwd(), "lib/billing/appointment-payment-state.ts"), "utf8");
+    const loader = src.slice(src.indexOf("export async function getAppointmentPaymentStates"));
+    expect(loader).not.toMatch(/SETTLEMENT_STATE_BY_METHOD\[/);
+    expect(loader.match(/settlementDisplayState\(settlement\)/g)?.length).toBe(2);
+  });
+});
+

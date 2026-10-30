@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { StudioTimedBlock } from "@/lib/types/database";
 import { TIMED_BLOCK_LABEL } from "./calendar-format";
@@ -75,9 +75,10 @@ export function TimedBlockEditDrawer({
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [pending, startTransition] = useTransition();
+  const seededId = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!block) return;
+    if (!block) { seededId.current = null; return; }
     // Seed the form from the block. Detect all-day by its local-midnight
     // boundaries (never by 24h duration) so editing preserves the mode; a timed
     // block seeds explicit times.
@@ -88,7 +89,10 @@ export function TimedBlockEditDrawer({
     setEndLocal(ad ? "12:30" : timeForInput(block.ends_at, studioTimezone));
     setCategory(block.category);
     setPrivateNote(block.private_note ?? "");
-    setError(null);
+    // The same block arriving fresh after a refresh keeps the message that
+    // explains why the values just changed; a different block starts clean.
+    if (seededId.current !== block.id) setError(null);
+    seededId.current = block.id;
     setConfirmingDelete(false);
   }, [block, studioTimezone]);
 
@@ -107,6 +111,8 @@ export function TimedBlockEditDrawer({
     setError(null);
     const fd = new FormData();
     fd.set("id", block!.id);
+    // HON-48: the version this drawer loaded; the action refuses a stale save.
+    fd.set("expected_updated_at", block!.updated_at);
     fd.set("date", date);
     fd.set("start_local", startLocal);
     fd.set("end_local", endLocal);
@@ -119,6 +125,8 @@ export function TimedBlockEditDrawer({
       const r = await updateTimedBlockAction(fd);
       if (!r.ok) {
         setError(r.error);
+        // Someone else changed or deleted this block: refetch so the calendar shows it.
+        if (r.stale) router.refresh();
         return;
       }
       router.refresh();
@@ -130,11 +138,13 @@ export function TimedBlockEditDrawer({
     setError(null);
     const fd = new FormData();
     fd.set("id", block!.id);
+    fd.set("expected_updated_at", block!.updated_at);
     startTransition(async () => {
       try {
         const result = await deleteTimedBlockAction(fd);
         if (!result.ok) {
           setError(result.error);
+          if (result.stale) router.refresh();
           return;
         }
         router.refresh();

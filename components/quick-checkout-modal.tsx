@@ -233,6 +233,7 @@ export function QuickCheckoutModal({
                 settledMethod={ctx.settlement.settledMethod}
                 settledId={ctx.settlement.settledId}
                 settledAmountCents={ctx.settlement.settledAmountCents}
+                settledQuotedCents={ctx.settlement.settledQuotedCents}
                 defaultAmountCents={ctx.settlement.quotedAmountCents}
                 onRecorded={refetchAfterSettlement}
               />
@@ -267,6 +268,7 @@ export function QuickCheckoutModal({
               settledMethod={ctx.settlement.settledMethod}
               settledId={ctx.settlement.settledId}
               settledAmountCents={ctx.settlement.settledAmountCents}
+                settledQuotedCents={ctx.settlement.settledQuotedCents}
               settlementQuotedAmountCents={ctx.settlement.quotedAmountCents}
               canRecordSettlement={ctx.settlement.canRecord}
               onSettlementRecorded={refetchAfterSettlement}

@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 246,
+    "count": 248,
     "last": "0268_appointment_arrival.sql",
-    "sha256": "61c00f5c6c13fd85f8ee7617c07cc2085b70fc2ab6c8565eee4ee5b65178ba04"
+    "sha256": "36bf75cd073f95654ca4488ed66697bcf50ad9161f966f79f57355f39eb7ac29"
   },
   "public": {
     "tables": [
@@ -306,6 +306,7 @@
       "import_legacy_waitlist_entry",
       "imported_treatment_memory_audit_row",
       "initialize_studio_payment_jurisdiction_from_history",
+      "initialize_studio_payment_jurisdiction_from_history_v2",
       "invalidate_waitlist_invitation_proof",
       "is_studio_member",
       "is_studio_owner",
