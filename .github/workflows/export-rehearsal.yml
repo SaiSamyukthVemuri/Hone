@@ -1,0 +1,115 @@
+# Export-tool rehearsal (EXPORT-PROCEDURE-GAPS.md GAP-2, GAP-3). Runs the
+# encrypted export tools (scripts/ops/logical-export.sh, object-export.sh,
+# verify-export.sh, export-restore.sh) against a throwaway local Supabase stack
+# with SYNTHETIC data, through checks V1 to V5 and V7 of
+# 01-ops/RECOVERY-LAYERS-PLAN.md section 4, with negative controls (a dump with
+# public.clients removed, a flipped ciphertext byte, an object deleted between
+# listing and download, a wrong project ref, a target equal to production).
+#
+# NOT REQUIRED. Branch protection never names this job. It runs only when the
+# tools change, or on demand (workflow_dispatch), on a disposable GitHub runner.
+#
+# Synthetic only. No hosted project, no production data, no live provider:
+#   * the rehearsal refuses any hosted Supabase URL and runs on its own ports;
+#   * the age key is generated in the job and destroyed at its end;
+#   * nothing encrypted is uploaded: the artifact holds only the receipt and logs.
+#
+# Supply chain: actions pinned by SHA (tests/ci/ci-config.test.ts enrols this file
+# by existing), contents: read, persist-credentials: false. The one credential is
+# the D7b read-only ghcr.io login, held only across a direct pinned-CLI start,
+# exactly as in restore-drill.yml and ci.yml.
+
+name: export-rehearsal
+
+on:
+  pull_request:
+    paths:
+      - "scripts/ops/export-*"
+      - "scripts/ops/logical-export.sh"
+      - "scripts/ops/object-export.sh"
+      - "scripts/ops/verify-export.sh"
+      - ".github/workflows/export-rehearsal.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hone-export-rehearsal-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  export-rehearsal:
+    name: export tools rehearsal (not required)
+    runs-on: ubuntu-latest
+    # D7b: read-only package scope for the authenticated ghcr.io image pull only.
+    permissions:
+      contents: read
+      packages: read
+    # Target ~20 min: an image pre-pull start, then two project builds from the
+    # migration chain (~5 min each) around the exports and controls. The hard
+    # timeout exceeds it (CLAUDE.md section 4).
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
+        with:
+          # Same pin as every other lane, and as the drill's own npx call (grants parity).
+          version: 2.102.0
+
+      - name: Log in to ghcr.io for Supabase images (D7b, read-only)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pulls the images the drill uses, authenticated, so the drill's own
+      # starts (run later, by a repository script, with no credential) find
+      # them cached. Same service set as the drill's EXCLUDE list.
+      - name: Start local Supabase stack (pre-pull the drill's images)
+        id: sb_start
+        continue-on-error: true
+        shell: bash
+        run: supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta,supavisor 2>&1 | tee "$RUNNER_TEMP/supabase-start.log"
+
+      - name: Log out of ghcr.io (D7b)
+        if: always()
+        run: docker logout ghcr.io
+
+      - name: Retry Supabase start once on a port-bind collision (no credential)
+        if: steps.sb_start.outcome == 'failure'
+        run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,realtime,edge-runtime,logflare,vector,imgproxy,mailpit,postgres-meta,supavisor
+
+      - name: Stop the pre-pull stack (its images stay cached)
+        run: supabase stop --no-backup
+
+      - name: Install age
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+          age --version
+          age-keygen --version
+
+      - name: Export tools rehearsal (synthetic)
+        run: bash scripts/ops/export-rehearsal.sh "$RUNNER_TEMP/export-evidence"
+
+      - name: Upload rehearsal receipt and logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: export-rehearsal-evidence
+          path: ${{ runner.temp }}/export-evidence/
+          retention-days: 7
