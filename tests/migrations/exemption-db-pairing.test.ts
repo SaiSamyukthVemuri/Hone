@@ -33,6 +33,52 @@ const MARKER = /^\s*\/\/\s*exemption-db-pair:\s*(.+)$/gm;
 
 export type Source = { path: string; text: string };
 
+/**
+ * The string entries a declaration ACTUALLY lists, read from its initializer
+ * (Codex, #1213 4401356805: a marker alone can go stale when an entry is
+ * appended to the list). Scans from the `=` to the end of the statement,
+ * skipping over string literals and comments, and returns every string literal
+ * in it. Returns null when the initializer cannot be read as literals (no `=`,
+ * or no string entry at all), which the caller reports instead of passing.
+ */
+export function declaredEntries(text: string, declAt: number): string[] | null {
+  const eq = text.indexOf("=", declAt);
+  if (eq < 0) return null;
+  const entries: string[] = [];
+  let depth = 0;
+  let i = eq + 1;
+  for (; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === "/" && text[i + 1] === "/") {
+      while (i < text.length && text[i] !== "\n") i++;
+      continue;
+    }
+    if (ch === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      if (end < 0) return null;
+      i = end + 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      let j = i + 1;
+      let lit = "";
+      while (j < text.length && text[j] !== ch) {
+        if (text[j] === "\\") j++;
+        lit += text[j] ?? "";
+        j++;
+      }
+      entries.push(lit);
+      i = j;
+      continue;
+    }
+    if (ch === "[" || ch === "(" || ch === "{") depth++;
+    else if (ch === "]" || ch === ")" || ch === "}") depth--;
+    else if (ch === ";" && depth <= 0) break;
+    else if (ch === "\n" && depth <= 0 && entries.length > 0) break;
+  }
+  return entries.length > 0 ? entries : null;
+}
+
 /** Violations of the pairing rule over a set of test sources. Pure, so it can be proved. */
 export function pairingViolations(
   testSources: Source[],
@@ -72,7 +118,25 @@ export function pairingViolations(
       if (!db.includes(fn)) {
         out.push(`${src.path}: ${name}: ${dbPath} never names the real function ${fn}`);
       }
-      for (const entry of entries.split(",").map((e) => e.trim()).filter(Boolean)) {
+      const marked = entries.split(",").map((e) => e.trim()).filter(Boolean);
+      const listed = declaredEntries(src.text, at);
+      if (listed === null) {
+        out.push(`${src.path}: ${name}: the guard cannot read its entries as string literals, so it cannot prove the pairing`);
+        continue;
+      }
+      // The LIST is the truth. An entry appended without updating the marker,
+      // or a marker entry the list no longer holds, is a violation either way.
+      for (const entry of listed) {
+        if (!marked.includes(entry)) {
+          out.push(`${src.path}: ${name}: the list holds ${entry}, which its exemption-db-pair marker does not name`);
+        }
+      }
+      for (const entry of marked) {
+        if (!listed.includes(entry)) {
+          out.push(`${src.path}: ${name}: the marker names ${entry}, which the list no longer holds (stale marker)`);
+        }
+      }
+      for (const entry of new Set([...listed, ...marked])) {
         if (!db.includes(entry)) {
           out.push(`${src.path}: ${name}: ${dbPath} never exercises the exempted entry ${entry}`);
         }
@@ -143,6 +207,42 @@ describe("G6(a) every migration-test exemption list is paired with a real-functi
     expect(pairingViolations([decl(MARK)], () => "initialize_thing").join()).toMatch(
       /never exercises the exempted entry widgets/,
     );
+  });
+
+  it("CONTROL: an entry appended to the list without updating the marker is a violation", () => {
+    const appended = {
+      path: "tests/migrations/x.test.ts",
+      text: `${MARK}\nconst EXEMPT = ["widgets", "new_money_table_without_db_coverage"];`,
+    };
+    expect(pairingViolations([appended], () => DB_OK).join()).toMatch(
+      /list holds new_money_table_without_db_coverage, which its exemption-db-pair marker does not name/,
+    );
+    // Even with the marker updated, the DB test must exercise the new entry.
+    const marked = {
+      path: appended.path,
+      text: appended.text.replace("| widgets", "| widgets, new_money_table_without_db_coverage"),
+    };
+    expect(pairingViolations([marked], () => DB_OK).join()).toMatch(
+      /never exercises the exempted entry new_money_table_without_db_coverage/,
+    );
+  });
+
+  it("CONTROL: a marker entry the list no longer holds is a stale marker", () => {
+    const stale = { path: "tests/migrations/x.test.ts", text: `${MARK}, gone_entry\nconst EXEMPT = ["widgets"];` };
+    expect(pairingViolations([stale], () => `${DB_OK} gone_entry`).join()).toMatch(/gone_entry.*stale marker/);
+  });
+
+  it("CONTROL: entries are read across lines, Set forms and comments", () => {
+    const multi = {
+      path: "tests/migrations/x.test.ts",
+      text: `${MARK}\nconst EXEMPT = new Set([\n  "widgets", // why\n  'sneaky',\n]);`,
+    };
+    expect(pairingViolations([multi], () => DB_OK).join()).toMatch(/list holds sneaky/);
+  });
+
+  it("CONTROL: a list the guard cannot read as string literals fails instead of passing", () => {
+    const opaque = { path: "tests/migrations/x.test.ts", text: `${MARK}\nconst EXEMPT = computeExemptions();` };
+    expect(pairingViolations([opaque], () => DB_OK).join()).toMatch(/cannot read its entries/);
   });
 
   it("CONTROL: a marker pointing at a source-contract test (not a DB test) is a violation", () => {
