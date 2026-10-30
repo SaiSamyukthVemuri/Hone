@@ -419,6 +419,16 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     priority: 360,
   },
   {
+    id: "settings-machines",
+    title: "Machines",
+    category: "Settings",
+    href: "/settings/machines",
+    description: "Register the machines in your studio so they appear when you chart",
+    keywords: ["machines", "machine", "register a machine", "register machine", "equipment", "device", "devices", "laser", "model", "unit", "add machine", "my machines"],
+    visibility: "owner",
+    priority: 365,
+  },
+  {
     id: "settings-team",
     title: "Team",
     category: "Settings",

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { activeProfiles } from "@/lib/machines/profile-contract";
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
+import { matchNavEntries } from "@/lib/search/navigation-registry";
 
 const { createElement } = await import("react");
 const { renderToStaticMarkup } = await import("react-dom/server");
@@ -75,5 +76,20 @@ describe("the owner route stays reviewed-only and owner-only", () => {
     for (const p of MACHINE_CATALOGUE) {
       if (p.availability !== "active") expect(active.has(p.profileId)).toBe(false);
     }
+  });
+});
+
+describe("Global Search finds the Machines page for an owner only", () => {
+  const owner = { isOwner: true, googleCalendarEnabled: false };
+  const staff = { isOwner: false, googleCalendarEnabled: false };
+  const hrefs = (q: string, ctx: typeof owner) =>
+    matchNavEntries(q, ctx).map((m) => m.entry.href);
+
+  it("an owner typing 'register a machine' reaches /settings/machines", () => {
+    expect(hrefs("register a machine", owner)).toContain("/settings/machines");
+  });
+
+  it("a practitioner does not get the owner-only page", () => {
+    expect(hrefs("register a machine", staff)).not.toContain("/settings/machines");
   });
 });
