@@ -83,6 +83,8 @@ printf '%s\n' "$PROMPTS" | grep -Evq '^(approve|secret-token|secret-password)\|.
 NAPP=$(printf '%s\n' "$PROMPTS" | grep -c '^approve|')
 { [ "$NAPP" = 1 ] || [ "$NAPP" = 2 ]; } || die_early "the manifest needs one approve prompt, or two (a second confirmation after the stage's dry run)"
 printf '%s\n' "$PROMPTS" | head -1 | grep -q '^approve|' || die_early "the first prompt of the manifest must be the approve prompt"
+# a SECOND approve must come after both secrets: otherwise the driver would take it for the first approval and ask for the credentials there
+printf '%s\n' "$PROMPTS" | awk -F'|' 'BEGIN{t=0;p=0;a=0;bad=0} $1=="secret-token"&&!t{t=1} $1=="secret-password"&&!p{p=1} $1=="approve"{a++; if(a==2&&!(t&&p))bad=1} END{exit bad}' || die_early "a second approve prompt must come after the access-token and password prompts"
 
 verify_pins() { # every PIN line, by FULL sha256, relative to ROOT; the apply and reconcile scripts must be among them
   local want path got n=0 sawa=0 sawr=0

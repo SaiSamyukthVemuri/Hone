@@ -122,7 +122,8 @@ while {1} {
             set creds 1
             dbg "credentials collected"
           }
-          send -- "$w\r"
+          # the child may have given up waiting (a stage can bound its own second prompt): a late answer is not an error
+          catch { send -- "$w\r" }
           dbg "approval sent to child"
         } else {
           if {!$creds} { fail "a secret prompt arrived before the approval" }

@@ -37,7 +37,7 @@ A prompt that is not the next one in the table is **never answered**. The child 
 
 "Approve running stage `<STAGE>` with `hone-stage-run.sh` sha256 `<runner>`, `run.exp` sha256 `<driver>` and manifest sha256 `<manifest>` (printed at the start of the run), which applies exactly the sealed migration `<file>` (sha256 `<sealed>`) online by the reviewed scripts `<apply sha>`, `<reconcile sha>` and `<read-back sha>`, with no settings write, one push and no retry; I accept that an interruption after the push leaves the result UNKNOWN and that the next step is then the read-back and the reconcile, never a rerun."
 
-## What CI proves (macOS arm64 /bin/bash 3.2 + /usr/bin/expect, and Linux; 39 of 39 each)
+## What CI proves (macOS arm64 /bin/bash 3.2 + /usr/bin/expect, and Linux; 40 of 40 each)
 
 Stubs for the CLI and the read-back; canary secrets; a real pty with a harness that plays the person; the REAL text of the 0254 online apply and reconcile scripts.
 - happy path: three lines typed (approval, token, password), four pinned reads, one dry run, ONE push, read-back, automatic reconcile (class ALL), marker archived, one result, run dir mode 700, no canary in any file or output
@@ -70,3 +70,4 @@ About 30 seconds: start the command, type the approval word, paste the token, pa
 A manifest may carry a SECOND `approve` prompt (the stage asking again after its own dry-run listing). The credentials are still typed once; the
 second approval is shown with its own text ("Second confirmation...") and declining it leaves nothing applied. The first PROMPT line must still be `approve`;
 more than two approve prompts are refused. Proved by the two TWO CONFIRMATIONS checks (accept: 4 lines typed; decline: no marker, NOT APPLIED).
+A second approve must be listed AFTER the access-token and password prompts (the runner refuses the manifest up front otherwise; one negative control). The driver tolerates a late answer to a stage that bounded its own second prompt.

@@ -242,6 +242,12 @@ rm -rf "$Y/hone-s1/s1-apply" "$Y/hone-s1/one-command"; mkdir -p "$Y/hone-s1/s1-a
 twoans no; hrun
 if [ $RC != 0 ] && [ "$(result_of)" = "NOT APPLIED" ] && [ "$(marker)" = none ] && [ ! -e "$H/hone-s1/s1-apply/APPLY-STATE" ] && [ -z "$(leaks)" ]; then ok "TWO CONFIRMATIONS: declining the second leaves NOTHING applied (no marker, NOT APPLIED), and no secret anywhere"; else bad "second confirmation declined" "rc=$RC result=$(result_of) marker=$(marker) $(echo "$OUT" | tail -8)"; fi
 
+# a manifest whose second approve is NOT after the secrets is refused before anything runs (V4)
+awk '/^PROMPT=approve\|Push it now/{next} /^PROMPT=secret-token\|Access token: <END>$/{print "PROMPT=approve|Push it now? <END>"} {print}' "$Y/stage.conf" > "$Y/stage-bad.conf"
+rm -rf "$Y/hone-s1/s1-apply" "$Y/hone-s1/one-command"; mkdir -p "$Y/hone-s1/s1-apply"; chmod 700 "$Y/hone-s1"
+H=$Y; RUNNER=$D/hone-stage-run.sh; : > "$H/ans"; ( cd "$H" && env -i HOME="$H" PATH="$PATH" LC_ALL=C /bin/bash "$RUNNER" "$H/stage-bad.conf" </dev/null > "$H/bad.out" 2>&1 ); RCB=$?
+if [ $RCB != 0 ] && grep -q 'second approve prompt must come after' "$H/bad.out" && [ ! -e "$H/hone-s1/s1-apply/APPLY-STATE" ]; then ok "a manifest with the second approve before the secrets is refused up front (nothing run, no marker)"; else bad "second approve order" "rc=$RCB $(tail -4 "$H/bad.out")"; fi
+
 # ------------------------------------------------------------------ mutation pass: the checks above must FAIL on a broken runner
 mutate() { # mutate NAME 'sed script' : a broken copy of the runner must make the targeted scenario fail
   local name=$1 sedx=$2; sed "$sedx" "$D/hone-stage-run.sh" > "$T/mut-runner.sh"; cp "$D/run.exp" "$T/run.exp"; chmod 755 "$T/mut-runner.sh"
