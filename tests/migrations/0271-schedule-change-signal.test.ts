@@ -57,7 +57,8 @@ describe("0271: statement-level triggers, one signal per studio per statement", 
     expect(code).toMatch(/is distinct from/);
   });
 
-  it("does not list checked_in_at (0268 is held); bookkeeping columns are never listed", () => {
+  it("does not list arrived_at (0268 is held); bookkeeping columns are never listed", () => {
+    expect(code).not.toContain("arrived_at");
     expect(code).not.toContain("checked_in_at");
     expect(code).not.toMatch(/'[a-z_0-9]*(?:_sent_at|_send_attempts|_claimed_at|sync_version|updated_at)'/);
   });
