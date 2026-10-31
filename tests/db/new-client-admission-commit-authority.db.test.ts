@@ -546,50 +546,41 @@ describe("the commit-time authority's shape", () => {
 // earlier request, leaving an invitation spent with no booking outcome.
 // ---------------------------------------------------------------------------
 describe("a client created WITHOUT the studio lock cannot abort the command", () => {
-  it("returns one valid ACTIVE client, not a raw 23505", async () => {
+  it("an ORDINARY booking refuses the ACTIVE winner (0256), answering definitely and not by raising 23505", async () => {
+    // Before 0256 this command ADOPTED the unlocked writer's client and booked on
+    // it (result 'created', that client's id and contact state). Knowing an email
+    // is not proof of owning it (SEC-004), so the ordinary path now refuses; an
+    // invitation (p_entry_id) still adopts. The point this case keeps from the
+    // original is that the collision never surfaces as a raw 23505.
     const f = await seed("race-active");
     await stamp(f.studioId, "open");
     const email = `race-${randomUUID().slice(0, 8)}@harness.local`;
 
-    // Simulate the unlocked writer winning the index: the row exists by the time
-    // the command inserts. The command's own lookup-then-insert, and its
-    // unique-violation re-read, must both land on this row.
     const other = randomUUID();
     await adminQuery(
       `insert into public.clients (id,studio_id,name,email,phone,sms_consent_at)
        values ($1,$2,'Added By Practitioner',$3,'+15559999',null)`,
       [other, f.studioId, email],
     );
+    const before = await countsFor(f.studioId);
 
     const r = await adminQuery(
       `select * from public.create_public_appointment_for_new_client(
          $1, null, 'Booker', $2, '+15550133', null, $3, $4::timestamptz, $5, false, null, null)`,
       [f.studioId, email, f.serviceId, f.slot, hash64()],
     );
-    expect(r.rows[0].result).toBe("created");
-    expect(r.rows[0].client_id).toBe(other);
+    expect(r.rows[0].result).toBe("existing_client_requires_confirmation");
+    expect(r.rows[0].appointment_id).toBeNull();
+    expect(r.rows[0].client_id).toBeNull();
+    expect(r.rows[0].client_phone).toBeNull();
 
-    // AND ITS OWN CONTACT STATE, not the submission's. The caller sends the
-    // post-commit SMS from these values, so returning the id alone would have
-    // let a management token go to the typed phone under typed consent for an
-    // appointment belonging to a differently-configured client.
-    expect(r.rows[0].client_name).toBe("Added By Practitioner");
-    expect(r.rows[0].client_phone).toBe("+15559999");
-    expect(r.rows[0].client_phone).not.toBe("+15550133");
-    expect(r.rows[0].client_sms_consent_at).toBeNull();
-    expect(r.rows[0].client_sms_opted_out_at).toBeNull();
-
-    // ONE client for that email, and the appointment belongs to it.
-    const clients = await adminQuery(
-      `select count(*)::int as n from public.clients where studio_id = $1 and normalized_email = lower($2)`,
-      [f.studioId, email],
+    // Nothing was written, and the practitioner's client is untouched.
+    expect(await countsFor(f.studioId)).toEqual(before);
+    const c = await adminQuery(
+      `select name, phone, sms_consent_at from public.clients where id = $1`,
+      [other],
     );
-    expect(clients.rows[0].n).toBe(1);
-    const appt = await adminQuery(
-      `select client_id from public.appointments where id = $1`,
-      [r.rows[0].appointment_id],
-    );
-    expect(appt.rows[0].client_id).toBe(other);
+    expect(c.rows[0]).toMatchObject({ name: "Added By Practitioner", phone: "+15559999", sms_consent_at: null });
   });
 
   it("an ARCHIVED winner is refused generically, and writes nothing", async () => {

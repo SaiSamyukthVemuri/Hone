@@ -1,0 +1,6 @@
+{
+  "pr": 1136,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0256_public_booking_refuses_active_client_adoption.sql"],
+  "release_receipt": "01-ops/1136-release-receipt.json"
+}
