@@ -1542,3 +1542,77 @@ describe("Codex P2 on 29c80788: decrypted object paths never touch the default t
     expect(/\bmktemp\b/.test('EXPECTED_PROJ="$(mktemp)"')).toBe(true);
   });
 });
+
+describe("Codex P1 on 3240218c: the exit trap deletes only what this invocation created", () => {
+  const CI = { EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true" };
+  function canary(name: string) {
+    const dir = path.join(scratch, name); mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "keep.txt"), "caller data");
+    return dir;
+  }
+  const intact = (dir: string) => existsSync(path.join(dir, "keep.txt")) && readFileSync(path.join(dir, "keep.txt"), "utf8") === "caller data";
+
+  it("an inherited TMP, EXPORT_TMPDIR, EXPORT_OUT or EXPORT_OUT_CREATED never makes a refused run delete the caller's directory", () => {
+    const d = fixtures("p1tmp");
+    for (const v of ["TMP", "EXPORT_TMPDIR", "EXPORT_OUT"]) {
+      const dir = canary(`p1tmp-${v}`);
+      const inherited: Record<string, string> = { [v]: dir, EXPORT_OUT_CREATED: "1" };
+      // a mismatched project ref: the run is refused before any output exists
+      const l = run("logical-export.sh", ["--out", path.join(scratch, `p1tmp-out-${v}`), "--recipient", "age1x", "--expect-ref", "someotherproject"], { ...CI, DB_URL, SHIM_DUMP_DIR: d, ...inherited });
+      expect(l.status, v).not.toBe(0);
+      expect(intact(dir), `logical-export deleted the inherited ${v}`).toBe(true);
+      const o = run("object-export.sh", ["--out", path.join(scratch, `p1tmp-oout-${v}`), "--recipient", "age1x", "--expect-ref", "someotherproject", "--storage-url", `https://${REF}.supabase.co`], { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d, ...inherited });
+      expect(o.status, v).not.toBe(0);
+      expect(intact(dir), `object-export deleted the inherited ${v}`).toBe(true);
+      const r = run("export-restore.sh", ["logical", d, "--identity", path.join(scratch, "nokey"), "--target-ref", REF, "--production-ref", REF], { ...CI, DB_URL, SHIM_DUMP_DIR: d, ...inherited });
+      expect(r.status, v).not.toBe(0);
+      expect(intact(dir), `export-restore deleted the inherited ${v}`).toBe(true);
+    }
+  });
+
+  it("RED control: the previous trap (rm -rf of an inherited $TMP) does delete the directory", () => {
+    const dir = canary("p1tmp-red");
+    spawnSync("bash", ["-c", 'old_trap() { [ -z "${TMP:-}" ] || rm -rf "$TMP"; }; old_trap'], { env: { PATH: process.env.PATH ?? "", TMP: dir } as unknown as NodeJS.ProcessEnv });
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it("GREEN: the object export's OWN temp directory is still removed on a failed run, and the output with it", () => {
+    const d = fixtures("p1tmp-own");
+    const enc = (p: string) => Buffer.byteLength(`https://${REF}.supabase.co/storage/v1/object/treatment-images/${p}`);
+    writeFileSync(path.join(d, "list.txt"), ["s/c/a.png", "s/c/b.png"].map((p) => `${p}${US}${enc(p)}${US}${MIME_OF(p)}`).join("\n") + "\n");
+    writeFileSync(path.join(d, "coverage.txt"), "rows_total=2 rows_without_object=0 objects_total=2 objects_without_row=0\n");
+    const out = path.join(scratch, "p1tmp-own-out");
+    const bystander = canary("p1tmp-own-bystander");
+    const r = run("object-export.sh", ["--out", out, "--recipient", "age1x", "--expect-ref", REF, "--storage-url", `https://${REF}.supabase.co`], { ...CI, DB_URL, SERVICE_KEY: "k", SHIM_DUMP_DIR: d, SHIM_CURL_FAIL_MATCH: "b.png", TMP: bystander });
+    expect(r.status).not.toBe(0);
+    expect(existsSync(out)).toBe(false);          // its own output and tmp are gone
+    expect(intact(bystander)).toBe(true);         // the inherited TMP is not
+  });
+
+  it("source contract: the trap removes only EXPORT_TMPDIR, and the lib resets the inherited variables when sourced", () => {
+    const lib = readFileSync(path.join(OPS, "export-lib.sh"), "utf8");
+    expect(lib).toMatch(/EXPORT_TMPDIR="" EXPORT_OUT="" EXPORT_OUT_CREATED=""/);
+    expect(lib).toContain('rm -rf "$EXPORT_TMPDIR"');
+    expect(lib).not.toMatch(/rm -rf "\$TMP"/);
+    for (const f of ["logical-export.sh", "object-export.sh", "export-restore.sh"]) {
+      expect(readFileSync(path.join(OPS, f), "utf8").split("\n").filter((l) => !/^\s*#/.test(l) && /trap .*rm -rf "\$TMP"/.test(l)), f).toEqual([]);
+    }
+  });
+});
+
+describe("Codex P2 on 3240218c: the private working directory ignores a caller-controlled, open base", () => {
+  it("a group- or world-writable XDG_RUNTIME_DIR is not used (the restore still passes through /dev/shm) and TMPDIR/TMP are never read", () => {
+    const lib = (body: string, env: Record<string, string>) => spawnSync("bash", ["-c", `. ${path.join(OPS, "export-lib.sh")}; ${body}`], { encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: scratch, ...env } as unknown as NodeJS.ProcessEnv });
+    const open = path.join(scratch, "wd-open"); mkdirSync(open); chmodSync(open, 0o777);
+    const closed = path.join(scratch, "wd-closed"); mkdirSync(closed); chmodSync(closed, 0o700);
+    const tmp = path.join(scratch, "wd-tmp"); mkdirSync(tmp);
+    const a = lib('private_workdir; printf "%s" "$WORKDIR"; rm -rf "$WORKDIR"', { XDG_RUNTIME_DIR: open, TMPDIR: tmp, TMP: tmp });
+    expect(a.status, a.stderr).toBe(0);
+    expect(a.stdout.startsWith("/dev/shm/export-work.")).toBe(true);
+    const b = lib('private_workdir; printf "%s %s" "$WORKDIR" "$(stat -c %a "$WORKDIR")"; rm -rf "$WORKDIR"', { XDG_RUNTIME_DIR: closed, TMPDIR: tmp, TMP: tmp });
+    expect(b.stdout.startsWith(`${closed}/export-work.`)).toBe(true);
+    expect(b.stdout.endsWith(" 700")).toBe(true);
+    expect(readdirSync(open)).toEqual([]);
+    expect(readdirSync(tmp)).toEqual([]);
+  });
+});

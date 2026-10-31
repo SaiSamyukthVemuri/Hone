@@ -8,6 +8,11 @@
 # check here prints counts, names of tables and pass/fail, NEVER a row, a path
 # or a key.
 
+# The cleanup trap deletes ONLY what this invocation created. These variables are reset here,
+# when the lib is sourced, so a value inherited from the caller's environment (TMP, EXPORT_OUT,
+# EXPORT_OUT_CREATED, EXPORT_TMPDIR) can never name a directory the trap removes (Codex P1 on 3240218c).
+EXPORT_TMPDIR="" EXPORT_OUT="" EXPORT_OUT_CREATED=""
+
 US=$'\x1f' # unit separator: object paths may contain '|' and spaces
 
 export_fail() { printf 'EXPORT FAIL: %s\n' "$*" >&2; exit 1; }
@@ -404,7 +409,9 @@ export_cleanup_secrets() {
 # tool refuses when no such place exists (Codex P2 on 29c80788). Sets WORKDIR.
 private_workdir() {
   local base="${XDG_RUNTIME_DIR:-}"
-  { [ -n "$base" ] && [ -d "$base" ] && [ -w "$base" ]; } || base=/dev/shm
+  # A caller-supplied XDG_RUNTIME_DIR is used only if it is ours and closed to others; else /dev/shm
+  # (a sticky tmpfs): the directory made inside is 0700 and fresh either way, and TMPDIR/TMP are never read.
+  { [ -n "$base" ] && [ -d "$base" ] && [ -w "$base" ] && [ -O "$base" ] && [ -z "$(find "$base" -maxdepth 0 -perm /022 2>/dev/null)" ]; } || base=/dev/shm
   { [ -d "$base" ] && [ -w "$base" ]; } || export_fail "no private tmpfs for decrypted working files (XDG_RUNTIME_DIR or /dev/shm); refusing rather than using the default temp directory"
   WORKDIR="$(umask 077; mktemp -d "$base/export-work.XXXXXX")" || export_fail "could not make the private working directory"
   chmod 700 "$WORKDIR"
@@ -419,7 +426,7 @@ export_on_exit() {
   local rc=$?
   snap_close
   export_cleanup_secrets
-  [ -z "${TMP:-}" ] || rm -rf "$TMP"
+  [ -z "${EXPORT_TMPDIR:-}" ] || rm -rf "$EXPORT_TMPDIR"
   if [ "$rc" -ne 0 ] && [ -n "${EXPORT_OUT:-}" ] && [ -d "$EXPORT_OUT" ] && [ ! -f "$EXPORT_OUT/receipt.txt" ]; then
     export_log "removing the partial output"
     if [ "${EXPORT_OUT_CREATED:-}" = 1 ]; then rm -rf "$EXPORT_OUT"; else find "$EXPORT_OUT" -mindepth 1 -delete 2>/dev/null || true; fi

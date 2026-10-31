@@ -81,6 +81,7 @@ if [ -e "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then export_fail "$OUT
 EXPORT_OUT="$OUT"
 mkdir -p "$OUT/objects" "$OUT/tmp"
 TMP="$OUT/tmp"
+EXPORT_TMPDIR="$TMP"   # the one directory the exit trap removes: made by this run, inside $OUT
 
 T0=$(date +%s)
 export_log "target hosts: $(host_of "$DB_URL") and $(host_of "$STORAGE_URL") (ref check passed)"
