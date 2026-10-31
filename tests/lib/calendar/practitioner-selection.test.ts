@@ -199,3 +199,14 @@ describe("view-only invariant", () => {
     expect(page).not.toMatch(/<DayColumn[^>]*(selection|sidebar)/i);
   });
 });
+
+describe("duplicate ids never widen a selection (Y1)", () => {
+  it("?people=a,a with two listed is one person, not everyone", () => {
+    const s = parseSelection("p1,p1", ["p1", "p2"]);
+    expect(s.mode).toBe("some");
+    expect([...s.ids]).toEqual(["p1"]);
+  });
+  it("a stored preference is stored without its duplicates", () => {
+    expect(sanitizeStoredSelection("p1,p1,p2")).toBe("p1,p2");
+  });
+});

@@ -54,7 +54,8 @@ export function parseSelection(
   if (value.trim() === NONE) return { mode: "none", ids: new Set() };
   // Unknown ids (a removed or deactivated practitioner, or a hand-edited link) are dropped, so a
   // link can never select someone the viewer is not offered.
-  const picked = splitIds(value).filter((id) => listed.has(id));
+  // De-duplicated, so `?people=a,a` is one person, never "everyone".
+  const picked = [...new Set(splitIds(value))].filter((id) => listed.has(id));
   if (picked.length === 0) return { mode: "none", ids: new Set() };
   if (picked.length >= listed.size) return { mode: "all", ids: listed };
   return { mode: "some", ids: new Set(picked) };
@@ -117,7 +118,7 @@ type StorageLike = Pick<Storage, "getItem" | "setItem">;
 export function sanitizeStoredSelection(raw: string | null | undefined): string | null {
   if (raw === null || raw === undefined) return null;
   if (raw === ALL || raw === NONE) return raw;
-  const ids = splitIds(raw);
+  const ids = [...new Set(splitIds(raw))];
   if (ids.length === 0 || !ids.every((id) => ID_RE.test(id))) return null;
   return ids.join(",");
 }

@@ -66,6 +66,9 @@ export function CalendarSidebar({
   const [open, setOpen] = useState(true); // desktop: sidebar column shown
   const [drawerOpen, setDrawerOpen] = useState(false); // mobile: drawer shown
   const [isDesktop, setIsDesktop] = useState(true);
+  const asideRef = useRef<HTMLElement | null>(null);
+  const toggleRef = useRef<HTMLButtonElement | null>(null);
+  const drawerWasOpen = useRef(false);
   // What the boxes show right now: follows the server, but moves at once on a click.
   const serverKey = selectedIds.join(",");
   const [checked, setChecked] = useState<ReadonlyArray<string>>(selectedIds);
@@ -154,6 +157,14 @@ export function CalendarSidebar({
     return () => document.removeEventListener("keydown", onKey);
   }, [drawerOpen]);
 
+  // The drawer is a modal dialog on narrow screens: focus moves into it on open and back to the
+  // toggle on close.
+  useEffect(() => {
+    if (drawerOpen) asideRef.current?.focus();
+    else if (drawerWasOpen.current) toggleRef.current?.focus();
+    drawerWasOpen.current = drawerOpen;
+  }, [drawerOpen]);
+
   const expanded = isDesktop ? open : drawerOpen;
   const asideClass = [
     "shrink-0",
@@ -178,6 +189,8 @@ export function CalendarSidebar({
       )}
       <aside
         id="calendar-sidebar"
+        ref={asideRef}
+        tabIndex={drawerOpen && !isDesktop ? -1 : undefined}
         data-testid="calendar-sidebar"
         data-open={expanded ? "true" : "false"}
         aria-label="Calendars"
@@ -244,6 +257,7 @@ export function CalendarSidebar({
           <button
             type="button"
             data-testid="calendar-sidebar-toggle"
+            ref={toggleRef}
             aria-expanded={expanded}
             aria-controls="calendar-sidebar"
             onClick={toggleSidebar}

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { withSelection } from "@/lib/calendar/practitioner-selection";
 import { useRouter } from "next/navigation";
+import { MINI_PICK_EVENT } from "@/lib/calendar/mini-pick";
 import type { Service, StudioTimedBlock } from "@/lib/types/database";
 import type {
   AppointmentWithPractitionerColor,
@@ -94,6 +95,16 @@ export function CalendarMobileDayView({
     setSeenInitialDate(initialDate);
     setSelectedDate(initialDate);
   }
+  // A mini-calendar pick of the date the server already has changes no prop; the pick is announced
+  // instead, so a strip tap made since is reset too.
+  useEffect(() => {
+    const onPick = (e: Event) => {
+      const date = (e as CustomEvent<string>).detail;
+      if (typeof date === "string" && days.some((d) => d.date === date)) setSelectedDate(date);
+    };
+    window.addEventListener(MINI_PICK_EVENT, onPick);
+    return () => window.removeEventListener(MINI_PICK_EVENT, onPick);
+  }, [days]);
   const [draft, setDraft] = useState<{
     localDate: string;
     localTime: string;

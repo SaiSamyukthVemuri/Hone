@@ -197,3 +197,21 @@ describe("selection and date stay in step on mobile and across navigation (Codex
     expect(MINI).toMatch(/onClick=\{\(\) => setShown\(firstOfPreviousMonthString\(shown\)\)\}/);
   });
 });
+
+describe("Insurance Y2 and Y7 follow-ups", () => {
+  const MOBILE = readFileSync("app/(app)/calendar/CalendarMobileDayView.tsx", "utf8");
+  const MINI_SRC = readFileSync("app/(app)/calendar/CalendarMiniMonth.tsx", "utf8");
+  const SIDEBAR = readFileSync("app/(app)/calendar/CalendarSidebar.tsx", "utf8");
+  it("Y2: every mini-calendar pick is announced and the mobile view resets to a date in its week", () => {
+    expect((MINI_SRC.match(/announceMiniPick\(/g) ?? []).length).toBe(2); // Today and the day cells
+    expect(MOBILE).toMatch(/addEventListener\(MINI_PICK_EVENT, onPick\)/);
+    expect(MOBILE).toMatch(/removeEventListener\(MINI_PICK_EVENT, onPick\)/);
+    expect(MOBILE).toMatch(/days\.some\(\(d\) => d\.date === date\)\) setSelectedDate\(date\)/);
+  });
+  it("Y7: the drawer takes focus when it opens and returns it to the toggle when it closes", () => {
+    expect(SIDEBAR).toMatch(/if \(drawerOpen\) asideRef\.current\?\.focus\(\)/);
+    expect(SIDEBAR).toMatch(/else if \(drawerWasOpen\.current\) toggleRef\.current\?\.focus\(\)/);
+    expect(SIDEBAR).toMatch(/ref=\{toggleRef\}/);
+    expect(SIDEBAR).toMatch(/tabIndex=\{drawerOpen && !isDesktop \? -1 : undefined\}/);
+  });
+});

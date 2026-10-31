@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { announceMiniPick } from "@/lib/calendar/mini-pick";
 import { useState } from "react";
 import {
   dayOfMonth,
@@ -66,7 +67,10 @@ export function CalendarMiniMonth({
           <Link
             href={withSelection(miniCalendarHref(view, today), selectionParam)}
             data-testid="calendar-mini-today"
-            onClick={() => setShown(today)}
+            onClick={() => {
+              setShown(today);
+              announceMiniPick(today);
+            }}
             className="rounded-md border border-neutral-300 px-2 py-0.5 text-[11px] font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
             Today
@@ -97,6 +101,7 @@ export function CalendarMiniMonth({
               key={date}
               href={withSelection(miniCalendarHref(view, date), selectionParam)}
               data-testid="calendar-mini-day"
+              onClick={() => announceMiniPick(date)}
               data-date={date}
               data-mini-today={isToday ? "true" : undefined}
               data-mini-selected={isAnchor ? "true" : undefined}
