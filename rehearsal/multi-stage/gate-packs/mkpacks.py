@@ -254,6 +254,34 @@ def main():
                "history, the privileges by role on client_legal_identities, its policies, the function grants and the guard trigger",
                notes="Privacy PEER-0258-0266-SQL C4. search_path is NOT asserted for the two invoker functions: Privacy F3 asks to move it to pg_catalog, pg_temp; add it to c03 once the reviewed body lands.")
 
+    # ------------------------------------------------------------------ 0272 legal identity hardening (Privacy PEER-0258-0266-0272-RECHECK C1, C2)
+    f72 = ["public.can_use_client_legal_identity(uuid)", "public.client_legal_identities_guard()"]
+    ev_sql = ("select t.tgname || '.' || w.k as k, w.v\nfrom pg_catalog.pg_trigger t\n"
+              "cross join lateral (values ('row', ((t.tgtype & 1) = 1)::text), ('before', ((t.tgtype & 2) = 2)::text), ('enabled', t.tgenabled::text),\n"
+              "  ('events', concat_ws(',', case when (t.tgtype & 4) <> 0 then 'insert' end, case when (t.tgtype & 8) <> 0 then 'delete' end, case when (t.tgtype & 16) <> 0 then 'update' end)),\n"
+              "  ('function', (select p.proname from pg_catalog.pg_proc p where p.oid = t.tgfoid))) as w(k, v)\n"
+              "where t.tgrelid = pg_catalog.to_regclass('public.client_legal_identities') and not t.tgisinternal and t.tgname = 'client_legal_identities_guard'\norder by 1;\n")
+    OBJECTS["0272"] = ["can_use_client_legal_identity", "client_legal_identities_guard"]
+    pre272 = [
+        ("tables_present", "select count(*) = 1 from pg_catalog.pg_class c where c.relnamespace = 'public'::pg_catalog.regnamespace and c.relkind = 'r' and c.relrowsecurity and c.relname = 'client_legal_identities'"),
+        ("functions_present", " and ".join(exists_fn(x.replace("(uuid)", "(pg_catalog.uuid)")) for x in f72)),
+        ("trigger_before_update_only", "exists (select 1 from pg_catalog.pg_trigger t where t.tgrelid = pg_catalog.to_regclass('public.client_legal_identities') and t.tgname = 'client_legal_identities_guard' "
+                                       "and (t.tgtype & 60) = 16 and (t.tgtype & 3) = 3)"),
+    ]
+    c272 = [
+        check("the guard trigger exists, row-level, BEFORE, on INSERT and UPDATE (and not DELETE), enabled, running the guard function (Privacy C1)", "c01_guard_trigger", "kv",
+              ["client_legal_identities_guard.row=true", "client_legal_identities_guard.before=true", "client_legal_identities_guard.enabled=O",
+               "client_legal_identities_guard.events=insert,update", "client_legal_identities_guard.function=client_legal_identities_guard"]),
+        check("can_use_client_legal_identity and the guard function pin search_path to pg_catalog, pg_temp (Privacy C2); grants unchanged: the predicate executable by authenticated only, the guard function by nobody, no PUBLIC grant", "c02_functions", "fnr",
+              ["can_use_client_legal_identity(uuid)|definer=false|sp=pg_catalog, pg_temp|exec=authenticated|public=false",
+               "client_legal_identities_guard()|definer=false|sp=pg_catalog, pg_temp|exec=|public=false"]),
+        check("client_legal_identities privileges unchanged: authenticated select, insert, update; anon and service_role nothing; RLS on", "c03_identity_table", "tb",
+              tbl_expect("client_legal_identities", authenticated="select,insert,update")),
+    ]
+    write_pack("0272", "0272", pre272, [("guard_trigger", ev_sql), ("functions", fn_sql(f72)), ("identity_table", tbl_priv_sql(["public.client_legal_identities"]))],
+               c272, ["client_legal_identities"], "history, the guard trigger timing and events, the pinned search_paths and the unchanged grants",
+               notes="Privacy PEER-0258-0266-0272-RECHECK C1 and C2. Needs 0258 immediately before it. The PRE gate requires the trigger to be BEFORE UPDATE only (0258's shape), so a hosted trigger that already differs is refused.")
+
     # ------------------------------------------------------------------ 0266 legal-name receptionist access
     OBJECTS["0266"] = ["studio_legal_name_access", "client_legal_name_access_audit", "studio_legal_name_access_select", "client_legal_name_access_audit_select", "set_receptionist_legal_name_access", "can_read_client_legal_identity", "client_legal_name_access_audit_immutable", "receptionist_client_contacts_v2", "receptionist_client_contacts", "receptionist_calendar", "client_legal_name_access_audit_no_update", "client_legal_name_access_audit_no_truncate"]
     f66 = ["public.set_receptionist_legal_name_access(uuid,boolean)", "public.can_read_client_legal_identity(uuid)", "public.client_legal_name_access_audit_immutable()",
