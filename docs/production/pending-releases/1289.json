@@ -1,0 +1,6 @@
+{
+  "pr": 1289,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0273_practitioner_calendar_preferences.sql"],
+  "release_receipt": "01-ops/1289-release-receipt.json"
+}
