@@ -168,3 +168,24 @@ describe("0267 · range confirmation recorded with the capture", () => {
     ).rejects.toThrow(/permission denied/i);
   });
 });
+
+describe("0267 function grants (Privacy C1)", () => {
+  it("no API role holds EXECUTE on the trigger function; the command is authenticated-only", async () => {
+    const rows = await adminQuery(
+      `select r.rolname as role,
+              has_function_privilege(r.oid, 'public.refuse_range_confirmation_update()', 'execute') as trig,
+              has_function_privilege(r.oid, 'public.record_setup_range_confirmations(uuid,jsonb,uuid,uuid)', 'execute') as cmd
+         from pg_roles r where r.rolname in ('anon','authenticated','service_role') order by 1`,
+    );
+    const by = Object.fromEntries(rows.rows.map((r: { role: string; trig: boolean; cmd: boolean }) => [r.role, r]));
+    for (const role of ["anon", "authenticated", "service_role"]) expect(by[role].trig).toBe(false);
+    expect(by.anon.cmd).toBe(false);
+    expect(by.service_role.cmd).toBe(false);
+    expect(by.authenticated.cmd).toBe(true);
+    const pub = await adminQuery(
+      `select p.proacl::text as acl from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+        where n.nspname='public' and p.proname in ('refuse_range_confirmation_update','record_setup_range_confirmations')`,
+    );
+    for (const r of pub.rows) expect(r.acl).not.toMatch(/(^\{|,)=X/);
+  });
+});

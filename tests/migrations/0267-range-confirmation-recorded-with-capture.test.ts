@@ -55,4 +55,23 @@ describe("0267 range confirmation source contract", () => {
     expect(sql).toContain("'documentation_discrepancy'");
     expect(sql).not.toContain("outside_hardware_limit");
   });
+
+  it("revokes EXECUTE on EVERY function it creates from public, anon, authenticated and service_role (Privacy C1)", () => {
+    const created = [...executable.matchAll(/create (?:or replace )?function\s+(public\.[a-z_]+)\s*\(([^)]*)\)/gi)];
+    expect(created.map((m) => m[1]).sort()).toEqual([
+      "public.record_setup_range_confirmations",
+      "public.refuse_range_confirmation_update",
+    ]);
+    for (const m of created) {
+      const sig = m[1] === "public.refuse_range_confirmation_update"
+        ? "public.refuse_range_confirmation_update()"
+        : "public.record_setup_range_confirmations(uuid, jsonb, uuid, uuid)";
+      for (const role of ["public", "anon", "authenticated", "service_role"]) {
+        expect(sql).toContain(`revoke execute on function ${sig} from ${role};`);
+      }
+    }
+    // The trigger function is granted to nobody; the command only to authenticated.
+    expect(executable).not.toMatch(/grant execute on function public\.refuse_range_confirmation_update/i);
+    expect(executable.match(/grant execute on function/gi)?.length).toBe(1);
+  });
 });

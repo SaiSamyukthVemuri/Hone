@@ -84,6 +84,13 @@ begin
 end;
 $$;
 
+-- A trigger function cannot be called directly, but Supabase's default privileges still
+-- grant EXECUTE to anon, authenticated and service_role: revoke from all of them by name.
+revoke execute on function public.refuse_range_confirmation_update() from public;
+revoke execute on function public.refuse_range_confirmation_update() from anon;
+revoke execute on function public.refuse_range_confirmation_update() from authenticated;
+revoke execute on function public.refuse_range_confirmation_update() from service_role;
+
 create trigger treatment_setup_range_confirmations_immutable
   before update on public.treatment_setup_range_confirmations
   for each row execute function public.refuse_range_confirmation_update();
