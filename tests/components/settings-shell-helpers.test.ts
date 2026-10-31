@@ -68,7 +68,7 @@ describe("narrow-screen drawer closes on a same-page section link (Codex P2)", (
       path.resolve(__dirname, "../../components/settings/settings-shell.tsx"),
       "utf8",
     );
-    expect(src).toMatch(/onClick=\{\(e\) => \{\s*if \(isRailLinkClick\(e\.target as Element \| null\)\) setDrawerOpen\(false\);/);
+    expect(src).toMatch(/onClick=\{\(e\) => \{\s*if \(isRailLinkClick\(e\.target as Element \| null\)\)\s*setDrawerOpen\(false\);/);
     expect(src).toMatch(/addEventListener\("hashchange", close\)/);
   });
 });
