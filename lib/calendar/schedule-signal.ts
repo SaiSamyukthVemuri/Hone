@@ -68,6 +68,11 @@ export type SignalControllerDeps = {
   lastRefreshMs: () => number;
   /** Performs the refresh AND records it as the last refresh. */
   refresh: () => void;
+  /**
+   * True while a refresh this screen started has not finished rendering. A signal that
+   * arrives then is held (the view is stale again), never overlapped.
+   */
+  busy?: () => boolean;
 };
 
 export type SignalController = {
@@ -86,6 +91,11 @@ export type SignalController = {
    * since the previous mark (the change, if any, was announced) and starts a new window.
    */
   markRefresh: () => boolean;
+  /**
+   * The previous refresh finished rendering. A signal held meanwhile now yields exactly one
+   * refresh (the guards and the minimum gap still apply).
+   */
+  refreshSettled: () => void;
   isPending: () => boolean;
   dispose: () => void;
 };
@@ -110,6 +120,12 @@ export function createScheduleSignalController(deps: SignalControllerDeps): Sign
 
   function evaluate() {
     if (disposed || !pending) return;
+    // A refresh is still in flight: stay pending (one flag, however many signals) and let
+    // refreshSettled() continue. The timer is only a backstop; it never touches the network.
+    if (deps.busy?.()) {
+      schedule(PENDING_RECHECK_MS);
+      return;
+    }
     const g = deps.guards();
     const ok = shouldAutoRefresh({
       trigger: "signal",
@@ -159,6 +175,11 @@ export function createScheduleSignalController(deps: SignalControllerDeps): Sign
       const was = heard;
       heard = false;
       return was;
+    },
+    refreshSettled() {
+      if (disposed || !pending) return;
+      clear();
+      evaluate();
     },
     isPending: () => pending,
     dispose() {

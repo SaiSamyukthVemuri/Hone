@@ -44,6 +44,9 @@ function readGuards() {
   };
 }
 
+// A transition that never reports done must not hold signals forever.
+const REFRESH_IN_FLIGHT_MAX_MS = 30_000;
+
 // At most once per page load: a stuck signal path must be visible, not a flood.
 let degradedReported = false;
 
@@ -67,6 +70,9 @@ export function CalendarAutoRefresh({
   const attribution = useRef(createRefreshAttribution());
   const previousFingerprint = useRef<string | undefined>(scheduleFingerprint);
   const [isPending, startTransition] = useTransition();
+  // A refresh this screen started and has not yet seen render. A signal arriving meanwhile is
+  // held by the controller (see SignalControllerDeps.busy); the stamp bounds a stuck transition.
+  const inFlightSinceMs = useRef<number | null>(null);
 
   // Navigation to another range discards any pending attribution. Declared before the
   // fingerprint effect so it runs first in the commit that renders the new range.
@@ -100,7 +106,11 @@ export function CalendarAutoRefresh({
   // A refresh that finished without moving the fingerprint is spent: it must not be blamed
   // for a later render. Runs after the fingerprint effect, which consumes a changed one.
   useEffect(() => {
-    if (!isPending) attribution.current.landed(false);
+    if (isPending) return;
+    attribution.current.landed(false);
+    inFlightSinceMs.current = null;
+    // A signal held while that refresh was pending now yields exactly one refresh.
+    controllerRef.current?.refreshSettled();
   }, [isPending]);
 
   useEffect(() => {
@@ -116,6 +126,7 @@ export function CalendarAutoRefresh({
       lastRefreshMs.current = nowMs;
       const announced = controllerRef.current?.markRefresh() ?? false;
       attribution.current.begin(trigger === "signal" ? "signal" : trigger, announced);
+      inFlightSinceMs.current = nowMs;
       startTransition(() => router.refresh());
     }
 
@@ -157,8 +168,10 @@ export function CalendarAutoRefresh({
       clearTimer: (h) => window.clearTimeout(h as number),
       guards: readGuards,
       lastRefreshMs: () => lastRefreshMs.current,
+      busy: () => inFlightSinceMs.current !== null && Date.now() - inFlightSinceMs.current < REFRESH_IN_FLIGHT_MAX_MS,
       refresh: () => {
         lastRefreshMs.current = Date.now();
+        inFlightSinceMs.current = Date.now();
         controller.markRefresh();
         attribution.current.begin("signal", true);
         startTransition(() => router.refresh());
