@@ -63,6 +63,7 @@ export default async function StudioSettingsPage() {
           clientSelfServicePolicyFromStudio(studio),
         )}
         portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
+        portalSwitchAvailable={typeof studio.client_portal_enabled === "boolean"}
       />
     </section>
   );

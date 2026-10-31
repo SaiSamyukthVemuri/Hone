@@ -11,6 +11,8 @@ vi.mock("server-only", () => ({}));
 const st = vi.hoisted(() => ({
   role: "owner" as string,
   studioId: "studio-A",
+  // 0252: extra keys on the loaded studio row (the column is present only after apply).
+  studioExtra: {} as Record<string, unknown>,
   updates: [] as Array<{ patch: Record<string, unknown>; id: unknown }>,
   error: null as { code?: string; message: string } | null,
   revalidated: [] as string[],
@@ -20,7 +22,7 @@ vi.mock("next/cache", () => ({ revalidatePath: (p: string) => st.revalidated.pus
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => ({
     practitioner: { role: st.role },
-    studio: { id: st.studioId },
+    studio: { id: st.studioId, ...st.studioExtra },
   }),
 }));
 vi.mock("@/lib/supabase/server", () => ({
@@ -49,6 +51,7 @@ function form(c: string | null, r: string | null): FormData {
 beforeEach(() => {
   st.role = "owner";
   st.studioId = "studio-A";
+  st.studioExtra = {};
   st.updates.length = 0;
   st.error = null;
   st.revalidated.length = 0;
@@ -120,6 +123,88 @@ describe("setClientSelfServiceAction", () => {
     st.error = { code: "42501", message: "secret detail jane@example.test" };
     const res = await setClientSelfServiceAction(form("false", "true"));
     expect(res).toEqual({ ok: false, error: "Could not save settings. Please try again." });
+  });
+});
+
+function formWithPortal(portal: string): FormData {
+  const f = form("true", "true");
+  f.set("client_portal_enabled", portal);
+  return f;
+}
+
+describe("0252 portal switch: parser", () => {
+  it("an absent portal key means 'leave it alone', never 'off'", () => {
+    expect(parseClientSelfServiceForm(form("true", "false"))).toEqual({ cancellation: true, reschedule: false });
+  });
+  it("a present portal key must be exactly true or false", () => {
+    expect(parseClientSelfServiceForm(formWithPortal("false"))).toEqual({ cancellation: true, reschedule: true, portal: false });
+    expect(parseClientSelfServiceForm(formWithPortal("true"))).toEqual({ cancellation: true, reschedule: true, portal: true });
+    for (const bad of ["on", "1", "", "FALSE", "off"]) {
+      expect(parseClientSelfServiceForm(formWithPortal(bad)), bad).toBeNull();
+    }
+  });
+});
+
+describe("0252 portal switch: action", () => {
+  it("before 0252 is applied (no column on the row) a submission without the portal key writes exactly the two older flags", async () => {
+    const { setClientSelfServiceAction } = await import("@/app/(app)/settings/studio/actions");
+    const res = await setClientSelfServiceAction(form("false", "true"));
+    expect(res.ok).toBe(true);
+    expect(st.updates).toHaveLength(1);
+    expect(Object.keys(st.updates[0].patch).sort()).toEqual(["client_cancellation_enabled", "client_reschedule_enabled"]);
+  });
+  it("before 0252 is applied a submission that names the portal key is refused whole: nothing is written", async () => {
+    const { setClientSelfServiceAction } = await import("@/app/(app)/settings/studio/actions");
+    const res = await setClientSelfServiceAction(formWithPortal("false"));
+    expect(res).toEqual({ ok: false, error: "The client portal switch is not available yet." });
+    expect(st.updates).toHaveLength(0);
+    expect(st.revalidated).toHaveLength(0);
+  });
+  it("a non-boolean column value is treated as absent (never written)", async () => {
+    const { setClientSelfServiceAction } = await import("@/app/(app)/settings/studio/actions");
+    st.studioExtra = { client_portal_enabled: null };
+    expect((await setClientSelfServiceAction(formWithPortal("false"))).ok).toBe(false);
+    expect(st.updates).toHaveLength(0);
+  });
+  it("after 0252 (column present) the owner's portal value is written with the other two, on the caller's studio only", async () => {
+    const { setClientSelfServiceAction } = await import("@/app/(app)/settings/studio/actions");
+    st.studioExtra = { client_portal_enabled: true };
+    const res = await setClientSelfServiceAction(formWithPortal("false"));
+    expect(res.ok).toBe(true);
+    expect(st.updates).toEqual([
+      { patch: { client_cancellation_enabled: true, client_reschedule_enabled: true, client_portal_enabled: false }, id: "studio-A" },
+    ]);
+  });
+  it("after 0252 a submission WITHOUT the portal key still leaves the portal column alone", async () => {
+    const { setClientSelfServiceAction } = await import("@/app/(app)/settings/studio/actions");
+    st.studioExtra = { client_portal_enabled: false };
+    await setClientSelfServiceAction(form("true", "true"));
+    expect(Object.keys(st.updates[0].patch)).not.toContain("client_portal_enabled");
+  });
+  it("a non-owner is refused even with the column present", async () => {
+    const { setClientSelfServiceAction } = await import("@/app/(app)/settings/studio/actions");
+    st.role = "practitioner";
+    st.studioExtra = { client_portal_enabled: true };
+    expect((await setClientSelfServiceAction(formWithPortal("false"))).ok).toBe(false);
+    expect(st.updates).toHaveLength(0);
+  });
+});
+
+describe("0252 portal switch: what the copy may claim", () => {
+  it("the staff and switch wording never claims portal links are withdrawn from every email (that needs 0247's snapshot change)", async () => {
+    const { PORTAL_OFF_STAFF_MESSAGE } = await import("@/lib/booking/client-self-service-policy");
+    const form = readFileSync("app/(app)/settings/studio/ClientSelfServiceForm.tsx", "utf8");
+    for (const text of [PORTAL_OFF_STAFF_MESSAGE, form]) {
+      expect(text).not.toMatch(/no portal links are sent|withdrawn from|removed from (every|all) email|links? (are|is) (removed|withdrawn)/i);
+    }
+    expect(PORTAL_OFF_STAFF_MESSAGE).toMatch(/Clients cannot sign in to the portal/);
+  });
+  it("the switch row renders only when the studio row carries the column", () => {
+    const f = readFileSync("app/(app)/settings/studio/ClientSelfServiceForm.tsx", "utf8");
+    const page = readFileSync("app/(app)/settings/studio/page.tsx", "utf8");
+    expect(f).toContain("portalSwitchAvailable ? [...ROWS, PORTAL_ROW] : ROWS");
+    expect(f).toContain('if (portalSwitchAvailable) fd.set("client_portal_enabled"');
+    expect(page).toContain('portalSwitchAvailable={typeof studio.client_portal_enabled === "boolean"}');
   });
 });
 

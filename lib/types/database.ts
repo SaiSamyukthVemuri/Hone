@@ -177,6 +177,10 @@ export type Studio = {
   // Existing finite 0213–0246 schema fields; this DTO grants no write authority.
   client_cancellation_enabled: boolean;
   client_reschedule_enabled: boolean;
+  // HON-47 / 0252. Default TRUE in the database; optional because a row read before
+  // 0252 is applied has no such column. Read through clientSelfServicePolicyFromStudio
+  // (absent = allowed). Its PRESENCE is also what lets the owner switch write it.
+  client_portal_enabled?: boolean;
 };
 
 // Migration 0140: per-studio resumable onboarding-v2 (owner first-run) state.
