@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { createBooking, openSeat, requireSignalPlatform, seedStudio, sleep, summary, whenVisible, type Seat } from "./helpers/hon48-signal";
 
+// Needs a Realtime-enabled stack, which CI's browser lanes do not start. Local proofs set HON48_SIGNAL_E2E=1.
+test.skip(process.env.HON48_SIGNAL_E2E !== "1", "needs a Realtime stack; run locally");
+
 // HON-48 proof 1: commit-to-visible p95 under 2 s, five signed-in sessions, 30+ trials, NO manual reload or refresh
 // from the test. The commit goes through the real receptionist RPC (the same write path the trigger fires on).
 const TRIALS = 30;

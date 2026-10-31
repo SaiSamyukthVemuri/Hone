@@ -5,6 +5,9 @@ import { E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "./helpers/local-env";
 import { seedE2eStudio, sql } from "./helpers/seed";
 import { withPassword } from "./helpers/hon48-signal";
 
+// Needs a Realtime-enabled stack, which CI's browser lanes do not start. Local proofs set HON48_SIGNAL_E2E=1.
+test.skip(process.env.HON48_SIGNAL_E2E !== "1", "needs a Realtime stack; run locally");
+
 // HON-48 proofs 4 and 5.
 
 test("HON48-SIGNAL-4: a revoked member gets no update, and its rejoin is refused", async ({ browser }) => {

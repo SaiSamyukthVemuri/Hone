@@ -5,6 +5,9 @@ import { E2E_SUPABASE_URL, E2E_WEB_SERVER_ENV } from "./helpers/local-env";
 import { createBooking, pct, requireSignalPlatform, seedStudio, sleep, summary, withPassword } from "./helpers/hon48-signal";
 import { seedE2eStudio, sql } from "./helpers/seed";
 
+// Needs a Realtime-enabled stack, which CI's browser lanes do not start. Local proofs set HON48_SIGNAL_E2E=1.
+test.skip(process.env.HON48_SIGNAL_E2E !== "1", "needs a Realtime stack; run locally");
+
 // HON-48 public-join negative controls (hosted has "Allow public access to channels" ON). Run with the Realtime tenant at its
 // default (public allowed): the first test reads it back so a run on a stricter tenant cannot pass by accident.
 const ANON = E2E_WEB_SERVER_ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY;

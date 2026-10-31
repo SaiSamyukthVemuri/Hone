@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { createBooking, openSeat, requireSignalPlatform, seedStudio, setVisibility, since, sleep, whenVisible } from "./helpers/hon48-signal";
 
+// Needs a Realtime-enabled stack, which CI's browser lanes do not start. Local proofs set HON48_SIGNAL_E2E=1.
+test.skip(process.env.HON48_SIGNAL_E2E !== "1", "needs a Realtime stack; run locally");
+
 // HON-48 proofs 2 and 3. Refetches are counted as the browser's own RSC requests for /calendar (what router.refresh() sends),
 // so no app instrumentation is needed. The 60 s interval cannot add one inside these windows (each window is well under 60 s).
 
