@@ -87,7 +87,7 @@ describe("owner-only pages and surfaces refuse before any read", () => {
   }
   it("the Launch tab sits in the owner-gated block of the settings nav", () => {
     const s = read("app/(app)/settings/layout.tsx");
-    expect(s.indexOf("/settings/launch")).toBeGreaterThan(s.indexOf("...(isOwner"));
+    expect(s.indexOf('href: "/settings/launch"')).toBeGreaterThan(s.indexOf("...(isOwner"));
   });
   it("studio-wide calendar preferences (time format, birthday colour) are saved only by an owner, at the action", () => {
     const s = read("app/(app)/settings/studio/actions.ts");
@@ -96,5 +96,35 @@ describe("owner-only pages and surfaces refuse before any read", () => {
     expect(guard).toBeGreaterThan(-1);
     expect(guard).toBeLessThan(fn.indexOf("time_format_preference"));
     expect(guard).toBeLessThan(fn.indexOf("birthday_reminder_color"));
+  });
+});
+
+import { isLaunchComplete, launchDestinationVisible } from "@/lib/settings/launch-completion";
+
+describe("launch completion predicate (decision D4): derived, owner-only 'Setup' while incomplete", () => {
+  const done = { send_confirmation_emails: true, postcare_aftercare_text: "Keep it dry.", cancellation_policy_text: "24h", no_show_policy_text: "Fee" };
+  const ready = { status: "ready" } as const;
+  it("is complete only when the booking authority is ready and the page's own must-haves are set", () => {
+    expect(isLaunchComplete(ready, done)).toBe(true);
+    expect(isLaunchComplete(ready, { ...done, send_confirmation_emails: false })).toBe(false);
+    expect(isLaunchComplete(ready, { ...done, postcare_aftercare_text: "  " })).toBe(false);
+    expect(isLaunchComplete(ready, { ...done, postcare_aftercare_text: null })).toBe(false);
+    expect(isLaunchComplete(ready, { ...done, cancellation_policy_text: "" })).toBe(false);
+    expect(isLaunchComplete(ready, { ...done, no_show_policy_text: null })).toBe(false);
+  });
+  it("an authority that is not ready, or could not answer, is never complete", () => {
+    expect(isLaunchComplete({ status: "not_ready", blockers: [], nextStep: null, unavailable: [] } as never, done)).toBe(false);
+    expect(isLaunchComplete({ status: "unknown", unavailable: [] } as never, done)).toBe(false);
+  });
+  it("visible to the owner only, and only while incomplete", () => {
+    expect(launchDestinationVisible("owner", false)).toBe(true);
+    expect(launchDestinationVisible("owner", true)).toBe(false);
+    for (const role of ["practitioner", "receptionist", "", "admin"]) expect(launchDestinationVisible(role, false)).toBe(false);
+  });
+  it("the page redirects a complete studio away and shares the predicate's facts; the nav label is Setup", () => {
+    const page = readFileSync("app/(app)/settings/launch/page.tsx", "utf8");
+    expect(page).toMatch(/isLaunchComplete\(readiness, studio\)\) redirect\("\/settings\/profile"\)/);
+    expect(page).toMatch(/studioHasAftercare\(studio\)/);
+    expect(readFileSync("app/(app)/settings/layout.tsx", "utf8")).toMatch(/launchVisible \? \[\{ href: "\/settings\/launch", label: "Setup" \}\]/);
   });
 });

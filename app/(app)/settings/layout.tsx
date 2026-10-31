@@ -1,5 +1,7 @@
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
+import { getNewClientReadiness } from "@/lib/booking/new-client-readiness";
+import { isLaunchComplete, launchDestinationVisible } from "@/lib/settings/launch-completion";
 import { newClientWaitlistCommitIsDurable } from "@/lib/booking/new-client-waitlist-durability-bridge";
 import { createClient } from "@/lib/supabase/server";
 import { hasActiveWaitlistEntries } from "@/lib/waitlist/operator-queue-presence";
@@ -69,13 +71,18 @@ export default async function SettingsLayout({
     (waitlistLive ||
       (await hasActiveWaitlistEntries(await createClient(), studio.id)));
 
+  // Only an owner pays for the readiness read; a failed read leaves the checklist visible (an unreadable studio is never "complete").
+  const launchVisible = isOwner
+    ? launchDestinationVisible(practitioner.role, isLaunchComplete(await getNewClientReadiness(studio), studio))
+    : false;
+
   const items: SettingsNavItem[] = [
     { href: "/settings/profile", label: "Profile" },
     { href: "/settings/intake", label: "Forms & Postcare" },
     ...(isOwner
       ? [
-          // WS-D: the launch checklist is owner-only (setup is the owner's job); the page refuses any other role server-side too.
-          { href: "/settings/launch", label: "Launch" },
+          // WS-D D4: owner-only "Setup" (the launch checklist) while setup is incomplete, gone after (derived, nothing deleted).
+          ...(launchVisible ? [{ href: "/settings/launch", label: "Setup" }] : NO_TABS),
           { href: "/settings/studio", label: "Studio" },
           { href: "/settings/team", label: "Team" },
           { href: "/settings/booking", label: "Booking" },

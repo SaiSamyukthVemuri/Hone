@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { redirect } from "next/navigation";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { hasAftercare as studioHasAftercare, hasBothPolicies as studioHasBothPolicies, isLaunchComplete } from "@/lib/settings/launch-completion";
 import { CONSENT_SETTINGS_HREF } from "@/lib/consent/launch-readiness";
 import {
   getNewClientReadiness,
@@ -100,6 +102,9 @@ export default async function LaunchChecklistPage() {
   // the facts it genuinely owns: confirmation emails, intake, postcare, policies
   // and the calendar feed.
   const readiness = await getNewClientReadiness(studio);
+  // WS-D D4: once setup is complete the checklist is gone (nothing is deleted: the settings and records stay). A direct link or an old
+  // bookmark lands on Profile, never on a page that no longer exists in the nav.
+  if (isLaunchComplete(readiness, studio)) redirect("/settings/profile");
   const provenBlockers = new Set<NewClientBlockerKey>(
     readiness.status === "not_ready" ? readiness.blockers.map((b) => b.key) : [],
   );
@@ -145,10 +150,8 @@ export default async function LaunchChecklistPage() {
     return status === "needs_setup" ? "manual" : status;
   };
 
-  const hasAftercare = nonEmpty(studio.postcare_aftercare_text);
-  const hasBothPolicies =
-    nonEmpty(studio.cancellation_policy_text) &&
-    nonEmpty(studio.no_show_policy_text);
+  const hasAftercare = studioHasAftercare(studio);
+  const hasBothPolicies = studioHasBothPolicies(studio);
   // Migration 0116: feed existence is now derived from the hash (hash-only at rest).
   const hasFeedToken = nonEmpty(practitioner.calendar_feed_token_hash);
   // Kept only to BUILD the public URL. The row's status comes from the
