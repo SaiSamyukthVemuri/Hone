@@ -1322,6 +1322,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "HON-18 / CLN-007: 0244 routine clinical reading correction diffs and actor snapshots. PENDING field review under TRUTH-01B, NOT EXPORTED: old/new values are clinical data; this registry entry grants no new export authority or retention policy. Retired signed-record ledgers and native setup captures remain separate.",
   },
+  practitioner_calendar_preferences: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "WS-F / 0273 (draft, held, not applied): a practitioner's own optional calendar display overrides (time format, default view, birthday display and colour). PENDING review under TRUTH-01B, NOT EXPORTED. Personal display choices, not studio content or clinical data; readable only by the practitioner who owns the row. This registry entry grants no export authority.",
+  },
   imported_treatment_memories: {
     kind: "pending",
     ticket: "TRUTH-01B",
