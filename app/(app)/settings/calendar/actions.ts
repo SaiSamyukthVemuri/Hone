@@ -9,13 +9,15 @@ import { suggestDistinctColour } from "@/lib/calendar/colour-assignment";
 
 // Settings > Calendar server actions (WS-C): the caller's OWN colour only. No studio-wide write lives here.
 
-export type CalendarPreferencesResult = { ok: true } | { ok: false; error: string };
+// `color` is the token the SERVER actually saved: it re-derives the suggestion, so it can differ from
+// the one the page showed when a colleague took that colour in the meantime.
+export type ApplySuggestedColourResult = { ok: true; color: string } | { ok: false; error: string };
 
 // Applies the suggested distinct colour to the CALLER'S OWN row through the governed 0178 command
 // (no practitioner id crosses the boundary). It re-derives the suggestion on the server from the
 // studio's current colours instead of trusting a submitted token, and refuses when the caller has
 // already chosen a colour, so a stale page can never overwrite a deliberate choice.
-export async function applySuggestedColourAction(): Promise<CalendarPreferencesResult> {
+export async function applySuggestedColourAction(): Promise<ApplySuggestedColourResult> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (isPractitionerColor(practitioner.color) && practitioner.color !== "neutral") {
     return { ok: false, error: "You already have a calendar colour." };
@@ -35,5 +37,5 @@ export async function applySuggestedColourAction(): Promise<CalendarPreferencesR
 
   revalidatePath("/settings/calendar");
   revalidatePath("/calendar");
-  return { ok: true };
+  return { ok: true, color: token };
 }

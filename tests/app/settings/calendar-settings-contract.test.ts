@@ -55,3 +55,12 @@ describe("the feed and colour moved here from Profile, behaviour intact", () => 
     expect(FEED).toMatch(/anyone with|private|secret/i);
   });
 });
+
+describe("the picker shows the colour the server actually saved (Codex P2)", () => {
+  it("the action returns the persisted token and the picker selects that, not its suggestion prop", () => {
+    expect(ACTIONS).toMatch(/Promise<ApplySuggestedColourResult>/);
+    expect(ACTIONS).toMatch(/return \{ ok: true, color: token \};/);
+    expect(PICKER).toMatch(/setSelected\(r\.color\)/);
+    expect(PICKER).not.toMatch(/setSelected\(suggestion\)/);
+  });
+});

@@ -44,7 +44,7 @@ export function ColorPicker({ initialColor, options, suggestion }: Props) {
     startTransition(async () => {
       const r = await applySuggestedColourAction();
       if (r.ok) {
-        if (suggestion) setSelected(suggestion);
+        setSelected(r.color); // the colour the server actually saved, never the one the page suggested
         setSavedHint(true);
         window.setTimeout(() => setSavedHint(false), 1500);
       } else {
