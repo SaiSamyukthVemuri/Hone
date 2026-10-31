@@ -342,7 +342,14 @@ jobs:
       - name: Gate packs, step by step, against the stack (PRE rules, one real push per step, POST read-back, mutation controls)
         run: |
           set -o pipefail
-          EXTRA_DIR="$PWD/rehearsal/multi-stage/spec/sealed" REHEARSAL_OUT="$RUNNER_TEMP/gates-out" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkgx" full 2>&1 | tee "$RUNNER_TEMP/gates-stack.txt"
+          first=1
+          : > "$RUNNER_TEMP/gates-stack.txt"
+          for q in "drop-0256+0258+0272+0266+0271" "drop-0255+0256+0258+0272+0266+0271" "drop-0253+0256+0258+0272+0266+0271"; do
+            if [ "$first" = 0 ]; then git checkout -- supabase/migrations && git clean -fdq supabase/migrations && supabase db reset --local > "$RUNNER_TEMP/reset.log" 2>&1 || { echo "FAIL - db reset before $q" | tee -a "$RUNNER_TEMP/gates-stack.txt"; tail -3 "$RUNNER_TEMP/reset.log"; }; fi
+            first=0
+            echo "=========== C1 sequence $q" | tee -a "$RUNNER_TEMP/gates-stack.txt"
+            EXTRA_DIR="$PWD/rehearsal/multi-stage/spec/sealed" REHEARSAL_OUT="$RUNNER_TEMP/gates-out-$q" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkgx" "$q" 2>&1 | tee -a "$RUNNER_TEMP/gates-stack.txt"
+          done
           ! grep -q "^FAIL" "$RUNNER_TEMP/gates-stack.txt"
 
       - name: Upload the read-back results (read-only catalog facts, no data)
