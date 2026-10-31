@@ -1,0 +1,21 @@
+{
+  "migration": "0272",
+  "tables": [
+    "client_legal_identities"
+  ],
+  "preflight": {
+    "sql": "g12-preflight.sql",
+    "fields": [
+      "tables_present",
+      "functions_present",
+      "trigger_before_update_only"
+    ]
+  },
+  "verify_sql": [
+    "c01_guard_trigger.sql",
+    "c02_functions.sql",
+    "c03_identity_table.sql"
+  ],
+  "verify_label": "history, the guard trigger timing and events, the pinned search_paths and the unchanged grants",
+  "notes": "Privacy PEER-0258-0266-0272-RECHECK C1 and C2. Needs 0258 immediately before it. The PRE gate requires the trigger to be BEFORE UPDATE only (0258's shape), so a hosted trigger that already differs is refused."
+}

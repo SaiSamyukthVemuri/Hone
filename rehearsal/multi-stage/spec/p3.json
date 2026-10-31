@@ -1,0 +1,107 @@
+{
+  "hosted": {
+    "dir": "../../../supabase/migrations",
+    "skipped": [
+      158
+    ],
+    "pin": [
+      "0257"
+    ],
+    "expect_rows": 250,
+    "expect_max": "0257",
+    "extra": [
+      {
+        "file": "sealed/0253_member_scoped_block_authorship.sql",
+        "sha256": "9992f4f0974ad3f9750a2437091059bb590e31c2a7728babbdab935c70f3432d"
+      },
+      {
+        "file": "sealed/0254_perm_hon44_role_enforcement.sql",
+        "sha256": "77f34d5c9b677faad344b5b1afc2c3f26321f9060db5653a2176d9a239bbba23"
+      },
+      {
+        "file": "sealed/0255_lint_hardening_anon_surface.sql",
+        "sha256": "e7ea6eace92730d537e2604976148e99f4ed06bc207c113ae8f065b2f90ff4ea"
+      }
+    ],
+    "dir_sha256": "3d6f68787f615f9952f095bdc4aadeed66f7205b025c30c967dc7a9abe340087"
+  },
+  "steps": [
+    {
+      "file": "sealed/0258_hon58_identity.sql",
+      "sha256": "12c8109d41059e78fbc7df2af3a5a15b5bfcd3c17e0a5453e385cff0cc1cfd78",
+      "ready": {
+        "status": "sealed 12c8109d; Privacy APPROVE pinned to this sha",
+        "carrier": "#1227 5b4ed51c (+ callers #1199)",
+        "class": "2",
+        "carrier_db_lane": "pass at the carrier head",
+        "content_gates": "content gates: preflight, clients table/lock reads, privilege/policy/function/trigger read-back (Privacy C4); search_path not yet asserted (F3 pending)",
+        "blocker": "carrier is 233 behind production, 7 conflicted files; needs a refresh and a gate pack"
+      },
+      "gate_pack": "../gate-packs/0258"
+    },
+    {
+      "file": "sealed-v2/0272_hon58_legal_identity_hardening.sql",
+      "ready": {
+        "status": "sealed d3805343 (#1227 5b4ed51c); Privacy APPROVE pinned to this sha (PEER-0258-0266-0272-RECHECK)",
+        "carrier": "#1227 5b4ed51c",
+        "content_gates": "yes: preflight (trigger is BEFORE UPDATE only before), table/lock reads, read-back (guard trigger BEFORE INSERT OR UPDATE, search_path pg_catalog, pg_temp on both functions, grants unchanged; Privacy C1/C2)",
+        "blocker": "Privacy/Insurance re-review; sha not final until it ends"
+      },
+      "sha256": "d380534372728383e028c020dce1e0b7d0ab6eeb697594c59184a001ada83655",
+      "gate_pack": "../gate-packs/0272"
+    },
+    {
+      "file": "sealed-v2/0266_legal_name_receptionist_access.sql",
+      "sha256": "1617f11a507c84b3fb69ab262d0ca4211f07abd9a621004edc9bd7420faea04c",
+      "requires": [
+        "0258"
+      ],
+      "ready": {
+        "status": "sealed 1617f11a (#1227 5b4ed51c); Privacy APPROVE pinned to this sha",
+        "carrier": "#1227 5b4ed51c",
+        "class": "2",
+        "carrier_db_lane": "pass at the carrier head",
+        "content_gates": "content gates: preflight, privilege/policy/function/trigger read-back (Privacy C4); needs 0258 and 0272 earlier",
+        "blocker": "hard dependency 0258; same carrier refresh as 0258"
+      },
+      "gate_pack": "../gate-packs/0266"
+    },
+    {
+      "file": "sealed/0271_schedule_change_signal.sql",
+      "sha256": "5985d3a09e16ff1c40bd360dc798274a945c8d126550892800f7b363f730fcc1",
+      "ready": {
+        "status": "sealed 5985d3a0 (unchanged at #1275 5c040f1b and f491337c; Willow may change only client files)",
+        "carrier": "#1275 f491337c (5c040f1b has the same SQL)",
+        "class": "3 (+2)",
+        "carrier_db_lane": "green",
+        "content_gates": "content gates: preflight (realtime.messages policies empty, RLS on, recorded grants), read-back (exactly the two policies, 12 triggers, emitter grants) (Insurance C3)",
+        "blocker": "Insurance C1 (restrictive deny ruling), C2, C4-C6; Sam approval"
+      },
+      "gate_pack": "../gate-packs/0271",
+      "head_sha": "5c040f1ba"
+    }
+  ],
+  "rules": {
+    "closure": {
+      "0258": [
+        "0272",
+        "0266"
+      ]
+    },
+    "adjacent": [
+      [
+        "0258",
+        "0272"
+      ]
+    ],
+    "requires_earlier": {
+      "0266": [
+        "0258",
+        "0272"
+      ]
+    },
+    "independent": [
+      "0271"
+    ]
+  }
+}
