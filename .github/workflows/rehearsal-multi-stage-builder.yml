@@ -75,7 +75,7 @@ jobs:
             ONLY_A=1 bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$PWD/supabase/migrations" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-linux-drops.txt" | tail -3
           done
           ! grep -q "^FAIL" "$RUNNER_TEMP/seq-linux-drops.txt"
-      - name: Package P1X (the optional 0253, 0255, 0256 added: 111 stage packages, 96 sequences): builder checks and a sample of sequences
+      - name: Package P1X (the optional 0253, 0255, 0256 added, 111 stage packages and 96 sequences), builder checks and a sample of sequences
         run: |
           set -o pipefail
           python3 rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p1x.json "$RUNNER_TEMP/ms-pkgx" | tee "$RUNNER_TEMP/p1x.txt"
