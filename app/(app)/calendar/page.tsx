@@ -60,8 +60,8 @@ import {
 import { formatClockLabel, formatTimeForStudio, resolveTimeFormat, type TimeFormat } from "@/lib/booking/tz";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import { redirect } from "next/navigation";
-import { buildTeamDay, type TeamDayColumn } from "@/lib/calendar/team-day";
-import { blockScopeNamesFor } from "@/lib/calendar/block-scope";
+import { buildTeamDay, teamColumnAllowsCreate, type TeamDayColumn } from "@/lib/calendar/team-day";
+import { blockScopeNamesFor, liveScopedRows } from "@/lib/calendar/block-scope";
 import { hasDayView, isInitialCalendarEntry, isTeamCalendar } from "./initial-view";
 import { teamDayGridTemplate } from "@/lib/calendar/team-day-layout";
 
@@ -246,7 +246,7 @@ export default async function CalendarPage({
   // appointments. A block straddling local midnight is rendered on
   // its starting day.
   const timedBlocksByDate = new Map<string, StudioTimedBlock[]>();
-  for (const tb of timedBlocks) {
+  for (const tb of liveScopedRows(studio.practitioner_capacity_enabled === true, timedBlocks)) {
     const localDate = localDateString(new Date(tb.starts_at), studio.timezone);
     const arr = timedBlocksByDate.get(localDate) ?? [];
     arr.push(tb);
@@ -255,7 +255,7 @@ export default async function CalendarPage({
 
   // Same grouping for recurring break occurrences.
   const recurringByDate = new Map<string, RecurringBreakOccurrenceWithRule[]>();
-  for (const occ of recurringOccurrences) {
+  for (const occ of liveScopedRows(studio.practitioner_capacity_enabled === true, recurringOccurrences)) {
     const localDate = localDateString(new Date(occ.starts_at), studio.timezone);
     const arr = recurringByDate.get(localDate) ?? [];
     arr.push(occ);
@@ -564,8 +564,8 @@ async function renderMonthView(opts: {
 
   const blockedByDate = groupMonthBlockedByDate(
     blockouts,
-    timedBlocks,
-    recurringOccurrences,
+    liveScopedRows(studio.practitioner_capacity_enabled === true, timedBlocks),
+    liveScopedRows(studio.practitioner_capacity_enabled === true, recurringOccurrences),
     studio.timezone,
     isClosedDate,
     blockScopeNamesFor(studio.practitioner_capacity_enabled === true, activePractitioners),
@@ -805,9 +805,15 @@ async function renderTeamDayView(opts: {
                   teamColumn={{
                     practitionerId: c.practitionerId,
                     name: c.name,
-                    // Owners book anyone active; a member books only
-                    // themselves, so only their own column offers it.
-                    allowCreate: c.active && (isOwner || c.practitionerId === practitioner.id),
+                    // Capacity on: owners book anyone active, a member only
+                    // themselves. Capacity off: as the week grid, any active column.
+                    allowCreate: teamColumnAllowsCreate({
+                      capacityEnabled,
+                      active: c.active,
+                      isOwner,
+                      columnPractitionerId: c.practitionerId,
+                      viewerPractitionerId: practitioner.id,
+                    }),
                   }}
                 />
               </div>
