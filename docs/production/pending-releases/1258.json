@@ -1,0 +1,6 @@
+{
+  "pr": 1258,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0268_appointment_arrival.sql"],
+  "release_receipt": "01-ops/1258-release-receipt.json"
+}

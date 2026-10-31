@@ -424,6 +424,10 @@ export type Appointment = {
   // the studio capacity flag, maintained by trigger; routes the row into the
   // studio-wide vs per-practitioner exclusion. Optional for pre-0134 rows.
   capacity_enabled?: boolean;
+  // Migration 0268 (HON-48 check-in): when the client was checked in at the front
+  // desk; null/absent = not checked in. Absent before 0268 is applied: reads use
+  // select(*), so the field simply never arrives, and nothing depends on it.
+  arrived_at?: string | null;
   // Migration 0152 (manual-override buffer bypass): true only when an
   // authenticated internal OWNER booked/moved this row with
   // allow_outside_availability=true; makes the soft-buffer trigger skip it.
