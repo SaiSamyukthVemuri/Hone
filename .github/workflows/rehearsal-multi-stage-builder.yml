@@ -361,8 +361,8 @@ jobs:
       - name: Gate pack 0256 on the hosted set after 0254 (single step, below head, real push, read-back, mutation controls)
         run: |
           set -o pipefail
-          python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p256.json "$RUNNER_TEMP/ms-pkg256"
           git checkout -- supabase/migrations && git clean -fdq supabase/migrations && supabase db reset --local > "$RUNNER_TEMP/reset256.log" 2>&1 || { echo "FAIL - db reset before 0256"; tail -3 "$RUNNER_TEMP/reset256.log"; exit 1; }
+          python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p256.json "$RUNNER_TEMP/ms-pkg256"
           EXTRA_DIR="$PWD/rehearsal/multi-stage/spec/sealed" REHEARSAL_OUT="$RUNNER_TEMP/gates-out-0256" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkg256" full 2>&1 | tee "$RUNNER_TEMP/gates-stack-0256.txt"
           ! grep -q "^FAIL" "$RUNNER_TEMP/gates-stack-0256.txt"
 
