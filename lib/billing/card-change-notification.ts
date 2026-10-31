@@ -151,10 +151,25 @@ export async function ensureCardChangeNotification(
   //    SetupIntent: a Stripe redelivery OR a second distinct Event object for
   //    the same SetupIntent: conflicts on the dedupe key and returns
   //    deduped:true. The already-created admin client is passed through.
+  // WS-D: owner-only DELIVERY. The row is targeted at the studio owner's practitioner, never studio-wide (null). No active owner is a
+  // lost race or a corrupt studio: throw so the webhook releases its claim and Stripe retries, rather than falling back to everyone.
+  const { data: owner, error: ownerErr } = await admin
+    .from("practitioners")
+    .select("id")
+    .eq("studio_id", studioId)
+    .eq("role", "owner")
+    .eq("active", true)
+    .limit(1)
+    .maybeSingle();
+  if (ownerErr) {
+    throw new Error(`card_change_owner_lookup_failed:${dbErrorCode(ownerErr)}`);
+  }
+  if (!owner) throw new Error("card_change_owner_missing");
+
   const dedupeKey = `stripe:setup_intent:${livemode ? "live" : "test"}:${setupIntentId}`;
   const { deduped } = await ensurePractitionerNotification(admin, {
     studioId,
-    practitionerId: null, // studio-wide visibility
+    practitionerId: owner.id as string, // owner only (WS-D)
     eventType,
     title,
     body,

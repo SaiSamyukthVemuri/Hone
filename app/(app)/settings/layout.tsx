@@ -71,10 +71,11 @@ export default async function SettingsLayout({
 
   const items: SettingsNavItem[] = [
     { href: "/settings/profile", label: "Profile" },
-    { href: "/settings/launch", label: "Launch" },
     { href: "/settings/intake", label: "Forms & Postcare" },
     ...(isOwner
       ? [
+          // WS-D: the launch checklist is owner-only (setup is the owner's job); the page refuses any other role server-side too.
+          { href: "/settings/launch", label: "Launch" },
           { href: "/settings/studio", label: "Studio" },
           { href: "/settings/team", label: "Team" },
           { href: "/settings/booking", label: "Booking" },

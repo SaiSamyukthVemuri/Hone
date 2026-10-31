@@ -620,7 +620,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
   {
     page: "/settings/launch",
     label: "Ready for booking checklist",
-    role: "practitioner",
+    role: "owner", // WS-D: the launch checklist is owner-only
     decision: "searchable",
     entryId: "settings-launch",
   },

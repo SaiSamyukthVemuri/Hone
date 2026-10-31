@@ -193,7 +193,6 @@ describe("permissions — search advertises only what the caller can already ope
       ["getting started", "Getting Started"],
       ["profile", "Profile"],
       ["intake", "Forms & Postcare"],
-      ["launch", "Launch"],
       ["notifications", "Notifications"],
       ["sterile", "Sterile Items"],
       ["disinfectant", "Disinfectants"],
@@ -696,7 +695,8 @@ describe("coverage tripwire — a new destination needs an explicit decision", (
     const open = hrefsIn(layout.slice(0, gateStart));
 
     expect(ownerGated.size).toBeGreaterThanOrEqual(10);
-    expect(open.size).toBeGreaterThanOrEqual(3);
+    // WS-D moved Launch into the owner block: Profile and Forms & Postcare are the two ungated tabs.
+    expect(open.size).toBeGreaterThanOrEqual(2);
     // A tab cannot be in both regions, or the parse is wrong.
     for (const href of ownerGated) expect(open.has(href)).toBe(false);
 

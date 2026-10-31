@@ -19,6 +19,7 @@ import { AppFooter } from "@/app/_components/AppFooter";
 import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
 import { identifyServerUser } from "@/lib/analytics/server";
 import { timed } from "@/lib/observability/perf-timing";
+import { scopeNotificationsToViewer } from "@/lib/notifications/owner-only-events";
 
 export default async function AppLayout({
   children,
@@ -65,7 +66,7 @@ export default async function AppLayout({
     "shell.support-reads",
     () =>
       Promise.all([
-        loadUnreadNotificationCount(studio.id),
+        loadUnreadNotificationCount(studio.id, practitioner.role === "owner"),
         loadOverdueDisinfectantCount(studio.id, studio.timezone),
       ]),
   );
@@ -264,14 +265,18 @@ export default async function AppLayout({
 // query is bounded and safe to run on every authenticated page
 // render. A failure (network, missing table in a fresh env)
 // falls back to zero so the layout never breaks.
-async function loadUnreadNotificationCount(studioId: string): Promise<number> {
+async function loadUnreadNotificationCount(studioId: string, viewerIsOwner: boolean): Promise<number> {
   try {
     const supabase = await createClient();
-    const { count, error } = await supabase
-      .from("practitioner_notifications")
-      .select("id", { count: "exact", head: true })
-      .eq("studio_id", studioId)
-      .is("read_at", null);
+    // WS-D: the badge never counts what the viewer cannot read (owner-only card-on-file rows).
+    const { count, error } = await scopeNotificationsToViewer(
+      supabase
+        .from("practitioner_notifications")
+        .select("id", { count: "exact", head: true })
+        .eq("studio_id", studioId)
+        .is("read_at", null),
+      viewerIsOwner,
+    );
     if (error) return 0;
     return count ?? 0;
   } catch {

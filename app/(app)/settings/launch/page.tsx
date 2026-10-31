@@ -73,6 +73,14 @@ function nonEmpty(s: string | null | undefined): boolean {
 
 export default async function LaunchChecklistPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
+  // WS-D (settings redesign): owner-only, refused BEFORE any readiness read so a non-owner's response carries no setup state.
+  if (practitioner.role !== "owner") {
+    return (
+      <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+        Only studio owners can view the launch checklist.
+      </div>
+    );
+  }
   // ONB-02: ask the predicate the BOOKING PATH enforces, not a second copy of
   // it. `s.modality === "consultation"` missed `isConsultationService`'s
   // name fallback, so a studio whose service is named "New Client

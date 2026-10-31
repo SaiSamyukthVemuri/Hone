@@ -283,7 +283,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     href: "/settings/launch",
     description: "Ready-for-booking checklist before your first real client",
     keywords: ["ready for booking checklist", "launch", "go live", "ready", "readiness", "checklist", "before booking", "first booking", "setup checklist"],
-    visibility: "practitioner",
+    visibility: "owner",
     priority: 220,
   },
   {
