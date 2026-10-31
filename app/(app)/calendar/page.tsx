@@ -63,6 +63,7 @@ import { redirect } from "next/navigation";
 import { buildTeamDay, type TeamDayColumn } from "@/lib/calendar/team-day";
 import { blockScopeNamesFor } from "@/lib/calendar/block-scope";
 import { isInitialCalendarEntry, isTeamCalendar } from "./initial-view";
+import { teamDayGridTemplate } from "@/lib/calendar/team-day-layout";
 
 type Search = Promise<{
   week?: string;
@@ -704,7 +705,7 @@ async function renderTeamDayView(opts: {
   // A studio-wide block sits in EVERY column labelled "All practitioners"; a
   // scoped one sits only in its own column (lib/calendar/team-day.ts).
   const blockScopeNames = blockScopeNamesFor(true, activePractitioners);
-  const gridColumns = `60px repeat(${Math.max(1, columns.length)}, minmax(9rem, 1fr))`;
+  const gridColumns = teamDayGridTemplate(columns.length);
 
   return (
     <div className="flex flex-col gap-6">
@@ -734,8 +735,14 @@ async function renderTeamDayView(opts: {
       <div
         data-testid="team-day-view"
         data-date={date}
+        data-column-count={columns.length}
         className="max-h-[calc(100dvh-13rem)] overflow-auto overscroll-contain rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950"
       >
+        {columns.length === 0 ? (
+          <p data-testid="team-day-empty" className="px-4 py-10 text-center text-sm text-neutral-600 dark:text-neutral-400">
+            No practitioner is working on this day.
+          </p>
+        ) : (
         <div className="min-w-fit">
           <div
             className="sticky top-0 z-20 grid border-b border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900"
@@ -805,6 +812,7 @@ async function renderTeamDayView(opts: {
             ))}
           </div>
         </div>
+        )}
       </div>
 
       <p className="hidden text-xs text-neutral-500 md:block">
