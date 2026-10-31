@@ -1,0 +1,28 @@
+{
+  "migration": "0271",
+  "tables": [
+    "appointments",
+    "studio_timed_blocks",
+    "studio_blockouts",
+    "studio_recurring_break_occurrences"
+  ],
+  "preflight": {
+    "sql": "g12-preflight.sql",
+    "fields": [
+      "tables_present",
+      "realtime_present",
+      "realtime_rls_on_no_policies",
+      "realtime_send_grants_as_recorded",
+      "helpers_ok",
+      "new_objects_absent"
+    ]
+  },
+  "verify_sql": [
+    "c01_realtime_policies.sql",
+    "c02_realtime_facts.sql",
+    "c03_triggers.sql",
+    "c04_functions.sql"
+  ],
+  "verify_label": "history, the realtime.messages policy set and recorded grants, the twelve triggers and the emitter grants",
+  "notes": "Insurance PEER-0271-FINAL C3. The realtime.send grants are asserted as the recorded hosted shape (anon and authenticated hold INSERT on realtime.messages, neither bypasses RLS)."
+}

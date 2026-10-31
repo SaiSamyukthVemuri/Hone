@@ -40,9 +40,10 @@
         "carrier": "#1227 28120e55 (+ callers #1199 700539e3)",
         "class": "2",
         "carrier_db_lane": "pass at the carrier head",
-        "content_gates": "MISSING (history-only gate)",
+        "content_gates": "content gates: preflight, clients table/lock reads, privilege/policy/function/trigger read-back (Privacy C4); search_path not yet asserted (F3 pending)",
         "blocker": "carrier is 233 behind production, 7 conflicted files; needs a refresh and a gate pack"
-      }
+      },
+      "gate_pack": "../gate-packs/0258"
     },
     {
       "file": "placeholder/0272_general_hardening_placeholder.sql",
@@ -65,21 +66,24 @@
         "carrier": "#1227 28120e55",
         "class": "2",
         "carrier_db_lane": "pass at the carrier head",
-        "content_gates": "MISSING (history-only gate)",
+        "content_gates": "content gates: preflight, privilege/policy/function/trigger read-back (Privacy C4); needs 0258 and 0272 earlier",
         "blocker": "hard dependency 0258; same carrier refresh as 0258"
-      }
+      },
+      "gate_pack": "../gate-packs/0266"
     },
     {
       "file": "sealed/0271_schedule_change_signal.sql",
-      "sha256": "c8f3e4d6f061ec8c2c20b94577865fbf8d98d559d85ebf6621cbcac90b129f8b",
+      "sha256": "5985d3a09e16ff1c40bd360dc798274a945c8d126550892800f7b363f730fcc1",
       "ready": {
-        "status": "NOT SEALED (in review)",
-        "carrier": "#1275 4703920d",
+        "status": "sealed 5985d3a0 (unchanged at #1275 5c040f1b and f491337c; Willow may change only client files)",
+        "carrier": "#1275 f491337c (5c040f1b has the same SQL)",
         "class": "3 (+2)",
-        "carrier_db_lane": "FAIL: appointment-boundary-revocation trigger census lacks the 0271 triggers",
-        "content_gates": "MISSING (history-only gate)",
-        "blocker": "review, a census fix, and the realtime job not yet run"
-      }
+        "carrier_db_lane": "green",
+        "content_gates": "content gates: preflight (realtime.messages policies empty, RLS on, recorded grants), read-back (exactly the two policies, 12 triggers, emitter grants) (Insurance C3)",
+        "blocker": "Insurance C1 (restrictive deny ruling), C2, C4-C6; Sam approval"
+      },
+      "gate_pack": "../gate-packs/0271",
+      "head_sha": "5c040f1ba"
     }
   ],
   "rules": {

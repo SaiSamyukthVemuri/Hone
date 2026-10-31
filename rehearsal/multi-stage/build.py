@@ -229,7 +229,7 @@ def gen_sql(st, pack, S):
             out["s1-open-transactions-%s.sql" % S] = derive_table_sql(ref_open, tables, bm, "scanned")
             out["w03-table-sizes-%s.sql" % S] = derive_table_sql(ref_w03, tables, bm, "named")
         if pack.get("preflight"):
-            out["g12-%s-preflight-%s.sql" % (S, S)] = open(os.path.join(pack["_dir"], pack["preflight"]["sql"])).read()
+            out["g12-%s-preflight-%s.sql" % (S, S)] = open(os.path.join(pack["_dir"], pack["preflight"]["sql"])).read().replace("__BEFORE_MAX__", bm)
     return out
 
 
@@ -686,7 +686,7 @@ def emit_step(st, out, specdir, ctx):
            "history_before": {"rows": st["n_before"], "max": st["before_max"], "list_md5": st["md5_before"], "versions_present": [v4(x) for x in sorted(st["before"])]},
            "history_after": {"rows": st["n_after"], "max": st["after_max"], "list_md5": st["md5_after"], "added": V},
            "absent_in_bundle": [v4(x) for x in st["absent"]], "bundle": {"files": st["n_after"], "tar_sha256": shas["bundle"], "list_sha256": shas["list"]},
-           "dry_run_must_list": [st["file"]], "content_gates": bool(pack), "gate_reads": len(reads),
+           "dry_run_must_list": [st["file"]], "content_gates": bool(pack), "gate_reads": len(reads), "gate_tables": list((pack or {}).get("tables") or []),
            "between_steps": ["window-s1read-%s.sh (read-back, must print the exact OVERALL PASS line)" % S, "s1-reconcile-%s-online.sh (ALL route; archives the APPLY-STATE marker)" % S],
            "pins": {k: v for k, v in shas.items() if k not in ("sql",)}, "file_sha256": sums}
     write(os.path.join(d, "EXPECT.json"), json.dumps(exp, indent=2, sort_keys=True) + "\n")

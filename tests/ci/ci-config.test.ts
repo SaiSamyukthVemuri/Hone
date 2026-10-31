@@ -1994,7 +1994,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   const SETUP_CLI_SHA = "ab058987d8d6c725971f6cf9d0b5c98467e30bd1";
   const SETUP_CLI_TAG = "v1.7.1";
   const SETUP_CLI_VERSION = "2.102.0";
-  const SETUP_CLI_USES = 9; // 7 in ci.yml (incl. storage-photos and webkit-hon-62) + 1 in nightly.yml + 1 in restore-drill.yml (DR-01A)
+  const SETUP_CLI_USES = 10; // 7 in ci.yml (incl. storage-photos and webkit-hon-62) + 1 in nightly.yml + 1 in restore-drill.yml (DR-01A) + 1 in rehearsal-multi-stage-builder.yml (REHEARSAL, never merge)
 
   const SETUP_CLI_ACTION = "supabase/setup-cli";
 
@@ -2126,8 +2126,8 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   it("the checkout count across the workflow directory is the reviewed one", () => {
     expect(
       checkoutCount(WORKFLOWS),
-      "9 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089; storage-photos by E-GAPS; webkit-hon-62 by HON-62) + 1 in nightly.yml + 1 in restore-drill.yml (DR-01A) + 4 in rehearsal-multi-stage-builder.yml (REHEARSAL, never merge)",
-    ).toBe(16);
+      "9 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089; storage-photos by E-GAPS; webkit-hon-62 by HON-62) + 1 in nightly.yml + 1 in restore-drill.yml (DR-01A) + 5 in rehearsal-multi-stage-builder.yml (REHEARSAL, never merge)",
+    ).toBe(17);
   });
 
   // -------------------------------------------------------------------------
@@ -2619,7 +2619,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
     const violations = setupCliViolations([...WORKFLOWS, cased]).join("\n");
     // Recognised at all — the reviewed count moves, which it could not do while
     // the identifier was compared case-sensitively...
-    expect(violations).toMatch(/10 setup-cli uses, expected 9/);
+    expect(violations).toMatch(/11 setup-cli uses, expected 10/);
     // ...and, being recognised, it is subject to the grants-parity pin.
     expect(violations).toMatch(/cli\.yaml jobs\.scan\.steps\[0\]\.uses: CLI version 2\.103\.0 is not the grants-parity pin 2\.102\.0/);
   });

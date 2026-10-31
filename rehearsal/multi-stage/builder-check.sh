@@ -7,6 +7,7 @@ sd=$(dirname "$SPEC")
 python3 "$D/build.py" "$SPEC" "$T/a" > "$T/a.log" 2>&1 && python3 "$D/build.py" "$SPEC" "$T/b" > "$T/b.log" 2>&1 \
   && [ "$(cd "$T/a" && find . -type f | LC_ALL=C sort | xargs shasum -a 256 | shasum -a 256)" = "$(cd "$T/b" && find . -type f | LC_ALL=C sort | xargs shasum -a 256 | shasum -a 256)" ] \
   && ok "DETERMINISTIC: two builds of the same list are byte-identical (every file, every pin)" || bad "builds differ" "$(cat $T/a.log $T/b.log)"
+if [ -z "${GENERIC_ONLY:-}" ]; then  # the P1-specific refusals and sequence properties (a spec with another step list runs the generic checks only)
 refuse() { # refuse NAME 'regex' SPECFILE
   python3 "$D/build.py" "$3" "$T/r" > "$T/r.log" 2>&1; rc=$?
   [ $rc != 0 ] && grep -Eq "BUILD REFUSED: .*($2)" "$T/r.log" && [ ! -f "$T/r/PLAN.json" ] && ok "$1" || bad "$1" "rc=$rc $(cat $T/r.log | head -3)"
@@ -50,12 +51,12 @@ r = p["rules"]
 assert "0254" not in str(r["closure"]) + str(r["adjacent"]) + str(r["requires_earlier"]) and "0271" not in str(r["closure"]) + str(r["adjacent"]) + str(r["requires_earlier"])
 PY
 # no content gates: the plan says so loudly
-python3 -I - "$T/a" <<'PY' && ok "CONTENT GATES: 0254 has them; steps without a gate pack are flagged in PLAN.json, README, SEQUENCE.md and the installer as NOT production-ready" || bad "content gate flags"
+python3 -I - "$T/a" <<'PY' && ok "CONTENT GATES: 0254, 0253, 0258, 0266 and 0271 have them; steps without a gate pack are flagged in PLAN.json, README, SEQUENCE.md and the installer as NOT production-ready" || bad "content gate flags"
 import json, sys
 d = sys.argv[1]
 p = json.load(open(d + "/PLAN.json"))
 for S, s in p["stages"].items():
-    if s["migration"].startswith("0254_"):
+    if s["migration"][:4] in ("0254", "0253", "0258", "0266", "0271"):
         assert s["content_gates"] is True
     else:
         assert s["content_gates"] is False
@@ -63,6 +64,7 @@ for S, s in p["stages"].items():
         assert "NOT production-ready" in open("%s/%s/install-%s-online.sh" % (d, S, S)).read()
 assert "CONTENT GATES MISSING" in open(d + "/SEQUENCE.md").read()
 PY
+fi
 # the allowlist embedded in each apply script is exactly the bundle's list
 c=0; for f in "$T"/a/*/; do S=$(basename "$f"); [ -f "$f/s1-apply-$S-online/s1-apply-$S-online.sh" ] || continue
   # the adopted reviewed package has no embedded ALLOW block: its LIST_SHA pin is the allowlist (checked to equal the bundle list's sha256)
@@ -72,5 +74,48 @@ c=0; for f in "$T"/a/*/; do S=$(basename "$f"); [ -f "$f/s1-apply-$S-online/s1-a
   LC_ALL=C sort "$f/s1-apply-$S-online/MIGRATIONS-stage$S.sha256" | cmp -s - "$T/allow.txt" || { c=1; bad "$S: the embedded allowlist is not the bundle list"; }; done
 [ $c = 0 ] && ok "every apply script embeds EXACTLY its bundle's reviewed allowlist (file name + sha256 of every migration)"
 c=0; for f in $(find "$T/a" -name '*.sh'); do bash -n "$f" || { c=1; bad "syntax: $f"; }; done; [ $c = 0 ] && ok "every generated shell script parses (bash -n)"
+# GATE PACKS: reproducible from mkpacks.py; the expected policy sets match the repository history and the sealed body; every expected object name is in the sealed body; every generated node check parses
+mkdir -p "$T/gp"; MKPACKS_OUT="$T/gp" python3 "$D/gate-packs/mkpacks.py" && diff -r -q "$T/gp" "$D/gate-packs" 2>&1 | grep -v "Only in $D/gate-packs: \(0254\|mkpacks.py\|__pycache__\)" | grep -q . \
+  && bad "gate packs are not exactly what mkpacks.py writes" "$(diff -r -q "$T/gp" "$D/gate-packs" | head -3)" || ok "the committed gate packs are exactly what mkpacks.py writes (reproducible, reviewable)"
+python3 -I - "$D" "$SPEC" <<'PY' && ok "gate pack facts: the expected 0253 policy set BEFORE equals the repository history and AFTER equals the sealed body applied on it; every expected object name appears in its sealed body" || bad "gate pack facts"
+import glob, json, os, re, sys
+d, spec = sys.argv[1:3]
+sys.path.insert(0, d + "/gate-packs")
+import mkpacks
+mkpacks.OUT = "/tmp/mkpacks-scratch"
+mkpacks.main()
+sp = json.load(open(spec)); sd = os.path.dirname(os.path.abspath(spec))
+hosted = os.path.normpath(os.path.join(sd, sp["hosted"]["dir"]))
+pat = re.compile(r'(create\s+policy\s+"?(\w+)"?\s+on\s+(?:public\.)?(\w+)(.*?);)|(drop\s+policy\s+(?:if\s+exists\s+)?"?(\w+)"?\s+on\s+(?:public\.)?(\w+))', re.S | re.I)
+def policies(files, tabs):
+    pol = {t: {} for t in tabs}
+    for f in files:
+        t = re.sub(r"--[^\n]*", "", open(f).read())
+        for m in pat.finditer(t):
+            if m.group(1):
+                n, tb, body = m.group(2), m.group(3), m.group(4)
+                if tb in pol:
+                    c = re.search(r"\bfor\s+(all|select|insert|update|delete)\b", body, re.I)
+                    pol[tb][n] = (c.group(1).upper() if c else "ALL")
+            else:
+                if m.group(7) in pol: pol[m.group(7)].pop(m.group(6), None)
+    return {t: sorted(v.items()) for t, v in pol.items()}
+tabs = list(mkpacks.before)
+files = sorted(glob.glob(hosted + "/*.sql"))
+got = policies(files, tabs)
+want = {t: sorted(v) for t, v in mkpacks.before.items()}
+assert got == want, ("0253 BEFORE set differs from the repository history", got, want)
+s0253 = [os.path.normpath(os.path.join(sd, x["file"])) for x in sp["steps"] if os.path.basename(x["file"]).startswith("0253_")]
+if s0253:
+    got2 = policies(files + s0253, tabs)
+    assert got2 == {t: sorted(v) for t, v in mkpacks.after.items()}, ("0253 AFTER set differs from the sealed body applied on the history", got2)
+for x in sp["steps"]:
+    ver = os.path.basename(x["file"])[:4]
+    if ver in mkpacks.OBJECTS and x.get("gate_pack"):
+        body = open(os.path.normpath(os.path.join(sd, x["file"]))).read()
+        for n in mkpacks.OBJECTS[ver]:
+            assert n in body, (ver, "expected object not in the sealed body", n)
+PY
+c=0; for f in $(find "$T/a" -path '*window-reads-s1-*' -name 'window-s1read-*.sh'); do sed -n "/<<'NODE'\$/,/^NODE\$/p" "$f" | sed '1d;$d' > "$T/chk.mjs"; node --check "$T/chk.mjs" 2>"$T/chk.err" || { c=1; bad "the generated read-back program does not parse: $f" "$(head -2 "$T/chk.err")"; }; done; [ $c = 0 ] && ok "every generated read-back node program parses (node --check)"
 rm -f "$sd"/.t-*.json
 echo "# RESULT: $pass passed, $fail failed"; [ $fail = 0 ]

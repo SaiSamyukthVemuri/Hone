@@ -54,8 +54,8 @@ install_step() { # install_step STAGE [VBDIR]: the package's files + the test va
   echo "RUNNER_SHA=$TRUN" > "$H/rconst-$S.txt"
   mkvar "$P/s1-apply-$S-online/s1-reconcile-$S-online.sh" "$r/s1-apply-$S-online/s1-reconcile-$S-online.sh" "$H/rconst-$S.txt"; chmod 755 "$r/s1-apply-$S-online/s1-reconcile-$S-online.sh"
   # the stage's stub knobs (replace the previous stage's, the stub reads the FIRST match)
-  sed -i.bak -E '/^(S_STAGE|S_VER|S_S1H|S_OVERALL|G12_AT)=/d' "$H/stubcfg"; rm -f "$H/stubcfg.bak"
-  cfgset "S_STAGE=$S" "S_VER=$(ex $S 'd["migration"][:4]')" "S_S1H=$(sha "$P/window-reads-s1-$S/s1-history-$S.sql")" "S_OVERALL=$(ex $S 'd["pins"]["overall"]')" "G12_AT=$(ex $S 'd["history_before"]["max"]')"
+  sed -i.bak -E '/^(S_STAGE|S_VER|S_S1H|S_OVERALL|G12_AT|S_TABLES)=/d' "$H/stubcfg"; rm -f "$H/stubcfg.bak"
+  cfgset "S_STAGE=$S" "S_VER=$(ex $S 'd["migration"][:4]')" "S_S1H=$(sha "$P/window-reads-s1-$S/s1-history-$S.sql")" "S_OVERALL=$(ex $S 'd["pins"]["overall"]')" "G12_AT=$(ex $S 'd["history_before"]["max"]')" "S_TABLES=$(ex $S '",".join(d.get("gate_tables") or ["appointment_settlements","client_pinned_notes","client_pricing","manual_fee_charge_attempts","payment_charge_attempts"])')"
 }
 leftover() { python3 -I -c 'import os,sys
 fd=os.open(sys.argv[1],os.O_RDONLY|os.O_NONBLOCK)

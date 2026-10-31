@@ -1,0 +1,12 @@
+
+const cmp = (got, want, what) => { if (JSON.stringify([...got].sort()) !== JSON.stringify([...want].sort())) fail(`${what}: got ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`); };
+const tb = (name) => rows(name).map((x) => `${x.obj}|${x.role}|${x.privs}|${isTrue(x.rls)}`);
+const fnr = (name) => rows(name).map((x) => `${x.obj}(${x.args})|definer=${isTrue(x.definer)}|sp=${x.search_path}|exec=${x.exec_roles}|public=${isTrue(x.exec_public)}`);
+const fnx = (name) => rows(name).map((x) => `${x.obj}(${x.args})|exec=${x.exec_roles}|public=${isTrue(x.exec_public)}`);
+const plx = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}`);
+const pl = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}|${x.roles}`);
+const tg = (name) => rows(name).map((x) => `${x.obj}|${x.tgname}|${x.enabled}|row=${isTrue(x.row_level)}|before=${isTrue(x.before_trg)}`);
+cmp(plx("c01_policies"), ["studio_timed_blocks|studio_timed_blocks_member_delete_own|DELETE|PERMISSIVE", "studio_timed_blocks|studio_timed_blocks_member_insert|INSERT|PERMISSIVE", "studio_timed_blocks|studio_timed_blocks_member_select|SELECT|PERMISSIVE", "studio_timed_blocks|studio_timed_blocks_member_update_own|UPDATE|PERMISSIVE", "studio_timed_blocks|studio_timed_blocks_owner_all|ALL|PERMISSIVE", "studio_timed_blocks|studio_timed_blocks_owner_scoped_write|ALL|PERMISSIVE", "studio_blockouts|studio_blockouts_member_select|SELECT|PERMISSIVE", "studio_blockouts|studio_blockouts_owner_write|ALL|PERMISSIVE"], "policies on the two tables are exactly the named set (after)");
+console.log("PASS policies on the two tables are exactly the named set (after)");
+cmp(fnr("c02_function"), ["member_owns_scoped_timed_block(uuid, uuid)|definer=true|sp=pg_catalog, pg_temp|exec=authenticated|public=false"], "member_owns_scoped_timed_block: definer, pinned search_path, execute for authenticated only");
+console.log("PASS member_owns_scoped_timed_block: definer, pinned search_path, execute for authenticated only");

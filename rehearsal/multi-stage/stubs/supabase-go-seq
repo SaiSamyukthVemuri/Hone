@@ -31,10 +31,10 @@ if [ "${1:-}" = --agent ] && [ "${4:-}" = query ]; then
       printf '[{"applied_count":%s,"hosted_max":"%s","versions_ge_0249":%s,"rows_0257":%s,"rows_0254":%s,"versions_0249_0256":%s,"rows_0248":%s,"last4":"%s"}]\n' "$n" "$mx" \
         "$(awk '$1>="0249"' "$HIST" | grep -c .)" "$(grep -c '^0257$' "$HIST")" "$(grep -c '^0254$' "$HIST")" "$(awk '$1>="0249" && $1<="0256"' "$HIST" | grep -c .)" "$r48" "$l4" ;;
     g02-history-*|s1-history-*) hist_json "$ver" ;;
-    g12-*) at=$(cfg G12_AT); echo "[{\"at_hosted_$at\":1,\"tables_present\":true,\"helpers_ok\":true,\"replaced_ok\":true,\"new_objects_absent\":true,\"columns_ok\":true}]" ;;
-    s1-open-transactions-*) at=$(cfg G12_AT); n=0; printf '['; for x in appointment_settlements client_pinned_notes client_pricing manual_fee_charge_attempts payment_charge_attempts; do n=$((n+1)); [ $n -gt 1 ] && printf ','
+    g12-*) at=$(cfg G12_AT); echo "[{\"at_hosted_$at\":1,\"tables_present\":true,\"helpers_ok\":true,\"replaced_ok\":true,\"new_objects_absent\":true,\"columns_ok\":true,\"policies_before_equal_repo_history\":true,\"policy_cmds_before_equal_repo_history\":true,\"identity_policies_before\":true,\"realtime_present\":true,\"realtime_rls_on_no_policies\":true,\"realtime_send_grants_as_recorded\":true}]" ;;
+    s1-open-transactions-*) at=$(cfg G12_AT); n=0; printf '['; for x in $(cfg S_TABLES | tr ',' ' '); do n=$((n+1)); [ $n -gt 1 ] && printf ','
         printf '{"at_hosted_%s":1,"table_name":"%s","table_present":true,"old_xact_backends":0,"old_idle_in_xact_backends":0,"waiting_backends":0,"any_xact_backends":0,"oldest_xact_age_seconds":0,"old_xact_backends_database_wide":0}' "$at" "$x"; done; echo ']' ;;
-    w03-table-sizes-*) at=$(cfg G12_AT); n=0; printf '['; for x in appointment_settlements client_pinned_notes client_pricing manual_fee_charge_attempts payment_charge_attempts; do n=$((n+1)); [ $n -gt 1 ] && printf ','
+    w03-table-sizes-*) at=$(cfg G12_AT); n=0; printf '['; for x in $(cfg S_TABLES | tr ',' ' '); do n=$((n+1)); [ $n -gt 1 ] && printf ','
         printf '{"at_hosted_%s":1,"table_name":"%s","present":true,"total_bytes":1048576,"approx_rows":10,"statement_timeout":"2min","lock_timeout":"0"}' "$at" "$x"; done; echo ']' ;;
     *) echo "unknown query $b" >&2; exit 1 ;;
   esac

@@ -1,0 +1,16 @@
+
+const cmp = (got, want, what) => { if (JSON.stringify([...got].sort()) !== JSON.stringify([...want].sort())) fail(`${what}: got ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`); };
+const tb = (name) => rows(name).map((x) => `${x.obj}|${x.role}|${x.privs}|${isTrue(x.rls)}`);
+const fnr = (name) => rows(name).map((x) => `${x.obj}(${x.args})|definer=${isTrue(x.definer)}|sp=${x.search_path}|exec=${x.exec_roles}|public=${isTrue(x.exec_public)}`);
+const fnx = (name) => rows(name).map((x) => `${x.obj}(${x.args})|exec=${x.exec_roles}|public=${isTrue(x.exec_public)}`);
+const plx = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}`);
+const pl = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}|${x.roles}`);
+const tg = (name) => rows(name).map((x) => `${x.obj}|${x.tgname}|${x.enabled}|row=${isTrue(x.row_level)}|before=${isTrue(x.before_trg)}`);
+cmp(tb("c01_table_privileges"), ["client_legal_identities|anon||true", "client_legal_identities|authenticated|select,insert,update|true", "client_legal_identities|service_role||true"], "client_legal_identities: authenticated holds exactly select, insert, update; anon and service_role hold nothing; no DELETE; RLS on");
+console.log("PASS client_legal_identities: authenticated holds exactly select, insert, update; anon and service_role hold nothing; no DELETE; RLS on");
+cmp(pl("c02_policies"), ["client_legal_identities|client_legal_identities_insert|INSERT|PERMISSIVE|authenticated", "client_legal_identities|client_legal_identities_select|SELECT|PERMISSIVE|authenticated", "client_legal_identities|client_legal_identities_update|UPDATE|PERMISSIVE|authenticated"], "client_legal_identities has exactly the select, insert and update policies, all for authenticated (no DELETE, no ALL)");
+console.log("PASS client_legal_identities has exactly the select, insert and update policies, all for authenticated (no DELETE, no ALL)");
+cmp(fnx("c03_functions"), ["can_use_client_legal_identity(uuid)|exec=authenticated|public=false", "client_legal_identities_guard()|exec=|public=false"], "0258 functions: the predicate is executable by authenticated only, the guard by nobody, no PUBLIC grant");
+console.log("PASS 0258 functions: the predicate is executable by authenticated only, the guard by nobody, no PUBLIC grant");
+cmp(tg("c04_trigger"), ["client_legal_identities|client_legal_identities_guard|O|row=true|before=true"], "the guard trigger is present, enabled, before, row level");
+console.log("PASS the guard trigger is present, enabled, before, row level");
