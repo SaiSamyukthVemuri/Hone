@@ -126,19 +126,19 @@ describe("mini calendar: today vs selected, Today action", () => {
   const cell = (h: string, date: string) => h.match(new RegExp(`<a[^>]*data-date="${date}"[^>]*>`))?.[0] ?? "";
   it("selected and today are two states on different days", () => {
     const h = mini({ anchorDate: "2026-10-31", selectedDate: "2026-10-20" });
-    expect(cell(h, "2026-10-20")).toContain('data-selected="true"');
-    expect(cell(h, "2026-10-20")).not.toContain("data-today");
-    expect(cell(h, "2026-10-31")).toContain('data-today="true"');
-    expect(cell(h, "2026-10-31")).not.toContain("data-selected");
+    expect(cell(h, "2026-10-20")).toContain('data-mini-selected="true"');
+    expect(cell(h, "2026-10-20")).not.toContain("data-mini-today");
+    expect(cell(h, "2026-10-31")).toContain('data-mini-today="true"');
+    expect(cell(h, "2026-10-31")).not.toContain("data-mini-selected");
   });
   it("both can apply to one day", () => {
     const c = cell(mini({ anchorDate: "2026-10-31", selectedDate: "2026-10-31" }), "2026-10-31");
-    expect(c).toContain('data-today="true"');
-    expect(c).toContain('data-selected="true"');
+    expect(c).toContain('data-mini-today="true"');
+    expect(c).toContain('data-mini-selected="true"');
     expect(c).toContain("today, selected");
   });
   it("Month has no single selected date: nothing is marked selected", () => {
-    expect(mini({ view: "month", selectedDate: null })).not.toContain("data-selected");
+    expect(mini({ view: "month", selectedDate: null })).not.toContain("data-mini-selected");
   });
   it("the Today action goes to today in the current view and keeps the selection", () => {
     const today = (view: "day" | "week" | "month", selectionParam?: string) =>

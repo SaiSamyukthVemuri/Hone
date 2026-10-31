@@ -90,8 +90,8 @@ export function CalendarMiniMonth({
               href={withSelection(miniCalendarHref(view, date), selectionParam)}
               data-testid="calendar-mini-day"
               data-date={date}
-              data-today={isToday ? "true" : undefined}
-              data-selected={isAnchor ? "true" : undefined}
+              data-mini-today={isToday ? "true" : undefined}
+              data-mini-selected={isAnchor ? "true" : undefined}
               aria-label={`${date}${isToday ? ", today" : ""}${isAnchor ? ", selected" : ""}`}
               aria-current={isAnchor ? "date" : undefined}
               className={[
