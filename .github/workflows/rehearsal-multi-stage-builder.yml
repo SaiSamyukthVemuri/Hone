@@ -33,15 +33,17 @@ jobs:
           python3 --version
           python3 rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p1.json "$RUNNER_TEMP/ms-pkg"
           cat "$RUNNER_TEMP/ms-pkg/SEQUENCE.md"
+          # the v1 (P1) package describes the hosted set BEFORE 0254 was applied; the production tree now carries 0254, so the 247-file hosted view leaves it out
+          mkdir -p "$RUNNER_TEMP/hosted247" && cp supabase/migrations/*.sql "$RUNNER_TEMP/hosted247/" && rm -f "$RUNNER_TEMP"/hosted247/0254_*.sql
       - name: Sequence, negative controls and failure injection (N of N)
         shell: /bin/zsh {0}
         run: |
-          /bin/bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$PWD/supabase/migrations" full 2>&1 | tee "$RUNNER_TEMP/seq-macos.txt"; rc=${pipestatus[1]}
+          /bin/bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$RUNNER_TEMP/hosted247" full 2>&1 | tee "$RUNNER_TEMP/seq-macos.txt"; rc=${pipestatus[1]}
           exit $rc
       - name: A dropped step (0266 dropped), the whole sequence, no rebuild
         shell: /bin/zsh {0}
         run: |
-          ONLY_A=1 /bin/bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$PWD/supabase/migrations" drop-0266 2>&1 | tee "$RUNNER_TEMP/seq-macos-drop.txt"; rc=${pipestatus[1]}
+          ONLY_A=1 /bin/bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$RUNNER_TEMP/hosted247" drop-0266 2>&1 | tee "$RUNNER_TEMP/seq-macos-drop.txt"; rc=${pipestatus[1]}
           exit $rc
 
   seq-linux:
@@ -59,6 +61,8 @@ jobs:
           python3 --version
           python3 rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p1.json "$RUNNER_TEMP/ms-pkg"
           cat "$RUNNER_TEMP/ms-pkg/SEQUENCE.md"
+          # the v1 (P1) package describes the hosted set BEFORE 0254 was applied; the production tree now carries 0254, so the 247-file hosted view leaves it out
+          mkdir -p "$RUNNER_TEMP/hosted247" && cp supabase/migrations/*.sql "$RUNNER_TEMP/hosted247/" && rm -f "$RUNNER_TEMP"/hosted247/0254_*.sql
       - name: Builder checks (refusals, determinism, content-gate flags)
         run: |
           set -o pipefail
@@ -66,13 +70,13 @@ jobs:
       - name: Sequence, negative controls and failure injection (N of N)
         run: |
           set -o pipefail
-          bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$PWD/supabase/migrations" full 2>&1 | tee "$RUNNER_TEMP/seq-linux.txt"
+          bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$RUNNER_TEMP/hosted247" full 2>&1 | tee "$RUNNER_TEMP/seq-linux.txt"
       - name: Every other valid plan (a step dropped without a rebuild)
         run: |
           set -o pipefail
           for q in $(python3 -c "import json,sys;print(' '.join(k for k in json.load(open(sys.argv[1]))['sequences'] if k != 'full'))" "$RUNNER_TEMP/ms-pkg/PLAN.json"); do
             echo "=========== sequence $q"
-            ONLY_A=1 bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$PWD/supabase/migrations" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-linux-drops.txt" | tail -3
+            ONLY_A=1 bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$RUNNER_TEMP/hosted247" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-linux-drops.txt" | tail -3
           done
           ! grep -q "^FAIL" "$RUNNER_TEMP/seq-linux-drops.txt"
       - name: Package P1X (the optional 0253, 0255, 0256 added, 111 stage packages and 96 sequences), builder checks and a sample of sequences
@@ -82,7 +86,7 @@ jobs:
           GENERIC_ONLY=1 bash rehearsal/multi-stage/builder-check.sh rehearsal/multi-stage/spec/p1x.json 2>&1 | tee "$RUNNER_TEMP/builder-p1x.txt"
           for q in full drop-0253 drop-0253+0255+0256 drop-0254+0253+0255+0256 drop-0258+0272+0266 drop-0258+0272+0266+0271; do
             echo "=========== P1X sequence $q"
-            ONLY_A=1 bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkgx" "$PWD/supabase/migrations" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-p1x.txt" | tail -3
+            ONLY_A=1 bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkgx" "$RUNNER_TEMP/hosted247" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-p1x.txt" | tail -3
           done
           ! grep -q "^FAIL" "$RUNNER_TEMP/seq-p1x.txt" "$RUNNER_TEMP/builder-p1x.txt"
 

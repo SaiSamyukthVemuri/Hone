@@ -134,9 +134,12 @@ def plan(spec, include=None):
         m = re.match(r"^(\d{4})_[A-Za-z0-9_]+\.sql$", f)
         if m:
             hosted[int(m.group(1))] = f
+    ex = spec["hosted"]
+    for xv in ex.get("exclude", []):
+        # a v1 spec describes the hosted set BEFORE a migration was applied; the production tree has since gained that file, so it is left out of the set
+        hosted.pop(int(xv), None)
     if not hosted:
         die("no hosted migration files in %s" % hdir)
-    ex = spec["hosted"]
     extra_bytes = {}
     for e in ex.get("extra", []):
         # a migration that is ALREADY applied on hosted but absent from the checkout's tree (e.g. 0254 once Sam has applied it): its bytes are pinned here
@@ -144,10 +147,14 @@ def plan(spec, include=None):
         em = re.match(r"^(\d{4})_[A-Za-z0-9_]+\.sql$", en)
         if not em or not e.get("sha256") or shab(eb) != e["sha256"]:
             die("hosted extra %s: not NNNN_name.sql, or its sha256 is missing or not the sealed one (%s)" % (en, shab(eb)))
-        if int(em.group(1)) in hosted:
-            die("hosted extra %s: version %s is already in the hosted directory" % (en, em.group(1)))
-        hosted[int(em.group(1))] = en
-        extra_bytes[int(em.group(1))] = eb
+        ev = int(em.group(1))
+        if ev in hosted:
+            # once the production tree itself carries the migration (it is applied and merged), the directory file must be the SAME name and bytes: nothing is added twice
+            if hosted[ev] != en or open(os.path.join(hdir, hosted[ev]), "rb").read() != eb:
+                die("hosted extra %s: version %s is already in the hosted directory under different bytes or another name" % (en, em.group(1)))
+        else:
+            hosted[ev] = en
+            extra_bytes[ev] = eb
     if "expect_rows" in ex and len(hosted) != ex["expect_rows"]:
         die("the hosted directory holds %d files, the spec expects %d (the directory is not the hosted set)" % (len(hosted), ex["expect_rows"]))
     if "expect_max" in ex and v4(max(hosted)) != ex["expect_max"]:

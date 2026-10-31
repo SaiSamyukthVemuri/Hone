@@ -9,7 +9,10 @@
     ],
     "expect_rows": 247,
     "expect_max": "0257",
-    "dir_sha256": "2da1e7a6014a0fbdfabc60eb4f233c0b68b89ba2e7876bbbf6a94ca4168d6eb5"
+    "dir_sha256": "2da1e7a6014a0fbdfabc60eb4f233c0b68b89ba2e7876bbbf6a94ca4168d6eb5",
+    "exclude": [
+      "0254"
+    ]
   },
   "steps": [
     {
