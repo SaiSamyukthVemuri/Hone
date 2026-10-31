@@ -8,7 +8,7 @@ cfg() { sed -n "s/^$1=//p" "$CFG" 2>/dev/null | head -1; }
 CANARY_TOK=canary-token-4f1c; CANARY_PW=canary-pw-9d2e
 args="$*"
 case "$args" in *"$CANARY_PW"*|*"$CANARY_TOK"*) echo "LEAK argv" >> "$H/leak.log" ;; esac
-md5() { if command -v md5sum >/dev/null 2>&1; then md5sum | cut -d' ' -f1; else md5 -q; fi; }
+md5() { if command -v md5sum >/dev/null 2>&1; then md5sum | cut -d' ' -f1; else command md5 -q; fi; }
 sorted() { LC_ALL=C sort "$HIST"; }
 hist_json() { # hist_json VER : the generic history row
   local n mx md r

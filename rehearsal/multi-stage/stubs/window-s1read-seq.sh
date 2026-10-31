@@ -10,7 +10,7 @@ IFS= read -rs -p "Database password (not shown; only its presence is used here):
 sleep 2   # the sidecar times have one-second resolution and the real read-back runs minutes after the marker
 S=$(cfg S_STAGE); VER=$(cfg S_VER); HIST=$H/remote-history
 D=$(mktemp -d "$H/hone-s1/s1read.XXXXXX"); mkdir -p "$D/results"
-md5() { if command -v md5sum >/dev/null 2>&1; then md5sum | cut -d' ' -f1; else md5 -q; fi; }
+md5() { if command -v md5sum >/dev/null 2>&1; then md5sum | cut -d' ' -f1; else command md5 -q; fi; }
 n=$(grep -c . "$HIST"); mx=$(LC_ALL=C sort "$HIST" | tail -1); md=$(LC_ALL=C sort "$HIST" | tr '\n' ',' | sed 's/,$//' | tr -d '\n' | md5); r=$(grep -c "^$VER\$" "$HIST")
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 # rows_0257/rows_0247 are the extra columns the adopted reviewed package's history check reads (harmless to the generated ones)

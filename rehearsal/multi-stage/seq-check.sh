@@ -83,7 +83,7 @@ calls() { [ -f "$H/calls.log" ] && sed -E 's/ sql=.*//' "$H/calls.log" | tr '\n'
 marker() { [ -f "$H/hone-s1/s1-apply/APPLY-STATE" ] && awk '{print $1}' "$H/hone-s1/s1-apply/APPLY-STATE" || echo none; }
 receipt_of() { echo "$OUT" | sed -n 's/^RESULT: //p' | head -1; }
 leaks() { rm -f "$H/tty"; { [ -f "$H/leak.log" ] && cat "$H/leak.log"; grep -rIl -e "$CTOK" -e "$CPW" "$H" 2>/dev/null | grep -v -e '/stubcfg$' -e '/supabase-cli/supabase-go$' ; echo "$OUT" | grep -e "$CTOK" -e "$CPW"; } | head -3; }
-md5() { if command -v md5sum >/dev/null 2>&1; then md5sum | cut -d' ' -f1; else md5 -q; fi; }
+md5() { if command -v md5sum >/dev/null 2>&1; then md5sum | cut -d' ' -f1; else command md5 -q; fi; }
 hist_rows() { grep -c . "$H/remote-history"; }
 hist_max() { LC_ALL=C sort "$H/remote-history" | tail -1; }
 hist_md5() { LC_ALL=C sort "$H/remote-history" | tr '\n' ',' | sed 's/,$//' | tr -d '\n' | md5; }
