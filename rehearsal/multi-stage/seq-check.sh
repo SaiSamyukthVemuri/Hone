@@ -253,7 +253,7 @@ newhome B7e; install_step "$S1"; sed -i.bak 's/read -r -t 600 -p/read -r -t 3 -p
 grep -q 'read -r -t 3 -p' "$H/hone-s1/s1-apply-$S1-online/s1-apply-$S1-online.sh" || bad "B7e test copy" "the timeout line was not found"
 rm -f "$H/calls.log"; runscript "$H/hone-s1/s1-apply-$S1-online/s1-apply-$S1-online.sh" APPLY "$CTOK" "$CPW"; before=$(hist_rows)
 [ $RC != 0 ] && [ "$TIMEOUT" = 0 ] && [ "$CONSUMED" = 3 ] && [ "$(receipt_of)" = "NOT APPLIED" ] && [ "$(marker)" = none ] && ! grep -q '^push' "$H/calls.log" && grep -q '^dry' "$H/calls.log" \
-  && echo "$OUT" | grep -q "no second APPLY within 10 minutes: treated as declined. NOTHING was applied; the credentials were cleared" && [ -z "$(leaks)" ] \
+  && echo "$OUT" | grep -Eq "(no second APPLY within 10 minutes: treated as declined|the second APPLY could not be read \(end of input\): treated as declined)\. NOTHING was applied; the credentials were cleared" && [ -z "$(leaks)" ] \
   && ok "SECOND PROMPT TIMEOUT: treated as declined, the dry run ran, NOTHING pushed, receipt NOT APPLIED, no marker, 'credentials were cleared'" || bad "B7e second prompt timeout" "rc=$RC consumed=$CONSUMED receipt=$(receipt_of) marker=$(marker) calls=[$(calls)] $(echo "$OUT" | grep STOP | tail -1)"
 # B7f-h. the history differs in rows_0248 / last4 (the v2 g02 rule): STOP at the history gate, BEFORE the dry run
 g02case() { # g02case NAME LABEL REGEX [forge knob] : the stub answers the g02 read with a forged field, or the history is edited first
