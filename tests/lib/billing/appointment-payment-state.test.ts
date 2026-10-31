@@ -142,11 +142,11 @@ describe("checkout cell + dashboard/calendar wiring (one shared flow)", () => {
     expect(CELL).toMatch(/appointment-payment-/);
   });
   it("dashboard uses the ONE bounded batch loader + the shared cell", () => {
-    expect(DASH).toMatch(/getAppointmentPaymentStates\(studio\.id, apptIds, studio\.timezone\)/);
+    expect(DASH).toMatch(/getAppointmentPaymentStates\(studio\.id, apptIds, studio\.timezone, isOwner\)/);
     expect(DASH).toMatch(/<AppointmentCheckoutCell/);
   });
   it("calendar reuses the SAME loader + cell (not a second flow)", () => {
-    expect(CAL).toMatch(/getAppointmentPaymentStates\(studio\.id, \[id\], studio\.timezone\)/);
+    expect(CAL).toMatch(/getAppointmentPaymentStates\(studio\.id, \[id\], studio\.timezone, isOwner\)/);
     expect(CAL).toMatch(/<AppointmentCheckoutCell/);
   });
 });
@@ -265,7 +265,7 @@ function scenario(attempts: ReadonlyArray<Attempt>, deploymentLivemode = true) {
 }
 
 async function state(): Promise<string | undefined> {
-  const states = await getAppointmentPaymentStates(STUDIO, [APPT], TZ);
+  const states = await getAppointmentPaymentStates(STUDIO, [APPT], TZ, true);
   return states.get(APPT);
 }
 

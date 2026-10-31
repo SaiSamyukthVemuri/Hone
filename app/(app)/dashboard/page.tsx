@@ -469,7 +469,7 @@ export default async function DashboardPage({
   // read is not issued), and the row below renders no checkout control for them.
   const paymentStatesPromise = settleLater(
     isOwner
-      ? getAppointmentPaymentStates(studio.id, apptIds, studio.timezone)
+      ? getAppointmentPaymentStates(studio.id, apptIds, studio.timezone, isOwner)
       : Promise.resolve(new Map<string, AppointmentPaymentState>()),
   );
   const beforeTodayPreviewsPromise = settleLater(
