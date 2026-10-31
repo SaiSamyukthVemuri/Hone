@@ -59,6 +59,8 @@ export function buildTeamDay(args: {
   recurringBreaks: ReadonlyArray<RecurringBreakOccurrenceWithRule>;
   defaults: ReadonlyArray<ScopedDefault>;
   overrides: ReadonlyArray<ScopedOverride>;
+  // Capacity OFF: hours come from studio-wide rows only, as in the slot engine.
+  capacityEnabled: boolean;
 }): TeamDay {
   const { date, dayOfWeek, tz } = args;
   const onDate = (iso: string) => localDateString(new Date(iso), tz) === date;
@@ -81,7 +83,7 @@ export function buildTeamDay(args: {
   ): TeamDayColumn => {
     const palette = resolvePractitionerColor(color);
     const window = active && id != null
-      ? resolvePractitionerDayAvailability({ date, dayOfWeek, defaults: args.defaults, overrides: args.overrides, practitionerId: id })
+      ? resolvePractitionerDayAvailability({ date, dayOfWeek, defaults: args.defaults, overrides: args.overrides, practitionerId: id, capacityEnabled: args.capacityEnabled })
       : { availability: null, closedDay: false };
     return {
       practitionerId: id,

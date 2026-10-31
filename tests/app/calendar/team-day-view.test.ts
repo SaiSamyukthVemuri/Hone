@@ -127,6 +127,8 @@ describe("team day page path", () => {
     // The real capacity flag reaches the column and the block scope names, never a hard-coded true.
     expect(day).toContain("practitionerCapacityEnabled={capacityEnabled}");
     expect(day).toContain("blockScopeNamesFor(capacityEnabled, activePractitioners)");
+    // Hours follow the same flag: capacity OFF reads studio-wide rows only, as the slot engine does.
+    expect(day).toMatch(/buildTeamDay\(\{[\s\S]*?capacityEnabled,\s*\}\);/);
   });
 
   it("reads through the week view's own studio-scoped loaders, nothing new", () => {

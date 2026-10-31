@@ -692,6 +692,7 @@ async function renderTeamDayView(opts: {
     recurringBreaks: recurringOccurrences,
     defaults: availabilityDefaults,
     overrides: availabilityOverrides,
+    capacityEnabled,
   });
 
   const blockout = blockouts.find((b) => b.starts_on <= date && date <= b.ends_on) ?? null;
