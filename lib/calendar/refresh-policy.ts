@@ -21,7 +21,17 @@ export const AUTO_REFRESH_INTERVAL_MS = 60_000;
 /** Coming back to the tab asks sooner, but never more than this often. */
 export const FOCUS_REFRESH_MIN_GAP_MS = 15_000;
 
-export type AutoRefreshTrigger = "interval" | "focus";
+/**
+ * A change signal (lib/calendar/schedule-signal.ts) asks for a refresh almost at
+ * once, but never more than this often: a burst of signals, a catch-up after a
+ * reconnect and the echo of this screen's own write all fold into one refresh per
+ * gap, so a signal can never cause a refresh storm (at most 4 per second per
+ * screen). 250 ms, down from 1 s: measured, most of the commit-to-visible median
+ * was this gap, not the signal (which arrives in milliseconds).
+ */
+export const SIGNAL_REFRESH_MIN_GAP_MS = 250;
+
+export type AutoRefreshTrigger = "interval" | "focus" | "signal";
 
 export type AutoRefreshInputs = {
   trigger: AutoRefreshTrigger;
@@ -42,5 +52,11 @@ export function shouldAutoRefresh(i: AutoRefreshInputs): boolean {
   if (!i.visible || !i.online || i.dialogOpen || i.editing) return false;
   const gap = i.nowMs - i.lastRefreshMs;
   if (!Number.isFinite(gap) || gap < 0) return false;
-  return gap >= (i.trigger === "interval" ? AUTO_REFRESH_INTERVAL_MS : FOCUS_REFRESH_MIN_GAP_MS);
+  const minGap =
+    i.trigger === "interval"
+      ? AUTO_REFRESH_INTERVAL_MS
+      : i.trigger === "focus"
+        ? FOCUS_REFRESH_MIN_GAP_MS
+        : SIGNAL_REFRESH_MIN_GAP_MS;
+  return gap >= minGap;
 }

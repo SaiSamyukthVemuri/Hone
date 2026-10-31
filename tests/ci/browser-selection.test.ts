@@ -233,7 +233,10 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // the /calendar paths already select. RECORDED AS A DECISION per the note above. Cost: ZERO executed cases in this lane: both files
     // self-skip unless CAL_LAYOUT_E2E=1 (the matrix is ~11 min of serial browser time, run locally at a PR's exact head), so a targeted
     // lane lists them and executes nothing.
-        expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(46);
+    // Now 50: the four HON-48 realtime signal proofs (hon48-signal-{access,latency,public,reconnect}.spec.ts) joined `calendar`. RECORDED AS A
+    // DECISION per the note above. Cost: ZERO executed cases in this lane: each file self-skips unless HON48_SIGNAL_E2E=1 (they need a
+    // Realtime stack the CI browser lanes do not start), so a targeted lane lists them and executes nothing.
+        expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(50);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

@@ -40,7 +40,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
-    exclude: ["node_modules/**", ".next/**", "tests/db/**"],
+    exclude: ["node_modules/**", ".next/**", "tests/db/**", "tests/realtime/**"],
     pool: "forks",
     reporters: "default",
   },
