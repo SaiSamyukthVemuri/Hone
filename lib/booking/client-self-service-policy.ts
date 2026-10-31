@@ -119,7 +119,7 @@ export function clientManageDisabledMessage(studioName?: string | null): string 
  * and what still works, instead of leaving a button that only refuses.
  */
 export const PORTAL_OFF_STAFF_MESSAGE =
-  "Client portal access is off for your studio. Clients cannot sign in, and no portal links are sent. Reminders and appointment emails are unaffected.";
+  "Client portal access is off for your studio. Clients cannot sign in to the portal, and a portal link they already have stops working. Reminders and appointment emails keep sending.";
 
 export function clientPortalDisabledMessage(studioName?: string | null): string {
   return `Online client access isn't available for ${contact(studioName)}. Please contact the studio directly about your appointments, forms or care instructions.`;

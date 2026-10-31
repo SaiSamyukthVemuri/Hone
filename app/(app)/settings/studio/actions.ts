@@ -159,8 +159,9 @@ export async function setStudioEmailSettingsAction(
 // ---------------------------------------------------------------------------
 // setClientSelfServiceAction (HON-47)
 // ---------------------------------------------------------------------------
-// Owner-only. Writes exactly the two 0234 flags on the CALLER'S studio and
-// nothing else: the studio id comes from the signed-in owner's session, never
+// Owner-only. Writes the two 0234 flags, and the 0252 portal flag only when the
+// submission names it and the studio row carries the column, on the CALLER'S
+// studio and nothing else: the studio id comes from the signed-in owner's session, never
 // from the form. Both values must be the literal "true" or "false"; anything
 // else is refused rather than coerced, so a crafted POST cannot flip a flag by
 // omission. The RLS policy "studios: owners update" is the second wall.
@@ -183,12 +184,23 @@ export async function setClientSelfServiceAction(
     return { ok: false, error: "Could not save settings. Please try again." };
   }
 
+  // 0252. The portal column is written ONLY when the signed-in owner's studio row
+  // already carries it (a boolean). Before 0252 is applied the key is absent, so a
+  // submission that names it is refused whole and nothing is written: the two older
+  // flags must never fail because a third column does not exist yet.
+  const portalColumnPresent =
+    typeof (studio as { client_portal_enabled?: unknown }).client_portal_enabled === "boolean";
+  if (parsed.portal !== undefined && !portalColumnPresent) {
+    return { ok: false, error: "The client portal switch is not available yet." };
+  }
+
   const supabase = await createClient();
   const { error } = await supabase
     .from("studios")
     .update({
       client_cancellation_enabled: parsed.cancellation,
       client_reschedule_enabled: parsed.reschedule,
+      ...(parsed.portal !== undefined ? { client_portal_enabled: parsed.portal } : {}),
     })
     .eq("id", studio.id);
   if (error) {

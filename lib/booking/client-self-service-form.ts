@@ -5,7 +5,13 @@
 // value returns null and nothing is written: an omitted key must never read as
 // "turn it off" (or on).
 
-export type ClientSelfServiceForm = { cancellation: boolean; reschedule: boolean };
+export type ClientSelfServiceForm = {
+  cancellation: boolean;
+  reschedule: boolean;
+  // 0252. Present only when the submission carried the portal key. ABSENT means
+  // "leave the portal setting alone", never "turn it off".
+  portal?: boolean;
+};
 
 function strictBool(value: FormDataEntryValue | null): boolean | null {
   if (value === "true") return true;
@@ -17,5 +23,9 @@ export function parseClientSelfServiceForm(formData: FormData): ClientSelfServic
   const cancellation = strictBool(formData.get("client_cancellation_enabled"));
   const reschedule = strictBool(formData.get("client_reschedule_enabled"));
   if (cancellation === null || reschedule === null) return null;
-  return { cancellation, reschedule };
+  if (!formData.has("client_portal_enabled")) return { cancellation, reschedule };
+  // A key that is present must be exactly "true" or "false": a crafted value is refused.
+  const portal = strictBool(formData.get("client_portal_enabled"));
+  if (portal === null) return null;
+  return { cancellation, reschedule, portal };
 }
