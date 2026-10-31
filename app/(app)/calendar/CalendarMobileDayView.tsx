@@ -15,7 +15,7 @@ import { DragActionChooser, type DragRangeDraft } from "./DragActionChooser";
 import { TimedBlockEditDrawer } from "./TimedBlockEditDrawer";
 import { reconcileEditingBlock } from "@/lib/calendar/reconcile-editing-block";
 import { MobileDayTimeline } from "./MobileDayTimeline";
-import type { BlockScopeNames } from "@/lib/calendar/block-scope";
+import { quickBlockScopeFor, type BlockScopeNames } from "@/lib/calendar/block-scope";
 import type { DayAvailability } from "./DayColumn";
 
 // Per-day slice of the week's data the calendar page already loaded. Passed as
@@ -333,6 +333,7 @@ export function CalendarMobileDayView({
         draft={blockDraft}
         studioTimezone={tz}
         onClose={() => setBlockDraft(null)}
+        scope={quickBlockScopeFor({ names: blockScopeNames, isOwner, currentPractitionerId, currentPractitionerName })}
       />
       <TimedBlockEditDrawer
         block={editingBlock}
