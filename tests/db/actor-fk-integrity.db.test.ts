@@ -398,6 +398,7 @@ describe("0179 — catalog shape", () => {
       expect([
         "calendar_connections",
         "google_oauth_states",
+        "practitioner_calendar_preferences",
         "service_practitioners",
         "studio_availability_default",
         "studio_availability_overrides",
