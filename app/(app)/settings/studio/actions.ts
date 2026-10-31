@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { BirthdayReminderColor } from "@/lib/types/database";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { parseClientSelfServiceForm } from "@/lib/booking/client-self-service-form";
 
 function nullableString(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") return null;
@@ -55,7 +56,7 @@ export async function updateStudioAction(formData: FormData): Promise<void> {
     .eq("id", studio.id);
 
   if (error) {
-    throw new Error(`Failed to update studio: ${error.message}`);
+    throw new Error(`Failed to update studio: ${dbErrorCode(error)}`);
   }
 
   // Time-format preference (migration 0109) is written SEPARATELY and
@@ -75,7 +76,7 @@ export async function updateStudioAction(formData: FormData): Promise<void> {
     tfError.code !== "PGRST204" &&
     tfError.code !== "42703"
   ) {
-    throw new Error(`Failed to update time format: ${tfError.message}`);
+    throw new Error(`Failed to update time format: ${dbErrorCode(tfError)}`);
   }
 
   revalidatePath("/dashboard");
@@ -156,6 +157,69 @@ export async function setStudioEmailSettingsAction(
 }
 
 // ---------------------------------------------------------------------------
+// setClientSelfServiceAction (HON-47)
+// ---------------------------------------------------------------------------
+// Owner-only. Writes the two 0234 flags, and the 0252 portal flag only when the
+// submission names it and the studio row carries the column, on the CALLER'S
+// studio and nothing else: the studio id comes from the signed-in owner's session, never
+// from the form. Both values must be the literal "true" or "false"; anything
+// else is refused rather than coerced, so a crafted POST cannot flip a flag by
+// omission. The RLS policy "studios: owners update" is the second wall.
+//
+// Reminders, postcare and every other studio setting are untouched: this action
+// never reads or writes them, and they never read these flags.
+
+export async function setClientSelfServiceAction(
+  formData: FormData,
+): Promise<EmailSettingsResult> {
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (practitioner.role !== "owner") {
+    return {
+      ok: false,
+      error: "Only studio owners can change client self-service settings.",
+    };
+  }
+  const parsed = parseClientSelfServiceForm(formData);
+  if (!parsed) {
+    return { ok: false, error: "Could not save settings. Please try again." };
+  }
+
+  // 0252. The portal column is written ONLY when the signed-in owner's studio row
+  // already carries it (a boolean). Before 0252 is applied the key is absent, so a
+  // submission that names it is refused whole and nothing is written: the two older
+  // flags must never fail because a third column does not exist yet.
+  const portalColumnPresent =
+    typeof (studio as { client_portal_enabled?: unknown }).client_portal_enabled === "boolean";
+  if (parsed.portal !== undefined && !portalColumnPresent) {
+    return { ok: false, error: "The client portal switch is not available yet." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("studios")
+    .update({
+      client_cancellation_enabled: parsed.cancellation,
+      client_reschedule_enabled: parsed.reschedule,
+      ...(parsed.portal !== undefined ? { client_portal_enabled: parsed.portal } : {}),
+    })
+    .eq("id", studio.id);
+  if (error) {
+    console.error(
+      JSON.stringify({
+        event: "studio_client_self_service_update_failed",
+        code: dbErrorCode(error),
+        studioId: studio.id,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: "Could not save settings. Please try again." };
+  }
+
+  revalidatePath("/settings/studio");
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
 // updateStudioPostcareAction
 // ---------------------------------------------------------------------------
 // Saves per-studio postcare email content. Owner-only. All four fields
@@ -223,7 +287,7 @@ export async function updateStudioPostcareAction(
     })
     .eq("id", studio.id);
   if (error) {
-    throw new Error(`Failed to update postcare settings: ${error.message}`);
+    throw new Error(`Failed to update postcare settings: ${dbErrorCode(error)}`);
   }
 
   // Migration 0110: postcare delivery mode (manual | auto_on_complete). Written
@@ -245,7 +309,7 @@ export async function updateStudioPostcareAction(
     modeError.code !== "PGRST204" &&
     modeError.code !== "42703"
   ) {
-    throw new Error(`Failed to update postcare delivery mode: ${modeError.message}`);
+    throw new Error(`Failed to update postcare delivery mode: ${dbErrorCode(modeError)}`);
   }
 
   revalidatePath("/settings/studio");
@@ -294,7 +358,7 @@ export async function updateStudioPolicyAction(
     .maybeSingle();
   if (readErr || !current) {
     throw new Error(
-      `Could not load studio for policy update: ${readErr?.message ?? "not found"}`,
+      `Could not load studio for policy update: ${readErr ? dbErrorCode(readErr) : "not_found"}`,
     );
   }
 
@@ -317,7 +381,7 @@ export async function updateStudioPolicyAction(
     .update(updates)
     .eq("id", studio.id);
   if (error) {
-    throw new Error(`Failed to update studio policy: ${error.message}`);
+    throw new Error(`Failed to update studio policy: ${dbErrorCode(error)}`);
   }
 
   revalidatePath("/settings/intake");

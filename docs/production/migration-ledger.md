@@ -15,7 +15,95 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
 
-## Current state (source-composed 2026-10-22; hosted declaration `0212` unchanged; finite repo prefix through `0246`)
+## Current state (verified 2026-10-30T11:35:59Z-11:36:01Z, post-0257 online apply; `0257` APPLIED out of order, `0247` and `0249`-`0256` NOT applied, repo == hosted)
+
+> **CURRENT RELATIONSHIP: repo == hosted at `0257`, with `0247` and `0249`-`0256` declared unhosted.** The single sealed migration `0257_studio_payment_jurisdiction_failed_attempt_ack.sql` (sha256 `170b5ddaf851c4e6d2900162ccdf47d048b2cf49a4ed7f4c6e0f79217b5ad20f`, bytes unchanged) was APPLIED to production by ONE push, by Sam under explicit per-change authorization (`SAM-AUTHORIZATION-0257-STAGE-A-20261030T113007Z.txt sha256 208d1a17383a7515fc3ba3a18a9ff0bd90db37a9c0a7c4240f0a2d5b80eac39a`). It is an **out-of-order** apply: `0247` and `0249`-`0256` are held and **absent from hosted history**; that is declared in `docs/production/migration-state.json` as `hosted_out_of_order` (`0248` below `0247`; `0257` below `0247`, `0249`-`0256`). **Do not reapply `0257`, and do not apply a held number as part of this record.** THE APPLY DOES NOT ITSELF INITIALIZE THE STUDIO'S PAYMENT JURISDICTION: it only installs the v2 command and two audit columns. Initializing that studio's jurisdiction is the SEPARATE operator run (rollback dry run, then apply), separately approved by Sam, and is not recorded here.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0257**, declared in `docs/production/migration-state.json`. Read back 2026-10-30T11:35:59Z-11:36:01Z: APPLIED+VERIFIED as relayed by Sam from the runner's result block: 247 history rows, max 0257, and the function, body, constraint and permission checks passed. **No server apply timestamp was captured**, so `hosted_applied_at` stays null; see the client-side marker below. |
+| **Repo migration max** | **0257** (`0257_studio_payment_jurisdiction_failed_attempt_ack.sql`), derived from the source files on this tree. |
+| **Remote-only migrations** | **None.** Production has nothing the repository lacks. |
+| **Pending migrations** | **None** above the hosted head. `0247` and `0249`-`0256` are declared unhosted gaps below it, not a pending suffix. |
+| **Next free number** | Next free number is **0258** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file; availability in a finite source tree is not allocation authority. |
+| **Project ref** | Canonical Hone production project. |
+
+### The 0257 apply (facts as recorded by OPS, 2026-10-30T11:35:59Z-11:36:01Z)
+
+- **What it is.** 0257 (PR #1267) is ADDITIVE ONLY: two columns (failed_attempts_acknowledged, failed_attempts_evidence) and one CHECK on studio_payment_jurisdiction_changes, and the new function initialize_studio_payment_jurisdiction_from_history_v2 with EXECUTE revoked from public, anon, authenticated and service_role by name, then granted to service_role only. ZERO migration-level DML (the only inserts are inside the function body); 0214's command, its two helpers and every grant on them are untouched; no data was written and no studio's jurisdiction row exists as a result.
+- **Stripe evidence, stated exactly.** The 0257 command exists for ONE reason: a failed live-mode Stripe account provisioning attempt that named no account blocks 0214. The basis recorded for acknowledging it is the owner's view-only census of the live connected accounts by studio metadata, stated exactly: "No additional matching Stripe account is currently visible; the historical outcome of the 5 July request remains uncertain." This record does not state that no account was created.
+- **Not the jurisdiction.** THE APPLY DOES NOT ITSELF INITIALIZE THE STUDIO'S PAYMENT JURISDICTION: it only installs the v2 command and two audit columns. Initializing that studio's jurisdiction is the SEPARATE operator run (rollback dry run, then apply), separately approved by Sam, and is not recorded here.
+- **Order.** 0257 was applied OUT OF ORDER on the 0248 precedent (F-OOO-1): the stage was the production prefix plus 0257 ONLY, by plain `db push` with no `--include-all`, and its dry run listed exactly 0257 (the runner's exact-list gate requires the dry-run list to equal [0257] before it pushes, and the push ran; the listing text itself was not relayed). 0247 and 0249-0256 are NOT applied and absent from the repository (held), so hosted_out_of_order declares [{version 0248, unhosted_below [0247]}, {version 0257, unhosted_below [0247, 0249, 0250, 0251, 0252, 0253, 0254, 0255, 0256]}]. Consequence: held 0249-0256 will later apply BELOW the hosted head, exactly as 0247 does, each in its own out-of-order stage.
+- **Tool and authorization.** Sam ran the 0257 stage from the operator Mac under `SAM-AUTHORIZATION-0257-STAGE-A-20261030T113007Z.txt sha256 208d1a17383a7515fc3ba3a18a9ff0bd90db37a9c0a7c4240f0a2d5b80eac39a`; pre-push pinned reads, a dry run that listed exactly `0257`, then ONE push. No settings write.
+- **Client push marker (operator Mac clock; NOT a server time; never copy into `hosted_applied_at`).** not included in the receipt Sam relayed (the push is bounded only by the authorization record at 2026-10-30T11:30:07Z and the read-back start at 11:35:59Z).
+- **Read-back.** 2026-10-30T11:35:59Z-11:36:01Z: APPLIED+VERIFIED as relayed by Sam from the runner's result block: 247 history rows, max 0257, and the function, body, constraint and permission checks passed.
+- **Reconcile.** RECONCILED ALL (reported complete by Sam; the exact time was not in the relayed receipt; after 2026-10-30T11:36:01Z).
+- **Not captured.** Any server-side apply instant, statement-level timing, and any independent confirmation of the client clock. Migration history is not table-content evidence.
+
+## Previous state (verified 2026-10-29, post-0248 online apply; `0248` APPLIED out of order, `0247` NOT applied, repo == hosted)
+
+> **CURRENT RELATIONSHIP: repo == hosted at `0248`, with `0247` declared unhosted.** The single sealed migration `0248_intake_protected_write_enforcement.sql` (sha256 `1f6f9ad0026cee66b970e9dc630f1497aa10966df2adb9433d8f8c85bbc44cc3`, bytes unchanged) was APPLIED to production by ONE push on 2026-10-29, by Sam under explicit per-change online authorization (`01-ops/sam-0248-online-authorization.txt`, sha256 prefix `40aad6a5`). It is an **out-of-order** apply: `0247` is allocated to Willow, separately held, and **absent from hosted history**; that is declared in `docs/production/migration-state.json` as `hosted_out_of_order: [{version 0248, unhosted_below [0247]}]`. **Do not reapply `0248`, and do not apply `0247` as part of this record.**
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0248**, declared in `docs/production/migration-state.json`. Read back 2026-10-29T01:21:48Z–01:22:11Z (`window-s1read-0248.sh`): 246 history rows, max `0248`, `0248` present exactly once, `0247` absent. **No server apply timestamp was captured**, so `hosted_applied_at` stays null; see the client-side marker below. |
+| **Repo migration max** | **0248** (`0248_intake_protected_write_enforcement.sql`), derived from the source files on this tree. |
+| **Remote-only migrations** | **None.** The repository and production agree. |
+| **Pending migrations** | **None** above the hosted head. `0247` is a declared unhosted gap below it, not a pending suffix. |
+| **Next free number** | Next free number is **0249** by this tree's derived filenames, **not claimed** or reallocated here. Willow `0247` is already allocated and separately held; availability in a finite source tree is not allocation authority. |
+| **Project ref** | Canonical Hone production project. |
+
+### The 0248 apply (facts as recorded by OPS, 2026-10-29)
+
+- **Tool.** Sam ran `s1-apply-0248-online.sh` (sha256 prefix `3f2fac3f`) from the operator Mac: the reviewed online delta of `s1-apply-0248.sh` (`a31e048b`). Pre-push pinned reads (history, intake definers, open transactions and `statement_timeout`), a dry run that listed exactly `0248`, then ONE push. **No settings write** (no `ALTER ROLE`).
+- **Rollout.** Under the online authorization there was no row-4/PITR prerequisite, no cron pause, no staff hold and no fixed window. The sealed SQL, the target, the migration-history checks and bounded execution were kept.
+- **Client push marker (operator Mac clock; NOT a server time; never copy into `hosted_applied_at`).** Push marker 2026-10-29T01:21:47Z.
+- **Read-back.** `s1read` 2026-10-29T01:21:48Z–01:22:11Z: OVERALL PASS. History 246 rows, max `0248`, `0248` exactly once, `0247` absent. The expected functions exist, and the `advance_intake_revision` body md5 `48669dd8dba82d0d15984631ea8af739` equals the verify bundle.
+- **Reconcile.** RECONCILED ALL at 2026-10-29T01:23:24Z (`s1-reconcile-0248-online.sh`).
+- **Not captured.** Any server-side apply instant, statement-level timing, and any independent confirmation of the client clock. Migration history is not table-content evidence.
+
+## Previous state (verified 2026-10-27, post-S1 apply; `0213`–`0246` APPLIED, repo == hosted)
+
+> **CURRENT RELATIONSHIP: repo == hosted at `0246`.** The 34 migrations `0213`–`0246` were APPLIED to production by ONE push on 2026-10-27 (migration-first), by Sam under explicit per-change authorization, inside the window 2026-10-27T01:11:00Z–04:30:00Z. Migration history went from 211 rows (max `0212`) to **245 rows (max `0246`)**, read back at 2026-10-27T02:37:56Z–02:38:28Z (`window-s1read.sh` `dc930b6a0c74ab5a50998b6667ff3839085687e404d416e28828be9d3ca7136a`): OVERALL PASS — 34 new versions, nothing above `0246`, the object census, the privilege closures (`0239`/`0242`/`0245`) and the function-body hashes. Migration history is not table-content evidence. **Do not reapply any of `0213`–`0246`.** `0247` and above are not applied and remain separately held.
+>
+> **This record carries exceptions, and none of them is a PASS** (listed in full below). In particular the row-4 recovery bracket was **WAIVED, NOT PASSED**, by Sam, the base backup identity is **UNVERIFIED**, and the row-4 point was **not restore-tested** (the S0b new-project restore of 2026-10-26 is a separate, limited validation; see exception 2).
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0246**, declared in `docs/production/migration-state.json`. Read back 2026-10-27T02:37:56Z–02:38:28Z: 245 history rows, 34 new versions `0213`–`0246`, nothing above. **No server apply timestamp was captured**, so `hosted_applied_at` stays null (the history table has no timestamp column); see the operator-observed outer bracket below. |
+| **Repo migration max** | **0246** (`0246_intake_questionnaire_snapshot.sql`), derived from 245 source files on the production tip. |
+| **Remote-only migrations** | **None.** The repository and production agree. |
+| **Pending migrations** | **None.** Nothing authored is unapplied through `0246`. |
+| **Next free number** | Next free number is **0247** by this tree's derived filenames, **not claimed** or reallocated here. Willow `0247` is already allocated and separately held; availability in a finite source tree is not allocation authority. |
+| **Project ref** | Canonical Hone production project. |
+
+### The apply (facts as recorded by OPS, 2026-10-26/27)
+
+- **Source.** Bundle `migrations-d189768b.tar` sha256 `599adf08712f6c702f5921ee54f7a83c653ee9faba60604d501aba7af841527b` (a `git archive` of `d189768b86fe1c53e330c65078f3a9f2949f8e59 supabase/migrations`: 245 files, `0001`–`0246`); file list sha256 `513035041c76717b5f8df1e2133cf2951c1b03c58d0cde5ce1e5dcdf5492c069`. The 34 pending files are `0213`–`0246`; `0214` = `a8bdcefe7b01216e986838fe336a9eb3613b6e892bd8de2c101cdd4e2f03751b` (P-2). The per-file checksums are in the previous state block below.
+- **Tool.** Sam ran `s1-apply-waiver.sh` (sha256 `090c37173730af78be8223d1cc77535767b5c8cd6f24f17fe0fe59e55aa8ced3`), a variant of the reviewed `s1-apply.sh` `2dfd335461d09561d4b427cbf1918b8a5165709da3184ff7642a149344009004`; the variant differs in the row-4 gate only (Insurance PEER-S1-WAIVER: APPROVE). The dry run listed exactly the 34 versions in order; then ONE push.
+- **Before.** S0a (`window.Iztxog`, verified 2026-10-27T01:22:01Z): OVERALL PASS (provider range; base backup UNVERIFIED; restore not tested); all S0-1 to S0-14 PASS; history 211 rows, max `0212`.
+- **Merge.** M `7e56d2d9c8396840ebb56a80421e595679c83821` merged at 2026-10-27T01:29:42Z as a merge commit; parents `7610fd70620f196448cbb646965e3f66384080ea` and `d189768b86fe1c53e330c65078f3a9f2949f8e59`; tree `b1013bb8dff75d6e2307da914a978bc0d7dfd3de` = the tree of `d189768b`. B-1035 `dpl_DFJxuNJKpXGUtRGeXPek5LYK3SvN` was built from M; the production env gates passed.
+- **Client push window (operator Mac clock; NOT a server time; never copy into `hosted_applied_at`).** From the run record `s1apply.YD1hwA/run.txt` (uploaded by Sam; `01-ops/preflight-results/mac-20261027/`): run started 2026-10-27T02:24:02Z; dry run 02:24:32Z exit 0, exactly the 34 versions in order; watchdog armed-and-watching confirmation recorded 02:37:41Z; **push started 02:37:52Z and finished 02:37:55Z, exit 0** (34 `Applying migration` lines, finish line present); dry-run log sha256 `2468260697bf054e0eade798f26a4d8556f398c4ba6a0d71accee96045fe9526`, push log sha256 `13a8059bb225f2205764004a8e0e01813ce1c7886c4da04f904c9a5dfeb1f526`; the S1 read-back (`s1read.WlJgm1`) ran 02:37:56Z–02:38:28Z, OVERALL PASS. **No server apply instant was captured** (the history table has no timestamp column), so `hosted_applied_at` stays null.
+- **Promote.** B-1035 was promoted WITHOUT a rebuild at about 02:43Z (Vercel `request_promote` by OPS under Sam's delegation). `hone.care` and `www` pointed at B-1035 on reads at 02:43:48Z and 02:45:17Z. `post-s3-smoke.sh` (`0c69ce828a982234d97751284514bdd9d7d3af026871e572bfd799bfe614571c`) passed 39/39 at 02:44:27Z and 03:16:27Z. Observation 02:43Z–03:16Z: 0 runtime errors and 0 error/warning logs, with near-zero traffic (clean but LOW evidence).
+
+### Post-release (2026-10-27)
+
+- **Reminders.** The cron-job.org appointment-reminders job was re-enabled by Sam on 2026-10-27. Its first run, at 11:45:40Z on B-1035, returned **500 `reminder_scan_incomplete`** with reason `coverage_unconfirmed` (0 candidates, 0 attempted). That is by design: the pause left an unvisited range. **Reminders that came due during the pause were not sent and are not replayed.** The next run, at 12:00:21Z, returned **200** (cron-job.org; served by B-1035, the alias unchanged since 02:43Z). A `reminder_scheduler_stale` critical alert fired at 08:00:24Z, expected from the pause.
+- **Post-cutover payment-gap read.** `obs-1035-gap-pending-payments-v2` (`5aa510c082e0484202d90503c5266a3c534250b90952e9b0a3a9d051e51e0086`) run through `window-gap-read.sh` (`f553e803`) at 2026-10-27T11:57:05Z: 19 rows, `at_hosted_0246` = 1 on every row, **all counts 0**. Result sha256 `dc1e21fef357eb33817ab31454d91a53e2f726b6f9965871f379082b61fedd74`. Counts only, over a fixed 24-hour lookback; it does not read rows older than that.
+
+### Exceptions (each is stated plainly; none is a PASS)
+
+1. **Row-4 recovery bracket: WAIVED, NOT PASSED**, by Sam at 2026-10-27T02:08:02Z (for this release only). The accepted provider recovery point is **2026-10-27T01:18:33Z** (PITR enabled; earliest 2026-10-20T07:37:25Z; span 6 d 17 h 41 m; read 02:18:53Z). The latest recovery point did not advance past the selection time; that the database was idle is Sam's attestation (studios offline, reminders paused), not independently measured, and it is not an established cause of the stalled recovery timestamp (T_SEL 01:38:56Z).
+2. **Named restore point (Q18) and restore evidence.** The Q18 POST at 2026-10-27T01:40:50Z (as printed by restore-point.sh; the name encodes 01:40:41Z, when it was generated) returned HTTP 400 "This endpoint is unavailable at the moment". The name `hs1-20261027014041` has **OUTCOME UNKNOWN** and is never a restore target. For THIS release the row-4 point (2026-10-27T01:18:33Z) was **NOT restore-tested**, and the base backup identity is UNVERIFIED. Separately, **S0b (2026-10-26)**: a PITR restore of production to a NEW project at T 2026-10-26T20:01:40Z was validated: **S0B PASS** after the empty-table comparator correction (the first evaluation by comparator `9d9439e9` FAILED on that checker defect; re-evaluated by `fe2ca275`, Insurance PEER-S0B-EMPTY-TABLE APPROVE; record `01-ops/S0B-RESULT-20261026.md`). **Limits of S0b:** not an in-place restore of production; base backup identity UNVERIFIED; photo files not covered; `appointment_payments` was empty, so no payment rows were compared; the restore downtime of production was not measured.
+3. **Watchdog:** the armed-and-watching confirmation was recorded at 02:37:41Z and the push lasted about 3 s (02:37:52Z–02:37:55Z, operator Mac clock), but the watchdog was **never pinned** to the push session. It gave no second-line protection; the server `statement_timeout` of 2 minutes was the only timeout.
+4. **B6 two-read alias check** was not repeated before S1.
+5. **S0-10 span minimum** was 6 days (candidate 5, Sam's decision); the S0a span was 6 d 17 h 21 m.
+6. **Window guards #1124/#1153 were dropped.** The people hold was Sam's attestation (studios offline). The cron-job.org appointment-reminders job was paused from 01:11:35Z for the window.
+7. **B-OLD** (the previous deployment) served the `0246` database from about 02:37Z to 02:43Z, until the promote.
+8. **Post-merge CI** run 40432892536 on M: one clock-bound test failure (`tests/app/invitation/recipient-actions.test.ts`, a fixture that resolves Mondays against the real clock). A time-bomb test, not a product defect; fixed forward later. No post-merge rerun.
+9. **S2 jurisdiction writes are deferred.**
+
+## Previous state (source-composed 2026-10-22; hosted declaration `0212` unchanged; finite repo prefix through `0246`)
 
 > **CURRENT RELATIONSHIP: repo > hosted.** This non-production candidate contains the contiguous pending `0213`–`0246` source prefix. These are published owner sources copied byte-identically, not new SQL authorship or an apply. Hosted history stays declared through `0212`; no hosted/shared/customer schema or data was changed. Migration history is not table-existence evidence. The previous 0212 reconciliation and historical apply records below remain preserved; **do not reapply 0212**.
 >

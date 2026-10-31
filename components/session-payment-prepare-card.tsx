@@ -209,7 +209,9 @@ export function SessionPaymentPrepareCard({
   isOwner = false,
   appointmentId = null,
   settledMethod = null,
+  settledId = null,
   settledAmountCents = null,
+  settledQuotedCents = null,
   settlementQuotedAmountCents = null,
   canRecordSettlement = true,
   onSettlementRecorded,
@@ -232,7 +234,10 @@ export function SessionPaymentPrepareCard({
   appointmentId?: string | null;
   // The live attested disposition, when one exists. Server-resolved.
   settledMethod?: SettlementMethod | null;
+  // The live record's id; lets the owner correct exactly that record.
+  settledId?: string | null;
   settledAmountCents?: number | null;
+  settledQuotedCents?: number | null;
   // The appointment-resolved price, available with or without a session.
   settlementQuotedAmountCents?: number | null;
   // The UI's copy of the database's own rule: only a COMPLETED appointment can
@@ -543,7 +548,9 @@ export function SessionPaymentPrepareCard({
           appointmentId={appointmentId}
           isOwner={isOwner}
           settledMethod={settledMethod}
+          settledId={settledId}
           settledAmountCents={settledAmountCents}
+          settledQuotedCents={settledQuotedCents}
           defaultAmountCents={
             presentation.prepareFormAmount?.amountCents ??
             settlementQuotedAmountCents

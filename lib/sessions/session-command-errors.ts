@@ -1,5 +1,7 @@
 import "server-only";
 
+import { dbErrorCode } from "@/lib/logging/error-class";
+
 // Safe error mapping for the L18 Phase 3 session commands (migration 0167).
 //
 // Same posture as lib/sessions/block-command-errors.ts: a PostgREST RPC failure
@@ -120,16 +122,18 @@ const KNOWN: ReadonlyArray<{ raised: string; safe: string }> = [
 /**
  * Map an RPC failure to a safe message.
  *
- * `logUnknown` receives only the raw message for server-side logging; it is
- * never returned to the caller.
+ * `logUnknown` receives a CLOSED code (the SQLSTATE or PostgREST code, or
+ * "unknown") for server-side logging, never the message: a Postgres message
+ * for a type or enum failure quotes the value it rejected, and the console is a
+ * third party. It is never returned to the caller.
  */
 export function mapSessionCommandError(
   error: RpcError | null | undefined,
-  logUnknown: (raw: string) => void = defaultLog,
+  logUnknown: (code: string) => void = defaultLog,
 ): string {
   const raw = (error?.message ?? "").trim();
   if (!raw) {
-    logUnknown("(empty RPC error)");
+    logUnknown("empty_rpc_error");
     return GENERIC_SESSION_COMMAND_ERROR;
   }
 
@@ -139,11 +143,10 @@ export function mapSessionCommandError(
 
   // Anything else: a constraint violation, a type error, a Postgres internal,
   // is logged and generalised. Never surfaced.
-  logUnknown(raw);
+  logUnknown(dbErrorCode(error));
   return GENERIC_SESSION_COMMAND_ERROR;
 }
 
-function defaultLog(raw: string): void {
-  // Message only: no client name, no clinical value, no ids.
-  console.error("[session-command] unmapped RPC failure:", raw);
+function defaultLog(code: string): void {
+  console.error("[session-command] unmapped RPC failure:", code);
 }

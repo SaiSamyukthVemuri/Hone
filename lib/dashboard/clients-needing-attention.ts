@@ -1,4 +1,6 @@
 import { TODO_DISCLOSURE_LIMIT } from "@/lib/dashboard/todo-model";
+import { clientDisplayName } from "@/lib/clients/identity";
+import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { createClient } from "@/lib/supabase/server";
 import {
   NOTABLE_CODED_REACTION_TYPES,
@@ -282,15 +284,18 @@ export async function getClientsNeedingAttention(
   studioId: string,
 ): Promise<ClientsNeedingAttention> {
   const supabase = await createClient();
-  const { data: sessionRows, error: sessionsError } = await supabase
-    .from("sessions")
-    .select(
-      "id, client_id, started_at, next_session_note, client:clients(id, name, archived_at)",
-    )
-    .eq("studio_id", studioId)
-    .is("deleted_at", null)
-    .order("started_at", { ascending: false })
-    .limit(SCAN_CAP);
+  // HON-58: staff see the display name; the read still works before 0258 exists.
+  const { data: sessionRows, error: sessionsError } = await readWithPreferredName((withPreferred) =>
+    supabase
+      .from("sessions")
+      .select(
+        `id, client_id, started_at, next_session_note, client:clients(id, name, ${preferredNameColumn(withPreferred)}archived_at)`,
+      )
+      .eq("studio_id", studioId)
+      .is("deleted_at", null)
+      .order("started_at", { ascending: false })
+      .limit(SCAN_CAP),
+  );
   // DAT-002 (the #981 pattern): a failed read refuses through the route error
   // boundary with a fixed message. Returning the empty list would claim there
   // is nothing to follow up.
@@ -301,18 +306,18 @@ export async function getClientsNeedingAttention(
     started_at: string;
     next_session_note: string | null;
     client:
-      | { id: string; name: string; archived_at: string | null }
-      | { id: string; name: string; archived_at: string | null }[]
+      | { id: string; name: string; preferred_name?: string | null; archived_at: string | null }
+      | { id: string; name: string; preferred_name?: string | null; archived_at: string | null }[]
       | null;
   };
-  const sessions: AttentionSessionInput[] = ((sessionRows ?? []) as Raw[])
+  const sessions: AttentionSessionInput[] = ((sessionRows ?? []) as unknown as Raw[])
     .map((r) => {
       const c = Array.isArray(r.client) ? (r.client[0] ?? null) : r.client;
       return c && !c.archived_at
         ? {
             id: r.id,
             client_id: r.client_id,
-            client_name: c.name,
+            client_name: clientDisplayName(c),
             started_at: r.started_at,
             next_session_note: r.next_session_note,
           }

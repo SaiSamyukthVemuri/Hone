@@ -6,6 +6,8 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { isServiceColorKey } from "@/lib/calendar/service-colors";
 import { isMissingColumnError } from "@/lib/db/missing-column";
 import { isServiceMove, type ServiceMove } from "@/lib/booking/service-order";
+import { dbErrorCode } from "@/lib/logging/error-class";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 
 function trimmed(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
@@ -87,15 +89,17 @@ async function nextStudioSortOrder(studioId: string): Promise<number> {
     .limit(1)
     .maybeSingle();
   if (error) {
-    throw new Error(`Failed to place the new service in the menu: ${error.message}`);
+    throw new Error(`Failed to place the new service in the menu: ${dbErrorCode(error)}`);
   }
   return (data?.sort_order ?? 0) + 10;
 }
 
+const OWNER_ONLY_MESSAGE = "Only studio owners can manage services.";
+
 async function assertOwner(): Promise<{ studioId: string }> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    throw new Error("Only studio owners can manage services.");
+    throw new Error(OWNER_ONLY_MESSAGE);
   }
   return { studioId: studio.id };
 }
@@ -133,7 +137,7 @@ export async function createServiceAction(formData: FormData): Promise<void> {
   if (error && isMissingColumnError(error, "calendar_color")) {
     ({ error } = await supabase.from("services").insert(base));
   }
-  if (error) throw new Error(`Failed to add service: ${error.message}`);
+  if (error) throw new Error(`Failed to add service: ${dbErrorCode(error)}`);
   revalidatePath("/settings/services");
 }
 
@@ -178,7 +182,7 @@ export async function updateServiceAction(formData: FormData): Promise<void> {
       .eq("id", id)
       .eq("studio_id", studioId));
   }
-  if (error) throw new Error(`Failed to update service: ${error.message}`);
+  if (error) throw new Error(`Failed to update service: ${dbErrorCode(error)}`);
   revalidatePath("/settings/services");
 }
 
@@ -230,8 +234,8 @@ export async function moveServiceAction(input: {
     return {
       ok: false,
       error:
-        err instanceof Error && /owner/i.test(err.message)
-          ? err.message
+        err instanceof Error && err.message === OWNER_ONLY_MESSAGE
+          ? OWNER_ONLY_MESSAGE
           : "Your session has expired. Reload the page and try again.",
     };
   }
@@ -260,7 +264,7 @@ export async function moveServiceAction(input: {
           "The service order changed while you were tapping. The list has been refreshed: try again.",
       };
     }
-    return { ok: false, error: `Failed to reorder: ${error.message}` };
+    return { ok: false, error: userFacingDbFailure("reorder the services", error, "service_reorder_failed") };
   }
 
   revalidatePath("/settings/services");
@@ -288,14 +292,14 @@ export async function toggleServiceActiveAction(
       p_studio_id: studioId,
       p_service_id: id,
     });
-    if (error) throw new Error(`Failed to update service: ${error.message}`);
+    if (error) throw new Error(`Failed to update service: ${dbErrorCode(error)}`);
   } else {
     const { error } = await supabase
       .from("services")
       .update({ active, updated_at: new Date().toISOString() })
       .eq("id", id)
       .eq("studio_id", studioId);
-    if (error) throw new Error(`Failed to update service: ${error.message}`);
+    if (error) throw new Error(`Failed to update service: ${dbErrorCode(error)}`);
   }
   revalidatePath("/settings/services");
   revalidatePath("/calendar");

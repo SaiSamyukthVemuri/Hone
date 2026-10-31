@@ -2,10 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import {
-  getCurrentPortalSession,
-  requirePortalSessionForAction,
-} from "@/lib/portal/session";
+import { getCurrentPortalSession } from "@/lib/portal/session";
 import { sendEmailSafely } from "@/lib/email/send-appointment";
 import { postcareContactEmail } from "@/lib/email/send-appointment";
 import { buildPortalReplyNotificationEmail } from "@/lib/email/templates/portal-reply-notification";
@@ -134,11 +131,10 @@ export async function createPortalMessageReplyAction(
     };
   }
 
-  // HON-47: refuses with the portal-disabled explanation when the studio has
-  // turned client portal access off.
-  const access = await requirePortalSessionForAction("Your portal session has expired.");
-  if (!access.ok) return { ok: false, error: access.error };
-  const session = access.session;
+  const session = await getCurrentPortalSession();
+  if (!session) {
+    return { ok: false, error: "Your portal session has expired." };
+  }
 
   const admin = createAdminClient();
 

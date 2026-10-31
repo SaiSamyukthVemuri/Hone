@@ -169,9 +169,10 @@ describe("3 — buildTreatmentIntelligence", () => {
 describe("4 — CHART 'From last visit' note read", () => {
   // The charting page reads this note straight from SQL; there is no pure
   // seam, so the query chain itself is pinned.
-  const CHART = read("app/(app)/clients/[id]/sessions/[sessionId]/page.tsx");
+  // HON-10: the chain moved from the page into the loader the page calls.
+  const CHART = read("lib/sessions/previous-visit-note.ts");
   const chain = (src: string) =>
-    /const \{ data: previousWithNote \}[\s\S]*?\.maybeSingle\(\)/.exec(src)?.[0] ?? "";
+    /\.from\("sessions"\)[\s\S]*?\.limit\(/.exec(src)?.[0] ?? "";
 
   it("the previous-note query excludes void sessions", () => {
     expect(chain(CHART)).toMatch(/\.neq\("record_status", "void"\)/);
@@ -273,7 +274,7 @@ async function preview(status: Status) {
       session_block_areas: [],
     }) as unknown as Awaited<ReturnType<typeof createClient>>,
   );
-  const p = (await getBeforeTodayPreviews(STUDIO, [CLIENT])).get(CLIENT);
+  const p = (await getBeforeTodayPreviews(STUDIO, [CLIENT], [])).get(CLIENT);
   return JSON.stringify(p ?? null);
 }
 

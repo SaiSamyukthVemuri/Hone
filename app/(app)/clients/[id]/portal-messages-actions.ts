@@ -3,10 +3,6 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import {
-  clientSelfServicePolicyFromStudio,
-  STAFF_PORTAL_MESSAGE_DISABLED_MESSAGE,
-} from "@/lib/booking/client-self-service-policy";
 import { limitPractitionerClientEmail } from "@/lib/rate-limit/public";
 import { sendEmailSafely } from "@/lib/email/send-appointment";
 import {
@@ -87,12 +83,6 @@ export async function createPortalMessageAction(
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot send messages." };
-  }
-  // HON-47. A portal message is read in the portal and announced by an email
-  // that links to it. With client portal access off neither works, so nothing
-  // is saved or sent.
-  if (!clientSelfServicePolicyFromStudio(studio).portal) {
-    return { ok: false, error: STAFF_PORTAL_MESSAGE_DISABLED_MESSAGE };
   }
   const messageRl = await limitPractitionerClientEmail({
     action: "portal_message",

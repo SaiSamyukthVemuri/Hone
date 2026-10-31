@@ -100,15 +100,6 @@ vi.mock("@/lib/supabase/admin-server", () => ({
 }));
 vi.mock("@/lib/portal/session", () => ({
   getCurrentPortalSession: async () => session.value,
-  // HON-47. Portal actions resolve the session through this wrapper, which
-  // answers portal_disabled for a studio with client portal access off. These
-  // tests exercise an ENABLED studio, so it delegates to the session above.
-  requirePortalSessionForAction: async (expired: string) => {
-    const s = await (async () => session.value)();
-    return s
-      ? { ok: true as const, session: s }
-      : { ok: false as const, code: "session_expired" as const, error: expired };
-  },
 }));
 vi.mock("@/lib/portal/tokens", () => ({ hashFingerprint: () => null }));
 vi.mock("@/lib/payment-methods/refresh-card-authorization-pointer", () => ({

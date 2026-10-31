@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Appointment, Studio } from "@/lib/types/database";
+import type { ClientSelfServiceStudioFlags } from "@/lib/booking/client-self-service-policy";
 
 // ===========================================================================
 // HON-47 — the REAL client email variants carry only the self-service links the
@@ -42,9 +43,7 @@ const {
   sendPostcareToClient,
 } = await import("@/lib/email/send-appointment");
 
-type Flags = Partial<
-  Pick<Studio, "client_cancellation_enabled" | "client_reschedule_enabled" | "client_portal_enabled">
->;
+type Flags = ClientSelfServiceStudioFlags;
 
 function studio(flags: Flags = {}): Studio {
   return {

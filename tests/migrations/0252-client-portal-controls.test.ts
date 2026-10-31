@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
@@ -33,9 +33,14 @@ describe(`${VERSION} is allocated correctly in the migration sequence`, () => {
     expect(countVersion(VERSION)).toBe(1);
   });
 
-  it("is the repository maximum, and nothing sits above it", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum: newer migrations sit above it", () => {
+    // Only the CURRENT maximum migration's own test may assert isRepoMax (CLAUDE.md
+    // section 2). 0252 is numbered below migrations that already exist, so the
+    // tripwire is derived, not pinned.
+    expect(isRepoMax(VERSION)).toBe(false);
+    const above = versionsAbove(VERSION);
+    expect(above.length, "nothing sits above 0252").toBeGreaterThan(0);
+    expect(above.every((v) => Number(v) > Number(VERSION))).toBe(true);
   });
 });
 
@@ -120,5 +125,38 @@ describe(`${VERSION}'s guard is the only routine, and no API role can call it`, 
       expect(CODE).toContain(`revoke all on function public.client_portal_access_guard() from ${role};`);
     }
     expect(CODE).not.toMatch(/\bgrant\b/i);
+  });
+});
+
+describe(`${VERSION} applies on the hosted shape`, () => {
+  // Hosted applied 0248 out of order with 0247 and the 0249+ drafts absent, and 0252 may be
+  // applied before or after any of them. So everything it touches must come from migrations
+  // that are not part of that governed range.
+  const DIR = path.join(process.cwd(), "supabase/migrations");
+  const FILES = readdirSync(DIR).filter((f) => /^\d{4}_.*\.sql$/.test(f)).sort();
+  const creator = (table: string): string | undefined =>
+    FILES.find((f) =>
+      new RegExp(`create table (if not exists )?public\\.${table}\\b`, "i").test(readFileSync(path.join(DIR, f), "utf8")),
+    );
+
+  it.each(["studios", "client_portal_magic_links", "client_portal_sessions"])(
+    "%s is created below the governed 0247+ range, so 0252 needs none of it",
+    (table) => {
+      const f = creator(table);
+      expect(f, `${table} is created by no migration`).toBeDefined();
+      expect(Number((f as string).slice(0, 4))).toBeLessThan(247);
+    },
+  );
+
+  it("names no object created by a migration at or above 0247", () => {
+    const newer = FILES.filter((f) => Number(f.slice(0, 4)) >= 247 && !f.startsWith(VERSION));
+    const created = new Set<string>();
+    for (const f of newer) {
+      for (const m of readFileSync(path.join(DIR, f), "utf8").matchAll(/create (?:or replace )?(?:table|function)(?: if not exists)? public\.(\w+)/gi)) created.add(m[1]);
+    }
+    const mine = new Set([...CODE_NO_STRINGS.matchAll(/public\.(\w+)/g)].map((m) => m[1]));
+    mine.delete("client_portal_access_guard"); // this file's own function
+    const clash = [...mine].filter((n) => created.has(n));
+    expect(clash).toEqual([]);
   });
 });

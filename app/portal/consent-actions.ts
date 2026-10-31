@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { requirePortalSessionForAction } from "@/lib/portal/session";
+import { getCurrentPortalSession } from "@/lib/portal/session";
 import { hashFingerprint } from "@/lib/portal/tokens";
 import { recordConsentSignature } from "@/lib/consent/sign-consent-form";
 import { refreshActiveCardAuthorizationPointersForSignature } from "@/lib/payment-methods/refresh-card-authorization-pointer";
@@ -106,11 +106,10 @@ export async function signConsentFormAction(
     .toString()
     .trim();
 
-  // HON-47: refuses with the portal-disabled explanation when the studio has
-  // turned client portal access off.
-  const access = await requirePortalSessionForAction("Your portal session has expired.");
-  if (!access.ok) return { ok: false, error: access.error };
-  const session = access.session;
+  const session = await getCurrentPortalSession();
+  if (!session) {
+    return { ok: false, error: "Your portal session has expired." };
+  }
 
   const hdrs = await headers();
 

@@ -52,7 +52,7 @@ import {
   type ClientRescheduleDisabledCode,
 } from "@/lib/booking/client-self-service-policy";
 import { loadClientSelfServicePolicy } from "@/lib/booking/client-self-service-policy-store";
-import { dbErrorCode } from "@/lib/logging/error-class";
+import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 
 const POLICY_ACK_REQUIRED_ERROR =
   "Please review and acknowledge the appointment policies before rescheduling.";
@@ -984,7 +984,7 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
         return { ok: false, error: PRACTITIONER_UNAVAILABLE_ERROR };
       default:
         logInternal("public_reschedule_command_unmapped_code", {
-          code: row.result,
+          code: failureCode(null, row.result),
           studioId: asserted.original.studio_id,
         });
         return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };

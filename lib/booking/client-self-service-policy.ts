@@ -39,6 +39,18 @@ export type ClientSelfServicePolicy = {
 export const DEFAULT_CLIENT_SELF_SERVICE_POLICY: ClientSelfServicePolicy =
   Object.freeze({ cancellation: true, reschedule: true, portal: true });
 
+/**
+ * A studio row as the self-service readers see it. client_portal_enabled is the
+ * HELD 0252 column: it is deliberately NOT on the generated Studio type (that
+ * type must match the hosted schema), so it rides here as an optional key that
+ * is absent until 0252 applies, and absent means TRUE.
+ */
+export type ClientSelfServiceStudioFlags = {
+  client_cancellation_enabled?: boolean;
+  client_reschedule_enabled?: boolean;
+  client_portal_enabled?: boolean;
+};
+
 export type ClientSelfServicePolicyColumns = {
   client_cancellation_enabled?: unknown;
   client_reschedule_enabled?: unknown;
@@ -100,6 +112,14 @@ export function clientRescheduleDisabledMessage(
 export function clientManageDisabledMessage(studioName?: string | null): string {
   return `Appointments are managed directly by ${contact(studioName)}. Your appointment is unchanged. Please contact the studio for any changes.`;
 }
+
+/**
+ * What the OWNER and staff see where the portal would be offered (client page,
+ * Today roster, settings) when client portal access is off. Says what changed
+ * and what still works, instead of leaving a button that only refuses.
+ */
+export const PORTAL_OFF_STAFF_MESSAGE =
+  "Client portal access is off for your studio. Clients cannot sign in to the portal, and a portal link they already have stops working. Reminders and appointment emails keep sending.";
 
 export function clientPortalDisabledMessage(studioName?: string | null): string {
   return `Online client access isn't available for ${contact(studioName)}. Please contact the studio directly about your appointments, forms or care instructions.`;
