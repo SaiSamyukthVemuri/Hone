@@ -133,7 +133,9 @@ describe("C4: privileges by name on the hosted shape", () => {
     ["set_receptionist_legal_name_access(uuid, boolean)", ["authenticated"]],
     ["client_legal_name_access_audit_immutable()", []],
     ["receptionist_client_contacts_v2(uuid, text, integer)", ["authenticated"]],
-    ["receptionist_calendar(uuid, timestamptz, timestamptz)", ["authenticated"]],
+    ["receptionist_calendar(uuid, timestamptz, timestamptz)", []], // closed by 0274 (Privacy R1)
+    ["receptionist_calendar_v2(uuid, timestamptz, timestamptz)", ["authenticated"]],
+    ["receptionist_client_directory(uuid, text, text[], text, integer, integer)", ["authenticated"]],
     ["receptionist_client_contacts(uuid, text, integer)", []],
   ];
   it.each(FUNCTIONS)("%s: EXECUTE is held by exactly %j", async (sig, allowed) => {

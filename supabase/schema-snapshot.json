@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 250,
-    "last": "0272_hon58_legal_identity_hardening.sql",
-    "sha256": "f6096f998f45d0892f8dbc851d6b4b4271f8e88e4e54563722c3635cae477c49"
+    "count": 251,
+    "last": "0274_receptionist_desk_projection.sql",
+    "sha256": "5bca8f8d8f37b10e1091a38439a94d2f17850ac41c40f7fcc3319147a1b93b3f"
   },
   "public": {
     "tables": [
@@ -379,9 +379,11 @@
       "receptionist_booking_options",
       "receptionist_calendar",
       "receptionist_calendar_closures",
+      "receptionist_calendar_v2",
       "receptionist_cancel_appointment",
       "receptionist_client_contacts",
       "receptionist_client_contacts_v2",
+      "receptionist_client_directory",
       "receptionist_create_appointment",
       "receptionist_move_appointment",
       "reconcile_bound_payment_event",

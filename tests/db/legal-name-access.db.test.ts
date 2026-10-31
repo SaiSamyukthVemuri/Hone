@@ -248,7 +248,7 @@ describe("closing the older receptionist paths to clients.name", () => {
   });
 
   it("the desk calendar shows the preferred name, and the stored name only where there is none", async () => {
-    const cal = () => asUser(aDesk, (q) => q("select client_id, client_display_name from public.receptionist_calendar($1,'2031-03-01T00:00:00Z','2031-03-10T00:00:00Z')", [a.studioId]));
+    const cal = () => asUser(aDesk, (q) => q("select client_id, display_name as client_display_name from public.receptionist_calendar_v2($1,'2031-03-01T00:00:00Z','2031-03-10T00:00:00Z')", [a.studioId]));
     let rows = (await cal()).rows;
     expect(rows.map((r) => r.client_display_name)).toEqual(["Maggie"]);
     expect(JSON.stringify(rows)).not.toContain("Margaret");
@@ -269,7 +269,7 @@ describe("closing the older receptionist paths to clients.name", () => {
 
   it("tenant isolation: the other studio's desk is refused on the finder and the calendar, and sees none of A's names", async () => {
     await expect(asUser(bDesk, (q) => q("select * from public.receptionist_client_contacts_v2($1,'Maggie')", [a.studioId]))).rejects.toMatchObject({ code: "42501" });
-    await expect(asUser(bDesk, (q) => q("select * from public.receptionist_calendar($1,'2031-03-01T00:00:00Z','2031-03-10T00:00:00Z')", [a.studioId]))).rejects.toMatchObject({ code: "42501" });
+    await expect(asUser(bDesk, (q) => q("select * from public.receptionist_calendar_v2($1,'2031-03-01T00:00:00Z','2031-03-10T00:00:00Z')", [a.studioId]))).rejects.toMatchObject({ code: "42501" });
     const own = await asUser(bDesk, (q) => q("select display_name from public.receptionist_client_contacts_v2($1,'Stored')", [b.studioId]));
     expect(own.rowCount).toBe(0);
   });
@@ -277,7 +277,7 @@ describe("closing the older receptionist paths to clients.name", () => {
   it("revocation: a deactivated receptionist is refused by the finder and the calendar on the next call", async () => {
     await adminQuery("update public.studio_receptionists set active = false, deactivated_at = now() where id = $1", [aDeskRowId]);
     await expect(asUser(aDesk, (q) => q("select * from public.receptionist_client_contacts_v2($1,'Maggie')", [a.studioId]))).rejects.toMatchObject({ code: "42501" });
-    await expect(asUser(aDesk, (q) => q("select * from public.receptionist_calendar($1,'2031-03-01T00:00:00Z','2031-03-10T00:00:00Z')", [a.studioId]))).rejects.toMatchObject({ code: "42501" });
+    await expect(asUser(aDesk, (q) => q("select * from public.receptionist_calendar_v2($1,'2031-03-01T00:00:00Z','2031-03-10T00:00:00Z')", [a.studioId]))).rejects.toMatchObject({ code: "42501" });
     await adminQuery("update public.studio_receptionists set active = true, deactivated_at = null where id = $1", [aDeskRowId]);
   });
 
