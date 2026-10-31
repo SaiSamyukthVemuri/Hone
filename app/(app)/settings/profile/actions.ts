@@ -73,6 +73,7 @@ export async function updatePractitionerColorAction(
   }
 
   revalidatePath("/settings/profile");
+  revalidatePath("/settings/calendar");
   revalidatePath("/calendar");
 }
 
@@ -134,6 +135,7 @@ export async function rotateCalendarFeedTokenAction(): Promise<CalendarFeedResul
     };
   }
   revalidatePath("/settings/profile");
+  revalidatePath("/settings/calendar");
   return { ok: true, token };
 }
 
@@ -156,5 +158,6 @@ export async function clearCalendarFeedTokenAction(): Promise<CalendarFeedResult
     };
   }
   revalidatePath("/settings/profile");
+  revalidatePath("/settings/calendar");
   return { ok: true, token: "" };
 }

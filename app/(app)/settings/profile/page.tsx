@@ -1,10 +1,15 @@
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { ProfileForm } from "./ProfileForm";
-import { ColorPicker } from "./ColorPicker";
-import { CalendarFeedCard } from "./CalendarFeedCard";
+import Link from "next/link";
+import { HashRedirect } from "@/components/settings/hash-redirect";
 import { GoogleCalendarCard } from "./GoogleCalendarCard";
 import { getOwnConnectionReadiness } from "@/lib/google-calendar/connection";
-import { getRequiredAppOrigin } from "@/lib/app-origin";
+
+// Old bookmarks and links to the sections that moved to Calendar keep working.
+const MOVED_SECTIONS = {
+  "calendar-color": "/settings/calendar#calendar-color",
+  "calendar-feed": "/settings/calendar#calendar-feed",
+} as const;
 
 export default async function ProfileSettingsPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
@@ -18,6 +23,7 @@ export default async function ProfileSettingsPage() {
 
   return (
     <section className="flex flex-col gap-8">
+      <HashRedirect moved={MOVED_SECTIONS} />
       <div>
         <h2 className="text-xl font-medium">Profile</h2>
         <p className="mt-1 text-sm text-neutral-500">
@@ -28,11 +34,13 @@ export default async function ProfileSettingsPage() {
         initialDisplayName={practitioner.display_name ?? ""}
         email={practitioner.email}
       />
-      <ColorPicker initialColor={practitioner.color} />
-      <CalendarFeedCard
-        appOrigin={getRequiredAppOrigin()}
-        initialActive={!!practitioner.calendar_feed_token_hash}
-      />
+      <p className="text-sm text-neutral-500">
+        Your calendar colour and calendar feed now live under{" "}
+        <Link href="/settings/calendar" className="underline">
+          Calendar
+        </Link>
+        .
+      </p>
       {googleEnabled && (
         <GoogleCalendarCard
           connection={google.metadata}

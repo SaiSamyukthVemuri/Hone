@@ -1,18 +1,20 @@
 import type { SettingsNavEntry } from "@/lib/settings/nav";
 
-// Calendar rail entry. First release: only the studio-wide Display preferences
-// exist here, and they are OWNER-ONLY, so the entry is owner-only too. Willow
-// (WS-C) owns this file from here on: adding Calendar colour and Calendar feed
-// for every practitioner is a `roles` change plus two `sections` entries, with
-// `display-preferences` kept owner-only through `sectionRoles`.
+// Calendar rail entry. Every practitioner sees Calendar colour and Calendar feed;
+// Display preferences are studio-wide and OWNER-ONLY, kept so through `sectionRoles`.
 export const calendarNav: ReadonlyArray<SettingsNavEntry> = [
   {
     id: "calendar",
     group: "personal",
     label: "Calendar",
     href: "/settings/calendar",
-    roles: ["owner"],
-    sections: [{ id: "display-preferences", label: "Display preferences" }],
+    roles: ["owner", "practitioner"],
+    sections: [
+      { id: "display-preferences", label: "Display preferences" },
+      { id: "calendar-color", label: "Calendar colour" },
+      { id: "calendar-feed", label: "Calendar feed" },
+    ],
+    sectionRoles: { "display-preferences": ["owner"] },
     order: 20,
   },
 ];

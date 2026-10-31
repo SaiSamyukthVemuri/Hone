@@ -4,9 +4,9 @@ import { useState, useTransition } from "react";
 import {
   rotateCalendarFeedTokenAction,
   clearCalendarFeedTokenAction,
-} from "./actions";
+} from "../../profile/actions";
 
-// Calendar feed card on Settings → Profile.
+// Calendar feed card on Settings → Calendar.
 //
 // Migration 0116: the raw feed token is HASH-ONLY at rest, so the card never
 // receives the raw token from the DB. It gets `initialActive` (whether a feed

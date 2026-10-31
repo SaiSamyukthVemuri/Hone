@@ -78,7 +78,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
       "Read-only display of the signed-in account address; there is nothing to configure, and the Profile page entry already covers reaching it.",
   },
   {
-    page: "/settings/profile",
+    page: "/settings/calendar",
     label: "Calendar color",
     helper: "Your appointments will appear in this color on the calendar",
     role: "practitioner",
@@ -86,7 +86,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     entryId: "settings-calendar-color",
   },
   {
-    page: "/settings/profile",
+    page: "/settings/calendar",
     label: "Calendar feed",
     helper: "Subscribe to this private calendar URL",
     role: "practitioner",
@@ -662,8 +662,8 @@ export const STRUCTURAL_LABEL_SOURCES: ReadonlyArray<{
     minLabels: 2,
   },
   {
-    file: "app/(app)/settings/profile/ColorPicker.tsx",
-    page: "/settings/profile",
+    file: "app/(app)/settings/calendar/color/ColorPicker.tsx",
+    page: "/settings/calendar",
     minLabels: 1,
   },
 ];
