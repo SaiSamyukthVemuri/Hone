@@ -38,3 +38,36 @@ export function blockScopeNamesFor(
   for (const p of activePractitioners) names[p.id] = p.display_name?.trim() || "Practitioner";
   return names;
 }
+
+// HON-48 F1 (held for Sam's rule). Who a NEW calendar quick block applies to.
+//   undefined         capacity OFF: one studio timeline, the block is
+//                     studio-wide (practitioner_id NULL), no control.
+//   { kind: "self" }  a non-owner practitioner: the block closes only their
+//                     own time. The server derives the practitioner; nothing
+//                     is sent from the browser.
+//   { kind: "choose" } the owner picks "All practitioners" or one person.
+export type QuickBlockScope =
+  | { kind: "self"; name: string }
+  | { kind: "choose"; options: ReadonlyArray<{ id: string; name: string }>; defaultValue: string };
+
+// The form value for "All practitioners". Any other non-empty value is a
+// practitioner id, validated by the database (FK + scope guard).
+export const ALL_PRACTITIONERS_SCOPE_VALUE = "all";
+
+export function quickBlockScopeFor(args: {
+  names: BlockScopeNames | undefined;
+  isOwner: boolean;
+  currentPractitionerId: string;
+  currentPractitionerName: string;
+}): QuickBlockScope | undefined {
+  if (!args.names) return undefined;
+  if (!args.isOwner) {
+    return { kind: "self", name: args.names[args.currentPractitionerId] ?? args.currentPractitionerName };
+  }
+  return {
+    kind: "choose",
+    options: Object.entries(args.names).map(([id, name]) => ({ id, name })),
+    // No preselection: the owner states the scope every time.
+    defaultValue: "",
+  };
+}
