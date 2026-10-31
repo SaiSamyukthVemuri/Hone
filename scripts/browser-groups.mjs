@@ -245,6 +245,11 @@ export const BROWSER_GROUPS = {
       // HON-48 team day layout matrix (opt-in: self-skips unless CAL_LAYOUT_E2E=1, so a targeted lane lists them but runs nothing).
       "calendar-day-layout.spec.ts",
       "calendar-day-layout-single.spec.ts",
+      // HON-48 realtime schedule signal proofs (opt-in: self-skip unless HON48_SIGNAL_E2E=1, they need a Realtime stack CI does not start).
+      "hon48-signal-access.spec.ts",
+      "hon48-signal-latency.spec.ts",
+      "hon48-signal-public.spec.ts",
+      "hon48-signal-reconnect.spec.ts",
       // HON-48 team day view: five synthetic practitioners in one-column-per-
       // practitioner layout, Los Angeles date boundaries, same-practitioner
       // conflict refusal, member create scope and the phone scroll box.

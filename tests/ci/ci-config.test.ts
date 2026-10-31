@@ -458,8 +458,8 @@ describe("PR CI — path-aware lane selection", () => {
     // Eight gated lanes declare `needs: changes` + an `if:` on classifier output
     // (the seventh is canonical-record, the docs-only production-record lane,
     // #825 6215529089; the eighth is storage-photos, not required, E-GAPS; the ninth is the non-required webkit-hon-62 lane).
-    expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(9);
-    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(9);
+    expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(10);
+    expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(10);
   });
 
   it("the required browser check is a STABLE aggregator, not a dynamic shard name", () => {
@@ -1150,7 +1150,7 @@ describe("CI-REGISTRY: every Supabase-starting job pre-pulls its images BY DIGES
 
   const real = [...prepulls(CI), ...prepulls(NIGHTLY)];
 
-  it.each([["ci.yml", () => CI, 7], ["nightly.yml", () => NIGHTLY, 1]])("%s: one pre-pull per setup-cli, directly after the login, with the same exclusions as the start that follows it", (_n, body, count) => {
+  it.each([["ci.yml", () => CI, 8], ["nightly.yml", () => NIGHTLY, 1]])("%s: one pre-pull per setup-cli, directly after the login, with the same exclusions as the start that follows it", (_n, body, count) => {
     const all = stepsOf(body());
     const pre = prepulls(body());
     expect(pre.length).toBe(count);
@@ -1168,7 +1168,7 @@ describe("CI-REGISTRY: every Supabase-starting job pre-pulls its images BY DIGES
   });
 
   it("every real pre-pull satisfies the supply-chain contract", () => {
-    expect(real.length).toBe(8);
+    expect(real.length).toBe(9);
     for (const s of real) expect(violations(s)).toEqual([]);
   });
 
@@ -1413,7 +1413,7 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     expect(agg.name).toBe("browser e2e (local stack)");
     expect(agg.needs).toEqual(["changes", "browser-e2e-shard", "canonical-record"]);
     expect(Object.keys(jobs).sort()).toEqual(
-      ["browser-e2e", "browser-e2e-shard", "canonical-record", "changes", "db-integration", "google-browser-e2e", "mobile-completion-e2e", "payment-browser-e2e", "storage-photos", "validate", "webkit-hon-62"].sort(),
+      ["browser-e2e", "browser-e2e-shard", "canonical-record", "changes", "db-integration", "google-browser-e2e", "mobile-completion-e2e", "payment-browser-e2e", "schedule-signal-realtime", "storage-photos", "validate", "webkit-hon-62"].sort(),
     );
     for (const [name, def] of Object.entries(jobs)) {
       const needs = ([] as string[]).concat((def as Job).needs ?? []);
@@ -1454,7 +1454,9 @@ describe("E-GAPS: the storage photo job is separate, storage-backed and never re
       "supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector",
       "supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector",
     ]);
-    expect(starts.filter((x) => !x.endsWith(",storage-api"))).toHaveLength(own.length);
+    // The schedule-signal-realtime job (HON-48) also starts with storage, twice (retry step), and is
+    // pinned by its own describe below.
+    expect(starts.filter((x) => !x.endsWith(",storage-api"))).toHaveLength(own.length + 2);
   });
 
   it("fails on a missing storage-api before the DB file or the specs could self-skip", () => {
@@ -1994,7 +1996,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   const SETUP_CLI_SHA = "ab058987d8d6c725971f6cf9d0b5c98467e30bd1";
   const SETUP_CLI_TAG = "v1.7.1";
   const SETUP_CLI_VERSION = "2.102.0";
-  const SETUP_CLI_USES = 9; // 7 in ci.yml (incl. storage-photos and webkit-hon-62) + 1 in nightly.yml + 1 in restore-drill.yml (DR-01A)
+  const SETUP_CLI_USES = 10; // 8 in ci.yml (incl. storage-photos, webkit-hon-62 and schedule-signal-realtime) + 1 in nightly.yml + 1 in restore-drill.yml (DR-01A)
 
   const SETUP_CLI_ACTION = "supabase/setup-cli";
 
@@ -2126,8 +2128,8 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   it("the checkout count across the workflow directory is the reviewed one", () => {
     expect(
       checkoutCount(WORKFLOWS),
-      "9 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089; storage-photos by E-GAPS; webkit-hon-62 by HON-62) + 1 in nightly.yml + 1 in restore-drill.yml (DR-01A)",
-    ).toBe(12);
+      "10 in ci.yml (the aggregator has none; canonical-record added by #825 6215529089; storage-photos by E-GAPS; webkit-hon-62 by HON-62; schedule-signal-realtime by HON-48) + 1 in nightly.yml + 1 in restore-drill.yml (DR-01A)",
+    ).toBe(13);
   });
 
   // -------------------------------------------------------------------------
@@ -2619,7 +2621,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
     const violations = setupCliViolations([...WORKFLOWS, cased]).join("\n");
     // Recognised at all — the reviewed count moves, which it could not do while
     // the identifier was compared case-sensitively...
-    expect(violations).toMatch(/10 setup-cli uses, expected 9/);
+    expect(violations).toMatch(/11 setup-cli uses, expected 10/);
     // ...and, being recognised, it is subject to the grants-parity pin.
     expect(violations).toMatch(/cli\.yaml jobs\.scan\.steps\[0\]\.uses: CLI version 2\.103\.0 is not the grants-parity pin 2\.102\.0/);
   });
@@ -2952,5 +2954,66 @@ describe("G4 — docs-only changes run the unit tests that read them", () => {
     expect(exec("tests/a.test.ts; tests/b.test.ts")).toEqual({ code: 0, out: "[tests/a.test.ts]\n[tests/b.test.ts]\n" });
     expect(exec("").code).not.toBe(0);
     expect(exec(" ; ").code).not.toBe(0);
+  });
+});
+
+
+describe("HON-48 / 0271: the schedule-signal realtime job is separate, runs the real Realtime service and is never required", () => {
+  const start = CI.indexOf("\n  schedule-signal-realtime:\n");
+  const rest = CI.slice(start + 1);
+  const next = rest.slice(1).search(/^ {2}[a-z0-9_-]+:$/m);
+  const JOB = next === -1 ? rest : rest.slice(0, next + 1);
+  const code = (text: string) => text.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+
+  it("exists, is named not required, and no job (the aggregator included) needs it", () => {
+    expect(start, "schedule-signal-realtime job").toBeGreaterThan(-1);
+    expect(JOB).toContain("    name: schedule signal realtime (not required)\n");
+    expect(CI).not.toMatch(/needs:[^\n]*schedule-signal-realtime/);
+    expect(CI).not.toMatch(/^ {6}- schedule-signal-realtime$/m);
+    expect(code(CI.replace(JOB, ""))).not.toMatch(/schedule-signal-realtime/);
+  });
+
+  it("starts Supabase WITH realtime (never excluded here), both on the first start and on the bind retry", () => {
+    const own = code(JOB).match(/supabase start -x [a-z,-]+/g) ?? [];
+    expect(own).toEqual([
+      "supabase start -x studio,imgproxy,edge-runtime,logflare,vector",
+      "supabase start -x studio,imgproxy,edge-runtime,logflare,vector",
+    ]);
+    for (const x of own) expect(x).not.toMatch(/realtime/);
+    expect(code(JOB)).toContain("EXCLUDE='studio,imgproxy,edge-runtime,logflare,vector'");
+  });
+
+  it("runs the schedule-signal DB file on the real surface (asserting it said so) and then the protocol file, with no browser", () => {
+    const c = code(JOB);
+    expect(c).toContain("npx vitest run --config vitest.db.config.ts tests/db/schedule-signal.db.test.ts");
+    expect(c).toContain('grep -q "SCHEDULE_SIGNAL_SURFACE real"');
+    expect(c).toMatch(/run: npm run test:realtime\n/);
+    expect(c).not.toMatch(/playwright/i);
+    expect(readFileSync("package.json", "utf8")).toMatch(/"test:realtime": "vitest run --config vitest\.realtime\.config\.ts"/);
+  });
+
+  it("the DB-file step cannot go green on a failing test: bash with pipefail, then the surface marker check", () => {
+    const at = JOB.indexOf("- name: Schedule-signal DB file on the REAL Realtime surface");
+    expect(at).toBeGreaterThan(-1);
+    const step = JOB.slice(at, JOB.indexOf("\n      - name:", at + 1));
+    expect(step).toContain("        shell: bash\n");
+    const c = code(step);
+    expect(c).toContain("set -o pipefail");
+    expect(c.indexOf("set -o pipefail")).toBeLessThan(c.indexOf("npx vitest run"));
+    // The log is a file, not a command substitution (which would swallow the exit status).
+    expect(c).not.toMatch(/out="\$\(/);
+    expect(c.indexOf("npx vitest run")).toBeLessThan(c.indexOf('grep -q "SCHEDULE_SIGNAL_SURFACE real"'));
+  });
+
+  it("the protocol test refuses (does not skip) on a stack without the Realtime service or the 0271 policy", () => {
+    const t = readFileSync("tests/realtime/schedule-signal.realtime.test.ts", "utf8");
+    expect(t).toMatch(/does not run the Realtime service/);
+    expect(t).toMatch(/0271's policy is not installed/);
+    expect(t).not.toMatch(/\.skip|skipIf|runIf/);
+  });
+
+  it("is gated on the classifier: database or full-matrix changes only", () => {
+    expect(JOB).toContain("    needs: changes\n");
+    expect(JOB).toContain("if: ${{ needs.changes.outputs.full_matrix_required == 'true' || needs.changes.outputs.database == 'true' }}");
   });
 });

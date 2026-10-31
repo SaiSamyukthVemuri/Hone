@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AUTO_REFRESH_INTERVAL_MS,
   FOCUS_REFRESH_MIN_GAP_MS,
+  SIGNAL_REFRESH_MIN_GAP_MS,
   shouldAutoRefresh,
   type AutoRefreshInputs,
 } from "@/lib/calendar/refresh-policy";
@@ -41,6 +42,23 @@ describe("the focus trigger (coming back to the tab)", () => {
   });
 });
 
+describe("the signal trigger (a live schedule-changed message)", () => {
+  it("asks almost at once, but never more than once per minimum gap", () => {
+    expect(at({ trigger: "signal", lastRefreshMs: IDLE.nowMs - SIGNAL_REFRESH_MIN_GAP_MS })).toBe(true);
+    expect(at({ trigger: "signal", lastRefreshMs: IDLE.nowMs - SIGNAL_REFRESH_MIN_GAP_MS + 1 })).toBe(false);
+    expect(SIGNAL_REFRESH_MIN_GAP_MS).toBeLessThan(FOCUS_REFRESH_MIN_GAP_MS);
+  });
+
+  it.each([
+    ["the tab is hidden", { visible: false }],
+    ["the browser is offline", { online: false }],
+    ["a drawer or dialog is open", { dialogOpen: true }],
+    ["a field is focused", { editing: true }],
+  ])("is held off while %s, exactly like every other trigger", (_label, over) => {
+    expect(at({ trigger: "signal", lastRefreshMs: IDLE.nowMs - 10 * AUTO_REFRESH_INTERVAL_MS, ...over })).toBe(false);
+  });
+});
+
 describe("never while someone is working or nothing could be fetched", () => {
   it.each([
     ["the tab is hidden", { visible: false }],
@@ -69,15 +87,24 @@ describe("the component and where it is mounted", () => {
   const component = readFileSync("app/(app)/calendar/CalendarAutoRefresh.tsx", "utf8");
   const toolbar = readFileSync("app/(app)/calendar/CalendarToolbar.tsx", "utf8");
 
-  it("only asks the existing server render for a refresh: no socket, no fetch, no subscription", () => {
+  it("only asks the existing server render for a refresh; its one subscription is a private, data-free signal", () => {
     expect(component).toMatch(/router\.refresh\(\)/);
-    expect(component).not.toMatch(/WebSocket|EventSource|fetch\(|supabase|realtime|channel\(/i);
+    // No data path: no fetch, no table read, no row-level subscription, no payload use.
+    expect(component).not.toMatch(/fetch\(|EventSource|postgres_changes|\.from\(|\.rpc\(/);
+    expect(component).toMatch(/config: \{ private: true \}/);
+    expect(component).toMatch(/\.on\("broadcast", \{ event: SCHEDULE_SIGNAL_EVENT \}, \(\) => controller\.signal\(\)\)/);
+    expect(component).toMatch(/removeChannel\(channel\)/);
+    // A refused or queued join is silent and retried with jitter; it never surfaces an error.
+    expect(component).toMatch(/rejoinDelayMs\(attempt, Math\.random\)/);
+    expect(component).toMatch(/REJOIN_MAX_ATTEMPTS/);
+    expect(component).not.toMatch(/console\.error|throw new Error/);
   });
 
   it("removes every listener and the timer when it unmounts", () => {
     expect(component).toMatch(/clearInterval\(timer\)/);
     expect(component).toMatch(/removeEventListener\("visibilitychange"/);
     expect(component).toMatch(/removeEventListener\("focus"/);
+    expect(component).toMatch(/removeEventListener\("online"/);
   });
 
   it("reads the same modal marker the drawers render, and asks the policy before every refresh", () => {
@@ -90,8 +117,10 @@ describe("the component and where it is mounted", () => {
 
   it("is on the toolbar every calendar view shares (week, month, team day)", () => {
     expect(toolbar).toMatch(/import \{ CalendarAutoRefresh \} from "\.\/CalendarAutoRefresh"/);
-    expect(toolbar).toMatch(/<CalendarAutoRefresh \/>/);
+    expect(toolbar).toMatch(/<CalendarAutoRefresh studioId=\{studioId\} scheduleFingerprint=\{scheduleFingerprint\} scopeKey=\{`\$\{view\}\|\$\{rangeLabel\}`\} \/>/);
     const page = readFileSync("app/(app)/calendar/page.tsx", "utf8");
     expect([...page.matchAll(/<CalendarToolbar/g)]).toHaveLength(3);
+    expect([...page.matchAll(/studioId=\{studio\.id\}/g)]).toHaveLength(3);
+    expect([...page.matchAll(/scheduleFingerprint=\{scheduleFingerprint\(/g)]).toHaveLength(3);
   });
 });
