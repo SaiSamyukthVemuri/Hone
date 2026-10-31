@@ -282,6 +282,9 @@ describe("the set of installed appointment_audit writers is pinned", () => {
     // writer census, never a relaxation — the surviving writers are unchanged
     // and the set is still asserted exactly.
     "reschedule_appointment_v3",
+    // HON-48 / 0268: front-desk check-in writes ONE audit row per change
+    // (checked_in / check_in_undone), explicitly, inside the command.
+    "set_appointment_arrived",
     // B4 / 0173. The repair commands write audit rows through the shared
     // `write_appointment_audit` helper rather than inlining the INSERT, so the
     // census grows by exactly ONE even though TWO commands landed:
@@ -357,7 +360,10 @@ describe("the set of installed appointment_audit writers is pinned", () => {
         // Its callers (revert_appointment_outcome, set_appointment_notes) are
         // B4 commands with their own suite,
         // tests/db/appointment-repair-commands.db.test.ts.
-        n !== "write_appointment_audit",
+        n !== "write_appointment_audit" &&
+        // HON-48 / 0268: front-desk check-in is not a B2 lifecycle command;
+        // its audit rows are proved by tests/db/appointment-arrival.db.test.ts.
+        n !== "set_appointment_arrived",
     );
     expect(DRIVEN).toHaveLength(8);
     for (const d of DRIVEN) {

@@ -682,6 +682,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "outside_availability_authorized_at", reason: "pending_review", note: "Override authorization (migration 0174)." },
       { column: "created_by_receptionist_id", reason: "pending_review", note: "Front-desk booking attribution (migration 0220)." },
       { column: "cancelled_by_receptionist_id", reason: "pending_review", note: "Front-desk cancellation attribution (migration 0220)." },
+      { column: "arrived_at", reason: "pending_review", note: "Front-desk check-in time (migration 0268). Operational state, not exported until reviewed." },
     ],
     sourceCountCheck: { kind: "studio_scoped" },
     derivedHeaders: {
