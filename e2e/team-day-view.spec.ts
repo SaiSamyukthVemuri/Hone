@@ -346,16 +346,22 @@ test.describe("initial view", () => {
     await expect(page.getByTestId("team-day-view")).toHaveCount(0);
   });
 
-  test("a studio that is not a team calendar keeps the week: capacity off, and capacity on with one practitioner", async ({ page }) => {
+  test("a studio that is not a team calendar still OPENS on the week, and a lone practitioner has a one-column Day view", async ({ page }) => {
     const solo = await seedE2eStudio();
     await loginAsOwner(page, solo);
     await page.goto("/calendar");
     await expect(page.getByTestId("calendar-view-week")).toHaveAttribute("aria-current", "page");
-    await expect(page.getByTestId("calendar-view-day")).toHaveCount(0);
+    await expect(page.getByTestId("team-day-view")).toHaveCount(0);
+    // The Day tab is offered (capacity off, exactly one active practitioner), not only reachable by URL.
+    await expect(page.getByTestId("calendar-view-day")).toHaveCount(1);
+    // HON-48: one active practitioner has the Day view, one compact column, capacity off or on.
+    await page.goto("/calendar?view=day");
+    await expect(page.getByTestId("team-day-view")).toHaveAttribute("data-column-count", "1");
     await setStudioCapacityEnabled(solo.studioId, true);
     await page.goto("/calendar");
     await expect(page.getByTestId("calendar-view-week")).toHaveAttribute("aria-current", "page");
-    await expect(page.getByTestId("team-day-view")).toHaveCount(0);
+    await page.goto("/calendar?view=day");
+    await expect(page.getByTestId("team-day-view")).toHaveAttribute("data-column-count", "1");
   });
 });
 
