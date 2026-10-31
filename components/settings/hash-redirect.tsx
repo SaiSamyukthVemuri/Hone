@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 import { useRouter } from "next/navigation";
 
 // A server redirect cannot see a URL fragment, so a deep link such as
@@ -10,14 +10,20 @@ import { useRouter } from "next/navigation";
 
 export type MovedSections = Readonly<Record<string, string>>;
 
-export function movedSectionTarget(hash: string, moved: MovedSections): string | null {
+export function movedSectionTarget(
+  hash: string,
+  moved: MovedSections,
+): string | null {
   const id = hash.replace(/^#/, "");
-  return id && Object.prototype.hasOwnProperty.call(moved, id) ? moved[id] : null;
+  return id && Object.prototype.hasOwnProperty.call(moved, id)
+    ? moved[id]
+    : null;
 }
 
 export function HashRedirect({ moved }: { moved: MovedSections }) {
   const router = useRouter();
-  useEffect(() => {
+  // Layout effect: runs before the first paint, so the old page is not shown for a moment.
+  useLayoutEffect(() => {
     const target = movedSectionTarget(window.location.hash, moved);
     if (target) router.replace(target);
   }, [moved, router]);
