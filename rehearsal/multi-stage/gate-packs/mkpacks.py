@@ -43,15 +43,15 @@ def seq_priv_sql(seqs):
             "order by 1, 2;\n" % (cols, ", ".join("pg_catalog.to_regclass('%s')" % t for t in seqs)))
 
 
-def fn_sql(sigs):
+def fn_sql(sigs, roles=("anon", "authenticated", "service_role")):
     return ("select p.proname as obj, pg_catalog.oidvectortypes(p.proargtypes) as args, p.prosecdef as definer,\n"
             "  coalesce((select substr(c, 13) from unnest(coalesce(p.proconfig, '{}')) c where c like 'search_path=%%'), '') as search_path,\n"
-            "  coalesce((select string_agg(r, ',' order by r) from (values ('anon'), ('authenticated'), ('service_role')) as x(r)\n"
+            "  coalesce((select string_agg(r, ',' order by r) from (values %s) as x(r)\n"
             "            where has_function_privilege(x.r, p.oid, 'EXECUTE')), '') as exec_roles,\n"
             "  exists (select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a where a.grantee = 0 and a.privilege_type = 'EXECUTE') as exec_public\n"
             "from pg_catalog.pg_proc p\n"
             "where p.oid in (%s)\n"
-            "order by 1, 2;\n" % ", ".join("pg_catalog.to_regprocedure('%s')" % s for s in sigs))
+            "order by 1, 2;\n" % (", ".join("('%s')" % r for r in roles), ", ".join("pg_catalog.to_regprocedure('%s')" % s for s in sigs)))
 
 
 def pol_sql(schema, tables):
@@ -85,6 +85,8 @@ const fnx = (name) => rows(name).map((x) => `${x.obj}(${x.args})|exec=${x.exec_r
 const plx = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}`);
 const pl = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}|${x.roles}`);
 const sq = (name) => rows(name).map((x) => `${x.obj}|${x.role}|${x.privs}`);
+const kv = (name) => rows(name).map((x) => `${x.k}=${x.v}`);
+const fnr3 = (name) => rows(name).map((x) => `${x.obj}(${x.args})|definer=${isTrue(x.definer)}|sp=${x.search_path}`);
 const tg = (name) => rows(name).map((x) => `${x.obj}|${x.tgname}|${x.enabled}|row=${isTrue(x.row_level)}|before=${isTrue(x.before_trg)}`);
 '''
 
@@ -168,6 +170,62 @@ def main():
     write_pack("0253", "0253", pre253, [("policies", pol_sql("public", tt)), ("function", fn_sql([sig253]))], c253, list(tt),
                "history, the exact policy set on studio_timed_blocks and studio_blockouts, and the grants of the new function",
                notes="Insurance PEER-0253-SQL: policy set before = repository history, after = the named set.")
+
+    # ------------------------------------------------------------------ 0255 lint hardening of the anon surface
+    wl, dr = "public.waitlist", "public.demo_requests"
+    v_wl = "char_length(email) between 3 and 254 and email ~ '^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$'"
+    viol = {
+        "waitlist_email_format": "select count(*) from public.waitlist where not (%s)" % v_wl,
+        "waitlist_field_length": "select count(*) from public.waitlist where not (char_length(practice_name) <= 300 and char_length(source) <= 40)",
+        "demo_requests_email_format": "select count(*) from public.demo_requests where not (%s)" % v_wl,
+        "demo_requests_field_length": "select count(*) from public.demo_requests where not (char_length(name) between 1 and 200 and char_length(practice_name) <= 300 and char_length(location) <= 300 and char_length(current_tool) <= 300 and char_length(notes) <= 5000 and char_length(status) <= 40)",
+    }
+    inv13 = ["set_updated_at()", "reject_payment_consents_mutation()", "reject_payment_audit_mutation()", "set_updated_at_now()", "treatment_plan_stages_set_studio_id()",
+             "client_personal_notes_set_studio_id()", "tg_client_portal_messages_set_updated_at()", "tg_client_portal_message_replies_set_updated_at()",
+             "tg_consent_form_templates_set_updated_at()", "tg_client_payment_methods_set_updated_at()", "payment_charge_attempts_touch_updated_at()",
+             "enforce_treatment_image_integrity()", "tg_studio_tracking_providers_set_updated_at()"]
+    trg5 = ["snapshot_appointment_buffer()", "handle_new_user()", "enforce_appointment_buffer()", "guard_scoped_recurring_rule_capacity()", "studios_admission_mode_guard()"]
+    pred3 = ["is_studio_member(uuid)", "is_studio_owner(uuid)", "session_is_visible(uuid)"]
+    cons4 = ["waitlist_email_format_chk", "waitlist_field_length_chk", "demo_requests_email_format_chk", "demo_requests_field_length_chk"]
+    OBJECTS["0255"] = ["waitlist_anonymous_insert", "demo_requests_anonymous_insert"] + cons4 + [x.split("(")[0] for x in inv13 + trg5 + pred3]
+    pre255 = [
+        ("tables_present", "select count(*) = 2 from pg_catalog.pg_class c where c.relnamespace = 'public'::pg_catalog.regnamespace and c.relkind = 'r' and c.relrowsecurity and c.relname in ('waitlist', 'demo_requests')"),
+        ("functions_present", " and ".join("pg_catalog.to_regprocedure('public.%s') is not null" % x for x in inv13 + trg5 + pred3)),
+        ("new_constraints_absent", "(select count(*) = 0 from pg_catalog.pg_constraint con where con.conname in (%s))" % ", ".join(q(c) for c in cons4)),
+        # PEER-0255-SQL A1: no legacy row may violate the new CHECKs (they are added NOT VALID, VALIDATE is NOT in this stage, but a later VALIDATE would refuse)
+    ] + [("legacy_rows_violating_%s" % k, "(%s) = 0" % v) for k, v in viol.items()]
+    c255 = [
+        check("waitlist and demo_requests: anon and authenticated hold INSERT only (no SELECT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, no column privilege)", "c01_browser_privs", "kv",
+              ["%s.%s.%s=%s" % (t, r, pr, "true" if pr == "insert" else "false") for t in ("waitlist", "demo_requests") for r in ("anon", "authenticated")
+               for pr in ("select", "insert", "update", "delete", "truncate", "references", "trigger", "col_select", "col_update")]),
+        check("service_role still reads both tables (the admin console)", "c02_service_role", "kv", ["waitlist.service_role.select=true", "demo_requests.service_role.select=true"]),
+        check("each table has exactly one INSERT-capable policy, the bounded one, for anon and authenticated, and no read/update/delete/all policy", "c03_policies", "pl",
+              ["waitlist|waitlist_anonymous_insert|INSERT|PERMISSIVE|anon,authenticated", "demo_requests|demo_requests_anonymous_insert|INSERT|PERMISSIVE|anon,authenticated"]),
+        check("the four form CHECK constraints exist and are NOT VALID (VALIDATE is not part of this stage)", "c04_constraints", "kv",
+              ["%s=validated:false" % c for c in cons4]),
+        check("the 13 invoker functions pin search_path to pg_catalog, pg_temp", "c05_invoker_fns", "fnr3", ["%s|definer=false|sp=pg_catalog, pg_temp" % x for x in inv13]),
+        check("the 5 trigger-only functions are executable by neither anon nor authenticated, and not by PUBLIC; the 3 RLS predicates are executable by authenticated and not by anon or PUBLIC", "c06_exec", "fnx",
+              ["%s|exec=|public=false" % x for x in trg5] + ["%s|exec=authenticated|public=false" % x for x in pred3]),
+        check("no policy in public applies to anon or PUBLIC and calls an RLS predicate", "c07_anon_predicate_policies", "kv", ["anon_predicate_policies=0"]),
+    ]
+    sql255 = [
+        ("browser_privs", "select t || '.' || r || '.' || p as k, case when p = 'col_select' then pg_catalog.has_any_column_privilege(r, c, 'SELECT') when p = 'col_update' then pg_catalog.has_any_column_privilege(r, c, 'UPDATE') else pg_catalog.has_table_privilege(r, c, upper(p)) end::text as v\n"
+                           "from (values ('waitlist', 'public.waitlist'::pg_catalog.regclass), ('demo_requests', 'public.demo_requests'::pg_catalog.regclass)) as x(t, c)\n"
+                           "cross join (values ('anon'), ('authenticated')) as ro(r)\n"
+                           "cross join (values ('select'), ('insert'), ('update'), ('delete'), ('truncate'), ('references'), ('trigger'), ('col_select'), ('col_update')) as pr(p)\norder by 1;\n"),
+        ("service_role", "select t || '.service_role.select' as k, pg_catalog.has_table_privilege('service_role', c, 'SELECT')::text as v\n"
+                         "from (values ('waitlist', 'public.waitlist'::pg_catalog.regclass), ('demo_requests', 'public.demo_requests'::pg_catalog.regclass)) as x(t, c)\norder by 1;\n"),
+        ("policies", pol_sql("public", ["waitlist", "demo_requests"])),
+        ("constraints", "select con.conname as k, 'validated:' || con.convalidated::text as v\nfrom pg_catalog.pg_constraint con\nwhere con.conname in (%s)\norder by 1;\n" % ", ".join(q(c) for c in cons4)),
+        ("invoker_fns", fn_sql(["public." + x for x in inv13])),
+        ("exec", fn_sql(["public." + x for x in trg5 + pred3], roles=("anon", "authenticated"))),
+        ("anon_predicate_policies", "select 'anon_predicate_policies' as k, pg_catalog.count(*)::text as v\nfrom pg_catalog.pg_policy pol\njoin pg_catalog.pg_class c on c.oid = pol.polrelid\n"
+                                    "where c.relnamespace = 'public'::pg_catalog.regnamespace and (pol.polroles = array[0]::pg_catalog.oid[] or (select r.oid from pg_catalog.pg_roles r where r.rolname = 'anon') = any (pol.polroles))\n"
+                                    "  and pg_catalog.lower(coalesce(pg_catalog.pg_get_expr(pol.polqual, pol.polrelid), '') || ' ' || coalesce(pg_catalog.pg_get_expr(pol.polwithcheck, pol.polrelid), '')) ~ '(^|[^a-z_])(is_studio_member|is_studio_owner|session_is_visible)\\(';\n"),
+    ]
+    write_pack("0255", "0255", pre255, sql255, c255, ["waitlist", "demo_requests"],
+               "history, the browser-role privileges on the two form tables, their one bounded INSERT policy, the four NOT VALID CHECKs, the pinned search_paths and the revoked executes",
+               notes="Insurance PEER-0255-SQL A1: PRE-apply, the hosted count of legacy rows violating each new CHECK must be 0 (the preflight reads it per constraint). VALIDATE CONSTRAINT is NOT in the stage; the read-back asserts the constraints are NOT VALID. Counts are rows, never row contents.")
 
     # ------------------------------------------------------------------ 0258 client legal identities
     OBJECTS["0258"] = ["client_legal_identities", "client_legal_identities_select", "client_legal_identities_insert", "client_legal_identities_update", "can_use_client_legal_identity", "client_legal_identities_guard", "preferred_name"]

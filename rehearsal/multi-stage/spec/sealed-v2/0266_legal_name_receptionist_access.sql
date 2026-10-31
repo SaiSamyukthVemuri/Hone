@@ -203,7 +203,8 @@ create policy client_legal_identities_select
 -- nothing else: never client_legal_identities, never the stored name behind a
 -- preferred one. It deliberately carries NO intake or consent fact, so the
 -- 0243-pinned set of definers that read intake forms is unchanged; the desk's
--- completion facts stay on receptionist_client_contacts (0216, untouched).
+-- completion facts have no source until a reviewed command replaces v1
+-- (0216's receptionist_client_contacts is closed to every role below, source untouched).
 -- The fallback with no preferred name is the stored name, exactly as today, and
 -- name_on_file says so (true = the stored name is being shown), so the desk can
 -- label it "Name on file": it may itself be a legal name, and this setting

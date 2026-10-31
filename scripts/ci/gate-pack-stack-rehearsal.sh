@@ -46,6 +46,13 @@ for S in $STAGES; do
     o=$(node "$W/rule.js" "$r" "$W/pre/$f.json" 2>&1 </dev/null) && ok "step $V ($S): PRE $r: ${o#PASS }" || { prefail=1; bad "step $V ($S): PRE $r refused" "$o"; }
   done
   [ $prefail = 0 ] || { bad "step $V ($S): not applied (a PRE gate failed)"; break; }
+  # PRE negative control (0255, PEER-0255-SQL A1): ONE legacy row that violates a new CHECK must make the preflight REFUSE (and name the field); the row is removed again
+  if [ "$V" = 0255 ] && [ "$GATES" = True ]; then
+    sqlx "insert into public.waitlist (email) values ('x')" > "$W/pre/legacy.log" || bad "step $V ($S): could not seed the legacy row" "$(tail -2 "$W/pre/legacy.log")"
+    runq "$PKG/$S/window-reads-$S/g12-$S-preflight-$S.sql" "$W/pre/g12-legacy.json"
+    o=$(node "$W/rule.js" g12 "$W/pre/g12-legacy.json" 2>&1 </dev/null) && bad "step $V ($S): PRE g12 ACCEPTED a legacy row violating the new email CHECK" "$o" || { echo "$o" | grep -q "legacy_rows_violating_waitlist_email_format" && ok "step $V ($S): PRE control: one legacy row violating a new CHECK makes g12 refuse, naming legacy_rows_violating_waitlist_email_format" || bad "step $V ($S): PRE control refused for another reason" "$o"; }
+    sqlx "delete from public.waitlist where email = 'x'" > "$W/pre/legacy.log" || bad "step $V ($S): could not remove the legacy row"
+  fi
   # ---- PUSH: the stage's own bundle replaces supabase/migrations; the pinned CLI applies exactly what is unapplied (include-all, as the stage does for a below-head file)
   rm -rf supabase/migrations && tar -xf "$PKG/$S/s1-apply-$S-online/migrations-stage$S.tar" -C . && [ "$(ls supabase/migrations | wc -l | tr -d ' ')" = "$(pj "$PKG/$S/EXPECT.json" 'd["bundle"]["files"]')" ] || { bad "step $V ($S): bundle extraction"; break; }
   flags=--local; [ "$(pj "$PKG/$S/EXPECT.json" 'd["include_all"]')" = True ] && flags="--local --include-all"
@@ -77,6 +84,10 @@ for S in $STAGES; do
     0253) mut "a permissive studio-wide INSERT policy on studio_blockouts" "create policy zz_mut on public.studio_blockouts for insert to authenticated with check (true)" "drop policy zz_mut on public.studio_blockouts"
           mut "the old member FOR ALL policy back on studio_blockouts" "create policy studio_blockouts_member_all on public.studio_blockouts for all to authenticated using (true)" "drop policy studio_blockouts_member_all on public.studio_blockouts"
           mut "execute on the decision function granted to anon" "grant execute on function public.member_owns_scoped_timed_block(uuid, uuid) to anon" "revoke execute on function public.member_owns_scoped_timed_block(uuid, uuid) from anon" ;;
+    0255) mut "SELECT granted to anon on waitlist" "grant select on public.waitlist to anon" "revoke select on public.waitlist from anon"
+          mut "a permissive always-true INSERT policy on demo_requests" "create policy zz_mut on public.demo_requests for insert to anon with check (true)" "drop policy zz_mut on public.demo_requests"
+          mut "an RLS predicate executable by anon again" "grant execute on function public.is_studio_member(uuid) to anon" "revoke execute on function public.is_studio_member(uuid) from anon"
+          mut "a trigger-only function executable by authenticated again" "grant execute on function public.handle_new_user() to authenticated" "revoke execute on function public.handle_new_user() from authenticated" ;;
     0258) mut "DELETE granted on client_legal_identities" "grant delete on public.client_legal_identities to authenticated" "revoke delete on public.client_legal_identities from authenticated"
           mut "a DELETE policy on client_legal_identities" "create policy zz_mut on public.client_legal_identities for delete to authenticated using (true)" "drop policy zz_mut on public.client_legal_identities"
           mut "service_role granted SELECT on client_legal_identities" "grant select on public.client_legal_identities to service_role" "revoke select on public.client_legal_identities from service_role"

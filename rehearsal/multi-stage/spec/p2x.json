@@ -35,9 +35,10 @@
       "droppable": true,
       "ready": {
         "status": "sealed (optional, below head, include-all)",
-        "content_gates": "MISSING (history-only gate; no reviewer-stated post-apply checks supplied)",
+        "content_gates": "yes: preflight (legacy rows violating each new CHECK = 0, PEER-0255-SQL A1), table/lock reads, content read-back (VALIDATE is not in the stage)",
         "blocker": ""
-      }
+      },
+      "gate_pack": "../gate-packs/0255"
     },
     {
       "file": "sealed/0256_public_booking_refuses_active_client_adoption.sql",
@@ -54,7 +55,7 @@
       "sha256": "12c8109d41059e78fbc7df2af3a5a15b5bfcd3c17e0a5453e385cff0cc1cfd78",
       "ready": {
         "status": "sealed",
-        "carrier": "#1227 51f82f46 (+ callers #1199)",
+        "carrier": "#1227 5b4ed51c (+ callers #1199)",
         "class": "2",
         "carrier_db_lane": "pass at the carrier head",
         "content_gates": "content gates: preflight, clients table/lock reads, privilege/policy/function/trigger read-back (Privacy C4); search_path not yet asserted (F3 pending)",
@@ -65,8 +66,8 @@
     {
       "file": "sealed-v2/0272_hon58_legal_identity_hardening.sql",
       "ready": {
-        "status": "sealed (#1227 51f82f46); Privacy re-review of 0258/0272/0266 in progress",
-        "carrier": "#1227 51f82f46",
+        "status": "sealed (#1227 5b4ed51c); Privacy re-review of 0258/0272/0266 in progress",
+        "carrier": "#1227 5b4ed51c",
         "content_gates": "MISSING: history-only (no reviewer-stated post-apply checks for 0272; it re-creates can_use_client_legal_identity, client_legal_identities_guard and its trigger)",
         "blocker": "Privacy/Insurance re-review; sha not final until it ends"
       },
@@ -74,13 +75,13 @@
     },
     {
       "file": "sealed-v2/0266_legal_name_receptionist_access.sql",
-      "sha256": "5fe2965cd42ef3cb81c81d0c4d00413a23bc5bf34139d6ef7fa708f334634cc8",
+      "sha256": "1617f11a507c84b3fb69ab262d0ca4211f07abd9a621004edc9bd7420faea04c",
       "requires": [
         "0258"
       ],
       "ready": {
         "status": "sealed per records; waits on 0258",
-        "carrier": "#1227 51f82f46",
+        "carrier": "#1227 5b4ed51c",
         "class": "2",
         "carrier_db_lane": "pass at the carrier head",
         "content_gates": "content gates: preflight, privilege/policy/function/trigger read-back (Privacy C4); needs 0258 and 0272 earlier",
