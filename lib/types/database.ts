@@ -177,6 +177,9 @@ export type Studio = {
   // Existing finite 0213–0246 schema fields; this DTO grants no write authority.
   client_cancellation_enabled: boolean;
   client_reschedule_enabled: boolean;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 // Migration 0140: per-studio resumable onboarding-v2 (owner first-run) state.
@@ -543,6 +546,9 @@ export type Appointment = {
   // Existing finite 0213–0246 schema fields; this DTO grants no write authority.
   created_by_receptionist_id?: string | null;
   cancelled_by_receptionist_id?: string | null;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 // Migration 0049: SMS types accepted by claim_sms_send and
@@ -806,6 +812,9 @@ export type Practitioner = {
 
   // Existing finite 0222 assignment timestamp; this DTO grants no write authority.
   last_public_assignment_at: string | null;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 export type Client = {
@@ -865,6 +874,9 @@ export type Client = {
   // Migration 0231: the client's identification portrait, a pointer to one of
   // their own client-scoped, unarchived treatment photos (null = none).
   portrait_image_id: string | null;
+  // Migration 0247: trigger-maintained reminder-email authority revision
+  // (bigint, opaque). Read by no app code; present so the schema stays exact.
+  email_operation_revision: number;
 };
 
 // Migration 0126 (Willow PR A): dedicated dated CONSULTATION notes + SKIN/HAIR

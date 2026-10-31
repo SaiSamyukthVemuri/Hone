@@ -1,0 +1,9 @@
+{
+  "pr": 1287,
+  "runtime": true,
+  "migrations": [
+    "supabase/migrations/0247_appointment_email_operation_authority.sql",
+    "supabase/migrations/0250_appointment_email_stale_preparation_retire.sql"
+  ],
+  "release_receipt": "01-ops/1287-release-receipt.json"
+}
