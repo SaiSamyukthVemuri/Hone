@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 248,
-    "last": "0257_studio_payment_jurisdiction_failed_attempt_ack.sql",
-    "sha256": "c383e4c38f8845f49b90c45c3168242d18b87fcb430a2dd6073a036fdc434b38"
+    "count": 249,
+    "last": "0273_practitioner_calendar_preferences.sql",
+    "sha256": "424f22586ffa64523b596462a7383680a80f8b84636ae2bda7e1fd14a62d9779"
   },
   "public": {
     "tables": [
@@ -70,6 +70,7 @@
       "pending_invitations",
       "photos",
       "platform_lead_alerts",
+      "practitioner_calendar_preferences",
       "practitioner_notifications",
       "practitioners",
       "probe_lots",
@@ -468,6 +469,7 @@
       "set_new_client_admission_mode",
       "set_next_session_note",
       "set_own_calendar_feed_token_hash",
+      "set_own_calendar_preferences",
       "set_own_default_machine",
       "set_own_default_machine_frequency",
       "set_practitioner_active_locked",
