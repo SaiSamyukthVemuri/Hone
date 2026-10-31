@@ -1,0 +1,40 @@
+{
+  "hosted": {
+    "dir": "../../../supabase/migrations",
+    "skipped": [
+      158
+    ],
+    "pin": [
+      "0257"
+    ],
+    "expect_rows": 248,
+    "expect_max": "0257",
+    "extra": [
+      {
+        "file": "sealed/0254_perm_hon44_role_enforcement.sql",
+        "sha256": "77f34d5c9b677faad344b5b1afc2c3f26321f9060db5653a2176d9a239bbba23"
+      }
+    ],
+    "dir_sha256": "b4b8537b7d642bc6c10def2044bfeecd4ed5d778f3545e5450eb505a974da8a5"
+  },
+  "steps": [
+    {
+      "file": "sealed/0256_public_booking_refuses_active_client_adoption.sql",
+      "sha256": "47a37b19c2381985e33d2213c04b977315df44a7d919c0c8c600af0663b1af0c",
+      "ready": {
+        "status": "sealed (optional, below head, include-all)",
+        "content_gates": "yes: preflight (both functions at the 0228 and 0225 bodies, grants service_role only, refusal absent), content read-back (definer, search_path, grants, exact stored bodies, refusal at both places)",
+        "blocker": ""
+      },
+      "gate_pack": "../gate-packs/0256"
+    }
+  ],
+  "rules": {
+    "closure": {},
+    "adjacent": [],
+    "requires_earlier": {},
+    "independent": [
+      "0256"
+    ]
+  }
+}

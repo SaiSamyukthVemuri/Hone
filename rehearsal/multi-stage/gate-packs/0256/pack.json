@@ -1,0 +1,22 @@
+{
+  "migration": "0256",
+  "tables": [],
+  "preflight": {
+    "sql": "g12-preflight.sql",
+    "fields": [
+      "functions_present",
+      "no_other_overloads",
+      "definer_and_search_path_as_before",
+      "grants_as_before_service_role_only",
+      "bodies_are_the_latest_prior_definitions_0228_and_0225",
+      "adoption_refusal_not_yet_present"
+    ]
+  },
+  "verify_sql": [
+    "c01_functions.sql",
+    "c02_bodies.sql",
+    "c03_overloads.sql"
+  ],
+  "verify_label": "history, the definer, search_path and grants of the two functions, the exact stored bodies and the adoption refusal at both places",
+  "notes": "Insurance PEER-0256-SQL: the two redefined functions' bodies and grants. The behaviour (an ordinary public booking for a new-client email refuses an ACTIVE client and writes nothing; an invitation still adopts) is proved by the DB test at the carrier head; here the stored body must equal the sealed definition byte for byte, so the hosted function IS the tested one. Below the hosted max: apply before 0258 (the pack's chain guard is the hosted max 0257)."
+}

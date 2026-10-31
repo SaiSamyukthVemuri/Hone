@@ -102,3 +102,10 @@ finish re-reviewing 0258/0272/0266 (a changed file means a new sha and a re-pin)
 0272 has no content pack (no reviewer-stated post-apply checks): history-only, flagged CONTENT GATES MISSING. 0266's pack now also asserts search_path on all five of its
 functions (G1) and that the audit identity sequence is granted to no API role (G6). 0258's pack still does not assert search_path (0272 changes it afterwards).
 seq-check's full negative-control suite (B7f/g, rule tests) is written for the adopted 0254 step 1, so P2 runs the combined sequences (`ONLY_A=1`) and the real-stack gate job.
+
+## 0256 gate pack (`gate-packs/0256`, `spec/p256.json`; scratch, Insurance PEER-0256-SQL)
+
+0256 (below head, include-all) redefines `create_public_appointment_for_new_client` and `_v2` so an ordinary public booking never adopts an active client. The pack asserts the two functions' bodies and grants
+(the reviewer-stated checks): PRE, both functions are still exactly the latest prior definitions (0228 and 0225, by md5 of the stored source, derived from the files), grants are service_role only, and the refusal is absent;
+POST, both are SECURITY DEFINER with search_path `pg_catalog, public, pg_temp`, executable by service_role only, no new overload, the stored bodies equal the sealed 0256 bodies and carry the refusal at both places.
+The behaviour itself (refuses an active email writing nothing, the race, an invitation still adopts) is the carrier's DB test; a stored body equal to the sealed one makes the hosted function the tested one.
