@@ -202,3 +202,46 @@ describe("buildTeamDay: America/Los_Angeles date boundaries", () => {
     expect(col(day, P[0]).appts.map((x) => x.id)).toEqual([a.id]);
   });
 });
+
+// HON-48 compact column: how many columns the day view draws for 1 active, 1 working of 3,
+// 0 working and 5 working. The page sizes each from teamDayGridTemplate, so a lone column is
+// the same compact width as any other, and zero columns is an explicit empty state.
+describe("buildTeamDay: column counts the layout depends on", () => {
+  const open = (id: string) => def(id, TUE, true, "09:00:00", "17:00:00");
+  const closed = (id: string) => def(id, TUE, false, null, null);
+  const run = (roster: typeof PRACTITIONERS, defaults: ReturnType<typeof def>[], appointments: ReturnType<typeof appt>[] = []) =>
+    buildTeamDay({
+      date: DATE, dayOfWeek: TUE, tz: TZ, practitioners: roster,
+      appointments, timedBlocks: [], recurringBreaks: [], defaults, overrides: [],
+    });
+
+  it("one active practitioner: one column, with their hours", () => {
+    const day = run([PRACTITIONERS[0]], [open(P[0])]);
+    expect(day.columns.map((c) => c.practitionerId)).toEqual([P[0]]);
+    expect(day.notWorking).toEqual([]);
+    expect(day.columns[0].availability?.isOpen).toBe(true);
+  });
+
+  it("one working of three active: one column, the other two listed as not working", () => {
+    const day = run(PRACTITIONERS.slice(0, 3), [open(P[1]), closed(P[0]), closed(P[2])]);
+    expect(day.columns.map((c) => c.practitionerId)).toEqual([P[1]]);
+    expect(day.notWorking.map((n) => n.practitionerId)).toEqual([P[0], P[2]]);
+  });
+
+  it("nobody working: no columns (the page shows its empty state) and everyone listed", () => {
+    const day = run(PRACTITIONERS.slice(0, 3), PRACTITIONERS.slice(0, 3).map((p) => closed(p.id)));
+    expect(day.columns).toEqual([]);
+    expect(day.notWorking).toHaveLength(3);
+  });
+
+  it("a practitioner who is off but holds an appointment still gets their column", () => {
+    const day = run(PRACTITIONERS.slice(0, 2), [closed(P[0]), closed(P[1])], [appt(P[0], "2026-11-17T18:00:00Z")]);
+    expect(day.columns.map((c) => c.practitionerId)).toEqual([P[0]]);
+  });
+
+  it("five working: five columns", () => {
+    const day = run(PRACTITIONERS, PRACTITIONERS.map((p) => open(p.id)));
+    expect(day.columns).toHaveLength(5);
+    expect(day.notWorking).toEqual([]);
+  });
+});

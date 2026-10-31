@@ -110,7 +110,7 @@ describe("Day tab", () => {
 describe("team day page path", () => {
   const day = PAGE.slice(PAGE.indexOf("async function renderTeamDayView"));
 
-  it("is offered by one rule for every studio: capacity on and more than one active practitioner", () => {
+  it("is offered to any studio with an active practitioner; only OPENING on it stays a team rule", () => {
     // The one rule moved to initial-view.ts with HON-48's default view, so the
     // page and the Day view's own guard share it.
     expect(readFileSync(path.join(ROOT, "app/(app)/calendar/initial-view.ts"), "utf8")).toContain(
@@ -118,7 +118,11 @@ describe("team day page path", () => {
     );
     expect(PAGE).toContain("isTeamCalendar");
     expect(PAGE).not.toMatch(/studio\.id\s*===/);
-    expect(day).toContain("if (!isTeamCalendar(capacityEnabled, activePractitioners))");
+    expect(day).toContain("if (!hasDayView(activePractitioners))");
+    expect(day).not.toContain("if (!capacityEnabled) redirect");
+    // The real capacity flag reaches the column and the block scope names, never a hard-coded true.
+    expect(day).toContain("practitionerCapacityEnabled={capacityEnabled}");
+    expect(day).toContain("blockScopeNamesFor(capacityEnabled, activePractitioners)");
   });
 
   it("reads through the week view's own studio-scoped loaders, nothing new", () => {

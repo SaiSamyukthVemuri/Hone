@@ -62,7 +62,7 @@ import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import { redirect } from "next/navigation";
 import { buildTeamDay, type TeamDayColumn } from "@/lib/calendar/team-day";
 import { blockScopeNamesFor } from "@/lib/calendar/block-scope";
-import { isInitialCalendarEntry, isTeamCalendar } from "./initial-view";
+import { hasDayView, isInitialCalendarEntry, isTeamCalendar } from "./initial-view";
 import { teamDayGridTemplate } from "@/lib/calendar/team-day-layout";
 
 type Search = Promise<{
@@ -290,7 +290,7 @@ export default async function CalendarPage({
         weekHref={`/calendar?view=week&week=${weekStart}`}
         monthHref={`/calendar?view=month&month=${firstOfMonthString(weekStart)}&week=${weekStart}`}
         dayHref={
-          isTeamCalendar(studio.practitioner_capacity_enabled === true, activePractitioners)
+          hasDayView(activePractitioners)
             ? `/calendar?view=day&day=${initialSelectedDate}`
             : undefined
         }
@@ -585,7 +585,7 @@ async function renderMonthView(opts: {
         weekHref={lastWeekHref}
         monthHref={`/calendar?view=month&month=${monthAnchor}`}
         dayHref={
-          isTeamCalendar(studio.practitioner_capacity_enabled === true, activePractitioners)
+          hasDayView(activePractitioners)
             ? `/calendar?view=day&day=${today >= monthAnchor && today < monthEnd ? today : monthAnchor}`
             : undefined
         }
@@ -642,7 +642,6 @@ async function renderTeamDayView(opts: {
   const { studio, timeFormat, today, isOwner, practitioner } = opts;
   const date = opts.dayParam && DATE_PARAM_RE.test(opts.dayParam) ? opts.dayParam : today;
   const capacityEnabled = studio.practitioner_capacity_enabled === true;
-  if (!capacityEnabled) redirect(`/calendar?day=${date}`);
 
   const [y, m, d] = date.split("-").map(Number);
   const dayOfWeek = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
@@ -677,7 +676,7 @@ async function renderTeamDayView(opts: {
   ]);
   domain.end();
 
-  if (!isTeamCalendar(capacityEnabled, activePractitioners)) {
+  if (!hasDayView(activePractitioners)) {
     redirect(`/calendar?day=${date}`);
   }
 
@@ -704,7 +703,7 @@ async function renderTeamDayView(opts: {
   const returnTo = buildCalendarReturnParams({ view: "day", day: date });
   // A studio-wide block sits in EVERY column labelled "All practitioners"; a
   // scoped one sits only in its own column (lib/calendar/team-day.ts).
-  const blockScopeNames = blockScopeNamesFor(true, activePractitioners);
+  const blockScopeNames = blockScopeNamesFor(capacityEnabled, activePractitioners);
   const gridColumns = teamDayGridTemplate(columns.length);
 
   return (
@@ -790,7 +789,7 @@ async function renderTeamDayView(opts: {
                   tz={studio.timezone}
                   timeFormat={timeFormat}
                   isOwner={isOwner}
-                  practitionerCapacityEnabled
+                  practitionerCapacityEnabled={capacityEnabled}
                   currentPractitionerId={practitioner.id}
                   currentPractitionerName={practitioner.display_name}
                   clients={drawerClients}

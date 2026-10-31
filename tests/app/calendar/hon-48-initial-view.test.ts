@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { isInitialCalendarEntry, isTeamCalendar } from "@/app/(app)/calendar/initial-view";
+import { hasDayView, isInitialCalendarEntry, isTeamCalendar } from "@/app/(app)/calendar/initial-view";
 
 // HON-48 (Sam decision 17): Day is the INITIAL view for a team studio. The rule
 // is the pure pair in initial-view.ts; the page applies it only to an entry with
@@ -39,9 +39,20 @@ describe("what counts as a team calendar", () => {
   });
 });
 
+describe("who has a Day view at all (one compact column for a lone practitioner)", () => {
+  it("is every studio with at least one active practitioner, capacity on or off", () => {
+    expect(hasDayView([{ id: "a" }])).toBe(true);
+    expect(hasDayView([{ id: "a" }, { id: "b" }])).toBe(true);
+    expect(hasDayView([])).toBe(false);
+  });
+  it("does not change which studios OPEN on the Day view", () => {
+    expect(isTeamCalendar(true, [{ id: "a" }])).toBe(false);
+  });
+});
+
 describe("the page applies the rule to the initial entry only", () => {
   it("overrides the view only for an initial entry on a capacity-on studio, through the shared helpers", () => {
-    expect(PAGE).toContain('import { isInitialCalendarEntry, isTeamCalendar } from "./initial-view";');
+    expect(PAGE).toContain('import { hasDayView, isInitialCalendarEntry, isTeamCalendar } from "./initial-view";');
     expect(PAGE).toMatch(
       /if \(isInitialCalendarEntry\(params\) && studio\.practitioner_capacity_enabled === true\) \{\s*const active = await getPractitionersForStudio\(studio\.id\);\s*if \(isTeamCalendar\(true, active\)\) view = "day";\s*\}/,
     );
