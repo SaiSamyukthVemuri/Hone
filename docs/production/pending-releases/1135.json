@@ -1,0 +1,6 @@
+{
+  "pr": 1135,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0253_member_scoped_block_authorship.sql"],
+  "release_receipt": "01-ops/1135-release-receipt.json"
+}

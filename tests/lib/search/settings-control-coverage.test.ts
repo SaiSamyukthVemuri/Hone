@@ -496,6 +496,8 @@ describe("settings pages are all represented", () => {
 
     expect(routes.length).toBeGreaterThanOrEqual(14);
     const audited = new Set(SETTINGS_CONTROLS.map((c) => c.page));
+    // Every settings page with a page.tsx is audited, including /settings/calendar
+    // (the studio-wide display preferences live there now).
     const exempt = new Set<string>();
     const missing = routes.filter((r) => !audited.has(r) && !exempt.has(r));
     expect(

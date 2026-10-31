@@ -1,51 +1,49 @@
-import { requirePractitionerWithStudio, getPractitionersForStudio } from "@/lib/supabase/queries";
-import { getRequiredAppOrigin } from "@/lib/app-origin";
-import { colourOptions, shouldSuggestColour, suggestDistinctColour } from "@/lib/calendar/colour-assignment";
-import { resolvePractitionerColor } from "@/lib/practitioner-colors";
-import { ColorPicker } from "./ColorPicker";
-import { CalendarFeedCard } from "./CalendarFeedCard";
+import { redirect } from "next/navigation";
+import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { resolveTimeFormat } from "@/lib/booking/tz";
+import { StudioDisplayPreferencesForm } from "./StudioDisplayPreferencesForm";
+import { personalCalendarSlot } from "./personal-slot";
 
-// Settings > Calendar (WS-C): the signed-in practitioner's own calendar colour and calendar feed, the
-// same for every role. Display preferences (studio-wide, owner-only) are a separate page owned by the
-// shell workstream; nothing studio-wide is written from here.
+// Calendar settings. First release: the studio-wide Display preferences only,
+// OWNER-ONLY. They moved here from Studio (a save of studio details no longer
+// touches them). Calendar colour and the calendar feed join this page in WS-C.
+//
+// This route used to redirect to /settings/availability (breaks and blocks were
+// consolidated there). It is now a page; Availability keeps its own route and
+// every internal link that meant Availability points at it directly.
 export default async function CalendarSettingsPage() {
-  // Identity first, like every authenticated page (SENTRY-IDENTITY-01).
   const { practitioner, studio } = await requirePractitionerWithStudio();
-
-  // The same active-practitioner read the calendar sidebar uses: colours are information for the
-  // picker, never a gate on saving anything.
-  const holders = await getPractitionersForStudio(studio.id);
-  const others = holders.filter((h) => h.id !== practitioner.id && h.display_name);
-  const options = colourOptions(holders, practitioner.id);
-  const suggestion = shouldSuggestColour(practitioner.color) ? suggestDistinctColour(holders, practitioner.id) : null;
+  const isOwner = practitioner.role === "owner";
+  // Navigation hides this page from a practitioner; this is the access gate. A
+  // practitioner may open it only when per-practitioner sections exist (the slot).
+  if (!isOwner && !personalCalendarSlot) redirect("/settings/profile");
 
   return (
-    <section className="flex flex-col gap-8">
-      <div>
-        <h2 className="text-xl font-medium">Calendar</h2>
-        <p className="mt-1 text-sm text-neutral-500">
-          Your calendar colour and your calendar feed.
-        </p>
-      </div>
-      <p data-testid="scope-tag" className="-mt-4 text-xs font-medium text-neutral-500">
-        Shared calendar identity: your colour is how your team sees your appointments.
-      </p>
-      <ColorPicker initialColor={practitioner.color} options={options} suggestion={suggestion} />
-      {others.length > 0 && (
-        <div data-testid="other-calendars" className="flex flex-col gap-2">
-          <span className="text-sm font-medium">Other practitioner calendars</span>
-          <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-            {others.map((o) => (
-              <li key={o.id} className="flex items-center gap-1.5">
-                <span aria-hidden className={`inline-block h-2.5 w-2.5 rounded-full ${resolvePractitionerColor(o.color).bg}`} />
-                {o.display_name}
-              </li>
-            ))}
-          </ul>
-          <p className="text-xs text-neutral-500">Their colours are never changed from here. A new practitioner is offered a colour nobody else uses.</p>
-        </div>
+    <section className="flex flex-col gap-10">
+      {isOwner && (
+        <>
+          <div id="display-preferences" className="scroll-mt-24">
+            <h2 className="text-xl font-medium">Display preferences</h2>
+            <p className="mt-1 text-sm font-medium text-neutral-700 dark:text-neutral-300">
+              Applies to the whole studio.
+            </p>
+            <p className="mt-1 text-sm text-neutral-500">
+              How your team sees times and birthday reminders. Only a studio
+              owner can change these.
+            </p>
+          </div>
+          <StudioDisplayPreferencesForm
+            initialBirthdayColor={studio.birthday_reminder_color}
+            initialTimeFormat={resolveTimeFormat(studio)}
+          />
+        </>
       )}
-      <CalendarFeedCard appOrigin={getRequiredAppOrigin()} initialActive={!!practitioner.calendar_feed_token_hash} />
+      {personalCalendarSlot && (
+        <personalCalendarSlot.Content
+          practitioner={practitioner}
+          studio={studio}
+        />
+      )}
     </section>
   );
 }

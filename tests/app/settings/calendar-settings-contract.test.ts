@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const read = (p: string) => readFileSync(p, "utf8");
-const PAGE = read("app/(app)/settings/calendar/page.tsx");
-const ACTIONS = read("app/(app)/settings/calendar/actions.ts");
-const PICKER = read("app/(app)/settings/calendar/ColorPicker.tsx");
-const FEED = read("app/(app)/settings/calendar/CalendarFeedCard.tsx");
+const PAGE = read("app/(app)/settings/calendar/personal-slot.tsx");
+const ACTIONS = read("app/(app)/settings/calendar/color/actions.ts");
+const PICKER = read("app/(app)/settings/calendar/color/ColorPicker.tsx");
+const FEED = read("app/(app)/settings/calendar/feed/CalendarFeedCard.tsx");
 const PROFILE = read("app/(app)/settings/profile/page.tsx");
 const PROFILE_ACTIONS = read("app/(app)/settings/profile/actions.ts");
 
@@ -62,5 +62,14 @@ describe("the picker shows the colour the server actually saved (Codex P2)", () 
     expect(ACTIONS).toMatch(/return \{ ok: true, color: token \};/);
     expect(PICKER).toMatch(/setSelected\(r\.color\)/);
     expect(PICKER).not.toMatch(/setSelected\(suggestion\)/);
+  });
+});
+
+describe("Profile deep links to the moved sections still land (shell HashRedirect)", () => {
+  it("#calendar-color and #calendar-feed on Profile redirect to Calendar", () => {
+    const profile = read("app/(app)/settings/profile/page.tsx");
+    expect(profile).toMatch(/<HashRedirect moved=\{MOVED_SECTIONS\} \/>/);
+    expect(profile).toContain('"calendar-color": "/settings/calendar#calendar-color"');
+    expect(profile).toContain('"calendar-feed": "/settings/calendar#calendar-feed"');
   });
 });

@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import {
   rotateCalendarFeedTokenAction,
   clearCalendarFeedTokenAction,
-} from "../profile/actions";
+} from "../../profile/actions";
 
 // Calendar feed card on Settings → Calendar.
 //

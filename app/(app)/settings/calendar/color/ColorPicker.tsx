@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { PRACTITIONER_COLORS, resolvePractitionerColor } from "@/lib/practitioner-colors";
-import { updatePractitionerColorAction } from "../profile/actions";
+import { updatePractitionerColorAction } from "../../profile/actions";
 import { applySuggestedColourAction } from "./actions";
 
 type Props = {
