@@ -429,11 +429,13 @@ describe("who may listen (the policy matrix)", () => {
   it("nobody can publish from the browser side: insert is refused by RLS, update and delete touch no row", async () => {
     // The outcome is asserted PER STATEMENT, not merely "refused or nothing": an INSERT must be
     // refused with an RLS violation (the restrictive deny, and no permissive INSERT policy at all);
-    // an UPDATE or DELETE has no policy to match, so it affects zero rows and raises nothing.
+    // an UPDATE or DELETE either matches no policy and affects zero rows, or is refused outright at the
+    // privilege layer (42501) on a stack whose grants omit that privilege. Both are SAFE and CI's stack
+    // takes the second path for DELETE; what must never happen is a changed row.
     const cases = [
       { sql: `insert into realtime.messages (topic, extension, payload, event, private) values ('${topicOf(A)}','broadcast','{"forged":true}','changed',true)`, expect: "refused" as const },
-      { sql: `update realtime.messages set payload = '{"forged":true}' where topic = '${topicOf(A)}'`, expect: "zero-rows" as const },
-      { sql: `delete from realtime.messages where topic = '${topicOf(A)}'`, expect: "zero-rows" as const },
+      { sql: `update realtime.messages set payload = '{"forged":true}' where topic = '${topicOf(A)}'`, expect: "zero-rows-or-refused" as const },
+      { sql: `delete from realtime.messages where topic = '${topicOf(A)}'`, expect: "zero-rows-or-refused" as const },
     ];
     // A row exists on the topic first, so a zero-row UPDATE/DELETE is the policy's doing and not an empty table.
     await insertAppt(A, serviceA);
@@ -449,8 +451,13 @@ describe("who may listen (the policy matrix)", () => {
         got = "refused";
         code = (e as { code?: string }).code;
       }
-      expect(got, c.sql.slice(0, 40)).toBe(c.expect);
-      if (c.expect === "refused") expect(code, "row-level security violation").toBe("42501");
+      if (c.expect === "refused") {
+        expect(got, c.sql.slice(0, 40)).toBe("refused");
+        expect(code, "row-level security violation").toBe("42501");
+      } else {
+        expect(["zero-rows", "refused"], c.sql.slice(0, 40)).toContain(got);
+        if (got === "refused") expect(code, "permission or policy refusal").toBe("42501");
+      }
       expect(await signals(A)).toBe(before);
     }
   });
