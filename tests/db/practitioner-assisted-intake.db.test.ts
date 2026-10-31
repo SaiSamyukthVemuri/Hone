@@ -549,6 +549,11 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
         } else if (change === "writer grant option") {
           await q("grant execute on function public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb) to service_role with grant option");
         } else {
+          // 0266 revokes EXECUTE on the v1 finder from every role, which correctly takes it out of
+          // the preflight's "callable intake definer" set. The mutant must therefore be callable
+          // again for the preflight to be asked about its body or its helper; this grant lives only
+          // inside the rolled-back savepoint and changes nothing on a chain without 0266.
+          await q("grant execute on function public.receptionist_client_contacts(uuid,text,integer) to authenticated");
           const signature = change === "changed transitive helper"
             ? "public.receptionist_actor_id(uuid)" : "public.receptionist_client_contacts(uuid,text,integer)";
           const { rows: [row] } = await q("select pg_catalog.pg_get_functiondef($1::regprocedure) as definition", [signature]);
