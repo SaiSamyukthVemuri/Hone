@@ -64,13 +64,9 @@ describe("the owner route stays reviewed-only and owner-only", () => {
     expect(page).not.toMatch(/register_studio_machine|\.rpc\(/);
   });
 
-  it("the tab is inside the owner-only block of the settings layout", () => {
-    const layout = read("app/(app)/settings/layout.tsx");
-    const owner = layout.indexOf("isOwner\n      ? [");
-    const tab = layout.indexOf('"/settings/machines"');
-    expect(owner).toBeGreaterThan(-1);
-    expect(tab).toBeGreaterThan(owner);
-    expect(layout.slice(owner, tab)).not.toContain(": []");
+  it("the tab is an owner-only entry in the settings nav registry", () => {
+    const registry = read("lib/settings/nav-registry.ts");
+    expect(registry).toMatch(/href: "\/settings\/machines", roles: OWNER/);
   });
 
   it("CONTROL: with the shipped catalogue the list is whatever is active, never inactive", () => {

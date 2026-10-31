@@ -163,7 +163,7 @@ async function waitlistTabShown(): Promise<boolean> {
   const { default: SettingsLayout } = await import("@/app/(app)/settings/layout");
   const tree = await SettingsLayout({ children: null });
   const items = findItems(tree);
-  expect(items, "layout must hand SettingsNav its items").not.toBeNull();
+  expect(items, "layout must hand the Settings shell its items").not.toBeNull();
   return items!.some((i) => i.href === "/settings/waitlist" && i.label === "Waitlist");
 }
 
@@ -266,7 +266,8 @@ describe("Settings → Waitlist tab visibility", () => {
 
 describe("the presence rule stays navigation-only", () => {
   const ROOT = path.resolve(__dirname, "../../..");
-  const LAYOUT = readFileSync(path.join(ROOT, "app/(app)/settings/layout.tsx"), "utf8");
+  // The presence rule moved from the layout into the nav registry unchanged.
+  const LAYOUT = readFileSync(path.join(ROOT, "lib/settings/nav-registry.ts"), "utf8");
   const HELPER = readFileSync(
     path.join(ROOT, "lib/waitlist/operator-queue-presence.ts"),
     "utf8",
