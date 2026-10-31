@@ -24,6 +24,13 @@ export const SIGNAL_COALESCE_MS = 250;
 /** While a refresh is held (drawer open, field focused), look again this often. */
 export const PENDING_RECHECK_MS = 500;
 /**
+ * The longest a signal is held because a refresh is "in flight". Whatever tells the controller a
+ * refresh is done (busy / refreshSettled) may be late or never come (router.refresh does not
+ * reliably flip a transition's pending state), so a held signal is released after this and
+ * refreshes anyway: a missed release costs one extra refresh, never a missing one.
+ */
+export const REFRESH_HOLD_MAX_MS = 1_500;
+/**
  * A tab hidden at least this long may have had its socket silently put to sleep and
  * missed messages for good, so coming back is a catch-up. A short alt-tab is not.
  */
@@ -105,6 +112,8 @@ export function createScheduleSignalController(deps: SignalControllerDeps): Sign
   let timer: unknown = null;
   let heard = false;
   let disposed = false;
+  // When the current pending signal was first held because a refresh was in flight.
+  let heldSince: number | null = null;
 
   const clear = () => {
     if (timer !== null) deps.clearTimer(timer);
@@ -123,8 +132,13 @@ export function createScheduleSignalController(deps: SignalControllerDeps): Sign
     // A refresh is still in flight: stay pending (one flag, however many signals) and let
     // refreshSettled() continue. The timer is only a backstop; it never touches the network.
     if (deps.busy?.()) {
-      schedule(PENDING_RECHECK_MS);
-      return;
+      const since = heldSince ?? (heldSince = deps.now());
+      const remaining = REFRESH_HOLD_MAX_MS - (deps.now() - since);
+      // The safety timeout: past it the hold is ignored, whatever busy() says.
+      if (remaining > 0) {
+        schedule(Math.min(PENDING_RECHECK_MS, remaining));
+        return;
+      }
     }
     const g = deps.guards();
     const ok = shouldAutoRefresh({
@@ -135,6 +149,7 @@ export function createScheduleSignalController(deps: SignalControllerDeps): Sign
     });
     if (ok) {
       pending = false;
+      heldSince = null;
       deps.refresh();
       return;
     }

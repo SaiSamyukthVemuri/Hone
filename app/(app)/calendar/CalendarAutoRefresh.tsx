@@ -12,6 +12,7 @@ import {
   SCHEDULE_SIGNAL_EVENT,
   createRefreshAttribution,
   createScheduleSignalController,
+  REFRESH_HOLD_MAX_MS,
   REJOIN_MAX_ATTEMPTS,
   isUnannouncedFind,
   rejoinDelayMs,
@@ -44,8 +45,9 @@ function readGuards() {
   };
 }
 
-// A transition that never reports done must not hold signals forever.
-const REFRESH_IN_FLIGHT_MAX_MS = 30_000;
+// A refresh that never reports done must not hold signals: the stamp expires on its own, and
+// the controller releases a held signal after REFRESH_HOLD_MAX_MS whatever busy() says.
+const REFRESH_IN_FLIGHT_MAX_MS = REFRESH_HOLD_MAX_MS;
 
 // At most once per page load: a stuck signal path must be visible, not a flood.
 let degradedReported = false;
@@ -87,6 +89,12 @@ export function CalendarAutoRefresh({
       scheduleFingerprint !== undefined &&
       previousFingerprint.current !== scheduleFingerprint;
     previousFingerprint.current = scheduleFingerprint;
+    // A render carrying a new fingerprint is the refresh landing, whether or not the pending
+    // flag of the transition ever flipped (router.refresh does not reliably flip it).
+    if (changed) {
+      inFlightSinceMs.current = null;
+      controllerRef.current?.refreshSettled();
+    }
     const last = changed ? attribution.current.landed(true) : null;
     if (
       !changed ||

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { SIGNAL_REFRESH_MIN_GAP_MS } from "@/lib/calendar/refresh-policy";
-import { SIGNAL_COALESCE_MS, createScheduleSignalController, type SignalGuards } from "@/lib/calendar/schedule-signal";
+import { REFRESH_HOLD_MAX_MS, SIGNAL_COALESCE_MS, createScheduleSignalController, type SignalGuards } from "@/lib/calendar/schedule-signal";
 
 // Insurance PEER-0271-FINAL-DELTA-2 G1: a signal that arrives while the previous refresh is still
 // rendering must not start an overlapping refresh and must not be lost: the view is stale again,
@@ -10,13 +10,15 @@ import { SIGNAL_COALESCE_MS, createScheduleSignalController, type SignalGuards }
 
 const REFRESH_MS = 800;
 
-function slowHarness(start = 1_000_000) {
+function slowHarness(start = 1_000_000, opts: { settle?: boolean; stuckBusy?: boolean } = {}) {
+  const settle = opts.settle ?? true;
   let now = start;
   let last = start - 10_000;
   const timers: { at: number; fn: () => void; id: number }[] = [];
   let nextId = 1;
   const guards: SignalGuards = { visible: true, online: true, dialogOpen: false, editing: false };
   let inFlight = false;
+  let stuck = false; // a busy flag that, once a refresh starts, is never cleared
   let doneAt = 0;
   let started = 0;
   let maxConcurrent = 0;
@@ -35,13 +37,14 @@ function slowHarness(start = 1_000_000) {
     },
     guards: () => ({ ...guards }),
     lastRefreshMs: () => last,
-    busy: () => inFlight,
+    busy: () => (opts.stuckBusy ? stuck : inFlight),
     refresh: () => {
       started++;
       startTimes.push(now);
       last = now;
       controller.markRefresh();
       inFlight = true;
+      stuck = true;
       doneAt = now + REFRESH_MS;
       concurrent++;
       maxConcurrent = Math.max(maxConcurrent, concurrent);
@@ -58,7 +61,7 @@ function slowHarness(start = 1_000_000) {
       if (inFlight && doneAt <= now) {
         inFlight = false;
         concurrent--;
-        controller.refreshSettled(); // what the component's isPending effect does
+        if (settle) controller.refreshSettled(); // what the component's isPending effect does
         continue;
       }
       const i = timers.findIndex((t) => t.at === at);
@@ -140,6 +143,37 @@ describe("a signal during a pending refresh (G1)", () => {
   });
 });
 
+describe("the settled callback never comes (regression: router.refresh does not flip isPending)", () => {
+  it("a held signal is released within the safety timeout and still refreshes", () => {
+    const h = slowHarness(1_000_000, { settle: false, stuckBusy: true });
+    h.controller.signal();
+    h.advance(SIGNAL_COALESCE_MS);
+    expect(h.started).toBe(1);
+    h.controller.signal(); // mid-refresh; busy() stays true and refreshSettled() is never called
+    h.advance(1_490); // literal on purpose: a mutated cap must not stretch the test
+    expect(h.started).toBe(1); // still held
+    h.advance(600);
+    expect(h.started).toBe(2); // released by the safety timeout
+    expect(h.controller.isPending()).toBe(false);
+  });
+
+  it("every signal is delivered: a stuck busy never turns a stream of signals into no refresh", () => {
+    const h = slowHarness(1_000_000, { settle: false, stuckBusy: true });
+    for (let t = 0; t < 20_000; t += 200) {
+      h.controller.signal();
+      h.advance(200);
+    }
+    h.advance(5_000);
+    // Each held signal waits at most the safety timeout: a refresh at least every ~1.5 s + gap.
+    expect(h.started).toBeGreaterThanOrEqual(Math.floor(20_000 / (REFRESH_HOLD_MAX_MS + 700)));
+    expect(h.controller.isPending()).toBe(false);
+  });
+
+  it("the delay of a held signal is bounded by the safety timeout (1.5 s)", () => {
+    expect(REFRESH_HOLD_MAX_MS).toBeLessThanOrEqual(1_500);
+  });
+});
+
 describe("the component wiring", () => {
   const component = readFileSync("app/(app)/calendar/CalendarAutoRefresh.tsx", "utf8");
 
@@ -147,6 +181,8 @@ describe("the component wiring", () => {
     expect(component).toMatch(/busy: \(\) => inFlightSinceMs\.current !== null && Date\.now\(\) - inFlightSinceMs\.current < REFRESH_IN_FLIGHT_MAX_MS/);
     expect(component).toMatch(/controllerRef\.current\?\.refreshSettled\(\)/);
     expect(component).toMatch(/inFlightSinceMs\.current = null/);
-    expect(component).toMatch(/REFRESH_IN_FLIGHT_MAX_MS = 30_000/);
+    expect(component).toMatch(/REFRESH_IN_FLIGHT_MAX_MS = REFRESH_HOLD_MAX_MS/);
+    // The render that carries a new fingerprint also releases the hold.
+    expect(component).toMatch(/if \(changed\) \{\s*inFlightSinceMs\.current = null;\s*controllerRef\.current\?\.refreshSettled\(\);/);
   });
 });
