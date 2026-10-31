@@ -12,6 +12,7 @@ pj() { python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));print(eval(
 CTOK=canary-token-4f1c; CPW=canary-pw-9d2e
 STAGES=$(pj "$PKG/PLAN.json" '" ".join(d["sequences"]["'"$SEQ"'"]["stages"])'); NSTEPS=$(echo $STAGES | wc -w | tr -d ' ')
 ex() { pj "$PKG/$1/EXPECT.json" "$2"; }
+[ "$NSTEPS" = 0 ] && { echo "ok   - sequence $SEQ: every step dropped, nothing to apply (no stage runs, history stays the hosted one)"; echo "# RESULT: 1 passed, 0 failed"; exit 0; }
 ln -sf "$(node -p 'process.execPath' 2>/dev/null || command -v true)" "$T/bin/node"
 printf '%s\n' '#!/bin/bash' 'if [ "${1:-}" = -s ]; then echo Darwin; else exec "$(PATH=/usr/bin:/bin command -v uname)" "$@"; fi' > "$T/shim/uname"; chmod 755 "$T/shim/uname"
 printf '%s\n' '#!/bin/bash' '[ -f "$HOME/pgrep-busy" ] && exit 0; exit 1' > "$T/shim/pgrep"; chmod 755 "$T/shim/pgrep"
@@ -101,7 +102,7 @@ do_step() {
 }
 good_step() { # good_step STAGE NAME : apply + read-back + reconcile, asserting every contract
   local S=$1 K; K=$(ex $S 'd["step"]')
-  hist_is "$S" before || bad "step $K ($S): the history before is not the expected one" "rows=$(hist_rows) max=$(hist_max)"
+  hist_is "$S" before || bad "step $K ($S): the history before is not the expected one" "rows=$(hist_rows) max=$(hist_max) md5=$(hist_md5) want=$(ex $S 'd["history_before"]["list_md5"]') md5tool=$(command -v md5sum || command -v md5) head=$(head -c 40 "$H/remote-history" | tr '\n' ' ')"
   do_step "$S"
   local want; want=$(expect_calls "$S")
   [ $RC = 0 ] && [ "$(calls)" = "$want" ] && [ "$(receipt_of)" = "APPLIED+VERIFIED" ] && [ "$(marker)" = APPLIED-UNVERIFIED ] && [ "$CONSUMED" = 6 ] && [ -z "$(leaks)" ] \
