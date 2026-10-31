@@ -29,8 +29,8 @@ One runner invocation per migration. A single push of N files cannot roll back t
 3. 0266 needs 0258 and 0272 earlier in the plan (or already hosted);
 4. 0254 and 0271 are independent.
 
-That leaves 12 valid plans (13 stage packages). A stage package is named `<ver>-after-<versions applied before>`, so
-dropping a step changes which package a later step uses, never the package itself. `plan-check.sh VERSION...` refuses a
+That leaves 12 valid plans (13 stage packages). A stage package is named `<ver>-b<hex>` (a bitmask, in the spec's step order, of the steps applied before it; SEQUENCE.md and EXPECT.json list the versions), so
+dropping a step changes which package a later step uses, never the package itself. Ids are at most 16 characters because the reviewed runner refuses a longer manifest STAGE; build.py refuses any id over 16 and `runner-validate.sh` runs every manifest through the real runner up to the driver. `plan-check.sh VERSION...` refuses a
 rule-breaking plan, refuses an order no package was built for, and prints the stage ids to run.
 
 ## Step 1 is Team's real v2 package, adopted unchanged
