@@ -110,10 +110,13 @@ describe("R5: one shared owner-input wording", () => {
     expect(read("app/(app)/settings/machines/page.tsx")).toMatch(/\{OWNER_INPUT_REQUEST\}/);
   });
 
-  it("the charting panel hint, once it carries the review caveat, carries this exact text", () => {
-    const panel = squash(read("components/machines/machine-first-setup-panel.tsx"));
-    if (!panel.includes("Sending this starts a review")) return; // #1272 not merged yet
-    expect(panel).toContain(OWNER_INPUT_REQUEST);
+  it("the charting panel renders the constant, not its own copy", () => {
+    const panel = read("components/machines/machine-first-setup-panel.tsx");
+    expect(panel).toMatch(/from "@\/lib\/machines\/owner-input-copy"/);
+    expect(panel).toMatch(/\{OWNER_INPUT_REQUEST\}/);
+    // No second copy of the wording may creep back in beside the constant.
+    expect(squash(panel)).not.toContain("Sending this starts a review");
+    expect(squash(panel)).not.toContain("with no client on screen");
   });
 });
 
