@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 248,
+    "count": 250,
     "last": "0257_studio_payment_jurisdiction_failed_attempt_ack.sql",
-    "sha256": "c383e4c38f8845f49b90c45c3168242d18b87fcb430a2dd6073a036fdc434b38"
+    "sha256": "444e37ee8515311783c8699b05deb1a55ac1cb698a168695bb3ef2248a1d4d95"
   },
   "public": {
     "tables": [
@@ -173,6 +173,7 @@
       "audit_actor_is_caller",
       "audit_client_pricing_change",
       "audit_pinned_note_delete",
+      "authorize_appointment_email_operation",
       "begin_appointment_email_message",
       "begin_appointment_sms_message",
       "begin_waitlist_invitation_proof",
@@ -307,6 +308,7 @@
       "imported_treatment_memory_audit_row",
       "initialize_studio_payment_jurisdiction_from_history",
       "initialize_studio_payment_jurisdiction_from_history_v2",
+      "inspect_appointment_email_operation",
       "invalidate_waitlist_invitation_proof",
       "is_studio_member",
       "is_studio_owner",
@@ -347,6 +349,7 @@
       "new_client_waitlist_invitations_no_delete",
       "new_client_waitlist_invitations_server_timestamps",
       "new_client_waitlist_resolve_owner",
+      "observe_appointment_email_operation",
       "on_practitioner_change_refan",
       "on_studio_capacity_flag_change",
       "open_new_client_waitlist_admission_round",
@@ -360,6 +363,7 @@
       "practitioner_cancel_appointment",
       "practitioner_capacity_retirement_blockers",
       "practitioners_receptionist_membership_guard",
+      "prepare_appointment_email_operation",
       "process_email_provider_event",
       "public_booking_local_to_utc",
       "public_booking_practitioner_options",
@@ -453,6 +457,7 @@
       "retire_practitioner_capacity",
       "retire_ready_card_attempts",
       "retire_studio_machine",
+      "retire_unattempted_appointment_email_operation",
       "revert_appointment_outcome",
       "revoke_waitlist_preference_grant",
       "save_client_card_on_file",
