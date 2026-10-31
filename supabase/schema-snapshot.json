@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 248,
+    "count": 249,
     "last": "0257_studio_payment_jurisdiction_failed_attempt_ack.sql",
-    "sha256": "4f070e4b37c804f55e7674690d589b428d62a181eafce96c8fa83516ecc1b0df"
+    "sha256": "b6214fd687b176f0082c47a7785cd63af706f2eb82a963e9ab51c8567708ffe2"
   },
   "public": {
     "tables": [
@@ -171,6 +171,8 @@
       "assert_session_writable",
       "assert_setup_scope",
       "audit_actor_is_caller",
+      "audit_client_pricing_change",
+      "audit_pinned_note_delete",
       "begin_appointment_email_message",
       "begin_appointment_sms_message",
       "begin_waitlist_invitation_proof",
@@ -249,6 +251,7 @@
       "delete_recurring_break_rule",
       "delivery_concerns_identity_guard",
       "delivery_concerns_server_defaults",
+      "edit_client_pinned_note",
       "edit_session_started_at",
       "effective_new_client_admission",
       "email_delivery_health",
