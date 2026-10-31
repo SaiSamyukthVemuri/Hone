@@ -88,22 +88,27 @@ async function liveRows(studioId: string) {
 }
 
 describe("0187 — the Checkout authority records a non-card disposition", () => {
-  it("an active practitioner of the studio may record cash, and it is not a Stripe fact", async () => {
+  it("the studio OWNER may record cash, and it is not a Stripe fact; an active practitioner is refused owner_only (HON-44, 0254)", async () => {
     const s = await scenario();
     const member = await seedMember(
       { studioId: s.studioId, userId: s.practitionerUserId, practitionerId: s.practitionerId, clientId: s.clientId },
       "settle-member",
     );
 
-    const out = await record(member.userId, s.studioId, s.appointmentId, "paid_cash");
+    // 0254 (Sam decision 12): recording what a client paid is owner-only.
+    const refused = await record(member.userId, s.studioId, s.appointmentId, "paid_cash");
+    expect(refused.result).toBe("owner_only");
+    expect(await liveRows(s.studioId)).toHaveLength(0);
+
+    const out = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash");
     expect(out.result).toBe("recorded");
 
     const rows = await liveRows(s.studioId);
     expect(rows).toHaveLength(1);
     expect(rows[0].method).toBe("paid_cash");
-    // Attribution is the ACTOR's practitioner row in THIS studio, never the
-    // studio owner and never a caller-supplied id.
-    expect(rows[0].recorded_by_practitioner_id).toBe(member.practitionerId);
+    // Attribution is the ACTOR's practitioner row in THIS studio and never a
+    // caller-supplied id.
+    expect(rows[0].recorded_by_practitioner_id).toBe(s.practitionerId);
 
     // NOT A PAYMENT. No charge attempt was created by recording cash.
     const attempts = await adminQuery(
@@ -173,13 +178,13 @@ describe("0187 — waiver and correction are owner-only, in the database", () =>
     expect(rows[0].amount_cents).toBe(4500);
   });
 
-  it("a practitioner cannot supersede even her own record", async () => {
+  it("a practitioner cannot supersede the owner's record (and, since 0254, cannot record one of their own)", async () => {
     const s = await scenario();
     const member = await seedMember(
       { studioId: s.studioId, userId: s.practitionerUserId, practitionerId: s.practitionerId, clientId: s.clientId },
       "supersede-member",
     );
-    const first = await record(member.userId, s.studioId, s.appointmentId, "paid_cash");
+    const first = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash");
     expect(first.result).toBe("recorded");
 
     const out = await asUser(member.userId, async (q) => {

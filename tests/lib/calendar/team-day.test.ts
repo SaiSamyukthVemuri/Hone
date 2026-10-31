@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { buildTeamDay } from "@/lib/calendar/team-day";
-import { resolvePractitionerDayAvailability } from "@/lib/calendar/day-availability";
+import { buildDaySlots } from "@/lib/booking/slots";
+import { resolveCalendarDayAvailability, resolvePractitionerDayAvailability } from "@/lib/calendar/day-availability";
 import type { AppointmentWithPractitionerColor, RecurringBreakOccurrenceWithRule } from "@/lib/booking/queries";
 import type { StudioAvailabilityDefault, StudioAvailabilityOverride, StudioTimedBlock } from "@/lib/types/database";
 
@@ -74,7 +76,7 @@ const OVERRIDES = [ovr(P[3], DATE, true, "10:00:00", "14:00:00")];
 function build(over: Partial<Parameters<typeof buildTeamDay>[0]> = {}) {
   return buildTeamDay({
     date: DATE, dayOfWeek: TUE, tz: TZ, practitioners: PRACTITIONERS,
-    appointments: [], timedBlocks: [], recurringBreaks: [], defaults: DEFAULTS, overrides: OVERRIDES,
+    appointments: [], timedBlocks: [], recurringBreaks: [], defaults: DEFAULTS, overrides: OVERRIDES, capacityEnabled: true,
     ...over,
   });
 }
@@ -159,7 +161,7 @@ describe("buildTeamDay: individual off-time per column", () => {
   });
 
   it("matches the shared resolver for a practitioner with no personal rows (inherits the studio)", () => {
-    expect(resolvePractitionerDayAvailability({ date: DATE, dayOfWeek: TUE, defaults: DEFAULTS, overrides: OVERRIDES, practitionerId: P[4] }))
+    expect(resolvePractitionerDayAvailability({ date: DATE, dayOfWeek: TUE, defaults: DEFAULTS, overrides: OVERRIDES, practitionerId: P[4], capacityEnabled: true }))
       .toEqual({ availability: { isOpen: true, openTime: "09:00", closeTime: "17:00" }, closedDay: false });
   });
 
@@ -178,7 +180,7 @@ describe("buildTeamDay: America/Los_Angeles date boundaries", () => {
     // And it is NOT on the 18th's local day.
     const next = buildTeamDay({
       date: "2026-11-18", dayOfWeek: 3, tz: TZ, practitioners: PRACTITIONERS,
-      appointments: [late], timedBlocks: [], recurringBreaks: [], defaults: [], overrides: [],
+      appointments: [late], timedBlocks: [], recurringBreaks: [], defaults: [], overrides: [], capacityEnabled: true,
     });
     expect(next.columns.flatMap((c) => c.appts)).toEqual([]);
   });
@@ -197,8 +199,173 @@ describe("buildTeamDay: America/Los_Angeles date boundaries", () => {
     const a = appt(P[0], "2026-03-09T03:00:00Z");
     const day = buildTeamDay({
       date: "2026-03-08", dayOfWeek: 0, tz: TZ, practitioners: PRACTITIONERS,
-      appointments: [a], timedBlocks: [], recurringBreaks: [], defaults: [], overrides: [],
+      appointments: [a], timedBlocks: [], recurringBreaks: [], defaults: [], overrides: [], capacityEnabled: true,
     });
     expect(col(day, P[0]).appts.map((x) => x.id)).toEqual([a.id]);
+  });
+});
+
+// HON-48 compact column: how many columns the day view draws for 1 active, 1 working of 3,
+// 0 working and 5 working. The page sizes each from teamDayGridTemplate, so a lone column is
+// the same compact width as any other, and zero columns is an explicit empty state.
+describe("buildTeamDay: column counts the layout depends on", () => {
+  const open = (id: string) => def(id, TUE, true, "09:00:00", "17:00:00");
+  const closed = (id: string) => def(id, TUE, false, null, null);
+  const run = (roster: typeof PRACTITIONERS, defaults: ReturnType<typeof def>[], appointments: ReturnType<typeof appt>[] = []) =>
+    buildTeamDay({
+      date: DATE, dayOfWeek: TUE, tz: TZ, practitioners: roster,
+      appointments, timedBlocks: [], recurringBreaks: [], defaults, overrides: [], capacityEnabled: true,
+    });
+
+  it("one active practitioner: one column, with their hours", () => {
+    const day = run([PRACTITIONERS[0]], [open(P[0])]);
+    expect(day.columns.map((c) => c.practitionerId)).toEqual([P[0]]);
+    expect(day.notWorking).toEqual([]);
+    expect(day.columns[0].availability?.isOpen).toBe(true);
+  });
+
+  it("one working of three active: one column, the other two listed as not working", () => {
+    const day = run(PRACTITIONERS.slice(0, 3), [open(P[1]), closed(P[0]), closed(P[2])]);
+    expect(day.columns.map((c) => c.practitionerId)).toEqual([P[1]]);
+    expect(day.notWorking.map((n) => n.practitionerId)).toEqual([P[0], P[2]]);
+  });
+
+  it("nobody working: no columns (the page shows its empty state) and everyone listed", () => {
+    const day = run(PRACTITIONERS.slice(0, 3), PRACTITIONERS.slice(0, 3).map((p) => closed(p.id)));
+    expect(day.columns).toEqual([]);
+    expect(day.notWorking).toHaveLength(3);
+  });
+
+  it("a practitioner who is off but holds an appointment still gets their column", () => {
+    const day = run(PRACTITIONERS.slice(0, 2), [closed(P[0]), closed(P[1])], [appt(P[0], "2026-11-17T18:00:00Z")]);
+    expect(day.columns.map((c) => c.practitionerId)).toEqual([P[0]]);
+  });
+
+  it("five working: five columns", () => {
+    const day = run(PRACTITIONERS, PRACTITIONERS.map((p) => open(p.id)));
+    expect(day.columns).toHaveLength(5);
+    expect(day.notWorking).toEqual([]);
+  });
+});
+
+// Codex P2 on #1280: a capacity-OFF solo studio can keep personal rows from when capacity was
+// on. The slot engine (lib/booking/slots.ts, OFF branch) and the week grid read STUDIO-WIDE rows
+// only; the Day column must too, or Day says "No practitioner is working" where booking is open.
+describe("buildTeamDay: capacity OFF reads studio-wide hours only (parity with the week grid and slots.ts)", () => {
+  const SOLO = [PRACTITIONERS[0]];
+  const conflicting = {
+    defaults: [def(null, TUE, true, "09:00:00", "17:00:00"), def(P[0], TUE, false, null, null)],
+    overrides: [ovr(P[0], DATE, false, null, null)],
+  };
+  const run = (capacityEnabled: boolean, over: Partial<Parameters<typeof buildTeamDay>[0]> = {}) =>
+    buildTeamDay({
+      date: DATE, dayOfWeek: TUE, tz: TZ, practitioners: SOLO,
+      appointments: [], timedBlocks: [], recurringBreaks: [], ...conflicting, capacityEnabled, ...over,
+    });
+
+  it("personal CLOSED, studio OPEN: capacity OFF keeps the column open with the studio hours", () => {
+    const day = run(false);
+    expect(day.columns.map((c) => c.practitionerId)).toEqual([P[0]]);
+    expect(day.notWorking).toEqual([]);
+    expect(day.columns[0].availability).toEqual({ isOpen: true, openTime: "09:00", closeTime: "17:00" });
+    expect(day.columns[0].closedDay).toBe(false);
+  });
+
+  it("the same rows with capacity ON still honour the personal closure (unchanged behaviour)", () => {
+    const day = run(true);
+    expect(day.columns).toEqual([]);
+    expect(day.notWorking.map((n) => n.practitionerId)).toEqual([P[0]]);
+  });
+
+  it("personal OPEN, studio CLOSED: capacity OFF stays closed, as booking does", () => {
+    const day = run(false, {
+      defaults: [def(null, TUE, false, null, null), def(P[0], TUE, true, "10:00:00", "12:00:00")],
+      overrides: [],
+    });
+    expect(day.columns).toEqual([]);
+    expect(day.notWorking.map((n) => n.practitionerId)).toEqual([P[0]]);
+  });
+
+  it("a personal date override is ignored too (studio override wins, else studio weekday)", () => {
+    const day = run(false, {
+      overrides: [ovr(P[0], DATE, false, null, null), ovr(null, DATE, true, "11:00:00", "15:00:00")],
+    });
+    expect(day.columns[0].availability).toEqual({ isOpen: true, openTime: "11:00", closeTime: "15:00" });
+  });
+
+  it("agrees with the week grid's resolver for every conflicting case, capacity OFF", () => {
+    for (const rows of [
+      conflicting,
+      { defaults: [def(null, TUE, false, null, null), def(P[0], TUE, true, "10:00:00", "12:00:00")], overrides: [] },
+      { defaults: conflicting.defaults, overrides: [ovr(P[0], DATE, false, null, null), ovr(null, DATE, true, "11:00:00", "15:00:00")] },
+    ]) {
+      const week = resolveCalendarDayAvailability({
+        date: DATE, dayOfWeek: TUE, defaults: rows.defaults, overrides: rows.overrides,
+        capacityEnabled: false, activePractitionerIds: [],
+      });
+      const column = resolvePractitionerDayAvailability({
+        date: DATE, dayOfWeek: TUE, defaults: rows.defaults, overrides: rows.overrides,
+        practitionerId: P[0], capacityEnabled: false,
+      });
+      expect(column).toEqual({ availability: week.availability, closedDay: week.closedDay });
+    }
+  });
+
+  it("the slot engine's OFF branch reads studio-wide rows only (the rule this mirrors)", () => {
+    const slots = readFileSync("lib/booking/slots.ts", "utf8");
+    const off = slots.slice(slots.indexOf("  } else {\n    // OFF: studio-wide window only."));
+    expect(off.slice(0, 600)).toMatch(/getStudioWideOverrideDaySafe/);
+    expect(off.slice(0, 600)).toMatch(/getStudioWideDaySafe/);
+    expect(off.slice(0, 600)).not.toMatch(/practitionerId/);
+  });
+});
+
+// Codex P2 #2 on #1280: with capacity OFF a practitioner-scoped block or recurring break is
+// DORMANT (0137 writes zero reservations for it), so the slot engine offers that time and the
+// Day column must not draw it as unavailable. Studio-wide ones stay in both modes.
+describe("buildTeamDay: capacity OFF draws studio-wide blocks and breaks only (parity with 0137 and slots.ts)", () => {
+  const SOLO = [PRACTITIONERS[0]];
+  const hours = [def(null, TUE, true, "09:00:00", "17:00:00")];
+  // 11:00-12:00 PST on DATE.
+  const START = "2026-11-17T19:00:00Z";
+  const END = "2026-11-17T20:00:00Z";
+  const scopedBlock = block(P[0], START, END);
+  const wideBlock = block(null, START, END);
+  const scopedBreak = brk(P[0], START, END, "Scoped break");
+  const wideBreak = brk(null, START, END, "Studio break");
+  const run = (capacityEnabled: boolean) =>
+    buildTeamDay({
+      date: DATE, dayOfWeek: TUE, tz: TZ, practitioners: SOLO,
+      appointments: [], timedBlocks: [scopedBlock, wideBlock], recurringBreaks: [scopedBreak, wideBreak],
+      defaults: hours, overrides: [], capacityEnabled,
+    }).columns[0];
+
+  it("capacity OFF: the scoped block and break are not drawn; the studio-wide ones are", () => {
+    const c = run(false);
+    expect(c.timedBlocks.map((b) => b.id)).toEqual([wideBlock.id]);
+    expect(c.recurringBreaks.map((b) => b.id)).toEqual([wideBreak.id]);
+  });
+
+  it("capacity ON: scoped and studio-wide are both drawn (unchanged)", () => {
+    const c = run(true);
+    expect(c.timedBlocks.map((b) => b.id)).toEqual([scopedBlock.id, wideBlock.id]);
+    expect(c.recurringBreaks.map((b) => b.id)).toEqual([scopedBreak.id, wideBreak.id]);
+  });
+
+  it("the slot engine offers the time under the reservations 0137 writes for each case", () => {
+    const offers = (reservations: Array<{ starts_at: string; ends_at: string }>) =>
+      buildDaySlots({ dateStr: DATE, tz: TZ, duration: 60, buffer: 0, openTime: "09:00", closeTime: "17:00", reservations })
+        .some((s) => Date.parse(s.start) === Date.parse(START));
+    // Capacity OFF, scoped source: dormant, zero reservations, time offered (and not drawn above).
+    expect(offers([])).toBe(true);
+    // Capacity OFF, studio-wide source: one reservation, time not offered (and drawn above).
+    expect(offers([{ starts_at: START, ends_at: END }])).toBe(false);
+  });
+
+  it("0137 keeps a scoped source dormant when capacity is off (the rule this mirrors)", () => {
+    const sql = readFileSync("supabase/migrations/0137_scoped_blocks_and_breaks.sql", "utf8");
+    const scoped = sql.slice(sql.indexOf("if p_practitioner_id is not null then"));
+    expect(scoped.slice(0, 400)).toMatch(/Capacity OFF => retained but DORMANT/);
+    expect(scoped.slice(0, 600)).toMatch(/if public\.studio_capacity_enabled\(p_studio_id\) then/);
   });
 });

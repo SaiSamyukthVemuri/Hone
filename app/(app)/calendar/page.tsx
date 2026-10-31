@@ -60,9 +60,10 @@ import {
 import { formatClockLabel, formatTimeForStudio, resolveTimeFormat, type TimeFormat } from "@/lib/booking/tz";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import { redirect } from "next/navigation";
-import { buildTeamDay, type TeamDayColumn } from "@/lib/calendar/team-day";
-import { blockScopeNamesFor } from "@/lib/calendar/block-scope";
-import { isInitialCalendarEntry, isTeamCalendar } from "./initial-view";
+import { buildTeamDay, teamColumnAllowsCreate, type TeamDayColumn } from "@/lib/calendar/team-day";
+import { blockScopeNamesFor, liveScopedRows } from "@/lib/calendar/block-scope";
+import { hasDayView, isInitialCalendarEntry, isTeamCalendar } from "./initial-view";
+import { teamDayGridTemplate } from "@/lib/calendar/team-day-layout";
 
 type Search = Promise<{
   week?: string;
@@ -176,7 +177,8 @@ export default async function CalendarPage({
     // used with weekday defaults to resolve common hours without collapsing
     // different practitioner schedules into one studio-wide state.
     getOverridesForRange(studio.id, weekStart, weekEnd),
-    studio.practitioner_capacity_enabled === true ? getPractitionersForStudio(studio.id) : Promise.resolve([]),
+    // Loaded for every studio: the Day tab needs the active count even with capacity off.
+    getPractitionersForStudio(studio.id),
   ]);
   domain.end();
 
@@ -186,7 +188,7 @@ export default async function CalendarPage({
   const availabilityForDate = (date: string, dayOfWeek: number) => resolveCalendarDayAvailability({
     date, dayOfWeek, defaults: availabilityDefaults, overrides: availabilityOverrides,
     capacityEnabled: studio.practitioner_capacity_enabled === true,
-    activePractitionerIds: activePractitioners.map((p) => p.id),
+    activePractitionerIds: (studio.practitioner_capacity_enabled === true ? activePractitioners : []).map((p) => p.id),
   });
   function isClosedDate(date: string, dow: number): boolean {
     return availabilityForDate(date, dow).closedDay;
@@ -244,7 +246,7 @@ export default async function CalendarPage({
   // appointments. A block straddling local midnight is rendered on
   // its starting day.
   const timedBlocksByDate = new Map<string, StudioTimedBlock[]>();
-  for (const tb of timedBlocks) {
+  for (const tb of liveScopedRows(studio.practitioner_capacity_enabled === true, timedBlocks)) {
     const localDate = localDateString(new Date(tb.starts_at), studio.timezone);
     const arr = timedBlocksByDate.get(localDate) ?? [];
     arr.push(tb);
@@ -253,7 +255,7 @@ export default async function CalendarPage({
 
   // Same grouping for recurring break occurrences.
   const recurringByDate = new Map<string, RecurringBreakOccurrenceWithRule[]>();
-  for (const occ of recurringOccurrences) {
+  for (const occ of liveScopedRows(studio.practitioner_capacity_enabled === true, recurringOccurrences)) {
     const localDate = localDateString(new Date(occ.starts_at), studio.timezone);
     const arr = recurringByDate.get(localDate) ?? [];
     arr.push(occ);
@@ -289,7 +291,7 @@ export default async function CalendarPage({
         weekHref={`/calendar?view=week&week=${weekStart}`}
         monthHref={`/calendar?view=month&month=${firstOfMonthString(weekStart)}&week=${weekStart}`}
         dayHref={
-          isTeamCalendar(studio.practitioner_capacity_enabled === true, activePractitioners)
+          hasDayView(studio.practitioner_capacity_enabled === true, activePractitioners)
             ? `/calendar?view=day&day=${initialSelectedDate}`
             : undefined
         }
@@ -535,7 +537,8 @@ async function renderMonthView(opts: {
       startUtc.toISOString(),
       endUtc.toISOString(),
     ),
-    studio.practitioner_capacity_enabled === true ? getPractitionersForStudio(studio.id) : Promise.resolve([]),
+    // Loaded for every studio: the Day tab needs the active count even with capacity off.
+    getPractitionersForStudio(studio.id),
   ]);
   domain.end();
 
@@ -546,7 +549,7 @@ async function renderMonthView(opts: {
     return resolveCalendarDayAvailability({
       date: dateStr, dayOfWeek: dow, defaults: availabilityDefaults, overrides: availabilityOverrides,
       capacityEnabled: studio.practitioner_capacity_enabled === true,
-      activePractitionerIds: activePractitioners.map((p) => p.id),
+      activePractitionerIds: (studio.practitioner_capacity_enabled === true ? activePractitioners : []).map((p) => p.id),
     });
   };
   function isClosedDate(dateStr: string): boolean {
@@ -561,8 +564,8 @@ async function renderMonthView(opts: {
 
   const blockedByDate = groupMonthBlockedByDate(
     blockouts,
-    timedBlocks,
-    recurringOccurrences,
+    liveScopedRows(studio.practitioner_capacity_enabled === true, timedBlocks),
+    liveScopedRows(studio.practitioner_capacity_enabled === true, recurringOccurrences),
     studio.timezone,
     isClosedDate,
     blockScopeNamesFor(studio.practitioner_capacity_enabled === true, activePractitioners),
@@ -584,7 +587,7 @@ async function renderMonthView(opts: {
         weekHref={lastWeekHref}
         monthHref={`/calendar?view=month&month=${monthAnchor}`}
         dayHref={
-          isTeamCalendar(studio.practitioner_capacity_enabled === true, activePractitioners)
+          hasDayView(studio.practitioner_capacity_enabled === true, activePractitioners)
             ? `/calendar?view=day&day=${today >= monthAnchor && today < monthEnd ? today : monthAnchor}`
             : undefined
         }
@@ -641,7 +644,6 @@ async function renderTeamDayView(opts: {
   const { studio, timeFormat, today, isOwner, practitioner } = opts;
   const date = opts.dayParam && DATE_PARAM_RE.test(opts.dayParam) ? opts.dayParam : today;
   const capacityEnabled = studio.practitioner_capacity_enabled === true;
-  if (!capacityEnabled) redirect(`/calendar?day=${date}`);
 
   const [y, m, d] = date.split("-").map(Number);
   const dayOfWeek = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
@@ -676,7 +678,7 @@ async function renderTeamDayView(opts: {
   ]);
   domain.end();
 
-  if (!isTeamCalendar(capacityEnabled, activePractitioners)) {
+  if (!hasDayView(capacityEnabled, activePractitioners)) {
     redirect(`/calendar?day=${date}`);
   }
 
@@ -690,6 +692,7 @@ async function renderTeamDayView(opts: {
     recurringBreaks: recurringOccurrences,
     defaults: availabilityDefaults,
     overrides: availabilityOverrides,
+    capacityEnabled,
   });
 
   const blockout = blockouts.find((b) => b.starts_on <= date && date <= b.ends_on) ?? null;
@@ -703,8 +706,8 @@ async function renderTeamDayView(opts: {
   const returnTo = buildCalendarReturnParams({ view: "day", day: date });
   // A studio-wide block sits in EVERY column labelled "All practitioners"; a
   // scoped one sits only in its own column (lib/calendar/team-day.ts).
-  const blockScopeNames = blockScopeNamesFor(true, activePractitioners);
-  const gridColumns = `60px repeat(${Math.max(1, columns.length)}, minmax(9rem, 1fr))`;
+  const blockScopeNames = blockScopeNamesFor(capacityEnabled, activePractitioners);
+  const gridColumns = teamDayGridTemplate(columns.length);
 
   return (
     <div className="flex flex-col gap-6">
@@ -734,8 +737,14 @@ async function renderTeamDayView(opts: {
       <div
         data-testid="team-day-view"
         data-date={date}
+        data-column-count={columns.length}
         className="max-h-[calc(100dvh-13rem)] overflow-auto overscroll-contain rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950"
       >
+        {columns.length === 0 ? (
+          <p data-testid="team-day-empty" className="px-4 py-10 text-center text-sm text-neutral-600 dark:text-neutral-400">
+            No practitioner is working on this day.
+          </p>
+        ) : (
         <div className="min-w-fit">
           <div
             className="sticky top-0 z-20 grid border-b border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900"
@@ -783,7 +792,7 @@ async function renderTeamDayView(opts: {
                   tz={studio.timezone}
                   timeFormat={timeFormat}
                   isOwner={isOwner}
-                  practitionerCapacityEnabled
+                  practitionerCapacityEnabled={capacityEnabled}
                   currentPractitionerId={practitioner.id}
                   currentPractitionerName={practitioner.display_name}
                   clients={drawerClients}
@@ -796,15 +805,22 @@ async function renderTeamDayView(opts: {
                   teamColumn={{
                     practitionerId: c.practitionerId,
                     name: c.name,
-                    // Owners book anyone active; a member books only
-                    // themselves, so only their own column offers it.
-                    allowCreate: c.active && (isOwner || c.practitionerId === practitioner.id),
+                    // Capacity on: owners book anyone active, a member only
+                    // themselves. Capacity off: as the week grid, any active column.
+                    allowCreate: teamColumnAllowsCreate({
+                      capacityEnabled,
+                      active: c.active,
+                      isOwner,
+                      columnPractitionerId: c.practitionerId,
+                      viewerPractitionerId: practitioner.id,
+                    }),
                   }}
                 />
               </div>
             ))}
           </div>
         </div>
+        )}
       </div>
 
       <p className="hidden text-xs text-neutral-500 md:block">

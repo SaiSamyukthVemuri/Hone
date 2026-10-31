@@ -671,6 +671,10 @@ describe("one ledger budget per cron run", () => {
 });
 
 
+const PRIVATE_PAYLOAD = /SYNTHETIC_PRIVATE|appt-1|studio-1|555/;
+// Every argument of every call stays under the privacy pattern; only the real clock reading in the first argument is dropped.
+const withoutClock = (calls: unknown[][]) =>
+  calls.map(([first, ...rest]) => [{ ...JSON.parse(String(first)), timestamp: undefined }, ...rest]);
 describe("MSG006 production final-failure observer", () => {
   function definiteNonSend() {
     fetchMock.mockImplementationOnce(() => Promise.reject(Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })));
@@ -715,6 +719,13 @@ describe("MSG006 production final-failure observer", () => {
     expect(result.ok).toBe(state === "accepted"); expect(h.attemptReads).toEqual([]); expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(recorded()).toEqual([state !== "terminal refusal"]);
   });
+  it("CONTROL: the privacy pattern still catches 555 in a non-timestamp field or in a second argument", () => {
+    const call = (...args: unknown[]) => [JSON.stringify({ event: "x", timestamp: "2026-10-30T15:55:55.555Z", ...(args[0] as object) }), ...args.slice(1)];
+    expect(JSON.stringify(withoutClock([call({ phone: "+16045550199" })]))).toMatch(PRIVATE_PAYLOAD);
+    expect(JSON.stringify(withoutClock([call({}, "appt-1")]))).toMatch(PRIVATE_PAYLOAD);
+    expect(JSON.stringify(withoutClock([call({}, { phone: "+16045550199" })]))).toMatch(PRIVATE_PAYLOAD);
+    expect(JSON.stringify(withoutClock([call({})]))).not.toMatch(PRIVATE_PAYLOAD);
+  });
   it("a throwing observer diagnostic preserves the definite failure without private payloads or retry", async () => {
     h.readMode = "error"; definiteNonSend();
     vi.mocked(console.error).mockImplementation((value) => {
@@ -723,8 +734,9 @@ describe("MSG006 production final-failure observer", () => {
     expect(await send24hReminderSmsToClient(input())).toEqual({ ok: false, error: "twilio_unreachable", retryable: true });
     const observer = vi.mocked(console.error).mock.calls.filter(call => String(call[0]).includes("sms_reminder_attempt_read_failed"));
     expect(observer).toHaveLength(1);
-    expect(JSON.parse(String(observer[0][0]))).toEqual({ event: "sms_reminder_attempt_read_failed", smsType: "reminder_24h", timestamp: expect.any(String) });
-    expect(JSON.stringify(observer)).not.toMatch(/SYNTHETIC_PRIVATE|appt-1|studio-1|555/);
+    const payload = JSON.parse(String(observer[0][0]));
+    expect(payload).toEqual({ event: "sms_reminder_attempt_read_failed", smsType: "reminder_24h", timestamp: expect.any(String) });
+    expect(JSON.stringify(withoutClock(observer))).not.toMatch(PRIVATE_PAYLOAD);
     expect(h.attemptReads).toHaveLength(1); expect(fetchMock).toHaveBeenCalledTimes(1); expect(recorded()).toEqual([false]);
   });
   it("an observer that ignores abort still returns within1000ms without extra sends", async () => {

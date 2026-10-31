@@ -22,6 +22,7 @@ const HELPERS = [
   "studio_named_stripe_accounts(uuid)",
 ];
 const ROLES = ["public", "anon", "authenticated", "service_role"];
+// exemption-db-pair: tests/db/studio-payment-jurisdiction-history-init.db.test.ts | initialize_studio_payment_jurisdiction_from_history | stripe_events
 const EXEMPT = ["stripe_events"];
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
