@@ -193,7 +193,7 @@ def main():
     f66[5] = "public.receptionist_calendar(uuid,timestamptz,timestamptz)"
     t66 = ["studio_legal_name_access", "client_legal_name_access_audit", "client_legal_identities"]
     pre266 = [
-        ("tables_present", "select count(*) = 2 from pg_catalog.pg_class c where c.relnamespace = 'public'::pg_catalog.regnamespace and c.relkind = 'r' and c.relrowsecurity and c.relname in ('client_legal_identities', 'studio_receptionists', 'studio_receptionist_actors') or true"),
+        ("tables_present", "select count(*) = 2 from pg_catalog.pg_class c where c.relnamespace = 'public'::pg_catalog.regnamespace and c.relkind = 'r' and c.relrowsecurity and c.relname in ('client_legal_identities', 'studio_receptionists')"),
         ("helpers_ok", " and ".join(exists_fn(s) for s in ("public.is_studio_member(pg_catalog.uuid)", "public.is_studio_owner(pg_catalog.uuid)", "public.can_use_client_legal_identity(pg_catalog.uuid)",
                                                               "public.receptionist_client_contacts(pg_catalog.uuid,pg_catalog.text,pg_catalog.int4)",
                                                               "public.receptionist_calendar(pg_catalog.uuid,pg_catalog.timestamptz,pg_catalog.timestamptz)"))),
