@@ -64,10 +64,8 @@ describe("the separate Breaks & blocks tab is removed + the route is safe", () =
     expect(LAYOUT).not.toMatch(/"\/settings\/calendar"/);
   });
 
-  it("/settings/calendar redirects to /settings/availability (safe deep link)", () => {
-    expect(CAL_PAGE).toMatch(/import \{ redirect \} from "next\/navigation"/);
-    expect(CAL_PAGE).toMatch(/redirect\("\/settings\/availability"\)/);
-    // The old data-loading / section rendering is gone from the route.
+  it("/settings/calendar is now Personal > Calendar: it no longer redirects, and never renders breaks or blocks", () => {
+    expect(CAL_PAGE).not.toMatch(/redirect\(/);
     expect(CAL_PAGE).not.toMatch(/RecurringBreaksSection|TimedBlocksSection|getUpcomingTimedBlocks/);
   });
 });

@@ -1,10 +1,8 @@
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { ProfileForm } from "./ProfileForm";
-import { ColorPicker } from "./ColorPicker";
-import { CalendarFeedCard } from "./CalendarFeedCard";
+import Link from "next/link";
 import { GoogleCalendarCard } from "./GoogleCalendarCard";
 import { getOwnConnectionReadiness } from "@/lib/google-calendar/connection";
-import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 export default async function ProfileSettingsPage() {
   const { practitioner, studio } = await requirePractitionerWithStudio();
@@ -28,11 +26,13 @@ export default async function ProfileSettingsPage() {
         initialDisplayName={practitioner.display_name ?? ""}
         email={practitioner.email}
       />
-      <ColorPicker initialColor={practitioner.color} />
-      <CalendarFeedCard
-        appOrigin={getRequiredAppOrigin()}
-        initialActive={!!practitioner.calendar_feed_token_hash}
-      />
+      <p className="text-sm text-neutral-500">
+        Your calendar colour and calendar feed now live under{" "}
+        <Link href="/settings/calendar" className="underline">
+          Calendar
+        </Link>
+        .
+      </p>
       {googleEnabled && (
         <GoogleCalendarCard
           connection={google.metadata}

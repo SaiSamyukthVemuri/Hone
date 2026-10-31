@@ -270,7 +270,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     id: "settings-calendar-feed",
     title: "Calendar feed",
     category: "Settings",
-    href: "/settings/profile#calendar-feed",
+    href: "/settings/calendar#calendar-feed",
     description: "Subscribe to your Hone appointments from Apple Calendar, Google Calendar, or Outlook",
     keywords: ["calendar feed", "feed", "ics", "ical", "subscribe", "apple calendar", "outlook", "export calendar"],
     visibility: "practitioner",
@@ -568,7 +568,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     id: "settings-calendar-color",
     title: "Calendar color",
     category: "Settings",
-    href: "/settings/profile#calendar-color",
+    href: "/settings/calendar#calendar-color",
     description: "The colour your appointments appear in on the calendar",
     keywords: ["calendar color", "calendar colour", "my color", "my colour", "appointment color", "appointment colour", "colour", "color"],
     visibility: "practitioner",
@@ -879,11 +879,6 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     route: "/records/print",
     reason:
       "Print/export view of whichever Records section you are already in. Not a destination on its own; reached from /records.",
-  },
-  {
-    route: "/settings/calendar",
-    reason:
-      "Redirect-only alias kept for old bookmarks; breaks & blocks were consolidated into /settings/availability, which is what search advertises.",
   },
   {
     route: "/settings/waitlist",

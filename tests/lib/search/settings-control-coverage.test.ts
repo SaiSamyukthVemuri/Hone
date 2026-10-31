@@ -496,9 +496,7 @@ describe("settings pages are all represented", () => {
 
     expect(routes.length).toBeGreaterThanOrEqual(14);
     const audited = new Set(SETTINGS_CONTROLS.map((c) => c.page));
-    // /settings/calendar is a redirect alias with no controls of its own; it is
-    // already recorded in NON_SEARCHABLE_ROUTES.
-    const exempt = new Set(["/settings/calendar"]);
+    const exempt = new Set<string>();
     const missing = routes.filter((r) => !audited.has(r) && !exempt.has(r));
     expect(
       missing.sort(),
