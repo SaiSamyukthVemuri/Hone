@@ -65,6 +65,8 @@ import { blockScopeNamesFor, liveScopedRows } from "@/lib/calendar/block-scope";
 import { hasDayView, isInitialCalendarEntry, isTeamCalendar } from "./initial-view";
 import { teamDayGridTemplate } from "@/lib/calendar/team-day-layout";
 import { CalendarSidebar } from "./CalendarSidebar";
+import { buildTimeInsights, insightPeriod } from "@/lib/calendar/time-insights";
+import { getBoundaryCrossingAppointments } from "@/lib/calendar/boundary-appointments";
 import { practitionerInitials } from "@/lib/calendar/practitioner-identity";
 import { buildSidebarModel } from "@/lib/calendar/sidebar-model";
 import {
@@ -172,6 +174,7 @@ export default async function CalendarPage({
     availabilityDefaults,
     availabilityOverrides,
     activePractitioners,
+    boundaryCrossers,
   ] = await Promise.all([
     getAppointmentsForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
     getBlockouts(studio.id),
@@ -192,6 +195,9 @@ export default async function CalendarPage({
     getOverridesForRange(studio.id, weekStart, weekEnd),
     // Loaded for every studio: the Day tab needs the active count even with capacity off.
     getPractitionersForStudio(studio.id),
+    // Time insights only: appointments that began before the period and run into it (same read,
+    // same scope as the view; never drawn).
+    getBoundaryCrossingAppointments(studio.id, startUtc),
   ]);
   domain.end();
 
@@ -199,6 +205,13 @@ export default async function CalendarPage({
   // availability, blocks and every action below are untouched.
   const sidebar = buildSidebarModel(activePractitioners, params.people);
   const visibleAppointments = filterBySelection(appointments, sidebar.selection);
+  const insights = buildTimeInsights({
+    appointments: [...appointments, ...boundaryCrossers],
+    period: insightPeriod(startUtc, endUtc),
+    selection: sidebar.selection,
+    periodLabel: weekRangeLabel(weekStart, weekEnd),
+    practitioners: sidebar.practitioners,
+  });
 
   // This combined view may show shared hours, never one arbitrary person's
   // row. A date with different effective schedules stays neutral and keeps
@@ -302,10 +315,12 @@ export default async function CalendarPage({
       studioId={studio.id}
       view="week"
       anchorDate={initialSelectedDate}
+      selectedDate={initialSelectedDate}
       today={today}
       practitioners={sidebar.practitioners}
       selectedIds={sidebar.selectedIds}
       selectionParam={sidebar.param}
+      insights={insights}
     >
     <div className="flex flex-col gap-6">
       {/* Google/Apple-style toolbar. Week-scoped step nav (Today/‹/›) is
@@ -553,6 +568,7 @@ async function renderMonthView(opts: {
     timedBlocks,
     recurringOccurrences,
     activePractitioners,
+    boundaryCrossers,
   ] = await Promise.all([
     getAppointmentsForRange(
       studio.id,
@@ -574,12 +590,23 @@ async function renderMonthView(opts: {
     ),
     // Loaded for every studio: the Day tab needs the active count even with capacity off.
     getPractitionersForStudio(studio.id),
+    // Time insights only: appointments that began before the period and run into it (same read,
+    // same scope as the view; never drawn).
+    getBoundaryCrossingAppointments(studio.id, startUtc),
   ]);
   domain.end();
 
   // Sidebar selection: view-only, narrows the chips drawn (blocked time and closures still show).
   const sidebar = buildSidebarModel(activePractitioners, peopleParam);
   const visibleAppointments = filterBySelection(appointments, sidebar.selection);
+  // The calendar month ONLY: the grid's spill-over days belong to the neighbouring months.
+  const insights = buildTimeInsights({
+    appointments: [...appointments, ...boundaryCrossers],
+    period: insightPeriod(startUtc, endUtc),
+    selection: sidebar.selection,
+    periodLabel: monthYearLabel(monthAnchor),
+    practitioners: sidebar.practitioners,
+  });
 
   const availabilityForDate = (dateStr: string) => {
     // Sunday-start dow consistent with the week view's mapping.
@@ -619,10 +646,12 @@ async function renderMonthView(opts: {
       studioId={studio.id}
       view="month"
       anchorDate={monthAnchor}
+      selectedDate={null}
       today={today}
       practitioners={sidebar.practitioners}
       selectedIds={sidebar.selectedIds}
       selectionParam={sidebar.param}
+      insights={insights}
     >
     <div className="flex flex-col gap-6">
       {/* Same Google/Apple-style toolbar as the week view, for coherent
@@ -716,6 +745,7 @@ async function renderTeamDayView(opts: {
     availabilityDefaults,
     availabilityOverrides,
     activePractitioners,
+    boundaryCrossers,
   ] = await Promise.all([
     getAppointmentsForRange(studio.id, startUtc.toISOString(), endUtc.toISOString()),
     getBlockouts(studio.id),
@@ -730,6 +760,9 @@ async function renderTeamDayView(opts: {
     getAvailabilityDefaults(studio.id),
     getOverridesForRange(studio.id, date, date),
     getPractitionersForStudio(studio.id),
+    // Time insights only: appointments that began before the period and run into it (same read,
+    // same scope as the view; never drawn).
+    getBoundaryCrossingAppointments(studio.id, startUtc),
   ]);
   domain.end();
 
@@ -742,6 +775,13 @@ async function renderTeamDayView(opts: {
   const sidebar = buildSidebarModel(activePractitioners, peopleParam);
   const shownPractitioners = selectedPractitioners(activePractitioners, sidebar.selection);
   const shownAppointments = filterBySelection(appointments, sidebar.selection);
+  const insights = buildTimeInsights({
+    appointments: [...appointments, ...boundaryCrossers],
+    period: insightPeriod(startUtc, endUtc),
+    selection: sidebar.selection,
+    periodLabel: `${weekdayLabel(dayOfWeek)}, ${monthDayLabel(date)}`,
+    practitioners: sidebar.practitioners,
+  });
 
   const { columns, notWorking } = buildTeamDay({
     date,
@@ -775,10 +815,12 @@ async function renderTeamDayView(opts: {
       studioId={studio.id}
       view="day"
       anchorDate={date}
+      selectedDate={date}
       today={today}
       practitioners={sidebar.practitioners}
       selectedIds={sidebar.selectedIds}
       selectionParam={sidebar.param}
+      insights={insights}
     >
     <div className="flex flex-col gap-6">
       <CalendarToolbar

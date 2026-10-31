@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { CalendarMiniMonth } from "./CalendarMiniMonth";
+import { INSIGHTS_RULE, type TimeInsightsModel } from "@/lib/calendar/time-insights";
 import {
   SELECTION_PARAM,
   SIDEBAR_STORAGE_KEY,
@@ -35,21 +36,27 @@ export function CalendarSidebar({
   studioId,
   view,
   anchorDate,
+  selectedDate,
   today,
   practitioners,
   selectedIds,
   selectionParam,
+  insights,
   children,
 }: {
   studioId: string;
   view: "day" | "week" | "month";
   anchorDate: string;
+  /** The date the view is on (null for Month, which has no single date). */
+  selectedDate: string | null;
   today: string;
   practitioners: ReadonlyArray<SidebarPractitioner>;
   /** What the server drew: every listed id when it is everyone. */
   selectedIds: ReadonlyArray<string>;
   /** The server's selection as a param (undefined = everyone). */
   selectionParam: string | undefined;
+  /** Booked hours and count for the displayed period and selection (lib/calendar/time-insights.ts). */
+  insights: TimeInsightsModel;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -179,7 +186,36 @@ export function CalendarSidebar({
         className={asideClass}
       >
         <div className="flex flex-col gap-5 md:sticky md:top-4">
-          <CalendarMiniMonth anchorDate={anchorDate} today={today} view={view} selectionParam={selectionParam} />
+          <CalendarMiniMonth
+            anchorDate={anchorDate}
+            selectedDate={selectedDate}
+            today={today}
+            view={view}
+            selectionParam={selectionParam}
+          />
+          <details open data-testid="calendar-time-insights" className="group rounded-md border border-neutral-200 dark:border-neutral-800">
+            <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+              Time insights
+            </summary>
+            <div className="flex flex-col gap-1 px-3 pb-3" title={INSIGHTS_RULE}>
+              <p data-testid="time-insights-label" className="text-xs text-neutral-600 dark:text-neutral-400">
+                {insights.label}
+              </p>
+              <p
+                data-testid="time-insights-total"
+                data-minutes={insights.minutes}
+                data-count={insights.count}
+                aria-describedby="time-insights-rule"
+                className="text-base font-semibold tabular-nums"
+              >
+                {insights.summary}
+              </p>
+              <p id="time-insights-rule" className="text-[11px] leading-snug text-neutral-500">
+                Booked time. Cancelled excluded; blocks and breaks never counted.
+              </p>
+              <span className="sr-only">{INSIGHTS_RULE}</span>
+            </div>
+          </details>
           <section aria-label="Practitioners" data-testid="calendar-sidebar-practitioners">
             <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">Practitioners</h2>
             <ul className="flex flex-col gap-1">
