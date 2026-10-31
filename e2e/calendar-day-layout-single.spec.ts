@@ -32,6 +32,9 @@ const VPS = {
 const KINDS = {
   B1: { capacity: true, extra: 0, personal: null }, B2: { capacity: false, extra: 0, personal: null }, B3: { capacity: true, extra: 2, personal: null },
   B4: { capacity: false, extra: 0, personal: "closed-default" }, B5: { capacity: false, extra: 0, personal: "closed-override" },
+  // B6 (Codex on #1280): capacity OFF, one active, a PRACTITIONER-SCOPED timed block at 15:00. Scoped blocks and breaks are dormant with
+  // capacity off (0137), so the Day column must not draw it: 15:00 stays bookable and a booking there succeeds.
+  B6: { capacity: false, extra: 0, personal: "scoped-block" },
 } as const;
 type Kind = keyof typeof KINDS;
 
@@ -50,6 +53,12 @@ function getStudio(kind: Kind): Promise<S> {
     const ownerId = await getOwnerPractitionerId(seed.studioId);
     const serviceId = await getE2eServiceId(seed.studioId);
     await seedStudioWideDefault(seed.studioId, d.dow, true, "08:00", "20:00");
+    if (k.personal === "scoped-block") {
+      await sql(
+        "insert into public.studio_timed_blocks (studio_id,practitioner_id,created_by,starts_at,ends_at,category,private_note) " +
+        "select $1,$2,$2,s,s+interval '1 hour','lunch',$3 from (select ($4::date + time '15:00') at time zone $5 as s) t",
+        [seed.studioId, ownerId, `cal-layout-b6-${seed.runId}`, d.day, TZ]);
+    }
     if (k.personal === "closed-default") await seedPractitionerDefault(seed.studioId, ownerId, d.dow, false, null, null);
     else await seedPractitionerDefault(seed.studioId, ownerId, d.dow, true, "08:00", "20:00");
     if (k.personal === "closed-override") {
@@ -112,13 +121,15 @@ async function scrollBy(page: Page, hasTouch: boolean, at: { x: number; y: numbe
 
 for (const vpName of ["desktop", "mobile"] as const) {
   const vp = VPS[vpName];
-  for (const kind of ["B1", "B2", "B3", "B4", "B5"] as Kind[]) {
+  for (const kind of ["B1", "B2", "B3", "B4", "B5", "B6"] as Kind[]) {
     test.describe(`single-path ${vpName} / ${kind}`, () => {
       test.use({ viewport: vp.viewport, hasTouch: vp.hasTouch, isMobile: vp.isMobile });
       test.setTimeout(240_000);
 
       test(`${kind}: where ?view=day lands, that the grid has slot lines, that it scrolls, and that a later time can be booked`, async ({ page }) => {
         const s = await getStudio(kind);
+        // B6: the two viewports share one studio, so each books its OWN half hour inside the dormant block (desktop 15:00, phone 15:30)
+        const tg = kind === "B6" ? { target: vpName === "desktop" ? "15:00" : "15:30", label: vpName === "desktop" ? "3:00 PM" : "3:30 PM", rx: /^(3\s?PM|15:00)$/i } : { target: vp.target, label: vpName === "desktop" ? "4:00 PM" : "5:00 PM", rx: vp.rx };
         await loginAsOwner(page, s.seed);
         await page.goto(`/calendar?view=day&day=${s.day}`);
         await page.waitForLoadState("networkidle");
@@ -155,15 +166,18 @@ for (const vpName of ["desktop", "mobile"] as const) {
         expect(await page.getByTestId("team-day-view").getAttribute("data-column-count"), "one column").toBe("1");
         expect(lineCount, "the grid draws its slot lines").toBeGreaterThan(0);
         expect(moved, `${vp.hasTouch ? "touch" : "wheel"} scrolling moves the ${kindOfScroller}`).toBeGreaterThan(100);
-        await expect(page.getByText(vp.rx).locator("visible=true").first(), `the ${vp.target} time label becomes visible`).toBeInViewport();
+        await expect(page.getByText(tg.rx).locator("visible=true").first(), `the ${tg.target} time label becomes visible`).toBeInViewport();
+
+        // B6: the dormant scoped block is not drawn in the Day column (checked BEFORE any drawer opens), so 15:00 is open
+        if (kind === "B6") await expect(page.getByTestId("team-day-column").first().getByText(/lunch/i), "a dormant scoped block is not drawn").toHaveCount(0);
 
         // a slot there opens the booking drawer for this day
         if (vpName === "desktop") {
           const col = present.teamDayView ? page.getByTestId("team-day-column").first() : page.locator(`[data-testid="week-day-column"][data-date="${s.day}"]`);
           const btn = col.getByRole("button", { name: /Open quick-book draft for/ });
           const cb = (await col.boundingBox())!;
-          const y = cb.y + (Number(vp.target.slice(0, 2)) - GRID_START_HOUR) * 60 + 6;
-          expect(y > 0 && y < vp.viewport.height, "the 16:00 slot is on screen after the scroll").toBe(true);
+          const y = cb.y + (Number(tg.target.slice(0, 2)) - GRID_START_HOUR) * 60 + 6;
+          expect(y > 0 && y < vp.viewport.height, "the target slot is on screen after the scroll").toBe(true);
           await page.mouse.click(cb.x + cb.width / 2, y);
           void btn;
         } else {
@@ -178,14 +192,14 @@ for (const vpName of ["desktop", "mobile"] as const) {
         const chooser = await page.getByRole("dialog", { name: /Choose action|New appointment|Add/ }).first().isVisible().catch(() => false);
         expect(opened || chooser, "selecting a slot (or the add button on a phone) opens a booking dialog").toBe(true);
 
-        // B4/B5: booking really works from here: pick the client, the service and the time in the drawer, book, and the row lands at that local time
+        // B4/B5/B6: booking really works from here: pick the client, the service and the time in the drawer, book, and the row lands at that local time
         if (KINDS[kind].personal) {
           const drawer = page.getByRole("dialog", { name: "New appointment" });
           await expect(drawer).toBeVisible({ timeout: 20_000 });
           await drawer.getByPlaceholder("Find existing client").fill(s.clientName);
           await drawer.getByRole("button", { name: new RegExp(s.seed.runId) }).first().click();
           await drawer.getByRole("combobox").first().selectOption(s.serviceId);
-          const label = vpName === "desktop" ? "4:00 PM" : "5:00 PM";
+          const label = tg.label;
           const slot = drawer.getByRole("button", { name: /^\d{1,2}:\d{2}\s?(AM|PM)$/i }).filter({ hasText: label }).first();
           await expect(slot, `the drawer offers ${label}`).toBeVisible({ timeout: 20_000 });
           await slot.click();
@@ -194,7 +208,7 @@ for (const vpName of ["desktop", "mobile"] as const) {
           await expect(drawer).toBeHidden({ timeout: 20_000 });
           await expect.poll(async () => (await sql<{ c: number }>(
             "select count(*)::int c from public.appointments where studio_id=$1 and client_id=$2 and practitioner_id=$3 and (starts_at at time zone $4)::time = $5::time",
-            [s.seed.studioId, s.clientId, s.ownerId, TZ, vp.target]))[0].c, { timeout: 20_000 }).toBe(1);
+            [s.seed.studioId, s.clientId, s.ownerId, TZ, tg.target]))[0].c, { timeout: 20_000 }).toBe(1);
           await shot(page, vpName, kind, "booked");
         }
       });
