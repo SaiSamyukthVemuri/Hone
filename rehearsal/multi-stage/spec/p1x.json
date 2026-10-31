@@ -50,10 +50,9 @@
       "droppable": true,
       "ready": {
         "status": "sealed (optional, below head, include-all)",
-        "content_gates": "yes: preflight (legacy rows violating each new CHECK = 0, PEER-0255-SQL A1), table/lock reads, content read-back (VALIDATE is not in the stage)",
+        "content_gates": "MISSING (history-only gate; no reviewer-stated post-apply checks supplied)",
         "blocker": ""
-      },
-      "gate_pack": "../gate-packs/0255"
+      }
     },
     {
       "file": "sealed/0256_public_booking_refuses_active_client_adoption.sql",
