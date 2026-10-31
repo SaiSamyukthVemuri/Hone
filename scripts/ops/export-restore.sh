@@ -47,7 +47,7 @@ command -v age >/dev/null || export_fail "age is not installed"
 export_guard_rehearsal   # rehearsal switches exist only in the CI rehearsal
 # shellcheck source=scripts/ops/restore-drill-lib.sh
 . "$HERE/restore-drill-lib.sh"   # compare_objects_projection: the drill's own metadata check
-trap 'rm -f "${AFTER:-}" "${BEFORE:-}"; export_cleanup_secrets' EXIT
+trap 'export_cleanup_secrets' EXIT   # also removes the private working directory
 
 # The production ref the operator typed must be the project this checkout is
 # linked to, when it is linked (Privacy PEER-1155 L1): a typo here is the only
@@ -97,7 +97,8 @@ SQL
       fi
     } | sql >/dev/null || export_fail "the row load failed or was rolled back (one transaction: nothing was loaded)"
     export_log "V2: recompute the fingerprint and compare"
-    AFTER="$(mktemp)"; BEFORE="$(mktemp)"
+    private_workdir
+    AFTER="$WORKDIR/after"; BEFORE="$WORKDIR/before"
     printf '%s\n' "$MANIFEST_SQL" | sql >"$AFTER" || export_fail "the fingerprint query failed on the target"
     dec "$DIR/manifest.age" >"$BEFORE" || export_fail "the identity does not decrypt manifest.age"
     compare_manifests "$BEFORE" "$AFTER" || export_fail "V2: the restored fingerprint differs from the export's"
@@ -136,7 +137,10 @@ SQL
     # The restored objects must carry the ORIGINAL type and size: compare the target's
     # storage.objects projection (bucket|name|size|mimetype) with what the manifest says,
     # with the restore drill's own comparison (restore-drill-lib.sh).
-    EXPECTED_PROJ="$(mktemp)"; ACTUAL_PROJ="$(mktemp)"; trap 'rm -f "${AFTER:-}" "${BEFORE:-}" "$EXPECTED_PROJ" "$ACTUAL_PROJ"; export_cleanup_secrets' EXIT
+    # The projections hold decrypted object paths (studio/client identifiers): they live only in
+    # the private tmpfs working directory, never under the default temp directory.
+    private_workdir
+    EXPECTED_PROJ="$WORKDIR/expected"; ACTUAL_PROJ="$WORKDIR/actual"
     for line in "${MANIFEST[@]}"; do
       printf '%s|%s|%s|%s\n' "$BUCKET" "$(manifest_field "$line" 2)" "$(manifest_field "$line" 3)" "$(manifest_field "$line" 5)"
     done | LC_ALL=C sort >"$EXPECTED_PROJ"

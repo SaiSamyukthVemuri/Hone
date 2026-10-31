@@ -349,6 +349,7 @@ MANIFEST_SQL="select format('%s.%s rows=%s md5=%s', schemaname, relname, n, h) f
 # `ps` therefore show neither.
 DB_URL_NOPASS="" DB_PASS="" DB_SSLMODE=""
 EXPORT_SECRET_FILES=()
+EXPORT_WORKDIRS=()
 
 urldecode() { local LC_ALL=C; printf '%b' "${1//%/\\x}"; }
 
@@ -394,6 +395,20 @@ make_auth_header_file() {
 
 export_cleanup_secrets() {
   if [ "${#EXPORT_SECRET_FILES[@]}" -gt 0 ]; then rm -f "${EXPORT_SECRET_FILES[@]}" 2>/dev/null || true; fi
+  if [ "${#EXPORT_WORKDIRS[@]}" -gt 0 ]; then rm -rf "${EXPORT_WORKDIRS[@]}" 2>/dev/null || true; fi
+}
+
+# private_workdir: a 0700 directory for DECRYPTED material (object paths carry studio and
+# client identifiers). It is made on a per-user tmpfs (XDG_RUNTIME_DIR, else /dev/shm), never
+# under the default TMPDIR or /tmp, is removed by export_cleanup_secrets on any exit, and the
+# tool refuses when no such place exists (Codex P2 on 29c80788). Sets WORKDIR.
+private_workdir() {
+  local base="${XDG_RUNTIME_DIR:-}"
+  { [ -n "$base" ] && [ -d "$base" ] && [ -w "$base" ]; } || base=/dev/shm
+  { [ -d "$base" ] && [ -w "$base" ]; } || export_fail "no private tmpfs for decrypted working files (XDG_RUNTIME_DIR or /dev/shm); refusing rather than using the default temp directory"
+  WORKDIR="$(umask 077; mktemp -d "$base/export-work.XXXXXX")" || export_fail "could not make the private working directory"
+  chmod 700 "$WORKDIR"
+  EXPORT_WORKDIRS+=("$WORKDIR")
 }
 
 # The EXIT trap of the two export tools: close the database session, remove the

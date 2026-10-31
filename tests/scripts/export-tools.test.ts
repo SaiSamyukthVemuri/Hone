@@ -88,7 +88,7 @@ while IFS= read -r line; do
     *pg_export_snapshot*) echo "00000003-00000002-1";;
     *EXPORT-EOF*) echo EXPORT-EOF; eofs=$((eofs + 1)); [ -n "\${SHIM_PSQL_EXIT_AFTER_EOF:-}" ] && [ "$eofs" -ge "$SHIM_PSQL_EXIT_AFTER_EOF" ] && exit 0;;
     *pg_stat_user_tables*) cat "$SHIM_DUMP_DIR/manifest.txt";;
-    *"bucket_id || '|'"*) cat "\${SHIM_PROJECTION:-/dev/null}";;
+    *"bucket_id || '|'"*) if [ -n "\${SHIM_WORK_PROBE:-}" ]; then { for w in "\${XDG_RUNTIME_DIR:-/nonexistent}"/export-work.*; do [ -d "$w" ] && { printf 'workdir-mode=%s\\n' "$(stat -c %a "$w")"; ls "$w"; grep -l 's/c/' "$w"/* 2>/dev/null | wc -l | sed 's/^/files-with-object-paths=/'; }; done; ls "\${TMPDIR:-/tmp}" | wc -l | sed 's/^/default-tmp-entries=/'; } >>"$SHIM_WORK_PROBE"; fi; cat "\${SHIM_PROJECTION:-/dev/null}";;
     *rows_total=*) cat "$SHIM_DUMP_DIR/coverage.txt";;
     *"from storage.objects where bucket_id"*) cat "$SHIM_DUMP_DIR/list.txt";;
     commit*) echo COMMIT;;
@@ -1471,5 +1471,74 @@ describe("Insurance PEER-1155-3B8E5CBC N1-N5: scheme, Supabase host forms, TLS f
     // in the lib only the parser and the rebuilt-argv line may slice the URL
     const libLines = violations(readFileSync(path.join(OPS, "export-lib.sh"), "utf8"));
     expect(libLines).toEqual([]);
+  });
+});
+
+describe("Codex P2 on 29c80788: decrypted object paths never touch the default temp directory", () => {
+  const ciEnv = (d: string, extra: Record<string, string> = {}) => ({ DB_URL, SERVICE_KEY: "k", EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d, ...extra });
+  const PATHS = ["s/c/a.png", "s/c/b.png", "s/c/c.thumb.webp"];
+  const enc = (p: string) => Buffer.byteLength(`https://${REF}.supabase.co/storage/v1/object/treatment-images/${p}`);
+
+  function exportedObjects(name: string) {
+    const d = fixtures(name);
+    writeFileSync(path.join(d, "list.txt"), PATHS.map((p) => `${p}${US}${enc(p)}${US}${MIME_OF(p)}`).join("\n") + "\n");
+    writeFileSync(path.join(d, "coverage.txt"), "rows_total=3 rows_without_object=0 objects_total=3 objects_without_row=0\n");
+    const out = path.join(scratch, `${name}-out`);
+    const r = run("object-export.sh", ["--out", out, "--recipient", "age1x", "--expect-ref", REF, "--storage-url", `https://${REF}.supabase.co`], ciEnv(d));
+    expect(r.status, r.stderr).toBe(0);
+    const key = path.join(scratch, `${name}-key.txt`); writeFileSync(key, "AGE-SECRET-KEY-SHIM");
+    const proj = path.join(scratch, `${name}-proj.txt`);
+    writeFileSync(proj, PATHS.map((p) => `treatment-images|${p}|${enc(p)}|${MIME_OF(p)}`).join("\n") + "\n");
+    return { d, out, key, proj };
+  }
+  const args = (out: string, key: string) => ["objects", out, "--identity", key, "--target-ref", REF, "--production-ref", "prod", "--storage-url", `https://${REF}.supabase.co`];
+
+  it("the projections live in a 0700 directory on the private tmpfs; the default TMPDIR gets nothing and the directory is gone afterwards", () => {
+    const { d, out, key, proj } = exportedObjects("tmp-ok");
+    const xdg = path.join(scratch, "tmp-ok-xdg"); mkdirSync(xdg, { mode: 0o700 });
+    const defTmp = path.join(scratch, "tmp-ok-default"); mkdirSync(defTmp);
+    const probe = path.join(scratch, "tmp-ok-probe.log"); writeFileSync(probe, "");
+    const r = run("export-restore.sh", args(out, key), ciEnv(d, { XDG_RUNTIME_DIR: xdg, TMPDIR: defTmp, SHIM_PROJECTION: proj, SHIM_WORK_PROBE: probe }));
+    expect(r.status, r.stderr).toBe(0);
+    const seen = readFileSync(probe, "utf8");
+    expect(seen).toContain("workdir-mode=700");
+    expect(seen).toMatch(/expected/);
+    expect(seen).toMatch(/actual/);
+    expect(seen).toMatch(/files-with-object-paths=[12]/);   // the decrypted paths exist, but only there
+    expect(seen).toContain("default-tmp-entries=0");        // while the comparison ran, nothing was in the default temp dir
+    expect(readdirSync(defTmp)).toEqual([]);
+    expect(readdirSync(xdg)).toEqual([]);                   // and the private directory was removed
+  });
+
+  it("NEGATIVE: with a default TMPDIR that cannot be written the restore still passes (it never uses it); a failed restore also leaves nothing behind", () => {
+    const { d, out, key, proj } = exportedObjects("tmp-unwritable");
+    const xdg = path.join(scratch, "tmp-unwritable-xdg"); mkdirSync(xdg, { mode: 0o700 });
+    const ok = run("export-restore.sh", args(out, key), ciEnv(d, { XDG_RUNTIME_DIR: xdg, TMPDIR: path.join(scratch, "no-such-tmp"), SHIM_PROJECTION: proj }));
+    expect(ok.status, ok.stderr).toBe(0);
+    expect(readdirSync(xdg)).toEqual([]);
+    // a restore that fails at the comparison removes the working directory too, and names no path
+    const wrong = path.join(scratch, "tmp-unwritable-wrong.txt");
+    writeFileSync(wrong, PATHS.map((p) => `treatment-images|${p}|${enc(p)}|image/gif`).join("\n") + "\n");
+    const bad = run("export-restore.sh", args(out, key), ciEnv(d, { XDG_RUNTIME_DIR: xdg, TMPDIR: path.join(scratch, "no-such-tmp"), SHIM_PROJECTION: wrong }));
+    expect(bad.status).not.toBe(0);
+    expect(bad.stdout + bad.stderr).not.toContain("s/c/");
+    expect(readdirSync(xdg)).toEqual([]);
+  });
+
+  it("the logical restore's fingerprint files use the private directory too, and no tool makes a bare mktemp for decrypted material", () => {
+    const d = fixtures("tmp-logical");
+    const out = path.join(scratch, "tmp-logical-out");
+    expect(run("logical-export.sh", LOGICAL_ARGS(out), { DB_URL, EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d }).status).toBe(0);
+    const key = path.join(scratch, "tmp-logical-key.txt"); writeFileSync(key, "AGE-SECRET-KEY-SHIM");
+    const xdg = path.join(scratch, "tmp-logical-xdg"); mkdirSync(xdg, { mode: 0o700 });
+    const r = run("export-restore.sh", ["logical", out, "--identity", key, "--target-ref", REF, "--production-ref", "prod"], { DB_URL, EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d, XDG_RUNTIME_DIR: xdg, TMPDIR: path.join(scratch, "no-such-tmp") });
+    expect(r.status, r.stderr).toBe(0);
+    expect(readdirSync(xdg)).toEqual([]);
+    // source contract: export-restore.sh has no bare mktemp (the lib's private_workdir is the one place)
+    const restoreSrc = readFileSync(path.join(OPS, "export-restore.sh"), "utf8");
+    expect(restoreSrc.split("\n").filter((l) => !/^\s*#/.test(l) && /\bmktemp\b/.test(l))).toEqual([]);
+    expect(restoreSrc).toContain("private_workdir");
+    // RED control: the previous form (a bare mktemp for the projections) is detected by the same rule
+    expect(/\bmktemp\b/.test('EXPECTED_PROJ="$(mktemp)"')).toBe(true);
   });
 });
