@@ -1,13 +1,12 @@
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-// DAT-001 minimal returned fields. /clients used to hand whole clients rows
-// to ClientSearch, a client component, so every column was serialized into
-// the browser's RSC payload although the list renders only name, pronouns,
-// phone and email (plus the id for the link). This pins that ClientSearch
-// receives exactly those five fields and no other client value. The directory
-// read's own column list is pinned in
-// tests/lib/supabase/client-directory-columns.test.ts.
+// DAT-001 minimal returned fields. The directory page hands its components only
+// the projected row fields (display name, pronouns, email, phone, archived-at, id,
+// plus the next appointment and intake STATE), never a whole clients row: every
+// other column is a sentinel here and must never reach a component's props. The
+// directory read's own column list is pinned in
+// tests/lib/clients/directory-guards.test.ts.
 
 // A full clients row as the database holds it. Every value the list does not
 // render is a sentinel that must never reach the client component.
@@ -19,23 +18,41 @@ const FULL_ROW = {
   emergency_contact_name: "SENTINEL-ec-name", emergency_contact_phone: "SENTINEL-ec-phone",
   contraindications: "SENTINEL-contraindications", photo_consent: true, notes: "SENTINEL-notes",
   created_at: "SENTINEL-created", created_by: "SENTINEL-created-by",
-  archived_at: "SENTINEL-archived-at", archived_by: "SENTINEL-archived-by",
+  archived_at: null, archived_by: "SENTINEL-archived-by",
   sms_consent_at: "SENTINEL-consent-at", sms_consent_source: "SENTINEL-consent-src",
   sms_opted_out_at: null, sms_opt_out_source: null, normalized_email: "SENTINEL-normalized",
 };
 
 vi.mock("@/lib/supabase/queries", () => ({
-  requirePractitionerWithStudio: async () => ({ studio: { id: "studio-1" } }),
-  getClientsForStudio: async () => [FULL_ROW],
-  getArchivedClientsForStudio: async () => [],
+  requirePractitionerWithStudio: async () => ({
+    studio: { id: "studio-1" },
+    practitioner: { id: "p1", role: "owner" },
+  }),
 }));
 
-// Only WHAT the page hands the client component matters here.
-vi.mock("@/components/client-search", () => ({ ClientSearch: () => null }));
+// A chainable fake: the clients table returns the full row once (then an empty
+// block), every other table is empty.
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: async () => ({
+    from: (table: string) => {
+      let afterId = false;
+      const q: Record<string, unknown> = {};
+      for (const m of ["select", "eq", "neq", "is", "not", "in", "lte", "order"]) q[m] = () => q;
+      q.gt = () => { afterId = true; return q; };
+      q.range = async () => ({ data: table === "clients" && !afterId ? [FULL_ROW] : [], error: null });
+      return q;
+    },
+  }),
+}));
+
+// Only WHAT the page hands its components matters here.
 vi.mock("@/components/pending-link", () => ({ PendingLink: () => null }));
+vi.mock("@/components/pending-button", () => ({ PendingButton: () => null }));
+vi.mock("@/components/formatted-date-time", () => ({ FormattedDateTime: () => null }));
+vi.mock("@/app/(app)/clients/[id]/actions", () => ({ unarchiveClientAction: async () => {} }));
 
 import ClientsPage from "@/app/(app)/clients/page";
-import { ClientSearch } from "@/components/client-search";
+import { DirectoryResults } from "@/app/(app)/clients/ClientsDirectory";
 
 function findElement(node: ReactNode, type: unknown): ReactElement<Record<string, unknown>> | null {
   if (Array.isArray(node)) {
@@ -51,16 +68,20 @@ function findElement(node: ReactNode, type: unknown): ReactElement<Record<string
   return findElement(element.props.children as ReactNode, type);
 }
 
-describe("DAT-001 /clients hands ClientSearch only what it renders", () => {
-  it("passes exactly id, name, pronouns, phone and email, and no other client value", async () => {
+describe("DAT-001 /clients hands its components only what it renders", () => {
+  it("passes the projected row fields and no other client value", async () => {
     const tree = await ClientsPage({ searchParams: Promise.resolve({}) });
-    const search = findElement(tree, ClientSearch);
-    expect(search).not.toBeNull();
-    const clients = search!.props.clients as Array<Record<string, unknown>>;
-    expect(clients).toEqual([{
-      id: "c1", name: "Visible Name", pronouns: "they/them",
+    const results = findElement(tree, DirectoryResults);
+    expect(results).not.toBeNull();
+    const data = results!.props.data as { rows: Array<Record<string, unknown>>; total: number };
+    expect(data.total).toBe(1);
+    expect(Object.keys(data.rows[0]).sort()).toEqual([
+      "archivedAt", "displayName", "email", "id", "intake", "nameOnFile", "next", "phone", "pronouns",
+    ]);
+    expect(data.rows[0]).toMatchObject({
+      id: "c1", displayName: "Visible Name", pronouns: "they/them",
       phone: "+1 555 0100", email: "visible@example.test",
-    }]);
-    expect(JSON.stringify(search!.props)).not.toContain("SENTINEL");
+    });
+    expect(JSON.stringify(results!.props)).not.toContain("SENTINEL");
   });
 });
