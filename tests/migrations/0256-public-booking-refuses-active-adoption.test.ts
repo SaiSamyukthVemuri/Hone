@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { countVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { countVersion } from "./helpers/migration-state";
 
 // 0256 (SEC-004): an ordinary public new-client booking refuses, inside its own
 // transaction, to adopt an existing ACTIVE client by email. Source contract; the
@@ -28,10 +28,10 @@ describe("0256 file shape", () => {
     expect(createHash("sha256").update(SQL, "utf8").digest("hex")).toBe("47a37b19c2381985e33d2213c04b977315df44a7d919c0c8c600af0663b1af0c");
   });
 
-  it("is allocated exactly once and is the repository maximum", () => {
+  it("is allocated exactly once", () => {
+    // Not the repository maximum: 0257 is on production, and a per-migration test must not
+    // pin "nothing above me" (CLAUDE.md §2).
     expect(countVersion(VERSION)).toBe(1);
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
   });
 
   it("is one transaction with its own lock timeout inside it", () => {
