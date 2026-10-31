@@ -1,4 +1,4 @@
-import { shouldAutoRefresh } from "@/lib/calendar/refresh-policy";
+import { SIGNAL_REFRESH_MIN_GAP_MS, shouldAutoRefresh } from "@/lib/calendar/refresh-policy";
 
 // HON-48 Q7 (migration 0271): the database sends a data-free "the schedule changed"
 // message on a private per-studio Realtime topic after a schedule write commits.
@@ -122,9 +122,16 @@ export function createScheduleSignalController(deps: SignalControllerDeps): Sign
       deps.refresh();
       return;
     }
-    // Hidden or offline: no polling at all; resume() continues. Busy or inside the
-    // minimum gap: look again shortly. Nothing here touches the network.
-    if (g.visible && g.online) schedule(PENDING_RECHECK_MS);
+    // Hidden or offline: no polling at all; resume() continues. Held by a drawer or a
+    // focused field: look again shortly. Held ONLY by the minimum gap: look again exactly
+    // when it ends, so a burst folded into this flag is one refresh at the earliest moment,
+    // not up to a recheck interval later. Nothing here touches the network.
+    if (g.visible && g.online) {
+      const sinceLast = deps.now() - deps.lastRefreshMs();
+      const remaining = SIGNAL_REFRESH_MIN_GAP_MS - sinceLast;
+      const onlyTheGap = !g.dialogOpen && !g.editing && Number.isFinite(sinceLast) && sinceLast >= 0 && remaining > 0;
+      schedule(onlyTheGap ? remaining : PENDING_RECHECK_MS);
+    }
   }
 
   return {

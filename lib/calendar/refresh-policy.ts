@@ -25,9 +25,11 @@ export const FOCUS_REFRESH_MIN_GAP_MS = 15_000;
  * A change signal (lib/calendar/schedule-signal.ts) asks for a refresh almost at
  * once, but never more than this often: a burst of signals, a catch-up after a
  * reconnect and the echo of this screen's own write all fold into one refresh per
- * gap, so a signal can never cause a refresh storm.
+ * gap, so a signal can never cause a refresh storm (at most 4 per second per
+ * screen). 250 ms, down from 1 s: measured, most of the commit-to-visible median
+ * was this gap, not the signal (which arrives in milliseconds).
  */
-export const SIGNAL_REFRESH_MIN_GAP_MS = 1_000;
+export const SIGNAL_REFRESH_MIN_GAP_MS = 250;
 
 export type AutoRefreshTrigger = "interval" | "focus" | "signal";
 

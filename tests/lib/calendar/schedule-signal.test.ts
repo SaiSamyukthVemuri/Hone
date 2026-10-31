@@ -113,6 +113,68 @@ describe("a signal sets a flag; the guards decide when", () => {
     expect(h.refreshes()).toBeGreaterThan(5);
   });
 
+  it("the gap is 250 ms, down from 1 s, and a signal on an idle screen is visible within coalesce + render, not a second later", () => {
+    expect(SIGNAL_REFRESH_MIN_GAP_MS).toBe(250);
+    const h = harness();
+    h.setLast(h.now() - 60_000);
+    h.controller.signal();
+    h.advance(SIGNAL_COALESCE_MS);
+    expect(h.refreshes()).toBe(1);
+  });
+
+  it("a signal right after a refresh waits ONLY for the gap to end (no recheck interval on top) and the burst is ONE refresh", () => {
+    const h = harness();
+    h.setLast(h.now()); // a refresh just happened
+    for (let i = 0; i < 40; i++) {
+      h.controller.signal();
+      h.advance(3);
+    }
+    // 120 ms in: still inside the 250 ms gap and the coalescing window: nothing yet.
+    expect(h.refreshes()).toBe(0);
+    h.advance(SIGNAL_COALESCE_MS); // the coalescing timer fires at +250 from the first signal; the gap has ended
+    expect(h.refreshes()).toBe(1);
+    h.advance(5_000);
+    expect(h.refreshes()).toBe(1);
+  });
+
+  it("a signal inside the gap after a LATE refresh fires exactly when the gap ends", () => {
+    const h = harness();
+    h.setLast(h.now());
+    h.advance(200);
+    h.setLast(h.now()); // another refresh 200 ms later (an interval or focus refresh)
+    h.controller.signal();
+    h.advance(SIGNAL_COALESCE_MS - 1); // coalesce timer not yet fired
+    expect(h.refreshes()).toBe(0);
+    h.advance(1); // fires at +250: the gap (250) has just ended
+    expect(h.refreshes()).toBe(1);
+  });
+
+  it("sustained signals every 20 ms for 10 s: at most one refresh per 250 ms (4 per second), however many arrive", () => {
+    const h = harness();
+    h.setLast(h.now() - 60_000);
+    const start = h.now();
+    for (let t = 0; t < 10_000; t += 20) {
+      h.controller.signal();
+      h.advance(20);
+    }
+    h.advance(1_000);
+    const elapsed = h.now() - start;
+    expect(h.refreshes()).toBeLessThanOrEqual(Math.ceil(elapsed / 250));
+    expect(h.refreshes()).toBeGreaterThan(10);
+  });
+
+  it("all four guards still hold at the shorter gap: hidden, offline, drawer open, field focused", () => {
+    for (const over of [{ visible: false }, { online: false }, { dialogOpen: true }, { editing: true }]) {
+      const h = harness();
+      h.setLast(h.now() - 60_000);
+      Object.assign(h.guards, over);
+      h.controller.signal();
+      h.advance(10_000);
+      expect(h.refreshes(), JSON.stringify(over)).toBe(0);
+      expect(h.controller.isPending()).toBe(true);
+    }
+  });
+
   it.each([
     ["a drawer is open", { dialogOpen: true }],
     ["a field is focused", { editing: true }],
@@ -142,13 +204,15 @@ describe("a signal sets a flag; the guards decide when", () => {
     expect(h.refreshes()).toBe(1);
   });
 
-  it("the screen's own refresh just before a signal folds the echo into the gap, then one more refresh", () => {
+  it("the echo of this screen's own write costs exactly ONE more refresh, at the end of the coalescing window, and no more", () => {
     const h = harness();
     h.setLast(h.now() - 10); // this screen refreshed 10 ms ago (its own write)
     h.controller.signal();
-    h.advance(SIGNAL_COALESCE_MS);
-    expect(h.refreshes()).toBe(0); // inside the minimum gap
-    h.advance(SIGNAL_REFRESH_MIN_GAP_MS);
+    h.advance(SIGNAL_COALESCE_MS - 1);
+    expect(h.refreshes()).toBe(0); // still inside the coalescing window
+    h.advance(1);
+    expect(h.refreshes()).toBe(1);
+    h.advance(SIGNAL_REFRESH_MIN_GAP_MS * 4);
     expect(h.refreshes()).toBe(1);
   });
 
