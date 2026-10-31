@@ -47,6 +47,11 @@ parse_conn_url() {
     userinfo="${authority%@*}"; hostport="${authority##*@}"
     case "$CONN_SCHEME" in http|https) CONN_REASON="credentials in a Storage URL"; return 1;; esac
     CONN_USER_RAW="${userinfo%%:*}"
+    # A '%' must start a valid two-hex-digit escape (and not %00): a malformed one is
+    # refused, never mangled into a different password (Insurance N4).
+    local pctcheck="${userinfo//%[0-9A-Fa-f][0-9A-Fa-f]/}"
+    [[ "$pctcheck" != *%* ]] || { CONN_REASON="a malformed percent sign in the credentials (write a literal '%' as %25)"; return 1; }
+    case "$userinfo" in *%00*) CONN_REASON="an encoded NUL in the credentials"; return 1;; esac
     CONN_USER="$(urldecode "$CONN_USER_RAW")"
     if [[ "$userinfo" == *:* ]]; then CONN_PASS="$(urldecode "${userinfo#*:}")"; fi
   else
@@ -79,6 +84,11 @@ parse_conn_url() {
       [[ "$path" =~ ^(/[A-Za-z0-9._~%/-]*)?$ ]] || { CONN_REASON="unexpected characters in the Storage URL path"; return 1; }
       [ -z "$query" ] || { CONN_REASON="a query string in a Storage URL"; return 1; };;
   esac
+  # N1: the Storage URL carries the service-role key and every object, so it is https;
+  # plain http exists only for the CI rehearsal's loopback.
+  if [ "$CONN_SCHEME" = http ] && ! { is_rehearsal && is_loopback_host "$CONN_HOST"; }; then
+    CONN_REASON="a Storage URL must be https (http is accepted only for the CI rehearsal's loopback)"; return 1
+  fi
   return 0
 }
 
@@ -98,7 +108,7 @@ require_conn_url() {
 # (PGHOSTADDR overrides the address a checked host resolves to), so none may be set.
 export_guard_libpq_env() {
   local v
-  for v in PGHOST PGHOSTADDR PGPORT PGSERVICE PGSERVICEFILE PGDATABASE PGUSER PGOPTIONS; do
+  for v in PGHOST PGHOSTADDR PGPORT PGSERVICE PGSERVICEFILE PGDATABASE PGUSER PGOPTIONS PGSSLMODE PGSSLROOTCERT PGSSLCERT PGSSLKEY PGPASSFILE PGGSSENCMODE PGSYSCONFDIR; do
     [ -z "${!v:-}" ] || export_fail "$v is set in the environment; libpq would let it override the checked target; unset it"
   done
 }
@@ -139,6 +149,14 @@ rehearsal_override_ok() {
 # label (Privacy PEER-1155 L2).
 host_has_label() { case ".$1." in *".$2."*) return 0;; *) return 1;; esac; }
 
+# N2: outside the CI rehearsal's loopback a host names the ref only in the two Supabase
+# forms this tool uses, EXACTLY: db.<ref>.supabase.co (database) and <ref>.supabase.co
+# (Storage). A host that merely contains the ref as a label (db.<ref>.attacker.example,
+# <ref>.attacker.example, a.b.<ref>.supabase.co) is refused. The pooler form
+# (aws-N-<region>.pooler.supabase.com, ref in the user name) is NOT used by these tools
+# (a pooled session cannot hold the export snapshot) and is refused.
+host_is_supabase_form() { [ "$1" = "db.$2.supabase.co" ] || [ "$1" = "$2.supabase.co" ]; }
+
 # The operator typed a project ref; every URL the tool will touch must name it.
 # Loopback is accepted only in rehearsal mode AND only for the one ref the
 # rehearsal declares (EXPORT_REHEARSAL_REF), so a wrong typed ref is refused in
@@ -149,7 +167,7 @@ url_matches_ref() {
   parse_conn_url "$url" || return 1
   host="$CONN_HOST"
   if is_rehearsal && is_loopback_host "$host" && [ "$ref" = "${EXPORT_REHEARSAL_REF:-}" ]; then return 0; fi
-  host_has_label "$host" "$ref"
+  host_has_label "$host" "$ref" && host_is_supabase_form "$host" "$ref"
 }
 
 # Percent-encode a Storage object path for a URL ('/' kept).
@@ -340,15 +358,27 @@ split_db_url() {
   parse_conn_url "$DB_URL" || export_fail "the connection string is refused: $CONN_REASON"
   case "$CONN_SCHEME" in postgresql|postgres) ;; *) export_fail "the connection string must be postgresql://";; esac
   DB_PASS="$CONN_PASS"; DB_SSLMODE="$CONN_SSLMODE"
+  # N3: outside the CI rehearsal's loopback the connection is verify-full, never weaker.
+  # A weaker sslmode in the URL is refused. Supabase's database certificate chains to
+  # Supabase's own CA, which system trust stores do not hold, so verify-full needs that CA
+  # in libpq's default root file (~/.postgresql/root.crt); the tool does not accept
+  # PGSSLROOTCERT (refused above), so the operator installs it there. Without it the tool
+  # refuses rather than falling back to an unverified TLS mode.
+  if ! { is_rehearsal && is_loopback_host "$CONN_HOST"; }; then
+    [ -z "$CONN_SSLMODE" ] || [ "$CONN_SSLMODE" = verify-full ] || export_fail "sslmode=$CONN_SSLMODE is weaker than verify-full; refusing"
+    [ -s "${HOME:-/nonexistent}/.postgresql/root.crt" ] || export_fail "verify-full needs the Supabase root CA in \$HOME/.postgresql/root.crt (the tool accepts no other root and no weaker mode); refusing"
+    DB_SSLMODE=verify-full
+  fi
   DB_URL_NOPASS="$CONN_SCHEME://${CONN_USER_RAW:+$CONN_USER_RAW@}$CONN_HOST${CONN_PORT:+:$CONN_PORT}${CONN_DB:+/$CONN_DB}"
 }
 
 # with_pgpass COMMAND...: run COMMAND with PGPASSWORD in ITS environment only.
 with_pgpass() {
-  if [ -n "$DB_PASS" ] && [ -n "${DB_SSLMODE:-}" ]; then PGSSLMODE="$DB_SSLMODE" PGPASSWORD="$DB_PASS" "$@"
-  elif [ -n "$DB_PASS" ]; then PGPASSWORD="$DB_PASS" "$@"
-  elif [ -n "${DB_SSLMODE:-}" ]; then PGSSLMODE="$DB_SSLMODE" "$@"
-  else "$@"; fi
+  # PGPASSFILE=/dev/null: a ~/.pgpass entry can never supply a password the operator did not type.
+  if [ -n "$DB_PASS" ] && [ -n "${DB_SSLMODE:-}" ]; then PGPASSFILE=/dev/null PGSSLMODE="$DB_SSLMODE" PGPASSWORD="$DB_PASS" "$@"
+  elif [ -n "$DB_PASS" ]; then PGPASSFILE=/dev/null PGPASSWORD="$DB_PASS" "$@"
+  elif [ -n "${DB_SSLMODE:-}" ]; then PGPASSFILE=/dev/null PGSSLMODE="$DB_SSLMODE" "$@"
+  else PGPASSFILE=/dev/null "$@"; fi
 }
 
 # make_auth_header_file: writes the Storage API headers for SERVICE_KEY to a

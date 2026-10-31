@@ -41,6 +41,9 @@ beforeAll(() => {
   scratch = mkdtempSync(path.join(tmpdir(), "export-tools-test-"));
   bin = path.join(scratch, "bin");
   mkdirSync(bin);
+  // the operator's pinned Supabase root CA for verify-full (a synthetic placeholder: the shims never speak TLS)
+  mkdirSync(path.join(scratch, ".postgresql"));
+  writeFileSync(path.join(scratch, ".postgresql", "root.crt"), "synthetic-root-ca-placeholder\n");
   write(
     path.join(bin, "age"),
     `#!/usr/bin/env bash
@@ -59,7 +62,7 @@ if [ "$mode" = enc ]; then cat >"$out"; else
   write(
     path.join(bin, "pg_dump"),
     `#!/usr/bin/env bash
-if [ -n "\${SHIM_ARGV_LOG:-}" ]; then { printf 'pg_dump argv:'; printf ' [%s]' "$@"; printf '\\nPGPASSWORD=%s\\n' "\${PGPASSWORD:-}"; } >>"$SHIM_ARGV_LOG"; fi
+if [ -n "\${SHIM_ARGV_LOG:-}" ]; then { printf 'pg_dump argv:'; printf ' [%s]' "$@"; printf '\\nPGPASSWORD=%s\\nPGSSLMODE=%s\\nPGPASSFILE=%s\\n' "\${PGPASSWORD:-}" "\${PGSSLMODE:-}" "\${PGPASSFILE:-}"; } >>"$SHIM_ARGV_LOG"; fi
 case " $* " in *" --snapshot="*) ;; *) echo "pg_dump called without --snapshot" >&2; exit 9;; esac
 D="$SHIM_DUMP_DIR"
 case " $* " in
@@ -76,7 +79,7 @@ esac
   write(
     path.join(bin, "psql"),
     `#!/usr/bin/env bash
-if [ -n "\${SHIM_ARGV_LOG:-}" ]; then { printf 'psql argv:'; printf ' [%s]' "$@"; printf '\\nPGPASSWORD=%s\\n' "\${PGPASSWORD:-}"; } >>"$SHIM_ARGV_LOG"; fi
+if [ -n "\${SHIM_ARGV_LOG:-}" ]; then { printf 'psql argv:'; printf ' [%s]' "$@"; printf '\\nPGPASSWORD=%s\\nPGSSLMODE=%s\\nPGPASSFILE=%s\\n' "\${PGPASSWORD:-}" "\${PGSSLMODE:-}" "\${PGPASSFILE:-}"; } >>"$SHIM_ARGV_LOG"; fi
 eofs=0
 while IFS= read -r line; do
   [ -n "\${SHIM_PSQL_LOG:-}" ] && printf '%s\\n' "$line" >>"$SHIM_PSQL_LOG"
@@ -1314,7 +1317,7 @@ describe("Codex P1/P2 on 7f5246be: libpq query-string overrides cannot change th
     expect(readFileSync(log, "utf8")).not.toContain("s3kr3t");
     expect(bad.stdout + bad.stderr).not.toContain("s3kr3t");
     // good form with sslmode: the argv is rebuilt without the password and without any query
-    const ok = run("logical-export.sh", LOGICAL_ARGS(path.join(scratch, "p2-out-ok")), ci(`postgresql://u:s3kr%40t@db.${REF}.supabase.co:5432/postgres?sslmode=require`));
+    const ok = run("logical-export.sh", LOGICAL_ARGS(path.join(scratch, "p2-out-ok")), ci(`postgresql://u:s3kr%40t@db.${REF}.supabase.co:5432/postgres?sslmode=verify-full`));
     expect(ok.status, ok.stderr).toBe(0);
     const argv = readFileSync(log, "utf8");
     for (const line of argv.split("\n").filter((l) => /argv:/.test(l))) {
@@ -1330,5 +1333,143 @@ describe("Codex P1/P2 on 7f5246be: libpq query-string overrides cannot change th
       expect(src, f).not.toMatch(/\$\{[A-Za-z_]*URL[A-Za-z_]*#\*@\}/);
     }
     expect(readFileSync(path.join(OPS, "export-lib.sh"), "utf8")).toContain("parse_conn_url");
+  });
+});
+
+describe("Insurance PEER-1155-3B8E5CBC N1-N5: scheme, Supabase host forms, TLS floor, percent signs, slicing", () => {
+  const BASE = `postgresql://u:p@db.${REF}.supabase.co:5432/postgres`;
+  const lib = (body: string, env: Record<string, string> = {}) =>
+    spawnSync("bash", ["-c", `. ${path.join(OPS, "export-lib.sh")}; ${body}`], { encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: scratch, ...env } as unknown as NodeJS.ProcessEnv });
+  const CI = { EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true" };
+
+  it("N1: a Storage URL must be https; http is accepted only for the rehearsal's loopback", () => {
+    expect(lib(`parse_conn_url 'http://${REF}.supabase.co'`).status).not.toBe(0);
+    expect(lib(`require_conn_url 'http://${REF}.supabase.co' 'the storage URL'`).stderr).toContain("must be https");
+    expect(lib(`parse_conn_url 'http://127.0.0.1:54321'`).status).not.toBe(0); // loopback http outside rehearsal
+    expect(lib(`parse_conn_url 'http://127.0.0.1:54321'`, CI).status).toBe(0); // the rehearsal's own form
+    expect(lib(`parse_conn_url 'http://evil.example'`, CI).status).not.toBe(0); // rehearsal does not make any http host fine
+    expect(lib(`parse_conn_url 'https://${REF}.supabase.co'`).status).toBe(0);
+  });
+
+  it("N1: the object tools refuse an http Storage URL before any curl, and send no key", () => {
+    const d = fixtures("n1");
+    const log = path.join(scratch, "n1-argv.log"); writeFileSync(log, "");
+    const out = path.join(scratch, "n1-out");
+    const env = { ...CI, SHIM_DUMP_DIR: d, SHIM_ARGV_LOG: log, DB_URL, SERVICE_KEY: "k-n1" };
+    const r = run("object-export.sh", ["--out", out, "--recipient", "age1x", "--expect-ref", REF, "--storage-url", `http://${REF}.supabase.co`], env);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("must be https");
+    expect(existsSync(out)).toBe(false);
+    expect(readFileSync(log, "utf8")).not.toMatch(/curl argv|k-n1/);
+  });
+
+  it("N2: only db.<ref>.supabase.co and <ref>.supabase.co name the ref; a lookalike or deeper host is refused", () => {
+    const hosts = [
+      `db.${REF}.attacker.example`, `${REF}.attacker.example`, `a.b.${REF}.supabase.co`, `db.${REF}.supabase.co.attacker.example`,
+      `${REF}.supabase.co.attacker.example`, `x.db.${REF}.supabase.co`, `${REF}.supabase.com`, `db.${REF}.supabase.in`,
+      `aws-0-us-east-1.pooler.supabase.com`,
+    ];
+    for (const h of hosts) {
+      expect(lib(`url_matches_ref 'postgresql://u:p@${h}:5432/postgres' ${REF}`).status, h).not.toBe(0);
+      expect(lib(`url_matches_ref 'https://${h}' ${REF}`).status, h).not.toBe(0);
+    }
+    // RED control: the label-only rule of 3b8e5cbc accepted every host that carries the ref as a label
+    for (const h of [`db.${REF}.attacker.example`, `${REF}.attacker.example`, `a.b.${REF}.supabase.co`]) {
+      expect(lib(`host_has_label '${h}' ${REF}`).status, h).toBe(0);
+    }
+    // GREEN: the two real forms
+    expect(lib(`url_matches_ref 'postgresql://u:p@db.${REF}.supabase.co:5432/postgres' ${REF}`).status).toBe(0);
+    expect(lib(`url_matches_ref 'https://${REF}.supabase.co' ${REF}`).status).toBe(0);
+    // the rehearsal's loopback exception still holds, for its one declared ref only
+    expect(lib(`url_matches_ref 'postgresql://u:p@127.0.0.1:5432/x' ${REF}`, { ...CI, EXPORT_REHEARSAL_REF: REF }).status).toBe(0);
+  });
+
+  it("N2: the object tools never send the service-role key to a lookalike Storage host", () => {
+    const d = fixtures("n2");
+    const log = path.join(scratch, "n2-argv.log"); writeFileSync(log, "");
+    const out = path.join(scratch, "n2-out");
+    const env = { ...CI, SHIM_DUMP_DIR: d, SHIM_ARGV_LOG: log, DB_URL, SERVICE_KEY: "k-n2" };
+    const r = run("object-export.sh", ["--out", out, "--recipient", "age1x", "--expect-ref", REF, "--storage-url", `https://${REF}.attacker.example`], env);
+    expect(r.status).not.toBe(0);
+    expect(existsSync(out)).toBe(false);
+    expect(readFileSync(log, "utf8")).not.toMatch(/curl argv|k-n2|attacker/);
+    const l = run("logical-export.sh", LOGICAL_ARGS(path.join(scratch, "n2-lx")), { ...env, DB_URL: `postgresql://u:p@db.${REF}.attacker.example:5432/postgres` });
+    expect(l.status).not.toBe(0);
+    expect(readFileSync(log, "utf8")).not.toMatch(/psql argv|pg_dump argv/);
+  });
+
+  it("N3: outside the rehearsal's loopback the connection is verify-full: a weaker sslmode is refused, none given means verify-full", () => {
+    for (const m of ["disable", "allow", "prefer", "require", "verify-ca"]) {
+      const r = lib(`DB_URL='${BASE}?sslmode=${m}'; export_configure_commands`);
+      expect(r.status, m).not.toBe(0);
+      expect(r.stderr, m).toContain("weaker than verify-full");
+    }
+    const none = lib(`DB_URL='${BASE}'; export_configure_commands; printf '%s' "$DB_SSLMODE"`);
+    expect(none.stdout).toBe("verify-full");
+    const vf = lib(`DB_URL='${BASE}?sslmode=verify-full'; export_configure_commands; printf '%s' "$DB_SSLMODE"`);
+    expect(vf.stdout).toBe("verify-full");
+    // the rehearsal's loopback target is not forced
+    const lo = lib(`DB_URL='postgresql://u:p@127.0.0.1:5432/postgres'; export_configure_commands; printf '[%s]' "$DB_SSLMODE"`, CI);
+    expect(lo.stdout).toBe("[]");
+  });
+
+  it("N3: without the pinned root CA the tool refuses instead of falling back to an unverified mode", () => {
+    const emptyHome = path.join(scratch, "n3-home"); mkdirSync(emptyHome, { recursive: true });
+    const r = lib(`DB_URL='${BASE}'; export_configure_commands`, { HOME: emptyHome });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("root CA");
+    const d = fixtures("n3-nocert");
+    const out = path.join(scratch, "n3-nocert-out");
+    const t = run("logical-export.sh", LOGICAL_ARGS(out), { ...CI, SHIM_DUMP_DIR: d, DB_URL, HOME: emptyHome });
+    expect(t.status).not.toBe(0);
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it("N3: the child gets PGSSLMODE=verify-full and PGPASSFILE=/dev/null; the TLS and password-file variables in the environment are refused", () => {
+    const d = fixtures("n3-ok");
+    const log = path.join(scratch, "n3-argv.log"); writeFileSync(log, "");
+    const r = run("logical-export.sh", LOGICAL_ARGS(path.join(scratch, "n3-ok-out")), { ...CI, SHIM_DUMP_DIR: d, SHIM_ARGV_LOG: log, DB_URL });
+    expect(r.status, r.stderr).toBe(0);
+    const argv = readFileSync(log, "utf8");
+    expect(argv).toMatch(/PGSSLMODE=verify-full/);
+    expect(argv).toMatch(/PGPASSFILE=\/dev\/null/);
+    expect(argv).not.toMatch(/PGSSLMODE=(require|prefer|disable|allow)/);
+    for (const v of ["PGSSLMODE", "PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY", "PGPASSFILE", "PGGSSENCMODE", "PGSYSCONFDIR"]) {
+      const e = lib(`DB_URL='${BASE}'; export_configure_commands`, { [v]: "x" });
+      expect(e.status, v).not.toBe(0);
+      expect(e.stderr, v).toContain(`${v} is set in the environment`);
+    }
+  });
+
+  it("N4: a malformed percent sign in the credentials is refused, not mangled; a valid escape still decodes", () => {
+    for (const cred of ["u:a%zz", "u:a%", "u:a%4", "u:%%41", "u:a%00b", "u%g1:p"]) {
+      const r = lib(`parse_conn_url 'postgresql://${cred}@db.${REF}.supabase.co/postgres'`);
+      expect(r.status, cred).not.toBe(0);
+      expect(lib(`require_conn_url 'postgresql://${cred}@db.${REF}.supabase.co/postgres' 'the connection string'`).stderr, cred).toMatch(/percent sign|encoded NUL/);
+    }
+    expect(lib(`parse_conn_url 'postgresql://u:50%25off%40x@db.${REF}.supabase.co/postgres' && printf '%s' "$CONN_PASS"`).stdout).toBe("50%off@x");
+  });
+
+  it("N5: no tool slices a URL variable by any parameter expansion, sed, cut, awk or tr of its own (the argument trim is the one reviewed exception)", () => {
+    const violations = (src: string) =>
+      src.split("\n").flatMap((raw, i) => {
+        const line = raw.replace(/^\s*#.*$/, "");
+        const exp = /\$\{(DB_URL|STORAGE_URL|DBURL)[A-Za-z_]*(##?|%%?|\/\/?|:)/.test(line) && !/STORAGE_URL="\$\{2%\/\}"/.test(line);
+        const tool = /\b(cut|sed|awk|tr|grep)\b[^\n|]*\$\{?(DB_URL|STORAGE_URL|DBURL)\b/.test(line);
+        return exp || tool ? [`line ${i + 1}: ${raw.trim().slice(0, 80)}`] : [];
+      });
+    // RED controls: other slicing forms are caught
+    expect(violations('h="${DB_URL%%/*}"')).toHaveLength(1);
+    expect(violations('h="${DB_URL:8}"')).toHaveLength(1);
+    expect(violations('h="${STORAGE_URL//https:/}"')).toHaveLength(1);
+    expect(violations('h=$(cut -d@ -f2 <<<"$DB_URL")')).toHaveLength(1);
+    expect(violations('h=$(sed "s/a/b/" <<<"$STORAGE_URL")')).toHaveLength(1);
+    expect(violations('STORAGE_URL="${2%/}"')).toHaveLength(0); // GREEN: the reviewed argument trim
+    for (const f of ["logical-export.sh", "object-export.sh", "export-restore.sh", "verify-export.sh", "export-rehearsal.sh"]) {
+      expect(violations(readFileSync(path.join(OPS, f), "utf8")), f).toEqual([]);
+    }
+    // in the lib only the parser and the rebuilt-argv line may slice the URL
+    const libLines = violations(readFileSync(path.join(OPS, "export-lib.sh"), "utf8"));
+    expect(libLines).toEqual([]);
   });
 });
