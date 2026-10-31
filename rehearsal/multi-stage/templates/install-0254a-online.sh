@@ -16,7 +16,7 @@ die() { echo "STOP: $*" >&2; exit 1; }
 pgrep -f 's1-apply-02|s1-reconcile-02|g02-read-02' >/dev/null 2>&1 && die "an apply, reconcile or read script is running; close it first"
 
 SET='
-450e83334b386248b801b54d5b8a175b5f590cf942cd698ea776b2b441d85f22 s1-apply-0254a-online/s1-apply-0254a-online.sh
+3255594171f79fc28050492f8f175a8ccf64ff5ce714e098ee39385ebd739f4b s1-apply-0254a-online/s1-apply-0254a-online.sh
 ecfb2d3b6811a8fd390449104f2952b4b4c877abed2fdce361bf69e7d0fa69c9 s1-apply-0254a-online/s1-reconcile-0254a-online.sh
 d5fe9726e46bca1bfd326b6afd08dfb655a30bda3f11da62c30d66aab6812262 s1-apply-0254a-online/g02-read-0254a-online.sh
 cb781e43b266a0c91b8a07ed18f8c87eeb297865846726b5be10c9c1e2576585 s1-apply-0254a-online/migrations-stage0254a.tar
@@ -34,9 +34,9 @@ dae82cab3050aed3cf18a0651d9b501d8f2fb13eaf73b93176737517c2476592 window-reads-s1
 471ecb9d18116f9b5c898400d9dae0aa898be5aa795b2788c44eacdefeb27357 window-reads-s1-0254a/run-window-read-macos.sh
 a0d3c33556ec7fe13b32f776cf6bf3fef6ccece4de39c752d66778f9b19c9d66 window-reads-s1-0254a/s1-history-0254a.sql
 e2313ac8d927771606ae6004f3a8bd6be1e601277f9cda004ff037b49a583515 window-reads-s1-0254a/window-s1read-0254a.sh
-bdaa312f1fcf3c54d642ca9e2bceb242f01e8f8232105c5bc42bcece9cc3633f runner/hone-stage-run.sh
-7ec25db81ae6bd9d2c12be243e417f3ffdb273a6b3011024fd30748b4bb2a7c4 runner/run.exp
-6a76e5acaeca905eebbde5bceda53bcd5f9174ca68200102804b5c5c3aec7e1c runner/stages/0254a.conf
+c2e92c9570ca0fd3204b4ca55428394b5bbf2eb5ba62ffcf9c6e1cc5c3e3c418 runner/hone-stage-run.sh
+5b453f6f6d33f8fa50248d5693c0c94a2d3b0373c25f8e3f1e940868abf0e69d runner/run.exp
+82573fa9b0441f7e0d00cc2406d39642d272164d06f0c1c3e992bed7bfb3fd30 runner/stages/0254a.conf
 '
 DIRS="s1-apply-0254a-online window-reads-0254a window-reads-s1-0254a runner runner/stages"
 

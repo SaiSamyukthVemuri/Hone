@@ -44,7 +44,7 @@ SQL_W03=03e4ce618597c3dd7449d764bb9c6422bd33e451c510686253e8afa33f736a91
 REF=alhhybgqdmcdyzpybykj
 URL="postgresql://postgres.$REF@aws-1-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require"
 POOLER_URL="postgresql://postgres.$REF@aws-1-us-east-1.pooler.supabase.com:5432/postgres"
-HEAD_SHA=4e15b595576525e9ad74278669732f5dde6f6c48  # the sealed 0254 head: #1226 (the hosted files incl. 0257 + sealed 0254 only)
+HEAD_SHA=464ac549dbc8f228a767ad8958aa08f2989ea2e8  # #1226 head: its supabase/migrations tree is BYTE-EQUAL to this 248-file bundle (0001..0246 less 0158, 0248, sealed 0254, 0257); run record and marker text only, no gate reads it
 TOMB="$ROOT/s1-apply/FAILED-LOGIN"
 NFILES=248
 MAXV=257
@@ -52,7 +52,7 @@ STATEF="$ROOT/s1-apply/APPLY-STATE"
 WR="$ROOT/window-reads-0254a"
 WR1="$ROOT/window-reads-s1-0254a"
 
-# The ONE pending file and its sha256 (sealed 0254, #1226 draft 4e4b9be0). 0247, 0249..0253, 0255 and 0256 are NOT in this stage; 0248 and 0257 are already hosted.
+# The ONE pending file and its sha256 (sealed 0254, carried by #1226 head 464ac549). 0247, 0249..0253, 0255 and 0256 are NOT in this stage; 0248 and 0257 are already hosted.
 #GOPEND-BEGIN
 GOPEND='77f34d5c9b677faad344b5b1afc2c3f26321f9060db5653a2176d9a239bbba23  0254_perm_hon44_role_enforcement.sql'
 #GOPEND-END
@@ -243,14 +243,15 @@ ask() { # ask VAR "prompt"
   echo "Runs, in this order, with no retry:"
   echo "  1. four READ-ONLY queries (pinned): history is 247 rows with max 0257, 0257 once, 0254 absent and nothing else at 0249..0256; the sealed 0254's own preflight passes;"
   echo "     no transaction older than 60 s on the five scanned tables; the five table sizes and the statement_timeout"
-  echo "  2. one dry run (db push --include-all --dry-run: 0254 is BELOW the hosted max 0257, so a plain push would refuse it) that must list exactly 0254"
-  echo "  3. ONE push of 0254 (db push --include-all --yes; a write to the production database: it makes three payment tables owner-readable only and owner-gates price and settlement writes)"
+  echo "  2. one dry run (db push --include-all --dry-run: 0254 is BELOW the hosted max 0257, so a plain push would refuse it) that must list exactly 0254; the listing is then SHOWN TO YOU"
+  echo "  3. a SECOND, separate APPLY from you, typed after you have read that listing: only then ONE push of 0254 (db push --include-all --yes; a write to the production database: it makes three payment tables owner-readable only and owner-gates price and settlement writes)"
   echo "  4. the read-back (window-s1read-0254a.sh): history 248 rows, max 0257, 0254 once, 0247 and 0249..0253 absent, the owner-only read-policy proof"
   echo "STOP (nothing is pushed) if: any pinned file or sha differs; history is not exactly 247 rows, max 0257, 0254 absent, nothing else at 0249..0256; the preflight read fails;"
   echo "  any scanned table has an open transaction over 60 s; a table is over 512 MiB; the statement_timeout is 0, over 2 min or unreadable;"
   echo "  a login fails (then a FAILED-LOGIN tombstone blocks every rerun); the dry run lists anything but 0254; an APPLY-STATE marker or tombstone already exists."
   echo "After the push starts, any failure or interruption leaves the APPLY-STATE marker: the result is UNKNOWN, there is NO retry, and the next step is the read-back and s1-reconcile-0254a-online.sh."
   echo "NO settings write: this script never runs ALTER ROLE or SET. No heartbeat, no restore point, no watchdog, no cron pause, no staff hold, no fixed window."
+  echo "Two confirmations: the APPLY below starts the reads and the dry run (no write). Nothing is pushed until you type APPLY a second time, after the dry-run listing."
   echo "Credentials: the access token (used only by the four read-only queries) and the database password, typed hidden, once, and cleared before the push."
   echo "The read-back script then asks for the token and password itself (a second entry; the pinned script is not changed)."
   echo "===================================================================="
@@ -306,7 +307,9 @@ if (rule === "g02") {
   if (r.hosted_max !== "0257") done(false, "hosted history max is not 0257 (" + r.hosted_max + ")");
   if (!numEq(r.versions_ge_0249, 1) || !numEq(r.rows_0257, 1)) done(false, "0257 is not the only version at or above 0249 (versions_ge_0249 " + r.versions_ge_0249 + ", rows_0257 " + r.rows_0257 + ")");
   if (!numEq(r.rows_0254, 0) || !numEq(r.versions_0249_0256, 0)) done(false, "0254 or another held migration is already applied (rows_0254 " + r.rows_0254 + ", versions_0249_0256 " + r.versions_0249_0256 + ")");
-  done(true, "history is 247 rows, max 0257, 0257 once, nothing at 0249..0256");
+  if (!numEq(r.rows_0248, 1)) done(false, "0248 is not applied exactly once (rows_0248 " + r.rows_0248 + ")");
+  if (r.last4 !== "0257,0248,0246,0245") done(false, "the newest four hosted versions are not 0257,0248,0246,0245 (last4 " + r.last4 + ")");
+  done(true, "history is 247 rows, max 0257, 0257 once, 0248 once, newest four 0257,0248,0246,0245, nothing at 0249..0256");
 } else if (rule === "g12") {
   if (rows.length !== 1) done(false, "expected 1 row, got " + rows.length);
   const r = rows[0], bad = [];
@@ -413,9 +416,28 @@ ngot=$(printf '%s\n' "$got" | grep -c '.')
 [ "$got" = "$WANT" ] || die "the dry run lists 1 migration but not the expected 0254. NOTHING was applied (log: $DRY)"
 echo "Dry run OK: exactly 1 migration, 0254." >&2
 echo "dry run listed exactly the 1 expected version" >> "$RUN"
+# Z4: the listing is shown, and the push needs its own APPLY. Nothing has been written yet.
+STAGE=confirm-push
+{
+  echo
+  echo "=========== DRY RUN RESULT (nothing has been written) ==========="
+  printf '%s\n' "$dsum" | mask
+  echo "The dry run lists exactly ONE migration, $WANT, and no other. The next step is the push: a WRITE to the production database."
+  echo "=================================================================="
+} >&2
+# V2: the wait is BOUNDED (10 minutes). A timeout or end of input is a decline: nothing is pushed and the credentials are cleared before the script exits.
+GOWORD2=""; rc2=0
+IFS= read -r -t 600 -p "The dry run above lists exactly 0254. Type  APPLY  to PUSH it now (anything else stops, nothing applied; 10 minutes at most): " GOWORD2 <"$TTY" || rc2=$?
+if [ "$rc2" != 0 ]; then
+  PW=""; TOK=""; unset PW TOK PGPASSWORD SUPABASE_DB_PASSWORD SUPABASE_ACCESS_TOKEN; PUSHSTATE=none
+  if [ "$rc2" -gt 128 ]; then die "no second APPLY within 10 minutes: treated as declined. NOTHING was applied; the credentials were cleared. Start over to apply."
+  else die "the second APPLY could not be read (end of input): treated as declined. NOTHING was applied; the credentials were cleared."; fi
+fi
+[ "$GOWORD2" = APPLY ] || die "the push was not confirmed (type exactly: APPLY). NOTHING was applied."
+echo "APPLY (push) typed $(utcnow)" >> "$RUN"
 
 # ---------------------------------------------------------------------------------------------------------
-# Part 5: ONE push (APPLY was typed in Part 2). The log must show 1 "Applying migration" line, then the
+# Part 5: ONE push (APPLY was typed in Part 2 and again after the dry-run listing). The log must show 1 "Applying migration" line, then the
 # finish line, and the CLI must exit 0. The marker is written first and only the reconcile script ever clears it.
 # ---------------------------------------------------------------------------------------------------------
 STAGE=confirm

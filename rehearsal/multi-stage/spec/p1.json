@@ -14,15 +14,22 @@
     {
       "file": "sealed/0254_perm_hon44_role_enforcement.sql",
       "sha256": "77f34d5c9b677faad344b5b1afc2c3f26321f9060db5653a2176d9a239bbba23",
-      "head_sha": "4e15b595576525e9ad74278669732f5dde6f6c48",
+      "head_sha": "464ac549dbc8f228a767ad8958aa08f2989ea2e8",
       "gate_pack": "../gate-packs/0254",
       "ready": {
-        "status": "sealed; Team finishing Z1-Z4 before approval",
-        "carrier": "#1226 4e15b595",
+        "status": "sealed 77f34d5c; Team package team/stage-0254a-v2 (Z1-Z4 fixed); Insurance delta review in progress",
+        "carrier": "#1226 464ac549 (248-file tree, byte-equal to migrations-stage0254a.tar)",
         "class": "3 (+2)",
         "carrier_db_lane": "pass at the carrier head",
         "content_gates": "yes: preflight, table/lock reads, content read-back (reviewed at hosted max 0257)",
-        "blocker": "Sam must approve 0254's exact changes; carrier is 158 behind production with a schema-snapshot conflict"
+        "blocker": "Insurance delta review; Sam must approve 0254's exact changes"
+      },
+      "adopt": {
+        "dir": "0254a",
+        "stage": "0254a",
+        "tar_sha256": "cb781e43b266a0c91b8a07ed18f8c87eeb297865846726b5be10c9c1e2576585",
+        "list_sha256": "446b637ce3845c65f9b5978ca41563f60939b733a8284e5c127c6a2199712675",
+        "apply_sha256": "3255594171f79fc28050492f8f175a8ccf64ff5ce714e098ee39385ebd739f4b"
       }
     },
     {

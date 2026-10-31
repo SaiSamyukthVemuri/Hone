@@ -75,7 +75,7 @@ runscript() { # runscript SCRIPT line... -> RC OUT CONSUMED TIMEOUT
   CONSUMED=$(( total - $(leftover "$H/tty") )); exec 9>&-; rm -f "$H/tty"
   OUT=$(cat "$H/out.txt")
 }
-APPLYIN=(APPLY "$CTOK" "$CPW" "$CTOK" "$CPW")
+APPLYIN=(APPLY "$CTOK" "$CPW" APPLY "$CTOK" "$CPW")
 run_apply() { runscript "$H/hone-s1/s1-apply-$1-online/s1-apply-$1-online.sh" "${APPLYIN[@]}"; }
 run_recon() { rm -f "$H/out.txt"; ( cd "$H" && env -i HOME="$H" PATH="$T/shim:$T/bin:$PATH" LC_ALL=C /bin/bash "$H/hone-s1/s1-apply-$1-online/s1-reconcile-$1-online.sh" > "$H/out.txt" 2>&1 ); RC=$?; OUT=$(cat "$H/out.txt"); }
 calls() { [ -f "$H/calls.log" ] && sed -E 's/ sql=.*//' "$H/calls.log" | tr '\n' ' ' | sed 's/ $//' || true; }
@@ -104,7 +104,7 @@ good_step() { # good_step STAGE NAME : apply + read-back + reconcile, asserting 
   hist_is "$S" before || bad "step $K ($S): the history before is not the expected one" "rows=$(hist_rows) max=$(hist_max)"
   do_step "$S"
   local want; want=$(expect_calls "$S")
-  [ $RC = 0 ] && [ "$(calls)" = "$want" ] && [ "$(receipt_of)" = "APPLIED+VERIFIED" ] && [ "$(marker)" = APPLIED-UNVERIFIED ] && [ "$CONSUMED" = 5 ] && [ -z "$(leaks)" ] \
+  [ $RC = 0 ] && [ "$(calls)" = "$want" ] && [ "$(receipt_of)" = "APPLIED+VERIFIED" ] && [ "$(marker)" = APPLIED-UNVERIFIED ] && [ "$CONSUMED" = 6 ] && [ -z "$(leaks)" ] \
     && ok "step $K ($S): $(nreads $S) pinned reads, ONE dry run, ONE push$([ "$(ex $S 'd["include_all"]')" = True ] && echo ' (--include-all)' || echo ' (plain)'), read-back, APPLIED+VERIFIED, marker kept" \
     || bad "step $K ($S): apply" "rc=$RC calls=[$(calls)] want=[$want] receipt=$(receipt_of) marker=$(marker) consumed=$CONSUMED $(echo "$OUT" | grep STOP | head -2) leaks=$(leaks)"
   hist_is "$S" after && [ "$(grep -c "^$(ex $S 'd["migration"][:4]')\$" "$H/remote-history")" = 1 ] \
@@ -166,6 +166,21 @@ prev=""; c=0; for S in $STAGES; do
 done; [ $c = 0 ] && ok "each bundle is the previous bundle plus exactly the step's one migration (nothing else added or removed)"
 
 # ================================================================== A. the whole sequence, in order
+# P. the runner's prompt table equals the apply's prompts EXACTLY: six PROMPT lines per stage, in order approve, token, password, approve2, token, password
+for S in $STAGES; do
+  python3 -I - "$PKG/$S/runner/stages/$S.conf" "$PKG/$S/s1-apply-$S-online/s1-apply-$S-online.sh" "$S" <<'PY' && ok "  runner prompts: $S: six PROMPT lines; the 1st and 4th APPLY prompts equal the apply's own ask texts byte for byte" || bad "  runner prompts: $S" "the conf prompt table differs from the apply"
+import re, sys
+conf, apply_, S = sys.argv[1:4]
+c = [l.rstrip("\n") for l in open(conf) if l.startswith("PROMPT=")]
+a = open(apply_).read()
+asks = [("GOWORD", t) for t in re.findall(r'^ask GOWORD "([^"\n]*)"$', a, re.M)] + [("GOWORD2", t) for t in re.findall(r'-t 600 -p "([^"\n]*)" GOWORD2', a)]
+assert len(c) == 6, "conf has %d PROMPT lines" % len(c)
+assert [x.split("|")[0] for x in c] == ["PROMPT=approve", "PROMPT=secret-token", "PROMPT=secret-password"] * 2, c
+assert [w for w, _ in asks] == ["GOWORD", "GOWORD2"], asks
+for i, (w, t) in zip((0, 3), asks):
+    assert c[i].split("|", 1)[1] == t + "<END>", (i, c[i], t)
+PY
+done
 echo "# A. combined sequence"
 newhome A; : > "$H/calls.log"
 for S in $STAGES; do good_step "$S"; done
@@ -188,15 +203,17 @@ newhome B2; install_step "$S1"; mkvb "$S1" "$FORWARD2" "" 0; install_step "$S1" 
 # B3. an extra unapplied OLD version (the include-all danger): 0255 in step 1's bundle
 newhome B3; install_step "$S1"; mkvb "$S1" "0255_stray.sql" "" 0; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "EXTRA FILE below the head (0255, would be taken by --include-all): STOP, nothing pushed" "(files|holds|names|not part of this stage|differs|lines)" "$(hist_rows)"
 # B3b. count-neutral swap: the stray 0255 added and hosted 0001 dropped, so the file COUNT is right and only the NAMED-FILE gates can stop it
-newhome B3b; install_step "$S1"; mkvb "$S1" "0255_stray.sql" "0001" 0; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "SWAPPED FILE (right count): 0255 added, 0001 dropped: STOP on the named-file gates, nothing pushed" "(not part of this stage|names|holds)" "$(hist_rows)"
+newhome B3b; install_step "$S1"; mkvb "$S1" "0255_stray.sql" "0001" 0; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "SWAPPED FILE (right count): 0255 added, 0001 dropped: STOP on the named-file gates, nothing pushed" "(not part of this stage|names|holds|pending file)" "$(hist_rows)"
 # B3c. count-neutral swap with a number OUTSIDE every named absent list (0158 is permanently skipped): only the embedded ALLOWLIST can stop it
-newhome B3c; install_step "$S1"; mkvb "$S1" "0158_stray.sql" "0001" 0; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "SWAPPED FILE of an unlisted number (0158 added, 0001 dropped, right count): STOP on the embedded allowlist, nothing pushed" "allowlist" "$(hist_rows)"
+newhome B3c; install_step "$S1"; mkvb "$S1" "0158_stray.sql" "0001" 0; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "SWAPPED FILE of an unlisted number (0158 added, 0001 dropped, right count): STOP (adopted v2: at the dry-run listing, before any push), nothing pushed" "(allowlist|dry run lists)" "$(hist_rows)"
+# the same swap on a GENERATED step (embedded allowlist): it must stop on the allowlist itself, earlier than the dry run
+newhome B3d; advance 1; install_step "$S2"; mkvb "$S2" "0158_stray.sql" "0001" 0; install_step "$S2" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S2"; expect_stop "SWAPPED FILE of an unlisted number at step 2 (generated, embedded allowlist): STOP on the allowlist, nothing pushed" "allowlist" "$(hist_rows)"
 # B6b. a hosted file CHANGED (0257), list and tar re-pinned consistently: only the allowlist / sha pins can stop it
-newhome B6b; install_step "$S1"; mkvb "$S1" "" "" 0 "0257"; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "CHANGED HOSTED FILE: 0257's body altered in a consistently re-pinned bundle: STOP on the allowlist / sha pin" "(allowlist|pinned|differs)" "$(hist_rows)"
+newhome B6b; install_step "$S1"; mkvb "$S1" "" "" 0 "0257"; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "CHANGED HOSTED FILE: 0257's body altered in a consistently re-pinned bundle: STOP on the allowlist / sha pin" "(allowlist|pinned|differs|does not carry)" "$(hist_rows)"
 # B6c. an EARLIER STEP's file changed in a later step's bundle
 newhome B6c; install_step "$S2"; mkvb "$S2" "" "" 0 "$(ex $S1 'd["migration"][:4]')"; install_step "$S2" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S2"; expect_stop "CHANGED EARLIER STEP: step 1's migration altered inside step 2's bundle: STOP on the allowlist / sha pin" "(allowlist|pinned|differs)" "$(hist_rows)"
 # B6d. every file of the bundle is unexpected: a hosted file of another number swapped for a different NAME (rename)
-newhome B6d; install_step "$S1"; python3 -I - "$D" "$PKG/$S1/s1-apply-$S1-online/migrations-stage$S1.tar" "$T/vb2" <<'PY'
+newhome B6d; advance 1; install_step "$S2"; python3 -I - "$D" "$PKG/$S2/s1-apply-$S2-online/migrations-stage$S2.tar" "$T/vb2" <<'PY'
 import hashlib, os, sys, tarfile
 d, tarp, out = sys.argv[1:4]
 sys.path.insert(0, d)
@@ -211,7 +228,9 @@ os.makedirs(out, exist_ok=True)
 open(out + "/b.tar", "wb").write(build.ustar(files))
 open(out + "/l.txt", "w").write("".join("%s  %s\n" % (hashlib.sha256(b).hexdigest(), n) for n, b in sorted(files.items())))
 PY
-install_step "$S1" "$T/vb2"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "RENAMED FILE: a hosted migration under a different name (same bytes, same count): STOP on the allowlist" "allowlist" "$(hist_rows)"
+install_step "$S2" "$T/vb2"; rm -f "$H/calls.log"; run_apply "$S2"; expect_stop "RENAMED FILE at step 2 (generated, embedded allowlist): a hosted migration under a different name (same bytes, same count): STOP on the allowlist" "allowlist" "$(hist_rows)"
+# B6e. DOCUMENTED difference of the adopted v2 step 1: it has no per-name allowlist of the 247 hosted files (its LIST_SHA pin IS the allowlist). A hosted file renamed
+# inside a bundle that is re-pinned in the script too (a different script) is accepted, but a same-version rename cannot change what is applied (the history keys on the version).
 # B4. missing hosted file
 newhome B4; install_step "$S1"; mkvb "$S1" "" "0001" 0; install_step "$S1" "$T/vb"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "MISSING FILE: hosted 0001 absent from the bundle: STOP before any call" "(files|missing|differs|names|lines)" "$(hist_rows)"
 # B5. missing pending file
@@ -223,6 +242,27 @@ newhome B7; install_step "$S1"; echo x >> "$H/hone-s1/s1-apply-$S1-online/migrat
 newhome B7b; install_step "$S1"; echo x >> "$H/hone-s1/s1-apply-$S1-online/MIGRATIONS-stage$S1.sha256"; rm -f "$H/calls.log"; run_apply "$S1"; expect_stop "WRONG SHA: the bundle list was changed after pinning: STOP before any call" "(sha256|sha|differs|pinned)" "$(hist_rows)"
 newhome B7c; install_step "$S1"; echo x >> "$H/hone-s1/s1-apply-$S1-online/s1-apply-$S1-online.sh"; rm -f "$H/calls.log"
 # (the runner pins the apply script itself; run directly, a changed script is simply a different script. The conf pin is asserted below.)
+# B7d. the SECOND APPLY (after the dry-run listing) is declined: nothing is pushed, receipt NOT APPLIED, no marker
+newhome B7d; install_step "$S1"; rm -f "$H/calls.log"; runscript "$H/hone-s1/s1-apply-$S1-online/s1-apply-$S1-online.sh" APPLY "$CTOK" "$CPW" NO "$CTOK" "$CPW"
+before=$(hist_rows)
+[ $RC != 0 ] && [ "$(receipt_of)" = "NOT APPLIED" ] && [ "$(marker)" = none ] && ! grep -q '^push' "$H/calls.log" && [ "$(hist_rows)" = "$before" ] && [ -z "$(leaks)" ] \
+  && ok "SECOND APPLY declined (answer NO after the dry-run listing): the dry run ran, NOTHING pushed, receipt NOT APPLIED, no marker, history unchanged" || bad "B7d second apply declined" "rc=$RC calls=[$(calls)] receipt=$(receipt_of) marker=$(marker)"
+# B7e. the SECOND prompt TIMES OUT (the real 10-minute wait scaled to 3 s in this test copy only: `read -t 600` -> `read -t 3`): treated as declined, NOT APPLIED, credentials cleared
+newhome B7e; install_step "$S1"; sed -i.bak 's/read -r -t 600 -p/read -r -t 3 -p/' "$H/hone-s1/s1-apply-$S1-online/s1-apply-$S1-online.sh"; rm -f "$H/hone-s1/s1-apply-$S1-online/"*.bak
+grep -q 'read -r -t 3 -p' "$H/hone-s1/s1-apply-$S1-online/s1-apply-$S1-online.sh" || bad "B7e test copy" "the timeout line was not found"
+rm -f "$H/calls.log"; runscript "$H/hone-s1/s1-apply-$S1-online/s1-apply-$S1-online.sh" APPLY "$CTOK" "$CPW"; before=$(hist_rows)
+[ $RC != 0 ] && [ "$TIMEOUT" = 0 ] && [ "$CONSUMED" = 3 ] && [ "$(receipt_of)" = "NOT APPLIED" ] && [ "$(marker)" = none ] && ! grep -q '^push' "$H/calls.log" && grep -q '^dry' "$H/calls.log" \
+  && echo "$OUT" | grep -q "no second APPLY within 10 minutes: treated as declined. NOTHING was applied; the credentials were cleared" && [ -z "$(leaks)" ] \
+  && ok "SECOND PROMPT TIMEOUT: treated as declined, the dry run ran, NOTHING pushed, receipt NOT APPLIED, no marker, 'credentials were cleared'" || bad "B7e second prompt timeout" "rc=$RC consumed=$CONSUMED receipt=$(receipt_of) marker=$(marker) calls=[$(calls)] $(echo "$OUT" | grep STOP | tail -1)"
+# B7f-h. the history differs in rows_0248 / last4 (the v2 g02 rule): STOP at the history gate, BEFORE the dry run
+g02case() { # g02case NAME LABEL REGEX [forge knob] : the stub answers the g02 read with a forged field, or the history is edited first
+  newhome "$1"; install_step "$S1"; [ -n "${4:-}" ] && cfgset "$4"; [ -n "${5:-}" ] && eval "$5"; rm -f "$H/calls.log"; local before; before=$(hist_rows); run_apply "$S1"
+  [ $RC != 0 ] && [ "$(receipt_of)" = "NOT APPLIED" ] && [ "$(marker)" = none ] && [ "$(calls)" = "query:g02-history-$S1" ] && [ "$(hist_rows)" = "$before" ] && echo "$OUT" | grep -Eq "$3" && [ -z "$(leaks)" ] \
+    && ok "$2: STOP at the history gate, only the g02 read ran (before the dry run), nothing pushed" || bad "$1 $2" "rc=$RC receipt=$(receipt_of) marker=$(marker) calls=[$(calls)] $(echo "$OUT" | grep STOP | tail -1)"
+}
+g02case B7f "rows_0248 differs (forged rows_0248=0, everything else as expected)" "rows_0248" "G02_FORGE_ROWS0248=0"
+g02case B7g "last4 differs (forged, everything else as expected)" "last4" "G02_FORGE_LAST4=0257,0248,0247,0246"
+g02case B7h "history really differs: 0248 replaced by 0247 (same count and max)" "(rows_0248|last4|0247)" "" 'sed -i.bak "s/^0248\$/0247/" "$H/remote-history"; rm -f "$H/remote-history.bak"'
 # B8. out of order: step 3 offered while the history is at the start (step 1 and 2 absent)
 newhome B8; install_step "$S3"; rm -f "$H/calls.log"; before=$(hist_rows); run_apply "$S3"; expect_stop "OUT OF ORDER: step 3 run on the start history (steps 1 and 2 not applied): STOP at the history gate, nothing after it runs" "(rows|max|version set|history)" "$before"
 [ "$(calls)" = "query:g02-history-$S3" ] && ok "  ... only the history read ran" || bad "  out-of-order: calls" "$(calls)"

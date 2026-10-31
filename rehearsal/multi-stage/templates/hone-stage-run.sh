@@ -80,7 +80,11 @@ PROMPTS=$(sed -n 's/^PROMPT=\(.*\)<END>$/\1/p' "$MANIFEST")   # a prompt ends wi
 [ -n "$PROMPTS" ] || die_early "the manifest has no PROMPT lines"
 printf '%s\n' "$PROMPTS" | grep -Evq '^(approve|secret-token|secret-password)\|.+$' && die_early "a manifest PROMPT line is not kind|text with kind approve, secret-token or secret-password"
 [ "$(sed -n 's/^PROMPT=//p' "$MANIFEST" | grep -vc '<END>$')" = 0 ] || die_early "every PROMPT line must end with <END>"
-[ "$(printf '%s\n' "$PROMPTS" | grep -c '^approve|')" = 1 ] || die_early "the manifest needs exactly one approve prompt"
+NAPP=$(printf '%s\n' "$PROMPTS" | grep -c '^approve|')
+{ [ "$NAPP" = 1 ] || [ "$NAPP" = 2 ]; } || die_early "the manifest needs one approve prompt, or two (a second confirmation after the stage's dry run)"
+printf '%s\n' "$PROMPTS" | head -1 | grep -q '^approve|' || die_early "the first prompt of the manifest must be the approve prompt"
+# a SECOND approve must come after both secrets: otherwise the driver would take it for the first approval and ask for the credentials there
+printf '%s\n' "$PROMPTS" | awk -F'|' 'BEGIN{t=0;p=0;a=0;bad=0} $1=="secret-token"&&!t{t=1} $1=="secret-password"&&!p{p=1} $1=="approve"{a++; if(a==2&&!(t&&p))bad=1} END{exit bad}' || die_early "a second approve prompt must come after the access-token and password prompts"
 
 verify_pins() { # every PIN line, by FULL sha256, relative to ROOT; the apply and reconcile scripts must be among them
   local want path got n=0 sawa=0 sawr=0
@@ -107,7 +111,7 @@ printf '%s\n' "$PROMPTS" > "$RUN/prompts.txt"
 # ---- 2. the interactive part: ONE pty session for the apply script (and, inside it, the read-back) ----
 cat >&2 <<EOF
 HONE ONE-COMMAND STAGE $M_STAGE   (manifest sha256 $MANIFEST_SHA)
-Next: the reviewed apply script shows its own summary. You then approve ONCE, type the access token and database password ONCE (hidden), and everything
+Next: the reviewed apply script shows its own summary. You then approve (a stage may ask for a second confirmation after its dry run), type the access token and database password ONCE (hidden), and everything
 after that is automatic: the four reads, the dry run, ONE push, the read-back (its own token/password prompts are answered from what you typed), then the
 reconcile. Nothing is retried. No settings are changed. Ctrl-C at any point stops safely; after the push starts the result is UNKNOWN and the receipt says what to run.
 EOF

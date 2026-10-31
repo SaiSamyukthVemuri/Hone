@@ -104,7 +104,11 @@ while {1} {
         show $expect_out(buffer)
         dbg "matched prompt $idx kind $wk"
         if {$wk eq "approve"} {
-          set w [ask_plain "\n>>> To run this stage now, type exactly $C(APPROVE_WORD) (anything else cancels, nothing has connected): "]
+          if {!$creds} {
+            set w [ask_plain "\n>>> To run this stage now, type exactly $C(APPROVE_WORD) (anything else cancels, nothing has connected): "]
+          } else {
+            set w [ask_plain "\n>>> Second confirmation. Read what the stage showed above. Type exactly $C(APPROVE_WORD) to continue (anything else cancels): "]
+          }
           dbg "approval typed (length [string length $w])"
           if {$w ne $C(APPROVE_WORD)} {
             send -- "no\r"; set R(STOP_REASON) "not approved (the person typed something other than $C(APPROVE_WORD))"
@@ -118,7 +122,8 @@ while {1} {
             set creds 1
             dbg "credentials collected"
           }
-          send -- "$w\r"
+          # the child may have given up waiting (a stage can bound its own second prompt): a late answer is not an error
+          catch { send -- "$w\r" }
           dbg "approval sent to child"
         } else {
           if {!$creds} { fail "a secret prompt arrived before the approval" }

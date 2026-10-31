@@ -23,7 +23,7 @@ w dup 'spec["steps"].append({"file": spec["steps"][0]["file"]})'; refuse "DUPLIC
 w hosted 'spec["steps"].append({"file": "sealed/0258_hon58_identity.sql"})'; refuse "DUPLICATE (later step repeats an earlier one) is refused" "already in the hosted set or an earlier step" "$sd/.t-hosted.json"
 w rows 'spec["hosted"]["expect_rows"] = 246'; refuse "HOSTED DIRECTORY that is not the hosted set (wrong file count) is refused" "hosted directory holds" "$sd/.t-rows.json"
 w max 'spec["hosted"]["expect_max"] = "0256"'; refuse "HOSTED DIRECTORY with the wrong max is refused" "hosted directory max" "$sd/.t-max.json"
-w pack 'spec["steps"] = spec["steps"][1:] + spec["steps"][:1]'; refuse "STALE GATE PACK: 0254's pack was reviewed at hosted max 0257; placed after the other steps it is refused" "gate pack was reviewed for a hosted max" "$sd/.t-pack.json"
+w pack 'spec["steps"] = spec["steps"][1:] + spec["steps"][:1]'; refuse "STALE GATE PACK: 0254's pack was reviewed at hosted max 0257; placed after the other steps it is refused" "(gate pack was reviewed for a hosted max|ADOPTED package is valid only as step 1)" "$sd/.t-pack.json"
 w name 'spec["steps"][1]["file"] = "sealed/0258 bad name.sql"'; refuse "a file that is not NNNN_name.sql is refused" "is not NNNN_name.sql" "$sd/.t-name.json"
 w sha 'spec["steps"][1]["sha256"] = "0" * 64'; refuse "WRONG SEALED SHA: a step file that is not the sealed one (sha256 in the spec) is refused" "is not the sealed one" "$sd/.t-sha.json"
 # template drift: a template that is not the reviewed file
@@ -65,6 +65,9 @@ assert "CONTENT GATES MISSING" in open(d + "/SEQUENCE.md").read()
 PY
 # the allowlist embedded in each apply script is exactly the bundle's list
 c=0; for f in "$T"/a/*/; do S=$(basename "$f"); [ -f "$f/s1-apply-$S-online/s1-apply-$S-online.sh" ] || continue
+  # the adopted reviewed package has no embedded ALLOW block: its LIST_SHA pin is the allowlist (checked to equal the bundle list's sha256)
+  if ! grep -q "^ALLOW='" "$f/s1-apply-$S-online/s1-apply-$S-online.sh"; then
+    [ "$(sed -n 's/^LIST_SHA=\([0-9a-f]*\).*/\1/p' "$f/s1-apply-$S-online/s1-apply-$S-online.sh")" = "$(shasum -a 256 "$f/s1-apply-$S-online/MIGRATIONS-stage$S.sha256" | cut -d' ' -f1)" ] || { c=1; bad "$S: (adopted) LIST_SHA is not the bundle list's sha256"; }; continue; fi
   sed -n "/^ALLOW='/,/'\$/p" "$f/s1-apply-$S-online/s1-apply-$S-online.sh" | sed "1s/^ALLOW='//;\$s/'\$//" | LC_ALL=C sort > "$T/allow.txt"
   LC_ALL=C sort "$f/s1-apply-$S-online/MIGRATIONS-stage$S.sha256" | cmp -s - "$T/allow.txt" || { c=1; bad "$S: the embedded allowlist is not the bundle list"; }; done
 [ $c = 0 ] && ok "every apply script embeds EXACTLY its bundle's reviewed allowlist (file name + sha256 of every migration)"

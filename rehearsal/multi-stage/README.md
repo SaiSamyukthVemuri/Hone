@@ -33,6 +33,19 @@ That leaves 12 valid plans (13 stage packages). A stage package is named `<ver>-
 dropping a step changes which package a later step uses, never the package itself. `plan-check.sh VERSION...` refuses a
 rule-breaking plan, refuses an order no package was built for, and prints the stage ids to run.
 
+## Step 1 is Team's real v2 package, adopted unchanged
+
+`spec/p1.json` marks 0254 `adopt`: the reviewed package `team/stage-0254a-v2` is copied into `adopted/0254a/` and emitted **byte for
+byte** (apply `cecb27bd`, runner, run.exp, conf with its six PROMPT lines, read-backs, installer). The builder re-checks every file
+against the package's own `SHA256SUMS.txt`, the apply against the pinned sha and its `HEAD_SHA` (464ac549), and refuses to adopt
+anywhere but step 1 on the hosted set. Nothing in step 1 is generated, so the combined rehearsal runs the real v2 apply (all six prompts:
+approve, token, password, approve2, token, password), not a stub of it. Only the CLI and the read-back are test stand-ins (see Stated limits).
+
+**V5, bundles are built from bytes.** Every bundle is the 247 hosted files (the production tree) plus the sealed target(s), assembled by
+`build.py` from file bytes in the GNU tar format Team's package uses. The adopted step's tar is rebuilt and must equal Team's
+`migrations-stage0254a.tar` (sha256 cb781e43...), so merging #1226 (the carrier PR) is not needed mid-session. Each later bundle is the
+previous bundle plus its one target, no carrier merge involved either.
+
 ## The runner's bundle guard (every step)
 
 Each apply script embeds the exact reviewed allowlist (file name and sha256 of every migration in its bundle) and checks:
