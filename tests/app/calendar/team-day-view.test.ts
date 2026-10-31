@@ -145,7 +145,10 @@ describe("team day page path", () => {
   });
 
   it("a member may book only their own column; owners any active one", () => {
-    expect(day).toContain("allowCreate: c.active && (isOwner || c.practitionerId === practitioner.id)");
+    // The rule lives in teamColumnAllowsCreate (capacity on: own column or owner; capacity off: any
+    // active column, as the week grid allows); its cases are in capacity-off-scoped-sources.test.ts.
+    expect(day).toContain("allowCreate: teamColumnAllowsCreate({");
+    expect(day).toContain("viewerPractitionerId: practitioner.id");
   });
 
   it("returns appointment details to the same day", () => {
