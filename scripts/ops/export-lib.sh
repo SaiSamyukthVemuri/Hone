@@ -13,11 +13,94 @@ US=$'\x1f' # unit separator: object paths may contain '|' and spaces
 export_fail() { printf 'EXPORT FAIL: %s\n' "$*" >&2; exit 1; }
 export_log() { printf '[export %s] %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
 
-# host of a URL, without credentials or port ("postgresql://u:p@h:5432/db" -> h).
+# --- one strict connection-URL parser (Codex P1/P2 on 1432d095/7f5246be) -------------
+# libpq lets a URL's query string override its authority (?host=, ?hostaddr=, ?port=,
+# ?dbname=, ?user=, ?service=, ?password=; host= may even list several hosts), so a ref
+# check that reads only the authority can pass a disposable host while libpq connects to
+# production. Every host check, the production-host guard and the argv the tools build
+# therefore come from THIS parser, which is fail-closed:
+#   * scheme postgresql/postgres (database) or http/https (Storage), nothing else;
+#   * the authority is everything up to the first '/', '?' or '#'; at most ONE '@'
+#     (an unencoded '@' in a password is refused: write %40);
+#   * the host is a plain hostname or a bracketed IPv6 literal: no ',' (multi-host), no '%'
+#     (percent-encoded host), no '/' (socket directory), no empty host;
+#   * the port is digits; the database name is [A-Za-z0-9_.-]*;
+#   * the ONLY query parameter allowed is sslmode=<a fixed value>; host, hostaddr, port,
+#     dbname, user, service, password and anything else is refused, and so is a '#'.
+# On success it sets CONN_SCHEME CONN_USER CONN_PASS (decoded) CONN_HOST CONN_PORT CONN_DB
+# CONN_SSLMODE; on refusal it returns 1 with CONN_REASON.
+parse_conn_url() {
+  local url="$1" rest authority afterauth userinfo hostport path query ats pair
+  CONN_SCHEME="" CONN_USER="" CONN_PASS="" CONN_USER_RAW="" CONN_HOST="" CONN_PORT="" CONN_DB="" CONN_SSLMODE="" CONN_REASON=""
+  case "$url" in
+    postgresql://*|postgres://*|http://*|https://*) CONN_SCHEME="${url%%://*}";;
+    *) CONN_REASON="unsupported scheme"; return 1;;
+  esac
+  rest="${url#*://}"
+  case "$rest" in *[[:space:]]*|*\\*|*"#"*) CONN_REASON="whitespace, backslash or fragment in the URL"; return 1;; esac
+  authority="${rest%%[/?]*}"; afterauth="${rest#"$authority"}"
+  path="${afterauth%%\?*}"; query=""
+  if [[ "$afterauth" == *\?* ]]; then query="${afterauth#*\?}"; fi
+  ats="${authority//[^@]/}"
+  [ "${#ats}" -le 1 ] || { CONN_REASON="more than one '@' in the authority (encode '@' in a password as %40)"; return 1; }
+  if [[ "$authority" == *@* ]]; then
+    userinfo="${authority%@*}"; hostport="${authority##*@}"
+    case "$CONN_SCHEME" in http|https) CONN_REASON="credentials in a Storage URL"; return 1;; esac
+    CONN_USER_RAW="${userinfo%%:*}"
+    CONN_USER="$(urldecode "$CONN_USER_RAW")"
+    if [[ "$userinfo" == *:* ]]; then CONN_PASS="$(urldecode "${userinfo#*:}")"; fi
+  else
+    hostport="$authority"
+  fi
+  if [[ "$hostport" =~ ^\[([0-9A-Fa-f:.]+)\](:([0-9]{1,5}))?$ ]]; then
+    CONN_HOST="[${BASH_REMATCH[1]}]"; CONN_PORT="${BASH_REMATCH[3]}"
+  elif [[ "$hostport" =~ ^([A-Za-z0-9.-]+)(:([0-9]{1,5}))?$ ]]; then
+    CONN_HOST="${BASH_REMATCH[1]}"; CONN_PORT="${BASH_REMATCH[3]}"
+  else
+    CONN_REASON="the host is not a single plain hostname (no list, no percent-encoding, no socket path)"; return 1
+  fi
+  if [ -n "$CONN_PORT" ] && { [ "$((10#$CONN_PORT))" -lt 1 ] || [ "$((10#$CONN_PORT))" -gt 65535 ]; }; then CONN_REASON="port out of range"; return 1; fi
+  case "$CONN_SCHEME" in
+    postgresql|postgres)
+      [[ "$path" =~ ^(/([A-Za-z0-9_.-]*))?$ ]] || { CONN_REASON="the database name has characters outside [A-Za-z0-9_.-]"; return 1; }
+      CONN_DB="${BASH_REMATCH[2]}"
+      if [ -n "$query" ]; then
+        local -a pairs; IFS='&' read -r -a pairs <<<"$query"
+        for pair in "${pairs[@]}"; do
+          case "$pair" in
+            sslmode=disable|sslmode=allow|sslmode=prefer|sslmode=require|sslmode=verify-ca|sslmode=verify-full)
+              [ -z "$CONN_SSLMODE" ] || { CONN_REASON="sslmode given twice"; return 1; }
+              CONN_SSLMODE="${pair#sslmode=}";;
+            *) CONN_REASON="a connection-string parameter other than sslmode (host, hostaddr, port, dbname, user, service, password ... all override the checked authority)"; return 1;;
+          esac
+        done
+      fi;;
+    *)
+      [[ "$path" =~ ^(/[A-Za-z0-9._~%/-]*)?$ ]] || { CONN_REASON="unexpected characters in the Storage URL path"; return 1; }
+      [ -z "$query" ] || { CONN_REASON="a query string in a Storage URL"; return 1; };;
+  esac
+  return 0
+}
+
+# host of a URL as the strict parser reads it (without credentials or port). Empty when the
+# URL is refused, and an empty host never names a ref, so every caller fails closed.
 host_of() {
-  local s="${1#*://}"
-  s="${s#*@}"; s="${s%%/*}"; s="${s%%:*}"
-  printf '%s' "$s"
+  parse_conn_url "$1" || return 0
+  printf '%s' "$CONN_HOST"
+}
+
+# require_conn_url URL WHAT: refuse, loudly and by reason, any URL the strict parser refuses.
+require_conn_url() {
+  parse_conn_url "$1" || export_fail "$2 refused: $CONN_REASON"
+}
+
+# libpq reads PGHOST / PGHOSTADDR / PGPORT / PGSERVICE / ... from the environment too
+# (PGHOSTADDR overrides the address a checked host resolves to), so none may be set.
+export_guard_libpq_env() {
+  local v
+  for v in PGHOST PGHOSTADDR PGPORT PGSERVICE PGSERVICEFILE PGDATABASE PGUSER PGOPTIONS; do
+    [ -z "${!v:-}" ] || export_fail "$v is set in the environment; libpq would let it override the checked target; unset it"
+  done
 }
 
 is_loopback_host() { case "$1" in 127.0.0.1|localhost|::1|'[::1]') return 0;; *) return 1;; esac; }
@@ -63,7 +146,8 @@ host_has_label() { case ".$1." in *".$2."*) return 0;; *) return 1;; esac; }
 url_matches_ref() {
   local url="$1" ref="$2" host
   [ -n "$ref" ] || return 1
-  host="$(host_of "$url")"
+  parse_conn_url "$url" || return 1
+  host="$CONN_HOST"
   if is_rehearsal && is_loopback_host "$host" && [ "$ref" = "${EXPORT_REHEARSAL_REF:-}" ]; then return 0; fi
   host_has_label "$host" "$ref"
 }
@@ -245,28 +329,26 @@ MANIFEST_SQL="select format('%s.%s rows=%s md5=%s', schemaname, relname, n, h) f
 # environment (with_pgpass). The service-role key goes to curl through a private
 # 0600 header file (-H @file), never on a command line. /proc/<pid>/cmdline and
 # `ps` therefore show neither.
-DB_URL_NOPASS="" DB_PASS=""
+DB_URL_NOPASS="" DB_PASS="" DB_SSLMODE=""
 EXPORT_SECRET_FILES=()
 
 urldecode() { local LC_ALL=C; printf '%b' "${1//%/\\x}"; }
 
 split_db_url() {
-  local scheme rest authority tail userinfo hostport
-  scheme="${DB_URL%%://*}"; rest="${DB_URL#*://}"
-  authority="${rest%%/*}"; tail="${rest#"$authority"}"
-  DB_PASS=""
-  if [[ "$authority" == *@* ]]; then
-    userinfo="${authority%@*}"; hostport="${authority##*@}"
-    if [[ "$userinfo" == *:* ]]; then DB_PASS="$(urldecode "${userinfo#*:}")"; userinfo="${userinfo%%:*}"; fi
-    DB_URL_NOPASS="$scheme://$userinfo@$hostport$tail"
-  else
-    DB_URL_NOPASS="$DB_URL"
-  fi
+  # The argv is REBUILT from the parsed pieces: scheme, user, host, port, database. No query
+  # string and no password ever reaches psql/pg_dump; sslmode travels as PGSSLMODE.
+  parse_conn_url "$DB_URL" || export_fail "the connection string is refused: $CONN_REASON"
+  case "$CONN_SCHEME" in postgresql|postgres) ;; *) export_fail "the connection string must be postgresql://";; esac
+  DB_PASS="$CONN_PASS"; DB_SSLMODE="$CONN_SSLMODE"
+  DB_URL_NOPASS="$CONN_SCHEME://${CONN_USER_RAW:+$CONN_USER_RAW@}$CONN_HOST${CONN_PORT:+:$CONN_PORT}${CONN_DB:+/$CONN_DB}"
 }
 
 # with_pgpass COMMAND...: run COMMAND with PGPASSWORD in ITS environment only.
 with_pgpass() {
-  if [ -n "$DB_PASS" ]; then PGPASSWORD="$DB_PASS" "$@"; else "$@"; fi
+  if [ -n "$DB_PASS" ] && [ -n "${DB_SSLMODE:-}" ]; then PGSSLMODE="$DB_SSLMODE" PGPASSWORD="$DB_PASS" "$@"
+  elif [ -n "$DB_PASS" ]; then PGPASSWORD="$DB_PASS" "$@"
+  elif [ -n "${DB_SSLMODE:-}" ]; then PGSSLMODE="$DB_SSLMODE" "$@"
+  else "$@"; fi
 }
 
 # make_auth_header_file: writes the Storage API headers for SERVICE_KEY to a
@@ -304,7 +386,9 @@ export_on_exit() {
 # both, but only with the one allow-listed docker-exec form (rehearsal_override_ok).
 export_configure_commands() {
   export_guard_rehearsal
-  split_db_url
+  export_guard_libpq_env
+  # With BOTH commands overridden (the CI rehearsal's docker-exec form) no URL reaches libpq.
+  if [ -n "${EXPORT_PG_DUMP:-}" ] && [ -n "${EXPORT_PSQL:-}" ]; then DB_PASS="" DB_SSLMODE=""; else split_db_url; fi
   if [ -n "${EXPORT_PG_DUMP:-}" ]; then
     read -r -a PGDUMP_CMD <<<"$EXPORT_PG_DUMP"
     rehearsal_override_ok pg_dump "${PGDUMP_CMD[@]}" || export_fail "EXPORT_PG_DUMP is not the allow-listed rehearsal form (docker exec -i supabase_db_<rehearsal ref> pg_dump -U postgres -d postgres); refusing"

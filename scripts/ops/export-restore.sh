@@ -59,6 +59,7 @@ if [ -f "$LINK_FILE" ]; then
 fi
 
 secret_input DB_URL "TARGET database connection string (input hidden): "
+require_conn_url "$DB_URL" "the target connection string"
 url_matches_ref "$DB_URL" "$TREF" || export_fail "the target's host does not name '$TREF'; refusing"
 case "$(host_of "$DB_URL")" in *"$PREF"*) export_fail "the target's host names the PRODUCTION ref; refusing";; esac
 export_configure_commands
@@ -104,6 +105,7 @@ SQL
     ;;
   objects)
     [ -n "$STORAGE_URL" ] || export_fail "--storage-url is required for objects"
+    require_conn_url "$STORAGE_URL" "the storage URL"
     url_matches_ref "$STORAGE_URL" "$TREF" || export_fail "the storage URL does not name '$TREF'; refusing"
     secret_input SERVICE_KEY "TARGET service-role key (input hidden): "
     make_auth_header_file   # the key reaches curl through a private 0600 file, never argv

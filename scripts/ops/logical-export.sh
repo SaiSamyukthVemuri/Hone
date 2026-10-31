@@ -56,6 +56,7 @@ export_guard_rehearsal   # rehearsal switches exist only in the CI rehearsal
 trap export_on_exit EXIT   # closes the session, removes secret files, deletes a partial output on any failure
 
 secret_input DB_URL "Database connection string (input hidden): "
+require_conn_url "$DB_URL" "the connection string"
 url_matches_ref "$DB_URL" "$REF" || export_fail "the connection string's host does not name project ref '$REF'; refusing"
 export_configure_commands
 

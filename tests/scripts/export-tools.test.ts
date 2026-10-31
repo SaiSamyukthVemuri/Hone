@@ -243,7 +243,7 @@ describe("logical-export.sh", () => {
     expect(ov.status).not.toBe(0);
     expect(ov.stderr).toContain("exist only for the CI rehearsal");
     expect(
-      lib("EXPORT_REHEARSAL=1; GITHUB_ACTIONS=true; EXPORT_REHEARSAL_REF=testref; DB_URL=u; EXPORT_PG_DUMP='docker exec -i supabase_db_testref pg_dump -U postgres -d postgres'; export_configure_commands; echo ok").stdout,
+      lib("EXPORT_REHEARSAL=1; GITHUB_ACTIONS=true; EXPORT_REHEARSAL_REF=testref; DB_URL=postgresql://u@127.0.0.1:5432/postgres; EXPORT_PG_DUMP='docker exec -i supabase_db_testref pg_dump -U postgres -d postgres'; export_configure_commands; echo ok").stdout,
     ).toContain("ok");
     const env2 = lib("DB_URL='postgresql://u:p@h/x'; secret_input DB_URL 'p: '");
     expect(env2.status).not.toBe(0);
@@ -1194,5 +1194,141 @@ describe("Insurance PEER-1155 J1/J2 and Codex P2 4371423762", () => {
     expect(g.status, g.stderr).toBe(0);
     expect(readFileSync(path.join(dir, "hashes.sha256"), "utf8").trim().split("\n")).toHaveLength(12001);
     expect(readFileSync(path.join(OPS, "object-export.sh"), "utf8")).toContain('hash_record_objects "$OUT"');
+  });
+});
+
+describe("Codex P1/P2 on 7f5246be: libpq query-string overrides cannot change the checked target", () => {
+  const PROD = "db.prodref.supabase.co";
+  const BASE = `postgresql://u:p@db.${REF}.supabase.co:5432/postgres`;
+  const lib = (body: string, env: Record<string, string> = {}) =>
+    spawnSync("bash", ["-c", `. ${path.join(OPS, "export-lib.sh")}; ${body}`], { encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: scratch, ...env } as unknown as NodeJS.ProcessEnv });
+
+  // Every way libpq (or a shell reading the URL differently) can be pointed elsewhere.
+  const REFUSED: Array<[string, string]> = [
+    ["host= in the query", `${BASE}?host=${PROD}`],
+    ["hostaddr= in the query", `${BASE}?hostaddr=10.1.2.3`],
+    ["port= in the query", `${BASE}?port=6543`],
+    ["dbname= in the query", `${BASE}?dbname=other`],
+    ["user= in the query", `${BASE}?user=admin`],
+    ["service= in the query", `${BASE}?service=prod`],
+    ["password= in the query", `${BASE}?password=s3kr3t`],
+    ["an unknown parameter", `${BASE}?application_name=x`],
+    ["sslmode followed by host=", `${BASE}?sslmode=require&host=${PROD}`],
+    ["host= followed by sslmode", `${BASE}?host=${PROD}&sslmode=require`],
+    ["multi-host in the query (h1,h2)", `${BASE}?host=db.${REF}.supabase.co,${PROD}`],
+    ["multi-host with the production host first", `${BASE}?host=${PROD},db.${REF}.supabase.co`],
+    ["percent-encoded value", `${BASE}?host=db%2Eprodref%2Esupabase%2Eco`],
+    ["percent-encoded KEY (%68ost)", `${BASE}?%68ost=${PROD}`],
+    ["percent-encoded key hostaddr", `${BASE}?hostadd%72=10.1.2.3`],
+    ["uppercase key", `${BASE}?HOST=${PROD}`],
+    ["sslmode with a percent-encoded value", `${BASE}?sslmode=requ%69re`],
+    ["sslmode given twice", `${BASE}?sslmode=require&sslmode=disable`],
+    ["an empty pair", `${BASE}?&sslmode=require`],
+    ["a fragment", `${BASE}#host=${PROD}`],
+    ["multi-host in the authority", `postgresql://u:p@db.${REF}.supabase.co,${PROD}:5432/postgres`],
+    ["a percent-encoded authority host", `postgresql://u:p@db.prodref%2Esupabase.co/postgres`],
+    ["a socket directory host", `postgresql://u:p@%2Ftmp/postgres`],
+    ["an empty host", `postgresql://u:p@/postgres`],
+    ["a non-numeric port", `postgresql://u:p@db.${REF}.supabase.co:abc/postgres`],
+    ["a port out of range", `postgresql://u:p@db.${REF}.supabase.co:70000/postgres`],
+    ["a percent-encoded database name", `postgresql://u:p@db.${REF}.supabase.co/post%67res`],
+    ["J4: an unencoded '@' in the password", `postgresql://u:pa@ss@${PROD}/postgres`],
+    ["J4: an unencoded '@' with the disposable host last", `postgresql://u:pa@${PROD}@db.${REF}.supabase.co/postgres`],
+    ["a whitespace character", `postgresql://u:p@db.${REF}.supabase.co/post gres`],
+    ["a backslash", `postgresql://u:p@db.${REF}.supabase.co\\@${PROD}/postgres`],
+    ["an unsupported scheme", `mysql://u:p@db.${REF}.supabase.co/x`],
+  ];
+
+  it("RED control: the OLD authority-only reader accepts a query-string host= and names the disposable host", () => {
+    const oldHostOf = `old_host_of() { local s="\${1#*://}"; s="\${s#*@}"; s="\${s%%/*}"; s="\${s%%:*}"; printf '%s' "$s"; }`;
+    const r = lib(`${oldHostOf}; old_host_of '${BASE}?host=${PROD}'`);
+    expect(r.stdout).toBe(`db.${REF}.supabase.co`); // the check would have PASSED while libpq connects to production
+    // and the NEW reader refuses the very same string
+    expect(lib(`url_matches_ref '${BASE}?host=${PROD}' ${REF}`).status).not.toBe(0);
+  });
+
+  it.each(REFUSED)("NEGATIVE: %s is refused by the parser, the ref check and host_of", (_name, url) => {
+    expect(lib(`parse_conn_url '${url}'`).status, url).not.toBe(0);
+    expect(lib(`url_matches_ref '${url}' ${REF}`).status, url).not.toBe(0);
+    expect(lib(`host_of '${url}'`).stdout, url).toBe("");
+    // and no refusal is silent: the tools quote the reason
+    const q = lib(`require_conn_url '${url}' 'the connection string'`);
+    expect(q.status, url).not.toBe(0);
+    expect(q.stderr, url).toContain("the connection string refused:");
+  });
+
+  it("POSITIVE controls: the plain form, a port, a user without password and sslmode alone are accepted, with the effective host", () => {
+    expect(lib(`parse_conn_url '${BASE}' && printf '%s|%s|%s|%s|%s' "$CONN_HOST" "$CONN_PORT" "$CONN_USER" "$CONN_DB" "$CONN_SSLMODE"`).stdout).toBe(`db.${REF}.supabase.co|5432|u|postgres|`);
+    expect(lib(`parse_conn_url '${BASE}?sslmode=verify-full' && printf '%s' "$CONN_SSLMODE"`).stdout).toBe("verify-full");
+    expect(lib(`parse_conn_url 'postgres://u@db.${REF}.supabase.co/postgres' && printf '%s' "$CONN_HOST"`).stdout).toBe(`db.${REF}.supabase.co`);
+    expect(lib(`parse_conn_url 'postgresql://u:s3kr%40t@db.${REF}.supabase.co/postgres' && printf '%s' "$CONN_PASS"`).stdout).toBe("s3kr@t");
+    expect(lib(`parse_conn_url 'https://${REF}.supabase.co/storage/v1' && printf '%s' "$CONN_HOST"`).stdout).toBe(`${REF}.supabase.co`);
+    expect(lib(`url_matches_ref '${BASE}?sslmode=require' ${REF}`).status).toBe(0);
+    // a Storage URL with credentials or a query string is refused
+    expect(lib(`parse_conn_url 'https://k@${REF}.supabase.co'`).status).not.toBe(0);
+    expect(lib(`parse_conn_url 'https://${REF}.supabase.co/?host=${PROD}'`).status).not.toBe(0);
+  });
+
+  it("libpq environment overrides (PGHOSTADDR, PGHOST, PGPORT, PGSERVICE, ...) are refused", () => {
+    for (const v of ["PGHOST", "PGHOSTADDR", "PGPORT", "PGSERVICE", "PGSERVICEFILE", "PGDATABASE", "PGUSER", "PGOPTIONS"]) {
+      const r = lib(`DB_URL='${BASE}'; export_configure_commands`, { [v]: "x" });
+      expect(r.status, v).not.toBe(0);
+      expect(r.stderr, v).toContain(`${v} is set in the environment`);
+    }
+  });
+
+  it("every tool refuses a host= override BEFORE it touches the database or writes anything", () => {
+    const d = fixtures("p1-tools");
+    const url = `${BASE}?host=${PROD}`;
+    const log = path.join(scratch, "p1-argv.log"); writeFileSync(log, "");
+    const ci = { EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d, SHIM_ARGV_LOG: log, DB_URL: url, SERVICE_KEY: "k" };
+    const out = path.join(scratch, "p1-out");
+    const a = run("logical-export.sh", LOGICAL_ARGS(out), ci);
+    expect(a.status).not.toBe(0);
+    expect(a.stderr).toContain("refused");
+    expect(existsSync(out)).toBe(false);
+    const out2 = path.join(scratch, "p1-out2");
+    const b = run("object-export.sh", ["--out", out2, "--recipient", "age1x", "--expect-ref", REF, "--storage-url", `https://${REF}.supabase.co`], ci);
+    expect(b.status).not.toBe(0);
+    expect(existsSync(out2)).toBe(false);
+    const key = path.join(scratch, "p1-key.txt"); writeFileSync(key, "AGE-SECRET-KEY-SHIM");
+    const psqlLog = path.join(scratch, "p1-psql.log"); writeFileSync(psqlLog, "");
+    const c = run("export-restore.sh", ["logical", d, "--identity", key, "--target-ref", REF, "--production-ref", "prodref"], { ...ci, SHIM_PSQL_LOG: psqlLog });
+    expect(c.status).not.toBe(0);
+    expect(c.stderr).toContain("refused");
+    expect(readFileSync(psqlLog, "utf8")).toBe("");
+    // none of the three ran psql or pg_dump at all
+    expect(readFileSync(log, "utf8")).not.toMatch(/psql argv|pg_dump argv/);
+    // a storage URL with a query override is refused too
+    const e = run("export-restore.sh", ["objects", d, "--identity", key, "--target-ref", REF, "--production-ref", "prodref", "--storage-url", `https://${REF}.supabase.co/?host=${PROD}`], { ...ci, DB_URL: BASE, SHIM_PSQL_LOG: psqlLog });
+    expect(e.status).not.toBe(0);
+    expect(e.stderr).toContain("storage URL refused");
+  });
+
+  it("P2: a password that is not in the authority never exists, and none appears in any constructed argv; a good password still goes only to PGPASSWORD", () => {
+    const d = fixtures("p2-pw");
+    const log = path.join(scratch, "p2-argv.log"); writeFileSync(log, "");
+    const ci = (url: string) => ({ EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d, SHIM_ARGV_LOG: log, DB_URL: url });
+    const bad = run("logical-export.sh", LOGICAL_ARGS(path.join(scratch, "p2-out-bad")), ci(`${BASE}?password=s3kr3t`));
+    expect(bad.status).not.toBe(0);
+    expect(readFileSync(log, "utf8")).not.toContain("s3kr3t");
+    expect(bad.stdout + bad.stderr).not.toContain("s3kr3t");
+    // good form with sslmode: the argv is rebuilt without the password and without any query
+    const ok = run("logical-export.sh", LOGICAL_ARGS(path.join(scratch, "p2-out-ok")), ci(`postgresql://u:s3kr%40t@db.${REF}.supabase.co:5432/postgres?sslmode=require`));
+    expect(ok.status, ok.stderr).toBe(0);
+    const argv = readFileSync(log, "utf8");
+    for (const line of argv.split("\n").filter((l) => /argv:/.test(l))) {
+      expect(line).not.toMatch(/s3kr|%40t|\?|sslmode|password/i);
+      expect(line).toContain(`[postgresql://u@db.${REF}.supabase.co:5432/postgres]`);
+    }
+    expect(argv).toMatch(/PGPASSWORD=s3kr@t/);
+  });
+
+  it("the strict parser is the only reader: no tool reads a host out of a URL by string slicing of its own", () => {
+    for (const f of ["logical-export.sh", "object-export.sh", "export-restore.sh", "verify-export.sh"]) {
+      const src = readFileSync(path.join(OPS, f), "utf8");
+      expect(src, f).not.toMatch(/\$\{[A-Za-z_]*URL[A-Za-z_]*#\*@\}/);
+    }
+    expect(readFileSync(path.join(OPS, "export-lib.sh"), "utf8")).toContain("parse_conn_url");
   });
 });

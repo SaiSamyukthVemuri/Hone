@@ -69,6 +69,8 @@ trap export_on_exit EXIT   # closes the session, removes secret files and TMP, d
 
 secret_input DB_URL "Database connection string (input hidden): "
 secret_input SERVICE_KEY "Service-role key (input hidden): "
+require_conn_url "$DB_URL" "the connection string"
+require_conn_url "$STORAGE_URL" "the storage URL"
 url_matches_ref "$DB_URL" "$REF" || export_fail "the connection string's host does not name project ref '$REF'; refusing"
 url_matches_ref "$STORAGE_URL" "$REF" || export_fail "the storage URL's host does not name project ref '$REF'; refusing"
 export_configure_commands
