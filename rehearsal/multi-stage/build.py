@@ -175,8 +175,9 @@ def plan(spec, include=None):
         if not pf:
             die("the hosted set has no file %s to pin by sha" % pv)
         pins_hosted.append((pf[0], shab(cur_files[int(pv)])))
-    for v_ in sorted(extra_bytes):
-        pins_hosted.append((hosted[v_], shab(extra_bytes[v_])))
+    for e_ in sorted(ex.get("extra", []), key=lambda e: os.path.basename(e["file"])):
+        # pinned by name and sha256 whether the directory already carries the file (production merged it) or the spec adds it: the generated scripts are the same either way
+        pins_hosted.append((os.path.basename(e["file"]), e["sha256"]))
     earlier = []
     chosen_ix = [i for i in range(len(spec["steps"])) if include is None or i in include]
     chosen = [spec["steps"][i] for i in chosen_ix]
