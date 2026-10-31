@@ -1,0 +1,17 @@
+
+const cmp = (got, want, what) => { if (JSON.stringify([...got].sort()) !== JSON.stringify([...want].sort())) fail(`${what}: got ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`); };
+const tb = (name) => rows(name).map((x) => `${x.obj}|${x.role}|${x.privs}|${isTrue(x.rls)}`);
+const fnr = (name) => rows(name).map((x) => `${x.obj}(${x.args})|definer=${isTrue(x.definer)}|sp=${x.search_path}|exec=${x.exec_roles}|public=${isTrue(x.exec_public)}`);
+const fnx = (name) => rows(name).map((x) => `${x.obj}(${x.args})|exec=${x.exec_roles}|public=${isTrue(x.exec_public)}`);
+const plx = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}`);
+const pl = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}|${x.roles}`);
+const sq = (name) => rows(name).map((x) => `${x.obj}|${x.role}|${x.privs}`);
+const kv = (name) => rows(name).map((x) => `${x.k}=${x.v}`);
+const fnr3 = (name) => rows(name).map((x) => `${x.obj}(${x.args})|definer=${isTrue(x.definer)}|sp=${x.search_path}`);
+const tg = (name) => rows(name).map((x) => `${x.obj}|${x.tgname}|${x.enabled}|row=${isTrue(x.row_level)}|before=${isTrue(x.before_trg)}`);
+cmp(fnr("c01_functions"), ["create_public_appointment_for_new_client(uuid, uuid, text, text, text, timestamp with time zone, uuid, timestamp with time zone, text, boolean, text, text, uuid)|definer=true|sp=pg_catalog, public, pg_temp|exec=service_role|public=false", "create_public_appointment_for_new_client_v2(uuid, uuid, text, text, text, timestamp with time zone, uuid, timestamp with time zone, text, boolean, text, text, uuid, uuid)|definer=true|sp=pg_catalog, public, pg_temp|exec=service_role|public=false"], "both redefined functions: SECURITY DEFINER, search_path pg_catalog, public, pg_temp, executable by service_role ONLY (anon, authenticated and PUBLIC revoked)");
+console.log("PASS both redefined functions: SECURITY DEFINER, search_path pg_catalog, public, pg_temp, executable by service_role ONLY (anon, authenticated and PUBLIC revoked)");
+cmp(kv("c02_bodies"), ["create_public_appointment_for_new_client.body_md5=02310182381cd7d49806ec533324ab77", "create_public_appointment_for_new_client.marker_count=2", "create_public_appointment_for_new_client_v2.body_md5=c6ea18e49b2835666b4bb6bf75e13259", "create_public_appointment_for_new_client_v2.marker_count=2"], "both bodies are exactly the sealed 0256 definitions (md5 of the stored source) and each carries the adoption refusal at both of its places (the lookup and the unique-violation re-read)");
+console.log("PASS both bodies are exactly the sealed 0256 definitions (md5 of the stored source) and each carries the adoption refusal at both of its places (the lookup and the unique-violation re-read)");
+cmp(kv("c03_overloads"), ["create_public_appointment_for_new_client.overloads=1", "create_public_appointment_for_new_client_v2.overloads=1"], "no new overload: exactly one function of each name");
+console.log("PASS no new overload: exactly one function of each name");

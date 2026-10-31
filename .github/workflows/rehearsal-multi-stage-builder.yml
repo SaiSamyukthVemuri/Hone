@@ -100,7 +100,13 @@ jobs:
             echo "=========== P2 sequence $q"
             ONLY_A=1 bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-p2" "$RUNNER_TEMP/hosted248" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-p2.txt" | tail -3
           done
-          ! grep -q "^FAIL" "$RUNNER_TEMP/seq-p2.txt" "$RUNNER_TEMP/builder-p2.txt"
+          python3 rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p256.json "$RUNNER_TEMP/ms-p256" | tee "$RUNNER_TEMP/p256.txt"
+          GENERIC_ONLY=1 bash rehearsal/multi-stage/builder-check.sh rehearsal/multi-stage/spec/p256.json 2>&1 | tee "$RUNNER_TEMP/builder-p256.txt"
+          for q in full drop-0256; do
+            echo "=========== P256 sequence $q"
+            ONLY_A=1 bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-p256" "$RUNNER_TEMP/hosted248" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-p256.txt" | tail -3
+          done
+          ! grep -q "^FAIL" "$RUNNER_TEMP/seq-p2.txt" "$RUNNER_TEMP/builder-p2.txt" "$RUNNER_TEMP/seq-p256.txt" "$RUNNER_TEMP/builder-p256.txt"
 
   push-linux:
     name: MULTI-STAGE push, real CLI v2.102.0, disposable PostgreSQL (Linux)
@@ -336,14 +342,29 @@ jobs:
         if: steps.sb_start.outcome == 'failure'
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,edge-runtime,logflare,vector
 
-      - name: Build package P2X (the hosted set AFTER 0254, then 0253, 0255, 0256, 0258, 0272, 0266, 0271)
-        run: python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p2x.json "$RUNNER_TEMP/ms-pkgx"
+      - name: Build package P3 (the hosted set AFTER 0254, 0253 and 0255, then 0258, 0272, 0266, 0271)
+        run: python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p3.json "$RUNNER_TEMP/ms-pkgx"
 
       - name: Gate packs, step by step, against the stack (PRE rules, one real push per step, POST read-back, mutation controls)
         run: |
           set -o pipefail
-          EXTRA_DIR="$PWD/rehearsal/multi-stage/spec/sealed" REHEARSAL_OUT="$RUNNER_TEMP/gates-out" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkgx" full 2>&1 | tee "$RUNNER_TEMP/gates-stack.txt"
+          first=1
+          : > "$RUNNER_TEMP/gates-stack.txt"
+          for q in full "drop-0258+0272+0266" "drop-0271" "drop-0266"; do
+            if [ "$first" = 0 ]; then git checkout -- supabase/migrations && git clean -fdq supabase/migrations && supabase db reset --local > "$RUNNER_TEMP/reset.log" 2>&1 || { echo "FAIL - db reset before $q" | tee -a "$RUNNER_TEMP/gates-stack.txt"; tail -3 "$RUNNER_TEMP/reset.log"; }; fi
+            first=0
+            echo "=========== P3 sequence $q" | tee -a "$RUNNER_TEMP/gates-stack.txt"
+            EXTRA_DIR="$PWD/rehearsal/multi-stage/spec/sealed" REHEARSAL_OUT="$RUNNER_TEMP/gates-out-$q" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkgx" "$q" 2>&1 | tee -a "$RUNNER_TEMP/gates-stack.txt"
+          done
           ! grep -q "^FAIL" "$RUNNER_TEMP/gates-stack.txt"
+
+      - name: Gate pack 0256 on the hosted set after 0254 (single step, below head, real push, read-back, mutation controls)
+        run: |
+          set -o pipefail
+          git checkout -- supabase/migrations && git clean -fdq supabase/migrations && supabase db reset --local > "$RUNNER_TEMP/reset256.log" 2>&1 || { echo "FAIL - db reset before 0256"; tail -3 "$RUNNER_TEMP/reset256.log"; exit 1; }
+          python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p256.json "$RUNNER_TEMP/ms-pkg256"
+          EXTRA_DIR="$PWD/rehearsal/multi-stage/spec/sealed" REHEARSAL_OUT="$RUNNER_TEMP/gates-out-0256" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkg256" full 2>&1 | tee "$RUNNER_TEMP/gates-stack-0256.txt"
+          ! grep -q "^FAIL" "$RUNNER_TEMP/gates-stack-0256.txt"
 
       - name: Upload the read-back results (read-only catalog facts, no data)
         if: always()
