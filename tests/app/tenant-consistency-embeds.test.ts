@@ -74,7 +74,7 @@ describe("the replaced embeds now use the bare table name (composite FK resolves
     // The bare form must appear on the appointments selects specifically — the
     // old positive assertion was satisfied by already-fixed 0094 queries in the
     // same file while the three appointments queries stayed broken.
-    expect(grepFixed("id, starts_at, status, client:clients(${nameCols}), service:services(name)")).not.toBe(
+    expect(grepFixed("id, starts_at, status, client:clients(name), service:services(name)")).not.toBe(
       "",
     );
   });
