@@ -13,6 +13,7 @@ import type {
   StudioTimedBlock,
 } from "@/lib/types/database";
 import { dbErrorCode, dbFailureCode } from "@/lib/logging/error-class";
+import { clientDisplayName } from "@/lib/clients/identity";
 
 // Active services for the studio, ordered by the practitioner-
 // controlled sort_order ascending and then by name as a deterministic
@@ -231,12 +232,14 @@ export async function getAppointmentsForRange(
   endIso: string,
 ): Promise<AppointmentWithPractitionerColor[]> {
   const supabase = await createClient();
-  const BASE =
-    "*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color, display_name), client:clients(id, name), ";
-  const runSelect = (serviceEmbed: string, afterId: string | null) => {
+  // HON-58: preferred_name is read when the database has it (before 0258 it
+  // does not); the first missing-column error drops it for the rest of the read.
+  const base = (withPreferred: boolean) =>
+    `*, practitioner:practitioners!appointments_practitioner_same_studio_fk(id, color, display_name), client:clients(id, name${withPreferred ? ", preferred_name" : ""}), `;
+  const runSelect = (serviceEmbed: string, afterId: string | null, withPreferred: boolean) => {
     let query = supabase
       .from("appointments")
-      .select(`${BASE}${serviceEmbed}`)
+      .select(`${base(withPreferred)}${serviceEmbed}`)
       .eq("studio_id", studioId)
       .gte("starts_at", startIso)
       .lt("starts_at", endIso);
@@ -256,11 +259,16 @@ export async function getAppointmentsForRange(
   const seen = new Set<string>();
   let afterId: string | null = null;
   let serviceEmbed = "service:services(id, name, modality, calendar_color)";
+  let withPreferred = true;
   for (;;) {
-    let { data, error } = await runSelect(serviceEmbed, afterId);
+    let { data, error } = await runSelect(serviceEmbed, afterId, withPreferred);
+    if (error && isMissingColumnError(error, "preferred_name")) {
+      withPreferred = false;
+      ({ data, error } = await runSelect(serviceEmbed, afterId, withPreferred));
+    }
     if (error && isMissingColumnError(error, "calendar_color")) {
       serviceEmbed = "service:services(id, name, modality)";
-      ({ data, error } = await runSelect(serviceEmbed, afterId));
+      ({ data, error } = await runSelect(serviceEmbed, afterId, withPreferred));
     }
     if (error) throw new Error("Failed to load appointments");
     const rows = (data ?? []) as unknown as Array<{ id: string }>;
@@ -282,8 +290,8 @@ export async function getAppointmentsForRange(
       | { id: string; color: string; display_name?: string | null }[]
       | null;
     client:
-      | { id: string; name: string }
-      | { id: string; name: string }[]
+      | { id: string; name: string; preferred_name?: string | null }
+      | { id: string; name: string; preferred_name?: string | null }[]
       | null;
     service:
       | { id: string; name: string; modality: string | null; calendar_color?: string | null }
@@ -297,9 +305,13 @@ export async function getAppointmentsForRange(
     const p = Array.isArray(row.practitioner)
       ? row.practitioner[0] ?? null
       : row.practitioner;
-    const c = Array.isArray(row.client)
+    const rawC = Array.isArray(row.client)
       ? row.client[0] ?? null
       : row.client;
+    // HON-58: on the calendar, `client.name` IS the display name (the preferred
+    // name when the client has one, else the stored name). The preferred name is
+    // not carried further: the calendar is an ordinary staff surface.
+    const c = rawC ? { id: rawC.id, name: clientDisplayName(rawC) } : null;
     const rawS = Array.isArray(row.service)
       ? row.service[0] ?? null
       : row.service;

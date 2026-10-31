@@ -1,10 +1,12 @@
 "use server";
 
+import { PREFERRED_NAME_UNAVAILABLE_MESSAGE, writeWithPreferredName } from "@/lib/clients/preferred-name-read";
 import { recordClientArchiveAudit } from "@/lib/audit/governed-writes";
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { parsePreferredName } from "@/lib/clients/identity";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { safeLog } from "@/lib/logging/safe-log";
 import {
@@ -216,6 +218,13 @@ export async function updateClientAction(
   const name = nullableString(formData.get("name"));
   if (!name) return { ok: false, error: "Name is required." };
 
+  // HON-58: written only when the form submitted the field (see the update).
+  const preferredRead = formData.has("preferred_name")
+    ? parsePreferredName(formData.get("preferred_name"))
+    : null;
+  if (preferredRead && !preferredRead.ok) return { ok: false, error: preferredRead.error };
+  const preferredToWrite = preferredRead && preferredRead.ok ? { value: preferredRead.value } : null;
+
   const { studio } = await getCurrentPractitionerWithStudio();
   const visible = await isClientVisible(studio.id, clientId);
   if (!visible) return { ok: false, error: "Client not found." };
@@ -293,10 +302,15 @@ export async function updateClientAction(
     }
   }
 
-  const { error } = await supabase
+  // HON-58: before 0258 an empty preferred name is left out; a typed one is refused, never dropped.
+  const { result: { error }, preferredUnavailable } = await writeWithPreferredName(preferredToWrite, (preferredColumns) =>
+    supabase
     .from("clients")
     .update({
       name,
+      // HON-58: only written when the form submitted the field, so an older
+      // form (or any other caller) can never blank a preferred name.
+      preferred_name: preferredColumns.preferred_name, // undefined (omitted) before 0258 when empty
       pronouns: nullableString(formData.get("pronouns")),
       phone,
       email,
@@ -318,7 +332,9 @@ export async function updateClientAction(
       ),
     })
     .eq("id", clientId)
-    .eq("studio_id", studio.id);
+    .eq("studio_id", studio.id),
+  );
+  if (preferredUnavailable) return { ok: false, error: PREFERRED_NAME_UNAVAILABLE_MESSAGE };
 
   if (error) {
     if (isClientDuplicateEmailDbError(error)) {

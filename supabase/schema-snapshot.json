@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 247,
-    "last": "0257_studio_payment_jurisdiction_failed_attempt_ack.sql",
-    "sha256": "91bacac918d4ac70cdcf9e0f11f9199fe86162d01766231a9ecf9593f5ab0c85"
+    "count": 248,
+    "last": "0258_hon58_identity.sql",
+    "sha256": "ff5e373c05e8ad59b9202d47bd68cfa3f2c30504227f0c32a56378f42f2e4300"
   },
   "public": {
     "tables": [
@@ -25,6 +25,7 @@
       "client_clinical_notes",
       "client_consent_signatures",
       "client_intake_forms",
+      "client_legal_identities",
       "client_payment_methods",
       "client_personal_notes",
       "client_pinned_notes",
@@ -179,6 +180,7 @@
       "calendar_connection_outbound_ready",
       "calendar_event_link_transition",
       "calendar_required_event_scopes",
+      "can_use_client_legal_identity",
       "cancel_appointment_core",
       "capture_treatment_reading_change",
       "check_claimed_payment_method_cleanup_safety",
@@ -207,6 +209,7 @@
       "client_budget_context_set_studio_id",
       "client_clinical_notes_before_insert",
       "client_clinical_notes_no_update",
+      "client_legal_identities_guard",
       "client_personal_notes_set_studio_id",
       "clients_portrait_integrity",
       "clients_sms_permission_guard",

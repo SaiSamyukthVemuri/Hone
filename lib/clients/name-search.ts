@@ -77,6 +77,8 @@ export type SearchableClient = {
   legal_given_name?: string | null;
   legal_middle_name?: string | null;
   legal_family_name?: string | null;
+  /** The legal name as one string, for a surface that projects it that way. */
+  legal_name?: string | null;
   email?: string | null;
   phone?: string | null;
 };
@@ -109,6 +111,7 @@ export function matchesClientSearch(client: SearchableClient, rawQuery: string):
     client.legal_given_name,
     client.legal_middle_name,
     client.legal_family_name,
+    client.legal_name,
   ]
     .filter((part): part is string => typeof part === "string" && part.length > 0)
     .join(" ");

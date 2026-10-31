@@ -1,4 +1,6 @@
 import { sendPostcareToClient } from "@/lib/email/send-appointment";
+import { preferredNameColumn, readPreferredLoose } from "@/lib/clients/preferred-name-read";
+import { clientCommunicationName } from "@/lib/clients/identity";
 import { timed } from "@/lib/observability/perf-timing";
 import type { Studio } from "@/lib/types/database";
 import { thrownErrorClass } from "@/lib/logging/error-class";
@@ -141,14 +143,17 @@ export async function autoSendPostcareOnComplete(
     }
     const send = deps?.sendPostcare ?? sendPostcareToClient;
 
-    const { data: appt, error: loadErr } = await admin
-      .from("appointments")
-      .select(
-        "id, status, starts_at, postcare_email_sent_at, postcare_email_send_attempts, client:clients(name, email), service:services(name, modality), studio:studios(id, name, owner_email, timezone, postcare_delivery_mode, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url, postcare_review_prompt_text, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
-      )
-      .eq("id", appointmentId)
-      .eq("studio_id", studioId)
-      .maybeSingle();
+    // HON-58: preferred_name is read when the database has it (before 0258 it does not).
+    const { data: appt, error: loadErr } = await readPreferredLoose((withPreferred) =>
+      admin
+        .from("appointments")
+        .select(
+          `id, status, starts_at, postcare_email_sent_at, postcare_email_send_attempts, client:clients(name, ${preferredNameColumn(withPreferred)}email), service:services(name, modality), studio:studios(id, name, owner_email, timezone, postcare_delivery_mode, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url, postcare_review_prompt_text, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)`,
+        )
+        .eq("id", appointmentId)
+        .eq("studio_id", studioId)
+        .maybeSingle(),
+    );
     if (loadErr || !appt) return logOutcome(appointmentId, "load_error");
 
     const client = pickOne(appt.client as { name: string | null; email: string | null } | null);
@@ -206,7 +211,7 @@ export async function autoSendPostcareOnComplete(
     const result = await timed("session-start.postcare", () =>
       send({
         appointmentId,
-        clientName: client?.name ?? "",
+        clientName: client ? clientCommunicationName(client) : "",
         clientEmail: client!.email as string,
         studio: studio as unknown as Studio,
         practitionerName: performer?.display_name ?? null,

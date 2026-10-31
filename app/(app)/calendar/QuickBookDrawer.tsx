@@ -27,6 +27,7 @@ import {
 } from "@/lib/booking/format";
 import { utcInstantFromLocal, formatClockLabel, type TimeFormat } from "@/lib/booking/tz";
 import { matchesClientSearch } from "@/lib/clients/name-search";
+import { clientDisplayName } from "@/lib/clients/identity";
 import {
   fetchSlotsForClientBookingAction,
   fetchEligiblePractitionersAction,
@@ -70,6 +71,8 @@ export type QuickBookDraft = {
 export type QuickBookClient = {
   id: string;
   name: string;
+  /** HON-58: the name the client goes by; shown in place of `name` when present. */
+  preferred_name?: string | null;
   email: string | null;
   phone: string | null;
   pronouns: string | null;
@@ -695,7 +698,7 @@ export function QuickBookDrawer({
           {selectedClient ? (
             <div className="flex items-center justify-between gap-3 rounded-md border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700">
               <div className="min-w-0">
-                <div className="truncate font-medium">{selectedClient.name}</div>
+                <div className="truncate font-medium">{clientDisplayName(selectedClient)}</div>
                 {(selectedClient.email || selectedClient.phone) && (
                   <div className="truncate text-xs text-neutral-500">
                     {[selectedClient.email, selectedClient.phone]
@@ -775,7 +778,7 @@ export function QuickBookDrawer({
                             className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-neutral-50 dark:hover:bg-neutral-900"
                           >
                             <div className="min-w-0 flex-1">
-                              <div className="truncate font-medium">{c.name}</div>
+                              <div className="truncate font-medium">{clientDisplayName(c)}</div>
                               {(c.email || c.phone) && (
                                 <div className="truncate text-xs text-neutral-500">
                                   {[c.email, c.phone].filter(Boolean).join(" · ")}

@@ -1,5 +1,6 @@
 "use server";
 
+import { clientCommunicationName } from "@/lib/clients/identity";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -29,6 +30,7 @@ import { confirmationSmsWillPass } from "@/lib/sms/consent-gate";
 import { localDateString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { safeLog } from "@/lib/logging/safe-log";
+import { preferredNameColumn, readPreferredLoose } from "@/lib/clients/preferred-name-read";
 import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 
 export type BookResult =
@@ -218,12 +220,16 @@ export async function bookAppointmentForClientAction(
   // second lookup. Internal booking does NOT modify either of those
   // fields; consent is established on the public booking surface or
   // by a practitioner action that is out of scope for this PR.
-  const { data: client, error: clientErr } = await supabase
-    .from("clients")
-    .select("id, name, email, phone, sms_consent_at, sms_opted_out_at")
-    .eq("id", clientId)
-    .eq("studio_id", studio.id)
-    .maybeSingle();
+  // HON-58: reads preferred_name when the database has it, and works without it
+  // (the window between deploying this and applying 0258).
+  const { data: client, error: clientErr } = await readPreferredLoose((withPreferred) =>
+    supabase
+      .from("clients")
+      .select(`id, name, ${preferredNameColumn(withPreferred)}email, phone, sms_consent_at, sms_opted_out_at`)
+      .eq("id", clientId)
+      .eq("studio_id", studio.id)
+      .maybeSingle(),
+  );
   if (clientErr) {
     logBookingDbError("book_appointment", "client_lookup", dbErrorCode(clientErr));
     return { ok: false, error: "Could not load the client. Please try again." };
@@ -412,7 +418,8 @@ export async function bookAppointmentForClientAction(
       service,
       studio,
       ...(await assignedNotificationContact()),
-      clientName: client.name,
+      // HON-58: ordinary client communication uses the preferred name where a name is needed.
+      clientName: clientCommunicationName(client),
       clientEmail: client.email,
       clientPhone: client.phone,
       clientSmsConsentAt: client.sms_consent_at,
@@ -529,11 +536,13 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
     .eq("studio_id", studio.id)
     .maybeSingle();
   if (appt) {
-    const { data: client } = await supabase
-      .from("clients")
-      .select("name, email")
-      .eq("id", appt.client_id)
-      .maybeSingle();
+    const { data: client } = await readPreferredLoose((withPreferred) =>
+      supabase
+        .from("clients")
+        .select(`name, ${preferredNameColumn(withPreferred)}email`)
+        .eq("id", appt.client_id)
+        .maybeSingle(),
+    );
     const { data: service } = appt.service_id
       ? await supabase
           .from("services")
@@ -547,8 +556,8 @@ export async function cancelAppointmentAction(formData: FormData): Promise<{
         await sendCancellationEmail({
           appointmentId,
           to: client.email,
-          recipientName: client.name,
-          clientName: client.name,
+          recipientName: clientCommunicationName(client),
+          clientName: clientCommunicationName(client),
           studio,
           serviceName: service?.name ?? "your appointment",
           durationMinutes: appt.duration_minutes,
@@ -1161,14 +1170,17 @@ export async function sendPostcareEmailAction(
   // in this file all use the admin client and we keep the pattern.
   const { createAdminClient } = await import("@/lib/supabase/admin-server");
   const admin = createAdminClient();
-  const { data: appt, error: lookupErr } = await admin
-    .from("appointments")
-    .select(
-      "id, studio_id, status, starts_at, postcare_email_sent_at, postcare_email_send_attempts, postcare_email_claimed_at, postcare_email_failed_at, client:clients(id, name, email), service:services(id, name, modality), studio:studios(id, name, owner_email, timezone, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url, postcare_review_prompt_text, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name)",
-    )
-    .eq("id", appointmentId)
-    .eq("studio_id", studio.id)
-    .maybeSingle();
+  // HON-58: preferred_name is read when the database has it (before 0258 it does not).
+  const { data: appt, error: lookupErr } = await readPreferredLoose((withPreferred) =>
+    admin
+      .from("appointments")
+      .select(
+        `id, studio_id, status, starts_at, postcare_email_sent_at, postcare_email_send_attempts, postcare_email_claimed_at, postcare_email_failed_at, client:clients(id, name, ${preferredNameColumn(withPreferred)}email), service:services(id, name, modality), studio:studios(id, name, owner_email, timezone, postcare_aftercare_text, postcare_warning_signs_text, postcare_product_recommendations_text, postcare_review_url, postcare_review_prompt_text, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name)`,
+      )
+      .eq("id", appointmentId)
+      .eq("studio_id", studio.id)
+      .maybeSingle(),
+  );
   if (lookupErr) {
     console.error(
       JSON.stringify({
@@ -1284,7 +1296,7 @@ export async function sendPostcareEmailAction(
   const startsAt = appt.starts_at ? new Date(appt.starts_at) : null;
   const result = await sendPostcareToClient({
     appointmentId,
-    clientName: client.name ?? "",
+    clientName: clientCommunicationName(client),
     clientEmail: client.email,
     studio: studioRow as unknown as import("@/lib/types/database").Studio,
     practitionerName: performer?.display_name ?? null,

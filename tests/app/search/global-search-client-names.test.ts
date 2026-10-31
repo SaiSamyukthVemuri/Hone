@@ -19,9 +19,10 @@ const ilikeCalls: Array<{ table: string; col: string; pattern: string }> = [];
 // to prove a short page does not end a read early.
 // failClientsAt, when set, makes a clients read whose page starts at that
 // offset answer with an error instead of rows.
-const server: { maxRows: number; failClientsAt: ((offset: number) => boolean) | null; hasPreferredColumn: boolean } = {
+const server: { maxRows: number; failClientsAt: ((offset: number) => boolean) | null; hasPreferredColumn: boolean; failTable: string | null } = {
   maxRows: 1000,
   failClientsAt: null,
+  failTable: null,
   // false = a database before 0258: any clients read that names preferred_name
   // answers 42703, as Postgres does.
   hasPreferredColumn: true,
@@ -117,6 +118,9 @@ function builder(table: string, selectList = "") {
           error: { code: "42703", message: "column clients.preferred_name does not exist" },
         }).then(resolve as never);
       }
+      if (server.failTable === table) {
+        return Promise.resolve({ data: null, error: { message: "fake read failure" } }).then(resolve as never);
+      }
       if (table === "clients" && server.failClientsAt?.(range?.[0] ?? 0)) {
         return Promise.resolve({ data: null, error: { message: "fake read failure" } }).then(
           resolve as never,
@@ -196,6 +200,7 @@ beforeEach(() => {
   server.hasPreferredColumn = true;
   server.maxRows = 1000;
   server.failClientsAt = null;
+  server.failTable = null;
   tables.clients = [
     client("c-janie", "Jane (Janie) Smith", { phone: "(555) 010-0001" }),
     client("c-obrien", "Saoirse O'Brien"),
@@ -589,5 +594,57 @@ describe("global search: ranking sees every candidate in the scan, not the first
   it("a complete small scan is not reported as truncated", async () => {
     const res = await globalSearchAction("jane");
     expect(res.ok && res.clientsTruncated).toBeFalsy();
+  });
+});
+
+// HON-58 slice 4: the same record through its PREFERRED name (own column) and
+// its LEGAL name (owner/practitioner-only table). Synthetic names.
+describe("global search: the legal name on the one client record", () => {
+  beforeEach(() => {
+    tables.clients.push(
+        client("c-legal", "Dana R", { preferred_name: "Dee" }),
+      client("c-legal-archived", "Old Record", { archived_at: "2026-01-01T00:00:00Z" }),
+      client("c-legal-foreign", "Foreign Record", { studio_id: STUDIO_B }),
+    );
+    tables.client_legal_identities = [
+      { client_id: "c-legal", studio_id: STUDIO_A, legal_given_name: "Dana", legal_middle_name: null, legal_family_name: "Reyes-Okafor" },
+      { client_id: "c-legal-archived", studio_id: STUDIO_A, legal_given_name: "Olive", legal_middle_name: null, legal_family_name: "Archived" },
+      { client_id: "c-legal-foreign", studio_id: STUDIO_B, legal_given_name: "Fiona", legal_middle_name: null, legal_family_name: "Foreign" },
+    ];
+  });
+
+  it.each([
+    ["legal family name", "okafor"],
+    ["legal given + family", "dana reyes okafor"],
+    ["legal family name, punctuation folded", "reyes okafor"],
+    ["preferred name", "dee"],
+    ["stored name", "dana r"],
+  ])("finds the same record by %s (%j) and returns it once", async (_l, query) => {
+    const ids = await clientIdsFor(query);
+    expect(ids.filter((id) => id === "c-legal")).toHaveLength(1);
+  });
+
+  it("names the legal identity in the subtitle only when it differs from the displayed name", async () => {
+    const res = await globalSearchAction("okafor");
+    if (!res.ok) throw new Error("search failed");
+    const hit = res.results.find((r) => r.id === "client:c-legal");
+    expect(hit?.title).toBe("Dee");
+    expect(hit?.subtitle).toBe("Legal name: Dana Reyes-Okafor");
+  });
+
+  it("never finds an archived client's or another studio's client through a legal name", async () => {
+    expect(await clientIdsFor("archived")).not.toContain("c-legal-archived");
+    expect(await clientIdsFor("foreign")).not.toContain("c-legal-foreign");
+  });
+
+  it("a failed legal-identity read fails the search rather than hiding a legal-name match", async () => {
+    server.failTable = "client_legal_identities";
+    expect((await globalSearchAction("okafor")).ok).toBe(false);
+  });
+
+  it("a studio with no legal identities (or a viewer the database shows none) still searches by the other names", async () => {
+    tables.client_legal_identities = [];
+    expect(await clientIdsFor("dee")).toContain("c-legal");
+    expect(await clientIdsFor("okafor")).not.toContain("c-legal");
   });
 });

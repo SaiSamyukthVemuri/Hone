@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { isMissingColumnError } from "@/lib/db/missing-column";
 import { redirect } from "next/navigation";
 import { createClient } from "./server";
 import { readSelectedStudioId } from "./selected-studio";
@@ -24,6 +25,7 @@ import type {
   Studio,
 } from "@/lib/types/database";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { clientDisplayName, type WithPreferredName } from "@/lib/clients/identity";
 
 export {
   IdentityRefusalError,
@@ -317,11 +319,16 @@ export async function getPractitionersForStudio(
 // Clinical, consent and emergency-contact columns never leave the database
 // for a list. A consumer that needs another column must add it here.
 export const CLIENT_DIRECTORY_COLUMNS =
+  "id, name, preferred_name, pronouns, email, phone, address, archived_at";
+// Before 0258 the column does not exist: the same list without it (HON-58).
+const CLIENT_DIRECTORY_COLUMNS_WITHOUT_PREFERRED =
   "id, name, pronouns, email, phone, address, archived_at";
+// HON-58: `preferred_name` is the optional name the client goes by; ordinary
+// staff lists show clientDisplayName (preferred, else the stored name).
 export type DirectoryClient = Pick<
   Client,
   "id" | "name" | "pronouns" | "email" | "phone" | "address" | "archived_at"
->;
+> & WithPreferredName;
 
 async function loadStudioClientDirectory(studioId: string, archived: boolean): Promise<DirectoryClient[]> {
   const supabase = await createClient();
@@ -329,21 +336,28 @@ async function loadStudioClientDirectory(studioId: string, archived: boolean): P
   const seen = new Set<string>();
   let afterId: string | null = null;
   const failure = archived ? "Failed to load archived clients" : "Failed to load clients";
-  for (;;) {
-    let query = supabase.from("clients").select(CLIENT_DIRECTORY_COLUMNS).eq("studio_id", studioId);
+  let columns = CLIENT_DIRECTORY_COLUMNS;
+  const page = (cols: string) => {
+    let query = supabase.from("clients").select(cols).eq("studio_id", studioId);
     query = archived ? query.not("archived_at", "is", null) : query.is("archived_at", null);
     if (afterId !== null) query = query.gt("id", afterId);
-    const { data, error } = await query
-      .order("id", { ascending: true })
-      .range(0, 999);
+    return query.order("id", { ascending: true }).range(0, 999);
+  };
+  for (;;) {
+    let { data, error } = await page(columns);
+    // HON-58: before 0258 there is no preferred_name; read the page without it and stay without it.
+    if (error && isMissingColumnError(error, "preferred_name")) {
+      columns = CLIENT_DIRECTORY_COLUMNS_WITHOUT_PREFERRED;
+      ({ data, error } = await page(columns));
+    }
     // Database messages may contain client data; never expose them here.
     if (error) throw new Error(failure);
-    const rows = (data ?? []) as DirectoryClient[];
+    const rows = (data ?? []) as unknown as DirectoryClient[];
     if (rows.length === 0) {
       return clients.sort((a, b) => (
         archived
           ? Date.parse(b.archived_at!) - Date.parse(a.archived_at!)
-          : a.name.localeCompare(b.name, "en")
+          : clientDisplayName(a).localeCompare(clientDisplayName(b), "en")
       ) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     }
     for (const row of rows) {
