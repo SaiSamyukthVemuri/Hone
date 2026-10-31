@@ -68,11 +68,10 @@
       "ready": {
         "status": "sealed (#1227 5b4ed51c); Privacy re-review of 0258/0272/0266 in progress",
         "carrier": "#1227 5b4ed51c",
-        "content_gates": "yes: preflight (trigger is BEFORE UPDATE only before), table/lock reads, read-back (guard trigger BEFORE INSERT OR UPDATE, search_path pg_catalog, pg_temp on both functions, grants unchanged; Privacy C1/C2)",
+        "content_gates": "MISSING: history-only (no reviewer-stated post-apply checks for 0272; it re-creates can_use_client_legal_identity, client_legal_identities_guard and its trigger)",
         "blocker": "Privacy/Insurance re-review; sha not final until it ends"
       },
-      "sha256": "d380534372728383e028c020dce1e0b7d0ab6eeb697594c59184a001ada83655",
-      "gate_pack": "../gate-packs/0272"
+      "sha256": "d380534372728383e028c020dce1e0b7d0ab6eeb697594c59184a001ada83655"
     },
     {
       "file": "sealed-v2/0266_legal_name_receptionist_access.sql",
