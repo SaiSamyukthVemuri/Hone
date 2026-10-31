@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
+import { OWNER_INPUT_REQUEST } from "@/lib/machines/owner-input-copy";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
 import type { StudioDevice } from "@/lib/machines/selection";
 
@@ -1883,6 +1884,13 @@ describe("the owner hint says what to send for an unlisted model", () => {
 
   it("says sending starts a review and does not add the model", () => {
     expect(owner).toContain("starts a review; it does not add the model");
+  });
+
+  it("renders EXACTLY the shared owner-input wording after the ownership sentence", () => {
+    const inner = owner.match(/data-testid="machine-owner-hint"[^>]*>([\s\S]*?)<\/p>/);
+    expect(inner, "the owner hint is not rendered").toBeTruthy();
+    const text = inner![1]!.replace(/<!--.*?-->/g, "").replace(/\s+/g, " ").trim();
+    expect(text).toBe(`You own this studio, so you can register its machines. ${OWNER_INPUT_REQUEST}`);
   });
 
   it("is shown to the owner only", () => {

@@ -109,7 +109,7 @@ function scenario(opts: {
   };
 }
 
-const state = async () => (await getAppointmentPaymentStates(STUDIO, [APPT], TZ)).get(APPT);
+const state = async () => (await getAppointmentPaymentStates(STUDIO, [APPT], TZ, true)).get(APPT);
 
 describe("HON-11 #2: after a FULL refund, a recorded outcome is the row's current state", () => {
   it("full refund + paid_cash → settled_cash (was: refunded_full forever)", async () => {
