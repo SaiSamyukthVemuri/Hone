@@ -134,6 +134,22 @@ jobs:
           for q in $(python3 -c "import json,sys;print(' '.join(k for k in json.load(open(sys.argv[1]))['sequences'] if k != 'full'))" "$RUNNER_TEMP/ms-pkg/PLAN.json"); do
             REHEARSAL_OUT="$RUNNER_TEMP/ms-push-out/$q" ONLY_A=1 bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" "$q" | tail -2
           done
+      - name: H1 control, an unreadable plan is a FAIL and only a really empty sequence is a no-op
+        shell: bash
+        env:
+          REHEARSAL_OUT: ${{ runner.temp }}/ms-h1
+        run: |
+          rc=0; o=$(bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" no-such-sequence 2>&1) || rc=$?
+          [ "$rc" != 0 ] && echo "$o" | grep -q "^FAIL  could not read the stage list" || { echo "FAIL - a mistyped sequence name was not refused: rc=$rc $o"; exit 1; }
+          rc=0; o=$(bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/no-such-package" full 2>&1) || rc=$?
+          [ "$rc" != 0 ] && echo "$o" | grep -q "^FAIL  could not read the stage list" || { echo "FAIL - a missing PLAN.json was not refused: rc=$rc $o"; exit 1; }
+          python3 - "$RUNNER_TEMP/ms-pkg/PLAN.json" "$RUNNER_TEMP/ms-h1-pkg" <<'PY'
+          import json, os, sys
+          d = json.load(open(sys.argv[1])); d["sequences"]["empty-control"] = {"stages": []}
+          os.makedirs(sys.argv[2], exist_ok=True); json.dump(d, open(os.path.join(sys.argv[2], "PLAN.json"), "w"))
+          PY
+          o=$(bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-h1-pkg" empty-control 2>&1) && echo "$o" | grep -q "RESULT: 0 passed, 0 failed (empty sequence" || { echo "FAIL - a genuinely empty sequence was not a no-op: $o"; exit 1; }
+          echo "ok - mistyped sequence FAIL, missing plan FAIL, genuinely empty sequence no-op"
       - name: Upload rehearsal logs
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

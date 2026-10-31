@@ -70,15 +70,15 @@
       "file": "sealed/0271_schedule_change_signal.sql",
       "sha256": "5985d3a09e16ff1c40bd360dc798274a945c8d126550892800f7b363f730fcc1",
       "ready": {
-        "status": "sealed 5985d3a0 (unchanged at #1275 5c040f1b and f491337c; Willow may change only client files)",
-        "carrier": "#1275 f491337c (5c040f1b has the same SQL)",
+        "status": "sealed 5985d3a0 (unchanged at #1275 5c040f1b, f491337c and d3b5a3fb; gates complete at d3b5a3fb: Codex clean, Insurance and Privacy deltas sound)",
+        "carrier": "#1275 d3b5a3fb (the SQL is byte-identical at 5c040f1b, f491337c and d3b5a3fb)",
         "class": "3 (+2)",
         "carrier_db_lane": "green",
         "content_gates": "content gates: preflight (realtime.messages policies empty, RLS on, recorded grants), read-back (exactly the two policies, 12 triggers, emitter grants) (Insurance C3)",
-        "blocker": "Insurance C1 (restrictive deny ruling), C2, C4-C6; Sam approval"
+        "blocker": "waits for the hosted read-back after Sam P2 (0253+0255) to confirm the 250-row premise, then an Insurance check"
       },
       "gate_pack": "../gate-packs/0271",
-      "head_sha": "5c040f1ba"
+      "head_sha": "d3b5a3fbd"
     }
   ],
   "rules": {
