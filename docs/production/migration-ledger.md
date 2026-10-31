@@ -24,7 +24,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | **Hosted (production) migration max** | **0257**, declared in `docs/production/migration-state.json` (unchanged by this apply). Read back 2026-10-31T01:31:05Z-01:31:08Z: APPLIED+VERIFIED as recorded by OPS: 248 history rows, max 0257, `0254` exactly once; functions and sealed bodies PASS; each of `payment_charge_attempts`, `manual_fee_charge_attempts` and `appointment_settlements` has exactly one owner-gated SELECT policy. **No server apply timestamp was captured**, so `hosted_applied_at` stays null. |
 | **Repo migration max** | **0257** (`0257_studio_payment_jurisdiction_failed_attempt_ack.sql`), derived from the source files on this tree; `0254` is present at the sealed bytes. |
 | **Remote-only migrations** | **None.** Production has nothing the repository lacks. |
-| **Pending migrations** | **None** above the hosted head. `0247`, `0249`-`0253`, `0255` and `0256` are declared unhosted gaps below it, not a pending suffix. |
+| **Pending migrations** | **None** above the hosted head. `0247`, `0249`-`0253`, `0255` and `0256` are declared unhosted gaps below it, not a pending suffix. `0252` is present in the repository only on the HON-47 carrier branch (PR 1134, sealed bytes, not applied): it is one of those declared gaps, and applying it is its own out-of-order stage that needs Sam's approval. |
 | **Next free number** | Next free number is **0258** by this tree's derived filenames, **not claimed** or reallocated here. Numbers are allocated by OPS reservation, not by this file. |
 | **Project ref** | Canonical Hone production project. |
 
