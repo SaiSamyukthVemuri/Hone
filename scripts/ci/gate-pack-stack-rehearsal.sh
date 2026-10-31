@@ -43,7 +43,7 @@ for S in $STAGES; do
   rm -rf supabase/migrations && tar -xf "$PKG/$S/s1-apply-$S-online/migrations-stage$S.tar" -C . && [ "$(ls supabase/migrations | wc -l | tr -d ' ')" = "$(pj "$PKG/$S/EXPECT.json" 'd["bundle"]["files"]')" ] || { bad "step $V ($S): bundle extraction"; break; }
   flags=--local; [ "$(pj "$PKG/$S/EXPECT.json" 'd["include_all"]')" = True ] && flags="--local --include-all"
   dry=$(supabase db push $flags --dry-run 2>&1) || { bad "step $V ($S): dry run failed" "$(echo "$dry" | tail -3)"; break; }
-  [ "$(echo "$dry" | grep -cE '^ *[0-9]{4}_')" = 1 ] && echo "$dry" | grep -q "$(pj "$PKG/$S/EXPECT.json" 'd["migration"]')" && ok "step $V ($S): the dry run lists exactly the step's one migration" || { bad "step $V ($S): the dry run does not list exactly one migration" "$dry"; break; }
+  [ "$(echo "$dry" | grep -cE '[0-9]{4}_[A-Za-z0-9_]+\.sql')" = 1 ] && echo "$dry" | grep -q "$(pj "$PKG/$S/EXPECT.json" 'd["migration"]')" && ok "step $V ($S): the dry run lists exactly the step's one migration" || { bad "step $V ($S): the dry run does not list exactly one migration" "$dry"; break; }
   supabase db push $flags --yes > "$W/push.log" 2>&1 || { bad "step $V ($S): push failed" "$(tail -5 "$W/push.log")"; break; }
   # ---- POST
   postfail=0
