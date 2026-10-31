@@ -25,13 +25,18 @@ const BIRTHDAY_COLOR_VALUES: ReadonlyArray<BirthdayReminderColor> = [
 ];
 function parseBirthdayColor(
   value: FormDataEntryValue | null,
-): BirthdayReminderColor {
+): BirthdayReminderColor | null {
   const t = typeof value === "string" ? value.trim() : "";
   return (BIRTHDAY_COLOR_VALUES as ReadonlyArray<string>).includes(t)
     ? (t as BirthdayReminderColor)
-    : "purple";
+    : null;
 }
 
+// Studio details: the name and the legal entity name ONLY. The studio-wide
+// display preferences (birthday colour, time format) are written by
+// updateStudioDisplayPreferencesAction below. This action must never read or
+// write them: it used to default both when absent (12h, purple), so a form that
+// merely omitted the fields would have reset a saved choice.
 export async function updateStudioAction(formData: FormData): Promise<void> {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (practitioner.role !== "owner") {
@@ -49,9 +54,6 @@ export async function updateStudioAction(formData: FormData): Promise<void> {
     .update({
       name,
       legal_entity_name: nullableString(formData.get("legal_entity_name")),
-      birthday_reminder_color: parseBirthdayColor(
-        formData.get("birthday_reminder_color"),
-      ),
     })
     .eq("id", studio.id);
 
@@ -59,16 +61,50 @@ export async function updateStudioAction(formData: FormData): Promise<void> {
     throw new Error(`Failed to update studio: ${dbErrorCode(error)}`);
   }
 
+  revalidatePath("/dashboard");
+  revalidatePath("/settings/studio");
+  revalidatePath("/settings/team");
+}
+
+export type StudioDisplayPreferencesResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+// Studio-wide display preferences (Calendar > Display preferences, "Applies to
+// the whole studio."). Owner-only, enforced here and by RLS "studios: owners
+// update". Writes ONLY birthday_reminder_color and time_format_preference.
+// Both values must be present and valid: a partial or crafted POST is refused
+// rather than silently defaulted over a saved value.
+export async function updateStudioDisplayPreferencesAction(
+  formData: FormData,
+): Promise<StudioDisplayPreferencesResult> {
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (practitioner.role !== "owner") {
+    return { ok: false, error: "Only studio owners can change studio display preferences." };
+  }
+
+  const color = parseBirthdayColor(formData.get("birthday_reminder_color"));
+  const rawTimeFormat = formData.get("time_format");
+  if (!color || (rawTimeFormat !== "12h" && rawTimeFormat !== "24h")) {
+    return { ok: false, error: "Choose a valid birthday colour and time format." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("studios")
+    .update({ birthday_reminder_color: color })
+    .eq("id", studio.id);
+  if (error) {
+    return { ok: false, error: `Failed to update display preferences: ${dbErrorCode(error)}` };
+  }
+
   // Time-format preference (migration 0109) is written SEPARATELY and
-  // best-effort: in the brief window after this code deploys but before 0109 is
-  // applied, the column doesn't exist yet, so the rest of studio settings must
-  // still save. Reads default to 12h until then. Any error OTHER than
-  // "column does not exist" is surfaced. Once 0109 is applied this is a normal,
-  // always-successful write.
-  const timeFormat = formData.get("time_format") === "24h" ? "24h" : "12h";
+  // best-effort: in the brief window after code deploys but before 0109 is
+  // applied the column does not exist, and the colour must still save. Any
+  // error OTHER than "column does not exist" is surfaced.
   const { error: tfError } = await supabase
     .from("studios")
-    .update({ time_format_preference: timeFormat })
+    .update({ time_format_preference: rawTimeFormat })
     .eq("id", studio.id);
   if (
     tfError &&
@@ -76,12 +112,14 @@ export async function updateStudioAction(formData: FormData): Promise<void> {
     tfError.code !== "PGRST204" &&
     tfError.code !== "42703"
   ) {
-    throw new Error(`Failed to update time format: ${dbErrorCode(tfError)}`);
+    return { ok: false, error: `Failed to update time format: ${dbErrorCode(tfError)}` };
   }
 
   revalidatePath("/dashboard");
+  revalidatePath("/calendar");
+  revalidatePath("/settings/calendar");
   revalidatePath("/settings/studio");
-  revalidatePath("/settings/team");
+  return { ok: true };
 }
 
 export type EmailSettingsResult = { ok: true } | { ok: false; error: string };
@@ -300,7 +338,9 @@ export async function updateStudioPostcareAction(
     throw new Error(`Failed to update postcare delivery mode: ${dbErrorCode(modeError)}`);
   }
 
+  // F4: the form is rendered on /settings/intake, so that page must refresh too.
   revalidatePath("/settings/studio");
+  revalidatePath("/settings/intake");
 }
 
 // ---------------------------------------------------------------------------

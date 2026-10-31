@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { SaveStatus, useSaveFeedback } from "@/components/settings/save-status";
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { updateStudioPolicyAction } from "./actions";
 import { MarkdownLiteTextarea } from "./PostcareEditingHelpers";
 
@@ -46,26 +48,27 @@ export function PolicySettingsForm({ initial }: Props) {
   );
   const [noShow, setNoShow] = useState(initial.no_show_policy_text);
   const [pending, startTransition] = useTransition();
-  const [hint, setHint] = useState<
-    { kind: "idle" } | { kind: "saved" } | { kind: "error"; message: string }
-  >({ kind: "idle" });
+  const [saved, setSaved] = useState({
+    cancellation: initial.cancellation_policy_text,
+    noShow: initial.no_show_policy_text,
+  });
+  const feedback = useSaveFeedback();
+  const dirty = cancellation !== saved.cancellation || noShow !== saved.noShow;
+  useUnsavedChangesGuard("studio-policies", dirty);
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setHint({ kind: "idle" });
+    feedback.saving();
     const fd = new FormData();
     fd.set("cancellation_policy_text", cancellation);
     fd.set("no_show_policy_text", noShow);
     startTransition(async () => {
       try {
         await updateStudioPolicyAction(fd);
-        setHint({ kind: "saved" });
-        window.setTimeout(() => setHint({ kind: "idle" }), 1500);
+        setSaved({ cancellation, noShow });
+        feedback.saved();
       } catch (err) {
-        setHint({
-          kind: "error",
-          message: err instanceof Error ? err.message : "Failed to save.",
-        });
+        feedback.failed(err instanceof Error ? err.message : "Failed to save.");
       }
     });
   }
@@ -152,14 +155,7 @@ export function PolicySettingsForm({ initial }: Props) {
         >
           {pending ? "Saving…" : "Save policies"}
         </button>
-        {hint.kind === "saved" && (
-          <span className="text-xs text-green-600 dark:text-green-400">
-            Saved.
-          </span>
-        )}
-        {hint.kind === "error" && (
-          <span className="text-xs text-red-700">{hint.message}</span>
-        )}
+        <SaveStatus state={feedback.state} />
         {initial.policy_version && (
           <span className="text-xs text-neutral-500">
             Version: {initial.policy_version}

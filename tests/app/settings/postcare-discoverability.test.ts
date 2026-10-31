@@ -8,14 +8,15 @@ import path from "node:path";
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
 }
-const LAYOUT = read("app/(app)/settings/layout.tsx");
+// The rail entries live in the nav registry (the layout only renders them).
+const LAYOUT = read("lib/settings/nav-registry.ts");
 const INTAKE = read("app/(app)/settings/intake/page.tsx");
 const FORM = read("app/(app)/settings/studio/PostcareSettingsForm.tsx");
 const ACTIONS = read("app/(app)/settings/studio/actions.ts");
 
 describe("postcare settings are discoverable", () => {
   it("the settings nav label surfaces Postcare", () => {
-    expect(LAYOUT).toMatch(/href: "\/settings\/intake", label: "Forms & Postcare"/);
+    expect(LAYOUT).toMatch(/label: "Forms & Postcare",\s*\n\s*href: "\/settings\/intake"/);
     expect(LAYOUT).toMatch(/Postcare/);
     expect(LAYOUT).not.toMatch(/label: "Forms & Policies"/);
   });

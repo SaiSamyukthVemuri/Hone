@@ -127,7 +127,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
       "Read-only display of the studio owner's address; not configurable here, and the Studio page entry already covers reaching it.",
   },
   {
-    page: "/settings/studio",
+    page: "/settings/calendar",
     label: "Birthday reminder color",
     helper: "Choose the accent color used for birthday reminders",
     role: "owner",
@@ -135,7 +135,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     entryId: "settings-birthday-color",
   },
   {
-    page: "/settings/studio",
+    page: "/settings/calendar",
     label: "Time format",
     helper: "How times are shown on your calendar, dashboard, and availability",
     role: "owner",
@@ -649,7 +649,12 @@ export const STRUCTURAL_LABEL_SOURCES: ReadonlyArray<{
   {
     file: "app/(app)/settings/studio/StudioSettingsForm.tsx",
     page: "/settings/studio",
-    minLabels: 5,
+    minLabels: 3,
+  },
+  {
+    file: "app/(app)/settings/calendar/StudioDisplayPreferencesForm.tsx",
+    page: "/settings/calendar",
+    minLabels: 2,
   },
   {
     file: "app/(app)/settings/profile/ProfileForm.tsx",

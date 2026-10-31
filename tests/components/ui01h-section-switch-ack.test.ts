@@ -21,7 +21,7 @@ const ROWS = {
   records: { file: "app/(app)/records/page.tsx", label: "Loading section…", kind: "PendingLink" },
   snapshot: { file: "app/(app)/dashboard/practice-snapshot.tsx", label: "Loading period…", kind: "PendingLink" },
   scope: { file: "app/(app)/settings/availability/ScopeSelector.tsx", label: "Loading schedule…", kind: "PendingContainerLink" },
-  settings: { file: "app/(app)/settings/SettingsNav.tsx", label: "Loading settings…", kind: "PendingLink" },
+  settings: { file: "components/settings/settings-shell.tsx", label: "Loading settings…", kind: "PendingLink" },
 } as const;
 
 describe("UI-01H-A: every converted row acknowledges the tap", () => {
