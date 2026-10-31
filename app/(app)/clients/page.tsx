@@ -93,7 +93,7 @@ export default async function ClientsPage({
   const lastVisitMap = lastVisits && lastVisits.ok ? lastVisits.value : null;
   domain.end();
 
-  const state: DirectoryState = { view, q: query.q, filters: query.filters, sort: query.sort };
+  const state: DirectoryState = { view, q: query.q, filters: query.filters, sort: query.sort, page: data.page };
 
   return (
     <div className="flex flex-col gap-6">

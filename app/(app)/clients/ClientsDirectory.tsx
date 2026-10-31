@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PendingLink } from "@/components/pending-link";
-import { PendingButton } from "@/components/pending-button";
-import { unarchiveClientAction } from "./[id]/actions";
+import { UnarchiveRowControl } from "./UnarchiveRowControl";
 import { NAME_ON_FILE_LABEL } from "@/lib/clients/directory-rules";
 import {
   directoryHref,
@@ -30,6 +29,8 @@ export type DirectoryState = {
   q: string;
   filters: DirectoryFilter[];
   sort: DirectorySort;
+  /** The results page being shown, so a link that opens the overview keeps it (Codex P2 on 4a7e9e8f). */
+  page: number;
 };
 
 export type LastVisitCell = { kind: "at"; iso: string } | { kind: "none" } | { kind: "unavailable" };
@@ -279,12 +280,7 @@ function DirectoryRowView({
             Open
           </PendingLink>
           {archived && (
-            <form action={unarchiveClientAction}>
-              <input type="hidden" name="client_id" value={row.id} />
-              <PendingButton variant="primary" size="sm">
-                Unarchive
-              </PendingButton>
-            </form>
+            <UnarchiveRowControl client={{ id: row.id }} />
           )}
         </div>
       </div>
