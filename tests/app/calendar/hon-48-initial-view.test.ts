@@ -75,7 +75,7 @@ describe("the page applies the rule to the initial entry only", () => {
   it("a week-view 'Today' names the week, or a team studio would be sent to the Day view", () => {
     expect(PAGE).toContain('todayHref={withSelection("/calendar?view=week", sidebar.param)}');
     expect(PAGE).not.toMatch(/todayHref="\/calendar"/);
-    expect(MOBILE).toContain('router.push("/calendar?view=week")');
+    expect(MOBILE).toContain('router.push(withSelection("/calendar?view=week", selectionParam))');
     expect(MOBILE).not.toContain('router.push("/calendar")');
   });
 

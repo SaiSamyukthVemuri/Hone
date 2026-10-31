@@ -173,3 +173,27 @@ describe("time insights in the sidebar", () => {
     expect(src).not.toMatch(/\.from\(|createClient|service_role/);
   });
 });
+
+describe("selection and date stay in step on mobile and across navigation (Codex P2 follow-ups)", () => {
+  const MOBILE_VIEW = readFileSync("app/(app)/calendar/CalendarMobileDayView.tsx", "utf8");
+  const MINI = readFileSync("app/(app)/calendar/CalendarMiniMonth.tsx", "utf8");
+  it("every URL the mobile day view pushes carries the practitioner selection", () => {
+    const pushes = [...MOBILE_VIEW.matchAll(/router\.push\(([^;]*)\);/g)].map((m) => m[1]);
+    expect(pushes.length).toBe(3); // prev past the week, next past the week, Today outside the week
+    for (const p of pushes) expect(p, p).toMatch(/^withSelection\(.*selectionParam\)$/);
+  });
+  it("the page hands the mobile view the selection", () => {
+    expect(PAGE).toMatch(/<CalendarMobileDayView[\s\S]*?selectionParam=\{sidebar\.param\}/);
+  });
+  it("the mobile timeline follows the server date when a mini-calendar pick changes it, and ignores strip taps", () => {
+    expect(MOBILE_VIEW).toMatch(/const \[seenInitialDate, setSeenInitialDate\] = useState\(initialDate\)/);
+    expect(MOBILE_VIEW).toMatch(/if \(seenInitialDate !== initialDate\) \{\s*setSeenInitialDate\(initialDate\);\s*setSelectedDate\(initialDate\);/);
+    // A strip tap sets local state only and never touches the tracked server date.
+    expect(MOBILE_VIEW).toMatch(/onClick=\{\(\) => setSelectedDate\(d\.date\)\}/);
+  });
+  it("the mini calendar follows its anchor when the page navigates, and keeps independent month browsing between navigations", () => {
+    expect(MINI).toMatch(/const \[seenAnchor, setSeenAnchor\] = useState\(anchorDate\)/);
+    expect(MINI).toMatch(/if \(seenAnchor !== anchorDate\) \{\s*setSeenAnchor\(anchorDate\);\s*setShown\(anchorDate\);/);
+    expect(MINI).toMatch(/onClick=\{\(\) => setShown\(firstOfPreviousMonthString\(shown\)\)\}/);
+  });
+});

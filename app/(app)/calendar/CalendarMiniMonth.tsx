@@ -38,6 +38,14 @@ export function CalendarMiniMonth({
   selectionParam: string | undefined;
 }) {
   const [shown, setShown] = useState(anchorDate);
+  // The page's anchor moved (toolbar step, Today, a pick in another month) while this component stayed
+  // mounted: follow it. Browsing months with the arrows changes `shown` only, so it is never reset
+  // between navigations.
+  const [seenAnchor, setSeenAnchor] = useState(anchorDate);
+  if (seenAnchor !== anchorDate) {
+    setSeenAnchor(anchorDate);
+    setShown(anchorDate);
+  }
   const cells = monthGridDates(shown);
   return (
     <section data-testid="calendar-mini-month" aria-label="Pick a date" className="select-none">

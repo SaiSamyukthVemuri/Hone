@@ -57,7 +57,7 @@ describe("mobile navigation: today / prev day / next day / week strip", () => {
   it("switches day within the loaded week with no fetch, and crosses weeks via ?day=", () => {
     expect(MOBILE).toMatch(/setSelectedDate\(days\[idx - 1\]\.date\)/);
     expect(MOBILE).toMatch(/setSelectedDate\(days\[idx \+ 1\]\.date\)/);
-    expect(MOBILE).toMatch(/router\.push\(`\/calendar\?day=\$\{addDays/);
+    expect(MOBILE).toMatch(/router\.push\(withSelection\(`\/calendar\?day=\$\{addDays/);
   });
   it("page anchors the week to ?day= and computes the initial selected day (tz-safe strings)", () => {
     expect(PAGE).toMatch(/params\.day \?\? params\.week \?\? startOfWeek\(today\)/);

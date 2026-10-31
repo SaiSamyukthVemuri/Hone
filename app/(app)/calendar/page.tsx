@@ -378,6 +378,7 @@ export default async function CalendarPage({
         services={services}
         returnTo={returnTo}
         blockScopeNames={blockScopeNames}
+        selectionParam={sidebar.param}
       />
 
       {/* Desktop/tablet keep the existing week grid, untouched, at md+. */}
