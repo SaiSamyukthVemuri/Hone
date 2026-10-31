@@ -8,6 +8,7 @@ import {
   SETTINGS_NAV_GROUP_LABEL,
   SETTINGS_NAV_GROUP_ORDER,
   activeSettingsItem,
+  isRailLinkClick,
   type SettingsNavItem,
 } from "@/lib/settings/nav";
 import { UnsavedChangesProvider } from "./unsaved-changes";
@@ -32,7 +33,10 @@ const ITEM_ACTIVE =
   "bg-neutral-100 font-semibold text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100";
 
 /** The section id nearest the top of the viewport, or the URL hash. */
-function useActiveSection(ids: ReadonlyArray<string>, pathKey: string): string | null {
+function useActiveSection(
+  ids: ReadonlyArray<string>,
+  pathKey: string,
+): string | null {
   const [active, setActive] = useState<string | null>(null);
   const idsKey = ids.join("|");
   useEffect(() => {
@@ -51,7 +55,9 @@ function useActiveSection(ids: ReadonlyArray<string>, pathKey: string): string |
         (entries) => {
           const top = entries
             .filter((e) => e.isIntersecting)
-            .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+            .sort(
+              (a, b) => a.boundingClientRect.top - b.boundingClientRect.top,
+            )[0];
           if (top) setActive(top.target.id);
         },
         { rootMargin: "-10% 0px -70% 0px" },
@@ -88,13 +94,23 @@ export function SettingsShell({ items, account, children }: Props) {
   // Opening the page's own category keeps it expanded as the route changes.
   useEffect(() => {
     if (!activeItem) return;
-    setOpenIds((prev) => (prev.has(activeItem.id) ? prev : new Set(prev).add(activeItem.id)));
+    setOpenIds((prev) =>
+      prev.has(activeItem.id) ? prev : new Set(prev).add(activeItem.id),
+    );
   }, [activeItem]);
 
   // A route change closes the drawer.
   useEffect(() => {
     setDrawerOpen(false);
   }, [pathname]);
+
+  // A same-page section link only changes the hash (no pathname change), and a
+  // keyboard activation or a browser hash navigation can too: close on both.
+  useEffect(() => {
+    const close = () => setDrawerOpen(false);
+    window.addEventListener("hashchange", close);
+    return () => window.removeEventListener("hashchange", close);
+  }, []);
 
   // Drawer: Escape closes, focus moves in on open and back to the button on close.
   useEffect(() => {
@@ -162,7 +178,14 @@ export function SettingsShell({ items, account, children }: Props) {
                 : "hidden"
             } min-[700px]:static min-[700px]:z-auto min-[700px]:block min-[700px]:w-auto min-[700px]:overflow-visible min-[700px]:bg-transparent min-[700px]:p-0 min-[700px]:shadow-none`}
           >
-            <nav aria-label="Settings sections" className="flex flex-col gap-4">
+            <nav
+              aria-label="Settings sections"
+              className="flex flex-col gap-4"
+              onClick={(e) => {
+                if (isRailLinkClick(e.target as Element | null))
+                  setDrawerOpen(false);
+              }}
+            >
               {groups.map(({ group, label, entries }) => (
                 <div key={group} className="flex flex-col gap-1">
                   {label && (
@@ -191,7 +214,8 @@ export function SettingsShell({ items, account, children }: Props) {
                         key={entry.id}
                         open={open}
                         onToggle={(e) => {
-                          const next = (e.currentTarget as HTMLDetailsElement).open;
+                          const next = (e.currentTarget as HTMLDetailsElement)
+                            .open;
                           setOpenIds((prev) => {
                             const s = new Set(prev);
                             if (next) s.add(entry.id);
@@ -212,13 +236,16 @@ export function SettingsShell({ items, account, children }: Props) {
                         </summary>
                         <ul className="ml-4 mt-1 flex flex-col border-l border-neutral-200 dark:border-neutral-800">
                           {entry.sections.map((section) => {
-                            const sectionActive = isActive && activeSection === section.id;
+                            const sectionActive =
+                              isActive && activeSection === section.id;
                             return (
                               <li key={section.id}>
                                 <PendingLink
                                   href={`${entry.href}#${section.id}`}
                                   pendingLabel="Loading settings…"
-                                  aria-current={sectionActive ? "location" : undefined}
+                                  aria-current={
+                                    sectionActive ? "location" : undefined
+                                  }
                                   className={`-ml-px block border-l-2 px-3 py-1.5 text-sm transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 dark:focus-visible:outline-neutral-100 ${
                                     sectionActive
                                       ? "border-neutral-900 font-medium text-neutral-900 dark:border-neutral-100 dark:text-neutral-100"
@@ -238,18 +265,27 @@ export function SettingsShell({ items, account, children }: Props) {
               ))}
             </nav>
             <div className="mt-6 border-t border-neutral-200 px-3 pt-4 text-sm dark:border-neutral-800">
-              <p className="truncate font-medium text-neutral-900 dark:text-neutral-100">{account.name}</p>
-              <p className="text-neutral-500 dark:text-neutral-400">{account.roleLabel}</p>
+              <p className="truncate font-medium text-neutral-900 dark:text-neutral-100">
+                {account.name}
+              </p>
+              <p className="text-neutral-500 dark:text-neutral-400">
+                {account.roleLabel}
+              </p>
             </div>
           </aside>
 
           <div className="min-w-0">
             {activeItem && (
-              <nav aria-label="Breadcrumb" className="mb-6 text-xs text-neutral-500 dark:text-neutral-400">
+              <nav
+                aria-label="Breadcrumb"
+                className="mb-6 text-xs text-neutral-500 dark:text-neutral-400"
+              >
                 <ol className="flex flex-wrap items-center gap-1.5">
                   <li>Settings</li>
                   <li aria-hidden>/</li>
-                  <li aria-current={activeSectionLabel ? undefined : "page"}>{activeItem.label}</li>
+                  <li aria-current={activeSectionLabel ? undefined : "page"}>
+                    {activeItem.label}
+                  </li>
                   {activeSectionLabel && (
                     <>
                       <li aria-hidden>/</li>

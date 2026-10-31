@@ -119,6 +119,16 @@ export async function resolveSettingsNav(
 }
 
 /**
+ * True when a click landed on (or inside) a link of the rail. The narrow-screen
+ * drawer closes on any such click: a same-page section link changes only the
+ * URL hash, so the pathname-change effect never fires and the drawer would stay
+ * open over the section the user just chose.
+ */
+export function isRailLinkClick(target: { closest?: (selector: string) => unknown } | null): boolean {
+  return Boolean(target?.closest?.("a[href]"));
+}
+
+/**
  * The rail item that owns a pathname: exact match first, then the longest
  * prefix (so /settings/payments/return is still "Payments").
  */

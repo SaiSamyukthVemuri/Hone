@@ -90,29 +90,31 @@ export async function updateStudioDisplayPreferencesAction(
   }
 
   const supabase = await createClient();
+  // ONE statement for both columns, so a failure leaves neither written (an
+  // atomic pair, not "the colour saved, the time format not").
   const { error } = await supabase
     .from("studios")
-    .update({ birthday_reminder_color: color })
+    .update({ birthday_reminder_color: color, time_format_preference: rawTimeFormat })
     .eq("id", studio.id);
   if (error) {
-    return { ok: false, error: `Failed to update display preferences: ${dbErrorCode(error)}` };
-  }
-
-  // Time-format preference (migration 0109) is written SEPARATELY and
-  // best-effort: in the brief window after code deploys but before 0109 is
-  // applied the column does not exist, and the colour must still save. Any
-  // error OTHER than "column does not exist" is surfaced.
-  const { error: tfError } = await supabase
-    .from("studios")
-    .update({ time_format_preference: rawTimeFormat })
-    .eq("id", studio.id);
-  if (
-    tfError &&
-    !/time_format_preference/i.test(tfError.message) &&
-    tfError.code !== "PGRST204" &&
-    tfError.code !== "42703"
-  ) {
-    return { ok: false, error: `Failed to update time format: ${dbErrorCode(tfError)}` };
+    // Time-format preference (migration 0109): in the brief window after code
+    // deploys but before 0109 is applied the column does not exist, and the
+    // colour must still save. Only "column does not exist" falls back to a
+    // colour-only write; any other error is surfaced with nothing written.
+    const missingColumn =
+      /time_format_preference/i.test(error.message) ||
+      error.code === "PGRST204" ||
+      error.code === "42703";
+    if (!missingColumn) {
+      return { ok: false, error: `Failed to update display preferences: ${dbErrorCode(error)}` };
+    }
+    const { error: colorError } = await supabase
+      .from("studios")
+      .update({ birthday_reminder_color: color })
+      .eq("id", studio.id);
+    if (colorError) {
+      return { ok: false, error: `Failed to update display preferences: ${dbErrorCode(colorError)}` };
+    }
   }
 
   revalidatePath("/dashboard");

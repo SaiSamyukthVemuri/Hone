@@ -48,3 +48,27 @@ describe("activeSettingsItem", () => {
     expect(activeSettingsItem(items, "/settings/paymentsx")).toBeNull();
   });
 });
+
+import { isRailLinkClick } from "@/lib/settings/nav";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+describe("narrow-screen drawer closes on a same-page section link (Codex P2)", () => {
+  it("a click on a link, or on something inside one, counts", () => {
+    const inside = { closest: (sel: string) => (sel === "a[href]" ? {} : null) };
+    expect(isRailLinkClick(inside)).toBe(true);
+  });
+  it("a click that is not inside a link does not close the drawer", () => {
+    expect(isRailLinkClick({ closest: () => null })).toBe(false);
+    expect(isRailLinkClick(null)).toBe(false);
+    expect(isRailLinkClick({})).toBe(false);
+  });
+  it("the shell wires the handler on the rail and also closes on hashchange", () => {
+    const src = readFileSync(
+      path.resolve(__dirname, "../../components/settings/settings-shell.tsx"),
+      "utf8",
+    );
+    expect(src).toMatch(/onClick=\{\(e\) => \{\s*if \(isRailLinkClick\(e\.target as Element \| null\)\) setDrawerOpen\(false\);/);
+    expect(src).toMatch(/addEventListener\("hashchange", close\)/);
+  });
+});

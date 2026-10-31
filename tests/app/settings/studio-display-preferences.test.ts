@@ -98,9 +98,9 @@ describe("updateStudioDisplayPreferencesAction", () => {
       form({ birthday_reminder_color: "blue", time_format: "24h" }),
     );
     expect(result).toEqual({ ok: true });
+    // ONE statement carrying both columns: atomic, never "colour saved, time format not".
     expect(updates.map((u) => u.values)).toEqual([
-      { birthday_reminder_color: "blue" },
-      { time_format_preference: "24h" },
+      { birthday_reminder_color: "blue", time_format_preference: "24h" },
     ]);
     expect(updates.every((u) => u.id === "studio-1" && u.table === "studios")).toBe(true);
   });
@@ -122,14 +122,21 @@ describe("updateStudioDisplayPreferencesAction", () => {
       form({ birthday_reminder_color: "green", time_format: "12h" }),
     );
     expect(result).toEqual({ ok: true });
+    // The colour still saved, through the colour-only fallback.
+    expect(updates.map((u) => u.values)).toEqual([
+      { birthday_reminder_color: "green", time_format_preference: "12h" },
+      { birthday_reminder_color: "green" },
+    ]);
   });
 
-  it("surfaces any other time-format error", async () => {
+  it("surfaces any other error with NOTHING written (no partial save)", async () => {
     failTimeFormat = { code: "42501", message: "permission denied" };
     const result = await updateStudioDisplayPreferencesAction(
       form({ birthday_reminder_color: "green", time_format: "12h" }),
     );
     expect(result.ok).toBe(false);
+    // Only the single combined attempt ran; there is no second, colour-only write.
+    expect(updates).toHaveLength(1);
   });
 });
 
