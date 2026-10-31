@@ -117,7 +117,7 @@ describe("the component and where it is mounted", () => {
 
   it("is on the toolbar every calendar view shares (week, month, team day)", () => {
     expect(toolbar).toMatch(/import \{ CalendarAutoRefresh \} from "\.\/CalendarAutoRefresh"/);
-    expect(toolbar).toMatch(/<CalendarAutoRefresh studioId=\{studioId\} scheduleFingerprint=\{scheduleFingerprint\} \/>/);
+    expect(toolbar).toMatch(/<CalendarAutoRefresh studioId=\{studioId\} scheduleFingerprint=\{scheduleFingerprint\} scopeKey=\{`\$\{view\}\|\$\{rangeLabel\}`\} \/>/);
     const page = readFileSync("app/(app)/calendar/page.tsx", "utf8");
     expect([...page.matchAll(/<CalendarToolbar/g)]).toHaveLength(3);
     expect([...page.matchAll(/studioId=\{studio\.id\}/g)]).toHaveLength(3);

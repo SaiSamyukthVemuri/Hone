@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import * as Sentry from "@sentry/nextjs";
 import {
@@ -10,13 +10,13 @@ import {
 } from "@/lib/calendar/refresh-policy";
 import {
   SCHEDULE_SIGNAL_EVENT,
+  createRefreshAttribution,
   createScheduleSignalController,
   REJOIN_MAX_ATTEMPTS,
   isUnannouncedFind,
   rejoinDelayMs,
   scheduleSignalEnabled,
   scheduleSignalTopic,
-  type RefreshCause,
   type SignalController,
 } from "@/lib/calendar/schedule-signal";
 import { createClient } from "@/lib/supabase/client";
@@ -50,9 +50,12 @@ let degradedReported = false;
 export function CalendarAutoRefresh({
   studioId,
   scheduleFingerprint,
+  scopeKey,
 }: {
   studioId?: string;
   scheduleFingerprint?: string;
+  /** The visible range (view + label). A change is a navigation, not a refresh. */
+  scopeKey?: string;
 }) {
   const router = useRouter();
   const lastRefreshMs = useRef<number>(Date.now());
@@ -60,8 +63,16 @@ export function CalendarAutoRefresh({
   const hiddenAtMs = useRef<number | null>(null);
   const channelStatus = useRef<string>("none");
   // What started the last refresh, and whether a live signal had announced a change.
-  const lastCause = useRef<{ cause: RefreshCause; announced: boolean } | null>(null);
+  // Scoped to the refresh that produced the render (see createRefreshAttribution).
+  const attribution = useRef(createRefreshAttribution());
   const previousFingerprint = useRef<string | undefined>(scheduleFingerprint);
+  const [isPending, startTransition] = useTransition();
+
+  // Navigation to another range discards any pending attribution. Declared before the
+  // fingerprint effect so it runs first in the commit that renders the new range.
+  useEffect(() => {
+    attribution.current.scoped(scopeKey);
+  }, [scopeKey]);
 
   // A fingerprint that changed after a fallback refresh no signal announced = degraded.
   useEffect(() => {
@@ -70,8 +81,7 @@ export function CalendarAutoRefresh({
       scheduleFingerprint !== undefined &&
       previousFingerprint.current !== scheduleFingerprint;
     previousFingerprint.current = scheduleFingerprint;
-    const last = lastCause.current;
-    if (changed) lastCause.current = null;
+    const last = changed ? attribution.current.landed(true) : null;
     if (
       !changed ||
       !last ||
@@ -87,6 +97,12 @@ export function CalendarAutoRefresh({
     Sentry.captureMessage("calendar.schedule_signal.degraded", { level: "warning", tags: detail });
   }, [scheduleFingerprint]);
 
+  // A refresh that finished without moving the fingerprint is spent: it must not be blamed
+  // for a later render. Runs after the fingerprint effect, which consumes a changed one.
+  useEffect(() => {
+    if (!isPending) attribution.current.landed(false);
+  }, [isPending]);
+
   useEffect(() => {
     function maybeRefresh(trigger: AutoRefreshTrigger) {
       const nowMs = Date.now();
@@ -99,8 +115,8 @@ export function CalendarAutoRefresh({
       if (!ok) return;
       lastRefreshMs.current = nowMs;
       const announced = controllerRef.current?.markRefresh() ?? false;
-      lastCause.current = { cause: trigger === "signal" ? "signal" : trigger, announced };
-      router.refresh();
+      attribution.current.begin(trigger === "signal" ? "signal" : trigger, announced);
+      startTransition(() => router.refresh());
     }
 
     // Poll at a fraction of the interval so a held-off refresh (a drawer was
@@ -129,7 +145,7 @@ export function CalendarAutoRefresh({
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("online", onOnline);
     };
-  }, [router]);
+  }, [router, startTransition]);
 
   useEffect(() => {
     const topic = scheduleSignalTopic(studioId);
@@ -144,8 +160,8 @@ export function CalendarAutoRefresh({
       refresh: () => {
         lastRefreshMs.current = Date.now();
         controller.markRefresh();
-        lastCause.current = { cause: "signal", announced: true };
-        router.refresh();
+        attribution.current.begin("signal", true);
+        startTransition(() => router.refresh());
       },
     });
     controllerRef.current = controller;
@@ -192,7 +208,7 @@ export function CalendarAutoRefresh({
       if (rejoinTimer !== null) window.clearTimeout(rejoinTimer);
       if (channel) void supabase.removeChannel(channel);
     };
-  }, [studioId, router]);
+  }, [studioId, router, startTransition]);
 
   return null;
 }

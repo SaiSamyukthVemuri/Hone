@@ -61,7 +61,7 @@ export function CalendarToolbar({
   return (
     <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       {/* HON-48: keeps this screen current for the other people on the calendar. */}
-      <CalendarAutoRefresh studioId={studioId} scheduleFingerprint={scheduleFingerprint} />
+      <CalendarAutoRefresh studioId={studioId} scheduleFingerprint={scheduleFingerprint} scopeKey={`${view}|${rangeLabel}`} />
       <div>
         {/* The visible date range IS the heading, Google-style. */}
         <h1 className="text-2xl font-semibold tracking-tight">{rangeLabel}</h1>

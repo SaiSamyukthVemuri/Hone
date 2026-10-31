@@ -183,3 +183,32 @@ export function isUnannouncedFind(a: {
 }): boolean {
   return a.fingerprintChanged && !a.announced && (a.cause === "interval" || a.cause === "focus");
 }
+
+/**
+ * Which refresh produced the render being looked at. The degraded check may only blame a
+ * fallback refresh for a changed fingerprint when that very refresh brought the change in:
+ *   * a refresh that lands with the fingerprint UNCHANGED is spent (`landed(false)`), so a
+ *     later render cannot be attributed to it;
+ *   * a navigation to another range (`scoped` sees a different key) discards it, because the
+ *     new range's fingerprint differs for reasons that are not a missed signal.
+ */
+export function createRefreshAttribution() {
+  let last: { cause: RefreshCause; announced: boolean } | null = null;
+  let scope: string | undefined;
+  return {
+    begin(cause: RefreshCause, announced: boolean) {
+      last = { cause, announced };
+    },
+    /** Call with the screen's range key on every render; a change is a navigation. */
+    scoped(key: string | undefined) {
+      if (scope !== undefined && key !== scope) last = null;
+      scope = key;
+    },
+    /** A refresh finished rendering. Returns what to attribute a CHANGED fingerprint to. */
+    landed(fingerprintChanged: boolean) {
+      const l = last;
+      last = null;
+      return fingerprintChanged ? l : null;
+    },
+  };
+}
