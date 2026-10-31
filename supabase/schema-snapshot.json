@@ -3,7 +3,7 @@
   "migrations": {
     "count": 248,
     "last": "0271_schedule_change_signal.sql",
-    "sha256": "63faf8b859e63caf357a37135fc8e6a8ee8feabdbc10e712ec50e86e3f476515"
+    "sha256": "dfa6faf7ab340c5891551b8f0f091011eefc74b774ccc0491b7360e80ec8c225"
   },
   "public": {
     "tables": [
