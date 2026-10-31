@@ -177,7 +177,8 @@ export default async function CalendarPage({
     // used with weekday defaults to resolve common hours without collapsing
     // different practitioner schedules into one studio-wide state.
     getOverridesForRange(studio.id, weekStart, weekEnd),
-    studio.practitioner_capacity_enabled === true ? getPractitionersForStudio(studio.id) : Promise.resolve([]),
+    // Loaded for every studio: the Day tab needs the active count even with capacity off.
+    getPractitionersForStudio(studio.id),
   ]);
   domain.end();
 
@@ -187,7 +188,7 @@ export default async function CalendarPage({
   const availabilityForDate = (date: string, dayOfWeek: number) => resolveCalendarDayAvailability({
     date, dayOfWeek, defaults: availabilityDefaults, overrides: availabilityOverrides,
     capacityEnabled: studio.practitioner_capacity_enabled === true,
-    activePractitionerIds: activePractitioners.map((p) => p.id),
+    activePractitionerIds: (studio.practitioner_capacity_enabled === true ? activePractitioners : []).map((p) => p.id),
   });
   function isClosedDate(date: string, dow: number): boolean {
     return availabilityForDate(date, dow).closedDay;
@@ -290,7 +291,7 @@ export default async function CalendarPage({
         weekHref={`/calendar?view=week&week=${weekStart}`}
         monthHref={`/calendar?view=month&month=${firstOfMonthString(weekStart)}&week=${weekStart}`}
         dayHref={
-          hasDayView(activePractitioners)
+          hasDayView(studio.practitioner_capacity_enabled === true, activePractitioners)
             ? `/calendar?view=day&day=${initialSelectedDate}`
             : undefined
         }
@@ -536,7 +537,8 @@ async function renderMonthView(opts: {
       startUtc.toISOString(),
       endUtc.toISOString(),
     ),
-    studio.practitioner_capacity_enabled === true ? getPractitionersForStudio(studio.id) : Promise.resolve([]),
+    // Loaded for every studio: the Day tab needs the active count even with capacity off.
+    getPractitionersForStudio(studio.id),
   ]);
   domain.end();
 
@@ -547,7 +549,7 @@ async function renderMonthView(opts: {
     return resolveCalendarDayAvailability({
       date: dateStr, dayOfWeek: dow, defaults: availabilityDefaults, overrides: availabilityOverrides,
       capacityEnabled: studio.practitioner_capacity_enabled === true,
-      activePractitionerIds: activePractitioners.map((p) => p.id),
+      activePractitionerIds: (studio.practitioner_capacity_enabled === true ? activePractitioners : []).map((p) => p.id),
     });
   };
   function isClosedDate(dateStr: string): boolean {
@@ -585,7 +587,7 @@ async function renderMonthView(opts: {
         weekHref={lastWeekHref}
         monthHref={`/calendar?view=month&month=${monthAnchor}`}
         dayHref={
-          hasDayView(activePractitioners)
+          hasDayView(studio.practitioner_capacity_enabled === true, activePractitioners)
             ? `/calendar?view=day&day=${today >= monthAnchor && today < monthEnd ? today : monthAnchor}`
             : undefined
         }
@@ -676,7 +678,7 @@ async function renderTeamDayView(opts: {
   ]);
   domain.end();
 
-  if (!hasDayView(activePractitioners)) {
+  if (!hasDayView(capacityEnabled, activePractitioners)) {
     redirect(`/calendar?day=${date}`);
   }
 

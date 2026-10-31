@@ -40,13 +40,21 @@ describe("what counts as a team calendar", () => {
 });
 
 describe("who has a Day view at all (one compact column for a lone practitioner)", () => {
-  it("is every studio with at least one active practitioner, capacity on or off", () => {
-    expect(hasDayView([{ id: "a" }])).toBe(true);
-    expect(hasDayView([{ id: "a" }, { id: "b" }])).toBe(true);
-    expect(hasDayView([])).toBe(false);
+  const one = [{ id: "a" }];
+  const many = [{ id: "a" }, { id: "b" }];
+  it("capacity ON: any studio with at least one active practitioner", () => {
+    expect(hasDayView(true, one)).toBe(true);
+    expect(hasDayView(true, many)).toBe(true);
+    expect(hasDayView(true, [])).toBe(false);
+  });
+  it("capacity OFF: only a studio with EXACTLY one active practitioner", () => {
+    expect(hasDayView(false, one)).toBe(true);
+    expect(hasDayView(false, many)).toBe(false); // keeps today's week grid
+    expect(hasDayView(false, [])).toBe(false);
   });
   it("does not change which studios OPEN on the Day view", () => {
-    expect(isTeamCalendar(true, [{ id: "a" }])).toBe(false);
+    expect(isTeamCalendar(true, one)).toBe(false);
+    expect(isTeamCalendar(false, one)).toBe(false);
   });
 });
 

@@ -118,7 +118,11 @@ describe("team day page path", () => {
     );
     expect(PAGE).toContain("isTeamCalendar");
     expect(PAGE).not.toMatch(/studio\.id\s*===/);
-    expect(day).toContain("if (!hasDayView(activePractitioners))");
+    expect(day).toContain("if (!hasDayView(capacityEnabled, activePractitioners))");
+    // The week and month renderers load the active list for EVERY studio, so a solo capacity-off
+    // studio is offered the Day tab; the availability input stays capacity-gated as before.
+    expect(PAGE).not.toMatch(/practitioner_capacity_enabled === true \? getPractitionersForStudio/);
+    expect((PAGE.match(/hasDayView\(studio\.practitioner_capacity_enabled === true, activePractitioners\)/g) ?? []).length).toBe(2);
     expect(day).not.toContain("if (!capacityEnabled) redirect");
     // The real capacity flag reaches the column and the block scope names, never a hard-coded true.
     expect(day).toContain("practitionerCapacityEnabled={capacityEnabled}");
