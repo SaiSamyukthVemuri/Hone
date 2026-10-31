@@ -221,7 +221,7 @@ async function ownerView(who: SignedIn, studioId: string, appointmentId: string)
   for (const [name, value] of who.cookies) jar.set(name, value);
   let state: string | undefined;
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    state = (await getAppointmentPaymentStates(studioId, [appointmentId], TZ)).get(appointmentId);
+    state = (await getAppointmentPaymentStates(studioId, [appointmentId], TZ, true)).get(appointmentId);
     if (state !== "unavailable") return state;
     await new Promise((r) => setTimeout(r, 250));
   }
