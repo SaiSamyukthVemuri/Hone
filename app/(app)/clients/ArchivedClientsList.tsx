@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { DirectoryClient } from "@/lib/supabase/queries";
+import { clientDisplayName } from "@/lib/clients/identity";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PendingButton } from "@/components/pending-button";
 import { unarchiveClientAction } from "./[id]/actions";
@@ -52,7 +53,7 @@ function ArchivedClientRow({ client }: { client: DirectoryClient }) {
             href={`/clients/${client.id}`}
             className="truncate font-medium hover:underline"
           >
-            {client.name}
+            {clientDisplayName(client)}
           </Link>
           <span className="inline-flex items-center rounded-full bg-neutral-200 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
             Archived

@@ -1,0 +1,10 @@
+{
+  "pr": 1227,
+  "runtime": true,
+  "migrations": [
+    "supabase/migrations/0258_hon58_identity.sql",
+    "supabase/migrations/0266_legal_name_receptionist_access.sql",
+    "supabase/migrations/0272_hon58_legal_identity_hardening.sql"
+  ],
+  "release_receipt": "01-ops/1227-release-receipt.json"
+}

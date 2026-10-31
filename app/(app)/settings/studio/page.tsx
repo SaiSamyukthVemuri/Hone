@@ -4,6 +4,9 @@ import { StudioSettingsForm } from "./StudioSettingsForm";
 import { EmailSettingsForm } from "./EmailSettingsForm";
 import { SmsSettingsForm } from "./SmsSettingsForm";
 import { ClientSelfServiceForm } from "./ClientSelfServiceForm";
+import { LegalNameAccessForm } from "./LegalNameAccessForm";
+import { createClient } from "@/lib/supabase/server";
+import { readLegalNameAccessSetting } from "@/lib/clients/legal-name-access";
 import { clientSelfServicePolicyFromStudio } from "@/lib/booking/client-self-service-policy";
 // PostcareSettingsForm intentionally NOT imported here. Postcare
 // editing moved to /settings/intake (Intake & Postcare tab) after
@@ -20,6 +23,9 @@ export default async function StudioSettingsPage() {
       </div>
     );
   }
+
+  // HON-58 Q1 (0266): the card exists only where the switch's table does.
+  const legalNameAccess = await readLegalNameAccessSetting(await createClient(), studio.id);
 
   return (
     <section className="flex flex-col gap-10">
@@ -64,6 +70,7 @@ export default async function StudioSettingsPage() {
         )}
         portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
       />
+      {legalNameAccess.available && <LegalNameAccessForm initial={legalNameAccess.receptionistAccess} />}
     </section>
   );
 }

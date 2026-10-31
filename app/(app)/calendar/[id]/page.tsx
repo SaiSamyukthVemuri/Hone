@@ -61,6 +61,7 @@ import type {
   TreatmentPlan,
 } from "@/lib/types/database";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { clientDisplayName, type WithPreferredName } from "@/lib/clients/identity";
 
 type ClientBriefing = Pick<
   Client,
@@ -72,7 +73,8 @@ type ClientBriefing = Pick<
   | "allergies"
   | "fitzpatrick_type"
   | "skin_notes"
->;
+> &
+  WithPreferredName;
 
 type Joined = Appointment & {
   client: ClientBriefing | null;
@@ -112,7 +114,7 @@ export default async function AppointmentDetailPage({
   const { data, error } = await supabase
     .from("appointments")
     .select(
-      "*, client:clients(id, name, email, phone, pronouns, allergies, fitzpatrick_type, skin_notes), service:services(id, name, default_duration_minutes, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
+      "*, client:clients(id, name, preferred_name, email, phone, pronouns, allergies, fitzpatrick_type, skin_notes), service:services(id, name, default_duration_minutes, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(id, display_name, color)",
     )
     .eq("id", id)
     .eq("studio_id", studio.id)
@@ -581,7 +583,7 @@ export default async function AppointmentDetailPage({
           }
           reviewUrl={studio.postcare_review_url}
           reviewPromptText={studio.postcare_review_prompt_text}
-          clientName={data.client.name}
+          clientName={clientDisplayName(data.client)}
           serviceName={data.service?.name ?? null}
           serviceModality={data.service?.modality ?? null}
           startsAt={data.starts_at}
@@ -715,7 +717,7 @@ export default async function AppointmentDetailPage({
                 startsAt: data.starts_at,
                 endsAt: data.ends_at,
                 durationMinutes: data.duration_minutes,
-                clientName: data.client?.name ?? null,
+                clientName: data.client ? clientDisplayName(data.client) : null,
                 serviceName: data.service?.name ?? null,
                 practitionerName: data.practitioner?.display_name ?? null,
               }}
@@ -949,7 +951,7 @@ function ClientBriefingCard({
           href={`/clients/${client.id}`}
           className="text-base font-medium hover:underline"
         >
-          {client.name}
+          {clientDisplayName(client)}
         </Link>
         {client.pronouns && (
           <span className="text-sm text-neutral-500">{client.pronouns}</span>

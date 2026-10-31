@@ -352,7 +352,7 @@ describe("0179 — a successful apply means 39/39 VALIDATED", () => {
 });
 
 describe("0179 — catalog shape", () => {
-  it("leaves exactly the expected nine simple practitioner FKs", async () => {
+  it("leaves exactly the expected ten simple practitioner FKs", async () => {
     const res = await adminQuery(`
       select ct.relname || '.' ||
              (select a.attname from pg_attribute a
@@ -367,7 +367,10 @@ describe("0179 — catalog shape", () => {
     // Every remaining simple FK is out of 0179's actor scope by an explicit
     // ruling: assignee, resource, recipient, domain subject, clinical performer
     // provenance, or a parent-scoped actor with no local studio lineage.
+    // client_legal_identities.updated_by (0258) is a nullable audit pointer
+    // ON DELETE SET NULL with no local studio lineage.
     expect(res.rows.map((r: { ref: string }) => r.ref)).toEqual([
+      "client_legal_identities.updated_by",
       "electrolysis_entries.deleted_by",
       "laser_entries.deleted_by",
       "practitioner_notifications.practitioner_id",
