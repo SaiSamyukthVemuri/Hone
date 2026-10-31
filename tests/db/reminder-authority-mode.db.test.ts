@@ -53,6 +53,11 @@ describe("reminder email authority mode on a real database", () => {
 
   it("the probe has no effect: no operation, cohort or appointment row is created", async () => {
     const before = await adminQuery("select count(*)::int as n from public.appointments");
+    // Measure a delta, not zero: with 0247 applied other DB files in the same
+    // run legitimately leave operations behind, and the probe must add none.
+    const opsBefore = (await exists("inspect_appointment_email_operation"))
+      ? ((await adminQuery("select count(*)::int as n from appointment_email_private.operations")).rows[0] as { n: number }).n
+      : null;
     const { detectReminderAuthorityMode } = await import("@/lib/email/reminder-authority-mode");
     await detectReminderAuthorityMode(admin);
     await detectReminderAuthorityMode(admin);
@@ -60,7 +65,7 @@ describe("reminder email authority mode on a real database", () => {
     expect(after.rows[0]).toEqual(before.rows[0]);
     if (await exists("inspect_appointment_email_operation")) {
       const ops = await adminQuery("select count(*)::int as n from appointment_email_private.operations");
-      expect((ops.rows[0] as { n: number }).n).toBe(0);
+      expect((ops.rows[0] as { n: number }).n).toBe(opsBefore);
     }
   });
 });
