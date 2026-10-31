@@ -200,7 +200,7 @@ describe("0271 protocol proofs (real Realtime)", () => {
     expect(sub.got.length).toBe(before);
   });
 
-  it("forged publish: a browser cannot send into the topic (socket send, REST broadcast), public or private", async () => {
+  it("forged publish: a browser cannot send into the topic (socket send, REST broadcast incl. an active member), public or private", async () => {
     const listener = await join(topicA(), { token: memberA.token, isPrivate: true });
     expect(listener.status).toBe("SUBSCRIBED");
     const before = listener.got.length;
@@ -212,7 +212,7 @@ describe("0271 protocol proofs (real Realtime)", () => {
     ];
     const outcomes: Record<string, string> = {};
     for (const a of attackers) {
-      try { outcomes[a.name] = String(await a.sub.ch.send({ type: "broadcast", event: "changed", payload: {} })); }
+      try { outcomes[a.name] = String(await a.sub.ch.send({ type: "broadcast", event: "changed", payload: { forged: true } })); }
       catch (e) { outcomes[a.name] = `threw:${(e as Error).message.slice(0, 40)}`; }
     }
     // The REST broadcast endpoint, as each caller identity.
@@ -220,20 +220,20 @@ describe("0271 protocol proofs (real Realtime)", () => {
       const res = await fetch(`${URL}/realtime/v1/api/broadcast`, {
         method: "POST",
         headers: { apikey: ANON, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: [{ topic: topicA(), event: "changed", payload: {}, private: true }] }),
+        body: JSON.stringify({ messages: [{ topic: topicA(), event: "changed", payload: { forged: true }, private: true }] }),
       });
       outcomes[name] = `http:${res.status}`;
     }
     await sleep(2_500);
     console.log("PROOF forged-publish", JSON.stringify({ outcomes, delivered: listener.got.length - before }));
-    // A public publisher on a private topic must not reach the private listener. The REST
-    // member publish is reported, not asserted: a member forging a data-free refresh ping at
-    // their OWN studio is a no-op nudge (the page refetches under RLS), and the policy has no
-    // INSERT clause for them either way.
-    const memberRest = outcomes["rest-member"];
-    const delivered = listener.got.length - before;
-    if (!/^http:(2\d\d)$/.test(memberRest ?? "")) expect(delivered).toBe(0);
-    else expect(delivered).toBeLessThanOrEqual(1);
+    // Nothing a browser identity publishes reaches the private listener, over any path: public or
+    // private socket send, and the REST broadcast endpoint as anon, another studio's owner, a removed
+    // member and an ACTIVE MEMBER of the same studio. Measured on the pinned local Realtime: every REST
+    // call returns 202 and none is delivered. Asserted, per path, not just printed.
+    expect(outcomes["rest-member"], "REST member publish returns an HTTP status").toMatch(/^http:\d{3}$/);
+    expect(listener.got.length - before, "no forged publish was delivered").toBe(0);
+    const forgedRows = (await sql<{ n: number }>(`select count(*)::int as n from realtime.messages where topic = $1 and payload ? 'forged'`, [topicA()]))[0].n;
+    expect(forgedRows, "no forged row was written").toBe(0);
   });
 
   it("SQL-level forged realtime.send as authenticated and anon: no new row AND no delivery to a private subscriber; the postgres control row is delivered", async () => {

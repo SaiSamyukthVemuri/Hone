@@ -426,22 +426,31 @@ describe("who may listen (the policy matrix)", () => {
     expect(anonSees).toBe(0);
   });
 
-  it("nobody can publish from the browser side: insert, update and delete on realtime.messages are refused for authenticated", async () => {
-    for (const sql of [
-      `insert into realtime.messages (topic, extension, payload, event, private) values ('${topicOf(A)}','broadcast','{"forged":true}','changed',true)`,
-      `update realtime.messages set payload = '{"forged":true}' where topic = '${topicOf(A)}'`,
-      `delete from realtime.messages where topic = '${topicOf(A)}'`,
-    ]) {
+  it("nobody can publish from the browser side: insert is refused by RLS, update and delete touch no row", async () => {
+    // The outcome is asserted PER STATEMENT, not merely "refused or nothing": an INSERT must be
+    // refused with an RLS violation (the restrictive deny, and no permissive INSERT policy at all);
+    // an UPDATE or DELETE has no policy to match, so it affects zero rows and raises nothing.
+    const cases = [
+      { sql: `insert into realtime.messages (topic, extension, payload, event, private) values ('${topicOf(A)}','broadcast','{"forged":true}','changed',true)`, expect: "refused" as const },
+      { sql: `update realtime.messages set payload = '{"forged":true}' where topic = '${topicOf(A)}'`, expect: "zero-rows" as const },
+      { sql: `delete from realtime.messages where topic = '${topicOf(A)}'`, expect: "zero-rows" as const },
+    ];
+    // A row exists on the topic first, so a zero-row UPDATE/DELETE is the policy's doing and not an empty table.
+    await insertAppt(A, serviceA);
+    for (const c of cases) {
       const before = await signals(A);
-      let outcome: "refused" | "no-rows";
+      expect(before, "a signal row exists to be updated or deleted").toBeGreaterThan(0);
+      let got: "refused" | "zero-rows" | "changed-rows";
+      let code: string | undefined;
       try {
-        const r = await asMemberOnTopic(A.userId, topicOf(A), async (q) => q(sql));
-        outcome = (r as { rowCount?: number }).rowCount ? ("no-rows" as const) : ("no-rows" as const);
-        expect((r as { rowCount?: number }).rowCount ?? 0).toBe(0);
-      } catch {
-        outcome = "refused";
+        const r = await asMemberOnTopic(A.userId, topicOf(A), async (q) => q(c.sql));
+        got = ((r as { rowCount?: number }).rowCount ?? 0) === 0 ? "zero-rows" : "changed-rows";
+      } catch (e) {
+        got = "refused";
+        code = (e as { code?: string }).code;
       }
-      expect(["refused", "no-rows"]).toContain(outcome);
+      expect(got, c.sql.slice(0, 40)).toBe(c.expect);
+      if (c.expect === "refused") expect(code, "row-level security violation").toBe("42501");
       expect(await signals(A)).toBe(before);
     }
   });

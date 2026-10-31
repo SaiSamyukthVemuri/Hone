@@ -36,10 +36,13 @@
 -- SERVICE, not by Postgres. CI and a fresh `supabase db reset` run migrations before
 -- they exist (CI excludes the service), so this file guards with to_regclass and
 -- to_regprocedure, emits a NOTICE and skips the policy; the emitter returns quietly
--- while send() is absent and works as soon as it appears. The file is idempotent:
--- re-run it once Realtime has initialised to install the policy. Hosted Supabase has
--- Realtime. UNPROVEN on hosted: that the migration role may create a policy on
--- realtime.messages and that private channels are enabled.
+-- while send() is absent and works as soon as it appears. Re-run it ONLY if the first
+-- run printed the NOTICE that skipped the policies: the triggers and functions use
+-- drop-if-exists or create-or-replace and survive a re-run, but the two policies are
+-- plain create policy (no drop), so a re-run after a run that CREATED them fails on
+-- create policy ("already exists"). Hosted Supabase has Realtime and applies this once.
+-- Hosted facts (read-only, by the owner): policy creation by the migration role is the
+-- supported path (supautils policy_grants includes realtime.messages for postgres).
 --
 -- Reserved by OPS for HON-48. Apply needs its own exact-stage approval.
 begin;
