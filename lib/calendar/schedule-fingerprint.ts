@@ -6,10 +6,13 @@
 
 type Row = Record<string, unknown>;
 
-const FIELDS = {
-  appointments: ["id", "practitioner_id", "client_id", "service_id", "starts_at", "ends_at", "duration_minutes", "status", "blocked_ends_at"],
-  timedBlocks: ["id", "practitioner_id", "starts_at", "ends_at", "category"],
-  blockouts: ["id", "starts_on", "ends_on"],
+// Every column 0271's UPDATE triggers announce is here (tests/lib/calendar/schedule-fingerprint.test.ts
+// derives that list from the migration and fails on a gap), so a label-only edit whose live
+// signal was missed still shows up as a degraded-signal event.
+export const FIELDS = {
+  appointments: ["id", "practitioner_id", "client_id", "service_id", "starts_at", "ends_at", "duration_minutes", "status", "notes", "blocked_ends_at", "buffer_minutes_snapshot"],
+  timedBlocks: ["id", "practitioner_id", "starts_at", "ends_at", "category", "private_note"],
+  blockouts: ["id", "starts_on", "ends_on", "reason"],
   recurringOccurrences: ["id", "starts_at", "ends_at"],
 } as const;
 

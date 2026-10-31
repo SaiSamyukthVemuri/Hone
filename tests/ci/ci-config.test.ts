@@ -2992,6 +2992,19 @@ describe("HON-48 / 0271: the schedule-signal realtime job is separate, runs the 
     expect(readFileSync("package.json", "utf8")).toMatch(/"test:realtime": "vitest run --config vitest\.realtime\.config\.ts"/);
   });
 
+  it("the DB-file step cannot go green on a failing test: bash with pipefail, then the surface marker check", () => {
+    const at = JOB.indexOf("- name: Schedule-signal DB file on the REAL Realtime surface");
+    expect(at).toBeGreaterThan(-1);
+    const step = JOB.slice(at, JOB.indexOf("\n      - name:", at + 1));
+    expect(step).toContain("        shell: bash\n");
+    const c = code(step);
+    expect(c).toContain("set -o pipefail");
+    expect(c.indexOf("set -o pipefail")).toBeLessThan(c.indexOf("npx vitest run"));
+    // The log is a file, not a command substitution (which would swallow the exit status).
+    expect(c).not.toMatch(/out="\$\(/);
+    expect(c.indexOf("npx vitest run")).toBeLessThan(c.indexOf('grep -q "SCHEDULE_SIGNAL_SURFACE real"'));
+  });
+
   it("the protocol test refuses (does not skip) on a stack without the Realtime service or the 0271 policy", () => {
     const t = readFileSync("tests/realtime/schedule-signal.realtime.test.ts", "utf8");
     expect(t).toMatch(/does not run the Realtime service/);

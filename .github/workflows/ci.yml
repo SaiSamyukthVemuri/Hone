@@ -2531,9 +2531,13 @@ jobs:
       # files refuse to run (they do not skip) when realtime.send or the 0271 policy is
       # missing, so a stack that silently lacks the service fails here instead of passing.
       - name: Schedule-signal DB file on the REAL Realtime surface
+        shell: bash
         run: |
-          out="$(npx vitest run --config vitest.db.config.ts tests/db/schedule-signal.db.test.ts 2>&1 | tee /dev/stderr)"
-          echo "$out" | grep -q "SCHEDULE_SIGNAL_SURFACE real"
+          # pipefail: a failing test must fail the step even though Vitest is piped into tee.
+          # The marker check stays: it proves the file ran against the real surface.
+          set -o pipefail
+          npx vitest run --config vitest.db.config.ts tests/db/schedule-signal.db.test.ts 2>&1 | tee "$RUNNER_TEMP/schedule-signal-db.log"
+          grep -q "SCHEDULE_SIGNAL_SURFACE real" "$RUNNER_TEMP/schedule-signal-db.log"
 
       - name: Realtime protocol proofs (public-join bypass, isolation, forged publish, reconnect, latency, capacity)
         if: ${{ !cancelled() }}
