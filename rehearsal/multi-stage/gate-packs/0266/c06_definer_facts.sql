@@ -5,5 +5,5 @@ select p.proname as obj, pg_catalog.oidvectortypes(p.proargtypes) as args, p.pro
             where has_function_privilege(x.r, p.oid, 'EXECUTE')), '') as exec_roles,
   exists (select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a where a.grantee = 0 and a.privilege_type = 'EXECUTE') as exec_public
 from pg_catalog.pg_proc p
-where p.oid in (pg_catalog.to_regprocedure('public.set_receptionist_legal_name_access(uuid,boolean)'))
+where p.oid in (pg_catalog.to_regprocedure('public.set_receptionist_legal_name_access(uuid,boolean)'), pg_catalog.to_regprocedure('public.can_read_client_legal_identity(uuid)'), pg_catalog.to_regprocedure('public.client_legal_name_access_audit_immutable()'), pg_catalog.to_regprocedure('public.receptionist_client_contacts_v2(uuid,text,integer)'), pg_catalog.to_regprocedure('public.receptionist_calendar(uuid,timestamptz,timestamptz)'))
 order by 1, 2;

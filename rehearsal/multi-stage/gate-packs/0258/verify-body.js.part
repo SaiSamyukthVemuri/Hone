@@ -5,6 +5,7 @@ const fnr = (name) => rows(name).map((x) => `${x.obj}(${x.args})|definer=${isTru
 const fnx = (name) => rows(name).map((x) => `${x.obj}(${x.args})|exec=${x.exec_roles}|public=${isTrue(x.exec_public)}`);
 const plx = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}`);
 const pl = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}|${x.roles}`);
+const sq = (name) => rows(name).map((x) => `${x.obj}|${x.role}|${x.privs}`);
 const tg = (name) => rows(name).map((x) => `${x.obj}|${x.tgname}|${x.enabled}|row=${isTrue(x.row_level)}|before=${isTrue(x.before_trg)}`);
 cmp(tb("c01_table_privileges"), ["client_legal_identities|anon||true", "client_legal_identities|authenticated|select,insert,update|true", "client_legal_identities|service_role||true"], "client_legal_identities: authenticated holds exactly select, insert, update; anon and service_role hold nothing; no DELETE; RLS on");
 console.log("PASS client_legal_identities: authenticated holds exactly select, insert, update; anon and service_role hold nothing; no DELETE; RLS on");

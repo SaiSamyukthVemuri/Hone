@@ -34,6 +34,15 @@ def tbl_priv_sql(tables):
             "order by 1, 2;\n" % (cols, ", ".join("pg_catalog.to_regclass('%s')" % t for t in tables)))
 
 
+def seq_priv_sql(seqs):
+    cols = ", ".join("case when has_sequence_privilege(r.role, c.oid, '%s') then '%s' end" % (p.upper(), p.lower()) for p in ("usage", "select", "update"))
+    return ("select c.relname as obj, r.role, coalesce(concat_ws(',', %s), '') as privs\n"
+            "from pg_catalog.pg_class c\n"
+            "cross join (values ('anon'), ('authenticated'), ('service_role')) as r(role)\n"
+            "where c.oid in (%s)\n"
+            "order by 1, 2;\n" % (cols, ", ".join("pg_catalog.to_regclass('%s')" % t for t in seqs)))
+
+
 def fn_sql(sigs):
     return ("select p.proname as obj, pg_catalog.oidvectortypes(p.proargtypes) as args, p.prosecdef as definer,\n"
             "  coalesce((select substr(c, 13) from unnest(coalesce(p.proconfig, '{}')) c where c like 'search_path=%%'), '') as search_path,\n"
@@ -75,6 +84,7 @@ const fnr = (name) => rows(name).map((x) => `${x.obj}(${x.args})|definer=${isTru
 const fnx = (name) => rows(name).map((x) => `${x.obj}(${x.args})|exec=${x.exec_roles}|public=${isTrue(x.exec_public)}`);
 const plx = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}`);
 const pl = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}|${x.roles}`);
+const sq = (name) => rows(name).map((x) => `${x.obj}|${x.role}|${x.privs}`);
 const tg = (name) => rows(name).map((x) => `${x.obj}|${x.tgname}|${x.enabled}|row=${isTrue(x.row_level)}|before=${isTrue(x.before_trg)}`);
 '''
 
@@ -217,15 +227,22 @@ def main():
                "receptionist_calendar(uuid, timestamp with time zone, timestamp with time zone)|exec=authenticated|public=false",
                "receptionist_client_contacts(uuid, text, integer)|exec=|public=false", "receptionist_client_contacts_v2(uuid, text, integer)|exec=authenticated|public=false",
                "set_receptionist_legal_name_access(uuid, boolean)|exec=authenticated|public=false"]),
-        check("the two writer and predicate definers pin the reviewed search_path", "c06_definer_facts", "fnr",
-              ["set_receptionist_legal_name_access(uuid, boolean)|definer=true|sp=pg_catalog, pg_temp|exec=authenticated|public=false"]),
+        check("every 0266 function pins search_path to pg_catalog, pg_temp (Privacy G1); the writer, predicate, v2 contacts and calendar are definers, the audit trigger function is an invoker", "c06_definer_facts", "fnr",
+              ["set_receptionist_legal_name_access(uuid, boolean)|definer=true|sp=pg_catalog, pg_temp|exec=authenticated|public=false",
+               "can_read_client_legal_identity(uuid)|definer=true|sp=pg_catalog, pg_temp|exec=authenticated|public=false",
+               "receptionist_client_contacts_v2(uuid, text, integer)|definer=true|sp=pg_catalog, pg_temp|exec=authenticated|public=false",
+               "receptionist_calendar(uuid, timestamp with time zone, timestamp with time zone)|definer=true|sp=pg_catalog, pg_temp|exec=authenticated|public=false",
+               "client_legal_name_access_audit_immutable()|definer=false|sp=pg_catalog, pg_temp|exec=|public=false"]),
+        check("the audit identity sequence is granted to NO API role (Privacy G6)", "c07_audit_sequence", "sq",
+              ["client_legal_name_access_audit_id_seq|%s|" % r for r in ROLES]),
         check("the audit table's append-only triggers are present and enabled", "c05_triggers", "tg",
               ["client_legal_name_access_audit|client_legal_name_access_audit_no_truncate|O|row=false|before=true", "client_legal_name_access_audit|client_legal_name_access_audit_no_update|O|row=true|before=true"]),
     ]
     write_pack("0266", "0266", pre266, [("new_tables", tbl_priv_sql(["public.studio_legal_name_access", "public.client_legal_name_access_audit"])),
                                         ("identity_table", tbl_priv_sql(["public.client_legal_identities"])), ("policies", pol_sql("public", t66)),
                                         ("functions", fn_sql(f66)), ("triggers", trg_sql(["client_legal_name_access_audit_no_update", "client_legal_name_access_audit_no_truncate"])),
-                                        ("definer_facts", fn_sql(["public.set_receptionist_legal_name_access(uuid,boolean)"]))],
+                                        ("definer_facts", fn_sql(f66[:3] + [f66[3], f66[5]])),
+                                        ("audit_sequence", seq_priv_sql(["public.client_legal_name_access_audit_id_seq"]))],
                c266, ["client_legal_identities"],
                "history, the privileges by role on the three tables, the policy set, the function grants and the audit triggers",
                notes="Privacy PEER-0258-0266-SQL C4. Needs 0258 (and 0272) earlier in the plan.")

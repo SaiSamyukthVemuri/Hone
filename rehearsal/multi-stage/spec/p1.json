@@ -8,7 +8,8 @@
       "0257"
     ],
     "expect_rows": 247,
-    "expect_max": "0257"
+    "expect_max": "0257",
+    "dir_sha256": "2da1e7a6014a0fbdfabc60eb4f233c0b68b89ba2e7876bbbf6a94ca4168d6eb5"
   },
   "steps": [
     {
@@ -53,7 +54,8 @@
         "class": "unknown",
         "content_gates": "MISSING",
         "blocker": "General must supply the sealed file; replacing the placeholder and re-running the builder adds its stages"
-      }
+      },
+      "sha256": "a373688cd6d3286bbf8685c1be26abc3f74e5b5123f4d2b9189d2be9e4d48f9e"
     },
     {
       "file": "sealed/0266_legal_name_receptionist_access.sql",

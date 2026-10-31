@@ -5,6 +5,7 @@ const fnr = (name) => rows(name).map((x) => `${x.obj}(${x.args})|definer=${isTru
 const fnx = (name) => rows(name).map((x) => `${x.obj}(${x.args})|exec=${x.exec_roles}|public=${isTrue(x.exec_public)}`);
 const plx = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}`);
 const pl = (name) => rows(name).map((x) => `${x.obj}|${x.policyname}|${x.cmd}|${x.permissive}|${x.roles}`);
+const sq = (name) => rows(name).map((x) => `${x.obj}|${x.role}|${x.privs}`);
 const tg = (name) => rows(name).map((x) => `${x.obj}|${x.tgname}|${x.enabled}|row=${isTrue(x.row_level)}|before=${isTrue(x.before_trg)}`);
 cmp(pl("c01_realtime_policies"), ["messages|schedule_signal_member_read|SELECT|PERMISSIVE|authenticated", "messages|schedule_signal_no_client_insert|INSERT|RESTRICTIVE|anon,authenticated"], "realtime.messages: exactly schedule_signal_member_read (SELECT, authenticated) and schedule_signal_no_client_insert (RESTRICTIVE INSERT, anon and authenticated)");
 console.log("PASS realtime.messages: exactly schedule_signal_member_read (SELECT, authenticated) and schedule_signal_no_client_insert (RESTRICTIVE INSERT, anon and authenticated)");

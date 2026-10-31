@@ -23,6 +23,13 @@ runq() { # runq FILE OUTFILE
 }
 sqlx() { psql "$PGURL" -At -v ON_ERROR_STOP=1 -c "$1" 2>&1; }
 echo "# gate packs on a real stack: sequence $SEQ: $STAGES"
+# a plan built on the hosted set AFTER an already-applied migration (e.g. 0254): bring the stack to that shape first, from the pinned sealed bytes
+EXTRA=$(pj "$PKG/PLAN.json" '" ".join(d["hosted_before_step_1"].get("extra", []))')
+if [ -n "$EXTRA" ]; then
+  [ -n "${EXTRA_DIR:-}" ] || { bad "the plan's hosted set includes $EXTRA but EXTRA_DIR (the directory holding it) is not set"; echo "# RESULT: $pass passed, $fail failed"; exit 1; }
+  for f in $EXTRA; do cp "$EXTRA_DIR/$f" supabase/migrations/; done
+  supabase db push --local --include-all --yes > "$OUT/extra-push.log" 2>&1 || { bad "the hosted-set extras ($EXTRA) could not be applied" "$(tail -3 "$OUT/extra-push.log")"; echo "# RESULT: $pass passed, $fail failed"; exit 1; }
+fi
 n0=$(sqlx "select count(*) from supabase_migrations.schema_migrations"); m0=$(sqlx "select max(version) from supabase_migrations.schema_migrations")
 [ "$n0" = "$(pj "$PKG/PLAN.json" 'd["hosted_before_step_1"]["rows"]')" ] && [ "$m0" = 0257 ] && ok "the stack is hosted-shaped: $n0 history rows, max $m0" || { bad "the stack is not hosted-shaped" "rows=$n0 max=$m0"; echo "# RESULT: $pass passed, $fail failed"; exit 1; }
 for S in $STAGES; do
@@ -77,6 +84,7 @@ for S in $STAGES; do
     0266) mut "INSERT granted on studio_legal_name_access" "grant insert on public.studio_legal_name_access to authenticated" "revoke insert on public.studio_legal_name_access from authenticated"
           mut "an ALL policy on client_legal_name_access_audit" "create policy zz_mut on public.client_legal_name_access_audit for all to authenticated using (true)" "drop policy zz_mut on public.client_legal_name_access_audit"
           mut "service_role granted SELECT on client_legal_name_access_audit" "grant select on public.client_legal_name_access_audit to service_role" "revoke select on public.client_legal_name_access_audit from service_role"
+          mut "the audit identity sequence granted to authenticated again" "grant usage on sequence public.client_legal_name_access_audit_id_seq to authenticated" "revoke all on sequence public.client_legal_name_access_audit_id_seq from authenticated"
           mut "the old receptionist_client_contacts executable by authenticated again" "grant execute on function public.receptionist_client_contacts(uuid, text, integer) to authenticated" "revoke execute on function public.receptionist_client_contacts(uuid, text, integer) from authenticated" ;;
     0271) mut "a permissive INSERT policy on realtime.messages" "create policy zz_mut on realtime.messages for insert to authenticated with check (true)" "drop policy zz_mut on realtime.messages"
           mut "a third policy on realtime.messages (a public SELECT)" "create policy zz_mut2 on realtime.messages for select to anon using (true)" "drop policy zz_mut2 on realtime.messages"

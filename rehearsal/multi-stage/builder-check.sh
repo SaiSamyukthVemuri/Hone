@@ -20,9 +20,12 @@ exec(code)
 json.dump(spec, open(sys.argv[2], "w"))
 PY
 }
-w dup 'spec["steps"].append({"file": spec["steps"][0]["file"]})'; refuse "DUPLICATE: the same migration listed twice is refused" "already in the hosted set or an earlier step" "$sd/.t-dup.json"
-w hosted 'spec["steps"].append({"file": "sealed/0258_hon58_identity.sql"})'; refuse "DUPLICATE (later step repeats an earlier one) is refused" "already in the hosted set or an earlier step" "$sd/.t-hosted.json"
+w dup 'spec["steps"].append(dict(spec["steps"][0]))'; refuse "DUPLICATE: the same migration listed twice is refused" "already in the hosted set or an earlier step" "$sd/.t-dup.json"
+w hosted 'spec["steps"].append({"file": "sealed/0258_hon58_identity.sql", "sha256": "12c8109d41059e78fbc7df2af3a5a15b5bfcd3c17e0a5453e385cff0cc1cfd78"})'; refuse "DUPLICATE (later step repeats an earlier one) is refused" "already in the hosted set or an earlier step" "$sd/.t-hosted.json"
 w rows 'spec["hosted"]["expect_rows"] = 246'; refuse "HOSTED DIRECTORY that is not the hosted set (wrong file count) is refused" "hosted directory holds" "$sd/.t-rows.json"
+w nosha 'del spec["steps"][1]["sha256"]'; refuse "R5: a step with no sha256 in the spec is refused (mandatory for every step)" "carries no sha256" "$sd/.t-nosha.json"
+w nodir 'del spec["hosted"]["dir_sha256"]'; refuse "R5: a hosted block with no dir_sha256 is refused" "no dir_sha256" "$sd/.t-nodir.json"
+w baddir 'spec["hosted"]["dir_sha256"] = "0" * 64'; refuse "R5: a hosted set whose file hashes differ from the pin is refused (a count and a max are not enough)" "not the pinned one" "$sd/.t-baddir.json"
 w max 'spec["hosted"]["expect_max"] = "0256"'; refuse "HOSTED DIRECTORY with the wrong max is refused" "hosted directory max" "$sd/.t-max.json"
 w pack 'spec["steps"] = spec["steps"][1:] + spec["steps"][:1]'; refuse "STALE GATE PACK: 0254's pack was reviewed at hosted max 0257; placed after the other steps it is refused" "(gate pack was reviewed for a hosted max|ADOPTED package is valid only as step 1)" "$sd/.t-pack.json"
 w name 'spec["steps"][1]["file"] = "sealed/0258 bad name.sql"'; refuse "a file that is not NNNN_name.sql is refused" "is not NNNN_name.sql" "$sd/.t-name.json"

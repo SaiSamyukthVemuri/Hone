@@ -18,7 +18,8 @@
     "c03_policies.sql",
     "c04_functions.sql",
     "c05_triggers.sql",
-    "c06_definer_facts.sql"
+    "c06_definer_facts.sql",
+    "c07_audit_sequence.sql"
   ],
   "verify_label": "history, the privileges by role on the three tables, the policy set, the function grants and the audit triggers",
   "notes": "Privacy PEER-0258-0266-SQL C4. Needs 0258 (and 0272) earlier in the plan."

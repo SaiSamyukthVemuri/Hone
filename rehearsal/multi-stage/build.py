@@ -123,12 +123,29 @@ def plan(spec, include=None):
     if not hosted:
         die("no hosted migration files in %s" % hdir)
     ex = spec["hosted"]
+    extra_bytes = {}
+    for e in ex.get("extra", []):
+        # a migration that is ALREADY applied on hosted but absent from the checkout's tree (e.g. 0254 once Sam has applied it): its bytes are pinned here
+        eb, en = open(e["file"], "rb").read(), os.path.basename(e["file"])
+        em = re.match(r"^(\d{4})_[A-Za-z0-9_]+\.sql$", en)
+        if not em or not e.get("sha256") or shab(eb) != e["sha256"]:
+            die("hosted extra %s: not NNNN_name.sql, or its sha256 is missing or not the sealed one (%s)" % (en, shab(eb)))
+        if int(em.group(1)) in hosted:
+            die("hosted extra %s: version %s is already in the hosted directory" % (en, em.group(1)))
+        hosted[int(em.group(1))] = en
+        extra_bytes[int(em.group(1))] = eb
     if "expect_rows" in ex and len(hosted) != ex["expect_rows"]:
         die("the hosted directory holds %d files, the spec expects %d (the directory is not the hosted set)" % (len(hosted), ex["expect_rows"]))
     if "expect_max" in ex and v4(max(hosted)) != ex["expect_max"]:
         die("the hosted directory max is %s, the spec expects %s" % (v4(max(hosted)), ex["expect_max"]))
     steps, seen = [], set(hosted)
-    cur_files = {v: open(os.path.join(hdir, f), "rb").read() for v, f in hosted.items()}
+    cur_files = {v: (extra_bytes[v] if v in extra_bytes else open(os.path.join(hdir, f), "rb").read()) for v, f in hosted.items()}
+    # R5: the hosted set is pinned by the sha256 of EVERY file (name and bytes), not by a count and a max
+    dsha = hashlib.sha256("".join("%s %s\n" % (hosted[v], shab(cur_files[v])) for v in sorted(hosted)).encode()).hexdigest()
+    if not ex.get("dir_sha256"):
+        die("the spec's hosted block has no dir_sha256 (the hash of the hosted set, mandatory); this directory hashes to %s" % dsha)
+    if ex["dir_sha256"] != dsha:
+        die("the hosted set is not the pinned one: its dir_sha256 is %s, the spec pins %s (a file differs, is missing or was added)" % (dsha, ex["dir_sha256"]))
     names = dict(hosted)
     cur = set(hosted)
     pins_hosted = []
@@ -137,6 +154,8 @@ def plan(spec, include=None):
         if not pf:
             die("the hosted set has no file %s to pin by sha" % pv)
         pins_hosted.append((pf[0], shab(cur_files[int(pv)])))
+    for v_ in sorted(extra_bytes):
+        pins_hosted.append((hosted[v_], shab(extra_bytes[v_])))
     earlier = []
     chosen = [x for i, x in enumerate(spec["steps"]) if include is None or i in include]
     for k, s in enumerate(chosen, 1):
@@ -145,7 +164,9 @@ def plan(spec, include=None):
         if not m:
             die("step %d: %r is not NNNN_name.sql" % (k, fn0))
         body = open(s["file"], "rb").read()
-        if s.get("sha256") and shab(body) != s["sha256"]:
+        if not s.get("sha256"):
+            die("step %d (%s): the spec carries no sha256 for it (mandatory for every step)" % (k, fn0))
+        if shab(body) != s["sha256"]:
             die("step %d (%s): the file is not the sealed one (sha256 %s, the spec says %s)" % (k, fn0, shab(body), s["sha256"]))
         fn = fn0
         v = int(fn[:4])
@@ -741,6 +762,8 @@ def main():
     spec["hosted"]["dir"] = os.path.normpath(os.path.join(specdir, spec["hosted"]["dir"]))
     for s_ in spec["steps"]:
         s_["file"] = os.path.normpath(os.path.join(specdir, s_["file"]))
+    for e_ in spec["hosted"].get("extra", []):
+        e_["file"] = os.path.normpath(os.path.join(specdir, e_["file"]))
     hosted, _ = plan(spec, include=[])
     ctx = {"go": spec.get("go_sha", "dce26b75c9c233274239041b4e426821e7728f025a365e54ea2512df442e4b7b"),
            "srcbase": spec.get("src_base", "sam@100.123.145.56:/home/sam/hone-handoffs/2026-10-18/01-ops"),
@@ -780,7 +803,7 @@ def main():
             seq.append(st["stage"])
         sequences[name] = {"dropped": dropped, "stages": seq, "versions": [st["ver"] for st in steps]}
     write(os.path.join(out, "plan-check.sh"), gen_plan_check(rules, vers, sequences, stages, set(str(v4(v)) for v in hosted)), 0o755)
-    plan_json = {"rules": rules, "hosted_before_step_1": {"rows": len(hosted), "max": v4(max(hosted)), "md5": md5list(set(hosted))},
+    plan_json = {"rules": rules, "hosted_before_step_1": {"rows": len(hosted), "max": v4(max(hosted)), "md5": md5list(set(hosted)), "dir_sha256": spec["hosted"]["dir_sha256"], "extra": [os.path.basename(e["file"]) for e in spec["hosted"].get("extra", [])]},
                  "sequences": sequences, "stages": stages, "skipped_sequences": skipped,
                  "readiness": [dict({"migration": os.path.basename(x["file"]), "droppable": x.get("droppable", True), "requires": x.get("requires", [])}, **x.get("ready", {})) for x in spec["steps"]]}
     write(os.path.join(out, "PLAN.json"), json.dumps(plan_json, indent=2, sort_keys=True) + "\n")

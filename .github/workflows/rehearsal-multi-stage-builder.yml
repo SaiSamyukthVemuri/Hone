@@ -86,6 +86,18 @@ jobs:
           done
           ! grep -q "^FAIL" "$RUNNER_TEMP/seq-p1x.txt" "$RUNNER_TEMP/builder-p1x.txt"
 
+      - name: Package P2 (P1 v2, the real 0258, 0272, 0266, 0271 on the hosted set AFTER 0254), builder checks and every valid plan
+        run: |
+          set -o pipefail
+          python3 rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p2.json "$RUNNER_TEMP/ms-p2" | tee "$RUNNER_TEMP/p2.txt"
+          GENERIC_ONLY=1 bash rehearsal/multi-stage/builder-check.sh rehearsal/multi-stage/spec/p2.json 2>&1 | tee "$RUNNER_TEMP/builder-p2.txt"
+          mkdir "$RUNNER_TEMP/hosted248" && cp supabase/migrations/*.sql "$RUNNER_TEMP/hosted248/" && cp rehearsal/multi-stage/spec/sealed/0254_perm_hon44_role_enforcement.sql "$RUNNER_TEMP/hosted248/"
+          for q in $(python3 -c "import json,sys;print(' '.join(json.load(open(sys.argv[1]))['sequences']))" "$RUNNER_TEMP/ms-p2/PLAN.json"); do
+            echo "=========== P2 sequence $q"
+            ONLY_A=1 bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-p2" "$RUNNER_TEMP/hosted248" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-p2.txt" | tail -3
+          done
+          ! grep -q "^FAIL" "$RUNNER_TEMP/seq-p2.txt" "$RUNNER_TEMP/builder-p2.txt"
+
   push-linux:
     name: MULTI-STAGE push, real CLI v2.102.0, disposable PostgreSQL (Linux)
     runs-on: ubuntu-latest
@@ -320,13 +332,13 @@ jobs:
         if: steps.sb_start.outcome == 'failure'
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,edge-runtime,logflare,vector
 
-      - name: Build package P1X (0254a adopted, 0253, 0255, 0256, 0258, 0272 placeholder, 0266, 0271)
-        run: python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p1x.json "$RUNNER_TEMP/ms-pkgx"
+      - name: Build package P2X (the hosted set AFTER 0254, then 0253, 0255, 0256, 0258, 0272, 0266, 0271)
+        run: python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p2x.json "$RUNNER_TEMP/ms-pkgx"
 
       - name: Gate packs, step by step, against the stack (PRE rules, one real push per step, POST read-back, mutation controls)
         run: |
           set -o pipefail
-          REHEARSAL_OUT="$RUNNER_TEMP/gates-out" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkgx" full 2>&1 | tee "$RUNNER_TEMP/gates-stack.txt"
+          EXTRA_DIR="$PWD/rehearsal/multi-stage/spec/sealed" REHEARSAL_OUT="$RUNNER_TEMP/gates-out" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkgx" full 2>&1 | tee "$RUNNER_TEMP/gates-stack.txt"
           ! grep -q "^FAIL" "$RUNNER_TEMP/gates-stack.txt"
 
       - name: Upload the read-back results (read-only catalog facts, no data)

@@ -87,3 +87,18 @@ A step with no pack gets a **history-only** gate. The plan, the README and the i
   read-back is checked for syntax and its history assertion only.
 - 0272 is a placeholder with a synthetic body until General supplies the file; replacing it and re-running the builder adds its stages.
 - CI runners (macOS arm64 and Linux), not a local stack.
+
+## P1 v2 (`spec/p2.json`, `spec/p2x.json`): the real files, on the hosted set AFTER 0254
+
+Sam is applying 0254 separately, so P2 builds the remaining steps on a hosted set of **248 files** (the checkout's 247 plus 0254, sha `77f34d5c`),
+declared as `hosted.extra` (name and sha256 mandatory). Steps: 0258 `12c8109d`, 0272 `d3805343`, 0266 `5fe2965c` (all #1227 head 51f82f46, in `spec/sealed-v2/`
+for 0272 and 0266), 0271 `5985d3a0` (#1275); `p2x` adds the droppable 0253, 0255, 0256 (below head, `--include-all`).
+
+**Insurance R5.** Every step's `sha256` is mandatory (the builder refuses a step without one), and the hosted block must carry `dir_sha256`: the sha256 of
+`name + " " + sha256(file)` for EVERY hosted file in order (the extras included). A count and a max are no longer the pin. `builder-check.sh` has three
+negative controls (no step sha, no dir hash, a wrong dir hash). The pin is NOT final until OPS confirms the hosted read-back after 0254's apply and Privacy/Insurance
+finish re-reviewing 0258/0272/0266 (a changed file means a new sha and a re-pin).
+
+0272 has no content pack (no reviewer-stated post-apply checks): history-only, flagged CONTENT GATES MISSING. 0266's pack now also asserts search_path on all five of its
+functions (G1) and that the audit identity sequence is granted to no API role (G6). 0258's pack still does not assert search_path (0272 changes it afterwards).
+seq-check's full negative-control suite (B7f/g, rule tests) is written for the adopted 0254 step 1, so P2 runs the combined sequences (`ONLY_A=1`) and the real-stack gate job.
