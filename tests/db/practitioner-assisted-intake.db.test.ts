@@ -549,6 +549,14 @@ describe("0243 public/assisted revision and atomic profile boundary", () => {
         } else if (change === "writer grant option") {
           await q("grant execute on function public.write_intake_revision(uuid,uuid,uuid,bigint,jsonb,integer,text,jsonb) to service_role with grant option");
         } else {
+          // FORWARD TRAP (Insurance PEER-0266-0248-PREFLIGHT P1): this replays the frozen 0248
+          // DO-block at the chain head, and it refuses ANY callable definer that mentions
+          // client_intake_forms and is not the exact reviewed v1. The desk's intake/consent
+          // completion facts were served only by v1, which 0266 closes, so the held desk branch
+          // will need a NEW reviewed command that reads client_intake_forms. When it lands this
+          // test goes red at the head. 0248 cannot be edited: move the reviewed-definer list into
+          // an allowlist test (source sha + exact ACL) BEFORE that command is written, so adding
+          // one definer is a reviewed diff, not a loosening of this test.
           // 0266 revokes EXECUTE on the v1 finder from every role, which correctly takes it out of
           // the preflight's "callable intake definer" set. The mutant must therefore be callable
           // again for the preflight to be asked about its body or its helper; this grant lives only
