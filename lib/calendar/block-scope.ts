@@ -38,3 +38,14 @@ export function blockScopeNamesFor(
   for (const p of activePractitioners) names[p.id] = p.display_name?.trim() || "Practitioner";
   return names;
 }
+
+// Capacity OFF: a practitioner-scoped timed block or recurring break is retained but
+// DORMANT (0137 writes no reservation for it) and the slot engine offers that time, so no
+// calendar view may draw it as unavailable. Studio-wide rows (practitioner_id NULL) stay.
+// Capacity ON draws both. One rule for the day, week and month views.
+export function liveScopedRows<T extends { practitioner_id: string | null }>(
+  capacityEnabled: boolean,
+  rows: ReadonlyArray<T>,
+): T[] {
+  return capacityEnabled ? [...rows] : rows.filter((row) => row.practitioner_id == null);
+}
