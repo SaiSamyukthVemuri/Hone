@@ -76,7 +76,7 @@ describe("6. Messages tab", () => {
 describe("7. overview order", () => {
   it("pinned notes, then allergies, then skin; pricing later", () => {
     const o = PAGE.slice(PAGE.indexOf('{activeTab === "overview"'), PAGE.indexOf('{activeTab === "messages"'));
-    const pinned = o.indexOf("ClientPinnedNotesCard");
+    const pinned = o.indexOf("{pinnedNotesCard}");
     const allergies = o.indexOf("Allergies");
     const skin = o.indexOf(">\n              Skin\n            </h2>") >= 0 ? o.indexOf(">\n              Skin\n            </h2>") : o.indexOf("Skin");
     const pricing = o.lastIndexOf("Pricing");

@@ -154,6 +154,7 @@ import {
 import { ClientBirthdayCard } from "@/components/client-birthday-card";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import { requireLoadedForTab } from "./deferred-reads";
+import { canViewClientBilling } from "@/lib/clients/profile-tabs";
 
 // Parse the studio-local "YYYY-MM-DD" returned by todayInTz() into
 // month/day numbers for the Birthday card's "today" / "this month"
@@ -238,7 +239,11 @@ export default async function ClientCheatSheetPage({
   // would be a real restructuring of a clinical surface for a measurement PR.
   // An early notFound() simply leaves the span unrecorded.
   const domain = startPerfSpan("client-profile.domain");
-  const data = await getClientById(studio.id, id);
+  // Sam's ruling: a non-owner's profile payload carries no client price, session
+  // price or service price. The loaders are told, and do not fetch them.
+  const isOwner = canViewClientBilling(practitioner.role);
+  const priceReads = { includePrices: isOwner };
+  const data = await getClientById(studio.id, id, priceReads);
 
   if (!data) {
     notFound();
@@ -288,6 +293,8 @@ export default async function ClientCheatSheetPage({
   const needsSessionsData = activeTab === "sessions";
   const needsTreatmentPlans = activeTab === "treatment";
   const needsPersonalNotes = activeTab === "personal";
+  // Pinned notes: the Overview briefing AND the notes tab, one read and one card.
+  const needsPinnedNotes = isOverview || activeTab === "personal";
   const needsPortalMessageReplies = activeTab === "messages";
   const needsConsultationNotes = activeTab === "consultation";
 
@@ -343,7 +350,7 @@ export default async function ClientCheatSheetPage({
       ? getAppointmentsForClientProfile(studio.id, client.id)
       : Promise.resolve([] as Awaited<ReturnType<typeof getAppointmentsForClientProfile>>),
     // Rendered outside every tab block, so always needed.
-    getActiveServices(studio.id),
+    getActiveServices(studio.id, priceReads),
     needsIntake
       ? getLatestIntakeForClient(studio.id, client.id)
       : Promise.resolve(null),
@@ -360,7 +367,7 @@ export default async function ClientCheatSheetPage({
     isOverview
       ? getLatestSubmittedOrReviewedIntakeForClient(studio.id, client.id)
       : Promise.resolve(null),
-    isOverview
+    needsPinnedNotes
       ? getPinnedNotesForClient(studio.id, client.id)
       : Promise.resolve([] as Awaited<ReturnType<typeof getPinnedNotesForClient>>),
     needsTreatmentPlans
@@ -870,6 +877,7 @@ export default async function ClientCheatSheetPage({
       // pinned notes, portal access + events, consent, card on file, imported
       // memory, clinical-notes summary, treatment intelligence
       overviewOnlyReads: isOverview,
+      pinnedNotes: needsPinnedNotes,
       intake: needsIntake,
       portalMessages: needsPortalMessages,
       lastTreatment: needsLastTreatment,
@@ -886,8 +894,21 @@ export default async function ClientCheatSheetPage({
     },
     health: { intake: needsIntake },
     consultation: { consultationNotes: needsConsultationNotes },
-    personal: { personalNotes: needsPersonalNotes },
+    personal: { personalNotes: needsPersonalNotes, pinnedNotes: needsPinnedNotes },
   });
+
+  // ONE card element, rendered on Overview and on the notes tab: the same source, the same
+  // visibility and the same three actions, so there is no second write path.
+  const pinnedNotesCard = (
+    <ClientPinnedNotesCard
+      clientId={client.id}
+      viewer={{ isOwner: practitioner.role === "owner", practitionerId: practitioner.id }}
+      notes={pinnedNotes}
+      addAction={addClientPinnedNoteAction}
+      editAction={editClientPinnedNoteAction}
+      removeAction={removeClientPinnedNoteAction}
+    />
+  );
 
   return (
     <div className="flex flex-col gap-10">
@@ -991,14 +1012,7 @@ export default async function ClientCheatSheetPage({
         <>
           {/* Every-visit priorities: pinned notes first, then anything
               that could change how today's treatment is delivered. */}
-          <ClientPinnedNotesCard
-            clientId={client.id}
-            viewer={{ isOwner: practitioner.role === "owner", practitionerId: practitioner.id }}
-            notes={pinnedNotes}
-            addAction={addClientPinnedNoteAction}
-            editAction={editClientPinnedNoteAction}
-            removeAction={removeClientPinnedNoteAction}
-          />
+          {pinnedNotesCard}
 
           {/* PR #194 (Chloe retest): allergies live at the TOP of
               Overview, directly under pinned notes. Messages and
@@ -1348,6 +1362,7 @@ export default async function ClientCheatSheetPage({
               clinical caution. Same fields, same actions (unchanged),
               same delete button; only the surrounding section markup
               changed. */}
+          {isOwner && (
           <section className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
             <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
               Pricing
@@ -1402,6 +1417,7 @@ export default async function ClientCheatSheetPage({
               </div>
             )}
           </section>
+          )}
         </>
       )}
 
@@ -1453,6 +1469,8 @@ export default async function ClientCheatSheetPage({
         budgetContext?.status === "unavailable" && (
           <ClientBudgetCardUnavailable />
         )}
+
+      {activeTab === "personal" && pinnedNotesCard}
 
       {activeTab === "personal" && (
         <ClientPersonalNotesEditor
