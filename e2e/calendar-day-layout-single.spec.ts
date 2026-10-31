@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type CDPSession, type Locator, type Page } from "@playwright/test";
 import {
-  getE2eServiceId, getOwnerPractitionerId, seedE2eClient, seedE2eMember, seedE2eStudio, seedPractitionerDefault,
+  getE2eServiceId, getOwnerPractitionerId, seedE2eClient, seedStudioWideDefault, seedE2eMember, seedE2eStudio, seedPractitionerDefault,
   seedServiceEligibility, setPractitionerActive, setStudioCapacityBookingEnabled, setStudioCapacityEnabled, setStudioTimezone, sql, type E2eSeed,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
@@ -26,10 +26,16 @@ const VPS = {
   desktop: { viewport: { width: 1280, height: 800 }, hasTouch: false, isMobile: false, target: "16:00", rx: /^(4\s?PM|16:00)$/i },
   mobile: { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, target: "17:00", rx: /^(5\s?PM|17:00)$/i },
 } as const;
-const KINDS = { B1: { capacity: true, extra: 0 }, B2: { capacity: false, extra: 0 }, B3: { capacity: true, extra: 2 } } as const;
+// B4/B5 (Codex P2 on #1280): capacity OFF, ONE active practitioner, the STUDIO open, but the practitioner carries a leftover PERSONAL closed
+// weekday default (B4) or a personal closed override for the day (B5). With capacity off those personal rows are not in force: the Day column
+// and its slot grid must show, and booking must work, not "No practitioner is working".
+const KINDS = {
+  B1: { capacity: true, extra: 0, personal: null }, B2: { capacity: false, extra: 0, personal: null }, B3: { capacity: true, extra: 2, personal: null },
+  B4: { capacity: false, extra: 0, personal: "closed-default" }, B5: { capacity: false, extra: 0, personal: "closed-override" },
+} as const;
 type Kind = keyof typeof KINDS;
 
-type S = { seed: E2eSeed; day: string; ownerId: string; serviceId: string };
+type S = { seed: E2eSeed; day: string; ownerId: string; serviceId: string; clientId: string; clientName: string };
 const cache = new Map<Kind, Promise<S>>();
 function getStudio(kind: Kind): Promise<S> {
   if (!cache.has(kind)) cache.set(kind, (async () => {
@@ -43,11 +49,19 @@ function getStudio(kind: Kind): Promise<S> {
       "select ((now() at time zone $1)::date+7)::text as day, extract(dow from ((now() at time zone $1)::date+7))::int as dow", [TZ]);
     const ownerId = await getOwnerPractitionerId(seed.studioId);
     const serviceId = await getE2eServiceId(seed.studioId);
-    await seedPractitionerDefault(seed.studioId, ownerId, d.dow, true, "08:00", "20:00");
+    await seedStudioWideDefault(seed.studioId, d.dow, true, "08:00", "20:00");
+    if (k.personal === "closed-default") await seedPractitionerDefault(seed.studioId, ownerId, d.dow, false, null, null);
+    else await seedPractitionerDefault(seed.studioId, ownerId, d.dow, true, "08:00", "20:00");
+    if (k.personal === "closed-override") {
+      await sql("insert into public.studio_availability_overrides (studio_id, effective_date, practitioner_id, is_open) values ($1,$2,$3,false)", [seed.studioId, d.day, ownerId]);
+    }
     await seedServiceEligibility(seed.studioId, serviceId, ownerId);
     for (let i = 0; i < k.extra; i++) { const m = await seedE2eMember(seed); await setPractitionerActive(m.practitionerId, false); }
     if (!k.capacity) { await setStudioCapacityBookingEnabled(seed.studioId, false); await setStudioCapacityEnabled(seed.studioId, false); }
-    return { seed, day: d.day, ownerId, serviceId };
+    // the drawer's client list loads WITH the page, so the client exists before any page is opened
+    const { clientId } = await seedE2eClient(seed);
+    const clientName = (await sql<{ name: string }>("select name from public.clients where studio_id=$1 and id=$2", [seed.studioId, clientId]))[0].name;
+    return { seed, day: d.day, ownerId, serviceId, clientId, clientName };
   })());
   return cache.get(kind)!;
 }
@@ -98,7 +112,7 @@ async function scrollBy(page: Page, hasTouch: boolean, at: { x: number; y: numbe
 
 for (const vpName of ["desktop", "mobile"] as const) {
   const vp = VPS[vpName];
-  for (const kind of ["B1", "B2", "B3"] as Kind[]) {
+  for (const kind of ["B1", "B2", "B3", "B4", "B5"] as Kind[]) {
     test.describe(`single-path ${vpName} / ${kind}`, () => {
       test.use({ viewport: vp.viewport, hasTouch: vp.hasTouch, isMobile: vp.isMobile });
       test.setTimeout(240_000);
@@ -135,6 +149,8 @@ for (const vpName of ["desktop", "mobile"] as const) {
 
         expect(surface, "which component renders (recorded)").not.toBe("unknown");
         // Sam's requirement: ONE active practitioner is shown the DAY view with one compact column, not redirected to the week grid
+        await expect(page.getByText(/No practitioner is working/i), "no false 'nobody is working' message").toHaveCount(0);
+        await expect(page.getByTestId("team-day-empty"), "no empty state: one practitioner IS working").toHaveCount(0);
         expect(surface, `one active practitioner gets the Day view (landed on ${url.pathname}${url.search} as a ${surface})`).toBe("team-day-view");
         expect(await page.getByTestId("team-day-view").getAttribute("data-column-count"), "one column").toBe("1");
         expect(lineCount, "the grid draws its slot lines").toBeGreaterThan(0);
@@ -161,7 +177,26 @@ for (const vpName of ["desktop", "mobile"] as const) {
         const opened = await page.getByRole("dialog").first().isVisible().catch(() => false);
         const chooser = await page.getByRole("dialog", { name: /Choose action|New appointment|Add/ }).first().isVisible().catch(() => false);
         expect(opened || chooser, "selecting a slot (or the add button on a phone) opens a booking dialog").toBe(true);
-        void seedE2eClient;
+
+        // B4/B5: booking really works from here: pick the client, the service and the time in the drawer, book, and the row lands at that local time
+        if (KINDS[kind].personal) {
+          const drawer = page.getByRole("dialog", { name: "New appointment" });
+          await expect(drawer).toBeVisible({ timeout: 20_000 });
+          await drawer.getByPlaceholder("Find existing client").fill(s.clientName);
+          await drawer.getByRole("button", { name: new RegExp(s.seed.runId) }).first().click();
+          await drawer.getByRole("combobox").first().selectOption(s.serviceId);
+          const label = vpName === "desktop" ? "4:00 PM" : "5:00 PM";
+          const slot = drawer.getByRole("button", { name: /^\d{1,2}:\d{2}\s?(AM|PM)$/i }).filter({ hasText: label }).first();
+          await expect(slot, `the drawer offers ${label}`).toBeVisible({ timeout: 20_000 });
+          await slot.click();
+          await shot(page, vpName, kind, "drawer");
+          await drawer.getByRole("button", { name: /^Book appointment$/ }).click();
+          await expect(drawer).toBeHidden({ timeout: 20_000 });
+          await expect.poll(async () => (await sql<{ c: number }>(
+            "select count(*)::int c from public.appointments where studio_id=$1 and client_id=$2 and practitioner_id=$3 and (starts_at at time zone $4)::time = $5::time",
+            [s.seed.studioId, s.clientId, s.ownerId, TZ, vp.target]))[0].c, { timeout: 20_000 }).toBe(1);
+          await shot(page, vpName, kind, "booked");
+        }
       });
     });
   }
