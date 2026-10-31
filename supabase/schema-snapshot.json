@@ -3,7 +3,7 @@
   "migrations": {
     "count": 249,
     "last": "0267_range_confirmation_recorded_with_capture.sql",
-    "sha256": "56604a30d75b2e02e1cddcc6dcc6a749822cc808528815c473c7cd692170f40a"
+    "sha256": "5539c0a9736f75d1861e4094afa4aaf7fb74bb41cdcdd3795db646b3975cd389"
   },
   "public": {
     "tables": [

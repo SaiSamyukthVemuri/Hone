@@ -169,6 +169,121 @@ describe("0267 · range confirmation recorded with the capture", () => {
   });
 });
 
+describe("0267 · review cases (Insurance K1, K2, K4; K3 accepted)", () => {
+  it("K1: stores the READING's value, so the caller's scale cannot differ", async () => {
+    const studio = await seedStudio("rc-scale");
+    const { captureId, route } = await capture(studio);
+    expect(await confirm(studio.userId, captureId, route, [item({ value: "999.000" })])).toBe(1);
+    const rows = await adminQuery(
+      `select c.confirmed_value::text as v, r.value_numeric::text as stored
+         from public.treatment_setup_range_confirmations c
+         join public.treatment_setup_readings r on r.capture_id = c.capture_id and r.field_key = c.field_key
+        where c.capture_id = $1`,
+      [captureId],
+    );
+    expect(rows.rows).toEqual([{ v: "999", stored: "999" }]);
+  });
+
+  it("K1: refuses a non-finite or non-numeric value", async () => {
+    const studio = await seedStudio("rc-nan");
+    const { captureId, route } = await capture(studio);
+    for (const value of ["NaN", "Infinity", "-Infinity", "abc", ""]) {
+      await expect(confirm(studio.userId, captureId, route, [item({ value })])).rejects.toThrow();
+    }
+  });
+
+  it("K2: trims field_key and stage_key as the capture command does, and stores the trimmed keys", async () => {
+    const studio = await seedStudio("rc-trim");
+    const { captureId, route } = await capture(studio);
+    expect(
+      await confirm(studio.userId, captureId, route, [item({ field_key: "  current  ", stage_key: "   " })]),
+    ).toBe(1);
+    const rows = await adminQuery(
+      `select field_key, stage_key from public.treatment_setup_range_confirmations where capture_id = $1`,
+      [captureId],
+    );
+    expect(rows.rows).toEqual([{ field_key: "current", stage_key: null }]);
+  });
+
+  it("K2: the table refuses an untrimmed key even for a privileged writer", async () => {
+    const studio = await seedStudio("rc-trimck");
+    const { captureId, blockId } = await capture(studio);
+    await expect(
+      adminQuery(
+        `insert into public.treatment_setup_range_confirmations
+           (studio_id, capture_id, session_block_id, field_key, confirmed_value, note_code, confirmed_by_practitioner_id)
+         values ($1,$2,$3,' current',999,'outside_published_specification',$4)`,
+        [studio.studioId, captureId, blockId, studio.practitionerId],
+      ),
+    ).rejects.toThrow(/check/i);
+  });
+
+  it("K4: a wrong session or client for the same studio is refused (the cross-client case)", async () => {
+    const studio = await seedStudio("rc-route");
+    const { captureId, route } = await capture(studio);
+    const other = await seedSession(studio);
+    const otherRoute = await routeFor(other.blockId);
+    await expect(
+      confirm(studio.userId, captureId, { sessionId: otherRoute.sessionId, clientId: route.clientId }, [item()]),
+    ).rejects.toThrow(/Unknown treatment block/);
+    await expect(
+      confirm(studio.userId, captureId, { sessionId: route.sessionId, clientId: "00000000-0000-4000-8000-000000000001" }, [item()]),
+    ).rejects.toThrow(/Unknown treatment block/);
+  });
+
+  it("K4: the item-count limit and malformed items are refused, writing nothing", async () => {
+    const studio = await seedStudio("rc-shape");
+    const { captureId, route } = await capture(studio);
+    const many = Array.from({ length: 201 }, () => item());
+    await expect(confirm(studio.userId, captureId, route, many)).rejects.toThrow(/between 1 and 200/);
+    await expect(confirm(studio.userId, captureId, route, [])).rejects.toThrow(/between 1 and 200/);
+    for (const bad of [null, 7, "x", [], {}, { field_key: "current" }, item({ value: 999 }), item({ note_code: null }), item({ stage_key: 5 })]) {
+      await expect(confirm(studio.userId, captureId, route, [bad])).rejects.toThrow(/Each confirmation needs/);
+    }
+    await expect(
+      asUser(studio.userId, async (q) =>
+        q(`select public.record_setup_range_confirmations($1,$2::jsonb,$3::uuid,$4::uuid)`, [
+          captureId, JSON.stringify({ a: 1 }), route.sessionId, route.clientId,
+        ]),
+      ),
+    ).rejects.toThrow(/between 1 and 200/);
+    const n = await adminQuery(
+      `select count(*)::int as n from public.treatment_setup_range_confirmations where capture_id = $1`,
+      [captureId],
+    );
+    expect(n.rows[0].n).toBe(0);
+  });
+
+  it("K4: one bad item rolls the whole call back", async () => {
+    const studio = await seedStudio("rc-atomic");
+    const { captureId, route } = await capture(studio);
+    await expect(
+      confirm(studio.userId, captureId, route, [item(), item({ field_key: "nope" })]),
+    ).rejects.toThrow(/No such reading/);
+    const n = await adminQuery(
+      `select count(*)::int as n from public.treatment_setup_range_confirmations where capture_id = $1`,
+      [captureId],
+    );
+    expect(n.rows[0].n).toBe(0);
+  });
+
+  it("K4 / K3: a machine retired within the window makes the confirmation final-refused", async () => {
+    const studio = await seedStudio("rc-retired");
+    const { captureId, route } = await capture(studio);
+    await adminQuery(
+      `update public.studio_machines set retired_at = now()
+        where id = (select studio_machine_id from public.treatment_setup_captures where id = $1)`,
+      [captureId],
+    );
+    await expect(confirm(studio.userId, captureId, route, [item()])).rejects.toThrow();
+    const n = await adminQuery(
+      `select count(*)::int as n from public.treatment_setup_range_confirmations where capture_id = $1`,
+      [captureId],
+    );
+    expect(n.rows[0].n).toBe(0);
+  });
+});
+
 describe("0267 function grants (Privacy C1)", () => {
   it("no API role holds EXECUTE on the trigger function; the command is authenticated-only", async () => {
     const rows = await adminQuery(

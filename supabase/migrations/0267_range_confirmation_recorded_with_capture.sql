@@ -23,6 +23,13 @@
 -- exactly that numeric value, and the confirmation arrives soon after the
 -- capture rather than being back-filled later.
 --
+-- KNOWN EDGE, ACCEPTED IN WRITING (OPS, Insurance K3): the command re-proves
+-- scope with the capture's own machine, so if that machine is retired, or the
+-- session or block removed, within the 10 minutes after the capture, the
+-- confirmation is refused. That is fail-closed and rare, and the refusal is
+-- FINAL: a caller must not retry it. The capture then stands with no row, the
+-- same "absent rather than wrong" state described below.
+--
 -- NOT ATOMIC WITH THE CAPTURE, and said so. The capture commands return a count
 -- and mint ids inside, so the capture id is not known before they run; this is
 -- a second call. A capture can therefore exist without its confirmation if that
@@ -41,9 +48,12 @@ create table public.treatment_setup_range_confirmations (
   session_block_id uuid not null
     references public.session_blocks(id) on delete cascade,
   stage_key text
-    check (stage_key is null or length(btrim(stage_key)) between 1 and 60),
-  field_key text not null check (length(btrim(field_key)) between 1 and 60),
-  -- The exact value the practitioner confirmed, as the reading stores it.
+    check (stage_key is null
+           or (stage_key = btrim(stage_key) and length(stage_key) between 1 and 60)),
+  field_key text not null
+    check (field_key = btrim(field_key) and length(field_key) between 1 and 60),
+  -- The value of the matching READING, copied from it (never the caller's text),
+  -- so the scale is exactly the one the reading stores.
   confirmed_value numeric not null,
   -- Which warning she was shown. Closed set: the three note codes that mean
   -- "outside a documented range". A hardware limit is a refusal, never a note.
@@ -132,6 +142,7 @@ declare
   v_stage text;
   v_field text;
   v_value numeric;
+  v_stored numeric;
   v_code text;
   v_count integer := 0;
 begin
@@ -179,8 +190,9 @@ begin
       raise exception 'Each confirmation needs a field_key, a value and a note_code.'
         using errcode = 'check_violation';
     end if;
-    v_stage := nullif(v_item->>'stage_key', '');
-    v_field := v_item->>'field_key';
+    -- Trimmed exactly as the capture commands trim before they store (0223, 0237).
+    v_stage := nullif(btrim(coalesce(v_item->>'stage_key', '')), '');
+    v_field := btrim(v_item->>'field_key');
     v_code := v_item->>'note_code';
     begin
       v_value := (v_item->>'value')::numeric;
@@ -191,13 +203,13 @@ begin
 
     -- THE READING MUST EXIST IN THIS CAPTURE WITH THIS EXACT NUMBER. Nothing
     -- can be confirmed that was not recorded.
-    if not exists (
-      select 1 from public.treatment_setup_readings r
-       where r.capture_id = p_capture_id
-         and r.stage_key is not distinct from v_stage
-         and r.field_key = v_field
-         and r.value_numeric = v_value
-    ) then
+    select r.value_numeric into v_stored
+      from public.treatment_setup_readings r
+     where r.capture_id = p_capture_id
+       and r.stage_key is not distinct from v_stage
+       and r.field_key = v_field
+       and r.value_numeric = v_value;
+    if not found then
       raise exception 'No such reading with that value in this capture.'
         using errcode = 'no_data_found';
     end if;
@@ -208,7 +220,7 @@ begin
       confirmed_value, note_code, confirmed_by_practitioner_id
     ) values (
       v_scope.o_studio, p_capture_id, v_cap.session_block_id, v_stage, v_field,
-      v_value, v_code, v_scope.o_practitioner
+      v_stored, v_code, v_scope.o_practitioner
     );
     v_count := v_count + 1;
   end loop;

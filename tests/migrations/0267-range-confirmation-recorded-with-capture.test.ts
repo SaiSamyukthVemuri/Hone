@@ -74,4 +74,14 @@ describe("0267 range confirmation source contract", () => {
     expect(executable).not.toMatch(/grant execute on function public\.refuse_range_confirmation_update/i);
     expect(executable.match(/grant execute on function/gi)?.length).toBe(1);
   });
+
+  it("stores the reading's value and trims keys like the capture command (Insurance K1, K2); records K3", () => {
+    expect(sql).toContain("v_stored, v_code");
+    expect(sql).not.toMatch(/v_scope\.o_studio, p_capture_id, v_cap\.session_block_id, v_stage, v_field,\s*v_value/);
+    expect(sql).toContain("v_stage := nullif(btrim(coalesce(v_item->>'stage_key', '')), '');");
+    expect(sql).toContain("v_field := btrim(v_item->>'field_key');");
+    expect(sql).toContain("stage_key = btrim(stage_key)");
+    expect(sql).toContain("field_key = btrim(field_key)");
+    expect(sql).toMatch(/ACCEPTED IN WRITING[\s\S]*FINAL: a caller must not retry/);
+  });
 });
