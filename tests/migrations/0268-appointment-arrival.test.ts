@@ -9,9 +9,8 @@ const SQL = readFileSync("supabase/migrations/0268_appointment_arrival.sql", "ut
 const lower = SQL.toLowerCase();
 
 describe("0268 appointment arrival: source contract", () => {
-  it("is the repository maximum (the tripwire for the next migration)", () => {
-    expect(isRepoMax("0268")).toBe(true);
-  });
+  // No isRepoMax('0268') here: only the CURRENT maximum's own test may assert it (CLAUDE.md section 2),
+  // and 0271 sits above 0268 once both are in the tree. The tripwire is served centrally.
   it("opens its own transaction with a lock timeout inside it", () => {
     expect(lower).toMatch(/\nbegin;\nset local lock_timeout = '5s';/);
     expect(lower.trimEnd().endsWith("commit;")).toBe(true);
