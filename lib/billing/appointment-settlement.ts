@@ -41,11 +41,22 @@ type Row = {
   supersedes_id: string | null;
 };
 
+/**
+ * `viewerIsOwner` is the caller's explicit owner context (HON-44, migration
+ * 0254). Since 0254 `appointment_settlements` is owner-readable only, so for a
+ * non-owner an RLS-filtered SELECT returns zero rows WITH NO ERROR, which this
+ * loader would otherwise report as `ok: true` with nothing settled: a paid or
+ * waived visit read as "chargeable". A non-owner therefore gets the explicit
+ * "could not find out" answer and no query is issued. The caller derives the
+ * flag from the authenticated practitioner's role, never from client input.
+ */
 export async function getAppointmentSettlements(
   studioId: string,
   appointmentIds: ReadonlyArray<string>,
+  viewerIsOwner: boolean,
 ): Promise<AppointmentSettlementLoad> {
   const byAppointmentId = new Map<string, AppointmentSettlement>();
+  if (!viewerIsOwner) return { ok: false };
   const ids = [...new Set(appointmentIds)].filter(Boolean);
   if (ids.length === 0) return { ok: true, byAppointmentId };
 

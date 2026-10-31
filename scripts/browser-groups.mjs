@@ -271,6 +271,7 @@ export const BROWSER_GROUPS = {
       // requirement (self-skips in CI without storage-api). Does not add to
       // the sessions targeted-lane cost pin.
       "fett-client-portrait.spec.ts",
+      "fett-session-photos-handoff.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the
