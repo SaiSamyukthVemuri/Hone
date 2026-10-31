@@ -5,6 +5,7 @@ import type {
 } from "@/lib/booking/queries";
 import { localDateString } from "@/lib/booking/tz";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
+import { liveScopedRows } from "@/lib/calendar/block-scope";
 import { resolvePractitionerDayAvailability } from "@/lib/calendar/day-availability";
 
 // HON-48 team day view: one column per working practitioner for one studio-local
@@ -67,13 +68,9 @@ export function buildTeamDay(args: {
   // Same display rule as the week grid: cancelled appointments free their slot
   // and are hidden; confirmed, completed and no-show stay visible.
   const appts = args.appointments.filter((a) => a.status !== "cancelled" && onDate(a.starts_at));
-  // Capacity OFF: a practitioner-scoped block or break is retained but DORMANT (0137
-  // writes zero reservations for it) and the slot engine offers that time, so it is not
-  // drawn. Studio-wide ones stay. Capacity ON draws both.
-  const live = <T extends { practitioner_id: string | null }>(rows: ReadonlyArray<T>) =>
-    args.capacityEnabled ? [...rows] : rows.filter((row) => row.practitioner_id == null);
-  const timedBlocks = live(args.timedBlocks).filter((b) => onDate(b.starts_at));
-  const recurringBreaks = live(args.recurringBreaks).filter((b) => onDate(b.starts_at));
+  // Capacity OFF draws studio-wide blocks and breaks only (see liveScopedRows).
+  const timedBlocks = liveScopedRows(args.capacityEnabled, args.timedBlocks).filter((b) => onDate(b.starts_at));
+  const recurringBreaks = liveScopedRows(args.capacityEnabled, args.recurringBreaks).filter((b) => onDate(b.starts_at));
 
   // A NULL practitioner_id block or break is studio-wide: it applies to every
   // column. A scoped one belongs to its own practitioner's column only.
@@ -136,4 +133,19 @@ export function buildTeamDay(args: {
   }
 
   return { columns, notWorking };
+}
+
+// Who may create from a team-day column. Capacity ON: an owner books any active
+// practitioner; a member books only themselves, so only their own column offers it.
+// Capacity OFF: one studio timeline and the week grid lets every member book (the
+// booking is always the acting practitioner's), so every ACTIVE column offers it.
+export function teamColumnAllowsCreate(args: {
+  capacityEnabled: boolean;
+  active: boolean;
+  isOwner: boolean;
+  columnPractitionerId: string | null;
+  viewerPractitionerId: string;
+}): boolean {
+  if (!args.active) return false;
+  return !args.capacityEnabled || args.isOwner || args.columnPractitionerId === args.viewerPractitionerId;
 }
