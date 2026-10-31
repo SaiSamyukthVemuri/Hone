@@ -31,6 +31,13 @@ pj() { python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));print(eval(
 OS=$(uname -s)
 STAGES=$(pj "$PKG/PLAN.json" '" ".join(d["sequences"]["'"$SEQ"'"]["stages"])')
 ex() { pj "$PKG/$1/EXPECT.json" "$2"; }
+# an empty sequence (every step dropped) applies nothing: there is no first stage, no bundle to build the synthetic hosted database from and no root EXPECT.json to read.
+# It is an explicit no-op, decided before anything else touches a stage or downloads the CLI.
+if [ -z "$STAGES" ]; then
+  say "SKIP  sequence $SEQ has no stages (every step dropped): nothing to apply, so there is no bundle to reset from and no stage to read; the hosted history stays as it is"
+  say "=================== RESULT: 0 passed, 0 failed (empty sequence, nothing run)"
+  exit 0
+fi
 
 # ---- the pinned binary, verified against checksums.txt ----------------------------------------------
 REL="https://github.com/supabase/cli/releases/download/v$VER"
