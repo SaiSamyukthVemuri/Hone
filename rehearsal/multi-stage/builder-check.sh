@@ -121,4 +121,6 @@ for x in sp["steps"]:
 PY
 c=0; for f in $(find "$T/a" -path '*window-reads-s1-*' -name 'window-s1read-*.sh'); do sed -n "/<<'NODE'\$/,/^NODE\$/p" "$f" | sed '1d;$d' > "$T/chk.mjs"; node --check "$T/chk.mjs" 2>"$T/chk.err" || { c=1; bad "the generated read-back program does not parse: $f" "$(head -2 "$T/chk.err")"; }; done; [ $c = 0 ] && ok "every generated read-back node program parses (node --check)"
 rm -f "$sd"/.t-*.json
+# every generated manifest through the REAL reviewed runner (stage id <= 16 chars, platform, pins, markers) up to the driver, plus the 17-character negative controls
+rv=$(bash "$D/runner-validate.sh" "$T/a" 2>&1); echo "$rv" | grep -E "^(ok|FAIL|       )" ; pass=$((pass+$(echo "$rv" | grep -c '^ok   - '))); fail=$((fail+$(echo "$rv" | grep -c '^FAIL - ')))
 echo "# RESULT: $pass passed, $fail failed"; [ $fail = 0 ]

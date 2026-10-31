@@ -112,6 +112,20 @@ def tpl(name):
 # ----------------------------------------------------------------------------------------------------------
 # the plan: which versions are present before and after each step
 # ----------------------------------------------------------------------------------------------------------
+STAGE_ID_MAX = 16   # the reviewed one-command runner (hone-stage-run.sh) accepts a manifest STAGE of ^[0-9A-Za-z._-]{1,16}$ and dies before connecting on anything else
+
+
+def stage_id(ver, done_mask):
+    """<ver>-b<hex>: the migration plus a bitmask (in the spec's step order) of the steps applied before it. One stage package per (migration, set applied before);
+    PLAN.json and SEQUENCE.md list what each id means. Always short (4 + 2 + hex digits), so no plan can outgrow the runner's 16 characters."""
+    return "%s-b%02x" % (v4(ver), done_mask)
+
+
+def check_stage_id(sid, k=0, fn=""):
+    if not re.match(r"^[0-9A-Za-z._-]{1,%d}$" % STAGE_ID_MAX, sid):
+        die("step %d (%s): the stage id %r is not 1-%d characters of [0-9A-Za-z._-]; the reviewed runner would refuse its manifest before connecting" % (k, fn, sid, STAGE_ID_MAX))
+
+
 def plan(spec, include=None):
     hdir = spec["hosted"]["dir"]
     skipped = set(spec["hosted"].get("skipped", [158]))
@@ -157,7 +171,9 @@ def plan(spec, include=None):
     for v_ in sorted(extra_bytes):
         pins_hosted.append((hosted[v_], shab(extra_bytes[v_])))
     earlier = []
-    chosen = [x for i, x in enumerate(spec["steps"]) if include is None or i in include]
+    chosen_ix = [i for i in range(len(spec["steps"])) if include is None or i in include]
+    chosen = [spec["steps"][i] for i in chosen_ix]
+    done_ix = 0   # bitmask over the spec's step order of the steps applied before this one
     for k, s in enumerate(chosen, 1):
         fn0 = os.path.basename(s["file"])
         m = re.match(r"^(\d{4})_[A-Za-z0-9_]+\.sql$", fn0)
@@ -185,7 +201,7 @@ def plan(spec, include=None):
         nm[v] = fn
         st = {
             "k": k, "ver": v4(v), "vn": v, "file": fn, "sealed": shab(body), "head": s.get("head_sha", "0" * 40),
-            "stage": "%s-after-%s" % (v4(v), "-".join(e[0][:4] for e in earlier) or "hosted"), "before": before, "after": after,
+            "stage": stage_id(v, done_ix), "applied_before": [e[0][:4] for e in earlier], "before": before, "after": after,
             "n_before": len(before), "n_after": len(after), "before_max": v4(bmax), "after_max": v4(amax),
             "include_all": include_all, "absent": absent, "md5_before": md5list(before), "md5_after": md5list(after),
             "bundle": {nm[x]: files[x] for x in after}, "pack": s.get("gate_pack"),
@@ -196,8 +212,10 @@ def plan(spec, include=None):
             if k != 1 or before != set(hosted):
                 die("step %d (%s): an ADOPTED package is valid only as step 1 on the hosted set" % (k, fn0))
             st["stage"] = st["adopt"]["stage"]
+        check_stage_id(st["stage"], k, fn0)
         steps.append(st)
         earlier.append((fn, shab(body)))
+        done_ix |= 1 << chosen_ix[k - 1]
         cur, cur_files, names = after, files, nm
     return hosted, steps
 
@@ -703,7 +721,7 @@ def emit_step(st, out, specdir, ctx):
     sums = dict(fshas)
     sums["install-%s-online.sh" % S] = shab(inst.encode())
     write(os.path.join(d, "SHA256SUMS.txt"), sha_lines(sorted(sums.items())))
-    exp = {"step": st["k"], "stage": S, "migration": st["file"], "sealed_sha256": st["sealed"], "include_all": st["include_all"],
+    exp = {"step": st["k"], "stage": S, "applied_before": st["applied_before"], "migration": st["file"], "sealed_sha256": st["sealed"], "include_all": st["include_all"],
            "history_before": {"rows": st["n_before"], "max": st["before_max"], "list_md5": st["md5_before"], "versions_present": [v4(x) for x in sorted(st["before"])]},
            "history_after": {"rows": st["n_after"], "max": st["after_max"], "list_md5": st["md5_after"], "added": V},
            "absent_in_bundle": [v4(x) for x in st["absent"]], "bundle": {"files": st["n_after"], "tar_sha256": shas["bundle"], "list_sha256": shas["list"]},
@@ -716,7 +734,7 @@ def emit_step(st, out, specdir, ctx):
           "PREPARATION ONLY / HELD. Step %d of an ordered multi-stage plan: apply %s alone.%s\n\nBundle: hosted files + steps 1..%d = %d files (sha256 %s).\n%s\nHistory %d rows (max %s) -> %d rows (max %s), %s once.\n"
           "Run order: install, run the stage through the runner, then window-s1read-%s.sh, then s1-reconcile-%s-online.sh, and only then the next step.\n"
           % (st["k"], st["file"], warn, st["k"], st["n_after"], shas["bundle"], "include-all: " + ("YES (step is below the hosted max)" if st["include_all"] else "no (plain push)"), st["n_before"], st["before_max"], st["n_after"], st["after_max"], V, S, S))
-    return ({k: exp[k] for k in ("step", "stage", "migration", "sealed_sha256", "include_all", "history_before", "history_after", "absent_in_bundle", "bundle", "content_gates")} | {"apply_sha256": shas["apply"], "conf_sha256": shas["conf"]})
+    return ({k: exp[k] for k in ("step", "stage", "applied_before", "migration", "sealed_sha256", "include_all", "history_before", "history_after", "absent_in_bundle", "bundle", "content_gates")} | {"apply_sha256": shas["apply"], "conf_sha256": shas["conf"]})
 
 
 
@@ -809,12 +827,12 @@ def main():
     write(os.path.join(out, "PLAN.json"), json.dumps(plan_json, indent=2, sort_keys=True) + "\n")
     seq = ["# Multi-stage plan (PREPARATION ONLY / HELD)\n",
            "One runner invocation per migration; after each, read back and reconcile before the next. A step that fails leaves the APPLY-STATE marker, which refuses every later step.\n",
-           "Every valid way to drop a step is pre-built (%d stage packages, %d sequences): dropping needs no rebuild. A dropped step's successors use the stage package named `<ver>-after-<applied before>`.\n" % (len(stages), len(sequences))]
+           "Every valid way to drop a step is pre-built (%d stage packages, %d sequences): dropping needs no rebuild. A dropped step's successors use the stage package whose id is `<ver>-b<hex>` (a bitmask, in the spec's step order, of the steps applied before it; at most 16 characters, the reviewed runner's limit). The legend follows each sequence line.\n" % (len(stages), len(sequences))]
     for name, q in sorted(sequences.items(), key=lambda kv: (len(kv[1]["dropped"]), kv[0])):
         seq.append("## %s" % name)
         for k, S in enumerate(q["stages"], 1):
             p = stages[S]
-            seq.append("%d. `%s` (%s): %d -> %d rows, max %s, include-all %s%s" % (k, S, p["migration"], p["history_before"]["rows"], p["history_after"]["rows"], p["history_after"]["max"], "yes" if p["include_all"] else "no", "" if p["content_gates"] else "  **(CONTENT GATES MISSING)**"))
+            seq.append("%d. `%s` (%s, after %s): %d -> %d rows, max %s, include-all %s%s" % (k, S, p["migration"], ", ".join(p.get("applied_before", [])) or "the hosted set only", p["history_before"]["rows"], p["history_after"]["rows"], p["history_after"]["max"], "yes" if p["include_all"] else "no", "" if p["content_gates"] else "  **(CONTENT GATES MISSING)**"))
         seq.append("")
     seq.append("## Readiness of each step\n")
     for r in plan_json["readiness"]:
