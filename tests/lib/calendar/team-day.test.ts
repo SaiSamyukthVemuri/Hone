@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { buildTeamDay } from "@/lib/calendar/team-day";
+import { buildDaySlots } from "@/lib/booking/slots";
 import { resolveCalendarDayAvailability, resolvePractitionerDayAvailability } from "@/lib/calendar/day-availability";
 import type { AppointmentWithPractitionerColor, RecurringBreakOccurrenceWithRule } from "@/lib/booking/queries";
 import type { StudioAvailabilityDefault, StudioAvailabilityOverride, StudioTimedBlock } from "@/lib/types/database";
@@ -316,5 +317,55 @@ describe("buildTeamDay: capacity OFF reads studio-wide hours only (parity with t
     expect(off.slice(0, 600)).toMatch(/getStudioWideOverrideDaySafe/);
     expect(off.slice(0, 600)).toMatch(/getStudioWideDaySafe/);
     expect(off.slice(0, 600)).not.toMatch(/practitionerId/);
+  });
+});
+
+// Codex P2 #2 on #1280: with capacity OFF a practitioner-scoped block or recurring break is
+// DORMANT (0137 writes zero reservations for it), so the slot engine offers that time and the
+// Day column must not draw it as unavailable. Studio-wide ones stay in both modes.
+describe("buildTeamDay: capacity OFF draws studio-wide blocks and breaks only (parity with 0137 and slots.ts)", () => {
+  const SOLO = [PRACTITIONERS[0]];
+  const hours = [def(null, TUE, true, "09:00:00", "17:00:00")];
+  // 11:00-12:00 PST on DATE.
+  const START = "2026-11-17T19:00:00Z";
+  const END = "2026-11-17T20:00:00Z";
+  const scopedBlock = block(P[0], START, END);
+  const wideBlock = block(null, START, END);
+  const scopedBreak = brk(P[0], START, END, "Scoped break");
+  const wideBreak = brk(null, START, END, "Studio break");
+  const run = (capacityEnabled: boolean) =>
+    buildTeamDay({
+      date: DATE, dayOfWeek: TUE, tz: TZ, practitioners: SOLO,
+      appointments: [], timedBlocks: [scopedBlock, wideBlock], recurringBreaks: [scopedBreak, wideBreak],
+      defaults: hours, overrides: [], capacityEnabled,
+    }).columns[0];
+
+  it("capacity OFF: the scoped block and break are not drawn; the studio-wide ones are", () => {
+    const c = run(false);
+    expect(c.timedBlocks.map((b) => b.id)).toEqual([wideBlock.id]);
+    expect(c.recurringBreaks.map((b) => b.id)).toEqual([wideBreak.id]);
+  });
+
+  it("capacity ON: scoped and studio-wide are both drawn (unchanged)", () => {
+    const c = run(true);
+    expect(c.timedBlocks.map((b) => b.id)).toEqual([scopedBlock.id, wideBlock.id]);
+    expect(c.recurringBreaks.map((b) => b.id)).toEqual([scopedBreak.id, wideBreak.id]);
+  });
+
+  it("the slot engine offers the time under the reservations 0137 writes for each case", () => {
+    const offers = (reservations: Array<{ starts_at: string; ends_at: string }>) =>
+      buildDaySlots({ dateStr: DATE, tz: TZ, duration: 60, buffer: 0, openTime: "09:00", closeTime: "17:00", reservations })
+        .some((s) => Date.parse(s.start) === Date.parse(START));
+    // Capacity OFF, scoped source: dormant, zero reservations, time offered (and not drawn above).
+    expect(offers([])).toBe(true);
+    // Capacity OFF, studio-wide source: one reservation, time not offered (and drawn above).
+    expect(offers([{ starts_at: START, ends_at: END }])).toBe(false);
+  });
+
+  it("0137 keeps a scoped source dormant when capacity is off (the rule this mirrors)", () => {
+    const sql = readFileSync("supabase/migrations/0137_scoped_blocks_and_breaks.sql", "utf8");
+    const scoped = sql.slice(sql.indexOf("if p_practitioner_id is not null then"));
+    expect(scoped.slice(0, 400)).toMatch(/Capacity OFF => retained but DORMANT/);
+    expect(scoped.slice(0, 600)).toMatch(/if public\.studio_capacity_enabled\(p_studio_id\) then/);
   });
 });

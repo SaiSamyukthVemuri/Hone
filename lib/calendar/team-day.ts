@@ -67,8 +67,13 @@ export function buildTeamDay(args: {
   // Same display rule as the week grid: cancelled appointments free their slot
   // and are hidden; confirmed, completed and no-show stay visible.
   const appts = args.appointments.filter((a) => a.status !== "cancelled" && onDate(a.starts_at));
-  const timedBlocks = args.timedBlocks.filter((b) => onDate(b.starts_at));
-  const recurringBreaks = args.recurringBreaks.filter((b) => onDate(b.starts_at));
+  // Capacity OFF: a practitioner-scoped block or break is retained but DORMANT (0137
+  // writes zero reservations for it) and the slot engine offers that time, so it is not
+  // drawn. Studio-wide ones stay. Capacity ON draws both.
+  const live = <T extends { practitioner_id: string | null }>(rows: ReadonlyArray<T>) =>
+    args.capacityEnabled ? [...rows] : rows.filter((row) => row.practitioner_id == null);
+  const timedBlocks = live(args.timedBlocks).filter((b) => onDate(b.starts_at));
+  const recurringBreaks = live(args.recurringBreaks).filter((b) => onDate(b.starts_at));
 
   // A NULL practitioner_id block or break is studio-wide: it applies to every
   // column. A scoped one belongs to its own practitioner's column only.
