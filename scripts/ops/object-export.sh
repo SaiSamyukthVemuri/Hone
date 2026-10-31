@@ -155,7 +155,7 @@ export_log "sample re-download: ${#PICK[@]} object(s) (a random sample plus the 
 # --- 4. manifest (encrypted), totals, hashes -------------------------------------------
 { printf 'manifest-version=%s\n' "$MANIFEST_VERSION"; printf '%s\n' "${MANIFEST[@]}"; printf 'count=%s total_bytes=%s\n' "$N" "$TOTAL"; } | age -r "$RECIPIENT" -o "$OUT/manifest.age"
 rm -rf "$TMP"
-(cd "$OUT" && sha256sum -- manifest.age objects/*.age >hashes.sha256)
+hash_record_objects "$OUT"
 {
   echo "export=objects"
   echo "created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"

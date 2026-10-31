@@ -35,8 +35,14 @@ hash_verify "$DIR" || note "V1: a ciphertext does not match hashes.sha256"
 case "$KIND" in
   logical)
     check() { # check PART MARKER REGEX
-      local got want
-      got="$(dec "$DIR/$1" | grep -c "$3" || true)"
+      local got want rcf drc
+      # The decrypt's OWN status is kept: `grep -c` exits 1 on a count of 0, so the old
+      # `| grep -c || true` swallowed a decryption error, and a truncated or corrupt part
+      # whose readable prefix still held every marker line passed (Insurance J2).
+      rcf="$(mktemp)"
+      got="$({ drc=0; dec "$DIR/$1" || drc=$?; echo "$drc" >"$rcf"; } | grep -c "$3" || true)"
+      drc="$(cat "$rcf")"; rm -f "$rcf"
+      [ "$drc" = 0 ] || { note "V3: $1 does not decrypt cleanly (status ${drc:-unknown})"; return 0; }
       want="$(marker_count "$DIR/markers/$2.count")"
       [ -n "$want" ] && [ "$got" = "$want" ] || note "V3: $1 decrypts to $got line(s) of $2, recorded ${want:-none}"
     }

@@ -48,7 +48,10 @@ mode=enc; out=""; file=""
 while [ $# -gt 0 ]; do case "$1" in -r) shift 2;; -o) out="$2"; shift 2;; -d) mode=dec; shift;; -i) shift 2;; *) file="$1"; shift;; esac; done
 if [ "$mode" = enc ]; then cat >"$out"; else
   if [ -n "\${SHIM_AGE_WRONG_KEY:-}" ]; then echo "age: no identity matched" >&2; exit 1; fi
-  cat "$file"; fi
+  cat "$file"
+  # a truncated or corrupt stream: real age emits what it could read, then fails (authentication / unexpected EOF)
+  if [ -n "\${SHIM_AGE_TRUNCATED:-}" ] && [ "$(basename "$file")" = "$SHIM_AGE_TRUNCATED" ]; then echo "age: error: unexpected EOF" >&2; exit 1; fi
+  fi
 `,
     0o755,
   );
@@ -62,7 +65,7 @@ D="$SHIM_DUMP_DIR"
 case " $* " in
   *" --schema-only "*) cat "$D/schema.sql";;
   *"--table=storage.buckets"*) cat "$D/storage.sql";;
-  *"--schema=auth"*) cat "$D/auth.sql";;
+  *"--schema=auth"*) if [ -n "\${SHIM_PG_DUMP_DIES_IN_AUTH:-}" ]; then head -n 2 "$D/auth.sql"; echo "pg_dump: error: connection to server was lost" >&2; exit 3; fi; cat "$D/auth.sql";;
   *"--schema=public"*) if [ -n "\${SHIM_NO_CLIENTS:-}" ]; then grep -v 'public.clients' "$D/public.sql" | grep -v '^Synthetic'; else cat "$D/public.sql"; fi;;
   *) echo "unexpected pg_dump args: $*" >&2; exit 9;;
 esac
@@ -1112,5 +1115,84 @@ describe("source contract: what the tools must never do", () => {
     for (const m of wf.matchAll(/uses: ([^\s@]+)@([^\s]+)/g)) expect(m[2], m[0]).toMatch(/^[0-9a-f]{40}$/);
     expect(wf).toContain("export-evidence/");
     expect(wf).not.toMatch(/export-(logical|objects)/);
+  });
+});
+
+describe("Insurance PEER-1155 J1/J2 and Codex P2 4371423762", () => {
+  const env = (d: string, extra: Record<string, string> = {}) => ({ DB_URL, EXPORT_REHEARSAL: "1", GITHUB_ACTIONS: "true", SHIM_DUMP_DIR: d, ...extra });
+  const key = () => { const k = path.join(scratch, "j-key.txt"); writeFileSync(k, "AGE-SECRET-KEY-SHIM"); return k; };
+
+  it("J1 NEGATIVE: pg_dump dying part-way fails the run: no receipt, no hashes, no output directory, no temp files", () => {
+    const d = fixtures("j1");
+    const out = path.join(scratch, "j1-out");
+    const tmp = path.join(scratch, "j1-tmp"); mkdirSync(tmp);
+    const r = run("logical-export.sh", LOGICAL_ARGS(out), env(d, { SHIM_PG_DUMP_DIES_IN_AUTH: "1", TMPDIR: tmp }));
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).not.toContain("PASS");
+    expect(existsSync(path.join(out, "receipt.txt"))).toBe(false);
+    expect(existsSync(out)).toBe(false);
+    expect(readdirSync(tmp)).toEqual([]);
+    // an existing EMPTY output directory is emptied, not left holding the earlier parts
+    const pre = path.join(scratch, "j1-pre"); mkdirSync(pre);
+    const r2 = run("logical-export.sh", LOGICAL_ARGS(pre), env(d, { SHIM_PG_DUMP_DIES_IN_AUTH: "1", TMPDIR: tmp }));
+    expect(r2.status).not.toBe(0);
+    expect(readdirSync(pre)).toEqual([]);
+    expect(readdirSync(tmp)).toEqual([]);
+    // POSITIVE control: the same fixtures without the failure produce a receipt
+    const ok = path.join(scratch, "j1-ok");
+    expect(run("logical-export.sh", LOGICAL_ARGS(ok), env(d, { TMPDIR: tmp })).status).toBe(0);
+    expect(existsSync(path.join(ok, "receipt.txt"))).toBe(true);
+  });
+
+  it("J2 NEGATIVE: a truncated ciphertext whose readable prefix still holds every marker line FAILS verification", () => {
+    const d = fixtures("j2");
+    const out = path.join(scratch, "j2-out");
+    expect(run("logical-export.sh", LOGICAL_ARGS(out), env(d)).status).toBe(0);
+    const k = key();
+    expect(run("verify-export.sh", ["logical", out, "--identity", k]).stdout).toContain("VERIFY PASS");
+    // truncate the final line of the part, then re-record the hashes so V1 passes: only the decrypt can tell
+    const part = path.join(out, "public-data.sql.age");
+    const full = readFileSync(part, "utf8");
+    writeFileSync(part, full.slice(0, full.lastIndexOf("\\.")));
+    execFileSync("bash", ["-c", "cd \"$0\" && sha256sum -- *.age >hashes.sha256", out]);
+    // the shim, like real age on a truncated stream, emits the prefix and then fails
+    const bad = run("verify-export.sh", ["logical", out, "--identity", k], { SHIM_AGE_TRUNCATED: "public-data.sql.age" });
+    expect(bad.status).not.toBe(0);
+    expect(bad.stdout).toContain("VERIFY FAIL");
+    expect(bad.stdout).toContain("public-data.sql.age does not decrypt cleanly");
+    expect(bad.stdout).not.toContain("VERIFY PASS");
+    // the marker count of the readable prefix alone WOULD have matched: this is the gap J2 named
+    expect(bad.stdout).not.toContain("decrypts to 0 line(s)");
+    // and a truncated schema-only part and manifest fail too
+    for (const name of ["schema-only.sql.age", "manifest.age", "auth-data.sql.age", "storage-meta.sql.age"]) {
+      const o = path.join(scratch, `j2-${name}`);
+      expect(run("logical-export.sh", LOGICAL_ARGS(o), env(d)).status).toBe(0);
+      const r = run("verify-export.sh", ["logical", o, "--identity", k], { SHIM_AGE_TRUNCATED: name });
+      expect(r.status, name).not.toBe(0);
+      expect(r.stdout, name).toContain("VERIFY FAIL");
+    }
+  });
+
+  it("J2 source: verify-export no longer swallows a decrypt status with `| grep -c ... || true`", () => {
+    const src = readFileSync(path.join(OPS, "verify-export.sh"), "utf8");
+    expect(src).not.toMatch(/dec "[^"]*" \| grep -c [^\n]*\|\| true/);
+    expect(src).toContain("does not decrypt cleanly");
+  });
+
+  it("Codex P2 4371423762: hashing a bucket too large for one argument list works; the old form fails under the same limit", () => {
+    const dir = path.join(scratch, "argmax"); mkdirSync(path.join(dir, "objects"), { recursive: true });
+    writeFileSync(path.join(dir, "manifest.age"), "m");
+    const names = Array.from({ length: 12000 }, (_, i) => `objects/${String(i).padStart(6, "0")}.age`);
+    for (const n of names) writeFileSync(path.join(dir, n), n);
+    const lib = path.join(OPS, "export-lib.sh");
+    // RED: the old one-exec form, ~230 KB of names against a 128 KB argument limit
+    const old = spawnSync("bash", ["-c", `ulimit -s 256; cd "${dir}" && sha256sum -- manifest.age objects/*.age >/dev/null`], { encoding: "utf8" });
+    expect(old.status).not.toBe(0);
+    expect(old.stderr).toMatch(/Argument list too long/);
+    // GREEN: the lib function under the same limit, then a full verification of the result
+    const g = spawnSync("bash", ["-c", `set -euo pipefail; ulimit -s 256; . "${lib}"; hash_record_objects "${dir}"; hash_verify "${dir}"`], { encoding: "utf8" });
+    expect(g.status, g.stderr).toBe(0);
+    expect(readFileSync(path.join(dir, "hashes.sha256"), "utf8").trim().split("\n")).toHaveLength(12001);
+    expect(readFileSync(path.join(OPS, "object-export.sh"), "utf8")).toContain('hash_record_objects "$OUT"');
   });
 });

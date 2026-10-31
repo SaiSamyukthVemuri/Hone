@@ -138,6 +138,10 @@ tables_equal() {
 # --- V1: ciphertext hashes ---------------------------------------------------
 hash_record() { (cd "$1" && sha256sum -- *.age >hashes.sha256); }
 hash_verify() { (cd "$1" && sha256sum --check --quiet hashes.sha256); }
+# hash_record_objects DIR: hashes manifest.age and every objects/*.age. The names go through
+# the printf BUILTIN and xargs, never as one exec argument list, so a bucket with tens of
+# thousands of objects cannot fail with "Argument list too long" (Codex P2 4371423762).
+hash_record_objects() { (cd "$1" && printf '%s\0' manifest.age objects/*.age | xargs -0 sha256sum -- >hashes.sha256); }
 
 # --- V2: manifest comparison ---------------------------------------------------
 # compare_manifests BEFORE AFTER: row count and md5 of every table, with
