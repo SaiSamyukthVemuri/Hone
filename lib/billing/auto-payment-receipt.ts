@@ -455,7 +455,9 @@ export async function autoSendReceiptAfterCharge(args: {
       safeDetails: { attempt_id: args.attemptId, thrown: message },
     });
     if (!tryRegister(register, alert)) await alert;
-    logInternal("auto_payment_receipt_threw", { ...ctx, err: message });
+    // A class, not the text: the thrown error can come from a provider or the
+    // database and quote the recipient. (The alert above redacts its copy.)
+    logInternal("auto_payment_receipt_threw", { ...ctx, errorClass: thrownErrorClass(err) });
     return { attempted: true, threw: true, message };
   }
 

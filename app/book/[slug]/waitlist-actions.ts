@@ -38,6 +38,7 @@ import { waitlistJoinReference } from "@/lib/email/waitlist-reference";
 import { sendWaitlistJoinAckSms } from "@/lib/waitlist/delivery/join-ack-sms";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import type { Studio } from "@/lib/types/database";
+import { failureCode } from "@/lib/logging/error-class";
 
 // ===========================================================================
 // PUBLIC NEW-CLIENT WAITLIST SUBMIT
@@ -407,7 +408,7 @@ async function submitToDurableWaitlist(
     // map to one generic message so a probing caller cannot tell them apart.
     logWaitlistEvent("new_client_waitlist_command_refused", {
       studioId: studio.id,
-      result: commandResult ?? "none",
+      result: failureCode(null, commandResult, "none"),
     });
     return { ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED };
   }

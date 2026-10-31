@@ -43,6 +43,25 @@ export const BROWSER_GROUPS = {
       "client-budget-context.spec.ts",
       "clinical-notes.spec.ts",
       "conditional-numbing-notes.spec.ts",
+      // MPX-03: the machine-first panel lives in the settings-block form,
+      // the same surface conditional-numbing-notes and
+      // repeat-client-fast-charting drive.
+      "machine-first-charting.spec.ts",
+      // MPX-03: the CREATE-mode journey through the same surface — the panel
+      // before a block exists, then the one atomic save that follows. Same
+      // group as its sibling for the same reason.
+      "machine-create-mode-journey.spec.ts",
+      // MPX-03: changing the machine or the mode UNDER a typed draft, and the
+      // unit going out of service mid-draft. Same surface again - the panel
+      // inside the settings-block form - so the same group: a diff to that
+      // form must run this spec, and filing it elsewhere would hide it from
+      // the only lane its subject can regress in.
+      "machine-switch-discards-draft.spec.ts",
+      // MPX-03: the LOST RESPONSE on the initial save, and pressing Save
+      // again. Same surface once more, so the same group - and this one most
+      // of all, because what it proves is that the FORM reuses its retry key,
+      // which no database test can see.
+      "machine-initial-save-retry.spec.ts",
       "copy-settings-machine-readings.spec.ts",
       "custom-area-commit.spec.ts",
       "galvanic-intensity-retirement.spec.ts",
@@ -197,6 +216,10 @@ export const BROWSER_GROUPS = {
       // SENTRY-BOOKING-ERR-01: the /book/[slug] error boundary contains a failed
       // or stale Server Action and recovers. A diff to app/book/** selects this
       // group, which is the diff that can break it.
+      // F2: /settings/booking shows a fixed sentence for any ?error= value, never
+      // the query's own text. Here because settings/booking/actions.ts selects
+      // this group.
+      "settings-booking-error-param.spec.ts",
       "public-booking-error-containment.spec.ts",
       "public-booking-slot-read-failure.spec.ts",
       // TWILIO-EGRESS-FAKE (MSG-006): a public booking with SMS consent reaches
@@ -219,6 +242,9 @@ export const BROWSER_GROUPS = {
       // boundary drives the data range: a grid that starts Sunday while the
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
+      // HON-48 team day layout matrix (opt-in: self-skips unless CAL_LAYOUT_E2E=1, so a targeted lane lists them but runs nothing).
+      "calendar-day-layout.spec.ts",
+      "calendar-day-layout-single.spec.ts",
       // HON-48 team day view: five synthetic practitioners in one-column-per-
       // practitioner layout, Los Angeles date boundaries, same-practitioner
       // conflict refusal, member create scope and the phone scroll box.
@@ -240,6 +266,12 @@ export const BROWSER_GROUPS = {
       // Same placement and same self-skip as the spec above; both run for real
       // in the non-required `storage photos` job, which has storage-api.
       "treatment-image-upload-formats.spec.ts",
+      // ID photo set/replace/remove on the client profile/Photos surface:
+      // same group as thumbnail recovery, with the same real-storage
+      // requirement (self-skips in CI without storage-api). Does not add to
+      // the sessions targeted-lane cost pin.
+      "fett-client-portrait.spec.ts",
+      "fett-session-photos-handoff.spec.ts",
       // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
       // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
       // spec is exactly an owner-authority surface — an owner reaches the

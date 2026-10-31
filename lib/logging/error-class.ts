@@ -34,6 +34,21 @@ export function dbErrorCode(error: unknown, internal: readonly string[] = []): s
   return safeDbCode(code);
 }
 
+/**
+ * dbErrorCode() for a read whose caller must tell "the transport failed" from
+ * "the database answered with an error" (getStudioBySlug: an unreadable studio
+ * is UNKNOWN, never absent, and Sentry groups the two apart). supabase-js
+ * reports a transport failure as an error object with no code whose message is
+ * exactly "TypeError: fetch failed"; that fixed sentence is the only message
+ * this reads, by equality, and it is answered with a fixed label.
+ */
+export function dbFailureCode(error: unknown): string {
+  const code = dbErrorCode(error);
+  if (code !== "unknown") return code;
+  const message = typeof error === "object" && error !== null ? (error as { message?: unknown }).message : undefined;
+  return message === "TypeError: fetch failed" ? "fetch_failed" : "unknown";
+}
+
 /** The same rule for a code that was already pulled off an error. */
 export function safeDbCode(code: unknown): string {
   if (typeof code !== "string") return "unknown";

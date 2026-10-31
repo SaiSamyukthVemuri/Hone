@@ -43,27 +43,20 @@ const LOCAL_SERVICE_ROLE_KEY =
 const BANNED_URL_PATTERNS =
   /supabase\.co|supabase\.com|supabase\.in|pooler\.|amazonaws\.com|rds\.|azure|neon\.tech/i;
 
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
-
 // Query parameters a PostgreSQL client gives PRECEDENCE over the URL authority
 // (pg-connection-string, libpq). With one present, the authority this guard
-// checks is not where the client connects: `postgresql://…@127.0.0.1:63322/
-// postgres?host=prod-db.internal` would pass a hostname check and seed SQL
-// off-machine, and `?port=54322` would pass the pair check while reaching the
-// shared stack (Codex P1 on #879). So any such override is refused outright.
-const CONNECTION_OVERRIDES = new Set(["host", "hostaddr", "port", "service"]);
 
-export function isLoopbackUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    for (const key of url.searchParams.keys()) {
-      if (CONNECTION_OVERRIDES.has(key.toLowerCase())) return false;
-    }
-    return LOOPBACK_HOSTS.has(url.hostname.toLowerCase());
-  } catch {
-    return false;
-  }
-}
+// RE-EXPORTED, NOT REIMPLEMENTED. The implementation moved to
+// `lib/net/loopback.ts` so production code can use it too: the synthetic
+// profile gate was asking the same question with a substring test
+// (Codex, #860 4298457391). Everything that imported it from here still
+// does, and there is one definition rather than two that can drift.
+// A RELATIVE PATH, NOT THE `@/` ALIAS. `vitest.db.config.ts` imports this
+// module to run #879's paired-target guard at CONFIG LOAD, which Node
+// resolves before any vite alias exists — `@/lib/net/loopback` fails there
+// with "Cannot find module" and takes the whole DB suite down at startup.
+export { isLoopbackUrl } from "../../lib/net/loopback";
+import { isLoopbackUrl } from "../../lib/net/loopback";
 
 /** Refuse a half-moved stack: the API and the database must leave the default together or not at all. */
 export function assertSameStackPair(supabaseUrl: string, dbUrl: string): void {
@@ -198,6 +191,9 @@ export function withSentryEgressGuard(existing: string | undefined): string {
 // CI lane's dummy/test-safe values, with Supabase pointed at the
 // LOCAL stack. Nothing here is a real secret.
 export const E2E_WEB_SERVER_ENV: Record<string, string> = {
+  // HELD portrait policy: OFF unless the outer process explicitly enables it
+  // for a dedicated server run (e2e/fett-client-portrait.spec.ts).
+  ...(process.env.HONE_CLIENT_PORTRAIT_ENABLED === "true" ? { HONE_CLIENT_PORTRAIT_ENABLED: "true" } : {}),
   // RESCHEDULE-E2E-01: THE FAKE EMAIL TRANSPORT IS ARMED FOR EVERY RUN OF THIS
   // LANE, not only when the outer job opts in.
   //
@@ -246,6 +242,33 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // when the outer process asks for it, so ordinary e2e runs are unmeasured
   // and unaffected.
   ...(process.env.HONE_PERF_TIMING === "1" ? { HONE_PERF_TIMING: "1" } : {}),
+  // MPX-03's synthetic machine profile, forwarded on EXACTLY the same terms as
+  // HONE_PERF_TIMING above and for the same reason: webServer.env REPLACES
+  // process.env, so a variable the Next server must see has to be listed here.
+  //
+  // WHY THE SPREAD IS CONDITIONAL, and must stay that way. Every real machine
+  // model in lib/machines/catalogue.ts is evidence-gated and blocked, so the
+  // machine picker is empty by design and the workflow is undemonstrable
+  // without one active profile. The synthetic demo profile supplies one, and
+  // lib/machines/synthetic-profile.ts gates it three ways: `server-only`, this
+  // flag must equal exactly "1", and production is refused outright even if the
+  // flag leaks there.
+  //
+  // An UNCONDITIONAL entry here would arm it for every run of this lane, which
+  // is precisely what the gate exists to prevent: the ordinary extended run is
+  // itself the flag-OFF regression proof that no real model is ever offered.
+  // Forwarded only when the outer process asks, so one dedicated run can
+  // exercise selection/save/retrieval while every other run stays gate-closed.
+  //
+  // Agreed with the ops01 lane rather than taken unilaterally: the alternative
+  // was a run wrapper mutating this file at run time, which is worse, because a
+  // crash mid-run would leave a six-claimant tracked file modified in a
+  // worktree other lanes share.
+  //
+  // tests/ci/e2e-web-server-env.test.ts pins that this stays conditional.
+  ...(process.env.HONE_SYNTHETIC_MACHINE_PROFILE === "1"
+    ? { HONE_SYNTHETIC_MACHINE_PROFILE: "1" }
+    : {}),
   // REL-001 route fault injection. Server-only marker; the module's own guard
   // (lib/reliability/e2e-route-fault.ts) refuses it in any deployed runtime and
   // the fault page 404s without it, so it is safe to arm unconditionally for

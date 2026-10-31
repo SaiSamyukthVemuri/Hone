@@ -25,6 +25,7 @@ import {
   sendPostcareToClient,
 } from "@/lib/email/send-appointment";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
+import { confirmationSmsWillPass } from "@/lib/sms/consent-gate";
 import { localDateString } from "@/lib/booking/tz";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { safeLog } from "@/lib/logging/safe-log";
@@ -949,12 +950,35 @@ async function dispatchBookingEmails(p: DispatchParams) {
   const manageUrl = `${appOrigin}/manage/${token}`;
   const appointmentUrl = `${appOrigin}/calendar`;
 
-  if (p.clientEmail && p.studio.send_confirmation_emails) {
-    const intake = await ensureIntakeForClient({
-      studioId: p.studio.id,
-      clientId: p.appointment.client_id,
-      appOrigin,
-    });
+  const emailWanted = Boolean(p.clientEmail && p.studio.send_confirmation_emails);
+  // HON-13: the confirmation SMS is its own preference (send_confirmation_sms)
+  // and is NOT nested under the email one. The public booking and reschedule
+  // surfaces already keep the two independent; nesting it here meant a studio
+  // that turned email confirmations off, or a client with no email address,
+  // silently lost the SMS the client had consented to. The intake link is
+  // ensured when either channel can carry it.
+  // 1181-F1: issuing the link creates a blank intake row and stamps it as
+  // issued, so it happens only when a message can actually carry it: the
+  // confirmation email, or a confirmation SMS that passes the FULL consent gate
+  // (switch, consent, not STOPped, usable phone). The stamp says "emailed" only
+  // when an email is what carries it.
+  const smsCanCarry = confirmationSmsWillPass(p.studio, {
+    phone: p.clientPhone,
+    sms_consent_at: p.clientSmsConsentAt ?? null,
+    sms_opted_out_at: p.clientSmsOptedOutAt ?? null,
+  });
+  const intake =
+    emailWanted || smsCanCarry
+      ? await ensureIntakeForClient({
+          studioId: p.studio.id,
+          clientId: p.appointment.client_id,
+          appOrigin,
+          emailed: emailWanted,
+        })
+      : null;
+  const { createAdminClient } = await import("@/lib/supabase/admin-server");
+  const admin = createAdminClient();
+  if (emailWanted && p.clientEmail) {
     const treatmentTimeLine = p.studio.show_treatment_time_to_clients
       ? buildTreatmentTimeLine({
           enabled: true,
@@ -981,8 +1005,6 @@ async function dispatchBookingEmails(p: DispatchParams) {
       treatmentTimeLine,
       appBaseUrl: appOrigin,
     });
-    const { createAdminClient } = await import("@/lib/supabase/admin-server");
-    const admin = createAdminClient();
     await recordEmailAttempt(admin, p.appointment.id, "confirmation", result.ok);
     if (!result.ok) {
       logEmailFailure({
@@ -993,28 +1015,29 @@ async function dispatchBookingEmails(p: DispatchParams) {
         attemptNumber: 1,
       });
     }
-
-    // SMS confirmation for the internal booking surface. We deliberately
-    // do NOT modify SMS consent here (consent is collected on the
-    // public booking surface or by a practitioner action that this PR
-    // does not ship); we only attempt to send if the consent gate
-    // inside the helper passes. The helper handles toggle, opt-out,
-    // phone normalization, claim race, and timeouts; it never throws.
-    await sendBookingConfirmationSmsToClient({
-      admin,
-      appointmentId: p.appointment.id,
-      startsAt: new Date(p.appointment.starts_at),
-      timezone: p.studio.timezone,
-      studio: p.studio,
-      client: {
-        phone: p.clientPhone,
-        sms_consent_at: p.clientSmsConsentAt ?? null,
-        sms_opted_out_at: p.clientSmsOptedOutAt ?? null,
-      },
-      intakeUrl: intake?.url ?? null,
-      manageUrl,
-    });
   }
+
+  // SMS confirmation for the internal booking surface. We deliberately
+  // do NOT modify SMS consent here (consent is collected on the
+  // public booking surface or by a practitioner action that this PR
+  // does not ship); we only attempt to send if the consent gate
+  // inside the helper passes. The helper handles toggle, opt-out,
+  // phone normalization, claim race, and timeouts; it never throws.
+  await sendBookingConfirmationSmsToClient({
+    admin,
+    appointmentId: p.appointment.id,
+    startsAt: new Date(p.appointment.starts_at),
+    timezone: p.studio.timezone,
+    studio: p.studio,
+    client: {
+      phone: p.clientPhone,
+      sms_consent_at: p.clientSmsConsentAt ?? null,
+      sms_opted_out_at: p.clientSmsOptedOutAt ?? null,
+    },
+    intakeUrl: intake?.url ?? null,
+    manageUrl,
+  });
+
   // Migration 0047: studio owners can opt out of the practitioner
   // new-booking notification. Default true preserves the previous
   // unconditional behavior. Client confirmation above already gates

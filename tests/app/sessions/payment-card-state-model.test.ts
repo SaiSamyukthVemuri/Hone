@@ -107,7 +107,7 @@ describe("PR #181: SucceededPanel promotes refund_status='succeeded' to the top 
   it("the refund amount + timestamp render in the compact subline (refund id is owner-only)", () => {
     const block = blockFor("SucceededPanel");
     expect(block).toMatch(/attempt\.refundedAt/);
-    expect(block).toMatch(/formatCadFromCents\(attempt\.refundAmountCents\)/);
+    expect(block).toMatch(/formatMoney\(attempt\.refundAmountCents, attempt\.currency\)/);
     // The raw refund id is NOT inline — it lives in the owner-only disclosure.
     expect(block).not.toMatch(/Refund:\s*\{?\s*attempt\.stripeRefundId/);
   });

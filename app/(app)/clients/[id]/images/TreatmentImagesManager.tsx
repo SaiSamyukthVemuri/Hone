@@ -22,6 +22,7 @@ import { Button, buttonClasses } from "@/components/ui/button";
 import { createPhotoPreviewController, type PhotoPreviewState } from "@/lib/images/photo-preview-controller";
 import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
 import { useReturnFocus } from "@/components/use-return-focus";
+import { PortraitControl } from "./PortraitControl";
 import {
   validateTreatmentImageUpload,
 } from "@/lib/images/treatment-images";
@@ -46,6 +47,9 @@ type UploadFileResult = {
 
 type Row = {
   id: string;
+  // 0231: true only for a client-scoped photo (no session, no treatment area);
+  // only those can be the client's identification portrait.
+  clientScope: boolean;
   // Session date of the attached session (null for client-scope photos). Shown
   // as the human card title instead of the raw .jpg filename (Chloe feedback).
   sessionDate: string | null;
@@ -209,10 +213,15 @@ export function TreatmentImagesManager({
   clientId,
   images,
   sessionOptions = [],
+  portraitImageId = null,
+  portraitEnabled = false,
 }: {
   clientId: string;
   images: Row[];
   sessionOptions?: SessionAttachOption[];
+  portraitImageId?: string | null;
+  // HELD: false (the default) renders no PortraitControl.
+  portraitEnabled?: boolean;
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -639,6 +648,7 @@ export function TreatmentImagesManager({
                   clientId={clientId}
                   note={img.note}
                 />
+                {portraitEnabled && <PortraitControl clientId={clientId} imageId={img.id} clientScope={img.clientScope} isPortrait={img.id === portraitImageId} />}
                 <div className="flex gap-3 text-xs">
                   <Button
                     variant="quiet"

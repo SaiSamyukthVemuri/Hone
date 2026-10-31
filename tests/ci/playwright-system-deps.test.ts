@@ -1,8 +1,15 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { spawn, spawnSync } from "node:child_process";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+
+// Real-time bound, intrinsic: every case runs the real script (sudo, setsid, flock,
+// timeout) as subprocesses. Under a loaded host (64 CPU burners) the healthy cases
+// took 8-12 s against vitest's 5 s default and the lock-held case 42 s against its
+// 30 s (FLAKE-SYSDEPS). Only ceilings move: the per-test and spawnSync limits. The
+// `r.ms` bounds that assert the script itself is bounded are unchanged.
+vi.setConfig({ testTimeout: 120_000 });
 
 // scripts/ci/playwright-system-deps.sh, EXECUTED against fakes that model the
 // PRIVILEGE BOUNDARY (Codex P1 r4362059036, #1059):
@@ -72,6 +79,12 @@ esac
 touch "${archives}/libnss3_$n.deb"`,
   );
   exe("dpkg", `echo "dpkg $*" >> "${trace}"`);
+  // The script's busy check is host-wide (`pgrep -x apt-get`, `-x dpkg`), which is
+  // right on a single-tenant runner. On a shared host another lane's REAL apt-get
+  // made it refuse to retry (FLAKE-SYSDEPS), so scope the real pgrep to this
+  // test's own directory, as afterEach already does when it reaps.
+  // (`pgrep -f` also matches this wrapper, whose command line holds the directory.)
+  exe("pgrep", `{ /usr/bin/pgrep "$@" || true; } | grep -F -- "${dir}" | grep -vF -- "${bin}/pgrep" || true`);
   const env: NodeJS.ProcessEnv = {
     PATH: `${bin}:/usr/bin:/bin`,
     NODE_ENV: "test",
@@ -87,7 +100,7 @@ touch "${archives}/libnss3_$n.deb"`,
   };
   const run = (args: string[] = []) => {
     const started = Date.now();
-    const r = spawnSync("bash", [SCRIPT, ...args], { encoding: "utf8", timeout: 45_000, env });
+    const r = spawnSync("bash", [SCRIPT, ...args], { encoding: "utf8", timeout: 90_000, env });
     const calls = existsSync(trace) ? readFileSync(trace, "utf8").trim().split("\n") : [];
     const ls = (d: string) => (existsSync(d) ? readdirSync(d).sort() : []);
     // What is still alive from this test, and whether anything holds the lock.
@@ -127,7 +140,7 @@ describe("playwright-system-deps.sh: cached, bounded INSIDE sudo, retried once o
     expect(r.lockHeld).toBe(false);
     expect(r.cache).toEqual(["libnss3_2.deb"]);
     expect(r.ms, "1 s limit + 1 s kill-after, not the 60 s stall").toBeLessThan(15_000);
-  }, 30_000);
+  }, 120_000);
 
   it("a stall that outlasts the retry fails the step, bounded, and leaves nothing running", () => {
     const r = setup("stall").run();
@@ -136,7 +149,7 @@ describe("playwright-system-deps.sh: cached, bounded INSIDE sudo, retried once o
     expect(r.alive).toBe("");
     expect(r.lockHeld).toBe(false);
     expect(r.ms).toBeLessThan(20_000);
-  }, 30_000);
+  }, 120_000);
 
   it("a lock still held after the kill window FAILS LOUDLY and never retries into it", () => {
     // The stalled apt leaves a child that escaped its process group (setsid)
@@ -149,7 +162,42 @@ describe("playwright-system-deps.sh: cached, bounded INSIDE sudo, retried once o
     expect(r.stdout).toContain(`lock held: ${t.lock}`);
     expect(r.calls.filter((c) => c.startsWith("npx")), "no retry").toHaveLength(1);
     expect(r.calls, "no dpkg repair while apt is busy").not.toContain("dpkg --configure -a");
-  }, 30_000);
+  }, 120_000);
+
+  // Decoy: a long-lived process whose command name is `apt-get`.
+  const decoy = (where: string) => {
+    mkdirSync(where, { recursive: true });
+    const exe = path.join(where, "apt-get");
+    copyFileSync("/usr/bin/sleep", exe);
+    chmodSync(exe, 0o755);
+    const child = spawn(exe, ["120"], { stdio: "ignore", detached: true });
+    child.unref();
+    return child;
+  };
+
+  it("an apt-get belonging to ANOTHER tenant of the host does not make the stall test refuse to retry", () => {
+    // Reproduces the shared-host failure deterministically: before the pgrep
+    // scope, this decoy made the script exit 1 with "apt is still busy".
+    const foreign = mkdtempSync(path.join(tmpdir(), "hone-pw-deps-foreign-"));
+    const child = decoy(foreign);
+    try {
+      const r = setup("stall-then-ok").run();
+      expect(r.status, r.stdout + r.stderr).toBe(0);
+      expect(r.calls.filter((c) => c.startsWith("npx"))).toHaveLength(2);
+    } finally {
+      if (child.pid) process.kill(child.pid, "SIGKILL");
+      rmSync(foreign, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("CONTROL: an apt-get of THIS test that outlives the kill window still fails loudly (the scope hides only foreign processes)", () => {
+    const t = setup("stall-then-ok");
+    decoy(path.join(t.dir, "decoy"));
+    const r = t.run();
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("::error::apt is still busy 2s after the timed-out install was killed; not retrying into a held lock:");
+    expect(r.calls.filter((c) => c.startsWith("npx")), "no retry").toHaveLength(1);
+  }, 120_000);
 
   it("`webkit` installs WebKit's packages through the same bounded path (HON-62)", () => {
     const r = setup("ok").run(["webkit"]);

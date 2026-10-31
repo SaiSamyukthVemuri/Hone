@@ -21,12 +21,16 @@ import {
   type NavSearchContext,
 } from "@/lib/search/navigation-registry";
 import { mergeMemoryBlockRows } from "@/lib/search/treatment-memory-merge";
+import { clientDisplayName } from "@/lib/clients/identity";
+import { isMissingColumnError } from "@/lib/db/missing-column";
+import { PREFERRED_NAME_COLUMN, preferredNameColumn } from "@/lib/clients/preferred-name-read";
 import {
   hasNameQuery,
   matchesClientSearch,
   nameCandidatePatterns,
   NON_ASCII_NAME_REGEX,
   phoneCandidatePattern,
+  sortByMatchRank,
 } from "@/lib/clients/name-search";
 
 // Global Search server action (V1: PR #232 · V2-A: settings + navigation).
@@ -142,6 +146,7 @@ function rowsOrFail<T>(r: { data: T[] | null; error: unknown }): T[] {
 type ClientSearchRow = {
   id: string;
   name: string | null;
+  preferred_name?: string | null;
   email: string | null;
   phone: string | null;
 };
@@ -163,16 +168,37 @@ type ClientSearch = { rows: ClientSearchRow[]; truncated: boolean };
 // Returns null when any page of any read fails (DAT-002): a failed page is not
 // "no more rows", and a partial list would look like a complete one. For the
 // same reason, a read cut short by the scan bound sets `truncated`.
+// HON-58: the preferred name is searched and shown where the database has it.
+// Before 0258 there is no such column, and a read that names it fails 42703. The
+// whole search then runs once more without it (today's behaviour exactly); any
+// other error is untouched, so a real failure is never retried or swallowed.
+class MissingPreferredNameColumn extends Error {}
+
 async function searchClientRows(
   supabase: Awaited<ReturnType<typeof createClient>>,
   studioId: string,
   query: string,
   like: string,
 ): Promise<ClientSearch | null> {
+  try {
+    return await searchClientRowsWith(supabase, studioId, query, like, true);
+  } catch (e) {
+    if (!(e instanceof MissingPreferredNameColumn)) throw e;
+    return searchClientRowsWith(supabase, studioId, query, like, false);
+  }
+}
+
+async function searchClientRowsWith(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  studioId: string,
+  query: string,
+  like: string,
+  includePreferred: boolean,
+): Promise<ClientSearch | null> {
   const base = () =>
     supabase
       .from("clients")
-      .select("id, name, email, phone")
+      .select(`id, name, ${preferredNameColumn(includePreferred)}email, phone`)
       .eq("studio_id", studioId)
       .is("archived_at", null);
 
@@ -180,7 +206,10 @@ async function searchClientRows(
   const confirmed = async (
     read: () => ReturnType<typeof base>,
   ): Promise<ClientSearch | null> => {
-    const found: ClientSearchRow[] = [];
+    // Best CLIENT_CAP confirmed rows so far, by match rank. The scan does NOT stop
+    // at the fifth match in name order: a better match (an exact name) can sort
+    // after it alphabetically, and ranking only the first five would drop it.
+    let found: ClientSearchRow[] = [];
     for (let offset = 0; ; ) {
       // The last request reaches one row PAST the bound (index
       // CLIENT_SCAN_CAP_PER_READ), never scanned: it only tells "stopped at
@@ -189,17 +218,18 @@ async function searchClientRows(
         .order("name")
         .order("id")
         .range(offset, Math.min(offset + CLIENT_CANDIDATE_PAGE - 1, CLIENT_SCAN_CAP_PER_READ));
-      if (error) return null;
-      const page = (data ?? []) as ClientSearchRow[];
+      if (error) {
+        if (includePreferred && isMissingColumnError(error, PREFERRED_NAME_COLUMN)) throw new MissingPreferredNameColumn();
+        return null;
+      }
+      const page = (data ?? []) as unknown as ClientSearchRow[];
       if (page.length === 0) return { rows: found, truncated: false };
       for (const [i, row] of page.entries()) {
         if (offset + i >= CLIENT_SCAN_CAP_PER_READ) return { rows: found, truncated: true };
         if (!matchesClientSearch(row, query)) continue;
         found.push(row);
-        // The first CLIENT_CAP confirmed rows in name order are all the
-        // final, name-sorted and capped result can use from this read.
-        if (found.length >= CLIENT_CAP) return { rows: found, truncated: false };
       }
+      found = sortByMatchRank(found, query).slice(0, CLIENT_CAP);
       // A server row cap can shorten a page, so advance by what arrived.
       offset += page.length;
     }
@@ -209,21 +239,31 @@ async function searchClientRows(
   const phonePattern = phoneCandidatePattern(query);
   const none = Promise.resolve<ClientSearch>({ rows: [], truncated: false });
 
-  const [direct, asciiNamed, otherNamed, phoned] = await Promise.all([
+  const [direct, asciiNamed, otherNamed, phoned, otherPreferred] = await Promise.all([
     // The direct read is confirmed and paged like every other client read
     // (Codex P2 4367010228): no row reaches the cap unconfirmed.
-    confirmed(() => base().or(orIlike(["name", "email", "phone"], like))),
+    confirmed(() =>
+      base().or(orIlike(includePreferred ? ["name", "preferred_name", "email", "phone"] : ["name", "email", "phone"], like)),
+    ),
     namePatterns.length > 0
       ? confirmed(() => {
           let q = base();
-          for (const pattern of namePatterns) q = q.ilike("name", pattern);
+          // Each query word must be in the stored name OR the preferred name
+          // (repeated or= filters are ANDed), so "janie smith" is a candidate
+          // for a stored "Jane Smith" whose preferred name is "Janie".
+          for (const pattern of namePatterns) {
+            q = includePreferred ? q.or(orIlike(["name", "preferred_name"], pattern)) : q.ilike("name", pattern);
+          }
           return q;
         })
       : none,
     hasNameQuery(query) ? confirmed(() => base().filter("name", "match", NON_ASCII_NAME_REGEX)) : none,
     phonePattern ? confirmed(() => base().ilike("phone", phonePattern)) : none,
+    includePreferred && hasNameQuery(query)
+      ? confirmed(() => base().filter("preferred_name", "match", NON_ASCII_NAME_REGEX))
+      : none,
   ]);
-  if (!direct || !asciiNamed || !otherNamed || !phoned) return null;
+  if (!direct || !asciiNamed || !otherNamed || !phoned || !otherPreferred) return null;
 
   const seen = new Set<string>();
   const rows: ClientSearchRow[] = [];
@@ -232,14 +272,14 @@ async function searchClientRows(
     seen.add(row.id);
     rows.push(row);
   }
-  for (const row of [...asciiNamed.rows, ...otherNamed.rows, ...phoned.rows]) {
+  for (const row of [...asciiNamed.rows, ...otherNamed.rows, ...phoned.rows, ...otherPreferred.rows]) {
     if (seen.has(row.id)) continue;
     seen.add(row.id);
     rows.push(row);
   }
   return {
-    rows: rows.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "")).slice(0, CLIENT_CAP),
-    truncated: [direct, asciiNamed, otherNamed, phoned].some((r) => r.truncated),
+    rows: sortByMatchRank(rows, query).slice(0, CLIENT_CAP),
+    truncated: [direct, asciiNamed, otherNamed, phoned, otherPreferred].some((r) => r.truncated),
   };
 }
 
@@ -457,7 +497,7 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
     results.push({
       id: `client:${c.id}`,
       type: "client",
-      title: (c.name as string) || "Client",
+      title: clientDisplayName(c) || "Client",
       subtitle:
         (c.email as string | null) || (c.phone as string | null) || undefined,
       href: `/clients/${c.id}`,

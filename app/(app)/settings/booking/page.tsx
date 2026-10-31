@@ -9,6 +9,7 @@ import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
 import { BookingLinkCard } from "./BookingLinkCard";
 import { SaveButton } from "./SaveButton";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
+import { bookingSettingsErrorSentence } from "@/lib/booking/settings-error-codes";
 
 // Plain option labels for the buffer select. The "Recommended" hint
 // is no longer inlined here because that crowded the select control
@@ -67,7 +68,9 @@ export default async function BookingSettingsPage({
   const errorParam = params.error;
   const saved =
     (Array.isArray(savedParam) ? savedParam[0] : savedParam) === "1";
-  const errorMessage = Array.isArray(errorParam) ? errorParam[0] : errorParam;
+  // `?error=` carries a CODE; only a recognised code becomes one of the fixed
+  // sentences, so a crafted link cannot write its own words in the banner.
+  const errorMessage = errorParam === undefined ? null : bookingSettingsErrorSentence(errorParam);
 
   const { practitioner, studio } = await requirePractitionerWithStudio();
   // The studio-owned mode, from the one authority that owns it. UNKNOWN is
@@ -85,7 +88,7 @@ export default async function BookingSettingsPage({
 
   return (
     <div className="flex flex-col gap-8">
-      <SaveBanner saved={saved} error={errorMessage ?? null} />
+      <SaveBanner saved={saved} error={errorMessage} />
 
       <section>
         <h2 className="text-xl font-medium">Booking</h2>

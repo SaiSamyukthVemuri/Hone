@@ -4,6 +4,7 @@ import type {
   TreatmentPlan,
   TreatmentPlanStage,
 } from "@/lib/types/database";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Plan returned with the count of attached non-deleted sessions. Computed
 // per plan via a single follow-up query (one trip, mapped client-side) so
@@ -44,7 +45,7 @@ export async function getTreatmentPlansForClient(
     .eq("client_id", clientId)
     .order("status", { ascending: true })
     .order("created_at", { ascending: false });
-  if (plansErr) throw new Error(`Failed to load plans: ${plansErr.message}`);
+  if (plansErr) throw new Error(`Failed to load plans: ${dbErrorCode(plansErr)}`);
 
   const rows = (plans ?? []) as TreatmentPlan[];
   if (rows.length === 0) return [];
@@ -73,10 +74,10 @@ export async function getTreatmentPlansForClient(
   ]);
 
   if (sessionsRes.error) {
-    throw new Error(`Failed to load plan counts: ${sessionsRes.error.message}`);
+    throw new Error(`Failed to load plan counts: ${dbErrorCode(sessionsRes.error)}`);
   }
   if (stagesRes.error) {
-    throw new Error(`Failed to load plan stages: ${stagesRes.error.message}`);
+    throw new Error(`Failed to load plan stages: ${dbErrorCode(stagesRes.error)}`);
   }
 
   const counts = new Map<string, number>();
@@ -120,7 +121,7 @@ export async function getActiveTreatmentPlansForClient(
     .eq("client_id", clientId)
     .eq("status", "active")
     .order("created_at", { ascending: false });
-  if (error) throw new Error(`Failed to load active plans: ${error.message}`);
+  if (error) throw new Error(`Failed to load active plans: ${dbErrorCode(error)}`);
   return (data ?? []) as TreatmentPlan[];
 }
 
@@ -137,7 +138,7 @@ export async function getTreatmentPlanWithCount(
     .eq("studio_id", studioId)
     .eq("id", planId)
     .maybeSingle();
-  if (error) throw new Error(`Failed to load plan: ${error.message}`);
+  if (error) throw new Error(`Failed to load plan: ${dbErrorCode(error)}`);
   if (!data) return null;
 
   const { count, error: countErr } = await supabase
@@ -147,7 +148,7 @@ export async function getTreatmentPlanWithCount(
     .eq("treatment_plan_id", planId)
     .is("deleted_at", null);
   if (countErr) {
-    throw new Error(`Failed to load plan count: ${countErr.message}`);
+    throw new Error(`Failed to load plan count: ${dbErrorCode(countErr)}`);
   }
   return { ...(data as TreatmentPlan), attached_count: count ?? 0 };
 }

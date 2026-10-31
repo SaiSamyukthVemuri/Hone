@@ -149,7 +149,7 @@ export async function startSessionAction(formData: FormData): Promise<void> {
           .maybeSingle(),
     );
     if (apptErr) {
-      throw new Error(`Failed to verify appointment: ${apptErr.message}`);
+      throw new Error(`Failed to verify appointment: ${dbErrorCode(apptErr)}`);
     }
     if (!appt) {
       throw new Error("Appointment not found.");

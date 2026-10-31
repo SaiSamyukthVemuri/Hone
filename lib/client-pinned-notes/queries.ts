@@ -5,6 +5,7 @@ import {
   EXPORT_PAGE_SIZE,
 } from "@/lib/export/paginate";
 import type { ClientPinnedNote } from "@/lib/types/database";
+import { dbErrorCode } from "@/lib/logging/error-class";
 
 export async function getPinnedNotesForClient(
   studioId: string,
@@ -17,7 +18,7 @@ export async function getPinnedNotesForClient(
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
     .order("created_at", { ascending: false });
-  if (error) throw new Error(`Failed to load pinned notes: ${error.message}`);
+  if (error) throw new Error(`Failed to load pinned notes: ${dbErrorCode(error)}`);
   return (data ?? []) as ClientPinnedNote[];
 }
 
@@ -72,7 +73,7 @@ export async function getPinnedNotesByClient(
       .order("id", { ascending: false })
       .range(from, to),
   );
-  if (error) throw new Error(`Failed to load pinned notes: ${error.message}`);
+  if (error) throw new Error(`Failed to load pinned notes: ${dbErrorCode(error)}`);
 
   // Already newest-first across every page, so pushing preserves that order
   // within each client without a second sort.

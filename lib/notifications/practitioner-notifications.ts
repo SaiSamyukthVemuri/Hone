@@ -248,7 +248,7 @@ export async function ensurePractitionerNotification(
         .maybeSingle();
       if (selErr) {
         throw new Error(
-          `ensure_practitioner_notification_dedupe_check_failed:${selErr.code}:${selErr.message}`,
+          `ensure_practitioner_notification_dedupe_check_failed:${dbErrorCode(selErr)}`,
         );
       }
       if (existing) {
@@ -257,11 +257,11 @@ export async function ensurePractitionerNotification(
       // 23505 with no matching dedupe row => a different unique constraint
       // tripped. Do NOT swallow it.
       throw new Error(
-        `ensure_practitioner_notification_unexpected_unique_violation:${error.code}:${error.message}`,
+        `ensure_practitioner_notification_unexpected_unique_violation:${dbErrorCode(error)}`,
       );
     }
     throw new Error(
-      `ensure_practitioner_notification_failed:${error.code}:${error.message}`,
+      `ensure_practitioner_notification_failed:${dbErrorCode(error)}`,
     );
   }
   return { deduped: false };
