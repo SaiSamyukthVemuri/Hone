@@ -1,0 +1,6 @@
+{
+  "pr": 1296,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0275_client_identification_photo_store.sql"],
+  "release_receipt": "01-ops/1296-release-receipt.json"
+}
