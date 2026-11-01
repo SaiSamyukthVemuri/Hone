@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { activeSettingsLocation } from "@/lib/settings/nav";
 import { isLeavingNavigation } from "@/components/settings/unsaved-changes";
 import { movedSectionTarget } from "@/components/settings/hash-redirect";
@@ -309,5 +309,38 @@ describe("R2 Codex P2 (1 Nov): setup links open the focused Studio view, never t
     ]) {
       expect(read(f), f).not.toMatch(/["'`]\/settings\/studio["'`]/);
     }
+  });
+});
+
+describe("R2-F1 (Photos, 1 Nov): the mobile drawer navigation lands focus on the heading, not <body>", () => {
+  it("focusIsNowhere is true only for null, body and the root element", async () => {
+    const { focusIsNowhere } = await import("@/components/settings/focus-heading");
+    const body = { id: "body" } as unknown as Element;
+    const root = { id: "html" } as unknown as Element;
+    const field = { id: "field" } as unknown as Element;
+    expect(focusIsNowhere(null, body, root)).toBe(true);
+    expect(focusIsNowhere(body, body, root)).toBe(true);
+    expect(focusIsNowhere(root, body, root)).toBe(true);
+    expect(focusIsNowhere(field, body, root)).toBe(false);
+  });
+
+  it("focusSettingsHeading focuses the heading without scrolling, once it exists", async () => {
+    const { focusSettingsHeading } = await import("@/components/settings/focus-heading");
+    const focus = vi.fn();
+    const heading = { focus } as unknown as HTMLElement;
+    expect(focusSettingsHeading({ querySelector: () => null }, null)).toBe(false);
+    expect(focus).not.toHaveBeenCalled();
+    expect(focusSettingsHeading({ querySelector: () => heading }, null)).toBe(true);
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    focus.mockClear();
+    expect(focusSettingsHeading({ querySelector: () => heading }, heading as unknown as Element)).toBe(true);
+    expect(focus).not.toHaveBeenCalled();
+  });
+
+  it("the shell retries as the new view mounts, only while focus is nowhere", () => {
+    const src = readFileSync(path.resolve(__dirname, "../..", "components/settings/settings-shell.tsx"), "utf8");
+    expect(src).toMatch(/new MutationObserver\(retry\)/);
+    expect(src).toMatch(/focusIsNowhere\(/);
+    expect(src).toMatch(/observer\.disconnect\(\)/);
   });
 });

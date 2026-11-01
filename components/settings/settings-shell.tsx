@@ -10,6 +10,7 @@ import {
   isRailLinkClick,
   type SettingsNavItem,
 } from "@/lib/settings/nav";
+import { focusIsNowhere, focusSettingsHeading } from "./focus-heading";
 import { HashRedirect } from "./hash-redirect";
 import { UnsavedChangesProvider } from "./unsaved-changes";
 
@@ -62,9 +63,32 @@ export function SettingsShell({ items, account, children }: Props) {
       mounted.current = true;
       return;
     }
-    content.current
-      ?.querySelector<HTMLElement>("[data-settings-heading]")
-      ?.focus({ preventScroll: true });
+    const root = content.current;
+    focusSettingsHeading(root, document.activeElement);
+    // The new view's heading can mount after this effect, and the closing
+    // drawer drops focus on <body>. Retry as the view mounts, only while focus
+    // is nowhere, and stop after a bounded wait.
+    if (!root) return;
+    const retry = () => {
+      if (
+        focusIsNowhere(
+          document.activeElement,
+          document.body,
+          document.documentElement,
+        )
+      ) {
+        focusSettingsHeading(root, document.activeElement);
+      }
+    };
+    const observer = new MutationObserver(retry);
+    observer.observe(root, { childList: true, subtree: true });
+    const frame = window.requestAnimationFrame(retry);
+    const stop = window.setTimeout(() => observer.disconnect(), 3000);
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(stop);
+    };
   }, [pathname]);
 
   // A keyboard activation or a browser hash navigation can change the URL
