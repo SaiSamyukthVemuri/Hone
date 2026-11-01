@@ -11,7 +11,7 @@ import { STAFF_MANAGED_UNKNOWN } from "@/lib/dashboard/staff-managed";
 import { getClientBirthdaysForMonth } from "@/lib/clients/birthday-queries";
 import { resolveBirthdayColor } from "@/lib/birthday-colors";
 import type { BirthdayReminderColor, Studio } from "@/lib/types/database";
-import { PracticeSnapshot } from "./practice-snapshot";
+import { ChartedWithin24hCard, PracticeSnapshot } from "./practice-snapshot";
 import {
   getPracticeDashboardMetrics,
   PROCEDURE_RECORD_WINDOW,
@@ -271,11 +271,6 @@ export async function SecondaryStack({
           functionality. */}
       {/* WS-D (settings redesign): the Practice Snapshot is OWNER-ONLY. It is a server component, so for any other role nothing of it,
           not its counts, period filter or copy, is rendered into the response. the metrics loader itself no longer runs for a non-owner (WS-DB); the roll-up they need comes from `getProcedureActionMetrics`. */}
-      {!isOwner && personalCharting !== null && (
-        <PersonalChartingCard
-          metrics={personalCharting === CHECK_UNAVAILABLE ? null : personalCharting}
-        />
-      )}
       {isOwner && staffManagedUnknown && (
         <p
           role="status"
@@ -302,34 +297,51 @@ export async function SecondaryStack({
       )}
       {isOwner && !practiceMetrics && capacityLink}
 
-      {/* CHLOE D2, setup that is DONE is not daily work.
-          ------------------------------------------------------------------
-          This card used to render in both states. Once every required item was
-          satisfied it became a permanent "Booking page ready" banner plus a
-          column of ticks: a congratulation occupying the daily workspace
-          forever.
-
-          ONB-03: the gate is the CANONICAL authority
-          (lib/booking/new-client-readiness.ts), the same one /settings/launch
-          consumes, so the two owner surfaces cannot disagree. No new flag and
-          no new column.
-
-          `status !== "ready"` INCLUDES "unknown" ON PURPOSE. Unknown means an
-          authority could not be read, so nobody has evidence this studio is
-          ready -- hiding the card would assert exactly that. The card renders a
-          distinct unknown state rather than an empty checklist, and it returns
-          null itself for "ready", so the contract holds for any future caller
-          and not only for this call site. */}
-      {/* WS-DB: the owner's choice to pause new-client booking is its own
-          state, not a "to-do" checklist, and a ready studio with launch items
-          open gets a one-line pointer to /settings/launch. */}
-      <SetupStateNotice state={setupCard} />
-      {isOwner &&
-        readiness &&
-        readiness.status !== "ready" &&
-        setupCard.kind !== "paused_by_owner" && (
-          <BookingSetupCard readiness={readiness} staffManaged={staffManaged} />
+      {/* FIDELITY F, the lower row: Charting (the owner's studio-wide "Charted within 24h", or a
+          practitioner's own figure) beside the booking card. Both were already live further down the
+          page; they are MOVED here, not duplicated. The booking card keeps its truthful wording
+          (an intentional pause reads "That is your setting, not unfinished setup", never a setup
+          warning), and the incomplete-setup checklist stays its own separate card. */}
+      <div data-testid="dashboard-lower-row" className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+        <div className="flex min-w-0 flex-col gap-4">
+        {!isOwner && personalCharting !== null && (
+          <PersonalChartingCard
+            metrics={personalCharting === CHECK_UNAVAILABLE ? null : personalCharting}
+          />
         )}
+          {isOwner && practiceMetrics && <ChartedWithin24hCard metrics={practiceMetrics} />}
+        </div>
+        <div className="flex min-w-0 flex-col gap-4">
+      {/* CHLOE D2, setup that is DONE is not daily work.
+            ------------------------------------------------------------------
+            This card used to render in both states. Once every required item was
+            satisfied it became a permanent "Booking page ready" banner plus a
+            column of ticks: a congratulation occupying the daily workspace
+            forever.
+
+            ONB-03: the gate is the CANONICAL authority
+            (lib/booking/new-client-readiness.ts), the same one /settings/launch
+            consumes, so the two owner surfaces cannot disagree. No new flag and
+            no new column.
+
+            `status !== "ready"` INCLUDES "unknown" ON PURPOSE. Unknown means an
+            authority could not be read, so nobody has evidence this studio is
+            ready -- hiding the card would assert exactly that. The card renders a
+            distinct unknown state rather than an empty checklist, and it returns
+            null itself for "ready", so the contract holds for any future caller
+            and not only for this call site. */}
+        {/* WS-DB: the owner's choice to pause new-client booking is its own
+            state, not a "to-do" checklist, and a ready studio with launch items
+            open gets a one-line pointer to /settings/launch. */}
+        <SetupStateNotice state={setupCard} />
+        {isOwner &&
+          readiness &&
+          readiness.status !== "ready" &&
+          setupCard.kind !== "paused_by_owner" && (
+            <BookingSetupCard readiness={readiness} staffManaged={staffManaged} />
+          )}
+        </div>
+      </div>
 
       {/* PR #215: setup/readiness checklist entry point. A normal
           link card, never a blocking modal. PR #238: shown only while

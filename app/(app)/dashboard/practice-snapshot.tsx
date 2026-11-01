@@ -197,9 +197,17 @@ export function PracticeSnapshot({
             )}
           </Card>
         )}
+      </div>
+      {children}
+    </section>
+  );
+}
 
-        {/* PR #225: treatment-memory loop health. Studio-level only;
-            never grouped or ranked by practitioner. */}
+// FIDELITY F: this card moved out of the snapshot's grid into the dashboard's lower row (beside the
+// booking card). Same content and wording, same studio-level-only rule.
+// PR #225: treatment-memory loop health. Studio-level only; never grouped or ranked by practitioner.
+export function ChartedWithin24hCard({ metrics }: { metrics: PracticeDashboardMetrics }) {
+  return (
         <Card title="Charted within 24h">
           {metrics.chartedWithin24h.completedCount === 0 ? (
             <>
@@ -227,8 +235,5 @@ export function PracticeSnapshot({
             Keeps Before Today and Treatment Intelligence current.
           </p>
         </Card>
-      </div>
-      {children}
-    </section>
   );
 }

@@ -159,3 +159,33 @@ describe("compact appointment rows (fidelity C)", () => {
     expect(row).toMatch(/\{isOwner && <CardOnFilePill status=\{cardOnFile\} \/>\}/);
   });
 });
+
+describe("lower row: Charting and the booking card, moved not duplicated (fidelity F)", () => {
+  const stack = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
+  const snap = readFileSync("app/(app)/dashboard/practice-snapshot.tsx", "utf8");
+  const row = stack.slice(stack.indexOf('data-testid="dashboard-lower-row"'));
+  it("one lower row holds the charting card (owner: Charted within 24h; practitioner: their own figure) and the booking cards", () => {
+    expect(row).toMatch(/<PersonalChartingCard/);
+    expect(row).toMatch(/<ChartedWithin24hCard metrics=\{practiceMetrics\}/);
+    expect(row).toMatch(/<SetupStateNotice state=\{setupCard\}/);
+    expect(row).toMatch(/<BookingSetupCard readiness=\{readiness\}/);
+  });
+  it("each appears exactly once on the page (no duplicate)", () => {
+    for (const marker of ["<PersonalChartingCard", "<ChartedWithin24hCard", "<SetupStateNotice", "<BookingSetupCard"]) {
+      expect((stack.match(new RegExp(marker, "g")) ?? []).length, marker).toBe(1);
+    }
+    expect(snap).not.toMatch(/<Card title="Charted within 24h">[\s\S]*<Card title="Charted within 24h">/);
+    // the snapshot grid no longer renders it; only the exported card does
+    expect((snap.match(/title="Charted within 24h"/g) ?? []).length).toBe(1);
+    expect(snap.indexOf('title="Charted within 24h"')).toBeGreaterThan(snap.indexOf("export function ChartedWithin24hCard"));
+  });
+  it("keeps the truthful intentional-off wording and the separate incomplete-setup checklist", () => {
+    const notice = readFileSync("app/(app)/dashboard/setup-state-notice.tsx", "utf8");
+    expect(notice).toContain("That is your setting, not unfinished setup");
+    expect(row).toMatch(/readiness\.status !== "ready" &&\s*setupCard\.kind !== "paused_by_owner"/);
+  });
+  it("role gates unchanged: practitioners' charting card only for non-owners, studio-wide card only for owners", () => {
+    expect(row).toMatch(/\{!isOwner && personalCharting !== null && \(/);
+    expect(row).toMatch(/\{isOwner && practiceMetrics && <ChartedWithin24hCard/);
+  });
+});
