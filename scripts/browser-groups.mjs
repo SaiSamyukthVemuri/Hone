@@ -220,6 +220,15 @@ export const BROWSER_GROUPS = {
       // the query's own text. Here because settings/booking/actions.ts selects
       // this group.
       "settings-booking-error-param.spec.ts",
+      // WS-E settings redesign verification: rail per role, direct URLs, restricted
+      // data absent from the server response, owner-only display preferences with
+      // the direct-action refusal, mobile drawer, unsaved-changes guard. Same
+      // group as the other settings spec: a diff under app/(app)/settings selects it.
+      "settings-nav-roles.spec.ts",
+      "settings-display-prefs.spec.ts",
+      "settings-shell-interactions.spec.ts",
+      "settings-r2-behaviours.spec.ts",
+      "settings-r2-sequence.spec.ts",
       "public-booking-error-containment.spec.ts",
       "public-booking-slot-read-failure.spec.ts",
       // TWILIO-EGRESS-FAKE (MSG-006): a public booking with SMS consent reaches
