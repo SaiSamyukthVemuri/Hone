@@ -39,7 +39,8 @@ test("non-owner practitioner cannot access schedule management", async ({ page }
   expect(E2E_APP_ORIGIN).toMatch(/^https?:\/\/(localhost|127\.0\.0\.1)/);
   await loginByMagicLink(page, memberA.email);
   await page.goto("/settings/availability");
-  await expect(page.getByText(/Only studio owners can change availability/i)).toBeVisible();
+  // Own-hours control ships OFF (0278 applies first): a practitioner sees the plain "not available yet" sentence.
+  await expect(page.getByText(/Changing your own working hours is not available yet/i)).toBeVisible();
 });
 
 test("owner customizes and resets a practitioner weekday; other practitioners stay inherited", async ({
