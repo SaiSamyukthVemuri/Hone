@@ -3,7 +3,7 @@
   "migrations": {
     "count": 251,
     "last": "0274_receptionist_desk_projection.sql",
-    "sha256": "5bca8f8d8f37b10e1091a38439a94d2f17850ac41c40f7fcc3319147a1b93b3f"
+    "sha256": "71dc559b6b0bdd3b2a6d5147a7d2c5eec6222a9c97b8bbd3df2d6eb371b5ca24"
   },
   "public": {
     "tables": [
