@@ -121,6 +121,65 @@ describe("0278: a practitioner changes only their OWN hours", () => {
   });
 });
 
+describe("0278 revocation, cross-studio scope and existing visits (Privacy C2, Insurance W-5)", () => {
+  it("a practitioner deactivated after their first successful save is refused at once", async () => {
+    const f = await fixture();
+    expect(await upsertDay(f.s.studioId, f.a.practitionerId, f.a.practitionerId)).toBe("ok");
+    await adminQuery(`update public.practitioners set active = false where id = $1`, [f.a.practitionerId]);
+    expect(await upsertDay(f.s.studioId, f.a.practitionerId, f.a.practitionerId, 4)).toBe("not_authorized");
+    expect(await deleteDay(f.s.studioId, f.a.practitionerId, f.a.practitionerId)).toBe("not_authorized");
+    expect(await weekly(f.s.studioId, f.a.practitionerId, f.a.practitionerId)).toBe("not_authorized");
+    expect(await dayRows(f.s.studioId, f.a.practitionerId)).toBe(1);
+  });
+
+  it("a role change takes effect at once: owner rights end the moment the role does", async () => {
+    const f = await fixture();
+    await adminQuery(`update public.practitioners set role = 'owner' where id = $1`, [f.a.practitionerId]);
+    expect(await upsertDay(f.s.studioId, f.a.practitionerId, null)).toBe("ok"); // studio-wide, as an owner
+    await adminQuery(`update public.practitioners set role = 'practitioner' where id = $1`, [f.a.practitionerId]);
+    expect(await upsertDay(f.s.studioId, f.a.practitionerId, null, 4)).toBe("not_authorized");
+    expect(await upsertDay(f.s.studioId, f.a.practitionerId, f.b.practitionerId, 4)).toBe("not_authorized");
+  });
+
+  it("another studio's practitioner id is never a reachable scope, for a member or an outsider", async () => {
+    const f = await fixture();
+    const other = await seedStudio("h278y");
+    await adminQuery(`update public.studios set practitioner_capacity_enabled = true where id = $1`, [other.studioId]);
+    expect(await upsertDay(f.s.studioId, f.a.practitionerId, other.practitionerId)).toBe("not_authorized");
+    expect(await upsertDay(other.studioId, f.a.practitionerId, f.a.practitionerId)).toBe("not_authorized");
+    expect(await upsertDay(other.studioId, f.a.practitionerId, other.practitionerId)).toBe("not_authorized");
+    expect(await dayRows(other.studioId, other.practitionerId)).toBe(0);
+  });
+
+  it("an owner is unchanged: any scope, and studio-wide, exactly as under 0150", async () => {
+    const f = await fixture();
+    expect(await upsertDay(f.s.studioId, f.s.practitionerId, null)).toBe("ok");
+    expect(await upsertDay(f.s.studioId, f.s.practitionerId, f.a.practitionerId)).toBe("ok");
+    expect(await upsertOverride(f.s.studioId, f.s.practitionerId, f.b.practitionerId)).toBe("ok");
+  });
+
+  // Recorded behaviour, not a new rule: no hours command (0150 or 0278) looks at existing
+  // appointments, so narrowing hours leaves a booked visit exactly as it was.
+  it("narrowing own hours changes no existing appointment (there is no conflict check here, for owner or practitioner)", async () => {
+    const f = await fixture();
+    expect(await upsertDay(f.s.studioId, f.a.practitionerId, f.a.practitionerId, 2)).toBe("ok");
+    const appt = await adminQuery(
+      `insert into public.appointments
+         (id, studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, status,
+          cancellation_token_hash, buffer_minutes_snapshot, blocked_ends_at)
+       values (gen_random_uuid(), $1, $2, $3, now() + interval '3 days', now() + interval '3 days 30 minutes', 30,
+               'confirmed', md5(random()::text), 15, now() + interval '3 days 45 minutes')
+       returning id, starts_at, status`,
+      [f.s.studioId, f.a.practitionerId, f.s.clientId],
+    );
+    const before = appt.rows[0];
+    expect(await upsertOverride(f.s.studioId, f.a.practitionerId, f.a.practitionerId, "2031-09-15")).toBe("ok");
+    expect(await deleteDay(f.s.studioId, f.a.practitionerId, f.a.practitionerId, 2)).toBe("ok");
+    const after = (await adminQuery(`select id, starts_at, status from public.appointments where id = $1`, [before.id])).rows[0];
+    expect(after).toEqual(before);
+  });
+});
+
 describe("0278 the direct-table path stays owner-only (RLS unchanged) and grants are service_role only", () => {
   it("a practitioner's own login cannot write the availability tables directly", async () => {
     const f = await fixture();
