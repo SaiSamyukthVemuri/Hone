@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { SummaryStrip } from "./summary-strip";
 import { computeTimeInsights, formatInsightHours, insightPeriod } from "@/lib/calendar/time-insights";
+import { getBoundaryCrossingAppointments } from "@/lib/calendar/boundary-appointments";
 import Link from "next/link";
 import { buttonClasses } from "@/components/ui/button";
 import {
@@ -471,6 +472,14 @@ export default async function DashboardPage({
     (a) => a.status !== "cancelled",
   );
 
+  // Booked time only: appointments that began before this day and run into it (a midnight-crossing
+  // visit) are not in the start-in-day query above. Same function and studio scope as the calendar's
+  // time insights; they never join the roster, the appointment count or the client count. A failed
+  // read makes the figure "Unavailable", never an undercount.
+  const boundaryCrossers = await getBoundaryCrossingAppointments(studio.id, startUtc).catch(
+    () => null,
+  );
+
   const selectedDayClientIds = Array.from(
     new Set(visibleAppointments.map((a) => a.client_id)),
   );
@@ -939,19 +948,23 @@ export default async function DashboardPage({
         <SummaryStrip
           appointmentCount={visibleAppointments.length}
           clientCount={selectedDayClientIds.length}
-          bookedTime={formatInsightHours(
-            computeTimeInsights({
-              appointments: visibleAppointments.map((a) => ({
-                id: a.id,
-                status: a.status,
-                starts_at: a.starts_at,
-                ends_at: a.ends_at,
-                practitioner_id: null,
-              })),
-              period: insightPeriod(startUtc, endUtc),
-              selection: { mode: "all", ids: new Set() },
-            }).minutes,
-          )}
+          bookedTime={
+            boundaryCrossers === null
+              ? "Unavailable"
+              : formatInsightHours(
+                  computeTimeInsights({
+                    appointments: [...visibleAppointments, ...boundaryCrossers].map((a) => ({
+                      id: a.id,
+                      status: a.status,
+                      starts_at: a.starts_at,
+                      ends_at: a.ends_at,
+                      practitioner_id: null,
+                    })),
+                    period: insightPeriod(startUtc, endUtc),
+                    selection: { mode: "all", ids: new Set() },
+                  }).minutes,
+                )
+          }
           clientsToReview={
             <ClientsToReview
               key={`summary-review:${selectedDayLocal}:${period}`}

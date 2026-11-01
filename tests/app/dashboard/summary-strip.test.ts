@@ -111,6 +111,32 @@ describe("an unavailable intake-review check is never a definite client count (C
   });
 });
 
+describe("booked time counts a midnight-crossing visit (Codex P2)", () => {
+  const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
+  const day = { startUtc: new Date("2026-11-02T00:00:00Z"), endUtc: new Date("2026-11-03T00:00:00Z") };
+  const appt = (id: string, status: string, starts_at: string, ends_at: string) => ({ id, status, starts_at, ends_at, practitioner_id: null });
+  it("a 23:30-00:30 visit from the day before adds its 30 minutes inside the day; it is clipped, not counted whole", () => {
+    const inDay = appt("a", "confirmed", "2026-11-02T10:00:00Z", "2026-11-02T11:00:00Z");
+    const crosser = appt("b", "confirmed", "2026-11-01T23:30:00Z", "2026-11-02T00:30:00Z");
+    const run = (rows: ReturnType<typeof appt>[]) =>
+      computeTimeInsights({ appointments: rows, period: insightPeriod(day.startUtc, day.endUtc), selection: { mode: "all", ids: new Set() } }).minutes;
+    expect(run([inDay])).toBe(60);
+    expect(run([inDay, crosser])).toBe(90);
+  });
+  it("the dashboard reads the boundary rows through the calendar's own function, for booked time only", () => {
+    expect(page).toMatch(/getBoundaryCrossingAppointments\(studio\.id, startUtc\)/);
+    expect(page).toMatch(/\[\.\.\.visibleAppointments, \.\.\.boundaryCrossers\]\.map/);
+    // the roster, the appointment count and the client count never see them
+    expect(page).toMatch(/appointmentCount=\{visibleAppointments\.length\}/);
+    expect(page).toMatch(/new Set\(visibleAppointments\.map\(\(a\) => a\.client_id\)\)/);
+    expect((page.match(/boundaryCrossers/g) ?? []).length).toBe(3);
+  });
+  it("a failed boundary read says Unavailable, never an undercount", () => {
+    expect(page).toMatch(/boundaryCrossers === null\s*\?\s*"Unavailable"/);
+    expect(page).toMatch(/getBoundaryCrossingAppointments\(studio\.id, startUtc\)\.catch\(\s*\(\) => null/);
+  });
+});
+
 describe("panel headers share one top edge (fidelity B)", () => {
   const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
   const stack = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
