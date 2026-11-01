@@ -53,10 +53,23 @@ import {
 } from "@/lib/booking/new-client-readiness";
 import {
   SecondaryStack,
+  NeedsAttentionSection,
+  NeedsAttentionSkeleton,
   SecondaryStackSkeleton,
 } from "./secondary-stack";
-import { getPracticeDashboardMetrics } from "@/lib/dashboard/practice-metrics";
-import { loadStaffManagedClinic } from "@/lib/dashboard/staff-managed";
+import {
+  getPracticeDashboardMetrics,
+  getProcedureActionMetrics,
+} from "@/lib/dashboard/practice-metrics";
+import { withDisplayNamesOnDetailGaps } from "@/lib/dashboard/client-display-names";
+import { getPersonalChartedWithin24h } from "@/lib/dashboard/personal-charting";
+import { getClientIdsWithUpcomingVisits } from "@/lib/dashboard/upcoming-visit-clients";
+import { CHECK_UNAVAILABLE } from "@/lib/dashboard/needs-attention-model";
+import { getIntakesAwaitingReview } from "@/lib/dashboard/intakes-awaiting-review";
+import {
+  loadStaffManagedClinicChecked,
+  STAFF_MANAGED_UNKNOWN,
+} from "@/lib/dashboard/staff-managed";
 import {
   isReportingPeriod,
   type ReportingPeriod,
@@ -289,7 +302,9 @@ export default async function DashboardPage({
   };
   const attentionSourcesPromise = settleLater(
     Promise.all([
-      countIntakesAwaitingReview(supabase, studio.id),
+      // Insurance B2: a failure here is "unavailable" for THIS count only. It
+      // must not reject the bundle and hide every other Needs attention item.
+      getIntakesAwaitingReview(supabase, studio.id).catch(() => CHECK_UNAVAILABLE),
       countActiveServices(studio.id),
       isOwner ? loadPaymentStatus(supabase, studio.id) : Promise.resolve(null),
       // Birthday reminders: month-of-year only, derived from
@@ -320,12 +335,49 @@ export default async function DashboardPage({
       ? getNewClientReadiness(studio)
       : Promise.resolve(null as NewClientReadiness | null),
   );
-  const staffManagedPromise = settleLater(loadStaffManagedClinic(supabase, studio.id));
+  // The read distinguishes "unknown" from "standard"; consumers that only need
+  // the copy posture get the same default as before, and the stack states the
+  // unknown case to the owner.
+  const staffManagedReadPromise = settleLater(
+    loadStaffManagedClinicChecked(supabase, studio.id),
+  );
+  const staffManagedPromise = settleLater(
+    staffManagedReadPromise.then((v) => (v === STAFF_MANAGED_UNKNOWN ? false : v)),
+  );
+  // WS-DB: the practice metrics loader runs for the OWNER only. A practitioner
+  // never starts it (it reads studio-wide activity and, for the owner, money).
   const practiceMetricsPromise = settleLater(
-    // HON-44: studio money totals are owner-only, refused at the read.
-    getPracticeDashboardMetrics(studio.id, studio.timezone, period, {
-      viewerIsOwner: isOwner,
-    }),
+    isOwner
+      ? getPracticeDashboardMetrics(studio.id, studio.timezone, period, {
+          viewerIsOwner: true,
+        })
+      : Promise.resolve(null),
+  );
+  // The "records missing details" roll-up every role sees. The owner already
+  // reads it inside the metrics; anyone else gets just that one read.
+  // Privacy C1: the detail-gap entries carry the DISPLAY name (preferred, else
+  // stored), not the record's stored name. The procedure record is untouched.
+  const procedureActionsPromise = settleLater(
+    (isOwner
+      ? practiceMetricsPromise.then((m) => m!.actions)
+      : getProcedureActionMetrics(studio.id)
+    ).then((actions) => withDisplayNamesOnDetailGaps(supabase, studio.id, actions)),
+  );
+  // Orders intake gaps (preparation tier). A failed read degrades to the safe
+  // order and never fails the section: it changes ORDER only, never membership.
+  const upcomingVisitClientsPromise = settleLater(
+    getClientIdsWithUpcomingVisits(supabase, studio.id, renderNow.toISOString()).catch(
+      () => CHECK_UNAVAILABLE,
+    ),
+  );
+  // A practitioner's OWN charting timeliness, for them alone. The owner sees the
+  // studio figure in the Practice Snapshot instead, so nothing is read here.
+  const personalChartingPromise = settleLater(
+    isOwner
+      ? Promise.resolve(null)
+      : getPersonalChartedWithin24h(studio.id, practitioner.id, renderNow.toISOString()).catch(
+          () => CHECK_UNAVAILABLE,
+        ),
   );
   const clientsNeedingAttentionPromise = settleLater(
     getClientsNeedingAttention(studio.id),
@@ -445,7 +497,14 @@ export default async function DashboardPage({
       // is ONE bounded read for today's UNIQUE client ids, so a client with two
       // appointments costs one lookup and the cost does not grow with the
       // schedule, and a failed read stays UNAVAILABLE — never "No card".
-      loadCardOnFileForStudio(studio.id, selectedDayClientIds),
+      // PRIVACY F1: card-on-file is a client payment-readiness signal, so it is
+      // OWNER-ONLY (Sam decision 12; payment state already works this way). A
+      // non-owner never triggers the read, so `cardOnFileLoad` is null, the
+      // status resolves to null, and the row renders no pill and no portal-link
+      // nudge (which keys off the same status).
+      isOwner
+        ? loadCardOnFileForStudio(studio.id, selectedDayClientIds)
+        : Promise.resolve(null),
     ]);
   void practitioners; // currently unused on the appointments roster;
   // kept fetched in parallel because future per-practitioner annotations
@@ -719,7 +778,12 @@ export default async function DashboardPage({
         />
       )}
 
-      <section className="flex flex-col gap-3">
+      {/* WS-DB layout: appointments beside Needs Attention on desktop, stacked on
+          mobile. `min-w-0` on both columns lets long names wrap instead of
+          widening the grid. The appointments column does not wait for Needs
+          Attention: that column streams behind its own boundary. */}
+      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:items-start">
+      <section aria-label="Appointments" className="flex min-w-0 flex-col gap-3">
         {/* `flex-wrap` matters: this header was the one multi-control row on
             the page without it, and it now carries day navigation beside the
             primary action. Without wrapping, 390px overflows horizontally. */}
@@ -904,6 +968,29 @@ export default async function DashboardPage({
             The daily workspace should not ask a practitioner to email the
             founder; that was pilot tooling, not product. */}
       </section>
+      <section aria-labelledby="needs-attention-heading" className="flex min-w-0 flex-col gap-3">
+        <h2 id="needs-attention-heading" className="text-lg font-medium">
+          Needs attention
+        </h2>
+        {/* KEYED like the secondary stack below, for the same reason. */}
+        <Suspense
+          key={`needs:${selectedDayLocal}:${period}`}
+          fallback={<NeedsAttentionSkeleton />}
+        >
+          <NeedsAttentionSection
+            attentionSources={attentionSourcesPromise}
+            staffManaged={staffManagedPromise}
+            procedureActions={procedureActionsPromise}
+            upcomingVisitClients={upcomingVisitClientsPromise}
+            clientsNeedingAttention={clientsNeedingAttentionPromise}
+            followUpAssistant={followUpAssistantPromise}
+            expiringSupplies={expiringSuppliesPromise}
+            isOwner={isOwner}
+            todayLocal={todayLocal}
+          />
+        </Suspense>
+      </section>
+      </div>
       {/* PERF-01C: the secondary stack streams; the roster above does not
           wait for it.
 
@@ -944,11 +1031,10 @@ export default async function DashboardPage({
         <SecondaryStack
           attentionSources={attentionSourcesPromise}
           staffManaged={staffManagedPromise}
+          staffManagedRead={staffManagedReadPromise}
+          personalCharting={personalChartingPromise}
           bookingReadiness={bookingReadinessPromise}
           practiceMetrics={practiceMetricsPromise}
-          clientsNeedingAttention={clientsNeedingAttentionPromise}
-          followUpAssistant={followUpAssistantPromise}
-          expiringSupplies={expiringSuppliesPromise}
           gettingStartedSignals={gettingStartedSignalsPromise}
           studio={studio}
           isOwner={isOwner}
@@ -1177,7 +1263,7 @@ function AppointmentRow({
               {/* Beside the NAME, exactly where Chloe asked for it, and ahead
                   of the intake line in the reading order. A non-interactive
                   span, so it is safe inside the row-body link. */}
-              <CardOnFilePill status={cardOnFile} />
+              {isOwner && <CardOnFilePill status={cardOnFile} />}
               {nextAction.chip && (
                 <span
                   className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
@@ -1469,7 +1555,12 @@ function AppointmentRow({
           {/* Chloe: consultation notes in ONE TAP from the Dashboard. It
               NAVIGATES to the canonical practitioner writer
               (/clients/<id>?tab=consultation, client_clinical_notes) exactly as
-              the appointment-side ConsultationNotesCard does. No modal, no
+              the appointment-side ConsultationNotesCard does. HELD at
+              ?tab=consultation until #1300 moves consultation into the
+              Treatment tab: on production today the Treatment tab has no
+              consultation writer, so repointing early would land on the wrong
+              content. The repoint to ?tab=treatment is a one-line follow-up
+              once #1300 is merged. No modal, no
               drawer, no second textarea, no second note action, no second
               clinical-note loader — a second writer is precisely what this
               contract exists to prevent. */}
@@ -1656,23 +1747,6 @@ async function loadIntakeStatusByClient(
   return selectCurrentIntakeByClient((data ?? []) as TodayIntakeRow[]);
 }
 
-async function countIntakesAwaitingReview(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  studioId: string,
-): Promise<number> {
-  const { count, error } = await supabase
-    .from("client_intake_forms")
-    .select("id", { count: "exact", head: true })
-    .eq("studio_id", studioId)
-    .eq("status", "submitted")
-    .is("deleted_at", null);
-  if (error) {
-    // DAT-002 N2: a fixed message; PostgREST text can echo the statement.
-    throw new Error("Failed to count intakes awaiting review");
-  }
-  return count ?? 0;
-}
-
 async function countActiveServices(studioId: string): Promise<number> {
   // Use the existing helper; cheap, already cached at the page level.
   const services = await getActiveServices(studioId);
@@ -1692,7 +1766,7 @@ type PaymentStatusForDashboard = {
 async function loadPaymentStatus(
   supabase: Awaited<ReturnType<typeof createClient>>,
   studioId: string,
-): Promise<PaymentStatusForDashboard | null> {
+): Promise<PaymentStatusForDashboard | typeof CHECK_UNAVAILABLE> {
   // Uses the same display-safe RPC the Payments settings page reads from.
   // No Stripe SDK calls, no secrets, no Stripe IDs returned. Mode-scoped
   // (migration 0103): reads the CURRENT deployment mode's row only, so the
@@ -1712,7 +1786,9 @@ async function loadPaymentStatus(
         timestamp: new Date().toISOString(),
       }),
     );
-    return null;
+    // WS-DB: a failed read is "unavailable", never "no payment item". The panel
+    // says so instead of showing a clean list.
+    return CHECK_UNAVAILABLE;
   }
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) {

@@ -76,10 +76,10 @@ export function LastVisitCard({
   unavailable,
 }: LastVisitCardProps) {
   return (
-    <section className="flex flex-col gap-2">
+    <section data-testid="profile-last-charted-treatment-detail" className="flex flex-col gap-2">
       <div>
         <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-600 dark:text-neutral-300">
-          Last visit
+          Last charted treatment
         </h2>
         <p className="text-xs text-neutral-400 dark:text-neutral-500">
           What we did last time

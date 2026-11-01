@@ -98,7 +98,7 @@ describe("A — Current", () => {
 // B — consultation notes in one tap, to the EXISTING writer
 // ---------------------------------------------------------------------------
 describe("B — Consultation notes", () => {
-  it("the row links to the canonical consultation tab", () => {
+  it("the row links to the canonical consultation tab (repoint to Treatment follows #1300)", () => {
     expect(ROW).toMatch(
       /href=\{`\/clients\/\$\{appt\.client_id\}\?tab=consultation`\}/,
     );

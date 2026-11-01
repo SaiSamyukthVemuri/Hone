@@ -405,13 +405,13 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     expect(optionLabels).toEqual([
       "Overview",
       "Sessions",
-      "Treatment Plans",
-      "Messages",
+      "Treatment",
+      "Photos",
       "Health & Forms",
-      // Renamed so the skin/hair analysis stops being invisible behind a tab
-      // named only "Consultation". The tab VALUE is unchanged.
-      "Consultation & Skin/Hair",
-      "Personal Notes",
+      "Messages",
+      "Notes",
+      // Owner-only; the seeded user here is the studio owner.
+      "Billing",
     ]);
     // 16px-safe: the focused select must not trigger iOS page zoom.
     expect(
@@ -421,10 +421,10 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await page.waitForURL(/tab=sessions/);
     await expect(sectionSelect).toHaveValue("sessions");
     await expectNoPageOverflow(page, "client detail sessions tab");
-    await sectionSelect.selectOption("personal");
-    await page.waitForURL(/tab=personal/);
-    await expect(sectionSelect).toHaveValue("personal");
-    await expectNoPageOverflow(page, "client detail personal tab");
+    await sectionSelect.selectOption("notes");
+    await page.waitForURL(/tab=notes/);
+    await expect(sectionSelect).toHaveValue("notes");
+    await expectNoPageOverflow(page, "client detail notes tab");
     await page.goto(`/clients/${clientId}`);
 
     // Pinned notes card (first thing on Overview) fits the viewport.

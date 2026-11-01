@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { SESSION_COLUMNS_WITHOUT_PRICE, type ProfileReadOptions } from "@/lib/clients/profile-pricing";
 import { redirect } from "next/navigation";
 import { createClient } from "./server";
 import { readSelectedStudioId } from "./selected-studio";
@@ -474,7 +475,12 @@ function stripDeletedEntries(session: SessionWithEntries): SessionWithEntries {
 export async function getClientById(
   studioId: string,
   clientId: string,
+  // Default true: every other caller is unchanged. The Client Profile passes
+  // `{ includePrices: false }` for a non-owner, and then no client pricing row
+  // and no `price_paid_cents` is fetched at all.
+  options: ProfileReadOptions = { includePrices: true },
 ): Promise<ClientCheatSheet | null> {
+  const includePrices = options.includePrices !== false;
   const supabase = await createClient();
 
   const { data: client, error: clientErr } = await supabase
@@ -488,15 +494,19 @@ export async function getClientById(
   if (!client) return null;
 
   const [pricingRes, sessionsRes, { practitioners, attributionRoster }] = await Promise.all([
-    supabase
-      .from("client_pricing")
-      .select("*")
-      .eq("studio_id", studioId)
-      .eq("client_id", clientId)
-      .order("effective_from", { ascending: false }),
+    includePrices
+      ? supabase
+          .from("client_pricing")
+          .select("*")
+          .eq("studio_id", studioId)
+          .eq("client_id", clientId)
+          .order("effective_from", { ascending: false })
+      : Promise.resolve({ data: [] as ClientPricing[], error: null }),
     supabase
       .from("sessions")
-      .select("*, electrolysis_entries(*), laser_entries(*)")
+      .select(
+        `${includePrices ? "*" : SESSION_COLUMNS_WITHOUT_PRICE}, electrolysis_entries(*), laser_entries(*)`,
+      )
       .eq("studio_id", studioId)
       .eq("client_id", clientId)
       .is("deleted_at", null)
@@ -512,7 +522,7 @@ export async function getClientById(
   return {
     client: client as Client,
     pricing: (pricingRes.data ?? []) as ClientPricing[],
-    sessions: ((sessionsRes.data ?? []) as SessionWithEntries[]).map(
+    sessions: ((sessionsRes.data ?? []) as unknown as SessionWithEntries[]).map(
       stripDeletedEntries,
     ),
     practitioners,
