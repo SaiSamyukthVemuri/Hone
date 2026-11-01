@@ -1543,15 +1543,18 @@ function AppointmentRow({
         <div className="flex flex-wrap items-center justify-start gap-x-3 gap-y-1 sm:justify-end">
           {/* Chloe: consultation notes in ONE TAP from the Dashboard. It
               NAVIGATES to the canonical practitioner writer
-              (/clients/<id>?tab=treatment, where consultation is a visible
-              subsection at the top; no #anchor, so nothing jumps),
-              client_clinical_notes, exactly as the appointment-side
-              ConsultationNotesCard does. No modal, no
+              (/clients/<id>?tab=consultation, client_clinical_notes) exactly as
+              the appointment-side ConsultationNotesCard does. HELD at
+              ?tab=consultation until #1300 moves consultation into the
+              Treatment tab: on production today the Treatment tab has no
+              consultation writer, so repointing early would land on the wrong
+              content. The repoint to ?tab=treatment is a one-line follow-up
+              once #1300 is merged. No modal, no
               drawer, no second textarea, no second note action, no second
               clinical-note loader — a second writer is precisely what this
               contract exists to prevent. */}
           <PendingLink
-            href={`/clients/${appt.client_id}?tab=treatment`}
+            href={`/clients/${appt.client_id}?tab=consultation`}
             data-testid="today-consultation-notes"
             pendingLabel="Opening client…"
             className="inline-flex min-h-[44px] items-center rounded-md px-0 py-1.5 text-xs font-medium text-neutral-600 sm:px-3 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
