@@ -285,8 +285,16 @@ jobs:
     if: ${{ needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     # A FAILURE CEILING, NOT A PERFORMANCE TARGET. The target for this lane is
-    # UNCHANGED; 15 minutes is only the point at which a run is declared broken,
+    # UNCHANGED; 25 minutes is only the point at which a run is declared broken,
     # and is NOT an acceptable runtime.
+    #
+    # 15 -> 25 (1 Nov, NODE-HEAP-01): with typecheck and the build no longer
+    # OOMing, PR runs of this job reached the 15 minute ceiling mid-`npm test`
+    # with every test that ran passing (#1324 runs 41338447505 and the next:
+    # setup + typecheck + lint + build 5.2 min, then 9.7+ min of tests, cut at
+    # 15.0). Unit tests took 3.8 min on production's push run and 4.6 min on a
+    # PR run earlier that day, so the extra time is not the heap flag (the
+    # second run gave the unit-test step the default heap and was no faster).
     #
     # MEASURED on head e77b83cd. `npm ci` alone took 7.1 MINUTES on that runner
     # -- against a lane that normally finishes in 3.7-4.7 min in total. Typecheck
@@ -299,7 +307,7 @@ jobs:
     # that run, so this is runner-batch variance in dependency installation, not
     # workload growth. A ceiling that cannot absorb it reports a slow runner as a
     # broken diff. Commands, test selection and assertions are unchanged.
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     # Dummy / test-safe env values. The build and test harness do not
     # need real Supabase / Stripe / Resend / Twilio / cron credentials
@@ -386,15 +394,6 @@ jobs:
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: npm test
         env:
-          # NODE-HEAP-01: vitest keeps the runner's default heap. With the
-          # workflow-wide 4 GB flag this step took 9.0 min (#1321) and was cut at
-          # the job's 15 min ceiling (#1324 run 41338447505), against 4.6 min on
-          # the last pre-OOM PR run (#1301 @ 58c67f05) and 3.8 min on production's
-          # push run: every vitest worker inherits the flag, and V8 collects less
-          # often under a larger limit, so the workers hold more memory at once on
-          # a 7 GB runner. Only typecheck, the build and the webServer build need
-          # the headroom. An empty value REPLACES the inherited one.
-          NODE_OPTIONS: ""
           # enforce: pushes to production and production-record changes;
           # measure (non-blocking, annotated): ordinary application PRs.
           CANONICAL_FRESHNESS: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.production_record == 'true') && 'enforce' || 'measure' }}

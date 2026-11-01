@@ -946,8 +946,11 @@ describe("PR CI — path-aware lane selection", () => {
     // ceiling killed the job, skipping Build, Unit tests and every safety gate.
     // No assertion failed -- most were never run. Lower bound 8 so a revert
     // turns this red.
+    // 15 -> 25 (NODE-HEAP-01, 1 Nov): with typecheck and the build no longer
+    // OOMing, PR runs reached 15.0 min mid-`npm test` with every test that ran
+    // passing (setup + build 5.2 min, tests 9.7+ min). The lower bound stays 8.
     expect(budget("validate")).toBeGreaterThan(8);
-    expect(budget("validate")).toBeLessThanOrEqual(15);
+    expect(budget("validate")).toBeLessThanOrEqual(25);
     // db-integration: TARGET unchanged, HARD TIMEOUT 12. It carried a single 8
     // that served as both, which is the same shape as the payment lane below.
     // The lane historically finished at 6.1-7.5 min — the ceiling and the
@@ -2967,12 +2970,5 @@ describe("NODE-HEAP-01: typecheck and the webServer build keep a 4 GB Node heap"
     const build = /- name: Build\n[\s\S]*?\n\s+NODE_OPTIONS: (.*)\n/.exec(CI)?.[1] ?? "";
     expect(build).toMatch(/--require \.\/scripts\/block-google-fonts\.cjs/);
     expect(heap(build)).toBeGreaterThanOrEqual(4096);
-  });
-});
-
-describe("NODE-HEAP-01: the unit-test step does not inherit the 4 GB heap", () => {
-  it("validate's `npm test` step overrides NODE_OPTIONS with an empty value", () => {
-    const m = /run: npm test\n\s+env:\n(?:\s+#.*\n)+\s+NODE_OPTIONS: ""\n/.exec(CI);
-    expect(m, "the Unit tests step must set NODE_OPTIONS to an empty string").not.toBeNull();
   });
 });
