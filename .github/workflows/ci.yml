@@ -69,6 +69,8 @@ concurrency:
 # and derived paths cannot disagree.
 env:
   HONE_E2E_PORT: "3111"
+  # EXPERIMENT (rehearsal PR #1321, never merged): every PR lane died with "JavaScript heap out of memory" at the 2 GB default.
+  NODE_OPTIONS: --max-old-space-size=4096
 
 jobs:
   # -------------------------------------------------------------------------
@@ -367,7 +369,7 @@ jobs:
         # See scripts/block-google-fonts.cjs and FONTS.md.
         run: npm run build
         env:
-          NODE_OPTIONS: --require ./scripts/block-google-fonts.cjs
+          NODE_OPTIONS: --max-old-space-size=4096 --require ./scripts/block-google-fonts.cjs
 
       - name: Unit tests
         # Same mirror rule. `Lint` runs above with no `if:`, so a lint failure
