@@ -14,7 +14,7 @@ import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
 // Real browser, real stack with 0258 applied, SYNTHETIC names only. The unit
 // lane proves each branch against fakes and tests/db proves the RLS; this
 // proves the whole path a practitioner takes: create a client with a preferred
-// name, record the legal name, find the SAME record by either name or surname,
+// name, record the legal name, find the SAME record by the name shown (the preferred name; legal and stored names behind it are not searched, Privacy S8),
 // see the right identity on the calendar, the profile and the clinical print,
 // and that another studio sees none of it. The tester never improvises a
 // fixture: every record below is created by this spec in its own studio.
@@ -82,26 +82,27 @@ test("preferred and legal names on one client: create, record, search, display, 
     await expect(page.getByText(`Legal name: Margaret Anne ${legalFamily}`)).toBeVisible();
   });
 
-  await test.step("the client list finds the same record by preferred name, legal surname, stored surname and case/spacing/punctuation variants", async () => {
+  await test.step("the client list finds the record by the NAME SHOWN (the preferred name) and by nothing behind it", async () => {
+    // Directory search rule (Privacy S8, production #1292): the name shown on the row, the email and the
+    // phone, and nothing else. The stored name behind a preferred name and every legal name are NOT searched.
     await page.goto("/clients");
-    const search = page.getByPlaceholder("Find client");
+    const search = page.getByRole("searchbox", { name: "Search clients" });
     await expect(search).toBeVisible({ timeout: 20_000 });
     const link = page.locator(`a[href="/clients/${clientId}"]`);
-    for (const query of [
-      preferred,
-      preferred.toUpperCase(),
-      `${preferred} Nowak${run}`,
-      legalFamily,
-      legalFamily.replace("-", " "),
-      `nowak${run}, margaret`,
-      `  margaret   anne  `,
-    ]) {
+    const submit = async (query: string) => {
       await search.fill(query);
-      await expect(link, `query ${JSON.stringify(query)} must find the record`).toBeVisible();
+      await search.press("Enter");
+      await expect(page).toHaveURL(/[?&]q=/, { timeout: 20_000 });
+    };
+    for (const query of [preferred, preferred.toUpperCase(), `  ${preferred.toLowerCase()}  `]) {
+      await submit(query);
+      await expect(link, `query ${JSON.stringify(query)} must find the record`).toBeVisible({ timeout: 20_000 });
       await expect(link).toHaveCount(1);
     }
-    await search.fill("nobody-by-this-name");
-    await expect(link).toHaveCount(0);
+    for (const query of [legalFamily, legalFamily.replace("-", " "), `Nowak${run}`, `margaret anne`, "nobody-by-this-name"]) {
+      await submit(query);
+      await expect(link, `query ${JSON.stringify(query)} must NOT find the record`).toHaveCount(0, { timeout: 20_000 });
+    }
   });
 
   await test.step("the calendar appointment page shows the preferred name", async () => {
@@ -141,10 +142,12 @@ test("preferred and legal names on one client: create, record, search, display, 
     try {
       await loginAsOwner(otherPage, other);
       await otherPage.goto("/clients");
-      const search = otherPage.getByPlaceholder("Find client");
+      const search = otherPage.getByRole("searchbox", { name: "Search clients" });
       await expect(search).toBeVisible({ timeout: 20_000 });
       for (const query of [preferred, legalFamily]) {
         await search.fill(query);
+        await search.press("Enter");
+        await expect(otherPage).toHaveURL(/[?&]q=/, { timeout: 20_000 });
         await expect(otherPage.locator(`a[href="/clients/${clientId}"]`)).toHaveCount(0);
       }
       const response = await otherPage.goto(`/clients/${clientId}`);
