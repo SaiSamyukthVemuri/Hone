@@ -34,6 +34,12 @@ jobs:
           cat "$RUNNER_TEMP/s1-pkg/SEQUENCE.md"
           mkdir -p "$RUNNER_TEMP/s1-hosted" && cp supabase/migrations/*.sql "$RUNNER_TEMP/s1-hosted/"
           test "$(ls "$RUNNER_TEMP/s1-hosted" | wc -l)" = 249
+      - name: The CI-built package is byte-identical to the pinned one (tree hash)
+        run: |
+          got="$(cd "$RUNNER_TEMP/s1-pkg" && find . -type f | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -d' ' -f1)"
+          want="$(tr -d '[:space:]' < rehearsal/multi-stage/spec/s1.package-tree-sha256)"
+          echo "built $got pinned $want"
+          [ "$got" = "$want" ]
       - name: Builder checks (refusals, determinism, content-gate flags)
         run: |
           set -o pipefail

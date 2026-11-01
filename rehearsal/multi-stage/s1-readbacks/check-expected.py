@@ -3,9 +3,17 @@
 # the three versions once; every function body md5 equals the md5 of the text between the sealed file's dollar quotes;
 # the grants rules; every row count 0. Prints every definition md5 so they can be copied into the request (hashes only).
 import json, re, hashlib, sys
-d, sealed = sys.argv[1], sys.argv[2:]
+args = sys.argv[1:]
+expect_file = None
+if "--expect" in args:   # a recorded EXPECTED.txt from the rehearsal stack: every informational line (definitions, md5s, config) must be identical
+    i = args.index("--expect"); expect_file = args[i + 1]; del args[i:i + 2]
+d, sealed = args[0], args[1:]
 def rows(n): return json.load(open("%s/%s.json" % (d, n)))
 bad = []
+LINES = []
+_print = print
+def print(*a, **k):
+    LINES.append(" ".join(str(x) for x in a)); _print(*a, **k)
 def need(c, m):
     print(("ok   - " if c else "FAIL - ") + m)
     if not c: bad.append(m)
@@ -34,4 +42,11 @@ for k, v in objs.items():
     if "(must be 0)" in k: need(v == "0", "%s = %s" % (k, v))
 need(not any(k.startswith("sequence privilege") and ("anon" in k or "authenticated" in k or "service_role" in k or "PUBLIC" in k) for k in objs), "audit sequence: no privilege for PUBLIC, anon, authenticated or service_role")
 need(objs.get("constraint clients_preferred_name_shape") == "validated=true", "clients_preferred_name_shape validated")
+if expect_file:
+    import io, contextlib
+    want = [l.rstrip("\n") for l in open(expect_file) if l.startswith("     ")]
+    got = [l for l in LINES if l.startswith("     ")]
+    need(sorted(want) == sorted(got), "every definition line (policy/trigger/foreign key/index md5s, function definer/volatility/config/grants) is identical to the recorded rehearsal values (%d lines)" % len(want))
+    for l in sorted(set(want) - set(got)): print("     MISSING " + l.strip())
+    for l in sorted(set(got) - set(want)): print("     UNEXPECTED " + l.strip())
 sys.exit(1 if bad else 0)
