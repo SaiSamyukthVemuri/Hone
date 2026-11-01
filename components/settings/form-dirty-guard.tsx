@@ -61,13 +61,27 @@ export function FormDirtyGuard({ name, token }: { name: string; token: string })
       awaiting.current = true;
       setDirty(false);
     };
+    // A save that succeeds without a redirect (the new-service form) makes React
+    // reset the form's fields. The reset event fires before the values change, so
+    // the resting snapshot is taken after it: the baseline is the empty form, not
+    // the submitted values, and the saved form reads clean.
+    const onReset = () => {
+      setTimeout(() => {
+        baseline.current = snapshot(form);
+        previous.current = null;
+        awaiting.current = false;
+        setDirty(false);
+      }, 0);
+    };
     form.addEventListener("input", check);
     form.addEventListener("change", check);
     form.addEventListener("submit", onSubmit);
+    form.addEventListener("reset", onReset);
     return () => {
       form.removeEventListener("input", check);
       form.removeEventListener("change", check);
       form.removeEventListener("submit", onSubmit);
+      form.removeEventListener("reset", onReset);
     };
   }, []);
 

@@ -527,3 +527,19 @@ describe("Codex P2s at d5a27f03 / 2ba36ac1", () => {
     expect(src).toMatch(/\[value\]\)/);
   });
 });
+
+describe("Codex P2 threads re-checked at 053d683f5", () => {
+  const read = (rel: string) =>
+    readFileSync(path.resolve(__dirname, "../..", rel), "utf8");
+  it("the legacy integrations doorway forwards the OAuth outcome query to Google Calendar", () => {
+    const src = read("app/(app)/settings/integrations/page.tsx");
+    expect(src).toMatch(/searchParams/);
+    expect(src).toMatch(/\/settings\/integrations\/google-calendar\$\{query \? `\?\$\{query\}` : ""\}/);
+  });
+  it("the dirty guard re-baselines from the resting form after React resets it", () => {
+    const src = read("components/settings/form-dirty-guard.tsx");
+    expect(src).toMatch(/addEventListener\("reset", onReset\)/);
+    expect(src).toMatch(/removeEventListener\("reset", onReset\)/);
+    expect(src).toMatch(/setTimeout\(\(\) => \{\s*baseline\.current = snapshot\(form\)/);
+  });
+});
