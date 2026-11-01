@@ -480,3 +480,22 @@ describe("Studio details shows location and time zone (artifact), without a seco
     expect(tail).not.toMatch(/<input|<select|<textarea|<form|action=/);
   });
 });
+
+describe("Photos finding (1 Nov, 58c67f05): a rail group toggle never moves the window", () => {
+  const src = readFileSync(path.resolve(__dirname, "../..", "components/settings/settings-shell.tsx"), "utf8");
+  it("the rail scrolls inside its own container on desktop", () => {
+    expect(src).toMatch(/min-\[700px\]:sticky/);
+    expect(src).toMatch(/min-\[700px\]:max-h-\[calc\(100vh-6rem\)\]/);
+    expect(src).toMatch(/min-\[700px\]:overflow-y-auto/);
+  });
+  it("a mouse press on a group toggle is not allowed to focus-scroll", () => {
+    expect(src).toMatch(/data-rail-group-toggle/);
+    expect(src).toMatch(/onMouseDown=\{\(e\) => \{[\s\S]*closest\?\.\("\[data-rail-group-toggle\]"\)\) e\.preventDefault\(\)/);
+  });
+  it("the window position at the press is restored after the toggle commits, for group toggles only", () => {
+    expect(src).toMatch(/scrollAtGroupPress\.current = toggle \? window\.scrollY : null/);
+    expect(src).toMatch(/useLayoutEffect\(\(\) => \{\s*const saved = scrollAtGroupPress\.current;/);
+    expect(src).toMatch(/window\.scrollTo\(\{ top: saved, behavior: "instant" \}\)/);
+    expect(src).toMatch(/\}, \[openId\]\)/);
+  });
+});
