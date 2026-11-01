@@ -97,8 +97,9 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
     const href = leaving;
     setLeaving(null);
     if (!href) return;
-    // Leaving discards the edits, so the guard must not block this navigation.
-    dirtyKeys.current.clear();
+    // router.push raises no click, so the click guard cannot re-trap it. The
+    // dirty set is left alone: a form that unmounts clears its own key, and one
+    // that stays mounted (same-page link) is still guarded.
     const url = new URL(href, window.location.origin);
     router.push(`${url.pathname}${url.search}${url.hash}`);
   }

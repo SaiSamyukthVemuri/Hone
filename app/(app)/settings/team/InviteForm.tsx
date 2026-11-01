@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { invitePractitionerAction } from "./actions";
 
 type Status =
@@ -19,6 +20,12 @@ export function InviteForm() {
   const [role, setRole] = useState<"practitioner" | "owner">("practitioner");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [, startTransition] = useTransition();
+  // Typed-but-unsent invitation details count as unsaved edits.
+  useUnsavedChangesGuard(
+    "team-invite",
+    status.kind !== "success" &&
+      (email !== "" || displayName !== "" || role !== "practitioner"),
+  );
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();

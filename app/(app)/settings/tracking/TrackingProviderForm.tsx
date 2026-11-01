@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 
 import { Button } from "@/components/ui/button";
 
@@ -37,6 +38,18 @@ export function TrackingProviderForm({
   const [token, setToken] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState({
+    enabled: current?.enabled ?? false,
+    pixelId: current?.browserTagId ?? "",
+    testCode: current?.testEventCode ?? "",
+  });
+  useUnsavedChangesGuard(
+    `tracking-${provider}`,
+    enabled !== saved.enabled ||
+      pixelId !== saved.pixelId ||
+      testCode !== saved.testCode ||
+      token !== "",
+  );
   const [pending, start] = useTransition();
 
   const hasToken = current?.tokenStatus === "active" && !!current?.tokenLast4;
@@ -54,6 +67,7 @@ export function TrackingProviderForm({
       const r = await saveAction(fd);
       if (r.ok) {
         setToken("");
+        setSaved({ enabled, pixelId: pixelId.trim(), testCode: testCode.trim() });
         setMsg(hasToken && token.trim() ? "Saved. Token rotated." : "Saved.");
       } else setErr(r.error);
     });
@@ -68,6 +82,7 @@ export function TrackingProviderForm({
       const r = await clearTokenAction(fd);
       if (r.ok) {
         setEnabled(false);
+        setSaved((s) => ({ ...s, enabled: false }));
         setMsg("Token removed. Provider disabled.");
       } else setErr(r.error);
     });
