@@ -245,10 +245,15 @@ test("G-1: a practitioner's client profile and session page carry no session pri
   expect(leaks(owner, SESSION_PRICE_FORMS).length).toBeGreaterThan(0);
 });
 
-test("decision 2: the published service-list price still shows a practitioner when booking", async () => {
+test("decision 2: the published service-list price is NOT stripped from a practitioner's booking surface", async () => {
+  // The profile's booking card (BookAppointment) renders no price text today, so the observable is the
+  // page payload it is handed: a Next client-component prop is serialized into the HTML flight data.
+  // Before this fix #1300 selected services without price_cents for a practitioner.
   const ch = await fetchChannels(memberCtx, `/clients/${todayClient.clientId}`);
   expect(ch.html.status).toBe(200);
-  expect(ch.html.body + safeDecode(ch.html.body)).toContain(PRICE_SENTINEL);
+  expect(ch.html.body).toMatch(new RegExp(`price_cents\\\\*"\\s*:\\s*${PRICE_CENTS}`));
+  // Control: the client-finance sentinels are still absent on the same page (the G-1 test above).
+  expect(leaks({ html: ch.html, rsc: ch.rsc, prefetch: ch.prefetch }, SESSION_PRICE_FORMS)).toEqual([]);
 });
 
 async function openCalendarAppointment(ctx: BrowserContext, id: string) {
