@@ -61,24 +61,26 @@ let b: SeededStudio;
 let practitioner: { userId: string; practitionerId: string };
 let receptionistUserId: string;
 
-async function seedReceptionist(studio: SeededStudio): Promise<string> {
+async function seedReceptionist(
+  studio: SeededStudio,
+): Promise<{ userId: string; membershipId: string }> {
   const userId = randomUUID();
   await adminQuery(`insert into auth.users (id, email) values ($1, $2)`, [
     userId,
     `rcp-${userId.slice(0, 8)}@harness.local`,
   ]);
-  await adminQuery(
-    `select public.add_studio_receptionist($1, $2, $3, $4, $5)`,
+  const added = await adminQuery(
+    `select public.add_studio_receptionist($1, $2, $3, $4, $5) as id`,
     [studio.studioId, studio.practitionerId, userId, "Desk", `rcp-${userId.slice(0, 8)}@harness.local`],
   );
-  return userId;
+  return { userId, membershipId: added.rows[0].id as string };
 }
 
 beforeAll(async () => {
   a = await seedStudio("rbac-a");
   b = await seedStudio("rbac-b");
   practitioner = await seedMember(a, "rbac-pr");
-  receptionistUserId = await seedReceptionist(a);
+  receptionistUserId = (await seedReceptionist(a)).userId;
   // Forbidden-field sentinels on the SAME client the owner control reads.
   await adminQuery(
     `update public.clients
@@ -212,15 +214,17 @@ describe("receptionist v1 surface: runtime, real receptionist session", () => {
   });
 
   it("revocation: after set_studio_receptionist_active(false) the same user is refused at once", async () => {
-    const revoked = await seedReceptionist(a);
+    const { userId: revoked, membershipId } = await seedReceptionist(a);
     // Before: allowed (control).
     const before = await asUser(revoked, (q) => q(`select * from public.receptionist_booking_options($1)`, [a.studioId]));
     expect(Array.isArray(before.rows)).toBe(true);
-    await adminQuery(`select public.set_studio_receptionist_active($1, $2, $3, false)`, [
+    // The third argument is the MEMBERSHIP ROW id, not the user id.
+    const done = await adminQuery(`select public.set_studio_receptionist_active($1, $2, $3, false) as r`, [
       a.studioId,
       a.practitionerId,
-      revoked,
+      membershipId,
     ]);
+    expect(done.rows[0].r).toBe("updated");
     await expect(
       asUser(revoked, (q) => q(`select * from public.receptionist_booking_options($1)`, [a.studioId])),
     ).rejects.toMatchObject({ code: "42501" });
