@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 
 import type { NewClientReadiness } from "@/lib/booking/new-client-readiness";
@@ -457,17 +458,7 @@ function formatMonthDay(month: number, day: number): string {
 // A rejection in any source throws here, through the route error boundary: the
 // panel never turns a failed read into "nothing needs attention".
 // ---------------------------------------------------------------------------
-export async function NeedsAttentionSection({
-  attentionSources,
-  staffManaged: staffManagedPromise,
-  procedureActions: procedureActionsPromise,
-  upcomingVisitClients: upcomingVisitClientsPromise,
-  clientsNeedingAttention: clientsNeedingAttentionPromise,
-  followUpAssistant: followUpAssistantPromise,
-  expiringSupplies: expiringSuppliesPromise,
-  isOwner,
-  todayLocal,
-}: {
+type NeedsAttentionInputs = {
   attentionSources: Promise<AttentionSources>;
   staffManaged: Promise<boolean>;
   procedureActions: Promise<ProcedureActionMetrics>;
@@ -483,7 +474,22 @@ export async function NeedsAttentionSection({
   >;
   isOwner: boolean;
   todayLocal: string;
-}) {
+};
+
+// The ONE place the Needs Attention model's input is resolved. The panel and the summary strip's "Clients to
+// review" both call it with the same already-started promises, so the strip's number IS the panel's
+// client count by construction (it reads `.clients.length` of this model), and no read is added.
+async function resolveNeedsAttentionInput({
+  attentionSources,
+  staffManaged: staffManagedPromise,
+  procedureActions: procedureActionsPromise,
+  upcomingVisitClients: upcomingVisitClientsPromise,
+  clientsNeedingAttention: clientsNeedingAttentionPromise,
+  followUpAssistant: followUpAssistantPromise,
+  expiringSupplies: expiringSuppliesPromise,
+  isOwner,
+  todayLocal,
+}: NeedsAttentionInputs) {
   const [intakesRead, activeServicesCount, paymentStatusRead] =
     await attentionSources;
   const intakesUnavailable = intakesRead === CHECK_UNAVAILABLE;
@@ -512,26 +518,60 @@ export async function NeedsAttentionSection({
     todayLocal,
   });
 
+  return {
+    assistant: followUpAssistant,
+    intakesAwaitingReview,
+    todo: dashboardTodo,
+    unavailableChecks: [
+      ...(intakesUnavailable ? ["intake review"] : []),
+      ...(paymentUnavailable ? ["payment setup"] : []),
+    ],
+    treatmentMemoryNotReturned:
+      clientsNeedingAttention.totalClients - clientsNeedingAttention.clients.length,
+    recordDetailGaps: procedureActions.detailGaps,
+    detailsWindow: procedureActions.detailGaps ? PROCEDURE_RECORD_WINDOW : null,
+    upcomingVisitClientIds:
+      upcomingVisitClients === CHECK_UNAVAILABLE
+        ? undefined
+        : upcomingVisitClients,
+  };
+}
+
+export async function NeedsAttentionSection(props: NeedsAttentionInputs) {
   return (
     <NeedsAttentionPanel
-      needs={buildNeedsAttention({
-        assistant: followUpAssistant,
-        intakesAwaitingReview,
-        todo: dashboardTodo,
-        unavailableChecks: [
-          ...(intakesUnavailable ? ["intake review"] : []),
-          ...(paymentUnavailable ? ["payment setup"] : []),
-        ],
-        treatmentMemoryNotReturned:
-          clientsNeedingAttention.totalClients - clientsNeedingAttention.clients.length,
-        recordDetailGaps: procedureActions.detailGaps,
-        detailsWindow: procedureActions.detailGaps ? PROCEDURE_RECORD_WINDOW : null,
-        upcomingVisitClientIds:
-          upcomingVisitClients === CHECK_UNAVAILABLE
-            ? undefined
-            : upcomingVisitClients,
-      })}
+      needs={buildNeedsAttention(await resolveNeedsAttentionInput(props))}
     />
+  );
+}
+
+/**
+ * The "Clients to review" value of the summary strip: the number of client cards in Needs Attention,
+ * from the SAME model. A failed read renders "Unavailable", never 0 (a zero would claim nothing needs
+ * review when nobody could read it).
+ */
+async function ClientsToReviewValue(props: NeedsAttentionInputs) {
+  let count: number | null = null;
+  try {
+    count = buildNeedsAttention(await resolveNeedsAttentionInput(props)).clients.length;
+  } catch {
+    count = null;
+  }
+  return (
+    <span data-testid="summary-clients-to-review-value">
+      {count === null ? "Unavailable" : count}
+    </span>
+  );
+}
+
+/** Own Suspense so the roster and the strip never wait on the model. The caller keys it per day/period. */
+export function ClientsToReview(props: NeedsAttentionInputs) {
+  return (
+    <Suspense
+      fallback={<span aria-hidden className="inline-block h-6 w-8 rounded bg-neutral-100 dark:bg-neutral-800" />}
+    >
+      <ClientsToReviewValue {...props} />
+    </Suspense>
   );
 }
 

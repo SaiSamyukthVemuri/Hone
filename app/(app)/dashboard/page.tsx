@@ -1,4 +1,6 @@
 import { Suspense } from "react";
+import { SummaryStrip } from "./summary-strip";
+import { computeTimeInsights, formatInsightHours, insightPeriod } from "@/lib/calendar/time-insights";
 import Link from "next/link";
 import { buttonClasses } from "@/components/ui/button";
 import {
@@ -54,6 +56,7 @@ import {
 import {
   SecondaryStack,
   NeedsAttentionSection,
+  ClientsToReview,
   NeedsAttentionSkeleton,
   SecondaryStackSkeleton,
 } from "./secondary-stack";
@@ -920,6 +923,37 @@ export default async function DashboardPage({
             Book appointment
           </Link>
         </div>
+
+        <SummaryStrip
+          appointmentCount={visibleAppointments.length}
+          bookedTime={formatInsightHours(
+            computeTimeInsights({
+              appointments: visibleAppointments.map((a) => ({
+                id: a.id,
+                status: a.status,
+                starts_at: a.starts_at,
+                ends_at: a.ends_at,
+                practitioner_id: null,
+              })),
+              period: insightPeriod(startUtc, endUtc),
+              selection: { mode: "all", ids: new Set() },
+            }).minutes,
+          )}
+          clientsToReview={
+            <ClientsToReview
+              key={`summary-review:${selectedDayLocal}:${period}`}
+              attentionSources={attentionSourcesPromise}
+              staffManaged={staffManagedPromise}
+              procedureActions={procedureActionsPromise}
+              upcomingVisitClients={upcomingVisitClientsPromise}
+              clientsNeedingAttention={clientsNeedingAttentionPromise}
+              followUpAssistant={followUpAssistantPromise}
+              expiringSupplies={expiringSuppliesPromise}
+              isOwner={isOwner}
+              todayLocal={todayLocal}
+            />
+          }
+        />
 
         {visibleAppointments.length === 0 ? (
           <EmptyDayState selectedDay={selectedDayLocal} todayLocal={todayLocal} />
