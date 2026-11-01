@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { canCompleteAppointment } from "@/lib/appointments/completion-authority";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAvailableSlots, INTERNAL_SLOT_PACKING } from "@/lib/booking/slots";
 import { captureServerEvent } from "@/lib/analytics/server";
@@ -592,6 +593,11 @@ export type AppointmentStateActionResult =
   // retry would risk a duplicate email.
   | { ok: false; code?: "provider_sent_status_unrecorded"; error: string };
 
+// One plain sentence for every refusal on this path (not found, another studio's, someone else's,
+// unassigned), so the text reveals nothing about the row.
+const COMPLETION_NOT_ALLOWED_MESSAGE =
+  "Only the practitioner assigned to this appointment, or the studio owner, can mark it complete.";
+
 // P0-1 + P0-3: practitioner-initiated mark complete. Calls the
 // service-role-only RPC public.mark_appointment_complete (introduced by
 // migration 0032, redefined by B6 / 0175) which:
@@ -611,6 +617,23 @@ export async function markAppointmentCompleteAction(
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (!practitioner.active) {
     return { ok: false, error: "Inactive practitioners cannot mark appointments complete." };
+  }
+
+  // Decision 3: a practitioner completes only an appointment ASSIGNED to them; the owner any in the
+  // studio. The row is read through the caller's RLS client and only its assignment is selected.
+  // Not found, another studio's, someone else's and unassigned all answer the SAME generic failure,
+  // so nothing about the row is revealed. No payment table is read on this path.
+  {
+    const supabase = await createClient();
+    const { data: assignment } = await supabase
+      .from("appointments")
+      .select("practitioner_id")
+      .eq("id", appointmentId)
+      .eq("studio_id", studio.id)
+      .maybeSingle();
+    if (!assignment || !canCompleteAppointment(practitioner, assignment.practitioner_id)) {
+      return { ok: false, error: COMPLETION_NOT_ALLOWED_MESSAGE };
+    }
   }
 
   const { createAdminClient } = await import("@/lib/supabase/admin-server");

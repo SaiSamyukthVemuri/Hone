@@ -8,6 +8,7 @@ import {
 } from "@/lib/sessions/session-command-errors";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { canCompleteAppointment } from "@/lib/appointments/completion-authority";
 import type { Modality } from "@/lib/types/database";
 import { captureServerEvent } from "@/lib/analytics/server";
 import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
@@ -24,6 +25,8 @@ async function maybeMarkAppointmentCompletedOnSessionStart(args: {
   appointmentId: string;
   studioId: string;
   practitionerId: string;
+  role: string;
+  assignedPractitionerId: string | null;
   status: string;
   endsAt: string;
 }): Promise<void> {
@@ -39,6 +42,11 @@ async function maybeMarkAppointmentCompletedOnSessionStart(args: {
   //     restores that). A failed auto-complete is logged but never
   //     thrown so the session-start UX is never blocked by it.
   if (args.status !== "confirmed") {
+    return;
+  }
+  // Decision 3: starting a session is not a way around the completion rule. A practitioner
+  // completes only an appointment assigned to them (an unassigned one is owner-only).
+  if (!canCompleteAppointment({ id: args.practitionerId, role: args.role }, args.assignedPractitionerId)) {
     return;
   }
   const endsAtMs = new Date(args.endsAt).getTime();
@@ -133,6 +141,7 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   // consumed if appointmentId resolves successfully.
   let appointmentStatus: string | null = null;
   let appointmentEndsAt: string | null = null;
+  let appointmentAssignedTo: string | null = null;
   if (typeof appointmentIdRaw === "string" && appointmentIdRaw.length > 0) {
     if (!UUID_RE.test(appointmentIdRaw)) {
       throw new Error("Invalid appointment id.");
@@ -185,6 +194,7 @@ export async function startSessionAction(formData: FormData): Promise<void> {
     appointmentId = appt.id;
     appointmentStatus = (appt.status as string | null) ?? null;
     appointmentEndsAt = (appt.ends_at as string | null) ?? null;
+    appointmentAssignedTo = (appt.practitioner_id as string | null) ?? null;
   }
 
   // L18 Phase 3: the coalesce lookup, the appointment-link promotion and the
@@ -308,6 +318,8 @@ export async function startSessionAction(formData: FormData): Promise<void> {
         appointmentId,
         studioId: studio.id,
         practitionerId: practitioner.id,
+        role: practitioner.role,
+        assignedPractitionerId: appointmentAssignedTo,
         status: appointmentStatus,
         endsAt: appointmentEndsAt,
       }),
