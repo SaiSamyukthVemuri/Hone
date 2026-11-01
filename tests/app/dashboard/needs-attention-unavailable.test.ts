@@ -8,6 +8,9 @@ import type { NeedsAttention } from "@/lib/dashboard/needs-attention-model";
 // all-clear. Synthetic data only.
 
 const empty: NeedsAttention = {
+  clients: [],
+  studioItems: [],
+  itemCount: 0,
   entries: [],
   issueCount: 0,
   others: [],
@@ -35,6 +38,19 @@ describe("Needs attention honest states", () => {
       ...empty,
       unavailableChecks: ["payment setup"],
       issueCount: 1,
+      itemCount: 1,
+      clients: [
+        {
+          clientId: "c1",
+          clientName: "Client One",
+          tier: "preparation",
+          occurredAt: null,
+          sharesNameWithAnotherClient: false,
+          items: [
+            { id: "intake:c1:intake_review", kind: "intake_review", label: "Intake awaiting review", detail: null, href: "/clients/c1", actionLabel: "Review intake" },
+          ],
+        },
+      ],
       entries: [
         {
           id: "intake:c1",

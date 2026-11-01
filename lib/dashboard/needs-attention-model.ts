@@ -63,7 +63,41 @@ export type AttentionEntry = {
   issues: AttentionIssue[];
 };
 
+// One line inside a client's card. Every row the panel shows is one of these, so a
+// client with a session gap, an intake gap and a reaction on record reads as ONE
+// card with three badged lines instead of three rows in two lists.
+export type AttentionItemKind = AttentionIssueKind | "treatment_memory";
+
+export type AttentionItem = {
+  // Stable React key.
+  id: string;
+  kind: AttentionItemKind;
+  label: string;
+  detail: string | null;
+  href: string;
+  actionLabel: string;
+};
+
+export type AttentionClient = {
+  // The grouping key. A client id from the loader, never a rendered name.
+  clientId: string;
+  clientName: string;
+  tier: "preparation" | "documentation";
+  occurredAt: string | null;
+  items: AttentionItem[];
+  // Another card in this list carries the same display name for a DIFFERENT client
+  // id. They are never merged; the panel says so, so two similar cards are not
+  // read as a duplicate.
+  sharesNameWithAnotherClient: boolean;
+};
+
 export type NeedsAttention = {
+  // ONE card per client: the list the panel renders.
+  clients: AttentionClient[];
+  // Items that belong to no client (supplies, owner setup, the records roll-up).
+  studioItems: DashboardTodoItem[];
+  // Every line in `clients` plus `studioItems`: the "items" in the heading.
+  itemCount: number;
   entries: AttentionEntry[];
   // Total issues across all entries, so the heading can state both counts.
   issueCount: number;
@@ -89,6 +123,19 @@ const GROUPED_TODO_KINDS: ReadonlySet<DashboardTodoItem["kind"]> = new Set([
   // Replaced by one entry per client; the studio-level count row is not kept.
   "intake_review",
 ]);
+
+// A to-do's detail line sometimes repeats a clause already printed in its reason
+// (a reaction-only client printed "Latest recorded reaction: X" twice). Drop only
+// a clause that is already in the reason, so no distinct text is lost.
+function detailWithoutRepeats(reason: string, detail: string | null): string | null {
+  if (!detail) return null;
+  const printed = new Set(reason.split(" · ").map((c) => c.trim().toLowerCase()));
+  const kept = detail
+    .split(" · ")
+    .map((c) => c.trim())
+    .filter((c) => c !== "" && !printed.has(c.toLowerCase()));
+  return kept.length > 0 ? kept.join(" · ") : null;
+}
 
 function newerFirst(a: string | null, b: string | null): number {
   if (a === b) return 0;
@@ -250,15 +297,84 @@ export function buildNeedsAttention(input: {
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
 
+  const others = input.todo.items.filter(
+    (i) =>
+      !GROUPED_TODO_KINDS.has(i.kind) &&
+      // Replaced by per-session entries when those were supplied.
+      !(input.recordDetailGaps && i.kind === "records_details"),
+  );
+  const studioItems = others.filter((i) => i.subject.kind !== "client");
+
+  // One card per client id. Entries are already keyed by client + record; here
+  // they fold by client alone, and a client-subject to-do (treatment memory) joins
+  // the card of the SAME client id.
+  const cards = new Map<string, AttentionClient>();
+  const touch = (clientId: string, clientName: string, occurredAt: string | null) => {
+    let card = cards.get(clientId);
+    if (!card) {
+      card = {
+        clientId,
+        clientName,
+        tier: "documentation",
+        occurredAt,
+        items: [],
+        sharesNameWithAnotherClient: false,
+      };
+      cards.set(clientId, card);
+    } else if (newerFirst(occurredAt, card.occurredAt) < 0) {
+      card.occurredAt = occurredAt;
+    }
+    return card;
+  };
+  for (const e of entries) {
+    const card = touch(e.clientId, e.clientName, e.occurredAt);
+    if (e.tier === "preparation") card.tier = "preparation";
+    for (const issue of e.issues) {
+      card.items.push({
+        id: `${e.id}:${issue.kind}`,
+        kind: issue.kind,
+        label: issue.label,
+        detail: null,
+        href: issue.href,
+        actionLabel: issue.actionLabel,
+      });
+    }
+  }
+  for (const item of others) {
+    if (item.subject.kind !== "client") continue;
+    touch(item.subject.id, item.subject.label, item.occurredAt || null).items.push({
+      id: item.id,
+      kind: "treatment_memory",
+      label: item.reason,
+      detail: detailWithoutRepeats(item.reason, item.detail),
+      href: item.action.href,
+      actionLabel: item.action.label,
+    });
+  }
+  const clients = [...cards.values()].sort((a, b) => {
+    if (a.tier !== b.tier) return a.tier === "preparation" ? -1 : 1;
+    const byDate = newerFirst(a.occurredAt, b.occurredAt);
+    if (byDate !== 0) return byDate;
+    return a.clientId < b.clientId ? -1 : a.clientId > b.clientId ? 1 : 0;
+  });
+  const idsByName = new Map<string, Set<string>>();
+  for (const c of clients) {
+    const key = c.clientName.trim().toLocaleLowerCase();
+    (idsByName.get(key) ?? idsByName.set(key, new Set()).get(key)!).add(c.clientId);
+  }
+  for (const c of clients) {
+    c.sharesNameWithAnotherClient =
+      (idsByName.get(c.clientName.trim().toLocaleLowerCase())?.size ?? 0) > 1;
+  }
+
   return {
+    clients,
+    studioItems,
+    itemCount:
+      clients.reduce((n, c) => n + c.items.length, 0) + studioItems.length,
     entries,
     issueCount: entries.reduce((n, e) => n + e.issues.length, 0),
-    others: input.todo.items.filter(
-      (i) =>
-        !GROUPED_TODO_KINDS.has(i.kind) &&
-        // Replaced by per-session entries when those were supplied.
-        !(input.recordDetailGaps && i.kind === "records_details"),
-    ),
+    others,
     unavailableChecks: [...(input.unavailableChecks ?? [])],
     detailsWindow: input.detailsWindow ?? null,
     notReturnedCount:

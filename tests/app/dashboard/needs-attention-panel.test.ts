@@ -30,8 +30,8 @@ describe("Needs Attention panel interaction contract", () => {
     expect(SRC).toContain('id="needs-attention-list"');
   });
 
-  it("rows are keyed by the domain id so expanding keeps existing rows mounted", () => {
-    expect(SRC).toContain("key={entry.id}");
+  it("cards are keyed by the client id so expanding keeps existing rows mounted", () => {
+    expect(SRC).toContain("key={card.clientId}");
   });
 
   it("opening an item is navigation only: the panel carries no write", () => {
