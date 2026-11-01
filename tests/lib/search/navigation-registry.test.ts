@@ -181,8 +181,6 @@ describe("permissions — search advertises only what the caller can already ope
       ["sms", "Appointment reminders"],
       ["consent", "Consent forms"],
       ["photo consent", "Consent forms"],
-      ["availability", "Availability"],
-      ["hours", "Availability"],
       ["buffer", "Time between appointments"],
       ["booking link", "Booking link"],
       ["services", "Services"],

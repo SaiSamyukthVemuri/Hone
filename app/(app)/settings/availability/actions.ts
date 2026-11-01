@@ -222,6 +222,26 @@ async function assertOwnerWithStudio(): Promise<{
   return { studio, practitioner };
 }
 
+// Decision 6 (Sam, 1 Nov): a practitioner changes ONLY their own working hours; the owner any. The
+// target comes from the form but is only ever COMPARED to the session's own practitioner id for a
+// non-owner: it is never trusted. The database re-checks the same rule (0278, once applied).
+type ScopedActor =
+  | { ok: true; studio: Studio; practitioner: Practitioner }
+  | { ok: false; error: string };
+
+async function resolveScopedActor(formData: FormData): Promise<ScopedActor> {
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (practitioner.role === "owner") return { ok: true, studio, practitioner };
+  if (practitioner.role !== "practitioner" || practitioner.active !== true) {
+    return { ok: false, error: "Only studio owners can change availability." };
+  }
+  const target = trimmed(formData.get("practitioner_id"));
+  if (!target || target !== practitioner.id) {
+    return { ok: false, error: "You can only change your own working hours." };
+  }
+  return { ok: true, studio, practitioner };
+}
+
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 // Upserts one day-of-week row. Lets the inline editor save a single day
@@ -430,7 +450,9 @@ function validateHours(
 export async function upsertScopedDayDefaultAction(
   formData: FormData,
 ): Promise<AvailabilityActionResult> {
-  const { studio, practitioner } = await assertOwnerWithStudio();
+  const actor = await resolveScopedActor(formData);
+  if (!actor.ok) return actor;
+  const { studio, practitioner } = actor;
   const supabase = await createClient();
   const scope = await resolveScopeTarget(
     supabase,
@@ -468,7 +490,9 @@ export async function upsertScopedDayDefaultAction(
 export async function resetPractitionerDayAction(
   formData: FormData,
 ): Promise<AvailabilityActionResult> {
-  const { studio, practitioner } = await assertOwnerWithStudio();
+  const actor = await resolveScopedActor(formData);
+  if (!actor.ok) return actor;
+  const { studio, practitioner } = actor;
   const supabase = await createClient();
   const scope = await resolveScopeTarget(
     supabase,
@@ -499,7 +523,9 @@ export async function resetPractitionerDayAction(
 export async function customizePractitionerWeekAction(
   formData: FormData,
 ): Promise<AvailabilityActionResult> {
-  const { studio } = await assertOwnerWithStudio();
+  const actor = await resolveScopedActor(formData);
+  if (!actor.ok) return actor;
+  const { studio, practitioner } = actor;
   const supabase = await createClient();
   const scope = await resolveScopeTarget(
     supabase,
@@ -535,16 +561,28 @@ export async function customizePractitionerWeekAction(
   // atomic, lock-taking RPC as the studio-wide save (one transaction, serialized
   // with booking / retirement). The scope practitioner is re-validated in-DB.
   const admin = createAdminClient();
-  const { data, error } = await admin.rpc("save_weekly_availability", {
-    p_studio_id: studio.id,
-    p_scope_practitioner_id: scope.practitionerId,
-    p_days: rows.map((r) => ({
-      day_of_week: r.day_of_week,
-      is_open: r.is_open,
-      open_time: r.open_time,
-      close_time: r.close_time,
-    })),
-  });
+  const days = rows.map((r) => ({
+    day_of_week: r.day_of_week,
+    is_open: r.is_open,
+    open_time: r.open_time,
+    close_time: r.close_time,
+  }));
+  // The owner keeps the existing command (present on every database today). A practitioner uses the
+  // actor-aware 0278 command, which authorizes "own scope only" in the database; until 0278 is applied
+  // that call fails closed and the practitioner sees the generic message.
+  const { data, error } =
+    practitioner.role === "owner"
+      ? await admin.rpc("save_weekly_availability", {
+          p_studio_id: studio.id,
+          p_scope_practitioner_id: scope.practitionerId,
+          p_days: days,
+        })
+      : await admin.rpc("save_weekly_availability_as", {
+          p_studio_id: studio.id,
+          p_actor_practitioner_id: practitioner.id,
+          p_scope_practitioner_id: scope.practitionerId,
+          p_days: days,
+        });
   if (error || data !== "ok") return { ok: false, error: "Could not customize the week." };
   revalidatePath("/settings/availability");
   return { ok: true };
@@ -554,7 +592,9 @@ export async function customizePractitionerWeekAction(
 export async function resetPractitionerWeekAction(
   formData: FormData,
 ): Promise<AvailabilityActionResult> {
-  const { studio, practitioner } = await assertOwnerWithStudio();
+  const actor = await resolveScopedActor(formData);
+  if (!actor.ok) return actor;
+  const { studio, practitioner } = actor;
   const supabase = await createClient();
   const scope = await resolveScopeTarget(
     supabase,
@@ -582,7 +622,9 @@ export async function resetPractitionerWeekAction(
 export async function upsertScopedOverrideAction(
   formData: FormData,
 ): Promise<AvailabilityActionResult> {
-  const { studio, practitioner } = await assertOwnerWithStudio();
+  const actor = await resolveScopedActor(formData);
+  if (!actor.ok) return actor;
+  const { studio, practitioner } = actor;
   const supabase = await createClient();
   const scope = await resolveScopeTarget(
     supabase,
@@ -622,7 +664,9 @@ export async function upsertScopedOverrideAction(
 export async function resetPractitionerOverrideAction(
   formData: FormData,
 ): Promise<AvailabilityActionResult> {
-  const { studio, practitioner } = await assertOwnerWithStudio();
+  const actor = await resolveScopedActor(formData);
+  if (!actor.ok) return actor;
+  const { studio, practitioner } = actor;
   const supabase = await createClient();
   const scope = await resolveScopeTarget(
     supabase,

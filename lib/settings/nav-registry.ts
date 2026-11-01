@@ -107,7 +107,7 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
     visibleWhen: waitlistVisible,
     order: 50,
   },
-  { id: "availability", group: "studio", label: "Availability", href: "/settings/availability", roles: OWNER, order: 60 },
+  { id: "availability", group: "studio", label: "Availability", href: "/settings/availability", roles: BOTH, order: 60 },
   { id: "services", group: "studio", label: "Services", href: "/settings/services", roles: OWNER, order: 70 },
   { id: "machines", group: "studio", label: "Machines", href: "/settings/machines", roles: OWNER, order: 80 },
   { id: "consent", group: "studio", label: "Consent forms", href: "/settings/consent", roles: OWNER, order: 90 },

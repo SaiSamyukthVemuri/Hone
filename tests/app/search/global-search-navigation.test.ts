@@ -206,7 +206,7 @@ describe("the action derives navigation visibility from the real session", () =>
       for (const href of hrefs(results)) {
         for (const ownerOnly of [
           "/settings/payments",
-          "/settings/availability",
+          // availability is shared since decision 6 (own working hours)
           "/settings/consent",
           "/settings/studio",
           "/settings/team",

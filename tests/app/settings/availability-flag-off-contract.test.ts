@@ -9,10 +9,13 @@ import path from "node:path";
 // editor), and never call the ON-only per-practitioner loaders / scope UI.
 
 const root = path.resolve(__dirname, "../../../");
-const PAGE = readFileSync(
+const FULL_PAGE = readFileSync(
   path.join(root, "app/(app)/settings/availability/page.tsx"),
   "utf8",
 );
+// Decision 6: a practitioner's own-hours view sits BEFORE the owner capacity switch and is gated on
+// capacity ON itself. This contract is about the OWNER page, so it starts at the switch.
+const PAGE = FULL_PAGE.slice(FULL_PAGE.indexOf("const capacityOn"));
 const off = PAGE.slice(
   PAGE.indexOf("if (!capacityOn)"),
   PAGE.indexOf("// ---- Flag ON"),

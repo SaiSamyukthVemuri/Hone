@@ -405,7 +405,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     href: "/settings/availability",
     description: "Weekly hours, special hours, repeating breaks, and blocked time",
     keywords: ["availability", "hours", "opening hours", "working hours", "business hours", "schedule", "when i work", "my hours"],
-    visibility: "owner",
+    visibility: "practitioner",
     priority: 350,
   },
   {

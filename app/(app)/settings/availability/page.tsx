@@ -94,10 +94,44 @@ export default async function AvailabilitySettingsPage({
 }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner") {
-    return (
+    // Decision 6 (Sam, 1 Nov): a practitioner manages ONLY their own working hours: the week and
+    // date-specific hours of their own per-practitioner schedule. Not the studio-wide hours, not a
+    // colleague's, not breaks or blocks (those have their own rules). Needs per-practitioner
+    // scheduling on; without it there is no personal schedule to edit. The actions re-check the
+    // same rule server-side and the database does too (0278); this page is the view of it.
+    const notice = (text: string) => (
       <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-        Only studio owners can change availability.
+        {text}
       </div>
+    );
+    if (studio.practitioner_capacity_enabled !== true) {
+      return notice("Your studio sets one schedule for everyone. Ask the studio owner to change the hours.");
+    }
+    const supabase = await createClient();
+    const mine = (await getActivePractitioners(supabase, studio.id)).find((p) => p.id === practitioner.id);
+    if (!mine) return notice("Only studio owners can change availability.");
+    const today = todayInTz(studio.timezone);
+    const scope = resolveScope(mine.id, [mine]);
+    if (scope.kind !== "practitioner") return notice("Only studio owners can change availability.");
+    const { week, overrides } = await loadScopedAvailability(
+      supabase,
+      studio.id,
+      scope,
+      today,
+      addDays(today, 90),
+    );
+    return (
+      <section className="flex flex-col gap-10">
+        <Header />
+        <PractitionerWeekEditor
+          practitionerId={mine.id}
+          practitionerName={mine.display_name}
+          practitionerColor={mine.color}
+          timeFormat={resolveTimeFormat(studio)}
+          week={week}
+          overrides={overrides}
+        />
+      </section>
     );
   }
 
