@@ -928,7 +928,8 @@ for (const width of CARD_WIDTHS) {
         // A Range reports one client rect per line box — the only honest way to
         // ask "did this text wrap?" for a flex item that stretches vertically.
         const timeRange = document.createRange();
-        timeRange.selectNodeContents(timeCell);
+        // The start label is the cell's first span; the end time is a deliberate second line beneath it.
+        timeRange.selectNodeContents(timeCell.firstElementChild ?? timeCell);
         const actions = [...document.querySelectorAll('[data-testid="today-next-action"],[data-testid="today-consultation-notes"]')];
         // The VISIBLE text edge, not the box edge. A borderless link with
         // horizontal padding has a box that aligns while its glyphs sit 12px
@@ -1105,7 +1106,7 @@ for (const width of HOSTILE_WIDTHS) {
         const timeCell = rowBody.firstElementChild as HTMLElement;
         const textCol = rowBody.children[1] as HTMLElement;
         const rg = document.createRange();
-        rg.selectNodeContents(timeCell);
+        rg.selectNodeContents(timeCell.firstElementChild ?? timeCell);
         const card = rowBody.parentElement!.parentElement!.getBoundingClientRect();
         const acts = [
           ...document.querySelectorAll(
