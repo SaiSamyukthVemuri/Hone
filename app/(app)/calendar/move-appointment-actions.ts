@@ -167,8 +167,9 @@ export async function loadMoveSlotsAction(input: {
         return { ok: false, error: "That practitioner isn't available." }; // fail closed, no enumeration
       }
       slotTarget = requestedTarget;
-    } else if (!currentValid) {
-      slotTarget = null; // reassignment required before any time can be offered
+    } else if (!currentValid && studio.practitioner_capacity_enabled === true) {
+      // Capacity OFF is studio-wide, so a missing or inactive assignee never blocks a time-only move there.
+      slotTarget = null; // reassignment required before any time can be offered (capacity ON)
     }
   }
 

@@ -71,8 +71,9 @@ describe("capacity OFF: assignment without parallelism", () => {
   it("collision stays studio-wide: a second booking at the same time for ANOTHER practitioner is refused", async () => {
     await setup(false);
     expect((await book(owner(), member(), T("10:00"))).result).toBe("created");
-    const second = await book(owner(), owner(), T("10:00"));
-    expect(second.result).not.toBe("created");
+    // The studio-wide overlap constraint refuses it outright (raised, not a soft result): capacity OFF records an
+    // assignee without creating parallelism.
+    await expect(book(owner(), owner(), T("10:00"))).rejects.toThrow(/no_overlapping_appointments_studio_wide/);
     const n = await adminQuery(`select count(*)::int n from public.appointments where studio_id = $1 and status = 'confirmed'`, [B.studioId]);
     expect(n.rows[0].n).toBe(1);
   });
