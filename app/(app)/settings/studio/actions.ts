@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import type { BirthdayReminderColor } from "@/lib/types/database";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { parseLegalNameAccessForm } from "@/lib/clients/legal-name-access";
 import { parseClientSelfServiceForm } from "@/lib/booking/client-self-service-form";
 
 function nullableString(value: FormDataEntryValue | null): string | null {
@@ -402,4 +403,44 @@ export async function updateStudioPolicyAction(
 
   revalidatePath("/settings/intake");
   revalidatePath("/settings/payments");
+}
+
+// ---------------------------------------------------------------------------
+// setReceptionistLegalNameAccessAction (HON-58 Q1)
+// ---------------------------------------------------------------------------
+// Owner-only. The studio id is the signed-in owner's own studio, never the form.
+// The value must be the literal "true" or "false". The RPC is the only writer:
+// it re-checks owner-of-this-studio and writes the audit row (who, when,
+// old -> new) in the same transaction, so this action cannot change the switch
+// without leaving a record. Takes effect on the next request: no cache here.
+
+export async function setReceptionistLegalNameAccessAction(
+  formData: FormData,
+): Promise<EmailSettingsResult> {
+  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  if (practitioner.role !== "owner") {
+    return { ok: false, error: "Only studio owners can change this setting." };
+  }
+  const enabled = parseLegalNameAccessForm(formData);
+  if (enabled === null) {
+    return { ok: false, error: "Could not save settings. Please try again." };
+  }
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("set_receptionist_legal_name_access", {
+    p_studio_id: studio.id,
+    p_enabled: enabled,
+  });
+  if (error) {
+    console.error(
+      JSON.stringify({
+        event: "studio_legal_name_access_update_failed",
+        code: dbErrorCode(error),
+        studioId: studio.id,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return { ok: false, error: "Could not save settings. Please try again." };
+  }
+  revalidatePath("/settings/studio");
+  return { ok: true };
 }

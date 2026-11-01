@@ -4,11 +4,17 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { Client } from "@/lib/types/database";
 import { matchesClientSearch } from "@/lib/clients/name-search";
+import { clientIdentityPair } from "@/lib/clients/identity";
 
 // DAT-001: exactly the fields this list renders and searches. Every prop of a
 // client component is serialized to the browser, so a caller projects to this
 // shape rather than passing whole client rows.
-export type ClientSearchRow = Pick<Client, "id" | "name" | "pronouns" | "phone" | "email">;
+export type ClientSearchRow = Pick<Client, "id" | "name" | "pronouns" | "phone" | "email"> & {
+  /** HON-58: the name the client goes by; shown in place of `name` when present. */
+  preferred_name?: string | null;
+  /** HON-58: the legal name, only for a viewer authorized to see it (owner or practitioner). */
+  legal_name?: string | null;
+};
 
 type Props = {
   clients: ClientSearchRow[];
@@ -123,7 +129,12 @@ export function ClientSearch({
 // Renders one client row. Contact info is read strictly from the client's own
 // columns; never from any other record (studio, practitioner, etc.).
 function ClientResultRow({ client }: { client: ClientSearchRow }) {
+  // HON-58: preferred name when given; the legal name rides beside it only
+  // when this viewer was sent one and it differs.
+  const { display } = clientIdentityPair({ name: client.name, preferred_name: client.preferred_name });
+  const legal = client.legal_name && client.legal_name !== display ? client.legal_name : null;
   const bits: string[] = [];
+  if (legal) bits.push(`Legal name: ${legal}`);
   if (client.pronouns) bits.push(client.pronouns);
   if (client.phone) bits.push(client.phone);
   if (client.email) bits.push(client.email);
@@ -135,7 +146,7 @@ function ClientResultRow({ client }: { client: ClientSearchRow }) {
         className="flex items-center justify-between gap-3 px-4 py-4 hover:bg-neutral-50 dark:hover:bg-neutral-900"
       >
         <div className="min-w-0 flex-1">
-          <div className="truncate font-medium">{client.name}</div>
+          <div className="truncate font-medium">{display}</div>
           {bits.length > 0 && (
             <div className="truncate text-xs text-neutral-500">
               {bits.join(" · ")}

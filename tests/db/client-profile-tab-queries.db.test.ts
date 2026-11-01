@@ -133,6 +133,7 @@ const ALWAYS = {
   client_pricing: 1,
   sessions: 1,
   services: 1,
+  client_legal_identities: 1, // HON-58: the legal name beside the display name in the heading
 };
 
 const EXPECTED: Record<string, Record<string, number>> = {

@@ -21,7 +21,9 @@ import {
   type NavSearchContext,
 } from "@/lib/search/navigation-registry";
 import { mergeMemoryBlockRows } from "@/lib/search/treatment-memory-merge";
-import { clientDisplayName } from "@/lib/clients/identity";
+import { clientDisplayName, clientLegalName } from "@/lib/clients/identity";
+import { LEGAL_IDENTITY_COLUMNS, type LegalIdentityRow } from "@/lib/clients/legal-identity";
+import { isMissingRelationError } from "@/lib/supabase/missing-relation";
 import { isMissingColumnError } from "@/lib/db/missing-column";
 import { PREFERRED_NAME_COLUMN, preferredNameColumn } from "@/lib/clients/preferred-name-read";
 import {
@@ -147,6 +149,8 @@ type ClientSearchRow = {
   id: string;
   name: string | null;
   preferred_name?: string | null;
+  // HON-58: owner/practitioner only, read from client_legal_identities.
+  legal_name?: string | null;
   email: string | null;
   phone: string | null;
 };
@@ -173,6 +177,12 @@ type ClientSearch = { rows: ClientSearchRow[]; truncated: boolean };
 // whole search then runs once more without it (today's behaviour exactly); any
 // other error is untouched, so a real failure is never retried or swallowed.
 class MissingPreferredNameColumn extends Error {}
+
+function clientSubtitle(c: ClientSearchRow): string | undefined {
+  const contact = c.email || c.phone || undefined;
+  const legal = c.legal_name && c.legal_name !== clientDisplayName(c) ? `Legal name: ${c.legal_name}` : null;
+  return [legal, contact].filter(Boolean).join(" · ") || undefined;
+}
 
 async function searchClientRows(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -235,11 +245,54 @@ async function searchClientRowsWith(
     }
   };
 
+  // HON-58: a client found by LEGAL name. The legal identity lives in its own
+  // owner/practitioner-only table, so this is a separate, bounded read: the
+  // first query word, as an in-order subsequence, against the given, middle or
+  // family name; the matching clients are then read and confirmed over the
+  // stored, preferred and legal names together. A non-ASCII query word is not
+  // prefiltered (ILIKE cannot fold it), so it finds no extra row here. A failed
+  // read fails the whole search (DAT-002), as every other client read does. A
+  // database without the table (before 0258) has no legal names to find.
+  const searchByLegalName = async (): Promise<ClientSearch | null> => {
+    const patterns = nameCandidatePatterns(query);
+    if (patterns.length === 0) return { rows: [], truncated: false };
+    const { data, error } = await supabase
+      .from("client_legal_identities")
+      .select(LEGAL_IDENTITY_COLUMNS)
+      .eq("studio_id", studioId)
+      .or(orIlike(["legal_given_name", "legal_middle_name", "legal_family_name"], patterns[0]))
+      .order("client_id")
+      .range(0, CLIENT_SCAN_CAP_PER_READ - 1);
+    if (error) return isMissingRelationError(error, "client_legal_identities") ? { rows: [], truncated: false } : null;
+    const legalRows = (data ?? []) as LegalIdentityRow[];
+    if (legalRows.length === 0) return { rows: [], truncated: false };
+    const legalById = new Map<string, string>();
+    for (const row of legalRows) {
+      const legal = clientLegalName(row);
+      if (legal) legalById.set(row.client_id, legal);
+    }
+    const found: ClientSearchRow[] = [];
+    const ids = [...legalById.keys()];
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data: clientData, error: clientErr } = await base().in("id", ids.slice(i, i + 200));
+      if (clientErr) {
+        if (includePreferred && isMissingColumnError(clientErr, PREFERRED_NAME_COLUMN)) throw new MissingPreferredNameColumn();
+        return null;
+      }
+      for (const row of (clientData ?? []) as unknown as ClientSearchRow[]) {
+        const withLegal = { ...row, legal_name: legalById.get(row.id) ?? null };
+        if (matchesClientSearch(withLegal, query)) found.push(withLegal);
+        if (found.length >= CLIENT_CAP) return { rows: found, truncated: false };
+      }
+    }
+    return { rows: found, truncated: legalRows.length >= CLIENT_SCAN_CAP_PER_READ };
+  };
+
   const namePatterns = nameCandidatePatterns(query);
   const phonePattern = phoneCandidatePattern(query);
   const none = Promise.resolve<ClientSearch>({ rows: [], truncated: false });
 
-  const [direct, asciiNamed, otherNamed, phoned, otherPreferred] = await Promise.all([
+  const [direct, asciiNamed, otherNamed, phoned, otherPreferred, legalMatched] = await Promise.all([
     // The direct read is confirmed and paged like every other client read
     // (Codex P2 4367010228): no row reaches the cap unconfirmed.
     confirmed(() =>
@@ -262,8 +315,9 @@ async function searchClientRowsWith(
     includePreferred && hasNameQuery(query)
       ? confirmed(() => base().filter("preferred_name", "match", NON_ASCII_NAME_REGEX))
       : none,
+    searchByLegalName(),
   ]);
-  if (!direct || !asciiNamed || !otherNamed || !phoned || !otherPreferred) return null;
+  if (!direct || !asciiNamed || !otherNamed || !phoned || !otherPreferred || !legalMatched) return null;
 
   const seen = new Set<string>();
   const rows: ClientSearchRow[] = [];
@@ -272,14 +326,14 @@ async function searchClientRowsWith(
     seen.add(row.id);
     rows.push(row);
   }
-  for (const row of [...asciiNamed.rows, ...otherNamed.rows, ...phoned.rows, ...otherPreferred.rows]) {
+  for (const row of [...asciiNamed.rows, ...otherNamed.rows, ...phoned.rows, ...otherPreferred.rows, ...legalMatched.rows]) {
     if (seen.has(row.id)) continue;
     seen.add(row.id);
     rows.push(row);
   }
   return {
     rows: sortByMatchRank(rows, query).slice(0, CLIENT_CAP),
-    truncated: [direct, asciiNamed, otherNamed, phoned, otherPreferred].some((r) => r.truncated),
+    truncated: [direct, asciiNamed, otherNamed, phoned, otherPreferred, legalMatched].some((r) => r.truncated),
   };
 }
 
@@ -498,8 +552,9 @@ async function runGlobalSearch(rawQuery: string): Promise<GlobalSearchResponse> 
       id: `client:${c.id}`,
       type: "client",
       title: clientDisplayName(c) || "Client",
-      subtitle:
-        (c.email as string | null) || (c.phone as string | null) || undefined,
+      // HON-58: the legal name rides in the subtitle only when it was found for
+      // this (authorized) viewer and differs from the displayed name.
+      subtitle: clientSubtitle(c),
       href: `/clients/${c.id}`,
     });
   }

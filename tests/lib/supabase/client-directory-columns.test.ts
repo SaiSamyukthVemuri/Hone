@@ -45,12 +45,12 @@ beforeEach(() => { selects.length = 0; pages.served = 0; });
 
 describe("DAT-001 the client directory read names its columns", () => {
   it("pins the exact directory column list", () => {
-    expect(CLIENT_DIRECTORY_COLUMNS).toBe("id, name, pronouns, email, phone, address, archived_at");
+    expect(CLIENT_DIRECTORY_COLUMNS).toBe("id, name, preferred_name, pronouns, email, phone, address, archived_at");
   });
 
   it.each([false, true])("selects only those columns on every page (archived=%s)", async (archived) => {
     await (archived ? getArchivedClientsForStudio("A") : getClientsForStudio("A"));
     expect(selects).toHaveLength(2);
-    for (const columns of selects) expect(columns).toBe("id, name, pronouns, email, phone, address, archived_at");
+    for (const columns of selects) expect(columns).toBe("id, name, preferred_name, pronouns, email, phone, address, archived_at");
   });
 });

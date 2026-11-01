@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  clinicalPacketName,
+  insurerDocumentName,
   clientClinicalName,
   clientCommunicationName,
   clientDisplayName,
@@ -119,5 +121,35 @@ describe("no name field is logged or leaked by the module", () => {
     expect(src).not.toMatch(/console\./);
     expect(src).not.toMatch(/\bfetch\s*\(/);
     expect(src).not.toMatch(/process\.env/);
+  });
+});
+
+describe("document identity (OPS Q2): insurer legal only, internal clinical packet legal + (preferred)", () => {
+  it("an insurer or claim document prints the legal identity and never the preferred name", () => {
+    expect(insurerDocumentName(BOTH)).toBe("Jane Marie Smith-Reyes");
+    expect(insurerDocumentName(BOTH)).not.toContain("Janie");
+    expect(insurerDocumentName({ name: "Jane Smith", preferred_name: "Janie" })).toBe("Jane Smith");
+  });
+
+  it("an internal clinical packet prints the legal identity with the preferred name in parentheses", () => {
+    expect(clinicalPacketName(BOTH)).toBe("Jane Marie Smith-Reyes (Janie)");
+    expect(clinicalPacketName({ name: "Jane Smith", preferred_name: "Janie" })).toBe("Jane Smith (Janie)");
+  });
+
+  it("does not repeat a preferred name that equals the legal name, or add one that is absent", () => {
+    expect(clinicalPacketName({ name: "Jane Smith", preferred_name: "jane smith" })).toBe("Jane Smith");
+    expect(clinicalPacketName({ name: "Jane Smith" })).toBe("Jane Smith");
+    expect(clinicalPacketName({ name: "Jane Smith", preferred_name: "  " })).toBe("Jane Smith");
+  });
+});
+
+describe("Name on file (Sam, 28 Oct): the stored name shown as the identity is labelled, never treated as protected", () => {
+  it("is labelled only when there is no preferred name", async () => {
+    const { isNameOnFile, NAME_ON_FILE_LABEL } = await import("@/lib/clients/identity");
+    expect(NAME_ON_FILE_LABEL).toBe("Name on file");
+    expect(isNameOnFile({ name: "Alex Stored", preferred_name: null })).toBe(true);
+    expect(isNameOnFile({ name: "Alex Stored", preferred_name: "   " })).toBe(true);
+    expect(isNameOnFile({ name: "Alex Stored" })).toBe(true);
+    expect(isNameOnFile({ name: "Alex Stored", preferred_name: "Lex" })).toBe(false);
   });
 });
