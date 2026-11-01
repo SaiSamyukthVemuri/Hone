@@ -240,7 +240,11 @@ export default async function ClientCheatSheetPage({
   // would be a real restructuring of a clinical surface for a measurement PR.
   // An early notFound() simply leaves the span unrecorded.
   const domain = startPerfSpan("client-profile.domain");
-  const data = await getClientById(studio.id, id);
+  // RBAC G-1: what a client has paid is OWNER-ONLY. Decided here, from the
+  // server-resolved role, and passed down so the non-owner read never SELECTs
+  // the column (see lib/clients/session-columns.ts), not merely hides it.
+  const isOwner = practitioner.role === "owner";
+  const data = await getClientById(studio.id, id, { includeFinancials: isOwner });
 
   if (!data) {
     notFound();
@@ -404,7 +408,9 @@ export default async function ClientCheatSheetPage({
       : Promise.resolve([] as Awaited<ReturnType<typeof getLatestSignaturesForPractitionerView>>),
     // PR #135 (migration 0058): card-on-file metadata only; Stripe identifiers
     // stay off the wire. Overview card.
-    isOverview
+    // OWNER-ONLY (G-1): stored card information is not sent to, or read for, a
+    // practitioner.
+    isOverview && isOwner
       ? getActiveCardForStudioClient(studio.id, client.id)
       : Promise.resolve(null),
     // PR #259: read-only imported treatment memory for the Before Today
@@ -474,13 +480,14 @@ export default async function ClientCheatSheetPage({
       ? await getClientBudgetContext(client.id)
       : null;
 
-  const lifetimeCents = sessions.reduce(
-    (sum, s) => sum + (s.price_paid_cents ?? 0),
-    0,
-  );
-  const sessionsWithPrice = sessions.filter(
-    (s) => s.price_paid_cents != null,
-  ).length;
+  // OWNER-ONLY (G-1): a non-owner's rows carry no price column, and the sum is
+  // not even computed for them.
+  const lifetimeCents = isOwner
+    ? sessions.reduce((sum, s) => sum + (s.price_paid_cents ?? 0), 0)
+    : 0;
+  const sessionsWithPrice = isOwner
+    ? sessions.filter((s) => s.price_paid_cents != null).length
+    : 0;
 
   // PR #199 (Chloe iPad retest): "Last session" used to be sessions[0]
   // even when that session had no treatment details, so the card Chloe
@@ -1184,7 +1191,7 @@ export default async function ClientCheatSheetPage({
               keeps the derivation co-located with the prop site so a
               future refactor moving this block does not split the
               two halves of the same decision. */}
-          {(() => {
+          {isOwner && (() => {
             // PR #170. Practitioner-side card_authorization state must
             // match what the portal sees: the LIVE template
             // (is_live=true AND status='active') and its current
@@ -1635,7 +1642,8 @@ export default async function ClientCheatSheetPage({
                         <div className="text-xs text-neutral-500">
                           {lastTreatment.modality}
                           {lastTreatmentPerformer && ` · ${lastTreatmentPerformer}`}
-                          {lastTreatment.price_paid_cents != null &&
+                          {isOwner &&
+                            lastTreatment.price_paid_cents != null &&
                             ` · Session price ${formatPrice(lastTreatment.price_paid_cents)}`}
                         </div>
                         {/* A newer uncharted session exists; say so quietly

@@ -1,3 +1,4 @@
+import { clientSessionsSelect } from "@/lib/clients/session-columns";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "./server";
@@ -474,6 +475,9 @@ function stripDeletedEntries(session: SessionWithEntries): SessionWithEntries {
 export async function getClientById(
   studioId: string,
   clientId: string,
+  // RBAC G-1: only the owner's read includes what a client paid. The default is
+  // the SAFE direction, so a caller that forgets the option cannot leak spend.
+  opts: { includeFinancials?: boolean } = {},
 ): Promise<ClientCheatSheet | null> {
   const supabase = await createClient();
 
@@ -496,7 +500,7 @@ export async function getClientById(
       .order("effective_from", { ascending: false }),
     supabase
       .from("sessions")
-      .select("*, electrolysis_entries(*), laser_entries(*)")
+      .select(clientSessionsSelect(opts.includeFinancials === true))
       .eq("studio_id", studioId)
       .eq("client_id", clientId)
       .is("deleted_at", null)
@@ -512,7 +516,9 @@ export async function getClientById(
   return {
     client: client as Client,
     pricing: (pricingRes.data ?? []) as ClientPricing[],
-    sessions: ((sessionsRes.data ?? []) as SessionWithEntries[]).map(
+    // The select string is chosen at runtime (owner vs not), so the client types
+    // the rows as a string error; the shape is the same minus the price column.
+    sessions: ((sessionsRes.data ?? []) as unknown as SessionWithEntries[]).map(
       stripDeletedEntries,
     ),
     practitioners,
