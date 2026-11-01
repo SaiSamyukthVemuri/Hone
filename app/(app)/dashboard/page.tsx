@@ -502,7 +502,14 @@ export default async function DashboardPage({
       // is ONE bounded read for today's UNIQUE client ids, so a client with two
       // appointments costs one lookup and the cost does not grow with the
       // schedule, and a failed read stays UNAVAILABLE — never "No card".
-      loadCardOnFileForStudio(studio.id, selectedDayClientIds),
+      // PRIVACY F1: card-on-file is a client payment-readiness signal, so it is
+      // OWNER-ONLY (Sam decision 12; payment state already works this way). A
+      // non-owner never triggers the read, so `cardOnFileLoad` is null, the
+      // status resolves to null, and the row renders no pill and no portal-link
+      // nudge (which keys off the same status).
+      isOwner
+        ? loadCardOnFileForStudio(studio.id, selectedDayClientIds)
+        : Promise.resolve(null),
     ]);
   void practitioners; // currently unused on the appointments roster;
   // kept fetched in parallel because future per-practitioner annotations
@@ -1297,7 +1304,7 @@ function AppointmentRow({
               {/* Beside the NAME, exactly where Chloe asked for it, and ahead
                   of the intake line in the reading order. A non-interactive
                   span, so it is safe inside the row-body link. */}
-              <CardOnFilePill status={cardOnFile} />
+              {isOwner && <CardOnFilePill status={cardOnFile} />}
               {nextAction.chip && (
                 <span
                   className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
