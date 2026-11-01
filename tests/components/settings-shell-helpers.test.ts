@@ -507,3 +507,23 @@ describe("Photos finding (1 Nov, d5a27f03): the desktop rail fits the viewport, 
     expect(src).not.toMatch(/data-rail-group-toggle|scrollAtGroupPress|scrollTo\(/);
   });
 });
+
+describe("Codex P2s at d5a27f03 / 2ba36ac1", () => {
+  const read = (rel: string) =>
+    readFileSync(path.resolve(__dirname, "../..", rel), "utf8");
+  it("the derived portal card status renders on the Card-on-file readiness view too", () => {
+    const src = read("app/(app)/settings/payments/PaymentsSettings.tsx");
+    expect(src).toMatch(
+      /\(view === "setup" \|\| view === "card-on-file"\) && \(\s*<div[^>]*>\s*<p className="font-medium">\{portalCardMessage\}/,
+    );
+    expect(src.match(/\{portalCardMessage\}/g)).toHaveLength(1);
+  });
+  it("a calendar colour pick announces itself to the form's dirty guard", () => {
+    const src = read("app/(app)/settings/services/ServiceFormControls.tsx");
+    expect(src).toMatch(/ref=\{hidden\} type="hidden" name=\{name\}/);
+    expect(src).toMatch(
+      /dispatchEvent\(new Event\("input", \{ bubbles: true \}\)\)/,
+    );
+    expect(src).toMatch(/\[value\]\)/);
+  });
+});

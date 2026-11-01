@@ -297,9 +297,16 @@ export function PaymentsSettings({
         </div>
       </section>
 
+      </>
+      )}
+
       {/* State-driven card-on-file + booking-collection facts (presenter).
           Replaces the pre-PR-A static payments-not-enabled/coming-later
-          block, which was false once live billing shipped. */}
+          block, which was false once live billing shipped. Shown on the
+          readiness view too: the checklist below does not check the
+          authorization template or the publishable key, so this derived
+          message is the only place a missing prerequisite is named. */}
+      {(view === "setup" || view === "card-on-file") && (
       <div className="rounded-md border border-neutral-200 bg-neutral-50 p-4 text-sm dark:border-neutral-800 dark:bg-neutral-900/50">
         <p className="font-medium">{portalCardMessage}</p>
         <p className="mt-1 text-neutral-600 dark:text-neutral-400">
@@ -307,8 +314,6 @@ export function PaymentsSettings({
           anyone.
         </p>
       </div>
-
-      </>
       )}
 
       {view === "card-on-file" && (
