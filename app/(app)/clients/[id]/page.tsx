@@ -1522,7 +1522,7 @@ export default async function ClientCheatSheetPage({
             Photos
           </h2>
           <p className="text-sm text-neutral-500">
-            Before and after photos for this client's sessions.
+            Before and after photos for this client&apos;s sessions.
           </p>
           <PendingLink
             href={`/clients/${client.id}/images`}
