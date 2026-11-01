@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeSettingsItem } from "@/lib/settings/nav";
+import { activeSettingsLocation } from "@/lib/settings/nav";
 import { isLeavingNavigation } from "@/components/settings/unsaved-changes";
 import { movedSectionTarget } from "@/components/settings/hash-redirect";
 
@@ -40,12 +40,30 @@ describe("movedSectionTarget", () => {
   });
 });
 
-describe("activeSettingsItem", () => {
-  const items = [{ href: "/settings/payments" }, { href: "/settings/profile" }];
-  it("matches exactly, then by prefix", () => {
-    expect(activeSettingsItem(items, "/settings/profile")?.href).toBe("/settings/profile");
-    expect(activeSettingsItem(items, "/settings/payments/return")?.href).toBe("/settings/payments");
-    expect(activeSettingsItem(items, "/settings/paymentsx")).toBeNull();
+describe("activeSettingsLocation", () => {
+  const items = [
+    {
+      id: "payments",
+      href: "/settings/payments/setup",
+      base: "/settings/payments",
+      children: [
+        { id: "setup", href: "/settings/payments/setup" },
+        { id: "fees", href: "/settings/payments/fees" },
+      ],
+    },
+    { id: "profile", href: "/settings/profile", base: "/settings/profile", children: [] },
+  ];
+  it("matches a child view exactly, then a flat entry", () => {
+    expect(activeSettingsLocation(items, "/settings/payments/fees")?.child?.id).toBe("fees");
+    expect(activeSettingsLocation(items, "/settings/profile")?.item.id).toBe("profile");
+  });
+  it("a route under a group's base that is not a view keeps the group lit", () => {
+    const loc = activeSettingsLocation(items, "/settings/payments/return");
+    expect(loc?.item.id).toBe("payments");
+    expect(loc?.child).toBeNull();
+  });
+  it("does not match a sibling prefix", () => {
+    expect(activeSettingsLocation(items, "/settings/paymentsx")).toBeNull();
   });
 });
 

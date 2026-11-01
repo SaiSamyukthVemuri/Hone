@@ -19,7 +19,7 @@ function read(rel: string): string {
 
 const PRA_SURFACES = [
   "app/(app)/settings/payments/PaymentsSettings.tsx",
-  "app/(app)/settings/payments/page.tsx",
+  "app/(app)/settings/payments/PaymentsView.tsx",
   "app/(app)/settings/launch/page.tsx",
   "app/(app)/settings/studio/PolicySettingsForm.tsx",
   "lib/onboarding/getting-started.ts",
@@ -53,7 +53,7 @@ describe("banned stale claims are gone from PR-A surfaces", () => {
 });
 
 describe("Settings → Payments is presenter-driven", () => {
-  const page = read("app/(app)/settings/payments/page.tsx");
+  const page = read("app/(app)/settings/payments/PaymentsView.tsx");
   const component = read("app/(app)/settings/payments/PaymentsSettings.tsx");
 
   it("page derives banner + portal + booking copy from the presenter", () => {

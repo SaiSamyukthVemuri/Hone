@@ -799,7 +799,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
-    path: "app/(app)/settings/tracking/page.tsx",
+    path: "app/(app)/settings/integrations/marketing/page.tsx",
     purpose: "Authenticated OWNER settings page (redacted status read).",
     why: "Owner-gated via requirePractitionerWithStudio(); reads only redacted provider status (never encrypted_server_token) scoped to studio.id.",
     scopeGuard: "requirePractitionerWithStudio",

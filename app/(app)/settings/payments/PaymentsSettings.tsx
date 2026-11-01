@@ -50,6 +50,10 @@ export type PaymentsSettingsProps = {
   // itself is rendered in Settings → Intake & Postcare.
   hasCancellationPolicy: boolean;
   hasNoShowPolicy: boolean;
+  // R2: Payment setup and Card-on-file readiness are separate focused views.
+  // Each view renders only its own part; neither adds, removes or changes a
+  // control, a status claim or any authority.
+  view: "setup" | "card-on-file";
 };
 
 // Plain-English status headline + supporting note. Owners shouldn't
@@ -102,6 +106,7 @@ export function PaymentsSettings({
   paidServiceCount,
   hasCancellationPolicy,
   hasNoShowPolicy,
+  view,
 }: PaymentsSettingsProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -189,6 +194,8 @@ export function PaymentsSettings({
 
   return (
     <div className="flex flex-col gap-4">
+      {view === "setup" && (
+      <>
       <div className={`rounded-lg border p-4 ${bannerStyles}`}>
         <p className={`text-sm font-medium ${bannerText}`}>
           {banner.headline}
@@ -301,6 +308,10 @@ export function PaymentsSettings({
         </p>
       </div>
 
+      </>
+      )}
+
+      {view === "card-on-file" && (
       <CardOnFileReadiness
         connectComplete={
           status.chargesEnabled && status.onboardingCompletedAt != null
@@ -310,7 +321,9 @@ export function PaymentsSettings({
         hasCancellationPolicy={hasCancellationPolicy}
         hasNoShowPolicy={hasNoShowPolicy}
       />
+      )}
 
+      {view === "setup" && (
       <details className="text-xs text-neutral-500">
         <summary className="cursor-pointer select-none">
           Technical details
@@ -347,6 +360,7 @@ export function PaymentsSettings({
           </Field>
         </dl>
       </details>
+      )}
     </div>
   );
 }

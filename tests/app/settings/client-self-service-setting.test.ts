@@ -156,7 +156,7 @@ describe("reminders and postcare are independent of the setting", () => {
     expect(src.slice(i)).not.toMatch(/client_(cancellation|reschedule)_enabled|clientSelfServicePolicy/);
   });
   it("the settings page is owner-only and shows the form from the live policy", () => {
-    const src = read("app/(app)/settings/studio/page.tsx");
+    const src = read("app/(app)/settings/studio/client-self-service/page.tsx");
     expect(src).toContain('practitioner.role !== "owner"');
     expect(src).toContain("ClientSelfServiceForm");
     expect(src).toContain("clientSelfServicePolicyFromStudio(studio)");

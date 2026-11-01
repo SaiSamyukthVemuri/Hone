@@ -209,7 +209,7 @@ describe("permissions — search advertises only what the caller can already ope
       ["settings", "Settings"],
       ["getting started", "Getting Started"],
       ["profile", "Profile"],
-      ["intake", "Forms & Postcare"],
+      ["intake", "Intake form preview"],
       ["launch", "Launch"],
       ["notifications", "Notifications"],
       ["sterile", "Sterile Items"],
@@ -265,7 +265,7 @@ describe("permissions — search advertises only what the caller can already ope
   it("google resolves for the audiences that actually have the surface", () => {
     // Owner: the studio-level Integrations page, whichever way the flag sits.
     expect(top("google", OWNER)).toBe("Google Calendar");
-    expect(hrefs("google", OWNER)).toContain("/settings/integrations");
+    expect(hrefs("google", OWNER)).toContain("/settings/integrations/google-calendar");
     expect(top("calendar sync", OWNER)).toBe("Google Calendar");
     // Practitioner with the flag on: their OWN connection card, on Profile.
     const withFlag = { isOwner: false, googleCalendarEnabled: true };

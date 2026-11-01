@@ -104,14 +104,14 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
 
   // ----------------------------------------------------------------- studio
   {
-    page: "/settings/studio",
+    page: "/settings/studio/details",
     label: "Studio name",
     role: "owner",
     decision: "searchable",
     entryId: "settings-studio-name",
   },
   {
-    page: "/settings/studio",
+    page: "/settings/studio/details",
     label: "Legal entity name",
     helper: "If different from studio name",
     role: "owner",
@@ -119,7 +119,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     entryId: "settings-legal-entity",
   },
   {
-    page: "/settings/studio",
+    page: "/settings/studio/details",
     label: "Owner email",
     role: "owner",
     decision: "excluded",
@@ -127,7 +127,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
       "Read-only display of the studio owner's address; not configurable here, and the Studio page entry already covers reaching it.",
   },
   {
-    page: "/settings/calendar",
+    page: "/settings/calendar/display",
     label: "Birthday reminder color",
     helper: "Choose the accent color used for birthday reminders",
     role: "owner",
@@ -135,7 +135,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     entryId: "settings-birthday-color",
   },
   {
-    page: "/settings/calendar",
+    page: "/settings/calendar/display",
     label: "Time format",
     helper: "How times are shown on your calendar, dashboard, and availability",
     role: "owner",
@@ -143,7 +143,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     entryId: "settings-time-format",
   },
   {
-    page: "/settings/studio",
+    page: "/settings/studio/email",
     label: "Email notifications",
     helper: "All emails are sent from hello@hone.care",
     role: "owner",
@@ -151,49 +151,49 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     entryId: "settings-reminders",
   },
   {
-    page: "/settings/studio",
+    page: "/settings/studio/email",
     label: "Send 24-hour reminders",
     role: "owner",
     decision: "searchable",
     entryId: "settings-reminders",
   },
   {
-    page: "/settings/studio",
+    page: "/settings/studio/email",
     label: "Send 2-hour reminders",
     role: "owner",
     decision: "searchable",
     entryId: "settings-reminders",
   },
   {
-    page: "/settings/studio",
+    page: "/settings/studio/email",
     label: "Send confirmation emails when appointments are booked",
     role: "owner",
     decision: "searchable",
     entryId: "settings-reminders",
   },
   {
-    page: "/settings/studio",
+    page: "/settings/studio/email",
     label: "Email me when a new booking is created",
     role: "owner",
     decision: "searchable",
     entryId: "settings-reminders",
   },
   {
-    page: "/settings/studio",
+    page: "/settings/studio/email",
     label: "Automatically mark no-shows",
     role: "owner",
     decision: "searchable",
     entryId: "settings-reminders",
   },
   {
-    page: "/settings/studio",
+    page: "/settings/studio/email",
     label: "Send follow-up email to no-shows",
     role: "owner",
     decision: "searchable",
     entryId: "settings-reminders",
   },
   {
-    page: "/settings/studio",
+    page: "/settings/studio/email",
     label: "Show treatment time to clients in emails",
     role: "owner",
     decision: "searchable",
@@ -203,21 +203,21 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
   // ---------------------------------------------------------------- booking
   // The page at the heart of the reported failure. All eight controls.
   {
-    page: "/settings/booking",
+    page: "/settings/booking/link",
     label: "New clients",
     role: "owner",
     decision: "searchable",
     entryId: "settings-new-client-admission",
   },
   {
-    page: "/settings/booking",
+    page: "/settings/booking/link",
     label: "Your booking link",
     role: "owner",
     decision: "searchable",
     entryId: "settings-booking-link",
   },
   {
-    page: "/settings/booking",
+    page: "/settings/booking/link",
     label: "Booking URL slug",
     helper: "Lowercase letters, numbers, and dashes",
     role: "owner",
@@ -225,21 +225,21 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     entryId: "settings-booking-slug",
   },
   {
-    page: "/settings/booking",
+    page: "/settings/booking/window",
     label: "Timezone",
     role: "owner",
     decision: "searchable",
     entryId: "settings-timezone",
   },
   {
-    page: "/settings/booking",
+    page: "/settings/booking/window",
     label: "Default duration (min)",
     role: "owner",
     decision: "searchable",
     entryId: "settings-default-duration",
   },
   {
-    page: "/settings/booking",
+    page: "/settings/booking/window",
     label: "Time between appointments",
     helper: "Automatically blocks time after each appointment",
     role: "owner",
@@ -247,7 +247,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     entryId: "settings-buffer",
   },
   {
-    page: "/settings/booking",
+    page: "/settings/booking/window",
     label: "Booking horizon",
     helper: "Choose how far ahead clients can book online",
     role: "owner",
@@ -255,7 +255,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     entryId: "settings-booking-horizon",
   },
   {
-    page: "/settings/booking",
+    page: "/settings/booking/window",
     label: "Public address (booking page and appointment emails)",
     helper: "For home-based studios, leave this blank",
     role: "owner",
@@ -263,7 +263,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     entryId: "settings-public-address",
   },
   {
-    page: "/settings/booking",
+    page: "/settings/booking/window",
     label: "Booking page intro",
     role: "owner",
     decision: "searchable",
@@ -423,7 +423,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
 
   // -------------------------------------------------------- forms & postcare
   {
-    page: "/settings/intake",
+    page: "/settings/forms/intake-preview",
     label: "Intake form preview",
     helper: "This is the current health intake form",
     role: "practitioner",
@@ -431,35 +431,35 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
     entryId: "settings-intake-preview",
   },
   {
-    page: "/settings/intake",
+    page: "/settings/forms/postcare",
     label: "Postcare",
     role: "owner",
     decision: "searchable",
     entryId: "settings-postcare",
   },
   {
-    page: "/settings/intake",
+    page: "/settings/forms/postcare",
     label: "Aftercare instructions",
     role: "owner",
     decision: "searchable",
     entryId: "settings-aftercare",
   },
   {
-    page: "/settings/intake",
+    page: "/settings/forms/postcare",
     label: "Postcare contact email",
     role: "owner",
     decision: "searchable",
     entryId: "settings-postcare-contact",
   },
   {
-    page: "/settings/intake",
+    page: "/settings/forms/cancellation-policy",
     label: "Cancellation and no-show policy",
     role: "owner",
     decision: "searchable",
     entryId: "settings-policies",
   },
   {
-    page: "/settings/intake",
+    page: "/settings/forms/postcare",
     label: "Warning signs / when to contact you",
     role: "owner",
     decision: "excluded",
@@ -467,7 +467,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
       "A field within the Postcare email editor; the Postcare and Aftercare instructions entries both land on that editor, so a third row would duplicate the same destination.",
   },
   {
-    page: "/settings/intake",
+    page: "/settings/forms/postcare",
     label: "Product recommendations",
     role: "owner",
     decision: "excluded",
@@ -475,7 +475,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
       "A field within the Postcare email editor; reached by the Postcare entry, which anchors at that editor.",
   },
   {
-    page: "/settings/intake",
+    page: "/settings/forms/postcare",
     label: "Review link (optional)",
     role: "owner",
     decision: "excluded",
@@ -483,7 +483,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
       "An optional field within the Postcare email editor; reached by the Postcare entry, which anchors at that editor.",
   },
   {
-    page: "/settings/intake",
+    page: "/settings/forms/postcare",
     label: "Review prompt wording (optional)",
     role: "owner",
     decision: "excluded",
@@ -496,44 +496,44 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
   // a parallel track, and this change must not touch them. Every payment
   // control therefore resolves to the page-level Payments entry.
   {
-    page: "/settings/payments",
+    page: "/settings/payments/setup",
     label: "Stripe connection",
     role: "owner",
     decision: "searchable",
     entryId: "settings-payments",
   },
   {
-    page: "/settings/payments",
+    page: "/settings/payments/card-on-file",
     label: "Card-on-file readiness",
     role: "owner",
     decision: "searchable",
-    entryId: "settings-payments",
+    entryId: "settings-card-on-file",
   },
   {
-    page: "/settings/payments",
+    page: "/settings/payments/fees",
     label: "Cancellation and no-show fee amounts",
     role: "owner",
     decision: "searchable",
-    entryId: "settings-payments",
+    entryId: "settings-fee-amounts",
   },
   {
-    page: "/settings/payments",
+    page: "/settings/payments/fees",
     label: "Late cancellation fee",
     role: "owner",
     decision: "searchable",
-    entryId: "settings-payments",
+    entryId: "settings-fee-amounts",
   },
   {
-    page: "/settings/payments",
+    page: "/settings/payments/fees",
     label: "No-show fee",
     role: "owner",
     decision: "searchable",
-    entryId: "settings-payments",
+    entryId: "settings-fee-amounts",
   },
 
   // ----------------------------------------------------------- integrations
   {
-    page: "/settings/integrations",
+    page: "/settings/integrations/google-calendar",
     label: "Google Calendar",
     role: "owner",
     decision: "searchable",
@@ -542,14 +542,14 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
 
   // --------------------------------------------------------------- tracking
   {
-    page: "/settings/tracking",
+    page: "/settings/integrations/marketing",
     label: "Provider",
     role: "owner",
     decision: "searchable",
     entryId: "settings-tracking",
   },
   {
-    page: "/settings/tracking",
+    page: "/settings/integrations/marketing",
     label: "Pixel / Dataset ID",
     role: "owner",
     decision: "excluded",
@@ -557,7 +557,7 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
       "Credential entry field. Search must not advertise credential inputs, and the registry payload is guarded against credential vocabulary. Reached via Marketing & analytics.",
   },
   {
-    page: "/settings/tracking",
+    page: "/settings/integrations/marketing",
     label: "Test event code (optional)",
     role: "owner",
     decision: "excluded",
@@ -638,32 +638,33 @@ export const SETTINGS_CONTROLS: readonly SettingsControl[] = [
  */
 export const STRUCTURAL_LABEL_SOURCES: ReadonlyArray<{
   file: string;
-  page: string;
+  /** Routes that render this file; a swept label may be decided on any. */
+  pages: ReadonlyArray<string>;
   minLabels: number;
 }> = [
   {
-    file: "app/(app)/settings/booking/page.tsx",
-    page: "/settings/booking",
+    file: "app/(app)/settings/booking/BookingView.tsx",
+    pages: ["/settings/booking/link", "/settings/booking/window"],
     minLabels: 7,
   },
   {
     file: "app/(app)/settings/studio/StudioSettingsForm.tsx",
-    page: "/settings/studio",
+    pages: ["/settings/studio/details"],
     minLabels: 3,
   },
   {
     file: "app/(app)/settings/calendar/StudioDisplayPreferencesForm.tsx",
-    page: "/settings/calendar",
+    pages: ["/settings/calendar/display"],
     minLabels: 2,
   },
   {
     file: "app/(app)/settings/profile/ProfileForm.tsx",
-    page: "/settings/profile",
+    pages: ["/settings/profile"],
     minLabels: 2,
   },
   {
     file: "app/(app)/settings/profile/ColorPicker.tsx",
-    page: "/settings/profile",
+    pages: ["/settings/profile"],
     minLabels: 1,
   },
 ];
