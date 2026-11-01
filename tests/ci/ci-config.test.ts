@@ -2969,3 +2969,10 @@ describe("NODE-HEAP-01: typecheck and the webServer build keep a 4 GB Node heap"
     expect(heap(build)).toBeGreaterThanOrEqual(4096);
   });
 });
+
+describe("NODE-HEAP-01: the unit-test step does not inherit the 4 GB heap", () => {
+  it("validate's `npm test` step overrides NODE_OPTIONS with an empty value", () => {
+    const m = /run: npm test\n\s+env:\n(?:\s+#.*\n)+\s+NODE_OPTIONS: ""\n/.exec(CI);
+    expect(m, "the Unit tests step must set NODE_OPTIONS to an empty string").not.toBeNull();
+  });
+});

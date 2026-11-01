@@ -386,6 +386,15 @@ jobs:
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: npm test
         env:
+          # NODE-HEAP-01: vitest keeps the runner's default heap. With the
+          # workflow-wide 4 GB flag this step took 9.0 min (#1321) and was cut at
+          # the job's 15 min ceiling (#1324 run 41338447505), against 4.6 min on
+          # the last pre-OOM PR run (#1301 @ 58c67f05) and 3.8 min on production's
+          # push run: every vitest worker inherits the flag, and V8 collects less
+          # often under a larger limit, so the workers hold more memory at once on
+          # a 7 GB runner. Only typecheck, the build and the webServer build need
+          # the headroom. An empty value REPLACES the inherited one.
+          NODE_OPTIONS: ""
           # enforce: pushes to production and production-record changes;
           # measure (non-blocking, annotated): ordinary application PRs.
           CANONICAL_FRESHNESS: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.production_record == 'true') && 'enforce' || 'measure' }}
