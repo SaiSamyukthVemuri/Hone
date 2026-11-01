@@ -1,5 +1,4 @@
-import { clientDisplayName } from "@/lib/clients/identity";
-import { preferredNameColumn, readWithPreferredName } from "@/lib/clients/preferred-name-read";
+import { getClientDisplayNames } from "./client-display-names";
 import type { createClient } from "@/lib/supabase/server";
 import {
   selectCurrentIntakeByClient,
@@ -143,28 +142,12 @@ export async function getIntakesAwaitingReview(
   const awaiting = selectClientsAwaitingIntakeReview(rows);
   if (awaiting.length === 0) return [];
 
-  // Names are the staff-facing display name (preferred, else stored). Chunked
-  // for the same reason as step 2.
-  const nameById = new Map<string, string>();
-  for (let i = 0; i < awaiting.length; i += CLIENT_CHUNK) {
-    const chunk = awaiting.slice(i, i + CLIENT_CHUNK).map((a) => a.clientId);
-    const { data: clientRows, error: clientError } = await readWithPreferredName(
-      (withPreferred) =>
-        supabase
-          .from("clients")
-          .select(`id, name, ${preferredNameColumn(withPreferred)}archived_at`)
-          .eq("studio_id", studioId)
-          .in("id", chunk),
-    );
-    if (clientError) throw new Error(REFUSAL);
-    for (const c of (clientRows ?? []) as unknown as Array<{
-      id: string;
-      name: string;
-      preferred_name?: string | null;
-      archived_at: string | null;
-    }>) {
-      nameById.set(c.id, clientDisplayName(c));
-    }
+  // Names are the staff-facing display name (preferred, else stored).
+  let nameById: Map<string, string>;
+  try {
+    nameById = await getClientDisplayNames(supabase, studioId, awaiting.map((a) => a.clientId));
+  } catch {
+    throw new Error(REFUSAL);
   }
   return awaiting.map((a) => ({
     clientId: a.clientId,

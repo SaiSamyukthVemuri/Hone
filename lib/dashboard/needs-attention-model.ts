@@ -76,6 +76,9 @@ export type NeedsAttention = {
   // Names of checks that could not be read, in plain words. When non-empty the
   // panel says the list may be incomplete and never shows the all-clear.
   unavailableChecks: string[];
+  // When the per-session details check ran, how many recent sessions it covers;
+  // null when it did not run. The panel prints it (Insurance N3).
+  detailsWindow: number | null;
 };
 
 const GROUPED_TODO_KINDS: ReadonlySet<DashboardTodoItem["kind"]> = new Set([
@@ -107,6 +110,7 @@ export function buildNeedsAttention(input: {
   upcomingVisitClientIds?: ReadonlySet<string>;
   // Per-session procedure-record gaps (client or operator details). When
   // supplied they replace the studio-level "records missing details" row.
+  detailsWindow?: number | null;
   recordDetailGaps?: ReadonlyArray<{
     sessionId: string;
     clientId: string;
@@ -251,6 +255,7 @@ export function buildNeedsAttention(input: {
         !(input.recordDetailGaps && i.kind === "records_details"),
     ),
     unavailableChecks: [...(input.unavailableChecks ?? [])],
+    detailsWindow: input.detailsWindow ?? null,
     notReturnedCount: Math.max(
       0,
       (input.assistant.allTotal ?? allItems.length) - allItems.length,

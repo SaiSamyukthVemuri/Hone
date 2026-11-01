@@ -13,6 +13,7 @@ const empty: NeedsAttention = {
   others: [],
   notReturnedCount: 0,
   unavailableChecks: [],
+  detailsWindow: null,
 };
 const html = (n: NeedsAttention) =>
   renderToStaticMarkup(createElement(NeedsAttentionPanel, { needs: n }));
@@ -58,5 +59,12 @@ describe("Needs attention honest states", () => {
     const src = require("node:fs").readFileSync("app/(app)/dashboard/page.tsx", "utf8") as string;
     const fn = src.slice(src.indexOf("async function loadPaymentStatus"));
     expect(fn.slice(0, fn.indexOf("const row = "))).toContain("return CHECK_UNAVAILABLE;");
+  });
+
+  it("N3: prints the window the details check covers, on the empty state and under a list", () => {
+    const empty100 = html({ ...empty, detailsWindow: 100 });
+    expect(empty100).toContain("most recent 100 charted sessions");
+    expect(empty100).toContain("Nothing needs attention right now");
+    expect(html({ ...empty, detailsWindow: null })).not.toContain("charted sessions");
   });
 });

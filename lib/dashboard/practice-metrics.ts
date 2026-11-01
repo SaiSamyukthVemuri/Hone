@@ -183,6 +183,11 @@ export function summarizeProcedureCompleteness(
 // feedback for the studio as a whole; it is never grouped or ranked
 // by practitioner.
 export const CHARTED_WINDOW_DAYS = 7;
+
+// How many of the studio's most recent charted sessions the procedure-record
+// completeness check looks at. Printed on Needs attention so a clean list is not
+// read as "every session ever is complete" (Insurance N3).
+export const PROCEDURE_RECORD_WINDOW = 100;
 export const CHARTED_WITHIN_MS = 24 * 60 * 60 * 1000;
 
 export type ChartedWithin24hInput = ReadonlyArray<{
@@ -308,7 +313,7 @@ export async function getPracticeDashboardMetrics(
         : Promise.resolve({ data: null, error: null }),
       // Same 100-session window as before; only the parameter shape
       // changed when PR #223 added the per-client filter option.
-      getClientProcedureRecords(studioId, { limit: 100 }),
+      getClientProcedureRecords(studioId, { limit: PROCEDURE_RECORD_WINDOW }),
       // PR #225 charted-within-24h denominator: completed
       // appointments that ENDED in the rolling last 7 days.
       supabase
@@ -431,6 +436,6 @@ export async function getProcedureActionMetrics(
   studioId: string,
 ): Promise<ProcedureActionMetrics> {
   return summarizeProcedureCompleteness(
-    await getClientProcedureRecords(studioId, { limit: 100 }),
+    await getClientProcedureRecords(studioId, { limit: PROCEDURE_RECORD_WINDOW }),
   );
 }

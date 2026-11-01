@@ -61,6 +61,7 @@ import {
   getPracticeDashboardMetrics,
   getProcedureActionMetrics,
 } from "@/lib/dashboard/practice-metrics";
+import { withDisplayNamesOnDetailGaps } from "@/lib/dashboard/client-display-names";
 import { getPersonalChartedWithin24h } from "@/lib/dashboard/personal-charting";
 import { getClientIdsWithUpcomingVisits } from "@/lib/dashboard/upcoming-visit-clients";
 import { CHECK_UNAVAILABLE } from "@/lib/dashboard/needs-attention-model";
@@ -354,10 +355,13 @@ export default async function DashboardPage({
   );
   // The "records missing details" roll-up every role sees. The owner already
   // reads it inside the metrics; anyone else gets just that one read.
+  // Privacy C1: the detail-gap entries carry the DISPLAY name (preferred, else
+  // stored), not the record's stored name. The procedure record is untouched.
   const procedureActionsPromise = settleLater(
-    isOwner
+    (isOwner
       ? practiceMetricsPromise.then((m) => m!.actions)
-      : getProcedureActionMetrics(studio.id),
+      : getProcedureActionMetrics(studio.id)
+    ).then((actions) => withDisplayNamesOnDetailGaps(supabase, studio.id, actions)),
   );
   // Orders intake gaps (preparation tier). A failed read degrades to the safe
   // order and never fails the section: it changes ORDER only, never membership.

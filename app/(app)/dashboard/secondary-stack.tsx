@@ -13,6 +13,7 @@ import type { BirthdayReminderColor, Studio } from "@/lib/types/database";
 import { PracticeSnapshot } from "./practice-snapshot";
 import {
   getPracticeDashboardMetrics,
+  PROCEDURE_RECORD_WINDOW,
   type ProcedureActionMetrics,
 } from "@/lib/dashboard/practice-metrics";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
@@ -522,6 +523,7 @@ export async function NeedsAttentionSection({
           ...(paymentUnavailable ? ["payment setup"] : []),
         ],
         recordDetailGaps: procedureActions.detailGaps,
+        detailsWindow: procedureActions.detailGaps ? PROCEDURE_RECORD_WINDOW : null,
         upcomingVisitClientIds:
           upcomingVisitClients === CHECK_UNAVAILABLE
             ? undefined

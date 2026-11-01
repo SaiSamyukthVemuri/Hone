@@ -57,6 +57,16 @@ function EntryRow({ entry }: { entry: AttentionEntry }) {
 export function NeedsAttentionPanel({ needs }: { needs: NeedsAttention }) {
   const [expanded, setExpanded] = useState(false);
 
+  // Insurance N3: say what the details check covers, so a clean list is not read
+  // as "every session ever is complete".
+  const windowNote =
+    needs.detailsWindow !== null ? (
+      <p data-testid="needs-attention-window" className="text-xs text-neutral-500">
+        Checks the studio&apos;s most recent {needs.detailsWindow} charted
+        sessions for missing client or operator details.
+      </p>
+    ) : null;
+
   const unavailableNote =
     needs.unavailableChecks.length > 0 ? (
       <p
@@ -70,12 +80,22 @@ export function NeedsAttentionPanel({ needs }: { needs: NeedsAttention }) {
     ) : null;
 
   if (needs.entries.length === 0 && needs.others.length === 0) {
-    if (unavailableNote) return unavailableNote;
+    if (unavailableNote) {
+      return (
+        <div className="flex flex-col gap-2">
+          {unavailableNote}
+          {windowNote}
+        </div>
+      );
+    }
     return (
-      <p className="rounded-lg border border-dashed border-neutral-300 px-4 py-6 text-sm text-neutral-500 dark:border-neutral-700">
-        Nothing needs attention right now. Finished work drops off this list
-        automatically.
-      </p>
+      <div className="flex flex-col gap-2">
+        <p className="rounded-lg border border-dashed border-neutral-300 px-4 py-6 text-sm text-neutral-500 dark:border-neutral-700">
+          Nothing needs attention right now. Finished work drops off this list
+          automatically.
+        </p>
+        {windowNote}
+      </div>
     );
   }
 
@@ -161,6 +181,7 @@ export function NeedsAttentionPanel({ needs }: { needs: NeedsAttention }) {
           Older items beyond this list are not included.
         </p>
       )}
+      {windowNote}
     </div>
   );
 }
