@@ -61,6 +61,7 @@ import {
   getPracticeDashboardMetrics,
   getProcedureActionMetrics,
 } from "@/lib/dashboard/practice-metrics";
+import { getClientIdsWithUpcomingVisits } from "@/lib/dashboard/upcoming-visit-clients";
 import { CHECK_UNAVAILABLE } from "@/lib/dashboard/needs-attention-model";
 import { getIntakesAwaitingReview } from "@/lib/dashboard/intakes-awaiting-review";
 import { loadStaffManagedClinic } from "@/lib/dashboard/staff-managed";
@@ -343,6 +344,13 @@ export default async function DashboardPage({
     isOwner
       ? practiceMetricsPromise.then((m) => m!.actions)
       : getProcedureActionMetrics(studio.id),
+  );
+  // Orders intake gaps (preparation tier). A failed read degrades to the safe
+  // order and never fails the section: it changes ORDER only, never membership.
+  const upcomingVisitClientsPromise = settleLater(
+    getClientIdsWithUpcomingVisits(supabase, studio.id, renderNow.toISOString()).catch(
+      () => CHECK_UNAVAILABLE,
+    ),
   );
   const clientsNeedingAttentionPromise = settleLater(
     getClientsNeedingAttention(studio.id),
@@ -939,6 +947,7 @@ export default async function DashboardPage({
             attentionSources={attentionSourcesPromise}
             staffManaged={staffManagedPromise}
             procedureActions={procedureActionsPromise}
+            upcomingVisitClients={upcomingVisitClientsPromise}
             clientsNeedingAttention={clientsNeedingAttentionPromise}
             followUpAssistant={followUpAssistantPromise}
             expiringSupplies={expiringSuppliesPromise}

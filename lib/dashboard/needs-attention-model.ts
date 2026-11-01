@@ -99,6 +99,12 @@ export function buildNeedsAttention(input: {
   intakesAwaitingReview: ReadonlyArray<IntakeAwaitingReview>;
   todo: DashboardTodo;
   unavailableChecks?: ReadonlyArray<string>;
+  // Clients with a confirmed visit coming up. An intake gap for one of them is
+  // PREPARATION (listed first); for anyone else it sorts with the general
+  // follow-up work. Omitted when the read failed: every intake gap stays in the
+  // preparation tier, which is the safe direction (nothing is hidden or reordered
+  // below other work).
+  upcomingVisitClientIds?: ReadonlySet<string>;
   // Per-session procedure-record gaps (client or operator details). When
   // supplied they replace the studio-level "records missing details" row.
   recordDetailGaps?: ReadonlyArray<{
@@ -122,12 +128,17 @@ export function buildNeedsAttention(input: {
     byId.set(entry.id, { ...entry, issues: [issue] });
   };
 
+  const intakeTier = (clientId: string): AttentionEntry["tier"] =>
+    !input.upcomingVisitClientIds || input.upcomingVisitClientIds.has(clientId)
+      ? "preparation"
+      : "documentation";
+
   for (const i of input.intakesAwaitingReview) {
     add(
       {
         id: `intake:${i.clientId}`,
         scope: "intake",
-        tier: "preparation",
+        tier: intakeTier(i.clientId),
         clientId: i.clientId,
         clientName: i.clientName,
         occurredAt: i.submittedAt || null,
@@ -148,7 +159,7 @@ export function buildNeedsAttention(input: {
         {
           id: `intake:${item.clientId}`,
           scope: "intake",
-          tier: "preparation",
+          tier: intakeTier(item.clientId),
           clientId: item.clientId,
           clientName: item.clientName,
           occurredAt: item.date,

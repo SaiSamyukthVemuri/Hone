@@ -210,3 +210,43 @@ describe("buildNeedsAttention per-session record details", () => {
     expect(without.others.map((i) => i.id)).toEqual(["records_details:studio"]);
   });
 });
+
+describe("buildNeedsAttention preparation tier", () => {
+  const empty = () =>
+    buildMissingRecordsAssistant({ unchartedAppointments: [], sessions: [], incompleteIntakes: [] });
+  const intakes = [
+    { clientId: "c1", clientName: "Client One", submittedAt: "2026-10-09T10:00:00Z" },
+    { clientId: "c2", clientName: "Client Two", submittedAt: "2026-10-10T10:00:00Z" },
+  ];
+  const doc = buildMissingRecordsAssistant({
+    unchartedAppointments: [],
+    incompleteIntakes: [],
+    sessions: [session({ sessionId: "s5", clientId: "c3", clientName: "Client Three", aftercareMarked: false, startedAt: "2026-10-11T15:00:00.000Z" })],
+  });
+
+  it("an intake gap for a client with an upcoming visit is preparation and leads", () => {
+    const out = buildNeedsAttention({
+      assistant: doc,
+      intakesAwaitingReview: intakes,
+      todo: NO_TODO,
+      upcomingVisitClientIds: new Set(["c1"]),
+    });
+    expect(out.entries[0].id).toBe("intake:c1");
+    expect(out.entries[0].tier).toBe("preparation");
+    // c2 has no upcoming visit: it ranks with documentation, newest first.
+    expect(out.entries.map((e) => e.id)).toEqual(["intake:c1", "session:c3:s5", "intake:c2"]);
+    expect(out.entries.find((e) => e.id === "intake:c2")?.tier).toBe("documentation");
+  });
+
+  it("nothing is added or removed by the tiering, only reordered", () => {
+    const a = buildNeedsAttention({ assistant: doc, intakesAwaitingReview: intakes, todo: NO_TODO, upcomingVisitClientIds: new Set() });
+    const b = buildNeedsAttention({ assistant: doc, intakesAwaitingReview: intakes, todo: NO_TODO });
+    expect(a.entries.map((e) => e.id).sort()).toEqual(b.entries.map((e) => e.id).sort());
+    expect(a.issueCount).toBe(b.issueCount);
+  });
+
+  it("when the upcoming-visit read is unavailable every intake gap stays in preparation", () => {
+    const out = buildNeedsAttention({ assistant: empty(), intakesAwaitingReview: intakes, todo: NO_TODO });
+    expect(out.entries.every((e) => e.tier === "preparation")).toBe(true);
+  });
+});

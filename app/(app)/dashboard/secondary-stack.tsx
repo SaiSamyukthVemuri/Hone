@@ -417,6 +417,7 @@ export async function NeedsAttentionSection({
   attentionSources,
   staffManaged: staffManagedPromise,
   procedureActions: procedureActionsPromise,
+  upcomingVisitClients: upcomingVisitClientsPromise,
   clientsNeedingAttention: clientsNeedingAttentionPromise,
   followUpAssistant: followUpAssistantPromise,
   expiringSupplies: expiringSuppliesPromise,
@@ -426,6 +427,7 @@ export async function NeedsAttentionSection({
   attentionSources: Promise<AttentionSources>;
   staffManaged: Promise<boolean>;
   procedureActions: Promise<ProcedureActionMetrics>;
+  upcomingVisitClients: Promise<ReadonlySet<string> | typeof CHECK_UNAVAILABLE>;
   clientsNeedingAttention: Promise<
     Awaited<ReturnType<typeof getClientsNeedingAttention>>
   >;
@@ -444,6 +446,7 @@ export async function NeedsAttentionSection({
   const paymentStatus = paymentUnavailable ? null : paymentStatusRead;
   const staffManaged = await staffManagedPromise;
   const procedureActions = await procedureActionsPromise;
+  const upcomingVisitClients = await upcomingVisitClientsPromise;
   const clientsNeedingAttention = await clientsNeedingAttentionPromise;
   const followUpAssistant = await followUpAssistantPromise;
   const expiringSupplies = await expiringSuppliesPromise;
@@ -471,6 +474,10 @@ export async function NeedsAttentionSection({
         todo: dashboardTodo,
         unavailableChecks: paymentUnavailable ? ["payment setup"] : [],
         recordDetailGaps: procedureActions.detailGaps,
+        upcomingVisitClientIds:
+          upcomingVisitClients === CHECK_UNAVAILABLE
+            ? undefined
+            : upcomingVisitClients,
       })}
     />
   );
