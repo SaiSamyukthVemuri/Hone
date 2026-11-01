@@ -14,7 +14,7 @@ Nothing here is authorized. Each stage needs Sam's own-words approval for that s
 Fixed by the 0274 change (Privacy C1 form): `receptionist_calendar_v2` returns `studio_timezone` for the caller's studio only (read from `studios.timezone`, validated against `pg_timezone_names`, UTC fallback, one string), and `receptionist_studio_timezone(p_studio_id)` returns the same string so booking works on an empty day. The desk formats every time and parses every entered date and time in that zone, never the device's. The schedule window ("now minus 12 hours to now plus 7 days") is still a rolling window, not a studio day. This condition is met only once 0274 is applied at the hash Privacy and Insurance re-reviewed; with 0274 absent the desk is not activated.
 
 ## Known limits
-No multi-studio chooser (a receptionist in two studios lands on `/no-access?reason=multiple-studios`). Only the OAuth/magic-link callback lands on `/desk`; a password sign-in still goes to the dashboard first. The desk has no booking actions (create, move, cancel exist in the database, 0220, but have no screen).
+No multi-studio chooser (a receptionist in two studios lands on `/no-access?reason=multiple-studios`). Only the OAuth/magic-link callback lands on `/desk`; a password sign-in still goes to the dashboard first. Booking, moving and cancelling have screens (`/desk/book` and the per-row actions) and work only through the 0220 commands.
 
 ## Rollback
 Unset the flag and restart: `/desk` is a 404, the middleware exemption and the sign-in landing stop, no database read happens. Database rollback is by privilege, per role, never by drop (see the D3 package, section 7).
