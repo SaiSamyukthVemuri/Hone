@@ -16,8 +16,8 @@ const MOBILE = read("app/(app)/calendar/CalendarMobileDayView.tsx");
 const PAGE = read("app/(app)/calendar/page.tsx");
 
 describe("QuickBookDrawer — owner selector, target-aware slots, member/Legacy", () => {
-  it("shows the selector ONLY for a capacity-ON owner and loads eligible practitioners", () => {
-    expect(DRAWER).toMatch(/const showSelector = practitionerCapacityEnabled && isOwner/);
+  it("shows the selector ONLY for an owner (either capacity mode) and loads eligible practitioners", () => {
+    expect(DRAWER).toMatch(/const showSelector = isOwner;/);
     expect(DRAWER).toMatch(/\{showSelector && \(/);
     expect(DRAWER).toMatch(/fetchEligiblePractitionersAction/);
   });

@@ -185,15 +185,15 @@ export async function bookAppointmentForClientAction(
     };
   }
 
-  // Part 4: a capacity-ON OWNER may book FOR another practitioner (submitted
-  // practitioner_id); every other case (Legacy, member, owner-without-selection)
-  // books for the acting practitioner. The canonical command re-validates the
-  // target authoritatively (active, same-studio, service-eligible). This is
+  // An OWNER may book FOR another practitioner (submitted practitioner_id) in BOTH capacity modes
+  // (Sam 1 Nov: assignment is not a capacity feature; in a capacity-off studio it records WHO does the
+  // work and changes nothing about collision, which stays studio-wide, 0134). Every other case (member,
+  // owner-without-selection) books for the acting practitioner. The canonical command re-validates the
+  // target authoritatively (active, same-studio; service-eligible only when capacity is ON). This is
   // only the default; nothing here is trusted as the final authority.
   const submittedPractitionerId = formDataStrOrNull(formData, "practitioner_id");
-  const capacityOn = studio.practitioner_capacity_enabled === true;
   const targetPractitionerId =
-    capacityOn && practitioner.role === "owner" && submittedPractitionerId
+    practitioner.role === "owner" && submittedPractitionerId
       ? submittedPractitionerId
       : practitioner.id;
 

@@ -141,14 +141,15 @@ export async function loadMoveSlotsAction(input: {
     return { ok: false, error: "This appointment can no longer be moved." };
   }
 
-  // Item 7 reassignment context: OWNER of a capacity-ON studio only. Members +
-  // Legacy get no choices (reassignEnabled=false → time-only move, no selector).
-  const reassignEnabled =
-    practitioner.role === "owner" && studio.practitioner_capacity_enabled === true;
+  // Item 7 reassignment context: an OWNER, in either capacity mode (Sam 1 Nov: assignment is not a
+  // capacity feature). Members get no choices (reassignEnabled=false → time-only move, no selector).
+  // Service eligibility is a capacity-ON rule, so capacity OFF lists every active practitioner.
+  const reassignEnabled = practitioner.role === "owner";
+  const eligibilityServiceId = studio.practitioner_capacity_enabled === true ? (appt.service_id ?? null) : null;
   let eligible: MovePractitionerOption[] = [];
   let currentValid = true;
   if (reassignEnabled) {
-    const loaded = await loadEligiblePractitioners(admin, studio.id, appt.service_id ?? null);
+    const loaded = await loadEligiblePractitioners(admin, studio.id, eligibilityServiceId);
     if (loaded === null) {
       return { ok: false, error: "Could not load practitioners. Please try again." }; // fail closed
     }
@@ -299,10 +300,13 @@ export async function moveAppointmentAction(input: {
   // NULL = a time-only move that preserves the current practitioner. The DB
   // command re-validates the target independently.
   let target: string | null = null;
-  const reassignEnabled =
-    practitioner.role === "owner" && studio.practitioner_capacity_enabled === true;
+  const reassignEnabled = practitioner.role === "owner";
   if (reassignEnabled && requestedTarget && requestedTarget !== appt.practitioner_id) {
-    const eligible = await loadEligiblePractitioners(admin, studio.id, appt.service_id ?? null);
+    const eligible = await loadEligiblePractitioners(
+      admin,
+      studio.id,
+      studio.practitioner_capacity_enabled === true ? (appt.service_id ?? null) : null,
+    );
     if (eligible === null) {
       return { ok: false, error: "We couldn't move the appointment. Please try again." };
     }

@@ -25,8 +25,8 @@ describe("Item 7 server — reassignment context + target-aware slots + submit",
     expect(ACTIONS).toMatch(/reassignEnabled:/);
     expect(ACTIONS).toMatch(/eligiblePractitioners:/);
     expect(ACTIONS).toMatch(/currentPractitionerValid:/);
-    // owner + capacity ON only.
-    expect(ACTIONS).toMatch(/const reassignEnabled =\s*\n?\s*practitioner\.role === "owner" && studio\.practitioner_capacity_enabled === true/);
+    // owner only, in either capacity mode.
+    expect(ACTIONS).toMatch(/const reassignEnabled = practitioner\.role === "owner";/);
     // eligibility via service_practitioners (active, same-studio, display names only).
     expect(ACTIONS).toMatch(/\.from\("service_practitioners"\)/);
     expect(ACTIONS).toMatch(/displayName: p\.display_name/);
