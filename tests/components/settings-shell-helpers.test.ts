@@ -448,3 +448,22 @@ describe("Reference fidelity (1 Nov): names, scope chip, same-route pick and Sta
   });
 
 });
+
+describe("Sam's decision 5 (1 Nov): PERSONAL / STUDIO category headings in the rail", () => {
+  it("the labels are PERSONAL and STUDIO; the setup group has none", async () => {
+    const { SETTINGS_NAV_GROUP_LABEL } = await import("@/lib/settings/nav");
+    expect(SETTINGS_NAV_GROUP_LABEL.personal).toBe("Personal");
+    expect(SETTINGS_NAV_GROUP_LABEL.studio).toBe("Studio");
+    expect(SETTINGS_NAV_GROUP_LABEL.setup).toBeNull();
+  });
+  it("the shell renders them as non-interactive, uppercase headings tied to their group", () => {
+    const src = readFileSync(path.resolve(__dirname, "../..", "components/settings/settings-shell.tsx"), "utf8");
+    const at = src.indexOf("SETTINGS_NAV_GROUP_LABEL[group] && (");
+    expect(at).toBeGreaterThan(0);
+    const block = src.slice(at, at + 520);
+    expect(block).toMatch(/<p\s+id=\{`\$\{railId\}-cat-\$\{group\}`\}/);
+    expect(block).toMatch(/uppercase/);
+    expect(block).not.toMatch(/<button|<PendingLink|tabIndex|onClick/);
+    expect(src).toMatch(/role="group"/);
+  });
+});

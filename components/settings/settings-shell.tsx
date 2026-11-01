@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 import { PendingLink } from "@/components/pending-link";
 import {
+  SETTINGS_NAV_GROUP_LABEL,
   SETTINGS_NAV_GROUP_ORDER,
   activeSettingsLocation,
   isRailLinkClick,
@@ -211,12 +212,24 @@ export function SettingsShell({ items, account, children }: Props) {
               {groups.map(({ group, entries }, groupIndex) => (
                 <div
                   key={group}
+                  role="group"
+                  aria-labelledby={SETTINGS_NAV_GROUP_LABEL[group] ? `${railId}-cat-${group}` : undefined}
                   className={`flex flex-col gap-1 ${
                     groupIndex > 0
                       ? "mt-2 border-t border-neutral-200 pt-3 dark:border-neutral-800"
                       : ""
                   }`}
                 >
+                  {SETTINGS_NAV_GROUP_LABEL[group] && (
+                    // A category heading, not a control: small caps, muted, no
+                    // hover, not focusable.
+                    <p
+                      id={`${railId}-cat-${group}`}
+                      className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-500 dark:text-neutral-400"
+                    >
+                      {SETTINGS_NAV_GROUP_LABEL[group]}
+                    </p>
+                  )}
                   {entries.map((entry) => {
                     const isActive = activeItem?.id === entry.id;
                     if (entry.children.length === 0) {

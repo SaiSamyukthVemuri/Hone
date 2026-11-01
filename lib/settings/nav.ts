@@ -78,14 +78,16 @@ export type SettingsNavItem = {
   children: ReadonlyArray<SettingsNavChildItem>;
 };
 
-// No overline labels (R2): "Personal > Profile" and "Studio > Studio > Details"
-// repeated themselves, and a studio-wide page under "Personal" read as personal.
-// Scope is stated on the page itself instead ("Applies to the whole studio.").
-// The group id still orders the rail: setup first, then you, then the studio.
+// The approved settings artifact heads the rail with PERSONAL and STUDIO
+// (Sam's decision 5, 1 Nov). They are non-clickable category headings, distinct
+// from the items beneath. The repetition Sam reported ("Studio > Studio > Studio
+// details") is resolved by naming: a group's items carry their own names, and
+// each studio view states its scope ("Applies to the whole studio."). The setup
+// group (Launch) has no heading.
 export const SETTINGS_NAV_GROUP_LABEL: Readonly<Record<SettingsNavGroup, string | null>> = {
   setup: null,
-  personal: null,
-  studio: null,
+  personal: "Personal",
+  studio: "Studio",
 };
 
 export const SETTINGS_NAV_GROUP_ORDER: ReadonlyArray<SettingsNavGroup> = [
