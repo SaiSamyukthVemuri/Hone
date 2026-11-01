@@ -969,6 +969,8 @@ test.describe("UI-01D Client Profile tabs — desktop", () => {
 /** Every UI-01E claim about one repaired control, measured in the layout engine. */
 async function provesTheTouchFloor(page: Page, control: Locator, label: string) {
   await expect(control).toBeVisible({ timeout: T });
+  // elementFromPoint only answers inside the viewport; a control below the fold has no hit target yet.
+  await control.scrollIntoViewIfNeeded();
   const box = await control.boundingBox();
   expect(box, `${label}: no box`).not.toBeNull();
 

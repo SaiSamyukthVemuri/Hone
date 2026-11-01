@@ -26,7 +26,13 @@ export function ContactSidebar({
   address: string | null;
 }) {
   return (
-    <aside aria-label="Contact" data-testid="client-profile-contact" className="min-w-0">
+    // On phones the tab's own content comes first (directly under the tab bar); the contact card follows.
+    // From md up it is the left column, in DOM order.
+    <aside
+      aria-label="Contact"
+      data-testid="client-profile-contact"
+      className="order-last min-w-0 md:order-none"
+    >
       <section className="flex flex-col gap-1 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800">
         <SectionLabel as="h2" size="caption">
           Contact

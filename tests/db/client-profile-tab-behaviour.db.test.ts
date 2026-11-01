@@ -310,11 +310,11 @@ describe("Client Profile — what each tab shows a practitioner", () => {
     // Clinical notes serve BOTH the Consultation tab and Overview's briefing.
     expect(rendered.overview).toContain(T.consultation);
     expect(rendered.overview).toContain(T.skinHair);
-    // Portal messages serve BOTH the Messages tab and Overview's pending
-    // tasks. Overview renders the DERIVED count, not the message body, which
-    // is why this asserts the task line rather than a token.
-    expect(rendered.overview).toContain("1 unread portal message");
-    expect(rendered.overview).not.toContain("No pending portal tasks");
+    // The pending-tasks card moved to Messages (Q3). It renders the DERIVED count, not the message
+    // body, which is why this asserts the task line rather than a token; Overview no longer shows it.
+    expect(rendered.messages).toContain("1 unread portal message");
+    expect(rendered.messages).not.toContain("No pending portal tasks");
+    expect(rendered.overview).not.toContain("unread portal message");
     // The most recent session, which Overview and Sessions both render —
     // under their own headings, which is why this asserts two strings.
     // Both render the LAST TREATMENT itself, so this asserts the charted
