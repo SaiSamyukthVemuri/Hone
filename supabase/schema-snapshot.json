@@ -3,7 +3,7 @@
   "migrations": {
     "count": 253,
     "last": "0274_receptionist_desk_projection.sql",
-    "sha256": "9adc3f4fed247ab11411fd0abc3d2c58574a959d02e7fd954525180da7c0c251"
+    "sha256": "d4105946f760ab2507a8fd9feb0b8804e3ba9d99263c9bc606a0f016d919884b"
   },
   "public": {
     "tables": [
@@ -390,6 +390,7 @@
       "receptionist_client_directory",
       "receptionist_create_appointment",
       "receptionist_move_appointment",
+      "receptionist_studio_timezone",
       "reconcile_bound_payment_event",
       "reconcile_card_payment_succeeded",
       "reconcile_dispute_closed",

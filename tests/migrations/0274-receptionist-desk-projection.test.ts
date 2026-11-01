@@ -14,6 +14,7 @@ const fn = (name: string) => {
 };
 const DIR = fn("receptionist_client_directory");
 const CAL = fn("receptionist_calendar_v2");
+const TZ = fn("receptionist_studio_timezone");
 const returns = (body: string) =>
   body.match(/returns table \(([\s\S]*?)\)\s*language/)![1].split(",").map((c) => c.trim().split(/\s+/)[0]).filter(Boolean);
 
@@ -54,6 +55,7 @@ describe("0274: both functions", () => {
     for (const sig of [
       "receptionist_client_directory(uuid, text, text[], text, integer, integer)",
       "receptionist_calendar_v2(uuid, timestamptz, timestamptz)",
+      "receptionist_studio_timezone(uuid)",
     ]) {
       for (const role of ["public", "anon", "service_role"]) expect(code).toContain(`revoke execute on function public.${sig} from ${role};`);
       expect(code).toContain(`revoke all on function public.${sig}\n  from public, anon, authenticated, service_role;`);
@@ -113,11 +115,30 @@ describe("0274: directory", () => {
   });
 });
 
+describe("0274: studio clock (Privacy C1, Sam decision 4)", () => {
+  it("receptionist_studio_timezone: definer, pinned search_path, actor checked first, one validated string, no other studios column", () => {
+    expect(TZ).toMatch(/security definer/);
+    expect(TZ).toMatch(/set search_path = pg_catalog, pg_temp\n/);
+    expect(TZ).toMatch(/returns text/);
+    expect(TZ.indexOf("receptionist_actor_id(p_studio_id) is null")).toBeLessThan(TZ.indexOf("public.studios"));
+    expect(TZ).toContain("pg_catalog.pg_timezone_names");
+    expect(TZ).toContain("'UTC'");
+    expect(TZ).toContain("where s.id = p_studio_id");
+    expect(TZ).not.toMatch(/\bs\.(?!timezone\b|id\b)[a-z_]+/);
+  });
+  it("calendar_v2 reads studios only for the timezone, for p_studio_id, with a UTC fallback; duration comes from the appointment", () => {
+    expect(CAL).toContain("where s.id = p_studio_id");
+    expect(CAL).toContain("a.duration_minutes");
+    expect(CAL).not.toMatch(/\bs\.(?!timezone\b|id\b)[a-z_]+/);
+  });
+});
+
 describe("0274: schedule v2 and the v1 closure (R1, R8)", () => {
   it("carries display_name and name_on_file and no stored-name column", () => {
     expect(returns(CAL)).toEqual([
       "appointment_id", "starts_at", "ends_at", "status", "practitioner_id", "practitioner_display_name",
       "practitioner_color", "service_id", "service_name", "client_id", "display_name", "name_on_file",
+      "duration_minutes", "studio_timezone",
     ]);
     expect(CAL).toContain("coalesce(nullif(pg_catalog.btrim(c.preferred_name), ''), c.name)");
     expect(CAL).not.toMatch(/,\s*c\.name\s*(,|\n\s*from)/);

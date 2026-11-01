@@ -8,6 +8,7 @@ import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio, type See
 const LEGAL = "Zyxwq"; // appears only in a legal name
 const DIR = "public.receptionist_client_directory(uuid,text,text[],text,integer,integer)";
 const CAL2 = "public.receptionist_calendar_v2(uuid,timestamptz,timestamptz)";
+const TZFN = "public.receptionist_studio_timezone(uuid)";
 const CAL1 = "public.receptionist_calendar(uuid,timestamptz,timestamptz)";
 
 let a: SeededStudio;
@@ -244,6 +245,7 @@ describe("R1: the schedule", () => {
     expect(r.fields.map((f) => f.name)).toEqual([
       "appointment_id", "starts_at", "ends_at", "status", "practitioner_id", "practitioner_display_name",
       "practitioner_color", "service_id", "service_name", "client_id", "display_name", "name_on_file",
+      "duration_minutes", "studio_timezone",
     ]);
     await expect(cal(bDesk, a.studioId)).rejects.toMatchObject({ code: "42501" });
     await expect(cal(aPrac.userId, a.studioId)).rejects.toMatchObject({ code: "42501" });
@@ -322,9 +324,35 @@ describe("Privacy C2 and Insurance L7 (reviews of 0274 at 236e34d6)", () => {
   });
 });
 
+describe("studio clock and duration (Sam decision 4, Privacy C1)", () => {
+  const tz = (uid: string, studio: string) => asUser(uid, (x) => x("select public.receptionist_studio_timezone($1) as tz", [studio]));
+  it("the clock returns the studio zone, validated, with a UTC fallback, and refuses other roles and studios", async () => {
+    const original = (await adminQuery("select timezone from public.studios where id = $1", [a.studioId])).rows[0].timezone;
+    try {
+      await adminQuery("update public.studios set timezone = 'Pacific/Auckland' where id = $1", [a.studioId]);
+      expect((await tz(aDesk, a.studioId)).rows[0].tz).toBe("Pacific/Auckland");
+      await adminQuery("update public.studios set timezone = 'Not/AZone' where id = $1", [a.studioId]);
+      expect((await tz(aDesk, a.studioId)).rows[0].tz).toBe("UTC");
+    } finally {
+      await adminQuery("update public.studios set timezone = $2 where id = $1", [a.studioId, original]);
+    }
+    await expect(tz(bDesk, a.studioId)).rejects.toMatchObject({ code: "42501" });
+    await expect(tz(aPrac.userId, a.studioId)).rejects.toMatchObject({ code: "42501" });
+    await expect(tz(a.userId, a.studioId)).rejects.toMatchObject({ code: "42501" });
+  });
+  it("the schedule carries the appointment duration and that one zone string, and nothing else about the studio", async () => {
+    const r = await asUser(aDesk, (x) => x(`select duration_minutes, studio_timezone from public.receptionist_calendar_v2($1,'2031-03-01T00:00:00Z','2031-03-10T00:00:00Z')`, [a.studioId]));
+    expect(r.rows.length).toBeGreaterThan(0);
+    for (const row of r.rows) {
+      expect(row.duration_minutes).toBe(60);
+      expect(typeof row.studio_timezone).toBe("string");
+    }
+  });
+});
+
 describe("grants", () => {
-  it("the two new functions are executable by authenticated only", async () => {
-    for (const fn of [DIR, CAL2]) {
+  it("the three new functions are executable by authenticated only", async () => {
+    for (const fn of [DIR, CAL2, TZFN]) {
       for (const role of ["anon", "service_role"]) expect((await adminQuery("select has_function_privilege($1,$2,'EXECUTE') ok", [role, fn])).rows[0].ok).toBe(false);
       expect((await adminQuery("select has_function_privilege('authenticated',$1,'EXECUTE') ok", [fn])).rows[0].ok).toBe(true);
       expect((await adminQuery("select count(*)::int n from pg_proc p, aclexplode(p.proacl) x where p.oid = to_regprocedure($1) and x.grantee = 0", [fn])).rows[0].n).toBe(0);
