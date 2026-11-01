@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SectionLabel } from "@/components/ui/section-label";
 import { formatTimeForStudio, localLongDate, type TimeFormat } from "@/lib/booking/tz";
 import type { LastVisit, NextAppointment } from "@/lib/clients/profile-visits";
 
@@ -26,7 +27,6 @@ function when(iso: string, tz: string, format: TimeFormat): string {
   return `${localLongDate(d, tz)}, ${formatTimeForStudio(d, tz, format)}`;
 }
 
-const LABEL = "text-[11px] font-medium uppercase tracking-wider text-neutral-500";
 const VALUE = "mt-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100";
 const EMPTY = "mt-0.5 text-sm text-neutral-500";
 
@@ -50,7 +50,9 @@ export function VisitSummary({
       className="grid gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800 sm:grid-cols-3"
     >
       <div data-testid="profile-last-visit">
-        <h2 className={LABEL}>Last visit</h2>
+        <SectionLabel as="h2" size="caption">
+          Last visit
+        </SectionLabel>
         {lastVisit && lastVisitHref ? (
           <Link href={lastVisitHref} className={`${VALUE} block underline-offset-2 hover:underline`}>
             {when(lastVisit.at, timezone, timeFormat)}
@@ -60,7 +62,9 @@ export function VisitSummary({
         )}
       </div>
       <div data-testid="profile-last-charted-treatment">
-        <h2 className={LABEL}>Last charted treatment</h2>
+        <SectionLabel as="h2" size="caption">
+          Last charted treatment
+        </SectionLabel>
         {lastChartedAt && lastChartedSessionId ? (
           <Link
             href={`/clients/${clientId}/sessions/${lastChartedSessionId}`}
@@ -73,7 +77,9 @@ export function VisitSummary({
         )}
       </div>
       <div data-testid="profile-next-appointment">
-        <h2 className={LABEL}>Next appointment</h2>
+        <SectionLabel as="h2" size="caption">
+          Next appointment
+        </SectionLabel>
         {next ? (
           <Link href={`/calendar/${next.id}`} className={`${VALUE} block underline-offset-2 hover:underline`}>
             {when(next.at, timezone, timeFormat)}

@@ -155,6 +155,7 @@ import { clientAvatarInitials } from "@/lib/clients/profile-avatar";
 import { getOverviewVisitAppointments } from "@/lib/clients/profile-appointments";
 import { pickLastVisit, pickNextAppointment } from "@/lib/clients/profile-visits";
 import { VisitSummary } from "./_profile/VisitSummary";
+import { ContactSidebar } from "./_profile/ContactSidebar";
 
 // Parse the studio-local "YYYY-MM-DD" returned by todayInTz() into
 // month/day numbers for the Birthday card's "today" / "this month"
@@ -934,7 +935,7 @@ export default async function ClientCheatSheetPage({
 
   return (
     <div className="flex flex-col gap-10">
-      <section>
+      <section data-testid="client-profile-header">
         <Link
           href="/clients"
           className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
@@ -974,8 +975,6 @@ export default async function ClientCheatSheetPage({
             </div>
             <div className="mt-1 flex flex-col gap-y-0.5 text-sm text-neutral-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3">
               {client.pronouns && <span>{client.pronouns}</span>}
-              {client.phone && <span>{client.phone}</span>}
-              {client.email && <span className="break-all">{client.email}</span>}
             </div>
             {sessionsWithPrice > 0 && (
               <p className="mt-1.5 text-xs text-neutral-500 sm:text-sm">
@@ -1033,6 +1032,16 @@ export default async function ClientCheatSheetPage({
       </section>
 
       <ProfileTabBar active={activeTab} tabs={profileTabsFor({ isOwner })} />
+
+      {/* Contact column beside every tab (stacked above the content on phones). */}
+      <div data-testid="profile-layout" className="grid gap-6 md:grid-cols-[206px_minmax(0,1fr)]">
+        <ContactSidebar
+          clientId={client.id}
+          phone={client.phone}
+          email={client.email}
+          address={client.address}
+        />
+        <div className="flex min-w-0 flex-col gap-10">
 
       {activeTab === "overview" && (
         <>
@@ -1846,6 +1855,8 @@ export default async function ClientCheatSheetPage({
           returnTo={planReturnTo}
         />
       )}
+        </div>
+      </div>
     </div>
   );
 }
