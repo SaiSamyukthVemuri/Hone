@@ -17,13 +17,15 @@ const day = insightPeriod(new Date("2026-11-02T05:00:00Z"), new Date("2026-11-03
 describe("summary strip (fidelity A)", () => {
   it("renders the three labelled values", () => {
     const out = renderToStaticMarkup(
-      createElement(SummaryStrip, { appointmentCount: 4, bookedTime: "5 h 30 min", clientsToReview: "7" }),
+      createElement(SummaryStrip, { appointmentCount: 4, clientCount: 3, bookedTime: "5 h 30 min", clientsToReview: "7" }),
     );
     expect(out).toContain("Appointments");
     expect(out).toContain("Booked time");
     expect(out).toContain("Clients to review");
     expect(out).toContain('data-testid="summary-appointments-value">4<');
     expect(out).toContain("5 h 30 min");
+    expect(out).toContain("3 clients");
+    expect(renderToStaticMarkup(createElement(SummaryStrip, { appointmentCount: 0, clientCount: 0, bookedTime: "0 h", clientsToReview: "0" }))).not.toContain("clients<");
   });
   it("booked time is the calendar definition: cancelled excluded, only minutes inside the day", () => {
     const m = computeTimeInsights({
@@ -70,5 +72,16 @@ describe("Clients to review comes from the Needs attention model", () => {
     const out = renderToStaticMarkup((await child.type(child.props)) as never);
     expect(out).toContain("Unavailable");
     expect(out).not.toMatch(/>0</);
+  });
+});
+
+describe("panel headers share one top edge (fidelity B)", () => {
+  const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
+  const stack = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
+  it("both column header rows have the same minimum height, and Needs attention carries a client-count pill from the same model", () => {
+    expect((page.match(/<div className="flex min-h-\[44px\]/g) ?? []).length).toBe(2);
+    expect(page).toMatch(/<NeedsAttentionCountPill/);
+    expect(stack).toMatch(/clients\.length[\s\S]{0,400}needs-attention-count-pill|needs-attention-count-pill[\s\S]{0,400}clients/);
+    expect(stack).toMatch(/async function ClientCountPillValue[\s\S]*?buildNeedsAttention\(await resolveNeedsAttentionInput\(props\)\)\.clients\.length/);
   });
 });

@@ -33,7 +33,7 @@ const ROW = PAGE_CODE.slice(
 );
 const PAGE_BODY = PAGE_CODE.slice(
   PAGE_CODE.indexOf("export default async function DashboardPage("),
-  PAGE_CODE.indexOf("function DaySummary("),
+  PAGE_CODE.indexOf("function AppointmentRow("),
 );
 
 vi.mock("@/app/(app)/clients/[id]/portal-link-actions", () => ({

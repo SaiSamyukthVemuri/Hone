@@ -564,6 +564,32 @@ async function ClientsToReviewValue(props: NeedsAttentionInputs) {
   );
 }
 
+async function ClientCountPillValue(props: NeedsAttentionInputs) {
+  let count: number | null = null;
+  try {
+    count = buildNeedsAttention(await resolveNeedsAttentionInput(props)).clients.length;
+  } catch {
+    count = null;
+  }
+  return (
+    <span
+      data-testid="needs-attention-count-pill"
+      className="rounded-full bg-neutral-100 px-2.5 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+    >
+      {count === null ? "Unavailable" : `${count} ${count === 1 ? "client" : "clients"}`}
+    </span>
+  );
+}
+
+/** The header count pill of the Needs attention card: same model, same count as the strip. Own Suspense. */
+export function NeedsAttentionCountPill(props: NeedsAttentionInputs) {
+  return (
+    <Suspense fallback={null}>
+      <ClientCountPillValue {...props} />
+    </Suspense>
+  );
+}
+
 /** Own Suspense so the roster and the strip never wait on the model. The caller keys it per day/period. */
 export function ClientsToReview(props: NeedsAttentionInputs) {
   return (

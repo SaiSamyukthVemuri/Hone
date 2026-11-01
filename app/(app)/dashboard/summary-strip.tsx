@@ -15,10 +15,13 @@ const VALUE = "mt-1 text-xl font-semibold tracking-tight text-neutral-900 dark:t
 
 export function SummaryStrip({
   appointmentCount,
+  clientCount,
   bookedTime,
   clientsToReview,
 }: {
   appointmentCount: number;
+  /** Distinct clients across those appointments: the Appointments cell's sub-label. */
+  clientCount: number;
   bookedTime: string;
   /** Rendered by the caller inside its own Suspense: it reads the Needs attention model. */
   clientsToReview: ReactNode;
@@ -30,6 +33,11 @@ export function SummaryStrip({
         <dd className={VALUE} data-testid="summary-appointments-value">
           {appointmentCount}
         </dd>
+        {appointmentCount > 0 && (
+          <p className="mt-0.5 text-xs text-neutral-500" data-testid="summary-clients-sublabel">
+            {clientCount} {clientCount === 1 ? "client" : "clients"}
+          </p>
+        )}
       </div>
       <div className={CELL}>
         <dt className={LABEL}>Booked time</dt>

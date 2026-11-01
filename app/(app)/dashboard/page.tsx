@@ -57,6 +57,7 @@ import {
   SecondaryStack,
   NeedsAttentionSection,
   ClientsToReview,
+  NeedsAttentionCountPill,
   NeedsAttentionSkeleton,
   SecondaryStackSkeleton,
 } from "./secondary-stack";
@@ -783,7 +784,7 @@ export default async function DashboardPage({
         {/* `flex-wrap` matters: this header was the one multi-control row on
             the page without it, and it now carries day navigation beside the
             primary action. Without wrapping, 390px overflows horizontally. */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-h-[44px] flex-wrap items-center justify-between gap-3">
           <div>
             {/* The heading names the day being shown. It says "Today" on the
                 real present day, so the ordinary case reads exactly as before;
@@ -801,10 +802,6 @@ export default async function DashboardPage({
                 {daySubLabel(selectedDayLocal, todayLocal)}
               </p>
             )}
-            <DaySummary
-              appointmentCount={visibleAppointments.length}
-              clientCount={selectedDayClientIds.length}
-            />
           </div>
           {/* Day navigation: server-rendered links, so the URL is shareable,
               browser Back works, and no client-side date state exists — this
@@ -926,6 +923,7 @@ export default async function DashboardPage({
 
         <SummaryStrip
           appointmentCount={visibleAppointments.length}
+          clientCount={selectedDayClientIds.length}
           bookedTime={formatInsightHours(
             computeTimeInsights({
               appointments: visibleAppointments.map((a) => ({
@@ -996,9 +994,24 @@ export default async function DashboardPage({
             founder; that was pilot tooling, not product. */}
       </section>
       <section aria-labelledby="needs-attention-heading" className="flex min-w-0 flex-col gap-3">
-        <h2 id="needs-attention-heading" className="text-lg font-medium">
-          Needs attention
-        </h2>
+        {/* Header row on the same top edge and minimum height as the appointments header. */}
+        <div className="flex min-h-[44px] items-center justify-between gap-3">
+          <h2 id="needs-attention-heading" className="text-lg font-medium">
+            Needs attention
+          </h2>
+          <NeedsAttentionCountPill
+            key={`needs-pill:${selectedDayLocal}:${period}`}
+            attentionSources={attentionSourcesPromise}
+            staffManaged={staffManagedPromise}
+            procedureActions={procedureActionsPromise}
+            upcomingVisitClients={upcomingVisitClientsPromise}
+            clientsNeedingAttention={clientsNeedingAttentionPromise}
+            followUpAssistant={followUpAssistantPromise}
+            expiringSupplies={expiringSuppliesPromise}
+            isOwner={isOwner}
+            todayLocal={todayLocal}
+          />
+        </div>
         {/* KEYED like the secondary stack below, for the same reason. */}
         <Suspense
           key={`needs:${selectedDayLocal}:${period}`}
@@ -1071,28 +1084,6 @@ export default async function DashboardPage({
         />
       </Suspense>
     </div>
-  );
-}
-
-function DaySummary({
-  appointmentCount,
-  clientCount,
-}: {
-  appointmentCount: number;
-  clientCount: number;
-}) {
-  // ONE empty-day message. EmptyDayState is the single source of truth for the
-  // empty day; this summary used to print "No appointments today." as well, so
-  // the sentence appeared twice: once under the heading and once in the card
-  // below it. The counts below are the only thing this component adds, and on
-  // an empty day there are no counts worth stating.
-  if (appointmentCount === 0) return null;
-  const appt = `${appointmentCount} ${appointmentCount === 1 ? "appointment" : "appointments"}`;
-  const client = `${clientCount} ${clientCount === 1 ? "client" : "clients"}`;
-  return (
-    <p className="mt-1 text-sm text-neutral-500">
-      {appt} · {client}
-    </p>
   );
 }
 

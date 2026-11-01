@@ -482,25 +482,15 @@ describe("empty day renders ONE empty state", () => {
     expect(emptyDayMessage("2026-08-20", "2026-08-20")).toBe("No appointments today.");
   });
 
-  it("DaySummary renders nothing at all when there are no appointments", () => {
-    const summary = rendered.slice(
-      rendered.indexOf("function DaySummary("),
-      rendered.indexOf("function AppointmentRow("),
-    );
-    expect(summary).toMatch(/if \(appointmentCount === 0\) return null;/);
-    expect(summary).not.toContain("No appointments today.");
-    expect(summary).not.toContain("emptyDayMessage");
-  });
-
-  it("a NON-empty day still summarises appointment and client counts", () => {
-    const summary = rendered.slice(
-      rendered.indexOf("function DaySummary("),
-      rendered.indexOf("function AppointmentRow("),
-    );
-    expect(summary).toMatch(/appointmentCount === 1 \? "appointment" : "appointments"/);
-    expect(summary).toMatch(/clientCount === 1 \? "client" : "clients"/);
-    expect(summary).toMatch(/\{appt\}/);
-    expect(summary).toMatch(/\{client\}/);
+  it("the loose DaySummary line is gone: the strip's Appointments cell carries the counts", () => {
+    expect(rendered).not.toContain("function DaySummary(");
+    expect(rendered).not.toContain("<DaySummary");
+    const strip = readFileSync(join(process.cwd(), "app/(app)/dashboard/summary-strip.tsx"), "utf8");
+    // no sub-label on an empty day (EmptyDayState says it once); otherwise "N client(s)"
+    expect(strip).toMatch(/appointmentCount > 0 &&/);
+    expect(strip).toMatch(/clientCount === 1 \? "client" : "clients"/);
+    expect(strip).not.toContain("No appointments today.");
+    expect(strip).not.toContain("emptyDayMessage");
   });
 
   it("the Book appointment action still points at the calendar", () => {
