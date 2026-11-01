@@ -151,6 +151,9 @@ describe("Insurance D1-D3 (peer review of #1303)", () => {
 
   it("D1: a superseded version, a later denial, and a template that is no longer live never read as signed", async () => {
     const plain = "555 0102";
+    // The earlier case left a live treatment_consent template signed only for another client;
+    // this case tests one template at a time, so retire every earlier live one first.
+    await adminQuery("update public.consent_form_templates set is_live = false where studio_id = $1 and form_type = 'treatment_consent'", [a.studioId]);
     const tpl = randomUUID();
     await adminQuery("insert into public.consent_form_templates (id, studio_id, title, body, form_type, version, status, is_live) values ($1,$2,'Treatment v1','body','treatment_consent',1,'active',true)", [tpl, a.studioId]);
     await sign(ids.plain, tpl, 1, "accepted", "2024-02-01T10:00:00Z", "d");
@@ -166,6 +169,21 @@ describe("Insurance D1-D3 (peer review of #1303)", () => {
     // Not live: nothing to be signed against.
     await adminQuery("update public.consent_form_templates set is_live = false where id = $1", [tpl]);
     expect(await consentOf(plain)).toBe(false);
+  });
+
+  it("D1: with two live treatment templates, a client signed on only one is NOT signed (the 'every' rule)", async () => {
+    const plain = "555 0102";
+    await adminQuery("update public.consent_form_templates set is_live = false where studio_id = $1 and form_type = 'treatment_consent'", [a.studioId]);
+    const t1 = randomUUID();
+    const t2 = randomUUID();
+    for (const [id, title] of [[t1, "Modality one"], [t2, "Modality two"]]) {
+      await adminQuery("insert into public.consent_form_templates (id, studio_id, title, body, form_type, version, status, is_live) values ($1,$2,$3,'body','treatment_consent',1,'active',true)", [id, a.studioId, title]);
+    }
+    await sign(ids.plain, t1, 1, "accepted", "2024-05-01T10:00:00Z", "1");
+    expect(await consentOf(plain)).toBe(false);
+    await sign(ids.plain, t2, 1, "accepted", "2024-05-02T10:00:00Z", "2");
+    expect(await consentOf(plain)).toBe(true);
+    await adminQuery("update public.consent_form_templates set is_live = false where id in ($1,$2)", [t1, t2]);
   });
 
   it("D2: last visit is the STUDIO-local date (a UTC-next-day visit does not show tomorrow)", async () => {
