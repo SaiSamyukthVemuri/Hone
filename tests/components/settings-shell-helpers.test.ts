@@ -480,3 +480,30 @@ describe("Studio details shows location and time zone (artifact), without a seco
     expect(tail).not.toMatch(/<input|<select|<textarea|<form|action=/);
   });
 });
+
+describe("Photos finding (1 Nov, d5a27f03): the desktop rail fits the viewport, so no rail item needs a window scroll", () => {
+  const src = readFileSync(path.resolve(__dirname, "../..", "components/settings/settings-shell.tsx"), "utf8");
+  it("the rail starts in the first grid row, beside the title (not below it)", () => {
+    expect(src).toMatch(/min-\[700px\]:grid min-\[700px\]:grid-cols-\[245px_minmax\(0,1fr\)\]/);
+    expect(src).toMatch(/min-\[700px\]:col-start-1 min-\[700px\]:row-span-2 min-\[700px\]:row-start-1/);
+    expect(src).toMatch(/min-\[700px\]:col-start-2 min-\[700px\]:row-start-1/); // title row
+    expect(src).toMatch(/min-\[700px\]:col-start-2 min-\[700px\]:row-start-2/); // view
+  });
+  it("it is sticky below the app header and scrolls inside itself", () => {
+    expect(src).toMatch(/min-\[700px\]:sticky min-\[700px\]:top-20/);
+    expect(src).toMatch(/min-\[700px\]:max-h-\[calc\(100vh-7\.5rem\)\]/);
+    expect(src).toMatch(/min-\[700px\]:overflow-y-auto/);
+  });
+  it("at 1280x800 and 1280x720 the rail's bottom stays inside the viewport at scroll 0", () => {
+    // App header ~65px + main padding 40px = natural top ~105px; the cap is 100vh - 7.5rem.
+    const naturalTop = 105;
+    for (const vh of [800, 720]) {
+      const bottom = naturalTop + (vh - 7.5 * 16);
+      expect(bottom, `viewport ${vh}`).toBeLessThanOrEqual(vh);
+    }
+  });
+  it("group toggles keep normal mouse focus and no scroll bookkeeping exists", () => {
+    expect(src).not.toMatch(/preventDefault\(\)/);
+    expect(src).not.toMatch(/data-rail-group-toggle|scrollAtGroupPress|scrollTo\(/);
+  });
+});

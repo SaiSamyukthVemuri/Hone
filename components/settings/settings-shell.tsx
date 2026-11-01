@@ -148,9 +148,13 @@ export function SettingsShell({ items, account, children }: Props) {
   return (
     <UnsavedChangesProvider onHold={rememberDrawer} onStay={stayOnPage}>
       <HashRedirect />
-      <div className="flex flex-col gap-6">
+      {/* Desktop: ONE grid. The rail takes the whole left column from the first row,
+          so it starts directly under the app header (not under the Settings title
+          row) and fits the viewport with no window scroll; the title row and the
+          view sit in the right column. */}
+      <div className="flex flex-col gap-6 min-[700px]:grid min-[700px]:grid-cols-[245px_minmax(0,1fr)] min-[700px]:items-start min-[700px]:gap-x-10 min-[700px]:gap-y-6">
         {/* Sticky so the menu is reachable without scrolling back to the top. */}
-        <header className="sticky top-14 z-20 -mx-4 flex items-center gap-3 bg-white px-4 py-2 min-[700px]:static min-[700px]:mx-0 min-[700px]:bg-transparent min-[700px]:p-0 dark:bg-neutral-950">
+        <header className="sticky top-14 z-20 -mx-4 flex items-center gap-3 bg-white px-4 py-2 min-[700px]:static min-[700px]:col-start-2 min-[700px]:row-start-1 min-[700px]:mx-0 min-[700px]:bg-transparent min-[700px]:p-0 dark:bg-neutral-950">
           <PendingLink
             href="/dashboard"
             pendingLabel="Loading…"
@@ -173,7 +177,6 @@ export function SettingsShell({ items, account, children }: Props) {
           </button>
         </header>
 
-        <div className="min-[700px]:grid min-[700px]:grid-cols-[245px_minmax(0,1fr)] min-[700px]:items-start min-[700px]:gap-10">
           {drawerOpen && (
             <button
               type="button"
@@ -191,7 +194,7 @@ export function SettingsShell({ items, account, children }: Props) {
               drawerOpen
                 ? "fixed inset-y-0 left-0 z-40 w-72 overflow-y-auto bg-white p-4 shadow-xl dark:bg-neutral-950"
                 : "hidden"
-            } min-[700px]:sticky min-[700px]:top-20 min-[700px]:z-auto min-[700px]:block min-[700px]:max-h-[calc(100vh-6rem)] min-[700px]:w-auto min-[700px]:overflow-y-auto min-[700px]:bg-transparent min-[700px]:p-0 min-[700px]:shadow-none`}
+            } min-[700px]:sticky min-[700px]:top-20 min-[700px]:z-auto min-[700px]:col-start-1 min-[700px]:row-span-2 min-[700px]:row-start-1 min-[700px]:block min-[700px]:max-h-[calc(100vh-7.5rem)] min-[700px]:w-auto min-[700px]:overflow-y-auto min-[700px]:bg-transparent min-[700px]:p-0 min-[700px]:shadow-none`}
           >
             <nav
               aria-label="Settings sections"
@@ -304,7 +307,7 @@ export function SettingsShell({ items, account, children }: Props) {
             </div>
           </aside>
 
-          <div ref={content} className="min-w-0">
+          <div ref={content} className="min-w-0 min-[700px]:col-start-2 min-[700px]:row-start-2">
             {activeItem && (
               <nav
                 aria-label="Breadcrumb"
@@ -327,7 +330,6 @@ export function SettingsShell({ items, account, children }: Props) {
             )}
             {children}
           </div>
-        </div>
       </div>
     </UnsavedChangesProvider>
   );
