@@ -6,6 +6,7 @@ import { SectionLabel } from "@/components/ui/section-label";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
+import { scopeNotificationsToViewer } from "@/lib/notifications/owner-only-events";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { todayInTz } from "@/lib/booking/tz";
 import {
@@ -34,14 +35,18 @@ import { dbErrorCode } from "@/lib/logging/error-class";
 const NOTIFICATION_LIST_LIMIT = 100;
 
 export default async function NotificationsPage() {
-  const { studio } = await requirePractitionerWithStudio();
+  const { practitioner, studio } = await requirePractitionerWithStudio();
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("practitioner_notifications")
-    .select(
-      "id, studio_id, practitioner_id, event_type, title, body, appointment_id, client_id, href, read_at, created_at",
-    )
-    .eq("studio_id", studio.id)
+  // WS-D: card-on-file notifications are owner-only; any other role never retrieves them.
+  const { data, error } = await scopeNotificationsToViewer(
+    supabase
+      .from("practitioner_notifications")
+      .select(
+        "id, studio_id, practitioner_id, event_type, title, body, appointment_id, client_id, href, read_at, created_at",
+      )
+      .eq("studio_id", studio.id),
+    practitioner.role === "owner",
+  )
     .order("created_at", { ascending: false })
     .limit(NOTIFICATION_LIST_LIMIT);
   if (error) {

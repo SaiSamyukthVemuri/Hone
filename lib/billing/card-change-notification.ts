@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ensurePractitionerNotification } from "@/lib/notifications/practitioner-notifications";
+import { recordOpsAlert } from "@/lib/ops/alerts";
 import { dbErrorCode } from "@/lib/logging/error-class";
 
 // Card-on-file change notification (Chloe's ask): when a client adds or
@@ -80,7 +81,11 @@ export type EnsureCardChangeNotificationParams = {
 export async function ensureCardChangeNotification(
   admin: SupabaseClient,
   params: EnsureCardChangeNotificationParams,
-): Promise<{ eventType: "card_added" | "card_replaced"; deduped: boolean }> {
+): Promise<{
+  eventType: "card_added" | "card_replaced";
+  deduped: boolean;
+  skipped?: "no_active_owner";
+}> {
   const { studioId, clientId, livemode, setupIntentId } = params;
 
   // 1. The card row THIS SetupIntent saved: authoritative brand/last4.
@@ -151,10 +156,41 @@ export async function ensureCardChangeNotification(
   //    SetupIntent: a Stripe redelivery OR a second distinct Event object for
   //    the same SetupIntent: conflicts on the dedupe key and returns
   //    deduped:true. The already-created admin client is passed through.
+  // WS-D: owner-only DELIVERY. The row is targeted at the studio owner's practitioner, never studio-wide (null).
+  // A studio with NO active owner (deactivated owner, transfer in progress) gets NO notice at all, for anyone: the card is saved and
+  // the webhook succeeds, because a Stripe retry cannot create an owner. Instead a structured ops alert is logged that carries no client
+  // data (studio id and SetupIntent id only). A failed lookup still throws, so Stripe retries a read that may succeed next time.
+  const { data: owner, error: ownerErr } = await admin
+    .from("practitioners")
+    .select("id")
+    .eq("studio_id", studioId)
+    .eq("role", "owner")
+    .eq("active", true)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (ownerErr) {
+    throw new Error(`card_change_owner_lookup_failed:${dbErrorCode(ownerErr)}`);
+  }
+  if (!owner) {
+    // OPS Z2 ruling: owner-only is the rule, so nobody else is told. The skip
+    // is recorded as a durable ops alert (never throws, redacts centrally) with
+    // the studio and SetupIntent ids only: no client, brand or last four.
+    await recordOpsAlert({
+      severity: "warning",
+      event: "card_change_notice_skipped_no_active_owner",
+      message: "A card-change notice was not delivered: the studio has no active owner.",
+      studioId,
+      safeDetails: { setupIntentId },
+    });
+    return { eventType, deduped: false, skipped: "no_active_owner" as const };
+  }
+
   const dedupeKey = `stripe:setup_intent:${livemode ? "live" : "test"}:${setupIntentId}`;
   const { deduped } = await ensurePractitionerNotification(admin, {
     studioId,
-    practitionerId: null, // studio-wide visibility
+    practitionerId: owner.id as string, // owner only (WS-D)
     eventType,
     title,
     body,
