@@ -176,8 +176,8 @@ describe("Settings R2: the remaining edit-then-save forms are guarded (Insurance
   });
   it("G1: a successful tracking save puts the trimmed values back in the inputs", () => {
     const src = read("app/(app)/settings/tracking/TrackingProviderForm.tsx");
-    expect(src).toMatch(/setPixelId\(pixelId\.trim\(\)\)/);
-    expect(src).toMatch(/setTestCode\(testCode\.trim\(\)\)/);
+    expect(src).toMatch(/setPixelId\(\(cur\) => \(cur === sentRawPixel \? sent\.pixelId : cur\)\)/);
+    expect(src).toMatch(/setTestCode\(\(cur\) => \(cur === sentRawTest \? sent\.testCode : cur\)\)/);
   });
 });
 
