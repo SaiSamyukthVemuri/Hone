@@ -10,13 +10,16 @@ import type { LastVisit, NextAppointment } from "@/lib/clients/profile-visits";
 //     recaps (it can be older than the last visit, e.g. an appointment that was never charted);
 //   * Next appointment: the nearest confirmed appointment still ahead.
 // Dates are STUDIO time, never the viewer's browser clock. A value that does not exist reads
-// "No visit recorded in Hone" / "Not recorded" / "None booked", never a blank. Display only: opening this writes nothing.
+// "No visit recorded in Hone" / "Not recorded" / "None booked", never a blank. When the charted-treatment
+// read FAILED the value reads "Unavailable", never "Not recorded" (that would be a clinical absence nobody read). Display only: opening this writes nothing.
 
 type Props = {
   clientId: string;
   lastVisit: LastVisit | null;
   lastChartedAt: string | null;
   lastChartedSessionId: string | null;
+  /** The read behind Last charted treatment FAILED. That is not "Not recorded": nobody read an absence. */
+  lastChartedUnavailable?: boolean;
   next: NextAppointment | null;
   timezone: string;
   timeFormat: TimeFormat;
@@ -35,6 +38,7 @@ export function VisitSummary({
   lastVisit,
   lastChartedAt,
   lastChartedSessionId,
+  lastChartedUnavailable = false,
   next,
   timezone,
   timeFormat,
@@ -72,6 +76,10 @@ export function VisitSummary({
           >
             {when(lastChartedAt, timezone, timeFormat)}
           </Link>
+        ) : lastChartedUnavailable ? (
+          <p className={EMPTY} data-testid="profile-last-charted-unavailable">
+            Unavailable
+          </p>
         ) : (
           <p className={EMPTY}>Not recorded</p>
         )}

@@ -1195,6 +1195,7 @@ export default async function ClientCheatSheetPage({
             })}
             lastChartedAt={lastTreatment?.started_at ?? null}
             lastChartedSessionId={lastTreatment?.id ?? null}
+            lastChartedUnavailable={clinicalHistoryUnavailable}
             next={pickNextAppointment({ appointments: overviewVisitAppointments, nowMs: visitNowMs })}
             timezone={studio.timezone}
             timeFormat={resolveTimeFormat(studio)}

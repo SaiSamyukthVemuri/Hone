@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
@@ -296,5 +297,20 @@ describe("UI-01D: a spinner is not the proof, and the mobile control is untouche
     const restHtml = render({ pending: false, active: "overview", requested: null });
     expect(selectDisabled(restHtml)).toBe(false);
     expect(restHtml.match(/<select([^>]*)>/)?.[1]).not.toMatch(/aria-busy/);
+  });
+
+  it("sticks BELOW the sticky app header, on desktop tabs and the 390 select alike (Codex P2)", () => {
+    const html = render({ pending: false, active: "overview", requested: null });
+    // One <nav> carries both the select (phones) and the tab row (md+), so one offset covers both.
+    const nav = html.match(/<nav([^>]*)>/)?.[1] ?? "";
+    expect(nav).toMatch(/sticky top-14 z-20/);
+    expect(nav).not.toMatch(/top-0/);
+    const src = readFileSync("components/profile-tab-bar.tsx", "utf8");
+    expect(src).toMatch(/querySelector\("header"\)/);
+    expect(src).toMatch(/style=\{headerHeight > 0 \? \{ top: headerHeight \} : undefined\}/);
+    expect(src).toMatch(/top < headerHeight/);
+    // stays under the header (z-30)
+    const layout = readFileSync("app/(app)/layout.tsx", "utf8");
+    expect(layout).toMatch(/<header className="sticky top-0 z-30/);
   });
 });

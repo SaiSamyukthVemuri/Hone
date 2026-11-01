@@ -1,5 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/link", () => ({
@@ -53,6 +54,29 @@ describe("three distinct values, none replacing another", () => {
     expect(cell(out, "profile-last-charted-treatment")).toContain("Not recorded");
     expect(cell(out, "profile-next-appointment")).toContain("November 12, 2026");
     expect(cell(html(), "profile-next-appointment")).toContain("None booked");
+  });
+});
+
+describe("an unavailable charted-treatment read is not an empty one", () => {
+  it("failed read: Last charted treatment says Unavailable, never Not recorded; the other values are unaffected", () => {
+    const out = html({ lastChartedUnavailable: true, next: { id: "a10", at: "2026-11-12T15:00:00Z" } });
+    expect(cell(out, "profile-last-charted-treatment")).toContain("Unavailable");
+    expect(cell(out, "profile-last-charted-treatment")).not.toContain("Not recorded");
+    expect(cell(out, "profile-last-visit")).toContain("No visit recorded in Hone");
+    expect(cell(out, "profile-next-appointment")).toContain("November 12, 2026");
+  });
+  it("genuinely empty (read succeeded): Not recorded", () => {
+    const out = html({ lastChartedUnavailable: false });
+    expect(cell(out, "profile-last-charted-treatment")).toContain("Not recorded");
+    expect(cell(out, "profile-last-charted-treatment")).not.toContain("Unavailable");
+  });
+  it("a loaded value wins over the flag", () => {
+    const out = html({ lastChartedUnavailable: true, lastChartedAt: "2026-10-20T15:00:00Z", lastChartedSessionId: "s1" });
+    expect(cell(out, "profile-last-charted-treatment")).toContain("October 20, 2026");
+  });
+  it("the page passes the clinical-history flag", () => {
+    const page = readFileSync("app/(app)/clients/[id]/page.tsx", "utf8");
+    expect(page).toMatch(/lastChartedUnavailable=\{clinicalHistoryUnavailable\}/);
   });
 });
 

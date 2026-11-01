@@ -47,13 +47,27 @@ export function ProfileTabBar({ active, tabs }: Props) {
   // bar's resting place, bring it back to that place, and do nothing otherwise.
   const restRef = useRef<HTMLDivElement | null>(null);
   const firstRender = useRef(true);
+  // The app header is itself sticky (top-0 z-30) and its height varies (wrapping, text size), so this
+  // bar sticks BELOW it: the measured height, with 3.5rem (the header's usual height) before measuring.
+  const [headerHeight, setHeaderHeight] = useState(0);
+  useEffect(() => {
+    const header = document.querySelector("header");
+    if (!header) return;
+    const measure = () => setHeaderHeight(Math.round(header.getBoundingClientRect().height));
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     if (firstRender.current) {
       firstRender.current = false;
       return;
     }
     const top = restRef.current?.getBoundingClientRect().top ?? 0;
-    if (top < 0) window.scrollBy(0, top);
+    if (top < headerHeight) window.scrollBy(0, top - headerHeight);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs on a tab change only, never on a resize
   }, [active]);
   const router = useRouter();
   const pathname = usePathname();
@@ -101,7 +115,8 @@ export function ProfileTabBar({ active, tabs }: Props) {
     <div ref={restRef} aria-hidden className="h-0" />
     <nav
       aria-label="Client profile sections"
-      className="sticky top-0 z-20 -mx-1 bg-white px-1 pt-1 border-b border-neutral-200 pb-3 dark:border-neutral-800 dark:bg-neutral-950 md:pb-0"
+      style={headerHeight > 0 ? { top: headerHeight } : undefined}
+      className="sticky top-14 z-20 -mx-1 bg-white px-1 pt-1 border-b border-neutral-200 pb-3 dark:border-neutral-800 dark:bg-neutral-950 md:pb-0"
     >
       {/* PR #238 (Chloe pilot): on phones the one-row scroller from
           PR #233 still moved under the finger and felt unstable, so
