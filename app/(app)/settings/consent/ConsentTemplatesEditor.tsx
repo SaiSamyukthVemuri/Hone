@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import type {
   ConsentFormTemplate,
   ConsentTemplateFormType,
@@ -324,6 +325,14 @@ function TemplateForm({
   );
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Unmounting (a saved form closes, or Cancel) clears the registration.
+  useUnsavedChangesGuard(
+    `consent-template-${initial?.id ?? "new"}`,
+    title !== (initial?.title ?? "") ||
+      description !== (initial?.description ?? "") ||
+      body !== (initial?.body ?? "") ||
+      formType !== (initial?.form_type ?? "treatment_consent"),
+  );
 
   function submit() {
     const t = title.trim();

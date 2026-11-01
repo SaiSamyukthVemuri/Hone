@@ -150,3 +150,26 @@ describe("Insurance #1297 U3: edit-then-save forms register with the unsaved gua
     expect(src).toContain(key);
   });
 });
+
+describe("Settings R2: the remaining edit-then-save forms are guarded (Insurance G1/G2)", () => {
+  const read = (rel: string) =>
+    require("node:fs").readFileSync(require("node:path").resolve(__dirname, "../..", rel), "utf8") as string;
+  it.each([
+    ["app/(app)/settings/consent/ConsentTemplatesEditor.tsx", "consent-template-"],
+    ["app/(app)/settings/import/QuickImport.tsx", "quick-import"],
+    ["app/(app)/settings/booking/BookingView.tsx", "booking-window"],
+    ["app/(app)/settings/booking/BookingView.tsx", "booking-link"],
+    ["app/(app)/settings/booking/BookingView.tsx", "booking-new-clients"],
+    ["app/(app)/settings/services/page.tsx", "service-edit-"],
+    ["app/(app)/settings/services/page.tsx", "service-create"],
+  ])("%s registers %s", (file, key) => {
+    const src = read(file);
+    expect(src).toMatch(/useUnsavedChangesGuard\(|<FormDirtyGuard/);
+    expect(src).toContain(key);
+  });
+  it("G1: a successful tracking save puts the trimmed values back in the inputs", () => {
+    const src = read("app/(app)/settings/tracking/TrackingProviderForm.tsx");
+    expect(src).toMatch(/setPixelId\(pixelId\.trim\(\)\)/);
+    expect(src).toMatch(/setTestCode\(testCode\.trim\(\)\)/);
+  });
+});

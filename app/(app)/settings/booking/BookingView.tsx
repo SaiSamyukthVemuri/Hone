@@ -10,6 +10,7 @@ import { BookingLinkCard } from "./BookingLinkCard";
 import { SaveButton } from "./SaveButton";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { bookingSettingsErrorSentence } from "@/lib/booking/settings-error-codes";
+import { FormDirtyGuard } from "@/components/settings/form-dirty-guard";
 import { SettingsViewHeading, STUDIO_WIDE_SCOPE } from "@/components/settings/view-heading";
 
 // Plain option labels for the buffer select. The "Recommended" hint
@@ -105,6 +106,7 @@ export async function BookingView({
           className="flex max-w-2xl flex-col gap-5"
         >
           <input type="hidden" name="view" value="window" />
+          <FormDirtyGuard name="booking-window" />
         <div className="grid gap-4 md:grid-cols-3">
           <label id="timezone" className="flex scroll-mt-24 flex-col gap-1.5">
             <span className="text-sm font-medium">Timezone</span>
@@ -267,6 +269,7 @@ export async function BookingView({
             action={updateNewClientAdmissionModeAction}
             className="flex max-w-2xl flex-col gap-3"
           >
+            <FormDirtyGuard name="booking-new-clients" />
             {(
               [
                 {
@@ -322,6 +325,7 @@ export async function BookingView({
         className="flex max-w-2xl flex-col gap-5"
       >
         <input type="hidden" name="view" value="link" />
+        <FormDirtyGuard name="booking-link" />
         <label id="booking-slug" className="flex scroll-mt-24 flex-col gap-1.5">
           <span className="text-sm font-medium">Booking URL slug</span>
           <div className="flex items-stretch">

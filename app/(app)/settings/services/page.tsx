@@ -1,3 +1,4 @@
+import { FormDirtyGuard } from "@/components/settings/form-dirty-guard";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAllServices, servicesHaveCalendarColor } from "@/lib/booking/queries";
 import { sortServicesForSettings } from "@/lib/booking/service-order";
@@ -155,6 +156,7 @@ function ServiceEditForm({
         className="flex flex-col gap-5"
         aria-label={`Edit ${service.name}`}
       >
+        <FormDirtyGuard name={`service-edit-${service.id}`} />
         <input type="hidden" name="id" value={service.id} />
 
         {/* Main fields */}
@@ -290,6 +292,7 @@ function AddServiceCard({ calendarColorAvailable }: { calendarColorAvailable: bo
 
       <article className="flex flex-col gap-5 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
         <form action={createServiceAction} className="flex flex-col gap-5">
+          <FormDirtyGuard name="service-create" />
           <div className="grid gap-4 md:grid-cols-2">
             <FieldLabel label="Service name" required>
               <input

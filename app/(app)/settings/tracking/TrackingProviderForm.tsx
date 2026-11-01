@@ -67,6 +67,10 @@ export function TrackingProviderForm({
       const r = await saveAction(fd);
       if (r.ok) {
         setToken("");
+        // The server stores the trimmed values; keep the inputs equal to what was
+        // saved, or a stray space leaves the form dirty after "Saved." (Insurance G1).
+        setPixelId(pixelId.trim());
+        setTestCode(testCode.trim());
         setSaved({ enabled, pixelId: pixelId.trim(), testCode: testCode.trim() });
         setMsg(hasToken && token.trim() ? "Saved. Token rotated." : "Saved.");
       } else setErr(r.error);
