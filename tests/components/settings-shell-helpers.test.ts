@@ -467,3 +467,16 @@ describe("Sam's decision 5 (1 Nov): PERSONAL / STUDIO category headings in the r
     expect(src).toMatch(/role="group"/);
   });
 });
+
+describe("Studio details shows location and time zone (artifact), without a second editable source", () => {
+  const src = readFileSync(path.resolve(__dirname, "../..", "app/(app)/settings/studio/details/page.tsx"), "utf8");
+  it("reads the existing studio address and timezone and links to Booking window", () => {
+    expect(src).toMatch(/studio\.address/);
+    expect(src).toMatch(/studio\.timezone/);
+    expect(src).toMatch(/href="\/settings\/booking\/window"/);
+  });
+  it("adds no input, no form and no action", () => {
+    const tail = src.slice(src.indexOf("studio-location-heading"));
+    expect(tail).not.toMatch(/<input|<select|<textarea|<form|action=/);
+  });
+});
