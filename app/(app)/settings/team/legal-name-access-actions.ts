@@ -15,7 +15,7 @@ import { dbErrorCode } from "@/lib/logging/error-class";
 export type LegalNameAccessResult = { ok: true; receptionistAccess: boolean; changed: boolean } | { ok: false; error: string };
 
 const GENERIC = "Couldn't change this setting. Please try again.";
-export const OWNER_ONLY_LEGAL_NAME_MESSAGE = "Only studio owners can change this setting.";
+const OWNER_ONLY_LEGAL_NAME_MESSAGE = "Only studio owners can change this setting.";
 
 export async function setReceptionistLegalNameAccessAction(formData: FormData): Promise<LegalNameAccessResult> {
   const requested = formData.get("enabled");

@@ -26,7 +26,8 @@ vi.mock("@/lib/supabase/server", () => ({
   }),
 }));
 
-import { setReceptionistLegalNameAccessAction, OWNER_ONLY_LEGAL_NAME_MESSAGE } from "@/app/(app)/settings/team/legal-name-access-actions";
+import { setReceptionistLegalNameAccessAction } from "@/app/(app)/settings/team/legal-name-access-actions";
+const OWNER_ONLY_LEGAL_NAME_MESSAGE = "Only studio owners can change this setting.";
 import { readReceptionistLegalNameAccess } from "@/lib/clients/legal-name-access";
 
 function fd(fields: Record<string, string>) {
@@ -146,5 +147,18 @@ describe("source contract: owner-only, default OFF, nothing turns it on", () => 
   it("no other app code calls the RPC or writes the switch table (so nothing turns it on)", () => {
     const hits = (readFileSync("lib/clients/legal-name-access.ts", "utf8").match(/\.(insert|update|upsert)\(/g) ?? []);
     expect(hits).toHaveLength(0);
+  });
+});
+
+describe("the new server-action files only export async functions and types (next build refuses anything else)", () => {
+  it.each([
+    "app/(app)/settings/team/legal-name-access-actions.ts",
+    "app/(app)/clients/[id]/legal-identity-actions.ts",
+  ])("%s", async (file) => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(file, "utf8");
+    expect(src.startsWith('"use server"')).toBe(true);
+    const exports = src.match(/^export\s+.*$/gm) ?? [];
+    for (const line of exports) expect(line).toMatch(/^export (async function|type) /);
   });
 });
