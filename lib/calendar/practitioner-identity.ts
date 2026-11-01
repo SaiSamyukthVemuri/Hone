@@ -55,3 +55,13 @@ export function practitionerRowFits(
     (opts.serviceRow ? CARD_LINE_PX.small : 0);
   return heightPx >= needed;
 }
+
+// Initials for the Day column header's avatar chip (decorative: the full name is always printed).
+export function practitionerInitials(name: string | null | undefined): string {
+  // Words that start with a letter or digit only: "(synthetic)" or "-" never becomes an initial.
+  const words = (name ?? "").trim().split(/\s+/).filter((w) => /^[\p{L}\p{N}]/u.test(w));
+  if (words.length === 0) return "?";
+  const first = [...words[0]][0] ?? "";
+  const last = words.length > 1 ? ([...words[words.length - 1]][0] ?? "") : "";
+  return (first + last).toUpperCase();
+}

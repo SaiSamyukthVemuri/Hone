@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import {
@@ -10,11 +10,28 @@ import {
   type NavEntry,
   type NavSearchContext,
 } from "@/lib/search/navigation-registry";
+import { resolveSettingsNav } from "@/lib/settings/nav";
+import { SETTINGS_NAV } from "@/lib/settings/nav-registry";
+import type { Studio } from "@/lib/types/database";
 import {
   capResults,
   NAV_RESULT_CAP,
   type SearchResult,
 } from "@/lib/search/global-search";
+
+// The Settings rail registry reads server-only helpers; stub them (the waitlist
+// entry's own rule is proved in waitlist-nav-visibility.test.ts).
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/booking/new-client-admission", () => ({
+  getNewClientAdmissionMode: async () => ({ ok: true, mode: "open", source: "persisted" }),
+}));
+vi.mock("@/lib/booking/new-client-waitlist-durability-bridge", () => ({
+  newClientWaitlistCommitIsDurable: () => false,
+}));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({}) }));
+vi.mock("@/lib/waitlist/operator-queue-presence", () => ({
+  hasActiveWaitlistEntries: async () => false,
+}));
 
 // Global Search V2-A — the navigation/settings registry.
 //
@@ -672,32 +689,27 @@ describe("coverage tripwire — a new destination needs an explicit decision", (
     }
   });
 
-  it("registry visibility never contradicts the Settings nav's own gating", () => {
+  it("registry visibility never contradicts the Settings nav's own gating", async () => {
     // The settings layout is the product's declaration of who may SEE each
     // tab. Search must not be a second, drifting opinion: if a tab moves
     // behind the owner gate, the registry entry has to move with it or this
     // fails. Search is allowed to be STRICTER (a sub-surface of a shared page
     // can be owner-only while the page is not) — never looser.
-    const layout = readFileSync(
-      path.join(ROOT, "app/(app)/settings/layout.tsx"),
-      "utf8",
-    );
-    // Anchor on the SPREAD, not the first mention of `isOwner` — the boolean
-    // is declared well above the item list, and slicing there would leave the
-    // "open" region empty and quietly assert nothing.
-    const gateStart = layout.indexOf("...(isOwner");
-    const gateEnd = layout.indexOf(": []", gateStart);
-    expect(gateStart).toBeGreaterThan(-1);
-    expect(gateEnd).toBeGreaterThan(gateStart);
-
-    const hrefsIn = (text: string) =>
-      new Set([...text.matchAll(/href: "(\/settings\/[a-z-]+)"/g)].map((m) => m[1]));
-    const ownerGated = hrefsIn(layout.slice(gateStart, gateEnd));
-    const open = hrefsIn(layout.slice(0, gateStart));
+    // The rail is a registry now (lib/settings/nav-registry.ts), resolved for
+    // each role exactly as the layout does.
+    const studio = { id: "s", slug: "x" } as unknown as Studio;
+    const hrefsFor = async (role: "owner" | "practitioner") =>
+      new Set(
+        (await resolveSettingsNav(SETTINGS_NAV, { role, studio })).map((i) => i.href),
+      );
+    const ownerSees = await hrefsFor("owner");
+    const memberSees = await hrefsFor("practitioner");
+    const ownerGated = new Set([...ownerSees].filter((h) => !memberSees.has(h)));
+    const open = memberSees;
 
     expect(ownerGated.size).toBeGreaterThanOrEqual(10);
     expect(open.size).toBeGreaterThanOrEqual(3);
-    // A tab cannot be in both regions, or the parse is wrong.
+    // A tab cannot be in both regions, or the resolution is wrong.
     for (const href of ownerGated) expect(open.has(href)).toBe(false);
 
     for (const entry of NAV_ENTRIES) {

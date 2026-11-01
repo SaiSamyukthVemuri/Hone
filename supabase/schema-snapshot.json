@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 248,
+    "count": 249,
     "last": "0257_studio_payment_jurisdiction_failed_attempt_ack.sql",
-    "sha256": "c383e4c38f8845f49b90c45c3168242d18b87fcb430a2dd6073a036fdc434b38"
+    "sha256": "e3877a03b2ac6c32d3d87e4c211e094383adbbd2a3c000a3ca1dc8170d005214"
   },
   "public": {
     "tables": [
@@ -335,6 +335,7 @@
       "mark_stripe_event_processed",
       "mark_waitlist_mobile_verified",
       "materialize_recurring_break_rule",
+      "member_owns_scoped_timed_block",
       "mint_setup_group_keys",
       "move_appointment_core",
       "move_or_reassign_appointment",
