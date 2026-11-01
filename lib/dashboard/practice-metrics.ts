@@ -230,9 +230,18 @@ export async function getPracticeDashboardMetrics(
   // REQUIRED, so every caller states who is looking. Membership RLS lets any
   // practitioner read service prices and payment_charge_attempts; HON-44
   // restricts studio totals to the owner, so the gate is here, before the read.
-  viewer: { viewerIsOwner: boolean },
+  //
+  // WS-DB: the loader no longer RUNS for anyone else. Its other reads (the
+  // studio-wide appointment counts and the charted-within-24h figures) are not
+  // a non-owner's to load, so the type admits only `true` and a runtime refusal
+  // backs it. A non-owner needs only the procedure-record roll-up, which has its
+  // own loader below.
+  viewer: { viewerIsOwner: true },
 ): Promise<PracticeDashboardMetrics> {
-  const includeMoney = viewer.viewerIsOwner;
+  if (viewer.viewerIsOwner !== true) {
+    throw new Error("Practice metrics are owner-only");
+  }
+  const includeMoney = true;
   const todayLocal = todayInTz(timezone);
   const range = resolvePeriodRange(todayLocal, period);
   const startUtc = utcInstantFromLocal(range.startLocal, "00:00", timezone);
@@ -393,4 +402,16 @@ export async function getPracticeDashboardMetrics(
     actions: summarizeProcedureCompleteness(procedureRecords),
     chartedWithin24h,
   };
+}
+
+// The procedure-record roll-up on its own: the "records missing details" count
+// every role sees on the To do / Needs attention list. Same 100-session window
+// and the same summarizer as `getPracticeDashboardMetrics(...).actions`, so the
+// number is identical; it just does not drag the owner's reads along.
+export async function getProcedureActionMetrics(
+  studioId: string,
+): Promise<ProcedureActionMetrics> {
+  return summarizeProcedureCompleteness(
+    await getClientProcedureRecords(studioId, { limit: 100 }),
+  );
 }

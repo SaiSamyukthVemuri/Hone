@@ -6,7 +6,10 @@ import { getClientBirthdaysForMonth } from "@/lib/clients/birthday-queries";
 import { resolveBirthdayColor } from "@/lib/birthday-colors";
 import type { BirthdayReminderColor, Studio } from "@/lib/types/database";
 import { PracticeSnapshot } from "./practice-snapshot";
-import { getPracticeDashboardMetrics } from "@/lib/dashboard/practice-metrics";
+import {
+  getPracticeDashboardMetrics,
+  type ProcedureActionMetrics,
+} from "@/lib/dashboard/practice-metrics";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
 import { getMissingRecordsAssistant } from "@/lib/dashboard/missing-records-assistant";
 import { getExpiringSterileItems } from "@/lib/record-keeping/queries";
@@ -80,9 +83,10 @@ type Props = {
    * no readiness read at all.
    */
   bookingReadiness: Promise<NewClientReadiness | null>;
-  practiceMetrics: Promise<
-    Awaited<ReturnType<typeof getPracticeDashboardMetrics>>
-  >;
+  // `null` for a non-owner: the loader never runs for them.
+  practiceMetrics: Promise<Awaited<
+    ReturnType<typeof getPracticeDashboardMetrics>
+  > | null>;
   gettingStartedSignals: Promise<
     Awaited<ReturnType<typeof getGettingStartedSignals>>
   >;
@@ -201,9 +205,8 @@ export async function SecondaryStack({
           shows them before their replacement exists would destroy working
           functionality. */}
       {/* WS-D (settings redesign): the Practice Snapshot is OWNER-ONLY. It is a server component, so for any other role nothing of it,
-          not its counts, period filter or copy, is rendered into the response. `practiceMetrics.actions` is still read above because it
-          feeds the shared To do model, which every role sees; the snapshot itself never reaches a non-owner. */}
-      {isOwner && (
+          not its counts, period filter or copy, is rendered into the response. the metrics loader itself no longer runs for a non-owner (WS-DB); the roll-up they need comes from `getProcedureActionMetrics`. */}
+      {isOwner && practiceMetrics && (
         <PracticeSnapshot
           metrics={practiceMetrics}
           livemode={inferStripeLivemode()}
@@ -408,7 +411,7 @@ function formatMonthDay(month: number, day: number): string {
 export async function NeedsAttentionSection({
   attentionSources,
   staffManaged: staffManagedPromise,
-  practiceMetrics: practiceMetricsPromise,
+  procedureActions: procedureActionsPromise,
   clientsNeedingAttention: clientsNeedingAttentionPromise,
   followUpAssistant: followUpAssistantPromise,
   expiringSupplies: expiringSuppliesPromise,
@@ -417,7 +420,7 @@ export async function NeedsAttentionSection({
 }: {
   attentionSources: Promise<AttentionSources>;
   staffManaged: Promise<boolean>;
-  practiceMetrics: Props["practiceMetrics"];
+  procedureActions: Promise<ProcedureActionMetrics>;
   clientsNeedingAttention: Promise<
     Awaited<ReturnType<typeof getClientsNeedingAttention>>
   >;
@@ -433,7 +436,7 @@ export async function NeedsAttentionSection({
   const [intakesAwaitingReview, activeServicesCount, paymentStatus] =
     await attentionSources;
   const staffManaged = await staffManagedPromise;
-  const practiceMetrics = await practiceMetricsPromise;
+  const procedureActions = await procedureActionsPromise;
   const clientsNeedingAttention = await clientsNeedingAttentionPromise;
   const followUpAssistant = await followUpAssistantPromise;
   const expiringSupplies = await expiringSuppliesPromise;
@@ -442,7 +445,7 @@ export async function NeedsAttentionSection({
     assistant: followUpAssistant,
     attention: clientsNeedingAttention,
     supplies: expiringSupplies,
-    metrics: practiceMetrics.actions,
+    metrics: procedureActions,
     studio: {
       isOwner,
       intakesAwaitingReviewCount: intakesAwaitingReview.length,

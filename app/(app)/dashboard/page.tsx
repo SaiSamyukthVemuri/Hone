@@ -57,7 +57,10 @@ import {
   NeedsAttentionSkeleton,
   SecondaryStackSkeleton,
 } from "./secondary-stack";
-import { getPracticeDashboardMetrics } from "@/lib/dashboard/practice-metrics";
+import {
+  getPracticeDashboardMetrics,
+  getProcedureActionMetrics,
+} from "@/lib/dashboard/practice-metrics";
 import { getIntakesAwaitingReview } from "@/lib/dashboard/intakes-awaiting-review";
 import { loadStaffManagedClinic } from "@/lib/dashboard/staff-managed";
 import {
@@ -324,11 +327,21 @@ export default async function DashboardPage({
       : Promise.resolve(null as NewClientReadiness | null),
   );
   const staffManagedPromise = settleLater(loadStaffManagedClinic(supabase, studio.id));
+  // WS-DB: the practice metrics loader runs for the OWNER only. A practitioner
+  // never starts it (it reads studio-wide activity and, for the owner, money).
   const practiceMetricsPromise = settleLater(
-    // HON-44: studio money totals are owner-only, refused at the read.
-    getPracticeDashboardMetrics(studio.id, studio.timezone, period, {
-      viewerIsOwner: isOwner,
-    }),
+    isOwner
+      ? getPracticeDashboardMetrics(studio.id, studio.timezone, period, {
+          viewerIsOwner: true,
+        })
+      : Promise.resolve(null),
+  );
+  // The "records missing details" roll-up every role sees. The owner already
+  // reads it inside the metrics; anyone else gets just that one read.
+  const procedureActionsPromise = settleLater(
+    isOwner
+      ? practiceMetricsPromise.then((m) => m!.actions)
+      : getProcedureActionMetrics(studio.id),
   );
   const clientsNeedingAttentionPromise = settleLater(
     getClientsNeedingAttention(studio.id),
@@ -924,7 +937,7 @@ export default async function DashboardPage({
           <NeedsAttentionSection
             attentionSources={attentionSourcesPromise}
             staffManaged={staffManagedPromise}
-            practiceMetrics={practiceMetricsPromise}
+            procedureActions={procedureActionsPromise}
             clientsNeedingAttention={clientsNeedingAttentionPromise}
             followUpAssistant={followUpAssistantPromise}
             expiringSupplies={expiringSuppliesPromise}

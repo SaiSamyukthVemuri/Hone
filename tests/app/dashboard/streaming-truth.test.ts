@@ -242,7 +242,7 @@ describe("4 — nothing about what renders changed", () => {
       "assistant: followUpAssistant",
       "attention: clientsNeedingAttention",
       "supplies: expiringSupplies",
-      "metrics: practiceMetrics.actions",
+      "metrics: procedureActions",
       "intakesAwaitingReviewCount",
       "activeServicesCount",
       "paymentStatus",
