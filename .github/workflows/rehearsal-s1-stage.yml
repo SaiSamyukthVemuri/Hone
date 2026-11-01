@@ -1,9 +1,8 @@
-# REHEARSAL - NEVER MERGE. PREPARATION ONLY / HELD: MULTI-STAGE-BUILDER. rehearsal/multi-stage/build.py turns an ORDERED list of migration files into one reviewed online stage package
-# per step (package P1: 0254, 0258, 0272, 0266, 0271) and every valid drop of a step, pre-built (stage-drop rules). (1) seq: the GENERATED apply, reconcile and read-back scripts run as REAL TEXT, stage after stage, against a STATEFUL stub supabase-go
-# (a file-backed remote history that follows the real CLI's --include-all rule), a FIFO terminal, canary secrets and a fake HOME, with negative controls (extra file, missing file, wrong sha,
-# out-of-order step, failure injected at step k: history stops at k-1 and the next step refuses). (2) push: the real pinned CLI v2.102.0 against a disposable PostgreSQL, one invocation per
-# migration, the same negative controls, and a two-file push that cannot be rolled back. No hosted call, no customer data, no credential beyond a throwaway canary password.
-name: rehearsal-multi-stage-builder
+# REHEARSAL - NEVER MERGE. PREPARATION ONLY / HELD: S1 STAGE PACKAGE (0258, 0272, 0266; 0271 dropped). Built by rehearsal/multi-stage/build.py from spec/s1.json: the hosted set is the production
+# tree's 249 migration files (S0/R1: 249 rows incl. 0253 and 0254, max 0257, 0255 NOT applied), then one reviewed online stage per migration. (1) seq-linux: generated scripts as real text against a stateful stub CLI.
+# (2) push-linux / push-macos: the real pinned CLI v2.102.0 against a disposable PostgreSQL, one invocation per migration, with negative controls. (3) gates-stack: the 0258/0272/0266 gate packs on a hosted-shaped
+# local Supabase stack. No hosted call, no customer data, no credential beyond a throwaway canary password.
+name: rehearsal-s1-stage
 
 on:
   pull_request:
@@ -11,43 +10,15 @@ on:
       - "rehearsal/multi-stage/**"
       - "scripts/ci/multi-stage-push-rehearsal.sh"
       - "scripts/ci/gate-pack-stack-rehearsal.sh"
-      - ".github/workflows/rehearsal-multi-stage-builder.yml"
+      - ".github/workflows/rehearsal-s1-stage.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  seq-macos:
-    name: MULTI-STAGE sequence on macOS arm64 (/bin/bash 3.2, launched from zsh like the operator's terminal)
-    runs-on: macos-14
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Build package P1 (0254, 0258, 0272, 0266, 0271 and every valid drop)
-        shell: bash
-        run: |
-          python3 --version
-          python3 rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p1.json "$RUNNER_TEMP/ms-pkg"
-          cat "$RUNNER_TEMP/ms-pkg/SEQUENCE.md"
-          # the v1 (P1) package describes the hosted set BEFORE 0254 was applied; the production tree now carries 0254, so the 247-file hosted view leaves it out
-          mkdir -p "$RUNNER_TEMP/hosted247" && cp supabase/migrations/*.sql "$RUNNER_TEMP/hosted247/" && rm -f "$RUNNER_TEMP"/hosted247/0254_*.sql
-      - name: Sequence, negative controls and failure injection (N of N)
-        shell: /bin/zsh {0}
-        run: |
-          /bin/bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$RUNNER_TEMP/hosted247" full 2>&1 | tee "$RUNNER_TEMP/seq-macos.txt"; rc=${pipestatus[1]}
-          exit $rc
-      - name: A dropped step (0266 dropped), the whole sequence, no rebuild
-        shell: /bin/zsh {0}
-        run: |
-          ONLY_A=1 /bin/bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$RUNNER_TEMP/hosted247" drop-0266 2>&1 | tee "$RUNNER_TEMP/seq-macos-drop.txt"; rc=${pipestatus[1]}
-          exit $rc
-
-  seq-linux:
-    name: MULTI-STAGE builder checks and sequence on Linux (bash 5)
+  s1-seq-linux:
+    name: S1 builder checks and sequence on Linux (bash 5)
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -55,55 +26,30 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build package P1 (0254, 0258, 0272, 0266, 0271 and every valid drop)
+      - name: Build package S1 (0258, 0272, 0266 and every valid drop)
         shell: bash
         run: |
-          python3 --version
-          python3 rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p1.json "$RUNNER_TEMP/ms-pkg"
-          cat "$RUNNER_TEMP/ms-pkg/SEQUENCE.md"
-          # the v1 (P1) package describes the hosted set BEFORE 0254 was applied; the production tree now carries 0254, so the 247-file hosted view leaves it out
-          mkdir -p "$RUNNER_TEMP/hosted247" && cp supabase/migrations/*.sql "$RUNNER_TEMP/hosted247/" && rm -f "$RUNNER_TEMP"/hosted247/0254_*.sql
+          python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/s1.json "$RUNNER_TEMP/s1-pkg"
+          cat "$RUNNER_TEMP/s1-pkg/SEQUENCE.md"
+          mkdir -p "$RUNNER_TEMP/s1-hosted" && cp supabase/migrations/*.sql "$RUNNER_TEMP/s1-hosted/"
+          test "$(ls "$RUNNER_TEMP/s1-hosted" | wc -l)" = 249
       - name: Builder checks (refusals, determinism, content-gate flags)
         run: |
           set -o pipefail
-          bash rehearsal/multi-stage/builder-check.sh rehearsal/multi-stage/spec/p1.json 2>&1 | tee "$RUNNER_TEMP/builder-linux.txt"
+          GENERIC_ONLY=1 bash rehearsal/multi-stage/builder-check.sh rehearsal/multi-stage/spec/s1.json 2>&1 | tee "$RUNNER_TEMP/builder-s1.txt"
       - name: Sequence, negative controls and failure injection (N of N)
         run: |
           set -o pipefail
-          bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$RUNNER_TEMP/hosted247" full 2>&1 | tee "$RUNNER_TEMP/seq-linux.txt"
-      - name: Every other valid plan (a step dropped without a rebuild)
-        run: |
-          set -o pipefail
-          for q in $(python3 -c "import json,sys;print(' '.join(k for k in json.load(open(sys.argv[1]))['sequences'] if k != 'full'))" "$RUNNER_TEMP/ms-pkg/PLAN.json"); do
-            echo "=========== sequence $q"
-            ONLY_A=1 bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkg" "$RUNNER_TEMP/hosted247" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-linux-drops.txt" | tail -3
+          : > "$RUNNER_TEMP/seq-s1.txt"
+          for q in full drop-0266 "drop-0258+0272+0266"; do
+            echo "=========== S1 sequence $q" | tee -a "$RUNNER_TEMP/seq-s1.txt"
+            ONLY_A=1 bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/s1-pkg" "$RUNNER_TEMP/s1-hosted" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-s1.txt" | tail -3
           done
-          ! grep -q "^FAIL" "$RUNNER_TEMP/seq-linux-drops.txt"
-      - name: Package P1X (the optional 0253, 0255, 0256 added, 111 stage packages and 96 sequences), builder checks and a sample of sequences
-        run: |
-          set -o pipefail
-          python3 rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p1x.json "$RUNNER_TEMP/ms-pkgx" | tee "$RUNNER_TEMP/p1x.txt"
-          GENERIC_ONLY=1 bash rehearsal/multi-stage/builder-check.sh rehearsal/multi-stage/spec/p1x.json 2>&1 | tee "$RUNNER_TEMP/builder-p1x.txt"
-          for q in full drop-0253 drop-0253+0255+0256 drop-0254+0253+0255+0256 drop-0258+0272+0266 drop-0258+0272+0266+0271; do
-            echo "=========== P1X sequence $q"
-            ONLY_A=1 bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-pkgx" "$RUNNER_TEMP/hosted247" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-p1x.txt" | tail -3
-          done
-          ! grep -q "^FAIL" "$RUNNER_TEMP/seq-p1x.txt" "$RUNNER_TEMP/builder-p1x.txt"
+          ! grep -q "^FAIL" "$RUNNER_TEMP/seq-s1.txt" "$RUNNER_TEMP/builder-s1.txt"
 
-      - name: Package P2 (P1 v2, the real 0258, 0272, 0266, 0271 on the hosted set AFTER 0254), builder checks and every valid plan
-        run: |
-          set -o pipefail
-          python3 rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p2.json "$RUNNER_TEMP/ms-p2" | tee "$RUNNER_TEMP/p2.txt"
-          GENERIC_ONLY=1 bash rehearsal/multi-stage/builder-check.sh rehearsal/multi-stage/spec/p2.json 2>&1 | tee "$RUNNER_TEMP/builder-p2.txt"
-          mkdir "$RUNNER_TEMP/hosted248" && cp supabase/migrations/*.sql "$RUNNER_TEMP/hosted248/" && cp rehearsal/multi-stage/spec/sealed/0254_perm_hon44_role_enforcement.sql "$RUNNER_TEMP/hosted248/"
-          for q in $(python3 -c "import json,sys;print(' '.join(json.load(open(sys.argv[1]))['sequences']))" "$RUNNER_TEMP/ms-p2/PLAN.json"); do
-            echo "=========== P2 sequence $q"
-            ONLY_A=1 bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/ms-p2" "$RUNNER_TEMP/hosted248" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-p2.txt" | tail -3
-          done
-          ! grep -q "^FAIL" "$RUNNER_TEMP/seq-p2.txt" "$RUNNER_TEMP/builder-p2.txt"
 
-  push-linux:
-    name: MULTI-STAGE push, real CLI v2.102.0, disposable PostgreSQL (Linux)
+  s1-push-linux:
+    name: S1 push, real CLI v2.102.0, disposable PostgreSQL (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -111,11 +57,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build package P1 (0254, 0258, 0272, 0266, 0271 and every valid drop)
+      - name: Build package S1 (0258, 0272, 0266 and every valid drop)
         shell: bash
         run: |
           python3 --version
-          python3 rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p1.json "$RUNNER_TEMP/ms-pkg"
+          python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/s1.json "$RUNNER_TEMP/ms-pkg"
           cat "$RUNNER_TEMP/ms-pkg/SEQUENCE.md"
       - name: Start the runner's PostgreSQL with a throwaway canary password
         shell: bash
@@ -154,24 +100,24 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: multi-stage-push-linux-logs
+          name: s1-push-linux-logs
           path: ${{ runner.temp }}/ms-push-out/
           retention-days: 7
 
-  push-macos:
-    name: MULTI-STAGE push, the macOS CLI binary the operator runs, disposable PostgreSQL (macOS arm64)
-    runs-on: macos-14
+  s1-push-macos:
+    name: S1 push, the macOS CLI binary the operator runs, disposable PostgreSQL (macOS arm64)
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build package P1 (0254, 0258, 0272, 0266, 0271 and every valid drop)
+      - name: Build package S1 (0258, 0272, 0266 and every valid drop)
         shell: bash
         run: |
           python3 --version
-          python3 rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p1.json "$RUNNER_TEMP/ms-pkg"
+          python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/s1.json "$RUNNER_TEMP/ms-pkg"
           cat "$RUNNER_TEMP/ms-pkg/SEQUENCE.md"
       - name: Start a local PostgreSQL with a throwaway canary password
         shell: bash
@@ -202,12 +148,12 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: multi-stage-push-macos-logs
+          name: s1-push-macos-logs
           path: ${{ runner.temp }}/ms-push-out/
           retention-days: 7
 
-  gates-stack:
-    name: MULTI-STAGE gate packs on a hosted-shaped local Supabase stack (real CLI, real realtime)
+  s1-gates-stack:
+    name: S1 gate packs on a hosted-shaped local Supabase stack (real CLI, real realtime)
     runs-on: ubuntu-latest
     # D7b: read-only package scope for the authenticated ghcr.io image pull only (the same shape as the DB lanes).
     permissions:
@@ -352,21 +298,43 @@ jobs:
         if: steps.sb_start.outcome == 'failure'
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,edge-runtime,logflare,vector
 
-      - name: Build package P3 (the hosted set AFTER 0254, 0253 and 0255, then 0258, 0272, 0266, 0271)
-        run: python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/p3.json "$RUNNER_TEMP/ms-pkgx"
+      - name: Build package S1 (the hosted set = the production tree, then 0258, 0272, 0266)
+        run: python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/s1.json "$RUNNER_TEMP/ms-pkgx"
 
       - name: Gate packs, step by step, against the stack (PRE rules, one real push per step, POST read-back, mutation controls)
         run: |
           set -o pipefail
           first=1
           : > "$RUNNER_TEMP/gates-stack.txt"
-          for q in full "drop-0258+0272+0266" "drop-0271" "drop-0266"; do
+          for q in full "drop-0266" "drop-0258+0272+0266"; do
             if [ "$first" = 0 ]; then git checkout -- supabase/migrations && git clean -fdq supabase/migrations && supabase db reset --local > "$RUNNER_TEMP/reset.log" 2>&1 || { echo "FAIL - db reset before $q" | tee -a "$RUNNER_TEMP/gates-stack.txt"; tail -3 "$RUNNER_TEMP/reset.log"; }; fi
             first=0
-            echo "=========== P3 sequence $q" | tee -a "$RUNNER_TEMP/gates-stack.txt"
-            EXTRA_DIR="$PWD/rehearsal/multi-stage/spec/sealed" REHEARSAL_OUT="$RUNNER_TEMP/gates-out-$q" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkgx" "$q" 2>&1 | tee -a "$RUNNER_TEMP/gates-stack.txt"
+            echo "=========== S1 sequence $q" | tee -a "$RUNNER_TEMP/gates-stack.txt"
+            REHEARSAL_OUT="$RUNNER_TEMP/gates-out-$q" bash scripts/ci/gate-pack-stack-rehearsal.sh "$RUNNER_TEMP/ms-pkgx" "$q" 2>&1 | tee -a "$RUNNER_TEMP/gates-stack.txt"
           done
           ! grep -q "^FAIL" "$RUNNER_TEMP/gates-stack.txt"
+
+      - name: Expected read-back values on the rehearsal stack (S1 read-back SELECTs after 0258, 0272, 0266; hashes only)
+        run: |
+          set -euo pipefail
+          git checkout -- supabase/migrations && git clean -fdq supabase/migrations
+          cp rehearsal/multi-stage/spec/sealed/0258_hon58_identity.sql rehearsal/multi-stage/spec/sealed-v2/0272_hon58_legal_identity_hardening.sql rehearsal/multi-stage/spec/sealed-v2/0266_legal_name_receptionist_access.sql supabase/migrations/
+          sha256sum supabase/migrations/0258_* supabase/migrations/0266_* supabase/migrations/0272_*
+          supabase db reset --local > "$RUNNER_TEMP/reset-s1.log" 2>&1 || { tail -20 "$RUNNER_TEMP/reset-s1.log"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/s1-readbacks"
+          psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -Atc 'show server_version'
+          for f in s1-1-history s1-2-post-objects s1-3-functions; do
+            sql="$(cat rehearsal/multi-stage/s1-readbacks/$f.sql)"
+            psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -At -v ON_ERROR_STOP=1 -c "select coalesce(json_agg(t), '[]'::json) from (${sql%;}) t" > "$RUNNER_TEMP/s1-readbacks/$f.json"
+          done
+          python3 -I rehearsal/multi-stage/s1-readbacks/check-expected.py "$RUNNER_TEMP/s1-readbacks" rehearsal/multi-stage/spec/sealed/0258_hon58_identity.sql rehearsal/multi-stage/spec/sealed-v2/0266_legal_name_receptionist_access.sql rehearsal/multi-stage/spec/sealed-v2/0272_hon58_legal_identity_hardening.sql | tee "$RUNNER_TEMP/s1-readbacks/EXPECTED.txt"
+      - name: Upload the S1 expected read-back values
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s1-expected-readbacks
+          path: ${{ runner.temp }}/s1-readbacks
+          retention-days: 7
 
       - name: Upload the read-back results (read-only catalog facts, no data)
         if: always()
