@@ -179,6 +179,9 @@ export const BROWSER_GROUPS = {
   booking: {
     description: "public booking and appointment lifecycle",
     specs: [
+      // WS-DC (HON-65): dashboard verification proof. Deliberately NOT in `sessions`: that targeted lane has a
+      // cost pin, and this spec (17 cases, ~7 min on the isolated stack) is a verification campaign, not a per-diff gate.
+      "dashboard-ws-dc.spec.ts",
       "ui01g-cluster-b-touch-floor.spec.ts",
       "client-booking-outside-hours.spec.ts",
       // BOOK-NEXT-FAST-01: the public "Next available" press — acknowledgement,
