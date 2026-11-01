@@ -93,6 +93,15 @@ test.describe("clients directory: one real click journey (HON-58)", () => {
     await page.goto("/clients");
     await expect(page.getByRole("heading", { name: "Clients" })).toBeVisible({ timeout: T });
     await expect(page.getByText("60 clients · showing 1–25")).toBeVisible({ timeout: T });
+    // Reference fidelity (HON-58, 1 Nov): the five visible headings, and Intake in its own cell.
+    const headings = page.getByTestId("directory-headings");
+    for (const h of ["Client", "Last visit", "Next appointment", "Intake", "Actions"]) {
+      await expect(headings.getByText(h, { exact: true })).toBeVisible();
+    }
+    const firstRow = page.locator("ul > li[id^='client-']").first();
+    await expect(firstRow.getByText("Intake:", { exact: false })).toBeAttached();
+    await expect(firstRow.getByText("Last visit:", { exact: false })).toBeAttached();
+    await expect(firstRow.getByText("Next appointment:", { exact: false })).toBeAttached();
 
     // SEARCH: Enter submits, the text stays, the URL carries it, nothing jumps.
     await search(page).fill("journey");
@@ -213,6 +222,12 @@ test.describe("clients directory: one real click journey (HON-58)", () => {
       await loginAsOwner(page, seed);
       await page.goto("/clients");
       await expect(page.getByText("60 clients · showing 1–25")).toBeVisible({ timeout: T });
+      // Phone cards carry explicit inline labels instead of relying on column position.
+      const card = page.locator("ul > li[id^='client-']").first();
+      await expect(page.getByTestId("directory-headings")).toBeHidden();
+      for (const l of ["Last visit:", "Next appointment:", "Intake:"]) {
+        await expect(card.getByText(l, { exact: false }).first()).toBeVisible();
+      }
 
       // Reachable without a menu: search, both sort options and both filters are all there.
       for (const control of [

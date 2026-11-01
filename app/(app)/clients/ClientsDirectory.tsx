@@ -123,6 +123,7 @@ export function DirectoryResults({
         {` · showing ${data.firstIndex}–${data.lastIndex}`}
       </p>
       <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+        <DirectoryHeader archived={archived} />
         {data.rows.map((row) => (
           <DirectoryRowView
             key={row.id}
@@ -137,6 +138,37 @@ export function DirectoryResults({
       </ul>
       <Pagination state={state} data={data} />
     </div>
+  );
+}
+
+// Visible column headings (reference: Client | Last visit | Next appointment | Intake |
+// Actions). Desktop only: the headings are aria-hidden because every cell below carries
+// its own label, visible on a phone and screen-reader-only beside the headings.
+const GRID_ACTIVE =
+  "md:grid-cols-[minmax(0,2.4fr)_minmax(0,1.1fr)_minmax(0,1.5fr)_minmax(0,1.1fr)_auto]";
+const GRID_ARCHIVED = "md:grid-cols-[minmax(0,2.4fr)_minmax(0,2.6fr)_auto]";
+const CELL_LABEL = "text-neutral-500 md:sr-only";
+
+function DirectoryHeader({ archived }: { archived: boolean }) {
+  const heading = "text-[11px] font-semibold uppercase tracking-wider text-neutral-500";
+  return (
+    <li
+      aria-hidden="true"
+      data-testid="directory-headings"
+      className={`hidden bg-neutral-50 px-4 py-2 md:grid md:gap-4 dark:bg-neutral-900 ${archived ? GRID_ARCHIVED : GRID_ACTIVE}`}
+    >
+      <span className={heading}>Client</span>
+      {archived ? (
+        <span className={heading}>Archived</span>
+      ) : (
+        <>
+          <span className={heading}>Last visit</span>
+          <span className={heading}>Next appointment</span>
+          <span className={heading}>Intake</span>
+        </>
+      )}
+      <span className={`${heading} md:text-right`}>Actions</span>
+    </li>
   );
 }
 
@@ -172,9 +204,22 @@ export function lastVisitCell(
   return timeZone ? { kind: "at", iso: at, label: formatStudioDate(at, timeZone) } : { kind: "at", iso: at };
 }
 
+// What the status IS (traced, HON-58 1 Nov): the status of the client's NEWEST non-deleted
+// intake form. "Reviewed" = a practitioner marked that form reviewed (the database stamps
+// who and when; the directory shows neither). It is not a visit, a chart or a consent.
+const INTAKE_MEANING: Record<IntakeState, string> = {
+  not_submitted: "The newest intake form has not been submitted, or the client has none",
+  awaiting_review: "The newest intake form was submitted and a practitioner has not reviewed it yet",
+  reviewed: "A practitioner has reviewed the newest intake form",
+  unavailable: "Intake status could not be loaded",
+};
+
 function IntakePill({ state }: { state: IntakeState }) {
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${INTAKE_TONE[state]}`}>
+    <span
+      title={INTAKE_MEANING[state]}
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${INTAKE_TONE[state]}`}
+    >
       {INTAKE_LABEL[state]}
     </span>
   );
@@ -196,53 +241,56 @@ function DirectoryRowView({
   timeZone?: string;
 }) {
   const archived = state.view === "archived";
-  const contact = [row.email, row.phone].filter((v): v is string => Boolean(v));
+  // Privacy ruling (FIDELITY-Q1): subline = pronouns · email, each omitted when absent; the
+  // "Name on file" label leads it wherever the shown name is the stored name (never hidden).
+  // The phone keeps its own line: it is searchable, so it must stay shown, and is not repeated.
+  const subline = [row.nameOnFile ? NAME_ON_FILE_LABEL : null, row.pronouns, row.email].filter((v): v is string => Boolean(v));
   return (
     <li
       id={`client-${row.id}`}
       className={`px-4 py-3 ${selected ? "border-l-4 border-neutral-900 bg-neutral-50 pl-3 dark:border-white dark:bg-neutral-900" : ""}`}
     >
-      <div className="flex flex-col gap-2 md:grid md:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,1.2fr)_minmax(0,1.5fr)_auto] md:items-center md:gap-4">
+      <div className={`flex flex-col gap-2 md:grid md:items-center md:gap-4 ${archived ? GRID_ARCHIVED : GRID_ACTIVE}`}>
         <div className="min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-2">
             <Link
               id={overviewRowLinkId(row.id)}
               href={href(state, { client: row.id })}
               scroll={false}
-              className="inline-flex min-h-11 min-w-0 items-center break-words font-medium hover:underline"
+              className="inline-flex min-h-11 min-w-0 items-center break-words font-medium hover:underline md:min-h-0"
               aria-current={selected ? "true" : undefined}
             >
               {row.displayName}
             </Link>
-            {row.pronouns && <span className="text-xs text-neutral-500">{row.pronouns}</span>}
             {archived && (
               <span className="rounded-full bg-neutral-200 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
                 Archived
               </span>
             )}
           </div>
-          {row.nameOnFile && <div className="text-[11px] text-neutral-500">{NAME_ON_FILE_LABEL}</div>}
+          {subline.length > 0 && (
+            <div className="min-w-0 break-words text-xs text-neutral-600 dark:text-neutral-400">{subline.join(" · ")}</div>
+          )}
+          {row.phone && <div className="min-w-0 break-words text-xs text-neutral-600 dark:text-neutral-400">{row.phone}</div>}
+          {subline.length === 0 && !row.phone && <div className="text-xs text-neutral-500">No contact on file</div>}
         </div>
-        <div className="min-w-0 truncate text-xs text-neutral-600 dark:text-neutral-400">{contact.length > 0 ? contact.join(" · ") : "No contact on file"}</div>
         {archived ? (
-          <div className="text-xs text-neutral-500 md:col-span-2">
-            {row.archivedAt ? (
-              <>
-                Archived <FormattedDateTime iso={row.archivedAt} />
-              </>
-            ) : null}
+          <div className="text-xs text-neutral-500">
+            <span className={CELL_LABEL}>Archived: </span>
+            {row.archivedAt ? <FormattedDateTime iso={row.archivedAt} /> : null}
           </div>
         ) : (
           <>
             <div className="text-xs text-neutral-600 dark:text-neutral-400">
-              <span className="text-neutral-500 md:hidden">Last visit: </span>
+              <span className={CELL_LABEL}>Last visit: </span>
               <LastVisitText cell={lastVisitCell(lastVisits, row.id, timeZone)} />
             </div>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
-              <span>
-                <span className="text-neutral-500 md:hidden">Next: </span>
-                <NextCell row={row} timeZone={timeZone} />
-              </span>
+            <div className="text-xs text-neutral-600 dark:text-neutral-400">
+              <span className={CELL_LABEL}>Next appointment: </span>
+              <NextCell row={row} timeZone={timeZone} />
+            </div>
+            <div className="text-xs text-neutral-600 dark:text-neutral-400">
+              <span className={CELL_LABEL}>Intake: </span>
               <IntakePill state={row.intake} />
             </div>
           </>
