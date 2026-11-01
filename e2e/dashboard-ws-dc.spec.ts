@@ -106,6 +106,18 @@ test.beforeAll(async () => {
   await sql(`update public.appointments set status='completed' where id=$1`, [unA]);
   names.DCUncharted = un.name;
 
+  // Display identity (#1299 @ 56fa8b53): a client whose LEGAL name differs from the PREFERRED name, with a recorded
+  // visit that lacks contact details (so Needs attention lists them) and a birthday this month (so the chip lists them).
+  const dd0 = await day(0);
+  const pref = await seedE2eEndedAppointmentSession(seed, { status: "completed", endedHoursAgo: 7, charted: true, aftercareExplained: true });
+  names.prefStored = "Storedname Fallbackfamily";
+  // clients.preferred_name arrives with HELD migration 0258 and is absent here (and on production). The app reads it through
+  // lib/clients/preferred-name-read.ts, which falls back to the stored name on a missing column: this fixture drives THAT.
+  await sql(
+    `update public.clients set name = $2, phone = null, address = null, date_of_birth = make_date(1990, $3, $4) where id = $1`,
+    [pref.clientId, names.prefStored, Number(dd0.slice(5, 7)), ((Number(dd0.slice(8, 10)) + 3) % 27) + 1],
+  );
+
   const d0 = await day(0);
   // populated days
   await book("DCToday1", d0, "09:00", 30);
@@ -391,6 +403,81 @@ for (const width of [1280, 390]) {
       await p.waitForLoadState("networkidle").catch(() => undefined);
       await capture(p, "cap-practitioner-month");
       await ctx.close();
+    });
+  });
+}
+
+// Candidate additions (OPS, #1299 @ 56fa8b53). Same assertions run on production for BEFORE; the new-behaviour ones are expected RED there.
+for (const width of [1280, 390]) {
+  test.describe(`display identity, setup card, unavailable state at ${width}px`, () => {
+    test.use({ viewport: { width, height: width === 390 ? 844 : 900 } });
+
+    test("display identity FALLBACK: with no preferred_name column the stored name shows in Needs attention and in birthdays, with no error", async ({ page }) => {
+      await loginAsOwner(page, seed);
+      await open(page);
+      const tgl = page.getByTestId("needs-attention-toggle");
+      if (await tgl.count()) { await tgl.click(); await expect(tgl).toHaveAttribute("aria-expanded", "true"); }
+      const entry = page.locator("[data-attention-id]").filter({ hasText: names.prefStored });
+      expect(await entry.count(), "the stored name heads a Needs attention entry (missing details)").toBeGreaterThan(0);
+      await expect(page.getByRole("link", { name: names.prefStored, exact: true }).last(), "birthday chip shows the stored name").toBeVisible();
+      await expect(page.getByText(/something went wrong|application error/i), "the page renders without an error").toHaveCount(0);
+      await capture(page, "owner-display-identity-fallback");
+    });
+
+    // NOT RUNNABLE until migration 0258 (clients.preferred_name) is applied: the column is absent on production and on any stack
+    // built from it. Recorded, not faked; a local pre-apply rehearsal would have to be labelled as such.
+    test.skip("display identity WITH a preferred name: preferred name shown, legal name nowhere (NOT RUNNABLE until 0258)", async () => {});
+
+    test("setup card: an unfinished studio reads 'incomplete'; a studio whose only gap is its own admission choice reads 'paused by owner'", async ({ page, browser }) => {
+      await loginAsOwner(page, seed);
+      await open(page);
+      await expect(page.getByTestId("setup-paused-by-owner"), "default studio is unfinished, not paused").toHaveCount(0);
+      await expect(page.getByTestId("booking-setup-card")).toBeVisible({ timeout: T });
+      await capture(page, "owner-setup-incomplete");
+
+      // second synthetic studio: live treatment consent + new clients closed, nothing else structural missing
+      const s2 = await seedE2eStudio();
+      await sql(
+        `insert into public.consent_form_templates (studio_id, title, description, body, form_type, version, status, is_live)
+         values ($1, 'Treatment consent', 'E2E', 'E2E treatment consent body', 'treatment_consent', 1, 'active', true)`,
+        [s2.studioId],
+      );
+      await sql(
+        `with permit as (select set_config('hone.admission_mode_studio_id', $1::text, true) as p)
+         update public.studios set new_client_admission_mode = 'closed' from permit where id = $1::uuid`,
+        [s2.studioId],
+      );
+      const ctx = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 } });
+      const p = await ctx.newPage();
+      await loginAsOwner(p, s2);
+      await p.goto("/dashboard");
+      await expect(p.locator("h1").first()).toBeVisible({ timeout: T });
+      await expect(p.getByTestId("setup-paused-by-owner"), "paused by the owner's own choice").toBeVisible({ timeout: T });
+      await expect(p.getByTestId("setup-paused-by-owner")).toContainText("That is your setting, not unfinished setup.");
+      await capture(p, "owner-setup-paused");
+      await ctx.close();
+    });
+
+    test("when the intake read fails the panel says it could not check, never a quiet zero", async ({ page }) => {
+      await loginAsOwner(page, seed);
+      // Table-wide revoke takes the whole page down (the Today roster's own intake read throws, as on production), so it cannot
+      // isolate this card. Only the awaiting-review read orders by the row id, so withdraw SELECT on that one column.
+      const cols = (await sql<{ column_name: string }>(
+        `select column_name from information_schema.columns where table_schema='public' and table_name='client_intake_forms' and column_name <> 'id'`,
+      )).map((r) => `"${r.column_name}"`).join(", ");
+      await sql(`revoke select on public.client_intake_forms from authenticated`);
+      await sql(`grant select (${cols}) on public.client_intake_forms to authenticated`);
+      try {
+        await page.goto("/dashboard");
+        await expect(page.locator("h1").first()).toBeVisible({ timeout: T });
+        await page.waitForLoadState("networkidle").catch(() => undefined);
+        const note = page.getByTestId("needs-attention-unavailable");
+        await expect(note, "an unreadable source is announced").toBeVisible({ timeout: T });
+        await expect(note).toHaveAttribute("role", "status");
+        await capture(page, "owner-needs-attention-unavailable");
+      } finally {
+        await sql(`grant select on public.client_intake_forms to authenticated`);
+      }
     });
   });
 }
