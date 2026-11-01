@@ -4,38 +4,36 @@
 // error where a server component tries to call a function exported from a
 // client module.
 //
-// Tab URL values (DEEP-LINK-COMPATIBLE):
-//   - "overview" : default landing
-//   - "sessions" : per-visit history + treatment time totals
-//                  (new value added in the post-retest UX polish PR)
-//   - "treatment" : treatment plans only (previously held sessions +
-//                   plans; sessions content moved to the new sessions
-//                   tab. Old ?tab=treatment links still land here as a
-//                   valid tab; they just no longer see session content
-//                   on the same page.)
-//   - "health" : Health & Forms (intake summary, status, deep link to
-//                /clients/[id]/intake)
-//   - "personal" : Personal Notes (practitioner-only relationship memory)
-//   - "consultation" : Consultation notes + Skin/hair analysis (dated,
-//                      append-only clinical records; migration 0126)
+// ONE tab union, defined here (tests/db/client-profile-tab-*.db.test.ts read
+// this declaration as the product's tab vocabulary). The order, labels and the
+// owner-only Billing tab are lib/clients/profile-tabs.ts, which imports this
+// type so the two cannot drift.
+//
+// Tab URL values:
+//   overview, sessions, treatment (plans + consultation + skin/hair + budget),
+//   photos, health, messages (portal access + messages), notes (pinned +
+//   personal notes), billing (owner only).
+// Legacy ?tab=consultation and ?tab=personal are redirected (see profile-tabs).
 
 export type ProfileTab =
   | "overview"
   | "sessions"
   | "treatment"
-  | "messages"
+  | "photos"
   | "health"
-  | "consultation"
-  | "personal";
+  | "messages"
+  | "notes"
+  | "billing";
 
 export function isProfileTab(value: string | null | undefined): value is ProfileTab {
   return (
     value === "overview" ||
     value === "sessions" ||
     value === "treatment" ||
-    value === "messages" ||
+    value === "photos" ||
     value === "health" ||
-    value === "consultation" ||
-    value === "personal"
+    value === "messages" ||
+    value === "notes" ||
+    value === "billing"
   );
 }

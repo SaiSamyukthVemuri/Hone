@@ -26,19 +26,19 @@ afterEach(() => {
 describe("requireLoadedForTab", () => {
   it("is silent when every read the tab renders was loaded", () => {
     expect(() =>
-      requireLoadedForTab("personal", { personal: { personalNotes: true } }),
+      requireLoadedForTab("notes", { notes: { personalNotes: true } }),
     ).not.toThrow();
   });
 
   it("throws naming the tab and the read when a gate stopped covering it", () => {
     expect(() =>
-      requireLoadedForTab("personal", { personal: { personalNotes: false } }),
+      requireLoadedForTab("notes", { notes: { personalNotes: false } }),
     ).toThrow(DeferredReadError);
     try {
-      requireLoadedForTab("personal", { personal: { personalNotes: false } });
+      requireLoadedForTab("notes", { notes: { personalNotes: false } });
       expect.unreachable("the invariant must throw");
     } catch (err) {
-      expect((err as Error).message).toContain('"personal"');
+      expect((err as Error).message).toContain('"notes"');
       expect((err as Error).message).toContain("personalNotes");
     }
   });
@@ -60,15 +60,15 @@ describe("requireLoadedForTab", () => {
 
   it("checks only the active tab, so another tab's deferral is not an error", () => {
     expect(() =>
-      requireLoadedForTab("personal", {
-        personal: { personalNotes: true },
+      requireLoadedForTab("notes", {
+        notes: { personalNotes: true },
         treatment: { treatmentPlans: false },
       }),
     ).not.toThrow();
   });
 
   it("does not check a tab the contract says nothing about", () => {
-    expect(() => requireLoadedForTab("health", { personal: { personalNotes: false } })).not.toThrow();
+    expect(() => requireLoadedForTab("health", { notes: { personalNotes: false } })).not.toThrow();
   });
 
   it("carries read names and the tab, and nothing else", () => {
@@ -91,7 +91,7 @@ describe("requireLoadedForTab", () => {
     vi.resetModules();
     const production = await import("@/app/(app)/clients/[id]/deferred-reads");
     expect(() =>
-      production.requireLoadedForTab("personal", { personal: { personalNotes: false } }),
+      production.requireLoadedForTab("notes", { notes: { personalNotes: false } }),
     ).not.toThrow();
   });
 });
