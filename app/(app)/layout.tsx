@@ -3,6 +3,7 @@ import {
   PendingLink,
 } from "@/components/pending-link";
 import { PrimaryNavLink } from "./PrimaryNavLink";
+import { AppMain } from "./AppMain";
 import { MobileMenu } from "./MobileMenu";
 import { AccountMenu } from "./AccountMenu";
 import { SignOutFlightProvider } from "./signout-flight";
@@ -247,9 +248,7 @@ export default async function AppLayout({
         </div>
       </header>
       </SignOutFlightProvider>
-      <main className="mx-auto max-w-5xl px-5 py-8 md:px-8 md:py-10">
-        {children}
-      </main>
+      <AppMain>{children}</AppMain>
       <AppFooter />
       {/* PR #142. Analytics mounts here (and at the other safe-tree
           layouts + marketing leaf pages) instead of the root layout,
