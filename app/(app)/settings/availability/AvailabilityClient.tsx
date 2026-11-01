@@ -1,5 +1,6 @@
 "use client";
 
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import type {
   StudioAvailabilityDefault,
@@ -242,6 +243,19 @@ export function AvailabilityClient({
   const [applyingPreset, setApplyingPreset] = useState<
     (typeof PRESETS)[number] | null
   >(null);
+
+  // An open day editor whose draft differs from the saved day is unsaved work.
+  const savedDay = editingDow == null ? null : days.get(editingDow) ?? null;
+  useUnsavedChangesGuard(
+    "availability-day",
+    editingDow != null &&
+      draft != null &&
+      savingDow == null &&
+      (draft.is_open !== (savedDay?.is_open ?? false) ||
+        (draft.is_open &&
+          (draft.open_time !== (savedDay?.open_time || DEFAULT_OPEN) ||
+            draft.close_time !== (savedDay?.close_time || DEFAULT_CLOSE)))),
+  );
 
   // Keep local map in sync if server props change after a revalidation.
   useEffect(() => {
@@ -910,6 +924,14 @@ function AddOverrideForm({ onDone }: { onDone: () => void }) {
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  useUnsavedChangesGuard(
+    "availability-override",
+    date !== "" ||
+      note !== "" ||
+      !isOpenToggle ||
+      openTime !== DEFAULT_OPEN ||
+      closeTime !== DEFAULT_CLOSE,
+  );
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -1097,6 +1119,7 @@ function AddBlockoutForm({ onDone }: { onDone: () => void }) {
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  useUnsavedChangesGuard("availability-blockout", starts !== "" || ends !== "" || reason !== "");
 
   function submit(e: React.FormEvent) {
     e.preventDefault();

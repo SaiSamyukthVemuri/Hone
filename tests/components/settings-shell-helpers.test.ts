@@ -162,6 +162,13 @@ describe("Settings R2: the remaining edit-then-save forms are guarded (Insurance
     ["app/(app)/settings/booking/BookingView.tsx", "booking-new-clients"],
     ["app/(app)/settings/services/page.tsx", "service-edit-"],
     ["app/(app)/settings/services/page.tsx", "service-create"],
+    ["app/(app)/settings/availability/AvailabilityClient.tsx", "availability-day"],
+    ["app/(app)/settings/availability/AvailabilityClient.tsx", "availability-override"],
+    ["app/(app)/settings/availability/AvailabilityClient.tsx", "availability-blockout"],
+    ["app/(app)/settings/availability/PractitionerWeekEditor.tsx", "availability-week-day"],
+    ["app/(app)/settings/availability/PractitionerWeekEditor.tsx", "availability-week-override"],
+    ["app/(app)/settings/availability/TimedBlocksSection.tsx", "availability-timed-block"],
+    ["app/(app)/settings/availability/RecurringBreaksSection.tsx", "availability-recurring-break"],
   ])("%s registers %s", (file, key) => {
     const src = read(file);
     expect(src).toMatch(/useUnsavedChangesGuard\(|<FormDirtyGuard/);

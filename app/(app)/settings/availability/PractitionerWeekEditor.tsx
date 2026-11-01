@@ -1,5 +1,6 @@
 "use client";
 
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { useState, useTransition } from "react";
 import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import type {
@@ -67,6 +68,16 @@ export function PractitionerWeekEditor({
     close: "17:00",
   });
   const [confirmResetWeek, setConfirmResetWeek] = useState(false);
+  // An open day editor whose draft differs from the day as shown is unsaved work.
+  const editedDay = editingDow == null ? null : week.find((d) => d.day_of_week === editingDow) ?? null;
+  useUnsavedChangesGuard(
+    `availability-week-day-${practitionerId}`,
+    editedDay != null &&
+      (draft.is_open !== editedDay.is_open ||
+        (draft.is_open &&
+          (draft.open !== (editedDay.open_time || "09:00") ||
+            draft.close !== (editedDay.close_time || "17:00")))),
+  );
 
   function run(action: () => Promise<AvailabilityActionResult>, okText: string) {
     setMsg(null);
@@ -310,6 +321,7 @@ function OverridesSection({
   const [isOpen, setIsOpen] = useState(true);
   const [open, setOpen] = useState("10:00");
   const [close, setClose] = useState("15:00");
+  useUnsavedChangesGuard(`availability-week-override-${practitionerName}`, date !== "" || !isOpen || open !== "10:00" || close !== "15:00");
 
   return (
     <div className="flex flex-col gap-3">

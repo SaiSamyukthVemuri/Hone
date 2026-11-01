@@ -1,5 +1,6 @@
 "use client";
 
+import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { StudioTimedBlock } from "@/lib/types/database";
@@ -124,6 +125,19 @@ export function TimedBlocksSection({
   const [allDay, setAllDay] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // A block being edited, or a create form changed from its defaults, is unsaved
+  // work; resetForm() after a successful save puts every field back.
+  useUnsavedChangesGuard(
+    "availability-timed-block",
+    editingId != null ||
+      date !== todayLocal ||
+      startLocal !== DEFAULT_START ||
+      endLocal !== DEFAULT_END ||
+      category !== DEFAULT_CATEGORY ||
+      privateNote !== "" ||
+      allDay ||
+      scope !== defaultScope,
+  );
 
   function resetForm() {
     setEditingId(null);
