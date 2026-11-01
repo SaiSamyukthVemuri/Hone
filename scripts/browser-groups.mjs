@@ -245,6 +245,9 @@ export const BROWSER_GROUPS = {
       // HON-48 team day layout matrix (opt-in: self-skips unless CAL_LAYOUT_E2E=1, so a targeted lane lists them but runs nothing).
       "calendar-day-layout.spec.ts",
       "calendar-day-layout-single.spec.ts",
+      // HON-48 calendar sidebar matrix (opt-in: self-skips unless CAL_SIDEBAR_E2E=1): practitioner checkboxes, empty selection, Day width
+      // rule, mini-calendar today/selected marks in the studio timezone, Time insights rules, mobile drawer and keyboard.
+      "calendar-sidebar.spec.ts",
       // HON-48 team day view: five synthetic practitioners in one-column-per-
       // practitioner layout, Los Angeles date boundaries, same-practitioner
       // conflict refusal, member create scope and the phone scroll box.

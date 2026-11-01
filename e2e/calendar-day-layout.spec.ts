@@ -208,7 +208,6 @@ for (const vpName of ["desktop", "mobile"] as const) {
         await expect(headers(page), "every working practitioner has a header").toHaveCount(n);
         await expect(columns(page), "every working practitioner has a column").toHaveCount(n);
         const K = await loadCalLayoutConstants();
-        const box = (await view(page).boundingBox())!;
         const clientW = await view(page).evaluate((el) => el.clientWidth);
         const hb: { x: number; w: number }[] = [], cb: { x: number; w: number }[] = [];
         for (let i = 0; i < n; i++) {
@@ -222,8 +221,7 @@ for (const vpName of ["desktop", "mobile"] as const) {
           expect(cb[i].w, `column ${i} is not below the code's minimum (${K.minColumnPx}px, ${K.source})`).toBeGreaterThanOrEqual(K.minColumnPx - 1);
         }
         if (n === 1) {
-          const cap = K.singleColumnMaxPx ?? 0.6 * (box.width - K.railPx);
-          expect(cb[0].w, `one practitioner is compact: ${Math.round(cb[0].w)}px of a ${Math.round(box.width)}px box (limit ${Math.round(cap)}px, ${K.singleColumnMaxPx ? "named constant" : "relative 60% until the constant exists"})`).toBeLessThanOrEqual(cap);
+          expect(cb[0].w, `one practitioner uses the whole schedule: ${Math.round(cb[0].w)}px of a ${Math.round(clientW)}px box`).toBeGreaterThanOrEqual(clientW - K.railPx - 2);
         }
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "the page itself never scrolls sideways").toBe(true);
         const needsH = K.railPx + n * K.minColumnPx > clientW;
