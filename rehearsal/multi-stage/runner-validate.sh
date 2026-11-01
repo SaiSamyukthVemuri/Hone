@@ -21,7 +21,7 @@ run_stage() { # run_stage HOMEDIR CONF : prints the runner's output; the stub lo
   env -i STUB_LOG="$W/stub.log" PATH="$W/bin:/usr/bin:/bin" HOME="$1" TERM=dumb script -qec "/bin/bash $1/hone-s1/runner/hone-stage-run.sh $2" /dev/null 2>&1 </dev/null
 }
 n=0
-for S in $(ls "$PKG" | grep -E '^[0-9]{4}[0-9A-Za-z._-]*$'); do
+for S in $(cd "$PKG" && for x in *; do [ -d "$x" ] && echo "$x"; done); do
   [ -f "$PKG/$S/runner/stages/$S.conf" ] || continue
   n=$((n+1))
   H="$W/h$n"; mkdir -p "$H/hone-s1"
@@ -33,7 +33,7 @@ for S in $(ls "$PKG" | grep -E '^[0-9]{4}[0-9A-Za-z._-]*$'); do
 done
 [ "$n" -gt 0 ] && [ "$fail" = 0 ] && ok "every generated manifest ($n stages) passes the REAL runner's validation (stage id, platform, pins, markers) and reaches the driver"
 # negative control 1: a 17-character stage id in an otherwise valid manifest is refused by the real runner before the driver
-S1=$(ls "$PKG" | grep -E '^[0-9]{4}[0-9A-Za-z._-]*$' | head -1)
+S1=$(cd "$PKG" && for x in *; do [ -d "$x" ] && echo "$x"; done | head -1)
 H="$W/hneg"; mkdir -p "$H/hone-s1"; for d in "$PKG/$S1"/s1-apply-* "$PKG/$S1"/window-reads-* "$PKG/$S1/runner"; do cp -R "$d" "$H/hone-s1/"; done
 sed "s/^STAGE=.*/STAGE=0253-after-hosted/" "$H/hone-s1/runner/stages/$S1.conf" > "$H/hone-s1/runner/stages/long.conf"
 out=$(run_stage "$H" "$H/hone-s1/runner/stages/long.conf")

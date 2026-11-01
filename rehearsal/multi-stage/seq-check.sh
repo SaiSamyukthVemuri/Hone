@@ -54,8 +54,8 @@ install_step() { # install_step STAGE [VBDIR]: the package's files + the test va
   echo "RUNNER_SHA=$TRUN" > "$H/rconst-$S.txt"
   mkvar "$P/s1-apply-$S-online/s1-reconcile-$S-online.sh" "$r/s1-apply-$S-online/s1-reconcile-$S-online.sh" "$H/rconst-$S.txt"; chmod 755 "$r/s1-apply-$S-online/s1-reconcile-$S-online.sh"
   # the stage's stub knobs (replace the previous stage's, the stub reads the FIRST match)
-  sed -i.bak -E '/^(S_STAGE|S_VER|S_S1H|S_OVERALL|G12_AT|S_TABLES)=/d' "$H/stubcfg"; rm -f "$H/stubcfg.bak"
-  cfgset "S_STAGE=$S" "S_VER=$(ex $S 'd["migration"][:4]')" "S_S1H=$(sha "$P/window-reads-s1-$S/s1-history-$S.sql")" "S_OVERALL=$(ex $S 'd["pins"]["overall"]')" "G12_AT=$(ex $S 'd["history_before"]["max"]')" "S_TABLES=$(ex $S '",".join(d.get("gate_tables") or ["appointment_settlements","client_pinned_notes","client_pricing","manual_fee_charge_attempts","payment_charge_attempts"])')"
+  sed -i.bak -E '/^(S_STAGE|S_VER|S_VERS|S_S1H|S_OVERALL|G12_AT|S_TABLES)=/d' "$H/stubcfg"; rm -f "$H/stubcfg.bak"
+  cfgset "S_STAGE=$S" "S_VER=$(ex $S 'd["rowcol"][5:]')" "S_VERS=$(ex $S '" ".join(d["pending_versions"])')" "S_S1H=$(sha "$P/window-reads-s1-$S/s1-history-$S.sql")" "S_OVERALL=$(ex $S 'd["pins"]["overall"]')" "G12_AT=$(ex $S 'd["history_before"]["max"]')" "S_TABLES=$(ex $S '",".join(d.get("gate_tables") or ["appointment_settlements","client_pinned_notes","client_pricing","manual_fee_charge_attempts","payment_charge_attempts"])')"
 }
 leftover() { python3 -I -c 'import os,sys
 fd=os.open(sys.argv[1],os.O_RDONLY|os.O_NONBLOCK)
@@ -108,8 +108,8 @@ good_step() { # good_step STAGE NAME : apply + read-back + reconcile, asserting 
   [ $RC = 0 ] && [ "$(calls)" = "$want" ] && [ "$(receipt_of)" = "APPLIED+VERIFIED" ] && [ "$(marker)" = APPLIED-UNVERIFIED ] && [ "$CONSUMED" = 6 ] && [ -z "$(leaks)" ] \
     && ok "step $K ($S): $(nreads $S) pinned reads, ONE dry run, ONE push$([ "$(ex $S 'd["include_all"]')" = True ] && echo ' (--include-all)' || echo ' (plain)'), read-back, APPLIED+VERIFIED, marker kept" \
     || bad "step $K ($S): apply" "rc=$RC calls=[$(calls)] want=[$want] receipt=$(receipt_of) marker=$(marker) consumed=$CONSUMED $(echo "$OUT" | grep STOP | head -2) leaks=$(leaks)"
-  hist_is "$S" after && [ "$(grep -c "^$(ex $S 'd["migration"][:4]')\$" "$H/remote-history")" = 1 ] \
-    && ok "step $K ($S): history $(hist_rows) rows, max $(hist_max), $(ex $S 'd["migration"][:4]') once, version-set md5 as planned" || bad "step $K ($S): history after" "rows=$(hist_rows) max=$(hist_max)"
+  hist_is "$S" after && [ "$(for v in $(ex $S '" ".join(d["pending_versions"])'); do grep -c "^$v\$" "$H/remote-history"; done | tr '\n' ' ')" = "$(ex $S '" ".join("1" for _ in d["pending_versions"])') " ] \
+    && ok "step $K ($S): history $(hist_rows) rows, max $(hist_max), $(ex $S '" ".join(d["pending_versions"])') once each, version-set md5 as planned" || bad "step $K ($S): history after" "rows=$(hist_rows) max=$(hist_max)"
   [ "$(grep -c '^push' "$H/calls.log")" = 1 ] && ok "step $K ($S): exactly one push call" || bad "step $K ($S): push count"
   run_recon "$S"
   [ $RC = 0 ] && echo "$OUT" | grep -q "RECONCILED ALL" && [ "$(marker)" = none ] && ls "$H/hone-s1/s1-apply/"APPLY-STATE.cleared.* >/dev/null 2>&1 \
@@ -189,6 +189,7 @@ for S in $STAGES; do good_step "$S"; done
 
 # ================================================================== B. negative controls
 if [ "${ONLY_A:-0}" = 1 ]; then echo "# RESULT: $pass passed, $fail failed"; [ $fail = 0 ]; exit; fi
+[ "$(ex $(echo $STAGES | cut -d' ' -f1) 'len(d["pending_versions"])')" -gt 1 ] && . "$D/group-controls.sh"
 echo "# B. negative controls"
 S1=$(echo $STAGES | cut -d' ' -f1); S2=$(echo $STAGES | cut -d' ' -f2); S3=$(echo $STAGES | cut -d' ' -f3)
 FORWARD2=$(ex $S2 'd["migration"]')

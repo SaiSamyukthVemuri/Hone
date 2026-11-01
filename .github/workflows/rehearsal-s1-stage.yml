@@ -1,5 +1,5 @@
-# REHEARSAL - NEVER MERGE. PREPARATION ONLY / HELD: S1 STAGE PACKAGE (0258, 0272, 0266; 0271 dropped). Built by rehearsal/multi-stage/build.py from spec/s1.json: the hosted set is the production
-# tree's 249 migration files (S0/R1: 249 rows incl. 0253 and 0254, max 0257, 0255 NOT applied), then one reviewed online stage per migration. (1) seq-linux: generated scripts as real text against a stateful stub CLI.
+# REHEARSAL - NEVER MERGE. PREPARATION ONLY / HELD: S1 STAGE PACKAGE (Sam's option A: 0258 -> 0266 -> 0272 in ONE stage and ONE plain push, numeric order; 0271 dropped). Built by rehearsal/multi-stage/build.py from spec/s1.json: the hosted set is the production
+# tree's 249 migration files (S0/R1: 249 rows incl. 0253 and 0254, max 0257, 0255 NOT applied), then ONE reviewed online stage applying the three migrations by one plain push (no --include-all). (1) seq-linux: generated scripts as real text against a stateful stub CLI.
 # (2) push-linux / push-macos: the real pinned CLI v2.102.0 against a disposable PostgreSQL, one invocation per migration, with negative controls. (3) gates-stack: the 0258/0272/0266 gate packs on a hosted-shaped
 # local Supabase stack. No hosted call, no customer data, no credential beyond a throwaway canary password.
 name: rehearsal-s1-stage
@@ -8,6 +8,7 @@ on:
   pull_request:
     paths:
       - "rehearsal/multi-stage/**"
+      - "scripts/ci/s1-trio-push-rehearsal.sh"
       - "scripts/ci/multi-stage-push-rehearsal.sh"
       - "scripts/ci/gate-pack-stack-rehearsal.sh"
       - ".github/workflows/rehearsal-s1-stage.yml"
@@ -26,7 +27,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build package S1 (0258, 0272, 0266 and every valid drop)
+      - name: Build package S1 (0258, 0266, 0272 as one stage)
         shell: bash
         run: |
           python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/s1.json "$RUNNER_TEMP/s1-pkg"
@@ -41,9 +42,9 @@ jobs:
         run: |
           set -o pipefail
           : > "$RUNNER_TEMP/seq-s1.txt"
-          for q in full drop-0266 "drop-0258+0272+0266"; do
+          for q in full "drop-0258+0266+0272"; do
             echo "=========== S1 sequence $q" | tee -a "$RUNNER_TEMP/seq-s1.txt"
-            ONLY_A=1 bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/s1-pkg" "$RUNNER_TEMP/s1-hosted" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-s1.txt" | tail -3
+            bash rehearsal/multi-stage/seq-check.sh "$RUNNER_TEMP/s1-pkg" "$RUNNER_TEMP/s1-hosted" "$q" 2>&1 | tee -a "$RUNNER_TEMP/seq-s1.txt" | tail -3
           done
           ! grep -q "^FAIL" "$RUNNER_TEMP/seq-s1.txt" "$RUNNER_TEMP/builder-s1.txt"
 
@@ -57,7 +58,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build package S1 (0258, 0272, 0266 and every valid drop)
+      - name: Build package S1 (0258, 0266, 0272 as one stage)
         shell: bash
         run: |
           python3 --version
@@ -76,25 +77,25 @@ jobs:
         env:
           REHEARSAL_OUT: ${{ runner.temp }}/ms-push-out
         run: |
-          bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" full
+          bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" full
           for q in $(python3 -c "import json,sys;print(' '.join(k for k in json.load(open(sys.argv[1]))['sequences'] if k != 'full'))" "$RUNNER_TEMP/ms-pkg/PLAN.json"); do
-            REHEARSAL_OUT="$RUNNER_TEMP/ms-push-out/$q" ONLY_A=1 bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" "$q" | tail -2
+            REHEARSAL_OUT="$RUNNER_TEMP/ms-push-out/$q" ONLY_A=1 bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" "$q" | tail -2
           done
       - name: H1 control, an unreadable plan is a FAIL and only a really empty sequence is a no-op
         shell: bash
         env:
           REHEARSAL_OUT: ${{ runner.temp }}/ms-h1
         run: |
-          rc=0; o=$(bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" no-such-sequence 2>&1) || rc=$?
+          rc=0; o=$(bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" no-such-sequence 2>&1) || rc=$?
           [ "$rc" != 0 ] && echo "$o" | grep -q "^FAIL  could not read the stage list" || { echo "FAIL - a mistyped sequence name was not refused: rc=$rc $o"; exit 1; }
-          rc=0; o=$(bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/no-such-package" full 2>&1) || rc=$?
+          rc=0; o=$(bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/no-such-package" full 2>&1) || rc=$?
           [ "$rc" != 0 ] && echo "$o" | grep -q "^FAIL  could not read the stage list" || { echo "FAIL - a missing PLAN.json was not refused: rc=$rc $o"; exit 1; }
           python3 - "$RUNNER_TEMP/ms-pkg/PLAN.json" "$RUNNER_TEMP/ms-h1-pkg" <<'PY'
           import json, os, sys
           d = json.load(open(sys.argv[1])); d["sequences"]["empty-control"] = {"stages": []}
           os.makedirs(sys.argv[2], exist_ok=True); json.dump(d, open(os.path.join(sys.argv[2], "PLAN.json"), "w"))
           PY
-          o=$(bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-h1-pkg" empty-control 2>&1) && echo "$o" | grep -q "RESULT: 0 passed, 0 failed (empty sequence" || { echo "FAIL - a genuinely empty sequence was not a no-op: $o"; exit 1; }
+          o=$(bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/ms-h1-pkg" empty-control 2>&1) && echo "$o" | grep -q "RESULT: 0 passed, 0 failed (empty sequence" || { echo "FAIL - a genuinely empty sequence was not a no-op: $o"; exit 1; }
           echo "ok - mistyped sequence FAIL, missing plan FAIL, genuinely empty sequence no-op"
       - name: Upload rehearsal logs
         if: ${{ always() }}
@@ -113,7 +114,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build package S1 (0258, 0272, 0266 and every valid drop)
+      - name: Build package S1 (0258, 0266, 0272 as one stage)
         shell: bash
         run: |
           python3 --version
@@ -142,8 +143,8 @@ jobs:
         env:
           REHEARSAL_OUT: ${{ runner.temp }}/ms-push-out
         run: |
-          bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" full
-          REHEARSAL_OUT="$RUNNER_TEMP/ms-push-out/drop-0266" ONLY_A=1 bash scripts/ci/multi-stage-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" drop-0266
+          bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" full
+          REHEARSAL_OUT="$RUNNER_TEMP/ms-push-out/empty" ONLY_A=1 bash scripts/ci/s1-trio-push-rehearsal.sh "$RUNNER_TEMP/ms-pkg" "drop-0258+0266+0272"
       - name: Upload rehearsal logs
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -298,7 +299,7 @@ jobs:
         if: steps.sb_start.outcome == 'failure'
         run: bash scripts/ci/supabase-start-bind-retry.sh --after-failed-start "$RUNNER_TEMP/supabase-start.log" supabase start -x studio,imgproxy,edge-runtime,logflare,vector
 
-      - name: Build package S1 (the hosted set = the production tree, then 0258, 0272, 0266)
+      - name: Build package S1 (the hosted set = the production tree, then 0258, 0266, 0272 as one stage)
         run: python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/s1.json "$RUNNER_TEMP/ms-pkgx"
 
       - name: Gate packs, step by step, against the stack (PRE rules, one real push per step, POST read-back, mutation controls)
@@ -306,7 +307,7 @@ jobs:
           set -o pipefail
           first=1
           : > "$RUNNER_TEMP/gates-stack.txt"
-          for q in full "drop-0266" "drop-0258+0272+0266"; do
+          for q in full "drop-0258+0266+0272"; do
             if [ "$first" = 0 ]; then git checkout -- supabase/migrations && git clean -fdq supabase/migrations && supabase db reset --local > "$RUNNER_TEMP/reset.log" 2>&1 || { echo "FAIL - db reset before $q" | tee -a "$RUNNER_TEMP/gates-stack.txt"; tail -3 "$RUNNER_TEMP/reset.log"; }; fi
             first=0
             echo "=========== S1 sequence $q" | tee -a "$RUNNER_TEMP/gates-stack.txt"
@@ -314,7 +315,7 @@ jobs:
           done
           ! grep -q "^FAIL" "$RUNNER_TEMP/gates-stack.txt"
 
-      - name: Expected read-back values on the rehearsal stack (S1 read-back SELECTs after 0258, 0272, 0266; hashes only)
+      - name: Expected read-back values on the rehearsal stack (S1 read-back SELECTs after 0258, 0266, 0272 in numeric order; hashes only)
         run: |
           set -euo pipefail
           git checkout -- supabase/migrations && git clean -fdq supabase/migrations

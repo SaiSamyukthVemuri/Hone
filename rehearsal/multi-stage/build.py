@@ -183,38 +183,57 @@ def plan(spec, include=None):
     chosen = [spec["steps"][i] for i in chosen_ix]
     done_ix = 0   # bitmask over the spec's step order of the steps applied before this one
     for k, s in enumerate(chosen, 1):
-        fn0 = os.path.basename(s["file"])
-        m = re.match(r"^(\d{4})_[A-Za-z0-9_]+\.sql$", fn0)
-        if not m:
-            die("step %d: %r is not NNNN_name.sql" % (k, fn0))
-        body = open(s["file"], "rb").read()
-        if not s.get("sha256"):
-            die("step %d (%s): the spec carries no sha256 for it (mandatory for every step)" % (k, fn0))
-        if shab(body) != s["sha256"]:
-            die("step %d (%s): the file is not the sealed one (sha256 %s, the spec says %s)" % (k, fn0, shab(body), s["sha256"]))
-        fn = fn0
-        v = int(fn[:4])
-        for r in s.get("requires", []):
-            if int(r) not in cur:
-                die("step %d (%s) requires %s, which is neither hosted nor an earlier step" % (k, fn0, r))
-        if v in cur:
-            die("step %d: version %s is already in the hosted set or an earlier step" % (k, v4(v)))
-        before, after = set(cur), set(cur) | {v}
+        # A step is ONE migration, or a GROUP ("members": several files applied by ONE push, numeric order, Sam's option A for S1).
+        mem = s.get("members")
+        ms = sorted(mem, key=lambda x: os.path.basename(x["file"])) if mem else [s]
+        items = []
+        for mm in ms:
+            fn0 = os.path.basename(mm["file"])
+            m = re.match(r"^(\d{4})_[A-Za-z0-9_]+\.sql$", fn0)
+            if not m:
+                die("step %d: %r is not NNNN_name.sql" % (k, fn0))
+            body = open(mm["file"], "rb").read()
+            if not mm.get("sha256"):
+                die("step %d (%s): the spec carries no sha256 for it (mandatory for every step)" % (k, fn0))
+            if shab(body) != mm["sha256"]:
+                die("step %d (%s): the file is not the sealed one (sha256 %s, the spec says %s)" % (k, fn0, shab(body), mm["sha256"]))
+            items.append((int(fn0[:4]), fn0, body, mm))
+        vs = [i[0] for i in items]
+        if len(set(vs)) != len(vs):
+            die("step %d: a version appears twice in the group" % k)
+        seen_local = set(cur)
+        for (v_, fn_, b_, mm) in items:
+            for r in mm.get("requires", []):
+                if int(r) not in seen_local:
+                    die("step %d (%s) requires %s, which is neither hosted nor an earlier step" % (k, fn_, r))
+            if v_ in cur:
+                die("step %d: version %s is already in the hosted set or an earlier step" % (k, v4(v_)))
+            seen_local.add(v_)
+        before, after = set(cur), set(cur) | set(vs)
         bmax, amax = max(before), max(after)
-        include_all = v < bmax
+        include_all = min(vs) < bmax
+        if mem and s.get("plain") and include_all:
+            die("step %d: the spec requires a PLAIN push (no --include-all) but %s is below the hosted max %s" % (k, v4(min(vs)), v4(bmax)))
         absent = [i for i in range(1, amax + 1) if i not in after and i not in skipped]
         files = dict(cur_files)
-        files[v] = body
         nm = dict(names)
-        nm[v] = fn
+        for (v_, fn_, b_, mm) in items:
+            files[v_] = b_
+            nm[v_] = fn_
+        label = "+".join(v4(x) for x in vs)
+        grp = bool(mem)
+        sid = ("%s-b%02x" % (s["stage_name"], done_ix)) if grp else stage_id(vs[0], done_ix)
+        fn0, fn, body, v = items[0][1], items[0][1], items[0][2], vs[0]
         st = {
-            "k": k, "ver": v4(v), "vn": v, "file": fn, "sealed": shab(body), "head": s.get("head_sha", "0" * 40),
-            "stage": stage_id(v, done_ix), "applied_before": [e[0][:4] for e in earlier], "before": before, "after": after,
+            "k": k, "ver": label, "vn": v, "file": fn, "sealed": shab(body), "head": s.get("head_sha", "0" * 40),
+            "stage": sid, "applied_before": [e[0][:4] for e in earlier], "before": before, "after": after,
             "n_before": len(before), "n_after": len(after), "before_max": v4(bmax), "after_max": v4(amax),
             "include_all": include_all, "absent": absent, "md5_before": md5list(before), "md5_after": md5list(after),
             "bundle": {nm[x]: files[x] for x in after}, "pack": s.get("gate_pack"),
             "orig_file": fn0, "droppable": bool(s.get("droppable", True)), "ready": s.get("ready", {}),
             "pins": list(pins_hosted) + list(earlier), "adopt": s.get("adopt"),
+            "group": grp, "vers": [v4(x) for x in vs], "vns": vs, "files": [i[1] for i in items], "sealeds": [shab(i[2]) for i in items],
+            "npend": len(items), "rowcol": ("rows_pending" if grp else "rows_" + v4(v)),
         }
         if st["adopt"]:
             if k != 1 or before != set(hosted):
@@ -222,7 +241,8 @@ def plan(spec, include=None):
             st["stage"] = st["adopt"]["stage"]
         check_stage_id(st["stage"], k, fn0)
         steps.append(st)
-        earlier.append((fn, shab(body)))
+        for (v_, fn_, b_, mm) in items:
+            earlier.append((fn_, shab(b_)))
         done_ix |= 1 << chosen_ix[k - 1]
         cur, cur_files, names = after, files, nm
     return hosted, steps
@@ -244,6 +264,14 @@ def load_pack(st, specdir):
     return p
 
 
+def NAMELINES(st):
+    return "".join("grep -Eq '^[0-9a-f]{64}  %s_' \"$SELF/$LIST\" || die \"$LIST does not name %s\"\n" % (v_, v_) for v_ in st["vers"])
+
+
+def INL(st):
+    return ", ".join("'%s'" % x for x in st["vers"])
+
+
 def gen_sql(st, pack, S):
     """returns {name: text} of the read-only gate files generated for this step"""
     out = {}
@@ -251,23 +279,23 @@ def gen_sql(st, pack, S):
     out["g02-history-%s.sql" % S] = (
         "-- GATE G2 (%s, MULTI-STAGE, PREPARATION ONLY / HELD): the hosted migration history before step %d (%s). Generated by build.py.\n"
         "-- One SELECT over supabase_migrations.schema_migrations; counts, one md5 and version strings only. No writes.\n"
-        "-- EXPECTED PASS: applied_count = %d, hosted_max = '%s', list_md5 = '%s' (md5 of the sorted version list, comma-joined: pins EXACTLY which versions are present), rows_%s = 0.\n"
+        "-- EXPECTED PASS: applied_count = %d, hosted_max = '%s', list_md5 = '%s' (md5 of the sorted version list, comma-joined: pins EXACTLY which versions are present), %s = 0.\n"
         "-- STOP CONDITION: any column differs. Do not apply, do not repair history.\n"
         "select\n"
         "  (select count(*) from supabase_migrations.schema_migrations)                                    as applied_count,\n"
         "  (select max(version) from supabase_migrations.schema_migrations)                                as hosted_max,\n"
         "  (select md5(string_agg(version, ',' order by version)) from supabase_migrations.schema_migrations) as list_md5,\n"
-        "  (select count(*) from supabase_migrations.schema_migrations where version = '%s')              as rows_%s;\n"
-        % (S, st["k"], V, st["n_before"], bm, st["md5_before"], V, V, V))
+        "  (select count(*) from supabase_migrations.schema_migrations where version in (%s))              as %s;\n"
+        % (S, st["k"], V, st["n_before"], bm, st["md5_before"], st["rowcol"], INL(st), st["rowcol"]))
     out["s1-history-%s.sql" % S] = (
         "-- S1 read-back history (%s, MULTI-STAGE, PREPARATION ONLY / HELD). Generated by build.py. Read-only.\n"
-        "-- EXPECTED after step %d: applied_count = %d, hosted_max = '%s', list_md5 = '%s', rows_%s = 1.\n"
+        "-- EXPECTED after step %d: applied_count = %d, hosted_max = '%s', list_md5 = '%s', %s = %d.\n"
         "select\n"
         "  (select count(*) from supabase_migrations.schema_migrations)                                    as applied_count,\n"
         "  (select max(version) from supabase_migrations.schema_migrations)                                as hosted_max,\n"
         "  (select md5(string_agg(version, ',' order by version)) from supabase_migrations.schema_migrations) as list_md5,\n"
-        "  (select count(*) from supabase_migrations.schema_migrations where version = '%s')              as rows_%s;\n"
-        % (S, st["k"], st["n_after"], st["after_max"], st["md5_after"], V, V, V))
+        "  (select count(*) from supabase_migrations.schema_migrations where version in (%s))              as %s;\n"
+        % (S, st["k"], st["n_after"], st["after_max"], st["md5_after"], st["rowcol"], st["npend"], INL(st), st["rowcol"]))
     if pack:
         tables = pack.get("tables") or []
         if tables:
@@ -301,10 +329,10 @@ def hist_chain(var, st, after):
     n = st["n_after"] if after else st["n_before"]
     mx = st["after_max"] if after else st["before_max"]
     md = st["md5_after"] if after else st["md5_before"]
-    rows = 1 if after else 0
+    rows = st["npend"] if after else 0
     return ("printf '%%s' \"$%s\" | grep -Eq '\"applied_count\":\"?%d\"?[,}]' && printf '%%s' \"$%s\" | grep -q '\"hosted_max\":\"%s\"' "
-            "&& printf '%%s' \"$%s\" | grep -q '\"list_md5\":\"%s\"' && printf '%%s' \"$%s\" | grep -Eq '\"rows_%s\":\"?%d\"?[,}]'"
-            % (var, n, var, mx, var, md, var, st["ver"], rows))
+            "&& printf '%%s' \"$%s\" | grep -q '\"list_md5\":\"%s\"' && printf '%%s' \"$%s\" | grep -Eq '\"%s\":\"?%d\"?[,}]'"
+            % (var, n, var, mx, var, md, var, st["rowcol"], rows))
 
 
 def gen_scripts(st, pack, S, shas, rt):
@@ -319,14 +347,16 @@ def gen_scripts(st, pack, S, shas, rt):
     overall = "OVERALL PASS (%s read-back: %s; read-only, not a promotion)" % (V, verify)
     mode = "BELOW the hosted max %s, so a plain push would refuse it: this step uses db push --include-all" % st["before_max"] if st["include_all"] else \
         "ABOVE the hosted max %s: a plain push applies it, with NO --include-all" % st["before_max"]
-    sealed_line = "%s  %s" % (st["sealed"], F)
+    sealed_line = "\n".join("%s  %s" % (h_, f_) for h_, f_ in zip(st["sealeds"], st["files"]))
+    N = st["npend"]
+    sealed_all = shab((sealed_line + "\n").encode()) if st["group"] else st["sealed"]
 
     # ---------------------------------------------------------------- apply
     a = tpl("s1-apply-0254a-online.sh")
     # constants block and the pending-file line, rewritten wholesale (the same blocks the test harness replaces)
     const = ["PLAT_OS=Darwin", "PLAT_ARCH=arm64", "TTY=/dev/tty", "GO_SHA=%s" % shas["go"],
              "BUNDLE=migrations-stage%s.tar" % S, "BUNDLE_SHA=%s" % shas["bundle"], "LIST=MIGRATIONS-stage%s.sha256" % S, "LIST_SHA=%s" % shas["list"],
-             "SEALED_SHA=%s" % st["sealed"], "RUNNER_SHA=%s" % shas["runner"], "RMANIFEST_SHA=%s" % shas["wr_manifest"],
+             "SEALED_SHA=%s" % sealed_all, "RUNNER_SHA=%s" % shas["runner"], "RMANIFEST_SHA=%s" % shas["wr_manifest"],
              "S1READ_SHA=%s" % shas["s1read"], "S1RUNNER_SHA=%s" % shas["runner"], "S1MANIFEST_SHA=%s" % shas["s1_manifest"],
              "SQL_S1H=%s" % shas["sql"]["s1-history"], "SQL_G02=%s" % shas["sql"]["g02-history"]]
     for r_, key in (("g12", "g12"), ("open", "s1-open-transactions"), ("w03", "w03-table-sizes")):
@@ -342,21 +372,27 @@ def gen_scripts(st, pack, S, shas, rt):
         "#!/bin/bash\n"
         "# Hone STAGE %s ONLINE, step %d of an ordered multi-stage plan (PREPARATION ONLY / HELD). GENERATED by multi-stage/build.py from the reviewed 0254-after-0257 online script (cecb27bd):\n"
         "# the logic is that script's; only the constants, the history gate, the file checks, the wording and the --include-all flag are generated. Do NOT edit by hand.\n"
-        "# Apply migration %s (1 file) through the SESSION POOLER with the vendor supabase-go and ONLY the stage bundle: the hosted files plus steps 1..%d (%d files; %s absent). ONE dry run, ONE push, the read-back.\n"
+        "# Apply migration %s (%s) through the SESSION POOLER with the vendor supabase-go and ONLY the stage bundle: the hosted files plus steps 1..%d (%d files; %s absent). ONE dry run, ONE push, the read-back.\n"
         "# %s is %s.\n"
         "# Expected hosted history before: %d rows, max %s, md5 of the version list %s, %s absent. After: %d rows, max %s, md5 %s, %s once.\n"
         "# KEPT: bundle/list/binary pins, the pinned REF and session-pooler URL, the FAILED-LOGIN tombstone, the APPLY-STATE single-flight marker (any marker refuses a start; only the reconcile script clears it),\n"
         "#   a dry run that must list exactly %s, exactly one push, UNKNOWN handling (marker stays, no retry), credentials read once, hidden and cleared. ONE migration per run: a push of several files cannot be rolled back file by file.\n"
         "# Exit 0 ONLY after the push log shows exactly 1 \"Applying migration\" line (%s), then \"Finished supabase db push.\", and the CLI exited 0. That does NOT replace the read-back.\n"
-        % (V, st["k"], V, st["k"], st["n_after"], absent, V, mode, st["n_before"], st["before_max"], st["md5_before"], V, st["n_after"], st["after_max"], st["md5_after"], V, V, V))
+        % (V, st["k"], V, ("%d files, numeric order" % N) if N > 1 else "1 file", st["k"], st["n_after"], absent, V, mode, st["n_before"], st["before_max"], st["md5_before"], V, st["n_after"], st["after_max"], st["md5_after"], V, V, V))
+    if N > 1:
+        header = header.replace("ONE migration per run: a push of several files cannot be rolled back file by file.",
+                                "THREE migrations in ONE run (Sam's option A, numeric order, plain push): the CLI keeps the files already applied if a later one fails (partial states are in the approval request).")
+        header = header.replace('exactly 1 \"Applying migration\" line (%s)' % V, 'exactly %d \"Applying migration\" lines (%s, in order)' % (N, V))
     a = header + a[hdr_end:]
     # receipt
     a = rsub(a, r'detail="The push applied exactly 0254 and the read-back shows 248 rows[^"]*"\n  elif',
-             'detail="The push applied exactly %s and the read-back shows %d rows, max %s, %s once, %s absent. The APPLY-STATE marker stays (APPLIED-UNVERIFIED) until s1-reconcile-%s-online.sh archives it; that script makes no connection."\n  elif' % (V, st["n_after"], st["after_max"], V, absent, S),
+             'detail="The push applied exactly %s and the read-back shows %d rows, max %s, %s, %s absent. The APPLY-STATE marker stays (APPLIED-UNVERIFIED) until s1-reconcile-%s-online.sh archives it; that script makes no connection."\n  elif' % (V, st["n_after"], st["after_max"], ("each of %s once" % V) if N > 1 else ("%s once" % V), absent, S),
              label="receipt detail")
     # bundle checks
     a = sub(a, "awk '{v=substr($2,1,4)+0; if (v>=249 && v<=256) print}' \"$SELF/$LIST\" > \"$WORK/pending-from-list.txt\"",
-            "awk '{v=substr($2,1,4)+0; if (v==%d) print}' \"$SELF/$LIST\" > \"$WORK/pending-from-list.txt\"" % st["vn"], label="pending-from-list")
+            "awk '{v=substr($2,1,4)+0; if (%s) print}' \"$SELF/$LIST\" > \"$WORK/pending-from-list.txt\"" % " || ".join("v==%d" % x for x in st["vns"]), label="pending-from-list")
+    a = sub(a, '[ "$(printf \'%s\\n\' "$GOPEND" | grep -c \'\')" = 1 ] || die "internal: the embedded pending list is not 1 line"',
+            '[ "$(printf \'%%s\\n\' "$GOPEND" | grep -c \'\')" = %d ] || die "internal: the embedded pending list is not %d line(s)"' % (N, N), label="gopend count")
     # absent-version checks and the 'hosted 0257 as applied' check
     a = rsub(a, r"grep -Eq '\^\[0-9a-f\]\{64\}  \(0247\|0249[^\n]*\n"
                 r"grep -Fxq \"\$SEALED257_SHA[^\n]*\n"
@@ -364,21 +400,21 @@ def gen_scripts(st, pack, S, shas, rt):
                 r"grep -Eq '\^\[0-9a-f\]\{64\}  0254_' [^\n]*\n",
              ("grep -Eq '^[0-9a-f]{64}  (%s)_' \"$SELF/$LIST\" && die \"$LIST names %s: they are not part of this stage\"\n"
               "tar -tf \"$SELF/$BUNDLE\" 2>/dev/null | grep -Eq 'supabase/migrations/(%s)_' && die \"$BUNDLE holds %s: they are not part of this stage\"\n"
-              "grep -Eq '^[0-9a-f]{64}  %s_' \"$SELF/$LIST\" || die \"$LIST does not name %s\"\n"
-              % (absent_pat, absent, absent_pat, absent, V, V)) if st["absent"] else
-             ("grep -Eq '^[0-9a-f]{64}  %s_' \"$SELF/$LIST\" || die \"$LIST does not name %s\"\n" % (V, V)),
+              "%s"
+              % (absent_pat, absent, absent_pat, absent, NAMELINES(st))) if st["absent"] else
+             NAMELINES(st),
              label="absent-version checks")
     mk = lambda n: n.replace("0254_perm_hon44", "0254\x01perm_hon44")  # masked: the template-name rename at the end must not touch generated names
     allow = "".join("%s  %s\n" % (shab(b), mk(n)) for n, b in sorted(st["bundle"].items()))
     allowblock = ("ALLOW='%s'\n" % allow.rstrip("\n") +
                   '[ "$(LC_ALL=C sort "$SELF/$LIST")" = "$(printf \'%s\\n\' "$ALLOW" | LC_ALL=C sort)" ] || die "$LIST is not exactly the reviewed allowlist embedded in this script (an extra, missing or changed migration of ANY number)"\n')
     pinlines = allowblock + "".join('grep -Fxq "%s  %s" "$SELF/$LIST" || die "$LIST does not carry %s at the pinned sha256 %s (a hosted or earlier-step file differs)"\n' % (h, mk(n), mk(n), h[:12]) for n, h in st["pins"])
-    a = sub(a, 'grep -Eq \'^[0-9a-f]{64}  %s_\' "$SELF/$LIST" || die "$LIST does not name %s"\n' % (V, V), 'grep -Eq \'^[0-9a-f]{64}  %s_\' "$SELF/$LIST" || die "$LIST does not name %s"\n' % (V, V) + pinlines, label="pin lines")
+    a = sub(a, NAMELINES(st), NAMELINES(st) + pinlines, label="pin lines")
     a = sub(a, 'echo "head $HEAD_SHA; files $NFILES; pending 1 (0254; 0247, 0249..0253, 0255 and 0256 absent; 0257 hosted)"',
-            'echo "head $HEAD_SHA; files $NFILES; pending 1 (%s; %s absent; max before %s)"' % (V, absent, st["before_max"]), label="run record")
+            'echo "head $HEAD_SHA; files $NFILES; pending %d (%s; %s absent; max before %s)"' % (N, V, absent, st["before_max"]), label="run record")
     a = sub(a, "the pending file equals the sealed 0254, the hosted 0257 is as applied, 0247, 0249..0253, 0255 and 0256 absent. Working directory",
-            "the pending file equals the sealed %s, %s absent. Working directory" % (V, absent), label="bundle verified echo")
-    a = sub(a, "the pending file in $LIST differs from the sealed 0254", "the pending file in $LIST differs from the sealed %s" % V, label="pending die")
+            "the pending file%s equal%s the sealed %s, %s absent. Working directory" % ("s" if N > 1 else "", "" if N > 1 else "s", V, absent), label="bundle verified echo")
+    a = sub(a, "the pending file in $LIST differs from the sealed 0254", "the pending file%s in $LIST differ%s from the sealed %s" % ("s" if N > 1 else "", "" if N > 1 else "s", V), label="pending die")
     a = sub(a, "0247, 0249..0253, 0255 and 0256 absent; 0257 hosted; verified just now)", "%s absent; verified just now)" % absent, label="summary bundle line")
     # the summary block
     sa = a.index('  echo "Runs, in this order, with no retry:"')
@@ -393,13 +429,17 @@ def gen_scripts(st, pack, S, shas, rt):
         + ('  echo "     no transaction older than 60 s on the %d scanned table(s); their sizes and the statement_timeout"\n' % ntab if tables else '')
         + '  echo "  2. one dry run (db push %s--dry-run; %s) that must list exactly %s; the listing is then SHOWN TO YOU"\n' % (ia, ("%s is BELOW the hosted max %s" % (V, st["before_max"]) if st["include_all"] else "%s is above the hosted max %s" % (V, st["before_max"])), V)
         + '  echo "  3. a SECOND, separate APPLY from you, typed after you have read that listing: only then ONE push of %s (db push %s--yes; a write to the production database)"\n' % (V, ia)
-        + '  echo "  4. the read-back (window-s1read-%s.sh): history %d rows, max %s, %s once, md5 %s"\n' % (S, st["n_after"], st["after_max"], V, st["md5_after"][:8] + "...")
+        + '  echo "  4. the read-back (window-s1read-%s.sh): history %d rows, max %s, %s, md5 %s"\n' % (S, st["n_after"], st["after_max"], ("each of %s once" % V) if N > 1 else ("%s once" % V), st["md5_after"][:8] + "...")
         + '  echo "STOP (nothing is pushed) if: any pinned file or sha differs; history is not exactly the expected %d rows, max %s, md5 %s; a preflight read fails;"\n' % (st["n_before"], st["before_max"], st["md5_before"][:8] + "...")
         + ('  echo "  any scanned table has an open transaction over 60 s; a table is over 512 MiB; the statement_timeout is 0, over 2 min or unreadable;"\n' if tables else '')
         + '  echo "  a login fails (then a FAILED-LOGIN tombstone blocks every rerun); the dry run lists anything but %s; an APPLY-STATE marker or tombstone already exists."\n' % V
         + '  echo "After the push starts, any failure or interruption leaves the APPLY-STATE marker: the result is UNKNOWN, there is NO retry, and the next step is the read-back and s1-reconcile-%s-online.sh."\n' % S)
     a = a[:sa] + summ + a[sb:]
-    a = sub(a, 'echo "Migration: 0254_perm_hon44_role_enforcement.sql, sealed sha256 $SEALED_SHA"', 'echo "Migration: %s, sealed sha256 $SEALED_SHA"' % F, label="summary migration")
+    if N > 1:
+        a = sub(a, 'echo "Migration: 0254_perm_hon44_role_enforcement.sql, sealed sha256 $SEALED_SHA"',
+                "\n  ".join('echo "Migration %d of %d: %s, sealed sha256 %s"' % (i_ + 1, N, f_, h_) for i_, (f_, h_) in enumerate(zip(st["files"], st["sealeds"]))), label="summary migration")
+    else:
+        a = sub(a, 'echo "Migration: 0254_perm_hon44_role_enforcement.sql, sealed sha256 $SEALED_SHA"', 'echo "Migration: %s, sealed sha256 $SEALED_SHA"' % F, label="summary migration")
     # the rule.js: tables and the four rules, rebuilt from the pack
     rj0 = a.index("const S1 = [")
     rj1 = a.index('} else done(false, "unknown rule");')
@@ -411,9 +451,9 @@ def gen_scripts(st, pack, S, shas, rt):
               '  if (!numEq(r.applied_count, %d)) done(false, "the hosted history is not %d rows (applied_count " + r.applied_count + ")");\n'
               '  if (r.hosted_max !== "%s") done(false, "hosted history max is not %s (" + r.hosted_max + ")");\n'
               '  if (r.list_md5 !== "%s") done(false, "the set of applied versions is not the expected one (list_md5 " + r.list_md5 + ")");\n'
-              '  if (!numEq(r.rows_%s, 0)) done(false, "%s is already applied (rows_%s " + r.rows_%s + ")");\n'
+              '  if (!numEq(r.%s, 0)) done(false, "%s is already applied (%s " + r.%s + ")");\n'
               '  done(true, "history is %d rows, max %s, the expected version set, %s absent");\n'
-              % (st["n_before"], st["n_before"], st["before_max"], st["before_max"], st["md5_before"], V, V, V, V, st["n_before"], st["before_max"], V))
+              % (st["n_before"], st["n_before"], st["before_max"], st["before_max"], st["md5_before"], st["rowcol"], V, st["rowcol"], st["rowcol"], st["n_before"], st["before_max"], V))
     if "g12" in reads:
         fl = pack["preflight"]["fields"]
         js.append('} else if (rule === "g12") {\n  if (rows.length !== 1) done(false, "expected 1 row, got " + rows.length);\n  const r = rows[0], bad = [];\n'
@@ -459,11 +499,19 @@ def gen_scripts(st, pack, S, shas, rt):
     # dry run / push flags and wording
     a = sub(a, 'run_cli "$DRY" db push --db-url "$URL" --include-all --dry-run', 'run_cli "$DRY" db push --db-url "$URL" %s--dry-run' % ia, label="dry run cmd")
     a = sub(a, 'run_cli "$PUSH" db push --db-url "$URL" --include-all --yes', 'run_cli "$PUSH" db push --db-url "$URL" %s--yes' % ia, label="push cmd")
-    a = sub(a, 'die "the dry run lists 1 migration but not the expected 0254.', 'die "the dry run lists 1 migration but not the expected %s.' % V, label="dry run die")
-    a = sub(a, 'echo "Dry run OK: exactly 1 migration, 0254." >&2', 'echo "Dry run OK: exactly 1 migration, %s." >&2' % V, label="dry ok echo")
-    a = sub(a, 'fail_report "the applied migration is not exactly 0254."', 'fail_report "the applied migration is not exactly %s."' % V, label="applied die")
-    a = sub(a, 'echo "STAGE 0254 APPLIED $(utcnow): 1 migration (0254), finish line present, exit 0"', 'echo "STAGE %s APPLIED $(utcnow): 1 migration (%s), finish line present, exit 0"' % (V, V), label="applied record")
-    a = sub(a, "echo \"STAGE 0254 PUSHED: exactly 1 migration (0254);", "echo \"STAGE %s PUSHED: exactly 1 migration (%s);" % (V, V), label="pushed echo")
+    mw = ("migration" if N == 1 else "migrations")
+    if N > 1:
+        a = sub(a, 'echo "dry run listed exactly the 1 expected version" >> "$RUN"', 'echo "dry run listed exactly the %d expected versions, in order" >> "$RUN"' % N, label="run record dry")
+    a = sub(a, 'die "the dry run lists 1 migration but not the expected 0254.', 'die "the dry run lists %d %s but not the expected %s.' % (N, mw, V), label="dry run die")
+    a = sub(a, 'echo "Dry run OK: exactly 1 migration, 0254." >&2', 'echo "Dry run OK: exactly %d %s, %s." >&2' % (N, mw, V), label="dry ok echo")
+    a = sub(a, 'fail_report "the applied migration is not exactly 0254."', 'fail_report "the applied %s %s not exactly %s, in this order."' % (mw, "is" if N == 1 else "are", V), label="applied die")
+    a = sub(a, 'echo "STAGE 0254 APPLIED $(utcnow): 1 migration (0254), finish line present, exit 0"', 'echo "STAGE %s APPLIED $(utcnow): %d %s (%s), finish line present, exit 0"' % (V, N, mw, V), label="applied record")
+    a = sub(a, "echo \"STAGE 0254 PUSHED: exactly 1 migration (0254);", "echo \"STAGE %s PUSHED: exactly %d %s (%s);" % (V, N, mw, V), label="pushed echo")
+    if N > 1:
+        a = sub(a, '[ "$ngot" = 1 ] || die "the dry run lists $ngot migrations, expected exactly 1.', '[ "$ngot" = %d ] || die "the dry run lists $ngot migrations, expected exactly %d.' % (N, N), label="ngot")
+        a = sub(a, 'echo "The dry run lists exactly ONE migration, $WANT, and no other.', 'echo "The dry run lists exactly %d migrations, in order, and no other: $(printf \'%%s\' "$WANT" | tr \'\\n\' \' \'). A failure part-way keeps the files already applied (see the request): the next step is then the read-back, never a retry.' % N, label="listing echo")
+        a = sub(a, 'echo "Applying-migration lines seen: $napp of 1." >&2', 'echo "Applying-migration lines seen: $napp of %d." >&2' % N, label="napp echo")
+        a = sub(a, '[ "$napp" = 1 ] || fail_report "the push logged $napp \'Applying migration\' lines, expected 1."', '[ "$napp" = %d ] || fail_report "the push logged $napp \'Applying migration\' lines, expected %d."' % (N, N), label="napp check")
     # read-back verification at the end of apply
     a = rsub(a, r"printf '%s' \"\$c\" \| grep -Eq '\"applied_count\":\"\?248\"\?\[,\}\]'[^\n]*\n[^\n]*\n",
              hist_chain("c", st, True) + "; then\n", label="apply read-back chain")
@@ -520,7 +568,7 @@ def gen_g02read(st, S, shas, tables_n):
          % (st["ver"], st["k"], S, S)) + g[hdr_end:]
     g = rsub(g, r"#CONST-BEGIN\n.*?#CONST-END",
              "#CONST-BEGIN\nPLAT_OS=Darwin\nPLAT_ARCH=arm64\nTTY=/dev/tty\nGO_SHA=%s\nRUNNER_SHA=%s\nRMANIFEST_SHA=%s\nSQL_G02=%s\n#CONST-END" % (shas["go"], shas["runner"], shas["wr_manifest"], shas["sql"]["g02-history"]), label="g02 const")
-    g = sub(g, "grep -Eo '\"(applied_count|hosted_max|versions_ge_0249)\":\"?[0-9]+\"?'", "grep -Eo '\"(applied_count|hosted_max|rows_%s)\":\"?[0-9]+\"?'" % st["ver"], label="g02 fields")
+    g = sub(g, "grep -Eo '\"(applied_count|hosted_max|versions_ge_0249)\":\"?[0-9]+\"?'", "grep -Eo '\"(applied_count|hosted_max|%s)\":\"?[0-9]+\"?'" % st["rowcol"], label="g02 fields")
     g = g.replace("0254a", S).replace("0254#a", "0254a")
     return g
 
@@ -537,7 +585,7 @@ def gen_s1read(st, pack, S, shas, files):
             'FILES="%s"\nNFILES=%d\n' % (" ".join(files), len(files)), label="s1read files")
     w = rsub(w, r"  if \[ \"\$f\" = s1-history-0254a\.sql \]; then\n.*?\n  fi\n  n=\$\(\(n\+1\)\)",
              '  if [ "$f" = s1-history-%s.sql ]; then\n    # The history is read FIRST. If it is not exactly the end state, nothing else is read.\n    %s \\\n'
-             '      || die "s1-history: the history is not exactly %d rows, max %s, %s once, the expected version set (md5 %s). The step did not reach its end state. Do NOT continue. Nothing else was read; report this result: $r"\n  fi\n  n=$((n+1))'
+             '      || die "s1-history: the history is not exactly %d rows, max %s, %s (each once), the expected version set (md5 %s). The step did not reach its end state. Do NOT continue. Nothing else was read; report this result: $r"\n  fi\n  n=$((n+1))'
              % (S, hist_chain("c", st, True), st["n_after"], st["after_max"], V, st["md5_after"]), label="s1read history check")
     # the node check
     a0 = w.index("const EXPECT = {")
@@ -545,9 +593,9 @@ def gen_s1read(st, pack, S, shas, files):
     pre = open(os.path.join(pack["_dir"], "verify-pre.js.part")).read() if pack and pack.get("verify_label") else ""
     body = open(os.path.join(pack["_dir"], "verify-body.js.part")).read() if pack and pack.get("verify_label") else ""
     hist = ('const h = rows("s1-history-%s");\nif (h.length !== 1) fail("s1-history-%s: not exactly one row");\nconst r = h[0];\n'
-            'if (!(num(r.applied_count, %d) && r.hosted_max === "%s" && r.list_md5 === "%s" && num(r.rows_%s, 1))) fail("history is not %d / %s / the expected version set / %s once");\n'
+            'if (!(num(r.applied_count, %d) && r.hosted_max === "%s" && r.list_md5 === "%s" && num(r.%s, %d))) fail("history is not %d / %s / the expected version set / %s once");\n'
             'console.log("PASS history: %d rows, max %s, the expected version set, %s once");\n'
-            % (S, S, st["n_after"], st["after_max"], st["md5_after"], V, st["n_after"], st["after_max"], V, st["n_after"], st["after_max"], V))
+            % (S, S, st["n_after"], st["after_max"], st["md5_after"], st["rowcol"], st["npend"], st["n_after"], st["after_max"], V, st["n_after"], st["after_max"], V))
     w = w[:a0] + pre + hist + body + w[a1:]
     w = sub(w, "OVERALL PASS (0254 read-back: history, 2 verify checks and the owner-only read-policy proof; read-only, not a promotion)", shas["overall"], n=2, label="s1read overall")
     w = w.replace("0254a", S)
@@ -729,19 +777,19 @@ def emit_step(st, out, specdir, ctx):
     sums = dict(fshas)
     sums["install-%s-online.sh" % S] = shab(inst.encode())
     write(os.path.join(d, "SHA256SUMS.txt"), sha_lines(sorted(sums.items())))
-    exp = {"step": st["k"], "stage": S, "applied_before": st["applied_before"], "migration": st["file"], "sealed_sha256": st["sealed"], "include_all": st["include_all"],
+    exp = {"step": st["k"], "stage": S, "applied_before": st["applied_before"], "migration": st["file"], "migrations": st["files"], "sealed_sha256": st["sealed"], "sealed_sha256s": st["sealeds"], "include_all": st["include_all"],
            "history_before": {"rows": st["n_before"], "max": st["before_max"], "list_md5": st["md5_before"], "versions_present": [v4(x) for x in sorted(st["before"])]},
            "history_after": {"rows": st["n_after"], "max": st["after_max"], "list_md5": st["md5_after"], "added": V},
            "absent_in_bundle": [v4(x) for x in st["absent"]], "bundle": {"files": st["n_after"], "tar_sha256": shas["bundle"], "list_sha256": shas["list"]},
-           "dry_run_must_list": [st["file"]], "content_gates": bool(pack), "gate_reads": len(reads), "gate_tables": list((pack or {}).get("tables") or []),
+           "dry_run_must_list": st["files"], "rowcol": st["rowcol"], "pending_versions": st["vers"], "content_gates": bool(pack), "gate_reads": len(reads), "gate_tables": list((pack or {}).get("tables") or []),
            "between_steps": ["window-s1read-%s.sh (read-back, must print the exact OVERALL PASS line)" % S, "s1-reconcile-%s-online.sh (ALL route; archives the APPLY-STATE marker)" % S],
            "pins": {k: v for k, v in shas.items() if k not in ("sql",)}, "file_sha256": sums}
     write(os.path.join(d, "EXPECT.json"), json.dumps(exp, indent=2, sort_keys=True) + "\n")
     warn = "" if pack else "\n**CONTENT GATES MISSING: this step has a history-only gate. It is NOT production-ready until its migration review supplies a gate pack (preflight, table/lock reads, content read-back).**\n"
     write(os.path.join(d, "README.txt"),
-          "PREPARATION ONLY / HELD. Step %d of an ordered multi-stage plan: apply %s alone.%s\n\nBundle: hosted files + steps 1..%d = %d files (sha256 %s).\n%s\nHistory %d rows (max %s) -> %d rows (max %s), %s once.\n"
+          "PREPARATION ONLY / HELD. Step %d of an ordered multi-stage plan: apply %s%s.%s\n\nBundle: hosted files + steps 1..%d = %d files (sha256 %s).\n%s\nHistory %d rows (max %s) -> %d rows (max %s), %s once.\n"
           "Run order: install, run the stage through the runner, then window-s1read-%s.sh, then s1-reconcile-%s-online.sh, and only then the next step.\n"
-          % (st["k"], st["file"], warn, st["k"], st["n_after"], shas["bundle"], "include-all: " + ("YES (step is below the hosted max)" if st["include_all"] else "no (plain push)"), st["n_before"], st["before_max"], st["n_after"], st["after_max"], V, S, S))
+          % (st["k"], ", ".join(st["files"]), " in this order, in ONE push" if st["npend"] > 1 else " alone", warn, st["k"], st["n_after"], shas["bundle"], "include-all: " + ("YES (step is below the hosted max)" if st["include_all"] else "no (plain push)"), st["n_before"], st["before_max"], st["n_after"], st["after_max"], V, S, S))
     return ({k: exp[k] for k in ("step", "stage", "applied_before", "migration", "sealed_sha256", "include_all", "history_before", "history_after", "absent_in_bundle", "bundle", "content_gates")} | {"apply_sha256": shas["apply"], "conf_sha256": shas["conf"]})
 
 
@@ -787,7 +835,12 @@ def main():
     specdir = os.path.dirname(specp)
     spec["hosted"]["dir"] = os.path.normpath(os.path.join(specdir, spec["hosted"]["dir"]))
     for s_ in spec["steps"]:
-        s_["file"] = os.path.normpath(os.path.join(specdir, s_["file"]))
+        for m_ in s_.get("members", []):
+            m_["file"] = os.path.normpath(os.path.join(specdir, m_["file"]))
+        if s_.get("members"):
+            s_["file"] = sorted((m_["file"] for m_ in s_["members"]), key=os.path.basename)[0]
+        else:
+            s_["file"] = os.path.normpath(os.path.join(specdir, s_["file"]))
     for e_ in spec["hosted"].get("extra", []):
         e_["file"] = os.path.normpath(os.path.join(specdir, e_["file"]))
     hosted, _ = plan(spec, include=[])
@@ -797,7 +850,7 @@ def main():
     tpl("run-window-read-macos.sh")
     ctx["stage_run"], ctx["run_exp"] = tpl("hone-stage-run.sh"), tpl("run.exp")
     n = len(spec["steps"])
-    vers = [os.path.basename(x["file"])[:4] for x in spec["steps"]]
+    vers = [("+".join(os.path.basename(m["file"])[:4] for m in sorted(x["members"], key=lambda m: os.path.basename(m["file"]))) if x.get("members") else os.path.basename(x["file"])[:4]) for x in spec["steps"]]
     if os.path.exists(out):
         shutil.rmtree(out)
     rules = spec.get("rules", {})
@@ -813,7 +866,7 @@ def main():
             for r in spec["steps"][i].get("requires", []):
                 if r not in have:
                     bad = "%s requires %s" % (vers[i], r)
-            have.add(vers[i])
+            have.update(vers[i].split("+"))
         name = "full" if not dropped else "drop-" + "+".join(dropped)
         bad = bad or rule_violation(rules, [vers[i] for i in include], set(str(v4(v)) for v in hosted))
         if bad:
@@ -831,10 +884,10 @@ def main():
     write(os.path.join(out, "plan-check.sh"), gen_plan_check(rules, vers, sequences, stages, set(str(v4(v)) for v in hosted)), 0o755)
     plan_json = {"rules": rules, "hosted_before_step_1": {"rows": len(hosted), "max": v4(max(hosted)), "md5": md5list(set(hosted)), "dir_sha256": spec["hosted"]["dir_sha256"], "extra": [os.path.basename(e["file"]) for e in spec["hosted"].get("extra", [])]},
                  "sequences": sequences, "stages": stages, "skipped_sequences": skipped,
-                 "readiness": [dict({"migration": os.path.basename(x["file"]), "droppable": x.get("droppable", True), "requires": x.get("requires", [])}, **x.get("ready", {})) for x in spec["steps"]]}
+                 "readiness": [dict({"migration": (" + ".join(os.path.basename(m["file"]) for m in sorted(x["members"], key=lambda m: os.path.basename(m["file"]))) if x.get("members") else os.path.basename(x["file"])), "droppable": x.get("droppable", True), "requires": x.get("requires", [])}, **x.get("ready", {})) for x in spec["steps"]]}
     write(os.path.join(out, "PLAN.json"), json.dumps(plan_json, indent=2, sort_keys=True) + "\n")
     seq = ["# Multi-stage plan (PREPARATION ONLY / HELD)\n",
-           "One runner invocation per migration; after each, read back and reconcile before the next. A step that fails leaves the APPLY-STATE marker, which refuses every later step.\n",
+           "One runner invocation per STEP (a step is one migration, or a group applied by ONE plain push in numeric order); after each, read back and reconcile before the next. A step that fails leaves the APPLY-STATE marker, which refuses every later step.\n",
            "Every valid way to drop a step is pre-built (%d stage packages, %d sequences): dropping needs no rebuild. A dropped step's successors use the stage package whose id is `<ver>-b<hex>` (a bitmask, in the spec's step order, of the steps applied before it; at most 16 characters, the reviewed runner's limit). The legend follows each sequence line.\n" % (len(stages), len(sequences))]
     for name, q in sorted(sequences.items(), key=lambda kv: (len(kv[1]["dropped"]), kv[0])):
         seq.append("## %s" % name)

@@ -13,7 +13,7 @@ sorted() { LC_ALL=C sort "$HIST"; }
 hist_json() { # hist_json VER : the generic history row
   local n mx md r
   n=$(grep -c . "$HIST"); mx=$(sorted | tail -1); md=$(sorted | tr '\n' ',' | sed 's/,$//' | tr -d '\n' | md5)
-  r=$(grep -c "^$1\$" "$HIST")
+  vs=$(cfg S_VERS); [ -n "$vs" ] || vs=$1; r=0; for v in $vs; do r=$((r+$(grep -c "^$v\$" "$HIST"))); done
   printf '[{"applied_count":%s,"hosted_max":"%s","list_md5":"%s","rows_%s":%s}]\n' "$n" "$mx" "$md" "$1" "$r"
 }
 if [ "${1:-}" = --agent ] && [ "${4:-}" = query ]; then
@@ -22,7 +22,7 @@ if [ "${1:-}" = --agent ] && [ "${4:-}" = query ]; then
   printf 'query:%s sql=%s\n' "$b" "$(shasum -a 256 "$f" | cut -d' ' -f1)" >> "$H/calls.log"
   if [ "${SUPABASE_ACCESS_TOKEN:-}" != "$CANARY_TOK" ] || [ "${SUPABASE_DB_PASSWORD:-}" != "$CANARY_PW" ]; then echo "401 unauthorized" >&2; exit 1; fi
   [ "$(cfg FAIL_QUERY)" = "$b" ] && { echo "ERROR: relation does not exist (42P01)" >&2; exit 1; }
-  ver=$(cfg S_VER)
+  ver=$(cfg S_VER); [ -n "$(cfg S_VERS)" ] || true
   case "$b" in
     g02-history-0254a) # the adopted reviewed package's own g02 columns, computed from the stateful history
       n=$(grep -c . "$HIST"); mx=$(sorted | tail -1)

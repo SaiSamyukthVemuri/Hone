@@ -33,7 +33,7 @@ fi
 n0=$(sqlx "select count(*) from supabase_migrations.schema_migrations"); m0=$(sqlx "select max(version) from supabase_migrations.schema_migrations")
 [ "$n0" = "$(pj "$PKG/PLAN.json" 'd["hosted_before_step_1"]["rows"]')" ] && [ "$m0" = 0257 ] && ok "the stack is hosted-shaped: $n0 history rows, max $m0" || { bad "the stack is not hosted-shaped" "rows=$n0 max=$m0"; echo "# RESULT: $pass passed, $fail failed"; exit 1; }
 for S in $STAGES; do
-  A=$PKG/$S/s1-apply-$S-online/s1-apply-$S-online.sh; V=$(pj "$PKG/$S/EXPECT.json" 'd["migration"][:4]'); GATES=$(pj "$PKG/$S/EXPECT.json" 'd["content_gates"]')
+  A=$PKG/$S/s1-apply-$S-online/s1-apply-$S-online.sh; V=$(pj "$PKG/$S/EXPECT.json" '"+".join(d.get("pending_versions") or [d["migration"][:4]])'); PV=$(pj "$PKG/$S/EXPECT.json" '" ".join(d.get("pending_versions") or [d["migration"][:4]])'); NPV=$(echo $PV | wc -w | tr -d ' '); GATES=$(pj "$PKG/$S/EXPECT.json" 'd["content_gates"]')
   W=$OUT/$S; mkdir -p "$W/pre" "$W/post"
   sed -n "/^cat > \"\$ONLINE\/rule.js\" <<'JS'\$/,/^JS\$/p" "$A" | sed '1d;$d' > "$W/rule.js"
   sed -n "/<<'NODE'\$/,/^NODE\$/p" "$PKG/$S/window-reads-s1-$S/window-s1read-$S.sh" | sed '1d;$d' > "$W/check.mjs"
@@ -57,7 +57,7 @@ for S in $STAGES; do
   rm -rf supabase/migrations && tar -xf "$PKG/$S/s1-apply-$S-online/migrations-stage$S.tar" -C . && [ "$(ls supabase/migrations | wc -l | tr -d ' ')" = "$(pj "$PKG/$S/EXPECT.json" 'd["bundle"]["files"]')" ] || { bad "step $V ($S): bundle extraction"; break; }
   flags=--local; [ "$(pj "$PKG/$S/EXPECT.json" 'd["include_all"]')" = True ] && flags="--local --include-all"
   dry=$(supabase db push $flags --dry-run 2>&1) || { bad "step $V ($S): dry run failed" "$(echo "$dry" | tail -3)"; break; }
-  [ "$(echo "$dry" | grep -cE '[0-9]{4}_[A-Za-z0-9_]+\.sql')" = 1 ] && echo "$dry" | grep -q "$(pj "$PKG/$S/EXPECT.json" 'd["migration"]')" && ok "step $V ($S): the dry run lists exactly the step's one migration" || { bad "step $V ($S): the dry run does not list exactly one migration" "$dry"; break; }
+  [ "$(echo "$dry" | grep -cE '[0-9]{4}_[A-Za-z0-9_]+\.sql')" = "$NPV" ] && [ "$(echo "$dry" | grep -oE '[0-9]{4}_[A-Za-z0-9_]+\.sql' | tr '\n' ' ')" = "$(pj "$PKG/$S/EXPECT.json" '" ".join(d.get("migrations") or [d["migration"]])') " ] && ok "step $V ($S): the dry run lists exactly the step's $NPV migration(s), in order" || { bad "step $V ($S): the dry run does not list exactly one migration" "$dry"; break; }
   supabase db push $flags --yes > "$W/push.log" 2>&1 || { bad "step $V ($S): push failed" "$(tail -5 "$W/push.log")"; break; }
   # ---- POST
   postfail=0
@@ -68,9 +68,10 @@ for S in $STAGES; do
   }
   o=$(readback); rc=$?
   if [ $rc = 0 ] && echo "$o" | grep -Fxq "$(pj "$PKG/$S/EXPECT.json" 'd["pins"]["overall"]')"; then ok "step $V ($S): POST read-back OVERALL PASS ($(echo "$o" | grep -c '^PASS') checks)"; else postfail=1; bad "step $V ($S): POST read-back" "rc=$rc $(echo "$o" | tail -4)"; fi
-  [ "$(sqlx "select count(*) from supabase_migrations.schema_migrations where version = '$V'")" = 1 ] && ok "step $V ($S): history holds $V once" || bad "step $V ($S): history"
+  c=0; for v in $PV; do c=$((c + $(sqlx "select count(*) from supabase_migrations.schema_migrations where version = '$v'"))); done
+  [ "$c" = "$NPV" ] && ok "step $V ($S): history holds each of $PV once" || bad "step $V ($S): history"
   # ---- MUTATION CONTROLS (only for steps that carry a content-gate pack)
-  [ "$GATES" = True ] || continue
+  [ "$GATES" = True ] && [ "$NPV" = 1 ] || continue   # a group stage has no per-migration mutation controls: its content read-back is the separate final-state set
   mut() { # mut NAME 'apply sql' 'revert sql' : the read-back must FAIL while the change is in place and PASS again once reverted
     local name=$1 up=$2 down=$3 o2 rc2
     sqlx "$up" > "$W/mut.log" || { bad "step $V ($S): mutation '$name' could not be made" "$(tail -2 "$W/mut.log")"; return; }
