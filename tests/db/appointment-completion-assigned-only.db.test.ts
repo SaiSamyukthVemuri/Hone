@@ -119,6 +119,91 @@ describe("0277 completion is assigned-only", () => {
   });
 });
 
+describe("0277 reassignment, owner-as-assignee, refusal order (Insurance Q-3)", () => {
+  it("reassignment takes effect at once: the old assignee is refused, the new one completes", async () => {
+    const f = await fixture();
+    await adminQuery(`update public.appointments set practitioner_id = $2 where id = $1`, [f.mine, f.b.practitionerId]);
+    await expect(complete(f.mine, f.s.studioId, f.a.practitionerId)).rejects.toMatchObject({ code: "42501" });
+    expect(await statusOf(f.mine)).toBe("confirmed");
+    await complete(f.mine, f.s.studioId, f.b.practitionerId);
+    expect(await statusOf(f.mine)).toBe("completed");
+  });
+
+  it("an owner who is also the assignee completes exactly as a plain assignee does", async () => {
+    const f = await fixture();
+    const own = await seedAppointment(f.s.studioId, f.s.clientId, f.s.practitionerId);
+    await complete(own, f.s.studioId, f.s.practitionerId);
+    expect(await statusOf(own)).toBe("completed");
+    expect(await auditCount(own)).toBe(1);
+  });
+
+  it("the refusal comes BEFORE the status and time checks: a non-assignee gets 42501, not P0002", async () => {
+    const f = await fixture();
+    // already completed (owner completes it), then a non-assignee tries: 42501, not a state error
+    await complete(f.theirs, f.s.studioId, f.s.practitionerId);
+    await expect(complete(f.theirs, f.s.studioId, f.a.practitionerId)).rejects.toMatchObject({ code: "42501" });
+    // cancelled, same
+    await adminQuery(`update public.appointments set status = 'cancelled' where id = $1`, [f.unassigned]);
+    await expect(complete(f.unassigned, f.s.studioId, f.a.practitionerId)).rejects.toMatchObject({ code: "42501" });
+    // not yet started (future), same
+    const future = await adminQuery(
+      `insert into public.appointments
+         (id, studio_id, practitioner_id, client_id, starts_at, ends_at, duration_minutes, status,
+          cancellation_token_hash, buffer_minutes_snapshot, blocked_ends_at)
+       values (gen_random_uuid(), $1, $2, $3, now() + interval '30 days', now() + interval '30 days 30 minutes',
+               30, 'confirmed', $4, 15, now() + interval '30 days 45 minutes')
+       returning id`,
+      [f.s.studioId, f.b.practitionerId, f.s.clientId, tokenHash()],
+    );
+    await expect(complete(future.rows[0].id as string, f.s.studioId, f.a.practitionerId)).rejects.toMatchObject({
+      code: "42501",
+    });
+  });
+});
+
+// Privacy C3: completion by the owner and by the assignee changes no payment row. The snapshot is
+// every public table with a studio_id column whose name says payment, settlement, charge, refund,
+// fee, card or stripe, so a payment table added later is covered without editing this test.
+describe("0277 completion touches no payment data (Privacy C3)", () => {
+  async function paymentSnapshot(studioId: string): Promise<Record<string, string>> {
+    const tables = await adminQuery(
+      `select c.table_name from information_schema.columns c
+         join information_schema.tables t on t.table_schema = c.table_schema and t.table_name = c.table_name
+        where c.table_schema = 'public' and c.column_name = 'studio_id' and t.table_type = 'BASE TABLE'
+          and c.table_name ~ '(payment|settlement|charge|refund|fee|card|stripe)'
+        order by 1`,
+    );
+    const out: Record<string, string> = {};
+    for (const { table_name } of tables.rows as { table_name: string }[]) {
+      const r = await adminQuery(
+        `select count(*)::int as n, coalesce(md5(string_agg(x::text, '|' order by x::text)), '') as h
+           from public."${table_name}" x where studio_id = $1`,
+        [studioId],
+      );
+      out[table_name] = `${r.rows[0].n}:${r.rows[0].h}`;
+    }
+    return out;
+  }
+
+  it("a settlement on another visit exists, and owner and assignee completions leave every payment table identical", async () => {
+    const f = await fixture();
+    // a recorded disposition on a decoy completed visit, so the snapshot is not vacuously empty
+    const decoy = await seedAppointment(f.s.studioId, f.s.clientId, f.a.practitionerId);
+    await complete(decoy, f.s.studioId, f.s.practitionerId);
+    await adminQuery(
+      `insert into public.appointment_settlements
+         (studio_id, appointment_id, method, amount_cents, recorded_by_practitioner_id)
+       values ($1,$2,'paid_cash',5000,$3)`,
+      [f.s.studioId, decoy, f.s.practitionerId],
+    );
+    const before = await paymentSnapshot(f.s.studioId);
+    expect(before.appointment_settlements.startsWith("1:")).toBe(true);
+    await complete(f.mine, f.s.studioId, f.a.practitionerId); // assignee
+    await complete(f.theirs, f.s.studioId, f.s.practitionerId); // owner
+    expect(await paymentSnapshot(f.s.studioId)).toEqual(before);
+  });
+});
+
 describe("0277 grants: service_role only", () => {
   it("anon and authenticated cannot execute; service_role can", async () => {
     const f = await fixture();
