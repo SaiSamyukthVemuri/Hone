@@ -190,3 +190,26 @@ describe("Insurance #1297 G1: the tracking form reads clean after a save with st
     expect(src).toMatch(/setTestCode\(testCode\.trim\(\)\)/);
   });
 });
+
+describe("Codex P2: FormDirtyGuard re-baselines after a save and rolls back on a refused one", () => {
+  const src = require("node:fs").readFileSync(
+    require("node:path").resolve(__dirname, "../..", "components/settings/form-dirty-guard.tsx"),
+    "utf8",
+  ) as string;
+  it("takes a new baseline on submit and restores the old one when the redirect carries an error", () => {
+    expect(src).toMatch(/previous\.current = baseline\.current;\s*baseline\.current = snapshot\(form\)/);
+    expect(src).toMatch(/baseline\.current = previous\.current/);
+    expect(src).toMatch(/search\?\.has\("error"\)/);
+  });
+});
+
+describe("Codex P2: no in-app entry point still targets the legacy /settings/intake route", () => {
+  it.each([
+    "app/(app)/settings/launch/page.tsx",
+    "app/(app)/settings/payments/PaymentsSettings.tsx",
+    "components/appointment/postcare-section.tsx",
+  ])("%s links straight to a focused Forms view", (file) => {
+    const src = require("node:fs").readFileSync(require("node:path").resolve(__dirname, "../..", file), "utf8") as string;
+    expect(src).not.toMatch(/\/settings\/intake/);
+  });
+});

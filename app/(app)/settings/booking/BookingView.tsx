@@ -220,7 +220,7 @@ export async function BookingView({
         </label>
 
           <div>
-            <SaveButton idleLabel="Save booking window" />
+            <SaveButton idleLabel="Save preferences" />
           </div>
         </form>
       </div>

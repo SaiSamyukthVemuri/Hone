@@ -280,8 +280,8 @@ export default async function LaunchChecklistPage() {
       detail:
         "Preview available. The current intake form is shown to every new client booked through Hone.",
       cta: {
-        label: "Open Forms & Policies",
-        href: "/settings/intake",
+        label: "Open Forms & postcare",
+        href: "/settings/forms/intake-preview",
       },
     },
     // Sits directly under the intake row because that is where the form is
@@ -305,7 +305,7 @@ export default async function LaunchChecklistPage() {
         : "Write aftercare text before sending postcare emails.",
       cta: {
         label: "Open Postcare editor",
-        href: "/settings/intake#postcare",
+        href: "/settings/forms/postcare",
       },
     },
     {
@@ -314,7 +314,7 @@ export default async function LaunchChecklistPage() {
       detail: hasBothPolicies
         ? "Both policies are set."
         : "Write a cancellation policy and a no-show policy before card-on-file is offered later.",
-      cta: { label: "Open Policies", href: "/settings/intake" },
+      cta: { label: "Open Policies", href: "/settings/forms/cancellation-policy" },
     },
     {
       title: "Calendar feed",

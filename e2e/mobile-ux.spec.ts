@@ -774,7 +774,7 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     // practitioner lands at the top of an eight-control form.
     await desktopPage.waitForURL(
       (url) =>
-        url.pathname === "/settings/booking" && url.hash === "#booking-horizon",
+        url.pathname === "/settings/booking/window",
     );
 
     // The real anchored control, on screen — not merely somewhere in the DOM.
@@ -807,7 +807,7 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expect(bufferResult).toBeVisible({ timeout: 15_000 });
     await bufferResult.click();
     await desktopPage.waitForURL(
-      (url) => url.pathname === "/settings/booking" && url.hash === "#buffer",
+      (url) => url.pathname === "/settings/booking/window",
     );
     const bufferControl = desktopPage.locator("#buffer");
     await expect(bufferControl).toBeVisible();

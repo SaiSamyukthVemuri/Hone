@@ -19,15 +19,15 @@ test("owner Integrations page: sync-off banner + connect fails closed when uncon
   await setStudioGoogleCalendarConnectionEnabled(seed.studioId, true);
   await loginAsOwner(page, seed);
 
-  await page.goto("/settings/integrations");
-  await expect(page.getByRole("heading", { name: /^Integrations$/ })).toBeVisible();
+  await page.goto("/settings/integrations/google-calendar");
+  await expect(page.getByRole("heading", { name: /^Google Calendar$/ }).first()).toBeVisible();
 
   // Dormancy is stated plainly — synchronization is off.
   await expect(page.getByTestId("integrations-sync-off")).toBeVisible();
   await expect(page.getByText(/synchronization is currently off/i)).toBeVisible();
 
   // The connection card (flag ON) offers Connect from the not-connected state.
-  await expect(page.getByRole("heading", { name: /^Google Calendar$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Google Calendar$/ }).first()).toBeVisible();
   await expect(
     page.getByRole("button", { name: /connect google calendar/i }),
   ).toBeVisible();
@@ -45,7 +45,7 @@ test("non-owner practitioner cannot access the Integrations page", async ({ page
   const member = await seedE2eMember(seed);
   await loginByMagicLink(page, member.email);
 
-  await page.goto("/settings/integrations");
+  await page.goto("/settings/integrations/google-calendar");
   // Owner-only: the server component redirects a non-owner to their profile.
   await expect(page).toHaveURL(/\/settings\/profile/);
   await expect(page.getByRole("heading", { name: /^Integrations$/ })).toHaveCount(0);
