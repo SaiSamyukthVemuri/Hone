@@ -336,7 +336,7 @@ async function provesSegmentChangeIsAcknowledged(page: Page) {
     const landed = new URL(page.url());
     expect(landed.pathname).toBe(`/clients/${client.clientId}`);
     // The requested tab is preserved — the acknowledgement changed no semantics.
-    expect(landed.searchParams.get("tab")).toBe("treatment");
+    expect(landed.searchParams.get("tab")).toBe("consultation");
     await expect(page.locator("[data-link-pending]")).toHaveCount(0);
     await expect(liveRegion).toHaveCount(0);
   });
@@ -347,7 +347,7 @@ async function provesSegmentChangeIsAcknowledged(page: Page) {
     // There is deliberately NO separate "warm cache serves this instantly" case
     // here, because on this route that scenario does not occur. Measured:
     //
-    //   - the consultation CTA never produces its own `?tab=treatment`
+    //   - the consultation CTA never produces its own `?tab=consultation`
     //     prefetch request. Prefetching for these client destinations is keyed
     //     by PATHNAME, so the neighbouring row action pointing at
     //     /clients/<id> already covers it;

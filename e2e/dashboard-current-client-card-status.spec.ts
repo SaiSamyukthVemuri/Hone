@@ -187,7 +187,7 @@ test.describe("Today row: current client, card status, one-tap actions", () => {
     await consultAction.click();
     // The canonical practitioner route — not a Dashboard-local editor.
     await expect(page).toHaveURL(
-      new RegExp(`/clients/${consult.clientId}\\?tab=treatment`),
+      new RegExp(`/clients/${consult.clientId}\\?tab=consultation`),
       { timeout: T },
     );
     // It landed on the REAL writer, which already lives on that tab.
