@@ -701,7 +701,7 @@ export default async function SessionDetailPage({
         <LastTreatmentMemoryCard
           clientId={id}
           memory={pointOfCareMemory}
-          notesHref={`/clients/${id}?tab=consultation`}
+          notesHref={`/clients/${id}?tab=treatment`}
         />
       )}
 
@@ -773,7 +773,7 @@ export default async function SessionDetailPage({
             sections={clinicalNoteSections}
             addAction={addClinicalNoteAction}
             reviseAction={reviseClinicalNoteAction}
-            profileHref={`/clients/${id}?tab=consultation`}
+            profileHref={`/clients/${id}?tab=treatment`}
             printHref={`/clients/${id}/clinical-notes/print`}
           />
         </div>

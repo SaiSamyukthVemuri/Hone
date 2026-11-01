@@ -163,11 +163,11 @@ describe("surfaces + placement", () => {
     expect(PRINT.startsWith("app/(app)/")).toBe(true);
   });
 
-  it("the profile tab set includes a dedicated consultation tab", () => {
-    const tab = read("components/profile-tab.ts");
-    expect(tab).toMatch(/"consultation"/);
-    const bar = read("components/profile-tab-bar.tsx");
-    expect(bar).toMatch(/value: "consultation"/);
+  it("consultation notes live under the Treatment tab; the legacy value resolves to it", () => {
+    const set = read("lib/clients/profile-tabs.ts");
+    expect(set).toMatch(/value: "treatment"/);
+    expect(set).toMatch(/consultation: \{ tab: "treatment" \}/);
+    expect(read("app/(app)/clients/[id]/page.tsx")).toMatch(/activeTab === "treatment" && clinicalNoteSections/);
   });
 
   it("the section + summary + print components render note bodies as pre-wrapped text", () => {
