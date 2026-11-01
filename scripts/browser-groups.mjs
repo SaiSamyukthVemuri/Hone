@@ -368,6 +368,10 @@ export const BROWSER_GROUPS = {
       // overview, book, back, close, Escape, clear) at desktop and phone width. Same group
       // and reasoning as UI-04: /clients/** has no PATH_TO_GROUP pattern.
       "clients-directory-journey.spec.ts",
+      // RBAC role boundaries (HON-44/HON-58; opt-in: self-skips unless RBAC_E2E=1): real owner and
+      // practitioner sessions, forbidden-data sentinels on HTML + RSC + prefetch, cross-studio both
+      // directions, old-cookie revocation. Here for the same reasons as the specs above.
+      "rbac-role-boundaries.spec.ts",
       // FETT photos (#892): the photo surface's mounted 44px floor at phone width
       // and the deactivated-practitioner denial. Filed here for the same two
       // reasons as UI-04 above: /clients/** has no PATH_TO_GROUP pattern, so a
