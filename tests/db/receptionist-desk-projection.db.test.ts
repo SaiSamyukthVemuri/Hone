@@ -326,13 +326,16 @@ describe("Privacy C2 and Insurance L7 (reviews of 0274 at 236e34d6)", () => {
 
 describe("studio clock and duration (Sam decision 4, Privacy C1)", () => {
   const tz = (uid: string, studio: string) => asUser(uid, (x) => x("select public.receptionist_studio_timezone($1) as tz", [studio]));
-  it("the clock returns the studio zone, validated, with a UTC fallback, and refuses other roles and studios", async () => {
+  it("the clock returns the studio zone (an unknown zone cannot be stored), and refuses other roles and studios", async () => {
     const original = (await adminQuery("select timezone from public.studios where id = $1", [a.studioId])).rows[0].timezone;
     try {
       await adminQuery("update public.studios set timezone = 'Pacific/Auckland' where id = $1", [a.studioId]);
       expect((await tz(aDesk, a.studioId)).rows[0].tz).toBe("Pacific/Auckland");
-      await adminQuery("update public.studios set timezone = 'Not/AZone' where id = $1", [a.studioId]);
-      expect((await tz(aDesk, a.studioId)).rows[0].tz).toBe("UTC");
+      // An unknown zone cannot be stored at all: the database itself refuses it ("time zone ... not
+      // recognized"), so the function's validate-or-UTC rule is defence in depth and its fallback is
+      // unreachable through any write path. Pin the refusal and that the stored zone is untouched.
+      await expect(adminQuery("update public.studios set timezone = 'Not/AZone' where id = $1", [a.studioId])).rejects.toThrow(/time zone/i);
+      expect((await tz(aDesk, a.studioId)).rows[0].tz).toBe("Pacific/Auckland");
     } finally {
       await adminQuery("update public.studios set timezone = $2 where id = $1", [a.studioId, original]);
     }
