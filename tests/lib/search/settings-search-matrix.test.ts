@@ -217,10 +217,14 @@ describe("acceptance matrix — authorization", () => {
       ["calendar color", "Calendar color"],
       ["calendar feed", "Calendar feed"],
       ["intake form preview", "Intake form preview"],
-      ["ready for booking checklist", "Launch"],
     ] as Array<[string, string]>) {
       expect(top(query, PRACTITIONER)?.title, query).toBe(title);
     }
+  });
+
+  // WS-D: the launch checklist is owner-only, so search never advertises it to a practitioner.
+  it("the owner-only launch checklist is not offered to a practitioner", () => {
+    expect(top("ready for booking checklist", PRACTITIONER)?.title).not.toBe("Launch");
   });
 
   it("case, spacing and punctuation never change the answer", () => {

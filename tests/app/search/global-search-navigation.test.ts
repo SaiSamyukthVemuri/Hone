@@ -229,7 +229,8 @@ describe("the action derives navigation visibility from the real session", () =>
     signInAs("practitioner");
     expect(hrefs(await search("profile"))).toContain("/settings/profile");
     expect(hrefs(await search("intake"))).toContain("/settings/forms/intake-preview");
-    expect(hrefs(await search("launch"))).toContain("/settings/launch");
+    // WS-D: the launch checklist is owner-only, so a practitioner is never offered it.
+    expect(hrefs(await search("launch"))).not.toContain("/settings/launch");
     expect(hrefs(await search("sterile"))).toContain(
       "/records?section=sterile",
     );
