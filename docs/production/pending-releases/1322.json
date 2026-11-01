@@ -1,6 +1,6 @@
 {
   "pr": 1322,
-  "runtime": false,
+  "runtime": true,
   "migrations": [
     "supabase/migrations/0258_hon58_identity.sql",
     "supabase/migrations/0266_legal_name_receptionist_access.sql",
