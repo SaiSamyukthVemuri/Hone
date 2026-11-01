@@ -68,6 +68,15 @@ concurrency:
 # magic-link flow. The derived range (3200-3999) excludes 3111, so the pinned
 # and derived paths cannot disagree.
 env:
+  # NODE-HEAP-01. Node's default old-space limit on these runners is ~2 GB. The
+  # typecheck step and the `next build` inside Playwright's webServer outgrew it
+  # PR-wide on 2026-11-01 ("Ineffective mark-compacts near heap limit", exit 134,
+  # before any test ran), while production's own push CI stayed green. Workflow-wide
+  # so every job that typechecks or builds - including the Playwright webServer,
+  # whose env composes with process.env.NODE_OPTIONS (e2e/helpers/local-env.ts) -
+  # gets the same ceiling. A step that sets its own NODE_OPTIONS REPLACES this
+  # value, so it must repeat the flag (see the Build step).
+  NODE_OPTIONS: --max-old-space-size=4096
   HONE_E2E_PORT: "3111"
 
 jobs:
@@ -367,7 +376,7 @@ jobs:
         # See scripts/block-google-fonts.cjs and FONTS.md.
         run: npm run build
         env:
-          NODE_OPTIONS: --require ./scripts/block-google-fonts.cjs
+          NODE_OPTIONS: --require ./scripts/block-google-fonts.cjs --max-old-space-size=4096
 
       - name: Unit tests
         # Same mirror rule. `Lint` runs above with no `if:`, so a lint failure

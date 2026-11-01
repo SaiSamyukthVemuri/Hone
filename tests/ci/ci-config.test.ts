@@ -2954,3 +2954,18 @@ describe("G4 — docs-only changes run the unit tests that read them", () => {
     expect(exec(" ; ").code).not.toBe(0);
   });
 });
+
+describe("NODE-HEAP-01: typecheck and the webServer build keep a 4 GB Node heap", () => {
+  // The default ~2 GB old-space limit OOM-killed typecheck and the Playwright
+  // webServer `next build` PR-wide on 2026-11-01 (exit 134, no test ran).
+  const heap = (text: string) => Number(/--max-old-space-size=(\d+)/.exec(text)?.[1] ?? 0);
+  it("the workflow-level env sets the heap, so every job inherits it", () => {
+    const top = /^env:\n((?:  .*\n|\s*\n)+)/m.exec(CI)?.[1] ?? "";
+    expect(heap(/^  NODE_OPTIONS: (.*)$/m.exec(top)?.[1] ?? "")).toBeGreaterThanOrEqual(4096);
+  });
+  it("the Build step's own NODE_OPTIONS replaces the inherited one, so it repeats the flag and keeps the font gate", () => {
+    const build = /- name: Build\n[\s\S]*?\n\s+NODE_OPTIONS: (.*)\n/.exec(CI)?.[1] ?? "";
+    expect(build).toMatch(/--require \.\/scripts\/block-google-fonts\.cjs/);
+    expect(heap(build)).toBeGreaterThanOrEqual(4096);
+  });
+});
