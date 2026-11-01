@@ -23,6 +23,7 @@ let actor: typeof OWNER | typeof PRACT = PRACT;
 let identityThrows = false;
 const tablesRead: string[] = [];
 const rpcCalls: string[] = [];
+const rpcArgs: Record<string, unknown>[] = [];
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/supabase/queries", () => ({
@@ -57,18 +58,20 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
-    rpc: async (name: string) => {
+    rpc: async (name: string, args?: Record<string, unknown>) => {
       rpcCalls.push(name);
+      rpcArgs.push(args ?? {});
       return { error: null };
     },
   }),
 }));
 vi.mock("@/app/(app)/calendar/postcare-auto-send", () => ({ autoSendPostcareOnComplete: vi.fn() }));
 
-async function complete(id: string) {
+async function complete(id: string, extra: Record<string, string> = {}) {
   const { markAppointmentCompleteAction } = await import("@/app/(app)/calendar/actions");
   const fd = new FormData();
   fd.set("appointment_id", id);
+  for (const [k, v] of Object.entries(extra)) fd.set(k, v);
   return markAppointmentCompleteAction(fd);
 }
 
@@ -77,6 +80,7 @@ beforeEach(() => {
   identityThrows = false;
   tablesRead.length = 0;
   rpcCalls.length = 0;
+  rpcArgs.length = 0;
 });
 
 describe("canCompleteAppointment", () => {
@@ -104,7 +108,10 @@ describe("markAppointmentCompleteAction enforces assignment", () => {
   });
   it("practitioner, appointment assigned to someone else: refused, command never called", async () => {
     const res = await complete("appt-other");
-    expect(res).toEqual({ ok: false, error: "Could not mark this appointment complete." });
+    expect(res).toEqual({
+      ok: false,
+      error: "Only the practitioner assigned to this appointment, or the studio owner, can mark it complete.",
+    });
     expect(rpcCalls).toEqual([]);
   });
   it("practitioner, unassigned appointment: refused", async () => {
@@ -178,5 +185,41 @@ describe("the completion control is hidden from a practitioner who cannot use it
   it("the server action's refusal is still there (the hint never replaces it)", () => {
     const ACTIONS = read("app/(app)/calendar/actions.ts");
     expect(ACTIONS).toContain("canCompleteAppointment(practitioner, assignment.practitioner_id)");
+  });
+});
+
+// Privacy C1: the database enforces assignment for the practitioner id it is GIVEN, so the id must
+// come from the signed-in session on every caller and never from a request value.
+describe("the practitioner id passed to the completion command is the session's", () => {
+  it("calendar action: hostile practitioner fields in the form are ignored", async () => {
+    // the colleague's id is in the request; the command still receives the session's own id
+    const res = await complete("appt-other", { practitioner_id: OTHER, actor_id: OTHER, p_practitioner_id: OTHER });
+    expect(res.ok).toBe(false); // still refused: the assignment check uses the SESSION actor
+    expect(rpcCalls).toEqual([]);
+    const ok = await complete("appt-mine", { practitioner_id: OTHER, actor_id: OTHER, p_practitioner_id: OTHER });
+    expect(ok.ok).toBe(true);
+    expect(rpcArgs[0]).toMatchObject({ p_practitioner_id: PRACT.id, p_studio_id: STUDIO_A });
+  });
+  it("an owner's request naming the assignee still records the owner as the completer", async () => {
+    actor = OWNER;
+    await complete("appt-other", { practitioner_id: OTHER });
+    expect(rpcArgs[0]).toMatchObject({ p_practitioner_id: OWNER.id });
+  });
+  it("session-start caller: derives practitionerId from the session, not from formData", () => {
+    const SRC = readFileSync(
+      path.resolve(__dirname, "../../..", "app/(app)/clients/[id]/sessions/new/actions.ts"),
+      "utf8",
+    );
+    expect(SRC).toContain("practitionerId: practitioner.id,");
+    const at = SRC.indexOf('admin.rpc("mark_appointment_complete"');
+    expect(at).toBeGreaterThan(0);
+    const helper = SRC.slice(SRC.lastIndexOf("function maybeMarkAppointmentCompletedOnSessionStart", at), at + 300);
+    expect(helper).not.toMatch(/formData|FormData/);
+    expect(helper).toContain("p_practitioner_id: args.practitionerId");
+  });
+  it("neither caller takes the id from a request value", () => {
+    const CAL = readFileSync(path.resolve(__dirname, "../../..", "app/(app)/calendar/actions.ts"), "utf8");
+    const i = CAL.indexOf('admin.rpc("mark_appointment_complete"');
+    expect(CAL.slice(i, i + 250)).toContain("p_practitioner_id: practitioner.id");
   });
 });

@@ -593,6 +593,11 @@ export type AppointmentStateActionResult =
   // retry would risk a duplicate email.
   | { ok: false; code?: "provider_sent_status_unrecorded"; error: string };
 
+// One plain sentence for every refusal on this path (not found, another studio's, someone else's,
+// unassigned), so the text reveals nothing about the row.
+const COMPLETION_NOT_ALLOWED_MESSAGE =
+  "Only the practitioner assigned to this appointment, or the studio owner, can mark it complete.";
+
 // P0-1 + P0-3: practitioner-initiated mark complete. Calls the
 // service-role-only RPC public.mark_appointment_complete (introduced by
 // migration 0032, redefined by B6 / 0175) which:
@@ -627,7 +632,7 @@ export async function markAppointmentCompleteAction(
       .eq("studio_id", studio.id)
       .maybeSingle();
     if (!assignment || !canCompleteAppointment(practitioner, assignment.practitioner_id)) {
-      return { ok: false, error: "Could not mark this appointment complete." };
+      return { ok: false, error: COMPLETION_NOT_ALLOWED_MESSAGE };
     }
   }
 
