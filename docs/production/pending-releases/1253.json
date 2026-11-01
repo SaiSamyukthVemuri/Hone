@@ -1,0 +1,6 @@
+{
+  "pr": 1253,
+  "runtime": true,
+  "migrations": ["supabase/migrations/0267_range_confirmation_recorded_with_capture.sql"],
+  "release_receipt": "01-ops/1253-release-receipt.json"
+}
