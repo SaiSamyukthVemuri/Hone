@@ -1324,7 +1324,9 @@ function AppointmentRow({
             {/* COMPACT ROW: service · modality · duration · practitioner on ONE line; allergy flag stays
                 visible; everything else about the visit is in the details below the row. */}
             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-500">
-              <span className="break-words">
+              {/* A flex item: min-w-0 + overflow-wrap:anywhere let an unbroken service name wrap inside the card
+                  (break-words alone does not lower a flex item's min-content width). */}
+              <span className="min-w-0 break-words [overflow-wrap:anywhere]">
                 {serviceName && <span>{serviceName}</span>}
                 {modality && <span>{serviceName ? " · " : ""}{modality}</span>}
                 <span>
