@@ -106,7 +106,7 @@ export async function BookingView({
           className="flex max-w-2xl flex-col gap-5"
         >
           <input type="hidden" name="view" value="window" />
-          <FormDirtyGuard name="booking-window" />
+          <FormDirtyGuard name="booking-window" token={Date.now().toString(36)} />
         <div className="grid gap-4 md:grid-cols-3">
           <label id="timezone" className="flex scroll-mt-24 flex-col gap-1.5">
             <span className="text-sm font-medium">Timezone</span>
@@ -269,7 +269,7 @@ export async function BookingView({
             action={updateNewClientAdmissionModeAction}
             className="flex max-w-2xl flex-col gap-3"
           >
-            <FormDirtyGuard name="booking-new-clients" />
+            <FormDirtyGuard name="booking-new-clients" token={Date.now().toString(36)} />
             {(
               [
                 {
@@ -325,7 +325,7 @@ export async function BookingView({
         className="flex max-w-2xl flex-col gap-5"
       >
         <input type="hidden" name="view" value="link" />
-        <FormDirtyGuard name="booking-link" />
+        <FormDirtyGuard name="booking-link" token={Date.now().toString(36)} />
         <label id="booking-slug" className="flex scroll-mt-24 flex-col gap-1.5">
           <span className="text-sm font-medium">Booking URL slug</span>
           <div className="flex items-stretch">

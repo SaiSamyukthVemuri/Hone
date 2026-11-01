@@ -303,6 +303,7 @@ export function PractitionerWeekEditor({
 }
 
 function OverridesSection({
+  practitionerId,
   practitionerName,
   timeFormat,
   overrides,
@@ -322,7 +323,7 @@ function OverridesSection({
   const [isOpen, setIsOpen] = useState(true);
   const [open, setOpen] = useState("10:00");
   const [close, setClose] = useState("15:00");
-  useUnsavedChangesGuard(`availability-week-override-${practitionerName}`, date !== "" || !isOpen || open !== "10:00" || close !== "15:00");
+  useUnsavedChangesGuard(`availability-week-override-${practitionerId}`, date !== "" || !isOpen || open !== "10:00" || close !== "15:00");
 
   return (
     <div className="flex flex-col gap-3">

@@ -127,20 +127,28 @@ export function TimedBlocksSection({
   const [pending, startTransition] = useTransition();
   // A block being edited, or a create form changed from its defaults, is unsaved
   // work; resetForm() after a successful save puts every field back.
+  // "Today" is fixed at mount, so a page left open past local midnight does not
+  // turn an untouched create form dirty. Editing an existing block is dirty only
+  // once a field differs from the block as opened.
+  const [mountDay] = useState(todayLocal);
+  const [openedKey, setOpenedKey] = useState<string | null>(null);
+  const fieldsKey = [date, startLocal, endLocal, category, privateNote, String(allDay), scope].join("\u0000");
   useUnsavedChangesGuard(
     "availability-timed-block",
-    editingId != null ||
-      date !== todayLocal ||
-      startLocal !== DEFAULT_START ||
-      endLocal !== DEFAULT_END ||
-      category !== DEFAULT_CATEGORY ||
-      privateNote !== "" ||
-      allDay ||
-      scope !== defaultScope,
+    editingId != null
+      ? fieldsKey !== openedKey
+      : date !== mountDay ||
+          startLocal !== DEFAULT_START ||
+          endLocal !== DEFAULT_END ||
+          category !== DEFAULT_CATEGORY ||
+          privateNote !== "" ||
+          allDay ||
+          scope !== defaultScope,
   );
 
   function resetForm() {
     setEditingId(null);
+    setOpenedKey(null);
     setEditingVersion(null);
     setDate(todayLocal);
     setStartLocal(DEFAULT_START);
@@ -221,9 +229,14 @@ export function TimedBlocksSection({
     // duration), so editing an all-day block PRESERVES all-day mode. A timed
     // block prefills its explicit times.
     const wasAllDay = isAllDayInterval(b.starts_at, b.ends_at, studioTimezone);
+    const openStart = wasAllDay ? DEFAULT_START : formatTimeForInput(b.starts_at, studioTimezone);
+    const openEnd = wasAllDay ? DEFAULT_END : formatTimeForInput(b.ends_at, studioTimezone);
+    setOpenedKey(
+      [formatDateForInput(b.starts_at, studioTimezone), openStart, openEnd, b.category, b.private_note ?? "", String(wasAllDay), b.practitioner_id ?? ""].join("\u0000"),
+    );
     setAllDay(wasAllDay);
-    setStartLocal(wasAllDay ? DEFAULT_START : formatTimeForInput(b.starts_at, studioTimezone));
-    setEndLocal(wasAllDay ? DEFAULT_END : formatTimeForInput(b.ends_at, studioTimezone));
+    setStartLocal(openStart);
+    setEndLocal(openEnd);
     setCategory(b.category);
     setPrivateNote(b.private_note ?? "");
     setScope(b.practitioner_id ?? "");

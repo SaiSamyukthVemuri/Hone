@@ -244,17 +244,20 @@ export function AvailabilityClient({
     (typeof PRESETS)[number] | null
   >(null);
 
-  // An open day editor whose draft differs from the saved day is unsaved work.
-  const savedDay = editingDow == null ? null : days.get(editingDow) ?? null;
+  // An open day editor whose draft differs from the draft it OPENED with is
+  // unsaved work. (Compared with the saved day it would read dirty the moment a
+  // closed day opened with its Open default, before any edit.)
+  const [openedDraft, setOpenedDraft] = useState<{ is_open: boolean; open_time: string; close_time: string } | null>(null);
   useUnsavedChangesGuard(
     "availability-day",
     editingDow != null &&
       draft != null &&
+      openedDraft != null &&
       savingDow == null &&
-      (draft.is_open !== (savedDay?.is_open ?? false) ||
+      (draft.is_open !== openedDraft.is_open ||
         (draft.is_open &&
-          (draft.open_time !== (savedDay?.open_time || DEFAULT_OPEN) ||
-            draft.close_time !== (savedDay?.close_time || DEFAULT_CLOSE)))),
+          (draft.open_time !== openedDraft.open_time ||
+            draft.close_time !== openedDraft.close_time))),
   );
 
   // Keep local map in sync if server props change after a revalidation.
@@ -269,16 +272,19 @@ export function AvailabilityClient({
     setSavedFor(null);
     // Click a closed day to default into "Open" mode with sensible hours;
     // the user can still toggle Open off and save to keep it closed.
-    setDraft({
+    const opened = {
       is_open: true,
       open_time: current?.open_time || DEFAULT_OPEN,
       close_time: current?.close_time || DEFAULT_CLOSE,
-    });
+    };
+    setOpenedDraft(opened);
+    setDraft(opened);
   }
 
   function closeEditor() {
     setEditingDow(null);
     setDraft(null);
+    setOpenedDraft(null);
     setError(null);
   }
 

@@ -156,7 +156,7 @@ function ServiceEditForm({
         className="flex flex-col gap-5"
         aria-label={`Edit ${service.name}`}
       >
-        <FormDirtyGuard name={`service-edit-${service.id}`} />
+        <FormDirtyGuard name={`service-edit-${service.id}`} token={Date.now().toString(36)} />
         <input type="hidden" name="id" value={service.id} />
 
         {/* Main fields */}
@@ -292,7 +292,7 @@ function AddServiceCard({ calendarColorAvailable }: { calendarColorAvailable: bo
 
       <article className="flex flex-col gap-5 rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
         <form action={createServiceAction} className="flex flex-col gap-5">
-          <FormDirtyGuard name="service-create" />
+          <FormDirtyGuard name="service-create" token={Date.now().toString(36)} />
           <div className="grid gap-4 md:grid-cols-2">
             <FieldLabel label="Service name" required>
               <input

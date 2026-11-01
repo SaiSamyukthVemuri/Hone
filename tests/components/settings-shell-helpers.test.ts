@@ -211,8 +211,51 @@ describe("Codex P2: FormDirtyGuard re-baselines after a save and rolls back on a
   ) as string;
   it("takes a new baseline on submit and restores the old one when the redirect carries an error", () => {
     expect(src).toMatch(/previous\.current = baseline\.current;\s*baseline\.current = snapshot\(form\)/);
-    expect(src).toMatch(/baseline\.current = previous\.current/);
     expect(src).toMatch(/search\?\.has\("error"\)/);
+  });
+});
+
+describe("Insurance #1301 G1-G3 (1 Nov)", () => {
+  const read = (rel: string) => readFileSync(path.resolve(__dirname, "../..", rel), "utf8");
+  it("G1: a refused save restores the pre-submit baseline EVERY time, keyed on the server response, not on the error param appearing", async () => {
+    const { baselineAfterArrival } = await import("@/components/settings/form-dirty-guard");
+    // first refusal and a second refusal at the same URL behave identically
+    for (let i = 0; i < 2; i++) {
+      expect(baselineAfterArrival({ awaiting: true, refused: true, before: "A" })).toBe("A");
+    }
+    // a successful save keeps the baseline taken at submit
+    expect(baselineAfterArrival({ awaiting: true, refused: false, before: "A" })).toBeNull();
+    // nothing pending: nothing changes
+    expect(baselineAfterArrival({ awaiting: false, refused: true, before: "A" })).toBeNull();
+    const src = read("components/settings/form-dirty-guard.tsx");
+    expect(src).toMatch(/\[token, hasError\]/);
+    expect(src).toMatch(/awaiting\.current = true/);
+  });
+  it.each([
+    ["app/(app)/settings/booking/BookingView.tsx", 3],
+    ["app/(app)/settings/services/page.tsx", 2],
+  ])("G1: %s passes a per-render token to every FormDirtyGuard", (file, n) => {
+    const src = read(file);
+    expect(src.match(/<FormDirtyGuard [^>]*token=\{Date\.now\(\)\.toString\(36\)\}/g)?.length).toBe(n);
+    expect(src.match(/<FormDirtyGuard /g)?.length).toBe(n);
+  });
+  it("G2: the week-override guard is keyed by practitioner id, never by name", () => {
+    const src = read("app/(app)/settings/availability/PractitionerWeekEditor.tsx");
+    expect(src).toContain("`availability-week-override-${practitionerId}`");
+    expect(src).not.toContain("availability-week-override-${practitionerName}");
+  });
+  it("G3: an untouched open edit is not dirty (compared with the form as opened)", () => {
+    const rec = read("app/(app)/settings/availability/RecurringBreaksSection.tsx");
+    const tim = read("app/(app)/settings/availability/TimedBlocksSection.tsx");
+    const day = read("app/(app)/settings/availability/AvailabilityClient.tsx");
+    for (const src of [rec, tim]) {
+      expect(src).toMatch(/editingId != null\s*\?\s*fieldsKey !== openedKey/);
+      expect(src).not.toMatch(/editingId != null \|\|/);
+    }
+    expect(tim).toMatch(/const \[mountDay\] = useState\(todayLocal\)/);
+    expect(tim).toMatch(/date !== mountDay/);
+    expect(day).toMatch(/setOpenedDraft\(opened\)/);
+    expect(day).toMatch(/draft\.open_time !== openedDraft\.open_time/);
   });
 });
 
