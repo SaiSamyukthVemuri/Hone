@@ -4,6 +4,7 @@ import { FormattedDateTime } from "@/components/formatted-date-time";
 import { PendingLink } from "@/components/pending-link";
 import { UnarchiveRowControl } from "./UnarchiveRowControl";
 import { OverviewFrame } from "./OverviewFrame";
+import { formatStudioDate } from "@/lib/clients/last-visit";
 import { NAME_ON_FILE_LABEL } from "@/lib/clients/directory-rules";
 import {
   directoryHref,
@@ -36,7 +37,8 @@ export type DirectoryState = {
   page: number;
 };
 
-export type LastVisitCell = { kind: "at"; iso: string } | { kind: "none" } | { kind: "unavailable" };
+/** `label` is the date in the studio timezone, formatted on the server (K3). */
+export type LastVisitCell = { kind: "at"; iso: string; label?: string } | { kind: "none" } | { kind: "unavailable" };
 
 const INTAKE_LABEL: Record<IntakeState, string> = {
   not_submitted: "Not submitted",
@@ -62,6 +64,7 @@ export function DirectoryResults({
   lastVisits,
   selectedId,
   overview,
+  timeZone,
 }: {
   state: DirectoryState;
   data: DirectoryPage;
@@ -69,6 +72,8 @@ export function DirectoryResults({
   selectedId: string | null;
   /** The open overview; shown INSIDE the selected row's item so nothing above it moves. */
   overview?: ReactNode;
+  /** The studio timezone, so last visit is a server-rendered studio date. */
+  timeZone?: string;
 }) {
   const archived = state.view === "archived";
   const filtered = state.q.length > 0 || state.filters.length > 0;
@@ -126,6 +131,7 @@ export function DirectoryResults({
             lastVisits={lastVisits}
             selected={row.id === selectedId}
             overview={row.id === selectedId ? overview : null}
+            timeZone={timeZone}
           />
         ))}
       </ul>
@@ -141,15 +147,23 @@ function NextCell({ row }: { row: DirectoryRow }) {
 }
 
 export function LastVisitText({ cell }: { cell: LastVisitCell }) {
-  if (cell.kind === "at") return <FormattedDateTime iso={cell.iso} format="date" />;
-  if (cell.kind === "none") return <span>No visit recorded</span>;
+  if (cell.kind === "at") {
+    return cell.label ? <time dateTime={cell.iso}>{cell.label}</time> : <FormattedDateTime iso={cell.iso} format="date" />;
+  }
+  // "in Hone": imported treatment history feeds neither source, so this is not "never seen" (K6).
+  if (cell.kind === "none") return <span>No visit recorded in Hone</span>;
   return <span className="text-neutral-500">Unavailable</span>;
 }
 
-export function lastVisitCell(map: ReadonlyMap<string, string> | null, id: string): LastVisitCell {
+export function lastVisitCell(
+  map: ReadonlyMap<string, string> | null,
+  id: string,
+  timeZone?: string,
+): LastVisitCell {
   if (map === null) return { kind: "unavailable" };
   const at = map.get(id);
-  return at ? { kind: "at", iso: at } : { kind: "none" };
+  if (!at) return { kind: "none" };
+  return timeZone ? { kind: "at", iso: at, label: formatStudioDate(at, timeZone) } : { kind: "at", iso: at };
 }
 
 function IntakePill({ state }: { state: IntakeState }) {
@@ -166,12 +180,14 @@ function DirectoryRowView({
   lastVisits,
   selected,
   overview,
+  timeZone,
 }: {
   row: DirectoryRow;
   state: DirectoryState;
   lastVisits: ReadonlyMap<string, string> | null;
   selected: boolean;
   overview: ReactNode;
+  timeZone?: string;
 }) {
   const archived = state.view === "archived";
   const contact = [row.email, row.phone].filter((v): v is string => Boolean(v));
@@ -214,7 +230,7 @@ function DirectoryRowView({
           <>
             <div className="text-xs text-neutral-600 dark:text-neutral-400">
               <span className="text-neutral-500 md:hidden">Last visit: </span>
-              <LastVisitText cell={lastVisitCell(lastVisits, row.id)} />
+              <LastVisitText cell={lastVisitCell(lastVisits, row.id, timeZone)} />
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
               <span>

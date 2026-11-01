@@ -109,3 +109,17 @@ describe("directory interaction contract (HON-58)", () => {
     }
   });
 });
+
+describe("empty states and the archived view (Insurance K5, K6)", () => {
+  it("an empty last visit says it is Hone's record, and a studio date renders on the server", async () => {
+    const { LastVisitText, lastVisitCell } = await import("@/app/(app)/clients/ClientsDirectory");
+    expect(renderToStaticMarkup(createElement(LastVisitText, { cell: { kind: "none" } }))).toContain("No visit recorded in Hone");
+    const cell = lastVisitCell(new Map([["c1", "2030-03-02T03:30:00Z"]]), "c1", "America/Los_Angeles");
+    expect(renderToStaticMarkup(createElement(LastVisitText, { cell }))).toContain(">Mar 1, 2030</time>");
+  });
+
+  it("the archived view ignores filters from the URL; the active view keeps them", () => {
+    expect(parseDirectoryParams({ filter: ["no_upcoming", "intake_review"] }, "archived").filters).toEqual([]);
+    expect(parseDirectoryParams({ filter: "no_upcoming" }, "active").filters).toEqual(["no_upcoming"]);
+  });
+});

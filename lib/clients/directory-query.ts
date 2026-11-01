@@ -87,7 +87,9 @@ export function parseDirectoryParams(
 ): DirectoryParams {
   const q = normalizeDirectoryQuery(one(sp.q));
   const rawFilters = ([] as string[]).concat(sp.filter ?? []);
-  const filters = FILTERS.filter((f) => rawFilters.includes(f));
+  // The archived view reads no appointment or intake data and offers no filters, so a
+  // typed filter is ignored there rather than matching placeholder aggregates (Insurance K5).
+  const filters = view === "archived" ? [] : FILTERS.filter((f) => rawFilters.includes(f));
   const rawSort = one(sp.sort);
   // Active: name (default) or next appointment. Archived: most recently archived (default) or name.
   const sort: DirectorySort =

@@ -391,6 +391,22 @@ function scrubRequest(request: Record<string, unknown>): void {
   }
 }
 
+/** A label that may start with an HTTP method and carry a URL ("GET /clients?q=x", a
+ *  transaction name or a span description): drop the query and fragment of the URL
+ *  token only. A description that is not URL-shaped (a SQL statement with `?`
+ *  placeholders) is left to the ordinary redactions. K7-A: a typed search term lives
+ *  in the query string, and the generic redaction does not know a name from a word. */
+function stripLabelQuery(label: string): string {
+  return label.replace(
+    /^((?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+)?(\/\S*|https?:\/\/\S*)/,
+    (_m, method: string | undefined, url: string) => `${method ?? ""}${sanitizeUrlString(url)}`,
+  );
+}
+
+// Span attributes that hold a URL (sanitized) or only its query/fragment (deleted).
+const SPAN_URL_KEYS = ["http.url", "url.full", "url", "url.original", "http.target", "url.path"];
+const SPAN_QUERY_KEYS = ["url.query", "http.query", "url.fragment", "http.fragment"];
+
 /** Scrub (or drop) a single breadcrumb. Shared by beforeBreadcrumb and the
  *  in-event breadcrumb pass so both paths behave identically. */
 export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb | null {
@@ -412,6 +428,13 @@ export function scrubBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb | null {
       typeof data.url === "string"
     ) {
       data.url = sanitizeUrlString(data.url);
+    }
+    // Navigation breadcrumbs carry the from/to paths, which include the query
+    // (K7-A: "/clients?q=<typed name>").
+    if (breadcrumb.category === "navigation") {
+      for (const key of ["from", "to", "url"]) {
+        if (typeof data[key] === "string") data[key] = sanitizeUrlString(data[key] as string);
+      }
     }
     breadcrumb.data = deepScrub(
       data,
@@ -457,7 +480,7 @@ function scrubEventCommon<T extends Event>(event: T): T {
   // credential is gone. Applied in the COMMON path so error and transaction
   // events are covered by one contract.
   if (typeof event.transaction === "string") {
-    event.transaction = redactString(event.transaction);
+    event.transaction = redactString(stripLabelQuery(event.transaction));
   }
 
   if (event.exception?.values) {
@@ -535,9 +558,13 @@ export function scrubTransactionEvent<T extends Event>(event: T): T {
     for (const span of event.spans) {
       const s = span as unknown as Record<string, unknown>;
       if (typeof s.description === "string") {
-        s.description = redactString(s.description);
+        s.description = redactString(stripLabelQuery(s.description));
       }
       if (isRecord(s.data)) {
+        for (const key of SPAN_URL_KEYS) {
+          if (typeof s.data[key] === "string") s.data[key] = sanitizeUrlString(s.data[key] as string);
+        }
+        for (const key of SPAN_QUERY_KEYS) delete s.data[key];
         s.data = deepScrub(s.data, { redactKeys: true }, new WeakSet(), 0);
       }
     }

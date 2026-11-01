@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readLastVisits, LAST_VISIT_DEFINITION } from "@/lib/clients/last-visit";
+import { readLastVisits, formatStudioDate, LAST_VISIT_DEFINITION, RECENT_WINDOW_DAYS } from "@/lib/clients/last-visit";
 import { readCurrentIntake, readDirectoryClients, readNextAppointments, DIRECTORY_CLIENT_COLUMNS } from "@/lib/clients/directory-read";
 
 type Call = { table: string; cols: string; ops: Array<[string, unknown[]]> };
@@ -15,7 +15,7 @@ function fake(script: Script) {
           const call: Call = { table, cols, ops: [] };
           calls.push(call);
           const q: Record<string, unknown> = {};
-          for (const m of ["eq", "neq", "lte", "gt", "is", "not", "in", "order"])
+          for (const m of ["eq", "neq", "lte", "gte", "lt", "gt", "is", "not", "in", "order"])
             q[m] = (...a: unknown[]) => { call.ops.push([m, a]); return q; };
           q.range = async (a: number, b: number) => { call.ops.push(["range", [a, b]]); return script(call, Math.floor(a / 1000)); };
           return q;
@@ -89,5 +89,71 @@ describe("directory reads", () => {
     expect(ok.calls[0].cols).toBe("client_id, status, created_at");
     expect(ok.calls[0].ops).toEqual(expect.arrayContaining([["is", ["deleted_at", null]]]));
     expect(await readCurrentIntake(fake(() => ({ data: null, error: { message: "x" } })).supabase, "s")).toBeNull();
+  });
+});
+
+describe("bounded reads (Insurance K1, K2, K4)", () => {
+  const NOW = "2030-06-01T00:00:00Z";
+  const ops = (c: Call) => c.ops.map(([m, a]) => `${m}:${(a as unknown[]).join(",")}`);
+
+  it("scoped next-appointment and intake reads are limited to the page's clients, and end with an id tie-break", async () => {
+    const next = fake(() => ({ data: [], error: null }));
+    await readNextAppointments(next.supabase, "s", NOW, ["a", "b"]);
+    expect(ops(next.calls[0])).toContain("in:client_id,a,b");
+    expect(next.calls[0].ops.filter(([m]) => m === "order").map(([, a]) => (a as unknown[])[0])).toEqual(["starts_at", "id"]);
+    const intake = fake(() => ({ data: [], error: null }));
+    await readCurrentIntake(intake.supabase, "s", ["a"]);
+    expect(ops(intake.calls[0])).toContain("in:client_id,a");
+    expect(intake.calls[0].ops.filter(([m]) => m === "order").map(([, a]) => (a as unknown[])[0])).toEqual(["created_at", "id"]);
+    // The unscoped (whole-studio) read has no client filter and the same tie-break.
+    const whole = fake(() => ({ data: [], error: null }));
+    await readCurrentIntake(whole.supabase, "s");
+    expect(whole.calls[0].ops.some(([m]) => m === "in")).toBe(false);
+    // No clients means no read at all.
+    const none = fake(() => ({ data: [], error: null }));
+    expect(await readNextAppointments(none.supabase, "s", NOW, [])).toEqual(new Map());
+    expect(await readCurrentIntake(none.supabase, "s", [])).toEqual(new Map());
+    expect(none.calls).toHaveLength(0);
+  });
+
+  it("last visit: a client with a recent visit is final after the recent window; only the rest read older history", async () => {
+    const windowStart = new Date(Date.parse(NOW) - RECENT_WINDOW_DAYS * 86_400_000).toISOString();
+    const { supabase, calls } = fake((c) => {
+      const older = c.ops.some(([m]) => m === "lt");
+      if (!older) return { data: c.table === "sessions" ? [{ client_id: "a", started_at: "2030-05-01T00:00:00Z" }] : [], error: null };
+      return { data: c.table === "sessions" ? [{ client_id: "b", started_at: "2025-01-01T00:00:00Z" }] : [], error: null };
+    });
+    const r = await readLastVisits(supabase, "s", ["a", "b", "c"], NOW);
+    expect(r).toEqual({ ok: true, value: new Map([["a", "2030-05-01T00:00:00Z"], ["b", "2025-01-01T00:00:00Z"]]) });
+    const recent = calls.filter((c) => c.ops.some(([m]) => m === "gte"));
+    const olderCalls = calls.filter((c) => c.ops.some(([m]) => m === "lt"));
+    expect(recent).toHaveLength(2);
+    expect(recent.every((c) => ops(c).includes(`gte:${c.table === "sessions" ? "started_at" : "starts_at"},${windowStart}`))).toBe(true);
+    // Older history is read ONLY for the clients with no recent hit.
+    expect(olderCalls).toHaveLength(2);
+    expect(olderCalls.every((c) => ops(c).includes("in:client_id,b,c"))).toBe(true);
+    // Every ordered read ends with an id tie-break.
+    for (const c of calls) expect(c.ops.filter(([m]) => m === "order").map(([, a]) => (a as unknown[])[0]).slice(-1)).toEqual(["id"]);
+  });
+
+  it("when every client has a recent visit, older history is never read", async () => {
+    const { supabase, calls } = fake((c) => ({ data: c.table === "sessions" ? [{ client_id: "a", started_at: "2030-05-01T00:00:00Z" }] : [], error: null }));
+    await readLastVisits(supabase, "s", ["a"], NOW);
+    expect(calls.some((c) => c.ops.some(([m]) => m === "lt"))).toBe(false);
+  });
+
+  it("a failed or overflowing older read is unavailable, never 'no visit'", async () => {
+    const { supabase } = fake((c) => (c.ops.some(([m]) => m === "lt") ? { data: null, error: { message: "x" } } : { data: [], error: null }));
+    expect(await readLastVisits(supabase, "s", ["a"], NOW)).toEqual({ ok: false });
+  });
+});
+
+describe("last visit date is the studio's date, formatted on the server (K3)", () => {
+  it("the same instant is a different day in different studio timezones", () => {
+    const iso = "2030-03-02T03:30:00Z";
+    expect(formatStudioDate(iso, "America/Los_Angeles")).toBe("Mar 1, 2030");
+    expect(formatStudioDate(iso, "Pacific/Auckland")).toBe("Mar 2, 2030");
+    expect(formatStudioDate("not a date", "UTC")).toBe("");
+    expect(formatStudioDate(iso, "Not/AZone")).toBe("Mar 2, 2030");
   });
 });

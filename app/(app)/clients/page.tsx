@@ -68,14 +68,40 @@ export default async function ClientsPage({
   const domain = startPerfSpan("clients.domain");
   const nowIso = new Date().toISOString();
 
-  const [source, nextAppointments, intake] = await Promise.all([
+  // What decides the SET or its ORDER needs the whole studio's aggregate (the "no
+  // upcoming" filter and the next-appointment sort need every client's next
+  // appointment; "intake needs review" needs every client's newest intake form).
+  // Anything else is only DISPLAYED, so it is read for the visible page's clients
+  // alone: an ordinary search, name sort or page click never scans every appointment
+  // and intake form (Insurance K1). The archived view reads neither.
+  const needAllNext = !archived && (query.sort === "next" || query.filters.includes("no_upcoming"));
+  const needAllIntake = !archived && query.filters.includes("intake_review");
+  const none = <T,>() => Promise.resolve(new Map<string, T>());
+
+  const [source, wholeNext, wholeIntake] = await Promise.all([
     readDirectoryClients(db, studio.id, archived),
-    archived ? Promise.resolve(new Map<string, string>()) : readNextAppointments(db, studio.id, nowIso),
-    archived ? Promise.resolve(new Map<string, "in_progress">()) : readCurrentIntake(db, studio.id),
+    needAllNext ? readNextAppointments(db, studio.id, nowIso) : none<string>(),
+    needAllIntake ? readCurrentIntake(db, studio.id) : none<"in_progress">(),
   ]);
-  const aggregates: DirectoryAggregates = { nextAppointments, intake };
   const identityRows = source.map(projectStaffRow);
-  const data = queryDirectory(identityRows, aggregates, query);
+  let aggregates: DirectoryAggregates = { nextAppointments: wholeNext, intake: wholeIntake };
+  let data = queryDirectory(identityRows, aggregates, query);
+
+  // The overview's client comes from the same authorized set; the page's rows are
+  // known now, so the display-only aggregates are read for exactly those clients.
+  const clientParamEarly = Array.isArray(params.client) ? params.client[0] : params.client;
+  const selectedInSet = clientParamEarly ? identityRows.some((r) => r.id === clientParamEarly) : false;
+  const pageIds = data.rows.map((r) => r.id);
+  if (selectedInSet && clientParamEarly && !pageIds.includes(clientParamEarly)) pageIds.push(clientParamEarly);
+  if (!archived && (!needAllNext || !needAllIntake)) {
+    const [pageNext, pageIntake] = await Promise.all([
+      needAllNext ? Promise.resolve(wholeNext) : readNextAppointments(db, studio.id, nowIso, pageIds),
+      needAllIntake ? Promise.resolve(wholeIntake) : readCurrentIntake(db, studio.id, pageIds),
+    ]);
+    aggregates = { nextAppointments: pageNext, intake: pageIntake };
+    // Same set, order and count (neither aggregate decided them); only the shown values are now real.
+    data = queryDirectory(identityRows, aggregates, query);
+  }
 
   // The overview's client comes from the same authorized set: an id that is not in
   // this view's set shows nothing and reveals nothing.
@@ -102,7 +128,7 @@ export default async function ClientsPage({
     <ClientOverview
       state={state}
       row={selected}
-      lastVisit={lastVisitCell(lastVisitMap, selected.id)}
+      lastVisit={lastVisitCell(lastVisitMap, selected.id, studio.timezone)}
       page={data.page}
     />
   ) : null;
@@ -143,6 +169,7 @@ export default async function ClientsPage({
         lastVisits={lastVisitMap}
         selectedId={selected?.id ?? null}
         overview={onThisPage ? overview : null}
+        timeZone={studio.timezone}
       />
     </div>
   );

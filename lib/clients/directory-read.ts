@@ -1,8 +1,15 @@
 // CLIENTS DIRECTORY: the server reads. A CONSTANT number of reads, none per row:
 //   1. the clients of the studio (one id-paged traversal), explicit columns;
-//   2. one read of confirmed upcoming appointments for the studio;
-//   3. one read of the studio's intake rows (status only, never the answers);
+//   2. confirmed upcoming appointments;
+//   3. intake rows (status only, never the answers);
 //   and, for the visible page only, one batched last-visit read (last-visit.ts).
+// 2 and 3 are read for the WHOLE studio only when the request needs them to decide
+// the set or its order (the "no upcoming" and "intake needs review" filters, the
+// next-appointment sort); otherwise they are read for the visible page's clients
+// only (`clientIds`), so an ordinary search or page click never scans every
+// appointment and intake form (Insurance K1). Every ordered paged read ends with an
+// id tie-break, so offset paging cannot skip or repeat a row (K2). Every traversal
+// is capped at MAX_BLOCKS blocks of BLOCK rows and fails honestly past it.
 // Everything is read through the SIGNED-IN client, so row-level security still
 // decides what a viewer may read. Filtering, search, sort, count and paging happen
 // afterwards, in directory-query.ts, over the whole set read here.
@@ -27,6 +34,7 @@ type Q = {
   eq: (c: string, v: string | boolean) => Q;
   gt: (c: string, v: string) => Q;
   is: (c: string, v: null) => Q;
+  in: (c: string, v: string[]) => Q;
   not: (c: string, op: string, v: null) => Q;
   order: (c: string, o: { ascending: boolean }) => Q;
   range: (a: number, b: number) => PromiseLike<Result>;
@@ -75,16 +83,21 @@ export async function readNextAppointments(
   supabase: DirectorySupabase,
   studioId: string,
   nowIso: string,
+  clientIds?: readonly string[],
 ): Promise<Map<string, string> | null> {
   const next = new Map<string, string>();
+  if (clientIds && clientIds.length === 0) return next;
   for (let block = 0; block < MAX_BLOCKS; block += 1) {
-    const res: Result = await supabase
+    let q = supabase
       .from("appointments")
       .select("client_id, starts_at")
       .eq("studio_id", studioId)
       .eq("status", "confirmed")
-      .gt("starts_at", nowIso)
+      .gt("starts_at", nowIso);
+    if (clientIds) q = q.in("client_id", [...clientIds]);
+    const res: Result = await q
       .order("starts_at", { ascending: true })
+      .order("id", { ascending: true })
       .range(block * BLOCK, block * BLOCK + BLOCK - 1);
     if (res.error) return null;
     const rows = (res.data ?? []) as Array<{ client_id: string; starts_at: string }>;
@@ -101,16 +114,21 @@ export async function readNextAppointments(
 export async function readCurrentIntake(
   supabase: DirectorySupabase,
   studioId: string,
+  clientIds?: readonly string[],
 ): Promise<Map<string, IntakeStatusValue> | null> {
   const best = new Map<string, string>();
   const out = new Map<string, IntakeStatusValue>();
+  if (clientIds && clientIds.length === 0) return out;
   for (let block = 0; block < MAX_BLOCKS; block += 1) {
-    const res: Result = await supabase
+    let q = supabase
       .from("client_intake_forms")
       .select("client_id, status, created_at")
       .eq("studio_id", studioId)
-      .is("deleted_at", null)
+      .is("deleted_at", null);
+    if (clientIds) q = q.in("client_id", [...clientIds]);
+    const res: Result = await q
       .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
       .range(block * BLOCK, block * BLOCK + BLOCK - 1);
     if (res.error) return null;
     const rows = (res.data ?? []) as Array<{ client_id: string; status: IntakeStatusValue; created_at: string }>;

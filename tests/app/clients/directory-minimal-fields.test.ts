@@ -37,7 +37,7 @@ vi.mock("@/lib/supabase/server", () => ({
     from: (table: string) => {
       let afterId = false;
       const q: Record<string, unknown> = {};
-      for (const m of ["select", "eq", "neq", "is", "not", "in", "lte", "order"]) q[m] = () => q;
+      for (const m of ["select", "eq", "neq", "is", "not", "in", "lte", "gte", "lt", "order"]) q[m] = () => q;
       q.gt = () => { afterId = true; return q; };
       q.range = async () => ({ data: table === "clients" && !afterId ? [FULL_ROW] : [], error: null });
       return q;
