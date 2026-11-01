@@ -135,3 +135,63 @@ describe("decision 6: exposure", () => {
     expect(nav.slice(i, i + 500)).toContain('visibility: "practitioner"');
   });
 });
+
+// Insurance W-4 / Privacy C3 / Privacy C1(0278): the actor is the session's, a practitioner can
+// never reach the actor-less weekly command, and an override note never reaches a public response.
+describe("decision 6: source contracts for the database half's conditions", () => {
+  const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
+  const ACTIONS = read("app/(app)/settings/availability/actions.ts");
+
+  it("W-4: the actor-less save_weekly_availability is reachable only from the owner branch or assertOwner paths", () => {
+    const customize = ACTIONS.slice(ACTIONS.indexOf("export async function customizePractitionerWeekAction"));
+    const end = customize.indexOf("\n}\n");
+    const body = customize.slice(0, end);
+    expect(body).toMatch(/practitioner\.role === "owner"\s*\?\s*await admin\.rpc\("save_weekly_availability", \{/);
+    expect(body).toMatch(/:\s*await admin\.rpc\("save_weekly_availability_as", \{[\s\S]*?p_actor_practitioner_id: practitioner\.id/);
+    // the only other caller is the studio-wide save, which is owner-only
+    const wide = ACTIONS.slice(ACTIONS.indexOf("export async function saveWeeklyDefaultsAction"));
+    expect(wide.slice(0, wide.indexOf('rpc("save_weekly_availability"'))).toContain("assertOwner()");
+  });
+
+  it("C3: every scoped writer passes the SESSION's practitioner as the actor, never a form value", () => {
+    const actors = ACTIONS.match(/p_actor_practitioner_id: ([^,\n]+)/g) ?? [];
+    expect(actors.length).toBeGreaterThanOrEqual(6);
+    for (const a of actors) expect(a).toMatch(/p_actor_practitioner_id: (practitioner|ctx)\.id|practitionerId/);
+    expect(ACTIONS).not.toMatch(/p_actor_practitioner_id: (trimmed|formData|nullable)/);
+  });
+
+  it("C1: public slot generation never selects or forwards an override note", () => {
+    const slots = read("lib/booking/slots.ts");
+    const range = read("lib/booking/public-slot-range.ts");
+    const selects = slots.match(/from\("studio_availability_overrides"\)\s*\.select\(([^)]*)\)/g) ?? [];
+    expect(selects.length).toBeGreaterThan(0);
+    for (const s of selects) expect(s).not.toMatch(/note|\*/);
+    expect(range).not.toMatch(/\bnote\b/);
+  });
+
+  it("C1: no public or desk surface imports the note-carrying override readers (SOURCE ONLY; a runtime sentinel case is not written)", () => {
+    const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
+    const walk = (d: string): string[] =>
+      readdirSync(d).flatMap((n) => {
+        const p = join(d, n);
+        return statSync(p).isDirectory() ? walk(p) : /\.(ts|tsx)$/.test(n) ? [p] : [];
+      });
+    const readers = /getOverridesForRange|studioWideOverrides|loadScopedAvailability/;
+    const allowed = new Set([
+      "app/(app)/calendar/page.tsx",
+      "app/(app)/settings/availability/page.tsx",
+      "lib/booking/public-slot-range.ts", // reads rows server-side; asserted above to forward no note
+      "lib/booking/queries.ts",
+      "lib/booking/studio-wide-availability.ts",
+      "lib/booking/practitioner-availability.ts",
+    ]);
+    const hits: string[] = [];
+    for (const root of ["app", "lib"]) {
+      for (const f of walk(join(process.cwd(), root))) {
+        const rel = f.slice(process.cwd().length + 1);
+        if (readers.test(readFileSync(f, "utf8")) && !allowed.has(rel)) hits.push(rel);
+      }
+    }
+    expect(hits).toEqual([]);
+  });
+});
