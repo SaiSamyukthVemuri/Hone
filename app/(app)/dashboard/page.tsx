@@ -1352,6 +1352,8 @@ function AppointmentRow({
                   Allergies
                 </span>
               )}
+              {/* Closed-state row (Insurance D-1): the intake status stays on the collapsed row. */}
+              <IntakePill status={intakeStatus} />
             </div>
             {pinnedNotes && pinnedNotes.length > 0 && (
               /* EVERY pinned note, newest first. This used to render one
@@ -1378,6 +1380,17 @@ function AppointmentRow({
                 </ul>
               </div>
             )}
+            {/* Closed-state row (Insurance D-1): the caution/watch line, FULL text, wrapped, never inside
+                the details. Only when the Before-Today read answered and there is history. */}
+            {workflow && !workflow.unavailable && workflow.hasHistory && workflow.caution && (
+              <span
+                data-testid="today-row-caution"
+                className="mt-1 block whitespace-pre-wrap break-words text-xs text-rose-900 dark:text-rose-200"
+                title={workflow.caution}
+              >
+                Caution: {workflow.caution}
+              </span>
+            )}
           </div>
         </PendingContainerLink>
         {/* COMPACT ROW (fidelity C): everything beyond time, name, service, practitioner, status, the
@@ -1388,11 +1401,13 @@ function AppointmentRow({
         <details data-testid="today-row-details" className="pl-24 [&_summary::-webkit-details-marker]:hidden">
           <summary className="inline-flex min-h-[44px] cursor-pointer items-center text-xs font-medium text-neutral-600 underline-offset-2 hover:underline dark:text-neutral-400">
             Visit details
+            {(workflow?.remember || prepSummary.remember) && (
+              <span data-testid="today-row-plan-cue" className="font-normal text-neutral-500">
+                {" · "}Plan note on record
+              </span>
+            )}
           </summary>
           <div className="flex flex-col gap-1.5 pb-2">
-            <div className="text-xs">
-              <IntakePill status={intakeStatus} />
-            </div>
             {/* PREPARATION: the facts that used to be split across the Today
                 row and the Daily Prep Brief, now resolved ONCE by
                 buildTodayWorkflow and rendered once here. Nothing below repeats
@@ -1466,17 +1481,6 @@ function AppointmentRow({
                         title={workflow.remember}
                       >
                         Remember: {workflow.remember}
-                      </span>
-                    )}
-                    {/* Caution = the watch line, kept visually distinct in the
-                        established rose convention and never folded into
-                        Remember. */}
-                    {workflow.caution && (
-                      <span
-                        className="whitespace-pre-wrap break-words text-rose-900 dark:text-rose-200"
-                        title={workflow.caution}
-                      >
-                        Caution: {workflow.caution}
                       </span>
                     )}
                     {!workflow.remember && !workflow.caution && (

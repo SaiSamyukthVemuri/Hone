@@ -2,6 +2,7 @@ import type { IntakeAwaitingReview } from "./intakes-awaiting-review";
 import type { MissingRecordsAssistant } from "./missing-records-assistant";
 import type { DashboardTodo, DashboardTodoItem } from "./todo-model";
 import { practitionerIntakeReviewHref } from "./today-intake";
+import { cardHasReaction } from "./attention-card";
 
 // ===========================================================================
 // Needs Attention: ONE entry per client + session, with the issues inside it.
@@ -351,8 +352,12 @@ export function buildNeedsAttention(input: {
       actionLabel: item.action.label,
     });
   }
+  // Order: before-visit cards, then cards carrying a reaction/watch item (a clinical signal that must
+  // not sit behind the compact cut), then documentation-tier cards. Newest first within each rank.
+  const rank = (c: AttentionClient) =>
+    c.tier === "preparation" ? 0 : cardHasReaction(c) ? 1 : 2;
   const clients = [...cards.values()].sort((a, b) => {
-    if (a.tier !== b.tier) return a.tier === "preparation" ? -1 : 1;
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
     const byDate = newerFirst(a.occurredAt, b.occurredAt);
     if (byDate !== 0) return byDate;
     return a.clientId < b.clientId ? -1 : a.clientId > b.clientId ? 1 : 0;

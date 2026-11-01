@@ -111,6 +111,9 @@ export const BROWSER_GROUPS = {
       // the right-side action moving from reading (Review Before Today) to
       // doing (Chart session). Same Today row, so the same group.
       "dashboard-all-pinned-notes.spec.ts",
+      // Insurance PEER-1308 D-4: the CLOSED compact row (pinned notes, allergy flag, caution line,
+      // intake pill visible) proved without the helper that opens the row details.
+      "dashboard-closed-row.spec.ts",
       "before-today-imported.spec.ts",
       // Point-of-care treatment memory on the live charting screen: the
       // newest-CHARTED-session selector, the setup fields that used to be

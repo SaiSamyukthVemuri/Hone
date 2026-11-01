@@ -67,8 +67,13 @@ export async function openTodayRowDetailsOnLoad(page: Page): Promise<void> {
   });
 }
 
-export async function loginByMagicLink(page: Page, email: string): Promise<void> {
-  await openTodayRowDetailsOnLoad(page);
+export async function loginByMagicLink(
+  page: Page,
+  email: string,
+  // Default true: see openTodayRowDetailsOnLoad. A spec that proves the CLOSED row passes false.
+  opts: { openRowDetails?: boolean } = {},
+): Promise<void> {
+  if (opts.openRowDetails !== false) await openTodayRowDetailsOnLoad(page);
   // WebKit only (non-required WebKit job): strip the https-upgrade headers
   // before the first document and follow the link by request. Chromium skips both.
   const webkit = isWebKit(page);

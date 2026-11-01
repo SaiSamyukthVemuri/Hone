@@ -79,11 +79,13 @@ describe("Today appointment card shows the memory lines in full", () => {
     expect(remember).toMatch(/whitespace-pre-wrap break-words/);
     const setup = PREVIEW_BLOCK.slice(PREVIEW_BLOCK.indexOf("Latest setup:") - 300);
     expect(setup).toMatch(/whitespace-pre-wrap break-words/);
-    // The caution is its own wrapped block, in the rose convention.
-    const caution = PREVIEW_BLOCK.slice(
-      PREVIEW_BLOCK.indexOf("{workflow.caution && ("),
-      PREVIEW_BLOCK.indexOf("No watch/plan note."),
+    // The caution is its own wrapped block, in the rose convention. FIDELITY D-1: it now lives on the
+    // CLOSED row (full text, wrapped), not in the details.
+    const caution = PAGE.slice(
+      PAGE.indexOf("workflow.hasHistory && workflow.caution && ("),
+      PAGE.indexOf("</PendingContainerLink>", PAGE.indexOf("workflow.hasHistory && workflow.caution && (")),
     );
+    expect(caution).toContain("Caution: {workflow.caution}");
     expect(caution).toMatch(/whitespace-pre-wrap break-words/);
     expect(caution).toMatch(/text-rose-900/);
   });

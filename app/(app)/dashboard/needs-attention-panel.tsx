@@ -7,6 +7,7 @@ import type {
   AttentionItemKind,
   NeedsAttention,
 } from "@/lib/dashboard/needs-attention-model";
+import { cardHasReaction } from "@/lib/dashboard/attention-card";
 import type { DashboardTodoItem } from "@/lib/dashboard/todo-model";
 
 // Needs Attention: ONE list, ONE card per client id. Presentational only: `needs` is already grouped and
@@ -32,12 +33,14 @@ const BADGE: Record<AttentionItemKind, string> = {
 const BADGE_CLASS =
   "inline-flex shrink-0 items-center rounded-full border border-neutral-300 px-2 py-0.5 text-[11px] font-medium text-neutral-700 dark:border-neutral-700 dark:text-neutral-300";
 
-// What the single "Show N more" control reveals: every card past the compact
-// count, and it says so. The studio group, when present, is the last card.
-export function hiddenCardsLabel(hiddenClients: number, studioHidden: boolean): string {
+// What the single "Show N more" control reveals: the client cards past the compact count, and it names
+// what it hides: a reaction/watch card behind the cut is stated, never silent. The studio card is
+// exempt from the cap and is always rendered, so it is never part of this count.
+export function hiddenCardsLabel(hiddenClients: number, hiddenReaction: number): string {
   const clients = `${hiddenClients} more ${hiddenClients === 1 ? "client" : "clients"}`;
-  if (hiddenClients === 0) return "Show studio items";
-  return studioHidden ? `Show ${clients} and studio items` : `Show ${clients}`;
+  return hiddenReaction > 0
+    ? `Show ${clients}, including ${hiddenReaction} reaction/watch`
+    : `Show ${clients}`;
 }
 
 function ClientCard({ card }: { card: AttentionClient }) {
@@ -185,15 +188,15 @@ export function NeedsAttentionPanel({ needs }: { needs: NeedsAttention }) {
   // ONE list: client cards, then (when present) one studio card. The compact
   // count applies to the cards, and the single control after the last card
   // reveals every card past it.
+  // The cap applies to CLIENT cards only; the studio card is always rendered.
   const studioPresent = needs.studioItems.length > 0;
-  const cardCount = needs.clients.length + (studioPresent ? 1 : 0);
-  const hiddenCount = Math.max(0, cardCount - NEEDS_ATTENTION_COMPACT_COUNT);
   const shownClients = expanded
     ? needs.clients
     : needs.clients.slice(0, NEEDS_ATTENTION_COMPACT_COUNT);
-  const showStudio =
-    studioPresent && (expanded || needs.clients.length < NEEDS_ATTENTION_COMPACT_COUNT);
-  const hiddenClients = needs.clients.length - shownClients.length;
+  const hiddenList = needs.clients.slice(shownClients.length);
+  const hiddenClients = hiddenList.length;
+  const hiddenReaction = hiddenList.filter(cardHasReaction).length;
+  const hiddenCount = hiddenClients;
 
   return (
     <div className="flex flex-col gap-3">
@@ -213,7 +216,7 @@ export function NeedsAttentionPanel({ needs }: { needs: NeedsAttention }) {
         {shownClients.map((card) => (
           <ClientCard key={card.clientId} card={card} />
         ))}
-        {showStudio && <StudioCard items={needs.studioItems} />}
+        {studioPresent && <StudioCard items={needs.studioItems} />}
       </ul>
       {hiddenCount > 0 && (
         <button
@@ -224,7 +227,7 @@ export function NeedsAttentionPanel({ needs }: { needs: NeedsAttention }) {
           onClick={() => setExpanded((v) => !v)}
           className={`self-start ${ACTION_CLASS}`}
         >
-          {expanded ? "Show less" : hiddenCardsLabel(hiddenClients, studioPresent && !showStudio)}
+          {expanded ? "Show less" : hiddenCardsLabel(hiddenClients, hiddenReaction)}
         </button>
       )}
       {needs.notReturnedCount > 0 && (
