@@ -10,9 +10,9 @@ import type { ResourceArticle } from "./resources";
 const abs = (path: string): string =>
   path === "/" ? CANONICAL_HOST : `${CANONICAL_HOST}${path}`;
 
-/** Parse the numeric monthly price from a "CAD $29" label. */
+/** Parse the numeric monthly price from a "US$49" label. */
 export function priceValue(label: string): number {
-  return Number(label.replace(/[^0-9.]/g, ""));
+  return Number(/\d+(?:\.\d+)?/.exec(label)?.[0] ?? Number.NaN);
 }
 
 export function organizationLd() {
@@ -36,7 +36,7 @@ export function webSiteLd() {
   };
 }
 
-/** SoftwareApplication with an OfferCatalog of the published plans (CAD). */
+/** SoftwareApplication with an OfferCatalog of the published plans (USD; "Contact us" plans carry no price and no Offer). */
 /**
  * The homepage's own declared description, or a hard failure.
  *

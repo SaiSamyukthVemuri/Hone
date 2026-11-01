@@ -173,10 +173,10 @@ describe("required homepage sections (copy deck v2.2 §3)", () => {
     ).toBeGreaterThanOrEqual(3);
   });
 
-  it("has a CAD pricing block driven by the shared plans (no $19 pilot)", () => {
+  it("has a USD pricing block driven by the shared plans (no $19 pilot)", () => {
     expect(PAGE).toMatch(/PRICING_PLANS/);
     expect(PAGE).toMatch(/href="\/pricing"/);
-    expect(PRICING_PLANS.some((p) => p.priceLabel?.includes("$"))).toBe(true);
+    expect(PRICING_PLANS.some((p) => p.priceLabel?.startsWith("US$"))).toBe(true);
     expect(SURFACE).not.toMatch(/\$19\b/);
   });
 
