@@ -150,6 +150,17 @@ describe("compact appointment rows (fidelity C)", () => {
     // the plan note itself, last treatment, setup, chips, previous-treatment strip stay inside
     for (const m of ["Remember: {workflow.remember}", "Latest setup:", "missing-record-chip", "<DashboardTreatmentMemory"]) expect(details).toContain(m);
   });
+  it("Insurance E-1: a failed Before-Today read says so ON the compact row, never as a silently absent caution", () => {
+    expect(link).toMatch(/\(workflow \? workflow\.unavailable : prepSummary\.unavailable\) && \(/);
+    expect(link).toMatch(/data-testid="today-row-unavailable"[\s\S]{0,160}\{CLINICAL_UNAVAILABLE_HEADLINE\}/);
+    // the marker sits before the caution line and is not gated on history or caution
+    expect(link.indexOf("today-row-unavailable")).toBeLessThan(link.indexOf("today-row-caution"));
+    // and it is not the same node as the details' own line
+    expect(details).toContain("today-before-today-unavailable");
+    expect(details).not.toContain("today-row-unavailable");
+    // the caution line itself still refuses to render off a failed read
+    expect(link).toMatch(/workflow && !workflow\.unavailable && workflow\.hasHistory && workflow\.caution/);
+  });
   it("the pinned note TEXT is visible and wrapped in the collapsed row, never truncated or inside details", () => {
     expect(link).toMatch(/whitespace-pre-wrap break-words[\s\S]{0,120}\{note\.text\}/);
     expect(details).not.toContain("note.text");

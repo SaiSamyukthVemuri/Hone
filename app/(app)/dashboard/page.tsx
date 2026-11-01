@@ -1382,6 +1382,17 @@ function AppointmentRow({
             )}
             {/* Closed-state row (Insurance D-1): the caution/watch line, FULL text, wrapped, never inside
                 the details. Only when the Before-Today read answered and there is history. */}
+            {/* Insurance E-1: when the Before-Today read FAILED the compact row says so, in the profile's own
+                words. Without it the absent caution line reads as "no caution", a clinical absence nobody
+                read. Same truthfulness rule as the profile's "Unavailable". */}
+            {(workflow ? workflow.unavailable : prepSummary.unavailable) && (
+              <span
+                data-testid="today-row-unavailable"
+                className="mt-1 block text-xs text-neutral-500"
+              >
+                {CLINICAL_UNAVAILABLE_HEADLINE}
+              </span>
+            )}
             {workflow && !workflow.unavailable && workflow.hasHistory && workflow.caution && (
               <span
                 data-testid="today-row-caution"
