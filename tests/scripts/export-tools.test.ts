@@ -58,6 +58,23 @@ if [ "$mode" = enc ]; then cat >"$out"; else
 `,
     0o755,
   );
+  // stat / uname: a filesystem-type and OS oracle for the tmpfs proof (Codex P2 on 30d21d68). `stat -f` answers
+  // from SHIM_FSTYPE_MAP ("prefix=type;prefix=type", first match wins); anything under the test scratch defaults to
+  // tmpfs, because a mkdtemp directory here stands for a per-user runtime dir; every other call is the real stat.
+  write(
+    path.join(bin, "stat"),
+    `#!/usr/bin/env bash
+case " $* " in *" -f "*)
+  p=""; for a in "$@"; do p="$a"; done
+  IFS=';' read -ra M <<<"\${SHIM_FSTYPE_MAP:-}"
+  for e in "\${M[@]}"; do [ -n "$e" ] && case "$p" in "\${e%%=*}"*) echo "\${e#*=}"; exit 0;; esac; done
+  case "$p" in "${scratch}"*) echo tmpfs; exit 0;; esac;;
+esac
+exec /usr/bin/stat "$@"
+`,
+    0o755,
+  );
+  write(path.join(bin, "uname"), `#!/usr/bin/env bash\nif [ -n "\${SHIM_UNAME:-}" ] && [ "\${1:-}" = -s ]; then echo "$SHIM_UNAME"; exit 0; fi\nexec /usr/bin/uname "$@"\n`, 0o755);
   // pg_dump: a fixture per part, chosen by the arguments; the tools must pass --snapshot.
   write(
     path.join(bin, "pg_dump"),
@@ -1602,7 +1619,7 @@ describe("Codex P1 on 3240218c: the exit trap deletes only what this invocation 
 
 describe("Codex P2 on 3240218c: the private working directory ignores a caller-controlled, open base", () => {
   it("a group- or world-writable XDG_RUNTIME_DIR is not used (the restore still passes through /dev/shm) and TMPDIR/TMP are never read", () => {
-    const lib = (body: string, env: Record<string, string>) => spawnSync("bash", ["-c", `. ${path.join(OPS, "export-lib.sh")}; ${body}`], { encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: scratch, ...env } as unknown as NodeJS.ProcessEnv });
+    const lib = (body: string, env: Record<string, string>) => spawnSync("bash", ["-c", `. ${path.join(OPS, "export-lib.sh")}; ${body}`], { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH ?? ""}`, HOME: scratch, ...env } as unknown as NodeJS.ProcessEnv });
     const open = path.join(scratch, "wd-open"); mkdirSync(open); chmodSync(open, 0o777);
     const closed = path.join(scratch, "wd-closed"); mkdirSync(closed); chmodSync(closed, 0o700);
     const tmp = path.join(scratch, "wd-tmp"); mkdirSync(tmp);
@@ -1614,6 +1631,69 @@ describe("Codex P2 on 3240218c: the private working directory ignores a caller-c
     expect(b.stdout.endsWith(" 700")).toBe(true);
     expect(readdirSync(open)).toEqual([]);
     expect(readdirSync(tmp)).toEqual([]);
+  });
+});
+
+describe("Codex P2 on 30d21d68: the private working directory must really be RAM-backed", () => {
+  const wd = (env: Record<string, string>) =>
+    spawnSync("bash", ["-c", `. ${path.join(OPS, "export-lib.sh")}; private_workdir; printf '%s' "$WORKDIR"; rm -rf "$WORKDIR"`], {
+      encoding: "utf8",
+      env: { PATH: `${bin}:${process.env.PATH ?? ""}`, HOME: scratch, ...env } as unknown as NodeJS.ProcessEnv,
+    });
+  const runtimeDir = (name: string) => { const d = path.join(scratch, name); mkdirSync(d, { mode: 0o700 }); chmodSync(d, 0o700); return d; };
+  // the literal pre-fix selector (902aca1e): owned + closed was enough, the filesystem was never asked
+  const OLD = `private_workdir_old() { local base="\${XDG_RUNTIME_DIR:-}"; { [ -n "$base" ] && [ -d "$base" ] && [ -w "$base" ] && [ -O "$base" ] && [ -z "$(find "$base" -maxdepth 0 -perm /022 2>/dev/null)" ]; } || base=/dev/shm; WORKDIR="$(umask 077; mktemp -d "$base/export-work.XXXXXX")"; }`;
+
+  it("CONTROL: the pre-fix selector writes decrypted working files to an owned, closed directory on a PERSISTENT filesystem", () => {
+    const xdg = runtimeDir("ram-ctl");
+    const r = spawnSync("bash", ["-c", `${OLD}; private_workdir_old; printf '%s' "$WORKDIR"; rm -rf "$WORKDIR"`], { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH ?? ""}`, XDG_RUNTIME_DIR: xdg, SHIM_FSTYPE_MAP: `${xdg}=ext4` } as unknown as NodeJS.ProcessEnv });
+    expect(r.stdout.startsWith(`${xdg}/export-work.`), "pre-fix used the ext4 directory").toBe(true);
+  });
+
+  it("an XDG_RUNTIME_DIR on a persistent filesystem is NOT used; the working directory falls to /dev/shm", () => {
+    const xdg = runtimeDir("ram-ext4");
+    const r = wd({ XDG_RUNTIME_DIR: xdg, SHIM_FSTYPE_MAP: `${xdg}=ext4;/dev/shm=tmpfs` });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.startsWith("/dev/shm/export-work.")).toBe(true);
+    expect(readdirSync(xdg)).toEqual([]);
+  });
+
+  it("tmpfs and ramfs XDG_RUNTIME_DIRs are accepted", () => {
+    for (const type of ["tmpfs", "ramfs"]) {
+      const xdg = runtimeDir(`ram-${type}`);
+      const r = wd({ XDG_RUNTIME_DIR: xdg, SHIM_FSTYPE_MAP: `${xdg}=${type}` });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout.startsWith(`${xdg}/export-work.`), type).toBe(true);
+    }
+  });
+
+  it("when neither XDG_RUNTIME_DIR nor /dev/shm is RAM-backed the tool refuses and writes nothing", () => {
+    const xdg = runtimeDir("ram-none");
+    const r = wd({ XDG_RUNTIME_DIR: xdg, SHIM_FSTYPE_MAP: `${xdg}=ext4;/dev/shm=ext4` });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("RAM-backed");
+    expect(readdirSync(xdg)).toEqual([]);
+  });
+
+  it("a working directory that lands on a different (persistent) mount than its base is refused and removed", () => {
+    const xdg = runtimeDir("ram-mount");
+    const r = wd({ XDG_RUNTIME_DIR: xdg, SHIM_FSTYPE_MAP: `${xdg}/export-work.=ext4;${xdg}=tmpfs` });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("not on a RAM-backed filesystem");
+  });
+
+  it("macOS: a per-user runtime directory is unproven, and with no /dev/shm the tool refuses", () => {
+    const xdg = runtimeDir("ram-mac");
+    const r = wd({ XDG_RUNTIME_DIR: xdg, SHIM_UNAME: "Darwin", SHIM_FSTYPE_MAP: `${xdg}=tmpfs;/dev/shm=tmpfs` });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("RAM-backed");
+    expect(readdirSync(xdg)).toEqual([]);
+  });
+
+  it("on this Linux host the real /dev/shm passes without any shim", () => {
+    if (process.platform !== "linux") return;
+    const r = spawnSync("bash", ["-c", `. ${path.join(OPS, "export-lib.sh")}; XDG_RUNTIME_DIR= private_workdir; printf '%s' "$WORKDIR"; rm -rf "$WORKDIR"`], { encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: scratch } as unknown as NodeJS.ProcessEnv });
+    expect(r.stdout.startsWith("/dev/shm/export-work.")).toBe(true);
   });
 });
 

@@ -414,15 +414,25 @@ export_cleanup_secrets() {
 # client identifiers). It is made on a per-user tmpfs (XDG_RUNTIME_DIR, else /dev/shm), never
 # under the default TMPDIR or /tmp, is removed by export_cleanup_secrets on any exit, and the
 # tool refuses when no such place exists (Codex P2 on 29c80788). Sets WORKDIR.
+# export_is_ram_fs DIR: true only when DIR is really on a RAM-backed filesystem (Codex P2 on 30d21d68:
+# an owned, closed directory on a PERSISTENT filesystem passed every earlier check, so decrypted
+# object paths could land on disk). Linux: the filesystem type must be tmpfs or ramfs. Anywhere else
+# (macOS has no /dev/shm and no verifiable per-user RAM disk) it is UNPROVEN, so false.
+export_is_ram_fs() {
+  [ "$(uname -s)" = Linux ] || return 1
+  case "$(stat -f -c %T -- "$1" 2>/dev/null)" in tmpfs|ramfs) return 0;; *) return 1;; esac
+}
+
 private_workdir() {
   local base="${XDG_RUNTIME_DIR:-}"
-  # A caller-supplied XDG_RUNTIME_DIR is used only if it is ours and closed to others; else /dev/shm
-  # (a sticky tmpfs): the directory made inside is 0700 and fresh either way, and TMPDIR/TMP are never read.
-  { [ -n "$base" ] && [ -d "$base" ] && [ -w "$base" ] && [ -O "$base" ] && [ -z "$(find "$base" -maxdepth 0 -perm /022 2>/dev/null)" ]; } || base=/dev/shm
-  { [ -d "$base" ] && [ -w "$base" ]; } || export_fail "no private tmpfs for decrypted working files (XDG_RUNTIME_DIR or /dev/shm); refusing rather than using the default temp directory"
+  # A caller-supplied XDG_RUNTIME_DIR is used only if it is ours, closed to others AND on a RAM
+  # filesystem; else /dev/shm, which must itself be one. TMPDIR/TMP are never read.
+  { [ -n "$base" ] && [ -d "$base" ] && [ -w "$base" ] && [ -O "$base" ] && [ -z "$(find "$base" -maxdepth 0 -perm /022 2>/dev/null)" ] && export_is_ram_fs "$base"; } || base=/dev/shm
+  { [ -d "$base" ] && [ -w "$base" ] && export_is_ram_fs "$base"; } || export_fail "no private RAM-backed (tmpfs) directory for decrypted working files (XDG_RUNTIME_DIR or /dev/shm, verified by filesystem type); refusing rather than writing them to a persistent disk"
   WORKDIR="$(umask 077; mktemp -d "$base/export-work.XXXXXX")" || export_fail "could not make the private working directory"
   chmod 700 "$WORKDIR"
   EXPORT_WORKDIRS+=("$WORKDIR")
+  export_is_ram_fs "$WORKDIR" || export_fail "the working directory is not on a RAM-backed filesystem; refusing"
 }
 
 # The EXIT trap of the two export tools: close the database session, remove the
