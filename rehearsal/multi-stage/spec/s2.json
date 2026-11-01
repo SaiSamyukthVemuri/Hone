@@ -35,7 +35,8 @@
         "status": "0274 at 4de5175c; Privacy accepted the SQL; Insurance delta owed",
         "order": "after S1 read back: one plain push of 0274, no --include-all",
         "blocker": "S1 applied and verified (history pin 252/0272)"
-      }
+      },
+      "gate_pack": "../gate-packs/s2-0274"
     }
   ],
   "rules": {}

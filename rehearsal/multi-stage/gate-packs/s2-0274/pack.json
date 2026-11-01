@@ -1,0 +1,11 @@
+{
+  "migration": "0274",
+  "tables": [],
+  "preflight": {
+    "sql": "g12-preflight.sql",
+    "fields": ["s1_tables_present", "s1_functions_present", "new_functions_absent", "calendar_as_0266_left_it"]
+  },
+  "verify_sql": [],
+  "verify_label": "history (253 rows, max 0274, 0274 once); the content read-back is the separate S2 read-back set",
+  "notes": "0274 only creates three functions and revokes one; it touches no table, so there is no lock or size read. The preflight proves the S1 state it builds on (tables and functions present, receptionist_calendar still the 0266 body and authenticated-executable) and that its own three functions are absent. Content verification is the S2 read-back files with the set-equality comparator."
+}

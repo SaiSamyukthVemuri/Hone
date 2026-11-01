@@ -345,6 +345,15 @@ jobs:
             psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -At -v ON_ERROR_STOP=1 -c "select coalesce(json_agg(t), '[]'::json) from (${sql%;}) t" > "$RUNNER_TEMP/s1-readbacks/$f.json"
           done
           python3 -I rehearsal/multi-stage/s1-readbacks/check-expected.py "$RUNNER_TEMP/s1-readbacks" rehearsal/multi-stage/spec/sealed/0258_hon58_identity.sql rehearsal/multi-stage/spec/sealed-v2/0266_legal_name_receptionist_access.sql rehearsal/multi-stage/spec/sealed-v2/0272_hon58_legal_identity_hardening.sql | tee "$RUNNER_TEMP/s1-readbacks/EXPECTED.txt"
+      - name: S2 (0274) preflight on the stack at the S1 state (every column true) and the CI-built S2 package is byte-identical to the pinned one
+        run: |
+          set -euo pipefail
+          python3 -I rehearsal/multi-stage/build.py rehearsal/multi-stage/spec/s2.json "$RUNNER_TEMP/s2-pkg-stack"
+          got="$(cd "$RUNNER_TEMP/s2-pkg-stack" && find . -type f | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -d' ' -f1)"
+          want="$(tr -d '[:space:]' < rehearsal/multi-stage/spec/s2.package-tree-sha256)"
+          echo "built $got pinned $want"; [ "$got" = "$want" ]
+          out="$(psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -At -v ON_ERROR_STOP=1 -F '|' -f "$RUNNER_TEMP/s2-pkg-stack/0274-b00/window-reads-0274-b00/g12-0274-b00-preflight-0274-b00.sql")"
+          echo "preflight: $out"; [ "$out" = "1|t|t|t|t" ]
       - name: S2 (0274) read-backs on the rehearsal stack after 0258, 0266, 0272, 0274; grants machine-checked as set equality (F-1(a))
         run: |
           set -euo pipefail
