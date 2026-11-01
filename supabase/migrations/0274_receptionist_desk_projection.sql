@@ -19,6 +19,8 @@
 --      computed in the database over the whole studio set.
 --   2. receptionist_calendar_v2: the schedule with the same display identity
 --      (display_name, name_on_file) and no other client column. (Privacy R1)
+--   2b. receptionist_studio_timezone: the studio's validated IANA zone (one string), for booking
+--       on an empty day (a receptionist cannot read the studios row).
 --   3. v1 receptionist_calendar is CLOSED for authenticated, by privilege.
 --
 -- WHAT A RECEPTIONIST NEVER GETS, in a column, a filter or a join: clinical
@@ -286,13 +288,17 @@ returns table (
   service_name              text,
   client_id                 uuid,
   display_name              text,
-  name_on_file              boolean
+  name_on_file              boolean,
+  duration_minutes          integer,
+  studio_timezone           text
 )
 language plpgsql
 stable
 security definer
 set search_path = pg_catalog, pg_temp
 as $$
+declare
+  v_tz text;
 begin
   if auth.uid() is null then
     raise exception 'not_authorized' using errcode = '42501';
@@ -300,6 +306,15 @@ begin
   if public.receptionist_actor_id(p_studio_id) is null then
     raise exception 'not_authorized' using errcode = '42501';
   end if;
+  -- Privacy C1 (PEER-0274-SQL): the studio's timezone, read for p_studio_id ONLY, validated
+  -- against pg_timezone_names with a UTC fallback, returned as that one string.
+  select coalesce(
+           (select z.name from pg_catalog.pg_timezone_names z where z.name = s.timezone limit 1),
+           'UTC')
+    into v_tz
+    from public.studios s
+   where s.id = p_studio_id;
+  v_tz := coalesce(v_tz, 'UTC');
   if p_from is null or p_to is null or p_to <= p_from or p_to - p_from > interval '93 days' then
     raise exception 'invalid_window' using errcode = '22023';
   end if;
@@ -312,7 +327,9 @@ begin
            a.service_id, sv.name,
            a.client_id,
            coalesce(nullif(pg_catalog.btrim(c.preferred_name), ''), c.name),
-           nullif(pg_catalog.btrim(c.preferred_name), '') is null
+           nullif(pg_catalog.btrim(c.preferred_name), '') is null,
+           a.duration_minutes,
+           v_tz
       from public.appointments a
       left join public.practitioners pr on pr.id = a.practitioner_id and pr.studio_id = a.studio_id
       left join public.services sv on sv.id = a.service_id and sv.studio_id = a.studio_id
@@ -332,7 +349,48 @@ revoke execute on function public.receptionist_calendar_v2(uuid, timestamptz, ti
 grant execute on function public.receptionist_calendar_v2(uuid, timestamptz, timestamptz) to authenticated;
 
 comment on function public.receptionist_calendar_v2(uuid, timestamptz, timestamptz) is
-  '0274 desk schedule (Privacy R1): the display identity (preferred name else the stored name, name_on_file true when the stored name is shown) and the service name. No notes, prices, payment state, status reasons or clinical field. Active receptionist of the studio only.';
+  '0274 desk schedule (Privacy R1): the display identity (preferred name else the stored name, name_on_file true when the stored name is shown), the service name, the appointment duration in minutes, and the studio timezone (one validated string). No notes, prices, payment state, status reasons or clinical field. Active receptionist of the studio only.';
+
+-- ---------------------------------------------------------------------------
+-- 2b) The studio clock, for booking. A receptionist cannot read the studios row, so a
+--     booking form needs the zone from here: the same single validated string the schedule
+--     returns (Privacy C1), available even when the schedule window is empty.
+-- ---------------------------------------------------------------------------
+create function public.receptionist_studio_timezone(p_studio_id uuid)
+returns text
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_tz text;
+begin
+  if auth.uid() is null then
+    raise exception 'not_authorized' using errcode = '42501';
+  end if;
+  if public.receptionist_actor_id(p_studio_id) is null then
+    raise exception 'not_authorized' using errcode = '42501';
+  end if;
+  select coalesce(
+           (select z.name from pg_catalog.pg_timezone_names z where z.name = s.timezone limit 1),
+           'UTC')
+    into v_tz
+    from public.studios s
+   where s.id = p_studio_id;
+  return coalesce(v_tz, 'UTC');
+end;
+$$;
+
+revoke all on function public.receptionist_studio_timezone(uuid)
+  from public, anon, authenticated, service_role;
+revoke execute on function public.receptionist_studio_timezone(uuid) from public;
+revoke execute on function public.receptionist_studio_timezone(uuid) from anon;
+revoke execute on function public.receptionist_studio_timezone(uuid) from service_role;
+grant execute on function public.receptionist_studio_timezone(uuid) to authenticated;
+
+comment on function public.receptionist_studio_timezone(uuid) is
+  '0274 desk clock: the studio IANA timezone for p_studio_id, validated against pg_timezone_names with a UTC fallback. Active receptionist of the studio only. Reads no other studios column.';
 
 -- ---------------------------------------------------------------------------
 -- 3) Close v1 for every role (Privacy R1), by privilege, source untouched.
