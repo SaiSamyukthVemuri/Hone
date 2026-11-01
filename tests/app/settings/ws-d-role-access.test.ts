@@ -3,7 +3,9 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // WS-D (settings redesign): role-aware access, enforced on the server. Synthetic ids only.
 const ensure = vi.fn(async () => ({ deduped: false }));
+const alert = vi.fn(async (..._a: unknown[]) => undefined);
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/ops/alerts", () => ({ recordOpsAlert: (...a: unknown[]) => alert(...a) }));
 vi.mock("@/lib/notifications/practitioner-notifications", () => ({ ensurePractitionerNotification: (...a: unknown[]) => ensure(...(a as [])) }));
 
 import { OWNER_ONLY_NOTIFICATION_EVENT_TYPES, scopeNotificationsToViewer } from "@/lib/notifications/owner-only-events";
@@ -59,19 +61,35 @@ describe("card-change notification DELIVERY is owner-only", () => {
     expect((ensure.mock.calls[0] as unknown[])[1]).toMatchObject({ practitionerId: OWNER });
   });
   it("a studio with NO active owner gets no notice for anyone: it succeeds, writes nothing, and logs a structured alert without client data", async () => {
-    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    try {
-      const out = await ensureCardChangeNotification(fakeAdmin(null) as never, params as never);
-      expect(out).toMatchObject({ skipped: "no_active_owner", deduped: false });
-      expect(ensure).not.toHaveBeenCalled();
-      const logged = spy.mock.calls.map((c) => String(c[0])).join("\n");
-      expect(logged).toContain("card_change_notice_skipped_no_active_owner");
-      expect(logged).not.toContain("Synthetic Client");
-      expect(logged).not.toContain("4242");
-      expect(logged).not.toContain('"clientId"');
-    } finally {
-      spy.mockRestore();
-    }
+    alert.mockClear();
+    const out = await ensureCardChangeNotification(fakeAdmin(null) as never, params as never);
+    expect(out).toMatchObject({ skipped: "no_active_owner", deduped: false });
+    expect(ensure).not.toHaveBeenCalled();
+    // A1: a durable ops alert (lib/ops/alerts), not only a console line.
+    expect(alert).toHaveBeenCalledTimes(1);
+    const input = alert.mock.calls[0][0] as Record<string, unknown>;
+    expect(input).toMatchObject({
+      severity: "warning",
+      event: "card_change_notice_skipped_no_active_owner",
+      studioId: (params as { studioId: string }).studioId,
+      safeDetails: { setupIntentId: (params as { setupIntentId: string }).setupIntentId },
+    });
+    // No client data anywhere in the alert.
+    const serialized = JSON.stringify(input);
+    expect(serialized).not.toContain("Synthetic Client");
+    expect(serialized).not.toContain("4242");
+    expect(input).not.toHaveProperty("clientId");
+    expect(serialized).not.toContain(`"${(params as { clientId: string }).clientId}"`);
+  });
+  it("A2: the webhook result carries the skip instead of reading as a created notice", () => {
+    const route = read("app/api/stripe/webhook/route.ts");
+    expect(route).toContain("cardChangeNotificationSkipped: notif.skipped ?? null");
+  });
+  it("a failed owner lookup still throws (Stripe retries) and raises no alert", async () => {
+    alert.mockClear();
+    const failing = { from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ eq: () => ({ order: () => ({ order: () => ({ limit: () => ({ maybeSingle: async () => ({ data: null, error: { code: "XX000" } }) }) }) }) }) }) }) }) }) };
+    await expect(ensureCardChangeNotification(failing as never, params as never)).rejects.toThrow();
+    expect(alert).not.toHaveBeenCalled();
   });
 });
 
