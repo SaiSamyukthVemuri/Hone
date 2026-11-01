@@ -210,7 +210,6 @@ describe("permissions — search advertises only what the caller can already ope
       ["getting started", "Getting Started"],
       ["profile", "Profile"],
       ["intake", "Forms & Postcare"],
-      ["launch", "Launch"],
       ["notifications", "Notifications"],
       ["sterile", "Sterile Items"],
       ["disinfectant", "Disinfectants"],
@@ -708,7 +707,8 @@ describe("coverage tripwire — a new destination needs an explicit decision", (
     const open = memberSees;
 
     expect(ownerGated.size).toBeGreaterThanOrEqual(10);
-    expect(open.size).toBeGreaterThanOrEqual(3);
+    // WS-D: Launch is owner-only, so Profile and Forms & Postcare are the two ungated tabs.
+    expect(open.size).toBeGreaterThanOrEqual(2);
     // A tab cannot be in both regions, or the resolution is wrong.
     for (const href of ownerGated) expect(open.has(href)).toBe(false);
 
