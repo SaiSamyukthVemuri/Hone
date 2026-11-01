@@ -123,8 +123,9 @@ describe("RESP-CLIENT-INTAKE-01: the slice did not grow", () => {
     // measured slice. Converting them would be the blanket adoption this work
     // is scoped against, and would make the PR unreviewable against its brief.
     const code = codeOnly(read(PROFILE));
-    expect(code).toContain('href="/clients"');
-    expect(code).toMatch(/<Link\s+href="\/clients"/);
+    // The href is the validated directory return path (falls back to /clients): still a bare <Link>.
+    expect(code).toContain('"/clients"');
+    expect(code).toMatch(/<Link\s+href=\{directoryReturnTo \?\? "\/clients"\}/);
     const edits = code.match(/<Link\s+href=\{`\/clients\/\$\{client\.id\}\/edit`\}/g);
     expect(edits ?? []).toHaveLength(2);
   });
