@@ -31,6 +31,22 @@ describe("directory rules: what a row shows", () => {
   });
 });
 
+describe("directory rules: pronouns are staff-only (Privacy R-1)", () => {
+  it("owners and practitioners keep pronouns; the receptionist projection and every unknown role drop them", () => {
+    const c = base({ pronouns: "they/them", preferred_name: "Janie" });
+    expect(projectStaffRow(c).pronouns).toBe("they/them");
+    expect(projectRowForRole("owner", c).pronouns).toBe("they/them");
+    expect(projectRowForRole("practitioner", c).pronouns).toBe("they/them");
+    for (const role of ["receptionist", undefined, null, "", "admin", "OWNER"]) {
+      expect(projectRowForRole(role, c).pronouns).toBeNull();
+    }
+    expect(projectReceptionistRow(c).pronouns).toBeNull();
+    expect(JSON.stringify(projectReceptionistRow(c))).not.toContain("they/them");
+    // Control: the rest of the permitted identity and contact is untouched.
+    expect(projectReceptionistRow(c)).toMatchObject({ displayName: "Janie", email: c.email, phone: c.phone });
+  });
+});
+
 describe("directory rules: roles default-deny (S7)", () => {
   it("owner and practitioner get the staff rules; the receptionist and every unknown role get the receptionist rules", () => {
     expect(normalizeDirectoryRole("owner")).toBe("owner");

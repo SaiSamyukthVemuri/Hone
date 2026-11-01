@@ -11,7 +11,8 @@
 //                     NOT matched, sorted on or counted when a preferred name is
 //                     displayed, for any role.
 //   contact           the email and phone the row shows.
-//   pronouns          shown, never searched.
+//   pronouns          owners and practitioners only (shown, never searched). The
+//                     receptionist list is contact, booking and form status (R-1).
 // Legal identity is never read, projected, searched or sorted here.
 //
 // ROLES (Privacy S7, R1). The rules are a pure function of the role. An unknown or
@@ -84,12 +85,14 @@ export function projectStaffRow(c: DirectorySourceClient): DirectoryIdentityRow 
 
 /**
  * The receptionist rows: the same display identity ("Name on file" when no
- * preferred name), the permitted contact, and nothing else. Specified and tested;
- * deliberately unwired.
+ * preferred name), the permitted contact, and nothing else: no pronouns (Privacy R-1,
+ * OPS ruling). Specified and tested; deliberately unwired, and it must stay unwired from
+ * this module (R-2): the receptionist reads through the held desk RPC (0274), not rows
+ * the app selects from clients.
  */
 export function projectReceptionistRow(c: DirectorySourceClient): DirectoryIdentityRow {
   const row = project(c);
-  return { ...row, pronouns: row.pronouns };
+  return { ...row, pronouns: null };
 }
 
 /** Role in, rows out; unknown role = receptionist rules. Tested; unwired. */
