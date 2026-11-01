@@ -125,7 +125,7 @@ describe("UI-R02 PageHeader: heading DEPTH is a property of the page, not the pr
   it("the settings layout supplies the h1 — the premise the page depends on", () => {
     // Pinned so that if the layout's h1 ever moves, the guard below is revisited
     // rather than silently becoming wrong in the other direction.
-    expect(code("app/(app)/settings/layout.tsx")).toMatch(/<h1[^>]*>\s*Settings\s*<\/h1>/);
+    expect(code("components/settings/settings-shell.tsx")).toMatch(/<h1[^>]*>\s*Settings\s*<\/h1>/);
   });
 
   it("/settings/data declares its real depth, and its sections sit below it", () => {
@@ -311,11 +311,11 @@ describe("UI-R02: the inline-hex border that no dark: variant could reach", () =
   it("the card heading sits BELOW the page title, which sits below the layout's h1", () => {
     // THIS TEST PREVIOUSLY ENFORCED THE DEFECT, which is how the defect shipped.
     // It asserted <h2> on the premise that "PageHeader is the page's only h1" —
-    // but settings/layout.tsx renders <h1>Settings</h1> for every settings
+    // but the Settings shell renders <h1>Settings</h1> for every settings
     // route, so the page title is an h2 and these sections are h3. Asserting a
     // SPELLING ("h2 is present") could not tell a correct hierarchy from a
     // broken one; asserting the CHAIN can.
-    expect(code("app/(app)/settings/layout.tsx")).toMatch(/<h1[^>]*>\s*Settings\s*<\/h1>/);
+    expect(code("components/settings/settings-shell.tsx")).toMatch(/<h1[^>]*>\s*Settings\s*<\/h1>/);
     expect(data).toContain("headingLevel={2}");
     expect(data).toMatch(/<h3 className="text-lg font-medium text-fg">/);
     expect(data).not.toMatch(/<h2[^>]*>\{title\}<\/h2>/);
