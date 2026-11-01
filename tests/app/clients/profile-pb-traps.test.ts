@@ -92,6 +92,6 @@ describe("per-tab loading (PERF2) covers every tab that reads", () => {
 describe("the header is initials only (independent of the held identification photo)", () => {
   it("no portrait read or component remains in the page", () => {
     expect(PAGE).not.toMatch(/ClientPortrait|signedClientPortraitUrl|clientPortraitEnabled|portrait_image_id|0275/);
-    expect(PAGE).toContain("clientAvatarInitials(client.name)");
+    expect(PAGE).toContain("clientAvatarInitials(clientDisplay)");
   });
 });

@@ -23,14 +23,27 @@ import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 // projection optimisation isn't worth the duplication.
 export type ConsentFormTemplateForPractitioner = ConsentFormTemplate;
 
+// Payment-signal fence. A viewer who may not see the card-authorization state (the client profile
+// for a non-owner: OPS ruling, no practitioner financial signal) passes
+// `{ includeCardAuthorization: false }` and the QUERY excludes those templates; they are never read.
+// Default true: every other caller is unchanged.
+export type CardAuthorizationScope = { includeCardAuthorization?: boolean };
+
+const CARD_AUTHORIZATION_FORM_TYPE = "card_authorization";
+
 export async function getConsentTemplatesForStudio(
   studioId: string,
+  scope: CardAuthorizationScope = {},
 ): Promise<ConsentFormTemplateForPractitioner[]> {
   const admin = createAdminClient();
-  const { data, error } = await admin
+  let query = admin
     .from("consent_form_templates")
     .select("*")
-    .eq("studio_id", studioId)
+    .eq("studio_id", studioId);
+  if (scope.includeCardAuthorization === false) {
+    query = query.neq("form_type", CARD_AUTHORIZATION_FORM_TYPE);
+  }
+  const { data, error } = await query
     .order("status", { ascending: true })
     .order("created_at", { ascending: false });
   if (error) {
@@ -164,16 +177,42 @@ export type PractitionerSignatureSummary = Pick<
 export async function getLatestSignaturesForPractitionerView(
   studioId: string,
   clientId: string,
+  scope: CardAuthorizationScope = {},
 ): Promise<PractitionerSignatureSummary[]> {
   const admin = createAdminClient();
-  const { data, error } = await admin
+  let excludedTemplateIds: string[] = [];
+  if (scope.includeCardAuthorization === false) {
+    // Ids only (no signed state, nothing returned to the caller), so the signature query can
+    // exclude them: a card-authorization signature row is never selected for this viewer.
+    const { data: cardTemplates, error: cardError } = await admin
+      .from("consent_form_templates")
+      .select("id")
+      .eq("studio_id", studioId)
+      .eq("form_type", CARD_AUTHORIZATION_FORM_TYPE);
+    if (cardError) {
+      // Fail closed: without the exclusion list, return no signatures rather than risk the signal.
+      console.error(
+        JSON.stringify({
+          event: "consent_signatures_for_practitioner_failed",
+          code: dbErrorCode(cardError),
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return [];
+    }
+    excludedTemplateIds = (cardTemplates ?? []).map((t) => (t as { id: string }).id);
+  }
+  let query = admin
     .from("client_consent_signatures")
     .select(
       "id, template_id, template_title_snapshot, template_version, signature_name, signed_at, response, template_body_snapshot, response_label_snapshot, template_hash, created_at",
     )
     .eq("studio_id", studioId)
-    .eq("client_id", clientId)
-    .order("signed_at", { ascending: false });
+    .eq("client_id", clientId);
+  if (excludedTemplateIds.length > 0) {
+    query = query.not("template_id", "in", `(${excludedTemplateIds.join(",")})`);
+  }
+  const { data, error } = await query.order("signed_at", { ascending: false });
   if (error) {
     console.error(
       JSON.stringify({

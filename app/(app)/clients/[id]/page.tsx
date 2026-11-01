@@ -153,6 +153,7 @@ import { startPerfSpan, timed } from "@/lib/observability/perf-timing";
 import { requireLoadedForTab } from "./deferred-reads";
 import { canViewClientBilling, isLegacyProfileTab, profileTabsFor, resolveProfileTab, type ProfileTab } from "@/lib/clients/profile-tabs";
 import { clientAvatarInitials } from "@/lib/clients/profile-avatar";
+import { profileNameLines } from "@/lib/clients/profile-name";
 import { getOverviewVisitAppointments } from "@/lib/clients/profile-appointments";
 import { pickLastVisit, pickNextAppointment } from "@/lib/clients/profile-visits";
 import { VisitSummary } from "./_profile/VisitSummary";
@@ -271,6 +272,8 @@ export default async function ClientCheatSheetPage({
   }
 
   const { client, pricing, sessions, practitioners, attributionRoster } = data;
+  // HON-58: ONE display identity for the whole profile (preferred name when set, else the stored name).
+  const { display: clientDisplay, nameOnFile } = profileNameLines(client);
   const sessionsByRecency = orderByRecency(sessions);
   const newestSession = pickNewestNonVoidSession(sessionsByRecency);
   // PR Willow launch fixes: surface past appointments that the
@@ -433,10 +436,10 @@ export default async function ClientCheatSheetPage({
     // PR #134 (migration 0057): consent / e-sign. Overview status card, and
     // both feed computePortalPendingTasks.
     needsConsent
-      ? getConsentTemplatesForStudio(studio.id)
+      ? getConsentTemplatesForStudio(studio.id, { includeCardAuthorization: isOwner })
       : Promise.resolve([] as Awaited<ReturnType<typeof getConsentTemplatesForStudio>>),
     needsConsent
-      ? getLatestSignaturesForPractitionerView(studio.id, client.id)
+      ? getLatestSignaturesForPractitionerView(studio.id, client.id, { includeCardAuthorization: isOwner })
       : Promise.resolve([] as Awaited<ReturnType<typeof getLatestSignaturesForPractitionerView>>),
     // PR #135 (migration 0058): card-on-file metadata only; Stripe identifiers
     // stay off the wire. Overview card.
@@ -965,10 +968,10 @@ export default async function ClientCheatSheetPage({
                 data-testid="client-profile-avatar"
                 className="flex size-12 shrink-0 items-center justify-center rounded-full bg-neutral-200 text-base font-semibold text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
               >
-                {clientAvatarInitials(client.name)}
+                {clientAvatarInitials(clientDisplay)}
               </span>
               <h1 className="break-words text-2xl font-semibold tracking-tight md:text-3xl">
-                {client.name}
+                {clientDisplay}
               </h1>
               {/* PR Willow launch fixes: when the client is archived
                   (migration 0050), show a calm badge so a practitioner
@@ -981,10 +984,15 @@ export default async function ClientCheatSheetPage({
                 </span>
               )}
             </div>
+            {nameOnFile && (
+              <p data-testid="client-profile-name-on-file" className="mt-1 text-sm text-neutral-500">
+                Name on file: {nameOnFile}
+              </p>
+            )}
             <div className="mt-1 flex flex-col gap-y-0.5 text-sm text-neutral-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3">
               {client.pronouns && <span>{client.pronouns}</span>}
             </div>
-            {sessionsWithPrice > 0 && (
+            {isOwner && sessionsWithPrice > 0 && (
               <p className="mt-1.5 text-xs text-neutral-500 sm:text-sm">
                 <span className="font-medium text-neutral-700 dark:text-neutral-300">
                   {formatPrice(lifetimeCents)}
@@ -1211,7 +1219,7 @@ export default async function ClientCheatSheetPage({
               v1; the practitioner authoring surface lives in
               Settings &rarr; Consent forms. */}
           <ConsentSignaturesCard
-            clientName={client.name}
+            clientName={clientDisplay}
             activeTemplates={consentTemplatesAll
               .filter((t) => t.status === "active")
               .map((t) => ({
@@ -1377,7 +1385,7 @@ export default async function ClientCheatSheetPage({
               Chloe's request). Same card, same actions. */}
           <PortalMessagesCard
             clientId={client.id}
-            clientName={client.name}
+            clientName={clientDisplay}
             clientHasEmail={!!client.email && client.email.length > 0}
             clientIsArchived={client.archived_at != null}
             messages={portalMessages}
@@ -1440,7 +1448,7 @@ export default async function ClientCheatSheetPage({
               : null;
             return (
               <PaymentMethodCard
-                clientName={client.name}
+                clientName={clientDisplay}
                 activeCard={activeCard}
                 authorizationSignedAt={authorizationSignedAt}
                 cardAuthorizationTemplateExists={
@@ -1682,7 +1690,7 @@ export default async function ClientCheatSheetPage({
                         <div className="text-xs text-neutral-500">
                           {lastTreatment.modality}
                           {lastTreatmentPerformer && ` · ${lastTreatmentPerformer}`}
-                          {lastTreatment.price_paid_cents != null &&
+                          {isOwner && lastTreatment.price_paid_cents != null &&
                             ` · Session price ${formatPrice(lastTreatment.price_paid_cents)}`}
                         </div>
                         {/* A newer uncharted session exists; say so quietly

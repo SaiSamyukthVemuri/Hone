@@ -10,7 +10,7 @@ import type { LastVisit, NextAppointment } from "@/lib/clients/profile-visits";
 //     recaps (it can be older than the last visit, e.g. an appointment that was never charted);
 //   * Next appointment: the nearest confirmed appointment still ahead.
 // Dates are STUDIO time, never the viewer's browser clock. A value that does not exist reads
-// "Not recorded" / "None booked", never a blank. Display only: opening this writes nothing.
+// "No visit recorded in Hone" / "Not recorded" / "None booked", never a blank. Display only: opening this writes nothing.
 
 type Props = {
   clientId: string;
@@ -58,7 +58,7 @@ export function VisitSummary({
             {when(lastVisit.at, timezone, timeFormat)}
           </Link>
         ) : (
-          <p className={EMPTY}>Not recorded</p>
+          <p className={EMPTY}>No visit recorded in Hone</p>
         )}
       </div>
       <div data-testid="profile-last-charted-treatment">

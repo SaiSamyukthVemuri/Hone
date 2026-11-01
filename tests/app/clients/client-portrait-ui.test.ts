@@ -98,7 +98,7 @@ describe("0231 portrait in the profile header: the Photos-tab trust boundary", (
     const page = readFileSync(join(ROOT, "app/(app)/clients/[id]/page.tsx"), "utf8");
     expect(page).not.toMatch(/signedClientPortraitUrl|ClientPortrait\b|clientPortraitEnabled|portrait_image_id/);
     expect(page).toMatch(/data-testid="client-profile-avatar"/);
-    expect(page).toMatch(/clientAvatarInitials\(client\.name\)/);
+    expect(page).toMatch(/clientAvatarInitials\(clientDisplay\)/);
   });
 
   it("the header avatar loads the derivative first, demotes to the original, and re-mints an EXPIRED URL once per variant", () => {

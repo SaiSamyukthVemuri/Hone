@@ -49,7 +49,7 @@ describe("three distinct values, none replacing another", () => {
   });
   it("a value that does not exist says so, and the others still render", () => {
     const out = html({ next: { id: "a10", at: "2026-11-12T15:00:00Z" } });
-    expect(cell(out, "profile-last-visit")).toContain("Not recorded");
+    expect(cell(out, "profile-last-visit")).toContain("No visit recorded in Hone");
     expect(cell(out, "profile-last-charted-treatment")).toContain("Not recorded");
     expect(cell(out, "profile-next-appointment")).toContain("November 12, 2026");
     expect(cell(html(), "profile-next-appointment")).toContain("None booked");
