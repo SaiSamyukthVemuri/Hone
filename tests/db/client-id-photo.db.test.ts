@@ -419,6 +419,50 @@ describe("0275 C1: the object path is reserved in the database BEFORE any upload
   });
 });
 
+describe("0275 D1: withdraw, remove and archive make an in-flight reservation due at once", () => {
+  const due = async (path: string) =>
+    (await adminQuery(`select delete_after <= now() d from public.client_id_photo_pending_object_deletions where storage_path = $1`, [path])).rows[0].d as boolean;
+
+  it("withdraw expires the client's open reservations; another client's stay open", async () => {
+    await enable(A.studioId, true);
+    const c = await newClient(A);
+    const other = await newClient(A);
+    await consent(A.userId, c);
+    await consent(A.userId, other);
+    const mine = await reserve(A.userId, c);
+    const mine2 = await reserve(A.userId, c);
+    const theirs = await reserve(A.userId, other);
+    expect(await due(mine)).toBe(false);
+    await userQuery(A.userId, `select public.withdraw_client_id_photo_consent($1)`, [c]);
+    expect(await due(mine)).toBe(true);
+    expect(await due(mine2)).toBe(true);
+    expect(await due(theirs), "another client's reservation is untouched").toBe(false);
+    expect((await serviceDrain()).rows.map((r) => r.storage_path)).toEqual(expect.arrayContaining([mine, mine2]));
+    expect((await refusal(setPhoto(A.userId, c, mine))).code).toBe(P0275);
+  });
+
+  it("remove expires them too", async () => {
+    await enable(A.studioId, true);
+    const c = await newClient(A);
+    await consent(A.userId, c);
+    const path = await reserve(A.userId, c);
+    await userQuery(A.userId, `select public.remove_client_id_photo($1)`, [c]);
+    expect(await due(path)).toBe(true);
+    expect((await serviceDrain()).rows.map((r) => r.storage_path)).toContain(path);
+  });
+
+  it("the client-archive trigger expires them", async () => {
+    await enable(A.studioId, true);
+    const c = await newClient(A);
+    await consent(A.userId, c);
+    const path = await reserve(A.userId, c);
+    expect(await due(path)).toBe(false);
+    await adminQuery(`update public.clients set archived_at = now() where id = $1`, [c]);
+    expect(await due(path)).toBe(true);
+    expect((await serviceDrain()).rows.map((r) => r.storage_path)).toContain(path);
+  });
+});
+
 describe("0275 C2: drain and acknowledge are service-role only", () => {
   it("authenticated and anon cannot call drain or ack; service_role can", async () => {
     for (const role of ["anon", "authenticated"] as const) {
