@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 249,
-    "last": "0257_studio_payment_jurisdiction_failed_attempt_ack.sql",
-    "sha256": "e3877a03b2ac6c32d3d87e4c211e094383adbbd2a3c000a3ca1dc8170d005214"
+    "count": 252,
+    "last": "0272_hon58_legal_identity_hardening.sql",
+    "sha256": "07dddfd1c054e8b161ec40a10127a0137a5a66b897399a4d7bc86cb6db12d2f5"
   },
   "public": {
     "tables": [
@@ -25,6 +25,8 @@
       "client_clinical_notes",
       "client_consent_signatures",
       "client_intake_forms",
+      "client_legal_identities",
+      "client_legal_name_access_audit",
       "client_payment_methods",
       "client_personal_notes",
       "client_pinned_notes",
@@ -97,6 +99,7 @@
       "studio_availability_overrides",
       "studio_blockouts",
       "studio_calendar_reservations",
+      "studio_legal_name_access",
       "studio_machines",
       "studio_onboarding",
       "studio_payment_jurisdiction_changes",
@@ -181,6 +184,8 @@
       "calendar_connection_outbound_ready",
       "calendar_event_link_transition",
       "calendar_required_event_scopes",
+      "can_read_client_legal_identity",
+      "can_use_client_legal_identity",
       "cancel_appointment_core",
       "capture_treatment_reading_change",
       "check_claimed_payment_method_cleanup_safety",
@@ -209,6 +214,8 @@
       "client_budget_context_set_studio_id",
       "client_clinical_notes_before_insert",
       "client_clinical_notes_no_update",
+      "client_legal_identities_guard",
+      "client_legal_name_access_audit_immutable",
       "client_personal_notes_set_studio_id",
       "clients_portrait_integrity",
       "clients_sms_permission_guard",
@@ -378,6 +385,7 @@
       "receptionist_calendar_closures",
       "receptionist_cancel_appointment",
       "receptionist_client_contacts",
+      "receptionist_client_contacts_v2",
       "receptionist_create_appointment",
       "receptionist_move_appointment",
       "reconcile_bound_payment_event",
@@ -472,6 +480,7 @@
       "set_own_default_machine",
       "set_own_default_machine_frequency",
       "set_practitioner_active_locked",
+      "set_receptionist_legal_name_access",
       "set_reservation_resource_key_default",
       "set_service_practitioner_eligibility_locked",
       "set_session_aftercare_explained",
